@@ -80,7 +80,7 @@ impl Cartridge {
         Ok(Cartridge { file, header })
     }
 
-    pub fn from_file(file_path: &String) -> io::Result<Self> {
+    pub fn from_file(file_path: &str) -> io::Result<Self> {
         let file = File::open(file_path)?;
         Self::new(file)
     }
@@ -90,8 +90,6 @@ impl Cartridge {
         self.file
             .read_exact_at(&mut boot_code, self.header.arm9_values.rom_offset as u64)?;
 
-        let test = self.header.arm9_values.rom_offset;
-        println!("{:x}", test);
         if (0x4000..0x8000).contains(&(self.header.arm9_values.rom_offset as i32)) {
             let (_, boot_code_aligned, _) = unsafe { boot_code.align_to_mut::<u32>() };
             let (_, game_code_aligned, _) = unsafe { self.header.game_code.align_to::<u32>() };

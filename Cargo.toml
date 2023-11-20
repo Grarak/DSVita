@@ -5,4 +5,16 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[package.metadata.vita]
+title_id = "DSPSV0000"
+title_name = "DSPSV"
+
 [dependencies]
+bilge = "0.2.0"
+paste = "1.0.14"
+
+[target.arm-unknown-linux-gnueabi.dependencies]
+libc = "0.2.150"
+
+[target.armv7-sony-vita-newlibeabihf.dependencies]
+vitasdk-sys = { version = "0.3.2", features = ["SceSysmem_stub"] }
