@@ -14,16 +14,17 @@ impl Mmap {
         if exec {
             prot |= libc::PROT_EXEC;
         }
-        let ptr = unsafe {
-            libc::mmap64(
-                null_mut(),
-                size as _,
-                prot,
-                libc::MAP_ANON | libc::MAP_SHARED,
-                -1,
-                0,
-            )
-        };
+        let ptr =
+            unsafe {
+                libc::mmap(
+                    null_mut(),
+                    size as _,
+                    prot,
+                    libc::MAP_ANON | libc::MAP_SHARED,
+                    -1,
+                    0,
+                )
+            };
         if ptr != libc::MAP_FAILED {
             Ok(Mmap { ptr, size })
         } else {
@@ -65,7 +66,6 @@ impl DerefMut for Mmap {
 }
 
 impl AsRef<[u8]> for Mmap {
-    #[inline]
     fn as_ref(&self) -> &[u8] {
         self.deref()
     }

@@ -12,6 +12,7 @@ title_name = "DSPSV"
 [dependencies]
 bilge = "0.2.0"
 paste = "1.0.14"
+static_assertions = "1.1.0"
 
 [target.arm-unknown-linux-gnueabi.dependencies]
 libc = "0.2.150"

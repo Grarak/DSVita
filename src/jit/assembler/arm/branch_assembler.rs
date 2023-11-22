@@ -1,3 +1,4 @@
+use crate::jit::{Cond, Reg};
 use bilge::prelude::*;
 
 #[bitsize(32)]
@@ -10,12 +11,13 @@ pub struct Bx {
 }
 
 impl Bx {
-    pub fn create(rn: u8, cond: u8) -> u32 {
+    #[inline]
+    pub fn create(rn: Reg, cond: Cond) -> u32 {
         u32::from(Bx::new(
-            u4::new(rn),
+            u4::new(rn as u8),
             u4::new(1),
             u20::new(0b0001_0010_1111_1111_1111),
-            u4::new(cond),
+            u4::new(cond as u8),
         ))
     }
 }

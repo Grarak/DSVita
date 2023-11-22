@@ -1,7 +1,8 @@
 mod transfer_variations {
+
     #[inline]
     pub fn ip(opcode: u32) -> u32 {
-        todo!()
+        opcode & 0xFFF
     }
 
     #[inline]
@@ -38,386 +39,383 @@ mod transfer_variations {
 pub use transfer_variations::*;
 
 mod transfer_ops {
-    use crate::jit::disassembler::InstInfo;
-    use crate::jit::jit::JitAsm;
+    use crate::jit::reg::reg_reserve;
+    use crate::jit::{InstInfo, Operand, Operands, Reg};
 
-    pub fn ldrsb_of(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrsb_of(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldrsh_of(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrsh_of(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldrb_of(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrb_of(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn strb_of(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
+    #[inline]
+    pub fn strb_of(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldrh_of(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrh_of(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn strh_of(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
+    #[inline]
+    pub fn strh_of(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldr_of(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn str_of(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldrd_of(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn strd_of(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldrsb_pr(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldrsh_pr(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldrb_pr(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn strb_pr(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldrh_pr(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn strh_pr(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldr_pr(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn str_pr(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldrd_pr(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn strd_pr(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldrsb_pt(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldrsh_pt(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldrb_pt(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn strb_pt(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldrh_pt(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn strh_pt(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldr_pt(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn str_pt(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn ldrd_pt(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
+    #[inline]
+    pub fn ldr_of(opcode: u32, operand2: u32) -> InstInfo {
+        let op0 = Reg::from((opcode >> 12) & 0xF);
+        let op1 = Reg::from((opcode >> 16) & 0xF);
+        InstInfo {
+            operands: Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
+            src_regs: reg_reserve!(op1),
+            out_regs: reg_reserve!(op0),
+        }
     }
 
-    pub fn strd_pt(asm: &mut JitAsm, name: &'static str, opcode: u32, operand2: u32) -> InstInfo {
-        todo!()
-    }
-
-    pub fn swpb(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
-        todo!()
+    #[inline]
+    pub fn str_of(opcode: u32, operand2: u32) -> InstInfo {
+        let op0 = Reg::from((opcode >> 12) & 0xF);
+        let op1 = Reg::from((opcode >> 16) & 0xF);
+        InstInfo {
+            operands: Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
+            src_regs: reg_reserve!(op0, op1),
+            out_regs: reg_reserve!(),
+        }
     }
 
-    pub fn swp(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrd_of(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmda(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn strd_of(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmda(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrsb_pr(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmia(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrsh_pr(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmia(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrb_pr(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmdb(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn strb_pr(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmdb(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrh_pr(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmib(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn strh_pr(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmib(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldr_pr(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmda_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn str_pr(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmda_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrd_pr(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmia_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn strd_pr(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmia_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrsb_pt(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmdb_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrsh_pt(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmdb_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrb_pt(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmib_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn strb_pt(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmib_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrh_pt(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmda_u(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn strh_pt(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmda_u(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldr_pt(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmia_u(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn str_pt(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmia_u(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldrd_pt(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmdb_u(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn strd_pt(opcode: u32, operand2: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmdb_u(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn swpb(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmib_u(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn swp(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmib_u(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmda(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmda_u_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmda(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmda_u_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmia(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmia_u_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmia(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmia_u_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmdb(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmdb_u_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmdb(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmdb_u_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmib(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmib_u_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmib(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmib_u_w(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmda_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn msr_rc(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmda_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn msr_rs(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmia_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn msr_ic(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmia_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn msr_is(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmdb_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn mrs_rc(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmdb_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn mrs_rs(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmib_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn mrc(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmib_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn mcr(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmda_u(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldrsb_reg_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmda_u(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldrsh_reg_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmia_u(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldrb_reg_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmia_u(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn strb_reg_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmdb_u(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldrh_reg_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmdb_u(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn strh_reg_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmib_u(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldr_reg_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmib_u(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn str_reg_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmda_u_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldrb_imm5_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmda_u_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn strb_imm5_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmia_u_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldrh_imm5_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmia_u_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn strh_imm5_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmdb_u_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldr_imm5_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmdb_u_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn str_imm5_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn ldmib_u_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldr_pc_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn stmib_u_w(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldr_sp_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
-        todo!()
+    #[inline]
+    pub fn msr_rc(opcode: u32) -> InstInfo {
+        let op1 = Reg::from(opcode & 0xF);
+        InstInfo {
+            operands: Operands::new_2(Operand::reg(Reg::CPSR), Operand::reg(op1)),
+            src_regs: reg_reserve!(op1),
+            out_regs: reg_reserve!(Reg::CPSR),
+        }
     }
 
-    pub fn str_sp_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn msr_rs(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn ldmia_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn msr_ic(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn stmia_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn msr_is(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn pop_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn mrs_rc(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn push_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn mrs_rs(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn pop_pc_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn mrc(opcode: u32) -> InstInfo {
         todo!()
     }
 
-    pub fn push_lr_t(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn mcr(opcode: u32) -> InstInfo {
         todo!()
     }
 }

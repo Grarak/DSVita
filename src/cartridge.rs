@@ -127,21 +127,21 @@ impl Key1 {
         x_end_index: usize,
         y_end_index: usize,
     ) {
-        assert_eq!(data.len(), 2);
+        debug_assert_eq!(data.len(), 2);
 
         let mut y = data[0];
-        let mut x = Wrapping(data[1]);
+        let mut x = data[1];
         for i in iter {
-            let z = [self.key_buf[i] ^ x.0];
+            let z = [self.key_buf[i] ^ x];
             let (_, z_aligned, _) = unsafe { z.align_to::<u8>() };
-            x = Wrapping(self.key_buf[0x12 + z_aligned[3] as usize]);
-            x += self.key_buf[0x112 + z_aligned[2] as usize];
+            x = self.key_buf[0x12 + z_aligned[3] as usize];
+            x = unsafe { x.unchecked_add(self.key_buf[0x112 + z_aligned[2] as usize]) };
             x ^= self.key_buf[0x212 + z_aligned[1] as usize];
-            x += self.key_buf[0x312 + z_aligned[0] as usize];
+            x = unsafe { x.unchecked_add(self.key_buf[0x312 + z_aligned[0] as usize]) };
             x ^= y;
             y = z[0];
         }
-        data[0] = x.0 ^ self.key_buf[x_end_index];
+        data[0] = x ^ self.key_buf[x_end_index];
         data[1] = y ^ self.key_buf[y_end_index];
     }
 
@@ -169,9 +169,10 @@ impl Key1 {
     }
 
     fn new(id_code: u32, level: u8, modulo: u32) -> Self {
-        let mut instance = Key1 {
-            key_buf: [0u32; KEY1_BUF_SIZE],
-        };
+        let mut instance =
+            Key1 {
+                key_buf: [0u32; KEY1_BUF_SIZE],
+            };
 
         let mut keycode = [id_code, id_code / 2, id_code * 2];
         if level >= 1 {

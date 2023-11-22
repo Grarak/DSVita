@@ -1,2 +1,4 @@
 [target.arm-unknown-linux-gnueabi]
 linker = "arm-linux-gnueabi-gcc"
+ar = "arm-linux-gnueabi-ar"
+rustflags = ["-C", "target-cpu=cortex-a9", "-C", "target-feature=+vfp3,+neon"]

@@ -1,27 +1,17 @@
 mod alu_delegations {
     use crate::jit::disassembler::alu_instructions::*;
-    use crate::jit::disassembler::InstInfo;
-    use crate::jit::jit::JitAsm;
+    use crate::jit::InstInfo;
     use paste::paste;
 
     macro_rules! generate_variations {
-        ($name:ident, $([$variation:ident]),+) => {
+        ($name:ident, $([$variation:ident, $processor:ident]),+) => {
             paste! {
                 $(
                     #[inline]
-                    pub fn [<$name _ $variation>](asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
-                        $name(asm, name, opcode, $variation(opcode))
-                    }
-                )*
-            }
-        };
-
-        ($name:ident, $([$variation:ident, $suffix:tt]),+) => {
-            paste! {
-                $(
-                    #[inline]
-                    pub fn [<$name _ $variation>](asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
-                        $name(asm, name, opcode, [<$variation $suffix>](opcode))
+                    pub fn [<$name _ $variation>](opcode: u32) -> InstInfo {
+                        paste! {
+                            [<$name _ $variation _ impl>](opcode, $processor(opcode))
+                        }
                     }
                 )*
             }
@@ -30,23 +20,25 @@ mod alu_delegations {
 
     macro_rules! generate_op {
         ($name:ident) => {
-            generate_variations!($name, [lli], [llr], [lri], [lrr], [ari], [arr], [rri], [rrr], [imm]);
-        };
-
-        ($name:ident, $suffix:tt) => {
-            paste! {
-                generate_variations!(
-                    $name, [lli, $suffix], [llr, $suffix], [lri, $suffix], [lrr, $suffix], [ari, $suffix], [arr, $suffix],
-                    [rri, $suffix], [rrr, $suffix], [imm, $suffix]
-                );
-            }
+            generate_variations!(
+                $name,
+                [lli, imm_shift],
+                [llr, reg_shift],
+                [lri, imm_shift],
+                [lrr, reg_shift],
+                [ari, imm_shift],
+                [arr, reg_shift],
+                [rri, imm_shift],
+                [rrr, reg_shift],
+                [imm, imm]
+            );
         };
     }
 
     generate_op!(_and);
-    generate_op!(ands, _s);
+    generate_op!(ands);
     generate_op!(eor);
-    generate_op!(eors, _s);
+    generate_op!(eors);
     generate_op!(sub);
     generate_op!(subs);
     generate_op!(rsb);
@@ -59,34 +51,33 @@ mod alu_delegations {
     generate_op!(sbcs);
     generate_op!(rsc);
     generate_op!(rscs);
-    generate_op!(tst, _s);
-    generate_op!(teq, _s);
-    generate_op!(cmp, _s);
-    generate_op!(cmn, _s);
+    generate_op!(tst);
+    generate_op!(teq);
+    generate_op!(cmp);
+    generate_op!(cmn);
     generate_op!(orr);
-    generate_op!(orrs, _s);
+    generate_op!(orrs);
     generate_op!(mov);
-    generate_op!(movs, _s);
+    generate_op!(movs);
     generate_op!(bic);
-    generate_op!(bics, _s);
+    generate_op!(bics);
     generate_op!(mvn);
-    generate_op!(mvns, _s);
+    generate_op!(mvns);
 }
 
 pub use alu_delegations::*;
 
 mod transfer_delegations {
     use crate::jit::disassembler::transfer_instructions::*;
-    use crate::jit::disassembler::InstInfo;
-    use crate::jit::jit::JitAsm;
+    use crate::jit::InstInfo;
     use paste::paste;
 
     macro_rules! generate_variation {
         ($name:ident, $suffix:ident, $variation:ident, $processor:ident) => {
             paste! {
                 #[inline]
-                pub fn [<$name _ $variation>](asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
-                    [<$name _ $suffix>](asm, name, opcode, $processor(opcode))
+                pub fn [<$name _ $variation>](opcode: u32) -> InstInfo {
+                    [<$name _ $suffix>](opcode, $processor(opcode))
                 }
             }
         };
@@ -94,8 +85,8 @@ mod transfer_delegations {
         ($name:ident, $suffix:ident, $variation:ident, $prefix:tt, $processor:ident) => {
             paste! {
                 #[inline]
-                pub fn [<$name _ $variation>](asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
-                    [<$name _ $suffix>](asm, name, opcode, !($processor(opcode) - 1))
+                pub fn [<$name _ $variation>](opcode: u32) -> InstInfo {
+                    [<$name _ $suffix>](opcode, !($processor(opcode) - 1))
                 }
             }
         };
@@ -137,10 +128,10 @@ mod transfer_delegations {
 pub use transfer_delegations::*;
 
 mod unknown_delegations {
-    use crate::jit::disassembler::InstInfo;
-    use crate::jit::jit::JitAsm;
+    use crate::jit::InstInfo;
 
-    pub fn unk_arm(asm: &mut JitAsm, name: &'static str, opcode: u32) -> InstInfo {
+    #[inline]
+    pub fn unk_arm(opcode: u32) -> InstInfo {
         todo!()
     }
 }

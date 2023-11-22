@@ -104,7 +104,6 @@ impl DerefMut for Mmap {
 }
 
 impl AsRef<[u8]> for Mmap {
-    #[inline]
     fn as_ref(&self) -> &[u8] {
         self.deref()
     }
