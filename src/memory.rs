@@ -94,7 +94,6 @@ impl VmManager {
         Ok(VmManager { regions, vm })
     }
 
-    #[inline]
     pub fn offset(&self) -> u32 {
         self.regions[0].offset
     }

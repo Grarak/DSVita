@@ -1,8 +1,7 @@
-use crate::utils::StrErr;
 use std::fmt::{Debug, Formatter};
-use std::{mem, ops};
+use std::{iter, mem, ops};
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd)]
 #[repr(u8)]
 pub enum Reg {
     R0 = 0,
@@ -22,53 +21,99 @@ pub enum Reg {
     LR = 14,
     PC = 15,
     CPSR = 16,
+    None = 17,
 }
 
-pub const GP_REGS: [Reg; 13] =
-    [
-        Reg::R0,
-        Reg::R1,
-        Reg::R2,
-        Reg::R3,
-        Reg::R4,
-        Reg::R5,
-        Reg::R6,
-        Reg::R7,
-        Reg::R8,
-        Reg::R9,
-        Reg::R10,
-        Reg::R11,
-        Reg::R12,
-    ];
+const GP_REGS_BITMASK: u32 = 0x1FFF;
+const EMULATED_REGS_BITMASK: u32 = (1 << Reg::LR as u8) | (1 << Reg::PC as u8);
+pub const FIRST_EMULATED_REG: Reg = Reg::LR;
+pub const EMULATED_REGS_COUNT: usize = u32::count_ones(EMULATED_REGS_BITMASK) as usize;
 
 impl<T: Into<u32>> From<T> for Reg {
-    #[inline]
     fn from(value: T) -> Self {
-        unsafe { mem::transmute(value.into() as u8) }
+        let value = value.into();
+        assert!(value >= Reg::R0 as u32 && value < Reg::None as u32);
+        unsafe { mem::transmute(value as u8) }
+    }
+}
+
+impl Reg {
+    pub fn is_emulated(&self) -> bool {
+        (EMULATED_REGS_BITMASK & (1 << *self as u8)) != 0
+    }
+}
+
+impl<'a> iter::Sum<&'a Reg> for RegReserve {
+    fn sum<I: Iterator<Item = &'a Reg>>(iter: I) -> Self {
+        let mut reg_reserve = RegReserve::new();
+        for reg in iter {
+            reg_reserve += *reg;
+        }
+        reg_reserve
     }
 }
 
 #[derive(Copy, Clone)]
-pub struct RegReserve(u32);
+pub struct RegReserve(pub u32);
 
 impl RegReserve {
-    #[inline]
     pub fn new() -> Self {
         RegReserve(0)
     }
 
-    #[inline]
-    pub fn reserve(&mut self, reg: Reg) {
-        self.0 |= 1 << reg as u8;
+    pub fn gp() -> Self {
+        RegReserve(GP_REGS_BITMASK)
     }
 
-    pub fn next_free_gp(&self) -> Result<Reg, StrErr> {
-        for i in GP_REGS {
-            if (self.0 >> i as u8) & 1 == 0 {
-                return Ok(Reg::from(i));
+    pub fn is_reserved(&self, reg: Reg) -> bool {
+        (self.0 >> reg as u8) & 1 == 1
+    }
+
+    pub fn next_free(&self) -> Option<Reg> {
+        for i in Reg::R0 as u8..=Reg::CPSR as u8 {
+            let reg = Reg::from(i);
+            if !self.is_reserved(reg) {
+                return Some(reg);
             }
         }
-        Err(StrErr::from("No free gp registers left"))
+        None
+    }
+
+    pub fn len(&self) -> usize {
+        u32::count_ones(self.0) as _
+    }
+
+    pub fn emulated_regs_count(&self) -> u8 {
+        u32::count_ones(self.0 & EMULATED_REGS_BITMASK) as _
+    }
+
+    pub fn get_emulated_regs(&self) -> RegReserve {
+        RegReserve(self.0 & EMULATED_REGS_BITMASK)
+    }
+
+    pub fn get_gp_regs(&self) -> RegReserve {
+        RegReserve(self.0 & GP_REGS_BITMASK)
+    }
+
+    pub fn peek(&self) -> Option<Reg> {
+        for i in Reg::R0 as u8..=Reg::CPSR as u8 {
+            let reg = Reg::from(i);
+            if self.is_reserved(reg) {
+                return Some(reg);
+            }
+        }
+        None
+    }
+
+    pub fn pop(&mut self) -> Option<Reg> {
+        for i in Reg::R0 as u8..=Reg::CPSR as u8 {
+            let reg = Reg::from(i);
+            if self.is_reserved(reg) {
+                self.0 &= !(1 << i);
+                return Some(reg);
+            }
+        }
+        None
     }
 }
 
@@ -100,12 +145,49 @@ impl ops::BitXorAssign<RegReserve> for RegReserve {
     }
 }
 
+impl ops::BitAnd<RegReserve> for RegReserve {
+    type Output = Self;
+
+    fn bitand(self, rhs: RegReserve) -> Self::Output {
+        RegReserve(self.0 & rhs.0)
+    }
+}
+
+impl ops::BitAndAssign<RegReserve> for RegReserve {
+    fn bitand_assign(&mut self, rhs: RegReserve) {
+        self.0 &= rhs.0;
+    }
+}
+
+impl ops::Not for RegReserve {
+    type Output = RegReserve;
+
+    fn not(self) -> Self::Output {
+        RegReserve(!self.0)
+    }
+}
+
+impl ops::Add<Reg> for RegReserve {
+    type Output = RegReserve;
+
+    fn add(self, rhs: Reg) -> Self::Output {
+        RegReserve(self.0 | 1 << rhs as u8)
+    }
+}
+
+impl ops::AddAssign<Reg> for RegReserve {
+    fn add_assign(&mut self, rhs: Reg) {
+        self.0 |= 1 << rhs as u8;
+    }
+}
+
 impl Debug for RegReserve {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut str = "".to_owned();
         for i in Reg::R0 as u8..=Reg::CPSR as u8 {
-            if (self.0 >> i) & 1 == 1 {
-                str += &format!("{:?}, ", Reg::from(i));
+            let reg = Reg::from(i);
+            if self.is_reserved(reg) {
+                str += &format!("{:?}, ", reg);
             }
         }
         let mut chars = str.chars();
@@ -115,38 +197,32 @@ impl Debug for RegReserve {
     }
 }
 
-pub struct GpRegReserve(RegReserve);
-
-impl From<RegReserve> for GpRegReserve {
-    fn from(value: RegReserve) -> Self {
-        GpRegReserve(value)
-    }
-}
-
-pub struct GpRegReserveIter {
-    reserve: GpRegReserve,
+pub struct RegReserveIter {
+    reserve: RegReserve,
     current: usize,
 }
 
-impl IntoIterator for GpRegReserve {
+impl IntoIterator for RegReserve {
     type Item = Reg;
-    type IntoIter = GpRegReserveIter;
+    type IntoIter = RegReserveIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        GpRegReserveIter {
+        RegReserveIter {
             reserve: self,
             current: 0,
         }
     }
 }
 
-impl Iterator for GpRegReserveIter {
-    type Item = <GpRegReserve as IntoIterator>::Item;
+impl Iterator for RegReserveIter {
+    type Item = <RegReserve as IntoIterator>::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        for i in self.current..GP_REGS.len() {
-            if (self.reserve.0 .0 >> i) == 1 {
-                return Some(Reg::from(i as u8));
+        for i in self.current..Reg::None as usize {
+            let reg = Reg::from(i as u8);
+            if self.reserve.is_reserved(reg) {
+                self.current = i + 1;
+                return Some(reg);
             }
         }
         None
@@ -154,13 +230,13 @@ impl Iterator for GpRegReserveIter {
 }
 
 macro_rules! reg_reserve {
-    [$($reg:expr),*] => {
+    ($($reg:expr),*) => {
         {
-            let mut gp_reg_reserve = crate::jit::reg::RegReserve::new();
+            let mut reg_reserve = crate::jit::reg::RegReserve::new();
             $(
-                gp_reg_reserve.reserve($reg);
+                reg_reserve += ($reg);
             )*
-            gp_reg_reserve
+            reg_reserve
         }
     };
 }

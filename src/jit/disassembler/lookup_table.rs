@@ -2,14 +2,16 @@ use crate::jit::disassembler::alu_instructions::*;
 use crate::jit::disassembler::branch_instructions::*;
 use crate::jit::disassembler::delegations::*;
 use crate::jit::disassembler::transfer_instructions::*;
+use crate::jit::inst_info::InstInfo;
+use crate::jit::Op;
 use crate::jit::Op::*;
-use crate::jit::{InstInfo, Op};
 
-pub const fn lookup_opcode(opcode: u32) -> &'static (Op, fn(u32) -> InstInfo) {
+pub const fn lookup_opcode(opcode: u32) -> &'static (Op, fn(u32, Op) -> InstInfo) {
     &LOOKUP_TABLE[(((opcode >> 16) & 0xFF0) | ((opcode >> 4) & 0xF)) as usize]
 }
 
-const LOOKUP_TABLE: [(Op, fn(u32) -> InstInfo); 4096] = [
+// Taken from https://github.com/Hydr8gon/NooDS/blob/master/src/interpreter_lookup.cpp
+const LOOKUP_TABLE: [(Op, fn(u32, Op) -> InstInfo); 4096] = [
     (AndLli, _and_lli),
     (AndLlr, _and_llr),
     (AndLri, _and_lri),

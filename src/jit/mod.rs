@@ -1,107 +1,15 @@
-use crate::jit::reg::{Reg, RegReserve};
+use std::mem;
 
 pub mod assembler;
 pub mod disassembler;
 mod emitter;
+mod inst_info;
 pub mod jit;
 mod reg;
 pub mod thread_context;
 
-#[derive(Debug)]
-pub struct InstInfo {
-    operands: Operands,
-    src_regs: RegReserve,
-    out_regs: RegReserve,
-}
-
-impl InstInfo {
-    #[inline]
-    pub fn operands(&self) -> &[Operand] {
-        &self.operands.values[..self.operands.num as usize]
-    }
-}
-
-#[derive(Debug)]
-pub struct Operands {
-    values: [Operand; 3],
-    num: u8,
-}
-
-impl Operands {
-    #[inline]
-    pub fn new_1(operand: Operand) -> Self {
-        Operands {
-            values: [operand, Operand::None, Operand::None],
-            num: 1,
-        }
-    }
-
-    #[inline]
-    pub fn new_2(operand1: Operand, operand2: Operand) -> Self {
-        Operands {
-            values: [operand1, operand2, Operand::None],
-            num: 2,
-        }
-    }
-
-    #[inline]
-    pub fn new_3(operand1: Operand, operand2: Operand, operand3: Operand) -> Self {
-        Operands {
-            values: [operand1, operand2, operand3],
-            num: 3,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum Operand {
-    Reg { reg: Reg, shift: Option<Shift> },
-    Imm { imm: u32, shift: Option<Shift> },
-    None,
-}
-
-impl Operand {
-    #[inline]
-    pub fn reg(reg: Reg) -> Self {
-        Operand::Reg { reg, shift: None }
-    }
-
-    #[inline]
-    pub fn reg_imm_shift(reg: Reg, shift_type: ShiftType, imm: u8) -> Self {
-        let shift_value = ShiftValue::Imm(imm);
-        Operand::Reg {
-            reg,
-            shift: Some(match shift_type {
-                ShiftType::LSL => Shift::LSL(shift_value),
-                ShiftType::LSR => Shift::LSR(shift_value),
-                ShiftType::ASR => Shift::ASR(shift_value),
-                ShiftType::ROR => Shift::ROR(shift_value),
-            }),
-        }
-    }
-
-    #[inline]
-    pub fn imm(imm: u32) -> Self {
-        Operand::Imm { imm, shift: None }
-    }
-}
-
-#[derive(Debug)]
-pub enum ShiftValue {
-    Reg(Reg),
-    Imm(u8),
-}
-
-#[derive(Debug)]
-#[repr(u8)]
-pub enum Shift {
-    LSL(ShiftValue),
-    LSR(ShiftValue),
-    ASR(ShiftValue),
-    ROR(ShiftValue),
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u16)]
 pub enum Op {
     AdcAri,
     AdcArr,
@@ -631,8 +539,7 @@ pub enum Op {
 }
 
 impl Op {
-    #[inline]
-    pub fn is_branch(&self) -> bool {
+    pub const fn is_branch(&self) -> bool {
         match self {
             Op::Bx | Op::BlxReg | Op::B | Op::Bl => true,
             _ => false,
@@ -642,21 +549,29 @@ impl Op {
 
 #[repr(u8)]
 pub enum Cond {
-    EQ = 0b0000,
-    NE = 0b0001,
-    CS = 0b0010,
-    CC = 0b0011,
-    MI = 0b0100,
-    PL = 0b0101,
-    VS = 0b0110,
-    VC = 0b0111,
-    HI = 0b1000,
-    LS = 0b1001,
-    GE = 0b1010,
-    LT = 0b1011,
-    GT = 0b1100,
-    LE = 0b1101,
-    AL = 0b1110,
+    EQ = 0,
+    NE = 1,
+    CS = 2,
+    CC = 3,
+    MI = 4,
+    PL = 5,
+    VS = 6,
+    VC = 7,
+    HI = 8,
+    LS = 9,
+    GE = 10,
+    LT = 11,
+    GT = 12,
+    LE = 13,
+    AL = 14,
+}
+
+impl<T: Into<u32>> From<T> for Cond {
+    fn from(value: T) -> Self {
+        let value = value.into();
+        assert!(value >= Cond::EQ as u32 && value <= Cond::AL as u32);
+        unsafe { mem::transmute(value as u8) }
+    }
 }
 
 #[repr(u8)]

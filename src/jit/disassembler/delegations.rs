@@ -1,6 +1,7 @@
 mod alu_delegations {
     use crate::jit::disassembler::alu_instructions::*;
-    use crate::jit::InstInfo;
+    use crate::jit::inst_info::InstInfo;
+    use crate::jit::Op;
     use paste::paste;
 
     macro_rules! generate_variations {
@@ -8,9 +9,9 @@ mod alu_delegations {
             paste! {
                 $(
                     #[inline]
-                    pub fn [<$name _ $variation>](opcode: u32) -> InstInfo {
+                    pub fn [<$name _ $variation>](opcode: u32, op: Op) -> InstInfo {
                         paste! {
-                            [<$name _ $variation _ impl>](opcode, $processor(opcode))
+                            [<$name _ $variation _ impl>](opcode, op, $processor(opcode))
                         }
                     }
                 )*
@@ -69,15 +70,16 @@ pub use alu_delegations::*;
 
 mod transfer_delegations {
     use crate::jit::disassembler::transfer_instructions::*;
-    use crate::jit::InstInfo;
+    use crate::jit::inst_info::InstInfo;
+    use crate::jit::Op;
     use paste::paste;
 
     macro_rules! generate_variation {
         ($name:ident, $suffix:ident, $variation:ident, $processor:ident) => {
             paste! {
                 #[inline]
-                pub fn [<$name _ $variation>](opcode: u32) -> InstInfo {
-                    [<$name _ $suffix>](opcode, $processor(opcode))
+                pub fn [<$name _ $variation>](opcode: u32, op: Op) -> InstInfo {
+                    [<$name _ $suffix>](opcode, op, $processor(opcode))
                 }
             }
         };
@@ -85,8 +87,8 @@ mod transfer_delegations {
         ($name:ident, $suffix:ident, $variation:ident, $prefix:tt, $processor:ident) => {
             paste! {
                 #[inline]
-                pub fn [<$name _ $variation>](opcode: u32) -> InstInfo {
-                    [<$name _ $suffix>](opcode, !($processor(opcode) - 1))
+                pub fn [<$name _ $variation>](opcode: u32, op: Op) -> InstInfo {
+                    [<$name _ $suffix>](opcode, op, !($processor(opcode) - 1))
                 }
             }
         };
@@ -128,10 +130,11 @@ mod transfer_delegations {
 pub use transfer_delegations::*;
 
 mod unknown_delegations {
-    use crate::jit::InstInfo;
+    use crate::jit::inst_info::InstInfo;
+    use crate::jit::Op;
 
     #[inline]
-    pub fn unk_arm(opcode: u32) -> InstInfo {
+    pub fn unk_arm(opcode: u32, op: Op) -> InstInfo {
         todo!()
     }
 }

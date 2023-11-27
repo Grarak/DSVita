@@ -75,7 +75,7 @@ pub struct Cartridge {
 impl Cartridge {
     pub fn new(mut file: File) -> io::Result<Self> {
         let mut raw_header = [0u8; HEADER_SIZE];
-        file.read_exact(&mut raw_header)?;
+        file.read(&mut raw_header)?;
         let header: CartridgeHeader = unsafe { mem::transmute(raw_header) };
         Ok(Cartridge { file, header })
     }
@@ -119,7 +119,6 @@ struct Key1 {
 }
 
 impl Key1 {
-    #[inline]
     fn crypt<I: IntoIterator<Item = usize>>(
         &self,
         data: &mut [u32],

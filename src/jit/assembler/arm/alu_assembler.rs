@@ -1,6 +1,7 @@
 use crate::jit::disassembler::lookup_table::lookup_opcode;
-use crate::jit::Op::{AddImm, MovImm};
-use crate::jit::{Cond, Reg, ShiftType};
+use crate::jit::reg::Reg;
+use crate::jit::Op::{AddImm, MovImm, SubImm};
+use crate::jit::{Cond, ShiftType};
 use bilge::prelude::*;
 
 #[bitsize(32)]
@@ -18,21 +19,43 @@ pub struct AluImm {
 }
 
 impl AluImm {
+    // #[inline]
+    // pub fn add(op0: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
+    //     let op = u32::from(AluImm::new(
+    //         op2,
+    //         u4::new(shift),
+    //         u4::new(op0 as u8),
+    //         u4::new(0),
+    //         u1::new(0),
+    //         u4::new(0x4),
+    //         u1::new(1),
+    //         u2::new(0),
+    //         u4::new(cond as u8),
+    //     ));
+    //     debug_assert_eq!(lookup_opcode(op).0, AddImm);
+    //     op
+    // }
+
     #[inline]
-    pub fn add(op0: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
+    pub fn sub(op0: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
         let op = u32::from(AluImm::new(
             op2,
             u4::new(shift),
             u4::new(op0 as u8),
             u4::new(0),
             u1::new(0),
-            u4::new(0x4),
+            u4::new(0x2),
             u1::new(1),
             u2::new(0),
             u4::new(cond as u8),
         ));
-        debug_assert_eq!(lookup_opcode(op).0, AddImm);
+        debug_assert_eq!(lookup_opcode(op).0, SubImm);
         op
+    }
+
+    #[inline]
+    pub fn sub_al(op0: Reg, op2: u8) -> u32 {
+        AluImm::sub(op0, op2, 0, Cond::AL)
     }
 
     #[inline]
@@ -95,6 +118,14 @@ impl AluImm {
     #[inline]
     pub fn mov_t_al(op0: Reg, op2: u16) -> u32 {
         AluImm::mov_t(op0, op2, Cond::AL)
+    }
+
+    #[inline]
+    pub fn mov32(op0: Reg, op2: u32) -> [u32; 2] {
+        [
+            AluImm::mov16_al(op0, (op2 & 0xFFFF) as u16),
+            AluImm::mov_t_al(op0, (op2 >> 16) as u16),
+        ]
     }
 }
 

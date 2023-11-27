@@ -1,4 +1,5 @@
-use crate::jit::{Cond, Reg};
+use crate::jit::reg::Reg;
+use crate::jit::Cond;
 use bilge::prelude::*;
 
 #[bitsize(32)]
