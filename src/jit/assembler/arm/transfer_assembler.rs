@@ -108,7 +108,7 @@ pub struct LdmStm {
 
 impl LdmStm {
     #[inline]
-    pub fn push(regs: RegReserve, sp: Reg, cond: Cond) -> u32 {
+    pub fn push_post(regs: RegReserve, sp: Reg, cond: Cond) -> u32 {
         u32::from(LdmStm::new(
             regs.0 as u16,
             u4::new(sp as u8),
@@ -123,12 +123,27 @@ impl LdmStm {
     }
 
     #[inline]
-    pub fn push_al(regs: RegReserve) -> u32 {
-        LdmStm::push(regs, Reg::SP, Cond::AL)
+    pub fn push_post_al(regs: RegReserve) -> u32 {
+        LdmStm::push_post(regs, Reg::SP, Cond::AL)
     }
 
     #[inline]
-    pub fn pop(regs: RegReserve, sp: Reg, cond: Cond) -> u32 {
+    pub fn push_pre(regs: RegReserve, sp: Reg, cond: Cond) -> u32 {
+        u32::from(LdmStm::new(
+            regs.0 as u16,
+            u4::new(sp as u8),
+            u1::new(0),
+            u1::new(1),
+            u1::new(0),
+            u1::new(0),
+            u1::new(1),
+            u3::new(0b100),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn pop_post(regs: RegReserve, sp: Reg, cond: Cond) -> u32 {
         u32::from(LdmStm::new(
             regs.0 as u16,
             u4::new(sp as u8),
@@ -143,8 +158,23 @@ impl LdmStm {
     }
 
     #[inline]
-    pub fn pop_al(regs: RegReserve) -> u32 {
-        LdmStm::pop(regs, Reg::SP, Cond::AL)
+    pub fn pop_post_al(regs: RegReserve) -> u32 {
+        LdmStm::pop_post(regs, Reg::SP, Cond::AL)
+    }
+
+    #[inline]
+    pub fn pop_pre(regs: RegReserve, sp: Reg, cond: Cond) -> u32 {
+        u32::from(LdmStm::new(
+            regs.0 as u16,
+            u4::new(sp as u8),
+            u1::new(1),
+            u1::new(1),
+            u1::new(0),
+            u1::new(1),
+            u1::new(1),
+            u3::new(0b100),
+            u4::new(cond as u8),
+        ))
     }
 }
 
@@ -169,26 +199,6 @@ impl LdrexStrex {
             u4::new(op1 as u8),
             u3::new(3),
             u5::new(0b00011),
-            u4::new(cond as u8),
-        ))
-    }
-}
-
-#[bitsize(32)]
-#[derive(FromBits)]
-pub struct Bx {
-    pub rn: u4,
-    pub op: u4,
-    pub id: u20,
-    pub u4: u4,
-}
-
-impl Bx {
-    pub fn bx(op0: Reg, cond: Cond) -> u32 {
-        u32::from(Bx::new(
-            u4::new(op0 as u8),
-            u4::new(1),
-            u20::new(0b00010010111111111111),
             u4::new(cond as u8),
         ))
     }

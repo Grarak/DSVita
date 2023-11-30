@@ -10,7 +10,7 @@ mod branch_ops {
 
     #[inline]
     pub fn blx_reg(opcode: u32, op: Op) -> InstInfo {
-        let op0 = Reg::from(opcode & 0xF);
+        let op0 = Reg::from((opcode & 0xF) as u8);
         InstInfo::new(
             opcode,
             op,
@@ -22,7 +22,14 @@ mod branch_ops {
 
     #[inline]
     pub fn b(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = ((opcode << 8) as i32) >> 6;
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::imm(op0 as u32)),
+            reg_reserve!(),
+            reg_reserve!(),
+        )
     }
 
     #[inline]
@@ -32,7 +39,13 @@ mod branch_ops {
 
     #[inline]
     pub fn swi(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_empty(),
+            reg_reserve!(),
+            reg_reserve!(),
+        )
     }
 }
 

@@ -29,11 +29,11 @@ const EMULATED_REGS_BITMASK: u32 = (1 << Reg::LR as u8) | (1 << Reg::PC as u8);
 pub const FIRST_EMULATED_REG: Reg = Reg::LR;
 pub const EMULATED_REGS_COUNT: usize = u32::count_ones(EMULATED_REGS_BITMASK) as usize;
 
-impl<T: Into<u32>> From<T> for Reg {
+impl<T: Into<u8>> From<T> for Reg {
     fn from(value: T) -> Self {
         let value = value.into();
-        assert!(value >= Reg::R0 as u32 && value < Reg::None as u32);
-        unsafe { mem::transmute(value as u8) }
+        assert!(value < Reg::None as u8);
+        unsafe { mem::transmute(value) }
     }
 }
 
@@ -128,6 +128,20 @@ impl ops::Add<RegReserve> for RegReserve {
 impl ops::AddAssign<RegReserve> for RegReserve {
     fn add_assign(&mut self, rhs: RegReserve) {
         self.0 |= rhs.0;
+    }
+}
+
+impl ops::Sub<RegReserve> for RegReserve {
+    type Output = Self;
+
+    fn sub(self, rhs: RegReserve) -> Self::Output {
+        RegReserve(self.0 & (!rhs.0))
+    }
+}
+
+impl ops::SubAssign<RegReserve> for RegReserve {
+    fn sub_assign(&mut self, rhs: RegReserve) {
+        self.0 &= !rhs.0;
     }
 }
 

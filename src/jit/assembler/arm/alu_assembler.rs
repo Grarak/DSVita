@@ -1,6 +1,6 @@
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::reg::Reg;
-use crate::jit::Op::{AddImm, MovImm, SubImm};
+use crate::jit::Op::{MovImm, SubImm};
 use crate::jit::{Cond, ShiftType};
 use bilge::prelude::*;
 

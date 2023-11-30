@@ -70,21 +70,21 @@ mod transfer_ops {
 
     #[inline]
     pub fn strh_of(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        let op0 = Reg::from((opcode >> 12) & 0xF);
-        let op1 = Reg::from((opcode >> 16) & 0xF);
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
         InstInfo::new(
             opcode,
             op,
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
-            reg_reserve!(op1),
-            reg_reserve!(op0),
+            reg_reserve!(op0, op1),
+            reg_reserve!(),
         )
     }
 
     #[inline]
     pub fn ldr_of(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        let op0 = Reg::from((opcode >> 12) & 0xF);
-        let op1 = Reg::from((opcode >> 16) & 0xF);
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
         InstInfo::new(
             opcode,
             op,
@@ -96,8 +96,8 @@ mod transfer_ops {
 
     #[inline]
     pub fn str_of(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        let op0 = Reg::from((opcode >> 12) & 0xF);
-        let op1 = Reg::from((opcode >> 16) & 0xF);
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
         InstInfo::new(
             opcode,
             op,
@@ -389,7 +389,7 @@ mod transfer_ops {
 
     #[inline]
     pub fn msr_rc(opcode: u32, op: Op) -> InstInfo {
-        let op1 = Reg::from(opcode & 0xF);
+        let op1 = Reg::from((opcode & 0xF) as u8);
         InstInfo::new(
             opcode,
             op,
@@ -431,11 +431,14 @@ mod transfer_ops {
 
     #[inline]
     pub fn mcr(opcode: u32, op: Op) -> InstInfo {
-        todo!()
-        // let op2 = Reg::from((opcode >> 12) & 0xF);
-        // let op3 = (opcode >> 16) & 0xF;
-        // let op4 = opcode & 0xF;
-        
+        let op2 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::reg(op2)),
+            reg_reserve!(op2),
+            reg_reserve!(),
+        )
     }
 }
 

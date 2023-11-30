@@ -84,7 +84,10 @@ pub struct VmManager {
 }
 
 impl VmManager {
-    pub fn new(name: &str, regions: &'static [&'static MemoryRegion]) -> io::Result<Self> {
+    pub fn new(
+        name: &str,
+        regions: &'static [&'static MemoryRegion],
+    ) -> io::Result<Self> {
         let vm = Mmap::new(
             name,
             false,

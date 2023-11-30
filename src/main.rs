@@ -2,7 +2,7 @@
 #![feature(unchecked_shifts)]
 
 use crate::cartridge::Cartridge;
-use crate::jit::thread_context::ThreadCtx;
+use crate::cpu::thread_context::ThreadContext;
 use crate::memory::{VmManager, ARM7_REGIONS, ARM9_REGIONS};
 use std::env;
 
@@ -10,6 +10,7 @@ use std::env;
 // extern crate static_assertions;
 
 mod cartridge;
+mod cpu;
 mod jit;
 mod logging;
 mod memory;
@@ -51,13 +52,13 @@ pub fn main() {
     let mut arm9_vmm = VmManager::new("arm9_vm", &ARM9_REGIONS).unwrap();
     println!("Allocate arm9 vm at {:x}", arm9_vmm.vm.as_ptr() as u32);
 
-    // let mut arm7_vmm = VmManager::new("arm7_vm", &ARM7_REGIONS).unwrap();
-    // println!("Allocate arm7 vm at {:x}", arm7_vmm.vm.as_ptr() as u32);
+    let mut arm7_vmm = VmManager::new("arm7_vm", &ARM7_REGIONS).unwrap();
+    println!("Allocate arm7 vm at {:x}", arm7_vmm.vm.as_ptr() as u32);
 
     let arm9_boot_code = cartridge.read_arm9_boot_code().unwrap();
     arm9_vmm.vm[..arm9_boot_code.len()].copy_from_slice(&arm9_boot_code);
 
-    let mut arm9_thread = ThreadCtx::new(arm9_vmm);
+    let mut arm9_thread = ThreadContext::new(arm9_vmm);
     {
         let mut regs = arm9_thread.regs.borrow_mut();
         regs.gp_regs[12] = arm9_entry_adrr;

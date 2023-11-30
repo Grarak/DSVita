@@ -3,15 +3,15 @@ mod alu_variations {
 
     #[inline]
     pub fn imm_shift(opcode: u32) -> (Reg, u8) {
-        let reg = Reg::from(opcode & 0xF);
+        let reg = Reg::from((opcode & 0xF) as u8);
         let shift = (opcode >> 7) & 0x1F;
         (reg, shift as u8)
     }
 
     #[inline]
     pub fn reg_shift(opcode: u32) -> (Reg, Reg) {
-        let reg = Reg::from(opcode & 0xF);
-        let shift = Reg::from((opcode >> 8) & 0xF);
+        let reg = Reg::from((opcode & 0xF) as u8);
+        let shift = Reg::from(((opcode >> 8) & 0xF) as u8);
         (reg, shift)
     }
 
@@ -252,8 +252,8 @@ mod alu_ops {
 
     #[inline]
     pub fn sub_imm_impl(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        let op0 = Reg::from((opcode >> 12) & 0xF);
-        let op1 = Reg::from((opcode >> 16) & 0xF);
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
         InstInfo::new(
             opcode,
             op,
@@ -440,8 +440,8 @@ mod alu_ops {
 
     #[inline]
     pub fn add_imm_impl(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        let op0 = Reg::from((opcode >> 12) & 0xF);
-        let op1 = Reg::from((opcode >> 16) & 0xF);
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
         InstInfo::new(
             opcode,
             op,
@@ -808,7 +808,14 @@ mod alu_ops {
 
     #[inline]
     pub fn tst_imm_impl(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_2(Operand::reg(op1), Operand::imm(operand2)),
+            reg_reserve!(op1),
+            reg_reserve!(Reg::CPSR),
+        )
     }
 
     #[inline]
@@ -898,7 +905,14 @@ mod alu_ops {
 
     #[inline]
     pub fn cmp_imm_impl(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_2(Operand::reg(op1), Operand::imm(operand2)),
+            reg_reserve!(op1),
+            reg_reserve!(Reg::CPSR),
+        )
     }
 
     #[inline]
@@ -988,7 +1002,15 @@ mod alu_ops {
 
     #[inline]
     pub fn orr_imm_impl(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
+            reg_reserve!(op1),
+            reg_reserve!(op0),
+        )
     }
 
     #[inline]
@@ -1038,7 +1060,7 @@ mod alu_ops {
 
     #[inline]
     pub fn mov_lli_impl(opcode: u32, op: Op, operand2: (Reg, u8)) -> InstInfo {
-        let op0 = Reg::from((opcode >> 12) & 0xF);
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
         InstInfo::new(
             opcode,
             op,
@@ -1058,7 +1080,17 @@ mod alu_ops {
 
     #[inline]
     pub fn mov_lri_impl(opcode: u32, op: Op, operand2: (Reg, u8)) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_2(
+                Operand::reg(op0),
+                Operand::reg_imm_shift(operand2.0, ShiftType::LSR, operand2.1),
+            ),
+            reg_reserve!(operand2.0),
+            reg_reserve!(op0),
+        )
     }
 
     #[inline]
@@ -1088,7 +1120,7 @@ mod alu_ops {
 
     #[inline]
     pub fn mov_imm_impl(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        let op0 = Reg::from((opcode >> 12) & 0xF);
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
         InstInfo::new(
             opcode,
             op,

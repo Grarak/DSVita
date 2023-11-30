@@ -1,4 +1,5 @@
 use crate::jit::assembler::arm::alu_assembler::AluImm;
+use crate::jit::assembler::arm::branch_assembler::Bx;
 use crate::jit::assembler::arm::transfer_assembler::LdmStm;
 use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
 use crate::jit::jit::JitAsm;
@@ -12,7 +13,9 @@ impl JitAsm {
         let inst_info = &self.opcode_buf[buf_index];
 
         let emit_func = match inst_info.op {
+            Op::B => JitAsm::emit_b,
             Op::BlxReg => JitAsm::emit_blx,
+            Op::Mcr | Op::Mrc => JitAsm::emit_cp15,
             Op::MovAri
             | Op::MovArr
             | Op::MovImm
@@ -32,8 +35,13 @@ impl JitAsm {
             | Op::MovsRri
             | Op::MovsRrr => JitAsm::emit_mov,
             Op::LdrOfip => JitAsm::emit_ldr,
-            Op::StrOfip => JitAsm::emit_str,
+            Op::StrOfip | Op::StrhOfip => JitAsm::emit_str,
             _ => {
+                debug_assert_eq!(
+                    (inst_info.src_regs + inst_info.out_regs).emulated_regs_count(),
+                    0
+                );
+
                 self.jit_buf.push(inst_info.opcode);
                 |_: &mut JitAsm, _: usize, _: u32| {}
             }
@@ -59,6 +67,7 @@ impl JitAsm {
             emulated_src_regs.len() as u8,
             &self.opcode_buf[buf_index + 1..],
         );
+        src_reserved.add_reg_reserve(inst_info.out_regs);
         src_reserved.use_gp();
 
         let mut src_reg_mapping: [Reg; EMULATED_REGS_COUNT] = [Reg::None; EMULATED_REGS_COUNT];
@@ -99,11 +108,8 @@ impl JitAsm {
             }
         }
 
-        {
-            let push = src_reserved.push_stack(Reg::LR);
-            if push != 0 {
-                self.jit_buf.push(push);
-            }
+        if let Some(opcode) = src_reserved.emit_push_stack(Reg::LR) {
+            self.jit_buf.push(opcode);
         }
 
         for (index, mapped_reg) in src_reg_mapping.iter().enumerate() {
@@ -125,6 +131,8 @@ impl JitAsm {
 
         let mut out_reserved: RegReserve = src_reg_mapping.iter().sum();
         out_reserved = out_reserved.get_gp_regs();
+        out_reserved += inst_info.out_regs.get_gp_regs();
+
         let num_out_reserve = max(
             ((emulated_out_regs.len() + 1) as i32) - out_reserved.len() as i32,
             0,
@@ -159,9 +167,8 @@ impl JitAsm {
 
         let insts = before_assemble(self, &inst_info, &mut out_reserved);
         {
-            let push = out_reserved.push_stack(Reg::LR);
-            if push != 0 {
-                self.jit_buf.push(out_reserved.push_stack(Reg::LR));
+            if let Some(opcode) = out_reserved.emit_push_stack(Reg::LR) {
+                self.jit_buf.push(opcode);
             }
         }
         self.jit_buf.extend_from_slice(&insts);
@@ -185,14 +192,18 @@ impl JitAsm {
             }
         }
 
-        let pop = src_reserved.pop_stack(Reg::LR);
-        if pop != 0 {
-            self.jit_buf.push(pop);
+        if let Some(opcode) = out_reserved.emit_pop_stack(Reg::LR) {
+            self.jit_buf.push(opcode);
         }
-        let pop = out_reserved.pop_stack(Reg::LR);
-        if pop != 0 {
-            self.jit_buf.push(pop);
+
+        if let Some(opcode) = src_reserved.emit_pop_stack(Reg::LR) {
+            self.jit_buf.push(opcode);
         }
+    }
+
+    pub fn emit_host_bx(addr: u32, jit_buf: &mut Vec<u32>) {
+        jit_buf.extend_from_slice(&AluImm::mov32(Reg::LR, addr));
+        jit_buf.push(Bx::bx(Reg::LR, Cond::AL));
     }
 }
 
@@ -222,6 +233,7 @@ pub struct RegPushPopHandler {
     reg_reserve: RegReserve,
     not_reserved: RegReserve,
     regs_to_save: RegReserve,
+    regs_to_skip: RegReserve,
 }
 
 impl From<RegReserve> for RegPushPopHandler {
@@ -230,15 +242,26 @@ impl From<RegReserve> for RegPushPopHandler {
             reg_reserve: value,
             not_reserved: !value,
             regs_to_save: RegReserve::new(),
+            regs_to_skip: RegReserve::new(),
         }
     }
 }
 
 impl RegPushPopHandler {
+    pub fn set_regs_to_skip(&mut self, regs_to_skip: RegReserve) {
+        self.reg_reserve -= regs_to_skip;
+        self.not_reserved -= regs_to_skip;
+        self.regs_to_skip = regs_to_skip;
+    }
+
     pub fn use_gp(&mut self) {
         self.reg_reserve = self.reg_reserve.get_gp_regs();
         self.not_reserved = self.not_reserved.get_gp_regs();
         self.regs_to_save = self.regs_to_save.get_gp_regs();
+    }
+
+    pub fn add_reg_reserve(&mut self, reg_reserve: RegReserve) {
+        self.reg_reserve += reg_reserve;
     }
 
     pub fn pop(&mut self) -> Option<Reg> {
@@ -254,12 +277,20 @@ impl RegPushPopHandler {
         }
     }
 
-    pub fn push_stack(&self, sp: Reg) -> u32 {
-        self.regs_to_save.len() as u32 * LdmStm::push(self.regs_to_save, sp, Cond::AL)
+    pub fn emit_push_stack(&self, sp: Reg) -> Option<u32> {
+        if self.regs_to_save.len() == 0 {
+            None
+        } else {
+            Some(LdmStm::push_pre(self.regs_to_save, sp, Cond::AL))
+        }
     }
 
-    pub fn pop_stack(&self, sp: Reg) -> u32 {
-        self.regs_to_save.len() as u32 * LdmStm::pop(self.regs_to_save, sp, Cond::AL)
+    pub fn emit_pop_stack(&self, sp: Reg) -> Option<u32> {
+        if self.regs_to_save.len() == 0 {
+            None
+        } else {
+            Some(LdmStm::pop_post(self.regs_to_save, sp, Cond::AL))
+        }
     }
 }
 
@@ -268,10 +299,14 @@ impl ops::Add<RegPushPopHandler> for RegPushPopHandler {
 
     fn add(self, rhs: RegPushPopHandler) -> Self::Output {
         let reg_reserve = self.reg_reserve + rhs.reg_reserve;
-        RegPushPopHandler {
-            reg_reserve,
-            not_reserved: !reg_reserve,
-            regs_to_save: RegReserve::new(),
-        }
+        let mut instance =
+            RegPushPopHandler {
+                reg_reserve,
+                not_reserved: !reg_reserve,
+                regs_to_save: RegReserve::new(),
+                regs_to_skip: RegReserve::new(),
+            };
+        instance.set_regs_to_skip(self.regs_to_skip + rhs.regs_to_skip);
+        instance
     }
 }

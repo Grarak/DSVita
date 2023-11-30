@@ -1,9 +1,12 @@
+use crate::cpu::cp15_context::Cp15Context;
+use crate::cpu::thread_context::ThreadRegs;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg};
+use crate::jit::assembler::arm::branch_assembler::Bx;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::Reg;
-use crate::jit::thread_context::ThreadRegs;
+use crate::jit::Cond;
 use crate::logging::debug_println;
 use crate::memory::VmManager;
 use crate::mmap::Mmap;
@@ -36,10 +39,6 @@ impl JitMemory {
         self.ptr += aligned_addr - current_addr;
     }
 
-    fn begin_addr(&self) -> *const u8 {
-        self.memory.as_ptr()
-    }
-
     pub fn write<T: Into<u32>>(&mut self, value: T) {
         debug_assert!(self.is_open);
         let (_, aligned, _) = unsafe { self.memory[self.ptr as usize..].align_to_mut::<T>() };
@@ -56,34 +55,38 @@ impl JitMemory {
     }
 
     #[cfg(target_os = "linux")]
-    fn open(&mut self) {
+    fn open(&mut self) -> u32 {
         self.is_open = true;
+        self.ptr
     }
 
     #[cfg(target_os = "linux")]
-    fn close(&mut self) {
+    fn close(&mut self) -> u32 {
         self.is_open = false;
+        self.ptr
     }
 
     #[cfg(target_os = "linux")]
     fn flush_cache(&self, _: u32, _: u32) {}
 
     #[cfg(not(target_os = "linux"))]
-    fn open(&mut self) {
+    fn open(&mut self) -> u32 {
         let ret = unsafe { vitasdk_sys::sceKernelOpenVMDomain() };
         if ret < vitasdk_sys::SCE_OK as _ {
             panic!("Can't open vm domain {}", ret);
         }
         self.is_open = true;
+        self.ptr
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn close(&mut self) {
+    fn close(&mut self) -> u32 {
         let ret = unsafe { vitasdk_sys::sceKernelCloseVMDomain() };
         if ret < vitasdk_sys::SCE_OK as _ {
             panic!("Can't close vm domain {}", ret);
         }
         self.is_open = false;
+        self.ptr
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -91,7 +94,7 @@ impl JitMemory {
         let ret = unsafe {
             vitasdk_sys::sceKernelSyncVMDomain(
                 self.memory.block_uid,
-                (self.begin_addr() as u32 + begin) as _,
+                (self.memory.as_ptr() as u32 + begin) as _,
                 end - begin,
             )
         };
@@ -102,7 +105,6 @@ impl JitMemory {
 }
 
 #[derive(Default)]
-#[repr(C)]
 pub struct OriginalRegs {
     sp: u32,
     lr: u32,
@@ -124,38 +126,100 @@ impl OriginalRegs {
 
 pub struct JitAsm {
     jit_memory: JitMemory,
+    jit_addr_mapping: HashMap<u32, u32>,
     vmm: Rc<RefCell<VmManager>>,
     pub vm_mem_offset: u32,
     pub memory_offset: u32,
     pub thread_regs: Rc<RefCell<ThreadRegs>>,
+    pub cp15_context: Rc<RefCell<Cp15Context>>,
     pub opcode_buf: Vec<InstInfo>,
     pub jit_buf: Vec<u32>,
-    pub original_regs: OriginalRegs,
+    pub original_regs: Box<OriginalRegs>,
+    pub breakout_addr: u32,
+    pub breakout_skip_save_regs_addr: u32,
+    pub restore_host_opcodes: [u32; 7],
+    pub restore_guest_opcodes: [u32; 5],
 }
 
 impl JitAsm {
-    pub fn new(vmm: Rc<RefCell<VmManager>>, thread_regs: Rc<RefCell<ThreadRegs>>) -> Self {
-        let jit_memory = JitMemory::new();
-        let vm_start = vmm.borrow().vm.as_ptr() as u32;
-        let base_offset = vmm.borrow().offset();
+    pub fn new(
+        vmm: Rc<RefCell<VmManager>>,
+        thread_regs: Rc<RefCell<ThreadRegs>>,
+        cp15_context: Rc<RefCell<Cp15Context>>,
+    ) -> Self {
+        let mut instance = {
+            let jit_memory = JitMemory::new();
+            let vm_start = vmm.borrow().vm.as_ptr() as u32;
+            let base_offset = vmm.borrow().offset();
 
-        println!(
-            "JitAsm: Allocating jit memory at {:x} with vm at {:x} with base offset {:x}",
-            jit_memory.memory.as_ptr() as u32,
-            vm_start,
-            base_offset
-        );
+            println!(
+                "JitAsm: Allocating jit memory at {:x} with vm at {:x} with base offset {:x}",
+                jit_memory.memory.as_ptr() as u32,
+                vm_start,
+                base_offset
+            );
 
-        JitAsm {
-            jit_memory,
-            vmm: vmm.clone(),
-            vm_mem_offset: vm_start - base_offset,
-            memory_offset: base_offset,
-            thread_regs,
-            opcode_buf: Vec::new(),
-            jit_buf: Vec::new(),
-            original_regs: OriginalRegs::default(),
+            let original_regs = Box::new(OriginalRegs::default());
+            assert_eq!(original_regs.addr_diff(), 4);
+
+            let mut restore_host_opcodes = [0u32; 7];
+            restore_host_opcodes[..4].copy_from_slice(&thread_regs.borrow().save_regs_opcodes);
+            let original_sp_addr = original_regs.get_sp_addr();
+            restore_host_opcodes[4..6].copy_from_slice(&AluImm::mov32(Reg::LR, original_sp_addr));
+            restore_host_opcodes[6] = LdrStrImm::ldr_al(Reg::SP, Reg::LR);
+
+            let mut restore_guest_opcodes = [0u32; 5];
+            restore_guest_opcodes[0] = AluReg::mov_al(Reg::LR, Reg::SP);
+            restore_guest_opcodes[1..].copy_from_slice(&thread_regs.borrow().restore_regs_opcodes);
+
+            JitAsm {
+                jit_memory,
+                jit_addr_mapping: HashMap::new(),
+                vmm: vmm.clone(),
+                vm_mem_offset: vm_start - base_offset,
+                memory_offset: base_offset,
+                thread_regs,
+                cp15_context,
+                opcode_buf: Vec::new(),
+                jit_buf: Vec::new(),
+                original_regs,
+                breakout_addr: 0,
+                breakout_skip_save_regs_addr: 0,
+                restore_host_opcodes,
+                restore_guest_opcodes,
+            }
+        };
+
+        {
+            let jit_start = instance.jit_memory.open();
+
+            instance
+                .jit_memory
+                .write_array(&instance.thread_regs.borrow().save_regs_opcodes);
+
+            let jit_skip_save_regs_start = instance.jit_memory.ptr;
+
+            let original_sp_addr = instance.original_regs.get_sp_addr();
+            let addr_diff = instance.original_regs.addr_diff();
+
+            instance
+                .jit_memory
+                .write_array(&AluImm::mov32(Reg::R0, original_sp_addr));
+            instance.jit_memory.write_array(&[
+                LdrStrImm::ldr_al(Reg::SP, Reg::R0),
+                LdrStrImm::ldr_offset_al(Reg::LR, Reg::R0, addr_diff as u16),
+                Bx::bx(Reg::LR, Cond::AL),
+            ]);
+
+            let jit_end = instance.jit_memory.close();
+            instance.jit_memory.flush_cache(jit_start, jit_end);
+
+            instance.breakout_addr = instance.jit_memory.memory.as_ptr() as u32 + jit_start;
+            instance.breakout_skip_save_regs_addr =
+                instance.jit_memory.memory.as_ptr() as u32 + jit_skip_save_regs_start;
         }
+
+        instance
     }
 
     pub fn execute(&mut self) {
@@ -168,29 +232,34 @@ impl JitAsm {
             todo!()
         }
 
+        let entry = entry & !1;
+
+        if let Some(jit_addr) = self.jit_addr_mapping.get(&entry) {
+            todo!()
+        }
+
         let vmm = self.vmm.clone();
         let vmm = vmm.borrow();
 
         self.jit_memory.round_up();
-        self.jit_memory.open();
-        let jit_memory_begin = self.jit_memory.ptr;
-
-        let (_, opcodes, _) =
-            unsafe { vmm.vm[(entry - self.memory_offset) as usize..].align_to::<u32>() };
+        let jit_begin = self.jit_memory.open();
 
         self.jit_memory
             .write_array(&AluImm::mov32(Reg::R0, self.original_regs.get_lr_addr()));
         self.jit_memory.write(LdrStrImm::str_al(Reg::LR, Reg::R0));
         self.jit_memory.write(AluReg::mov_al(Reg::LR, Reg::SP));
         self.jit_memory
-            .write_array(&self.thread_regs.borrow().emit_restore_regs());
+            .write_array(&self.thread_regs.borrow().restore_regs_opcodes);
 
         self.opcode_buf.clear();
         let mut emulated_regs_count = HashMap::<Reg, u32>::new();
+
+        let (_, opcodes, _) =
+            unsafe { vmm.vm[(entry - self.memory_offset) as usize..].align_to::<u32>() };
+
         for opcode in opcodes {
             let (op, func) = lookup_opcode(*opcode);
             let inst_info = func(*opcode, *op);
-            debug_println!("{:?} {:?}", op, inst_info);
 
             if DEBUG {
                 for reg in (inst_info.src_regs + inst_info.out_regs).get_emulated_regs() {
@@ -204,7 +273,7 @@ impl JitAsm {
                 todo!()
             }
 
-            if op.is_branch() {
+            if op.is_branch() && inst_info.cond() == Cond::AL {
                 break;
             }
         }
@@ -213,18 +282,29 @@ impl JitAsm {
             debug_println!("Emulated regs {:?}", emulated_regs_count);
         }
 
+        let jit_emits_start = self.jit_memory.memory.as_ptr() as u32 + self.jit_memory.ptr;
         self.jit_buf.clear();
         for i in 0..self.opcode_buf.len() {
-            self.emit(i, i as u32 * 4 + entry);
+            let pc = i as u32 * 4 + entry;
+            let jit_pc = self.jit_buf.len() as u32 * 4 + jit_emits_start;
+            self.jit_addr_mapping.insert(pc, jit_pc);
+
+            if DEBUG {
+                self.jit_buf.push(AluReg::mov_al(Reg::R0, Reg::R0)); // NOP
+
+                let inst_info = &self.opcode_buf[i];
+                debug_println!("Mapping {:x} to {:x} {:?}", pc, jit_pc, inst_info);
+            }
+
+            self.emit(i, pc);
         }
         // TODO statically analyze generated insts
         self.jit_memory.write_array(&self.jit_buf);
 
-        self.jit_memory.close();
-        self.jit_memory
-            .flush_cache(jit_memory_begin, self.jit_memory.ptr);
+        let jit_end = self.jit_memory.close();
+        self.jit_memory.flush_cache(jit_begin, jit_end);
 
-        let jit_entry = self.jit_memory.begin_addr() as u32;
+        let jit_entry = self.jit_memory.memory.as_ptr() as u32 + jit_begin;
         let original_sp_adr = self.original_regs.get_sp_addr();
 
         unsafe {
@@ -238,6 +318,6 @@ impl JitAsm {
             );
         }
 
-        println!("Exiting {:x}", self.thread_regs.borrow().pc);
+        debug_println!("Exiting {:x}", self.thread_regs.borrow().pc);
     }
 }

@@ -1,12 +1,11 @@
-use std::mem;
+use std::{mem, ops};
 
 pub mod assembler;
 pub mod disassembler;
 mod emitter;
 mod inst_info;
 pub mod jit;
-mod reg;
-pub mod thread_context;
+pub mod reg;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u16)]
@@ -547,12 +546,13 @@ impl Op {
     }
 }
 
+#[derive(Eq, PartialEq)]
 #[repr(u8)]
 pub enum Cond {
     EQ = 0,
     NE = 1,
-    CS = 2,
-    CC = 3,
+    HS = 2,
+    LO = 3,
     MI = 4,
     PL = 5,
     VS = 6,
@@ -564,13 +564,39 @@ pub enum Cond {
     GT = 12,
     LE = 13,
     AL = 14,
+    NV = 15,
 }
 
-impl<T: Into<u32>> From<T> for Cond {
+impl<T: Into<u8>> From<T> for Cond {
     fn from(value: T) -> Self {
         let value = value.into();
-        assert!(value >= Cond::EQ as u32 && value <= Cond::AL as u32);
-        unsafe { mem::transmute(value as u8) }
+        assert!(value <= Cond::AL as u8);
+        unsafe { mem::transmute(value) }
+    }
+}
+
+impl ops::Not for Cond {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Cond::EQ => Cond::NE,
+            Cond::NE => Cond::EQ,
+            Cond::HS => Cond::LO,
+            Cond::LO => Cond::HS,
+            Cond::MI => Cond::PL,
+            Cond::PL => Cond::MI,
+            Cond::VS => Cond::VC,
+            Cond::VC => Cond::VS,
+            Cond::HI => Cond::LS,
+            Cond::LS => Cond::HI,
+            Cond::GE => Cond::LT,
+            Cond::LT => Cond::GE,
+            Cond::GT => Cond::LE,
+            Cond::LE => Cond::GT,
+            Cond::AL => Cond::NV,
+            Cond::NV => Cond::AL,
+        }
     }
 }
 

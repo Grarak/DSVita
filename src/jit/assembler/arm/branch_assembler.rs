@@ -4,20 +4,48 @@ use bilge::prelude::*;
 
 #[bitsize(32)]
 #[derive(FromBits)]
+pub struct B {
+    pub nn: u24,
+    pub op: u1,
+    pub id: u3,
+    pub u4: u4,
+}
+
+impl B {
+    pub fn b(imm: i32, cond: Cond) -> u32 {
+        u32::from(B::new(
+            u24::new(imm as u32),
+            u1::new(0),
+            u3::new(0b101),
+            u4::new(cond as u8),
+        ))
+    }
+}
+
+#[bitsize(32)]
+#[derive(FromBits)]
 pub struct Bx {
     pub rn: u4,
     pub op: u4,
     pub id: u20,
-    pub cond: u4,
+    pub u4: u4,
 }
 
 impl Bx {
-    #[inline]
-    pub fn create(rn: Reg, cond: Cond) -> u32 {
+    pub fn bx(op0: Reg, cond: Cond) -> u32 {
         u32::from(Bx::new(
-            u4::new(rn as u8),
-            u4::new(1),
-            u20::new(0b0001_0010_1111_1111_1111),
+            u4::new(op0 as u8),
+            u4::new(0b1),
+            u20::new(0b00010010111111111111),
+            u4::new(cond as u8),
+        ))
+    }
+
+    pub fn blx(op0: Reg, cond: Cond) -> u32 {
+        u32::from(Bx::new(
+            u4::new(op0 as u8),
+            u4::new(0b11),
+            u20::new(0b00010010111111111111),
             u4::new(cond as u8),
         ))
     }

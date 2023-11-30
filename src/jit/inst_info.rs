@@ -31,7 +31,7 @@ impl InstInfo {
     }
 
     pub fn cond(&self) -> Cond {
-        Cond::from((self.opcode >> 28) & 0xF)
+        Cond::from(((self.opcode >> 28) & 0xF) as u8)
     }
 
     pub fn operands(&self) -> &[Operand] {
@@ -83,6 +83,13 @@ pub struct Operands {
 }
 
 impl Operands {
+    pub fn new_empty() -> Self {
+        Operands {
+            values: [Operand::None; 3],
+            num: 0,
+        }
+    }
+
     pub fn new_1(operand: Operand) -> Self {
         Operands {
             values: [operand, Operand::None, Operand::None],
@@ -137,6 +144,13 @@ impl Operand {
     pub fn as_reg(&self) -> Option<(&Reg, &Option<Shift>)> {
         match self {
             Operand::Reg { reg, shift } => Some((reg, shift)),
+            _ => None,
+        }
+    }
+
+    pub fn as_imm(&self) -> Option<(&u32, &Option<Shift>)> {
+        match self {
+            Operand::Imm { imm, shift } => Some((imm, shift)),
             _ => None,
         }
     }

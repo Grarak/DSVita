@@ -32,28 +32,22 @@ impl Mmap {
 
         let c_name = CString::new(name).unwrap();
 
-        let block_uid =
-            if exec {
-                unsafe {
-                    vitasdk_sys::sceKernelAllocMemBlockForVM(c_name.as_c_str().as_ptr(), size)
-                }
-            } else {
-                let mut opts: vitasdk_sys::SceKernelAllocMemBlockOpt = unsafe { mem::zeroed() };
-                opts.size = mem::size_of::<vitasdk_sys::SceKernelAllocMemBlockOpt>() as _;
-                opts.attr = vitasdk_sys::SCE_KERNEL_ALLOC_MEMBLOCK_ATTR_HAS_ALIGNMENT;
-                opts.alignment = 256 * 1024;
-
-                let aligned_size = utils::align_up(size as _, opts.alignment);
-
-                unsafe {
-                    vitasdk_sys::sceKernelAllocMemBlock(
-                        c_name.as_c_str().as_ptr() as _,
-                        vitasdk_sys::SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW,
-                        aligned_size,
-                        &mut opts as _,
-                    )
-                }
-            };
+        let block_uid = if exec {
+            unsafe { vitasdk_sys::sceKernelAllocMemBlockForVM(c_name.as_c_str().as_ptr(), size) }
+        } else {
+            let mut opts: vitasdk_sys::SceKernelAllocMemBlockOpt = unsafe { mem::zeroed() };
+            opts.size = mem::size_of::<vitasdk_sys::SceKernelAllocMemBlockOpt>() as _;
+            opts.attr = vitasdk_sys::SCE_KERNEL_ALLOC_MEMBLOCK_ATTR_HAS_ALIGNMENT;
+            opts.alignment = 256 * 1024;
+            unsafe {
+                vitasdk_sys::sceKernelAllocMemBlock(
+                    c_name.as_c_str().as_ptr() as _,
+                    vitasdk_sys::SCE_KERNEL_MEMBLOCK_TYPE_USER_RW,
+                    utils::align_up(size as _, opts.alignment),
+                    ptr::addr_of_mut!(opts),
+                )
+            }
+        };
 
         if block_uid < vitasdk_sys::SCE_OK as i32 {
             Err(Error::from(ErrorKind::AddrNotAvailable))

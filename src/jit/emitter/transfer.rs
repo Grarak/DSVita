@@ -1,46 +1,63 @@
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
-use crate::jit::inst_info::Operand;
+use crate::jit::emitter::emit::RegPushPopHandler;
+use crate::jit::inst_info::InstInfo;
 use crate::jit::jit::JitAsm;
-use crate::jit::reg::reg_reserve;
-use crate::jit::Op;
+use crate::jit::reg::Reg;
 use bilge::prelude::u4;
 
 impl JitAsm {
+    fn emit_memory_offset(
+        jit_buf: &mut Vec<u32>,
+        vm_mem_offset: u32,
+        buf_index: usize,
+        opcode_buf: &[InstInfo],
+        inst_info: &InstInfo,
+    ) {
+        let (reg_op1, _) = inst_info.operands()[1].as_reg().unwrap();
+
+        let mut tmp_regs = RegPushPopHandler::from(
+            inst_info
+                .src_regs
+                .get_writable_gp_regs(1, &opcode_buf[buf_index + 1..]),
+        );
+        tmp_regs.set_regs_to_skip(inst_info.src_regs);
+        tmp_regs.use_gp();
+
+        let tmp_reg = tmp_regs.pop().unwrap();
+
+        if let Some(opcode) = tmp_regs.emit_push_stack(Reg::LR) {
+            jit_buf.push(opcode);
+        }
+
+        jit_buf.extend_from_slice(&AluImm::mov32(tmp_reg, vm_mem_offset));
+        jit_buf.push(AluShiftImm::add_al(tmp_reg, tmp_reg, *reg_op1));
+
+        let mut modified_op = LdrStrImm::from(inst_info.opcode);
+        modified_op.set_rn(u4::new(tmp_reg as u8));
+        jit_buf.push(u32::from(modified_op));
+
+        if let Some(opcode) = tmp_regs.emit_pop_stack(Reg::LR) {
+            jit_buf.push(opcode);
+        }
+    }
+
     pub fn emit_str(&mut self, buf_index: usize, _: u32) {
         let inst_info = &self.opcode_buf[buf_index];
-        match inst_info.op {
-            Op::StrOfip => {
-                let operands = inst_info.operands();
-                assert_eq!(operands.len(), 3);
 
-                let reg_op0 = match &operands[0] {
-                    Operand::Reg { reg, .. } => reg,
-                    _ => panic!(),
-                };
+        let used_regs = inst_info.src_regs + inst_info.out_regs;
+        let emulated_regs_count = used_regs.emulated_regs_count();
+        if emulated_regs_count > 0 {
+            todo!()
+        }
 
-                let reg_op1 = match &operands[1] {
-                    Operand::Reg { reg, .. } => reg,
-                    _ => panic!(),
-                };
-
-                let tmp_regs = reg_reserve!(*reg_op0, *reg_op1)
-                    .get_writable_gp_regs(1, &self.opcode_buf[buf_index + 1..]);
-
-                assert!(tmp_regs.len() >= 1); // TODO
-
-                let tmp_reg = tmp_regs.into_iter().next().unwrap();
-                self.jit_buf
-                    .extend_from_slice(&AluImm::mov32(tmp_reg, self.vm_mem_offset));
-                self.jit_buf
-                    .push(AluShiftImm::add_al(tmp_reg, tmp_reg, *reg_op1));
-
-                let mut modified_op = LdrStrImm::from(inst_info.opcode);
-                modified_op.set_rn(u4::new(tmp_reg as u8));
-                self.jit_buf.push(u32::from(modified_op));
-            }
-            _ => panic!(),
-        };
+        JitAsm::emit_memory_offset(
+            &mut self.jit_buf,
+            self.vm_mem_offset,
+            buf_index,
+            &self.opcode_buf,
+            inst_info,
+        );
     }
 
     pub fn emit_ldr(&mut self, buf_index: usize, pc: u32) {
@@ -61,7 +78,13 @@ impl JitAsm {
                 insts
             });
         } else {
-            self.jit_buf.push(inst_info.opcode);
+            JitAsm::emit_memory_offset(
+                &mut self.jit_buf,
+                self.vm_mem_offset,
+                buf_index,
+                &self.opcode_buf,
+                inst_info,
+            );
         }
     }
 }
