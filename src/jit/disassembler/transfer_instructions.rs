@@ -426,7 +426,14 @@ mod transfer_ops {
 
     #[inline]
     pub fn mrc(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op2 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::reg(op2)),
+            reg_reserve!(),
+            reg_reserve!(op2),
+        )
     }
 
     #[inline]

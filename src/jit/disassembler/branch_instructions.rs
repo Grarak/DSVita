@@ -5,7 +5,14 @@ mod branch_ops {
 
     #[inline]
     pub fn bx(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from((opcode & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::reg(op0)),
+            reg_reserve!(op0),
+            reg_reserve!(),
+        )
     }
 
     #[inline]

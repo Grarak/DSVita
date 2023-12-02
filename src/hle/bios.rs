@@ -3,7 +3,7 @@ mod bios {
     use crate::hle::thread_context::ThreadRegs;
     use crate::logging::debug_println;
 
-    pub extern "C" fn swi(comment: u8, regs: &mut ThreadRegs) {
+    pub fn swi(comment: u8, regs: &mut ThreadRegs) {
         let (name, func) = &ARM9_SWI_LOOKUP_TABLE[comment as usize];
         debug_println!("swi {:x} {}", comment, name);
         func(regs);

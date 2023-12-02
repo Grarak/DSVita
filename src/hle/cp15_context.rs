@@ -52,7 +52,7 @@ const TCM_MIN_SIZE: u32 = 4 * 1024;
 
 pub struct Cp15Context {
     control: u32,
-    exception_addr: u32,
+    pub exception_addr: u32,
     dtcm: u32,
     dtcm_state: TCMState,
     dtcm_addr: u32,
@@ -143,7 +143,24 @@ impl Cp15Context {
             0x070004 | 0x070802 => todo!(),
             0x090100 => self.set_dtcm(value),
             0x090101 => self.set_itcm(value),
-            _ => debug_println!("Unknown cp15 reg {:x}", reg),
+            _ => debug_println!("Unknown cp15 reg write {:x}", reg),
         }
+    }
+
+    pub extern "C" fn read(&self, reg: u32, value: &mut u32) {
+        debug_println!("Reading from cp15 reg {:x}", reg);
+
+        *value =
+            match reg {
+                0x000000 => 0x41059461, // Main ID
+                0x000001 => 0x0F0D2112, // Cache type
+                0x010000 => self.control,
+                0x090100 => self.dtcm,
+                0x090101 => self.itcm,
+                _ => {
+                    debug_println!("Unknown cp15 reg read {:x}", reg);
+                    0
+                }
+            }
     }
 }
