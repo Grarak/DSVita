@@ -1,4 +1,4 @@
-use crate::cpu::cp15_context::Cp15Context;
+use crate::hle::cp15_context::Cp15Context;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg};
 use crate::jit::assembler::arm::branch_assembler::Bx;
 use crate::jit::jit::JitAsm;

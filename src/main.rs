@@ -2,7 +2,7 @@
 #![feature(unchecked_shifts)]
 
 use crate::cartridge::Cartridge;
-use crate::cpu::thread_context::ThreadContext;
+use crate::hle::thread_context::ThreadContext;
 use crate::memory::{VmManager, ARM7_REGIONS, ARM9_REGIONS};
 use std::env;
 
@@ -10,7 +10,7 @@ use std::env;
 // extern crate static_assertions;
 
 mod cartridge;
-mod cpu;
+mod hle;
 mod jit;
 mod logging;
 mod memory;
@@ -65,6 +65,7 @@ pub fn main() {
         regs.sp = 0x3002F7C;
         regs.lr = arm9_entry_adrr;
         regs.pc = arm9_entry_adrr;
+        regs.cpsr = 0x000000DF;
     }
     arm9_thread.run();
 }

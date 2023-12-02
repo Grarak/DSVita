@@ -36,6 +36,7 @@ impl JitAsm {
             | Op::MovsRrr => JitAsm::emit_mov,
             Op::LdrOfip => JitAsm::emit_ldr,
             Op::StrOfip | Op::StrhOfip => JitAsm::emit_str,
+            Op::Swi => JitAsm::emit_swi,
             _ => {
                 debug_assert_eq!(
                     (inst_info.src_regs + inst_info.out_regs).emulated_regs_count(),
@@ -61,6 +62,10 @@ impl JitAsm {
         ) -> Vec<u32>,
     ) {
         let mut inst_info = self.opcode_buf[buf_index];
+
+        if inst_info.cond() != Cond::AL {
+            todo!()
+        }
 
         let emulated_src_regs = inst_info.src_regs.get_emulated_regs();
         let mut src_reserved = inst_info.src_regs.create_push_pop_handler(

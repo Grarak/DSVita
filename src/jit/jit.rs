@@ -1,8 +1,8 @@
-use crate::cpu::cp15_context::Cp15Context;
-use crate::cpu::thread_context::ThreadRegs;
+use crate::hle::cp15_context::Cp15Context;
+use crate::hle::thread_context::ThreadRegs;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg};
 use crate::jit::assembler::arm::branch_assembler::Bx;
-use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
+use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, Msr};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::Reg;
@@ -105,12 +105,13 @@ impl JitMemory {
 }
 
 #[derive(Default)]
-pub struct OriginalRegs {
+pub struct HostRegs {
     sp: u32,
     lr: u32,
+    cprs: u32,
 }
 
-impl OriginalRegs {
+impl HostRegs {
     pub fn get_sp_addr(&self) -> u32 {
         ptr::addr_of!(self.sp) as _
     }
@@ -119,8 +120,8 @@ impl OriginalRegs {
         ptr::addr_of!(self.lr) as _
     }
 
-    pub fn addr_diff(&self) -> u32 {
-        self.get_lr_addr() - self.get_sp_addr()
+    pub fn get_cpsr_addr(&self) -> u32 {
+        ptr::addr_of!(self.cprs) as _
     }
 }
 
@@ -134,11 +135,11 @@ pub struct JitAsm {
     pub cp15_context: Rc<RefCell<Cp15Context>>,
     pub opcode_buf: Vec<InstInfo>,
     pub jit_buf: Vec<u32>,
-    pub original_regs: Box<OriginalRegs>,
+    pub host_regs: Box<HostRegs>,
     pub breakout_addr: u32,
     pub breakout_skip_save_regs_addr: u32,
-    pub restore_host_opcodes: [u32; 7],
-    pub restore_guest_opcodes: [u32; 5],
+    pub restore_host_opcodes: [u32; 11],
+    pub restore_guest_opcodes: [u32; 7],
 }
 
 impl JitAsm {
@@ -159,16 +160,20 @@ impl JitAsm {
                 base_offset
             );
 
-            let original_regs = Box::new(OriginalRegs::default());
-            assert_eq!(original_regs.addr_diff(), 4);
+            let host_regs = Box::new(HostRegs::default());
 
-            let mut restore_host_opcodes = [0u32; 7];
-            restore_host_opcodes[..4].copy_from_slice(&thread_regs.borrow().save_regs_opcodes);
-            let original_sp_addr = original_regs.get_sp_addr();
-            restore_host_opcodes[4..6].copy_from_slice(&AluImm::mov32(Reg::LR, original_sp_addr));
-            restore_host_opcodes[6] = LdrStrImm::ldr_al(Reg::SP, Reg::LR);
+            let mut restore_host_opcodes = [0u32; 11];
+            // Save guest
+            restore_host_opcodes[..6].copy_from_slice(&thread_regs.borrow().save_regs_opcodes);
 
-            let mut restore_guest_opcodes = [0u32; 5];
+            // Restore host sp, cpsr
+            let host_sp_addr = host_regs.get_sp_addr();
+            restore_host_opcodes[6..8].copy_from_slice(&AluImm::mov32(Reg::LR, host_sp_addr));
+            restore_host_opcodes[8] = LdrStrImm::ldr_al(Reg::SP, Reg::LR); // SP
+            restore_host_opcodes[9] = LdrStrImm::ldr_offset_al(Reg::R0, Reg::LR, 8); // CPSR
+            restore_host_opcodes[10] = Msr::cpsr(Reg::R0, Cond::AL);
+
+            let mut restore_guest_opcodes = [0u32; 7];
             restore_guest_opcodes[0] = AluReg::mov_al(Reg::LR, Reg::SP);
             restore_guest_opcodes[1..].copy_from_slice(&thread_regs.borrow().restore_regs_opcodes);
 
@@ -182,7 +187,7 @@ impl JitAsm {
                 cp15_context,
                 opcode_buf: Vec::new(),
                 jit_buf: Vec::new(),
-                original_regs,
+                host_regs,
                 breakout_addr: 0,
                 breakout_skip_save_regs_addr: 0,
                 restore_host_opcodes,
@@ -191,23 +196,26 @@ impl JitAsm {
         };
 
         {
+            // Common function to exit guest (breakout)
             let jit_start = instance.jit_memory.open();
 
             instance
                 .jit_memory
                 .write_array(&instance.thread_regs.borrow().save_regs_opcodes);
 
+            // Some emits already save regs themselves, add skip addr
             let jit_skip_save_regs_start = instance.jit_memory.ptr;
 
-            let original_sp_addr = instance.original_regs.get_sp_addr();
-            let addr_diff = instance.original_regs.addr_diff();
+            let host_sp_addr = instance.host_regs.get_sp_addr();
 
             instance
                 .jit_memory
-                .write_array(&AluImm::mov32(Reg::R0, original_sp_addr));
+                .write_array(&AluImm::mov32(Reg::R0, host_sp_addr));
             instance.jit_memory.write_array(&[
-                LdrStrImm::ldr_al(Reg::SP, Reg::R0),
-                LdrStrImm::ldr_offset_al(Reg::LR, Reg::R0, addr_diff as u16),
+                LdrStrImm::ldr_al(Reg::SP, Reg::R0),           // SP
+                LdrStrImm::ldr_offset_al(Reg::LR, Reg::R0, 4), // LR
+                LdrStrImm::ldr_offset_al(Reg::R0, Reg::R0, 8), // CPSR
+                Msr::cpsr(Reg::R0, Cond::AL),
                 Bx::bx(Reg::LR, Cond::AL),
             ]);
 
@@ -244,10 +252,13 @@ impl JitAsm {
         self.jit_memory.round_up();
         let jit_begin = self.jit_memory.open();
 
+        // Save lr to return to this function
         self.jit_memory
-            .write_array(&AluImm::mov32(Reg::R0, self.original_regs.get_lr_addr()));
+            .write_array(&AluImm::mov32(Reg::R0, self.host_regs.get_lr_addr()));
         self.jit_memory.write(LdrStrImm::str_al(Reg::LR, Reg::R0));
+        // Keep host sp in lr
         self.jit_memory.write(AluReg::mov_al(Reg::LR, Reg::SP));
+        // Restore guest
         self.jit_memory
             .write_array(&self.thread_regs.borrow().restore_regs_opcodes);
 
@@ -304,20 +315,37 @@ impl JitAsm {
         let jit_end = self.jit_memory.close();
         self.jit_memory.flush_cache(jit_begin, jit_end);
 
+        let host_sp_adr = self.host_regs.get_sp_addr();
+        let host_cpsr_addr = self.host_regs.get_cpsr_addr();
         let jit_entry = self.jit_memory.memory.as_ptr() as u32 + jit_begin;
-        let original_sp_adr = self.original_regs.get_sp_addr();
 
         unsafe {
             asm!(
                 "push {{r0-r12, lr}}",
-                "str sp, [{original_sp_adr}]",
-                "blx {jit_entry}",
+                "mov r4, {host_sp_adr}", // Avoid R0-R3 here, compiler will try to optimize them for calling convention
+                "mov r5, {host_cpsr_addr}",
+                "mov r6, {jit_entry}",
+                "mrs r7, cpsr",
+                "str sp, [r4]",
+                "str r7, [r5]",
+                "blx r6",
                 "pop {{r0-r12, lr}}",
-                original_sp_adr = in(reg) original_sp_adr,
+                host_sp_adr = in(reg) host_sp_adr,
+                host_cpsr_addr = in(reg) host_cpsr_addr,
                 jit_entry = in(reg) jit_entry,
             );
         }
 
-        debug_println!("Exiting {:x}", self.thread_regs.borrow().pc);
+        {
+            let regs = self.thread_regs.borrow();
+            debug_println!(
+                "Exiting gp: {:?}, sp: {:x}, lr: {:x}, pc: {:x}, cpsr: {:x}",
+                regs.gp_regs,
+                regs.sp,
+                regs.lr,
+                regs.pc,
+                regs.cpsr,
+            );
+        }
     }
 }

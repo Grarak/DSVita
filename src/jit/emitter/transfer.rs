@@ -4,6 +4,7 @@ use crate::jit::emitter::emit::RegPushPopHandler;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit::JitAsm;
 use crate::jit::reg::Reg;
+use crate::jit::Cond;
 use bilge::prelude::u4;
 
 impl JitAsm {
@@ -14,6 +15,10 @@ impl JitAsm {
         opcode_buf: &[InstInfo],
         inst_info: &InstInfo,
     ) {
+        if inst_info.cond() != Cond::AL {
+            todo!()
+        }
+
         let (reg_op1, _) = inst_info.operands()[1].as_reg().unwrap();
 
         let mut tmp_regs = RegPushPopHandler::from(

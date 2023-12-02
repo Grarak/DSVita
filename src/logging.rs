@@ -1,4 +1,5 @@
-macro_rules! debug_println {
+macro_rules!
+debug_println {
         ($($args:tt)*) => {
             if crate::DEBUG {
                 println!($($args)*)

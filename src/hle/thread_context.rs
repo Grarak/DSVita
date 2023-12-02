@@ -1,6 +1,6 @@
-use crate::cpu::cp15_context::Cp15Context;
+use crate::hle::cp15_context::Cp15Context;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
-use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm};
+use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs, Msr};
 use crate::jit::jit::JitAsm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::Cond;
@@ -15,8 +15,9 @@ pub struct ThreadRegs {
     pub sp: u32,
     pub lr: u32,
     pub pc: u32,
-    pub restore_regs_opcodes: [u32; 4],
-    pub save_regs_opcodes: [u32; 4],
+    pub cpsr: u32,
+    pub restore_regs_opcodes: [u32; 6],
+    pub save_regs_opcodes: [u32; 6],
 }
 
 impl ThreadRegs {
@@ -26,16 +27,19 @@ impl ThreadRegs {
         {
             let mut instance = instance.borrow_mut();
 
+            let gp_regs_addr = instance.gp_regs.as_ptr() as u32;
             let last_regs_addr = ptr::addr_of!(instance.gp_regs[instance.gp_regs.len() - 1]) as u32;
             let sp_addr = ptr::addr_of!(instance.sp) as u32;
+            let cpsr_addr = ptr::addr_of!(instance.cpsr) as u32;
             assert_eq!(sp_addr - last_regs_addr, 4);
 
             {
-                let gp_regs_addr = instance.gp_regs.as_ptr() as u32;
                 let mov = AluImm::mov32(Reg::SP, gp_regs_addr);
                 instance.restore_regs_opcodes = [
                     mov[0],
                     mov[1],
+                    LdrStrImm::ldr_offset_al(Reg::R0, Reg::SP, (cpsr_addr - gp_regs_addr) as u16),
+                    Msr::cpsr(Reg::R0, Cond::AL),
                     LdmStm::pop_post_al(RegReserve::gp()),
                     LdrStrImm::ldr_al(Reg::SP, Reg::SP),
                 ]
@@ -48,6 +52,12 @@ impl ThreadRegs {
                     mov[1],
                     LdrStrImm::str_offset_al(Reg::SP, Reg::LR, 4),
                     LdmStm::push_post(RegReserve::gp(), Reg::LR, Cond::AL),
+                    Mrs::cpsr(Reg::R0, Cond::AL),
+                    LdrStrImm::str_offset_al(
+                        Reg::R0,
+                        Reg::LR,
+                        (cpsr_addr - gp_regs_addr + 4) as u16, // + 4 to offset last post decrement of push
+                    ),
                 ]
             }
         }
@@ -101,6 +111,7 @@ impl ThreadContext {
     pub fn new(vmm: VmManager) -> Self {
         let regs = ThreadRegs::new();
         let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
+
         let vmm = Rc::new(RefCell::new(vmm));
 
         ThreadContext {

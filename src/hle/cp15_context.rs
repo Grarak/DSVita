@@ -118,6 +118,12 @@ impl Cp15Context {
         self.dtcm = value;
         self.dtcm_addr = u32::from(tcm_reg.region_base()) << 12;
         self.dtcm_size = cmp::max(512 << u8::from(tcm_reg.virtual_size()), TCM_MIN_SIZE);
+
+        debug_println!(
+            "Set dtcm to addr {:x} with size {:x}",
+            self.dtcm_addr,
+            self.dtcm_size
+        );
     }
 
     fn set_itcm(&mut self, value: u32) {
@@ -125,6 +131,8 @@ impl Cp15Context {
 
         self.itcm = value;
         self.itcm_size = cmp::max(512 << u8::from(tcm_reg.virtual_size()), TCM_MIN_SIZE);
+
+        debug_println!("Set itcm with size {:x}", self.itcm_size);
     }
 
     pub extern "C" fn write(&mut self, reg: u32, value: u32) {
