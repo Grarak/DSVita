@@ -15,7 +15,7 @@ impl JitAsm {
         opcode_buf: &[InstInfo],
         inst_info: &InstInfo,
     ) {
-        if inst_info.cond() != Cond::AL {
+        if inst_info.cond != Cond::AL {
             todo!()
         }
 

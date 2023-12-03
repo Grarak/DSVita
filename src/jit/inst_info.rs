@@ -8,6 +8,7 @@ use bilge::prelude::{u2, u4, u5};
 pub struct InstInfo {
     pub opcode: u32,
     pub op: Op,
+    pub cond: Cond,
     operands: Operands,
     pub src_regs: RegReserve,
     pub out_regs: RegReserve,
@@ -24,14 +25,11 @@ impl InstInfo {
         InstInfo {
             opcode,
             op,
+            cond: Cond::from(((opcode >> 28) & 0xF) as u8),
             operands,
             src_regs,
             out_regs,
         }
-    }
-
-    pub fn cond(&self) -> Cond {
-        Cond::from(((self.opcode >> 28) & 0xF) as u8)
     }
 
     pub fn operands(&self) -> &[Operand] {

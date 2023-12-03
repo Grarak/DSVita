@@ -75,6 +75,15 @@ mod transfer_delegations {
     use paste::paste;
 
     macro_rules! generate_variation {
+        ($name:ident, $variation:ident, $processor:ident) => {
+            paste! {
+                #[inline]
+                pub fn [<$name _ $variation>](opcode: u32, op: Op) -> InstInfo {
+                    [<$name _ $variation _ impl>](opcode, op, $processor(opcode))
+                }
+            }
+        };
+
         ($name:ident, $suffix:ident, $variation:ident, $processor:ident) => {
             paste! {
                 #[inline]
@@ -104,13 +113,13 @@ mod transfer_delegations {
 
     macro_rules! generate_op_half {
         ($name:ident) => {
-            generate_variations!($name, [of, ofrm, -, rp], [of, ofim, -, ip_h], [of, ofrp, rp], [of, ofip, ip_h], [pr, prrm, -, rp], [pr, prim, -, ip_h], [pr, prrp, rp], [pr, prip, ip_h], [pt, ptrm, -, rp], [pt, ptim, -, ip_h], [pt, ptrp, rp], [pt, ptip, ip_h]);
+            generate_variations!($name, [of, ofim, -, ip_h], [of, ofip, ip_h], [pr, prim, -, ip_h], [pr, prip, ip_h], [pt, ptim, -, ip_h], [pt, ptip, ip_h], [ofrm, rp], [ofrp, rp], [prrm, rp], [prrp, rp], [ptrm, rp], [ptrp, rp]);
         };
     }
 
     macro_rules! generate_op_full {
         ($name:ident) => {
-            generate_variations!($name, [of, ofim, -, ip], [of, ofip, ip], [of, ofrmll, -, rpll], [of, ofrmlr, -, rplr], [of, ofrmar, -, rpar], [of, ofrmrr, -, rprr], [of, ofrpll, rpll], [of, ofrplr, rplr], [of, ofrpar, rpar], [of, ofrprr, rprr], [pr, prim, -, ip], [pr, prip, ip], [pr, prrmll, -, rpll], [pr, prrmlr, -, rplr], [pr, prrmar, -, rpar], [pr, prrmrr, -, rprr], [pr, prrpll, rpll], [pr, prrplr, rplr], [pr, prrpar, rpar], [pr, prrprr, rprr], [pt, ptim, -, ip], [pt, ptip, ip], [pt, ptrmll, -, rpll], [pt, ptrmlr, -, rplr], [pt, ptrmar, -, rpar], [pt, ptrmrr, -, rprr], [pt, ptrpll, rpll], [pt, ptrplr, rplr], [pt, ptrpar, rpar], [pt, ptrprr, rprr]);
+            generate_variations!($name, [of, ofim, -, ip], [of, ofip, ip], [pr, prim, -, ip], [pr, prip, ip], [pt, ptim, -, ip], [pt, ptip, ip], [ofrmll, imm_shift], [ofrmlr, imm_shift], [ofrmar, imm_shift], [ofrmrr, imm_shift], [ofrpll, imm_shift], [ofrplr, imm_shift], [ofrpar, imm_shift], [ofrprr, imm_shift], [prrmll, imm_shift], [prrmlr, imm_shift], [prrmar, imm_shift], [prrmrr, imm_shift], [prrpll, imm_shift], [prrplr, imm_shift], [prrpar, imm_shift], [prrprr, imm_shift], [ptrmll, imm_shift], [ptrmlr, imm_shift], [ptrmar, imm_shift], [ptrmrr, imm_shift], [ptrpll, imm_shift], [ptrplr, imm_shift], [ptrpar, imm_shift], [ptrprr, imm_shift]);
         };
     }
 

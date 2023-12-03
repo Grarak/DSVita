@@ -13,8 +13,8 @@ impl JitAsm {
         let inst_info = &self.opcode_buf[buf_index];
 
         let emit_func = match inst_info.op {
-            Op::B => JitAsm::emit_b,
-            Op::BlxReg => JitAsm::emit_blx,
+            Op::B | Op::Bl => JitAsm::emit_b,
+            Op::Bx | Op::BlxReg => JitAsm::emit_bx,
             Op::Mcr | Op::Mrc => JitAsm::emit_cp15,
             Op::MovAri
             | Op::MovArr
@@ -34,7 +34,7 @@ impl JitAsm {
             | Op::MovsLrr
             | Op::MovsRri
             | Op::MovsRrr => JitAsm::emit_mov,
-            Op::LdrOfip => JitAsm::emit_ldr,
+            Op::LdrOfip | Op::LdrbOfrplr => JitAsm::emit_ldr,
             Op::StrOfip | Op::StrhOfip => JitAsm::emit_str,
             Op::Swi => JitAsm::emit_swi,
             _ => {
@@ -63,7 +63,7 @@ impl JitAsm {
     ) {
         let mut inst_info = self.opcode_buf[buf_index];
 
-        if inst_info.cond() != Cond::AL {
+        if inst_info.cond != Cond::AL {
             todo!()
         }
 

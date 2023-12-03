@@ -546,7 +546,7 @@ impl Op {
     }
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum Cond {
     EQ = 0,

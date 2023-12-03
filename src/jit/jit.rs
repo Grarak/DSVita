@@ -270,6 +270,8 @@ impl JitAsm {
 
         for opcode in opcodes {
             let (op, func) = lookup_opcode(*opcode);
+            debug_println!("Decoding {:?}", op);
+
             let inst_info = func(*opcode, *op);
 
             if DEBUG {
@@ -284,7 +286,7 @@ impl JitAsm {
                 todo!()
             }
 
-            if op.is_branch() && inst_info.cond() == Cond::AL {
+            if op.is_branch() && inst_info.cond == Cond::AL {
                 break;
             }
         }

@@ -88,6 +88,8 @@ impl ThreadRegs {
     }
 
     pub fn emit_set_reg(&self, dest_reg: Reg, src_reg: Reg, tmp_reg: Reg) -> [u32; 3] {
+        debug_assert_ne!(src_reg, tmp_reg);
+
         let reg_addr = match dest_reg {
             Reg::SP => ptr::addr_of!(self.sp),
             Reg::LR => ptr::addr_of!(self.lr),

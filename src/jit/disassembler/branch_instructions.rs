@@ -29,7 +29,7 @@ mod branch_ops {
 
     #[inline]
     pub fn b(opcode: u32, op: Op) -> InstInfo {
-        let op0 = ((opcode << 8) as i32) >> 6;
+        let op0 = ((opcode << 8) as i32) >> 6; // * 4 (in steps of 4)
         InstInfo::new(
             opcode,
             op,
@@ -41,7 +41,14 @@ mod branch_ops {
 
     #[inline]
     pub fn bl(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = ((opcode << 8) as i32) >> 6; // * 4 (in steps of 4)
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::imm(op0 as u32)),
+            reg_reserve!(),
+            reg_reserve!(),
+        )
     }
 
     #[inline]
