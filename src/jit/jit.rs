@@ -151,13 +151,13 @@ impl JitAsm {
     ) -> Self {
         let mut instance = {
             let jit_memory = JitMemory::new();
-            let vm_start = vmm.borrow().vm.as_ptr() as u32;
+            let vm_begin_addr = vmm.borrow().vm_begin_addr() as u32;
             let base_offset = vmm.borrow().offset();
 
             println!(
                 "JitAsm: Allocating jit memory at {:x} with vm at {:x} with base offset {:x}",
                 jit_memory.memory.as_ptr() as u32,
-                vm_start,
+                vm_begin_addr,
                 base_offset
             );
 
@@ -182,7 +182,7 @@ impl JitAsm {
                 jit_memory,
                 jit_addr_mapping: HashMap::new(),
                 vmm: vmm.clone(),
-                vm_mem_offset: vm_start - base_offset,
+                vm_mem_offset: vm_begin_addr - base_offset,
                 memory_offset: base_offset,
                 thread_regs,
                 cp15_context,

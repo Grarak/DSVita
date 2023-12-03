@@ -58,7 +58,34 @@ pub fn main() {
     let arm9_boot_code = cartridge.read_arm9_boot_code().unwrap();
     arm9_vmm.vm[..arm9_boot_code.len()].copy_from_slice(&arm9_boot_code);
 
+    {
+        let mut vmmap = arm9_vmm.get_vm_mapping();
+        vmmap[0x4000247] = 0x03; // WRAMCNT
+        vmmap[0x4000300] = 0x01; // POSTFLG (ARM9)
+        vmmap[0x4000304] = 0x0001; // POWCNT1
+
+        let (_, aligned, _) = unsafe { vmmap.align_to_mut::<u16>() };
+        aligned[0x27FF850 / 2] = 0x5835; // ARM7 BIOS CRC
+        aligned[0x27FF880 / 2] = 0x0007; // Message from ARM9 to ARM7
+        aligned[0x27FF884 / 2] = 0x0006; // ARM7 boot task
+        aligned[0x27FFC10 / 2] = 0x5835; // Copy of ARM7 BIOS CRC
+        aligned[0x27FFC40 / 2] = 0x0001; // Boot indicator
+
+        let (_, aligned, _) = unsafe { vmmap.align_to_mut::<u32>() };
+        aligned[0x27FF800 / 4] = 0x00001FC2; // Chip ID 1
+        aligned[0x27FF804 / 4] = 0x00001FC2; // Chip ID 2
+        aligned[0x27FFC00 / 4] = 0x00001FC2; // Copy of chip ID 1
+        aligned[0x27FFC04 / 4] = 0x00001FC2; // Copy of chip ID 2
+    }
+
     let mut arm9_thread = ThreadContext::new(arm9_vmm);
+    {
+        let mut cp15 = arm9_thread.cp15_context.borrow_mut();
+        cp15.write(0x010000, 0x0005707D); // control
+        cp15.write(0x090100, 0x0300000A); // dtcm addr/size
+        cp15.write(0x090101, 0x00000020); // itcm size
+    }
+
     {
         let mut regs = arm9_thread.regs.borrow_mut();
         regs.gp_regs[12] = arm9_entry_adrr;
