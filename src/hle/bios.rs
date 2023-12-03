@@ -5,7 +5,7 @@ mod bios {
 
     pub fn swi(comment: u8, regs: &mut ThreadRegs) {
         let (name, func) = &ARM9_SWI_LOOKUP_TABLE[comment as usize];
-        debug_println!("swi {:x} {}", comment, name);
+        debug_println!("Swi call {:x} {}", comment, name);
         func(regs);
     }
 }

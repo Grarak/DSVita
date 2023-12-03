@@ -100,6 +100,23 @@ impl ThreadRegs {
         let mov = AluImm::mov32(tmp_reg, reg_addr);
         [mov[0], mov[1], LdrStrImm::str_al(src_reg, tmp_reg)]
     }
+
+    pub fn get_reg_value(&self, reg: Reg) -> u32 {
+        match reg {
+            Reg::SP => self.sp,
+            Reg::LR => self.lr,
+            Reg::PC => self.pc,
+            Reg::CPSR => self.cpsr,
+            Reg::None => panic!(),
+            _ => {
+                if reg >= Reg::R0 && reg <= Reg::R12 {
+                    self.gp_regs[reg as usize]
+                } else {
+                    panic!()
+                }
+            }
+        }
+    }
 }
 
 pub struct ThreadContext {

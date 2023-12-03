@@ -171,8 +171,8 @@ impl JitAsm {
             let host_sp_addr = host_regs.get_sp_addr();
             restore_host_opcodes[6..8].copy_from_slice(&AluImm::mov32(Reg::LR, host_sp_addr));
             restore_host_opcodes[8] = LdrStrImm::ldr_al(Reg::SP, Reg::LR); // SP
-            restore_host_opcodes[9] = LdrStrImm::ldr_offset_al(Reg::R0, Reg::LR, 8); // CPSR
-            restore_host_opcodes[10] = Msr::cpsr(Reg::R0, Cond::AL);
+            restore_host_opcodes[9] = LdrStrImm::ldr_offset_al(Reg::LR, Reg::LR, 8); // CPSR
+            restore_host_opcodes[10] = Msr::cpsr(Reg::LR, Cond::AL);
 
             let mut restore_guest_opcodes = [0u32; 7];
             restore_guest_opcodes[0] = AluReg::mov_al(Reg::LR, Reg::SP);
@@ -258,6 +258,108 @@ impl JitAsm {
         instance
     }
 
+    extern "C" fn debug_after_exec_op(&self, pc: u32) {
+        let inst_info =
+            {
+                let vmm = self.vmm.borrow();
+                let vmmap = vmm.get_vm_mapping();
+
+                let (_, aligned, _) = unsafe { vmmap[pc as usize..].align_to::<u32>() };
+                let opcode = aligned[0];
+                let (op, func) = lookup_opcode(opcode);
+                func(opcode, *op)
+            };
+
+        let regs = self.thread_regs.borrow();
+        let mut output = "Executed ".to_owned();
+        for reg in reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR)
+            + inst_info.src_regs
+            + inst_info.out_regs
+        {
+            let value =
+                if reg != Reg::PC {
+                    regs.get_reg_value(reg)
+                } else {
+                    pc
+                };
+            output += &format!("{:?}: {:x}, ", reg, value);
+        }
+        println!("{}\n\t{:?}", output, inst_info);
+    }
+
+    fn emit_code_block(&mut self, entry: u32, thumb: bool) -> u32 {
+        self.jit_memory.align_up();
+        let jit_begin = self.jit_memory.open();
+
+        self.opcode_buf.clear();
+        let mut emulated_regs_count = HashMap::<Reg, u32>::new();
+
+        let vmm = self.vmm.clone();
+        let vmm = vmm.borrow();
+        let vmmap = vmm.get_vm_mapping();
+
+        let (_, opcodes, _) = unsafe { vmmap[entry as usize..].align_to::<u32>() };
+
+        for opcode in opcodes {
+            let (op, func) = lookup_opcode(*opcode);
+            debug_println!("Decoding {:?}", op);
+            let inst_info = func(*opcode, *op);
+
+            if DEBUG {
+                for reg in (inst_info.src_regs + inst_info.out_regs).get_emulated_regs() {
+                    *emulated_regs_count.entry(reg).or_insert(0) += 1;
+                }
+            }
+
+            self.opcode_buf.push(inst_info);
+
+            if inst_info.out_regs.is_reserved(Reg::PC) {
+                todo!()
+            }
+
+            if op.is_branch() && inst_info.cond == Cond::AL {
+                break;
+            }
+        }
+
+        if DEBUG {
+            debug_println!("Emulated regs {:?}", emulated_regs_count);
+        }
+
+        let jit_emits_start = self.jit_memory.memory.as_ptr() as u32 + self.jit_memory.ptr;
+        self.jit_buf.clear();
+        for i in 0..self.opcode_buf.len() {
+            let pc = i as u32 * 4 + entry;
+            let jit_pc = self.jit_buf.len() as u32 * 4 + jit_emits_start;
+            self.jit_addr_mapping.insert(pc, jit_pc);
+
+            if DEBUG {
+                self.jit_buf.push(AluReg::mov_al(Reg::R0, Reg::R0)); // NOP
+
+                let inst_info = &self.opcode_buf[i];
+                debug_println!("Mapping {:#010x} to {:#010x} {:?}", pc, jit_pc, inst_info);
+            }
+
+            self.emit(i, pc);
+
+            if DEBUG {
+                let debug_after_addr = JitAsm::debug_after_exec_op as *const () as u32;
+                self.emit_call_host_func(
+                    |_| {},
+                    &[Some(self as *const _ as u32), Some(pc)],
+                    debug_after_addr,
+                );
+            }
+        }
+        // TODO statically analyze generated insts
+        self.jit_memory.write_array(&self.jit_buf);
+
+        let jit_end = self.jit_memory.close();
+        self.jit_memory.flush_cache(jit_begin, jit_end);
+
+        self.jit_memory.memory.as_ptr() as u32 + jit_begin
+    }
+
     pub fn execute(&mut self) {
         let entry = self.thread_regs.borrow().pc;
 
@@ -267,75 +369,11 @@ impl JitAsm {
         if thumb {
             todo!()
         }
-
         let entry = entry & !1;
 
         let jit_entry = match self.jit_addr_mapping.get(&entry) {
             Some(jit_addr) => *jit_addr,
-            None => {
-                let vmm = self.vmm.clone();
-                let vmm = vmm.borrow();
-
-                self.jit_memory.align_up();
-                let jit_begin = self.jit_memory.open();
-
-                self.opcode_buf.clear();
-                let mut emulated_regs_count = HashMap::<Reg, u32>::new();
-
-                let (_, opcodes, _) =
-                    unsafe { vmm.vm[(entry - self.memory_offset) as usize..].align_to::<u32>() };
-
-                for opcode in opcodes {
-                    let (op, func) = lookup_opcode(*opcode);
-                    debug_println!("Decoding {:?}", op);
-
-                    let inst_info = func(*opcode, *op);
-
-                    if DEBUG {
-                        for reg in (inst_info.src_regs + inst_info.out_regs).get_emulated_regs() {
-                            *emulated_regs_count.entry(reg).or_insert(0) += 1;
-                        }
-                    }
-
-                    self.opcode_buf.push(inst_info);
-
-                    if inst_info.out_regs.is_reserved(Reg::PC) {
-                        todo!()
-                    }
-
-                    if op.is_branch() && inst_info.cond == Cond::AL {
-                        break;
-                    }
-                }
-
-                if DEBUG && !emulated_regs_count.is_empty() {
-                    debug_println!("Emulated regs {:?}", emulated_regs_count);
-                }
-
-                let jit_emits_start = self.jit_memory.memory.as_ptr() as u32 + self.jit_memory.ptr;
-                self.jit_buf.clear();
-                for i in 0..self.opcode_buf.len() {
-                    let pc = i as u32 * 4 + entry;
-                    let jit_pc = self.jit_buf.len() as u32 * 4 + jit_emits_start;
-                    self.jit_addr_mapping.insert(pc, jit_pc);
-
-                    if DEBUG {
-                        self.jit_buf.push(AluReg::mov_al(Reg::R0, Reg::R0)); // NOP
-
-                        let inst_info = &self.opcode_buf[i];
-                        debug_println!("Mapping {:#010x} to {:#010x} {:?}", pc, jit_pc, inst_info);
-                    }
-
-                    self.emit(i, pc);
-                }
-                // TODO statically analyze generated insts
-                self.jit_memory.write_array(&self.jit_buf);
-
-                let jit_end = self.jit_memory.close();
-                self.jit_memory.flush_cache(jit_begin, jit_end);
-
-                self.jit_memory.memory.as_ptr() as u32 + jit_begin
-            }
+            None => self.emit_code_block(entry, thumb),
         };
 
         let host_sp_adr = self.host_regs.get_sp_addr();

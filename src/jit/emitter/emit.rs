@@ -210,6 +210,34 @@ impl JitAsm {
         jit_buf.extend_from_slice(&AluImm::mov32(Reg::LR, addr));
         jit_buf.push(Bx::bx(Reg::LR, Cond::AL));
     }
+
+    pub fn emit_call_host_func<F: FnOnce(&mut JitAsm)>(
+        &mut self,
+        after_host_restore: F,
+        args: &[Option<u32>],
+        func_addr: u32,
+    ) {
+        self.jit_buf.extend_from_slice(&self.restore_host_opcodes);
+
+        if args.len() > 4 {
+            todo!()
+        }
+
+        after_host_restore(self);
+
+        for (index, arg) in args.iter().enumerate() {
+            if let Some(arg) = arg {
+                self.jit_buf
+                    .extend_from_slice(&AluImm::mov32(Reg::from(index as u8), *arg));
+            }
+        }
+
+        self.jit_buf
+            .extend_from_slice(&AluImm::mov32(Reg::LR, func_addr));
+        self.jit_buf.push(Bx::blx(Reg::LR, Cond::AL));
+
+        self.jit_buf.extend_from_slice(&self.restore_guest_opcodes);
+    }
 }
 
 impl RegReserve {
