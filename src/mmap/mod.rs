@@ -4,6 +4,6 @@ pub use self::platform::*;
 #[path = "linux.rs"]
 mod platform;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "vita")]
 #[path = "vita.rs"]
 mod platform;

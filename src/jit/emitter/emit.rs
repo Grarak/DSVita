@@ -1,8 +1,9 @@
-use crate::jit::assembler::arm::alu_assembler::AluImm;
+use crate::hle::CpuType;
+use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::Bx;
-use crate::jit::assembler::arm::transfer_assembler::LdmStm;
+use crate::jit::assembler::arm::transfer_assembler::{LdmStm, Mrs};
 use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
-use crate::jit::jit::JitAsm;
+use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve, EMULATED_REGS_COUNT, FIRST_EMULATED_REG};
 use crate::jit::{Cond, Op};
 use std::cmp::max;
@@ -10,43 +11,99 @@ use std::ops;
 
 impl JitAsm {
     pub fn emit(&mut self, buf_index: usize, pc: u32) {
-        let inst_info = &self.opcode_buf[buf_index];
+        let inst_info = &self.jit_buf.instructions[buf_index];
 
-        let emit_func = match inst_info.op {
-            Op::B | Op::Bl => JitAsm::emit_b,
-            Op::Bx | Op::BlxReg => JitAsm::emit_bx,
-            Op::Mcr | Op::Mrc => JitAsm::emit_cp15,
-            Op::MovAri
-            | Op::MovArr
-            | Op::MovImm
-            | Op::MovLli
-            | Op::MovLlr
-            | Op::MovLri
-            | Op::MovLrr
-            | Op::MovRri
-            | Op::MovRrr
-            | Op::MovsAri
-            | Op::MovsArr
-            | Op::MovsImm
-            | Op::MovsLli
-            | Op::MovsLlr
-            | Op::MovsLri
-            | Op::MovsLrr
-            | Op::MovsRri
-            | Op::MovsRrr => JitAsm::emit_mov,
-            Op::LdrOfip | Op::LdrbOfrplr => JitAsm::emit_ldr,
-            Op::StrOfip | Op::StrhOfip => JitAsm::emit_str,
-            Op::Swi => JitAsm::emit_swi,
-            _ => {
-                debug_assert_eq!(
-                    (inst_info.src_regs + inst_info.out_regs).emulated_regs_count(),
-                    0
-                );
+        let emit_func =
+            match inst_info.op {
+                Op::B | Op::Bl => JitAsm::emit_b,
+                Op::Bx | Op::BlxReg => JitAsm::emit_bx,
+                Op::LdrOfip | Op::LdrbOfrplr => match self.cpu_type {
+                    CpuType::ARM7 => JitAsm::emit_ldr_arm7,
+                    CpuType::ARM9 => JitAsm::emit_ldr_arm9,
+                },
+                Op::LdmiaW => match self.cpu_type {
+                    CpuType::ARM7 => JitAsm::emit_ldm_arm7,
+                    CpuType::ARM9 => JitAsm::emit_ldm_arm9,
+                },
+                Op::StrOfip | Op::StrhOfip => match self.cpu_type {
+                    CpuType::ARM7 => JitAsm::emit_str_arm7,
+                    CpuType::ARM9 => JitAsm::emit_str_arm9,
+                },
+                Op::StmiaW => match self.cpu_type {
+                    CpuType::ARM7 => JitAsm::emit_stm_arm7,
+                    CpuType::ARM9 => JitAsm::emit_stm_arm9,
+                },
+                Op::Mcr | Op::Mrc => JitAsm::emit_cp15,
+                Op::MsrRc | Op::MsrIc => JitAsm::emit_msr_cprs,
+                Op::MrsRc => JitAsm::emit_mrs_cprs,
+                Op::Swi => JitAsm::emit_swi,
+                _ => {
+                    let src_regs = inst_info.src_regs;
+                    let out_regs = inst_info.out_regs;
+                    let combined_regs = src_regs + out_regs;
+                    if combined_regs.emulated_regs_count() > 0 {
+                        self.handle_emulated_regs(buf_index, pc, |_, _, _| Vec::new());
+                    } else {
+                        self.jit_buf.emit_opcodes.push(inst_info.opcode);
+                    }
 
-                self.jit_buf.push(inst_info.opcode);
-                |_: &mut JitAsm, _: usize, _: u32| {}
-            }
-        };
+                    if out_regs.is_reserved(Reg::CPSR) {
+                        let mut reserved = combined_regs.create_push_pop_handler(
+                            2,
+                            &self.jit_buf.instructions[buf_index + 1..],
+                        );
+
+                        let host_cpsr_reg = reserved.pop().unwrap();
+                        let guest_cpsr_reg = reserved.pop().unwrap();
+
+                        if let Some(opcode) = reserved.emit_push_stack(Reg::LR) {
+                            self.jit_buf.emit_opcodes.push(opcode)
+                        }
+
+                        self.jit_buf
+                            .emit_opcodes
+                            .push(Mrs::cpsr(host_cpsr_reg, Cond::AL));
+                        self.jit_buf.emit_opcodes.extend(
+                            &self
+                                .thread_regs
+                                .borrow()
+                                .emit_get_reg(guest_cpsr_reg, Reg::CPSR),
+                        );
+
+                        // Only copy the cond flags from host cpsr
+                        self.jit_buf.emit_opcodes.push(AluImm::and(
+                            host_cpsr_reg,
+                            host_cpsr_reg,
+                            0xF8,
+                            4, // 8 Bytes, steps of 2
+                            Cond::AL,
+                        ));
+                        self.jit_buf.emit_opcodes.push(AluImm::bic(
+                            guest_cpsr_reg,
+                            guest_cpsr_reg,
+                            0xF8,
+                            4, // 8 Bytes, steps of 2
+                            Cond::AL,
+                        ));
+                        self.jit_buf.emit_opcodes.push(
+                            AluShiftImm::orr_al(guest_cpsr_reg, host_cpsr_reg, guest_cpsr_reg)
+                        );
+                        self.jit_buf
+                            .emit_opcodes
+                            .extend(&self.thread_regs.borrow().emit_set_reg(
+                                Reg::CPSR,
+                                guest_cpsr_reg,
+                                host_cpsr_reg,
+                            ));
+
+                        if let Some(opcode) = reserved.emit_pop_stack(Reg::LR) {
+                            self.jit_buf.emit_opcodes.push(opcode)
+                        }
+                    }
+
+                    |_: &mut JitAsm, _: usize, _: u32| {}
+                }
+            };
 
         emit_func(self, buf_index, pc);
     }
@@ -61,7 +118,7 @@ impl JitAsm {
             reg_reserver: &mut RegPushPopHandler,
         ) -> Vec<u32>,
     ) {
-        let mut inst_info = self.opcode_buf[buf_index];
+        let mut inst_info = self.jit_buf.instructions[buf_index];
 
         if inst_info.cond != Cond::AL {
             todo!()
@@ -70,7 +127,7 @@ impl JitAsm {
         let emulated_src_regs = inst_info.src_regs.get_emulated_regs();
         let mut src_reserved = inst_info.src_regs.create_push_pop_handler(
             emulated_src_regs.len() as u8,
-            &self.opcode_buf[buf_index + 1..],
+            &self.jit_buf.instructions[buf_index + 1..],
         );
         src_reserved.add_reg_reserve(inst_info.out_regs);
         src_reserved.use_gp();
@@ -114,7 +171,7 @@ impl JitAsm {
         }
 
         if let Some(opcode) = src_reserved.emit_push_stack(Reg::LR) {
-            self.jit_buf.push(opcode);
+            self.jit_buf.emit_opcodes.push(opcode);
         }
 
         for (index, mapped_reg) in src_reg_mapping.iter().enumerate() {
@@ -125,10 +182,12 @@ impl JitAsm {
             let reg = Reg::from(FIRST_EMULATED_REG as u8 + index as u8);
             if reg == Reg::PC {
                 self.jit_buf
-                    .extend_from_slice(&AluImm::mov32(*mapped_reg, pc + 8));
+                    .emit_opcodes
+                    .extend(&AluImm::mov32(*mapped_reg, pc + 8));
             } else {
                 self.jit_buf
-                    .extend_from_slice(&self.thread_regs.borrow().emit_get_reg(*mapped_reg, reg));
+                    .emit_opcodes
+                    .extend(&self.thread_regs.borrow().emit_get_reg(*mapped_reg, reg));
             }
         }
 
@@ -144,10 +203,10 @@ impl JitAsm {
         );
 
         let mut out_reserved = RegPushPopHandler::from(out_reserved)
-            + RegPushPopHandler::from(
-                out_reserved
-                    .get_writable_gp_regs(num_out_reserve as u8, &self.opcode_buf[buf_index + 1..]),
-            );
+            + RegPushPopHandler::from(out_reserved.get_writable_gp_regs(
+                num_out_reserve as u8,
+                &self.jit_buf.instructions[buf_index + 1..],
+            ));
         out_reserved.use_gp();
 
         let out_addr = out_reserved.pop().unwrap();
@@ -173,11 +232,11 @@ impl JitAsm {
         let insts = before_assemble(self, &inst_info, &mut out_reserved);
         {
             if let Some(opcode) = out_reserved.emit_push_stack(Reg::LR) {
-                self.jit_buf.push(opcode);
+                self.jit_buf.emit_opcodes.push(opcode);
             }
         }
-        self.jit_buf.extend_from_slice(&insts);
-        self.jit_buf.push(inst_info.assemble());
+        self.jit_buf.emit_opcodes.extend(&insts);
+        self.jit_buf.emit_opcodes.push(inst_info.assemble());
 
         for (index, mapped_reg) in out_reg_mapping.iter().enumerate() {
             if *mapped_reg == Reg::None {
@@ -189,25 +248,27 @@ impl JitAsm {
                 todo!()
             } else {
                 self.jit_buf
-                    .extend_from_slice(&self.thread_regs.borrow().emit_set_reg(
-                        reg,
-                        *mapped_reg,
-                        out_addr,
-                    ));
+                    .emit_opcodes
+                    .extend(
+                        &self
+                            .thread_regs
+                            .borrow()
+                            .emit_set_reg(reg, *mapped_reg, out_addr),
+                    );
             }
         }
 
         if let Some(opcode) = out_reserved.emit_pop_stack(Reg::LR) {
-            self.jit_buf.push(opcode);
+            self.jit_buf.emit_opcodes.push(opcode);
         }
 
         if let Some(opcode) = src_reserved.emit_pop_stack(Reg::LR) {
-            self.jit_buf.push(opcode);
+            self.jit_buf.emit_opcodes.push(opcode);
         }
     }
 
     pub fn emit_host_bx(addr: u32, jit_buf: &mut Vec<u32>) {
-        jit_buf.extend_from_slice(&AluImm::mov32(Reg::LR, addr));
+        jit_buf.extend(&AluImm::mov32(Reg::LR, addr));
         jit_buf.push(Bx::bx(Reg::LR, Cond::AL));
     }
 
@@ -217,7 +278,7 @@ impl JitAsm {
         args: &[Option<u32>],
         func_addr: u32,
     ) {
-        self.jit_buf.extend_from_slice(&self.restore_host_opcodes);
+        self.jit_buf.emit_opcodes.extend(&self.restore_host_opcodes);
 
         if args.len() > 4 {
             todo!()
@@ -228,21 +289,27 @@ impl JitAsm {
         for (index, arg) in args.iter().enumerate() {
             if let Some(arg) = arg {
                 self.jit_buf
-                    .extend_from_slice(&AluImm::mov32(Reg::from(index as u8), *arg));
+                    .emit_opcodes
+                    .extend(&AluImm::mov32(Reg::from(index as u8), *arg));
             }
         }
 
         self.jit_buf
-            .extend_from_slice(&AluImm::mov32(Reg::LR, func_addr));
-        self.jit_buf.push(Bx::blx(Reg::LR, Cond::AL));
+            .emit_opcodes
+            .extend(&AluImm::mov32(Reg::LR, func_addr));
+        self.jit_buf.emit_opcodes.push(Bx::blx(Reg::LR, Cond::AL));
 
-        self.jit_buf.extend_from_slice(&self.restore_guest_opcodes);
+        self.jit_buf
+            .emit_opcodes
+            .extend(&self.restore_guest_opcodes);
     }
 }
 
 impl RegReserve {
     pub fn create_push_pop_handler(&self, num: u8, insts: &[InstInfo]) -> RegPushPopHandler {
-        RegPushPopHandler::from(self.get_writable_gp_regs(num, insts))
+        let mut handler = RegPushPopHandler::from(self.get_writable_gp_regs(num, insts));
+        handler.use_gp();
+        handler
     }
 
     pub fn get_writable_gp_regs(&self, num: u8, insts: &[InstInfo]) -> RegReserve {
@@ -267,6 +334,7 @@ pub struct RegPushPopHandler {
     not_reserved: RegReserve,
     regs_to_save: RegReserve,
     regs_to_skip: RegReserve,
+    pushed: bool,
 }
 
 impl From<RegReserve> for RegPushPopHandler {
@@ -276,6 +344,7 @@ impl From<RegReserve> for RegPushPopHandler {
             not_reserved: !value,
             regs_to_save: RegReserve::new(),
             regs_to_skip: RegReserve::new(),
+            pushed: false,
         }
     }
 }
@@ -298,6 +367,7 @@ impl RegPushPopHandler {
     }
 
     pub fn pop(&mut self) -> Option<Reg> {
+        debug_assert!(!self.pushed);
         match self.reg_reserve.pop() {
             Some(reg) => Some(reg),
             None => {
@@ -310,7 +380,9 @@ impl RegPushPopHandler {
         }
     }
 
-    pub fn emit_push_stack(&self, sp: Reg) -> Option<u32> {
+    pub fn emit_push_stack(&mut self, sp: Reg) -> Option<u32> {
+        debug_assert!(!self.pushed);
+        self.pushed = true;
         if self.regs_to_save.len() == 0 {
             None
         } else {
@@ -318,7 +390,8 @@ impl RegPushPopHandler {
         }
     }
 
-    pub fn emit_pop_stack(&self, sp: Reg) -> Option<u32> {
+    pub fn emit_pop_stack(self, sp: Reg) -> Option<u32> {
+        debug_assert!(self.pushed);
         if self.regs_to_save.len() == 0 {
             None
         } else {
@@ -332,13 +405,13 @@ impl ops::Add<RegPushPopHandler> for RegPushPopHandler {
 
     fn add(self, rhs: RegPushPopHandler) -> Self::Output {
         let reg_reserve = self.reg_reserve + rhs.reg_reserve;
-        let mut instance =
-            RegPushPopHandler {
-                reg_reserve,
-                not_reserved: !reg_reserve,
-                regs_to_save: RegReserve::new(),
-                regs_to_skip: RegReserve::new(),
-            };
+        let mut instance = RegPushPopHandler {
+            reg_reserve,
+            not_reserved: !reg_reserve,
+            regs_to_save: RegReserve::new(),
+            regs_to_skip: RegReserve::new(),
+            pushed: false,
+        };
         instance.set_regs_to_skip(self.regs_to_skip + rhs.regs_to_skip);
         instance
     }

@@ -3,8 +3,9 @@ use std::{mem, ops};
 pub mod assembler;
 pub mod disassembler;
 mod emitter;
-mod inst_info;
-pub mod jit;
+pub mod inst_info;
+pub mod jit_asm;
+mod jit_memory;
 pub mod reg;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

@@ -1,3 +1,7 @@
+use crate::hle::bios;
+use crate::hle::cp15_context::Cp15Context;
+use crate::hle::thread_context::ThreadRegs;
+
 #[repr(u8)]
 pub enum ExceptionVector {
     Reset = 0x0,
@@ -10,30 +14,22 @@ pub enum ExceptionVector {
     FastInterrupt = 0x1C,
 }
 
-mod exception_handler {
-    use crate::hle::bios;
-    use crate::hle::cp15_context::Cp15Context;
-    use crate::hle::exception_handler::ExceptionVector;
-    use crate::hle::thread_context::ThreadRegs;
-
-    pub extern "C" fn exception(
-        cp15_context: &Cp15Context,
-        regs: &mut ThreadRegs,
-        opcode: u32,
-        vector: ExceptionVector,
-    ) {
-        if cp15_context.exception_addr != 0 {
-            match vector {
-                ExceptionVector::SoftwareInterrupt => {
-                    bios::swi(((opcode >> 16) & 0xFF) as u8, regs)
-                }
-                _ => todo!(),
+#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
+pub unsafe extern "C" fn exception_handler(
+    cp15_context: *const Cp15Context,
+    regs: *mut ThreadRegs,
+    opcode: u32,
+    vector: ExceptionVector,
+) {
+    if (*cp15_context).exception_addr != 0 {
+        match vector {
+            ExceptionVector::SoftwareInterrupt => {
+                bios::swi(((opcode >> 16) & 0xFF) as u8, regs.as_mut().unwrap())
             }
-            return;
+            _ => todo!(),
         }
-
-        todo!()
+        return;
     }
-}
 
-pub use exception_handler::exception;
+    todo!()
+}

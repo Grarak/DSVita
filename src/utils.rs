@@ -1,8 +1,12 @@
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
-pub fn align_up(n: u32, align: u32) -> u32 {
+pub const fn align_up(n: u32, align: u32) -> u32 {
     (n + align - 1) & !(align - 1)
+}
+
+pub const fn negative(n: u32) -> u32 {
+    !(n - 1)
 }
 
 pub struct StrErr {

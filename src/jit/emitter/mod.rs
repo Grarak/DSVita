@@ -1,6 +1,6 @@
-mod alu;
-mod branch;
-mod cp15;
+mod emit_branch;
+mod emit_cp15;
 mod emit;
-mod swi;
-mod transfer;
+mod emit_swi;
+mod emit_transfer;
+mod emit_psr;

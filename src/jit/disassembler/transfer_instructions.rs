@@ -28,7 +28,7 @@ pub use transfer_variations::*;
 
 mod transfer_ops {
     use crate::jit::inst_info::{InstInfo, Operand, Operands};
-    use crate::jit::reg::{reg_reserve, Reg};
+    use crate::jit::reg::{reg_reserve, Reg, RegReserve};
     use crate::jit::{Op, ShiftType};
 
     // Half
@@ -753,7 +753,15 @@ mod transfer_ops {
 
     #[inline]
     pub fn str_pr(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
+            reg_reserve!(op0, op1),
+            reg_reserve!(op1),
+        )
     }
 
     #[inline]
@@ -943,12 +951,26 @@ mod transfer_ops {
 
     #[inline]
     pub fn ldmia_w(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::reg(op0)),
+            reg_reserve!(op0),
+            RegReserve::from(opcode & 0xFFFF) + op0,
+        )
     }
 
     #[inline]
     pub fn stmia_w(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::reg(op0)),
+            RegReserve::from(opcode & 0xFFFF) + op0,
+            reg_reserve!(op0),
+        )
     }
 
     #[inline]
@@ -1057,7 +1079,7 @@ mod transfer_ops {
         InstInfo::new(
             opcode,
             op,
-            Operands::new_2(Operand::reg(Reg::CPSR), Operand::reg(op1)),
+            Operands::new_1(Operand::reg(op1)),
             reg_reserve!(op1),
             reg_reserve!(Reg::CPSR),
         )

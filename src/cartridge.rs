@@ -1,3 +1,4 @@
+use static_assertions::const_assert_eq;
 use std::fs::File;
 use std::io::Read;
 use std::num::Wrapping;
@@ -26,8 +27,8 @@ pub struct CartridgeHeader {
     unit_code: u8,
     encryption_seed_select: u8,
     device_capacity: u8,
-    reserved1: [u8; 7],
-    reserved2: u8,
+    reserved: [u8; 7],
+    reserved1: u8,
     nds_region: u8,
     rom_version: u8,
     autostart: u8,
@@ -50,22 +51,21 @@ pub struct CartridgeHeader {
     total_used_rom_size: u32,
     rom_header_size: u32,
     unknown: u32,
-    nand_end_rom_area: u16,
-    nand_start_of_rw_area: u16,
-    reserved3: [u8; 0x18],
-    reserved4: [u8; 0x10],
+    reserve2: [u8; 0x24],
+    reserved3: [u8; 0x10],
     nintendo_logo: [u8; 0x9C],
     nintendo_logo_checksum: u16,
     header_checksum: u16,
     debug_rom_offset: u32,
     debug_size: u32,
     debug_ram_address: u32,
-    reserved5: [u8; 4],
-    reserved6: [u8; 0x90],
-    reserved7: [u8; 0xE00],
+    reserved4: [u8; 4],
+    reserved5: [u8; 0x90],
 }
 
 const HEADER_SIZE: usize = mem::size_of::<CartridgeHeader>();
+pub const HEADER_IN_RAM_SIZE: usize = 0x170;
+const_assert_eq!(HEADER_SIZE, HEADER_IN_RAM_SIZE + 0x90);
 
 pub struct Cartridge {
     file: File,
@@ -85,7 +85,7 @@ impl Cartridge {
         Self::new(file)
     }
 
-    pub fn read_arm9_boot_code(&self) -> io::Result<Vec<u8>> {
+    pub fn read_arm9_code(&self) -> io::Result<Vec<u8>> {
         let mut boot_code = vec![0u8; self.header.arm9_values.size as usize];
         self.file
             .read_exact_at(&mut boot_code, self.header.arm9_values.rom_offset as u64)?;
@@ -108,6 +108,13 @@ impl Cartridge {
             }
         }
 
+        Ok(boot_code)
+    }
+
+    pub fn read_arm7_code(&self) -> io::Result<Vec<u8>> {
+        let mut boot_code = vec![0u8; self.header.arm7_values.size as usize];
+        self.file
+            .read_exact_at(&mut boot_code, self.header.arm7_values.rom_offset as u64)?;
         Ok(boot_code)
     }
 }

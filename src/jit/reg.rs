@@ -195,6 +195,12 @@ impl ops::AddAssign<Reg> for RegReserve {
     }
 }
 
+impl From<u32> for RegReserve {
+    fn from(value: u32) -> Self {
+        RegReserve(value)
+    }
+}
+
 impl Debug for RegReserve {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut str = "".to_owned();

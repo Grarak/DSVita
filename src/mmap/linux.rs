@@ -20,7 +20,7 @@ impl Mmap {
                     null_mut(),
                     size as _,
                     prot,
-                    libc::MAP_ANON | libc::MAP_SHARED,
+                    libc::MAP_ANON | libc::MAP_PRIVATE,
                     -1,
                     0,
                 )

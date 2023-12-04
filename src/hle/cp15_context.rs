@@ -50,6 +50,7 @@ struct TcmReg {
 const CONTROL_RW_BITS_MASK: u32 = 0x000FF085;
 const TCM_MIN_SIZE: u32 = 4 * 1024;
 
+#[repr(C)]
 pub struct Cp15Context {
     control: u32,
     pub exception_addr: u32,
@@ -135,7 +136,7 @@ impl Cp15Context {
         debug_println!("Set itcm with size {:x}", self.itcm_size);
     }
 
-    pub extern "C" fn write(&mut self, reg: u32, value: u32) {
+    pub fn write(&mut self, reg: u32, value: u32) {
         debug_println!("Writing to cp15 reg {:x} {:x}", reg, value);
 
         match reg {
@@ -147,7 +148,7 @@ impl Cp15Context {
         }
     }
 
-    pub extern "C" fn read(&self, reg: u32, value: &mut u32) {
+    pub fn read(&self, reg: u32, value: &mut u32) {
         debug_println!("Reading from cp15 reg {:x}", reg);
 
         *value =
@@ -163,4 +164,14 @@ impl Cp15Context {
                 }
             }
     }
+}
+
+#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
+pub unsafe extern "C" fn cp15_write(context: *mut Cp15Context, reg: u32, value: u32) {
+    (*context).write(reg, value)
+}
+
+#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
+pub unsafe extern "C" fn cp15_read(context: *const Cp15Context, reg: u32, value: *mut u32) {
+    (*context).read(reg, value.as_mut().unwrap())
 }

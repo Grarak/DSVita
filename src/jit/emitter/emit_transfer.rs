@@ -1,13 +1,27 @@
+use crate::hle::indirect_memory::indirect_memory_handler::{indirect_mem_read, indirect_mem_write};
+use crate::hle::indirect_memory::indirect_memory_multiple_handler::{
+    indirect_mem_read_multiple, indirect_mem_write_multiple,
+};
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::emitter::emit::RegPushPopHandler;
 use crate::jit::inst_info::InstInfo;
-use crate::jit::jit::JitAsm;
+use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
 use bilge::prelude::u4;
 
 impl JitAsm {
+    fn emit_indirect(&mut self, func_addr: *const (), _: usize, pc: u32) {
+        let indirect_memory_handler_addr = self.indirect_memory_handler.as_ptr() as u32;
+
+        self.emit_call_host_func(
+            |_| {},
+            &[Some(indirect_memory_handler_addr), Some(pc)],
+            func_addr as u32,
+        );
+    }
+
     fn emit_memory_offset(
         jit_buf: &mut Vec<u32>,
         vm_mem_offset: u32,
@@ -35,7 +49,7 @@ impl JitAsm {
             jit_buf.push(opcode);
         }
 
-        jit_buf.extend_from_slice(&AluImm::mov32(tmp_reg, vm_mem_offset));
+        jit_buf.extend(&AluImm::mov32(tmp_reg, vm_mem_offset));
         jit_buf.push(AluShiftImm::add_al(tmp_reg, tmp_reg, *reg_op1));
 
         let mut modified_op = LdrStrImm::from(inst_info.opcode);
@@ -47,33 +61,40 @@ impl JitAsm {
         }
     }
 
-    pub fn emit_str(&mut self, buf_index: usize, _: u32) {
-        let inst_info = &self.opcode_buf[buf_index];
+    pub fn emit_str_arm7(&mut self, buf_index: usize, pc: u32) {
+        self.emit_indirect(indirect_mem_write as _, buf_index, pc);
+    }
+
+    pub fn emit_str_arm9(&mut self, buf_index: usize, _: u32) {
+        let inst_info = &self.jit_buf.instructions[buf_index];
 
         let used_regs = inst_info.src_regs + inst_info.out_regs;
         let emulated_regs_count = used_regs.emulated_regs_count();
         if emulated_regs_count > 0 {
             todo!()
+        } else {
+            JitAsm::emit_memory_offset(
+                &mut self.jit_buf.emit_opcodes,
+                self.vm_mem_offset,
+                buf_index,
+                &self.jit_buf.instructions,
+                inst_info,
+            );
         }
-
-        JitAsm::emit_memory_offset(
-            &mut self.jit_buf,
-            self.vm_mem_offset,
-            buf_index,
-            &self.opcode_buf,
-            inst_info,
-        );
     }
 
-    pub fn emit_ldr(&mut self, buf_index: usize, pc: u32) {
-        let inst_info = &self.opcode_buf[buf_index];
+    pub fn emit_ldr_arm7(&mut self, buf_index: usize, pc: u32) {
+        self.emit_indirect(indirect_mem_read as _, buf_index, pc);
+    }
+
+    pub fn emit_ldr_arm9(&mut self, buf_index: usize, pc: u32) {
+        let inst_info = &self.jit_buf.instructions[buf_index];
 
         let used_regs = inst_info.src_regs + inst_info.out_regs;
         let emulated_regs_count = used_regs.emulated_regs_count();
         if emulated_regs_count > 0 {
             self.handle_emulated_regs(buf_index, pc, |jit_asm, inst_info, reg_reserve| {
-                let mut insts = Vec::<u32>::new();
-                insts.resize(3, 0);
+                let mut insts = vec![0u32; 3];
 
                 let tmp_reg = reg_reserve.pop().unwrap();
                 insts[..2].copy_from_slice(&AluImm::mov32(tmp_reg, jit_asm.vm_mem_offset));
@@ -84,12 +105,28 @@ impl JitAsm {
             });
         } else {
             JitAsm::emit_memory_offset(
-                &mut self.jit_buf,
+                &mut self.jit_buf.emit_opcodes,
                 self.vm_mem_offset,
                 buf_index,
-                &self.opcode_buf,
+                &self.jit_buf.instructions,
                 inst_info,
             );
         }
+    }
+
+    pub fn emit_stm_arm7(&mut self, buf_index: usize, pc: u32) {
+        self.emit_indirect(indirect_mem_write_multiple as _, buf_index, pc);
+    }
+
+    pub fn emit_stm_arm9(&mut self, buf_index: usize, pc: u32) {
+        todo!()
+    }
+
+    pub fn emit_ldm_arm7(&mut self, buf_index: usize, pc: u32) {
+        self.emit_indirect(indirect_mem_read_multiple as _, buf_index, pc);
+    }
+
+    pub fn emit_ldm_arm9(&mut self, buf_index: usize, pc: u32) {
+        todo!()
     }
 }

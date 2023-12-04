@@ -1,4 +1,4 @@
-use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
+use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
@@ -43,9 +43,18 @@ impl InstInfo {
     pub fn assemble(&self) -> u32 {
         let operands = self.operands();
         match self.op {
+            Op::AddImm => {
+                let mut opcode = AluImm::from(self.opcode);
+                let reg0 = operands[0].as_reg_no_shift().unwrap();
+                let reg1 = operands[1].as_reg_no_shift().unwrap();
+                opcode.set_rd(u4::new(*reg0 as u8));
+                opcode.set_rn(u4::new(*reg1 as u8));
+
+                u32::from(opcode)
+            }
             Op::MovLli | Op::MovRri | Op::MovsLli | Op::MovsRri => {
                 let mut opcode = AluShiftImm::from(self.opcode);
-                let (reg0, _) = operands[0].as_reg().unwrap();
+                let reg0 = operands[0].as_reg_no_shift().unwrap();
                 let (reg2, shift_2) = operands[1].as_reg().unwrap();
                 opcode.set_rm(u4::new(*reg2 as u8));
                 opcode.set_rd(u4::new(*reg0 as u8));
@@ -60,10 +69,10 @@ impl InstInfo {
 
                 u32::from(opcode)
             }
-            Op::LdrOfip => {
+            Op::LdrOfip | Op::StrPrim => {
                 let mut opcode = LdrStrImm::from(self.opcode);
-                let (reg0, _) = operands[0].as_reg().unwrap();
-                let (reg1, shift1) = operands[1].as_reg().unwrap();
+                let reg0 = operands[0].as_reg_no_shift().unwrap();
+                let reg1 = operands[1].as_reg_no_shift().unwrap();
                 opcode.set_rd(u4::new(*reg0 as u8));
                 opcode.set_rn(u4::new(*reg1 as u8));
 
@@ -113,7 +122,7 @@ impl Operands {
 #[derive(Copy, Clone, Debug)]
 pub enum Operand {
     Reg { reg: Reg, shift: Option<Shift> },
-    Imm { imm: u32, shift: Option<Shift> },
+    Imm(u32),
     None,
 }
 
@@ -136,7 +145,7 @@ impl Operand {
     }
 
     pub fn imm(imm: u32) -> Self {
-        Operand::Imm { imm, shift: None }
+        Operand::Imm(imm)
     }
 
     pub fn as_reg(&self) -> Option<(&Reg, &Option<Shift>)> {
@@ -146,9 +155,17 @@ impl Operand {
         }
     }
 
-    pub fn as_imm(&self) -> Option<(&u32, &Option<Shift>)> {
+    pub fn as_reg_no_shift(&self) -> Option<&Reg> {
+        let (reg, shift) = self.as_reg().unwrap();
+        match shift {
+            None => Some(reg),
+            Some(_) => None,
+        }
+    }
+
+    pub fn as_imm(&self) -> Option<&u32> {
         match self {
-            Operand::Imm { imm, shift } => Some((imm, shift)),
+            Operand::Imm(imm) => Some(imm),
             _ => None,
         }
     }

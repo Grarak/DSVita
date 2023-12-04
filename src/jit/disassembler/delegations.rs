@@ -72,6 +72,7 @@ mod transfer_delegations {
     use crate::jit::disassembler::transfer_instructions::*;
     use crate::jit::inst_info::InstInfo;
     use crate::jit::Op;
+    use crate::utils::negative;
     use paste::paste;
 
     macro_rules! generate_variation {
@@ -97,7 +98,7 @@ mod transfer_delegations {
             paste! {
                 #[inline]
                 pub fn [<$name _ $variation>](opcode: u32, op: Op) -> InstInfo {
-                    [<$name _ $suffix>](opcode, op, !($processor(opcode) - 1))
+                    [<$name _ $suffix>](opcode, op, negative($processor(opcode)))
                 }
             }
         };
