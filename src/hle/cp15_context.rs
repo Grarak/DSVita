@@ -50,7 +50,6 @@ struct TcmReg {
 const CONTROL_RW_BITS_MASK: u32 = 0x000FF085;
 const TCM_MIN_SIZE: u32 = 4 * 1024;
 
-#[repr(C)]
 pub struct Cp15Context {
     control: u32,
     pub exception_addr: u32,

@@ -92,11 +92,13 @@ pub fn main() {
 
         {
             let mut regs = arm9_thread.regs.borrow_mut();
-            regs.gp_regs[12] = arm9_entry_adrr;
-            regs.sp = 0x3002F7C;
-            regs.lr = arm9_entry_adrr;
+            regs.user.gp_regs[4] = arm9_entry_adrr; // R12
+            regs.user.sp = 0x3002F7C;
+            regs.irq.sp = 0x3003F80;
+            regs.svc.sp = 0x3003FC0;
+            regs.user.lr = arm9_entry_adrr;
             regs.pc = arm9_entry_adrr;
-            regs.cpsr = 0x000000DF;
+            regs.set_cpsr(0x000000DF);
         }
         arm9_thread.run();
     }

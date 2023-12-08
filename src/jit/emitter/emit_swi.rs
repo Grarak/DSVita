@@ -14,7 +14,6 @@ impl JitAsm {
 
         let cp15_context_addr = self.cp15_context.as_ptr() as u32;
         let regs_addr = self.thread_regs.as_ptr() as u32;
-        let exception_addr = exception_handler as *const () as u32;
 
         self.emit_call_host_func(
             |asm| {
@@ -28,7 +27,7 @@ impl JitAsm {
                 Some(inst_info.opcode),
                 None,
             ],
-            exception_addr,
+            exception_handler as _,
         );
     }
 }

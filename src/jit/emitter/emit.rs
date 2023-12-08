@@ -276,7 +276,7 @@ impl JitAsm {
         &mut self,
         after_host_restore: F,
         args: &[Option<u32>],
-        func_addr: u32,
+        func_addr: *const (),
     ) {
         self.jit_buf.emit_opcodes.extend(&self.restore_host_opcodes);
 
@@ -296,7 +296,7 @@ impl JitAsm {
 
         self.jit_buf
             .emit_opcodes
-            .extend(&AluImm::mov32(Reg::LR, func_addr));
+            .extend(&AluImm::mov32(Reg::LR, func_addr as u32));
         self.jit_buf.emit_opcodes.push(Bx::blx(Reg::LR, Cond::AL));
 
         self.jit_buf
@@ -316,6 +316,10 @@ impl RegReserve {
         let mut reserve = *self;
         let mut writable_regs = RegReserve::new();
         for inst in insts {
+            if inst.op.is_branch() {
+                break;
+            }
+
             reserve += inst.src_regs;
             let writable = (reserve & inst.out_regs) ^ inst.out_regs;
             writable_regs += writable;

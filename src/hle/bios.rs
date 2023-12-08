@@ -1,6 +1,6 @@
 mod bios {
     use crate::hle::bios_lookup_table::ARM9_SWI_LOOKUP_TABLE;
-    use crate::hle::thread_context::ThreadRegs;
+    use crate::hle::registers::ThreadRegs;
     use crate::logging::debug_println;
 
     pub fn swi(comment: u8, regs: &mut ThreadRegs) {
@@ -13,7 +13,7 @@ mod bios {
 pub use bios::swi;
 
 mod swi {
-    use crate::hle::thread_context::ThreadRegs;
+    use crate::hle::registers::ThreadRegs;
 
     pub fn bit_unpack(regs: &mut ThreadRegs) {
         todo!()

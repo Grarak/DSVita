@@ -21,27 +21,25 @@ impl JitAsm {
         let cp15_reg = (cn << 16) | (cm << 8) | cp;
         let cp15_context_addr = self.cp15_context.as_ptr() as u32;
 
-        let (args, addr) =
-            match inst_info.op {
-                Op::Mcr => {
-                    let cp15_write_addr = cp15_write as *const () as u32;
-                    (
-                        [Some(cp15_context_addr), Some(cp15_reg), None],
-                        cp15_write_addr,
-                    )
-                }
-                Op::Mrc => {
-                    let reg_addr =
-                        ptr::addr_of_mut!(self.thread_regs.borrow_mut().gp_regs[*rd as usize])
-                            as u32;
-                    let cp15_read_addr = cp15_read as *const () as u32;
-                    (
-                        [Some(cp15_context_addr), Some(cp15_reg), Some(reg_addr)],
-                        cp15_read_addr,
-                    )
-                }
-                _ => panic!(),
-            };
+        let (args, addr) = match inst_info.op {
+            Op::Mcr => {
+                let cp15_write_addr = cp15_write as *const ();
+                (
+                    [Some(cp15_context_addr), Some(cp15_reg), None],
+                    cp15_write_addr,
+                )
+            }
+            Op::Mrc => {
+                let reg_addr =
+                    ptr::addr_of_mut!(self.thread_regs.borrow_mut().gp_regs[*rd as usize]) as u32;
+                let cp15_read_addr = cp15_read as *const ();
+                (
+                    [Some(cp15_context_addr), Some(cp15_reg), Some(reg_addr)],
+                    cp15_read_addr,
+                )
+            }
+            _ => panic!(),
+        };
 
         let op = inst_info.op;
         let rd = *rd;

@@ -1,5 +1,5 @@
 use crate::hle::indirect_memory::MemoryAmount;
-use crate::hle::thread_context::ThreadRegs;
+use crate::hle::registers::ThreadRegs;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::inst_info::{InstInfo, Operand, ShiftValue};
 use crate::jit::reg::Reg;

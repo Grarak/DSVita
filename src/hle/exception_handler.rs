@@ -1,6 +1,6 @@
 use crate::hle::bios;
 use crate::hle::cp15_context::Cp15Context;
-use crate::hle::thread_context::ThreadRegs;
+use crate::hle::registers::ThreadRegs;
 
 #[repr(u8)]
 pub enum ExceptionVector {

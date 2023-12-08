@@ -23,17 +23,13 @@ impl JitAsm {
         );
 
         if inst_info.op == Op::Bl {
-            self.jit_buf
-                .emit_opcodes
-                .extend(&AluImm::mov32(Reg::R0, pc + 4));
-            self.jit_buf
-                .emit_opcodes
-                .extend(
-                    &self
-                        .thread_regs
-                        .borrow()
-                        .emit_set_reg(Reg::LR, Reg::R0, Reg::LR),
-                );
+            opcodes.extend(&AluImm::mov32(Reg::R0, pc + 4));
+            opcodes.extend(
+                &self
+                    .thread_regs
+                    .borrow()
+                    .emit_set_reg(Reg::LR, Reg::R0, Reg::LR),
+            );
         }
 
         JitAsm::emit_host_bx(self.breakout_skip_save_regs_addr, &mut opcodes);

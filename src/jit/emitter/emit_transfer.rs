@@ -18,7 +18,7 @@ impl JitAsm {
         self.emit_call_host_func(
             |_| {},
             &[Some(indirect_memory_handler_addr), Some(pc)],
-            func_addr as u32,
+            func_addr,
         );
     }
 

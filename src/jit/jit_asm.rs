@@ -1,6 +1,6 @@
 use crate::hle::cp15_context::Cp15Context;
 use crate::hle::indirect_memory::indirect_memory_handler::IndirectMemoryHandler;
-use crate::hle::thread_context::ThreadRegs;
+use crate::hle::registers::ThreadRegs;
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg};
 use crate::jit::assembler::arm::branch_assembler::Bx;
@@ -8,7 +8,7 @@ use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_memory::JitMemory;
-use crate::jit::reg::{reg_reserve, Reg};
+use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
 use crate::memory::VmManager;
@@ -16,6 +16,7 @@ use crate::DEBUG;
 use std::arch::asm;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::ptr;
 use std::rc::Rc;
 
@@ -254,17 +255,20 @@ impl JitAsm {
             self.emit(i, pc);
 
             if DEBUG {
-                self.jit_buf.emit_opcodes.extend(&[
-                    AluReg::mov_al(Reg::R0, Reg::R0), // NOP
-                    AluReg::mov_al(Reg::R0, Reg::R0), // NOP
-                ]);
+                let inst_info = &self.jit_buf.instructions[i];
 
-                let debug_after_addr = debug_after_exec_op as *const () as u32;
-                self.emit_call_host_func(
-                    |_| {},
-                    &[Some(self as *const _ as u32), Some(pc)],
-                    debug_after_addr,
-                );
+                if !inst_info.op.is_branch() || inst_info.cond != Cond::AL {
+                    self.jit_buf.emit_opcodes.extend(&[
+                        AluReg::mov_al(Reg::R0, Reg::R0), // NOP
+                        AluReg::mov_al(Reg::R0, Reg::R0), // NOP
+                    ]);
+
+                    self.emit_call_host_func(
+                        |_| {},
+                        &[Some(self as *const _ as u32), Some(pc)],
+                        debug_after_exec_op as _,
+                    );
+                }
             }
         }
         // TODO statically analyze generated insts
@@ -292,38 +296,48 @@ impl JitAsm {
             None => self.emit_code_block(entry, thumb),
         };
 
-        JitAsm::enter_jit(jit_entry, self.host_regs.get_sp_addr(), self.breakin_addr);
+        unsafe { JitAsm::enter_jit(jit_entry, self.host_regs.get_sp_addr(), self.breakin_addr) };
 
-        let regs = self.thread_regs.borrow();
-        debug_println!(
-            "Exiting gp: {:?}, sp: {:x}, lr: {:x}, pc: {:x}, cpsr: {:x}",
-            regs.gp_regs,
-            regs.sp,
-            regs.lr,
-            regs.pc,
-            regs.cpsr,
-        );
+        if DEBUG {
+            debug_inst_info(
+                self.cpu_type,
+                RegReserve::gp(),
+                self.thread_regs.borrow().deref(),
+                0,
+            );
+        }
     }
 
     #[inline(never)]
     #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-    fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: u32) {
-        unsafe {
-            asm!(
-                "push {{r0-r12, lr}}",
-                // Avoid R0-R3 here, compiler will try to optimize them for calling convention
-                "mov r4, {jit_entry}",
-                "mov r5, {host_sp_adr}",
-                "mov r6, {breakin_addr}",
-                "str sp, [r5]",
-                "blx r6",
-                "pop {{r0-r12, lr}}",
-                jit_entry = in(reg) jit_entry,
-                host_sp_adr = in(reg) host_sp_addr,
-                breakin_addr = in(reg) breakin_addr,
-            );
-        }
+    unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: u32) {
+        asm!(
+            "push {{r0-r12, lr}}",
+            // Avoid R0-R3 here, compiler will try to optimize them for calling convention
+            "mov r4, {jit_entry}",
+            "mov r5, {host_sp_adr}",
+            "mov r6, {breakin_addr}",
+            "str sp, [r5]",
+            "blx r6",
+            "pop {{r0-r12, lr}}",
+            jit_entry = in(reg) jit_entry,
+            host_sp_adr = in(reg) host_sp_addr,
+            breakin_addr = in(reg) breakin_addr,
+        );
     }
+}
+
+fn debug_inst_info(cpu_type: CpuType, regs_to_log: RegReserve, regs: &ThreadRegs, pc: u32) {
+    let mut output = "Executed ".to_owned();
+    for reg in reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR) + regs_to_log {
+        let value = if reg != Reg::PC {
+            *regs.get_reg_value(reg)
+        } else {
+            pc
+        };
+        output += &format!("{:?}: {:x}, ", reg, value);
+    }
+    println!("{:?} {}", cpu_type, output);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
@@ -339,16 +353,11 @@ unsafe extern "C" fn debug_after_exec_op(asm: *const JitAsm, pc: u32) {
     };
 
     let regs = (*asm).thread_regs.borrow();
-    let mut output = "Executed ".to_owned();
-    for reg in
-        reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR) + inst_info.src_regs + inst_info.out_regs
-    {
-        let value = if reg != Reg::PC {
-            *regs.get_reg_value(reg)
-        } else {
-            pc
-        };
-        output += &format!("{:?}: {:x}, ", reg, value);
-    }
-    println!("{:?} {}\n\t{:?}", (*asm).cpu_type, output, inst_info);
+    debug_inst_info(
+        (*asm).cpu_type,
+        inst_info.src_regs + inst_info.out_regs,
+        regs.deref(),
+        pc,
+    );
+    println!("\t{:?}", inst_info);
 }
