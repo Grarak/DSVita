@@ -1,22 +1,40 @@
-use crate::hle::indirect_memory::MemoryAmount;
+use crate::hle::gpu::gpu_context::GpuContext;
+use crate::hle::memory::indirect_memory::MemoryAmount;
+use crate::hle::memory::io_ports::IoPorts;
+use crate::hle::memory::memory::Memory;
+use crate::hle::memory::regions;
 use crate::hle::registers::ThreadRegs;
+use crate::hle::CpuType;
+use crate::host_memory::{VMmap, VmManager};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::inst_info::{InstInfo, Operand, ShiftValue};
 use crate::jit::reg::Reg;
 use crate::jit::{Op, ShiftType};
 use crate::logging::debug_println;
-use crate::memory::{VMmap, VmManager};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-pub struct IndirectMemoryHandler {
+pub struct IndirectMemHandler {
+    cpu_type: CpuType,
     pub vmm: Rc<RefCell<VmManager>>,
     pub thread_regs: Rc<RefCell<ThreadRegs>>,
+    io_ports: IoPorts,
 }
 
-impl IndirectMemoryHandler {
-    pub fn new(vmm: Rc<RefCell<VmManager>>, thread_regs: Rc<RefCell<ThreadRegs>>) -> Self {
-        IndirectMemoryHandler { vmm, thread_regs }
+impl IndirectMemHandler {
+    pub fn new(
+        cpu_type: CpuType,
+        memory: Rc<RefCell<Memory>>,
+        thread_regs: Rc<RefCell<ThreadRegs>>,
+        gpu_context: Rc<RefCell<GpuContext>>,
+    ) -> Self {
+        let vmm = memory.borrow().vmm.clone();
+        IndirectMemHandler {
+            cpu_type,
+            vmm,
+            thread_regs: thread_regs.clone(),
+            io_ports: IoPorts::new(memory, thread_regs, gpu_context),
+        }
     }
 
     pub fn get_inst_info(vmmap: &VMmap, addr: u32) -> InstInfo {
@@ -33,25 +51,28 @@ impl IndirectMemoryHandler {
             pc
         );
 
-        let vmm = self.vmm.borrow();
-        let mut vmmap = vmm.get_vm_mapping();
-
-        let inst_info = IndirectMemoryHandler::get_inst_info(&vmmap, pc);
-
-        let pre = match inst_info.op {
-            Op::LdrOfip | Op::StrOfip => true,
-            _ => todo!(),
+        let inst_info = {
+            let vmm = self.vmm.borrow();
+            IndirectMemHandler::get_inst_info(&vmm.get_vm_mapping(), pc)
         };
 
-        let add_to_base = match inst_info.op {
-            Op::LdrOfip | Op::StrOfip => true,
-            _ => todo!(),
-        };
+        let pre =
+            match inst_info.op {
+                Op::LdrOfip | Op::StrOfip | Op::StrhOfip => true,
+                _ => todo!(),
+            };
 
-        let write_back = match inst_info.op {
-            Op::LdrOfip | Op::StrOfip => false,
-            _ => todo!(),
-        };
+        let add_to_base =
+            match inst_info.op {
+                Op::LdrOfip | Op::StrOfip | Op::StrhOfip => true,
+                _ => todo!(),
+            };
+
+        let write_back =
+            match inst_info.op {
+                Op::LdrOfip | Op::StrOfip | Op::StrhOfip => false,
+                _ => todo!(),
+            };
 
         let operands = inst_info.operands();
         let op0 = operands[0].as_reg_no_shift().unwrap();
@@ -134,42 +155,39 @@ impl IndirectMemoryHandler {
             MemoryAmount::BYTE => {
                 if write {
                     let value = get_reg_value(*op0);
-                    vmmap[base_addr as usize] = value as u8;
+                    self.write(base_addr, value as u8);
                 } else {
-                    let value = vmmap[base_addr as usize];
+                    let value = self.read::<u8>(base_addr);
                     set_reg_value(*op0, value as u32);
                 }
             }
             MemoryAmount::HALF => {
-                let (_, aligned, _) = unsafe { vmmap[base_addr as usize..].align_to_mut::<u16>() };
                 if write {
                     let value = get_reg_value(*op0);
-                    aligned[0] = value as u16;
+                    self.write(base_addr, value as u16);
                 } else {
-                    let value = aligned[0];
+                    let value = self.read::<u16>(base_addr);
                     set_reg_value(*op0, value as u32);
                 }
             }
             MemoryAmount::WORD => {
-                let (_, aligned, _) = unsafe { vmmap[base_addr as usize..].align_to_mut::<u32>() };
                 if write {
                     let value = get_reg_value(*op0);
-                    aligned[0] = value;
+                    self.write(base_addr, value);
                 } else {
-                    let value = aligned[0];
+                    let value = self.read(base_addr);
                     set_reg_value(*op0, value);
                 }
             }
             MemoryAmount::DOUBLE => {
-                let (_, aligned, _) = unsafe { vmmap[base_addr as usize..].align_to_mut::<u32>() };
                 if write {
                     let value = get_reg_value(*op0);
                     let value1 = get_reg_value(Reg::from(*op0 as u8 + 1));
-                    aligned[0] = value;
-                    aligned[1] = value1;
+                    self.write(base_addr, value);
+                    self.write(base_addr + 4, value1);
                 } else {
-                    let value = aligned[0];
-                    let value1 = aligned[1];
+                    let value = self.read(base_addr);
+                    let value1 = self.read(base_addr);
                     set_reg_value(*op0, value);
                     set_reg_value(Reg::from(*op0 as u8 + 1), value1);
                 }
@@ -180,14 +198,82 @@ impl IndirectMemoryHandler {
             set_reg_value(*op1, new_base);
         }
     }
+
+    pub fn read<T: Into<u32> + Clone>(&self, addr: u32) -> T {
+        match self.cpu_type {
+            CpuType::ARM7 => self.read_arm7(addr),
+            CpuType::ARM9 => self.read_arm9(addr),
+        }
+    }
+
+    pub fn write<T: Clone + Into<u32>>(&self, addr: u32, value: T) {
+        debug_println!(
+            "{:?} Writing to {:x} with value {:x}",
+            self.cpu_type,
+            addr,
+            value.clone().into()
+        );
+
+        match self.cpu_type {
+            CpuType::ARM7 => self.write_arm7(addr, value),
+            CpuType::ARM9 => self.write_arm9(addr, value),
+        }
+    }
+
+    fn read_arm7<T: Into<u32>>(&self, addr: u32) -> T {
+        todo!()
+    }
+
+    fn write_arm7<T: Into<u32>>(&self, addr: u32, value: T) {
+        todo!()
+    }
+
+    fn read_arm9<T: Into<u32>>(&self, addr: u32) -> T {
+        todo!()
+    }
+
+    fn write_arm9<T: Clone + Into<u32>>(&self, addr: u32, value: T) {
+        let vmm = self.vmm.borrow();
+        let mut vmmap = vmm.get_vm_mapping();
+        let (_, aligned, _) = unsafe { vmmap[addr as usize..].align_to_mut::<T>() };
+        aligned[0] = value.clone();
+
+        let base = addr & 0xFF000000;
+        let offset = addr - base;
+        match base {
+            regions::SHARED_WRAM_OFFSET => {
+                todo!()
+            }
+            regions::ARM9_IO_PORTS_OFFSET => self.io_ports.write_arm9(offset, value),
+            regions::STANDARD_PALETTES_OFFSET => {
+                todo!()
+            }
+            regions::VRAM_ENGINE_A_BG_OFFSET => {
+                todo!()
+            }
+            regions::VRAM_ENGINE_B_BG_OFFSET => {
+                todo!()
+            }
+            regions::VRAM_ENGINE_A_OBJ_OFFSET => {
+                todo!()
+            }
+            regions::VRAM_ENGINE_B_OBJ_OFFSET => {
+                todo!()
+            }
+            regions::VRAM_LCDC_ALLOCATED_OFFSET => {
+                todo!()
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_read(handler: *const IndirectMemoryHandler, pc: u32) {
+pub unsafe extern "C" fn indirect_mem_read(handler: *const IndirectMemHandler, pc: u32) {
     (*handler).handle_request(pc, false);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_write(handler: *const IndirectMemoryHandler, pc: u32) {
+pub unsafe extern "C" fn indirect_mem_write(handler: *const IndirectMemHandler, pc: u32) {
     (*handler).handle_request(pc, true);
 }

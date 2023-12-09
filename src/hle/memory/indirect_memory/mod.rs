@@ -1,7 +1,7 @@
 use crate::jit::Op;
 
-pub mod indirect_memory_handler;
-pub mod indirect_memory_multiple_handler;
+pub mod indirect_mem_handler;
+pub mod indirect_mem_multiple_handler;
 
 enum MemoryAmount {
     BYTE,

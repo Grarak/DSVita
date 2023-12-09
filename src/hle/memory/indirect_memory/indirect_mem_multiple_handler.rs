@@ -1,9 +1,9 @@
-use crate::hle::indirect_memory::indirect_memory_handler::IndirectMemoryHandler;
+use crate::hle::memory::indirect_memory::indirect_mem_handler::IndirectMemHandler;
 use crate::jit::reg::RegReserve;
 use crate::jit::Op;
 use crate::logging::debug_println;
 
-impl IndirectMemoryHandler {
+impl IndirectMemHandler {
     fn handle_multiple_request(&self, pc: u32, write: bool) {
         debug_println!(
             "indirect memory multiple {} {:x}",
@@ -14,7 +14,7 @@ impl IndirectMemoryHandler {
         let vmm = self.vmm.borrow();
         let mut vmmap = vmm.get_vm_mapping();
 
-        let inst_info = IndirectMemoryHandler::get_inst_info(&vmmap, pc);
+        let inst_info = IndirectMemHandler::get_inst_info(&vmmap, pc);
 
         let pre = match inst_info.op {
             Op::Ldmia | Op::LdmiaW | Op::StmiaW => false,
@@ -70,17 +70,11 @@ impl IndirectMemoryHandler {
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_read_multiple(
-    handler: *const IndirectMemoryHandler,
-    pc: u32,
-) {
+pub unsafe extern "C" fn indirect_mem_read_multiple(handler: *const IndirectMemHandler, pc: u32) {
     (*handler).handle_multiple_request(pc, false);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_write_multiple(
-    handler: *const IndirectMemoryHandler,
-    pc: u32,
-) {
+pub unsafe extern "C" fn indirect_mem_write_multiple(handler: *const IndirectMemHandler, pc: u32) {
     (*handler).handle_multiple_request(pc, true);
 }

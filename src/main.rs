@@ -3,18 +3,20 @@
 #![feature(unchecked_shifts)]
 
 use crate::cartridge::Cartridge;
+use crate::hle::memory::memory::Memory;
+use crate::hle::memory::regions;
 use crate::hle::thread_context::ThreadContext;
 use crate::hle::CpuType;
-use crate::memory::{VmManager, ARM9_REGIONS};
+use crate::host_memory::VmManager;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::{env, mem};
 
 mod cartridge;
 mod hle;
+mod host_memory;
 mod jit;
 mod logging;
-mod memory;
 mod mmap;
 mod utils;
 
@@ -43,14 +45,15 @@ pub fn main() {
     }
 
     let cartridge = Cartridge::from_file(&get_file_path()).unwrap();
-    let vmm = Rc::new(RefCell::new(VmManager::new("vm", &ARM9_REGIONS).unwrap()));
+    let vmm = Rc::new(RefCell::new(VmManager::new("vm", &regions::ARM9_REGIONS).unwrap()));
     println!("Allocate vm at {:x}", vmm.borrow().vm.as_ptr() as u32);
+    let memory = Rc::new(RefCell::new(Memory::new(vmm.clone())));
 
     {
         let arm9_ram_addr = cartridge.header.arm9_values.ram_address;
         let arm9_entry_adrr = cartridge.header.arm9_values.entry_address;
 
-        assert_eq!(arm9_ram_addr, memory::MAIN_MEMORY_REGION.offset);
+        assert_eq!(arm9_ram_addr, regions::MAIN_MEMORY_REGION.offset);
 
         {
             let vmm_borrow = vmm.borrow();
@@ -63,10 +66,6 @@ pub fn main() {
             let arm9_code = cartridge.read_arm9_code().unwrap();
             vmmap[arm9_ram_addr as usize..arm9_ram_addr as usize + arm9_code.len()]
                 .copy_from_slice(&arm9_code);
-
-            vmmap[0x4000247] = 0x03; // WRAMCNT
-            vmmap[0x4000300] = 0x01; // POSTFLG (ARM9)
-            vmmap[0x4000304] = 0x0001; // POWCNT1
 
             let (_, aligned, _) = unsafe { vmmap.align_to_mut::<u16>() };
             aligned[0x27FF850 / 2] = 0x5835; // ARM7 BIOS CRC
@@ -82,12 +81,20 @@ pub fn main() {
             aligned[0x27FFC04 / 4] = 0x00001FC2; // Copy of chip ID 2
         }
 
-        let mut arm9_thread = ThreadContext::new(vmm.clone(), CpuType::ARM9);
+        let mut arm9_thread = ThreadContext::new(memory.clone(), CpuType::ARM9);
         {
             let mut cp15 = arm9_thread.cp15_context.borrow_mut();
             cp15.write(0x010000, 0x0005707D); // control
             cp15.write(0x090100, 0x0300000A); // dtcm addr/size
             cp15.write(0x090101, 0x00000020); // itcm size
+        }
+
+        {
+            // I/O Ports
+            let indirect_mem_handler = arm9_thread.indirect_mem_handler.borrow_mut();
+            indirect_mem_handler.write(0x4000247, 0x03u8);
+            indirect_mem_handler.write(0x4000300, 0x01u8);
+            indirect_mem_handler.write(0x4000304, 0x0001u16);
         }
 
         {
@@ -119,7 +126,7 @@ pub fn main() {
                 .copy_from_slice(&arm7_code);
         }
 
-        let mut arm7_thread = ThreadContext::new(vmm.clone(), CpuType::ARM7);
+        let mut arm7_thread = ThreadContext::new(memory, CpuType::ARM7);
         {
             let mut regs = arm7_thread.regs.borrow_mut();
             regs.gp_regs[12] = arm7_entry_addr;

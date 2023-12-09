@@ -1,7 +1,8 @@
 use crate::hle::cp15_context::Cp15Context;
-use crate::hle::indirect_memory::indirect_memory_handler::IndirectMemoryHandler;
+use crate::hle::memory::indirect_memory::indirect_mem_handler::IndirectMemHandler;
 use crate::hle::registers::ThreadRegs;
 use crate::hle::CpuType;
+use crate::host_memory::VmManager;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg};
 use crate::jit::assembler::arm::branch_assembler::Bx;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs};
@@ -11,7 +12,6 @@ use crate::jit::jit_memory::JitMemory;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
-use crate::memory::VmManager;
 use crate::DEBUG;
 use std::arch::asm;
 use std::cell::RefCell;
@@ -58,7 +58,7 @@ pub struct JitAsm {
     pub vm_mem_offset: u32,
     pub memory_offset: u32,
     pub cpu_type: CpuType,
-    pub indirect_memory_handler: Rc<RefCell<IndirectMemoryHandler>>,
+    pub indirect_mem_handler: Rc<RefCell<IndirectMemHandler>>,
     pub thread_regs: Rc<RefCell<ThreadRegs>>,
     pub cp15_context: Rc<RefCell<Cp15Context>>,
     pub jit_buf: JitBuf,
@@ -75,6 +75,7 @@ impl JitAsm {
         vmm: Rc<RefCell<VmManager>>,
         thread_regs: Rc<RefCell<ThreadRegs>>,
         cp15_context: Rc<RefCell<Cp15Context>>,
+        indirect_mem_handler: Rc<RefCell<IndirectMemHandler>>,
         cpu_type: CpuType,
     ) -> Self {
         let mut instance =
@@ -120,9 +121,7 @@ impl JitAsm {
                     vm_mem_offset: vm_begin_addr - base_offset,
                     memory_offset: base_offset,
                     cpu_type,
-                    indirect_memory_handler: Rc::new(
-                        RefCell::new(IndirectMemoryHandler::new(vmm, thread_regs.clone()))
-                    ),
+                    indirect_mem_handler,
                     thread_regs,
                     cp15_context,
                     jit_buf: JitBuf::new(),

@@ -13,97 +13,88 @@ impl JitAsm {
     pub fn emit(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
-        let emit_func =
-            match inst_info.op {
-                Op::B | Op::Bl => JitAsm::emit_b,
-                Op::Bx | Op::BlxReg => JitAsm::emit_bx,
-                Op::LdrOfip | Op::LdrbOfrplr => match self.cpu_type {
-                    CpuType::ARM7 => JitAsm::emit_ldr_arm7,
-                    CpuType::ARM9 => JitAsm::emit_ldr_arm9,
-                },
-                Op::LdmiaW => match self.cpu_type {
-                    CpuType::ARM7 => JitAsm::emit_ldm_arm7,
-                    CpuType::ARM9 => JitAsm::emit_ldm_arm9,
-                },
-                Op::StrOfip | Op::StrhOfip => match self.cpu_type {
-                    CpuType::ARM7 => JitAsm::emit_str_arm7,
-                    CpuType::ARM9 => JitAsm::emit_str_arm9,
-                },
-                Op::StmiaW => match self.cpu_type {
-                    CpuType::ARM7 => JitAsm::emit_stm_arm7,
-                    CpuType::ARM9 => JitAsm::emit_stm_arm9,
-                },
-                Op::Mcr | Op::Mrc => JitAsm::emit_cp15,
-                Op::MsrRc | Op::MsrIc => JitAsm::emit_msr_cprs,
-                Op::MrsRc => JitAsm::emit_mrs_cprs,
-                Op::Swi => JitAsm::emit_swi,
-                _ => {
-                    let src_regs = inst_info.src_regs;
-                    let out_regs = inst_info.out_regs;
-                    let combined_regs = src_regs + out_regs;
-                    if combined_regs.emulated_regs_count() > 0 {
-                        self.handle_emulated_regs(buf_index, pc, |_, _, _| Vec::new());
-                    } else {
-                        self.jit_buf.emit_opcodes.push(inst_info.opcode);
-                    }
-
-                    if out_regs.is_reserved(Reg::CPSR) {
-                        let mut reserved = combined_regs.create_push_pop_handler(
-                            2,
-                            &self.jit_buf.instructions[buf_index + 1..],
-                        );
-
-                        let host_cpsr_reg = reserved.pop().unwrap();
-                        let guest_cpsr_reg = reserved.pop().unwrap();
-
-                        if let Some(opcode) = reserved.emit_push_stack(Reg::LR) {
-                            self.jit_buf.emit_opcodes.push(opcode)
-                        }
-
-                        self.jit_buf
-                            .emit_opcodes
-                            .push(Mrs::cpsr(host_cpsr_reg, Cond::AL));
-                        self.jit_buf.emit_opcodes.extend(
-                            &self
-                                .thread_regs
-                                .borrow()
-                                .emit_get_reg(guest_cpsr_reg, Reg::CPSR),
-                        );
-
-                        // Only copy the cond flags from host cpsr
-                        self.jit_buf.emit_opcodes.push(AluImm::and(
-                            host_cpsr_reg,
-                            host_cpsr_reg,
-                            0xF8,
-                            4, // 8 Bytes, steps of 2
-                            Cond::AL,
-                        ));
-                        self.jit_buf.emit_opcodes.push(AluImm::bic(
-                            guest_cpsr_reg,
-                            guest_cpsr_reg,
-                            0xF8,
-                            4, // 8 Bytes, steps of 2
-                            Cond::AL,
-                        ));
-                        self.jit_buf.emit_opcodes.push(
-                            AluShiftImm::orr_al(guest_cpsr_reg, host_cpsr_reg, guest_cpsr_reg)
-                        );
-                        self.jit_buf
-                            .emit_opcodes
-                            .extend(&self.thread_regs.borrow().emit_set_reg(
-                                Reg::CPSR,
-                                guest_cpsr_reg,
-                                host_cpsr_reg,
-                            ));
-
-                        if let Some(opcode) = reserved.emit_pop_stack(Reg::LR) {
-                            self.jit_buf.emit_opcodes.push(opcode)
-                        }
-                    }
-
-                    |_: &mut JitAsm, _: usize, _: u32| {}
+        let emit_func = match inst_info.op {
+            Op::B | Op::Bl => JitAsm::emit_b,
+            Op::Bx | Op::BlxReg => JitAsm::emit_bx,
+            Op::LdrOfip | Op::LdrbOfrplr => match self.cpu_type {
+                CpuType::ARM7 => JitAsm::emit_ldr_arm7,
+                CpuType::ARM9 => JitAsm::emit_ldr_arm9,
+            },
+            Op::LdmiaW => match self.cpu_type {
+                CpuType::ARM7 => JitAsm::emit_ldm_arm7,
+                CpuType::ARM9 => JitAsm::emit_ldm_arm9,
+            },
+            Op::StrOfip | Op::StrhOfip => JitAsm::emit_str,
+            Op::StmiaW => JitAsm::emit_stm,
+            Op::Mcr | Op::Mrc => JitAsm::emit_cp15,
+            Op::MsrRc | Op::MsrIc => JitAsm::emit_msr_cprs,
+            Op::MrsRc => JitAsm::emit_mrs_cprs,
+            Op::Swi => JitAsm::emit_swi,
+            _ => {
+                let src_regs = inst_info.src_regs;
+                let out_regs = inst_info.out_regs;
+                let combined_regs = src_regs + out_regs;
+                if combined_regs.emulated_regs_count() > 0 {
+                    self.handle_emulated_regs(buf_index, pc, |_, _, _| Vec::new());
+                } else {
+                    self.jit_buf.emit_opcodes.push(inst_info.opcode);
                 }
-            };
+
+                if out_regs.is_reserved(Reg::CPSR) {
+                    let mut reserved = combined_regs
+                        .create_push_pop_handler(2, &self.jit_buf.instructions[buf_index + 1..]);
+
+                    let host_cpsr_reg = reserved.pop().unwrap();
+                    let guest_cpsr_reg = reserved.pop().unwrap();
+
+                    if let Some(opcode) = reserved.emit_push_stack(Reg::LR) {
+                        self.jit_buf.emit_opcodes.push(opcode)
+                    }
+
+                    self.jit_buf
+                        .emit_opcodes
+                        .push(Mrs::cpsr(host_cpsr_reg, Cond::AL));
+                    self.jit_buf.emit_opcodes.extend(
+                        &self
+                            .thread_regs
+                            .borrow()
+                            .emit_get_reg(guest_cpsr_reg, Reg::CPSR),
+                    );
+
+                    // Only copy the cond flags from host cpsr
+                    self.jit_buf.emit_opcodes.push(AluImm::and(
+                        host_cpsr_reg,
+                        host_cpsr_reg,
+                        0xF8,
+                        4, // 8 Bytes, steps of 2
+                        Cond::AL,
+                    ));
+                    self.jit_buf.emit_opcodes.push(AluImm::bic(
+                        guest_cpsr_reg,
+                        guest_cpsr_reg,
+                        0xF8,
+                        4, // 8 Bytes, steps of 2
+                        Cond::AL,
+                    ));
+                    self.jit_buf
+                        .emit_opcodes
+                        .push(AluShiftImm::orr_al(guest_cpsr_reg, host_cpsr_reg, guest_cpsr_reg));
+                    self.jit_buf
+                        .emit_opcodes
+                        .extend(&self.thread_regs.borrow().emit_set_reg(
+                            Reg::CPSR,
+                            guest_cpsr_reg,
+                            host_cpsr_reg,
+                        ));
+
+                    if let Some(opcode) = reserved.emit_pop_stack(Reg::LR) {
+                        self.jit_buf.emit_opcodes.push(opcode)
+                    }
+                }
+
+                |_: &mut JitAsm, _: usize, _: u32| {}
+            }
+        };
 
         emit_func(self, buf_index, pc);
     }

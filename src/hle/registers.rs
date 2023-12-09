@@ -1,3 +1,4 @@
+use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Msr};
 use crate::jit::reg::{Reg, RegReserve};
@@ -59,16 +60,21 @@ pub struct ThreadRegs {
     pub abt: OtherModeRegs,
     pub irq: OtherModeRegs,
     pub und: OtherModeRegs,
+    pub ime: bool,
+    pub post_flg: u8,
+    pub cpu_type: CpuType,
     pub restore_regs_opcodes: [u32; 6],
     pub save_regs_opcodes: [u32; 4],
 }
 
 impl ThreadRegs {
-    pub fn new() -> Rc<RefCell<Self>> {
+    pub fn new(cpu_type: CpuType) -> Rc<RefCell<Self>> {
         let instance = Rc::new(RefCell::new(ThreadRegs::default()));
 
         {
             let mut instance = instance.borrow_mut();
+
+            instance.cpu_type = cpu_type;
 
             let gp_regs_addr = instance.gp_regs.as_ptr() as u32;
             let last_regs_addr = ptr::addr_of!(instance.gp_regs[instance.gp_regs.len() - 1]) as u32;
@@ -247,6 +253,17 @@ impl ThreadRegs {
         }
 
         self.cpsr = value;
+    }
+
+    pub fn set_ime(&mut self, value: u8) {
+        self.ime = value & 0x1 == 1;
+    }
+
+    pub fn set_post_flg(&mut self, value: u8) {
+        self.post_flg |= value & 0x1;
+        if self.cpu_type == CpuType::ARM9 {
+            self.post_flg = (self.post_flg & !0x2) | (value & 0x2);
+        }
     }
 }
 
