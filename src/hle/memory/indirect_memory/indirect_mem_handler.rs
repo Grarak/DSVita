@@ -21,6 +21,13 @@ pub struct IndirectMemHandler {
     io_ports: IoPorts,
 }
 
+pub enum WriteBack {
+    Byte(u8),
+    Half(u16),
+    Word(u32),
+    None,
+}
+
 impl IndirectMemHandler {
     pub fn new(
         cpu_type: CpuType,
@@ -233,38 +240,34 @@ impl IndirectMemHandler {
     }
 
     fn write_arm9<T: Clone + Into<u32>>(&self, addr: u32, value: T) {
+        let base = addr & 0xFF000000;
+        let offset = addr - base;
+
+        let readjusted_value = match base {
+            regions::SHARED_WRAM_OFFSET => todo!(),
+            regions::ARM9_IO_PORTS_OFFSET => self.io_ports.write_arm9(offset, value.clone()),
+            regions::STANDARD_PALETTES_OFFSET => todo!(),
+            regions::VRAM_ENGINE_A_BG_OFFSET => todo!(),
+            regions::VRAM_ENGINE_B_BG_OFFSET => todo!(),
+            regions::VRAM_ENGINE_A_OBJ_OFFSET => todo!(),
+            regions::VRAM_ENGINE_B_OBJ_OFFSET => todo!(),
+            regions::VRAM_LCDC_ALLOCATED_OFFSET => todo!(),
+            _ => WriteBack::None,
+        };
+
+        match readjusted_value {
+            WriteBack::Byte(v) => self.write_raw(addr, v),
+            WriteBack::Half(v) => self.write_raw(addr, v),
+            WriteBack::Word(v) => self.write_raw(addr, v),
+            WriteBack::None => self.write_raw(addr, value),
+        }
+    }
+
+    fn write_raw<T: Into<u32>>(&self, addr: u32, value: T) {
         let vmm = self.vmm.borrow();
         let mut vmmap = vmm.get_vm_mapping();
         let (_, aligned, _) = unsafe { vmmap[addr as usize..].align_to_mut::<T>() };
-        aligned[0] = value.clone();
-
-        let base = addr & 0xFF000000;
-        let offset = addr - base;
-        match base {
-            regions::SHARED_WRAM_OFFSET => {
-                todo!()
-            }
-            regions::ARM9_IO_PORTS_OFFSET => self.io_ports.write_arm9(offset, value),
-            regions::STANDARD_PALETTES_OFFSET => {
-                todo!()
-            }
-            regions::VRAM_ENGINE_A_BG_OFFSET => {
-                todo!()
-            }
-            regions::VRAM_ENGINE_B_BG_OFFSET => {
-                todo!()
-            }
-            regions::VRAM_ENGINE_A_OBJ_OFFSET => {
-                todo!()
-            }
-            regions::VRAM_ENGINE_B_OBJ_OFFSET => {
-                todo!()
-            }
-            regions::VRAM_LCDC_ALLOCATED_OFFSET => {
-                todo!()
-            }
-            _ => {}
-        }
+        aligned[0] = value;
     }
 }
 

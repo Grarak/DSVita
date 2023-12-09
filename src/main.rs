@@ -49,37 +49,37 @@ pub fn main() {
     println!("Allocate vm at {:x}", vmm.borrow().vm.as_ptr() as u32);
     let memory = Rc::new(RefCell::new(Memory::new(vmm.clone())));
 
+    let vmm_borrow = vmm.borrow();
+    let mut vmmap = vmm_borrow.get_vm_mapping();
+
+    {
+        let header: &[u8; cartridge::HEADER_IN_RAM_SIZE] =
+            unsafe { mem::transmute(&cartridge.header) };
+        vmmap[0x27FFE00..0x27FFE00 + cartridge::HEADER_IN_RAM_SIZE].copy_from_slice(header);
+
+        let (_, aligned, _) = unsafe { vmmap.align_to_mut::<u16>() };
+        aligned[0x27FF850 / 2] = 0x5835; // ARM7 BIOS CRC
+        aligned[0x27FF880 / 2] = 0x0007; // Message from ARM9 to ARM7
+        aligned[0x27FF884 / 2] = 0x0006; // ARM7 boot task
+        aligned[0x27FFC10 / 2] = 0x5835; // Copy of ARM7 BIOS CRC
+        aligned[0x27FFC40 / 2] = 0x0001; // Boot indicator
+
+        let (_, aligned, _) = unsafe { vmmap.align_to_mut::<u32>() };
+        aligned[0x27FF800 / 4] = 0x00001FC2; // Chip ID 1
+        aligned[0x27FF804 / 4] = 0x00001FC2; // Chip ID 2
+        aligned[0x27FFC00 / 4] = 0x00001FC2; // Copy of chip ID 1
+        aligned[0x27FFC04 / 4] = 0x00001FC2; // Copy of chip ID 2
+    }
+
     {
         let arm9_ram_addr = cartridge.header.arm9_values.ram_address;
         let arm9_entry_adrr = cartridge.header.arm9_values.entry_address;
 
         assert_eq!(arm9_ram_addr, regions::MAIN_MEMORY_REGION.offset);
 
-        {
-            let vmm_borrow = vmm.borrow();
-            let mut vmmap = vmm_borrow.get_vm_mapping();
-
-            let header: &[u8; cartridge::HEADER_IN_RAM_SIZE] =
-                unsafe { mem::transmute(&cartridge.header) };
-            vmmap[0x27FFE00..0x27FFE00 + cartridge::HEADER_IN_RAM_SIZE].copy_from_slice(header);
-
-            let arm9_code = cartridge.read_arm9_code().unwrap();
-            vmmap[arm9_ram_addr as usize..arm9_ram_addr as usize + arm9_code.len()]
-                .copy_from_slice(&arm9_code);
-
-            let (_, aligned, _) = unsafe { vmmap.align_to_mut::<u16>() };
-            aligned[0x27FF850 / 2] = 0x5835; // ARM7 BIOS CRC
-            aligned[0x27FF880 / 2] = 0x0007; // Message from ARM9 to ARM7
-            aligned[0x27FF884 / 2] = 0x0006; // ARM7 boot task
-            aligned[0x27FFC10 / 2] = 0x5835; // Copy of ARM7 BIOS CRC
-            aligned[0x27FFC40 / 2] = 0x0001; // Boot indicator
-
-            let (_, aligned, _) = unsafe { vmmap.align_to_mut::<u32>() };
-            aligned[0x27FF800 / 4] = 0x00001FC2; // Chip ID 1
-            aligned[0x27FF804 / 4] = 0x00001FC2; // Chip ID 2
-            aligned[0x27FFC00 / 4] = 0x00001FC2; // Copy of chip ID 1
-            aligned[0x27FFC04 / 4] = 0x00001FC2; // Copy of chip ID 2
-        }
+        let arm9_code = cartridge.read_arm9_code().unwrap();
+        vmmap[arm9_ram_addr as usize..arm9_ram_addr as usize + arm9_code.len()]
+            .copy_from_slice(&arm9_code);
 
         let mut arm9_thread = ThreadContext::new(memory.clone(), CpuType::ARM9);
         {
@@ -129,13 +129,15 @@ pub fn main() {
         let mut arm7_thread = ThreadContext::new(memory, CpuType::ARM7);
         {
             let mut regs = arm7_thread.regs.borrow_mut();
-            regs.gp_regs[12] = arm7_entry_addr;
-            regs.sp = 0x380FD80;
-            regs.lr = arm7_entry_addr;
+            regs.user.gp_regs[4] = arm7_entry_addr; // R12
+            regs.user.sp = 0x380FD80;
+            regs.irq.sp = 0x380FF80;
+            regs.user.sp = 0x380FFC0;
+            regs.user.lr = arm7_entry_addr;
             regs.pc = arm7_entry_addr;
-            regs.cpsr = 0x000000DF;
+            regs.set_cpsr(0x000000DF);
         }
 
-        // arm7_thread.run();;
+        // arm7_thread.run();
     }
 }

@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 pub struct Memory {
     pub vmm: Rc<RefCell<VmManager>>,
-    wram_cnt: u8,
+    pub wram_cnt: u8,
 }
 
 impl Memory {
@@ -12,7 +12,8 @@ impl Memory {
         Memory { vmm, wram_cnt: 0 }
     }
 
-    pub fn set_wram_cnt(&mut self, value: u8) {
+    pub fn set_wram_cnt(&mut self, value: u8) -> u8 {
         self.wram_cnt = value & 0x3;
+        self.wram_cnt
     }
 }

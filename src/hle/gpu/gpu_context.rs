@@ -7,7 +7,8 @@ impl GpuContext {
         GpuContext { pow_cnt1: 0 }
     }
 
-    pub fn set_pow_cnt1(&mut self, value: u16) {
+    pub fn set_pow_cnt1(&mut self, value: u16) -> u16 {
         self.pow_cnt1 = value;
+        self.pow_cnt1
     }
 }
