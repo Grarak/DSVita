@@ -14,18 +14,24 @@ const INSTRUCTION_TCM_REGION: MemoryRegion =
     MemoryRegion::new("Instruction TCM", 0x00000000, 32 * 1024);
 const DATA_TCM_REGION: MemoryRegion = MemoryRegion::new("Data TCM", 0, 16 * 1024);
 
-pub const MAIN_MEMORY_REGION: MemoryRegion =
-    MemoryRegion::new("Main Memory", 0x02000000, 4 * 1024 * 1024);
+pub const MAIN_MEMORY_OFFSET: u32 = 0x02000000;
+const MAIN_MEMORY_REGION: MemoryRegion =
+    MemoryRegion::new("Main Memory", MAIN_MEMORY_OFFSET, 4 * 1024 * 1024);
 
 pub const SHARED_WRAM_OFFSET: u32 = 0x03000000;
 const SHARED_WRAM_REGION: MemoryRegion =
     MemoryRegion::new("Shared WRAM", SHARED_WRAM_OFFSET, 32 * 1024);
-const ARM7_WRAM_REGION: MemoryRegion = MemoryRegion::new("ARM7-WRAM", 0x03800000, 64 * 1024);
+pub const ARM7_WRAM_OFFSET: u32 = 0x03800000;
+pub const ARM7_WRAM_SIZE: u32 = 64 * 1024;
+const ARM7_WRAM_REGION: MemoryRegion =
+    MemoryRegion::new("ARM7-WRAM", ARM7_WRAM_OFFSET, ARM7_WRAM_SIZE);
 
 pub const ARM9_IO_PORTS_OFFSET: u32 = 0x04000000;
 const ARM9_IO_PORTS_REGION: MemoryRegion =
     MemoryRegion::new("ARM9-I/O Ports", ARM9_IO_PORTS_OFFSET, 0);
-const ARM7_IO_PORTS_REGION: MemoryRegion = MemoryRegion::new("ARM7-I/O Ports", 0x04000000, 0);
+pub const ARM7_IO_PORTS_OFFSET: u32 = 0x04000000;
+const ARM7_IO_PORTS_REGION: MemoryRegion =
+    MemoryRegion::new("ARM7-I/O Ports", ARM7_IO_PORTS_OFFSET, 0);
 
 const WIRELESS_COM_WAIT_STATE_0: MemoryRegion =
     MemoryRegion::new("Wireless Communications Wait State 0", 0x04800000, 8 * 1024);

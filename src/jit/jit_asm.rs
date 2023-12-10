@@ -290,10 +290,16 @@ impl JitAsm {
         }
         let entry = entry & !1;
 
-        let jit_entry = match self.jit_addr_mapping.get(&entry) {
-            Some(jit_addr) => *jit_addr,
-            None => self.emit_code_block(entry, thumb),
-        };
+        // TODO invalidate jit blocks
+        let jit_entry =
+            if entry < 0x02000000 || entry >= 0x03000000 {
+                self.emit_code_block(entry, thumb)
+            } else {
+                match self.jit_addr_mapping.get(&entry) {
+                    Some(jit_addr) => *jit_addr,
+                    None => self.emit_code_block(entry, thumb),
+                }
+            };
 
         unsafe { JitAsm::enter_jit(jit_entry, self.host_regs.get_sp_addr(), self.breakin_addr) };
 

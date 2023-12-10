@@ -9,6 +9,16 @@ pub const fn negative(n: u32) -> u32 {
     !(n - 1)
 }
 
+pub fn read_from_mem<T: Clone + Into<u32>>(mem: &[u8], addr: u32) -> T {
+    let (_, aligned, _) = unsafe { mem[addr as usize..].align_to::<T>() };
+    aligned[0].clone()
+}
+
+pub fn write_to_mem<T: Into<u32>>(mem: &mut [u8], addr: u32, value: T) {
+    let (_, aligned, _) = unsafe { mem[addr as usize..].align_to_mut::<T>() };
+    aligned[0] = value
+}
+
 pub struct StrErr {
     str: String,
 }

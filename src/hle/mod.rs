@@ -6,6 +6,7 @@ mod gpu;
 pub mod memory;
 pub mod registers;
 pub mod thread_context;
+mod spu_context;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]

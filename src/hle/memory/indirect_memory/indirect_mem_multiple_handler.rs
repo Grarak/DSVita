@@ -11,10 +11,10 @@ impl IndirectMemHandler {
             pc
         );
 
-        let vmm = self.vmm.borrow();
-        let mut vmmap = vmm.get_vm_mapping();
-
-        let inst_info = IndirectMemHandler::get_inst_info(&vmmap, pc);
+        let inst_info = {
+            let vmm = self.vmm.borrow();
+            IndirectMemHandler::get_inst_info(&vmm.get_vm_mapping(), pc)
+        };
 
         let pre = match inst_info.op {
             Op::Ldmia | Op::LdmiaW | Op::StmiaW => false,
@@ -46,25 +46,24 @@ impl IndirectMemHandler {
             todo!()
         }
 
-        let mut addr = *self.thread_regs.borrow().get_reg_value(*op0);
-        addr += decrement as u32 * rlist.len() as u32 * 4;
+        let start_addr = *self.thread_regs.borrow().get_reg_value(*op0);
+        let mut addr = start_addr;
 
-        let (_, aligned, _) = unsafe { vmmap.align_to_mut::<u32>() };
         for reg in rlist {
             addr += pre as u32 * 4;
             if write {
                 let value = *self.thread_regs.borrow_mut().get_reg_value(reg);
-                aligned[(addr / 4) as usize] = value;
+                self.write(addr, value);
             } else {
-                let value = aligned[(addr / 4) as usize];
+                let value = self.read(addr);
                 *self.thread_regs.borrow_mut().get_reg_value_mut(reg) = value;
             }
             addr += !pre as u32 * 4;
         }
 
         if write_back {
-            *self.thread_regs.borrow_mut().get_reg_value_mut(*op0) =
-                addr + decrement as u32 * rlist.len() as u32 * 4;
+            *self.thread_regs.borrow_mut().get_reg_value_mut(*op0) = (decrement as u32 * (rlist.len() as u32 * 4 + start_addr)) // stm 
+                    + (!decrement as u32 * addr); // ldm
         }
     }
 }

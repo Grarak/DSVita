@@ -75,7 +75,7 @@ pub fn main() {
         let arm9_ram_addr = cartridge.header.arm9_values.ram_address;
         let arm9_entry_adrr = cartridge.header.arm9_values.entry_address;
 
-        assert_eq!(arm9_ram_addr, regions::MAIN_MEMORY_REGION.offset);
+        assert_eq!(arm9_ram_addr, regions::MAIN_MEMORY_OFFSET);
 
         let arm9_code = cartridge.read_arm9_code().unwrap();
         vmmap[arm9_ram_addr as usize..arm9_ram_addr as usize + arm9_code.len()]
@@ -107,7 +107,7 @@ pub fn main() {
             regs.pc = arm9_entry_adrr;
             regs.set_cpsr(0x000000DF);
         }
-        arm9_thread.run();
+        // arm9_thread.run();
     }
 
     {
@@ -127,6 +127,14 @@ pub fn main() {
         }
 
         let mut arm7_thread = ThreadContext::new(memory, CpuType::ARM7);
+
+        {
+            // I/O Ports
+            let indirect_mem_handler = arm7_thread.indirect_mem_handler.borrow_mut();
+            indirect_mem_handler.write(0x4000300, 0x01u8); // POWCNT1
+            indirect_mem_handler.write(0x4000504, 0x0200u16); // SOUNDBIAS
+        }
+
         {
             let mut regs = arm7_thread.regs.borrow_mut();
             regs.user.gp_regs[4] = arm7_entry_addr; // R12
@@ -138,6 +146,6 @@ pub fn main() {
             regs.set_cpsr(0x000000DF);
         }
 
-        // arm7_thread.run();
+        arm7_thread.run();
     }
 }

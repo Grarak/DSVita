@@ -24,7 +24,7 @@ impl JitAsm {
                 CpuType::ARM7 => JitAsm::emit_ldm_arm7,
                 CpuType::ARM9 => JitAsm::emit_ldm_arm9,
             },
-            Op::StrOfip | Op::StrhOfip => JitAsm::emit_str,
+            Op::StrOfip | Op::StrhOfip | Op::StrPrim => JitAsm::emit_str,
             Op::StmiaW => JitAsm::emit_stm,
             Op::Mcr | Op::Mrc => JitAsm::emit_cp15,
             Op::MsrRc | Op::MsrIc => JitAsm::emit_msr_cprs,

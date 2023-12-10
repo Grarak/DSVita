@@ -1,5 +1,5 @@
 use crate::mmap::Mmap;
-use crate::utils::align_up;
+use crate::utils::{align_up, write_to_mem};
 use std::mem;
 
 pub struct JitMemory {
@@ -25,8 +25,7 @@ impl JitMemory {
 
     pub fn write<T: Into<u32>>(&mut self, value: T) {
         debug_assert!(self.is_open);
-        let (_, aligned, _) = unsafe { self.memory[self.ptr as usize..].align_to_mut::<T>() };
-        aligned[0] = value;
+        write_to_mem(&mut self.memory, self.ptr, value);
         self.ptr += mem::size_of::<T>() as u32;
     }
 

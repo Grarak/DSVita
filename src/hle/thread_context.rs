@@ -3,6 +3,7 @@ use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::memory::indirect_memory::indirect_mem_handler::IndirectMemHandler;
 use crate::hle::memory::memory::Memory;
 use crate::hle::registers::ThreadRegs;
+use crate::hle::spu_context::SpuContext;
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitAsm;
 use std::cell::RefCell;
@@ -21,9 +22,10 @@ impl ThreadContext {
         let regs = ThreadRegs::new(cpu_type);
         let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
         let gpu_context = Rc::new(RefCell::new(GpuContext::new()));
-        let indirect_mem_handler = Rc::new(
-            RefCell::new(IndirectMemHandler::new(cpu_type, memory, regs.clone(), gpu_context))
-        );
+        let spu_context = Rc::new(RefCell::new(SpuContext::new()));
+        let indirect_mem_handler = Rc::new(RefCell::new(
+            IndirectMemHandler::new(cpu_type, memory, regs.clone(), gpu_context, spu_context)
+        ));
 
         ThreadContext {
             jit: JitAsm::new(
