@@ -8,6 +8,7 @@ use crate::hle::CpuType;
 use crate::jit::jit_asm::JitAsm;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 pub struct ThreadContext {
     jit: JitAsm,
@@ -17,19 +18,23 @@ pub struct ThreadContext {
 }
 
 impl ThreadContext {
-    pub fn new(memory: Rc<RefCell<Memory>>, cpu_type: CpuType) -> Self {
-        let vmm = memory.borrow().vmm.clone();
+    pub fn new(memory: Arc<Mutex<Memory>>, cpu_type: CpuType) -> Self {
         let regs = ThreadRegs::new(cpu_type);
         let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
         let gpu_context = Rc::new(RefCell::new(GpuContext::new()));
         let spu_context = Rc::new(RefCell::new(SpuContext::new()));
-        let indirect_mem_handler = Rc::new(RefCell::new(
-            IndirectMemHandler::new(cpu_type, memory, regs.clone(), gpu_context, spu_context)
-        ));
+        let indirect_mem_handler =
+            Rc::new(RefCell::new(IndirectMemHandler::new(
+                cpu_type,
+                memory.clone(),
+                regs.clone(),
+                gpu_context,
+                spu_context,
+            )));
 
         ThreadContext {
             jit: JitAsm::new(
-                vmm,
+                memory,
                 regs.clone(),
                 cp15_context.clone(),
                 indirect_mem_handler.clone(),

@@ -6,22 +6,26 @@ use crate::hle::memory::regions;
 use crate::hle::registers::ThreadRegs;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::CpuType;
-use crate::host_memory::{VMmap, VmManager};
+use crate::host_memory::VmManager;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
-use crate::jit::inst_info::{InstInfo, Operand, ShiftValue};
+use crate::jit::inst_info::{Operand, ShiftValue};
 use crate::jit::reg::Reg;
 use crate::jit::{Op, ShiftType};
 use crate::logging::debug_println;
-use crate::utils::{read_from_mem, write_to_mem};
+use crate::utils;
 use std::cell::RefCell;
+use std::collections::HashSet;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 pub struct IndirectMemHandler {
     cpu_type: CpuType,
-    memory: Rc<RefCell<Memory>>,
-    pub vmm: Rc<RefCell<VmManager>>,
+    memory: Arc<Mutex<Memory>>,
+    pub vmm: *mut VmManager,
     pub thread_regs: Rc<RefCell<ThreadRegs>>,
     io_ports: IoPorts,
+    pub invalidated_jit_addrs: HashSet<u32>,
 }
 
 pub enum WriteBack {
@@ -34,38 +38,33 @@ pub enum WriteBack {
 impl IndirectMemHandler {
     pub fn new(
         cpu_type: CpuType,
-        memory: Rc<RefCell<Memory>>,
+        memory: Arc<Mutex<Memory>>,
         thread_regs: Rc<RefCell<ThreadRegs>>,
         gpu_context: Rc<RefCell<GpuContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
     ) -> Self {
-        let vmm = memory.borrow().vmm.clone();
+        let vmm = &mut memory.lock().unwrap().vmm as *mut _;
         IndirectMemHandler {
             cpu_type,
             memory: memory.clone(),
             vmm,
             thread_regs: thread_regs.clone(),
-            io_ports: IoPorts::new(memory, thread_regs, gpu_context, spu_context),
+            io_ports: IoPorts::new(memory.clone(), thread_regs, gpu_context, spu_context),
+            invalidated_jit_addrs: HashSet::new(),
         }
     }
 
-    pub fn get_inst_info(vmmap: &VMmap, addr: u32) -> InstInfo {
-        let (_, aligned, _) = unsafe { vmmap[addr as usize..].align_to::<u32>() };
-        let opcode = aligned[0];
-        let (op, func) = lookup_opcode(opcode);
-        func(opcode, *op)
-    }
-
-    fn handle_request(&self, pc: u32, write: bool) {
+    fn handle_request(&mut self, opcode: u32, pc: u32, write: bool) {
         debug_println!(
-            "indirect memory {} {:x}",
+            "{:?} indirect memory {} {:x}",
+            self.cpu_type,
             if write { "write" } else { "read" },
             pc
         );
 
         let inst_info = {
-            let vmm = self.vmm.borrow();
-            IndirectMemHandler::get_inst_info(&vmm.get_vm_mapping(), pc)
+            let (op, func) = lookup_opcode(opcode);
+            func(opcode, *op)
         };
 
         let pre = match inst_info.op {
@@ -83,27 +82,30 @@ impl IndirectMemHandler {
         let op0 = operands[0].as_reg_no_shift().unwrap();
         let op1 = operands[1].as_reg_no_shift().unwrap();
 
-        let get_reg_value = |reg: Reg| match reg {
-            Reg::PC => pc + 8,
-            _ => *self.thread_regs.borrow().get_reg_value(reg),
-        };
-        let set_reg_value = |reg: Reg, value: u32| match reg {
+        let get_reg_value =
+            |regs: &ThreadRegs, reg: Reg| match reg {
+                Reg::PC => pc + 8,
+                _ => *regs.get_reg_value(reg),
+            };
+        let set_reg_value = |regs: &mut ThreadRegs, reg: Reg, value: u32| match reg {
             Reg::PC => todo!(),
-            _ => *self.thread_regs.borrow_mut().get_reg_value_mut(reg) = value,
+            _ => *regs.get_reg_value_mut(reg) = value,
         };
 
         let new_base = {
-            let mut op1_value = get_reg_value(*op1);
+            let mut op1_value = get_reg_value(self.thread_regs.borrow().deref(), *op1);
 
             if operands.len() == 3 {
                 let op2_value = match &operands[2] {
                     Operand::Reg { reg, shift } => {
-                        let mut op2_value = get_reg_value(*reg);
+                        let mut op2_value = get_reg_value(self.thread_regs.borrow().deref(), *reg);
 
                         if let Some(shift) = shift {
                             let (shift_type, shift) = (*shift).into();
                             let shift_value = match shift {
-                                ShiftValue::Reg(reg) => get_reg_value(reg),
+                                ShiftValue::Reg(reg) => {
+                                    get_reg_value(self.thread_regs.borrow().deref(), reg)
+                                }
                                 ShiftValue::Imm(imm) => imm as u32,
                             };
 
@@ -140,105 +142,116 @@ impl IndirectMemHandler {
             op1_value
         };
 
-        let base_addr =
-            if pre {
-                if write_back {
-                    set_reg_value(*op1, new_base);
-                }
-                new_base
-            } else {
-                get_reg_value(*op1)
-            };
+        let base_addr = if pre {
+            if write_back {
+                set_reg_value(self.thread_regs.borrow_mut().deref_mut(), *op1, new_base);
+            }
+            new_base
+        } else {
+            get_reg_value(self.thread_regs.borrow().deref(), *op1)
+        };
 
         let memory_amount = MemoryAmount::from(inst_info.op);
         match memory_amount {
             MemoryAmount::BYTE => {
                 if write {
-                    let value = get_reg_value(*op0);
+                    let value = get_reg_value(self.thread_regs.borrow().deref(), *op0);
                     self.write(base_addr, value as u8);
                 } else {
                     let value = self.read::<u8>(base_addr);
-                    set_reg_value(*op0, value as u32);
+                    set_reg_value(
+                        self.thread_regs.borrow_mut().deref_mut(),
+                        *op0,
+                        value as u32,
+                    );
                 }
             }
             MemoryAmount::HALF => {
                 if write {
-                    let value = get_reg_value(*op0);
+                    let value = get_reg_value(self.thread_regs.borrow().deref(), *op0);
                     self.write(base_addr, value as u16);
                 } else {
                     let value = self.read::<u16>(base_addr);
-                    set_reg_value(*op0, value as u32);
+                    set_reg_value(
+                        self.thread_regs.borrow_mut().deref_mut(),
+                        *op0,
+                        value as u32,
+                    );
                 }
             }
             MemoryAmount::WORD => {
                 if write {
-                    let value = get_reg_value(*op0);
+                    let value = get_reg_value(self.thread_regs.borrow().deref(), *op0);
                     self.write(base_addr, value);
                 } else {
                     let value = self.read(base_addr);
-                    set_reg_value(*op0, value);
+                    set_reg_value(self.thread_regs.borrow_mut().deref_mut(), *op0, value);
                 }
             }
             MemoryAmount::DOUBLE => {
                 if write {
-                    let value = get_reg_value(*op0);
-                    let value1 = get_reg_value(Reg::from(*op0 as u8 + 1));
+                    let value = get_reg_value(self.thread_regs.borrow().deref(), *op0);
+                    let value1 =
+                        get_reg_value(self.thread_regs.borrow().deref(), Reg::from(*op0 as u8 + 1));
                     self.write(base_addr, value);
                     self.write(base_addr + 4, value1);
                 } else {
                     let value = self.read(base_addr);
                     let value1 = self.read(base_addr);
-                    set_reg_value(*op0, value);
-                    set_reg_value(Reg::from(*op0 as u8 + 1), value1);
+                    set_reg_value(self.thread_regs.borrow_mut().deref_mut(), *op0, value);
+                    set_reg_value(
+                        self.thread_regs.borrow_mut().deref_mut(),
+                        Reg::from(*op0 as u8 + 1),
+                        value1,
+                    );
                 }
             }
         }
 
         if !pre && write_back {
-            set_reg_value(*op1, new_base);
+            set_reg_value(self.thread_regs.borrow_mut().deref_mut(), *op1, new_base);
         }
     }
 
-    pub fn read<T: Clone + Into<u32>>(&self, addr: u32) -> T {
+    pub fn read<T: Copy + Into<u32>>(&self, addr: u32) -> T {
         match self.cpu_type {
             CpuType::ARM7 => self.read_arm7(addr),
             CpuType::ARM9 => todo!(),
         }
     }
 
-    pub fn write<T: Clone + Into<u32>>(&self, addr: u32, value: T) {
+    pub fn write<T: Copy + Into<u32>>(&mut self, addr: u32, value: T) {
         match self.cpu_type {
             CpuType::ARM7 => self.write_arm7(addr, value),
             CpuType::ARM9 => self.write_arm9(addr, value),
         }
     }
 
-    fn read_arm7<T: Clone + Into<u32>>(&self, addr: u32) -> T {
+    fn read_arm7<T: Copy + Into<u32>>(&self, addr: u32) -> T {
         let base = addr & 0xFF000000;
         let offset = addr - base;
 
         match base {
             regions::MAIN_MEMORY_OFFSET => self.read_raw(addr),
-            regions::SHARED_WRAM_OFFSET => self.memory.borrow().read_wram_arm7(offset),
+            regions::SHARED_WRAM_OFFSET => self.memory.lock().unwrap().read_wram_arm7(offset),
             regions::ARM7_IO_PORTS_OFFSET => self.io_ports.read_arm7(offset),
             _ => todo!("unimplemented read addr {:x}", addr),
         }
     }
 
-    fn write_arm7<T: Clone + Into<u32>>(&self, addr: u32, value: T) {
+    fn write_arm7<T: Copy + Into<u32>>(&mut self, addr: u32, value: T) {
         let base = addr & 0xFF000000;
         let offset = addr - base;
 
         let write_to_mem = match base {
             regions::MAIN_MEMORY_OFFSET => true,
             regions::SHARED_WRAM_OFFSET => {
-                self.memory
-                    .borrow_mut()
-                    .write_wram_arm7(offset, value.clone());
+                self.memory.lock().unwrap().write_wram_arm7(offset, value);
+                self.invalidated_jit_addrs.insert(addr);
                 false
             }
             regions::ARM7_IO_PORTS_OFFSET => {
-                self.io_ports.write_arm7(offset, value.clone());
+                self.io_ports.write_arm7(offset, value);
                 false
             }
             _ => todo!("unimplemented write addr {:x}", addr),
@@ -249,13 +262,13 @@ impl IndirectMemHandler {
         }
     }
 
-    fn write_arm9<T: Clone + Into<u32>>(&self, addr: u32, value: T) {
+    fn write_arm9<T: Copy + Into<u32>>(&self, addr: u32, value: T) {
         let base = addr & 0xFF000000;
         let offset = addr - base;
 
         let readjusted_value = match base {
             regions::SHARED_WRAM_OFFSET => {
-                self.memory.borrow().write_wram_arm9(offset, value.clone());
+                self.memory.lock().unwrap().write_wram_arm9(offset, value);
                 None
             }
             regions::ARM9_IO_PORTS_OFFSET => Some(self.io_ports.write_arm9(offset, value.clone())),
@@ -278,25 +291,27 @@ impl IndirectMemHandler {
         }
     }
 
-    fn read_raw<T: Clone + Into<u32>>(&self, addr: u32) -> T {
-        let vmm = self.vmm.borrow();
-        let vmmap = vmm.get_vm_mapping();
-        read_from_mem(&vmmap, addr)
+    fn read_raw<T: Copy + Into<u32>>(&self, addr: u32) -> T {
+        let vmmap = unsafe { (*self.vmm).get_vm_mapping() };
+        utils::read_from_mem(&vmmap, addr)
     }
 
     fn write_raw<T: Into<u32>>(&self, addr: u32, value: T) {
-        let vmm = self.vmm.borrow();
-        let mut vmmap = vmm.get_vm_mapping();
-        write_to_mem(&mut vmmap, addr, value)
+        let mut vmmap = unsafe { (*self.vmm).get_vm_mapping() };
+        utils::write_to_mem(&mut vmmap, addr, value)
     }
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_read(handler: *const IndirectMemHandler, pc: u32) {
-    (*handler).handle_request(pc, false);
+pub unsafe extern "C" fn indirect_mem_read(handler: *mut IndirectMemHandler, opcode: u32, pc: u32) {
+    (*handler).handle_request(opcode, pc, false);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_write(handler: *const IndirectMemHandler, pc: u32) {
-    (*handler).handle_request(pc, true);
+pub unsafe extern "C" fn indirect_mem_write(
+    handler: *mut IndirectMemHandler,
+    opcode: u32,
+    pc: u32,
+) {
+    (*handler).handle_request(opcode, pc, true);
 }

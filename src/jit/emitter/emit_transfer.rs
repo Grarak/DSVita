@@ -14,12 +14,12 @@ use crate::jit::Cond;
 use bilge::prelude::u4;
 
 impl JitAsm {
-    fn emit_indirect(&mut self, func_addr: *const (), _: usize, pc: u32) {
+    fn emit_indirect(&mut self, func_addr: *const (), opcode: u32, pc: u32) {
         let indirect_memory_handler_addr = self.indirect_mem_handler.as_ptr() as u32;
 
         self.emit_call_host_func(
             |_| {},
-            &[Some(indirect_memory_handler_addr), Some(pc)],
+            &[Some(indirect_memory_handler_addr), Some(opcode), Some(pc)],
             func_addr,
         );
     }
@@ -64,11 +64,19 @@ impl JitAsm {
     }
 
     pub fn emit_str(&mut self, buf_index: usize, pc: u32) {
-        self.emit_indirect(indirect_mem_write as _, buf_index, pc);
+        self.emit_indirect(
+            indirect_mem_write as _,
+            self.jit_buf.instructions[buf_index].opcode,
+            pc,
+        );
     }
 
     pub fn emit_ldr_arm7(&mut self, buf_index: usize, pc: u32) {
-        self.emit_indirect(indirect_mem_read as _, buf_index, pc);
+        self.emit_indirect(
+            indirect_mem_read as _,
+            self.jit_buf.instructions[buf_index].opcode,
+            pc,
+        );
     }
 
     pub fn emit_ldr_arm9(&mut self, buf_index: usize, pc: u32) {
@@ -99,11 +107,19 @@ impl JitAsm {
     }
 
     pub fn emit_stm(&mut self, buf_index: usize, pc: u32) {
-        self.emit_indirect(indirect_mem_write_multiple as _, buf_index, pc);
+        self.emit_indirect(
+            indirect_mem_write_multiple as _,
+            self.jit_buf.instructions[buf_index].opcode,
+            pc,
+        );
     }
 
     pub fn emit_ldm_arm7(&mut self, buf_index: usize, pc: u32) {
-        self.emit_indirect(indirect_mem_read_multiple as _, buf_index, pc);
+        self.emit_indirect(
+            indirect_mem_read_multiple as _,
+            self.jit_buf.instructions[buf_index].opcode,
+            pc,
+        );
     }
 
     pub fn emit_ldm_arm9(&mut self, buf_index: usize, pc: u32) {

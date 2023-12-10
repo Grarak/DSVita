@@ -1,8 +1,10 @@
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::branch_assembler::B;
+use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::{Cond, Op};
+use std::ptr;
 
 impl JitAsm {
     pub fn emit_b(&mut self, buf_index: usize, pc: u32) {
@@ -21,6 +23,13 @@ impl JitAsm {
                 .borrow()
                 .emit_set_reg(Reg::PC, Reg::R0, Reg::LR),
         );
+
+        opcodes.extend(&AluImm::mov32(Reg::R0, pc));
+        opcodes.extend(&AluImm::mov32(
+            Reg::LR,
+            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+        ));
+        opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
 
         if inst_info.op == Op::Bl {
             opcodes.extend(&AluImm::mov32(Reg::R0, pc + 4));
@@ -68,6 +77,13 @@ impl JitAsm {
                     .emit_set_reg(Reg::PC, *reg, Reg::LR),
             );
         }
+
+        opcodes.extend(&AluImm::mov32(Reg::R0, pc));
+        opcodes.extend(&AluImm::mov32(
+            Reg::LR,
+            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+        ));
+        opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
 
         if inst_info.op == Op::BlxReg {
             opcodes.extend(&AluImm::mov32(Reg::R0, pc + 4));

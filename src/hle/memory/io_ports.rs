@@ -6,9 +6,10 @@ use crate::hle::spu_context::SpuContext;
 use crate::hle::CpuType;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 pub struct IoPorts {
-    memory: Rc<RefCell<Memory>>,
+    memory: Arc<Mutex<Memory>>,
     thread_regs: Rc<RefCell<ThreadRegs>>,
     gpu_context: Rc<RefCell<GpuContext>>,
     spu_context: Rc<RefCell<SpuContext>>,
@@ -16,7 +17,7 @@ pub struct IoPorts {
 
 impl IoPorts {
     pub fn new(
-        memory: Rc<RefCell<Memory>>,
+        memory: Arc<Mutex<Memory>>,
         thread_regs: Rc<RefCell<ThreadRegs>>,
         gpu_context: Rc<RefCell<GpuContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
@@ -43,7 +44,7 @@ impl IoPorts {
     ) -> WriteBack {
         let value = value.into();
         match addr_offset {
-            0x180 => todo!(),
+            0x180 => WriteBack::None,
             0x208 => WriteBack::Byte(self.thread_regs.borrow_mut().set_ime(value as u8)),
             0x300 => WriteBack::Byte(self.thread_regs.borrow_mut().set_post_flg(value as u8)),
             _ => todo!("{:?} unimplemented io port {:x}", cpu_type, addr_offset),
@@ -63,7 +64,7 @@ impl IoPorts {
 
     pub fn write_arm9<T: Into<u32>>(&self, addr_offset: u32, value: T) -> WriteBack {
         match addr_offset {
-            0x247 => WriteBack::Byte(self.memory.borrow_mut().set_wram_cnt(value.into() as u8)),
+            0x247 => WriteBack::Byte(self.memory.lock().unwrap().set_wram_cnt(value.into() as u8)),
             0x304 => WriteBack::Half(
                 self.gpu_context
                     .borrow_mut()

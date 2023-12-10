@@ -1,10 +1,11 @@
 use crate::hle::memory::indirect_memory::indirect_mem_handler::IndirectMemHandler;
+use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::reg::RegReserve;
 use crate::jit::Op;
 use crate::logging::debug_println;
 
 impl IndirectMemHandler {
-    fn handle_multiple_request(&self, pc: u32, write: bool) {
+    fn handle_multiple_request(&mut self, opcode: u32, pc: u32, write: bool) {
         debug_println!(
             "indirect memory multiple {} {:x}",
             if write { "write" } else { "read" },
@@ -12,8 +13,8 @@ impl IndirectMemHandler {
         );
 
         let inst_info = {
-            let vmm = self.vmm.borrow();
-            IndirectMemHandler::get_inst_info(&vmm.get_vm_mapping(), pc)
+            let (op, func) = lookup_opcode(opcode);
+            func(opcode, *op)
         };
 
         let pre = match inst_info.op {
@@ -69,11 +70,19 @@ impl IndirectMemHandler {
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_read_multiple(handler: *const IndirectMemHandler, pc: u32) {
-    (*handler).handle_multiple_request(pc, false);
+pub unsafe extern "C" fn indirect_mem_read_multiple(
+    handler: *mut IndirectMemHandler,
+    opcode: u32,
+    pc: u32,
+) {
+    (*handler).handle_multiple_request(opcode, pc, false);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_write_multiple(handler: *const IndirectMemHandler, pc: u32) {
-    (*handler).handle_multiple_request(pc, true);
+pub unsafe extern "C" fn indirect_mem_write_multiple(
+    handler: *mut IndirectMemHandler,
+    opcode: u32,
+    pc: u32,
+) {
+    (*handler).handle_multiple_request(opcode, pc, true);
 }

@@ -8,6 +8,8 @@ pub struct Mmap {
     size: u32,
 }
 
+unsafe impl Send for Mmap {}
+
 impl Mmap {
     pub fn new(_: &str, exec: bool, size: u32) -> io::Result<Self> {
         let mut prot = libc::PROT_READ | libc::PROT_WRITE;
