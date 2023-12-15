@@ -45,6 +45,6 @@ impl JitAsm {
 
         self.jit_buf
             .emit_opcodes
-            .extend(&self.thread_regs.borrow().emit_get_reg(*op0, Reg::CPSR));
+            .extend(self.thread_regs.borrow().emit_get_reg(*op0, Reg::CPSR));
     }
 }

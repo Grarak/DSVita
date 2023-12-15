@@ -11,9 +11,35 @@ pub struct VMmap<'a> {
     phantom_data: PhantomData<&'a u8>,
 }
 
+pub struct VMmapMut<'a> {
+    vm_begin_addr: *mut u8,
+    offset: u32,
+    size: usize,
+    phantom_data: PhantomData<&'a u8>,
+}
+
 impl<'a> VMmap<'a> {
     fn new(vm_begin_addr: *const u8, offset: u32, size: usize) -> Self {
         VMmap {
+            vm_begin_addr,
+            offset,
+            size,
+            phantom_data: PhantomData,
+        }
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        (self.vm_begin_addr as u32 - self.offset) as _
+    }
+
+    pub fn len(&self) -> usize {
+        self.size + self.offset as usize
+    }
+}
+
+impl<'a> VMmapMut<'a> {
+    fn new(vm_begin_addr: *mut u8, offset: u32, size: usize) -> Self {
+        VMmapMut {
             vm_begin_addr,
             offset,
             size,
@@ -42,7 +68,15 @@ impl<'a> Deref for VMmap<'a> {
     }
 }
 
-impl<'a> DerefMut for VMmap<'a> {
+impl<'a> Deref for VMmapMut<'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { slice::from_raw_parts(self.as_ptr(), self.len()) }
+    }
+}
+
+impl<'a> DerefMut for VMmapMut<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
     }
@@ -54,7 +88,13 @@ impl<'a> AsRef<[u8]> for VMmap<'a> {
     }
 }
 
-impl<'a> AsMut<[u8]> for VMmap<'a> {
+impl<'a> AsRef<[u8]> for VMmapMut<'a> {
+    fn as_ref(&self) -> &[u8] {
+        self.deref()
+    }
+}
+
+impl<'a> AsMut<[u8]> for VMmapMut<'a> {
     fn as_mut(&mut self) -> &mut [u8] {
         self.deref_mut()
     }
@@ -86,5 +126,9 @@ impl VmManager {
 
     pub fn get_vm_mapping(&self) -> VMmap<'_> {
         VMmap::new(self.vm_begin_addr(), self.offset(), self.vm.len())
+    }
+
+    pub fn get_vm_mapping_mut(&mut self) -> VMmapMut<'_> {
+        VMmapMut::new(self.vm_begin_addr() as _, self.offset(), self.vm.len())
     }
 }

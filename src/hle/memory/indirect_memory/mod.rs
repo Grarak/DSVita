@@ -202,7 +202,8 @@ impl From<Op> for MemoryAmount {
             | Op::StrPtrpar
             | Op::StrPtrpll
             | Op::StrPtrplr
-            | Op::StrPtrprr => MemoryAmount::WORD,
+            | Op::StrPtrprr
+            | Op::LdrPcT => MemoryAmount::WORD,
             Op::LdrdOfim
             | Op::LdrdOfip
             | Op::LdrdOfrm
@@ -227,7 +228,7 @@ impl From<Op> for MemoryAmount {
             | Op::StrdPtip
             | Op::StrdPtrm
             | Op::StrdPtrp => MemoryAmount::DOUBLE,
-            _ => panic!(),
+            _ => todo!("{:?}", value),
         }
     }
 }

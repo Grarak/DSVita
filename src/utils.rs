@@ -14,14 +14,19 @@ pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
     aligned[0].clone()
 }
 
+pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) {
+    let (_, aligned, _) = unsafe { mem[addr as usize..].align_to::<T>() };
+    slice.copy_from_slice(&aligned[..slice.len()]);
+}
+
 pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
     let (_, aligned, _) = unsafe { mem[addr as usize..].align_to_mut::<T>() };
     aligned[0] = value
 }
 
-pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, values: &[T]) {
+pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) {
     let (_, aligned, _) = unsafe { mem[addr as usize..].align_to_mut::<T>() };
-    aligned[..values.len()].copy_from_slice(values)
+    aligned[..slice.len()].copy_from_slice(slice)
 }
 
 pub struct StrErr {

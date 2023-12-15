@@ -1,4 +1,3 @@
-use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::{Bx, B};
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs};
@@ -18,14 +17,8 @@ impl JitAsm {
         let emit_func = match inst_info.op {
             Op::B | Op::Bl => JitAsm::emit_b,
             Op::Bx | Op::BlxReg => JitAsm::emit_bx,
-            Op::LdrOfip | Op::LdrbOfrplr | Op::LdrPtip => match self.cpu_type {
-                CpuType::ARM7 => JitAsm::emit_ldr_arm7,
-                CpuType::ARM9 => JitAsm::emit_ldr_arm9,
-            },
-            Op::LdmiaW => match self.cpu_type {
-                CpuType::ARM7 => JitAsm::emit_ldm_arm7,
-                CpuType::ARM9 => JitAsm::emit_ldm_arm9,
-            },
+            Op::LdrOfip | Op::LdrbOfrplr | Op::LdrPtip => JitAsm::emit_ldr,
+            Op::LdmiaW => JitAsm::emit_ldm,
             Op::StrOfip | Op::StrhOfip | Op::StrPrim => JitAsm::emit_str,
             Op::StmiaW => JitAsm::emit_stm,
             Op::Mcr | Op::Mrc => JitAsm::emit_cp15,
@@ -52,41 +45,7 @@ impl JitAsm {
                         self.jit_buf.emit_opcodes.push(opcode)
                     }
 
-                    self.jit_buf
-                        .emit_opcodes
-                        .push(Mrs::cpsr(host_cpsr_reg, Cond::AL));
-                    self.jit_buf.emit_opcodes.extend(
-                        &self
-                            .thread_regs
-                            .borrow()
-                            .emit_get_reg(guest_cpsr_reg, Reg::CPSR),
-                    );
-
-                    // Only copy the cond flags from host cpsr
-                    self.jit_buf.emit_opcodes.push(AluImm::and(
-                        host_cpsr_reg,
-                        host_cpsr_reg,
-                        0xF8,
-                        4, // 8 Bytes, steps of 2
-                        Cond::AL,
-                    ));
-                    self.jit_buf.emit_opcodes.push(AluImm::bic(
-                        guest_cpsr_reg,
-                        guest_cpsr_reg,
-                        0xF8,
-                        4, // 8 Bytes, steps of 2
-                        Cond::AL,
-                    ));
-                    self.jit_buf
-                        .emit_opcodes
-                        .push(AluShiftImm::orr_al(guest_cpsr_reg, host_cpsr_reg, guest_cpsr_reg));
-                    self.jit_buf
-                        .emit_opcodes
-                        .extend(&self.thread_regs.borrow().emit_set_reg(
-                            Reg::CPSR,
-                            guest_cpsr_reg,
-                            host_cpsr_reg,
-                        ));
+                    self.handle_cpsr(host_cpsr_reg, guest_cpsr_reg);
 
                     if let Some(opcode) = reserved.emit_pop_stack(Reg::LR) {
                         self.jit_buf.emit_opcodes.push(opcode)
@@ -111,9 +70,10 @@ impl JitAsm {
             self.jit_buf
                 .emit_opcodes
                 .extend(&AluImm::mov32(Reg::R0, pc));
-            self.jit_buf.emit_opcodes.extend(
-                &AluImm::mov32(Reg::LR, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
-            );
+            self.jit_buf.emit_opcodes.extend(&AluImm::mov32(
+                Reg::LR,
+                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+            ));
             self.jit_buf
                 .emit_opcodes
                 .push(LdrStrImm::str_al(Reg::R0, Reg::LR));
@@ -178,7 +138,7 @@ impl JitAsm {
                     }
 
                     if emulated_src_regs.is_reserved(*reg) {
-                        handle_src_reg(reg)
+                        handle_src_reg(reg);
                     }
                 }
                 _ => {}
@@ -198,7 +158,7 @@ impl JitAsm {
             if reg == Reg::PC {
                 opcodes.extend(&AluImm::mov32(*mapped_reg, pc + 8));
             } else {
-                opcodes.extend(&self.thread_regs.borrow().emit_get_reg(*mapped_reg, reg));
+                opcodes.extend(self.thread_regs.borrow().emit_get_reg(*mapped_reg, reg));
             }
         }
 
@@ -259,8 +219,7 @@ impl JitAsm {
                 todo!()
             } else {
                 opcodes.extend(
-                    &self
-                        .thread_regs
+                    self.thread_regs
                         .borrow()
                         .emit_set_reg(reg, *mapped_reg, out_addr),
                 );
@@ -295,7 +254,12 @@ impl JitAsm {
         args: &[Option<u32>],
         func_addr: *const (),
     ) {
-        self.jit_buf.emit_opcodes.extend(&self.restore_host_opcodes);
+        let thumb = self.thread_regs.borrow().is_thumb();
+        self.jit_buf.emit_opcodes.extend(if thumb {
+            &self.restore_host_thumb_opcodes
+        } else {
+            &self.restore_host_opcodes
+        });
 
         if args.len() > 4 {
             todo!()
@@ -316,9 +280,51 @@ impl JitAsm {
             .extend(&AluImm::mov32(Reg::LR, func_addr as u32));
         self.jit_buf.emit_opcodes.push(Bx::blx(Reg::LR, Cond::AL));
 
+        self.jit_buf.emit_opcodes.extend(if thumb {
+            &self.restore_guest_thumb_opcodes
+        } else {
+            &self.restore_guest_opcodes
+        });
+    }
+
+    pub fn handle_cpsr(&mut self, host_cpsr_reg: Reg, guest_cpsr_reg: Reg) {
         self.jit_buf
             .emit_opcodes
-            .extend(&self.restore_guest_opcodes);
+            .push(Mrs::cpsr(host_cpsr_reg, Cond::AL));
+        self.jit_buf.emit_opcodes.extend(
+            &self
+                .thread_regs
+                .borrow()
+                .emit_get_reg(guest_cpsr_reg, Reg::CPSR),
+        );
+
+        // Only copy the cond flags from host cpsr
+        self.jit_buf.emit_opcodes.push(AluImm::and(
+            host_cpsr_reg,
+            host_cpsr_reg,
+            0xF8,
+            4, // 8 Bytes, steps of 2
+            Cond::AL,
+        ));
+        self.jit_buf.emit_opcodes.push(AluImm::bic(
+            guest_cpsr_reg,
+            guest_cpsr_reg,
+            0xF8,
+            4, // 8 Bytes, steps of 2
+            Cond::AL,
+        ));
+        self.jit_buf.emit_opcodes.push(AluShiftImm::orr_al(
+            guest_cpsr_reg,
+            host_cpsr_reg,
+            guest_cpsr_reg,
+        ));
+        self.jit_buf
+            .emit_opcodes
+            .extend(self.thread_regs.borrow().emit_set_reg(
+                Reg::CPSR,
+                guest_cpsr_reg,
+                host_cpsr_reg,
+            ));
     }
 }
 
@@ -333,7 +339,10 @@ impl RegReserve {
         let mut reserve = *self;
         let mut writable_regs = RegReserve::new();
         for inst in insts {
-            if inst.op.is_branch() || inst.out_regs.is_reserved(Reg::PC) {
+            if inst.op.is_branch()
+                || inst.op.is_branch_thumb()
+                || inst.out_regs.is_reserved(Reg::PC)
+            {
                 break;
             }
 

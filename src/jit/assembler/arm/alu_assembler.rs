@@ -41,6 +41,28 @@ impl AluImm {
     }
 
     #[inline]
+    pub fn adds(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
+        let op = u32::from(AluImm::new(
+            op2,
+            u4::new(shift),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0x4),
+            u1::new(1),
+            u2::new(0),
+            u4::new(cond as u8),
+        ));
+        debug_assert_eq!(lookup_opcode(op).0, Op::AddImm);
+        op
+    }
+
+    #[inline]
+    pub fn adds_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
+        AluImm::add(op0, op1, op2, 0, Cond::AL)
+    }
+
+    #[inline]
     pub fn and(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
         u32::from(AluImm::new(
             op2,
@@ -108,6 +130,28 @@ impl AluImm {
     }
 
     #[inline]
+    pub fn subs(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
+        let op = u32::from(AluImm::new(
+            op2,
+            u4::new(shift),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0x2),
+            u1::new(1),
+            u2::new(0),
+            u4::new(cond as u8),
+        ));
+        debug_assert_eq!(lookup_opcode(op).0, Op::SubImm);
+        op
+    }
+
+    #[inline]
+    pub fn subs_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
+        AluImm::subs(op0, op1, op2, 0, Cond::AL)
+    }
+
+    #[inline]
     pub fn mov(op0: Reg, op2: u8, ror: u8, cond: Cond) -> u32 {
         let op = u32::from(AluImm::new(
             op2,
@@ -127,6 +171,28 @@ impl AluImm {
     #[inline]
     pub fn mov_al(op0: Reg, op2: u8) -> u32 {
         AluImm::mov(op0, op2, 0, Cond::AL)
+    }
+
+    #[inline]
+    pub fn movs(op0: Reg, op2: u8, ror: u8, cond: Cond) -> u32 {
+        let op = u32::from(AluImm::new(
+            op2,
+            u4::new(ror),
+            u4::new(op0 as u8),
+            u4::new(0),
+            u1::new(1),
+            u4::new(0xD),
+            u1::new(1),
+            u2::new(0),
+            u4::new(cond as u8),
+        ));
+        debug_assert_eq!(lookup_opcode(op).0, Op::MovsImm);
+        op
+    }
+
+    #[inline]
+    pub fn movs_al(op0: Reg, op2: u8) -> u32 {
+        AluImm::movs(op0, op2, 0, Cond::AL)
     }
 
     #[inline]
@@ -294,6 +360,72 @@ impl AluShiftImm {
     pub fn sub_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
         AluShiftImm::sub(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
+
+    #[inline]
+    pub fn subs(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(AluShiftImm::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0x2),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn subs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
+        AluShiftImm::subs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+    }
+
+    #[inline]
+    pub fn mov(op0: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(AluShiftImm::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(op0 as u8),
+            u4::new(0),
+            u1::new(0),
+            u4::new(0xD),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn mov_al(op0: Reg, op2: Reg) -> u32 {
+        AluShiftImm::mov(op0, op2, ShiftType::LSL, 0, Cond::AL)
+    }
+
+    #[inline]
+    pub fn movs(op0: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(AluShiftImm::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(op0 as u8),
+            u4::new(0),
+            u1::new(1),
+            u4::new(0xD),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn movs_al(op0: Reg, op2: Reg) -> u32 {
+        AluShiftImm::movs(op0, op2, ShiftType::LSL, 0, Cond::AL)
+    }
 }
 
 #[bitsize(32)]
@@ -382,6 +514,31 @@ impl AluReg {
             u4::new(op0 as u8),
             u4::new(op1 as u8),
             u1::new(0),
+            u4::new(0x2),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn subs(
+        op0: Reg,
+        op1: Reg,
+        op2: Reg,
+        shift_type: ShiftType,
+        shift_reg: Reg,
+        cond: Cond,
+    ) -> u32 {
+        u32::from(AluReg::new(
+            u4::new(op2 as u8),
+            u1::new(1),
+            u2::new(shift_type as u8),
+            u1::new(1),
+            u4::new(shift_reg as u8),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(1),
             u4::new(0x2),
             u1::new(0),
             u2::new(0),

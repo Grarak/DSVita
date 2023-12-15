@@ -1,4 +1,5 @@
 #![feature(arm_target_feature)]
+#![feature(thread_id_value)]
 #![feature(unchecked_math)]
 #![feature(unchecked_shifts)]
 
@@ -10,7 +11,8 @@ use crate::hle::thread_context::ThreadContext;
 use crate::hle::CpuType;
 use crate::host_memory::VmManager;
 use crate::jit::jit_memory::JitMemory;
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc;
+use std::sync::{Arc, RwLock};
 use std::{env, mem, thread};
 
 mod cartridge;
@@ -22,6 +24,8 @@ mod mmap;
 mod utils;
 
 pub const DEBUG: bool = cfg!(debug_assertions);
+// pub const DEBUG: bool = false;
+pub const SINGLE_CORE: bool = false;
 
 #[cfg(target_os = "linux")]
 fn get_file_path() -> String {
@@ -29,7 +33,7 @@ fn get_file_path() -> String {
     if args.len() == 2 {
         args[1].clone()
     } else {
-        println!("Usage {} <path_to_nds>", args[0]);
+        eprintln!("Usage {} <path_to_nds>", args[0]);
         std::process::exit(1);
     }
 }
@@ -37,6 +41,72 @@ fn get_file_path() -> String {
 #[cfg(target_os = "vita")]
 fn get_file_path() -> String {
     "ux0:hello_world.nds".to_owned()
+}
+
+fn initialize_arm9_thread(
+    entry_addr: u32,
+    jit_memory: Arc<RwLock<JitMemory>>,
+    memory: Arc<RwLock<Memory>>,
+    ipc_handler: Arc<RwLock<IpcHandler>>,
+) -> ThreadContext {
+    let thread = ThreadContext::new(CpuType::ARM9, jit_memory, memory, ipc_handler);
+
+    {
+        let mut cp15 = thread.cp15_context.borrow_mut();
+        cp15.write(0x010000, 0x0005707D); // control
+        cp15.write(0x090100, 0x0300000A); // dtcm addr/size
+        cp15.write(0x090101, 0x00000020); // itcm size
+    }
+
+    {
+        // I/O Ports
+        let mut indirect_mem_handler = thread.indirect_mem_handler.borrow_mut();
+        indirect_mem_handler.write(0x4000247, 0x03u8);
+        indirect_mem_handler.write(0x4000300, 0x01u8);
+        indirect_mem_handler.write(0x4000304, 0x0001u16);
+    }
+
+    {
+        let mut regs = thread.regs.borrow_mut();
+        regs.user.gp_regs[4] = entry_addr; // R12
+        regs.user.sp = 0x3002F7C;
+        regs.irq.sp = 0x3003F80;
+        regs.svc.sp = 0x3003FC0;
+        regs.user.lr = entry_addr;
+        regs.pc = entry_addr;
+        regs.set_cpsr(0x000000DF);
+    }
+
+    thread
+}
+
+fn initialize_arm7_thread(
+    entry_addr: u32,
+    jit_memory: Arc<RwLock<JitMemory>>,
+    memory: Arc<RwLock<Memory>>,
+    ipc_handler: Arc<RwLock<IpcHandler>>,
+) -> ThreadContext {
+    let thread = ThreadContext::new(CpuType::ARM7, jit_memory, memory, ipc_handler);
+
+    {
+        // I/O Ports
+        let mut indirect_mem_handler = thread.indirect_mem_handler.borrow_mut();
+        indirect_mem_handler.write(0x4000300, 0x01u8); // POWCNT1
+        indirect_mem_handler.write(0x4000504, 0x0200u16); // SOUNDBIAS
+    }
+
+    {
+        let mut regs = thread.regs.borrow_mut();
+        regs.user.gp_regs[4] = entry_addr; // R12
+        regs.user.sp = 0x380FD80;
+        regs.irq.sp = 0x380FF80;
+        regs.user.sp = 0x380FFC0;
+        regs.user.lr = entry_addr;
+        regs.pc = entry_addr;
+        regs.set_cpsr(0x000000DF);
+    }
+
+    thread
 }
 
 // Must be pub for vita
@@ -47,10 +117,10 @@ pub fn main() {
 
     let cartridge = Cartridge::from_file(&get_file_path()).unwrap();
 
-    let vmm = VmManager::new("vm", &regions::ARM9_REGIONS).unwrap();
+    let mut vmm = VmManager::new("vm", &regions::ARM9_REGIONS).unwrap();
     println!("Allocate vm at {:x}", vmm.vm.as_ptr() as u32);
 
-    let mut vmmap = vmm.get_vm_mapping();
+    let mut vmmap = vmm.get_vm_mapping_mut();
 
     {
         let header: &[u8; cartridge::HEADER_IN_RAM_SIZE] =
@@ -88,73 +158,59 @@ pub fn main() {
             .copy_from_slice(&arm7_code);
     }
 
-    let jit_memory = Arc::new(Mutex::new(JitMemory::new()));
-    let memory = Arc::new(Mutex::new(Memory::new(vmm)));
-    let ipc_handler = Arc::new(Mutex::new(IpcHandler::new()));
+    let jit_memory = Arc::new(RwLock::new(JitMemory::new()));
+    let memory = Arc::new(RwLock::new(Memory::new(vmm)));
+    let ipc_handler = Arc::new(RwLock::new(IpcHandler::new()));
 
     let jit_memory_clone = jit_memory.clone();
     let memory_clone = memory.clone();
     let ipc_handler_clone = ipc_handler.clone();
 
-    let mut arm9_thread =
-        ThreadContext::new(
-            CpuType::ARM9,
+    if SINGLE_CORE {
+        let mut arm9_thread = initialize_arm9_thread(
+            arm9_entry_adrr,
             jit_memory_clone,
             memory_clone,
             ipc_handler_clone,
         );
-    {
-        let mut cp15 = arm9_thread.cp15_context.borrow_mut();
-        cp15.write(0x010000, 0x0005707D); // control
-        cp15.write(0x090100, 0x0300000A); // dtcm addr/size
-        cp15.write(0x090101, 0x00000020); // itcm size
+
+        let mut arm7_thread =
+            initialize_arm7_thread(arm7_entry_addr, jit_memory, memory, ipc_handler);
+
+        loop {
+            arm9_thread.iterate(2);
+            arm7_thread.iterate(1);
+        }
+    } else {
+        let (tx, rx) = mpsc::channel::<()>();
+
+        let arm9_thread = thread::Builder::new()
+            .name("arm9_thread".to_owned())
+            .spawn(move || {
+                let mut arm9_thread = initialize_arm9_thread(
+                    arm9_entry_adrr,
+                    jit_memory_clone,
+                    memory_clone,
+                    ipc_handler_clone,
+                );
+
+                tx.send(()).unwrap();
+                arm9_thread.run();
+            })
+            .unwrap();
+
+        let arm7_thread = thread::Builder::new()
+            .name("arm7_thread".to_owned())
+            .spawn(move || {
+                rx.recv().unwrap();
+
+                let mut arm7_thread =
+                    initialize_arm7_thread(arm7_entry_addr, jit_memory, memory, ipc_handler);
+                arm7_thread.run();
+            })
+            .unwrap();
+
+        arm9_thread.join().unwrap();
+        arm7_thread.join().unwrap();
     }
-
-    {
-        // I/O Ports
-        let mut indirect_mem_handler = arm9_thread.indirect_mem_handler.borrow_mut();
-        indirect_mem_handler.write(0x4000247, 0x03u8);
-        indirect_mem_handler.write(0x4000300, 0x01u8);
-        indirect_mem_handler.write(0x4000304, 0x0001u16);
-    }
-
-    {
-        let mut regs = arm9_thread.regs.borrow_mut();
-        regs.user.gp_regs[4] = arm9_entry_adrr; // R12
-        regs.user.sp = 0x3002F7C;
-        regs.irq.sp = 0x3003F80;
-        regs.svc.sp = 0x3003FC0;
-        regs.user.lr = arm9_entry_adrr;
-        regs.pc = arm9_entry_adrr;
-        regs.set_cpsr(0x000000DF);
-    }
-
-    let arm7_thread =
-        thread::spawn(move || {
-            let mut arm7_thread =
-                ThreadContext::new(CpuType::ARM7, jit_memory, memory, ipc_handler);
-
-            {
-                // I/O Ports
-                let mut indirect_mem_handler = arm7_thread.indirect_mem_handler.borrow_mut();
-                indirect_mem_handler.write(0x4000300, 0x01u8); // POWCNT1
-                indirect_mem_handler.write(0x4000504, 0x0200u16); // SOUNDBIAS
-            }
-
-            {
-                let mut regs = arm7_thread.regs.borrow_mut();
-                regs.user.gp_regs[4] = arm7_entry_addr; // R12
-                regs.user.sp = 0x380FD80;
-                regs.irq.sp = 0x380FF80;
-                regs.user.sp = 0x380FFC0;
-                regs.user.lr = arm7_entry_addr;
-                regs.pc = arm7_entry_addr;
-                regs.set_cpsr(0x000000DF);
-            }
-
-            arm7_thread.run();
-        });
-
-    arm9_thread.run();
-    arm7_thread.join().unwrap();
 }

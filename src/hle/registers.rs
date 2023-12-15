@@ -65,6 +65,8 @@ pub struct ThreadRegs {
     pub cpu_type: CpuType,
     pub restore_regs_opcodes: [u32; 6],
     pub save_regs_opcodes: [u32; 4],
+    pub restore_regs_thumb_opcodes: [u32; 6],
+    pub save_regs_thumb_opcodes: [u32; 4],
 }
 
 impl ThreadRegs {
@@ -78,6 +80,7 @@ impl ThreadRegs {
 
             let gp_regs_addr = instance.gp_regs.as_ptr() as u32;
             let last_regs_addr = ptr::addr_of!(instance.gp_regs[instance.gp_regs.len() - 1]) as u32;
+            let last_regs_thumb_addr = ptr::addr_of!(instance.gp_regs[7]) as u32;
             let sp_addr = ptr::addr_of!(instance.sp) as u32;
             let cpsr_addr = ptr::addr_of!(instance.cpsr) as u32;
             assert_eq!(sp_addr - last_regs_addr, 4);
@@ -101,6 +104,31 @@ impl ThreadRegs {
                     mov[1],
                     LdrStrImm::str_offset_al(Reg::SP, Reg::LR, 4),
                     LdmStm::push_post(RegReserve::gp(), Reg::LR, Cond::AL),
+                ]
+            }
+
+            {
+                instance.restore_regs_thumb_opcodes = instance.restore_regs_opcodes;
+                instance.restore_regs_thumb_opcodes[4] =
+                    LdmStm::pop_post_al(RegReserve::gp_thumb());
+                instance.restore_regs_thumb_opcodes[5] = LdrStrImm::ldr_offset_al(
+                    Reg::SP,
+                    Reg::SP,
+                    (sp_addr - last_regs_thumb_addr - 4) as u16,
+                );
+            }
+
+            {
+                let mov = AluImm::mov32(Reg::LR, last_regs_thumb_addr);
+                instance.save_regs_thumb_opcodes = [
+                    mov[0],
+                    mov[1],
+                    LdrStrImm::str_offset_al(
+                        Reg::SP,
+                        Reg::LR,
+                        (sp_addr - last_regs_thumb_addr) as u16,
+                    ),
+                    LdmStm::push_post(RegReserve::gp_thumb(), Reg::LR, Cond::AL),
                 ]
             }
         }
@@ -253,6 +281,16 @@ impl ThreadRegs {
         }
 
         self.cpsr = value;
+    }
+
+    pub fn set_thumb(&mut self, enable: bool) {
+        let mut cpsr = Cpsr::from(self.cpsr);
+        cpsr.set_thumb(u1::new(enable as u8));
+        self.cpsr = u32::from(cpsr);
+    }
+
+    pub fn is_thumb(&self) -> bool {
+        bool::from(Cpsr::from(self.cpsr).thumb())
     }
 
     pub fn set_ime(&mut self, value: u8) -> u8 {

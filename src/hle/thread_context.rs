@@ -10,7 +10,8 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::jit_memory::JitMemory;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
+use std::thread;
 
 pub struct ThreadContext {
     cpu_type: CpuType,
@@ -23,9 +24,9 @@ pub struct ThreadContext {
 impl ThreadContext {
     pub fn new(
         cpu_type: CpuType,
-        jit_memory: Arc<Mutex<JitMemory>>,
-        memory: Arc<Mutex<Memory>>,
-        ipc_handler: Arc<Mutex<IpcHandler>>,
+        jit_memory: Arc<RwLock<JitMemory>>,
+        memory: Arc<RwLock<Memory>>,
+        ipc_handler: Arc<RwLock<IpcHandler>>,
     ) -> Self {
         let regs = ThreadRegs::new(cpu_type);
         let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
@@ -33,7 +34,7 @@ impl ThreadContext {
         let spu_context = Rc::new(RefCell::new(SpuContext::new()));
         let indirect_mem_handler = Rc::new(RefCell::new(IndirectMemHandler::new(
             cpu_type,
-            memory.clone(),
+            memory,
             ipc_handler,
             regs.clone(),
             gpu_context,
@@ -44,7 +45,6 @@ impl ThreadContext {
             cpu_type,
             jit: JitAsm::new(
                 jit_memory,
-                memory,
                 regs.clone(),
                 cp15_context.clone(),
                 indirect_mem_handler.clone(),
@@ -57,7 +57,11 @@ impl ThreadContext {
     }
 
     pub fn run(&mut self) {
-        println!("{:?} start", self.cpu_type);
+        println!(
+            "{:?} start with host thread id {:x}",
+            self.cpu_type,
+            thread::current().id().as_u64()
+        );
         loop {
             self.jit.execute();
         }

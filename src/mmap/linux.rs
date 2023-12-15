@@ -9,6 +9,7 @@ pub struct Mmap {
 }
 
 unsafe impl Send for Mmap {}
+unsafe impl Sync for Mmap {}
 
 impl Mmap {
     pub fn new(_: &str, exec: bool, size: u32) -> io::Result<Self> {

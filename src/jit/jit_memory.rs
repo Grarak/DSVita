@@ -140,7 +140,7 @@ impl JitMemory {
 
             debug_println!(
                 "Removing jit block at {:x} with guest start pc {:x}",
-                jit_start_addr,
+                self.memory.as_ptr() as u32 + jit_start_addr,
                 guest_start_pc
             );
         }

@@ -11,7 +11,7 @@ mod branch_ops {
             op,
             Operands::new_1(Operand::reg(op0)),
             reg_reserve!(op0),
-            reg_reserve!(),
+            reg_reserve!(Reg::CPSR),
         )
     }
 
@@ -23,7 +23,7 @@ mod branch_ops {
             op,
             Operands::new_1(Operand::reg(op0)),
             reg_reserve!(op0),
-            reg_reserve!(),
+            reg_reserve!(Reg::LR, Reg::CPSR),
         )
     }
 
@@ -47,7 +47,7 @@ mod branch_ops {
             op,
             Operands::new_1(Operand::imm(op0 as u32)),
             reg_reserve!(),
-            reg_reserve!(),
+            reg_reserve!(Reg::LR),
         )
     }
 

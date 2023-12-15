@@ -25,6 +25,7 @@ pub enum Reg {
 }
 
 const GP_REGS_BITMASK: u32 = 0x1FFF;
+const GP_THUMB_REGS_BITMASK: u32 = 0xFF;
 const EMULATED_REGS_BITMASK: u32 = (1 << Reg::LR as u8) | (1 << Reg::PC as u8);
 pub const FIRST_EMULATED_REG: Reg = Reg::LR;
 pub const EMULATED_REGS_COUNT: usize = u32::count_ones(EMULATED_REGS_BITMASK) as usize;
@@ -40,6 +41,10 @@ impl<T: Into<u8>> From<T> for Reg {
 impl Reg {
     pub fn is_emulated(&self) -> bool {
         (EMULATED_REGS_BITMASK & (1 << *self as u8)) != 0
+    }
+
+    pub fn is_high_gp_reg(&self) -> bool {
+        !self.is_emulated() && !RegReserve::gp_thumb().is_reserved(*self)
     }
 }
 
@@ -63,6 +68,10 @@ impl RegReserve {
 
     pub fn gp() -> Self {
         RegReserve(GP_REGS_BITMASK)
+    }
+
+    pub fn gp_thumb() -> Self {
+        RegReserve(GP_THUMB_REGS_BITMASK)
     }
 
     pub fn is_reserved(&self, reg: Reg) -> bool {

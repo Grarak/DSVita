@@ -1,5 +1,6 @@
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
+use crate::jit::inst_info_thumb::InstInfoThumb;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
 use bilge::prelude::{u2, u4, u5};
@@ -79,6 +80,19 @@ impl InstInfo {
                 u32::from(opcode)
             }
             _ => todo!("{:?}", self),
+        }
+    }
+}
+
+impl From<&InstInfoThumb> for InstInfo {
+    fn from(value: &InstInfoThumb) -> Self {
+        InstInfo {
+            opcode: value.opcode as u32,
+            op: value.op,
+            cond: Cond::AL,
+            operands: value.operands,
+            src_regs: value.src_regs,
+            out_regs: value.out_regs,
         }
     }
 }

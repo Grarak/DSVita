@@ -1,27 +1,25 @@
 use crate::hle::cp15_context::Cp15Context;
 use crate::hle::memory::indirect_memory::indirect_mem_handler::IndirectMemHandler;
-use crate::hle::memory::memory::Memory;
 use crate::hle::registers::ThreadRegs;
 use crate::hle::CpuType;
-use crate::host_memory::VmManager;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg};
-use crate::jit::assembler::arm::branch_assembler::{Bx, B};
+use crate::jit::assembler::arm::branch_assembler::Bx;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
+use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_memory::JitMemory;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
-use crate::jit::{Cond, Op};
+use crate::jit::Cond;
 use crate::logging::debug_println;
 use crate::DEBUG;
-use bilge::prelude::u24;
 use std::arch::asm;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::ptr;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 #[derive(Default)]
 #[repr(C)]
@@ -44,7 +42,6 @@ pub struct JitBuf {
     pub instructions: Vec<InstInfo>,
     pub emit_opcodes: Vec<u32>,
     pub jit_addr_mapping: HashMap<u32, u16>,
-    pub post_branch_mapping: Vec<(u16, u32)>,
 }
 
 impl JitBuf {
@@ -53,7 +50,6 @@ impl JitBuf {
             instructions: Vec::new(),
             emit_opcodes: Vec::new(),
             jit_addr_mapping: HashMap::new(),
-            post_branch_mapping: Vec::new(),
         }
     }
 
@@ -61,15 +57,11 @@ impl JitBuf {
         self.instructions.clear();
         self.emit_opcodes.clear();
         self.jit_addr_mapping.clear();
-        self.post_branch_mapping.clear();
     }
 }
 
 pub struct JitAsm {
-    jit_memory: Arc<Mutex<JitMemory>>,
-    vmm: *mut VmManager,
-    pub vm_mem_offset: u32,
-    pub memory_offset: u32,
+    jit_memory: Arc<RwLock<JitMemory>>,
     pub cpu_type: CpuType,
     pub indirect_mem_handler: Rc<RefCell<IndirectMemHandler>>,
     pub thread_regs: Rc<RefCell<ThreadRegs>>,
@@ -80,35 +72,37 @@ pub struct JitAsm {
     pub breakin_addr: u32,
     pub breakout_addr: u32,
     pub breakout_skip_save_regs_addr: u32,
+    pub breakin_thumb_addr: u32,
+    pub breakout_thumb_addr: u32,
+    pub breakout_skip_save_regs_thumb_addr: u32,
     pub restore_host_opcodes: [u32; 7],
     pub restore_guest_opcodes: [u32; 7],
+    pub restore_host_thumb_opcodes: [u32; 7],
+    pub restore_guest_thumb_opcodes: [u32; 7],
 }
 
 impl JitAsm {
     pub fn new(
-        jit_memory: Arc<Mutex<JitMemory>>,
-        memory: Arc<Mutex<Memory>>,
+        jit_memory: Arc<RwLock<JitMemory>>,
         thread_regs: Rc<RefCell<ThreadRegs>>,
         cp15_context: Rc<RefCell<Cp15Context>>,
         indirect_mem_handler: Rc<RefCell<IndirectMemHandler>>,
         cpu_type: CpuType,
     ) -> Self {
         let mut instance = {
-            let vmm = &memory.lock().unwrap().vmm;
-            let vm_begin_addr = vmm.vm_begin_addr() as u32;
-            let base_offset = vmm.offset();
-
             let host_regs = Box::new(HostRegs::default());
 
             let restore_host_opcodes = {
                 let mut opcodes = [0u32; 7];
                 // Save guest
-                opcodes[..4].copy_from_slice(&thread_regs.borrow().save_regs_opcodes);
+                let save_regs_opcodes = &thread_regs.borrow().save_regs_opcodes;
+                let index = save_regs_opcodes.len();
+                opcodes[..index].copy_from_slice(save_regs_opcodes);
 
                 // Restore host sp
                 let host_sp_addr = host_regs.get_sp_addr();
-                opcodes[4..6].copy_from_slice(&AluImm::mov32(Reg::LR, host_sp_addr));
-                opcodes[6] = LdrStrImm::ldr_al(Reg::SP, Reg::LR); // SP
+                opcodes[index..index + 2].copy_from_slice(&AluImm::mov32(Reg::LR, host_sp_addr));
+                opcodes[index + 2] = LdrStrImm::ldr_al(Reg::SP, Reg::LR); // SP
                 opcodes
             };
 
@@ -120,11 +114,21 @@ impl JitAsm {
                 opcodes
             };
 
+            let restore_host_thumb_opcodes = {
+                let mut opcodes = restore_host_opcodes;
+                let save_regs_thumb_opcodes = &thread_regs.borrow().save_regs_thumb_opcodes;
+                opcodes[..save_regs_thumb_opcodes.len()].copy_from_slice(save_regs_thumb_opcodes);
+                opcodes
+            };
+
+            let restore_guest_thumb_opcodes = {
+                let mut opcodes = restore_guest_opcodes;
+                opcodes[1..].copy_from_slice(&thread_regs.borrow().restore_regs_thumb_opcodes);
+                opcodes
+            };
+
             JitAsm {
                 jit_memory,
-                vmm: vmm as *const _ as _,
-                vm_mem_offset: vm_begin_addr - base_offset,
-                memory_offset: base_offset,
                 cpu_type,
                 indirect_mem_handler,
                 thread_regs,
@@ -135,8 +139,13 @@ impl JitAsm {
                 breakin_addr: 0,
                 breakout_addr: 0,
                 breakout_skip_save_regs_addr: 0,
+                breakin_thumb_addr: 0,
+                breakout_thumb_addr: 0,
+                breakout_skip_save_regs_thumb_addr: 0,
                 restore_host_opcodes,
                 restore_guest_opcodes,
+                restore_host_thumb_opcodes,
+                restore_guest_thumb_opcodes,
             }
         };
 
@@ -154,12 +163,21 @@ impl JitAsm {
                     LdmStm::push_pre(reg_reserve!(Reg::R4), Reg::LR, Cond::AL), // Save actual entry
                 ]);
                 // Restore guest
+                let guest_restore_index = jit_opcodes.len();
                 jit_opcodes.extend(&instance.thread_regs.borrow().restore_regs_opcodes);
 
                 jit_opcodes.push(LdmStm::pop_post(reg_reserve!(Reg::PC), Reg::LR, Cond::AL));
 
-                let mut jit_memory = instance.jit_memory.lock().unwrap();
+                let mut jit_memory = instance.jit_memory.write().unwrap();
                 instance.breakin_addr = jit_memory.insert_block(&jit_opcodes, None, None);
+
+                let restore_regs_thumb_opcodes =
+                    &instance.thread_regs.borrow().restore_regs_thumb_opcodes;
+                jit_opcodes
+                    [guest_restore_index..guest_restore_index + restore_regs_thumb_opcodes.len()]
+                    .copy_from_slice(restore_regs_thumb_opcodes);
+                instance.breakin_thumb_addr = jit_memory.insert_block(&jit_opcodes, None, None);
+
                 jit_opcodes.clear();
             }
 
@@ -179,10 +197,19 @@ impl JitAsm {
                     Bx::bx(Reg::LR, Cond::AL),
                 ]);
 
-                let mut jit_memory = instance.jit_memory.lock().unwrap();
+                let mut jit_memory = instance.jit_memory.write().unwrap();
                 instance.breakout_addr = jit_memory.insert_block(&jit_opcodes, None, None);
                 instance.breakout_skip_save_regs_addr =
                     instance.breakout_addr + jit_skip_save_regs_offset * 4;
+
+                let save_regs_thumb_opcodes =
+                    &instance.thread_regs.borrow().save_regs_thumb_opcodes;
+                jit_opcodes[..save_regs_thumb_opcodes.len()]
+                    .copy_from_slice(save_regs_thumb_opcodes);
+                instance.breakout_thumb_addr = jit_memory.insert_block(&jit_opcodes, None, None);
+                instance.breakout_skip_save_regs_thumb_addr =
+                    instance.breakout_thumb_addr + jit_skip_save_regs_offset * 4;
+
                 jit_opcodes.clear();
             }
         }
@@ -191,23 +218,64 @@ impl JitAsm {
     }
 
     fn emit_code_block(&mut self, entry: u32, thumb: bool) -> u32 {
-        let vmmap = unsafe { (*self.vmm).get_vm_mapping() };
+        {
+            let mem_handler = self.indirect_mem_handler.borrow();
+            let mut index = 0;
+            if thumb {
+                let mut buf = [0u16; 2048];
+                'outer: loop {
+                    mem_handler.read_slice(entry + index, &mut buf);
+                    for opcode in buf {
+                        debug_println!(
+                            "{:?} disassemble thumb {:x} {}",
+                            self.cpu_type,
+                            opcode,
+                            opcode
+                        );
+                        let (op, func) = lookup_thumb_opcode(opcode);
+                        let inst_info = func(opcode, *op);
 
-        let (_, opcodes, _) = unsafe { vmmap[entry as usize..].align_to::<u32>() };
-        for opcode in opcodes {
-            let (op, func) = lookup_opcode(*opcode);
-            let inst_info = func(*opcode, *op);
+                        self.jit_buf.instructions.push(InstInfo::from(&inst_info));
 
-            self.jit_buf.instructions.push(inst_info);
+                        if inst_info.op.is_unconditional_branch_thumb() {
+                            break 'outer;
+                        }
+                    }
+                    index += buf.len() as u32 * 2;
+                }
+            } else {
+                let mut buf = [0u32; 1024];
+                'outer: loop {
+                    mem_handler.read_slice(entry + index, &mut buf);
+                    for opcode in buf {
+                        debug_println!(
+                            "{:?} disassemble arm {:x} {}",
+                            self.cpu_type,
+                            opcode,
+                            opcode
+                        );
+                        let (op, func) = lookup_opcode(opcode);
+                        let inst_info = func(opcode, *op);
 
-            if (inst_info.op == Op::Bx || inst_info.op == Op::BlxReg) && inst_info.cond == Cond::AL
-            {
-                break;
+                        self.jit_buf.instructions.push(inst_info);
+
+                        if inst_info.op.is_branch() && inst_info.cond == Cond::AL {
+                            break 'outer;
+                        }
+                    }
+                    index += buf.len() as u32 * 4;
+                }
             }
         }
 
+        let pc_step_size = 2 + !thumb as u32 * 2;
+        let emit_func = if thumb {
+            JitAsm::emit_thumb
+        } else {
+            JitAsm::emit
+        };
         for i in 0..self.jit_buf.instructions.len() {
-            let pc = i as u32 * 4 + entry;
+            let pc = i as u32 * pc_step_size + entry;
             let opcodes_len = self.jit_buf.emit_opcodes.len();
             if opcodes_len > 0 {
                 self.jit_buf
@@ -222,13 +290,13 @@ impl JitAsm {
                     .emit_opcodes
                     .push(AluReg::mov_al(Reg::R0, Reg::R0)); // NOP
             }
-            self.emit(i, pc);
+            emit_func(self, i, pc);
 
             if DEBUG {
                 let inst_info = &self.jit_buf.instructions[i];
 
-                if (inst_info.op != Op::Bx && inst_info.op != Op::BlxReg)
-                    || inst_info.cond != Cond::AL
+                if (thumb && !inst_info.op.is_unconditional_branch_thumb())
+                    || (!thumb && (!inst_info.op.is_branch() || inst_info.cond != Cond::AL))
                 {
                     self.jit_buf.emit_opcodes.extend(&[
                         AluReg::mov_al(Reg::R0, Reg::R0), // NOP
@@ -237,26 +305,20 @@ impl JitAsm {
 
                     self.emit_call_host_func(
                         |_| {},
-                        &[Some(self as *const _ as u32), Some(pc)],
+                        &[
+                            Some(self as *const _ as u32),
+                            Some(pc),
+                            Some(inst_info.opcode),
+                        ],
                         debug_after_exec_op as _,
                     );
                 }
             }
         }
 
-        for (jit_addr_offset, guest_pc) in &self.jit_buf.post_branch_mapping {
-            let offset_to_branch = self.jit_buf.jit_addr_mapping[guest_pc];
-            debug_assert!(*jit_addr_offset < offset_to_branch);
-
-            let relative_pc = (offset_to_branch - *jit_addr_offset) / 4;
-            let mut branch = B::from(self.jit_buf.emit_opcodes[*jit_addr_offset as usize / 4]);
-            branch.set_nn(u24::new(((relative_pc as i32) - 2) as u32));
-            self.jit_buf.emit_opcodes[*jit_addr_offset as usize / 4] = u32::from(branch);
-        }
-
         // TODO statically analyze generated insts
         let addr = {
-            let mut jit_memory = self.jit_memory.lock().unwrap();
+            let mut jit_memory = self.jit_memory.write().unwrap();
 
             let addr = jit_memory.insert_block(
                 &self.jit_buf.emit_opcodes,
@@ -266,7 +328,7 @@ impl JitAsm {
 
             if DEBUG {
                 for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
-                    let pc = index as u32 * 4 + entry;
+                    let pc = index as u32 * pc_step_size + entry;
                     let jit_addr = jit_memory.get_jit_start_addr(pc).unwrap();
 
                     debug_println!(
@@ -290,16 +352,18 @@ impl JitAsm {
         let entry = self.thread_regs.borrow().pc;
 
         debug_println!("{:?} Execute {:x}", self.cpu_type, entry);
+        self.execute_internal(entry);
+    }
 
+    fn execute_internal(&mut self, entry: u32) {
         let thumb = (entry & 1) == 1;
-        if thumb {
-            todo!("{:?}", self.cpu_type)
-        }
         let entry = entry & !1;
+
+        self.thread_regs.borrow_mut().set_thumb(thumb);
 
         let jit_entry = {
             {
-                let mut jit_memory = self.jit_memory.lock().unwrap();
+                let mut jit_memory = self.jit_memory.write().unwrap();
 
                 {
                     let mut indirect_memory_handler = self.indirect_mem_handler.borrow_mut();
@@ -314,7 +378,17 @@ impl JitAsm {
             .unwrap_or_else(|| self.emit_code_block(entry, thumb))
         };
 
-        unsafe { JitAsm::enter_jit(jit_entry, self.host_regs.get_sp_addr(), self.breakin_addr) };
+        unsafe {
+            JitAsm::enter_jit(
+                jit_entry,
+                self.host_regs.get_sp_addr(),
+                if thumb {
+                    self.breakin_thumb_addr
+                } else {
+                    self.breakin_addr
+                },
+            )
+        };
 
         if DEBUG {
             debug_inst_info(
@@ -322,12 +396,11 @@ impl JitAsm {
                 RegReserve::gp(),
                 self.thread_regs.borrow().deref(),
                 self.guest_branch_out_pc,
-                "",
+                "breakout",
             );
         }
     }
 
-    #[inline(never)]
     #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
     unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: u32) {
         asm!(
@@ -362,20 +435,21 @@ fn debug_inst_info(
         };
         output += &format!("{:?}: {:x}, ", reg, value);
     }
-    println!("{:?} {}{}", cpu_type, output, append);
+    debug_println!("{:?} {}{}", cpu_type, output, append);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-unsafe extern "C" fn debug_after_exec_op(asm: *const JitAsm, pc: u32) {
-    let inst_info =
-        {
-            let vmmap = (*(*asm).vmm).get_vm_mapping();
-
-            let (_, aligned, _) = vmmap[pc as usize..].align_to::<u32>();
-            let opcode = aligned[0];
+unsafe extern "C" fn debug_after_exec_op(asm: *const JitAsm, pc: u32, opcode: u32) {
+    let asm = asm.as_ref().unwrap();
+    let inst_info = {
+        if asm.thread_regs.borrow().is_thumb() {
+            let (op, func) = lookup_thumb_opcode(opcode as u16);
+            InstInfo::from(&func(opcode as u16, *op))
+        } else {
             let (op, func) = lookup_opcode(opcode);
             func(opcode, *op)
-        };
+        }
+    };
 
     let regs = (*asm).thread_regs.borrow();
     debug_inst_info(
@@ -383,6 +457,6 @@ unsafe extern "C" fn debug_after_exec_op(asm: *const JitAsm, pc: u32) {
         inst_info.src_regs + inst_info.out_regs,
         regs.deref(),
         pc,
-        &format!("\n\t{:?}", inst_info),
+        &format!("\n\t{:?} {:?}", asm.cpu_type, inst_info),
     );
 }

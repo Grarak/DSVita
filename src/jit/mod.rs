@@ -4,6 +4,7 @@ pub mod assembler;
 pub mod disassembler;
 mod emitter;
 pub mod inst_info;
+mod inst_info_thumb;
 pub mod jit_asm;
 pub mod jit_memory;
 pub mod reg;
@@ -536,12 +537,125 @@ pub enum Op {
     Umull,
     Umulls,
     UnkArm,
+
+    // Thumb
+    AdcDpT,
+    AddHT,
+    AddImm3T,
+    AddImm8T,
+    AddPcT,
+    AddRegT,
+    AddSpImmT,
+    AddSpT,
+    AndDpT,
+    AsrDpT,
+    AsrImmT,
+    BT,
+    BccT,
+    BcsT,
+    BeqT,
+    BgeT,
+    BgtT,
+    BhiT,
+    BicDpT,
+    BlOffT,
+    BlSetupT,
+    BleT,
+    BlsT,
+    BltT,
+    BlxOffT,
+    BlxRegT,
+    BmiT,
+    BneT,
+    BplT,
+    BvcT,
+    BvsT,
+    BxRegT,
+    CmnDpT,
+    CmpDpT,
+    CmpHT,
+    CmpImm8T,
+    EorDpT,
+    LdmiaT,
+    LdrImm5T,
+    LdrPcT,
+    LdrRegT,
+    LdrSpT,
+    LdrbImm5T,
+    LdrbRegT,
+    LdrhImm5T,
+    LdrhRegT,
+    LdrsbRegT,
+    LdrshRegT,
+    LslDpT,
+    LslImmT,
+    LsrDpT,
+    LsrImmT,
+    MovHT,
+    MovImm8T,
+    MulDpT,
+    MvnDpT,
+    NegDpT,
+    OrrDpT,
+    PopPcT,
+    PopT,
+    PushLrT,
+    PushT,
+    RorDpT,
+    SbcDpT,
+    StmiaT,
+    StrImm5T,
+    StrRegT,
+    StrSpT,
+    StrbImm5T,
+    StrbRegT,
+    StrhImm5T,
+    StrhRegT,
+    SubImm3T,
+    SubImm8T,
+    SubRegT,
+    SwiT,
+    TstDpT,
+    UnkThumb,
 }
 
 impl Op {
     pub const fn is_branch(&self) -> bool {
         match self {
             Op::Bx | Op::BlxReg | Op::B | Op::Bl => true,
+            _ => false,
+        }
+    }
+
+    pub const fn is_branch_thumb(&self) -> bool {
+        match self {
+            Op::BxRegT
+            | Op::BlxRegT
+            | Op::BT
+            | Op::BeqT
+            | Op::BneT
+            | Op::BcsT
+            | Op::BccT
+            | Op::BmiT
+            | Op::BplT
+            | Op::BvsT
+            | Op::BvcT
+            | Op::BhiT
+            | Op::BlsT
+            | Op::BgeT
+            | Op::BltT
+            | Op::BgtT
+            | Op::BleT
+            | Op::BlSetupT
+            | Op::BlOffT
+            | Op::BlxOffT => true,
+            _ => false,
+        }
+    }
+
+    pub const fn is_unconditional_branch_thumb(&self) -> bool {
+        match self {
+            Op::BxRegT | Op::BlxRegT | Op::BT | Op::BlOffT | Op::BlxOffT => true,
             _ => false,
         }
     }
