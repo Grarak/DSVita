@@ -3,6 +3,28 @@ use crate::jit::Op;
 pub mod indirect_mem_handler;
 pub mod indirect_mem_multiple_handler;
 
+pub trait Convert: Copy + Into<u32> {
+    fn from(value: u32) -> Self;
+}
+
+impl Convert for u8 {
+    fn from(value: u32) -> Self {
+        value as u8
+    }
+}
+
+impl Convert for u16 {
+    fn from(value: u32) -> Self {
+        value as u16
+    }
+}
+
+impl Convert for u32 {
+    fn from(value: u32) -> Self {
+        value
+    }
+}
+
 enum MemoryAmount {
     BYTE,
     HALF,

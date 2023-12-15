@@ -14,7 +14,6 @@ bilge = "0.2.0"
 paste = "1.0.14"
 static_assertions = "1.1.0"
 im = "15.1.0"
-rayon = "1.8.0"
 
 [target.arm-unknown-linux-gnueabi.dependencies]
 libc = "0.2.150"

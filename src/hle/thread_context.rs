@@ -1,16 +1,19 @@
 use crate::hle::cp15_context::Cp15Context;
 use crate::hle::gpu::gpu_context::GpuContext;
+use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::indirect_memory::indirect_mem_handler::IndirectMemHandler;
 use crate::hle::memory::memory::Memory;
 use crate::hle::registers::ThreadRegs;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitAsm;
+use crate::jit::jit_memory::JitMemory;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 pub struct ThreadContext {
+    cpu_type: CpuType,
     jit: JitAsm,
     pub regs: Rc<RefCell<ThreadRegs>>,
     pub cp15_context: Rc<RefCell<Cp15Context>>,
@@ -18,22 +21,29 @@ pub struct ThreadContext {
 }
 
 impl ThreadContext {
-    pub fn new(memory: Arc<Mutex<Memory>>, cpu_type: CpuType) -> Self {
+    pub fn new(
+        cpu_type: CpuType,
+        jit_memory: Arc<Mutex<JitMemory>>,
+        memory: Arc<Mutex<Memory>>,
+        ipc_handler: Arc<Mutex<IpcHandler>>,
+    ) -> Self {
         let regs = ThreadRegs::new(cpu_type);
         let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
         let gpu_context = Rc::new(RefCell::new(GpuContext::new()));
         let spu_context = Rc::new(RefCell::new(SpuContext::new()));
-        let indirect_mem_handler =
-            Rc::new(RefCell::new(IndirectMemHandler::new(
-                cpu_type,
-                memory.clone(),
-                regs.clone(),
-                gpu_context,
-                spu_context,
-            )));
+        let indirect_mem_handler = Rc::new(RefCell::new(IndirectMemHandler::new(
+            cpu_type,
+            memory.clone(),
+            ipc_handler,
+            regs.clone(),
+            gpu_context,
+            spu_context,
+        )));
 
         ThreadContext {
+            cpu_type,
             jit: JitAsm::new(
+                jit_memory,
                 memory,
                 regs.clone(),
                 cp15_context.clone(),
@@ -47,8 +57,15 @@ impl ThreadContext {
     }
 
     pub fn run(&mut self) {
+        println!("{:?} start", self.cpu_type);
         loop {
-            self.jit.execute()
+            self.jit.execute();
+        }
+    }
+
+    pub fn iterate(&mut self, count: usize) {
+        for _ in 0..count {
+            self.jit.execute();
         }
     }
 }

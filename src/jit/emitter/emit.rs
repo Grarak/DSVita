@@ -1,22 +1,24 @@
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
-use crate::jit::assembler::arm::branch_assembler::Bx;
-use crate::jit::assembler::arm::transfer_assembler::{LdmStm, Mrs};
+use crate::jit::assembler::arm::branch_assembler::{Bx, B};
+use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs};
 use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve, EMULATED_REGS_COUNT, FIRST_EMULATED_REG};
 use crate::jit::{Cond, Op};
 use std::cmp::max;
-use std::ops;
+use std::{ops, ptr};
 
 impl JitAsm {
     pub fn emit(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
+        let cond = inst_info.cond;
+        let out_regs = inst_info.out_regs;
 
         let emit_func = match inst_info.op {
             Op::B | Op::Bl => JitAsm::emit_b,
             Op::Bx | Op::BlxReg => JitAsm::emit_bx,
-            Op::LdrOfip | Op::LdrbOfrplr => match self.cpu_type {
+            Op::LdrOfip | Op::LdrbOfrplr | Op::LdrPtip => match self.cpu_type {
                 CpuType::ARM7 => JitAsm::emit_ldr_arm7,
                 CpuType::ARM9 => JitAsm::emit_ldr_arm9,
             },
@@ -32,7 +34,6 @@ impl JitAsm {
             Op::Swi => JitAsm::emit_swi,
             _ => {
                 let src_regs = inst_info.src_regs;
-                let out_regs = inst_info.out_regs;
                 let combined_regs = src_regs + out_regs;
                 if combined_regs.emulated_regs_count() > 0 {
                     self.handle_emulated_regs(buf_index, pc, |_, _, _| Vec::new());
@@ -97,6 +98,31 @@ impl JitAsm {
         };
 
         emit_func(self, buf_index, pc);
+
+        if out_regs.is_reserved(Reg::PC) {
+            if cond != Cond::AL {
+                todo!()
+            }
+
+            self.jit_buf
+                .emit_opcodes
+                .extend(&self.thread_regs.borrow().save_regs_opcodes);
+
+            self.jit_buf
+                .emit_opcodes
+                .extend(&AluImm::mov32(Reg::R0, pc));
+            self.jit_buf.emit_opcodes.extend(
+                &AluImm::mov32(Reg::LR, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
+            );
+            self.jit_buf
+                .emit_opcodes
+                .push(LdrStrImm::str_al(Reg::R0, Reg::LR));
+
+            JitAsm::emit_host_bx(
+                self.breakout_skip_save_regs_addr,
+                &mut self.jit_buf.emit_opcodes,
+            );
+        }
     }
 
     pub fn handle_emulated_regs(
@@ -111,9 +137,7 @@ impl JitAsm {
     ) {
         let mut inst_info = self.jit_buf.instructions[buf_index];
 
-        if inst_info.cond != Cond::AL {
-            todo!()
-        }
+        let mut opcodes = Vec::<u32>::new();
 
         let emulated_src_regs = inst_info.src_regs.get_emulated_regs();
         let mut src_reserved = inst_info.src_regs.create_push_pop_handler(
@@ -162,7 +186,7 @@ impl JitAsm {
         }
 
         if let Some(opcode) = src_reserved.emit_push_stack(Reg::LR) {
-            self.jit_buf.emit_opcodes.push(opcode);
+            opcodes.push(opcode);
         }
 
         for (index, mapped_reg) in src_reg_mapping.iter().enumerate() {
@@ -172,13 +196,9 @@ impl JitAsm {
 
             let reg = Reg::from(FIRST_EMULATED_REG as u8 + index as u8);
             if reg == Reg::PC {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(&AluImm::mov32(*mapped_reg, pc + 8));
+                opcodes.extend(&AluImm::mov32(*mapped_reg, pc + 8));
             } else {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(&self.thread_regs.borrow().emit_get_reg(*mapped_reg, reg));
+                opcodes.extend(&self.thread_regs.borrow().emit_get_reg(*mapped_reg, reg));
             }
         }
 
@@ -223,11 +243,11 @@ impl JitAsm {
         let insts = before_assemble(self, &inst_info, &mut out_reserved);
         {
             if let Some(opcode) = out_reserved.emit_push_stack(Reg::LR) {
-                self.jit_buf.emit_opcodes.push(opcode);
+                opcodes.push(opcode);
             }
         }
-        self.jit_buf.emit_opcodes.extend(&insts);
-        self.jit_buf.emit_opcodes.push(inst_info.assemble());
+        opcodes.extend(&insts);
+        opcodes.push(inst_info.assemble());
 
         for (index, mapped_reg) in out_reg_mapping.iter().enumerate() {
             if *mapped_reg == Reg::None {
@@ -238,24 +258,30 @@ impl JitAsm {
             if reg == Reg::PC {
                 todo!()
             } else {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(
-                        &self
-                            .thread_regs
-                            .borrow()
-                            .emit_set_reg(reg, *mapped_reg, out_addr),
-                    );
+                opcodes.extend(
+                    &self
+                        .thread_regs
+                        .borrow()
+                        .emit_set_reg(reg, *mapped_reg, out_addr),
+                );
             }
         }
 
         if let Some(opcode) = out_reserved.emit_pop_stack(Reg::LR) {
-            self.jit_buf.emit_opcodes.push(opcode);
+            opcodes.push(opcode);
         }
 
         if let Some(opcode) = src_reserved.emit_pop_stack(Reg::LR) {
-            self.jit_buf.emit_opcodes.push(opcode);
+            opcodes.push(opcode);
         }
+
+        if inst_info.cond != Cond::AL {
+            self.jit_buf
+                .emit_opcodes
+                .push(B::b(opcodes.len() as i32 - 1, !inst_info.cond));
+        }
+
+        self.jit_buf.emit_opcodes.extend(&opcodes);
     }
 
     pub fn emit_host_bx(addr: u32, jit_buf: &mut Vec<u32>) {
@@ -307,7 +333,7 @@ impl RegReserve {
         let mut reserve = *self;
         let mut writable_regs = RegReserve::new();
         for inst in insts {
-            if inst.op.is_branch() {
+            if inst.op.is_branch() || inst.out_regs.is_reserved(Reg::PC) {
                 break;
             }
 

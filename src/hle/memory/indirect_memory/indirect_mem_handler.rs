@@ -1,5 +1,6 @@
 use crate::hle::gpu::gpu_context::GpuContext;
-use crate::hle::memory::indirect_memory::MemoryAmount;
+use crate::hle::ipc_handler::IpcHandler;
+use crate::hle::memory::indirect_memory::{Convert, MemoryAmount};
 use crate::hle::memory::io_ports::IoPorts;
 use crate::hle::memory::memory::Memory;
 use crate::hle::memory::regions;
@@ -28,17 +29,11 @@ pub struct IndirectMemHandler {
     pub invalidated_jit_addrs: HashSet<u32>,
 }
 
-pub enum WriteBack {
-    Byte(u8),
-    Half(u16),
-    Word(u32),
-    None,
-}
-
 impl IndirectMemHandler {
     pub fn new(
         cpu_type: CpuType,
         memory: Arc<Mutex<Memory>>,
+        ipc_handler: Arc<Mutex<IpcHandler>>,
         thread_regs: Rc<RefCell<ThreadRegs>>,
         gpu_context: Rc<RefCell<GpuContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
@@ -49,19 +44,18 @@ impl IndirectMemHandler {
             memory: memory.clone(),
             vmm,
             thread_regs: thread_regs.clone(),
-            io_ports: IoPorts::new(memory.clone(), thread_regs, gpu_context, spu_context),
+            io_ports: IoPorts::new(
+                memory.clone(),
+                ipc_handler,
+                thread_regs,
+                gpu_context,
+                spu_context,
+            ),
             invalidated_jit_addrs: HashSet::new(),
         }
     }
 
     fn handle_request(&mut self, opcode: u32, pc: u32, write: bool) {
-        debug_println!(
-            "{:?} indirect memory {} {:x}",
-            self.cpu_type,
-            if write { "write" } else { "read" },
-            pc
-        );
-
         let inst_info = {
             let (op, func) = lookup_opcode(opcode);
             func(opcode, *op)
@@ -69,27 +63,26 @@ impl IndirectMemHandler {
 
         let pre = match inst_info.op {
             Op::LdrOfip | Op::StrOfip | Op::StrhOfip | Op::StrPrim => true,
-            _ => todo!(),
+            Op::LdrPtip => false,
+            _ => todo!("{:?}", inst_info),
         };
 
         let write_back = match inst_info.op {
             Op::LdrOfip | Op::StrOfip | Op::StrhOfip => false,
-            Op::StrPrim => true,
-            _ => todo!(),
+            Op::LdrPtip | Op::StrPrim => true,
+            _ => todo!("{:?}", inst_info),
         };
 
         let operands = inst_info.operands();
         let op0 = operands[0].as_reg_no_shift().unwrap();
         let op1 = operands[1].as_reg_no_shift().unwrap();
 
-        let get_reg_value =
-            |regs: &ThreadRegs, reg: Reg| match reg {
-                Reg::PC => pc + 8,
-                _ => *regs.get_reg_value(reg),
-            };
-        let set_reg_value = |regs: &mut ThreadRegs, reg: Reg, value: u32| match reg {
-            Reg::PC => todo!(),
-            _ => *regs.get_reg_value_mut(reg) = value,
+        let get_reg_value = |regs: &ThreadRegs, reg: Reg| match reg {
+            Reg::PC => pc + 8,
+            _ => *regs.get_reg_value(reg),
+        };
+        let set_reg_value = |regs: &mut ThreadRegs, reg: Reg, value: u32| {
+            *regs.get_reg_value_mut(reg) = value;
         };
 
         let new_base = {
@@ -213,21 +206,37 @@ impl IndirectMemHandler {
         }
     }
 
-    pub fn read<T: Copy + Into<u32>>(&self, addr: u32) -> T {
-        match self.cpu_type {
+    pub fn read<T: Convert>(&self, addr: u32) -> T {
+        let ret: T = match self.cpu_type {
             CpuType::ARM7 => self.read_arm7(addr),
             CpuType::ARM9 => todo!(),
-        }
+        };
+
+        debug_println!(
+            "{:?} indirect memory read at {:x} with value {:x}",
+            self.cpu_type,
+            addr,
+            ret.into()
+        );
+
+        ret
     }
 
-    pub fn write<T: Copy + Into<u32>>(&mut self, addr: u32, value: T) {
+    pub fn write<T: Convert>(&mut self, addr: u32, value: T) {
+        debug_println!(
+            "{:?} indirect memory write at {:x} with value {:x}",
+            self.cpu_type,
+            addr,
+            value.into(),
+        );
+
         match self.cpu_type {
             CpuType::ARM7 => self.write_arm7(addr, value),
             CpuType::ARM9 => self.write_arm9(addr, value),
         }
     }
 
-    fn read_arm7<T: Copy + Into<u32>>(&self, addr: u32) -> T {
+    fn read_arm7<T: Convert>(&self, addr: u32) -> T {
         let base = addr & 0xFF000000;
         let offset = addr - base;
 
@@ -239,7 +248,7 @@ impl IndirectMemHandler {
         }
     }
 
-    fn write_arm7<T: Copy + Into<u32>>(&mut self, addr: u32, value: T) {
+    fn write_arm7<T: Convert>(&mut self, addr: u32, value: T) {
         let base = addr & 0xFF000000;
         let offset = addr - base;
 
@@ -262,7 +271,7 @@ impl IndirectMemHandler {
         }
     }
 
-    fn write_arm9<T: Copy + Into<u32>>(&self, addr: u32, value: T) {
+    fn write_arm9<T: Convert>(&self, addr: u32, value: T) {
         let base = addr & 0xFF000000;
         let offset = addr - base;
 
@@ -271,32 +280,27 @@ impl IndirectMemHandler {
                 self.memory.lock().unwrap().write_wram_arm9(offset, value);
                 None
             }
-            regions::ARM9_IO_PORTS_OFFSET => Some(self.io_ports.write_arm9(offset, value.clone())),
+            regions::ARM9_IO_PORTS_OFFSET => Some(self.io_ports.write_arm9(offset, value)),
             regions::STANDARD_PALETTES_OFFSET => todo!(),
             regions::VRAM_ENGINE_A_BG_OFFSET => todo!(),
             regions::VRAM_ENGINE_B_BG_OFFSET => todo!(),
             regions::VRAM_ENGINE_A_OBJ_OFFSET => todo!(),
             regions::VRAM_ENGINE_B_OBJ_OFFSET => todo!(),
             regions::VRAM_LCDC_ALLOCATED_OFFSET => todo!(),
-            _ => Some(WriteBack::None),
+            _ => Some(value),
         };
 
         if let Some(readjusted_value) = readjusted_value {
-            match readjusted_value {
-                WriteBack::Byte(v) => self.write_raw(addr, v),
-                WriteBack::Half(v) => self.write_raw(addr, v),
-                WriteBack::Word(v) => self.write_raw(addr, v),
-                WriteBack::None => self.write_raw(addr, value),
-            }
+            self.write_raw(addr, readjusted_value)
         }
     }
 
-    fn read_raw<T: Copy + Into<u32>>(&self, addr: u32) -> T {
+    fn read_raw<T: Convert>(&self, addr: u32) -> T {
         let vmmap = unsafe { (*self.vmm).get_vm_mapping() };
         utils::read_from_mem(&vmmap, addr)
     }
 
-    fn write_raw<T: Into<u32>>(&self, addr: u32, value: T) {
+    fn write_raw<T: Convert>(&self, addr: u32, value: T) {
         let mut vmmap = unsafe { (*self.vmm).get_vm_mapping() };
         utils::write_to_mem(&mut vmmap, addr, value)
     }

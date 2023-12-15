@@ -1,12 +1,14 @@
+use crate::hle::memory::indirect_memory::Convert;
 use crate::hle::memory::regions;
 use crate::host_memory::VmManager;
 use crate::logging::debug_println;
 use crate::utils;
+use std::ops::{Deref, DerefMut};
 
 pub struct Memory {
     pub vmm: VmManager,
     pub wram_cnt: u8,
-    wram_arm7: [u8; regions::ARM7_WRAM_SIZE as usize],
+    wram_arm7: Box<[u8; regions::ARM7_WRAM_SIZE as usize]>,
 }
 
 impl Memory {
@@ -14,7 +16,7 @@ impl Memory {
         Memory {
             vmm,
             wram_cnt: 0,
-            wram_arm7: [0u8; regions::ARM7_WRAM_SIZE as usize],
+            wram_arm7: Box::new([0u8; regions::ARM7_WRAM_SIZE as usize]),
         }
     }
 
@@ -23,7 +25,7 @@ impl Memory {
         self.wram_cnt
     }
 
-    pub fn read_wram_arm7<T: Copy + Into<u32>>(&self, addr_offset: u32) -> T {
+    pub fn read_wram_arm7<T: Convert>(&self, addr_offset: u32) -> T {
         match self.wram_cnt {
             1 | 2 | 3 => {
                 debug_println!(
@@ -32,11 +34,14 @@ impl Memory {
                 );
                 self.read_raw(regions::SHARED_WRAM_OFFSET | addr_offset)
             }
-            _ => utils::read_from_mem(&self.wram_arm7, addr_offset & (regions::ARM7_WRAM_SIZE - 1)),
+            _ => utils::read_from_mem(
+                self.wram_arm7.deref(),
+                addr_offset & (regions::ARM7_WRAM_SIZE - 1),
+            ),
         }
     }
 
-    pub fn write_wram_arm7<T: Copy + Into<u32>>(&mut self, addr_offset: u32, value: T) {
+    pub fn write_wram_arm7<T: Convert>(&mut self, addr_offset: u32, value: T) {
         match self.wram_cnt {
             1 | 2 | 3 => {
                 debug_println!(
@@ -48,7 +53,7 @@ impl Memory {
             }
             _ => {
                 utils::write_to_mem(
-                    &mut self.wram_arm7,
+                    self.wram_arm7.deref_mut(),
                     addr_offset & (regions::ARM7_WRAM_SIZE - 1),
                     value,
                 );
@@ -56,16 +61,16 @@ impl Memory {
         }
     }
 
-    pub fn write_wram_arm9<T: Into<u32>>(&self, addr_offset: u32, value: T) {
+    pub fn write_wram_arm9<T: Convert>(&self, addr_offset: u32, value: T) {
         todo!()
     }
 
-    fn read_raw<T: Copy + Into<u32>>(&self, addr: u32) -> T {
+    fn read_raw<T: Convert>(&self, addr: u32) -> T {
         let vmmap = self.vmm.get_vm_mapping();
         utils::read_from_mem(&vmmap, addr)
     }
 
-    fn write_raw<T: Into<u32>>(&self, addr: u32, value: T) {
+    fn write_raw<T: Convert>(&self, addr: u32, value: T) {
         let mut vmmap = self.vmm.get_vm_mapping();
         utils::write_to_mem(&mut vmmap, addr, value)
     }

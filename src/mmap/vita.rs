@@ -62,10 +62,6 @@ impl Mmap {
             if ret < vitasdk_sys::SCE_OK as i32 {
                 Err(Error::from(ErrorKind::AddrNotAvailable))
             } else {
-                // TODO implement open/close correctly
-                if exec {
-                    unsafe { vitasdk_sys::sceKernelOpenVMDomain() };
-                }
                 Ok(Mmap {
                     block_uid,
                     ptr: base,

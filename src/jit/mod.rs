@@ -5,7 +5,7 @@ pub mod disassembler;
 mod emitter;
 pub mod inst_info;
 pub mod jit_asm;
-mod jit_memory;
+pub mod jit_memory;
 pub mod reg;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

@@ -3,8 +3,9 @@ use crate::mmap::Mmap;
 use crate::{utils, DEBUG};
 use im::OrdMap;
 use std::collections::HashMap;
+use std::thread;
 
-const JIT_MEMORY_SIZE: u32 = 8 * 1024 * 1024;
+const JIT_MEMORY_SIZE: u32 = 16 * 1024 * 1024;
 
 type JitBlockStartAddr = u32;
 type JitBlockSize = u32;
@@ -27,18 +28,18 @@ impl CodeBlock {
 
 pub struct JitMemory {
     pub memory: Mmap,
-    is_open: bool,
     blocks: OrdMap<JitBlockStartAddr, JitBlockSize>,
     code_blocks: OrdMap<GuestStartPc, CodeBlock>,
+    current_thread_holder: Option<thread::ThreadId>,
 }
 
 impl JitMemory {
     pub fn new() -> Self {
         JitMemory {
             memory: Mmap::new("code", true, JIT_MEMORY_SIZE).unwrap(),
-            is_open: false,
             blocks: OrdMap::new(),
             code_blocks: OrdMap::new(),
+            current_thread_holder: None,
         }
     }
 
@@ -70,9 +71,22 @@ impl JitMemory {
         let aligned_size = utils::align_up((opcodes.len() * 4) as u32, 16);
         let new_addr = self.find_free_start(aligned_size);
 
-        self.open();
+        let current_thread_id = thread::current().id();
+        match self.current_thread_holder {
+            Some(thread_id) => {
+                if thread_id != current_thread_id {
+                    self.close();
+                    self.open();
+                    self.current_thread_holder = Some(current_thread_id);
+                }
+            }
+            None => {
+                self.open();
+                self.current_thread_holder = Some(current_thread_id);
+            }
+        }
+
         utils::write_to_mem_slice(&mut self.memory, new_addr, opcodes);
-        self.close();
         self.flush_cache(new_addr, (opcodes.len() * 4) as u32);
 
         self.blocks.insert(new_addr, aligned_size);
@@ -133,36 +147,28 @@ impl JitMemory {
     }
 
     #[cfg(target_os = "linux")]
-    fn open(&mut self) {
-        self.is_open = true;
-    }
+    fn open(&mut self) {}
 
     #[cfg(target_os = "linux")]
-    fn close(&mut self) {
-        self.is_open = false;
-    }
+    fn close(&mut self) {}
 
     #[cfg(target_os = "linux")]
     fn flush_cache(&self, _: JitBlockStartAddr, _: JitBlockSize) {}
 
-    // TODO implement open/close correctly
     #[cfg(target_os = "vita")]
     fn open(&mut self) {
-        // let ret = unsafe { vitasdk_sys::sceKernelOpenVMDomain() };
-        // if ret < vitasdk_sys::SCE_OK as _ {
-        //     panic!("Can't open vm domain {}", ret);
-        // }
-        self.is_open = true;
+        let ret = unsafe { vitasdk_sys::sceKernelOpenVMDomain() };
+        if ret < vitasdk_sys::SCE_OK as _ {
+            panic!("Can't open vm domain {}", ret);
+        }
     }
 
-    // TODO implement open/close correctly
     #[cfg(target_os = "vita")]
     fn close(&mut self) {
-        // let ret = unsafe { vitasdk_sys::sceKernelCloseVMDomain() };
-        // if ret < vitasdk_sys::SCE_OK as _ {
-        //     panic!("Can't close vm domain {}", ret);
-        // }
-        self.is_open = false;
+        let ret = unsafe { vitasdk_sys::sceKernelCloseVMDomain() };
+        if ret < vitasdk_sys::SCE_OK as _ {
+            panic!("Can't close vm domain {}", ret);
+        }
     }
 
     #[cfg(target_os = "vita")]
