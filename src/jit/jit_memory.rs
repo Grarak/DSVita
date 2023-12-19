@@ -14,13 +14,19 @@ type GuestStartPc = u32;
 #[derive(Clone)]
 struct CodeBlock {
     guest_pc_to_jit_addr_offset: HashMap<u32, u16>,
+    guest_pc_end: u32,
     jit_start_addr: u32,
 }
 
 impl CodeBlock {
-    fn new(guest_pc_to_jit_addr_offset: HashMap<u32, u16>, jit_start_addr: u32) -> Self {
+    fn new(
+        guest_pc_to_jit_addr_offset: HashMap<u32, u16>,
+        guest_pc_end: u32,
+        jit_start_addr: u32,
+    ) -> Self {
         CodeBlock {
             guest_pc_to_jit_addr_offset,
+            guest_pc_end,
             jit_start_addr,
         }
     }
@@ -36,7 +42,7 @@ pub struct JitMemory {
 impl JitMemory {
     pub fn new() -> Self {
         JitMemory {
-            memory: Mmap::new("code", true, JIT_MEMORY_SIZE).unwrap(),
+            memory: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
             blocks: OrdMap::new(),
             code_blocks: OrdMap::new(),
             current_thread_holder: None,
@@ -67,6 +73,7 @@ impl JitMemory {
         opcodes: &[u32],
         guest_start_pc: Option<GuestStartPc>,
         guest_pc_to_jit_addr_offset: Option<HashMap<u32, u16>>,
+        guest_pc_end: Option<u32>,
     ) -> u32 {
         let aligned_size = utils::align_up((opcodes.len() * 4) as u32, 16);
         let new_addr = self.find_free_start(aligned_size);
@@ -94,7 +101,11 @@ impl JitMemory {
         if let Some(guest_start_pc) = guest_start_pc {
             self.code_blocks.insert(
                 guest_start_pc,
-                CodeBlock::new(guest_pc_to_jit_addr_offset.unwrap(), new_addr),
+                CodeBlock::new(
+                    guest_pc_to_jit_addr_offset.unwrap(),
+                    guest_pc_end.unwrap(),
+                    new_addr,
+                ),
             );
         }
 
@@ -109,13 +120,23 @@ impl JitMemory {
         new_addr + self.memory.as_ptr() as u32
     }
 
-    fn get_code_block(&self, guest_pc: u32) -> Option<(u32, u32, u16)> {
+    fn get_code_block(&self, guest_pc: u32) -> Option<(u32, u32, u32, u16)> {
         match self.code_blocks.get_prev(&guest_pc) {
             Some((guest_start_pc, code_block)) => {
                 if guest_pc == *guest_start_pc {
-                    Some((*guest_start_pc, code_block.jit_start_addr, 0))
+                    Some((
+                        *guest_start_pc,
+                        code_block.guest_pc_end,
+                        code_block.jit_start_addr,
+                        0,
+                    ))
                 } else if let Some(offset) = code_block.guest_pc_to_jit_addr_offset.get(&guest_pc) {
-                    Some((*guest_start_pc, code_block.jit_start_addr, *offset))
+                    Some((
+                        *guest_start_pc,
+                        code_block.guest_pc_end,
+                        code_block.jit_start_addr,
+                        *offset,
+                    ))
                 } else {
                     None
                 }
@@ -124,17 +145,18 @@ impl JitMemory {
         }
     }
 
-    pub fn get_jit_start_addr(&self, guest_pc: u32) -> Option<u32> {
+    pub fn get_jit_start_addr(&self, guest_pc: u32) -> Option<(u32, u32)> {
         match self.get_code_block(guest_pc) {
-            Some((_, jit_start_addr, offset)) => {
-                Some(jit_start_addr + offset as u32 + self.memory.as_ptr() as u32)
-            }
+            Some((_, guest_pc_end, jit_start_addr, offset)) => Some((
+                jit_start_addr + offset as u32 + self.memory.as_ptr() as u32,
+                guest_pc_end,
+            )),
             None => None,
         }
     }
 
     pub fn invalidate_block(&mut self, guest_pc: u32) {
-        if let Some((guest_start_pc, jit_start_addr, _)) = self.get_code_block(guest_pc) {
+        if let Some((guest_start_pc, _, jit_start_addr, _)) = self.get_code_block(guest_pc) {
             self.blocks.remove(&jit_start_addr);
             self.code_blocks.remove(&guest_start_pc);
 

@@ -1,7 +1,7 @@
 use crate::jit::Op;
 
-pub mod indirect_mem_handler;
-pub mod indirect_mem_multiple_handler;
+pub mod mem_handler;
+pub mod mem_multiple_handler;
 
 pub trait Convert: Copy + Into<u32> {
     fn from(value: u32) -> Self;
@@ -203,7 +203,8 @@ impl From<Op> for MemoryAmount {
             | Op::StrPtrpll
             | Op::StrPtrplr
             | Op::StrPtrprr
-            | Op::LdrPcT => MemoryAmount::WORD,
+            | Op::LdrPcT
+            | Op::StrImm5T => MemoryAmount::WORD,
             Op::LdrdOfim
             | Op::LdrdOfip
             | Op::LdrdOfrm

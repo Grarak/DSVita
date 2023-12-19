@@ -1,4 +1,4 @@
-use crate::hle::memory::indirect_memory::indirect_mem_handler::IndirectMemHandler;
+use crate::hle::memory::handler::mem_handler::MemHandler;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_info::InstInfo;
@@ -6,7 +6,7 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::Op;
 use crate::logging::debug_println;
 
-impl IndirectMemHandler {
+impl MemHandler {
     fn handle_multiple_request(&mut self, opcode: u32, pc: u32, thumb: bool, write: bool) {
         debug_println!(
             "handle multiple request at {:x} thumb: {} write: {}",
@@ -94,17 +94,13 @@ impl IndirectMemHandler {
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_read_multiple(
-    handler: *mut IndirectMemHandler,
-    opcode: u32,
-    pc: u32,
-) {
+pub unsafe extern "C" fn mem_handler_multiple_read(handler: *mut MemHandler, opcode: u32, pc: u32) {
     (*handler).handle_multiple_request(opcode, pc, false, false);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_write_multiple(
-    handler: *mut IndirectMemHandler,
+pub unsafe extern "C" fn mem_handler_multiple_write(
+    handler: *mut MemHandler,
     opcode: u32,
     pc: u32,
 ) {
@@ -112,8 +108,8 @@ pub unsafe extern "C" fn indirect_mem_write_multiple(
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_read_multiple_thumb(
-    handler: *mut IndirectMemHandler,
+pub unsafe extern "C" fn mem_handler_multiple_read_thumb(
+    handler: *mut MemHandler,
     opcode: u32,
     pc: u32,
 ) {
@@ -121,8 +117,8 @@ pub unsafe extern "C" fn indirect_mem_read_multiple_thumb(
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_write_multiple_thumb(
-    handler: *mut IndirectMemHandler,
+pub unsafe extern "C" fn mem_handler_multiple_write_thumb(
+    handler: *mut MemHandler,
     opcode: u32,
     pc: u32,
 ) {

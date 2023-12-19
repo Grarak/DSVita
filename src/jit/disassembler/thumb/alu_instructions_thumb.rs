@@ -1,12 +1,22 @@
 mod alu_thumb_ops {
-    use crate::jit::inst_info::{Operand, Operands};
+    use crate::jit::inst_info::{InstCycle, Operand, Operands};
     use crate::jit::inst_info_thumb::InstInfoThumb;
     use crate::jit::reg::{reg_reserve, Reg};
     use crate::jit::Op;
 
     #[inline]
     pub fn add_reg_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let op0 = Reg::from((opcode & 0x7) as u8);
+        let op1 = Reg::from(((opcode >> 3) & 0x7) as u8);
+        let op2 = Reg::from(((opcode >> 6) & 0x7) as u8);
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
+            reg_reserve!(op1, op2),
+            reg_reserve!(op0, Reg::CPSR),
+            InstCycle::common(1),
+        )
     }
 
     #[inline]
@@ -20,6 +30,7 @@ mod alu_thumb_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
             reg_reserve!(op1, op2),
             reg_reserve!(op0, Reg::CPSR),
+            InstCycle::common(1),
         )
     }
 
@@ -43,6 +54,7 @@ mod alu_thumb_ops {
             Operands::new_2(Operand::reg(op0), Operand::reg(op2)),
             reg_reserve!(op2),
             reg_reserve!(op0),
+            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
         )
     }
 
@@ -76,12 +88,27 @@ mod alu_thumb_ops {
             ),
             reg_reserve!(op1),
             reg_reserve!(op0, Reg::CPSR),
+            InstCycle::common(1),
         )
     }
 
     #[inline]
     pub fn lsr_imm_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let op0 = Reg::from((opcode & 0x7) as u8);
+        let op1 = Reg::from(((opcode >> 3) & 0x7) as u8);
+        let op2 = (opcode >> 6) & 0x1F;
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_3(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::imm(op2 as u32),
+            ),
+            reg_reserve!(op1),
+            reg_reserve!(op0, Reg::CPSR),
+            InstCycle::common(1),
+        )
     }
 
     #[inline]
@@ -99,6 +126,7 @@ mod alu_thumb_ops {
             ),
             reg_reserve!(op1),
             reg_reserve!(op0, Reg::CPSR),
+            InstCycle::common(1),
         )
     }
 
@@ -122,6 +150,7 @@ mod alu_thumb_ops {
             Operands::new_2(Operand::reg(op0), Operand::imm(op2 as u32)),
             reg_reserve!(op0),
             reg_reserve!(op0, Reg::CPSR),
+            InstCycle::common(1),
         )
     }
 
@@ -140,6 +169,7 @@ mod alu_thumb_ops {
             Operands::new_2(Operand::reg(op0), Operand::imm(op2 as u32)),
             reg_reserve!(op0),
             reg_reserve!(op0, Reg::CPSR),
+            InstCycle::common(1),
         )
     }
 
@@ -153,6 +183,7 @@ mod alu_thumb_ops {
             Operands::new_2(Operand::reg(op0), Operand::imm(op2 as u32)),
             reg_reserve!(),
             reg_reserve!(op0, Reg::CPSR),
+            InstCycle::common(1),
         )
     }
 
@@ -211,6 +242,7 @@ mod alu_thumb_ops {
             Operands::new_2(Operand::reg(op1), Operand::reg(op2)),
             reg_reserve!(op1, op2),
             reg_reserve!(Reg::CPSR),
+            InstCycle::common(1),
         )
     }
 
@@ -221,7 +253,16 @@ mod alu_thumb_ops {
 
     #[inline]
     pub fn orr_dp_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let op0 = Reg::from((opcode & 0x7) as u8);
+        let op2 = Reg::from(((opcode >> 3) & 0x7) as u8);
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_2(Operand::reg(op0), Operand::reg(op2)),
+            reg_reserve!(op0, op2),
+            reg_reserve!(op0, Reg::CPSR),
+            InstCycle::common(1),
+        )
     }
 
     #[inline]

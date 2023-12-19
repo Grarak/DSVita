@@ -15,30 +15,35 @@ unsafe impl Send for Mmap {}
 unsafe impl Sync for Mmap {}
 
 impl Mmap {
-    pub fn new(name: &str, exec: bool, size: u32) -> io::Result<Self> {
+    pub fn rw(name: &str, size: u32) -> io::Result<Self> {
+        let c_name = CString::new(name).unwrap();
+
+        let mut opts: vitasdk_sys::SceKernelAllocMemBlockOpt = unsafe { mem::zeroed() };
+        opts.size = mem::size_of::<vitasdk_sys::SceKernelAllocMemBlockOpt>() as _;
+        opts.attr = vitasdk_sys::SCE_KERNEL_MEMORY_ACCESS_R;
+        opts.alignment = 4 * 1024;
+
+        let block_uid = unsafe {
+            vitasdk_sys::sceKernelAllocMemBlock(
+                c_name.as_c_str().as_ptr() as _,
+                vitasdk_sys::SCE_KERNEL_MEMBLOCK_TYPE_USER_RW,
+                utils::align_up(size, opts.alignment),
+                ptr::addr_of_mut!(opts),
+            )
+        };
+
+        Mmap::new(block_uid, size)
+    }
+
+    pub fn executable(name: &str, size: u32) -> io::Result<Self> {
         let c_name = CString::new(name).unwrap();
 
         let block_uid =
-            if exec {
-                unsafe {
-                    vitasdk_sys::sceKernelAllocMemBlockForVM(c_name.as_c_str().as_ptr(), size)
-                }
-            } else {
-                let mut opts: vitasdk_sys::SceKernelAllocMemBlockOpt = unsafe { mem::zeroed() };
-                opts.size = mem::size_of::<vitasdk_sys::SceKernelAllocMemBlockOpt>() as _;
-                opts.attr = vitasdk_sys::SCE_KERNEL_MEMORY_ACCESS_R;
-                opts.alignment = 4 * 1024;
+            unsafe { vitasdk_sys::sceKernelAllocMemBlockForVM(c_name.as_c_str().as_ptr(), size) };
+        Mmap::new(block_uid, size)
+    }
 
-                unsafe {
-                    vitasdk_sys::sceKernelAllocMemBlock(
-                        c_name.as_c_str().as_ptr() as _,
-                        vitasdk_sys::SCE_KERNEL_MEMBLOCK_TYPE_USER_RW,
-                        utils::align_up(size, opts.alignment),
-                        ptr::addr_of_mut!(opts),
-                    )
-                }
-            };
-
+    fn new(block_uid: vitasdk_sys::SceUID, size: u32) -> io::Result<Self> {
         if block_uid < vitasdk_sys::SCE_OK as i32 {
             Err(Error::from(ErrorKind::AddrNotAvailable))
         } else {

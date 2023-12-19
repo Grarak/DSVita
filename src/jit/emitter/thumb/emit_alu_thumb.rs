@@ -2,49 +2,38 @@ use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::inst_info::Operand;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::RegReserve;
-use crate::jit::{Cond, ShiftType};
+use crate::jit::{Cond, Op, ShiftType};
 
 impl JitAsm {
-    pub fn emit_add_thumb(&mut self, buf_index: usize, _: u32) {
+    pub fn emit_alu_common(&mut self, buf_index: usize, _: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
         let operands = inst_info.operands();
-        let op0 = operands[0].as_reg_no_shift().unwrap();
-
-        let opcode = match operands[1] {
-            Operand::Reg { .. } => todo!(),
-            Operand::Imm(imm) => AluImm::adds_al(*op0, *op0, imm as u8),
-            _ => panic!(),
+        let op0 = *operands[0].as_reg_no_shift().unwrap();
+        let (op1, op2) = if operands.len() == 3 {
+            (*operands[1].as_reg_no_shift().unwrap(), &operands[2])
+        } else {
+            (op0, &operands[1])
         };
 
-        self.jit_buf.emit_opcodes.push(opcode)
-    }
-
-    pub fn emit_asr_thumb(&mut self, buf_index: usize, _: u32) {
-        let inst_info = &self.jit_buf.instructions[buf_index];
-
-        let operands = inst_info.operands();
-        let op0 = operands[0].as_reg_no_shift().unwrap();
-        let op1 = operands[1].as_reg_no_shift().unwrap();
-
-        let opcode = match operands[2] {
-            Operand::Reg { .. } => todo!(),
-            Operand::Imm(imm) => AluShiftImm::movs(*op0, *op1, ShiftType::ASR, imm as u8, Cond::AL),
-            _ => panic!(),
-        };
-
-        self.jit_buf.emit_opcodes.push(opcode)
-    }
-
-    pub fn emit_mov_thumb(&mut self, buf_index: usize, _: u32) {
-        let inst_info = &self.jit_buf.instructions[buf_index];
-
-        let operands = inst_info.operands();
-        let op0 = operands[0].as_reg_no_shift().unwrap();
-
-        let opcode = match operands[1] {
-            Operand::Reg { .. } => todo!(),
-            Operand::Imm(imm) => AluImm::movs_al(*op0, imm as u8),
+        let opcode = match op2 {
+            Operand::Reg { reg, .. } => match inst_info.op {
+                Op::AddRegT => AluShiftImm::adds_al(op0, op1, *reg),
+                Op::CmpDpT => AluShiftImm::cmp_al(op0, *reg),
+                Op::SubRegT => AluShiftImm::subs_al(op0, op1, *reg),
+                Op::OrrDpT => AluShiftImm::orrs_al(op0, op1, *reg),
+                _ => todo!("{:?}", inst_info),
+            },
+            Operand::Imm(imm) => match inst_info.op {
+                Op::AddImm8T => AluImm::adds_al(op0, op1, *imm as u8),
+                Op::AsrImmT => AluShiftImm::movs(op0, op1, ShiftType::ASR, *imm as u8, Cond::AL),
+                Op::CmpImm8T => AluImm::cmp_al(op0, *imm as u8),
+                Op::LslImmT => AluShiftImm::movs(op0, op1, ShiftType::LSL, *imm as u8, Cond::AL),
+                Op::LsrImmT => AluShiftImm::movs(op0, op1, ShiftType::LSR, *imm as u8, Cond::AL),
+                Op::MovImm8T => AluImm::movs_al(op0, *imm as u8),
+                Op::SubImm8T => AluImm::subs_al(op0, op1, *imm as u8),
+                _ => todo!("{:?}", inst_info),
+            },
             _ => panic!(),
         };
 
@@ -78,21 +67,5 @@ impl JitAsm {
                 .emit_opcodes
                 .push(AluShiftImm::mov_al(*op0, *op2));
         }
-    }
-
-    pub fn emit_sub_thumb(&mut self, buf_index: usize, _: u32) {
-        let inst_info = &self.jit_buf.instructions[buf_index];
-
-        let operands = inst_info.operands();
-        let op0 = operands[0].as_reg_no_shift().unwrap();
-        let op1 = operands[1].as_reg_no_shift().unwrap();
-
-        let opcode = match operands[2] {
-            Operand::Reg { reg, .. } => AluShiftImm::subs_al(*op0, *op1, reg),
-            Operand::Imm(imm) => AluImm::subs_al(*op0, *op1, imm as u8),
-            _ => panic!(),
-        };
-
-        self.jit_buf.emit_opcodes.push(opcode)
     }
 }

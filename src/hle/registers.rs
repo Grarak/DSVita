@@ -293,17 +293,15 @@ impl ThreadRegs {
         bool::from(Cpsr::from(self.cpsr).thumb())
     }
 
-    pub fn set_ime(&mut self, value: u8) -> u8 {
+    pub fn set_ime(&mut self, value: u8) {
         self.ime = value & 0x1;
-        self.ime
     }
 
-    pub fn set_post_flg(&mut self, value: u8) -> u8 {
+    pub fn set_post_flg(&mut self, value: u8) {
         self.post_flg |= value & 0x1;
         if self.cpu_type == CpuType::ARM9 {
             self.post_flg = (self.post_flg & !0x2) | (value & 0x2);
         }
-        self.post_flg
     }
 }
 

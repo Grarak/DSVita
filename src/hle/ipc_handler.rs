@@ -28,7 +28,7 @@ impl IpcHandler {
         self.sync_regs[cpu_type as usize]
     }
 
-    pub fn set_sync_reg(&mut self, cpu_type: CpuType, value: u16) -> u16 {
+    pub fn set_sync_reg(&mut self, cpu_type: CpuType, value: u16) {
         let mut current_cpu_ipc_sync = IpcSync::from(self.sync_regs[cpu_type as usize]);
         let mut other_cpu_ipc_sync = IpcSync::from(self.sync_regs[!cpu_type as usize]);
 
@@ -46,7 +46,5 @@ impl IpcHandler {
         if send_interrupt {
             todo!()
         }
-
-        self.sync_regs[cpu_type as usize]
     }
 }

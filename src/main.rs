@@ -9,7 +9,6 @@ use crate::hle::memory::memory::Memory;
 use crate::hle::memory::regions;
 use crate::hle::thread_context::ThreadContext;
 use crate::hle::CpuType;
-use crate::host_memory::VmManager;
 use crate::jit::jit_memory::JitMemory;
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
@@ -17,7 +16,6 @@ use std::{env, mem, thread};
 
 mod cartridge;
 mod hle;
-mod host_memory;
 mod jit;
 mod logging;
 mod mmap;
@@ -60,10 +58,10 @@ fn initialize_arm9_thread(
 
     {
         // I/O Ports
-        let mut indirect_mem_handler = thread.indirect_mem_handler.borrow_mut();
-        indirect_mem_handler.write(0x4000247, 0x03u8);
-        indirect_mem_handler.write(0x4000300, 0x01u8);
-        indirect_mem_handler.write(0x4000304, 0x0001u16);
+        let mut mem_handler = thread.mem_handler.borrow_mut();
+        mem_handler.write(0x4000247, 0x03u8);
+        mem_handler.write(0x4000300, 0x01u8);
+        mem_handler.write(0x4000304, 0x0001u16);
     }
 
     {
@@ -90,9 +88,9 @@ fn initialize_arm7_thread(
 
     {
         // I/O Ports
-        let mut indirect_mem_handler = thread.indirect_mem_handler.borrow_mut();
-        indirect_mem_handler.write(0x4000300, 0x01u8); // POWCNT1
-        indirect_mem_handler.write(0x4000504, 0x0200u16); // SOUNDBIAS
+        let mut mem_handler = thread.mem_handler.borrow_mut();
+        mem_handler.write(0x4000300, 0x01u8); // POWCNT1
+        mem_handler.write(0x4000504, 0x0200u16); // SOUNDBIAS
     }
 
     {
@@ -117,30 +115,6 @@ pub fn main() {
 
     let cartridge = Cartridge::from_file(&get_file_path()).unwrap();
 
-    let mut vmm = VmManager::new("vm", &regions::ARM9_REGIONS).unwrap();
-    println!("Allocate vm at {:x}", vmm.vm.as_ptr() as u32);
-
-    let mut vmmap = vmm.get_vm_mapping_mut();
-
-    {
-        let header: &[u8; cartridge::HEADER_IN_RAM_SIZE] =
-            unsafe { mem::transmute(&cartridge.header) };
-        vmmap[0x27FFE00..0x27FFE00 + cartridge::HEADER_IN_RAM_SIZE].copy_from_slice(header);
-
-        let (_, aligned, _) = unsafe { vmmap.align_to_mut::<u16>() };
-        aligned[0x27FF850 / 2] = 0x5835; // ARM7 BIOS CRC
-        aligned[0x27FF880 / 2] = 0x0007; // Message from ARM9 to ARM7
-        aligned[0x27FF884 / 2] = 0x0006; // ARM7 boot task
-        aligned[0x27FFC10 / 2] = 0x5835; // Copy of ARM7 BIOS CRC
-        aligned[0x27FFC40 / 2] = 0x0001; // Boot indicator
-
-        let (_, aligned, _) = unsafe { vmmap.align_to_mut::<u32>() };
-        aligned[0x27FF800 / 4] = 0x00001FC2; // Chip ID 1
-        aligned[0x27FF804 / 4] = 0x00001FC2; // Chip ID 2
-        aligned[0x27FFC00 / 4] = 0x00001FC2; // Copy of chip ID 1
-        aligned[0x27FFC04 / 4] = 0x00001FC2; // Copy of chip ID 2
-    }
-
     let arm9_ram_addr = cartridge.header.arm9_values.ram_address;
     let arm9_entry_adrr = cartridge.header.arm9_values.entry_address;
     let arm7_ram_addr = cartridge.header.arm7_values.ram_address;
@@ -148,18 +122,33 @@ pub fn main() {
 
     assert_eq!(arm9_ram_addr, regions::MAIN_MEMORY_OFFSET);
 
+    let memory = Arc::new(RwLock::new(Memory::new()));
     {
+        let memory = &mut memory.write().unwrap();
+
+        let header: &[u8; cartridge::HEADER_IN_RAM_SIZE] =
+            unsafe { mem::transmute(&cartridge.header) };
+        memory.write_main_slice(0x27FFE00, header);
+
+        memory.write_main(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
+        memory.write_main(0x27FF880, 0x0007u16); // Message from ARM9 to ARM7
+        memory.write_main(0x27FF884, 0x0006u16); // ARM7 boot task
+        memory.write_main(0x27FFC10, 0x5835u16); // Copy of ARM7 BIOS CRC
+        memory.write_main(0x27FFC40, 0x0001u16); // Boot indicator
+
+        memory.write_main(0x27FF800, 0x00001FC2u32); // Chip ID 1
+        memory.write_main(0x27FF804, 0x00001FC2u32); // Chip ID 2
+        memory.write_main(0x27FFC00, 0x00001FC2u32); // Copy of chip ID 1
+        memory.write_main(0x27FFC04, 0x00001FC2u32); // Copy of chip ID 2
+
         let arm9_code = cartridge.read_arm9_code().unwrap();
-        vmmap[arm9_ram_addr as usize..arm9_ram_addr as usize + arm9_code.len()]
-            .copy_from_slice(&arm9_code);
+        memory.write_main_slice(arm9_ram_addr, &arm9_code);
 
         let arm7_code = cartridge.read_arm7_code().unwrap();
-        vmmap[arm7_ram_addr as usize..arm7_ram_addr as usize + arm7_code.len()]
-            .copy_from_slice(&arm7_code);
+        memory.write_main_slice(arm7_ram_addr, &arm7_code);
     }
 
     let jit_memory = Arc::new(RwLock::new(JitMemory::new()));
-    let memory = Arc::new(RwLock::new(Memory::new(vmm)));
     let ipc_handler = Arc::new(RwLock::new(IpcHandler::new()));
 
     let jit_memory_clone = jit_memory.clone();
@@ -187,12 +176,13 @@ pub fn main() {
         let arm9_thread = thread::Builder::new()
             .name("arm9_thread".to_owned())
             .spawn(move || {
-                let mut arm9_thread = initialize_arm9_thread(
-                    arm9_entry_adrr,
-                    jit_memory_clone,
-                    memory_clone,
-                    ipc_handler_clone,
-                );
+                let mut arm9_thread =
+                    initialize_arm9_thread(
+                        arm9_entry_adrr,
+                        jit_memory_clone,
+                        memory_clone,
+                        ipc_handler_clone,
+                    );
 
                 tx.send(()).unwrap();
                 arm9_thread.run();

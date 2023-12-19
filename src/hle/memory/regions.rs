@@ -15,20 +15,21 @@ const INSTRUCTION_TCM_REGION: MemoryRegion =
 const DATA_TCM_REGION: MemoryRegion = MemoryRegion::new("Data TCM", 0, 16 * 1024);
 
 pub const MAIN_MEMORY_OFFSET: u32 = 0x02000000;
+pub const MAIN_MEMORY_ADDRESS_SPACE: u32 = 16 * 1024 * 1024;
 const MAIN_MEMORY_REGION: MemoryRegion =
     MemoryRegion::new("Main Memory", MAIN_MEMORY_OFFSET, 4 * 1024 * 1024);
 
 pub const SHARED_WRAM_OFFSET: u32 = 0x03000000;
+pub const SHARED_WRAM_SIZE: u32 = 32 * 1024;
 const SHARED_WRAM_REGION: MemoryRegion =
-    MemoryRegion::new("Shared WRAM", SHARED_WRAM_OFFSET, 32 * 1024);
+    MemoryRegion::new("Shared WRAM", SHARED_WRAM_OFFSET, SHARED_WRAM_SIZE);
 pub const ARM7_WRAM_OFFSET: u32 = 0x03800000;
 pub const ARM7_WRAM_SIZE: u32 = 64 * 1024;
 const ARM7_WRAM_REGION: MemoryRegion =
     MemoryRegion::new("ARM7-WRAM", ARM7_WRAM_OFFSET, ARM7_WRAM_SIZE);
 
-pub const ARM9_IO_PORTS_OFFSET: u32 = 0x04000000;
-const ARM9_IO_PORTS_REGION: MemoryRegion =
-    MemoryRegion::new("ARM9-I/O Ports", ARM9_IO_PORTS_OFFSET, 0);
+pub const IO_PORTS_OFFSET: u32 = 0x04000000;
+const ARM9_IO_PORTS_REGION: MemoryRegion = MemoryRegion::new("ARM9-I/O Ports", IO_PORTS_OFFSET, 0);
 pub const ARM7_IO_PORTS_OFFSET: u32 = 0x04000000;
 const ARM7_IO_PORTS_REGION: MemoryRegion =
     MemoryRegion::new("ARM7-I/O Ports", ARM7_IO_PORTS_OFFSET, 0);

@@ -11,8 +11,8 @@ impl JitAsm {
     pub fn emit_b_thumb(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
-        let imm = inst_info.operands()[0].as_imm().unwrap();
-        let new_pc = pc + 4 + *imm;
+        let imm = *inst_info.operands()[0].as_imm().unwrap() as i32;
+        let new_pc = (pc as i32 + 4 + imm) as u32;
 
         let cond = match inst_info.op {
             Op::BT => Cond::AL,
@@ -37,10 +37,9 @@ impl JitAsm {
 
         if DEBUG {
             opcodes.extend(&AluImm::mov32(Reg::R8, pc));
-            opcodes.extend(&AluImm::mov32(
-                Reg::R9,
-                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-            ));
+            opcodes.extend(
+                &AluImm::mov32(Reg::R9, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
+            );
             opcodes.push(LdrStrImm::str_al(Reg::R8, Reg::R9));
         }
 
@@ -100,10 +99,9 @@ impl JitAsm {
             self.jit_buf
                 .emit_opcodes
                 .extend(&AluImm::mov32(Reg::R8, pc));
-            self.jit_buf.emit_opcodes.extend(&AluImm::mov32(
-                Reg::R9,
-                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-            ));
+            self.jit_buf.emit_opcodes.extend(
+                &AluImm::mov32(Reg::R9, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
+            );
             self.jit_buf
                 .emit_opcodes
                 .push(LdrStrImm::str_al(Reg::R8, Reg::R9));
@@ -144,10 +142,9 @@ impl JitAsm {
             self.jit_buf
                 .emit_opcodes
                 .extend(&AluImm::mov32(tmp_reg, pc));
-            self.jit_buf.emit_opcodes.extend(&AluImm::mov32(
-                tmp_reg2,
-                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-            ));
+            self.jit_buf.emit_opcodes.extend(
+                &AluImm::mov32(tmp_reg2, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
+            );
             self.jit_buf
                 .emit_opcodes
                 .push(LdrStrImm::str_al(tmp_reg, tmp_reg2));

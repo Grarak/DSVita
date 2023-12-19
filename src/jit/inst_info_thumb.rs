@@ -1,4 +1,4 @@
-use crate::jit::inst_info::Operands;
+use crate::jit::inst_info::{InstCycle, Operands};
 use crate::jit::reg::RegReserve;
 use crate::jit::Op;
 
@@ -9,6 +9,7 @@ pub struct InstInfoThumb {
     pub operands: Operands,
     pub src_regs: RegReserve,
     pub out_regs: RegReserve,
+    pub cycle: InstCycle,
 }
 
 impl InstInfoThumb {
@@ -18,6 +19,7 @@ impl InstInfoThumb {
         operands: Operands,
         src_regs: RegReserve,
         out_regs: RegReserve,
+        cycle: InstCycle,
     ) -> Self {
         InstInfoThumb {
             opcode,
@@ -25,6 +27,7 @@ impl InstInfoThumb {
             operands,
             src_regs,
             out_regs,
+            cycle,
         }
     }
 }

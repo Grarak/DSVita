@@ -1,5 +1,5 @@
 use crate::hle::cp15_context::Cp15Context;
-use crate::hle::memory::indirect_memory::indirect_mem_handler::IndirectMemHandler;
+use crate::hle::memory::handler::mem_handler::MemHandler;
 use crate::hle::registers::ThreadRegs;
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg};
@@ -63,7 +63,7 @@ impl JitBuf {
 pub struct JitAsm {
     jit_memory: Arc<RwLock<JitMemory>>,
     pub cpu_type: CpuType,
-    pub indirect_mem_handler: Rc<RefCell<IndirectMemHandler>>,
+    pub mem_handler: Rc<RefCell<MemHandler>>,
     pub thread_regs: Rc<RefCell<ThreadRegs>>,
     pub cp15_context: Rc<RefCell<Cp15Context>>,
     pub jit_buf: JitBuf,
@@ -86,7 +86,7 @@ impl JitAsm {
         jit_memory: Arc<RwLock<JitMemory>>,
         thread_regs: Rc<RefCell<ThreadRegs>>,
         cp15_context: Rc<RefCell<Cp15Context>>,
-        indirect_mem_handler: Rc<RefCell<IndirectMemHandler>>,
+        mem_handler: Rc<RefCell<MemHandler>>,
         cpu_type: CpuType,
     ) -> Self {
         let mut instance = {
@@ -130,7 +130,7 @@ impl JitAsm {
             JitAsm {
                 jit_memory,
                 cpu_type,
-                indirect_mem_handler,
+                mem_handler,
                 thread_regs,
                 cp15_context,
                 jit_buf: JitBuf::new(),
@@ -169,14 +169,15 @@ impl JitAsm {
                 jit_opcodes.push(LdmStm::pop_post(reg_reserve!(Reg::PC), Reg::LR, Cond::AL));
 
                 let mut jit_memory = instance.jit_memory.write().unwrap();
-                instance.breakin_addr = jit_memory.insert_block(&jit_opcodes, None, None);
+                instance.breakin_addr = jit_memory.insert_block(&jit_opcodes, None, None, None);
 
                 let restore_regs_thumb_opcodes =
                     &instance.thread_regs.borrow().restore_regs_thumb_opcodes;
                 jit_opcodes
                     [guest_restore_index..guest_restore_index + restore_regs_thumb_opcodes.len()]
                     .copy_from_slice(restore_regs_thumb_opcodes);
-                instance.breakin_thumb_addr = jit_memory.insert_block(&jit_opcodes, None, None);
+                instance.breakin_thumb_addr =
+                    jit_memory.insert_block(&jit_opcodes, None, None, None);
 
                 jit_opcodes.clear();
             }
@@ -198,7 +199,7 @@ impl JitAsm {
                 ]);
 
                 let mut jit_memory = instance.jit_memory.write().unwrap();
-                instance.breakout_addr = jit_memory.insert_block(&jit_opcodes, None, None);
+                instance.breakout_addr = jit_memory.insert_block(&jit_opcodes, None, None, None);
                 instance.breakout_skip_save_regs_addr =
                     instance.breakout_addr + jit_skip_save_regs_offset * 4;
 
@@ -206,7 +207,8 @@ impl JitAsm {
                     &instance.thread_regs.borrow().save_regs_thumb_opcodes;
                 jit_opcodes[..save_regs_thumb_opcodes.len()]
                     .copy_from_slice(save_regs_thumb_opcodes);
-                instance.breakout_thumb_addr = jit_memory.insert_block(&jit_opcodes, None, None);
+                instance.breakout_thumb_addr =
+                    jit_memory.insert_block(&jit_opcodes, None, None, None);
                 instance.breakout_skip_save_regs_thumb_addr =
                     instance.breakout_thumb_addr + jit_skip_save_regs_offset * 4;
 
@@ -217,9 +219,9 @@ impl JitAsm {
         instance
     }
 
-    fn emit_code_block(&mut self, entry: u32, thumb: bool) -> u32 {
+    fn emit_code_block(&mut self, entry: u32, thumb: bool) -> (u32, u32) {
         {
-            let mem_handler = self.indirect_mem_handler.borrow();
+            let mem_handler = self.mem_handler.borrow();
             let mut index = 0;
             if thumb {
                 let mut buf = [0u16; 2048];
@@ -316,6 +318,7 @@ impl JitAsm {
             }
         }
 
+        let guest_pc_end = entry + self.jit_buf.instructions.len() as u32 * pc_step_size;
         // TODO statically analyze generated insts
         let addr = {
             let mut jit_memory = self.jit_memory.write().unwrap();
@@ -324,12 +327,13 @@ impl JitAsm {
                 &self.jit_buf.emit_opcodes,
                 Some(entry),
                 Some(self.jit_buf.jit_addr_mapping.clone()),
+                Some(guest_pc_end),
             );
 
             if DEBUG {
                 for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
                     let pc = index as u32 * pc_step_size + entry;
-                    let jit_addr = jit_memory.get_jit_start_addr(pc).unwrap();
+                    let (jit_addr, _) = jit_memory.get_jit_start_addr(pc).unwrap();
 
                     debug_println!(
                         "{:?} Mapping {:#010x} to {:#010x} {:?}",
@@ -345,7 +349,7 @@ impl JitAsm {
         };
 
         self.jit_buf.clear_all();
-        addr
+        (addr, guest_pc_end)
     }
 
     pub fn execute(&mut self) {
@@ -355,28 +359,30 @@ impl JitAsm {
         self.execute_internal(entry);
     }
 
-    fn execute_internal(&mut self, entry: u32) {
-        let thumb = (entry & 1) == 1;
-        let entry = entry & !1;
+    fn execute_internal(&mut self, guest_pc: u32) {
+        let thumb = (guest_pc & 1) == 1;
+        let guest_pc = guest_pc & !1;
 
         self.thread_regs.borrow_mut().set_thumb(thumb);
 
-        let jit_entry = {
+        let (jit_entry, guest_pc_end) = {
             {
                 let mut jit_memory = self.jit_memory.write().unwrap();
 
                 {
-                    let mut indirect_memory_handler = self.indirect_mem_handler.borrow_mut();
-                    for addr in &indirect_memory_handler.invalidated_jit_addrs {
+                    let mut mem_handler = self.mem_handler.borrow_mut();
+                    for addr in &mem_handler.invalidated_jit_addrs {
                         jit_memory.invalidate_block(*addr);
                     }
-                    indirect_memory_handler.invalidated_jit_addrs.clear();
+                    mem_handler.invalidated_jit_addrs.clear();
                 }
 
-                jit_memory.get_jit_start_addr(entry)
+                jit_memory.get_jit_start_addr(guest_pc)
             }
-            .unwrap_or_else(|| self.emit_code_block(entry, thumb))
+            .unwrap_or_else(|| self.emit_code_block(guest_pc, thumb))
         };
+
+        self.mem_handler.borrow_mut().current_jit_block_range = (guest_pc, guest_pc_end);
 
         unsafe {
             JitAsm::enter_jit(

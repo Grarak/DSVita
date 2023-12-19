@@ -12,22 +12,25 @@ unsafe impl Send for Mmap {}
 unsafe impl Sync for Mmap {}
 
 impl Mmap {
-    pub fn new(_: &str, exec: bool, size: u32) -> io::Result<Self> {
-        let mut prot = libc::PROT_READ | libc::PROT_WRITE;
-        if exec {
-            prot |= libc::PROT_EXEC;
-        }
-        let ptr =
-            unsafe {
-                libc::mmap(
-                    null_mut(),
-                    size as _,
-                    prot,
-                    libc::MAP_ANON | libc::MAP_PRIVATE,
-                    -1,
-                    0,
-                )
-            };
+    pub fn rw(_: &str, size: u32) -> io::Result<Self> {
+        Mmap::new(libc::PROT_READ | libc::PROT_WRITE, size)
+    }
+
+    pub fn executable(_: &str, size: u32) -> io::Result<Self> {
+        Mmap::new(libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC, size)
+    }
+
+    fn new(prot: i32, size: u32) -> io::Result<Self> {
+        let ptr = unsafe {
+            libc::mmap(
+                null_mut(),
+                size as _,
+                prot,
+                libc::MAP_ANON | libc::MAP_PRIVATE,
+                -1,
+                0,
+            )
+        };
         if ptr != libc::MAP_FAILED {
             Ok(Mmap { ptr, size })
         } else {

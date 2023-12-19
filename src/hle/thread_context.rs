@@ -1,7 +1,7 @@
 use crate::hle::cp15_context::Cp15Context;
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::ipc_handler::IpcHandler;
-use crate::hle::memory::indirect_memory::indirect_mem_handler::IndirectMemHandler;
+use crate::hle::memory::handler::mem_handler::MemHandler;
 use crate::hle::memory::memory::Memory;
 use crate::hle::registers::ThreadRegs;
 use crate::hle::spu_context::SpuContext;
@@ -18,7 +18,7 @@ pub struct ThreadContext {
     jit: JitAsm,
     pub regs: Rc<RefCell<ThreadRegs>>,
     pub cp15_context: Rc<RefCell<Cp15Context>>,
-    pub indirect_mem_handler: Rc<RefCell<IndirectMemHandler>>,
+    pub mem_handler: Rc<RefCell<MemHandler>>,
 }
 
 impl ThreadContext {
@@ -32,7 +32,7 @@ impl ThreadContext {
         let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
         let gpu_context = Rc::new(RefCell::new(GpuContext::new()));
         let spu_context = Rc::new(RefCell::new(SpuContext::new()));
-        let indirect_mem_handler = Rc::new(RefCell::new(IndirectMemHandler::new(
+        let mem_handler = Rc::new(RefCell::new(MemHandler::new(
             cpu_type,
             memory,
             ipc_handler,
@@ -47,12 +47,12 @@ impl ThreadContext {
                 jit_memory,
                 regs.clone(),
                 cp15_context.clone(),
-                indirect_mem_handler.clone(),
+                mem_handler.clone(),
                 cpu_type,
             ),
             regs,
             cp15_context,
-            indirect_mem_handler,
+            mem_handler,
         }
     }
 

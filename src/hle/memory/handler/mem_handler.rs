@@ -1,6 +1,6 @@
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::ipc_handler::IpcHandler;
-use crate::hle::memory::indirect_memory::{Convert, MemoryAmount};
+use crate::hle::memory::handler::{Convert, MemoryAmount};
 use crate::hle::memory::io_ports::IoPorts;
 use crate::hle::memory::memory::Memory;
 use crate::hle::memory::regions;
@@ -20,15 +20,16 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
-pub struct IndirectMemHandler {
+pub struct MemHandler {
     pub cpu_type: CpuType,
     memory: Arc<RwLock<Memory>>,
     pub thread_regs: Rc<RefCell<ThreadRegs>>,
     io_ports: IoPorts,
     pub invalidated_jit_addrs: HashSet<u32>,
+    pub current_jit_block_range: (u32, u32),
 }
 
-impl IndirectMemHandler {
+impl MemHandler {
     pub fn new(
         cpu_type: CpuType,
         memory: Arc<RwLock<Memory>>,
@@ -37,11 +38,12 @@ impl IndirectMemHandler {
         gpu_context: Rc<RefCell<GpuContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
     ) -> Self {
-        IndirectMemHandler {
+        MemHandler {
             cpu_type,
             memory: memory.clone(),
             thread_regs: thread_regs.clone(),
             io_ports: IoPorts::new(
+                cpu_type,
                 memory.clone(),
                 ipc_handler,
                 thread_regs,
@@ -49,6 +51,7 @@ impl IndirectMemHandler {
                 spu_context,
             ),
             invalidated_jit_addrs: HashSet::new(),
+            current_jit_block_range: (0, 0),
         }
     }
 
@@ -69,13 +72,19 @@ impl IndirectMemHandler {
             | Op::StrOfip
             | Op::StrhOfip
             | Op::StrPrim
-            | Op::LdrPcT => true,
+            | Op::LdrPcT
+            | Op::StrImm5T => true,
             Op::LdrPtip => false,
             _ => todo!("{:?}", inst_info),
         };
 
         let write_back = match inst_info.op {
-            Op::LdrOfip | Op::LdrbOfrplr | Op::StrOfip | Op::StrhOfip | Op::LdrPcT => false,
+            Op::LdrOfip
+            | Op::LdrbOfrplr
+            | Op::StrOfip
+            | Op::StrhOfip
+            | Op::LdrPcT
+            | Op::StrImm5T => false,
             Op::LdrPtip | Op::StrPrim => true,
             _ => todo!("{:?}", inst_info),
         };
@@ -228,19 +237,17 @@ impl IndirectMemHandler {
     }
 
     pub fn read<T: Convert>(&self, addr: u32) -> T {
-        let ret: T = match self.cpu_type {
-            CpuType::ARM7 => self.read_arm7(addr),
-            CpuType::ARM9 => self.read_raw(addr),
-        };
+        let mut buf = [T::from(0)];
+        self.read_slice(addr, &mut buf);
 
         debug_println!(
             "{:?} indirect memory read at {:x} with value {:x}",
             self.cpu_type,
             addr,
-            ret.into()
+            buf[0].into()
         );
 
-        ret
+        buf[0]
     }
 
     pub fn read_slice<T: Convert>(&self, addr: u32, slice: &mut [T]) {
@@ -250,10 +257,29 @@ impl IndirectMemHandler {
         let addr_end_base = addr_end & 0xFF000000;
         debug_assert_eq!(addr_base, addr_end_base);
 
-        match self.cpu_type {
-            CpuType::ARM7 => self.read_slice_arm7(addr, slice),
-            CpuType::ARM9 => self.read_slice_raw(addr, slice),
-        }
+        let addr_offset = addr - addr_base;
+
+        match addr_base {
+            regions::MAIN_MEMORY_OFFSET => self
+                .memory
+                .read()
+                .unwrap()
+                .read_main_slice(addr_offset, slice),
+            regions::SHARED_WRAM_OFFSET => {
+                self.memory
+                    .read()
+                    .unwrap()
+                    .read_wram_slice(self.cpu_type, addr_offset, slice)
+            }
+            regions::IO_PORTS_OFFSET => {
+                for (i, value) in slice.iter_mut().enumerate() {
+                    *value = self
+                        .io_ports
+                        .read(addr_offset + (i * mem::size_of::<T>()) as u32);
+                }
+            }
+            _ => todo!(),
+        };
     }
 
     pub fn write<T: Convert>(&mut self, addr: u32, value: T) {
@@ -264,127 +290,67 @@ impl IndirectMemHandler {
             value.into(),
         );
 
-        match self.cpu_type {
-            CpuType::ARM7 => self.write_arm7(addr, value),
-            CpuType::ARM9 => self.write_arm9(addr, value),
-        }
+        self.write_slice(addr, &[value]);
     }
 
-    fn read_arm7<T: Convert>(&self, addr: u32) -> T {
-        let base = addr & 0xFF000000;
-        let offset = addr - base;
+    pub fn write_slice<T: Convert>(&mut self, addr: u32, slice: &[T]) {
+        let addr_end = addr + (slice.len() * mem::size_of::<T>()) as u32;
 
-        match base {
-            regions::MAIN_MEMORY_OFFSET => self.read_raw(addr),
-            regions::SHARED_WRAM_OFFSET => self.memory.read().unwrap().read_wram_arm7(offset),
-            regions::ARM7_IO_PORTS_OFFSET => self.io_ports.read_arm7(offset),
-            _ => todo!("unimplemented read addr {:x}", addr),
-        }
-    }
+        let addr_base = addr & 0xFF000000;
+        let addr_end_base = addr_end & 0xFF000000;
+        debug_assert_eq!(addr_base, addr_end_base);
 
-    fn read_slice_arm7<T: Convert>(&self, addr: u32, slice: &mut [T]) {
-        let base = addr & 0xFF000000;
-        let offset = addr - base;
+        let addr_offset = addr - addr_base;
 
-        match base {
-            regions::MAIN_MEMORY_OFFSET => self.read_slice_raw(addr, slice),
-            regions::SHARED_WRAM_OFFSET => self
+        match addr_base {
+            regions::MAIN_MEMORY_OFFSET => self
                 .memory
-                .read()
+                .write()
                 .unwrap()
-                .read_wram_slice_arm7(offset, slice),
-            _ => todo!("unimplemented read slice addr {:x}", addr),
-        }
-    }
-
-    fn write_arm7<T: Convert>(&mut self, addr: u32, value: T) {
-        let base = addr & 0xFF000000;
-        let offset = addr - base;
-
-        let write_to_mem = match base {
-            regions::MAIN_MEMORY_OFFSET => true,
+                .write_main_slice(addr_offset, slice),
             regions::SHARED_WRAM_OFFSET => {
-                self.memory.write().unwrap().write_wram_arm7(offset, value);
-                self.invalidated_jit_addrs.insert(addr);
-                false
+                self.memory
+                    .write()
+                    .unwrap()
+                    .write_wram_slice(self.cpu_type, addr_offset, slice);
+
+                for (i, _) in slice.iter().enumerate() {
+                    self.invalidated_jit_addrs
+                        .insert(addr + (i * mem::size_of::<T>()) as u32);
+                }
+
+                let (current_jit_block_start, current_jit_block_end) = self.current_jit_block_range;
+                if addr >= current_jit_block_start && addr <= current_jit_block_end {
+                    todo!()
+                }
             }
-            regions::ARM7_IO_PORTS_OFFSET => {
-                self.io_ports.write_arm7(offset, value);
-                false
+            regions::IO_PORTS_OFFSET => {
+                for (i, value) in slice.iter().enumerate() {
+                    self.io_ports
+                        .write(addr_offset + (i * mem::size_of::<T>()) as u32, *value);
+                }
             }
-            _ => todo!("unimplemented write addr {:x}", addr),
+            _ => todo!("{:x}", addr),
         };
-
-        if write_to_mem {
-            self.write_raw(addr, value)
-        }
-    }
-
-    fn write_arm9<T: Convert>(&self, addr: u32, value: T) {
-        let base = addr & 0xFF000000;
-        let offset = addr - base;
-
-        let readjusted_value = match base {
-            regions::SHARED_WRAM_OFFSET => {
-                self.memory.write().unwrap().write_wram_arm9(offset, value);
-                None
-            }
-            regions::ARM9_IO_PORTS_OFFSET => Some(self.io_ports.write_arm9(offset, value)),
-            regions::STANDARD_PALETTES_OFFSET => todo!(),
-            regions::VRAM_ENGINE_A_BG_OFFSET => todo!(),
-            regions::VRAM_ENGINE_B_BG_OFFSET => todo!(),
-            regions::VRAM_ENGINE_A_OBJ_OFFSET => todo!(),
-            regions::VRAM_ENGINE_B_OBJ_OFFSET => todo!(),
-            regions::VRAM_LCDC_ALLOCATED_OFFSET => todo!(),
-            _ => Some(value),
-        };
-
-        if let Some(readjusted_value) = readjusted_value {
-            self.write_raw(addr, readjusted_value)
-        }
-    }
-
-    fn read_raw<T: Convert>(&self, addr: u32) -> T {
-        self.memory.read().unwrap().read_raw(addr)
-    }
-
-    fn read_slice_raw<T: Convert>(&self, addr: u32, slice: &mut [T]) {
-        self.memory.read().unwrap().read_raw_slice(addr, slice);
-    }
-
-    fn write_raw<T: Convert>(&self, addr: u32, value: T) {
-        self.memory.write().unwrap().write_raw(addr, value)
     }
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_read(handler: *mut IndirectMemHandler, opcode: u32, pc: u32) {
+pub unsafe extern "C" fn mem_handler_read(handler: *mut MemHandler, opcode: u32, pc: u32) {
     (*handler).handle_request(opcode, pc, false, false);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_write(
-    handler: *mut IndirectMemHandler,
-    opcode: u32,
-    pc: u32,
-) {
+pub unsafe extern "C" fn mem_handler_write(handler: *mut MemHandler, opcode: u32, pc: u32) {
     (*handler).handle_request(opcode, pc, false, true);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_read_thumb(
-    handler: *mut IndirectMemHandler,
-    opcode: u32,
-    pc: u32,
-) {
+pub unsafe extern "C" fn mem_handler_read_thumb(handler: *mut MemHandler, opcode: u32, pc: u32) {
     (*handler).handle_request(opcode, pc, true, false);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn indirect_mem_write_thumb(
-    handler: *mut IndirectMemHandler,
-    opcode: u32,
-    pc: u32,
-) {
+pub unsafe extern "C" fn mem_handler_write_thumb(handler: *mut MemHandler, opcode: u32, pc: u32) {
     (*handler).handle_request(opcode, pc, true, true);
 }

@@ -1,5 +1,5 @@
 mod branch_ops {
-    use crate::jit::inst_info::{InstInfo, Operand, Operands};
+    use crate::jit::inst_info::{InstCycle, InstInfo, Operand, Operands};
     use crate::jit::reg::{reg_reserve, Reg};
     use crate::jit::Op;
 
@@ -12,6 +12,7 @@ mod branch_ops {
             Operands::new_1(Operand::reg(op0)),
             reg_reserve!(op0),
             reg_reserve!(Reg::CPSR),
+            InstCycle::common(3),
         )
     }
 
@@ -24,6 +25,7 @@ mod branch_ops {
             Operands::new_1(Operand::reg(op0)),
             reg_reserve!(op0),
             reg_reserve!(Reg::LR, Reg::CPSR),
+            InstCycle::common(3),
         )
     }
 
@@ -36,6 +38,7 @@ mod branch_ops {
             Operands::new_1(Operand::imm(op0 as u32)),
             reg_reserve!(),
             reg_reserve!(),
+            InstCycle::common(3),
         )
     }
 
@@ -48,6 +51,7 @@ mod branch_ops {
             Operands::new_1(Operand::imm(op0 as u32)),
             reg_reserve!(),
             reg_reserve!(Reg::LR),
+            InstCycle::common(3),
         )
     }
 
@@ -59,6 +63,7 @@ mod branch_ops {
             Operands::new_empty(),
             reg_reserve!(),
             reg_reserve!(),
+            InstCycle::common(3),
         )
     }
 }

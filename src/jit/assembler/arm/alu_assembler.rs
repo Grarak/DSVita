@@ -53,13 +53,13 @@ impl AluImm {
             u2::new(0),
             u4::new(cond as u8),
         ));
-        debug_assert_eq!(lookup_opcode(op).0, Op::AddImm);
+        debug_assert_eq!(lookup_opcode(op).0, Op::AddsImm);
         op
     }
 
     #[inline]
     pub fn adds_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
-        AluImm::add(op0, op1, op2, 0, Cond::AL)
+        AluImm::adds(op0, op1, op2, 0, Cond::AL)
     }
 
     #[inline]
@@ -90,6 +90,28 @@ impl AluImm {
             u2::new(0),
             u4::new(cond as u8),
         ))
+    }
+
+    #[inline]
+    pub fn cmp(op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
+        let op = u32::from(AluImm::new(
+            op2,
+            u4::new(shift),
+            u4::new(0),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0xA),
+            u1::new(1),
+            u2::new(0),
+            u4::new(cond as u8),
+        ));
+        debug_assert_eq!(lookup_opcode(op).0, Op::CmpImm);
+        op
+    }
+
+    #[inline]
+    pub fn cmp_al(op1: Reg, op2: u8) -> u32 {
+        AluImm::cmp(op1, op2, 0, Cond::AL)
     }
 
     #[inline]
@@ -301,6 +323,28 @@ impl AluShiftImm {
     }
 
     #[inline]
+    pub fn adds(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(AluShiftImm::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0x4),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn adds_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
+        AluShiftImm::adds(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+    }
+
+    #[inline]
     pub fn bic(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
         u32::from(AluShiftImm::new(
             u4::new(op2 as u8),
@@ -315,6 +359,28 @@ impl AluShiftImm {
             u2::new(0),
             u4::new(cond as u8),
         ))
+    }
+
+    #[inline]
+    pub fn cmp(op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(AluShiftImm::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(0),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0xA),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn cmp_al(op1: Reg, op2: Reg) -> u32 {
+        AluShiftImm::cmp(op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
@@ -337,6 +403,28 @@ impl AluShiftImm {
     #[inline]
     pub fn orr_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
         AluShiftImm::orr(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+    }
+
+    #[inline]
+    pub fn orrs(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(AluShiftImm::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0xC),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn orrs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
+        AluShiftImm::orrs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]

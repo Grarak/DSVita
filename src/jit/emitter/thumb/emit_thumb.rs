@@ -8,18 +8,26 @@ impl JitAsm {
         let out_regs = inst_info.out_regs;
 
         let emit_func = match inst_info.op {
-            Op::AddImm8T => JitAsm::emit_add_thumb,
-            Op::AsrImmT => JitAsm::emit_asr_thumb,
-            Op::MovImm8T => JitAsm::emit_mov_thumb,
+            Op::AddImm8T
+            | Op::AddRegT
+            | Op::AsrImmT
+            | Op::CmpDpT
+            | Op::CmpImm8T
+            | Op::LslImmT
+            | Op::LsrImmT
+            | Op::MovImm8T
+            | Op::SubImm8T
+            | Op::SubRegT
+            | Op::OrrDpT => JitAsm::emit_alu_common,
             Op::MovHT => JitAsm::emit_movh_thumb,
-            Op::SubRegT => JitAsm::emit_sub_thumb,
 
-            Op::BeqT => JitAsm::emit_b_thumb,
+            Op::BT | Op::BeqT | Op::BltT | Op::BneT => JitAsm::emit_b_thumb,
             Op::BlSetupT => JitAsm::emit_bl_setup_thumb,
             Op::BlOffT => JitAsm::emit_bl_thumb,
             Op::BxRegT => JitAsm::emit_bx_thumb,
 
-            Op::LdrPcT => JitAsm::emit_ldr_thumb,
+            Op::LdrhImm5T | Op::LdrImm5T | Op::LdrPcT => JitAsm::emit_ldr_thumb,
+            Op::StrhImm5T | Op::StrImm5T => JitAsm::emit_str_thumb,
             Op::LdmiaT | Op::PopT => JitAsm::emit_ldm_thumb,
             Op::PushLrT => JitAsm::emit_stm_thumb,
             _ => todo!("{:?}", inst_info),
