@@ -1,3 +1,7 @@
+use once_cell::sync::Lazy;
+
+pub static IO_SCHEDULER: Lazy<Scheduler> = Lazy::new(|| Scheduler::new("io_scheduler"));
+
 pub struct Scheduler {
     pool: rayon::ThreadPool,
 }
@@ -13,7 +17,7 @@ impl Scheduler {
         Scheduler { pool }
     }
 
-    pub fn schedule<F: FnOnce() + Send + 'static>(&self, f: F) {
+    pub fn schedule(&self, f: impl FnOnce() + Send + 'static) {
         self.pool.spawn(f)
     }
 }

@@ -5,6 +5,7 @@ use crate::hle::memory::dma::Dma;
 use crate::hle::memory::io_ports::IoPorts;
 use crate::hle::memory::memory::Memory;
 use crate::hle::memory::{regions, Convert};
+use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::CpuType;
 use crate::logging::debug_println;
@@ -29,6 +30,7 @@ impl MemHandler {
         ipc_handler: Arc<RwLock<IpcHandler>>,
         cpu_regs: Rc<RefCell<CpuRegs>>,
         gpu_context: Rc<RefCell<GpuContext>>,
+        spi_context: Arc<RwLock<SpiContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
         dma: Rc<RefCell<Dma>>,
     ) -> Self {
@@ -41,6 +43,7 @@ impl MemHandler {
                 ipc_handler,
                 cpu_regs,
                 gpu_context,
+                spi_context,
                 spu_context,
                 dma,
             ),
@@ -54,7 +57,7 @@ impl MemHandler {
         self.read_slice(addr, &mut buf);
 
         debug_println!(
-            "{:?} indirect memory read at {:x} with value {:x}",
+            "{:?} memory read at {:x} with value {:x}",
             self.cpu_type,
             addr,
             buf[0].into()
@@ -97,7 +100,7 @@ impl MemHandler {
 
     pub fn write<T: Convert>(&mut self, addr: u32, value: T) {
         debug_println!(
-            "{:?} indirect memory write at {:x} with value {:x}",
+            "{:?} memory write at {:x} with value {:x}",
             self.cpu_type,
             addr,
             value.into(),

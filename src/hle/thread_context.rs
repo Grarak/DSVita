@@ -5,6 +5,7 @@ use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::dma::Dma;
 use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::memory::memory::Memory;
+use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::thread_regs::ThreadRegs;
 use crate::hle::CpuType;
@@ -34,6 +35,7 @@ impl ThreadContext {
         let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
         let cpu_regs = Rc::new(RefCell::new(CpuRegs::new(cpu_type)));
         let gpu_context = Rc::new(RefCell::new(GpuContext::new()));
+        let spi_context = Arc::new(RwLock::new(SpiContext::new()));
         let spu_context = Rc::new(RefCell::new(SpuContext::new()));
         let dma = Rc::new(RefCell::new(Dma::new(cpu_type)));
 
@@ -43,6 +45,7 @@ impl ThreadContext {
             ipc_handler,
             cpu_regs,
             gpu_context,
+            spi_context,
             spu_context,
             dma.clone(),
         )));

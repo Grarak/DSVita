@@ -1,7 +1,7 @@
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::inst_info::Operand;
 use crate::jit::jit_asm::JitAsm;
-use crate::jit::reg::RegReserve;
+use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
 
 impl JitAsm {
@@ -19,6 +19,7 @@ impl JitAsm {
         let opcode = match op2 {
             Operand::Reg { reg, .. } => match inst_info.op {
                 Op::AddRegT => AluShiftImm::adds_al(op0, op1, *reg),
+                Op::BicDpT => AluShiftImm::bics_al(op0, op1, *reg),
                 Op::CmpDpT => AluShiftImm::cmp_al(op0, *reg),
                 Op::SubRegT => AluShiftImm::subs_al(op0, op1, *reg),
                 Op::TstDpT => AluShiftImm::tst_al(op0, *reg),
@@ -26,7 +27,8 @@ impl JitAsm {
                 _ => todo!("{:?}", inst_info),
             },
             Operand::Imm(imm) => match inst_info.op {
-                Op::AddImm8T => AluImm::adds_al(op0, op1, *imm as u8),
+                Op::AddImm3T | Op::AddImm8T => AluImm::adds_al(op0, op1, *imm as u8),
+                Op::AddSpT => AluImm::add(op0, op1, (*imm / 4) as u8, 15, Cond::AL), // imm in steps of 4, ror by 15 * 2
                 Op::AsrImmT => AluShiftImm::movs(op0, op1, ShiftType::ASR, *imm as u8, Cond::AL),
                 Op::CmpImm8T => AluImm::cmp_al(op0, *imm as u8),
                 Op::LslImmT => AluShiftImm::movs(op0, op1, ShiftType::LSL, *imm as u8, Cond::AL),
@@ -39,6 +41,21 @@ impl JitAsm {
         };
 
         self.jit_buf.emit_opcodes.push(opcode)
+    }
+
+    pub fn emit_add_sp_imm_thumb(&mut self, buf_index: usize, _: u32) {
+        let inst_info = &self.jit_buf.instructions[buf_index];
+
+        let imm = inst_info.opcode & 0x7F;
+        let sub = inst_info.opcode & (1 << 7) != 0;
+        // imm in steps of 4, ror by 15 * 2
+        let opcode = if sub {
+            AluImm::sub(Reg::SP, Reg::SP, imm as u8, 15, Cond::AL)
+        } else {
+            AluImm::add(Reg::SP, Reg::SP, imm as u8, 15, Cond::AL)
+        };
+
+        self.jit_buf.emit_opcodes.push(opcode);
     }
 
     pub fn emit_movh_thumb(&mut self, buf_index: usize, _: u32) {

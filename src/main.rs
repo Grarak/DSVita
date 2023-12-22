@@ -7,11 +7,11 @@ use crate::cartridge::Cartridge;
 use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::memory::Memory;
 use crate::hle::memory::regions;
+use crate::hle::spi_context;
 use crate::hle::thread_context::ThreadContext;
 use crate::hle::CpuType;
 use crate::jit::jit_memory::JitMemory;
-use crate::schedulers::Scheduler;
-use once_cell::sync::Lazy;
+use crate::scheduler::IO_SCHEDULER;
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::{env, mem, thread};
@@ -21,14 +21,12 @@ mod hle;
 mod jit;
 mod logging;
 mod mmap;
-mod schedulers;
+mod scheduler;
 mod utils;
 
 pub const DEBUG: bool = cfg!(debug_assertions);
 // pub const DEBUG: bool = false;
 pub const SINGLE_CORE: bool = false;
-
-static IO_SCHEDULER: Lazy<Scheduler> = Lazy::new(|| Scheduler::new("io_scheduler"));
 
 #[cfg(target_os = "linux")]
 fn get_file_path() -> String {
@@ -146,11 +144,25 @@ pub fn main() {
         memory.write_main(0x27FFC00, 0x00001FC2u32); // Copy of chip ID 1
         memory.write_main(0x27FFC04, 0x00001FC2u32); // Copy of chip ID 2
 
+        // User settings
+        memory.write_main_slice(
+            0x27FFC80,
+            &spi_context::SPI_FIRMWARE
+                [spi_context::USER_SETTINGS_1_ADDR..spi_context::USER_SETTINGS_1_ADDR + 0x70],
+        );
+
         let arm9_code = cartridge.read_arm9_code().unwrap();
         memory.write_main_slice(arm9_ram_addr, &arm9_code);
 
         let arm7_code = cartridge.read_arm7_code().unwrap();
         memory.write_main_slice(arm7_ram_addr, &arm7_code);
+    }
+
+    {
+        // Initialize scheduler
+        let (tx, rx) = mpsc::channel::<()>();
+        IO_SCHEDULER.schedule(move || tx.send(()).unwrap());
+        rx.recv().unwrap();
     }
 
     let jit_memory = Arc::new(RwLock::new(JitMemory::new()));

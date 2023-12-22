@@ -2,7 +2,7 @@ use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::{memory, CpuType};
 use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
-use crate::IO_SCHEDULER;
+use crate::scheduler::IO_SCHEDULER;
 use bilge::prelude::*;
 use std::mem;
 use std::sync::{Arc, RwLock};

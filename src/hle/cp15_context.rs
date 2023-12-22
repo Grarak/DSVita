@@ -1,6 +1,5 @@
 use crate::logging::debug_println;
 use bilge::prelude::*;
-use bilge::{bitsize, FromBits};
 use std::{cmp, mem};
 
 #[bitsize(32)]

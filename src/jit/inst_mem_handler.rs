@@ -53,8 +53,11 @@ impl InstMemHandler {
             | Op::LdrImm5T
             | Op::LdrhImm5T
             | Op::LdrPcT
+            | Op::LdrSpT
+            | Op::StrbImm5T
             | Op::StrImm5T
-            | Op::StrhImm5T => true,
+            | Op::StrhImm5T
+            | Op::StrSpT => true,
             Op::LdrPtip => false,
             _ => todo!("{:?}", inst_info),
         };
@@ -67,8 +70,11 @@ impl InstMemHandler {
             | Op::LdrImm5T
             | Op::LdrhImm5T
             | Op::LdrPcT
+            | Op::LdrSpT
+            | Op::StrbImm5T
             | Op::StrImm5T
-            | Op::StrhImm5T => false,
+            | Op::StrhImm5T
+            | Op::StrSpT => false,
             Op::LdrPtip | Op::StrPrim => true,
             _ => todo!("{:?}", inst_info),
         };

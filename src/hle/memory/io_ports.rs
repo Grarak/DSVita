@@ -4,6 +4,7 @@ use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::dma::Dma;
 use crate::hle::memory::memory::Memory;
 use crate::hle::memory::Convert;
+use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::CpuType;
 use std::cell::RefCell;
@@ -16,6 +17,7 @@ pub struct IoPorts {
     ipc_handler: Arc<RwLock<IpcHandler>>,
     cpu_regs: Rc<RefCell<CpuRegs>>,
     gpu_context: Rc<RefCell<GpuContext>>,
+    spi_context: Arc<RwLock<SpiContext>>,
     spu_context: Rc<RefCell<SpuContext>>,
     pub dma: Rc<RefCell<Dma>>,
 }
@@ -27,6 +29,7 @@ impl IoPorts {
         ipc_handler: Arc<RwLock<IpcHandler>>,
         cpu_regs: Rc<RefCell<CpuRegs>>,
         gpu_context: Rc<RefCell<GpuContext>>,
+        spi_context: Arc<RwLock<SpiContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
         dma: Rc<RefCell<Dma>>,
     ) -> Self {
@@ -36,6 +39,7 @@ impl IoPorts {
             ipc_handler,
             cpu_regs,
             gpu_context,
+            spi_context,
             spu_context,
             dma,
         }
@@ -67,6 +71,9 @@ impl IoPorts {
     fn read_arm7<T: Convert>(&self, addr_offset: u32) -> T {
         T::from(match addr_offset {
             0x180 => self.ipc_handler.read().unwrap().get_sync_reg(CpuType::ARM7) as u32,
+            0x1C0 => self.spi_context.read().unwrap().cnt as u32,
+            0x1C2 => self.spi_context.read().unwrap().data as u32,
+            0x304 => 0,
             0x500 => self.spu_context.borrow().main_sound_cnt as u32,
             _ => self.read_common(addr_offset),
         })
@@ -96,6 +103,9 @@ impl IoPorts {
     fn write_arm7<T: Convert>(&mut self, addr_offset: u32, value: T) {
         match addr_offset {
             0x180 => self.ipc_handler.write().unwrap().set_sync_reg(CpuType::ARM7, value.into() as u16),
+            0x1C0 => self.spi_context.write().unwrap().set_cnt(value.into() as u16),
+            0x1C2 => self.spi_context.write().unwrap().set_data(value.into() as u8),
+            0x304 => {},
 
             0x400 => self.spu_context.borrow_mut().set_cnt(0, value.into()),
             0x404 => self.spu_context.borrow_mut().set_sad(0, value.into()),
