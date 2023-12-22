@@ -10,18 +10,19 @@ use crate::logging::debug_println;
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 
 pub struct InstMemHandler {
     cpu_type: CpuType,
     thread_regs: Rc<RefCell<ThreadRegs>>,
-    mem_handler: Rc<RefCell<MemHandler>>,
+    mem_handler: Arc<RwLock<MemHandler>>,
 }
 
 impl InstMemHandler {
     pub fn new(
         cpu_type: CpuType,
         thread_regs: Rc<RefCell<ThreadRegs>>,
-        mem_handler: Rc<RefCell<MemHandler>>,
+        mem_handler: Arc<RwLock<MemHandler>>,
     ) -> Self {
         InstMemHandler {
             cpu_type,
@@ -49,8 +50,11 @@ impl InstMemHandler {
             | Op::StrOfip
             | Op::StrhOfip
             | Op::StrPrim
+            | Op::LdrImm5T
+            | Op::LdrhImm5T
             | Op::LdrPcT
-            | Op::StrImm5T => true,
+            | Op::StrImm5T
+            | Op::StrhImm5T => true,
             Op::LdrPtip => false,
             _ => todo!("{:?}", inst_info),
         };
@@ -60,8 +64,11 @@ impl InstMemHandler {
             | Op::LdrbOfrplr
             | Op::StrOfip
             | Op::StrhOfip
+            | Op::LdrImm5T
+            | Op::LdrhImm5T
             | Op::LdrPcT
-            | Op::StrImm5T => false,
+            | Op::StrImm5T
+            | Op::StrhImm5T => false,
             Op::LdrPtip | Op::StrPrim => true,
             _ => todo!("{:?}", inst_info),
         };
@@ -146,18 +153,24 @@ impl InstMemHandler {
             MemoryAmount::BYTE => {
                 if write {
                     let value = get_reg_value(thread_regs.deref(), *op0);
-                    self.mem_handler.borrow_mut().write(base_addr, value as u8);
+                    self.mem_handler
+                        .write()
+                        .unwrap()
+                        .write(base_addr, value as u8);
                 } else {
-                    let value = self.mem_handler.borrow().read::<u8>(base_addr);
+                    let value = self.mem_handler.read().unwrap().read::<u8>(base_addr);
                     set_reg_value(thread_regs.deref_mut(), *op0, value as u32);
                 }
             }
             MemoryAmount::HALF => {
                 if write {
                     let value = get_reg_value(thread_regs.deref(), *op0);
-                    self.mem_handler.borrow_mut().write(base_addr, value as u16);
+                    self.mem_handler
+                        .write()
+                        .unwrap()
+                        .write(base_addr, value as u16);
                 } else {
-                    let value = self.mem_handler.borrow().read::<u16>(base_addr);
+                    let value = self.mem_handler.read().unwrap().read::<u16>(base_addr);
 
                     if self.cpu_type == CpuType::ARM7 && base_addr & 1 != 0 {
                         todo!()
@@ -169,9 +182,9 @@ impl InstMemHandler {
             MemoryAmount::WORD => {
                 if write {
                     let value = get_reg_value(thread_regs.deref(), *op0);
-                    self.mem_handler.borrow_mut().write(base_addr, value);
+                    self.mem_handler.write().unwrap().write(base_addr, value);
                 } else {
-                    let value = self.mem_handler.borrow().read(base_addr);
+                    let value = self.mem_handler.read().unwrap().read(base_addr);
 
                     if base_addr & 3 != 0 {
                         todo!("{:?} {:x}", self.cpu_type, pc);
@@ -184,11 +197,11 @@ impl InstMemHandler {
                 if write {
                     let value = get_reg_value(thread_regs.deref(), *op0);
                     let value1 = get_reg_value(thread_regs.deref(), Reg::from(*op0 as u8 + 1));
-                    let mut mem_handler = self.mem_handler.borrow_mut();
+                    let mut mem_handler = self.mem_handler.write().unwrap();
                     mem_handler.write(base_addr, value);
                     mem_handler.write(base_addr + 4, value1);
                 } else {
-                    let mem_handler = self.mem_handler.borrow();
+                    let mem_handler = self.mem_handler.read().unwrap();
                     let value = mem_handler.read(base_addr);
                     let value1 = mem_handler.read(base_addr);
                     set_reg_value(thread_regs.deref_mut(), *op0, value);
@@ -259,23 +272,28 @@ impl InstMemHandler {
             todo!()
         }
 
-        let mut mem_handler = self.mem_handler.borrow_mut();
         let mut thread_regs = self.thread_regs.borrow_mut();
 
         let start_addr = *thread_regs.get_reg_value(*op0);
         let mut addr = start_addr - (decrement as u32 * rlist.len() as u32 * 4);
 
         // TODO use batches
-        for reg in rlist {
-            addr += pre as u32 * 4;
-            if write {
+        if write {
+            let mut mem_handler = self.mem_handler.write().unwrap();
+            for reg in rlist {
+                addr += pre as u32 * 4;
                 let value = *thread_regs.get_reg_value(reg);
                 mem_handler.write(addr, value);
-            } else {
+                addr += !pre as u32 * 4;
+            }
+        } else {
+            let mem_handler = self.mem_handler.read().unwrap();
+            for reg in rlist {
+                addr += pre as u32 * 4;
                 let value = mem_handler.read(addr);
                 *thread_regs.get_reg_value_mut(reg) = value;
+                addr += !pre as u32 * 4;
             }
-            addr += !pre as u32 * 4;
         }
 
         if write_back {

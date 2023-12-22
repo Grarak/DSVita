@@ -21,6 +21,7 @@ impl JitAsm {
                 Op::AddRegT => AluShiftImm::adds_al(op0, op1, *reg),
                 Op::CmpDpT => AluShiftImm::cmp_al(op0, *reg),
                 Op::SubRegT => AluShiftImm::subs_al(op0, op1, *reg),
+                Op::TstDpT => AluShiftImm::tst_al(op0, *reg),
                 Op::OrrDpT => AluShiftImm::orrs_al(op0, op1, *reg),
                 _ => todo!("{:?}", inst_info),
             },

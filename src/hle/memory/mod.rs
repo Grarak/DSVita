@@ -1,4 +1,4 @@
-mod dma;
+pub mod dma;
 mod io_ports;
 pub mod mem_handler;
 pub mod memory;

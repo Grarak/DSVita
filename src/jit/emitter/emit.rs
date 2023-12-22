@@ -95,7 +95,7 @@ impl JitAsm {
             reg_reserver: &mut RegPushPopHandler,
         ) -> Vec<u32>,
     ) {
-        let mut inst_info = self.jit_buf.instructions[buf_index];
+        let mut inst_info = self.jit_buf.instructions[buf_index].clone();
 
         let mut opcodes = Vec::<u32>::new();
 

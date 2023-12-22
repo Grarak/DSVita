@@ -10,6 +10,8 @@ use crate::hle::memory::regions;
 use crate::hle::thread_context::ThreadContext;
 use crate::hle::CpuType;
 use crate::jit::jit_memory::JitMemory;
+use crate::schedulers::Scheduler;
+use once_cell::sync::Lazy;
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::{env, mem, thread};
@@ -19,11 +21,14 @@ mod hle;
 mod jit;
 mod logging;
 mod mmap;
+mod schedulers;
 mod utils;
 
 pub const DEBUG: bool = cfg!(debug_assertions);
 // pub const DEBUG: bool = false;
-pub const SINGLE_CORE: bool = true;
+pub const SINGLE_CORE: bool = false;
+
+static IO_SCHEDULER: Lazy<Scheduler> = Lazy::new(|| Scheduler::new("io_scheduler"));
 
 #[cfg(target_os = "linux")]
 fn get_file_path() -> String {
@@ -58,7 +63,7 @@ fn initialize_arm9_thread(
 
     {
         // I/O Ports
-        let mut mem_handler = thread.mem_handler.borrow_mut();
+        let mut mem_handler = thread.mem_handler.write().unwrap();
         mem_handler.write(0x4000247, 0x03u8);
         mem_handler.write(0x4000300, 0x01u8);
         mem_handler.write(0x4000304, 0x0001u16);
@@ -88,7 +93,7 @@ fn initialize_arm7_thread(
 
     {
         // I/O Ports
-        let mut mem_handler = thread.mem_handler.borrow_mut();
+        let mut mem_handler = thread.mem_handler.write().unwrap();
         mem_handler.write(0x4000300, 0x01u8); // POWCNT1
         mem_handler.write(0x4000504, 0x0200u16); // SOUNDBIAS
     }

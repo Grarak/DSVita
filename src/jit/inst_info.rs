@@ -6,7 +6,7 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
 use bilge::prelude::{u2, u4, u5};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct InstInfo {
     pub opcode: u32,
     pub op: Op,

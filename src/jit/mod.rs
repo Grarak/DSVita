@@ -724,7 +724,7 @@ pub enum ShiftType {
     ROR = 3,
 }
 
-enum MemoryAmount {
+pub enum MemoryAmount {
     BYTE,
     HALF,
     WORD,
@@ -817,7 +817,9 @@ impl From<Op> for MemoryAmount {
             | Op::StrhPtim
             | Op::StrhPtip
             | Op::StrhPtrm
-            | Op::StrhPtrp => MemoryAmount::HALF,
+            | Op::StrhPtrp
+            | Op::LdrhImm5T
+            | Op::StrhImm5T => MemoryAmount::HALF,
             Op::LdrOfim
             | Op::LdrOfip
             | Op::LdrOfrmar
@@ -902,6 +904,7 @@ impl From<Op> for MemoryAmount {
             | Op::StrPtrpll
             | Op::StrPtrplr
             | Op::StrPtrprr
+            | Op::LdrImm5T
             | Op::LdrPcT
             | Op::StrImm5T => MemoryAmount::WORD,
             Op::LdrdOfim
@@ -929,6 +932,17 @@ impl From<Op> for MemoryAmount {
             | Op::StrdPtrm
             | Op::StrdPtrp => MemoryAmount::DOUBLE,
             _ => todo!("{:?}", value),
+        }
+    }
+}
+
+impl MemoryAmount {
+    pub const fn mem_size(&self) -> usize {
+        match self {
+            MemoryAmount::BYTE => mem::size_of::<u8>(),
+            MemoryAmount::HALF => mem::size_of::<u16>(),
+            MemoryAmount::WORD => mem::size_of::<u32>(),
+            MemoryAmount::DOUBLE => mem::size_of::<u64>(),
         }
     }
 }

@@ -1,6 +1,7 @@
 use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::ipc_handler::IpcHandler;
+use crate::hle::memory::dma::Dma;
 use crate::hle::memory::io_ports::IoPorts;
 use crate::hle::memory::memory::Memory;
 use crate::hle::memory::{regions, Convert};
@@ -16,7 +17,7 @@ use std::sync::{Arc, RwLock};
 pub struct MemHandler {
     pub cpu_type: CpuType,
     memory: Arc<RwLock<Memory>>,
-    io_ports: IoPorts,
+    pub io_ports: IoPorts,
     pub invalidated_jit_addrs: HashSet<u32>,
     pub current_jit_block_range: (u32, u32),
 }
@@ -29,6 +30,7 @@ impl MemHandler {
         cpu_regs: Rc<RefCell<CpuRegs>>,
         gpu_context: Rc<RefCell<GpuContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
+        dma: Rc<RefCell<Dma>>,
     ) -> Self {
         MemHandler {
             cpu_type,
@@ -40,6 +42,7 @@ impl MemHandler {
                 cpu_regs,
                 gpu_context,
                 spu_context,
+                dma,
             ),
             invalidated_jit_addrs: HashSet::new(),
             current_jit_block_range: (0, 0),
@@ -144,3 +147,6 @@ impl MemHandler {
         };
     }
 }
+
+unsafe impl Send for MemHandler {}
+unsafe impl Sync for MemHandler {}

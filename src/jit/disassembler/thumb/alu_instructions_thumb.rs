@@ -229,7 +229,16 @@ mod alu_thumb_ops {
 
     #[inline]
     pub fn tst_dp_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let op1 = Reg::from((opcode & 0x7) as u8);
+        let op2 = Reg::from(((opcode >> 3) & 0x7) as u8);
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_2(Operand::reg(op1), Operand::reg(op2)),
+            reg_reserve!(op1, op2),
+            reg_reserve!(Reg::CPSR),
+            InstCycle::common(1),
+        )
     }
 
     #[inline]

@@ -65,7 +65,7 @@ pub struct JitAsm {
     jit_memory: Arc<RwLock<JitMemory>>,
     pub cpu_type: CpuType,
     pub inst_mem_handler: InstMemHandler,
-    pub mem_handler: Rc<RefCell<MemHandler>>,
+    pub mem_handler: Arc<RwLock<MemHandler>>,
     pub thread_regs: Rc<RefCell<ThreadRegs>>,
     pub cp15_context: Rc<RefCell<Cp15Context>>,
     pub jit_buf: JitBuf,
@@ -88,7 +88,7 @@ impl JitAsm {
         jit_memory: Arc<RwLock<JitMemory>>,
         thread_regs: Rc<RefCell<ThreadRegs>>,
         cp15_context: Rc<RefCell<Cp15Context>>,
-        mem_handler: Rc<RefCell<MemHandler>>,
+        mem_handler: Arc<RwLock<MemHandler>>,
         cpu_type: CpuType,
     ) -> Self {
         let mut instance =
@@ -231,12 +231,14 @@ impl JitAsm {
 
     fn emit_code_block(&mut self, entry: u32, thumb: bool) -> (u32, u32) {
         {
-            let mem_handler = self.mem_handler.borrow();
             let mut index = 0;
             if thumb {
                 let mut buf = [0u16; 2048];
                 'outer: loop {
-                    mem_handler.read_slice(entry + index, &mut buf);
+                    self.mem_handler
+                        .read()
+                        .unwrap()
+                        .read_slice(entry + index, &mut buf);
                     for opcode in buf {
                         debug_println!(
                             "{:?} disassemble thumb {:x} {}",
@@ -258,7 +260,10 @@ impl JitAsm {
             } else {
                 let mut buf = [0u32; 1024];
                 'outer: loop {
-                    mem_handler.read_slice(entry + index, &mut buf);
+                    self.mem_handler
+                        .read()
+                        .unwrap()
+                        .read_slice(entry + index, &mut buf);
                     for opcode in buf {
                         debug_println!(
                             "{:?} disassemble arm {:x} {}",
@@ -268,10 +273,12 @@ impl JitAsm {
                         );
                         let (op, func) = lookup_opcode(opcode);
                         let inst_info = func(opcode, *op);
+                        let is_branch = inst_info.op.is_branch();
+                        let cond = inst_info.cond;
 
                         self.jit_buf.instructions.push(inst_info);
 
-                        if inst_info.op.is_branch() && inst_info.cond == Cond::AL {
+                        if is_branch && cond == Cond::AL {
                             break 'outer;
                         }
                     }
@@ -381,7 +388,7 @@ impl JitAsm {
                 let mut jit_memory = self.jit_memory.write().unwrap();
 
                 {
-                    let mut mem_handler = self.mem_handler.borrow_mut();
+                    let mut mem_handler = self.mem_handler.write().unwrap();
                     for addr in &mem_handler.invalidated_jit_addrs {
                         jit_memory.invalidate_block(*addr);
                     }
@@ -393,7 +400,7 @@ impl JitAsm {
             .unwrap_or_else(|| self.emit_code_block(guest_pc, thumb))
         };
 
-        self.mem_handler.borrow_mut().current_jit_block_range = (guest_pc, guest_pc_end);
+        self.mem_handler.write().unwrap().current_jit_block_range = (guest_pc, guest_pc_end);
 
         unsafe {
             JitAsm::enter_jit(

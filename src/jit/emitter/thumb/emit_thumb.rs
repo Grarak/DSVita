@@ -18,6 +18,7 @@ impl JitAsm {
             | Op::MovImm8T
             | Op::SubImm8T
             | Op::SubRegT
+            | Op::TstDpT
             | Op::OrrDpT => JitAsm::emit_alu_common,
             Op::MovHT => JitAsm::emit_movh_thumb,
 
