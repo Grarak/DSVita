@@ -23,7 +23,7 @@ mod utils;
 
 pub const DEBUG: bool = cfg!(debug_assertions);
 // pub const DEBUG: bool = false;
-pub const SINGLE_CORE: bool = false;
+pub const SINGLE_CORE: bool = true;
 
 #[cfg(target_os = "linux")]
 fn get_file_path() -> String {

@@ -1,9 +1,9 @@
+use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::dma::Dma;
-use crate::hle::memory::handler::Convert;
 use crate::hle::memory::memory::Memory;
-use crate::hle::registers::ThreadRegs;
+use crate::hle::memory::Convert;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::CpuType;
 use std::cell::RefCell;
@@ -14,7 +14,7 @@ pub struct IoPorts {
     cpu_type: CpuType,
     memory: Arc<RwLock<Memory>>,
     ipc_handler: Arc<RwLock<IpcHandler>>,
-    thread_regs: Rc<RefCell<ThreadRegs>>,
+    cpu_regs: Rc<RefCell<CpuRegs>>,
     gpu_context: Rc<RefCell<GpuContext>>,
     spu_context: Rc<RefCell<SpuContext>>,
     dma: Dma,
@@ -25,7 +25,7 @@ impl IoPorts {
         cpu_type: CpuType,
         memory: Arc<RwLock<Memory>>,
         ipc_handler: Arc<RwLock<IpcHandler>>,
-        thread_regs: Rc<RefCell<ThreadRegs>>,
+        cpu_regs: Rc<RefCell<CpuRegs>>,
         gpu_context: Rc<RefCell<GpuContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
     ) -> Self {
@@ -33,7 +33,7 @@ impl IoPorts {
             cpu_type,
             memory,
             ipc_handler,
-            thread_regs,
+            cpu_regs,
             gpu_context,
             spu_context,
             dma: Dma::new(cpu_type),
@@ -82,8 +82,8 @@ impl IoPorts {
             0xd4 => self.dma.set_sad(3, value.into()),
             0xd8 => self.dma.set_dad(3, value.into()),
             0xdc => self.dma.set_cnt(3, value.into()),
-            0x208 => self.thread_regs.borrow_mut().set_ime(value as u8),
-            0x300 => self.thread_regs.borrow_mut().set_post_flg(value as u8),
+            0x208 => self.cpu_regs.borrow_mut().set_ime(value as u8),
+            0x300 => self.cpu_regs.borrow_mut().set_post_flg(value as u8),
             _ => todo!("{:?} unimplemented io port {:x}", cpu_type, addr_offset),
         };
     }

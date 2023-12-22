@@ -1,5 +1,5 @@
 use crate::hle::bios::*;
-use crate::hle::registers::ThreadRegs;
+use crate::hle::thread_regs::ThreadRegs;
 
 pub const ARM9_SWI_LOOKUP_TABLE: [(&'static str, fn(&mut ThreadRegs)); 33] = [
     ("unknown", unknown),

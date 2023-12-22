@@ -1,4 +1,4 @@
-use crate::hle::registers::register_set_cpsr;
+use crate::hle::thread_regs::register_set_cpsr;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg};
 use crate::jit::inst_info::Operand;
 use crate::jit::jit_asm::JitAsm;

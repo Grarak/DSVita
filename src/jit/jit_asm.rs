@@ -1,6 +1,6 @@
 use crate::hle::cp15_context::Cp15Context;
-use crate::hle::memory::handler::mem_handler::MemHandler;
-use crate::hle::registers::ThreadRegs;
+use crate::hle::memory::mem_handler::MemHandler;
+use crate::hle::thread_regs::ThreadRegs;
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg};
 use crate::jit::assembler::arm::branch_assembler::Bx;
@@ -8,6 +8,7 @@ use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_info::InstInfo;
+use crate::jit::inst_mem_handler::InstMemHandler;
 use crate::jit::jit_memory::JitMemory;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
@@ -63,6 +64,7 @@ impl JitBuf {
 pub struct JitAsm {
     jit_memory: Arc<RwLock<JitMemory>>,
     pub cpu_type: CpuType,
+    pub inst_mem_handler: InstMemHandler,
     pub mem_handler: Rc<RefCell<MemHandler>>,
     pub thread_regs: Rc<RefCell<ThreadRegs>>,
     pub cp15_context: Rc<RefCell<Cp15Context>>,
@@ -89,65 +91,73 @@ impl JitAsm {
         mem_handler: Rc<RefCell<MemHandler>>,
         cpu_type: CpuType,
     ) -> Self {
-        let mut instance = {
-            let host_regs = Box::new(HostRegs::default());
+        let mut instance =
+            {
+                let host_regs = Box::new(HostRegs::default());
 
-            let restore_host_opcodes = {
-                let mut opcodes = [0u32; 7];
-                // Save guest
-                let save_regs_opcodes = &thread_regs.borrow().save_regs_opcodes;
-                let index = save_regs_opcodes.len();
-                opcodes[..index].copy_from_slice(save_regs_opcodes);
+                let restore_host_opcodes = {
+                    let mut opcodes = [0u32; 7];
+                    // Save guest
+                    let save_regs_opcodes = &thread_regs.borrow().save_regs_opcodes;
+                    let index = save_regs_opcodes.len();
+                    opcodes[..index].copy_from_slice(save_regs_opcodes);
 
-                // Restore host sp
-                let host_sp_addr = host_regs.get_sp_addr();
-                opcodes[index..index + 2].copy_from_slice(&AluImm::mov32(Reg::LR, host_sp_addr));
-                opcodes[index + 2] = LdrStrImm::ldr_al(Reg::SP, Reg::LR); // SP
-                opcodes
+                    // Restore host sp
+                    let host_sp_addr = host_regs.get_sp_addr();
+                    opcodes[index..index + 2]
+                        .copy_from_slice(&AluImm::mov32(Reg::LR, host_sp_addr));
+                    opcodes[index + 2] = LdrStrImm::ldr_al(Reg::SP, Reg::LR); // SP
+                    opcodes
+                };
+
+                let restore_guest_opcodes = {
+                    let mut opcodes = [0u32; 7];
+                    // Restore guest
+                    opcodes[0] = AluReg::mov_al(Reg::LR, Reg::SP);
+                    opcodes[1..].copy_from_slice(&thread_regs.borrow().restore_regs_opcodes);
+                    opcodes
+                };
+
+                let restore_host_thumb_opcodes = {
+                    let mut opcodes = restore_host_opcodes;
+                    let save_regs_thumb_opcodes = &thread_regs.borrow().save_regs_thumb_opcodes;
+                    opcodes[..save_regs_thumb_opcodes.len()]
+                        .copy_from_slice(save_regs_thumb_opcodes);
+                    opcodes
+                };
+
+                let restore_guest_thumb_opcodes = {
+                    let mut opcodes = restore_guest_opcodes;
+                    opcodes[1..].copy_from_slice(&thread_regs.borrow().restore_regs_thumb_opcodes);
+                    opcodes
+                };
+
+                JitAsm {
+                    jit_memory,
+                    cpu_type,
+                    inst_mem_handler: InstMemHandler::new(
+                        cpu_type,
+                        thread_regs.clone(),
+                        mem_handler.clone(),
+                    ),
+                    mem_handler,
+                    thread_regs,
+                    cp15_context,
+                    jit_buf: JitBuf::new(),
+                    host_regs,
+                    guest_branch_out_pc: 0,
+                    breakin_addr: 0,
+                    breakout_addr: 0,
+                    breakout_skip_save_regs_addr: 0,
+                    breakin_thumb_addr: 0,
+                    breakout_thumb_addr: 0,
+                    breakout_skip_save_regs_thumb_addr: 0,
+                    restore_host_opcodes,
+                    restore_guest_opcodes,
+                    restore_host_thumb_opcodes,
+                    restore_guest_thumb_opcodes,
+                }
             };
-
-            let restore_guest_opcodes = {
-                let mut opcodes = [0u32; 7];
-                // Restore guest
-                opcodes[0] = AluReg::mov_al(Reg::LR, Reg::SP);
-                opcodes[1..].copy_from_slice(&thread_regs.borrow().restore_regs_opcodes);
-                opcodes
-            };
-
-            let restore_host_thumb_opcodes = {
-                let mut opcodes = restore_host_opcodes;
-                let save_regs_thumb_opcodes = &thread_regs.borrow().save_regs_thumb_opcodes;
-                opcodes[..save_regs_thumb_opcodes.len()].copy_from_slice(save_regs_thumb_opcodes);
-                opcodes
-            };
-
-            let restore_guest_thumb_opcodes = {
-                let mut opcodes = restore_guest_opcodes;
-                opcodes[1..].copy_from_slice(&thread_regs.borrow().restore_regs_thumb_opcodes);
-                opcodes
-            };
-
-            JitAsm {
-                jit_memory,
-                cpu_type,
-                mem_handler,
-                thread_regs,
-                cp15_context,
-                jit_buf: JitBuf::new(),
-                host_regs,
-                guest_branch_out_pc: 0,
-                breakin_addr: 0,
-                breakout_addr: 0,
-                breakout_skip_save_regs_addr: 0,
-                breakin_thumb_addr: 0,
-                breakout_thumb_addr: 0,
-                breakout_skip_save_regs_thumb_addr: 0,
-                restore_host_opcodes,
-                restore_guest_opcodes,
-                restore_host_thumb_opcodes,
-                restore_guest_thumb_opcodes,
-            }
-        };
 
         {
             let jit_opcodes = &mut instance.jit_buf.emit_opcodes;
@@ -320,33 +330,34 @@ impl JitAsm {
 
         let guest_pc_end = entry + self.jit_buf.instructions.len() as u32 * pc_step_size;
         // TODO statically analyze generated insts
-        let addr = {
-            let mut jit_memory = self.jit_memory.write().unwrap();
+        let addr =
+            {
+                let mut jit_memory = self.jit_memory.write().unwrap();
 
-            let addr = jit_memory.insert_block(
-                &self.jit_buf.emit_opcodes,
-                Some(entry),
-                Some(self.jit_buf.jit_addr_mapping.clone()),
-                Some(guest_pc_end),
-            );
+                let addr = jit_memory.insert_block(
+                    &self.jit_buf.emit_opcodes,
+                    Some(entry),
+                    Some(self.jit_buf.jit_addr_mapping.clone()),
+                    Some(guest_pc_end),
+                );
 
-            if DEBUG {
-                for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
-                    let pc = index as u32 * pc_step_size + entry;
-                    let (jit_addr, _) = jit_memory.get_jit_start_addr(pc).unwrap();
+                if DEBUG {
+                    for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
+                        let pc = index as u32 * pc_step_size + entry;
+                        let (jit_addr, _) = jit_memory.get_jit_start_addr(pc).unwrap();
 
-                    debug_println!(
-                        "{:?} Mapping {:#010x} to {:#010x} {:?}",
-                        self.cpu_type,
-                        pc,
-                        jit_addr,
-                        inst_info
-                    );
+                        debug_println!(
+                            "{:?} Mapping {:#010x} to {:#010x} {:?}",
+                            self.cpu_type,
+                            pc,
+                            jit_addr,
+                            inst_info
+                        );
+                    }
                 }
-            }
 
-            addr
-        };
+                addr
+            };
 
         self.jit_buf.clear_all();
         (addr, guest_pc_end)

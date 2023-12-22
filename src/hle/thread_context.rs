@@ -1,10 +1,11 @@
 use crate::hle::cp15_context::Cp15Context;
+use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::ipc_handler::IpcHandler;
-use crate::hle::memory::handler::mem_handler::MemHandler;
+use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::memory::memory::Memory;
-use crate::hle::registers::ThreadRegs;
 use crate::hle::spu_context::SpuContext;
+use crate::hle::thread_regs::ThreadRegs;
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::jit_memory::JitMemory;
@@ -30,13 +31,14 @@ impl ThreadContext {
     ) -> Self {
         let regs = ThreadRegs::new(cpu_type);
         let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
+        let cpu_regs = Rc::new(RefCell::new(CpuRegs::new(cpu_type)));
         let gpu_context = Rc::new(RefCell::new(GpuContext::new()));
         let spu_context = Rc::new(RefCell::new(SpuContext::new()));
         let mem_handler = Rc::new(RefCell::new(MemHandler::new(
             cpu_type,
             memory,
             ipc_handler,
-            regs.clone(),
+            cpu_regs,
             gpu_context,
             spu_context,
         )));

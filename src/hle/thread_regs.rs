@@ -60,8 +60,6 @@ pub struct ThreadRegs {
     pub abt: OtherModeRegs,
     pub irq: OtherModeRegs,
     pub und: OtherModeRegs,
-    pub ime: u8,
-    pub post_flg: u8,
     pub cpu_type: CpuType,
     pub restore_regs_opcodes: [u32; 6],
     pub save_regs_opcodes: [u32; 4],
@@ -291,17 +289,6 @@ impl ThreadRegs {
 
     pub fn is_thumb(&self) -> bool {
         bool::from(Cpsr::from(self.cpsr).thumb())
-    }
-
-    pub fn set_ime(&mut self, value: u8) {
-        self.ime = value & 0x1;
-    }
-
-    pub fn set_post_flg(&mut self, value: u8) {
-        self.post_flg |= value & 0x1;
-        if self.cpu_type == CpuType::ARM9 {
-            self.post_flg = (self.post_flg & !0x2) | (value & 0x2);
-        }
     }
 }
 

@@ -1,5 +1,4 @@
-use crate::hle::memory::handler::Convert;
-use crate::hle::memory::regions;
+use crate::hle::memory::{regions, Convert};
 use crate::hle::CpuType;
 use crate::mmap::Mmap;
 use crate::utils;
