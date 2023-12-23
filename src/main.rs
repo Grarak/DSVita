@@ -8,6 +8,7 @@ use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::memory::Memory;
 use crate::hle::memory::regions;
 use crate::hle::spi_context;
+use crate::hle::spi_context::SpiContext;
 use crate::hle::thread_context::ThreadContext;
 use crate::hle::CpuType;
 use crate::jit::jit_memory::JitMemory;
@@ -48,9 +49,11 @@ fn initialize_arm9_thread(
     entry_addr: u32,
     jit_memory: Arc<RwLock<JitMemory>>,
     memory: Arc<RwLock<Memory>>,
+    spi_context: Arc<RwLock<SpiContext>>,
     ipc_handler: Arc<RwLock<IpcHandler>>,
 ) -> ThreadContext {
-    let thread = ThreadContext::new(CpuType::ARM9, jit_memory, memory, ipc_handler);
+    let mut thread =
+        ThreadContext::new(CpuType::ARM9, jit_memory, memory, spi_context, ipc_handler);
 
     {
         let mut cp15 = thread.cp15_context.borrow_mut();
@@ -61,10 +64,9 @@ fn initialize_arm9_thread(
 
     {
         // I/O Ports
-        let mut mem_handler = thread.mem_handler.write().unwrap();
-        mem_handler.write(0x4000247, 0x03u8);
-        mem_handler.write(0x4000300, 0x01u8);
-        mem_handler.write(0x4000304, 0x0001u16);
+        thread.mem_handler.write(0x4000247, 0x03u8);
+        thread.mem_handler.write(0x4000300, 0x01u8);
+        thread.mem_handler.write(0x4000304, 0x0001u16);
     }
 
     {
@@ -85,15 +87,16 @@ fn initialize_arm7_thread(
     entry_addr: u32,
     jit_memory: Arc<RwLock<JitMemory>>,
     memory: Arc<RwLock<Memory>>,
+    spi_context: Arc<RwLock<SpiContext>>,
     ipc_handler: Arc<RwLock<IpcHandler>>,
 ) -> ThreadContext {
-    let thread = ThreadContext::new(CpuType::ARM7, jit_memory, memory, ipc_handler);
+    let mut thread =
+        ThreadContext::new(CpuType::ARM7, jit_memory, memory, spi_context, ipc_handler);
 
     {
         // I/O Ports
-        let mut mem_handler = thread.mem_handler.write().unwrap();
-        mem_handler.write(0x4000300, 0x01u8); // POWCNT1
-        mem_handler.write(0x4000504, 0x0200u16); // SOUNDBIAS
+        thread.mem_handler.write(0x4000300, 0x01u8); // POWCNT1
+        thread.mem_handler.write(0x4000504, 0x0200u16); // SOUNDBIAS
     }
 
     {
@@ -166,22 +169,31 @@ pub fn main() {
     }
 
     let jit_memory = Arc::new(RwLock::new(JitMemory::new()));
+    let spi_context = Arc::new(RwLock::new(SpiContext::new()));
     let ipc_handler = Arc::new(RwLock::new(IpcHandler::new()));
 
     let jit_memory_clone = jit_memory.clone();
     let memory_clone = memory.clone();
+    let spi_context_clone = spi_context.clone();
     let ipc_handler_clone = ipc_handler.clone();
 
     if SINGLE_CORE {
-        let mut arm9_thread = initialize_arm9_thread(
-            arm9_entry_adrr,
-            jit_memory_clone,
-            memory_clone,
-            ipc_handler_clone,
-        );
+        let mut arm9_thread =
+            initialize_arm9_thread(
+                arm9_entry_adrr,
+                jit_memory_clone,
+                memory_clone,
+                spi_context_clone,
+                ipc_handler_clone,
+            );
 
-        let mut arm7_thread =
-            initialize_arm7_thread(arm7_entry_addr, jit_memory, memory, ipc_handler);
+        let mut arm7_thread = initialize_arm7_thread(
+            arm7_entry_addr,
+            jit_memory,
+            memory,
+            spi_context,
+            ipc_handler,
+        );
 
         loop {
             arm9_thread.iterate(2);
@@ -193,13 +205,13 @@ pub fn main() {
         let arm9_thread = thread::Builder::new()
             .name("arm9_thread".to_owned())
             .spawn(move || {
-                let mut arm9_thread =
-                    initialize_arm9_thread(
-                        arm9_entry_adrr,
-                        jit_memory_clone,
-                        memory_clone,
-                        ipc_handler_clone,
-                    );
+                let mut arm9_thread = initialize_arm9_thread(
+                    arm9_entry_adrr,
+                    jit_memory_clone,
+                    memory_clone,
+                    spi_context_clone,
+                    ipc_handler_clone,
+                );
 
                 tx.send(()).unwrap();
                 arm9_thread.run();
@@ -211,8 +223,13 @@ pub fn main() {
             .spawn(move || {
                 rx.recv().unwrap();
 
-                let mut arm7_thread =
-                    initialize_arm7_thread(arm7_entry_addr, jit_memory, memory, ipc_handler);
+                let mut arm7_thread = initialize_arm7_thread(
+                    arm7_entry_addr,
+                    jit_memory,
+                    memory,
+                    spi_context,
+                    ipc_handler,
+                );
                 arm7_thread.run();
             })
             .unwrap();

@@ -1,11 +1,11 @@
 use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::{memory, CpuType};
-use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
 use crate::scheduler::IO_SCHEDULER;
 use bilge::prelude::*;
 use std::mem;
-use std::sync::{Arc, RwLock};
+use std::ops::Deref;
+use std::sync::Arc;
 
 const CHANNEL_COUNT: usize = 4;
 
@@ -101,7 +101,7 @@ struct DmaChannel {
 pub struct Dma {
     cpu_type: CpuType,
     channels: [DmaChannel; CHANNEL_COUNT],
-    mem_handler: Option<Arc<RwLock<MemHandler>>>,
+    mem_handler: Option<Arc<MemHandler>>,
 }
 
 impl Dma {
@@ -117,7 +117,7 @@ impl Dma {
         self.channels[channel_num as usize].cnt
     }
 
-    pub fn set_mem_handler(&mut self, mem_handler: Arc<RwLock<MemHandler>>) {
+    pub fn set_mem_handler(&mut self, mem_handler: Arc<MemHandler>) {
         self.mem_handler = Some(mem_handler)
     }
 
@@ -171,7 +171,7 @@ struct DmaScheduledTransfer {
     cpu_type: CpuType,
     channel: DmaChannel,
     channel_num: u8,
-    mem_handler: Arc<RwLock<MemHandler>>,
+    mem_handler: Arc<MemHandler>,
 }
 
 impl DmaScheduledTransfer {
@@ -179,7 +179,7 @@ impl DmaScheduledTransfer {
         cpu_type: CpuType,
         channel: DmaChannel,
         channel_num: u8,
-        mem_handler: Arc<RwLock<MemHandler>>,
+        mem_handler: Arc<MemHandler>,
     ) -> Self {
         DmaScheduledTransfer {
             cpu_type,
@@ -189,28 +189,29 @@ impl DmaScheduledTransfer {
         }
     }
 
-    fn do_transfer<T: memory::Convert>(
-        cpu_type: CpuType,
-        dest_addr_ctrl: DmaAddrCtrl,
-        src_addr_ctrl: DmaAddrCtrl,
-        mut dest_addr: u32,
-        mut src_addr: u32,
-        count: u32,
-        mode: DmaTransferMode,
-        mem_handler: Arc<RwLock<MemHandler>>,
-    ) {
+    fn do_transfer<T: memory::Convert>(&self, cnt: &DmaCntArm9, mode: DmaTransferMode) {
+        let dest_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.dest_addr_ctrl()));
+        let src_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.src_addr_ctrl()));
+
+        let count = u32::from(cnt.word_count());
+
+        let mut dest_addr = self.channel.dad;
+        let mut src_addr = self.channel.sad;
+
         let step_size = mem::size_of::<T>() as u32;
         for _ in 0..count {
             debug_println!(
                 "{:?} dma transfer from {:x} to {:x}",
-                cpu_type,
+                self.cpu_type,
                 src_addr,
                 dest_addr
             );
 
-            let mut mem_handler = mem_handler.write().unwrap();
-            let src = mem_handler.read::<T>(src_addr);
-            mem_handler.write(dest_addr, src);
+            {
+                let mem_handler = self.mem_handler.deref();
+                let src = mem_handler.read_lock::<T>(src_addr, false);
+                mem_handler.write_lock(dest_addr, src, false);
+            }
 
             match src_addr_ctrl {
                 DmaAddrCtrl::Increment => src_addr += step_size,
@@ -231,45 +232,16 @@ impl DmaScheduledTransfer {
     }
 
     fn transfer(&self) {
+        // Block all memory operations, but tcm, during dma
+        let _lock = self.mem_handler.dma_transfer_lock.write().unwrap();
+
         let cnt = DmaCntArm9::from(self.channel.cnt);
-        let dest_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.dest_addr_ctrl()));
-        let src_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.src_addr_ctrl()));
         let mode = DmaTransferMode::from_cnt(self.cpu_type, self.channel.cnt, self.channel_num);
 
-        let amount =
-            if bool::from(cnt.transfer_type()) {
-                MemoryAmount::WORD
-            } else {
-                MemoryAmount::HALF
-            };
-
-        let count = u32::from(cnt.word_count());
-
-        let dest_addr = self.channel.dad;
-        let src_addr = self.channel.sad;
-
-        match amount {
-            MemoryAmount::HALF => DmaScheduledTransfer::do_transfer::<u16>(
-                self.cpu_type,
-                dest_addr_ctrl,
-                src_addr_ctrl,
-                dest_addr,
-                src_addr,
-                count,
-                mode,
-                self.mem_handler.clone(),
-            ),
-            MemoryAmount::WORD => DmaScheduledTransfer::do_transfer::<u32>(
-                self.cpu_type,
-                dest_addr_ctrl,
-                src_addr_ctrl,
-                dest_addr,
-                src_addr,
-                count,
-                mode,
-                self.mem_handler.clone(),
-            ),
-            _ => {}
+        if bool::from(cnt.transfer_type()) {
+            self.do_transfer::<u32>(&cnt, mode);
+        } else {
+            self.do_transfer::<u16>(&cnt, mode);
         }
 
         if mode == DmaTransferMode::GeometryCmdFifo {
@@ -279,14 +251,8 @@ impl DmaScheduledTransfer {
         if bool::from(cnt.repeat()) && mode != DmaTransferMode::StartImm {
             todo!()
         } else {
-            self.mem_handler
-                .write()
-                .unwrap()
-                .io_ports
-                .dma
-                .borrow_mut()
-                .channels[self.channel_num as usize]
-                .cnt &= !(1 << 31);
+            self.mem_handler.io_ports.dma.borrow_mut().channels[self.channel_num as usize].cnt &=
+                !(1 << 31);
         }
 
         if bool::from(cnt.irq_at_end()) {

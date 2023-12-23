@@ -16,11 +16,25 @@ use crate::logging::debug_println;
 use crate::DEBUG;
 use std::arch::asm;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::ptr;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
+
+pub struct JitState {
+    pub invalidated_addrs: HashSet<u32>,
+    pub current_block_range: (u32, u32),
+}
+
+impl JitState {
+    pub fn new() -> Self {
+        JitState {
+            invalidated_addrs: HashSet::new(),
+            current_block_range: (0, 0),
+        }
+    }
+}
 
 #[derive(Default)]
 #[repr(C)]
@@ -65,7 +79,7 @@ pub struct JitAsm {
     jit_memory: Arc<RwLock<JitMemory>>,
     pub cpu_type: CpuType,
     pub inst_mem_handler: InstMemHandler,
-    pub mem_handler: Arc<RwLock<MemHandler>>,
+    pub mem_handler: Arc<MemHandler>,
     pub thread_regs: Rc<RefCell<ThreadRegs>>,
     pub cp15_context: Rc<RefCell<Cp15Context>>,
     pub jit_buf: JitBuf,
@@ -85,11 +99,11 @@ pub struct JitAsm {
 
 impl JitAsm {
     pub fn new(
+        cpu_type: CpuType,
         jit_memory: Arc<RwLock<JitMemory>>,
         thread_regs: Rc<RefCell<ThreadRegs>>,
         cp15_context: Rc<RefCell<Cp15Context>>,
-        mem_handler: Arc<RwLock<MemHandler>>,
-        cpu_type: CpuType,
+        mem_handler: Arc<MemHandler>,
     ) -> Self {
         let mut instance =
             {
@@ -235,10 +249,7 @@ impl JitAsm {
             if thumb {
                 let mut buf = [0u16; 2048];
                 'outer: loop {
-                    self.mem_handler
-                        .read()
-                        .unwrap()
-                        .read_slice(entry + index, &mut buf);
+                    self.mem_handler.read_slice(entry + index, &mut buf);
                     for opcode in buf {
                         debug_println!(
                             "{:?} disassemble thumb {:x} {}",
@@ -260,10 +271,7 @@ impl JitAsm {
             } else {
                 let mut buf = [0u32; 1024];
                 'outer: loop {
-                    self.mem_handler
-                        .read()
-                        .unwrap()
-                        .read_slice(entry + index, &mut buf);
+                    self.mem_handler.read_slice(entry + index, &mut buf);
                     for opcode in buf {
                         debug_println!(
                             "{:?} disassemble arm {:x} {}",
@@ -388,11 +396,11 @@ impl JitAsm {
                 let mut jit_memory = self.jit_memory.write().unwrap();
 
                 {
-                    let mut mem_handler = self.mem_handler.write().unwrap();
-                    for addr in &mem_handler.invalidated_jit_addrs {
+                    let mut jit_state = self.mem_handler.jit_state.lock().unwrap();
+                    for addr in &jit_state.invalidated_addrs {
                         jit_memory.invalidate_block(*addr);
                     }
-                    mem_handler.invalidated_jit_addrs.clear();
+                    jit_state.invalidated_addrs.clear();
                 }
 
                 jit_memory.get_jit_start_addr(guest_pc)
@@ -400,7 +408,11 @@ impl JitAsm {
             .unwrap_or_else(|| self.emit_code_block(guest_pc, thumb))
         };
 
-        self.mem_handler.write().unwrap().current_jit_block_range = (guest_pc, guest_pc_end);
+        self.mem_handler
+            .jit_state
+            .lock()
+            .unwrap()
+            .current_block_range = (guest_pc, guest_pc_end);
 
         unsafe {
             JitAsm::enter_jit(

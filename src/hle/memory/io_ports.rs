@@ -6,6 +6,7 @@ use crate::hle::memory::memory::Memory;
 use crate::hle::memory::Convert;
 use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
+use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -14,38 +15,41 @@ use std::sync::{Arc, RwLock};
 pub struct IoPorts {
     cpu_type: CpuType,
     memory: Arc<RwLock<Memory>>,
+    spi_context: Arc<RwLock<SpiContext>>,
     ipc_handler: Arc<RwLock<IpcHandler>>,
     cpu_regs: Rc<RefCell<CpuRegs>>,
     gpu_context: Rc<RefCell<GpuContext>>,
-    spi_context: Arc<RwLock<SpiContext>>,
     spu_context: Rc<RefCell<SpuContext>>,
-    pub dma: Rc<RefCell<Dma>>,
+    pub dma: Arc<RefCell<Dma>>,
+    timers_context: Rc<RefCell<TimersContext>>,
 }
 
 impl IoPorts {
     pub fn new(
         cpu_type: CpuType,
         memory: Arc<RwLock<Memory>>,
+        spi_context: Arc<RwLock<SpiContext>>,
         ipc_handler: Arc<RwLock<IpcHandler>>,
         cpu_regs: Rc<RefCell<CpuRegs>>,
         gpu_context: Rc<RefCell<GpuContext>>,
-        spi_context: Arc<RwLock<SpiContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
-        dma: Rc<RefCell<Dma>>,
+        dma: Arc<RefCell<Dma>>,
+        timers_context: Rc<RefCell<TimersContext>>,
     ) -> Self {
         IoPorts {
             cpu_type,
             memory,
             ipc_handler,
+            spi_context,
             cpu_regs,
             gpu_context,
-            spi_context,
             spu_context,
             dma,
+            timers_context,
         }
     }
 
-    pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T) {
+    pub fn write<T: Convert>(&self, addr_offset: u32, value: T) {
         match self.cpu_type {
             CpuType::ARM9 => self.write_arm9(addr_offset, value),
             CpuType::ARM7 => self.write_arm7(addr_offset, value),
@@ -61,7 +65,10 @@ impl IoPorts {
 
     fn read_common<T: Convert>(&self, addr_offset: u32) -> T {
         T::from(match addr_offset {
+            0xB8 => self.dma.borrow().get_cnt(0),
+
             0xDC => self.dma.borrow().get_cnt(3),
+
             0x180 => self.ipc_handler.read().unwrap().get_sync_reg(self.cpu_type) as u32,
             0x208 => self.cpu_regs.borrow().ime as u32,
             _ => todo!("io port read {:x}", addr_offset),
@@ -87,12 +94,17 @@ impl IoPorts {
         })
     }
 
-    fn write_common<T: Convert>(&mut self, addr_offset: u32, value: T) {
+    fn write_common<T: Convert>(&self, addr_offset: u32, value: T) {
         let value = value.into();
         match addr_offset {
+            0xB0 => self.dma.borrow_mut().set_sad(0, value.into()),
+            0xB4 => self.dma.borrow_mut().set_dad(0, value.into()),
+            0xB8 => self.dma.borrow_mut().set_cnt(0, value.into()),
+
             0xD4 => self.dma.borrow_mut().set_sad(3, value.into()),
             0xD8 => self.dma.borrow_mut().set_dad(3, value.into()),
             0xDC => self.dma.borrow_mut().set_cnt(3, value.into()),
+
             0x208 => self.cpu_regs.borrow_mut().set_ime(value as u8),
             0x300 => self.cpu_regs.borrow_mut().set_post_flg(value as u8),
             _ => todo!("io port write {:x}", addr_offset),
@@ -100,7 +112,7 @@ impl IoPorts {
     }
 
     #[rustfmt::skip]
-    fn write_arm7<T: Convert>(&mut self, addr_offset: u32, value: T) {
+    fn write_arm7<T: Convert>(&self, addr_offset: u32, value: T) {
         match addr_offset {
             0x180 => self.ipc_handler.write().unwrap().set_sync_reg(CpuType::ARM7, value.into() as u16),
             0x1C0 => self.spi_context.write().unwrap().set_cnt(value.into() as u16),
@@ -210,7 +222,7 @@ impl IoPorts {
     }
 
     #[rustfmt::skip]
-    fn write_arm9<T: Convert>(&mut self, addr_offset: u32, value: T) {
+    fn write_arm9<T: Convert>(&self, addr_offset: u32, value: T) {
         match addr_offset {
             0x180 => self.ipc_handler.write().unwrap().set_sync_reg(CpuType::ARM9, value.into() as u16),
             0x247 => self.memory.write().unwrap().set_wram_cnt(value.into() as u8),

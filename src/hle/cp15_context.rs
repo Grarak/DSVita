@@ -53,25 +53,26 @@ pub struct Cp15Context {
     control: u32,
     pub exception_addr: u32,
     dtcm: u32,
-    dtcm_state: TCMState,
-    dtcm_addr: u32,
-    dtcm_size: u32,
+    pub dtcm_state: TcmState,
+    pub dtcm_addr: u32,
+    pub dtcm_size: u32,
     itcm: u32,
-    itcm_state: TCMState,
-    itcm_size: u32,
+    pub itcm_state: TcmState,
+    pub itcm_size: u32,
 }
 
+#[derive(Eq, PartialEq)]
 #[repr(u8)]
-enum TCMState {
+pub enum TcmState {
     Disabled = 0,
     RW = 1,
     W = 2,
 }
 
-impl<T: Into<u8>> From<T> for TCMState {
+impl<T: Into<u8>> From<T> for TcmState {
     fn from(value: T) -> Self {
         let value = value.into();
-        assert!(value <= TCMState::W as u8);
+        assert!(value <= TcmState::W as u8);
         unsafe { mem::transmute(value) }
     }
 }
@@ -89,11 +90,11 @@ impl Cp15Context {
             control: u32::from(control_default),
             exception_addr: 0,
             dtcm: 0,
-            dtcm_state: TCMState::Disabled,
+            dtcm_state: TcmState::Disabled,
             dtcm_addr: 0,
             dtcm_size: 0,
             itcm: 0,
-            itcm_state: TCMState::Disabled,
+            itcm_state: TcmState::Disabled,
             itcm_size: 0,
         }
     }
@@ -103,10 +104,10 @@ impl Cp15Context {
         let control_reg = Cp15ControlReg::from(self.control);
 
         self.exception_addr = u32::from(control_reg.exception_vectors()) * 0xFFFF0000;
-        self.dtcm_state = TCMState::from(
+        self.dtcm_state = TcmState::from(
             u8::from(control_reg.dtcm_enable()) * 1 + u8::from(control_reg.dtcm_load_mode()),
         );
-        self.itcm_state = TCMState::from(
+        self.itcm_state = TcmState::from(
             u8::from(control_reg.itcm_enable()) * 1 + u8::from(control_reg.itcm_load_mode()),
         );
     }

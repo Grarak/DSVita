@@ -938,14 +938,3 @@ impl From<Op> for MemoryAmount {
         }
     }
 }
-
-impl MemoryAmount {
-    pub const fn mem_size(&self) -> usize {
-        match self {
-            MemoryAmount::BYTE => mem::size_of::<u8>(),
-            MemoryAmount::HALF => mem::size_of::<u16>(),
-            MemoryAmount::WORD => mem::size_of::<u32>(),
-            MemoryAmount::DOUBLE => mem::size_of::<u64>(),
-        }
-    }
-}

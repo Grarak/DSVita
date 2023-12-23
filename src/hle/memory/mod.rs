@@ -1,8 +1,9 @@
 pub mod dma;
-mod io_ports;
+pub mod io_ports;
 pub mod mem_handler;
 pub mod memory;
 pub mod regions;
+pub mod tcm;
 
 pub trait Convert: Copy + Into<u32> {
     fn from(value: u32) -> Self;

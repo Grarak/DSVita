@@ -10,9 +10,11 @@ impl MemoryRegion {
     }
 }
 
+pub const INSTRUCTION_TCM_SIZE: u32 = 32 * 1024;
 const INSTRUCTION_TCM_REGION: MemoryRegion =
-    MemoryRegion::new("Instruction TCM", 0x00000000, 32 * 1024);
-const DATA_TCM_REGION: MemoryRegion = MemoryRegion::new("Data TCM", 0, 16 * 1024);
+    MemoryRegion::new("Instruction TCM", 0x00000000, INSTRUCTION_TCM_SIZE);
+pub const DATA_TCM_SIZE: u32 = 16 * 1024;
+const DATA_TCM_REGION: MemoryRegion = MemoryRegion::new("Data TCM", 0, DATA_TCM_SIZE);
 
 pub const MAIN_MEMORY_OFFSET: u32 = 0x02000000;
 pub const MAIN_MEMORY_ADDRESS_SPACE: u32 = 16 * 1024 * 1024;

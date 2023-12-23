@@ -126,10 +126,10 @@ struct Key1 {
 }
 
 impl Key1 {
-    fn crypt<I: IntoIterator<Item = usize>>(
+    fn crypt(
         &self,
         data: &mut [u32],
-        iter: I,
+        iter: impl IntoIterator<Item = usize>,
         x_end_index: usize,
         y_end_index: usize,
     ) {

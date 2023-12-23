@@ -326,7 +326,19 @@ mod transfer_ops {
 
     #[inline]
     pub fn ldrb_pt(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
+            reg_reserve!(op1),
+            reg_reserve!(op0, op1),
+            InstCycle::new(
+                (op0 == Reg::PC) as u8 * 4 + 1,
+                (op0 == Reg::PC) as u8 * 3 + 2,
+            ),
+        )
     }
 
     #[inline]
@@ -473,8 +485,8 @@ mod transfer_ops {
             opcode,
             op,
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
-            reg_reserve!(op1),
-            reg_reserve!(op0),
+            reg_reserve!(op0, op1),
+            reg_reserve!(),
             InstCycle::new(1, 2),
         )
     }
@@ -486,7 +498,16 @@ mod transfer_ops {
 
     #[inline]
     pub fn strb_pt(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
+            reg_reserve!(op0, op1),
+            reg_reserve!(op1),
+            InstCycle::new(1, 2),
+        )
     }
 
     #[inline]
@@ -640,7 +661,7 @@ mod transfer_ops {
             op,
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
-            reg_reserve!(op0),
+            reg_reserve!(op0, op1),
             InstCycle::new(
                 (op0 == Reg::PC) as u8 * 4 + 1,
                 (op0 == Reg::PC) as u8 * 3 + 2,
