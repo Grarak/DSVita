@@ -1,4 +1,5 @@
 use crate::hle::CpuType;
+use crate::logging::debug_println;
 use bilge::prelude::*;
 
 #[bitsize(16)]
@@ -28,22 +29,26 @@ impl IpcHandler {
         self.sync_regs[cpu_type as usize]
     }
 
-    pub fn set_sync_reg(&mut self, cpu_type: CpuType, value: u16) {
-        let mut current_cpu_ipc_sync = IpcSync::from(self.sync_regs[cpu_type as usize]);
-        let mut other_cpu_ipc_sync = IpcSync::from(self.sync_regs[!cpu_type as usize]);
+    pub fn set_sync_reg(&mut self, cpu_type: CpuType, mut mask: u16, value: u16) {
+        debug_println!(
+            "{:?} set ipc sync with mask {:x} and value {:x}",
+            cpu_type,
+            mask,
+            value
+        );
 
-        let new_ipc_sync = IpcSync::from(value);
-        current_cpu_ipc_sync.set_data_out(new_ipc_sync.data_out());
-        current_cpu_ipc_sync.set_enable_irq(new_ipc_sync.enable_irq());
-        other_cpu_ipc_sync.set_data_in(new_ipc_sync.data_out());
+        mask &= 0x4F00;
+        let current = &mut self.sync_regs[cpu_type as usize];
+        *current = (*current & !mask) | (value & mask);
+        let other = &mut self.sync_regs[!cpu_type as usize];
+        *other = (*other & !((mask >> 8) & 0xF)) | (((value & mask) >> 8) & 0xF);
 
-        let send_interrupt =
-            bool::from(new_ipc_sync.send_irq()) && bool::from(other_cpu_ipc_sync.enable_irq());
+        let current_cpu_ipc_sync = IpcSync::from(self.sync_regs[cpu_type as usize]);
+        let other_cpu_ipc_sync = IpcSync::from(self.sync_regs[!cpu_type as usize]);
 
-        self.sync_regs[cpu_type as usize] = u16::from(current_cpu_ipc_sync);
-        self.sync_regs[!cpu_type as usize] = u16::from(other_cpu_ipc_sync);
-
-        if send_interrupt {
+        if bool::from(current_cpu_ipc_sync.send_irq())
+            && bool::from(other_cpu_ipc_sync.enable_irq())
+        {
             todo!()
         }
     }

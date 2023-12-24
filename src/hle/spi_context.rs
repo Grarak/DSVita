@@ -148,8 +148,9 @@ impl SpiContext {
         SpiContext::default()
     }
 
-    pub fn set_cnt(&mut self, value: u16) {
-        self.cnt = (self.cnt & !0xCF03) | (value & 0xCF03);
+    pub fn set_cnt(&mut self, mut mask: u16, value: u16) {
+        mask &= 0xCF03;
+        self.cnt = (self.cnt & !mask) | (value & mask);
     }
 
     pub fn set_data(&mut self, value: u8) {

@@ -1,5 +1,6 @@
 use crate::hle::memory::{regions, Convert};
 use crate::hle::CpuType;
+use crate::logging::debug_println;
 use crate::mmap::Mmap;
 use crate::utils;
 use std::marker::PhantomData;
@@ -184,6 +185,7 @@ impl Memory {
     }
 
     pub fn set_wram_cnt(&mut self, value: u8) {
+        debug_println!("set wram cnt to {:x}", value);
         self.wram.set_cnt(value)
     }
 

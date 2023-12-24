@@ -70,10 +70,9 @@ impl JitAsm {
             self.jit_buf
                 .emit_opcodes
                 .extend(&AluImm::mov32(Reg::R0, pc));
-            self.jit_buf.emit_opcodes.extend(&AluImm::mov32(
-                Reg::LR,
-                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-            ));
+            self.jit_buf.emit_opcodes.extend(
+                &AluImm::mov32(Reg::LR, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
+            );
             self.jit_buf
                 .emit_opcodes
                 .push(LdrStrImm::str_al(Reg::R0, Reg::LR));
@@ -184,19 +183,16 @@ impl JitAsm {
         let mut out_reg_mapping: [Reg; EMULATED_REGS_COUNT] = [Reg::None; EMULATED_REGS_COUNT];
 
         for operand in inst_info.operands_mut() {
-            match operand {
-                Operand::Reg { reg, .. } => {
-                    if emulated_out_regs.is_reserved(*reg) {
-                        let mapped_reg =
-                            &mut out_reg_mapping[(*reg as u8 - FIRST_EMULATED_REG as u8) as usize];
-                        if *mapped_reg == Reg::None {
-                            *mapped_reg = out_reserved.pop().unwrap();
-                        }
-
-                        *reg = *mapped_reg;
+            if let Operand::Reg { reg, .. } = operand {
+                if emulated_out_regs.is_reserved(*reg) {
+                    let mapped_reg =
+                        &mut out_reg_mapping[(*reg as u8 - FIRST_EMULATED_REG as u8) as usize];
+                    if *mapped_reg == Reg::None {
+                        *mapped_reg = out_reserved.pop().unwrap();
                     }
+
+                    *reg = *mapped_reg;
                 }
-                _ => {}
             }
         }
 

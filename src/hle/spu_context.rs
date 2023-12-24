@@ -24,35 +24,35 @@ impl SpuContext {
         }
     }
 
-    pub fn get_cnt(&self, channel: u8) -> u32 {
-        self.channels[channel as usize].cnt
+    pub fn get_cnt(&self, channel: usize) -> u32 {
+        self.channels[channel].cnt
     }
 
-    pub fn set_cnt(&mut self, channel: u8, value: u32) {
-        self.channels[channel as usize].cnt = value;
+    pub fn set_cnt(&mut self, channel: usize, mask: u32, value: u32) {
+        self.channels[channel].cnt = (self.channels[channel].cnt & !mask) | (value & mask);
     }
 
-    pub fn set_sad(&mut self, channel: u8, value: u32) {
-        self.channels[channel as usize].sad = value;
+    pub fn set_sad(&mut self, channel: usize, mask: u32, value: u32) {
+        self.channels[channel].sad = (self.channels[channel].sad & !mask) | (value & mask);
     }
 
-    pub fn set_pnt(&mut self, channel: u8, value: u16) {
-        self.channels[channel as usize].pnt = value;
+    pub fn set_tmr(&mut self, channel: usize, mask: u16, value: u16) {
+        self.channels[channel].tmr = (self.channels[channel].tmr & !mask) | (value & mask);
     }
 
-    pub fn set_tmr(&mut self, channel: u8, value: u16) {
-        self.channels[channel as usize].tmr = value;
+    pub fn set_pnt(&mut self, channel: usize, mask: u16, value: u16) {
+        self.channels[channel].pnt = (self.channels[channel].pnt & !mask) | (value & mask);
     }
 
-    pub fn set_len(&mut self, channel: u8, value: u32) {
-        self.channels[channel as usize].len = value;
+    pub fn set_len(&mut self, channel: usize, mask: u32, value: u32) {
+        self.channels[channel].len = (self.channels[channel].len & !mask) | (value & mask);
     }
 
-    pub fn set_main_sound_cnt(&mut self, value: u16) {
-        self.main_sound_cnt = value
+    pub fn set_main_sound_cnt(&mut self, mask: u16, value: u16) {
+        self.main_sound_cnt = (self.main_sound_cnt & !mask) | (value & mask);
     }
 
-    pub fn set_sound_bias(&mut self, value: u16) {
-        self.sound_bias = value;
+    pub fn set_sound_bias(&mut self, mask: u16, value: u16) {
+        self.sound_bias = (self.sound_bias & !mask) | (value & mask);
     }
 }

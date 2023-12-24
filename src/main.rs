@@ -52,7 +52,7 @@ fn initialize_arm9_thread(
     spi_context: Arc<RwLock<SpiContext>>,
     ipc_handler: Arc<RwLock<IpcHandler>>,
 ) -> ThreadContext {
-    let mut thread =
+    let thread =
         ThreadContext::new(CpuType::ARM9, jit_memory, memory, spi_context, ipc_handler);
 
     {
@@ -90,7 +90,7 @@ fn initialize_arm7_thread(
     spi_context: Arc<RwLock<SpiContext>>,
     ipc_handler: Arc<RwLock<IpcHandler>>,
 ) -> ThreadContext {
-    let mut thread =
+    let thread =
         ThreadContext::new(CpuType::ARM7, jit_memory, memory, spi_context, ipc_handler);
 
     {
