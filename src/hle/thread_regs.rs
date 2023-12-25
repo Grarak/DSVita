@@ -4,8 +4,8 @@ use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Msr};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
+use crate::utils::FastCell;
 use bilge::prelude::*;
-use std::cell::RefCell;
 use std::ptr;
 use std::rc::Rc;
 
@@ -68,8 +68,8 @@ pub struct ThreadRegs {
 }
 
 impl ThreadRegs {
-    pub fn new(cpu_type: CpuType) -> Rc<RefCell<Self>> {
-        let instance = Rc::new(RefCell::new(ThreadRegs::default()));
+    pub fn new(cpu_type: CpuType) -> Rc<FastCell<Self>> {
+        let instance = Rc::new(FastCell::new(ThreadRegs::default()));
 
         {
             let mut instance = instance.borrow_mut();

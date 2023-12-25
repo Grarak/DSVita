@@ -1,8 +1,7 @@
 use crate::hle::memory::regions;
 use crate::hle::CpuType;
 use crate::utils;
-use crate::utils::Convert;
-use std::cell::RefCell;
+use crate::utils::{Convert, FastCell};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::sync::RwLock;
@@ -186,14 +185,14 @@ impl SharedWram {
 }
 
 pub struct WramContext {
-    wram_arm7: RefCell<Box<[u8; regions::ARM7_WRAM_SIZE as usize]>>,
+    wram_arm7: FastCell<Box<[u8; regions::ARM7_WRAM_SIZE as usize]>>,
     shared: RwLock<SharedWram>,
 }
 
 impl WramContext {
     pub fn new() -> Self {
         WramContext {
-            wram_arm7: RefCell::new(Box::new([0u8; regions::ARM7_WRAM_SIZE as usize])),
+            wram_arm7: FastCell::new(Box::new([0u8; regions::ARM7_WRAM_SIZE as usize])),
             shared: RwLock::new(SharedWram::new()),
         }
     }

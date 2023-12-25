@@ -15,9 +15,9 @@ use crate::jit::jit_memory::JitMemory;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
+use crate::utils::FastCell;
 use crate::DEBUG;
 use std::arch::asm;
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::ptr;
@@ -85,9 +85,9 @@ pub struct JitAsm {
     jit_cycle_manager: Arc<RwLock<JitCycleManager>>,
     jit_memory: Arc<RwLock<JitMemory>>,
     pub inst_mem_handler: InstMemHandler,
-    pub thread_regs: Rc<RefCell<ThreadRegs>>,
-    pub cp15_context: Rc<RefCell<Cp15Context>>,
-    timers_context: Rc<RefCell<TimersContext>>,
+    pub thread_regs: Rc<FastCell<ThreadRegs>>,
+    pub cp15_context: Rc<FastCell<Cp15Context>>,
+    timers_context: Rc<FastCell<TimersContext>>,
     pub mem_handler: Arc<MemHandler>,
     pub jit_buf: JitBuf,
     pub host_regs: Box<HostRegs>,
@@ -109,9 +109,9 @@ impl JitAsm {
         cpu_type: CpuType,
         jit_cycle_manager: Arc<RwLock<JitCycleManager>>,
         jit_memory: Arc<RwLock<JitMemory>>,
-        thread_regs: Rc<RefCell<ThreadRegs>>,
-        cp15_context: Rc<RefCell<Cp15Context>>,
-        timers_context: Rc<RefCell<TimersContext>>,
+        thread_regs: Rc<FastCell<ThreadRegs>>,
+        cp15_context: Rc<FastCell<Cp15Context>>,
+        timers_context: Rc<FastCell<TimersContext>>,
         mem_handler: Arc<MemHandler>,
     ) -> Self {
         let mut instance = {
@@ -445,7 +445,7 @@ impl JitAsm {
             self.guest_branch_out_pc = 0;
         }
 
-        // let now = std::time::Instant::now();
+        let now = std::time::Instant::now();
         unsafe {
             JitAsm::enter_jit(
                 jit_entry,
@@ -457,7 +457,7 @@ impl JitAsm {
                 },
             )
         };
-        // let elapsed_time = now.elapsed();
+        let elapsed_time = now.elapsed();
         debug_assert_ne!(self.guest_branch_out_pc, 0);
 
         let executed_insts = (self.guest_branch_out_pc - guest_pc) / (!thumb as u32 * 2 + 2);
@@ -470,11 +470,11 @@ impl JitAsm {
             .on_cycle_update(executed_cycles);
 
         // TODO cycle correction for conds
-        // self.jit_cycle_manager.write().unwrap().insert(
-        //     self.cpu_type,
-        //     elapsed_time,
-        //     executed_cycles,
-        // );
+        self.jit_cycle_manager.write().unwrap().insert(
+            self.cpu_type,
+            elapsed_time,
+            executed_cycles,
+        );
 
         if DEBUG {
             debug_inst_info(

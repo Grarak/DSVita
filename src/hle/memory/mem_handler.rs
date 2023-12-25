@@ -7,8 +7,7 @@ use crate::hle::memory::wram_context::WramContext;
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitState;
 use crate::logging::debug_println;
-use crate::utils::Convert;
-use std::cell::RefCell;
+use crate::utils::{Convert, FastCell};
 use std::mem;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
@@ -17,8 +16,8 @@ pub struct MemHandler {
     pub cpu_type: CpuType,
     pub memory: Arc<RwLock<MainMemory>>,
     pub wram_context: Arc<WramContext>,
-    cp15_context: Rc<RefCell<Cp15Context>>,
-    tcm: Rc<RefCell<Tcm>>,
+    cp15_context: Rc<FastCell<Cp15Context>>,
+    tcm: Rc<FastCell<Tcm>>,
     pub io_ports: IoPorts,
     pub jit_state: Arc<Mutex<JitState>>,
     pub dma_transfer_lock: Arc<RwLock<()>>,
@@ -32,7 +31,7 @@ impl MemHandler {
         cpu_type: CpuType,
         memory: Arc<RwLock<MainMemory>>,
         wram_context: Arc<WramContext>,
-        cp15_context: Rc<RefCell<Cp15Context>>,
+        cp15_context: Rc<FastCell<Cp15Context>>,
         io_ports: IoPorts,
     ) -> Self {
         MemHandler {
@@ -40,7 +39,7 @@ impl MemHandler {
             memory,
             wram_context,
             cp15_context,
-            tcm: Rc::new(RefCell::new(Tcm::new())),
+            tcm: Rc::new(FastCell::new(Tcm::new())),
             io_ports,
             jit_state: Arc::new(Mutex::new(JitState::new())),
             dma_transfer_lock: Arc::new(RwLock::new(())),

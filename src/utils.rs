@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
@@ -80,3 +81,31 @@ impl Display for StrErr {
 }
 
 impl Error for StrErr {}
+
+pub type FastCell<T> = RefCell<T>;
+// Might give better performance
+// pub struct FastCell<T: ?Sized> {
+//     value: UnsafeCell<T>,
+// }
+//
+// impl<T> FastCell<T> {
+//     pub const fn new(value: T) -> Self {
+//         FastCell {
+//             value: UnsafeCell::new(value),
+//         }
+//     }
+// }
+//
+// impl<T: ?Sized> FastCell<T> {
+//     pub fn borrow(&self) -> &T {
+//         unsafe { self.value.get().as_ref().unwrap() }
+//     }
+//
+//     pub fn borrow_mut(&self) -> &mut T {
+//         unsafe { self.value.get().as_mut().unwrap() }
+//     }
+//
+//     pub fn as_ptr(&self) -> *mut T {
+//         self.value.get()
+//     }
+// }

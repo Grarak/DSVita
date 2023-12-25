@@ -10,8 +10,7 @@ use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
-use crate::utils::Convert;
-use std::cell::RefCell;
+use crate::utils::{Convert, FastCell};
 use std::rc::Rc;
 use std::sync::atomic::AtomicU8;
 use std::sync::{Arc, RwLock};
@@ -21,18 +20,18 @@ pub struct IoPorts {
     pub memory: Arc<RwLock<MainMemory>>,
     pub wram_context: Arc<WramContext>,
     pub ipc_handler: Arc<RwLock<IpcHandler>>,
-    pub cpu_regs: Rc<RefCell<CpuRegs>>,
-    pub dma: Rc<RefCell<Dma>>,
-    pub timers_context: Rc<RefCell<TimersContext>>,
+    pub cpu_regs: Rc<FastCell<CpuRegs>>,
+    pub dma: Rc<FastCell<Dma>>,
+    pub timers_context: Rc<FastCell<TimersContext>>,
 
     pub vram_context: Arc<VramContext>,
-    pub gpu_context: Rc<RefCell<GpuContext>>,
-    pub gpu_2d_context_0: Rc<RefCell<Gpu2DContext>>,
-    pub gpu_2d_context_1: Rc<RefCell<Gpu2DContext>>,
+    pub gpu_context: Rc<FastCell<GpuContext>>,
+    pub gpu_2d_context_0: Rc<FastCell<Gpu2DContext>>,
+    pub gpu_2d_context_1: Rc<FastCell<Gpu2DContext>>,
 
     pub vram_stat: Arc<AtomicU8>,
     pub spi_context: Arc<RwLock<SpiContext>>,
-    pub spu_context: Rc<RefCell<SpuContext>>,
+    pub spu_context: Rc<FastCell<SpuContext>>,
 }
 
 impl IoPorts {
@@ -41,16 +40,16 @@ impl IoPorts {
         memory: Arc<RwLock<MainMemory>>,
         wram_context: Arc<WramContext>,
         ipc_handler: Arc<RwLock<IpcHandler>>,
-        cpu_regs: Rc<RefCell<CpuRegs>>,
-        dma: Rc<RefCell<Dma>>,
-        timers_context: Rc<RefCell<TimersContext>>,
+        cpu_regs: Rc<FastCell<CpuRegs>>,
+        dma: Rc<FastCell<Dma>>,
+        timers_context: Rc<FastCell<TimersContext>>,
         vram_context: Arc<VramContext>,
-        gpu_context: Rc<RefCell<GpuContext>>,
-        gpu_2d_context_0: Rc<RefCell<Gpu2DContext>>,
-        gpu_2d_context_1: Rc<RefCell<Gpu2DContext>>,
+        gpu_context: Rc<FastCell<GpuContext>>,
+        gpu_2d_context_0: Rc<FastCell<Gpu2DContext>>,
+        gpu_2d_context_1: Rc<FastCell<Gpu2DContext>>,
         vram_stat: Arc<AtomicU8>,
         spi_context: Arc<RwLock<SpiContext>>,
-        spu_context: Rc<RefCell<SpuContext>>,
+        spu_context: Rc<FastCell<SpuContext>>,
     ) -> Self {
         IoPorts {
             cpu_type,

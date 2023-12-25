@@ -17,7 +17,7 @@ use crate::hle::CpuType;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::jit_cycle_handler::JitCycleManager;
 use crate::jit::jit_memory::JitMemory;
-use std::cell::RefCell;
+use crate::utils::FastCell;
 use std::rc::Rc;
 use std::sync::atomic::AtomicU8;
 use std::sync::{Arc, RwLock};
@@ -26,8 +26,8 @@ use std::thread;
 pub struct ThreadContext {
     cpu_type: CpuType,
     jit: JitAsm,
-    pub regs: Rc<RefCell<ThreadRegs>>,
-    pub cp15_context: Rc<RefCell<Cp15Context>>,
+    pub regs: Rc<FastCell<ThreadRegs>>,
+    pub cp15_context: Rc<FastCell<Cp15Context>>,
     pub mem_handler: Arc<MemHandler>,
 }
 
@@ -42,19 +42,19 @@ impl ThreadContext {
         ipc_handler: Arc<RwLock<IpcHandler>>,
     ) -> Self {
         let regs = ThreadRegs::new(cpu_type);
-        let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
-        let cpu_regs = Rc::new(RefCell::new(CpuRegs::new(cpu_type)));
-        let dma = Rc::new(RefCell::new(Dma::new(cpu_type)));
-        let timers_context = Rc::new(RefCell::new(TimersContext::new()));
+        let cp15_context = Rc::new(FastCell::new(Cp15Context::new()));
+        let cpu_regs = Rc::new(FastCell::new(CpuRegs::new(cpu_type)));
+        let dma = Rc::new(FastCell::new(Dma::new(cpu_type)));
+        let timers_context = Rc::new(FastCell::new(TimersContext::new()));
 
         let vram_stat = Arc::new(AtomicU8::new(0));
         let vram_context = Arc::new(VramContext::new(vram_stat.clone()));
 
-        let gpu_context = Rc::new(RefCell::new(GpuContext::new()));
-        let gpu_2d_context_0 = Rc::new(RefCell::new(Gpu2DContext::new()));
-        let gpu_2d_context_1 = Rc::new(RefCell::new(Gpu2DContext::new()));
+        let gpu_context = Rc::new(FastCell::new(GpuContext::new()));
+        let gpu_2d_context_0 = Rc::new(FastCell::new(Gpu2DContext::new()));
+        let gpu_2d_context_1 = Rc::new(FastCell::new(Gpu2DContext::new()));
 
-        let spu_context = Rc::new(RefCell::new(SpuContext::new()));
+        let spu_context = Rc::new(FastCell::new(SpuContext::new()));
 
         let io_ports = IoPorts::new(
             cpu_type,

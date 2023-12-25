@@ -7,21 +7,21 @@ use crate::jit::inst_info::{InstInfo, Operand, ShiftValue};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{MemoryAmount, Op, ShiftType};
 use crate::logging::debug_println;
-use std::cell::RefCell;
+use crate::utils::FastCell;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::sync::Arc;
 
 pub struct InstMemHandler {
     cpu_type: CpuType,
-    thread_regs: Rc<RefCell<ThreadRegs>>,
+    thread_regs: Rc<FastCell<ThreadRegs>>,
     mem_handler: Arc<MemHandler>,
 }
 
 impl InstMemHandler {
     pub fn new(
         cpu_type: CpuType,
-        thread_regs: Rc<RefCell<ThreadRegs>>,
+        thread_regs: Rc<FastCell<ThreadRegs>>,
         mem_handler: Arc<MemHandler>,
     ) -> Self {
         InstMemHandler {
