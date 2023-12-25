@@ -1,8 +1,9 @@
-use crate::hle::memory::{regions, Convert};
+use crate::hle::memory::regions;
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use crate::mmap::Mmap;
 use crate::utils;
+use crate::utils::Convert;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::{ptr, slice};

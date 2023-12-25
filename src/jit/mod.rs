@@ -7,6 +7,7 @@ pub mod inst_info;
 mod inst_info_thumb;
 mod inst_mem_handler;
 pub mod jit_asm;
+pub mod jit_cycle_handler;
 pub mod jit_memory;
 pub mod reg;
 
@@ -647,7 +648,6 @@ impl Op {
             | Op::BltT
             | Op::BgtT
             | Op::BleT
-            | Op::BlSetupT
             | Op::BlOffT
             | Op::BlxOffT => true,
             _ => false,

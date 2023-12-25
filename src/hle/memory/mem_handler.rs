@@ -1,11 +1,12 @@
 use crate::hle::cp15_context::{Cp15Context, TcmState};
 use crate::hle::memory::io_ports::IoPorts;
 use crate::hle::memory::memory::Memory;
+use crate::hle::memory::regions;
 use crate::hle::memory::tcm::Tcm;
-use crate::hle::memory::{regions, Convert};
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitState;
 use crate::logging::debug_println;
+use crate::utils::Convert;
 use std::cell::RefCell;
 use std::mem;
 use std::rc::Rc;
@@ -42,8 +43,8 @@ impl MemHandler {
         }
     }
 
-    fn lock_dma(&self, lock: bool) -> Option<RwLockReadGuard<()>> {
-        if lock {
+    fn lock_dma<const LOCK: bool>(&self) -> Option<RwLockReadGuard<()>> {
+        if LOCK {
             Some(self.dma_transfer_lock.read().unwrap())
         } else {
             None
@@ -51,12 +52,12 @@ impl MemHandler {
     }
 
     pub fn read<T: Convert>(&self, addr: u32) -> T {
-        self.read_lock(addr, true)
+        self.read_lock::<true, T>(addr)
     }
 
-    pub fn read_lock<T: Convert>(&self, addr: u32, lock_dma: bool) -> T {
+    pub fn read_lock<const LOCK_DMA: bool, T: Convert>(&self, addr: u32) -> T {
         let mut buf = [T::from(0)];
-        self.read_slice_lock(addr, &mut buf, lock_dma);
+        self.read_slice_lock::<LOCK_DMA, T>(addr, &mut buf);
 
         debug_println!(
             "{:?} memory read at {:x} with value {:x}",
@@ -69,10 +70,10 @@ impl MemHandler {
     }
 
     pub fn read_slice<T: Convert>(&self, addr: u32, slice: &mut [T]) {
-        self.read_slice_lock(addr, slice, true);
+        self.read_slice_lock::<true, T>(addr, slice);
     }
 
-    pub fn read_slice_lock<T: Convert>(&self, addr: u32, slice: &mut [T], lock_dma: bool) {
+    pub fn read_slice_lock<const LOCK_DMA: bool, T: Convert>(&self, addr: u32, slice: &mut [T]) {
         let addr_end = addr + (slice.len() * mem::size_of::<T>()) as u32;
 
         let addr_base = addr & 0xFF000000;
@@ -83,21 +84,21 @@ impl MemHandler {
 
         match addr_base {
             regions::MAIN_MEMORY_OFFSET => {
-                let _lock = self.lock_dma(lock_dma);
+                let _lock = self.lock_dma::<LOCK_DMA>();
                 self.memory
                     .read()
                     .unwrap()
                     .read_main_slice(addr_offset, slice)
             }
             regions::SHARED_WRAM_OFFSET => {
-                let _lock = self.lock_dma(lock_dma);
+                let _lock = self.lock_dma::<LOCK_DMA>();
                 self.memory
                     .read()
                     .unwrap()
                     .read_wram_slice(self.cpu_type, addr_offset, slice)
             }
             regions::IO_PORTS_OFFSET => {
-                let _lock = self.lock_dma(lock_dma);
+                let _lock = self.lock_dma::<LOCK_DMA>();
                 for (i, value) in slice.iter_mut().enumerate() {
                     *value = self
                         .io_ports
@@ -109,10 +110,10 @@ impl MemHandler {
     }
 
     pub fn write<T: Convert>(&self, addr: u32, value: T) {
-        self.write_lock(addr, value, true);
+        self.write_lock::<true, T>(addr, value);
     }
 
-    pub fn write_lock<T: Convert>(&self, addr: u32, value: T, lock_dma: bool) {
+    pub fn write_lock<const LOCK_DMA: bool, T: Convert>(&self, addr: u32, value: T) {
         debug_println!(
             "{:?} memory write at {:x} with value {:x}",
             self.cpu_type,
@@ -120,14 +121,14 @@ impl MemHandler {
             value.into(),
         );
 
-        self.write_slice_lock(addr, &[value], lock_dma);
+        self.write_slice_lock::<LOCK_DMA, T>(addr, &[value]);
     }
 
     pub fn write_slice<T: Convert>(&self, addr: u32, slice: &[T]) {
-        self.write_slice_lock(addr, slice, true);
+        self.write_slice_lock::<true, T>(addr, slice);
     }
 
-    pub fn write_slice_lock<T: Convert>(&self, addr: u32, slice: &[T], lock_dma: bool) {
+    pub fn write_slice_lock<const LOCK_DMA: bool, T: Convert>(&self, addr: u32, slice: &[T]) {
         let addr_end = addr + (slice.len() * mem::size_of::<T>()) as u32;
 
         let addr_base = addr & 0xFF000000;
@@ -138,14 +139,14 @@ impl MemHandler {
         let mut invalidate_jit = false;
         match addr_base {
             regions::MAIN_MEMORY_OFFSET => {
-                let _lock = self.lock_dma(lock_dma);
+                let _lock = self.lock_dma::<LOCK_DMA>();
                 self.memory
                     .write()
                     .unwrap()
                     .write_main_slice(addr_offset, slice);
             }
             regions::SHARED_WRAM_OFFSET => {
-                let _lock = self.lock_dma(lock_dma);
+                let _lock = self.lock_dma::<LOCK_DMA>();
                 self.memory
                     .write()
                     .unwrap()
@@ -153,7 +154,7 @@ impl MemHandler {
                 invalidate_jit = true;
             }
             regions::IO_PORTS_OFFSET => {
-                let _lock = self.lock_dma(lock_dma);
+                let _lock = self.lock_dma::<LOCK_DMA>();
                 for (i, value) in slice.iter().enumerate() {
                     self.io_ports
                         .write(addr_offset + (i * mem::size_of::<T>()) as u32, *value);

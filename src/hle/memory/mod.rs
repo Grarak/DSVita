@@ -1,28 +1,8 @@
 pub mod dma;
 pub mod io_ports;
+mod io_ports_arm7;
+mod io_ports_arm9;
 pub mod mem_handler;
 pub mod memory;
 pub mod regions;
 pub mod tcm;
-
-pub trait Convert: Copy + Into<u32> {
-    fn from(value: u32) -> Self;
-}
-
-impl Convert for u8 {
-    fn from(value: u32) -> Self {
-        value as u8
-    }
-}
-
-impl Convert for u16 {
-    fn from(value: u32) -> Self {
-        value as u16
-    }
-}
-
-impl Convert for u32 {
-    fn from(value: u32) -> Self {
-        value
-    }
-}

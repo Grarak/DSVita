@@ -5,8 +5,30 @@ pub const fn align_up(n: u32, align: u32) -> u32 {
     (n + align - 1) & !(align - 1)
 }
 
-pub const fn negative(n: u32) -> u32 {
-    !(n - 1)
+pub trait Convert: Copy + Into<u32> {
+    fn from(value: u32) -> Self;
+}
+
+impl Convert for u8 {
+    fn from(value: u32) -> Self {
+        value as u8
+    }
+}
+
+impl Convert for u16 {
+    fn from(value: u32) -> Self {
+        value as u16
+    }
+}
+
+impl Convert for u32 {
+    fn from(value: u32) -> Self {
+        value
+    }
+}
+
+pub fn negative<T: Convert>(n: T) -> T {
+    T::from(!(n.into() - 1))
 }
 
 pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {

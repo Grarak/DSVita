@@ -1,5 +1,6 @@
-use crate::hle::memory::{regions, Convert};
+use crate::hle::memory::regions;
 use crate::utils;
+use crate::utils::Convert;
 
 pub struct Tcm {
     itcm: Box<[u8; regions::INSTRUCTION_TCM_SIZE as usize]>,

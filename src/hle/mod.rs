@@ -12,7 +12,7 @@ pub mod spi_context;
 mod spu_context;
 pub mod thread_context;
 pub mod thread_regs;
-mod timers_context;
+pub mod timers_context;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]

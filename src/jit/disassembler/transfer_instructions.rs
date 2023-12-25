@@ -27,7 +27,7 @@ mod transfer_variations {
 pub use transfer_variations::*;
 
 mod transfer_ops {
-    use crate::jit::inst_info::{InstCycle, InstInfo, Operand, Operands};
+    use crate::jit::inst_info::{InstInfo, Operand, Operands};
     use crate::jit::reg::{reg_reserve, Reg, RegReserve};
     use crate::jit::{Op, ShiftType};
 
@@ -178,7 +178,7 @@ mod transfer_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op0, op1),
             reg_reserve!(),
-            InstCycle::new(1, 2),
+            2,
         )
     }
 
@@ -334,10 +334,7 @@ mod transfer_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
             reg_reserve!(op0, op1),
-            InstCycle::new(
-                (op0 == Reg::PC) as u8 * 4 + 1,
-                (op0 == Reg::PC) as u8 * 3 + 2,
-            ),
+            3,
         )
     }
 
@@ -380,10 +377,7 @@ mod transfer_ops {
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
-            InstCycle::new(
-                (op0 == Reg::PC) as u8 * 4 + 1,
-                (op0 == Reg::PC) as u8 * 3 + 2,
-            ),
+            3,
         )
     }
 
@@ -487,7 +481,7 @@ mod transfer_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op0, op1),
             reg_reserve!(),
-            InstCycle::new(1, 2),
+            2,
         )
     }
 
@@ -506,7 +500,7 @@ mod transfer_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op0, op1),
             reg_reserve!(op1),
-            InstCycle::new(1, 2),
+            2,
         )
     }
 
@@ -640,10 +634,7 @@ mod transfer_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
             reg_reserve!(op0),
-            InstCycle::new(
-                (op0 == Reg::PC) as u8 * 4 + 1,
-                (op0 == Reg::PC) as u8 * 3 + 2,
-            ),
+            3,
         )
     }
 
@@ -662,10 +653,7 @@ mod transfer_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
             reg_reserve!(op0, op1),
-            InstCycle::new(
-                (op0 == Reg::PC) as u8 * 4 + 1,
-                (op0 == Reg::PC) as u8 * 3 + 2,
-            ),
+            3,
         )
     }
 
@@ -799,7 +787,7 @@ mod transfer_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op0, op1),
             reg_reserve!(),
-            InstCycle::new(1, 2),
+            2,
         )
     }
 
@@ -813,7 +801,7 @@ mod transfer_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op0, op1),
             reg_reserve!(op1),
-            InstCycle::new(1, 2),
+            2,
         )
     }
 
@@ -1006,18 +994,13 @@ mod transfer_ops {
     pub fn ldmia_w(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
         let rlist = RegReserve::from(opcode & 0xFFFF);
-        let rlist_len = rlist.len() as u8;
         InstInfo::new(
             opcode,
             op,
             Operands::new_1(Operand::reg(op0)),
             reg_reserve!(op0),
             rlist + op0,
-            if rlist.is_reserved(Reg::PC) {
-                InstCycle::common(rlist_len + 4)
-            } else {
-                InstCycle::new(rlist_len + (rlist_len < 2) as u8, rlist_len + 2)
-            },
+            rlist.len() as u8 + 2,
         )
     }
 
@@ -1025,14 +1008,13 @@ mod transfer_ops {
     pub fn stmia_w(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
         let rlist = RegReserve::from(opcode & 0xFFFF);
-        let rlist_len = rlist.len() as u8;
         InstInfo::new(
             opcode,
             op,
             Operands::new_1(Operand::reg(op0)),
             rlist + op0,
             reg_reserve!(op0),
-            InstCycle::new(rlist_len + (rlist_len < 2) as u8, rlist_len + 1),
+            rlist.len() as u8 + 1,
         )
     }
 
@@ -1145,7 +1127,7 @@ mod transfer_ops {
             Operands::new_1(Operand::reg(op1)),
             reg_reserve!(op1),
             reg_reserve!(Reg::CPSR),
-            InstCycle::common(1),
+            1,
         )
     }
 
@@ -1183,7 +1165,7 @@ mod transfer_ops {
             Operands::new_1(Operand::reg(op2)),
             reg_reserve!(),
             reg_reserve!(op2),
-            InstCycle::common(1),
+            1,
         )
     }
 
@@ -1196,7 +1178,7 @@ mod transfer_ops {
             Operands::new_1(Operand::reg(op2)),
             reg_reserve!(op2),
             reg_reserve!(),
-            InstCycle::common(1),
+            1,
         )
     }
 }

@@ -1,17 +1,21 @@
-use crate::logging::debug_println;
-
 pub struct GpuContext {
+    disp_stat: u16,
     pow_cnt1: u16,
 }
 
 impl GpuContext {
-    pub fn new() -> Self {
-        GpuContext { pow_cnt1: 0 }
+    pub fn new() -> GpuContext {
+        GpuContext {
+            disp_stat: 0,
+            pow_cnt1: 0,
+        }
     }
 
-    // TODO
+    pub fn set_disp_stat(&mut self, mask: u16, value: u16) {
+        self.disp_stat = (self.disp_stat & !mask) | (value & mask);
+    }
+
     pub fn set_pow_cnt1(&mut self, mask: u16, value: u16) {
-        debug_println!("set pow cnt1 with mask {:x} and value {:x}", mask, value);
-        self.pow_cnt1 = value & mask;
+        self.pow_cnt1 = (self.pow_cnt1 & !mask) | (value & mask);
     }
 }

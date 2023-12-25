@@ -1,7 +1,8 @@
 use crate::hle::memory::mem_handler::MemHandler;
-use crate::hle::{memory, CpuType};
+use crate::hle::CpuType;
 use crate::logging::debug_println;
 use crate::scheduler::IO_SCHEDULER;
+use crate::utils;
 use bilge::prelude::*;
 use std::mem;
 use std::ops::Deref;
@@ -96,6 +97,7 @@ struct DmaChannel {
     cnt: u32,
     sad: u32,
     dad: u32,
+    fill: u32,
 }
 
 pub struct Dma {
@@ -115,6 +117,10 @@ impl Dma {
 
     pub fn get_cnt(&self, channel_num: usize) -> u32 {
         self.channels[channel_num].cnt
+    }
+
+    pub fn get_fill(&self, channel_num: usize) -> u32 {
+        self.channels[channel_num].fill
     }
 
     pub fn set_mem_handler(&mut self, mem_handler: Arc<MemHandler>) {
@@ -165,6 +171,11 @@ impl Dma {
             });
         }
     }
+
+    pub fn set_fill(&mut self, channel_num: usize, mask: u32, value: u32) {
+        self.channels[channel_num].fill =
+            (self.channels[channel_num].fill & !mask) | (value & mask);
+    }
 }
 
 struct DmaScheduledTransfer {
@@ -189,7 +200,7 @@ impl DmaScheduledTransfer {
         }
     }
 
-    fn do_transfer<T: memory::Convert>(&self, cnt: &DmaCntArm9, mode: DmaTransferMode) {
+    fn do_transfer<T: utils::Convert>(&self, cnt: &DmaCntArm9, mode: DmaTransferMode) {
         let dest_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.dest_addr_ctrl()));
         let src_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.src_addr_ctrl()));
 
@@ -209,8 +220,8 @@ impl DmaScheduledTransfer {
 
             {
                 let mem_handler = self.mem_handler.deref();
-                let src = mem_handler.read_lock::<T>(src_addr, false);
-                mem_handler.write_lock(dest_addr, src, false);
+                let src = mem_handler.read_lock::<false, T>(src_addr);
+                mem_handler.write_lock::<false, T>(dest_addr, src);
             }
 
             match src_addr_ctrl {

@@ -4,7 +4,6 @@ use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op};
-use crate::DEBUG;
 use std::ptr;
 
 impl JitAsm {
@@ -35,13 +34,9 @@ impl JitAsm {
 
         let mut opcodes = Vec::<u32>::new();
 
-        if DEBUG {
-            opcodes.extend(&AluImm::mov32(Reg::R8, pc));
-            opcodes.extend(
-                &AluImm::mov32(Reg::R9, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
-            );
-            opcodes.push(LdrStrImm::str_al(Reg::R8, Reg::R9));
-        }
+        opcodes.extend(AluImm::mov32(Reg::R8, pc));
+        opcodes.extend(AluImm::mov32(Reg::R9, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+        opcodes.push(LdrStrImm::str_al(Reg::R8, Reg::R9));
 
         opcodes.extend(AluImm::mov32(Reg::R8, new_pc | 1));
         opcodes.extend(
@@ -95,17 +90,13 @@ impl JitAsm {
         let op0 = inst_info.operands()[0].as_imm().unwrap();
         let lr = (pc + 2) | 1;
 
-        if DEBUG {
-            self.jit_buf
-                .emit_opcodes
-                .extend(&AluImm::mov32(Reg::R8, pc));
-            self.jit_buf.emit_opcodes.extend(
-                &AluImm::mov32(Reg::R9, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
-            );
-            self.jit_buf
-                .emit_opcodes
-                .push(LdrStrImm::str_al(Reg::R8, Reg::R9));
-        }
+        self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R8, pc));
+        self.jit_buf
+            .emit_opcodes
+            .extend(AluImm::mov32(Reg::R9, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+        self.jit_buf
+            .emit_opcodes
+            .push(LdrStrImm::str_al(Reg::R8, Reg::R9));
 
         let thread_regs = self.thread_regs.borrow();
         self.jit_buf
@@ -138,17 +129,13 @@ impl JitAsm {
         let tmp_reg = reg_reserve.pop().unwrap();
         let tmp_reg2 = reg_reserve.pop().unwrap();
 
-        if DEBUG {
-            self.jit_buf
-                .emit_opcodes
-                .extend(&AluImm::mov32(tmp_reg, pc));
-            self.jit_buf.emit_opcodes.extend(
-                &AluImm::mov32(tmp_reg2, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
-            );
-            self.jit_buf
-                .emit_opcodes
-                .push(LdrStrImm::str_al(tmp_reg, tmp_reg2));
-        }
+        self.jit_buf.emit_opcodes.extend(AluImm::mov32(tmp_reg, pc));
+        self.jit_buf
+            .emit_opcodes
+            .extend(AluImm::mov32(tmp_reg2, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+        self.jit_buf
+            .emit_opcodes
+            .push(LdrStrImm::str_al(tmp_reg, tmp_reg2));
 
         if op0.is_emulated() {
             let thread_regs = self.thread_regs.borrow();

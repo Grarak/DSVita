@@ -53,10 +53,9 @@ fn write_block(base: u32, size: usize, block: &str) -> Block {
 }
 
 fn read_block(base: u32, size: usize, block: &str) -> Block {
-    let block =
-        if size == 1 {
-            format!(
-                "
+    let block = if size == 1 {
+        format!(
+            "
 {{
     #[allow(unreachable_code)]
     {{
@@ -66,11 +65,11 @@ fn read_block(base: u32, size: usize, block: &str) -> Block {
     }}
 }}
         ",
-                size * 8
-            )
-        } else {
-            format!(
-                "
+            size * 8
+        )
+    } else {
+        format!(
+            "
 {{
     #[allow(unreachable_code)]
     {{
@@ -85,14 +84,14 @@ fn read_block(base: u32, size: usize, block: &str) -> Block {
     }}
 }}
 ",
-                size * 8,
-            )
-        };
+            size * 8,
+        )
+    };
 
     syn::parse_str(&block).unwrap()
 }
 
-fn traverse_match(expr: &mut ExprMatch, is_write: bool) {
+fn traverse_match<const WRITE: bool>(expr: &mut ExprMatch) {
     for arm in &mut expr.arms {
         if let Pat::TupleStruct(tuple_struct) = &mut arm.pat {
             if tuple_struct.path.segments.len() == 1 {
@@ -131,7 +130,7 @@ fn traverse_match(expr: &mut ExprMatch, is_write: bool) {
                     arm.body = Box::new(Expr::Block(ExprBlock {
                         attrs: Vec::new(),
                         label: None,
-                        block: if is_write {
+                        block: if WRITE {
                             write_block(
                                 addrs[0],
                                 addrs.len(),
@@ -180,7 +179,7 @@ struct IoPortsWrite {
 impl Parse for IoPortsRead {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut expr_match: ExprMatch = input.parse()?;
-        traverse_match(&mut expr_match, false);
+        traverse_match::<false>(&mut expr_match);
         Ok(IoPortsRead { expr_match })
     }
 }
@@ -188,7 +187,7 @@ impl Parse for IoPortsRead {
 impl Parse for IoPortsWrite {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut expr_match: ExprMatch = input.parse()?;
-        traverse_match(&mut expr_match, true);
+        traverse_match::<true>(&mut expr_match);
         Ok(IoPortsWrite { expr_match })
     }
 }

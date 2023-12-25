@@ -4,7 +4,6 @@ use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::{Cond, Op};
-use crate::DEBUG;
 use std::ptr;
 
 impl JitAsm {
@@ -24,24 +23,19 @@ impl JitAsm {
 
         opcodes.extend(&self.thread_regs.borrow().save_regs_opcodes);
 
-        opcodes.extend(&AluImm::mov32(Reg::R0, new_pc));
+        opcodes.extend(AluImm::mov32(Reg::R0, new_pc));
         opcodes.extend(
             self.thread_regs
                 .borrow()
                 .emit_set_reg(Reg::PC, Reg::R0, Reg::LR),
         );
 
-        if DEBUG {
-            opcodes.extend(&AluImm::mov32(Reg::R0, pc));
-            opcodes.extend(&AluImm::mov32(
-                Reg::LR,
-                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-            ));
-            opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
-        }
+        opcodes.extend(AluImm::mov32(Reg::R0, pc));
+        opcodes.extend(AluImm::mov32(Reg::LR, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+        opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
 
         if op == Op::Bl {
-            opcodes.extend(&AluImm::mov32(Reg::R0, pc + 4));
+            opcodes.push(AluImm::add_al(Reg::R0, Reg::R0, 4));
             opcodes.extend(
                 self.thread_regs
                     .borrow()
@@ -95,17 +89,12 @@ impl JitAsm {
             );
         }
 
-        if DEBUG {
-            opcodes.extend(&AluImm::mov32(Reg::R0, pc));
-            opcodes.extend(&AluImm::mov32(
-                Reg::LR,
-                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-            ));
-            opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
-        }
+        opcodes.extend(AluImm::mov32(Reg::R0, pc));
+        opcodes.extend(AluImm::mov32(Reg::LR, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+        opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
 
         if inst_info.op == Op::BlxReg {
-            opcodes.extend(&AluImm::mov32(Reg::R0, pc + 4));
+            opcodes.push(AluImm::add_al(Reg::R0, Reg::R0, 4));
             opcodes.extend(
                 self.thread_regs
                     .borrow()

@@ -261,6 +261,7 @@ impl Iterator for RegReserveIter {
 macro_rules! reg_reserve {
     ($($reg:expr),*) => {
         {
+            #[allow(unused_mut)]
             let mut reg_reserve = crate::jit::reg::RegReserve::new();
             $(
                 reg_reserve += ($reg);

@@ -1,5 +1,6 @@
 use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::CpuRegs;
+use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::dma::Dma;
@@ -12,6 +13,7 @@ use crate::hle::thread_regs::ThreadRegs;
 use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitAsm;
+use crate::jit::jit_cycle_handler::JitCycleManager;
 use crate::jit::jit_memory::JitMemory;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -29,6 +31,7 @@ pub struct ThreadContext {
 impl ThreadContext {
     pub fn new(
         cpu_type: CpuType,
+        jit_cycle_manager: Arc<RwLock<JitCycleManager>>,
         jit_memory: Arc<RwLock<JitMemory>>,
         memory: Arc<RwLock<Memory>>,
         spi_context: Arc<RwLock<SpiContext>>,
@@ -38,20 +41,24 @@ impl ThreadContext {
         let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
         let cpu_regs = Rc::new(RefCell::new(CpuRegs::new(cpu_type)));
         let gpu_context = Rc::new(RefCell::new(GpuContext::new()));
+        let gpu_2d_context_0 = Rc::new(RefCell::new(Gpu2DContext::new()));
+        let gpu_2d_context_1 = Rc::new(RefCell::new(Gpu2DContext::new()));
         let spu_context = Rc::new(RefCell::new(SpuContext::new()));
-        let dma = Arc::new(RefCell::new(Dma::new(cpu_type)));
+        let dma = Rc::new(RefCell::new(Dma::new(cpu_type)));
         let timers_context = Rc::new(RefCell::new(TimersContext::new()));
 
         let io_ports = IoPorts::new(
             cpu_type,
             memory.clone(),
-            spi_context,
             ipc_handler,
             cpu_regs,
-            gpu_context,
-            spu_context,
             dma.clone(),
-            timers_context,
+            timers_context.clone(),
+            gpu_context,
+            gpu_2d_context_0,
+            gpu_2d_context_1,
+            spi_context,
+            spu_context,
         );
 
         let mem_handler =
@@ -63,9 +70,11 @@ impl ThreadContext {
             cpu_type,
             jit: JitAsm::new(
                 cpu_type,
+                jit_cycle_manager,
                 jit_memory,
                 regs.clone(),
                 cp15_context.clone(),
+                timers_context,
                 mem_handler.clone(),
             ),
             regs,

@@ -1,5 +1,5 @@
 mod branch_thumb_ops {
-    use crate::jit::inst_info::{InstCycle, Operand, Operands};
+    use crate::jit::inst_info::{Operand, Operands};
     use crate::jit::inst_info_thumb::InstInfoThumb;
     use crate::jit::reg::{reg_reserve, Reg};
     use crate::jit::Op;
@@ -13,7 +13,7 @@ mod branch_thumb_ops {
             Operands::new_1(Operand::reg(op0)),
             reg_reserve!(op0),
             reg_reserve!(),
-            InstCycle::common(3),
+            1,
         )
     }
 
@@ -31,7 +31,7 @@ mod branch_thumb_ops {
             Operands::new_1(Operand::imm(op0 as u32)),
             reg_reserve!(),
             reg_reserve!(),
-            InstCycle::common(3),
+            1,
         )
     }
 
@@ -114,7 +114,7 @@ mod branch_thumb_ops {
             Operands::new_1(Operand::imm(op0 as u32)),
             reg_reserve!(),
             reg_reserve!(Reg::LR),
-            InstCycle::common(1),
+            1,
         )
     }
 
@@ -127,7 +127,7 @@ mod branch_thumb_ops {
             Operands::new_1(Operand::imm(op0 as u32)),
             reg_reserve!(),
             reg_reserve!(Reg::LR),
-            InstCycle::common(3),
+            1,
         )
     }
 

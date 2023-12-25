@@ -14,6 +14,7 @@ type GuestStartPc = u32;
 #[derive(Clone)]
 struct CodeBlock {
     guest_pc_to_jit_addr_offset: HashMap<u32, u16>,
+    guest_insts_cycle_counts: Vec<u8>,
     guest_pc_end: u32,
     jit_start_addr: u32,
 }
@@ -21,11 +22,13 @@ struct CodeBlock {
 impl CodeBlock {
     fn new(
         guest_pc_to_jit_addr_offset: HashMap<u32, u16>,
+        guest_insts_cycle_counts: Vec<u8>,
         guest_pc_end: u32,
         jit_start_addr: u32,
     ) -> Self {
         CodeBlock {
             guest_pc_to_jit_addr_offset,
+            guest_insts_cycle_counts,
             guest_pc_end,
             jit_start_addr,
         }
@@ -73,6 +76,7 @@ impl JitMemory {
         opcodes: &[u32],
         guest_start_pc: Option<GuestStartPc>,
         guest_pc_to_jit_addr_offset: Option<HashMap<u32, u16>>,
+        guest_insts_cycle_counts: Option<Vec<u8>>,
         guest_pc_end: Option<u32>,
     ) -> u32 {
         let aligned_size = utils::align_up((opcodes.len() * 4) as u32, 16);
@@ -103,6 +107,7 @@ impl JitMemory {
                 guest_start_pc,
                 CodeBlock::new(
                     guest_pc_to_jit_addr_offset.unwrap(),
+                    guest_insts_cycle_counts.unwrap(),
                     guest_pc_end.unwrap(),
                     new_addr,
                 ),
@@ -120,23 +125,13 @@ impl JitMemory {
         new_addr + self.memory.as_ptr() as u32
     }
 
-    fn get_code_block(&self, guest_pc: u32) -> Option<(u32, u32, u32, u16)> {
+    fn get_code_block(&self, guest_pc: u32) -> Option<(u32, &CodeBlock, u16)> {
         match self.code_blocks.get_prev(&guest_pc) {
             Some((guest_start_pc, code_block)) => {
                 if guest_pc == *guest_start_pc {
-                    Some((
-                        *guest_start_pc,
-                        code_block.guest_pc_end,
-                        code_block.jit_start_addr,
-                        0,
-                    ))
+                    Some((*guest_start_pc, code_block, 0))
                 } else if let Some(offset) = code_block.guest_pc_to_jit_addr_offset.get(&guest_pc) {
-                    Some((
-                        *guest_start_pc,
-                        code_block.guest_pc_end,
-                        code_block.jit_start_addr,
-                        *offset,
-                    ))
+                    Some((*guest_start_pc, code_block, *offset))
                 } else {
                     None
                 }
@@ -145,26 +140,33 @@ impl JitMemory {
         }
     }
 
-    pub fn get_jit_start_addr(&self, guest_pc: u32) -> Option<(u32, u32)> {
+    pub fn get_jit_start_addr<const THUMB: bool>(
+        &self,
+        guest_pc: u32,
+    ) -> Option<(u32, u32, Vec<u8>)> {
         match self.get_code_block(guest_pc) {
-            Some((_, guest_pc_end, jit_start_addr, offset)) => Some((
-                jit_start_addr + offset as u32 + self.memory.as_ptr() as u32,
-                guest_pc_end,
+            Some((guest_start_pc, code_block, offset)) => Some((
+                code_block.jit_start_addr + offset as u32 + self.memory.as_ptr() as u32,
+                code_block.guest_pc_end,
+                code_block.guest_insts_cycle_counts
+                    [((guest_pc - guest_start_pc) / if THUMB { 2 } else { 4 }) as usize..]
+                    .to_vec(),
             )),
             None => None,
         }
     }
 
     pub fn invalidate_block(&mut self, guest_pc: u32) {
-        if let Some((guest_start_pc, _, jit_start_addr, _)) = self.get_code_block(guest_pc) {
-            self.blocks.remove(&jit_start_addr);
-            self.code_blocks.remove(&guest_start_pc);
-
+        if let Some((guest_start_pc, code_block, _)) = self.get_code_block(guest_pc) {
             debug_println!(
                 "Removing jit block at {:x} with guest start pc {:x}",
-                self.memory.as_ptr() as u32 + jit_start_addr,
+                self.memory.as_ptr() as u32 + code_block.jit_start_addr,
                 guest_start_pc
             );
+
+            let jit_start_addr = code_block.jit_start_addr;
+            self.blocks.remove(&jit_start_addr);
+            self.code_blocks.remove(&guest_start_pc);
         }
     }
 

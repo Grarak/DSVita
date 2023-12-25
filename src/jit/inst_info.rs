@@ -1,4 +1,3 @@
-use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::inst_info_thumb::InstInfoThumb;
@@ -14,7 +13,7 @@ pub struct InstInfo {
     operands: Operands,
     pub src_regs: RegReserve,
     pub out_regs: RegReserve,
-    pub cycle: InstCycle,
+    pub cycle: u8,
 }
 
 impl InstInfo {
@@ -24,7 +23,7 @@ impl InstInfo {
         operands: Operands,
         src_regs: RegReserve,
         out_regs: RegReserve,
-        cycle: InstCycle,
+        cycle: u8,
     ) -> Self {
         InstInfo {
             opcode,
@@ -228,32 +227,6 @@ impl Into<(ShiftType, ShiftValue)> for Shift {
             Shift::LSR(v) => (ShiftType::LSR, v),
             Shift::ASR(v) => (ShiftType::ASR, v),
             Shift::ROR(v) => (ShiftType::ROR, v),
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct InstCycle {
-    arm9: u8,
-    arm7: u8,
-}
-
-impl InstCycle {
-    pub fn new(arm9: u8, arm7: u8) -> Self {
-        InstCycle { arm9, arm7 }
-    }
-
-    pub fn common(cycles: u8) -> Self {
-        InstCycle {
-            arm9: cycles,
-            arm7: cycles,
-        }
-    }
-
-    pub fn get(&self, cpu_type: CpuType) -> u8 {
-        match cpu_type {
-            CpuType::ARM9 => self.arm9,
-            CpuType::ARM7 => self.arm7,
         }
     }
 }

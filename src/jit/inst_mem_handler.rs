@@ -31,8 +31,8 @@ impl InstMemHandler {
         }
     }
 
-    fn get_inst_info(opcode: u32, thumb: bool) -> InstInfo {
-        if thumb {
+    fn get_inst_info<const THUMB: bool>(opcode: u32) -> InstInfo {
+        if THUMB {
             let (op, func) = lookup_thumb_opcode(opcode as u16);
             InstInfo::from(&func(opcode as u16, *op))
         } else {
@@ -41,8 +41,8 @@ impl InstMemHandler {
         }
     }
 
-    fn handle_request(&mut self, opcode: u32, pc: u32, thumb: bool, write: bool) {
-        let inst_info = InstMemHandler::get_inst_info(opcode, thumb);
+    fn handle_request<const THUMB: bool, const WRITE: bool>(&mut self, opcode: u32, pc: u32) {
+        let inst_info = InstMemHandler::get_inst_info::<THUMB>(opcode);
 
         let pre = match inst_info.op {
             Op::LdrOfip
@@ -84,7 +84,7 @@ impl InstMemHandler {
         let op1 = operands[1].as_reg_no_shift().unwrap();
 
         let get_reg_value = |regs: &ThreadRegs, reg: Reg| match reg {
-            Reg::PC => pc + 4 + 4 * !thumb as u32,
+            Reg::PC => pc + 4 + 4 * !THUMB as u32,
             _ => *regs.get_reg_value(reg),
         };
         let set_reg_value = |regs: &mut ThreadRegs, reg: Reg, value: u32| {
@@ -157,7 +157,7 @@ impl InstMemHandler {
         let memory_amount = MemoryAmount::from(inst_info.op);
         match memory_amount {
             MemoryAmount::BYTE => {
-                if write {
+                if WRITE {
                     let value = get_reg_value(thread_regs.deref(), *op0);
                     self.mem_handler.write(base_addr, value as u8);
                 } else {
@@ -166,7 +166,7 @@ impl InstMemHandler {
                 }
             }
             MemoryAmount::HALF => {
-                if write {
+                if WRITE {
                     let value = get_reg_value(thread_regs.deref(), *op0);
                     self.mem_handler.write(base_addr, value as u16);
                 } else {
@@ -180,7 +180,7 @@ impl InstMemHandler {
                 }
             }
             MemoryAmount::WORD => {
-                if write {
+                if WRITE {
                     let value = get_reg_value(thread_regs.deref(), *op0);
                     self.mem_handler.write(base_addr, value);
                 } else {
@@ -194,7 +194,7 @@ impl InstMemHandler {
                 }
             }
             MemoryAmount::DOUBLE => {
-                if write {
+                if WRITE {
                     let value = get_reg_value(thread_regs.deref(), *op0);
                     let value1 = get_reg_value(thread_regs.deref(), Reg::from(*op0 as u8 + 1));
                     self.mem_handler.write(base_addr, value);
@@ -213,15 +213,19 @@ impl InstMemHandler {
         }
     }
 
-    fn handle_multiple_request(&mut self, opcode: u32, pc: u32, thumb: bool, write: bool) {
+    fn handle_multiple_request<const THUMB: bool, const WRITE: bool>(
+        &mut self,
+        opcode: u32,
+        pc: u32,
+    ) {
         debug_println!(
             "handle multiple request at {:x} thumb: {} write: {}",
             pc,
-            thumb,
-            write
+            THUMB,
+            WRITE
         );
 
-        let inst_info = InstMemHandler::get_inst_info(opcode, thumb);
+        let inst_info = InstMemHandler::get_inst_info::<THUMB>(opcode);
 
         let mut pre =
             match inst_info.op {
@@ -249,7 +253,7 @@ impl InstMemHandler {
         let operands = inst_info.operands();
 
         let op0 = operands[0].as_reg_no_shift().unwrap();
-        let mut rlist = RegReserve::from(inst_info.opcode & (0xFF | (!thumb as u32 * 0xFF00)));
+        let mut rlist = RegReserve::from(inst_info.opcode & if THUMB { 0xFF } else { 0xFFFF });
         if inst_info.op == Op::PushLrT {
             rlist += Reg::LR;
         }
@@ -276,7 +280,7 @@ impl InstMemHandler {
         let mut addr = start_addr - (decrement as u32 * rlist.len() as u32 * 4);
 
         // TODO use batches
-        if write {
+        if WRITE {
             for reg in rlist {
                 addr += pre as u32 * 4;
                 let value = *thread_regs.get_reg_value(reg);
@@ -301,7 +305,7 @@ impl InstMemHandler {
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn inst_mem_handler_read(handler: *mut InstMemHandler, opcode: u32, pc: u32) {
-    (*handler).handle_request(opcode, pc, false, false);
+    (*handler).handle_request::<false, false>(opcode, pc);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
@@ -310,7 +314,7 @@ pub unsafe extern "C" fn inst_mem_handler_write(
     opcode: u32,
     pc: u32,
 ) {
-    (*handler).handle_request(opcode, pc, false, true);
+    (*handler).handle_request::<false, true>(opcode, pc);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
@@ -319,7 +323,7 @@ pub unsafe extern "C" fn inst_mem_handler_read_thumb(
     opcode: u32,
     pc: u32,
 ) {
-    (*handler).handle_request(opcode, pc, true, false);
+    (*handler).handle_request::<true, false>(opcode, pc);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
@@ -328,7 +332,7 @@ pub unsafe extern "C" fn inst_mem_handler_write_thumb(
     opcode: u32,
     pc: u32,
 ) {
-    (*handler).handle_request(opcode, pc, true, true);
+    (*handler).handle_request::<true, true>(opcode, pc);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
@@ -337,7 +341,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple_read(
     opcode: u32,
     pc: u32,
 ) {
-    (*handler).handle_multiple_request(opcode, pc, false, false);
+    (*handler).handle_multiple_request::<false, false>(opcode, pc);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
@@ -346,7 +350,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple_write(
     opcode: u32,
     pc: u32,
 ) {
-    (*handler).handle_multiple_request(opcode, pc, false, true);
+    (*handler).handle_multiple_request::<false, true>(opcode, pc);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
@@ -355,7 +359,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple_read_thumb(
     opcode: u32,
     pc: u32,
 ) {
-    (*handler).handle_multiple_request(opcode, pc, true, false);
+    (*handler).handle_multiple_request::<true, false>(opcode, pc);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
@@ -364,5 +368,5 @@ pub unsafe extern "C" fn inst_mem_handler_multiple_write_thumb(
     opcode: u32,
     pc: u32,
 ) {
-    (*handler).handle_multiple_request(opcode, pc, true, true);
+    (*handler).handle_multiple_request::<true, true>(opcode, pc);
 }

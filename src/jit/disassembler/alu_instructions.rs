@@ -26,7 +26,7 @@ mod alu_variations {
 pub use alu_variations::*;
 
 mod alu_ops {
-    use crate::jit::inst_info::{InstCycle, InstInfo, Operand, Operands};
+    use crate::jit::inst_info::{InstInfo, Operand, Operands};
     use crate::jit::reg::{reg_reserve, Reg};
     use crate::jit::{Op, ShiftType};
 
@@ -44,7 +44,7 @@ mod alu_ops {
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -93,7 +93,7 @@ mod alu_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -246,7 +246,7 @@ mod alu_ops {
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -295,7 +295,7 @@ mod alu_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -313,7 +313,7 @@ mod alu_ops {
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -362,7 +362,7 @@ mod alu_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
             reg_reserve!(op0, Reg::CPSR),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -470,7 +470,7 @@ mod alu_ops {
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -519,7 +519,7 @@ mod alu_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -887,7 +887,7 @@ mod alu_ops {
             Operands::new_2(Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
             reg_reserve!(Reg::CPSR),
-            InstCycle::common(1),
+            1,
         )
     }
 
@@ -948,7 +948,7 @@ mod alu_ops {
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(Reg::CPSR),
-            InstCycle::common(1),
+            1,
         )
     }
 
@@ -996,7 +996,7 @@ mod alu_ops {
             Operands::new_2(Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
             reg_reserve!(Reg::CPSR),
-            InstCycle::common(1),
+            1,
         )
     }
 
@@ -1059,7 +1059,7 @@ mod alu_ops {
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -1108,7 +1108,7 @@ mod alu_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -1169,7 +1169,7 @@ mod alu_ops {
             ),
             reg_reserve!(operand2.0),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -1190,7 +1190,7 @@ mod alu_ops {
             ),
             reg_reserve!(operand2.0),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -1228,7 +1228,7 @@ mod alu_ops {
             Operands::new_2(Operand::reg(op0), Operand::imm(operand2)),
             reg_reserve!(),
             reg_reserve!(op0),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 
@@ -1336,7 +1336,7 @@ mod alu_ops {
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0, Reg::CPSR),
-            InstCycle::common((op0 == Reg::PC) as u8 * 2 + 1),
+            1,
         )
     }
 

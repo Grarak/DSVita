@@ -11,6 +11,7 @@ use crate::hle::spi_context;
 use crate::hle::spi_context::SpiContext;
 use crate::hle::thread_context::ThreadContext;
 use crate::hle::CpuType;
+use crate::jit::jit_cycle_handler::JitCycleManager;
 use crate::jit::jit_memory::JitMemory;
 use crate::scheduler::IO_SCHEDULER;
 use std::sync::mpsc;
@@ -47,13 +48,20 @@ fn get_file_path() -> String {
 
 fn initialize_arm9_thread(
     entry_addr: u32,
+    jit_cycle_manager: Arc<RwLock<JitCycleManager>>,
     jit_memory: Arc<RwLock<JitMemory>>,
     memory: Arc<RwLock<Memory>>,
     spi_context: Arc<RwLock<SpiContext>>,
     ipc_handler: Arc<RwLock<IpcHandler>>,
 ) -> ThreadContext {
-    let thread =
-        ThreadContext::new(CpuType::ARM9, jit_memory, memory, spi_context, ipc_handler);
+    let thread = ThreadContext::new(
+        CpuType::ARM9,
+        jit_cycle_manager,
+        jit_memory,
+        memory,
+        spi_context,
+        ipc_handler,
+    );
 
     {
         let mut cp15 = thread.cp15_context.borrow_mut();
@@ -85,13 +93,20 @@ fn initialize_arm9_thread(
 
 fn initialize_arm7_thread(
     entry_addr: u32,
+    jit_cycle_manager: Arc<RwLock<JitCycleManager>>,
     jit_memory: Arc<RwLock<JitMemory>>,
     memory: Arc<RwLock<Memory>>,
     spi_context: Arc<RwLock<SpiContext>>,
     ipc_handler: Arc<RwLock<IpcHandler>>,
 ) -> ThreadContext {
-    let thread =
-        ThreadContext::new(CpuType::ARM7, jit_memory, memory, spi_context, ipc_handler);
+    let thread = ThreadContext::new(
+        CpuType::ARM7,
+        jit_cycle_manager,
+        jit_memory,
+        memory,
+        spi_context,
+        ipc_handler,
+    );
 
     {
         // I/O Ports
@@ -168,27 +183,30 @@ pub fn main() {
         rx.recv().unwrap();
     }
 
+    let jit_cycle_manager = Arc::new(RwLock::new(JitCycleManager::new()));
     let jit_memory = Arc::new(RwLock::new(JitMemory::new()));
     let spi_context = Arc::new(RwLock::new(SpiContext::new()));
     let ipc_handler = Arc::new(RwLock::new(IpcHandler::new()));
 
+    let jit_cycle_manager_clone = jit_cycle_manager.clone();
     let jit_memory_clone = jit_memory.clone();
     let memory_clone = memory.clone();
     let spi_context_clone = spi_context.clone();
     let ipc_handler_clone = ipc_handler.clone();
 
     if SINGLE_CORE {
-        let mut arm9_thread =
-            initialize_arm9_thread(
-                arm9_entry_adrr,
-                jit_memory_clone,
-                memory_clone,
-                spi_context_clone,
-                ipc_handler_clone,
-            );
+        let mut arm9_thread = initialize_arm9_thread(
+            arm9_entry_adrr,
+            jit_cycle_manager_clone,
+            jit_memory_clone,
+            memory_clone,
+            spi_context_clone,
+            ipc_handler_clone,
+        );
 
         let mut arm7_thread = initialize_arm7_thread(
             arm7_entry_addr,
+            jit_cycle_manager,
             jit_memory,
             memory,
             spi_context,
@@ -207,6 +225,7 @@ pub fn main() {
             .spawn(move || {
                 let mut arm9_thread = initialize_arm9_thread(
                     arm9_entry_adrr,
+                    jit_cycle_manager_clone,
                     jit_memory_clone,
                     memory_clone,
                     spi_context_clone,
@@ -223,13 +242,15 @@ pub fn main() {
             .spawn(move || {
                 rx.recv().unwrap();
 
-                let mut arm7_thread = initialize_arm7_thread(
-                    arm7_entry_addr,
-                    jit_memory,
-                    memory,
-                    spi_context,
-                    ipc_handler,
-                );
+                let mut arm7_thread =
+                    initialize_arm7_thread(
+                        arm7_entry_addr,
+                        jit_cycle_manager,
+                        jit_memory,
+                        memory,
+                        spi_context,
+                        ipc_handler,
+                    );
                 arm7_thread.run();
             })
             .unwrap();
