@@ -5,8 +5,9 @@
 
 use crate::cartridge::Cartridge;
 use crate::hle::ipc_handler::IpcHandler;
-use crate::hle::memory::memory::Memory;
+use crate::hle::memory::main_memory::MainMemory;
 use crate::hle::memory::regions;
+use crate::hle::memory::wram_context::WramContext;
 use crate::hle::spi_context;
 use crate::hle::spi_context::SpiContext;
 use crate::hle::thread_context::ThreadContext;
@@ -50,7 +51,8 @@ fn initialize_arm9_thread(
     entry_addr: u32,
     jit_cycle_manager: Arc<RwLock<JitCycleManager>>,
     jit_memory: Arc<RwLock<JitMemory>>,
-    memory: Arc<RwLock<Memory>>,
+    memory: Arc<RwLock<MainMemory>>,
+    wram_context: Arc<WramContext>,
     spi_context: Arc<RwLock<SpiContext>>,
     ipc_handler: Arc<RwLock<IpcHandler>>,
 ) -> ThreadContext {
@@ -59,6 +61,7 @@ fn initialize_arm9_thread(
         jit_cycle_manager,
         jit_memory,
         memory,
+        wram_context,
         spi_context,
         ipc_handler,
     );
@@ -95,7 +98,8 @@ fn initialize_arm7_thread(
     entry_addr: u32,
     jit_cycle_manager: Arc<RwLock<JitCycleManager>>,
     jit_memory: Arc<RwLock<JitMemory>>,
-    memory: Arc<RwLock<Memory>>,
+    memory: Arc<RwLock<MainMemory>>,
+    wram_context: Arc<WramContext>,
     spi_context: Arc<RwLock<SpiContext>>,
     ipc_handler: Arc<RwLock<IpcHandler>>,
 ) -> ThreadContext {
@@ -104,6 +108,7 @@ fn initialize_arm7_thread(
         jit_cycle_manager,
         jit_memory,
         memory,
+        wram_context,
         spi_context,
         ipc_handler,
     );
@@ -143,7 +148,7 @@ pub fn main() {
 
     assert_eq!(arm9_ram_addr, regions::MAIN_MEMORY_OFFSET);
 
-    let memory = Arc::new(RwLock::new(Memory::new()));
+    let memory = Arc::new(RwLock::new(MainMemory::new()));
     {
         let memory = &mut memory.write().unwrap();
 
@@ -185,12 +190,16 @@ pub fn main() {
 
     let jit_cycle_manager = Arc::new(RwLock::new(JitCycleManager::new()));
     let jit_memory = Arc::new(RwLock::new(JitMemory::new()));
+
+    let wram_context = Arc::new(WramContext::new());
     let spi_context = Arc::new(RwLock::new(SpiContext::new()));
     let ipc_handler = Arc::new(RwLock::new(IpcHandler::new()));
 
     let jit_cycle_manager_clone = jit_cycle_manager.clone();
     let jit_memory_clone = jit_memory.clone();
+
     let memory_clone = memory.clone();
+    let wram_context_clone = wram_context.clone();
     let spi_context_clone = spi_context.clone();
     let ipc_handler_clone = ipc_handler.clone();
 
@@ -200,6 +209,7 @@ pub fn main() {
             jit_cycle_manager_clone,
             jit_memory_clone,
             memory_clone,
+            wram_context_clone,
             spi_context_clone,
             ipc_handler_clone,
         );
@@ -209,6 +219,7 @@ pub fn main() {
             jit_cycle_manager,
             jit_memory,
             memory,
+            wram_context,
             spi_context,
             ipc_handler,
         );
@@ -228,6 +239,7 @@ pub fn main() {
                     jit_cycle_manager_clone,
                     jit_memory_clone,
                     memory_clone,
+                    wram_context_clone,
                     spi_context_clone,
                     ipc_handler_clone,
                 );
@@ -242,15 +254,15 @@ pub fn main() {
             .spawn(move || {
                 rx.recv().unwrap();
 
-                let mut arm7_thread =
-                    initialize_arm7_thread(
-                        arm7_entry_addr,
-                        jit_cycle_manager,
-                        jit_memory,
-                        memory,
-                        spi_context,
-                        ipc_handler,
-                    );
+                let mut arm7_thread = initialize_arm7_thread(
+                    arm7_entry_addr,
+                    jit_cycle_manager,
+                    jit_memory,
+                    memory,
+                    wram_context,
+                    spi_context,
+                    ipc_handler,
+                );
                 arm7_thread.run();
             })
             .unwrap();

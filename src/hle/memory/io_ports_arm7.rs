@@ -5,6 +5,7 @@ use crate::utils::Convert;
 use crate::DEBUG;
 use dspsv_macros::{io_ports_read, io_ports_write};
 use std::mem;
+use std::sync::atomic::Ordering;
 
 impl IoPorts {
     pub fn read_arm7<T: Convert>(&self, addr_offset: u32) -> T {
@@ -55,8 +56,8 @@ impl IoPorts {
                 io8(0x208) => self.cpu_regs.borrow().ime,
                 io32(0x210) => todo!(),
                 io32(0x214) => todo!(),
-                io8(0x240) => todo!(),
-                io8(0x241) => todo!(),
+                io8(0x240) => self.vram_stat.load(Ordering::Relaxed),
+                io8(0x241) => self.wram_context.get_cnt(),
                 io8(0x300) => todo!(),
                 io8(0x301) => todo!(),
                 io32(0x400) => todo!(),

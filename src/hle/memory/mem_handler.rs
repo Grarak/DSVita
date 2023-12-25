@@ -1,8 +1,9 @@
 use crate::hle::cp15_context::{Cp15Context, TcmState};
 use crate::hle::memory::io_ports::IoPorts;
-use crate::hle::memory::memory::Memory;
+use crate::hle::memory::main_memory::MainMemory;
 use crate::hle::memory::regions;
 use crate::hle::memory::tcm::Tcm;
+use crate::hle::memory::wram_context::WramContext;
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitState;
 use crate::logging::debug_println;
@@ -14,7 +15,8 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
 pub struct MemHandler {
     pub cpu_type: CpuType,
-    pub memory: Arc<RwLock<Memory>>,
+    pub memory: Arc<RwLock<MainMemory>>,
+    pub wram_context: Arc<WramContext>,
     cp15_context: Rc<RefCell<Cp15Context>>,
     tcm: Rc<RefCell<Tcm>>,
     pub io_ports: IoPorts,
@@ -28,13 +30,15 @@ unsafe impl Sync for MemHandler {}
 impl MemHandler {
     pub fn new(
         cpu_type: CpuType,
-        memory: Arc<RwLock<Memory>>,
+        memory: Arc<RwLock<MainMemory>>,
+        wram_context: Arc<WramContext>,
         cp15_context: Rc<RefCell<Cp15Context>>,
         io_ports: IoPorts,
     ) -> Self {
         MemHandler {
             cpu_type,
             memory,
+            wram_context,
             cp15_context,
             tcm: Rc::new(RefCell::new(Tcm::new())),
             io_ports,
@@ -92,10 +96,8 @@ impl MemHandler {
             }
             regions::SHARED_WRAM_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
-                self.memory
-                    .read()
-                    .unwrap()
-                    .read_wram_slice(self.cpu_type, addr_offset, slice)
+                self.wram_context
+                    .read_slice(self.cpu_type, addr_offset, slice)
             }
             regions::IO_PORTS_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
@@ -147,10 +149,8 @@ impl MemHandler {
             }
             regions::SHARED_WRAM_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
-                self.memory
-                    .write()
-                    .unwrap()
-                    .write_wram_slice(self.cpu_type, addr_offset, slice);
+                self.wram_context
+                    .write_slice(self.cpu_type, addr_offset, slice);
                 invalidate_jit = true;
             }
             regions::IO_PORTS_OFFSET => {

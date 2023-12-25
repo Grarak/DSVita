@@ -259,7 +259,7 @@ impl IoPorts {
                 io8(0x244) => todo!(),
                 io8(0x245) => todo!(),
                 io8(0x246) => todo!(),
-                io8(0x247) => self.memory.write().unwrap().set_wram_cnt(value),
+                io8(0x247) => self.wram_context.set_cnt(value),
                 io8(0x248) => todo!(),
                 io8(0x249) => todo!(),
                 io16(0x280) => todo!(),
