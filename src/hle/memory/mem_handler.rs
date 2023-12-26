@@ -1,8 +1,10 @@
 use crate::hle::cp15_context::{Cp15Context, TcmState};
 use crate::hle::memory::io_ports::IoPorts;
 use crate::hle::memory::main_memory::MainMemory;
+use crate::hle::memory::oam_context::OamContext;
+use crate::hle::memory::palettes_context::PalettesContext;
 use crate::hle::memory::regions;
-use crate::hle::memory::tcm::Tcm;
+use crate::hle::memory::tcm_context::TcmContext;
 use crate::hle::memory::wram_context::WramContext;
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitState;
@@ -13,14 +15,16 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
 pub struct MemHandler {
-    pub cpu_type: CpuType,
-    pub memory: Arc<RwLock<MainMemory>>,
-    pub wram_context: Arc<WramContext>,
+    cpu_type: CpuType,
+    memory: Arc<RwLock<MainMemory>>,
+    wram_context: Arc<WramContext>,
+    palettes_context: Rc<FastCell<PalettesContext>>,
     cp15_context: Rc<FastCell<Cp15Context>>,
-    tcm: Rc<FastCell<Tcm>>,
+    tcm_context: Rc<FastCell<TcmContext>>,
     pub io_ports: IoPorts,
     pub jit_state: Arc<Mutex<JitState>>,
     pub dma_transfer_lock: Arc<RwLock<()>>,
+    oam: Rc<FastCell<OamContext>>,
 }
 
 unsafe impl Send for MemHandler {}
@@ -31,18 +35,23 @@ impl MemHandler {
         cpu_type: CpuType,
         memory: Arc<RwLock<MainMemory>>,
         wram_context: Arc<WramContext>,
+        palettes_context: Rc<FastCell<PalettesContext>>,
         cp15_context: Rc<FastCell<Cp15Context>>,
+        tcm_context: Rc<FastCell<TcmContext>>,
         io_ports: IoPorts,
+        oam: Rc<FastCell<OamContext>>,
     ) -> Self {
         MemHandler {
             cpu_type,
             memory,
             wram_context,
+            palettes_context,
             cp15_context,
-            tcm: Rc::new(FastCell::new(Tcm::new())),
+            tcm_context,
             io_ports,
             jit_state: Arc::new(Mutex::new(JitState::new())),
             dma_transfer_lock: Arc::new(RwLock::new(())),
+            oam,
         }
     }
 
@@ -91,12 +100,12 @@ impl MemHandler {
                 self.memory
                     .read()
                     .unwrap()
-                    .read_main_slice(addr_offset, slice)
+                    .read_main_slice(addr_offset, slice);
             }
             regions::SHARED_WRAM_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
                 self.wram_context
-                    .read_slice(self.cpu_type, addr_offset, slice)
+                    .read_slice(self.cpu_type, addr_offset, slice);
             }
             regions::IO_PORTS_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
@@ -105,6 +114,16 @@ impl MemHandler {
                         .io_ports
                         .read(addr_offset + (i * mem::size_of::<T>()) as u32);
                 }
+            }
+            regions::STANDARD_PALETTES_OFFSET => {
+                let _lock = self.lock_dma::<LOCK_DMA>();
+                self.palettes_context
+                    .borrow()
+                    .read_slice(addr_offset, slice);
+            }
+            regions::OAM_OFFSET => {
+                let _lock = self.lock_dma::<LOCK_DMA>();
+                self.oam.borrow().read_slice(addr_offset, slice);
             }
             _ => todo!(),
         };
@@ -159,6 +178,18 @@ impl MemHandler {
                         .write(addr_offset + (i * mem::size_of::<T>()) as u32, *value);
                 }
             }
+            regions::STANDARD_PALETTES_OFFSET => {
+                let _lock = self.lock_dma::<LOCK_DMA>();
+                self.palettes_context
+                    .borrow_mut()
+                    .write_slice(addr_offset, slice);
+            }
+            regions::OAM_OFFSET => {
+                let _lock = self.lock_dma::<LOCK_DMA>();
+                self.palettes_context
+                    .borrow_mut()
+                    .write_slice(addr_offset, slice);
+            }
             _ => {
                 let mut handled = false;
 
@@ -166,7 +197,7 @@ impl MemHandler {
                     let cp15_context = self.cp15_context.borrow();
                     if addr < cp15_context.itcm_size {
                         if cp15_context.itcm_state != TcmState::Disabled {
-                            self.tcm.borrow_mut().write_itcm_slice(addr, slice);
+                            self.tcm_context.borrow_mut().write_itcm_slice(addr, slice);
                             invalidate_jit = true;
                         }
                         handled = true;
@@ -174,7 +205,7 @@ impl MemHandler {
                         && addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
                     {
                         if cp15_context.dtcm_state != TcmState::Disabled {
-                            self.tcm
+                            self.tcm_context
                                 .borrow_mut()
                                 .write_dtcm_slice(addr - cp15_context.dtcm_addr, slice);
                         }

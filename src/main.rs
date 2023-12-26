@@ -4,17 +4,27 @@
 #![feature(unchecked_shifts)]
 
 use crate::cartridge::Cartridge;
+use crate::hle::cp15_context::Cp15Context;
+use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
+use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::main_memory::MainMemory;
+use crate::hle::memory::oam_context::OamContext;
+use crate::hle::memory::palettes_context::PalettesContext;
 use crate::hle::memory::regions;
+use crate::hle::memory::tcm_context::TcmContext;
+use crate::hle::memory::vram_context::VramContext;
 use crate::hle::memory::wram_context::WramContext;
 use crate::hle::spi_context;
 use crate::hle::spi_context::SpiContext;
+use crate::hle::spu_context::SpuContext;
 use crate::hle::thread_context::ThreadContext;
 use crate::hle::CpuType;
 use crate::jit::jit_cycle_handler::JitCycleManager;
 use crate::jit::jit_memory::JitMemory;
 use crate::scheduler::IO_SCHEDULER;
+use crate::utils::FastCell;
+use std::rc::Rc;
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::{env, mem, thread};
@@ -47,25 +57,7 @@ fn get_file_path() -> String {
     "ux0:hello_world.nds".to_owned()
 }
 
-fn initialize_arm9_thread(
-    entry_addr: u32,
-    jit_cycle_manager: Arc<RwLock<JitCycleManager>>,
-    jit_memory: Arc<RwLock<JitMemory>>,
-    memory: Arc<RwLock<MainMemory>>,
-    wram_context: Arc<WramContext>,
-    spi_context: Arc<RwLock<SpiContext>>,
-    ipc_handler: Arc<RwLock<IpcHandler>>,
-) -> ThreadContext {
-    let thread = ThreadContext::new(
-        CpuType::ARM9,
-        jit_cycle_manager,
-        jit_memory,
-        memory,
-        wram_context,
-        spi_context,
-        ipc_handler,
-    );
-
+fn initialize_arm9_thread(entry_addr: u32, thread: &ThreadContext) {
     {
         let mut cp15 = thread.cp15_context.borrow_mut();
         cp15.write(0x010000, 0x0005707D); // control
@@ -90,29 +82,9 @@ fn initialize_arm9_thread(
         regs.pc = entry_addr;
         regs.set_cpsr(0x000000DF);
     }
-
-    thread
 }
 
-fn initialize_arm7_thread(
-    entry_addr: u32,
-    jit_cycle_manager: Arc<RwLock<JitCycleManager>>,
-    jit_memory: Arc<RwLock<JitMemory>>,
-    memory: Arc<RwLock<MainMemory>>,
-    wram_context: Arc<WramContext>,
-    spi_context: Arc<RwLock<SpiContext>>,
-    ipc_handler: Arc<RwLock<IpcHandler>>,
-) -> ThreadContext {
-    let thread = ThreadContext::new(
-        CpuType::ARM7,
-        jit_cycle_manager,
-        jit_memory,
-        memory,
-        wram_context,
-        spi_context,
-        ipc_handler,
-    );
-
+fn initialize_arm7_thread(entry_addr: u32, thread: &mut ThreadContext) {
     {
         // I/O Ports
         thread.mem_handler.write(0x4000300, 0x01u8); // POWCNT1
@@ -129,8 +101,6 @@ fn initialize_arm7_thread(
         regs.pc = entry_addr;
         regs.set_cpsr(0x000000DF);
     }
-
-    thread
 }
 
 // Must be pub for vita
@@ -148,9 +118,9 @@ pub fn main() {
 
     assert_eq!(arm9_ram_addr, regions::MAIN_MEMORY_OFFSET);
 
-    let memory = Arc::new(RwLock::new(MainMemory::new()));
+    let main_memory = Arc::new(RwLock::new(MainMemory::new()));
     {
-        let memory = &mut memory.write().unwrap();
+        let memory = &mut main_memory.write().unwrap();
 
         let header: &[u8; cartridge::HEADER_IN_RAM_SIZE] =
             unsafe { mem::transmute(&cartridge.header) };
@@ -190,40 +160,60 @@ pub fn main() {
 
     let jit_cycle_manager = Arc::new(RwLock::new(JitCycleManager::new()));
     let jit_memory = Arc::new(RwLock::new(JitMemory::new()));
-
     let wram_context = Arc::new(WramContext::new());
     let spi_context = Arc::new(RwLock::new(SpiContext::new()));
     let ipc_handler = Arc::new(RwLock::new(IpcHandler::new()));
+    let vram_context = Arc::new(VramContext::new());
+    let gpu_context = Rc::new(FastCell::new(GpuContext::new()));
+    let gpu_2d_context_0 = Rc::new(FastCell::new(Gpu2DContext::new()));
+    let gpu_2d_context_1 = Rc::new(FastCell::new(Gpu2DContext::new()));
+    let spu_context = Rc::new(FastCell::new(SpuContext::new()));
+    let palettes_context = Rc::new(FastCell::new(PalettesContext::new()));
+    let cp15_context = Rc::new(FastCell::new(Cp15Context::new()));
+    let tcm_context = Rc::new(FastCell::new(TcmContext::new()));
+    let oam_context = Rc::new(FastCell::new(OamContext::new()));
 
-    let jit_cycle_manager_clone = jit_cycle_manager.clone();
-    let jit_memory_clone = jit_memory.clone();
+    let mut arm9_thread = ThreadContext::new(
+        CpuType::ARM9,
+        jit_cycle_manager.clone(),
+        jit_memory.clone(),
+        main_memory.clone(),
+        wram_context.clone(),
+        spi_context.clone(),
+        ipc_handler.clone(),
+        vram_context.clone(),
+        gpu_context.clone(),
+        gpu_2d_context_0.clone(),
+        gpu_2d_context_1.clone(),
+        spu_context.clone(),
+        palettes_context.clone(),
+        cp15_context.clone(),
+        tcm_context.clone(),
+        oam_context.clone(),
+    );
+    initialize_arm9_thread(arm9_entry_adrr, &mut arm9_thread);
 
-    let memory_clone = memory.clone();
-    let wram_context_clone = wram_context.clone();
-    let spi_context_clone = spi_context.clone();
-    let ipc_handler_clone = ipc_handler.clone();
+    let mut arm7_thread = ThreadContext::new(
+        CpuType::ARM7,
+        jit_cycle_manager,
+        jit_memory,
+        main_memory,
+        wram_context,
+        spi_context,
+        ipc_handler,
+        vram_context,
+        gpu_context,
+        gpu_2d_context_0,
+        gpu_2d_context_1,
+        spu_context,
+        palettes_context,
+        cp15_context,
+        tcm_context,
+        oam_context,
+    );
+    initialize_arm7_thread(arm7_entry_addr, &mut arm7_thread);
 
     if SINGLE_CORE {
-        let mut arm9_thread = initialize_arm9_thread(
-            arm9_entry_adrr,
-            jit_cycle_manager_clone,
-            jit_memory_clone,
-            memory_clone,
-            wram_context_clone,
-            spi_context_clone,
-            ipc_handler_clone,
-        );
-
-        let mut arm7_thread = initialize_arm7_thread(
-            arm7_entry_addr,
-            jit_cycle_manager,
-            jit_memory,
-            memory,
-            wram_context,
-            spi_context,
-            ipc_handler,
-        );
-
         loop {
             arm9_thread.iterate(2);
             arm7_thread.iterate(1);
@@ -234,16 +224,6 @@ pub fn main() {
         let arm9_thread = thread::Builder::new()
             .name("arm9_thread".to_owned())
             .spawn(move || {
-                let mut arm9_thread = initialize_arm9_thread(
-                    arm9_entry_adrr,
-                    jit_cycle_manager_clone,
-                    jit_memory_clone,
-                    memory_clone,
-                    wram_context_clone,
-                    spi_context_clone,
-                    ipc_handler_clone,
-                );
-
                 tx.send(()).unwrap();
                 arm9_thread.run();
             })
@@ -253,16 +233,6 @@ pub fn main() {
             .name("arm7_thread".to_owned())
             .spawn(move || {
                 rx.recv().unwrap();
-
-                let mut arm7_thread = initialize_arm7_thread(
-                    arm7_entry_addr,
-                    jit_cycle_manager,
-                    jit_memory,
-                    memory,
-                    wram_context,
-                    spi_context,
-                    ipc_handler,
-                );
                 arm7_thread.run();
             })
             .unwrap();

@@ -12,7 +12,6 @@ use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
 use crate::utils::{Convert, FastCell};
 use std::rc::Rc;
-use std::sync::atomic::AtomicU8;
 use std::sync::{Arc, RwLock};
 
 pub struct IoPorts {
@@ -23,13 +22,12 @@ pub struct IoPorts {
     pub cpu_regs: Rc<FastCell<CpuRegs>>,
     pub dma: Rc<FastCell<Dma>>,
     pub timers_context: Rc<FastCell<TimersContext>>,
-
     pub vram_context: Arc<VramContext>,
+
     pub gpu_context: Rc<FastCell<GpuContext>>,
     pub gpu_2d_context_0: Rc<FastCell<Gpu2DContext>>,
     pub gpu_2d_context_1: Rc<FastCell<Gpu2DContext>>,
 
-    pub vram_stat: Arc<AtomicU8>,
     pub spi_context: Arc<RwLock<SpiContext>>,
     pub spu_context: Rc<FastCell<SpuContext>>,
 }
@@ -47,7 +45,6 @@ impl IoPorts {
         gpu_context: Rc<FastCell<GpuContext>>,
         gpu_2d_context_0: Rc<FastCell<Gpu2DContext>>,
         gpu_2d_context_1: Rc<FastCell<Gpu2DContext>>,
-        vram_stat: Arc<AtomicU8>,
         spi_context: Arc<RwLock<SpiContext>>,
         spu_context: Rc<FastCell<SpuContext>>,
     ) -> Self {
@@ -63,7 +60,6 @@ impl IoPorts {
             gpu_context,
             gpu_2d_context_0,
             gpu_2d_context_1,
-            vram_stat,
             spi_context,
             spu_context,
         }

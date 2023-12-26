@@ -1,7 +1,7 @@
 use crate::hle::memory::regions;
 use crate::hle::CpuType;
 use crate::utils;
-use crate::utils::{Convert, FastCell};
+use crate::utils::{Convert, FastCell, HeapMem};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::sync::RwLock;
@@ -91,7 +91,7 @@ impl AsMut<[u8]> for SharedWramMapMut<'_> {
 
 struct SharedWram {
     pub cnt: u8,
-    mem: Box<[u8; regions::SHARED_WRAM_SIZE as usize]>,
+    mem: HeapMem<{ regions::SHARED_WRAM_SIZE as usize }>,
     arm9_ptr: *mut u8,
     arm9_size: usize,
     arm7_ptr: *mut u8,
@@ -102,7 +102,7 @@ impl SharedWram {
     fn new() -> Self {
         let mut instance = SharedWram {
             cnt: 0,
-            mem: Box::new([0u8; regions::SHARED_WRAM_SIZE as usize]),
+            mem: HeapMem::new(),
             arm9_ptr: ptr::null_mut(),
             arm9_size: 0,
             arm7_ptr: ptr::null_mut(),
@@ -185,14 +185,14 @@ impl SharedWram {
 }
 
 pub struct WramContext {
-    wram_arm7: FastCell<Box<[u8; regions::ARM7_WRAM_SIZE as usize]>>,
+    wram_arm7: FastCell<HeapMem<{ regions::ARM7_WRAM_SIZE as usize }>>,
     shared: RwLock<SharedWram>,
 }
 
 impl WramContext {
     pub fn new() -> Self {
         WramContext {
-            wram_arm7: FastCell::new(Box::new([0u8; regions::ARM7_WRAM_SIZE as usize])),
+            wram_arm7: FastCell::new(HeapMem::new()),
             shared: RwLock::new(SharedWram::new()),
         }
     }
@@ -253,6 +253,3 @@ impl WramContext {
         }
     }
 }
-
-unsafe impl Send for WramContext {}
-unsafe impl Sync for WramContext {}

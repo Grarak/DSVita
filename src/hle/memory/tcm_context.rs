@@ -1,17 +1,17 @@
 use crate::hle::memory::regions;
 use crate::utils;
-use crate::utils::Convert;
+use crate::utils::{Convert, HeapMem};
 
-pub struct Tcm {
-    itcm: Box<[u8; regions::INSTRUCTION_TCM_SIZE as usize]>,
-    dtcm: Box<[u8; regions::DATA_TCM_SIZE as usize]>,
+pub struct TcmContext {
+    itcm: HeapMem<{ regions::INSTRUCTION_TCM_SIZE as usize }>,
+    dtcm: HeapMem<{ regions::DATA_TCM_SIZE as usize }>,
 }
 
-impl Tcm {
+impl TcmContext {
     pub fn new() -> Self {
-        Tcm {
-            itcm: Box::new([0u8; regions::INSTRUCTION_TCM_SIZE as usize]),
-            dtcm: Box::new([0u8; regions::DATA_TCM_SIZE as usize]),
+        TcmContext {
+            itcm: HeapMem::new(),
+            dtcm: HeapMem::new(),
         }
     }
 

@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
+use std::ops::{Deref, DerefMut};
 
 pub const fn align_up(n: u32, align: u32) -> u32 {
     (n + align - 1) & !(align - 1)
@@ -109,3 +110,25 @@ pub type FastCell<T> = RefCell<T>;
 //         self.value.get()
 //     }
 // }
+
+pub struct HeapMem<const T: usize>(Box<[u8; T]>);
+
+impl<const T: usize> HeapMem<T> {
+    pub fn new() -> Self {
+        HeapMem(Box::new([0u8; T]))
+    }
+}
+
+impl<const T: usize> Deref for HeapMem<T> {
+    type Target = Box<[u8; T]>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<const T: usize> DerefMut for HeapMem<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
