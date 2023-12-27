@@ -6,6 +6,7 @@ use crate::hle::memory::dma::Dma;
 use crate::hle::memory::main_memory::MainMemory;
 use crate::hle::memory::vram_context::VramContext;
 use crate::hle::memory::wram_context::WramContext;
+use crate::hle::rtc_context::RtcContext;
 use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::timers_context::TimersContext;
@@ -28,6 +29,7 @@ pub struct IoPorts {
     pub gpu_2d_context_0: Rc<FastCell<Gpu2DContext>>,
     pub gpu_2d_context_1: Rc<FastCell<Gpu2DContext>>,
 
+    pub rtc_context: Rc<FastCell<RtcContext>>,
     pub spi_context: Arc<RwLock<SpiContext>>,
     pub spu_context: Rc<FastCell<SpuContext>>,
 }
@@ -45,6 +47,7 @@ impl IoPorts {
         gpu_context: Rc<FastCell<GpuContext>>,
         gpu_2d_context_0: Rc<FastCell<Gpu2DContext>>,
         gpu_2d_context_1: Rc<FastCell<Gpu2DContext>>,
+        rtc_context: Rc<FastCell<RtcContext>>,
         spi_context: Arc<RwLock<SpiContext>>,
         spu_context: Rc<FastCell<SpuContext>>,
     ) -> Self {
@@ -60,6 +63,7 @@ impl IoPorts {
             gpu_context,
             gpu_2d_context_0,
             gpu_2d_context_1,
+            rtc_context,
             spi_context,
             spu_context,
         }

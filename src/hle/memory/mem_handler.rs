@@ -10,9 +10,9 @@ use crate::hle::CpuType;
 use crate::jit::jit_asm::JitState;
 use crate::logging::debug_println;
 use crate::utils::{Convert, FastCell};
-use std::mem;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
+use std::{mem, thread};
 
 pub struct MemHandler {
     cpu_type: CpuType,
@@ -69,10 +69,19 @@ impl MemHandler {
 
     pub fn read_lock<const LOCK_DMA: bool, T: Convert>(&self, addr: u32) -> T {
         let mut buf = [T::from(0)];
+
+        debug_println!(
+            "{} {:?} memory read at {:x}",
+            thread::current().name().unwrap(),
+            self.cpu_type,
+            addr
+        );
+
         self.read_slice_lock::<LOCK_DMA, T>(addr, &mut buf);
 
         debug_println!(
-            "{:?} memory read at {:x} with value {:x}",
+            "{} {:?} memory read at {:x} with value {:x}",
+            thread::current().name().unwrap(),
             self.cpu_type,
             addr,
             buf[0].into()
@@ -86,11 +95,13 @@ impl MemHandler {
     }
 
     pub fn read_slice_lock<const LOCK_DMA: bool, T: Convert>(&self, addr: u32, slice: &mut [T]) {
-        let addr_end = addr + (slice.len() * mem::size_of::<T>()) as u32;
-
         let addr_base = addr & 0xFF000000;
-        let addr_end_base = addr_end & 0xFF000000;
-        debug_assert_eq!(addr_base, addr_end_base);
+        {
+            let addr_end = addr + (slice.len() * mem::size_of::<T>()) as u32 - 1;
+
+            let addr_end_base = addr_end & 0xFF000000;
+            debug_assert_eq!(addr_base, addr_end_base);
+        }
 
         let addr_offset = addr - addr_base;
 
@@ -141,7 +152,8 @@ impl MemHandler {
 
     pub fn write_lock<const LOCK_DMA: bool, T: Convert>(&self, addr: u32, value: T) {
         debug_println!(
-            "{:?} memory write at {:x} with value {:x}",
+            "{} {:?} memory write at {:x} with value {:x}",
+            thread::current().name().unwrap(),
             self.cpu_type,
             addr,
             value.into(),
@@ -155,11 +167,13 @@ impl MemHandler {
     }
 
     pub fn write_slice_lock<const LOCK_DMA: bool, T: Convert>(&self, addr: u32, slice: &[T]) {
-        let addr_end = addr + (slice.len() * mem::size_of::<T>()) as u32;
-
         let addr_base = addr & 0xFF000000;
-        let addr_end_base = addr_end & 0xFF000000;
-        debug_assert_eq!(addr_base, addr_end_base);
+        {
+            let addr_end = addr + (slice.len() * mem::size_of::<T>()) as u32 - 1;
+
+            let addr_end_base = addr_end & 0xFF000000;
+            debug_assert_eq!(addr_base, addr_end_base);
+        }
 
         let addr_offset = addr - addr_base;
         let mut invalidate_jit = false;

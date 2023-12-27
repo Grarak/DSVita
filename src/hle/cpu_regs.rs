@@ -53,6 +53,22 @@ impl CpuRegs {
         }
     }
 
+    pub fn set_ie(&mut self, mut mask: u32, value: u32) {
+        mask &= match self.cpu_type {
+            CpuType::ARM9 => 0x003F3F7F,
+            CpuType::ARM7 => 0x01FF3FFF,
+        };
+        self.ie = (self.ie & !mask) & (value & mask);
+
+        if self.ime == 1 && (self.ie & self.irf) != 0 {
+            todo!()
+        }
+    }
+
+    pub fn set_irf(&mut self, mask: u32, value: u32) {
+        self.irf &= !(value & mask);
+    }
+
     pub fn set_post_flg(&mut self, value: u8) {
         self.post_flg |= value & 0x1;
         if self.cpu_type == CpuType::ARM9 {

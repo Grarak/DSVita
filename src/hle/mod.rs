@@ -8,6 +8,7 @@ pub mod exception_handler;
 pub mod gpu;
 pub mod ipc_handler;
 pub mod memory;
+pub mod rtc_context;
 pub mod spi_context;
 pub mod spu_context;
 pub mod thread_context;

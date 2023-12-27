@@ -20,7 +20,7 @@ mod exception_handler {
 
     pub fn arm9<const THUMB: bool>(
         cp15_context: &Cp15Context,
-        bios_context: &BiosContext,
+        bios_context: &mut BiosContext,
         opcode: u32,
         vector: ExceptionVector,
     ) {
@@ -33,7 +33,7 @@ mod exception_handler {
     }
 
     pub fn handle<const THUMB: bool>(
-        bios_context: &BiosContext,
+        bios_context: &mut BiosContext,
         opcode: u32,
         vector: ExceptionVector,
     ) {
@@ -49,13 +49,13 @@ mod exception_handler {
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn exception_handler_arm9(
     cp15_context: *const Cp15Context,
-    bios_context: *const BiosContext,
+    bios_context: *mut BiosContext,
     opcode: u32,
     vector: ExceptionVector,
 ) {
     exception_handler::arm9::<false>(
         cp15_context.as_ref().unwrap(),
-        bios_context.as_ref().unwrap(),
+        bios_context.as_mut().unwrap(),
         opcode,
         vector,
     )
@@ -63,23 +63,23 @@ pub unsafe extern "C" fn exception_handler_arm9(
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn exception_handler_arm7(
-    bios_context: *const BiosContext,
+    bios_context: *mut BiosContext,
     opcode: u32,
     vector: ExceptionVector,
 ) {
-    exception_handler::handle::<false>(bios_context.as_ref().unwrap(), opcode, vector)
+    exception_handler::handle::<false>(bios_context.as_mut().unwrap(), opcode, vector)
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn exception_handler_arm9_thumb(
     cp15_context: *const Cp15Context,
-    bios_context: *const BiosContext,
+    bios_context: *mut BiosContext,
     opcode: u32,
     vector: ExceptionVector,
 ) {
     exception_handler::arm9::<true>(
         cp15_context.as_ref().unwrap(),
-        bios_context.as_ref().unwrap(),
+        bios_context.as_mut().unwrap(),
         opcode,
         vector,
     )
@@ -87,9 +87,9 @@ pub unsafe extern "C" fn exception_handler_arm9_thumb(
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn exception_handler_arm7_thumb(
-    bios_context: *const BiosContext,
+    bios_context: *mut BiosContext,
     opcode: u32,
     vector: ExceptionVector,
 ) {
-    exception_handler::handle::<true>(bios_context.as_ref().unwrap(), opcode, vector)
+    exception_handler::handle::<true>(bios_context.as_mut().unwrap(), opcode, vector)
 }

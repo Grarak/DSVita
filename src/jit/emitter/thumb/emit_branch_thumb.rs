@@ -36,13 +36,14 @@ impl JitAsm {
 
         opcodes.extend(AluImm::mov32(Reg::R8, pc));
         opcodes.extend(AluImm::mov32(Reg::R9, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+        opcodes.extend(AluImm::mov32(Reg::R10, new_pc | 1));
+
         opcodes.push(LdrStrImm::str_al(Reg::R8, Reg::R9));
 
-        opcodes.extend(AluImm::mov32(Reg::R8, new_pc | 1));
         opcodes.extend(
             self.thread_regs
                 .borrow()
-                .emit_set_reg(Reg::PC, Reg::R8, Reg::R9),
+                .emit_set_reg(Reg::PC, Reg::R10, Reg::R11),
         );
 
         JitAsm::emit_host_bx(self.breakout_thumb_addr, &mut opcodes);
@@ -90,32 +91,41 @@ impl JitAsm {
         let op0 = inst_info.operands()[0].as_imm().unwrap();
         let lr = (pc + 2) | 1;
 
-        self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R8, pc));
         self.jit_buf
             .emit_opcodes
-            .extend(AluImm::mov32(Reg::R9, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+            .extend(AluImm::mov32(Reg::R10, pc));
         self.jit_buf
             .emit_opcodes
-            .push(LdrStrImm::str_al(Reg::R8, Reg::R9));
+            .extend(AluImm::mov32(Reg::R11, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
 
         let thread_regs = self.thread_regs.borrow();
         self.jit_buf
             .emit_opcodes
             .extend(thread_regs.emit_get_reg(Reg::R8, Reg::LR));
+
+        self.jit_buf
+            .emit_opcodes
+            .push(LdrStrImm::str_al(Reg::R10, Reg::R11));
+
         self.jit_buf
             .emit_opcodes
             .extend(AluImm::mov32(Reg::R9, *op0 | 1));
+
+        self.jit_buf
+            .emit_opcodes
+            .extend(AluImm::mov32(Reg::R10, lr));
+
         self.jit_buf
             .emit_opcodes
             .push(AluShiftImm::add_al(Reg::R8, Reg::R8, Reg::R9));
+
+        self.jit_buf
+            .emit_opcodes
+            .extend(thread_regs.emit_set_reg(Reg::LR, Reg::R10, Reg::R11));
+
         self.jit_buf
             .emit_opcodes
             .extend(thread_regs.emit_set_reg(Reg::PC, Reg::R8, Reg::R9));
-
-        self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R8, lr));
-        self.jit_buf
-            .emit_opcodes
-            .extend(thread_regs.emit_set_reg(Reg::LR, Reg::R8, Reg::R9));
 
         JitAsm::emit_host_bx(self.breakout_thumb_addr, &mut self.jit_buf.emit_opcodes);
     }
@@ -139,9 +149,15 @@ impl JitAsm {
 
         if op0.is_emulated() {
             let thread_regs = self.thread_regs.borrow();
-            self.jit_buf
-                .emit_opcodes
-                .extend(thread_regs.emit_get_reg(tmp_reg, *op0));
+            if *op0 == Reg::PC {
+                self.jit_buf
+                    .emit_opcodes
+                    .push(AluImm::add_al(tmp_reg, tmp_reg, 4));
+            } else {
+                self.jit_buf
+                    .emit_opcodes
+                    .extend(thread_regs.emit_get_reg(tmp_reg, *op0));
+            }
             self.jit_buf
                 .emit_opcodes
                 .extend(thread_regs.emit_set_reg(Reg::PC, tmp_reg, tmp_reg2));

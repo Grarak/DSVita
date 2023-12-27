@@ -1,5 +1,5 @@
 use crate::hle::thread_regs::register_set_cpsr;
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg};
+use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::inst_info::Operand;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
@@ -18,7 +18,9 @@ impl JitAsm {
                 match &inst_info.operands()[0] {
                     Operand::Reg { reg, .. } => {
                         if *reg != Reg::R1 {
-                            asm.jit_buf.emit_opcodes.push(AluReg::mov_al(Reg::R1, *reg));
+                            asm.jit_buf
+                                .emit_opcodes
+                                .push(AluShiftImm::mov_al(Reg::R1, *reg));
                         }
                     }
                     Operand::Imm(imm) => {

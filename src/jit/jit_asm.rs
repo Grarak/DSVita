@@ -4,7 +4,7 @@ use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::thread_regs::ThreadRegs;
 use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg};
+use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::Bx;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
@@ -100,10 +100,10 @@ pub struct JitAsm {
     pub breakin_thumb_addr: u32,
     pub breakout_thumb_addr: u32,
     pub breakout_skip_save_regs_thumb_addr: u32,
-    pub restore_host_opcodes: [u32; 7],
-    pub restore_guest_opcodes: [u32; 7],
-    pub restore_host_thumb_opcodes: [u32; 7],
-    pub restore_guest_thumb_opcodes: [u32; 7],
+    pub restore_host_opcodes: Vec<u32>,
+    pub restore_guest_opcodes: Vec<u32>,
+    pub restore_host_thumb_opcodes: Vec<u32>,
+    pub restore_guest_thumb_opcodes: Vec<u32>,
 }
 
 impl JitAsm {
@@ -120,37 +120,47 @@ impl JitAsm {
             let host_regs = Box::new(HostRegs::default());
 
             let restore_host_opcodes = {
-                let mut opcodes = [0u32; 7];
+                let mut opcodes = Vec::new();
                 // Save guest
-                let save_regs_opcodes = &thread_regs.borrow().save_regs_opcodes;
-                let index = save_regs_opcodes.len();
-                opcodes[..index].copy_from_slice(save_regs_opcodes);
+                opcodes.extend(&thread_regs.borrow().save_regs_opcodes);
 
                 // Restore host sp
                 let host_sp_addr = host_regs.get_sp_addr();
-                opcodes[index..index + 2].copy_from_slice(&AluImm::mov32(Reg::LR, host_sp_addr));
-                opcodes[index + 2] = LdrStrImm::ldr_al(Reg::SP, Reg::LR); // SP
+                opcodes.extend(AluImm::mov32(Reg::LR, host_sp_addr));
+                opcodes.push(LdrStrImm::ldr_al(Reg::SP, Reg::LR));
+                opcodes.shrink_to_fit();
                 opcodes
             };
 
-            let restore_guest_opcodes = {
-                let mut opcodes = [0u32; 7];
-                // Restore guest
-                opcodes[0] = AluReg::mov_al(Reg::LR, Reg::SP);
-                opcodes[1..].copy_from_slice(&thread_regs.borrow().restore_regs_opcodes);
-                opcodes
-            };
+            let restore_guest_opcodes =
+                {
+                    let mut opcodes = Vec::new();
+                    // Restore guest
+                    opcodes.push(AluShiftImm::mov_al(Reg::LR, Reg::SP));
+                    opcodes.extend(&thread_regs.borrow().restore_regs_opcodes);
+                    opcodes.shrink_to_fit();
+                    opcodes
+                };
 
             let restore_host_thumb_opcodes = {
-                let mut opcodes = restore_host_opcodes;
-                let save_regs_thumb_opcodes = &thread_regs.borrow().save_regs_thumb_opcodes;
-                opcodes[..save_regs_thumb_opcodes.len()].copy_from_slice(save_regs_thumb_opcodes);
+                let mut opcodes = Vec::new();
+                // Save guest
+                opcodes.extend(&thread_regs.borrow().save_regs_thumb_opcodes);
+
+                // Restore host sp
+                let host_sp_addr = host_regs.get_sp_addr();
+                opcodes.extend(AluImm::mov32(Reg::LR, host_sp_addr));
+                opcodes.push(LdrStrImm::ldr_al(Reg::SP, Reg::LR));
+                opcodes.shrink_to_fit();
                 opcodes
             };
 
             let restore_guest_thumb_opcodes = {
-                let mut opcodes = restore_guest_opcodes;
-                opcodes[1..].copy_from_slice(&thread_regs.borrow().restore_regs_thumb_opcodes);
+                let mut opcodes = Vec::new();
+                // Restore guest
+                opcodes.push(AluShiftImm::mov_al(Reg::LR, Reg::SP));
+                opcodes.extend(&thread_regs.borrow().restore_regs_thumb_opcodes);
+                opcodes.shrink_to_fit();
                 opcodes
             };
 
@@ -165,7 +175,7 @@ impl JitAsm {
                 ),
                 thread_regs: thread_regs.clone(),
                 cp15_context,
-                bios_context: BiosContext::new(thread_regs, mem_handler.clone()),
+                bios_context: BiosContext::new(cpu_type, thread_regs, mem_handler.clone()),
                 timers_context,
                 mem_handler,
                 jit_buf: JitBuf::new(),
@@ -189,13 +199,13 @@ impl JitAsm {
             {
                 // Common function to enter guest (breakin)
                 // Save lr to return to this function
-                jit_opcodes.extend(&AluImm::mov32(Reg::R0, instance.host_regs.get_lr_addr()));
+                jit_opcodes.extend(&AluImm::mov32(Reg::R1, instance.host_regs.get_lr_addr()));
                 jit_opcodes.extend(&[
-                    LdrStrImm::str_al(Reg::LR, Reg::R0), // Save host lr
-                    Mrs::cpsr(Reg::LR, Cond::AL),
-                    LdrStrImm::str_offset_al(Reg::LR, Reg::R0, 4), // Save host cpsr
-                    AluReg::mov_al(Reg::LR, Reg::SP),              // Keep host sp in lr
-                    LdmStm::push_pre(reg_reserve!(Reg::R4), Reg::LR, Cond::AL), // Save actual entry
+                    Mrs::cpsr(Reg::R2, Cond::AL),
+                    LdmStm::push_pre(reg_reserve!(Reg::R0), Reg::SP, Cond::AL), // Save actual function entry
+                    LdrStrImm::str_al(Reg::LR, Reg::R1),                        // Save host lr
+                    LdrStrImm::str_offset_al(Reg::R2, Reg::R1, 4),              // Save host cpsr
+                    AluShiftImm::mov_al(Reg::LR, Reg::SP), // Keep host sp in lr
                 ]);
                 // Restore guest
                 let guest_restore_index = jit_opcodes.len();
@@ -329,7 +339,7 @@ impl JitAsm {
 
                 self.jit_buf
                     .emit_opcodes
-                    .push(AluReg::mov_al(Reg::R0, Reg::R0)); // NOP
+                    .push(AluShiftImm::mov_al(Reg::R0, Reg::R0)); // NOP
             }
             if THUMB {
                 self.emit_thumb(i, pc);
@@ -344,8 +354,8 @@ impl JitAsm {
                     || (!THUMB && (!inst_info.op.is_branch() || inst_info.cond != Cond::AL))
                 {
                     self.jit_buf.emit_opcodes.extend(&[
-                        AluReg::mov_al(Reg::R0, Reg::R0), // NOP
-                        AluReg::mov_al(Reg::R0, Reg::R0), // NOP
+                        AluShiftImm::mov_al(Reg::R0, Reg::R0), // NOP
+                        AluShiftImm::mov_al(Reg::R0, Reg::R0), // NOP
                     ]);
 
                     self.emit_call_host_func(
@@ -447,8 +457,9 @@ impl JitAsm {
         if DEBUG {
             self.guest_branch_out_pc = 0;
         }
+        self.bios_context.cycle_correction = 0;
 
-        // let now = std::time::Instant::now();
+        let now = std::time::Instant::now();
         unsafe {
             JitAsm::enter_jit(
                 jit_entry,
@@ -460,49 +471,59 @@ impl JitAsm {
                 },
             )
         };
-        // let elapsed_time = now.elapsed();
+        let elapsed_time = now.elapsed();
         debug_assert_ne!(self.guest_branch_out_pc, 0);
 
         let executed_insts = (self.guest_branch_out_pc - guest_pc) / (!thumb as u32 * 2 + 2);
         let executed_cycles = insts_cycle_count[0..=executed_insts as usize]
             .iter()
             .fold(0u16, |sum, count| sum + *count as u16)
+            + self.bios_context.cycle_correction
             + 2; // + 2 for branching
         self.timers_context
             .borrow_mut()
             .on_cycle_update(executed_cycles);
 
         // TODO cycle correction for conds
-        // self.jit_cycle_manager.write().unwrap().insert(
-        //     self.cpu_type,
-        //     elapsed_time,
-        //     executed_cycles,
-        // );
+        self.jit_cycle_manager.write().unwrap().insert(
+            self.cpu_type,
+            elapsed_time,
+            executed_cycles,
+        );
 
         if DEBUG {
+            let inst_info = if thumb {
+                let opcode = self.mem_handler.read(self.guest_branch_out_pc);
+                let (op, func) = lookup_thumb_opcode(opcode);
+                InstInfo::from(&func(opcode, *op))
+            } else {
+                let opcode = self.mem_handler.read(self.guest_branch_out_pc);
+                let (op, func) = lookup_opcode(opcode);
+                func(opcode, *op)
+            };
             debug_inst_info(
                 self.cpu_type,
                 RegReserve::gp(),
                 self.thread_regs.borrow().deref(),
                 self.guest_branch_out_pc,
-                "breakout",
+                &format!("breakout\n\t{:?} {:?}", self.cpu_type, inst_info),
             );
         }
     }
 
     #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
+    #[inline(never)]
     unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: u32) {
         asm!(
-            "push {{r0-r12, lr}}",
-            // Avoid R0-R3 here, compiler will try to optimize them for calling convention
-            "mov r4, {jit_entry}",
-            "mov r5, {host_sp_adr}",
-            "mov r6, {breakin_addr}",
-            "str sp, [r5]",
-            "blx r6",
-            "pop {{r0-r12, lr}}",
+            "push {{r4-r12, lr}}",
+            "mov r0, {jit_entry}",
+            "mov r1, {host_sp_addr}",
+            "mov r2, {breakin_addr}",
+            "str sp, [r1]",
+            "blx r2",
+            "pop {{r4-r12, lr}}",
             jit_entry = in(reg) jit_entry,
-            host_sp_adr = in(reg) host_sp_addr,
+            host_sp_addr = in(reg) host_sp_addr,
             breakin_addr = in(reg) breakin_addr,
         );
     }

@@ -71,7 +71,7 @@ impl JitAsm {
                 .emit_opcodes
                 .extend(&AluImm::mov32(Reg::R0, pc));
             self.jit_buf.emit_opcodes.extend(
-                &AluImm::mov32(Reg::LR, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
+                AluImm::mov32(Reg::LR, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
             );
             self.jit_buf
                 .emit_opcodes
@@ -267,7 +267,7 @@ impl JitAsm {
             if let Some(arg) = arg {
                 self.jit_buf
                     .emit_opcodes
-                    .extend(&AluImm::mov32(Reg::from(index as u8), *arg));
+                    .extend(AluImm::mov32(Reg::from(index as u8), *arg));
             }
         }
 

@@ -1,6 +1,6 @@
 use crate::hle::bios_context::*;
 
-pub const ARM9_SWI_LOOKUP_TABLE: [(&'static str, fn(&BiosContext)); 33] = [
+pub const ARM9_SWI_LOOKUP_TABLE: [(&'static str, fn(&mut BiosContext)); 33] = [
     ("unknown", unknown),
     ("unknown", unknown),
     ("unknown", unknown),
@@ -36,7 +36,7 @@ pub const ARM9_SWI_LOOKUP_TABLE: [(&'static str, fn(&BiosContext)); 33] = [
     ("unknown", unknown),
 ];
 
-pub const ARM7_SWI_LOOKUP_TABLE: [(&'static str, fn(&BiosContext)); 33] = [
+pub const ARM7_SWI_LOOKUP_TABLE: [(&'static str, fn(&mut BiosContext)); 33] = [
     ("unknown", unknown),
     ("unknown", unknown),
     ("unknown", unknown),

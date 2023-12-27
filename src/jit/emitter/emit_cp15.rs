@@ -1,5 +1,5 @@
 use crate::hle::cp15_context::{cp15_read, cp15_write};
-use crate::jit::assembler::arm::alu_assembler::AluReg;
+use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::{Cond, Op};
@@ -46,7 +46,9 @@ impl JitAsm {
         self.emit_call_host_func(
             |asm| {
                 if op == Op::Mcr && rd != Reg::R2 {
-                    asm.jit_buf.emit_opcodes.push(AluReg::mov_al(Reg::R2, rd));
+                    asm.jit_buf
+                        .emit_opcodes
+                        .push(AluShiftImm::mov_al(Reg::R2, rd));
                 }
             },
             &args,

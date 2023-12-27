@@ -50,6 +50,8 @@ impl InstMemHandler {
             | Op::StrOfip
             | Op::StrhOfip
             | Op::StrPrim
+            | Op::LdrshRegT
+            | Op::LdrbImm5T
             | Op::LdrImm5T
             | Op::LdrhImm5T
             | Op::LdrPcT
@@ -67,6 +69,8 @@ impl InstMemHandler {
             | Op::LdrbOfrplr
             | Op::StrOfip
             | Op::StrhOfip
+            | Op::LdrshRegT
+            | Op::LdrbImm5T
             | Op::LdrImm5T
             | Op::LdrhImm5T
             | Op::LdrPcT
@@ -176,7 +180,11 @@ impl InstMemHandler {
                         todo!()
                     }
 
-                    set_reg_value(thread_regs.deref_mut(), *op0, value as u32);
+                    if inst_info.op == Op::LdrshRegT {
+                        set_reg_value(thread_regs.deref_mut(), *op0, (value as i16) as u32);
+                    } else {
+                        set_reg_value(thread_regs.deref_mut(), *op0, value as u32);
+                    }
                 }
             }
             MemoryAmount::WORD => {

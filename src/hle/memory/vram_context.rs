@@ -24,8 +24,8 @@ impl<const SIZE: usize> VramMap<SIZE> {
         }
     }
 
-    fn extract_section<const CHUNK_SIZE: usize, const OFFSET: usize>(&self) -> VramMap<CHUNK_SIZE> {
-        VramMap::from((self.ptr as usize + CHUNK_SIZE * OFFSET) as *const u8)
+    fn extract_section<const CHUNK_SIZE: usize>(&self, offset: usize) -> VramMap<CHUNK_SIZE> {
+        VramMap::from((self.ptr as usize + CHUNK_SIZE * offset) as *const u8)
     }
 
     fn as_mut(&mut self) -> VramMapMut<SIZE> {
@@ -133,6 +133,7 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
         let mut buf = vec![T::from(0); slice.len()];
         for i in 0..self.count {
             let map = &self.overlaps[i];
+            debug_assert_ne!(map.ptr, ptr::null());
             utils::read_from_mem_slice(&map, index, &mut buf);
             slice
                 .iter_mut()
@@ -145,6 +146,7 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
         for i in 0..self.count {
             let map = &mut self.overlaps[i];
             let mut map = map.as_mut();
+            debug_assert_ne!(map.ptr, ptr::null_mut());
             utils::write_to_mem_slice(&mut map, index, slice);
         }
     }
@@ -166,7 +168,7 @@ impl<const SIZE: usize, const CHUNK_SIZE: usize, const SECTIONS_COUNT: usize>
 
     fn add<const MAP_SIZE: usize, const OFFSET: usize>(&mut self, map: VramMap<MAP_SIZE>) {
         for i in 0..(MAP_SIZE / CHUNK_SIZE) {
-            self.sections[OFFSET + i].add(map.extract_section::<CHUNK_SIZE, OFFSET>())
+            self.sections[OFFSET + i].add(map.extract_section::<CHUNK_SIZE>(i))
         }
     }
 
@@ -242,7 +244,6 @@ const TOTAL_SIZE: usize = BANK_A_SIZE
     + BANK_I_SIZE;
 const_assert_eq!(TOTAL_SIZE, 656 * 1024);
 
-#[derive(Default)]
 struct VramBanks {
     vram_a: HeapMem<BANK_A_SIZE>,
     vram_b: HeapMem<BANK_B_SIZE>,
@@ -253,6 +254,33 @@ struct VramBanks {
     vram_g: HeapMem<BANK_G_SIZE>,
     vram_h: HeapMem<BANK_H_SIZE>,
     vram_i: HeapMem<BANK_I_SIZE>,
+}
+
+impl VramBanks {
+    fn new() -> Self {
+        let instance = VramBanks {
+            vram_a: HeapMem::new(),
+            vram_b: HeapMem::new(),
+            vram_c: HeapMem::new(),
+            vram_d: HeapMem::new(),
+            vram_e: HeapMem::new(),
+            vram_f: HeapMem::new(),
+            vram_g: HeapMem::new(),
+            vram_h: HeapMem::new(),
+            vram_i: HeapMem::new(),
+        };
+
+        debug_println!(
+            "Allocating vram banks at a: {:x}, b: {:x}, c: {:x}, d: {:x}, e: {:x}, f: {:x}, g: {:x}, h: {:x}, i: {:x}",
+            instance.vram_a.as_ptr() as u32, instance.vram_b.as_ptr() as u32,
+            instance.vram_c.as_ptr() as u32, instance.vram_d.as_ptr() as u32,
+            instance.vram_e.as_ptr() as u32, instance.vram_f.as_ptr() as u32,
+            instance.vram_g.as_ptr() as u32, instance.vram_h.as_ptr() as u32,
+            instance.vram_i.as_ptr() as u32
+        );
+
+        instance
+    }
 }
 
 const LCDC_OFFSET: u32 = 0x800000;
@@ -289,7 +317,7 @@ impl VramInner {
         let instance = VramInner {
             stat,
             cnt: [0u8; BANK_SIZE],
-            banks: VramBanks::default(),
+            banks: VramBanks::new(),
 
             lcdc: OverlapMapping::new(),
 

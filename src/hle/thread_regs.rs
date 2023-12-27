@@ -61,10 +61,10 @@ pub struct ThreadRegs {
     pub irq: OtherModeRegs,
     pub und: OtherModeRegs,
     pub cpu_type: CpuType,
-    pub restore_regs_opcodes: [u32; 6],
-    pub save_regs_opcodes: [u32; 4],
-    pub restore_regs_thumb_opcodes: [u32; 6],
-    pub save_regs_thumb_opcodes: [u32; 4],
+    pub restore_regs_opcodes: Vec<u32>,
+    pub save_regs_opcodes: Vec<u32>,
+    pub restore_regs_thumb_opcodes: Vec<u32>,
+    pub save_regs_thumb_opcodes: Vec<u32>,
 }
 
 impl ThreadRegs {
@@ -84,70 +84,76 @@ impl ThreadRegs {
             assert_eq!(sp_addr - last_regs_addr, 4);
 
             {
-                let mov = AluImm::mov32(Reg::SP, gp_regs_addr);
-                instance.restore_regs_opcodes = [
-                    mov[0],
-                    mov[1],
+                let restore_regs_opcodes = &mut instance.restore_regs_opcodes;
+                restore_regs_opcodes.extend(AluImm::mov32(Reg::SP, gp_regs_addr));
+                restore_regs_opcodes.extend([
                     LdrStrImm::ldr_offset_al(Reg::R0, Reg::SP, (cpsr_addr - gp_regs_addr) as u16),
                     Msr::cpsr_flags(Reg::R0, Cond::AL),
                     LdmStm::pop_post_al(RegReserve::gp()),
                     LdrStrImm::ldr_al(Reg::SP, Reg::SP),
-                ]
+                ]);
+                restore_regs_opcodes.shrink_to_fit();
             }
 
             {
-                let mov = AluImm::mov32(Reg::LR, last_regs_addr);
-                instance.save_regs_opcodes = [
-                    mov[0],
-                    mov[1],
+                let save_regs_opcodes = &mut instance.save_regs_opcodes;
+                save_regs_opcodes.extend(AluImm::mov32(Reg::LR, last_regs_addr));
+                save_regs_opcodes.extend([
                     LdrStrImm::str_offset_al(Reg::SP, Reg::LR, 4),
                     LdmStm::push_post(RegReserve::gp(), Reg::LR, Cond::AL),
-                ]
+                ]);
+                save_regs_opcodes.shrink_to_fit();
             }
 
             {
-                instance.restore_regs_thumb_opcodes = instance.restore_regs_opcodes;
-                instance.restore_regs_thumb_opcodes[4] =
+                instance.restore_regs_thumb_opcodes = instance.restore_regs_opcodes.clone();
+                let len = instance.restore_regs_thumb_opcodes.len();
+                instance.restore_regs_thumb_opcodes[len - 2] =
                     LdmStm::pop_post_al(RegReserve::gp_thumb());
-                instance.restore_regs_thumb_opcodes[5] = LdrStrImm::ldr_offset_al(
+                *instance.restore_regs_thumb_opcodes.last_mut().unwrap() = LdrStrImm::ldr_offset_al(
                     Reg::SP,
                     Reg::SP,
                     (sp_addr - last_regs_thumb_addr - 4) as u16,
                 );
+                instance.restore_regs_thumb_opcodes.shrink_to_fit();
             }
 
             {
-                let mov = AluImm::mov32(Reg::LR, last_regs_thumb_addr);
-                instance.save_regs_thumb_opcodes = [
-                    mov[0],
-                    mov[1],
+                let save_regs_thumb_opcodes = &mut instance.save_regs_thumb_opcodes;
+                save_regs_thumb_opcodes.extend(AluImm::mov32(Reg::LR, last_regs_thumb_addr));
+                save_regs_thumb_opcodes.extend([
                     LdrStrImm::str_offset_al(
                         Reg::SP,
                         Reg::LR,
                         (sp_addr - last_regs_thumb_addr) as u16,
                     ),
                     LdmStm::push_post(RegReserve::gp_thumb(), Reg::LR, Cond::AL),
-                ]
+                ]);
+                save_regs_thumb_opcodes.shrink_to_fit();
             }
         }
 
         instance
     }
 
-    pub fn emit_get_reg(&self, dest_reg: Reg, src_reg: Reg) -> [u32; 3] {
+    pub fn emit_get_reg(&self, dest_reg: Reg, src_reg: Reg) -> Vec<u32> {
         let reg_addr = self.get_reg_value(src_reg) as *const _ as u32;
 
-        let mov = AluImm::mov32(dest_reg, reg_addr);
-        [mov[0], mov[1], LdrStrImm::ldr_al(dest_reg, dest_reg)]
+        let mut opcodes = Vec::new();
+        opcodes.extend(AluImm::mov32(dest_reg, reg_addr));
+        opcodes.push(LdrStrImm::ldr_al(dest_reg, dest_reg));
+        opcodes
     }
 
-    pub fn emit_set_reg(&self, dest_reg: Reg, src_reg: Reg, tmp_reg: Reg) -> [u32; 3] {
+    pub fn emit_set_reg(&self, dest_reg: Reg, src_reg: Reg, tmp_reg: Reg) -> Vec<u32> {
         debug_assert_ne!(src_reg, tmp_reg);
 
         let reg_addr = self.get_reg_value(dest_reg) as *const _ as u32;
 
-        let mov = AluImm::mov32(tmp_reg, reg_addr);
-        [mov[0], mov[1], LdrStrImm::str_al(src_reg, tmp_reg)]
+        let mut opcodes = Vec::new();
+        opcodes.extend(AluImm::mov32(tmp_reg, reg_addr));
+        opcodes.push(LdrStrImm::str_al(src_reg, tmp_reg));
+        opcodes
     }
 
     pub fn get_reg_value(&self, reg: Reg) -> &u32 {

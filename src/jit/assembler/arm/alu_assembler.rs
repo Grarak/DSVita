@@ -164,13 +164,35 @@ impl AluImm {
             u2::new(0),
             u4::new(cond as u8),
         ));
-        debug_assert_eq!(lookup_opcode(op).0, Op::SubImm);
+        debug_assert_eq!(lookup_opcode(op).0, Op::SubsImm);
         op
     }
 
     #[inline]
     pub fn subs_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
         AluImm::subs(op0, op1, op2, 0, Cond::AL)
+    }
+
+    #[inline]
+    pub fn rsbs(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
+        let op = u32::from(AluImm::new(
+            op2,
+            u4::new(shift),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0x3),
+            u1::new(1),
+            u2::new(0),
+            u4::new(cond as u8),
+        ));
+        debug_assert_eq!(lookup_opcode(op).0, Op::RsbsImm);
+        op
+    }
+
+    #[inline]
+    pub fn rsbs_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
+        AluImm::rsbs(op0, op1, op2, 0, Cond::AL)
     }
 
     #[inline]
@@ -258,11 +280,15 @@ impl AluImm {
     }
 
     #[inline]
-    pub fn mov32(op0: Reg, op2: u32) -> [u32; 2] {
-        [
-            AluImm::mov16_al(op0, (op2 & 0xFFFF) as u16),
-            AluImm::mov_t_al(op0, (op2 >> 16) as u16),
-        ]
+    pub fn mov32(op0: Reg, op2: u32) -> Vec<u32> {
+        if op2 & 0xFFFFFF00 == 0 {
+            vec![AluImm::mov_al(op0, op2 as u8)]
+        } else {
+            vec![
+                AluImm::mov16_al(op0, (op2 & 0xFFFF) as u16),
+                AluImm::mov_t_al(op0, (op2 >> 16) as u16),
+            ]
+        }
     }
 }
 
@@ -298,6 +324,50 @@ impl AluShiftImm {
             u2::new(0),
             u4::new(cond as u8),
         ))
+    }
+
+    #[inline]
+    pub fn ands(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(AluShiftImm::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0x0),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn ands_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
+        AluShiftImm::ands(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+    }
+
+    #[inline]
+    pub fn adcs(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(AluShiftImm::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0x5),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn adcs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
+        AluShiftImm::adcs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
@@ -579,126 +649,57 @@ pub struct AluReg {
 
 impl AluReg {
     #[inline]
-    pub fn add(
-        op0: Reg,
-        op1: Reg,
-        op2: Reg,
-        shift_type: ShiftType,
-        shift_reg: Reg,
-        cond: Cond,
-    ) -> u32 {
+    pub fn movs(op0: Reg, op2: Reg, shift_type: ShiftType, shift_reg: Reg, cond: Cond) -> u32 {
         u32::from(AluReg::new(
             u4::new(op2 as u8),
             u1::new(1),
             u2::new(shift_type as u8),
-            u1::new(1),
+            u1::new(0),
             u4::new(shift_reg as u8),
-            u4::new(op0 as u8),
-            u4::new(op1 as u8),
-            u1::new(0),
-            u4::new(0x4),
-            u1::new(0),
-            u2::new(0),
-            u4::new(cond as u8),
-        ))
-    }
-
-    #[inline]
-    pub fn orr(
-        op0: Reg,
-        op1: Reg,
-        op2: Reg,
-        shift_type: ShiftType,
-        shift_reg: Reg,
-        cond: Cond,
-    ) -> u32 {
-        u32::from(AluReg::new(
-            u4::new(op2 as u8),
-            u1::new(1),
-            u2::new(shift_type as u8),
-            u1::new(1),
-            u4::new(shift_reg as u8),
-            u4::new(op0 as u8),
-            u4::new(op1 as u8),
-            u1::new(0),
-            u4::new(0xC),
-            u1::new(0),
-            u2::new(0),
-            u4::new(cond as u8),
-        ))
-    }
-
-    #[inline]
-    pub fn sub(
-        op0: Reg,
-        op1: Reg,
-        op2: Reg,
-        shift_type: ShiftType,
-        shift_reg: Reg,
-        cond: Cond,
-    ) -> u32 {
-        u32::from(AluReg::new(
-            u4::new(op2 as u8),
-            u1::new(1),
-            u2::new(shift_type as u8),
-            u1::new(1),
-            u4::new(shift_reg as u8),
-            u4::new(op0 as u8),
-            u4::new(op1 as u8),
-            u1::new(0),
-            u4::new(0x2),
-            u1::new(0),
-            u2::new(0),
-            u4::new(cond as u8),
-        ))
-    }
-
-    #[inline]
-    pub fn subs(
-        op0: Reg,
-        op1: Reg,
-        op2: Reg,
-        shift_type: ShiftType,
-        shift_reg: Reg,
-        cond: Cond,
-    ) -> u32 {
-        u32::from(AluReg::new(
-            u4::new(op2 as u8),
-            u1::new(1),
-            u2::new(shift_type as u8),
-            u1::new(1),
-            u4::new(shift_reg as u8),
-            u4::new(op0 as u8),
-            u4::new(op1 as u8),
-            u1::new(1),
-            u4::new(0x2),
-            u1::new(0),
-            u2::new(0),
-            u4::new(cond as u8),
-        ))
-    }
-
-    #[inline]
-    pub fn mov(op0: Reg, op2: Reg, cond: Cond) -> u32 {
-        u32::from(AluReg::new(
-            u4::new(op2 as u8),
-            u1::new(0),
-            u2::new(0),
-            u1::new(0),
-            u4::new(0),
             u4::new(op0 as u8),
             u4::new(0),
-            u1::new(0),
+            u1::new(1),
             u4::new(0xD),
             u1::new(0),
             u2::new(0),
             u4::new(cond as u8),
         ))
     }
+}
+
+#[bitsize(32)]
+#[derive(FromBits)]
+pub struct MulReg {
+    pub rm: u4,
+    pub non_half: u4,
+    pub rs: u4,
+    pub rn: u4,
+    pub rd: u4,
+    pub set: u1,
+    pub op: u4,
+    pub id: u3,
+    pub cond: u4,
+}
+
+impl MulReg {
+    #[inline]
+    pub fn muls(op0: Reg, op1: Reg, op2: Reg, cond: Cond) -> u32 {
+        u32::from(MulReg::new(
+            u4::new(op2 as u8),
+            u4::new(0b1001),
+            u4::new(op1 as u8),
+            u4::new(0),
+            u4::new(op0 as u8),
+            u1::new(1),
+            u4::new(0b0),
+            u3::new(0b000),
+            u4::new(cond as u8),
+        ))
+    }
 
     #[inline]
-    pub fn mov_al(op0: Reg, op2: Reg) -> u32 {
-        AluReg::mov(op0, op2, Cond::AL)
+    pub fn muls_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
+        MulReg::muls(op0, op1, op2, Cond::AL)
     }
 }
 

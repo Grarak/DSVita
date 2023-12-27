@@ -14,7 +14,7 @@ impl JitAsm {
             todo!()
         }
 
-        let bios_context_addr = ptr::addr_of!(self.bios_context) as u32;
+        let bios_context_addr = ptr::addr_of_mut!(self.bios_context) as u32;
         match self.cpu_type {
             CpuType::ARM9 => {
                 self.emit_call_host_func(

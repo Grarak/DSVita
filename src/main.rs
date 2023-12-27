@@ -15,6 +15,7 @@ use crate::hle::memory::regions;
 use crate::hle::memory::tcm_context::TcmContext;
 use crate::hle::memory::vram_context::VramContext;
 use crate::hle::memory::wram_context::WramContext;
+use crate::hle::rtc_context::RtcContext;
 use crate::hle::spi_context;
 use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
@@ -167,6 +168,7 @@ pub fn main() {
     let gpu_context = Rc::new(FastCell::new(GpuContext::new()));
     let gpu_2d_context_0 = Rc::new(FastCell::new(Gpu2DContext::new()));
     let gpu_2d_context_1 = Rc::new(FastCell::new(Gpu2DContext::new()));
+    let rtc_context = Rc::new(FastCell::new(RtcContext::new()));
     let spu_context = Rc::new(FastCell::new(SpuContext::new()));
     let palettes_context = Rc::new(FastCell::new(PalettesContext::new()));
     let cp15_context = Rc::new(FastCell::new(Cp15Context::new()));
@@ -185,6 +187,7 @@ pub fn main() {
         gpu_context.clone(),
         gpu_2d_context_0.clone(),
         gpu_2d_context_1.clone(),
+        rtc_context.clone(),
         spu_context.clone(),
         palettes_context.clone(),
         cp15_context.clone(),
@@ -205,6 +208,7 @@ pub fn main() {
         gpu_context,
         gpu_2d_context_0,
         gpu_2d_context_1,
+        rtc_context,
         spu_context,
         palettes_context,
         cp15_context,

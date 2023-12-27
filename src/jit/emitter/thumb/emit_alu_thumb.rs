@@ -1,4 +1,4 @@
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
+use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, MulReg};
 use crate::jit::inst_info::Operand;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve};
@@ -18,9 +18,15 @@ impl JitAsm {
 
         let opcode = match op2 {
             Operand::Reg { reg, .. } => match inst_info.op {
+                Op::AdcDpT => AluShiftImm::adcs_al(op0, op1, *reg),
                 Op::AddRegT => AluShiftImm::adds_al(op0, op1, *reg),
+                Op::AndDpT => AluShiftImm::ands_al(op0, op1, *reg),
                 Op::BicDpT => AluShiftImm::bics_al(op0, op1, *reg),
                 Op::CmpDpT => AluShiftImm::cmp_al(op0, *reg),
+                Op::LslDpT => AluReg::movs(op0, op0, ShiftType::LSL, *reg, Cond::AL),
+                Op::MulDpT => MulReg::muls_al(op0, op0, *reg),
+                Op::NegDpT => AluImm::rsbs_al(op0, *reg, 0),
+                Op::RorDpT => AluReg::movs(op0, op0, ShiftType::ROR, *reg, Cond::AL),
                 Op::SubRegT => AluShiftImm::subs_al(op0, op1, *reg),
                 Op::TstDpT => AluShiftImm::tst_al(op0, *reg),
                 Op::OrrDpT => AluShiftImm::orrs_al(op0, op1, *reg),

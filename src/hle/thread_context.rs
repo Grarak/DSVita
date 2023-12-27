@@ -12,6 +12,7 @@ use crate::hle::memory::palettes_context::PalettesContext;
 use crate::hle::memory::tcm_context::TcmContext;
 use crate::hle::memory::vram_context::VramContext;
 use crate::hle::memory::wram_context::WramContext;
+use crate::hle::rtc_context::RtcContext;
 use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::thread_regs::ThreadRegs;
@@ -48,6 +49,7 @@ impl ThreadContext {
         gpu_context: Rc<FastCell<GpuContext>>,
         gpu_2d_context_0: Rc<FastCell<Gpu2DContext>>,
         gpu_2d_context_1: Rc<FastCell<Gpu2DContext>>,
+        rtc_context: Rc<FastCell<RtcContext>>,
         spu_context: Rc<FastCell<SpuContext>>,
         palettes_context: Rc<FastCell<PalettesContext>>,
         cp15_context: Rc<FastCell<Cp15Context>>,
@@ -71,6 +73,7 @@ impl ThreadContext {
             gpu_context,
             gpu_2d_context_0,
             gpu_2d_context_1,
+            rtc_context,
             spi_context,
             spu_context,
         );
