@@ -121,11 +121,17 @@ impl MemHandler {
                     .borrow()
                     .read_slice(addr_offset, slice);
             }
+            regions::VRAM_OFFSET => {
+                let _lock = self.lock_dma::<LOCK_DMA>();
+                self.io_ports
+                    .vram_context
+                    .read_slice(self.cpu_type, addr_offset, slice);
+            }
             regions::OAM_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
                 self.oam.borrow().read_slice(addr_offset, slice);
             }
-            _ => todo!(),
+            _ => todo!("{:x}", addr),
         };
     }
 
@@ -183,6 +189,12 @@ impl MemHandler {
                 self.palettes_context
                     .borrow_mut()
                     .write_slice(addr_offset, slice);
+            }
+            regions::VRAM_OFFSET => {
+                let _lock = self.lock_dma::<LOCK_DMA>();
+                self.io_ports
+                    .vram_context
+                    .write_slice(self.cpu_type, addr_offset, slice);
             }
             regions::OAM_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();

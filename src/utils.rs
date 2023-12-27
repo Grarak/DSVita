@@ -132,3 +132,9 @@ impl<const T: usize> DerefMut for HeapMem<T> {
         &mut self.0
     }
 }
+
+impl<const T: usize> Default for HeapMem<T> {
+    fn default() -> Self {
+        HeapMem::new()
+    }
+}

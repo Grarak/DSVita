@@ -15,5 +15,7 @@ pub const IO_PORTS_OFFSET: u32 = 0x04000000;
 pub const STANDARD_PALETTES_OFFSET: u32 = 0x05000000;
 pub const STANDARD_PALETTES_SIZE: u32 = 2 * 1024;
 
+pub const VRAM_OFFSET: u32 = 0x06000000;
+
 pub const OAM_OFFSET: u32 = 0x07000000;
 pub const OAM_SIZE: u32 = 2 * 1024;

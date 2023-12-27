@@ -10,7 +10,7 @@ use std::{ptr, slice};
 struct SharedWramMap<'a> {
     shared_ptr: *const u8,
     size: usize,
-    phantom_data: PhantomData<&'a mut [u8]>,
+    phantom_data: PhantomData<&'a u8>,
 }
 
 impl SharedWramMap<'_> {
@@ -46,20 +46,30 @@ impl AsRef<[u8]> for SharedWramMap<'_> {
 }
 
 struct SharedWramMapMut<'a> {
-    shared_wram_map: SharedWramMap<'a>,
+    shared_ptr: *mut u8,
+    size: usize,
+    phantom_data: PhantomData<&'a mut u8>,
 }
 
 impl SharedWramMapMut<'_> {
-    pub fn as_mut_ptr(&mut self) -> *mut u8 {
-        self.shared_wram_map.as_ptr() as _
-    }
-}
-
-impl<'a> From<SharedWramMap<'a>> for SharedWramMapMut<'a> {
-    fn from(value: SharedWramMap<'a>) -> Self {
+    fn new(shared_ptr: *mut u8, size: usize) -> Self {
         SharedWramMapMut {
-            shared_wram_map: value,
+            shared_ptr,
+            size,
+            phantom_data: PhantomData,
         }
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.shared_ptr
+    }
+
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.shared_ptr
+    }
+
+    pub fn len(&self) -> usize {
+        self.size
     }
 }
 
@@ -67,7 +77,7 @@ impl Deref for SharedWramMapMut<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        unsafe { slice::from_raw_parts(self.shared_wram_map.as_ptr(), self.shared_wram_map.len()) }
+        unsafe { slice::from_raw_parts(self.as_ptr(), self.len()) }
     }
 }
 
@@ -79,7 +89,7 @@ impl AsRef<[u8]> for SharedWramMapMut<'_> {
 
 impl DerefMut for SharedWramMapMut<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.shared_wram_map.len()) }
+        unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
     }
 }
 
@@ -150,7 +160,7 @@ impl SharedWram {
     }
 
     fn get_map_arm9_mut(&mut self) -> SharedWramMapMut {
-        SharedWramMapMut::from(self.get_map_arm9())
+        SharedWramMapMut::new(self.arm9_ptr, self.arm9_size)
     }
 
     fn get_map_arm7(&self) -> SharedWramMap {
@@ -158,7 +168,7 @@ impl SharedWram {
     }
 
     fn get_map_arm7_mut(&mut self) -> SharedWramMapMut {
-        SharedWramMapMut::from(self.get_map_arm7())
+        SharedWramMapMut::new(self.arm7_ptr, self.arm7_size)
     }
 
     fn read_slice_arm9<T: Convert>(&self, addr_offset: u32, slice: &mut [T]) {
