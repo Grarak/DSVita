@@ -22,8 +22,9 @@ impl JitAsm {
             | Op::SubImm8T
             | Op::SubRegT
             | Op::TstDpT
-            | Op::OrrDpT => JitAsm::emit_alu_common,
+            | Op::OrrDpT => JitAsm::emit_alu_common_thumb,
             Op::AddSpImmT => JitAsm::emit_add_sp_imm_thumb,
+            Op::AddHT => JitAsm::emit_add_h_thumb,
             Op::MovHT => JitAsm::emit_movh_thumb,
 
             Op::BT | Op::BeqT | Op::BltT | Op::BneT => JitAsm::emit_b_thumb,
@@ -35,6 +36,8 @@ impl JitAsm {
             Op::StrbImm5T | Op::StrhImm5T | Op::StrImm5T | Op::StrSpT => JitAsm::emit_str_thumb,
             Op::LdmiaT | Op::PopT => JitAsm::emit_ldm_thumb,
             Op::PushLrT => JitAsm::emit_stm_thumb,
+
+            Op::SwiT => JitAsm::emit_swi_thumb,
             _ => todo!("{:?}", inst_info),
         };
 

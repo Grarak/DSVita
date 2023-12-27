@@ -138,7 +138,14 @@ mod branch_thumb_ops {
 
     #[inline]
     pub fn swi_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_empty(),
+            reg_reserve!(),
+            reg_reserve!(),
+            3,
+        )
     }
 }
 

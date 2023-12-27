@@ -1,7 +1,6 @@
-use crate::hle::bios::*;
-use crate::hle::thread_regs::ThreadRegs;
+use crate::hle::bios_context::*;
 
-pub const ARM9_SWI_LOOKUP_TABLE: [(&'static str, fn(&mut ThreadRegs)); 33] = [
+pub const ARM9_SWI_LOOKUP_TABLE: [(&'static str, fn(&BiosContext)); 33] = [
     ("unknown", unknown),
     ("unknown", unknown),
     ("unknown", unknown),
@@ -31,6 +30,42 @@ pub const ARM9_SWI_LOOKUP_TABLE: [(&'static str, fn(&mut ThreadRegs)); 33] = [
     ("unknown", unknown),
     ("unknown", unknown),
     ("unknown", unknown),
+    ("unknown", unknown),
+    ("unknown", unknown),
+    ("unknown", unknown),
+    ("unknown", unknown),
+];
+
+pub const ARM7_SWI_LOOKUP_TABLE: [(&'static str, fn(&BiosContext)); 33] = [
+    ("unknown", unknown),
+    ("unknown", unknown),
+    ("unknown", unknown),
+    ("wait_by_loop", wait_by_loop),
+    ("interrupt_wait", interrupt_wait),
+    ("v_blank_intr_wait", v_blank_intr_wait),
+    ("halt", halt),
+    ("sleep", sleep),
+    ("sound_bias", sound_bias),
+    ("divide", divide),
+    ("unknown", unknown),
+    ("cpu_set", cpu_set),
+    ("cpu_fast_set", cpu_fast_set),
+    ("square_root", square_root),
+    ("get_crc16", get_crc16),
+    ("is_debugger", is_debugger),
+    ("bit_unpack", bit_unpack),
+    ("lz77_uncomp", lz77_uncomp),
+    ("lz77_uncomp", lz77_uncomp),
+    ("huff_uncomp", huff_uncomp),
+    ("runlen_uncomp", runlen_uncomp),
+    ("runlen_uncomp", runlen_uncomp),
+    ("unknown", unknown),
+    ("unknown", unknown),
+    ("unknown", unknown),
+    ("unknown", unknown),
+    ("get_sine_table", get_sine_table),
+    ("get_pitch_table", get_pitch_table),
+    ("get_volume_table", get_volume_table),
     ("unknown", unknown),
     ("unknown", unknown),
     ("unknown", unknown),

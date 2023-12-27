@@ -1,4 +1,5 @@
 use crate::logging::debug_println;
+use crate::utils;
 use bilge::prelude::*;
 use std::mem;
 
@@ -13,17 +14,6 @@ enum Language {
     GER = 3,
     ITA = 4,
     SPA = 5,
-}
-
-const fn crc16(mut crc: u16, msg: &[u8], start: usize, size: usize) -> u16 {
-    let mut i = start;
-    while i < start + size {
-        let mut x = (msg[i] as u16) ^ (crc & 0xff);
-        x ^= (x & 0x0f) << 4;
-        crc = ((x << 8) | (crc >> 8)) ^ (x >> 4) ^ (x << 3);
-        i += 1;
-    }
-    crc
 }
 
 const fn get_firmware() -> [u8; FIRMWARE_SIZE] {
@@ -46,7 +36,7 @@ const fn get_firmware() -> [u8; FIRMWARE_SIZE] {
     firmware[0x3D] = 0x3F; // Enabled channels, byte 2
 
     // Calculate the WiFi config CRC
-    let crc = crc16(0, &firmware, 0x2C, 0x138);
+    let crc = utils::crc16(0, &firmware, 0x2C, 0x138);
     firmware[0x2A] = (crc & 0xFF) as u8;
     firmware[0x2B] = ((crc & 0xFF00) >> 8) as u8;
 
@@ -58,7 +48,7 @@ const fn get_firmware() -> [u8; FIRMWARE_SIZE] {
         firmware[addr + 0xF5] = 0x28; // Unknown
 
         // Calculate the access point CRC
-        let crc = crc16(0, &firmware, addr, 0xFE);
+        let crc = utils::crc16(0, &firmware, addr, 0xFE);
         firmware[addr + 0xFE] = (crc & 0xFF) as u8;
         firmware[addr + 0xFF] = ((crc & 0xFF00) >> 8) as u8;
 
@@ -92,7 +82,7 @@ const fn get_firmware() -> [u8; FIRMWARE_SIZE] {
         firmware[addr + 0x64] = Language::ENG as u8;
 
         // Calculate the user settings CRC
-        let crc = crc16(0xFFFF, &firmware, addr, 0x70);
+        let crc = utils::crc16(0xFFFF, &firmware, addr, 0x70);
         firmware[addr + 0x72] = (crc & 0xFF) as u8;
         firmware[addr + 0x73] = ((crc & 0xFF00) >> 8) as u8;
 

@@ -1,6 +1,6 @@
 use std::ops;
 
-mod bios;
+pub mod bios_context;
 mod bios_lookup_table;
 pub mod cp15_context;
 mod cpu_regs;

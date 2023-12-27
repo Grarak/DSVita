@@ -1,3 +1,4 @@
+use crate::hle::bios_context::BiosContext;
 use crate::hle::cp15_context::Cp15Context;
 use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::thread_regs::ThreadRegs;
@@ -87,6 +88,7 @@ pub struct JitAsm {
     pub inst_mem_handler: InstMemHandler,
     pub thread_regs: Rc<FastCell<ThreadRegs>>,
     pub cp15_context: Rc<FastCell<Cp15Context>>,
+    pub bios_context: BiosContext,
     timers_context: Rc<FastCell<TimersContext>>,
     pub mem_handler: Arc<MemHandler>,
     pub jit_buf: JitBuf,
@@ -161,8 +163,9 @@ impl JitAsm {
                     thread_regs.clone(),
                     mem_handler.clone(),
                 ),
-                thread_regs,
+                thread_regs: thread_regs.clone(),
                 cp15_context,
+                bios_context: BiosContext::new(thread_regs, mem_handler.clone()),
                 timers_context,
                 mem_handler,
                 jit_buf: JitBuf::new(),

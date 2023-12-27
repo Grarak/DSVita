@@ -325,8 +325,8 @@ impl VramInner {
 
     pub fn set_cnt(&mut self, bank: usize, value: u8) {
         debug_println!("Set vram cnt {:x} to {:x}", bank, value);
-        let masks = [0x9B, 0x9B, 0x9F, 0x9F, 0x87, 0x9F, 0x9F, 0x83, 0x83];
-        let value = value & masks[bank];
+        const MASKS: [u8; 9] = [0x9B, 0x9B, 0x9F, 0x9F, 0x87, 0x9F, 0x9F, 0x83, 0x83];
+        let value = value & MASKS[bank];
         if self.cnt[bank] == value {
             return;
         }

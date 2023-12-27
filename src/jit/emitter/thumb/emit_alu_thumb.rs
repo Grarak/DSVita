@@ -5,7 +5,7 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
 
 impl JitAsm {
-    pub fn emit_alu_common(&mut self, buf_index: usize, _: u32) {
+    pub fn emit_alu_common_thumb(&mut self, buf_index: usize, _: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
         let operands = inst_info.operands();
@@ -56,6 +56,37 @@ impl JitAsm {
         };
 
         self.jit_buf.emit_opcodes.push(opcode);
+    }
+
+    pub fn emit_add_h_thumb(&mut self, buf_index: usize, _: u32) {
+        let inst_info = &self.jit_buf.instructions[buf_index];
+
+        let operands = inst_info.operands();
+        let op0 = operands[0].as_reg_no_shift().unwrap();
+        let op2 = operands[1].as_reg_no_shift().unwrap();
+
+        if op2.is_high_gp_reg() {
+            self.jit_buf
+                .emit_opcodes
+                .extend(self.thread_regs.borrow().emit_get_reg(*op2, *op2));
+        }
+
+        if op0.is_high_gp_reg() {
+            self.jit_buf
+                .emit_opcodes
+                .extend(self.thread_regs.borrow().emit_get_reg(*op0, *op0));
+        }
+
+        self.jit_buf
+            .emit_opcodes
+            .push(AluShiftImm::add_al(*op0, *op0, *op2));
+
+        if op0.is_high_gp_reg() {
+            let tmp_reg = (RegReserve::gp_thumb() + *op0).next_free().unwrap();
+            self.jit_buf
+                .emit_opcodes
+                .extend(self.thread_regs.borrow().emit_set_reg(*op0, *op0, tmp_reg));
+        }
     }
 
     pub fn emit_movh_thumb(&mut self, buf_index: usize, _: u32) {
