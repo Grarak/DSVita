@@ -822,6 +822,7 @@ impl From<Op> for MemoryAmount {
             | Op::StrhPtrp
             | Op::LdrshRegT
             | Op::LdrhImm5T
+            | Op::StrhRegT
             | Op::StrhImm5T => MemoryAmount::HALF,
             Op::LdrOfim
             | Op::LdrOfip
@@ -910,6 +911,7 @@ impl From<Op> for MemoryAmount {
             | Op::LdrImm5T
             | Op::LdrPcT
             | Op::LdrSpT
+            | Op::StrRegT
             | Op::StrImm5T
             | Op::StrSpT => MemoryAmount::WORD,
             Op::LdrdOfim

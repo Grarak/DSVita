@@ -58,7 +58,12 @@ impl JitAsm {
             | Op::LdrImm5T
             | Op::LdrPcT
             | Op::LdrSpT => JitAsm::emit_ldr_thumb,
-            Op::StrbImm5T | Op::StrhImm5T | Op::StrImm5T | Op::StrSpT => JitAsm::emit_str_thumb,
+            Op::StrbImm5T
+            | Op::StrhImm5T
+            | Op::StrhRegT
+            | Op::StrRegT
+            | Op::StrImm5T
+            | Op::StrSpT => JitAsm::emit_str_thumb,
             Op::LdmiaT | Op::PopT => JitAsm::emit_ldm_thumb,
             Op::PushLrT => JitAsm::emit_stm_thumb,
 

@@ -44,25 +44,28 @@ impl InstMemHandler {
     fn handle_request<const THUMB: bool, const WRITE: bool>(&mut self, opcode: u32, pc: u32) {
         let inst_info = InstMemHandler::get_inst_info::<THUMB>(opcode);
 
-        let pre = match inst_info.op {
-            Op::LdrOfip
-            | Op::LdrbOfrplr
-            | Op::StrOfip
-            | Op::StrhOfip
-            | Op::StrPrim
-            | Op::LdrshRegT
-            | Op::LdrbImm5T
-            | Op::LdrImm5T
-            | Op::LdrhImm5T
-            | Op::LdrPcT
-            | Op::LdrSpT
-            | Op::StrbImm5T
-            | Op::StrImm5T
-            | Op::StrhImm5T
-            | Op::StrSpT => true,
-            Op::LdrPtip => false,
-            _ => todo!("{:?}", inst_info),
-        };
+        let pre =
+            match inst_info.op {
+                Op::LdrOfip
+                | Op::LdrbOfrplr
+                | Op::StrOfip
+                | Op::StrhOfip
+                | Op::StrPrim
+                | Op::LdrshRegT
+                | Op::LdrbImm5T
+                | Op::LdrImm5T
+                | Op::LdrhImm5T
+                | Op::LdrPcT
+                | Op::LdrSpT
+                | Op::StrbImm5T
+                | Op::StrhRegT
+                | Op::StrhImm5T
+                | Op::StrRegT
+                | Op::StrImm5T
+                | Op::StrSpT => true,
+                Op::LdrPtip => false,
+                _ => todo!("{:?}", inst_info),
+            };
 
         let write_back = match inst_info.op {
             Op::LdrOfip
@@ -76,8 +79,10 @@ impl InstMemHandler {
             | Op::LdrPcT
             | Op::LdrSpT
             | Op::StrbImm5T
-            | Op::StrImm5T
+            | Op::StrhRegT
             | Op::StrhImm5T
+            | Op::StrRegT
+            | Op::StrImm5T
             | Op::StrSpT => false,
             Op::LdrPtip | Op::StrPrim => true,
             _ => todo!("{:?}", inst_info),

@@ -166,9 +166,9 @@ impl<const SIZE: usize, const CHUNK_SIZE: usize, const SECTIONS_COUNT: usize>
         }
     }
 
-    fn add<const MAP_SIZE: usize, const OFFSET: usize>(&mut self, map: VramMap<MAP_SIZE>) {
+    fn add<const MAP_SIZE: usize>(&mut self, map: VramMap<MAP_SIZE>, offset: usize) {
         for i in 0..(MAP_SIZE / CHUNK_SIZE) {
-            self.sections[OFFSET + i].add(map.extract_section::<CHUNK_SIZE>(i))
+            self.sections[offset + i].add(map.extract_section::<CHUNK_SIZE>(i))
         }
     }
 
@@ -373,134 +373,170 @@ impl VramInner {
         self.obj_ext_palette_b = VramMap::default();
         self.arm7 = OverlapMapping::new();
 
-        let cnt_a = VramCnt::from(self.cnt[0]);
-        if bool::from(cnt_a.enable()) {
-            let mst = u8::from(cnt_a.mst()) & 0x3;
-            match mst {
-                0 => {
-                    let map: VramMap<BANK_A_SIZE> = VramMap::new(&self.banks.vram_a);
-                    self.lcdc.add::<BANK_A_SIZE, 0>(map);
+        {
+            let cnt_a = VramCnt::from(self.cnt[0]);
+            if bool::from(cnt_a.enable()) {
+                let mst = u8::from(cnt_a.mst()) & 0x3;
+                match mst {
+                    0 => {
+                        let map: VramMap<BANK_A_SIZE> = VramMap::new(&self.banks.vram_a);
+                        self.lcdc.add::<BANK_A_SIZE>(map, 0);
+                    }
+                    1 => {
+                        let ofs = u8::from(cnt_a.ofs());
+                        self.bg_a.add::<BANK_A_SIZE>(
+                            VramMap::new(&self.banks.vram_a),
+                            128 / 16 * ofs as usize,
+                        );
+                    }
+                    2 => {
+                        todo!()
+                    }
+                    3 => {
+                        todo!()
+                    }
+                    _ => {}
                 }
-                1 => {
-                    todo!()
-                }
-                2 => {
-                    todo!()
-                }
-                3 => {
-                    todo!()
-                }
-                _ => {}
             }
         }
 
-        let cnt_b = VramCnt::from(self.cnt[1]);
-        if bool::from(cnt_b.enable()) {
-            let mst = u8::from(cnt_a.mst()) & 0x3;
-            match mst {
-                0 => {
-                    self.lcdc
-                        .add::<BANK_B_SIZE, { BANK_A_SIZE / 1024 / 16 }>(VramMap::new(
-                            &self.banks.vram_b,
-                        ));
+        {
+            let cnt_b = VramCnt::from(self.cnt[1]);
+            if bool::from(cnt_b.enable()) {
+                let mst = u8::from(cnt_b.mst()) & 0x3;
+                match mst {
+                    0 => {
+                        self.lcdc.add::<BANK_B_SIZE>(
+                            VramMap::new(&self.banks.vram_b),
+                            BANK_A_SIZE / 1024 / 16,
+                        );
+                    }
+                    1 => {
+                        let ofs = u8::from(cnt_b.ofs());
+                        self.bg_a.add::<BANK_B_SIZE>(
+                            VramMap::new(&self.banks.vram_b),
+                            128 / 16 * ofs as usize,
+                        );
+                    }
+                    2 => {
+                        let ofs = u8::from(cnt_b.ofs());
+                        self.obj_a.add::<BANK_B_SIZE>(
+                            VramMap::new(&self.banks.vram_b),
+                            128 / 16 * (ofs & 1) as usize,
+                        );
+                    }
+                    3 => {
+                        todo!()
+                    }
+                    _ => {}
                 }
-                1 => {
-                    todo!()
-                }
-                2 => {
-                    todo!()
-                }
-                3 => {
-                    todo!()
-                }
-                _ => {}
             }
         }
 
-        let cnt_c = VramCnt::from(self.cnt[2]);
-        if bool::from(cnt_c.enable()) {
-            let mst = u8::from(cnt_a.mst());
-            match mst {
-                0 => {
-                    self.lcdc
-                        .add::<BANK_C_SIZE, { BANK_A_SIZE / 1024 / 16 * 2 }>(VramMap::new(
-                            &self.banks.vram_c,
-                        ));
+        {
+            let cnt_c = VramCnt::from(self.cnt[2]);
+            if bool::from(cnt_c.enable()) {
+                let mst = u8::from(cnt_c.mst());
+                match mst {
+                    0 => {
+                        self.lcdc.add::<BANK_C_SIZE>(
+                            VramMap::new(&self.banks.vram_c),
+                            BANK_A_SIZE / 1024 / 16 * 2,
+                        );
+                    }
+                    1 => {
+                        let ofs = u8::from(cnt_c.ofs());
+                        self.bg_a.add::<BANK_C_SIZE>(
+                            VramMap::new(&self.banks.vram_c),
+                            128 / 16 * ofs as usize,
+                        );
+                    }
+                    2 => {
+                        todo!()
+                    }
+                    3 => {
+                        todo!()
+                    }
+                    4 => {
+                        self.bg_b
+                            .add::<BANK_C_SIZE>(VramMap::new(&self.banks.vram_c), 0);
+                    }
+                    _ => {}
                 }
-                1 => {
-                    todo!()
-                }
-                2 => {
-                    todo!()
-                }
-                3 => {
-                    todo!()
-                }
-                4 => {
-                    todo!()
-                }
-                _ => {}
             }
         }
 
-        let cnt_d = VramCnt::from(self.cnt[3]);
-        if bool::from(cnt_d.enable()) {
-            let mst = u8::from(cnt_a.mst());
-            match mst {
-                0 => {
-                    self.lcdc
-                        .add::<BANK_D_SIZE, { BANK_A_SIZE / 1024 / 16 * 3 }>(VramMap::new(
-                            &self.banks.vram_d,
-                        ));
+        {
+            let cnt_d = VramCnt::from(self.cnt[3]);
+            if bool::from(cnt_d.enable()) {
+                let mst = u8::from(cnt_d.mst());
+                match mst {
+                    0 => {
+                        self.lcdc.add::<BANK_D_SIZE>(
+                            VramMap::new(&self.banks.vram_d),
+                            BANK_A_SIZE / 1024 / 16 * 3,
+                        );
+                    }
+                    1 => {
+                        let ofs = u8::from(cnt_d.ofs());
+                        self.bg_a.add::<BANK_D_SIZE>(
+                            VramMap::new(&self.banks.vram_d),
+                            128 / 16 * ofs as usize,
+                        );
+                    }
+                    2 => {
+                        todo!()
+                    }
+                    3 => {
+                        todo!()
+                    }
+                    _ => {}
                 }
-                1 => {
-                    todo!()
-                }
-                2 => {
-                    todo!()
-                }
-                3 => {
-                    todo!()
-                }
-                _ => {}
             }
         }
 
-        let cnt_e = VramCnt::from(self.cnt[4]);
-        if bool::from(cnt_e.enable()) {
-            let mst = u8::from(cnt_a.mst());
-            match mst {
-                0 => {
-                    self.lcdc
-                        .add::<BANK_E_SIZE, { BANK_A_SIZE / 1024 / 16 * 4 }>(VramMap::new(
-                            &self.banks.vram_e,
-                        ));
+        {
+            let cnt_e = VramCnt::from(self.cnt[4]);
+            if bool::from(cnt_e.enable()) {
+                let mst = u8::from(cnt_e.mst());
+                match mst {
+                    0 => {
+                        self.lcdc.add::<BANK_E_SIZE>(
+                            VramMap::new(&self.banks.vram_e),
+                            BANK_A_SIZE / 1024 / 16 * 4,
+                        );
+                    }
+                    1 => {
+                        self.bg_a
+                            .add::<BANK_E_SIZE>(VramMap::new(&self.banks.vram_e), 0);
+                    }
+                    2 => {
+                        todo!()
+                    }
+                    3 => {
+                        todo!()
+                    }
+                    _ => {}
                 }
-                1 => {
-                    todo!()
-                }
-                2 => {
-                    todo!()
-                }
-                3 => {
-                    todo!()
-                }
-                _ => {}
             }
         }
 
         let cnt_f = VramCnt::from(self.cnt[5]);
         if bool::from(cnt_f.enable()) {
-            let mst = u8::from(cnt_a.mst());
+            let mst = u8::from(cnt_f.mst());
             match mst {
                 0 => {
-                    self.lcdc
-                        .add::<BANK_F_SIZE, { (BANK_A_SIZE * 4 + BANK_E_SIZE) / 1024 / 16 }>(
-                            VramMap::new(&self.banks.vram_f),
-                        );
+                    self.lcdc.add::<BANK_F_SIZE>(
+                        VramMap::new(&self.banks.vram_f),
+                        (BANK_A_SIZE * 4 + BANK_E_SIZE) / 1024 / 16,
+                    );
                 }
                 1 => {
-                    todo!()
+                    let ofs = u8::from(cnt_f.ofs()) as usize;
+                    self.bg_a.add::<BANK_F_SIZE>(
+                        VramMap::new(&self.banks.vram_f),
+                        (ofs & 1) + (64 / 16 * (ofs & 0x2)),
+                    );
                 }
                 2 => {
                     todo!()
@@ -520,16 +556,20 @@ impl VramInner {
 
         let cnt_g = VramCnt::from(self.cnt[6]);
         if bool::from(cnt_g.enable()) {
-            let mst = u8::from(cnt_a.mst());
+            let mst = u8::from(cnt_g.mst());
             match mst {
                 0 => {
-                    self.lcdc
-                        .add::<BANK_G_SIZE, { (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE) / 1024 / 16 }>(
-                            VramMap::new(&self.banks.vram_g),
-                        );
+                    self.lcdc.add::<BANK_G_SIZE>(
+                        VramMap::new(&self.banks.vram_g),
+                        (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE) / 1024 / 16,
+                    );
                 }
                 1 => {
-                    todo!()
+                    let ofs = u8::from(cnt_g.ofs()) as usize;
+                    self.bg_a.add::<BANK_G_SIZE>(
+                        VramMap::new(&self.banks.vram_g),
+                        (ofs & 1) + (64 / 16 * (ofs & 0x2)),
+                    );
                 }
                 2 => {
                     todo!()
@@ -549,12 +589,13 @@ impl VramInner {
 
         let cnt_h = VramCnt::from(self.cnt[7]);
         if bool::from(cnt_h.enable()) {
-            let mst = u8::from(cnt_a.mst()) & 0x3;
+            let mst = u8::from(cnt_h.mst()) & 0x3;
             match mst {
                 0 => {
-                    self.lcdc.add::<BANK_H_SIZE, {
-                        (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE + BANK_G_SIZE) / 1024 / 16
-                    }>(VramMap::new(&self.banks.vram_h));
+                    self.lcdc.add::<BANK_H_SIZE>(
+                        VramMap::new(&self.banks.vram_h),
+                        (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE + BANK_G_SIZE) / 1024 / 16,
+                    );
                 }
                 1 => {
                     todo!()
@@ -568,14 +609,15 @@ impl VramInner {
 
         let cnt_i = VramCnt::from(self.cnt[8]);
         if bool::from(cnt_i.enable()) {
-            let mst = u8::from(cnt_a.mst()) & 0x3;
+            let mst = u8::from(cnt_i.mst()) & 0x3;
             match mst {
                 0 => {
-                    self.lcdc.add::<BANK_I_SIZE, {
+                    self.lcdc.add::<BANK_I_SIZE>(
+                        VramMap::new(&self.banks.vram_i),
                         (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE + BANK_G_SIZE + BANK_H_SIZE)
                             / 1024
-                            / 16
-                    }>(VramMap::new(&self.banks.vram_i));
+                            / 16,
+                    );
                 }
                 1 => {
                     todo!()

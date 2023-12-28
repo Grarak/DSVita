@@ -241,7 +241,7 @@ pub fn main() {
             })
             .unwrap();
 
-        arm9_thread.join().unwrap();
-        arm7_thread.join().unwrap();
+        arm9_thread.join().ok();
+        arm7_thread.join().ok();
     }
 }

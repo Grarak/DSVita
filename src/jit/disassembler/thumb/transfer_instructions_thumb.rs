@@ -41,7 +41,17 @@ mod transfer_thumb_ops {
 
     #[inline]
     pub fn strh_reg_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let op0 = Reg::from((opcode & 0x7) as u8);
+        let op1 = Reg::from(((opcode >> 3) & 0x7) as u8);
+        let op2 = Reg::from(((opcode >> 6) & 0x7) as u8);
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
+            reg_reserve!(op0, op1, op2),
+            reg_reserve!(),
+            3,
+        )
     }
 
     #[inline]
@@ -51,7 +61,17 @@ mod transfer_thumb_ops {
 
     #[inline]
     pub fn str_reg_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let op0 = Reg::from((opcode & 0x7) as u8);
+        let op1 = Reg::from(((opcode >> 3) & 0x7) as u8);
+        let op2 = Reg::from(((opcode >> 6) & 0x7) as u8);
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
+            reg_reserve!(op0, op1, op2),
+            reg_reserve!(),
+            3,
+        )
     }
 
     #[inline]
