@@ -12,6 +12,7 @@ title_name = "DSPSV"
 
 [dependencies]
 bilge = "0.2.0"
+chrono = "0.4.31"
 im = "15.1.0"
 paste = "1.0.14"
 rayon = "1.8.0"

@@ -100,7 +100,7 @@ impl AsMut<[u8]> for SharedWramMapMut<'_> {
 }
 
 struct SharedWram {
-    pub cnt: u8,
+    cnt: u8,
     mem: HeapMem<{ regions::SHARED_WRAM_SIZE as usize }>,
     arm9_ptr: *mut u8,
     arm9_size: usize,

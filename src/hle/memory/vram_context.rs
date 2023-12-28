@@ -666,6 +666,10 @@ impl VramContext {
         self.stat.load(Ordering::Relaxed)
     }
 
+    pub fn get_cnt(&self, bank: usize) -> u8 {
+        self.inner.read().unwrap().cnt[bank]
+    }
+
     pub fn set_cnt(&self, bank: usize, value: u8) {
         self.inner.write().unwrap().set_cnt(bank, value);
     }

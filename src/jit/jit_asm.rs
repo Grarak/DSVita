@@ -459,7 +459,7 @@ impl JitAsm {
         }
         self.bios_context.cycle_correction = 0;
 
-        let now = std::time::Instant::now();
+        // let now = std::time::Instant::now();
         unsafe {
             JitAsm::enter_jit(
                 jit_entry,
@@ -471,7 +471,7 @@ impl JitAsm {
                 },
             )
         };
-        let elapsed_time = now.elapsed();
+        // let elapsed_time = now.elapsed();
         debug_assert_ne!(self.guest_branch_out_pc, 0);
 
         let executed_insts = (self.guest_branch_out_pc - guest_pc) / (!thumb as u32 * 2 + 2);
@@ -485,11 +485,11 @@ impl JitAsm {
             .on_cycle_update(executed_cycles);
 
         // TODO cycle correction for conds
-        self.jit_cycle_manager.write().unwrap().insert(
-            self.cpu_type,
-            elapsed_time,
-            executed_cycles,
-        );
+        // self.jit_cycle_manager.write().unwrap().insert(
+        //     self.cpu_type,
+        //     elapsed_time,
+        //     executed_cycles,
+        // );
 
         if DEBUG {
             let inst_info = if thumb {
