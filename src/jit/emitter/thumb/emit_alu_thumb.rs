@@ -27,6 +27,7 @@ impl JitAsm {
                 Op::MulDpT => MulReg::muls_al(op0, op0, *reg),
                 Op::NegDpT => AluImm::rsbs_al(op0, *reg, 0),
                 Op::RorDpT => AluReg::movs(op0, op0, ShiftType::ROR, *reg, Cond::AL),
+                Op::SbcDpT => AluShiftImm::sbcs_al(op0, op1, *reg),
                 Op::SubRegT => AluShiftImm::subs_al(op0, op1, *reg),
                 Op::TstDpT => AluShiftImm::tst_al(op0, *reg),
                 Op::OrrDpT => AluShiftImm::orrs_al(op0, op1, *reg),
@@ -40,7 +41,7 @@ impl JitAsm {
                 Op::LslImmT => AluShiftImm::movs(op0, op1, ShiftType::LSL, *imm as u8, Cond::AL),
                 Op::LsrImmT => AluShiftImm::movs(op0, op1, ShiftType::LSR, *imm as u8, Cond::AL),
                 Op::MovImm8T => AluImm::movs_al(op0, *imm as u8),
-                Op::SubImm8T => AluImm::subs_al(op0, op1, *imm as u8),
+                Op::SubImm3T | Op::SubImm8T => AluImm::subs_al(op0, op1, *imm as u8),
                 _ => todo!("{:?}", inst_info),
             },
             _ => panic!(),
@@ -93,6 +94,30 @@ impl JitAsm {
                 .emit_opcodes
                 .extend(self.thread_regs.borrow().emit_set_reg(*op0, *op0, tmp_reg));
         }
+    }
+
+    pub fn emit_cmp_h_thumb(&mut self, buf_index: usize, _: u32) {
+        let inst_info = &self.jit_buf.instructions[buf_index];
+
+        let operands = inst_info.operands();
+        let op1 = operands[0].as_reg_no_shift().unwrap();
+        let op2 = operands[1].as_reg_no_shift().unwrap();
+
+        if op2.is_high_gp_reg() {
+            self.jit_buf
+                .emit_opcodes
+                .extend(self.thread_regs.borrow().emit_get_reg(*op2, *op2));
+        }
+
+        if op1.is_high_gp_reg() {
+            self.jit_buf
+                .emit_opcodes
+                .extend(self.thread_regs.borrow().emit_get_reg(*op1, *op1));
+        }
+
+        self.jit_buf
+            .emit_opcodes
+            .push(AluShiftImm::cmp_al(*op1, *op2));
     }
 
     pub fn emit_movh_thumb(&mut self, buf_index: usize, _: u32) {

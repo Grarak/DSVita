@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::cmp::min;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Deref, DerefMut};
@@ -38,9 +39,11 @@ pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
     aligned[0].clone()
 }
 
-pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) {
+pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> usize {
     let (_, aligned, _) = unsafe { mem[addr as usize..].align_to::<T>() };
-    slice.copy_from_slice(&aligned[..slice.len()]);
+    let read_amount = min(aligned.len(), slice.len());
+    slice[..read_amount].copy_from_slice(&aligned[..read_amount]);
+    read_amount
 }
 
 pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
@@ -48,9 +51,11 @@ pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
     aligned[0] = value
 }
 
-pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) {
+pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) -> usize {
     let (_, aligned, _) = unsafe { mem[addr as usize..].align_to_mut::<T>() };
-    aligned[..slice.len()].copy_from_slice(slice)
+    let write_amount = min(aligned.len(), slice.len());
+    aligned[..write_amount].copy_from_slice(&slice[..write_amount]);
+    write_amount
 }
 
 pub struct StrErr {

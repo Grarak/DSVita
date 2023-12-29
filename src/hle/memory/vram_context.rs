@@ -134,10 +134,10 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
         for i in 0..self.count {
             let map = &self.overlaps[i];
             debug_assert_ne!(map.ptr, ptr::null());
-            utils::read_from_mem_slice(&map, index, &mut buf);
-            slice
+            let read_amount = utils::read_from_mem_slice(&map, index, &mut buf);
+            slice[..read_amount]
                 .iter_mut()
-                .zip(&buf)
+                .zip(&buf[..read_amount])
                 .for_each(|(a, b)| *a = T::from((*a).into() | (*b).into()))
         }
     }
@@ -172,7 +172,7 @@ impl<const SIZE: usize, const CHUNK_SIZE: usize, const SECTIONS_COUNT: usize>
         }
     }
 
-    pub fn read_slice<T: utils::Convert>(&self, mut addr: u32, slice: &mut [T]) {
+    pub fn read_slice<T: utils::Convert>(&self, mut addr: u32, slice: &mut [T]) -> usize {
         addr &= SIZE as u32 - 1;
         debug_assert!(addr as usize + slice.len() < SIZE);
 
@@ -191,9 +191,10 @@ impl<const SIZE: usize, const CHUNK_SIZE: usize, const SECTIONS_COUNT: usize>
             );
             slice_index += read_amount;
         }
+        slice_index
     }
 
-    pub fn write_slice<T: utils::Convert>(&mut self, mut addr: u32, slice: &[T]) {
+    pub fn write_slice<T: utils::Convert>(&mut self, mut addr: u32, slice: &[T]) -> usize {
         addr &= SIZE as u32 - 1;
         debug_assert!(addr as usize + slice.len() < SIZE);
 
@@ -212,6 +213,7 @@ impl<const SIZE: usize, const CHUNK_SIZE: usize, const SECTIONS_COUNT: usize>
             );
             slice_index += write_amount;
         }
+        slice_index
     }
 }
 
@@ -633,12 +635,15 @@ impl VramInner {
         }
     }
 
-    pub fn read_slice<T: utils::Convert>(&self, cpu_type: CpuType, addr: u32, slice: &mut [T]) {
+    pub fn read_slice<T: utils::Convert>(
+        &self,
+        cpu_type: CpuType,
+        addr: u32,
+        slice: &mut [T],
+    ) -> usize {
         match cpu_type {
             CpuType::ARM9 => match addr & 0xE00000 {
-                LCDC_OFFSET => {
-                    self.lcdc.read_slice(addr, slice);
-                }
+                LCDC_OFFSET => self.lcdc.read_slice(addr, slice),
                 BG_A_OFFSET => {
                     todo!()
                 }
@@ -661,12 +666,15 @@ impl VramInner {
         }
     }
 
-    pub fn write_slice<T: utils::Convert>(&mut self, cpu_type: CpuType, addr: u32, slice: &[T]) {
+    pub fn write_slice<T: utils::Convert>(
+        &mut self,
+        cpu_type: CpuType,
+        addr: u32,
+        slice: &[T],
+    ) -> usize {
         match cpu_type {
             CpuType::ARM9 => match addr & 0xE00000 {
-                LCDC_OFFSET => {
-                    self.lcdc.write_slice(addr, slice);
-                }
+                LCDC_OFFSET => self.lcdc.write_slice(addr, slice),
                 BG_A_OFFSET => {
                     todo!()
                 }
@@ -721,17 +729,22 @@ impl VramContext {
         cpu_type: CpuType,
         addr_offset: u32,
         slice: &mut [T],
-    ) {
+    ) -> usize {
         self.inner
             .read()
             .unwrap()
-            .read_slice(cpu_type, addr_offset, slice);
+            .read_slice(cpu_type, addr_offset, slice)
     }
 
-    pub fn write_slice<T: utils::Convert>(&self, cpu_type: CpuType, addr_offset: u32, slice: &[T]) {
+    pub fn write_slice<T: utils::Convert>(
+        &self,
+        cpu_type: CpuType,
+        addr_offset: u32,
+        slice: &[T],
+    ) -> usize {
         self.inner
             .write()
             .unwrap()
-            .write_slice(cpu_type, addr_offset, slice);
+            .write_slice(cpu_type, addr_offset, slice)
     }
 }

@@ -1,6 +1,9 @@
+use crate::jit::assembler::arm::alu_assembler::AluImm;
+use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::Op;
+use std::ptr;
 
 impl JitAsm {
     pub fn emit_thumb(&mut self, buf_index: usize, pc: u32) {
@@ -25,12 +28,15 @@ impl JitAsm {
             | Op::MulDpT
             | Op::NegDpT
             | Op::RorDpT
+            | Op::SbcDpT
+            | Op::SubImm3T
             | Op::SubImm8T
             | Op::SubRegT
             | Op::TstDpT
             | Op::OrrDpT => JitAsm::emit_alu_common_thumb,
             Op::AddSpImmT => JitAsm::emit_add_sp_imm_thumb,
             Op::AddHT => JitAsm::emit_add_h_thumb,
+            Op::CmpHT => JitAsm::emit_cmp_h_thumb,
             Op::MovHT => JitAsm::emit_movh_thumb,
 
             Op::BT
@@ -53,7 +59,9 @@ impl JitAsm {
             Op::BxRegT => JitAsm::emit_bx_thumb,
 
             Op::LdrshRegT
+            | Op::LdrbRegT
             | Op::LdrbImm5T
+            | Op::LdrhRegT
             | Op::LdrhImm5T
             | Op::LdrImm5T
             | Op::LdrPcT
@@ -64,7 +72,7 @@ impl JitAsm {
             | Op::StrRegT
             | Op::StrImm5T
             | Op::StrSpT => JitAsm::emit_str_thumb,
-            Op::LdmiaT | Op::PopT => JitAsm::emit_ldm_thumb,
+            Op::LdmiaT | Op::PopT | Op::PopPcT => JitAsm::emit_ldm_thumb,
             Op::PushLrT => JitAsm::emit_stm_thumb,
 
             Op::SwiT => JitAsm::emit_swi_thumb,
@@ -78,7 +86,25 @@ impl JitAsm {
         }
 
         if out_regs.is_reserved(Reg::PC) {
-            todo!()
+            self.jit_buf
+                .emit_opcodes
+                .extend(&self.thread_regs.borrow().save_regs_thumb_opcodes);
+
+            self.jit_buf
+                .emit_opcodes
+                .extend(&AluImm::mov32(Reg::R0, pc));
+            self.jit_buf.emit_opcodes.extend(AluImm::mov32(
+                Reg::LR,
+                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+            ));
+            self.jit_buf
+                .emit_opcodes
+                .push(LdrStrImm::str_al(Reg::R0, Reg::LR));
+
+            JitAsm::emit_host_bx(
+                self.breakout_skip_save_regs_thumb_addr,
+                &mut self.jit_buf.emit_opcodes,
+            );
         }
     }
 }

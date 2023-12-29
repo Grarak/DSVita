@@ -20,7 +20,7 @@ impl JitAsm {
             Op::LdrOfip | Op::LdrbOfrplr | Op::LdrPtip => JitAsm::emit_ldr,
             Op::LdmiaW => JitAsm::emit_ldm,
             Op::StrOfip | Op::StrhOfip | Op::StrPrim => JitAsm::emit_str,
-            Op::StmiaW => JitAsm::emit_stm,
+            Op::Stmia | Op::StmiaW | Op::StmdbW => JitAsm::emit_stm,
             Op::Mcr | Op::Mrc => JitAsm::emit_cp15,
             Op::MsrRc | Op::MsrIc => JitAsm::emit_msr_cprs,
             Op::MrsRc => JitAsm::emit_mrs_cprs,
@@ -70,9 +70,10 @@ impl JitAsm {
             self.jit_buf
                 .emit_opcodes
                 .extend(&AluImm::mov32(Reg::R0, pc));
-            self.jit_buf.emit_opcodes.extend(
-                AluImm::mov32(Reg::LR, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32)
-            );
+            self.jit_buf.emit_opcodes.extend(AluImm::mov32(
+                Reg::LR,
+                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+            ));
             self.jit_buf
                 .emit_opcodes
                 .push(LdrStrImm::str_al(Reg::R0, Reg::LR));

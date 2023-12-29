@@ -1514,7 +1514,15 @@ mod alu_ops {
 
     #[inline]
     pub fn mvn_imm_impl(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_2(Operand::reg(op0), Operand::imm(operand2)),
+            reg_reserve!(),
+            reg_reserve!(op0),
+            1,
+        )
     }
 
     #[inline]

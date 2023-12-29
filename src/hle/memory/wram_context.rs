@@ -124,32 +124,32 @@ impl SharedWram {
 
     fn set_cnt(&mut self, value: u8) {
         self.cnt = value & 0x3;
-        let shared_len = self.mem.len();
+        const SHARED_LEN: usize = regions::SHARED_WRAM_SIZE as usize;
 
         match self.cnt {
             0 => {
                 self.arm9_ptr = self.mem.as_mut_ptr();
-                self.arm9_size = shared_len;
+                self.arm9_size = SHARED_LEN;
                 self.arm7_ptr = ptr::null_mut();
                 self.arm7_size = 0;
             }
             1 => {
-                self.arm9_ptr = self.mem[shared_len / 2..].as_mut_ptr();
-                self.arm9_size = shared_len / 2;
+                self.arm9_ptr = self.mem[SHARED_LEN / 2..].as_mut_ptr();
+                self.arm9_size = SHARED_LEN / 2;
                 self.arm7_ptr = self.mem.as_mut_ptr();
-                self.arm7_size = shared_len / 2;
+                self.arm7_size = SHARED_LEN / 2;
             }
             2 => {
                 self.arm9_ptr = self.mem.as_mut_ptr();
-                self.arm9_size = shared_len / 2;
-                self.arm7_ptr = self.mem[shared_len / 2..].as_mut_ptr();
-                self.arm7_size = shared_len / 2;
+                self.arm9_size = SHARED_LEN / 2;
+                self.arm7_ptr = self.mem[SHARED_LEN / 2..].as_mut_ptr();
+                self.arm7_size = SHARED_LEN / 2;
             }
             3 => {
                 self.arm9_ptr = ptr::null_mut();
                 self.arm9_size = 0;
                 self.arm7_ptr = self.mem.as_mut_ptr();
-                self.arm7_size = shared_len;
+                self.arm7_size = SHARED_LEN;
             }
             _ => panic!(),
         }
@@ -171,26 +171,26 @@ impl SharedWram {
         SharedWramMapMut::new(self.arm7_ptr, self.arm7_size)
     }
 
-    fn read_slice_arm9<T: Convert>(&self, addr_offset: u32, slice: &mut [T]) {
+    fn read_slice_arm9<T: Convert>(&self, addr_offset: u32, slice: &mut [T]) -> usize {
         let mem = self.get_map_arm9();
-        utils::read_from_mem_slice(&mem, addr_offset & (mem.len() - 1) as u32, slice);
+        utils::read_from_mem_slice(&mem, addr_offset & (mem.len() - 1) as u32, slice)
     }
 
-    fn read_slice_arm7<T: Convert>(&self, addr_offset: u32, slice: &mut [T]) {
+    fn read_slice_arm7<T: Convert>(&self, addr_offset: u32, slice: &mut [T]) -> usize {
         let mem = self.get_map_arm7();
-        utils::read_from_mem_slice(&mem, addr_offset & (mem.len() - 1) as u32, slice);
+        utils::read_from_mem_slice(&mem, addr_offset & (mem.len() - 1) as u32, slice)
     }
 
-    fn write_slice_arm9<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) {
+    fn write_slice_arm9<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) -> usize {
         let mut mem = self.get_map_arm9_mut();
         let mem_len = mem.len();
-        utils::write_to_mem_slice(&mut mem, addr_offset & (mem_len - 1) as u32, slice);
+        utils::write_to_mem_slice(&mut mem, addr_offset & (mem_len - 1) as u32, slice)
     }
 
-    fn write_slice_arm7<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) {
+    fn write_slice_arm7<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) -> usize {
         let mut mem = self.get_map_arm7_mut();
         let mem_len = mem.len();
-        utils::write_to_mem_slice(&mut mem, addr_offset & (mem_len - 1) as u32, slice);
+        utils::write_to_mem_slice(&mut mem, addr_offset & (mem_len - 1) as u32, slice)
     }
 }
 
@@ -215,7 +215,12 @@ impl WramContext {
         self.shared.write().unwrap().set_cnt(value)
     }
 
-    pub fn read_slice<T: Convert>(&self, cpu_type: CpuType, addr_offset: u32, slice: &mut [T]) {
+    pub fn read_slice<T: Convert>(
+        &self,
+        cpu_type: CpuType,
+        addr_offset: u32,
+        slice: &mut [T],
+    ) -> usize {
         match cpu_type {
             CpuType::ARM9 => self
                 .shared
@@ -228,18 +233,23 @@ impl WramContext {
                         self.wram_arm7.borrow().as_slice(),
                         addr_offset & (regions::ARM7_WRAM_SIZE - 1),
                         slice,
-                    );
+                    )
                 } else {
                     self.shared
                         .read()
                         .unwrap()
-                        .read_slice_arm7(addr_offset, slice);
+                        .read_slice_arm7(addr_offset, slice)
                 }
             }
         }
     }
 
-    pub fn write_slice<T: Convert>(&self, cpu_type: CpuType, addr_offset: u32, slice: &[T]) {
+    pub fn write_slice<T: Convert>(
+        &self,
+        cpu_type: CpuType,
+        addr_offset: u32,
+        slice: &[T],
+    ) -> usize {
         match cpu_type {
             CpuType::ARM9 => self
                 .shared
@@ -252,12 +262,12 @@ impl WramContext {
                         self.wram_arm7.borrow_mut().as_mut_slice(),
                         addr_offset & (regions::ARM7_WRAM_SIZE - 1),
                         slice,
-                    );
+                    )
                 } else {
                     self.shared
                         .write()
                         .unwrap()
-                        .write_slice_arm7(addr_offset, slice);
+                        .write_slice_arm7(addr_offset, slice)
                 }
             }
         }

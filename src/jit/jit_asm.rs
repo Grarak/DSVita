@@ -132,15 +132,14 @@ impl JitAsm {
                 opcodes
             };
 
-            let restore_guest_opcodes =
-                {
-                    let mut opcodes = Vec::new();
-                    // Restore guest
-                    opcodes.push(AluShiftImm::mov_al(Reg::LR, Reg::SP));
-                    opcodes.extend(&thread_regs.borrow().restore_regs_opcodes);
-                    opcodes.shrink_to_fit();
-                    opcodes
-                };
+            let restore_guest_opcodes = {
+                let mut opcodes = Vec::new();
+                // Restore guest
+                opcodes.push(AluShiftImm::mov_al(Reg::LR, Reg::SP));
+                opcodes.extend(&thread_regs.borrow().restore_regs_opcodes);
+                opcodes.shrink_to_fit();
+                opcodes
+            };
 
             let restore_host_thumb_opcodes = {
                 let mut opcodes = Vec::new();
@@ -272,16 +271,16 @@ impl JitAsm {
             if THUMB {
                 let mut buf = [0u16; 2048];
                 'outer: loop {
-                    self.mem_handler.read_slice(entry + index, &mut buf);
-                    for opcode in buf {
+                    let read_amount = self.mem_handler.read_slice(entry + index, &mut buf);
+                    for opcode in &buf[..read_amount] {
                         debug_println!(
                             "{:?} disassemble thumb {:x} {}",
                             self.cpu_type,
                             opcode,
                             opcode
                         );
-                        let (op, func) = lookup_thumb_opcode(opcode);
-                        let inst_info = func(opcode, *op);
+                        let (op, func) = lookup_thumb_opcode(*opcode);
+                        let inst_info = func(*opcode, *op);
 
                         self.jit_buf.insts_cycle_counts.push(inst_info.cycle);
                         self.jit_buf.instructions.push(InstInfo::from(&inst_info));
@@ -295,16 +294,16 @@ impl JitAsm {
             } else {
                 let mut buf = [0u32; 1024];
                 'outer: loop {
-                    self.mem_handler.read_slice(entry + index, &mut buf);
-                    for opcode in buf {
+                    let read_amount = self.mem_handler.read_slice(entry + index, &mut buf);
+                    for opcode in &buf[..read_amount] {
                         debug_println!(
                             "{:?} disassemble arm {:x} {}",
                             self.cpu_type,
                             opcode,
                             opcode
                         );
-                        let (op, func) = lookup_opcode(opcode);
-                        let inst_info = func(opcode, *op);
+                        let (op, func) = lookup_opcode(*opcode);
+                        let inst_info = func(*opcode, *op);
                         let is_branch = inst_info.op.is_branch();
                         let cond = inst_info.cond;
 
@@ -420,33 +419,32 @@ impl JitAsm {
 
         self.thread_regs.borrow_mut().set_thumb(thumb);
 
-        let (jit_entry, guest_pc_end, insts_cycle_count) =
+        let (jit_entry, guest_pc_end, insts_cycle_count) = {
             {
+                let mut jit_memory = self.jit_memory.write().unwrap();
+
                 {
-                    let mut jit_memory = self.jit_memory.write().unwrap();
-
-                    {
-                        let mut jit_state = self.mem_handler.jit_state.lock().unwrap();
-                        for addr in &jit_state.invalidated_addrs {
-                            jit_memory.invalidate_block(*addr);
-                        }
-                        jit_state.invalidated_addrs.clear();
+                    let mut jit_state = self.mem_handler.jit_state.lock().unwrap();
+                    for addr in &jit_state.invalidated_addrs {
+                        jit_memory.invalidate_block(*addr);
                     }
-
-                    if thumb {
-                        jit_memory.get_jit_start_addr::<true>(guest_pc)
-                    } else {
-                        jit_memory.get_jit_start_addr::<false>(guest_pc)
-                    }
+                    jit_state.invalidated_addrs.clear();
                 }
-                .unwrap_or_else(|| {
-                    if thumb {
-                        self.emit_code_block::<true>(guest_pc)
-                    } else {
-                        self.emit_code_block::<false>(guest_pc)
-                    }
-                })
-            };
+
+                if thumb {
+                    jit_memory.get_jit_start_addr::<true>(guest_pc)
+                } else {
+                    jit_memory.get_jit_start_addr::<false>(guest_pc)
+                }
+            }
+            .unwrap_or_else(|| {
+                if thumb {
+                    self.emit_code_block::<true>(guest_pc)
+                } else {
+                    self.emit_code_block::<false>(guest_pc)
+                }
+            })
+        };
 
         self.mem_handler
             .jit_state
@@ -492,6 +490,11 @@ impl JitAsm {
         // );
 
         if DEBUG {
+            debug_println!(
+                "{:?} reading opcode of breakout at {:x}",
+                self.cpu_type,
+                self.guest_branch_out_pc
+            );
             let inst_info = if thumb {
                 let opcode = self.mem_handler.read(self.guest_branch_out_pc);
                 let (op, func) = lookup_thumb_opcode(opcode);

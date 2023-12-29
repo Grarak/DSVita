@@ -44,28 +44,29 @@ impl InstMemHandler {
     fn handle_request<const THUMB: bool, const WRITE: bool>(&mut self, opcode: u32, pc: u32) {
         let inst_info = InstMemHandler::get_inst_info::<THUMB>(opcode);
 
-        let pre =
-            match inst_info.op {
-                Op::LdrOfip
-                | Op::LdrbOfrplr
-                | Op::StrOfip
-                | Op::StrhOfip
-                | Op::StrPrim
-                | Op::LdrshRegT
-                | Op::LdrbImm5T
-                | Op::LdrImm5T
-                | Op::LdrhImm5T
-                | Op::LdrPcT
-                | Op::LdrSpT
-                | Op::StrbImm5T
-                | Op::StrhRegT
-                | Op::StrhImm5T
-                | Op::StrRegT
-                | Op::StrImm5T
-                | Op::StrSpT => true,
-                Op::LdrPtip => false,
-                _ => todo!("{:?}", inst_info),
-            };
+        let pre = match inst_info.op {
+            Op::LdrOfip
+            | Op::LdrbOfrplr
+            | Op::StrOfip
+            | Op::StrhOfip
+            | Op::StrPrim
+            | Op::LdrshRegT
+            | Op::LdrbRegT
+            | Op::LdrbImm5T
+            | Op::LdrImm5T
+            | Op::LdrhRegT
+            | Op::LdrhImm5T
+            | Op::LdrPcT
+            | Op::LdrSpT
+            | Op::StrbImm5T
+            | Op::StrhRegT
+            | Op::StrhImm5T
+            | Op::StrRegT
+            | Op::StrImm5T
+            | Op::StrSpT => true,
+            Op::LdrPtip => false,
+            _ => todo!("{:?}", inst_info),
+        };
 
         let write_back = match inst_info.op {
             Op::LdrOfip
@@ -73,8 +74,10 @@ impl InstMemHandler {
             | Op::StrOfip
             | Op::StrhOfip
             | Op::LdrshRegT
+            | Op::LdrbRegT
             | Op::LdrbImm5T
             | Op::LdrImm5T
+            | Op::LdrhRegT
             | Op::LdrhImm5T
             | Op::LdrPcT
             | Op::LdrSpT
@@ -240,28 +243,44 @@ impl InstMemHandler {
 
         let inst_info = InstMemHandler::get_inst_info::<THUMB>(opcode);
 
-        let mut pre =
-            match inst_info.op {
-                Op::Ldmia | Op::LdmiaW | Op::StmiaW | Op::LdmiaT | Op::PopT => false,
-                Op::PushLrT => true,
-                _ => todo!("{:?}", inst_info),
-            };
+        let mut pre = match inst_info.op {
+            Op::Ldmia
+            | Op::LdmiaW
+            | Op::Stmia
+            | Op::StmiaW
+            | Op::LdmiaT
+            | Op::PopT
+            | Op::PopPcT => false,
+            Op::StmdbW | Op::PushLrT => true,
+            _ => todo!("{:?}", inst_info),
+        };
 
         let decrement = match inst_info.op {
-            Op::Ldmia | Op::LdmiaW | Op::StmiaW | Op::LdmiaT | Op::PopT => false,
-            Op::PushLrT => {
+            Op::Ldmia
+            | Op::LdmiaW
+            | Op::Stmia
+            | Op::StmiaW
+            | Op::LdmiaT
+            | Op::PopT
+            | Op::PopPcT => false,
+            Op::StmdbW | Op::PushLrT => {
                 pre = !pre;
                 true
             }
             _ => todo!("{:?}", inst_info),
         };
 
-        let write_back =
-            match inst_info.op {
-                Op::Ldmia => false,
-                Op::LdmiaW | Op::StmiaW | Op::PushLrT | Op::LdmiaT | Op::PopT => true,
-                _ => todo!("{:?}", inst_info),
-            };
+        let write_back = match inst_info.op {
+            Op::Ldmia | Op::Stmia => false,
+            Op::LdmiaW
+            | Op::StmiaW
+            | Op::StmdbW
+            | Op::PushLrT
+            | Op::LdmiaT
+            | Op::PopT
+            | Op::PopPcT => true,
+            _ => todo!("{:?}", inst_info),
+        };
 
         let operands = inst_info.operands();
 
@@ -269,7 +288,11 @@ impl InstMemHandler {
         let mut rlist = RegReserve::from(inst_info.opcode & if THUMB { 0xFF } else { 0xFFFF });
         if inst_info.op == Op::PushLrT {
             rlist += Reg::LR;
+        } else if inst_info.op == Op::PopPcT {
+            rlist += Reg::PC;
         }
+
+        let mut thread_regs = self.thread_regs.borrow_mut();
 
         if rlist.len() == 0 {
             todo!()
@@ -280,14 +303,12 @@ impl InstMemHandler {
         }
 
         if rlist.is_reserved(Reg::PC) {
-            todo!()
+            *thread_regs.get_reg_value_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
         }
 
         if *op0 == Reg::PC {
             todo!()
         }
-
-        let mut thread_regs = self.thread_regs.borrow_mut();
 
         let start_addr = *thread_regs.get_reg_value(*op0);
         let mut addr = start_addr - (decrement as u32 * rlist.len() as u32 * 4);

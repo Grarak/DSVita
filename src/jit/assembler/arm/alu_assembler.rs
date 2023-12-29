@@ -520,6 +520,28 @@ impl AluShiftImm {
     }
 
     #[inline]
+    pub fn sbcs(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(AluShiftImm::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0x6),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn sbcs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
+        AluShiftImm::sbcs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+    }
+
+    #[inline]
     pub fn sub(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
         u32::from(AluShiftImm::new(
             u4::new(op2 as u8),
