@@ -1,7 +1,7 @@
 use crate::hle::memory::regions;
 use crate::hle::CpuType;
 use crate::utils;
-use crate::utils::{Convert, FastCell, HeapMem};
+use crate::utils::{Convert, FastCell, HeapMemU8};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::sync::RwLock;
@@ -101,7 +101,7 @@ impl AsMut<[u8]> for SharedWramMapMut<'_> {
 
 struct SharedWram {
     cnt: u8,
-    mem: HeapMem<{ regions::SHARED_WRAM_SIZE as usize }>,
+    mem: HeapMemU8<{ regions::SHARED_WRAM_SIZE as usize }>,
     arm9_ptr: *mut u8,
     arm9_size: usize,
     arm7_ptr: *mut u8,
@@ -112,7 +112,7 @@ impl SharedWram {
     fn new() -> Self {
         let mut instance = SharedWram {
             cnt: 0,
-            mem: HeapMem::new(),
+            mem: HeapMemU8::new(),
             arm9_ptr: ptr::null_mut(),
             arm9_size: 0,
             arm7_ptr: ptr::null_mut(),
@@ -195,14 +195,14 @@ impl SharedWram {
 }
 
 pub struct WramContext {
-    wram_arm7: FastCell<HeapMem<{ regions::ARM7_WRAM_SIZE as usize }>>,
+    wram_arm7: FastCell<HeapMemU8<{ regions::ARM7_WRAM_SIZE as usize }>>,
     shared: RwLock<SharedWram>,
 }
 
 impl WramContext {
     pub fn new() -> Self {
         WramContext {
-            wram_arm7: FastCell::new(HeapMem::new()),
+            wram_arm7: FastCell::new(HeapMemU8::new()),
             shared: RwLock::new(SharedWram::new()),
         }
     }
@@ -215,13 +215,12 @@ impl WramContext {
         self.shared.write().unwrap().set_cnt(value)
     }
 
-    pub fn read_slice<T: Convert>(
+    pub fn read_slice<const CPU: CpuType, T: Convert>(
         &self,
-        cpu_type: CpuType,
         addr_offset: u32,
         slice: &mut [T],
     ) -> usize {
-        match cpu_type {
+        match CPU {
             CpuType::ARM9 => self
                 .shared
                 .read()
@@ -244,13 +243,12 @@ impl WramContext {
         }
     }
 
-    pub fn write_slice<T: Convert>(
+    pub fn write_slice<const CPU: CpuType, T: Convert>(
         &self,
-        cpu_type: CpuType,
         addr_offset: u32,
         slice: &[T],
     ) -> usize {
-        match cpu_type {
+        match CPU {
             CpuType::ARM9 => self
                 .shared
                 .write()

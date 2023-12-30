@@ -1,11 +1,12 @@
 use crate::hle::cp15_context::{cp15_read, cp15_write};
+use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::{Cond, Op};
 use std::ptr;
 
-impl JitAsm {
+impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_cp15(&mut self, buf_index: usize, _: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 

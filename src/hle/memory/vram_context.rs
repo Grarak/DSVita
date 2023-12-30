@@ -1,7 +1,7 @@
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
-use crate::utils::HeapMem;
+use crate::utils::HeapMemU8;
 use bilge::prelude::*;
 use static_assertions::const_assert_eq;
 use std::cmp::min;
@@ -18,7 +18,7 @@ struct VramMap<const SIZE: usize> {
 }
 
 impl<const SIZE: usize> VramMap<SIZE> {
-    fn new<const T: usize>(heap: &HeapMem<T>) -> Self {
+    fn new<const T: usize>(heap: &HeapMemU8<T>) -> Self {
         VramMap {
             ptr: heap.as_ptr() as _,
         }
@@ -247,29 +247,29 @@ const TOTAL_SIZE: usize = BANK_A_SIZE
 const_assert_eq!(TOTAL_SIZE, 656 * 1024);
 
 struct VramBanks {
-    vram_a: HeapMem<BANK_A_SIZE>,
-    vram_b: HeapMem<BANK_B_SIZE>,
-    vram_c: HeapMem<BANK_C_SIZE>,
-    vram_d: HeapMem<BANK_D_SIZE>,
-    vram_e: HeapMem<BANK_E_SIZE>,
-    vram_f: HeapMem<BANK_F_SIZE>,
-    vram_g: HeapMem<BANK_G_SIZE>,
-    vram_h: HeapMem<BANK_H_SIZE>,
-    vram_i: HeapMem<BANK_I_SIZE>,
+    vram_a: HeapMemU8<BANK_A_SIZE>,
+    vram_b: HeapMemU8<BANK_B_SIZE>,
+    vram_c: HeapMemU8<BANK_C_SIZE>,
+    vram_d: HeapMemU8<BANK_D_SIZE>,
+    vram_e: HeapMemU8<BANK_E_SIZE>,
+    vram_f: HeapMemU8<BANK_F_SIZE>,
+    vram_g: HeapMemU8<BANK_G_SIZE>,
+    vram_h: HeapMemU8<BANK_H_SIZE>,
+    vram_i: HeapMemU8<BANK_I_SIZE>,
 }
 
 impl VramBanks {
     fn new() -> Self {
         let instance = VramBanks {
-            vram_a: HeapMem::new(),
-            vram_b: HeapMem::new(),
-            vram_c: HeapMem::new(),
-            vram_d: HeapMem::new(),
-            vram_e: HeapMem::new(),
-            vram_f: HeapMem::new(),
-            vram_g: HeapMem::new(),
-            vram_h: HeapMem::new(),
-            vram_i: HeapMem::new(),
+            vram_a: HeapMemU8::new(),
+            vram_b: HeapMemU8::new(),
+            vram_c: HeapMemU8::new(),
+            vram_d: HeapMemU8::new(),
+            vram_e: HeapMemU8::new(),
+            vram_f: HeapMemU8::new(),
+            vram_g: HeapMemU8::new(),
+            vram_h: HeapMemU8::new(),
+            vram_i: HeapMemU8::new(),
         };
 
         debug_println!(
@@ -635,13 +635,12 @@ impl VramInner {
         }
     }
 
-    pub fn read_slice<T: utils::Convert>(
+    pub fn read_slice<const CPU: CpuType, T: utils::Convert>(
         &self,
-        cpu_type: CpuType,
         addr: u32,
         slice: &mut [T],
     ) -> usize {
-        match cpu_type {
+        match CPU {
             CpuType::ARM9 => match addr & 0xE00000 {
                 LCDC_OFFSET => self.lcdc.read_slice(addr, slice),
                 BG_A_OFFSET => {
@@ -666,13 +665,12 @@ impl VramInner {
         }
     }
 
-    pub fn write_slice<T: utils::Convert>(
+    pub fn write_slice<const CPU: CpuType, T: utils::Convert>(
         &mut self,
-        cpu_type: CpuType,
         addr: u32,
         slice: &[T],
     ) -> usize {
-        match cpu_type {
+        match CPU {
             CpuType::ARM9 => match addr & 0xE00000 {
                 LCDC_OFFSET => self.lcdc.write_slice(addr, slice),
                 BG_A_OFFSET => {
@@ -724,27 +722,25 @@ impl VramContext {
         self.inner.write().unwrap().set_cnt(bank, value);
     }
 
-    pub fn read_slice<T: utils::Convert>(
+    pub fn read_slice<const CPU: CpuType, T: utils::Convert>(
         &self,
-        cpu_type: CpuType,
         addr_offset: u32,
         slice: &mut [T],
     ) -> usize {
         self.inner
             .read()
             .unwrap()
-            .read_slice(cpu_type, addr_offset, slice)
+            .read_slice::<CPU, _>(addr_offset, slice)
     }
 
-    pub fn write_slice<T: utils::Convert>(
+    pub fn write_slice<const CPU: CpuType, T: utils::Convert>(
         &self,
-        cpu_type: CpuType,
         addr_offset: u32,
         slice: &[T],
     ) -> usize {
         self.inner
             .write()
             .unwrap()
-            .write_slice(cpu_type, addr_offset, slice)
+            .write_slice::<CPU, _>(addr_offset, slice)
     }
 }

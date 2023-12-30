@@ -69,10 +69,9 @@ pub enum TcmState {
     W = 2,
 }
 
-impl<T: Into<u8>> From<T> for TcmState {
-    fn from(value: T) -> Self {
-        let value = value.into();
-        assert!(value <= TcmState::W as u8);
+impl From<u8> for TcmState {
+    fn from(value: u8) -> Self {
+        debug_assert!(value <= TcmState::W as u8);
         unsafe { mem::transmute(value) }
     }
 }

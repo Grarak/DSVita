@@ -6,7 +6,7 @@ use crate::DEBUG;
 use dspsv_macros::{io_ports_read, io_ports_write};
 use std::mem;
 
-impl IoPorts {
+impl<const CPU: CpuType> IoPorts<CPU> {
     pub fn read_arm7<T: Convert>(&self, addr_offset: u32) -> T {
         /*
          * Use moving windows to handle reads and writes
@@ -178,7 +178,7 @@ impl IoPorts {
         while (index - 3) < bytes.len() {
             #[rustfmt::skip]
             io_ports_write!(match addr_offset + (index - 3) as u32 {
-                io16(0x4) => self.gpu_context.write().unwrap().set_disp_stat(CpuType::ARM7, mask, value),
+                io16(0x4) => self.gpu_context.write().unwrap().set_disp_stat::<{ CpuType::ARM7 }>(mask, value),
                 io32(0xB0) => todo!(),
                 io32(0xB4) => todo!(),
                 io32(0xB8) => todo!(),

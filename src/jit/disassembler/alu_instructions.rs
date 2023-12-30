@@ -23,7 +23,7 @@ mod alu_variations {
     }
 }
 
-pub use alu_variations::*;
+pub(super) use alu_variations::*;
 
 mod alu_ops {
     use crate::jit::inst_info::{InstInfo, Operand, Operands};
@@ -1749,4 +1749,4 @@ mod alu_ops {
     }
 }
 
-pub use alu_ops::*;
+pub(super) use alu_ops::*;

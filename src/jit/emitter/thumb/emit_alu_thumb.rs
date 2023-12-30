@@ -1,10 +1,11 @@
+use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, MulReg};
 use crate::jit::inst_info::Operand;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
 
-impl JitAsm {
+impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_alu_common_thumb(&mut self, buf_index: usize, _: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 

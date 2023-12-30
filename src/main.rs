@@ -1,4 +1,7 @@
+#![allow(incomplete_features)]
+#![feature(adt_const_params)]
 #![feature(arm_target_feature)]
+#![feature(const_trait_impl)]
 #![feature(thread_id_value)]
 #![feature(unchecked_math)]
 #![feature(unchecked_shifts)]
@@ -6,6 +9,7 @@
 use crate::cartridge::Cartridge;
 use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::CpuRegs;
+use crate::hle::cycle_manager::CycleManager;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::input_context::InputContext;
@@ -22,14 +26,12 @@ use crate::hle::spi_context;
 use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::thread_context::ThreadContext;
-use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
-use crate::jit::jit_cycle_handler::JitCycleManager;
 use crate::jit::jit_memory::JitMemory;
 use crate::scheduler::IO_SCHEDULER;
 use crate::utils::FastCell;
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex};
 use std::sync::{Arc, RwLock};
 use std::{env, mem, thread};
 
@@ -43,7 +45,6 @@ mod utils;
 
 pub const DEBUG: bool = cfg!(debug_assertions);
 // pub const DEBUG: bool = false;
-pub const SINGLE_CORE: bool = false;
 
 #[cfg(target_os = "linux")]
 fn get_file_path() -> String {
@@ -61,7 +62,7 @@ fn get_file_path() -> String {
     "ux0:hello_world.nds".to_owned()
 }
 
-fn initialize_arm9_thread(entry_addr: u32, thread: &ThreadContext) {
+fn initialize_arm9_thread(entry_addr: u32, thread: &ThreadContext<{ CpuType::ARM9 }>) {
     {
         let mut cp15 = thread.cp15_context.borrow_mut();
         cp15.write(0x010000, 0x0005707D); // control
@@ -88,7 +89,7 @@ fn initialize_arm9_thread(entry_addr: u32, thread: &ThreadContext) {
     }
 }
 
-fn initialize_arm7_thread(entry_addr: u32, thread: &mut ThreadContext) {
+fn initialize_arm7_thread(entry_addr: u32, thread: &mut ThreadContext<{ CpuType::ARM7 }>) {
     {
         // I/O Ports
         thread.mem_handler.write(0x4000300, 0x01u8); // POWCNT1
@@ -112,6 +113,11 @@ pub fn main() {
     if DEBUG {
         env::set_var("RUST_BACKTRACE", "full");
     }
+
+    let (tx, rx) = mpsc::channel::<()>();
+    IO_SCHEDULER.schedule(move || {
+        tx.send(()).unwrap();
+    });
 
     let cartridge = Cartridge::from_file(&get_file_path()).unwrap();
 
@@ -155,32 +161,22 @@ pub fn main() {
         memory.write_main_slice(arm7_ram_addr, &arm7_code);
     }
 
-    {
-        // Initialize scheduler
-        let (tx, rx) = mpsc::channel::<()>();
-        IO_SCHEDULER.schedule(move || tx.send(()).unwrap());
-        rx.recv().unwrap();
-    }
-
-    let cpu_regs_arm9 = Arc::new(CpuRegs::new(CpuType::ARM9));
-    let cpu_regs_arm7 = Arc::new(CpuRegs::new(CpuType::ARM7));
-    let timers_context_arm9 = Arc::new(RwLock::new(TimersContext::new()));
-    let timers_context_arm7 = Arc::new(RwLock::new(TimersContext::new()));
-    let jit_cycle_manager = Arc::new(RwLock::new(JitCycleManager::new(
-        cpu_regs_arm9.clone(),
-        timers_context_arm9.clone(),
-        cpu_regs_arm7.clone(),
-        timers_context_arm7.clone(),
+    let cycle_manager = Arc::new(CycleManager::new());
+    let cpu_regs_arm9 = Arc::new(CpuRegs::<{ CpuType::ARM9 }>::new());
+    let cpu_regs_arm7 = Arc::new(CpuRegs::<{ CpuType::ARM7 }>::new());
+    let gpu_2d_context_a = Rc::new(FastCell::new(Gpu2DContext::new()));
+    let gpu_2d_context_b = Rc::new(FastCell::new(Gpu2DContext::new()));
+    let gpu_context = Arc::new(RwLock::new(GpuContext::new(
+        cycle_manager.clone(),
+        gpu_2d_context_a.clone(),
+        gpu_2d_context_b.clone(),
     )));
-    let jit_memory = Arc::new(RwLock::new(JitMemory::new()));
+    let jit_memory = Arc::new(Mutex::new(JitMemory::new()));
     let wram_context = Arc::new(WramContext::new());
     let spi_context = Arc::new(RwLock::new(SpiContext::new()));
     let ipc_handler = Arc::new(RwLock::new(IpcHandler::new()));
     let vram_context = Arc::new(VramContext::new());
     let input_context = Arc::new(RwLock::new(InputContext::new()));
-    let gpu_context = Arc::new(RwLock::new(GpuContext::new()));
-    let gpu_2d_context_0 = Rc::new(FastCell::new(Gpu2DContext::new()));
-    let gpu_2d_context_1 = Rc::new(FastCell::new(Gpu2DContext::new()));
     let rtc_context = Rc::new(FastCell::new(RtcContext::new()));
     let spu_context = Rc::new(FastCell::new(SpuContext::new()));
     let palettes_context = Rc::new(FastCell::new(PalettesContext::new()));
@@ -188,9 +184,8 @@ pub fn main() {
     let tcm_context = Rc::new(FastCell::new(TcmContext::new()));
     let oam_context = Rc::new(FastCell::new(OamContext::new()));
 
-    let mut arm9_thread = ThreadContext::new(
-        CpuType::ARM9,
-        jit_cycle_manager.clone(),
+    let mut arm9_thread = ThreadContext::<{ CpuType::ARM9 }>::new(
+        cycle_manager.clone(),
         jit_memory.clone(),
         main_memory.clone(),
         wram_context.clone(),
@@ -199,8 +194,8 @@ pub fn main() {
         vram_context.clone(),
         input_context.clone(),
         gpu_context.clone(),
-        gpu_2d_context_0.clone(),
-        gpu_2d_context_1.clone(),
+        gpu_2d_context_a.clone(),
+        gpu_2d_context_b.clone(),
         rtc_context.clone(),
         spu_context.clone(),
         palettes_context.clone(),
@@ -208,13 +203,11 @@ pub fn main() {
         cp15_context.clone(),
         tcm_context.clone(),
         oam_context.clone(),
-        timers_context_arm9,
     );
     initialize_arm9_thread(arm9_entry_adrr, &mut arm9_thread);
 
-    let mut arm7_thread = ThreadContext::new(
-        CpuType::ARM7,
-        jit_cycle_manager,
+    let mut arm7_thread = ThreadContext::<{ CpuType::ARM7 }>::new(
+        cycle_manager,
         jit_memory,
         main_memory,
         wram_context,
@@ -223,8 +216,8 @@ pub fn main() {
         vram_context,
         input_context,
         gpu_context,
-        gpu_2d_context_0,
-        gpu_2d_context_1,
+        gpu_2d_context_a,
+        gpu_2d_context_b,
         rtc_context,
         spu_context,
         palettes_context,
@@ -232,35 +225,25 @@ pub fn main() {
         cp15_context,
         tcm_context,
         oam_context,
-        timers_context_arm7,
     );
     initialize_arm7_thread(arm7_entry_addr, &mut arm7_thread);
 
-    if SINGLE_CORE {
-        loop {
-            arm9_thread.iterate(1);
-            arm7_thread.iterate(1);
-        }
-    } else {
-        let (tx, rx) = mpsc::channel::<()>();
+    rx.recv().unwrap();
 
-        let arm9_thread = thread::Builder::new()
-            .name("arm9_thread".to_owned())
-            .spawn(move || {
-                tx.send(()).unwrap();
-                arm9_thread.run();
-            })
-            .unwrap();
+    let arm9_thread = thread::Builder::new()
+        .name("arm9_thread".to_owned())
+        .spawn(move || {
+            arm9_thread.run();
+        })
+        .unwrap();
 
-        let arm7_thread = thread::Builder::new()
-            .name("arm7_thread".to_owned())
-            .spawn(move || {
-                rx.recv().unwrap();
-                arm7_thread.run();
-            })
-            .unwrap();
+    let arm7_thread = thread::Builder::new()
+        .name("arm7_thread".to_owned())
+        .spawn(move || {
+            arm7_thread.run();
+        })
+        .unwrap();
 
-        arm9_thread.join().ok();
-        arm7_thread.join().ok();
-    }
+    arm9_thread.join().ok();
+    arm7_thread.join().ok();
 }

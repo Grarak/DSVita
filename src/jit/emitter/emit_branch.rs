@@ -1,3 +1,4 @@
+use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
@@ -6,7 +7,7 @@ use crate::jit::reg::Reg;
 use crate::jit::{Cond, Op};
 use std::ptr;
 
-impl JitAsm {
+impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_b(&mut self, buf_index: usize, pc: u32) {
         let (op, cond, imm) = {
             let inst_info = &self.jit_buf.instructions[buf_index];
@@ -32,7 +33,10 @@ impl JitAsm {
                 .emit_set_reg(Reg::PC, Reg::R0, Reg::R3),
         );
 
-        opcodes.extend(AluImm::mov32(Reg::R2, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+        opcodes.extend(AluImm::mov32(
+            Reg::R2,
+            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+        ));
 
         if op == Op::Bl {
             opcodes.push(AluImm::add_al(Reg::R0, Reg::R1, 4));
@@ -45,7 +49,7 @@ impl JitAsm {
 
         opcodes.push(LdrStrImm::str_al(Reg::R1, Reg::R2));
 
-        JitAsm::emit_host_bx(self.breakout_skip_save_regs_addr, &mut opcodes);
+        Self::emit_host_bx(self.breakout_skip_save_regs_addr, &mut opcodes);
 
         if cond != Cond::AL {
             if new_pc < pc {
@@ -100,7 +104,10 @@ impl JitAsm {
 
         opcodes.extend(AluImm::mov32(Reg::R1, pc));
 
-        opcodes.extend(AluImm::mov32(Reg::R2, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+        opcodes.extend(AluImm::mov32(
+            Reg::R2,
+            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+        ));
 
         if inst_info.op == Op::BlxReg {
             opcodes.push(AluImm::add_al(Reg::R3, Reg::R1, 4));
@@ -113,7 +120,7 @@ impl JitAsm {
 
         opcodes.push(LdrStrImm::str_al(Reg::R1, Reg::R2));
 
-        JitAsm::emit_host_bx(self.breakout_skip_save_regs_addr, &mut opcodes);
+        Self::emit_host_bx(self.breakout_skip_save_regs_addr, &mut opcodes);
 
         if inst_info.cond != Cond::AL {
             self.jit_buf

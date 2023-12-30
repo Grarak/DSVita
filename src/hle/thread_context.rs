@@ -1,6 +1,8 @@
 use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::CpuRegs;
+use crate::hle::cycle_manager::CycleManager;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
+use crate::hle::gpu::gpu_2d_context::Gpu2DEngine::{A, B};
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
@@ -20,29 +22,27 @@ use crate::hle::thread_regs::ThreadRegs;
 use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitAsm;
-use crate::jit::jit_cycle_handler::JitCycleManager;
 use crate::jit::jit_memory::JitMemory;
 use crate::utils::FastCell;
 use std::rc::Rc;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
-pub struct ThreadContext {
-    cpu_type: CpuType,
-    jit: JitAsm,
+pub struct ThreadContext<const CPU: CpuType> {
+    jit: JitAsm<CPU>,
+    cycle_manager: Arc<CycleManager>,
     pub regs: Rc<FastCell<ThreadRegs>>,
     pub cp15_context: Rc<FastCell<Cp15Context>>,
-    pub mem_handler: Arc<MemHandler>,
-    cpu_regs: Arc<CpuRegs>,
+    pub mem_handler: Arc<MemHandler<CPU>>,
+    cpu_regs: Arc<CpuRegs<CPU>>,
 }
 
-unsafe impl Send for ThreadContext {}
+unsafe impl<const CPU: CpuType> Send for ThreadContext<CPU> {}
 
-impl ThreadContext {
+impl<const CPU: CpuType> ThreadContext<CPU> {
     pub fn new(
-        cpu_type: CpuType,
-        jit_cycle_manager: Arc<RwLock<JitCycleManager>>,
-        jit_memory: Arc<RwLock<JitMemory>>,
+        cycle_manager: Arc<CycleManager>,
+        jit_memory: Arc<Mutex<JitMemory>>,
         memory: Arc<RwLock<MainMemory>>,
         wram_context: Arc<WramContext>,
         spi_context: Arc<RwLock<SpiContext>>,
@@ -50,22 +50,21 @@ impl ThreadContext {
         vram_context: Arc<VramContext>,
         input_context: Arc<RwLock<InputContext>>,
         gpu_context: Arc<RwLock<GpuContext>>,
-        gpu_2d_context_0: Rc<FastCell<Gpu2DContext>>,
-        gpu_2d_context_1: Rc<FastCell<Gpu2DContext>>,
+        gpu_2d_context_a: Rc<FastCell<Gpu2DContext<{ A }>>>,
+        gpu_2d_context_b: Rc<FastCell<Gpu2DContext<{ B }>>>,
         rtc_context: Rc<FastCell<RtcContext>>,
         spu_context: Rc<FastCell<SpuContext>>,
         palettes_context: Rc<FastCell<PalettesContext>>,
-        cpu_regs: Arc<CpuRegs>,
+        cpu_regs: Arc<CpuRegs<CPU>>,
         cp15_context: Rc<FastCell<Cp15Context>>,
         tcm_context: Rc<FastCell<TcmContext>>,
         oam: Rc<FastCell<OamContext>>,
-        timers_context: Arc<RwLock<TimersContext>>,
     ) -> Self {
-        let regs = ThreadRegs::new(cpu_type);
-        let dma = Rc::new(FastCell::new(Dma::new(cpu_type)));
+        let regs = ThreadRegs::new();
+        let dma = Rc::new(FastCell::new(Dma::new(cycle_manager.clone())));
+        let timers_context = Arc::new(RwLock::new(TimersContext::new(cycle_manager.clone())));
 
         let io_ports = IoPorts::new(
-            cpu_type,
             memory.clone(),
             wram_context.clone(),
             ipc_handler,
@@ -75,15 +74,14 @@ impl ThreadContext {
             vram_context,
             input_context,
             gpu_context,
-            gpu_2d_context_0,
-            gpu_2d_context_1,
+            gpu_2d_context_a,
+            gpu_2d_context_b,
             rtc_context,
             spi_context,
             spu_context,
         );
 
         let mem_handler = Arc::new(MemHandler::new(
-            cpu_type,
             memory.clone(),
             wram_context,
             palettes_context,
@@ -96,10 +94,7 @@ impl ThreadContext {
         dma.borrow_mut().set_mem_handler(mem_handler.clone());
 
         ThreadContext {
-            cpu_type,
             jit: JitAsm::new(
-                cpu_type,
-                jit_cycle_manager,
                 jit_memory,
                 regs.clone(),
                 cpu_regs.clone(),
@@ -107,6 +102,7 @@ impl ThreadContext {
                 timers_context,
                 mem_handler.clone(),
             ),
+            cycle_manager,
             regs,
             cp15_context,
             mem_handler,
@@ -114,27 +110,23 @@ impl ThreadContext {
         }
     }
 
-    pub fn run(&mut self) {
-        println!(
-            "{:?} start with host thread id {:x}",
-            self.cpu_type,
-            thread::current().id().as_u64()
-        );
-        loop {
-            if !self.cpu_regs.is_halted() {
-                self.jit.execute();
-            } else {
-                thread::yield_now();
-            }
-        }
+    fn is_halted(&self) -> bool {
+        self.cpu_regs.is_halted()
     }
 
-    pub fn iterate(&mut self, count: usize) {
-        for _ in 0..count {
-            if !self.cpu_regs.is_halted() {
-                self.jit.execute();
-            } else {
+    pub fn run(&mut self) {
+        loop {
+            if self.is_halted() {
+                self.cycle_manager.add_cycle::<CPU, true>(0);
                 thread::yield_now();
+            } else {
+                let cycles = self.jit.execute();
+                if CPU == CpuType::ARM9 {
+                    self.cycle_manager
+                        .add_cycle::<CPU, false>((cycles + (cycles % 2)) / 2);
+                } else {
+                    self.cycle_manager.add_cycle::<CPU, false>(cycles);
+                }
             }
         }
     }

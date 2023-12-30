@@ -24,7 +24,7 @@ mod transfer_variations {
     }
 }
 
-pub use transfer_variations::*;
+pub(super) use transfer_variations::*;
 
 mod transfer_ops {
     use crate::jit::inst_info::{InstInfo, Operand, Operands};
@@ -1201,4 +1201,4 @@ mod transfer_ops {
     }
 }
 
-pub use transfer_ops::*;
+pub(super) use transfer_ops::*;

@@ -1,15 +1,15 @@
 use crate::hle::memory::regions;
 use crate::utils;
-use crate::utils::{Convert, HeapMem};
+use crate::utils::{Convert, HeapMemU8};
 
 pub struct OamContext {
-    mem: HeapMem<{ regions::OAM_SIZE as usize }>,
+    mem: HeapMemU8<{ regions::OAM_SIZE as usize }>,
 }
 
 impl OamContext {
     pub fn new() -> Self {
         OamContext {
-            mem: HeapMem::new(),
+            mem: HeapMemU8::new(),
         }
     }
 

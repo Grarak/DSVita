@@ -1,4 +1,3 @@
-use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Msr};
 use crate::jit::reg::{Reg, RegReserve};
@@ -60,7 +59,6 @@ pub struct ThreadRegs {
     pub abt: OtherModeRegs,
     pub irq: OtherModeRegs,
     pub und: OtherModeRegs,
-    pub cpu_type: CpuType,
     pub restore_regs_opcodes: Vec<u32>,
     pub save_regs_opcodes: Vec<u32>,
     pub restore_regs_thumb_opcodes: Vec<u32>,
@@ -68,14 +66,11 @@ pub struct ThreadRegs {
 }
 
 impl ThreadRegs {
-    pub fn new(cpu_type: CpuType) -> Rc<FastCell<Self>> {
-        let instance = Rc::new(FastCell::new(ThreadRegs::default()));
+    pub fn new() -> Rc<FastCell<Self>> {
+        let mut instance = Rc::new(FastCell::new(ThreadRegs::default()));
 
         {
             let mut instance = instance.borrow_mut();
-
-            instance.cpu_type = cpu_type;
-
             let gp_regs_addr = instance.gp_regs.as_ptr() as u32;
             let last_regs_addr = ptr::addr_of!(instance.gp_regs[instance.gp_regs.len() - 1]) as u32;
             let last_regs_thumb_addr = ptr::addr_of!(instance.gp_regs[7]) as u32;
@@ -156,6 +151,7 @@ impl ThreadRegs {
         opcodes
     }
 
+    #[inline]
     pub fn get_reg_value(&self, reg: Reg) -> &u32 {
         match reg {
             Reg::SP => &self.sp,
@@ -173,6 +169,7 @@ impl ThreadRegs {
         }
     }
 
+    #[inline]
     pub fn get_reg_value_mut(&mut self, reg: Reg) -> &mut u32 {
         match reg {
             Reg::SP => &mut self.sp,

@@ -8,4 +8,4 @@ mod unknown_delegations {
     }
 }
 
-pub use unknown_delegations::*;
+pub(super) use unknown_delegations::*;

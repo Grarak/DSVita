@@ -14,35 +14,32 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 use std::{mem, thread};
 
-pub struct MemHandler {
-    cpu_type: CpuType,
+pub struct MemHandler<const CPU: CpuType> {
     memory: Arc<RwLock<MainMemory>>,
     wram_context: Arc<WramContext>,
     palettes_context: Rc<FastCell<PalettesContext>>,
     cp15_context: Rc<FastCell<Cp15Context>>,
     tcm_context: Rc<FastCell<TcmContext>>,
-    pub io_ports: IoPorts,
+    pub io_ports: IoPorts<CPU>,
     pub jit_state: Arc<Mutex<JitState>>,
     pub dma_transfer_lock: Arc<RwLock<()>>,
     oam: Rc<FastCell<OamContext>>,
 }
 
-unsafe impl Send for MemHandler {}
-unsafe impl Sync for MemHandler {}
+unsafe impl<const CPU: CpuType> Send for MemHandler<CPU> {}
+unsafe impl<const CPU: CpuType> Sync for MemHandler<CPU> {}
 
-impl MemHandler {
+impl<const CPU: CpuType> MemHandler<CPU> {
     pub fn new(
-        cpu_type: CpuType,
         memory: Arc<RwLock<MainMemory>>,
         wram_context: Arc<WramContext>,
         palettes_context: Rc<FastCell<PalettesContext>>,
         cp15_context: Rc<FastCell<Cp15Context>>,
         tcm_context: Rc<FastCell<TcmContext>>,
-        io_ports: IoPorts,
+        io_ports: IoPorts<CPU>,
         oam: Rc<FastCell<OamContext>>,
     ) -> Self {
         MemHandler {
-            cpu_type,
             memory,
             wram_context,
             palettes_context,
@@ -73,7 +70,7 @@ impl MemHandler {
         debug_println!(
             "{} {:?} memory read at {:x}",
             thread::current().name().unwrap(),
-            self.cpu_type,
+            CPU,
             addr
         );
 
@@ -82,7 +79,7 @@ impl MemHandler {
         debug_println!(
             "{} {:?} memory read at {:x} with value {:x}",
             thread::current().name().unwrap(),
-            self.cpu_type,
+            CPU,
             addr,
             buf[0].into()
         );
@@ -119,8 +116,7 @@ impl MemHandler {
             }
             regions::SHARED_WRAM_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
-                self.wram_context
-                    .read_slice(self.cpu_type, addr_offset, slice)
+                self.wram_context.read_slice::<CPU, _>(addr_offset, slice)
             }
             regions::IO_PORTS_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
@@ -139,9 +135,7 @@ impl MemHandler {
             }
             regions::VRAM_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
-                self.io_ports
-                    .vram_context
-                    .read_slice(self.cpu_type, addr_offset, slice)
+                self.io_ports.vram_context.read_slice::<CPU, _>(addr_offset, slice)
             }
             regions::OAM_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
@@ -151,7 +145,7 @@ impl MemHandler {
                 let mut handled = false;
                 let mut read_amount = 0;
 
-                if self.cpu_type == CpuType::ARM9 {
+                if CPU == CpuType::ARM9 {
                     let cp15_context = self.cp15_context.borrow();
                     if addr < cp15_context.itcm_size {
                         if cp15_context.itcm_state == TcmState::RW {
@@ -188,7 +182,7 @@ impl MemHandler {
         debug_println!(
             "{} {:?} memory write at {:x} with value {:x}",
             thread::current().name().unwrap(),
-            self.cpu_type,
+            CPU,
             addr,
             value.into(),
         );
@@ -226,8 +220,7 @@ impl MemHandler {
             regions::SHARED_WRAM_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
                 invalidate_jit = true;
-                self.wram_context
-                    .write_slice(self.cpu_type, addr_offset, slice)
+                self.wram_context.write_slice::<CPU, _>(addr_offset, slice)
             }
             regions::IO_PORTS_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
@@ -245,9 +238,7 @@ impl MemHandler {
             }
             regions::VRAM_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
-                self.io_ports
-                    .vram_context
-                    .write_slice(self.cpu_type, addr_offset, slice)
+                self.io_ports.vram_context.write_slice::<CPU, _>(addr_offset, slice)
             }
             regions::OAM_OFFSET => {
                 let _lock = self.lock_dma::<LOCK_DMA>();
@@ -257,7 +248,7 @@ impl MemHandler {
                 let mut handled = false;
                 let mut write_amount = 0;
 
-                if self.cpu_type == CpuType::ARM9 {
+                if CPU == CpuType::ARM9 {
                     let cp15_context = self.cp15_context.borrow();
                     if addr < cp15_context.itcm_size {
                         if cp15_context.itcm_state != TcmState::Disabled {

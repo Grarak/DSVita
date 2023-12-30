@@ -105,7 +105,7 @@ enum SpiDevice {
 
 impl From<u8> for SpiDevice {
     fn from(value: u8) -> Self {
-        assert!(value <= SpiDevice::Reserved as u8);
+        debug_assert!(value <= SpiDevice::Reserved as u8);
         unsafe { mem::transmute(value) }
     }
 }

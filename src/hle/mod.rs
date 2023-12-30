@@ -1,9 +1,11 @@
+use std::marker::ConstParamTy;
 use std::ops;
 
 pub mod bios_context;
 mod bios_lookup_table;
 pub mod cp15_context;
 pub mod cpu_regs;
+pub mod cycle_manager;
 pub mod exception_handler;
 pub mod gpu;
 pub mod input_context;
@@ -16,14 +18,14 @@ pub mod thread_context;
 pub mod thread_regs;
 pub mod timers_context;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(ConstParamTy, Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum CpuType {
     ARM9 = 0,
     ARM7 = 1,
 }
 
-impl ops::Not for CpuType {
+impl const ops::Not for CpuType {
     type Output = Self;
 
     fn not(self) -> Self::Output {
@@ -31,11 +33,5 @@ impl ops::Not for CpuType {
             CpuType::ARM9 => CpuType::ARM7,
             CpuType::ARM7 => CpuType::ARM9,
         }
-    }
-}
-
-impl Default for CpuType {
-    fn default() -> Self {
-        CpuType::ARM9
     }
 }

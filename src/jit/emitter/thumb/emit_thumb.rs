@@ -1,3 +1,4 @@
+use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
@@ -5,7 +6,7 @@ use crate::jit::reg::Reg;
 use crate::jit::Op;
 use std::ptr;
 
-impl JitAsm {
+impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_thumb(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
         let out_regs = inst_info.out_regs;
@@ -101,7 +102,7 @@ impl JitAsm {
                 .emit_opcodes
                 .push(LdrStrImm::str_al(Reg::R0, Reg::LR));
 
-            JitAsm::emit_host_bx(
+            Self::emit_host_bx(
                 self.breakout_skip_save_regs_thumb_addr,
                 &mut self.jit_buf.emit_opcodes,
             );

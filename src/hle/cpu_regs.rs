@@ -28,18 +28,16 @@ enum InterruptFlags {
     Wifi = 24,
 }
 
-struct Regs {
-    cpu_type: CpuType,
+struct Regs<const CPU: CpuType> {
     ime: u8,
     ie: u32,
     irf: u32,
     post_flg: u8,
 }
 
-impl Regs {
-    fn new(cpu_type: CpuType) -> Self {
+impl<const CPU: CpuType> Regs<CPU> {
+    fn new() -> Self {
         Regs {
-            cpu_type,
             ime: 0,
             ie: 0,
             irf: 0,
@@ -56,7 +54,7 @@ impl Regs {
     }
 
     fn set_ie(&mut self, mut mask: u32, value: u32) {
-        mask &= match self.cpu_type {
+        mask &= match CPU {
             CpuType::ARM9 => 0x003F3F7F,
             CpuType::ARM7 => 0x01FF3FFF,
         };
@@ -73,21 +71,21 @@ impl Regs {
 
     fn set_post_flg(&mut self, value: u8) {
         self.post_flg |= value & 0x1;
-        if self.cpu_type == CpuType::ARM9 {
+        if CPU == CpuType::ARM9 {
             self.post_flg = (self.post_flg & !0x2) | (value & 0x2);
         }
     }
 }
 
-pub struct CpuRegs {
-    inner: FastCell<Regs>,
+pub struct CpuRegs<const CPU: CpuType> {
+    inner: FastCell<Regs<CPU>>,
     halt: AtomicU8,
 }
 
-impl CpuRegs {
-    pub fn new(cpu_type: CpuType) -> Self {
+impl<const CPU: CpuType> CpuRegs<CPU> {
+    pub fn new() -> Self {
         CpuRegs {
-            inner: FastCell::new(Regs::new(cpu_type)),
+            inner: FastCell::new(Regs::new()),
             halt: AtomicU8::new(0),
         }
     }

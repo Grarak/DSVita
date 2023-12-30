@@ -12,88 +12,41 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::sync::Arc;
 
-pub struct InstMemHandler {
-    cpu_type: CpuType,
+pub struct InstMemHandler<const CPU: CpuType> {
     thread_regs: Rc<FastCell<ThreadRegs>>,
-    mem_handler: Arc<MemHandler>,
+    mem_handler: Arc<MemHandler<CPU>>,
 }
 
-impl InstMemHandler {
-    pub fn new(
-        cpu_type: CpuType,
-        thread_regs: Rc<FastCell<ThreadRegs>>,
-        mem_handler: Arc<MemHandler>,
-    ) -> Self {
+fn get_inst_info<const THUMB: bool>(opcode: u32) -> InstInfo {
+    if THUMB {
+        let (op, func) = lookup_thumb_opcode(opcode as u16);
+        InstInfo::from(&func(opcode as u16, *op))
+    } else {
+        let (op, func) = lookup_opcode(opcode);
+        func(opcode, *op)
+    }
+}
+
+impl<const CPU: CpuType> InstMemHandler<CPU> {
+    pub fn new(thread_regs: Rc<FastCell<ThreadRegs>>, mem_handler: Arc<MemHandler<CPU>>) -> Self {
         InstMemHandler {
-            cpu_type,
             thread_regs,
             mem_handler,
         }
     }
 
-    fn get_inst_info<const THUMB: bool>(opcode: u32) -> InstInfo {
-        if THUMB {
-            let (op, func) = lookup_thumb_opcode(opcode as u16);
-            InstInfo::from(&func(opcode as u16, *op))
-        } else {
-            let (op, func) = lookup_opcode(opcode);
-            func(opcode, *op)
-        }
-    }
+    #[inline(always)]
+    fn handle_request<const THUMB: bool, const WRITE: bool>(
+        &mut self,
+        opcode: u32,
+        pc: u32,
+        flags: u8,
+    ) {
+        let inst_info = get_inst_info::<THUMB>(opcode);
 
-    fn handle_request<const THUMB: bool, const WRITE: bool>(&mut self, opcode: u32, pc: u32) {
-        let inst_info = InstMemHandler::get_inst_info::<THUMB>(opcode);
-
-        let pre = match inst_info.op {
-            Op::LdrOfip
-            | Op::LdrOfim
-            | Op::LdrbOfrplr
-            | Op::StrOfip
-            | Op::StrbOfip
-            | Op::StrhOfip
-            | Op::StrPrim
-            | Op::LdrshRegT
-            | Op::LdrbRegT
-            | Op::LdrbImm5T
-            | Op::LdrImm5T
-            | Op::LdrhRegT
-            | Op::LdrhImm5T
-            | Op::LdrPcT
-            | Op::LdrSpT
-            | Op::StrbImm5T
-            | Op::StrhRegT
-            | Op::StrhImm5T
-            | Op::StrRegT
-            | Op::StrImm5T
-            | Op::StrSpT => true,
-            Op::LdrPtip => false,
-            _ => todo!("{:?}", inst_info),
-        };
-
-        let write_back = match inst_info.op {
-            Op::LdrOfip
-            | Op::LdrOfim
-            | Op::LdrbOfrplr
-            | Op::StrOfip
-            | Op::StrbOfip
-            | Op::StrhOfip
-            | Op::LdrshRegT
-            | Op::LdrbRegT
-            | Op::LdrbImm5T
-            | Op::LdrImm5T
-            | Op::LdrhRegT
-            | Op::LdrhImm5T
-            | Op::LdrPcT
-            | Op::LdrSpT
-            | Op::StrbImm5T
-            | Op::StrhRegT
-            | Op::StrhImm5T
-            | Op::StrRegT
-            | Op::StrImm5T
-            | Op::StrSpT => false,
-            Op::LdrPtip | Op::StrPrim => true,
-            _ => todo!("{:?}", inst_info),
-        };
+        let pre = flags & 1 != 0;
+        let write_back = flags & 2 != 0;
+        let memory_amount = MemoryAmount::from(flags >> 2);
 
         let operands = inst_info.operands();
         let op0 = operands[0].as_reg_no_shift().unwrap();
@@ -170,7 +123,6 @@ impl InstMemHandler {
             base_addr &= !0x3;
         }
 
-        let memory_amount = MemoryAmount::from(inst_info.op);
         match memory_amount {
             MemoryAmount::BYTE => {
                 if WRITE {
@@ -188,7 +140,7 @@ impl InstMemHandler {
                 } else {
                     let value = self.mem_handler.read::<u16>(base_addr);
 
-                    if self.cpu_type == CpuType::ARM7 && base_addr & 1 != 0 {
+                    if CPU == CpuType::ARM7 && base_addr & 1 != 0 {
                         todo!()
                     }
 
@@ -207,7 +159,7 @@ impl InstMemHandler {
                     let value = self.mem_handler.read(base_addr);
 
                     if base_addr & 3 != 0 {
-                        todo!("{:?} {:x}", self.cpu_type, pc);
+                        todo!("{:?} {:x}", CPU, pc);
                     }
 
                     set_reg_value(thread_regs.deref_mut(), *op0, value);
@@ -237,6 +189,7 @@ impl InstMemHandler {
         &mut self,
         opcode: u32,
         pc: u32,
+        flags: u8,
     ) {
         debug_println!(
             "handle multiple request at {:x} thumb: {} write: {}",
@@ -245,46 +198,11 @@ impl InstMemHandler {
             WRITE
         );
 
-        let inst_info = InstMemHandler::get_inst_info::<THUMB>(opcode);
+        let inst_info = get_inst_info::<THUMB>(opcode);
 
-        let mut pre = match inst_info.op {
-            Op::Ldmia
-            | Op::LdmiaW
-            | Op::Stmia
-            | Op::StmiaW
-            | Op::LdmiaT
-            | Op::PopT
-            | Op::PopPcT => false,
-            Op::StmdbW | Op::PushLrT => true,
-            _ => todo!("{:?}", inst_info),
-        };
-
-        let decrement = match inst_info.op {
-            Op::Ldmia
-            | Op::LdmiaW
-            | Op::Stmia
-            | Op::StmiaW
-            | Op::LdmiaT
-            | Op::PopT
-            | Op::PopPcT => false,
-            Op::StmdbW | Op::PushLrT => {
-                pre = !pre;
-                true
-            }
-            _ => todo!("{:?}", inst_info),
-        };
-
-        let write_back = match inst_info.op {
-            Op::Ldmia | Op::Stmia => false,
-            Op::LdmiaW
-            | Op::StmiaW
-            | Op::StmdbW
-            | Op::PushLrT
-            | Op::LdmiaT
-            | Op::PopT
-            | Op::PopPcT => true,
-            _ => todo!("{:?}", inst_info),
-        };
+        let pre = flags & 1 != 0;
+        let write_back = flags & 2 != 0;
+        let decrement = flags & 4 != 0;
 
         let operands = inst_info.operands();
 
@@ -342,69 +260,29 @@ impl InstMemHandler {
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn inst_mem_handler_read(handler: *mut InstMemHandler, opcode: u32, pc: u32) {
-    (*handler).handle_request::<false, false>(opcode, pc);
+pub unsafe extern "C" fn inst_mem_handler<
+    const CPU: CpuType,
+    const THUMB: bool,
+    const WRITE: bool,
+>(
+    handler: *mut InstMemHandler<CPU>,
+    opcode: u32,
+    pc: u32,
+    flags: u8,
+) {
+    (*handler).handle_request::<THUMB, WRITE>(opcode, pc, flags);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn inst_mem_handler_write(
-    handler: *mut InstMemHandler,
+pub unsafe extern "C" fn inst_mem_handler_multiple<
+    const CPU: CpuType,
+    const THUMB: bool,
+    const WRITE: bool,
+>(
+    handler: *mut InstMemHandler<CPU>,
     opcode: u32,
     pc: u32,
+    flags: u8,
 ) {
-    (*handler).handle_request::<false, true>(opcode, pc);
-}
-
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn inst_mem_handler_read_thumb(
-    handler: *mut InstMemHandler,
-    opcode: u32,
-    pc: u32,
-) {
-    (*handler).handle_request::<true, false>(opcode, pc);
-}
-
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn inst_mem_handler_write_thumb(
-    handler: *mut InstMemHandler,
-    opcode: u32,
-    pc: u32,
-) {
-    (*handler).handle_request::<true, true>(opcode, pc);
-}
-
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn inst_mem_handler_multiple_read(
-    handler: *mut InstMemHandler,
-    opcode: u32,
-    pc: u32,
-) {
-    (*handler).handle_multiple_request::<false, false>(opcode, pc);
-}
-
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn inst_mem_handler_multiple_write(
-    handler: *mut InstMemHandler,
-    opcode: u32,
-    pc: u32,
-) {
-    (*handler).handle_multiple_request::<false, true>(opcode, pc);
-}
-
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn inst_mem_handler_multiple_read_thumb(
-    handler: *mut InstMemHandler,
-    opcode: u32,
-    pc: u32,
-) {
-    (*handler).handle_multiple_request::<true, false>(opcode, pc);
-}
-
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn inst_mem_handler_multiple_write_thumb(
-    handler: *mut InstMemHandler,
-    opcode: u32,
-    pc: u32,
-) {
-    (*handler).handle_multiple_request::<true, true>(opcode, pc);
+    (*handler).handle_multiple_request::<THUMB, WRITE>(opcode, pc, flags);
 }

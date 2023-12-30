@@ -66,7 +66,7 @@ mod alu_delegations {
     generate_op!(mvns);
 }
 
-pub use alu_delegations::*;
+pub(super) use alu_delegations::*;
 
 mod transfer_delegations {
     use crate::jit::disassembler::transfer_instructions::*;
@@ -137,7 +137,7 @@ mod transfer_delegations {
     generate_op_full!(str);
 }
 
-pub use transfer_delegations::*;
+pub(super) use transfer_delegations::*;
 
 mod unknown_delegations {
     use crate::jit::inst_info::InstInfo;
@@ -149,4 +149,4 @@ mod unknown_delegations {
     }
 }
 
-pub use unknown_delegations::*;
+pub(super) use unknown_delegations::*;

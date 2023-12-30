@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::cmp::min;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
@@ -31,7 +30,7 @@ impl Convert for u32 {
 }
 
 pub fn negative<T: Convert>(n: T) -> T {
-    T::from(!(n.into() - 1))
+    T::from(!(unsafe { n.into().unchecked_sub(1) }))
 }
 
 pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
@@ -88,16 +87,16 @@ impl Display for StrErr {
 
 impl Error for StrErr {}
 
-pub type FastCell<T> = RefCell<T>;
+pub type FastCell<T> = std::cell::RefCell<T>;
 // Might give better performance
 // pub struct FastCell<T: ?Sized> {
-//     value: UnsafeCell<T>,
+//     value: std::cell::UnsafeCell<T>,
 // }
 //
 // impl<T> FastCell<T> {
 //     pub const fn new(value: T) -> Self {
 //         FastCell {
-//             value: UnsafeCell::new(value),
+//             value: std::cell::UnsafeCell::new(value),
 //         }
 //     }
 // }
@@ -116,29 +115,31 @@ pub type FastCell<T> = RefCell<T>;
 //     }
 // }
 
-pub struct HeapMem<const T: usize>(Box<[u8; T]>);
+pub type HeapMemU8<const SIZE: usize> = HeapMem<u8, SIZE>;
 
-impl<const T: usize> HeapMem<T> {
+pub struct HeapMem<T: Sized, const SIZE: usize>(Box<[T; SIZE]>);
+
+impl<T: Sized + Default + Copy, const SIZE: usize> HeapMem<T, SIZE> {
     pub fn new() -> Self {
-        HeapMem(Box::new([0u8; T]))
+        HeapMem(Box::new([T::default(); SIZE]))
     }
 }
 
-impl<const T: usize> Deref for HeapMem<T> {
-    type Target = Box<[u8; T]>;
+impl<T: Sized + Default + Copy, const SIZE: usize> Deref for HeapMem<T, SIZE> {
+    type Target = Box<[T; SIZE]>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<const T: usize> DerefMut for HeapMem<T> {
+impl<T: Sized + Default + Copy, const SIZE: usize> DerefMut for HeapMem<T, SIZE> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<const T: usize> Default for HeapMem<T> {
+impl<T: Sized + Default + Copy, const SIZE: usize> Default for HeapMem<T, SIZE> {
     fn default() -> Self {
         HeapMem::new()
     }

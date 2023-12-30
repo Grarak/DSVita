@@ -326,4 +326,4 @@ mod transfer_thumb_ops {
     }
 }
 
-pub use transfer_thumb_ops::*;
+pub(super) use transfer_thumb_ops::*;

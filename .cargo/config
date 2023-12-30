@@ -1,4 +1,3 @@
-[target.arm-unknown-linux-gnueabi]
-linker = "arm-linux-gnueabi-gcc"
-ar = "arm-linux-gnueabi-ar"
-rustflags = ["-C", "target-cpu=cortex-a9", "-C", "target-feature=+neon,+thumb-mode,+thumb2,+v5te,+v6,+v6k,+v6t2,+v7,+vfp2,+vfp3"]
+[target.armv7-unknown-linux-gnueabihf]
+linker = "/usr/bin/clang"
+rustflags = ["-C", "link-args=-target armv7-unknown-linux-gnueabihf -fuse-ld=lld", "-C", "target-feature=+neon,+thumb-mode,+thumb2,+v5te,+v6,+v6k,+v6t2,+v7,+vfp2,+vfp3"]

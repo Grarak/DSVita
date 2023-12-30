@@ -7,7 +7,6 @@ pub mod inst_info;
 mod inst_info_thumb;
 mod inst_mem_handler;
 pub mod jit_asm;
-pub mod jit_cycle_handler;
 pub mod jit_memory;
 pub mod reg;
 
@@ -683,10 +682,9 @@ pub enum Cond {
     NV = 15,
 }
 
-impl<T: Into<u8>> From<T> for Cond {
-    fn from(value: T) -> Self {
-        let value = value.into();
-        assert!(value <= Cond::AL as u8);
+impl From<u8> for Cond {
+    fn from(value: u8) -> Self {
+        debug_assert!(value <= Cond::AL as u8);
         unsafe { mem::transmute(value) }
     }
 }
@@ -724,6 +722,7 @@ pub enum ShiftType {
     ROR = 3,
 }
 
+#[repr(u8)]
 pub enum MemoryAmount {
     BYTE,
     HALF,
@@ -942,5 +941,12 @@ impl From<Op> for MemoryAmount {
             | Op::StrdPtrp => MemoryAmount::DOUBLE,
             _ => todo!("{:?}", value),
         }
+    }
+}
+
+impl From<u8> for MemoryAmount {
+    fn from(value: u8) -> Self {
+        debug_assert!(value <= MemoryAmount::DOUBLE as u8);
+        unsafe { mem::transmute(value) }
     }
 }

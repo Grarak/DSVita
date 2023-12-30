@@ -455,4 +455,4 @@ mod alu_thumb_ops {
     }
 }
 
-pub use alu_thumb_ops::*;
+pub(super) use alu_thumb_ops::*;

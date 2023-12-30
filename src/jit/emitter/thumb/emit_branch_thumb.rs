@@ -1,3 +1,4 @@
+use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
@@ -6,7 +7,7 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op};
 use std::ptr;
 
-impl JitAsm {
+impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_b_thumb(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
@@ -35,7 +36,10 @@ impl JitAsm {
         let mut opcodes = Vec::<u32>::new();
 
         opcodes.extend(AluImm::mov32(Reg::R8, pc));
-        opcodes.extend(AluImm::mov32(Reg::R9, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+        opcodes.extend(AluImm::mov32(
+            Reg::R9,
+            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+        ));
         opcodes.extend(AluImm::mov32(Reg::R10, new_pc | 1));
 
         opcodes.push(LdrStrImm::str_al(Reg::R8, Reg::R9));
@@ -46,7 +50,7 @@ impl JitAsm {
                 .emit_set_reg(Reg::PC, Reg::R10, Reg::R11),
         );
 
-        JitAsm::emit_host_bx(self.breakout_thumb_addr, &mut opcodes);
+        Self::emit_host_bx(self.breakout_thumb_addr, &mut opcodes);
 
         if cond != Cond::AL {
             if new_pc < pc {
@@ -94,9 +98,10 @@ impl JitAsm {
         self.jit_buf
             .emit_opcodes
             .extend(AluImm::mov32(Reg::R10, pc));
-        self.jit_buf
-            .emit_opcodes
-            .extend(AluImm::mov32(Reg::R11, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+        self.jit_buf.emit_opcodes.extend(AluImm::mov32(
+            Reg::R11,
+            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+        ));
 
         let thread_regs = self.thread_regs.borrow();
         self.jit_buf
@@ -127,7 +132,7 @@ impl JitAsm {
             .emit_opcodes
             .extend(thread_regs.emit_set_reg(Reg::PC, Reg::R8, Reg::R9));
 
-        JitAsm::emit_host_bx(self.breakout_thumb_addr, &mut self.jit_buf.emit_opcodes);
+        Self::emit_host_bx(self.breakout_thumb_addr, &mut self.jit_buf.emit_opcodes);
     }
 
     pub fn emit_bx_thumb(&mut self, buf_index: usize, pc: u32) {
@@ -140,9 +145,10 @@ impl JitAsm {
         let tmp_reg2 = reg_reserve.pop().unwrap();
 
         self.jit_buf.emit_opcodes.extend(AluImm::mov32(tmp_reg, pc));
-        self.jit_buf
-            .emit_opcodes
-            .extend(AluImm::mov32(tmp_reg2, ptr::addr_of_mut!(self.guest_branch_out_pc) as u32));
+        self.jit_buf.emit_opcodes.extend(AluImm::mov32(
+            tmp_reg2,
+            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+        ));
         self.jit_buf
             .emit_opcodes
             .push(LdrStrImm::str_al(tmp_reg, tmp_reg2));
@@ -171,6 +177,6 @@ impl JitAsm {
                 );
         }
 
-        JitAsm::emit_host_bx(self.breakout_thumb_addr, &mut self.jit_buf.emit_opcodes);
+        Self::emit_host_bx(self.breakout_thumb_addr, &mut self.jit_buf.emit_opcodes);
     }
 }

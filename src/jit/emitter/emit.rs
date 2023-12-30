@@ -1,3 +1,4 @@
+use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::{Bx, B};
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs};
@@ -8,7 +9,7 @@ use crate::jit::{Cond, Op};
 use std::cmp::max;
 use std::{ops, ptr};
 
-impl JitAsm {
+impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
         let cond = inst_info.cond;
@@ -52,7 +53,7 @@ impl JitAsm {
                     }
                 }
 
-                |_: &mut JitAsm, _: usize, _: u32| {}
+                |_: &mut JitAsm<CPU>, _: usize, _: u32| {}
             }
         };
 
@@ -78,7 +79,7 @@ impl JitAsm {
                 .emit_opcodes
                 .push(LdrStrImm::str_al(Reg::R0, Reg::LR));
 
-            JitAsm::emit_host_bx(
+            Self::emit_host_bx(
                 self.breakout_skip_save_regs_addr,
                 &mut self.jit_buf.emit_opcodes,
             );
@@ -90,7 +91,7 @@ impl JitAsm {
         buf_index: usize,
         pc: u32,
         before_assemble: fn(
-            &JitAsm,
+            &JitAsm<CPU>,
             inst_info: &InstInfo,
             reg_reserver: &mut RegPushPopHandler,
         ) -> Vec<u32>,
@@ -245,7 +246,7 @@ impl JitAsm {
         jit_buf.push(Bx::bx(Reg::LR, Cond::AL));
     }
 
-    pub fn emit_call_host_func<F: FnOnce(&mut JitAsm)>(
+    pub fn emit_call_host_func<F: FnOnce(&mut JitAsm<CPU>)>(
         &mut self,
         after_host_restore: F,
         args: &[Option<u32>],

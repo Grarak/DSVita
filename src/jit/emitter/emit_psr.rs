@@ -1,11 +1,12 @@
 use crate::hle::thread_regs::register_set_cpsr;
+use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::inst_info::Operand;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
 
-impl JitAsm {
+impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_msr_cprs(&mut self, buf_index: usize, _: u32) {
         self.emit_call_host_func(
             |asm| {

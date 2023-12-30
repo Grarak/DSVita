@@ -6,44 +6,44 @@ use crate::utils::FastCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-pub struct BiosContext {
-    cpu_type: CpuType,
+pub struct BiosContext<const CPU: CpuType> {
     regs: Rc<FastCell<ThreadRegs>>,
-    mem_handler: Arc<MemHandler>,
-    cpu_regs: Arc<CpuRegs>,
+    mem_handler: Arc<MemHandler<CPU>>,
+    cpu_regs: Arc<CpuRegs<CPU>>,
     pub cycle_correction: u16,
 }
 
 mod swi {
     use crate::hle::bios_context::BiosContext;
+    use crate::hle::CpuType;
     use crate::jit::reg::Reg;
     use crate::utils;
 
-    pub fn bit_unpack(context: &mut BiosContext) {
+    pub fn bit_unpack<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn cpu_fast_set(context: &mut BiosContext) {
+    pub fn cpu_fast_set<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn cpu_set(context: &mut BiosContext) {
+    pub fn cpu_set<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn diff_unfilt16(context: &mut BiosContext) {
+    pub fn diff_unfilt16<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn diff_unfilt8(context: &mut BiosContext) {
+    pub fn diff_unfilt8<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn divide(context: &mut BiosContext) {
+    pub fn divide<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn get_crc16(context: &mut BiosContext) {
+    pub fn get_crc16<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         let (initial, addr, len) = {
             let regs = context.regs.borrow();
             (
@@ -59,95 +59,100 @@ mod swi {
         *context.regs.borrow_mut().get_reg_value_mut(Reg::R0) = ret as u32;
     }
 
-    pub fn halt(context: &mut BiosContext) {
+    pub fn halt<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         context.cpu_regs.halt(0);
     }
 
-    pub fn huff_uncomp(context: &mut BiosContext) {
+    pub fn huff_uncomp<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn interrupt_wait(context: &mut BiosContext) {
+    pub fn interrupt_wait<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn is_debugger(context: &mut BiosContext) {
+    pub fn is_debugger<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         *context.regs.borrow_mut().get_reg_value_mut(Reg::R0) = 0;
     }
 
-    pub fn lz77_uncomp(context: &mut BiosContext) {
+    pub fn lz77_uncomp<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn runlen_uncomp(context: &mut BiosContext) {
+    pub fn runlen_uncomp<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn square_root(context: &mut BiosContext) {
+    pub fn square_root<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn unknown(context: &mut BiosContext) {
+    pub fn unknown<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn v_blank_intr_wait(context: &mut BiosContext) {
+    pub fn v_blank_intr_wait<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn wait_by_loop(context: &mut BiosContext) {
+    pub fn wait_by_loop<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         let mut regs = context.regs.borrow_mut();
         let delay = regs.get_reg_value_mut(Reg::R0);
         context.cycle_correction = *delay as u16 * 4;
         *delay = 0;
     }
 
-    pub fn sleep(context: &mut BiosContext) {
+    pub fn sleep<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn sound_bias(context: &mut BiosContext) {
+    pub fn sound_bias<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn get_sine_table(context: &mut BiosContext) {
+    pub fn get_sine_table<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn get_pitch_table(context: &mut BiosContext) {
+    pub fn get_pitch_table<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 
-    pub fn get_volume_table(context: &mut BiosContext) {
+    pub fn get_volume_table<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
     }
 }
 
 use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::CpuType;
-pub use swi::*;
+pub(super) use swi::*;
 
-impl BiosContext {
+impl<const CPU: CpuType> BiosContext<CPU> {
     pub fn new(
-        cpu_type: CpuType,
         regs: Rc<FastCell<ThreadRegs>>,
-        cpu_regs: Arc<CpuRegs>,
-        mem_handler: Arc<MemHandler>,
+        cpu_regs: Arc<CpuRegs<CPU>>,
+        mem_handler: Arc<MemHandler<CPU>>,
     ) -> Self {
         BiosContext {
-            cpu_type,
             regs,
             cpu_regs,
             mem_handler,
             cycle_correction: 0,
         }
     }
+}
 
-    pub fn swi(&mut self, comment: u8) {
-        let (name, func) = match self.cpu_type {
-            CpuType::ARM9 => &ARM9_SWI_LOOKUP_TABLE[comment as usize],
-            CpuType::ARM7 => &ARM7_SWI_LOOKUP_TABLE[comment as usize],
-        };
+impl BiosContext<{ CpuType::ARM9 }> {
+    pub fn swi_arm9(&mut self, comment: u8) {
+        let (name, func) = &ARM9_SWI_LOOKUP_TABLE[comment as usize];
+        debug_println!("Swi call {:x} {}", comment, name);
+        func(self);
+    }
+}
+
+impl BiosContext<{ CpuType::ARM7 }> {
+    pub fn swi_arm7(&mut self, comment: u8) {
+        let (name, func) = &ARM7_SWI_LOOKUP_TABLE[comment as usize];
         debug_println!("Swi call {:x} {}", comment, name);
         func(self);
     }

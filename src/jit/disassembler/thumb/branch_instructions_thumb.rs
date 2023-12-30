@@ -149,4 +149,4 @@ mod branch_thumb_ops {
     }
 }
 
-pub use branch_thumb_ops::*;
+pub(super) use branch_thumb_ops::*;

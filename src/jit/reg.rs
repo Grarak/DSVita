@@ -30,10 +30,9 @@ const EMULATED_REGS_BITMASK: u32 = (1 << Reg::LR as u8) | (1 << Reg::PC as u8);
 pub const FIRST_EMULATED_REG: Reg = Reg::LR;
 pub const EMULATED_REGS_COUNT: usize = u32::count_ones(EMULATED_REGS_BITMASK) as usize;
 
-impl<T: Into<u8>> From<T> for Reg {
-    fn from(value: T) -> Self {
-        let value = value.into();
-        assert!(value < Reg::None as u8);
+impl From<u8> for Reg {
+    fn from(value: u8) -> Self {
+        debug_assert!(value < Reg::None as u8);
         unsafe { mem::transmute(value) }
     }
 }

@@ -1,5 +1,6 @@
 use crate::hle::bios_context::BiosContext;
 use crate::hle::cp15_context::Cp15Context;
+use crate::hle::CpuType;
 
 #[repr(u8)]
 pub enum ExceptionVector {
@@ -17,29 +18,43 @@ mod exception_handler {
     use crate::hle::bios_context::BiosContext;
     use crate::hle::cp15_context::Cp15Context;
     use crate::hle::exception_handler::ExceptionVector;
+    use crate::hle::CpuType;
 
     pub fn arm9<const THUMB: bool>(
         cp15_context: &Cp15Context,
-        bios_context: &mut BiosContext,
+        bios_context: &mut BiosContext<{ CpuType::ARM9 }>,
         opcode: u32,
         vector: ExceptionVector,
     ) {
         if cp15_context.exception_addr != 0 {
-            handle::<THUMB>(bios_context, opcode, vector);
+            handle_arm9::<THUMB>(bios_context, opcode, vector);
             return;
         }
 
         todo!()
     }
 
-    pub fn handle<const THUMB: bool>(
-        bios_context: &mut BiosContext,
+    pub fn handle_arm9<const THUMB: bool>(
+        bios_context: &mut BiosContext<{ CpuType::ARM9 }>,
         opcode: u32,
         vector: ExceptionVector,
     ) {
         match vector {
             ExceptionVector::SoftwareInterrupt => {
-                bios_context.swi(((opcode >> if THUMB { 0 } else { 16 }) & 0xFF) as u8);
+                bios_context.swi_arm9(((opcode >> if THUMB { 0 } else { 16 }) & 0xFF) as u8);
+            }
+            _ => todo!(),
+        }
+    }
+
+    pub fn handle_arm7<const THUMB: bool>(
+        bios_context: &mut BiosContext<{ CpuType::ARM7 }>,
+        opcode: u32,
+        vector: ExceptionVector,
+    ) {
+        match vector {
+            ExceptionVector::SoftwareInterrupt => {
+                bios_context.swi_arm7(((opcode >> if THUMB { 0 } else { 16 }) & 0xFF) as u8);
             }
             _ => todo!(),
         }
@@ -49,7 +64,7 @@ mod exception_handler {
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn exception_handler_arm9(
     cp15_context: *const Cp15Context,
-    bios_context: *mut BiosContext,
+    bios_context: *mut BiosContext<{ CpuType::ARM9 }>,
     opcode: u32,
     vector: ExceptionVector,
 ) {
@@ -63,17 +78,17 @@ pub unsafe extern "C" fn exception_handler_arm9(
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn exception_handler_arm7(
-    bios_context: *mut BiosContext,
+    bios_context: *mut BiosContext<{ CpuType::ARM7 }>,
     opcode: u32,
     vector: ExceptionVector,
 ) {
-    exception_handler::handle::<false>(bios_context.as_mut().unwrap(), opcode, vector)
+    exception_handler::handle_arm7::<false>(bios_context.as_mut().unwrap(), opcode, vector)
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn exception_handler_arm9_thumb(
     cp15_context: *const Cp15Context,
-    bios_context: *mut BiosContext,
+    bios_context: *mut BiosContext<{ CpuType::ARM9 }>,
     opcode: u32,
     vector: ExceptionVector,
 ) {
@@ -87,9 +102,9 @@ pub unsafe extern "C" fn exception_handler_arm9_thumb(
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn exception_handler_arm7_thumb(
-    bios_context: *mut BiosContext,
+    bios_context: *mut BiosContext<{ CpuType::ARM7 }>,
     opcode: u32,
     vector: ExceptionVector,
 ) {
-    exception_handler::handle::<true>(bios_context.as_mut().unwrap(), opcode, vector)
+    exception_handler::handle_arm7::<true>(bios_context.as_mut().unwrap(), opcode, vector)
 }
