@@ -10,6 +10,7 @@ pub struct BiosContext {
     cpu_type: CpuType,
     regs: Rc<FastCell<ThreadRegs>>,
     mem_handler: Arc<MemHandler>,
+    cpu_regs: Arc<CpuRegs>,
     pub cycle_correction: u16,
 }
 
@@ -59,7 +60,7 @@ mod swi {
     }
 
     pub fn halt(context: &mut BiosContext) {
-        todo!()
+        context.cpu_regs.halt(0);
     }
 
     pub fn huff_uncomp(context: &mut BiosContext) {
@@ -122,6 +123,7 @@ mod swi {
     }
 }
 
+use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::CpuType;
 pub use swi::*;
 
@@ -129,11 +131,13 @@ impl BiosContext {
     pub fn new(
         cpu_type: CpuType,
         regs: Rc<FastCell<ThreadRegs>>,
+        cpu_regs: Arc<CpuRegs>,
         mem_handler: Arc<MemHandler>,
     ) -> Self {
         BiosContext {
             cpu_type,
             regs,
+            cpu_regs,
             mem_handler,
             cycle_correction: 0,
         }

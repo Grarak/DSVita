@@ -2,6 +2,7 @@ use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
 use crate::hle::gpu::gpu_context::GpuContext;
+use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::dma::Dma;
 use crate::hle::memory::io_ports::IoPorts;
@@ -32,6 +33,7 @@ pub struct ThreadContext {
     pub regs: Rc<FastCell<ThreadRegs>>,
     pub cp15_context: Rc<FastCell<Cp15Context>>,
     pub mem_handler: Arc<MemHandler>,
+    cpu_regs: Arc<CpuRegs>,
 }
 
 unsafe impl Send for ThreadContext {}
@@ -46,30 +48,32 @@ impl ThreadContext {
         spi_context: Arc<RwLock<SpiContext>>,
         ipc_handler: Arc<RwLock<IpcHandler>>,
         vram_context: Arc<VramContext>,
-        gpu_context: Rc<FastCell<GpuContext>>,
+        input_context: Arc<RwLock<InputContext>>,
+        gpu_context: Arc<RwLock<GpuContext>>,
         gpu_2d_context_0: Rc<FastCell<Gpu2DContext>>,
         gpu_2d_context_1: Rc<FastCell<Gpu2DContext>>,
         rtc_context: Rc<FastCell<RtcContext>>,
         spu_context: Rc<FastCell<SpuContext>>,
         palettes_context: Rc<FastCell<PalettesContext>>,
+        cpu_regs: Arc<CpuRegs>,
         cp15_context: Rc<FastCell<Cp15Context>>,
         tcm_context: Rc<FastCell<TcmContext>>,
         oam: Rc<FastCell<OamContext>>,
+        timers_context: Arc<RwLock<TimersContext>>,
     ) -> Self {
         let regs = ThreadRegs::new(cpu_type);
-        let cpu_regs = Rc::new(FastCell::new(CpuRegs::new(cpu_type)));
         let dma = Rc::new(FastCell::new(Dma::new(cpu_type)));
-        let timers_context = Rc::new(FastCell::new(TimersContext::new()));
 
         let io_ports = IoPorts::new(
             cpu_type,
             memory.clone(),
             wram_context.clone(),
             ipc_handler,
-            cpu_regs,
+            cpu_regs.clone(),
             dma.clone(),
             timers_context.clone(),
             vram_context,
+            input_context,
             gpu_context,
             gpu_2d_context_0,
             gpu_2d_context_1,
@@ -98,6 +102,7 @@ impl ThreadContext {
                 jit_cycle_manager,
                 jit_memory,
                 regs.clone(),
+                cpu_regs.clone(),
                 cp15_context.clone(),
                 timers_context,
                 mem_handler.clone(),
@@ -105,6 +110,7 @@ impl ThreadContext {
             regs,
             cp15_context,
             mem_handler,
+            cpu_regs,
         }
     }
 
@@ -115,13 +121,21 @@ impl ThreadContext {
             thread::current().id().as_u64()
         );
         loop {
-            self.jit.execute();
+            if !self.cpu_regs.is_halted() {
+                self.jit.execute();
+            } else {
+                thread::yield_now();
+            }
         }
     }
 
     pub fn iterate(&mut self, count: usize) {
         for _ in 0..count {
-            self.jit.execute();
+            if !self.cpu_regs.is_halted() {
+                self.jit.execute();
+            } else {
+                thread::yield_now();
+            }
         }
     }
 }

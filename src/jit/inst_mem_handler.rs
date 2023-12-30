@@ -46,8 +46,10 @@ impl InstMemHandler {
 
         let pre = match inst_info.op {
             Op::LdrOfip
+            | Op::LdrOfim
             | Op::LdrbOfrplr
             | Op::StrOfip
+            | Op::StrbOfip
             | Op::StrhOfip
             | Op::StrPrim
             | Op::LdrshRegT
@@ -70,8 +72,10 @@ impl InstMemHandler {
 
         let write_back = match inst_info.op {
             Op::LdrOfip
+            | Op::LdrOfim
             | Op::LdrbOfrplr
             | Op::StrOfip
+            | Op::StrbOfip
             | Op::StrhOfip
             | Op::LdrshRegT
             | Op::LdrbRegT

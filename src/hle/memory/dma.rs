@@ -42,12 +42,12 @@ struct DmaCntArm9 {
 #[derive(FromBits)]
 struct DmaCntArm7 {
     word_count: u16,
-    unused: u5,
+    not_used: u5,
     dest_addr_ctrl: u2,
     src_addr_ctrl: u2,
     repeat: u1,
     transfer_type: u1,
-    unused1: u1,
+    not_used1: u1,
     transfer_mode: u2,
     irq_at_end: u1,
     enable: u1,

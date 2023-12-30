@@ -5,8 +5,10 @@
 
 use crate::cartridge::Cartridge;
 use crate::hle::cp15_context::Cp15Context;
+use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
 use crate::hle::gpu::gpu_context::GpuContext;
+use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::main_memory::MainMemory;
 use crate::hle::memory::oam_context::OamContext;
@@ -20,6 +22,7 @@ use crate::hle::spi_context;
 use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::thread_context::ThreadContext;
+use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
 use crate::jit::jit_cycle_handler::JitCycleManager;
 use crate::jit::jit_memory::JitMemory;
@@ -159,13 +162,23 @@ pub fn main() {
         rx.recv().unwrap();
     }
 
-    let jit_cycle_manager = Arc::new(RwLock::new(JitCycleManager::new()));
+    let cpu_regs_arm9 = Arc::new(CpuRegs::new(CpuType::ARM9));
+    let cpu_regs_arm7 = Arc::new(CpuRegs::new(CpuType::ARM7));
+    let timers_context_arm9 = Arc::new(RwLock::new(TimersContext::new()));
+    let timers_context_arm7 = Arc::new(RwLock::new(TimersContext::new()));
+    let jit_cycle_manager = Arc::new(RwLock::new(JitCycleManager::new(
+        cpu_regs_arm9.clone(),
+        timers_context_arm9.clone(),
+        cpu_regs_arm7.clone(),
+        timers_context_arm7.clone(),
+    )));
     let jit_memory = Arc::new(RwLock::new(JitMemory::new()));
     let wram_context = Arc::new(WramContext::new());
     let spi_context = Arc::new(RwLock::new(SpiContext::new()));
     let ipc_handler = Arc::new(RwLock::new(IpcHandler::new()));
     let vram_context = Arc::new(VramContext::new());
-    let gpu_context = Rc::new(FastCell::new(GpuContext::new()));
+    let input_context = Arc::new(RwLock::new(InputContext::new()));
+    let gpu_context = Arc::new(RwLock::new(GpuContext::new()));
     let gpu_2d_context_0 = Rc::new(FastCell::new(Gpu2DContext::new()));
     let gpu_2d_context_1 = Rc::new(FastCell::new(Gpu2DContext::new()));
     let rtc_context = Rc::new(FastCell::new(RtcContext::new()));
@@ -184,15 +197,18 @@ pub fn main() {
         spi_context.clone(),
         ipc_handler.clone(),
         vram_context.clone(),
+        input_context.clone(),
         gpu_context.clone(),
         gpu_2d_context_0.clone(),
         gpu_2d_context_1.clone(),
         rtc_context.clone(),
         spu_context.clone(),
         palettes_context.clone(),
+        cpu_regs_arm9,
         cp15_context.clone(),
         tcm_context.clone(),
         oam_context.clone(),
+        timers_context_arm9,
     );
     initialize_arm9_thread(arm9_entry_adrr, &mut arm9_thread);
 
@@ -205,21 +221,24 @@ pub fn main() {
         spi_context,
         ipc_handler,
         vram_context,
+        input_context,
         gpu_context,
         gpu_2d_context_0,
         gpu_2d_context_1,
         rtc_context,
         spu_context,
         palettes_context,
+        cpu_regs_arm7,
         cp15_context,
         tcm_context,
         oam_context,
+        timers_context_arm7,
     );
     initialize_arm7_thread(arm7_entry_addr, &mut arm7_thread);
 
     if SINGLE_CORE {
         loop {
-            arm9_thread.iterate(2);
+            arm9_thread.iterate(1);
             arm7_thread.iterate(1);
         }
     } else {

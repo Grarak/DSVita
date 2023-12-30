@@ -1,6 +1,7 @@
 use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
 use crate::hle::gpu::gpu_context::GpuContext;
+use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::dma::Dma;
 use crate::hle::memory::main_memory::MainMemory;
@@ -20,12 +21,13 @@ pub struct IoPorts {
     pub memory: Arc<RwLock<MainMemory>>,
     pub wram_context: Arc<WramContext>,
     pub ipc_handler: Arc<RwLock<IpcHandler>>,
-    pub cpu_regs: Rc<FastCell<CpuRegs>>,
+    pub cpu_regs: Arc<CpuRegs>,
     pub dma: Rc<FastCell<Dma>>,
-    pub timers_context: Rc<FastCell<TimersContext>>,
+    pub timers_context: Arc<RwLock<TimersContext>>,
     pub vram_context: Arc<VramContext>,
+    pub input_context: Arc<RwLock<InputContext>>,
 
-    pub gpu_context: Rc<FastCell<GpuContext>>,
+    pub gpu_context: Arc<RwLock<GpuContext>>,
     pub gpu_2d_context_0: Rc<FastCell<Gpu2DContext>>,
     pub gpu_2d_context_1: Rc<FastCell<Gpu2DContext>>,
 
@@ -40,11 +42,12 @@ impl IoPorts {
         memory: Arc<RwLock<MainMemory>>,
         wram_context: Arc<WramContext>,
         ipc_handler: Arc<RwLock<IpcHandler>>,
-        cpu_regs: Rc<FastCell<CpuRegs>>,
+        cpu_regs: Arc<CpuRegs>,
         dma: Rc<FastCell<Dma>>,
-        timers_context: Rc<FastCell<TimersContext>>,
+        timers_context: Arc<RwLock<TimersContext>>,
         vram_context: Arc<VramContext>,
-        gpu_context: Rc<FastCell<GpuContext>>,
+        input_context: Arc<RwLock<InputContext>>,
+        gpu_context: Arc<RwLock<GpuContext>>,
         gpu_2d_context_0: Rc<FastCell<Gpu2DContext>>,
         gpu_2d_context_1: Rc<FastCell<Gpu2DContext>>,
         rtc_context: Rc<FastCell<RtcContext>>,
@@ -60,6 +63,7 @@ impl IoPorts {
             dma,
             timers_context,
             vram_context,
+            input_context,
             gpu_context,
             gpu_2d_context_0,
             gpu_2d_context_1,

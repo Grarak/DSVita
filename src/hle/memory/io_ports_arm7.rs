@@ -20,7 +20,7 @@ impl IoPorts {
         while (index - 3) < mem::size_of::<T>() {
             #[rustfmt::skip]
             io_ports_read!(match addr_offset + (index - 3) as u32 {
-                io16(0x4) => todo!(),
+                io16(0x4) => self.gpu_context.read().unwrap().get_disp_stat(CpuType::ARM7),
                 io16(0x6) => todo!(),
                 io32(0xB0) => todo!(),
                 io32(0xB4) => todo!(),
@@ -42,7 +42,7 @@ impl IoPorts {
                 io16(0x10A) => todo!(),
                 io16(0x10C) => todo!(),
                 io16(0x10E) => todo!(),
-                io16(0x130) => todo!(),
+                io16(0x130) => self.input_context.read().unwrap().key_input,
                 io16(0x136) => todo!(),
                 io8(0x138) => self.rtc_context.borrow().get_rtc(),
                 io16(0x180) => self.ipc_handler.read().unwrap().get_sync_reg(CpuType::ARM7),
@@ -52,9 +52,9 @@ impl IoPorts {
                 io32(0x1A4) => todo!(),
                 io16(0x1C0) => self.spi_context.read().unwrap().cnt,
                 io8(0x1C2) => self.spi_context.read().unwrap().data,
-                io8(0x208) => self.cpu_regs.borrow().ime,
-                io32(0x210) => self.cpu_regs.borrow().ie,
-                io32(0x214) => self.cpu_regs.borrow().irf,
+                io8(0x208) => self.cpu_regs.get_ime(),
+                io32(0x210) => self.cpu_regs.get_ie(),
+                io32(0x214) => self.cpu_regs.get_irf(),
                 io8(0x240) => self.vram_context.get_stat(),
                 io8(0x241) => self.wram_context.get_cnt(),
                 io8(0x300) => todo!(),
@@ -178,7 +178,7 @@ impl IoPorts {
         while (index - 3) < bytes.len() {
             #[rustfmt::skip]
             io_ports_write!(match addr_offset + (index - 3) as u32 {
-                io16(0x4) => todo!(),
+                io16(0x4) => self.gpu_context.write().unwrap().set_disp_stat(CpuType::ARM7, mask, value),
                 io32(0xB0) => todo!(),
                 io32(0xB4) => todo!(),
                 io32(0xB8) => todo!(),
@@ -210,10 +210,10 @@ impl IoPorts {
                 io32(0x1AC) => todo!(),
                 io16(0x1C0) => self.spi_context.write().unwrap().set_cnt(mask, value),
                 io8(0x1C2) => self.spi_context.write().unwrap().set_data(value),
-                io8(0x208) => self.cpu_regs.borrow_mut().set_ime(value),
-                io32(0x210) => self.cpu_regs.borrow_mut().set_ie(mask, value),
-                io32(0x214) => self.cpu_regs.borrow_mut().set_irf(mask, value),
-                io8(0x300) => self.cpu_regs.borrow_mut().set_post_flg(value),
+                io8(0x208) => self.cpu_regs.set_ime(value),
+                io32(0x210) => self.cpu_regs.set_ie(mask, value),
+                io32(0x214) => self.cpu_regs.set_irf(mask, value),
+                io8(0x300) => self.cpu_regs.set_post_flg(value),
                 io8(0x301) => todo!(),
                 io32(0x400) => self.spu_context.borrow_mut().set_cnt(0, mask, value),
                 io32(0x404) => self.spu_context.borrow_mut().set_sad(0, mask, value),

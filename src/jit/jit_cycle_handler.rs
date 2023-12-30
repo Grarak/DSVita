@@ -1,4 +1,7 @@
+use crate::hle::cpu_regs::CpuRegs;
+use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 struct AverageCycle {
@@ -36,16 +39,72 @@ impl AverageCycle {
     }
 }
 
+struct CpuContent {
+    cpu_regs: Arc<CpuRegs>,
+    timers_context: Arc<RwLock<TimersContext>>,
+}
+
+impl CpuContent {
+    fn new(cpu_regs: Arc<CpuRegs>, timers_context: Arc<RwLock<TimersContext>>) -> Self {
+        CpuContent {
+            cpu_regs,
+            timers_context,
+        }
+    }
+}
+
 pub struct JitCycleManager {
+    arm9_context: CpuContent,
+    arm7_context: CpuContent,
     arm9_average_cycle: AverageCycle,
     arm7_average_cycle: AverageCycle,
 }
 
 impl JitCycleManager {
-    pub fn new() -> Self {
+    pub fn new(
+        arm9_cpu_regs: Arc<CpuRegs>,
+        arm9_timers_context: Arc<RwLock<TimersContext>>,
+        arm7_cpu_regs: Arc<CpuRegs>,
+        arm7_timers_context: Arc<RwLock<TimersContext>>,
+    ) -> Self {
         JitCycleManager {
+            arm9_context: CpuContent::new(arm9_cpu_regs, arm9_timers_context),
+            arm7_context: CpuContent::new(arm7_cpu_regs, arm7_timers_context),
             arm9_average_cycle: AverageCycle::new(100),
             arm7_average_cycle: AverageCycle::new(50),
+        }
+    }
+
+    pub fn on_cycle_update(&mut self, cpu_type: CpuType, cycles: u16) {
+        match cpu_type {
+            CpuType::ARM9 => {
+                self.arm9_context
+                    .timers_context
+                    .write()
+                    .unwrap()
+                    .on_cycle_update(cycles);
+                if self.arm7_context.cpu_regs.is_halted() {
+                    self.arm7_context
+                        .timers_context
+                        .write()
+                        .unwrap()
+                        .on_cycle_update(cycles);
+                }
+            }
+            CpuType::ARM7 => {
+                self.arm7_context
+                    .timers_context
+                    .write()
+                    .unwrap()
+                    .on_cycle_update(cycles);
+                if self.arm9_context.cpu_regs.is_halted() {
+                    self.arm9_context
+                        .timers_context
+                        .write()
+                        .unwrap()
+                        .on_cycle_update(cycles);
+                }
+            }
         }
     }
 

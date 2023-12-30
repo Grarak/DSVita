@@ -8,11 +8,11 @@ struct RtcReg {
     data_io: u1,
     clock_out: u1,
     select_out: u1,
-    unused: u1,
+    not_used: u1,
     data_dir: u1,
     clock_dir: u1,
     select_dir: u1,
-    unused1: u1,
+    not_used1: u1,
 }
 
 #[derive(Default)]

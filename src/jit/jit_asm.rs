@@ -1,5 +1,6 @@
 use crate::hle::bios_context::BiosContext;
 use crate::hle::cp15_context::Cp15Context;
+use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::thread_regs::ThreadRegs;
 use crate::hle::timers_context::TimersContext;
@@ -87,9 +88,10 @@ pub struct JitAsm {
     jit_memory: Arc<RwLock<JitMemory>>,
     pub inst_mem_handler: InstMemHandler,
     pub thread_regs: Rc<FastCell<ThreadRegs>>,
+    pub cpu_regs: Arc<CpuRegs>,
     pub cp15_context: Rc<FastCell<Cp15Context>>,
     pub bios_context: BiosContext,
-    timers_context: Rc<FastCell<TimersContext>>,
+    timers_context: Arc<RwLock<TimersContext>>,
     pub mem_handler: Arc<MemHandler>,
     pub jit_buf: JitBuf,
     pub host_regs: Box<HostRegs>,
@@ -112,8 +114,9 @@ impl JitAsm {
         jit_cycle_manager: Arc<RwLock<JitCycleManager>>,
         jit_memory: Arc<RwLock<JitMemory>>,
         thread_regs: Rc<FastCell<ThreadRegs>>,
+        cpu_regs: Arc<CpuRegs>,
         cp15_context: Rc<FastCell<Cp15Context>>,
-        timers_context: Rc<FastCell<TimersContext>>,
+        timers_context: Arc<RwLock<TimersContext>>,
         mem_handler: Arc<MemHandler>,
     ) -> Self {
         let mut instance = {
@@ -173,8 +176,14 @@ impl JitAsm {
                     mem_handler.clone(),
                 ),
                 thread_regs: thread_regs.clone(),
+                cpu_regs: cpu_regs.clone(),
                 cp15_context,
-                bios_context: BiosContext::new(cpu_type, thread_regs, mem_handler.clone()),
+                bios_context: BiosContext::new(
+                    cpu_type,
+                    thread_regs,
+                    cpu_regs,
+                    mem_handler.clone(),
+                ),
                 timers_context,
                 mem_handler,
                 jit_buf: JitBuf::new(),
@@ -478,9 +487,10 @@ impl JitAsm {
             .fold(0u16, |sum, count| sum + *count as u16)
             + self.bios_context.cycle_correction
             + 2; // + 2 for branching
-        self.timers_context
-            .borrow_mut()
-            .on_cycle_update(executed_cycles);
+        self.jit_cycle_manager
+            .write()
+            .unwrap()
+            .on_cycle_update(self.cpu_type, executed_cycles);
 
         // TODO cycle correction for conds
         // self.jit_cycle_manager.write().unwrap().insert(
