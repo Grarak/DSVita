@@ -33,10 +33,11 @@ impl CycleManager {
 
         let events_triggered = {
             let events = self.events[CPU as usize].borrow();
-            if let Some((index, (_, _))) = events
+            if let Some((index, _)) = events
                 .iter()
+                .rev()
                 .enumerate()
-                .find(|(_, (cycles, _))| cycle_count < *cycles)
+                .find(|(index, (cycles, _))| cycle_count < *cycles)
             {
                 index
             } else {
@@ -45,7 +46,7 @@ impl CycleManager {
         };
 
         for _ in 0..events_triggered {
-            let (cycles, mut event) = self.events[CPU as usize].borrow_mut().remove(0);
+            let (cycles, mut event) = self.events[CPU as usize].borrow_mut().pop().unwrap();
             event.trigger((cycle_count - cycles) as u16);
         }
     }
@@ -60,7 +61,7 @@ impl CycleManager {
         let mut events = self.events[CPU as usize].borrow_mut();
         let event_cycle = cycle_count + in_cycles as u64;
         let index = events
-            .binary_search_by_key(&event_cycle, |(cycles, _)| *cycles)
+            .binary_search_by(|(cycles, _)| event_cycle.cmp(cycles))
             .unwrap_or_else(|index| index);
         event.scheduled(&event_cycle);
         events.insert(index, (event_cycle, event));
