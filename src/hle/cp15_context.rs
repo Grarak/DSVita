@@ -1,5 +1,8 @@
+use crate::hle::cpu_regs::CpuRegs;
+use crate::hle::CpuType;
 use crate::logging::debug_println;
 use bilge::prelude::*;
+use std::sync::Arc;
 use std::{cmp, mem};
 
 #[bitsize(32)]
@@ -59,6 +62,7 @@ pub struct Cp15Context {
     itcm: u32,
     pub itcm_state: TcmState,
     pub itcm_size: u32,
+    cpu_regs: Arc<CpuRegs<{ CpuType::ARM9 }>>,
 }
 
 #[derive(Eq, PartialEq)]
@@ -77,8 +81,7 @@ impl From<u8> for TcmState {
 }
 
 impl Cp15Context {
-    pub fn new() -> Self {
-        // TODO make this const
+    pub fn new(cpu_regs: Arc<CpuRegs<{ CpuType::ARM9 }>>) -> Self {
         let mut control_default = Cp15ControlReg::from(0);
         control_default.set_write_buffer(u1::new(1));
         control_default.set_exception_handling(u1::new(1));
@@ -95,6 +98,7 @@ impl Cp15Context {
             itcm: 0,
             itcm_state: TcmState::Disabled,
             itcm_size: 0,
+            cpu_regs,
         }
     }
 
@@ -139,7 +143,7 @@ impl Cp15Context {
 
         match reg {
             0x010000 => self.set_control_reg(value),
-            0x070004 | 0x070802 => todo!(),
+            0x070004 | 0x070802 => self.cpu_regs.halt(0),
             0x090100 => self.set_dtcm(value),
             0x090101 => self.set_itcm(value),
             _ => debug_println!("Unknown cp15 reg write {:x}", reg),
@@ -149,18 +153,17 @@ impl Cp15Context {
     pub fn read(&self, reg: u32, value: &mut u32) {
         debug_println!("Reading from cp15 reg {:x}", reg);
 
-        *value =
-            match reg {
-                0x000000 => 0x41059461, // Main ID
-                0x000001 => 0x0F0D2112, // Cache type
-                0x010000 => self.control,
-                0x090100 => self.dtcm,
-                0x090101 => self.itcm,
-                _ => {
-                    debug_println!("Unknown cp15 reg read {:x}", reg);
-                    0
-                }
+        *value = match reg {
+            0x000000 => 0x41059461, // Main ID
+            0x000001 => 0x0F0D2112, // Cache type
+            0x010000 => self.control,
+            0x090100 => self.dtcm,
+            0x090101 => self.itcm,
+            _ => {
+                debug_println!("Unknown cp15 reg read {:x}", reg);
+                0
             }
+        }
     }
 }
 

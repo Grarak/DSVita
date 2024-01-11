@@ -30,7 +30,7 @@ impl Convert for u32 {
 }
 
 pub fn negative<T: Convert>(n: T) -> T {
-    T::from(!(unsafe { n.into().unchecked_sub(1) }))
+    T::from(!n.into().wrapping_sub(1))
 }
 
 pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
@@ -116,6 +116,7 @@ pub type FastCell<T> = std::cell::RefCell<T>;
 // }
 
 pub type HeapMemU8<const SIZE: usize> = HeapMem<u8, SIZE>;
+pub type HeapMemU32<const SIZE: usize> = HeapMem<u32, SIZE>;
 
 pub struct HeapMem<T: Sized, const SIZE: usize>(Box<[T; SIZE]>);
 

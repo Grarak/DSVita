@@ -3,17 +3,16 @@
 #![feature(arm_target_feature)]
 #![feature(const_trait_impl)]
 #![feature(thread_id_value)]
-#![feature(unchecked_math)]
-#![feature(unchecked_shifts)]
 
 use crate::cartridge::Cartridge;
 use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::cycle_manager::CycleManager;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
-use crate::hle::gpu::gpu_context::GpuContext;
+use crate::hle::gpu::gpu_context::{GpuContext, Swapchain, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
+use crate::hle::memory::dma::Dma;
 use crate::hle::memory::main_memory::MainMemory;
 use crate::hle::memory::oam_context::OamContext;
 use crate::hle::memory::palettes_context::PalettesContext;
@@ -28,11 +27,15 @@ use crate::hle::spu_context::SpuContext;
 use crate::hle::thread_context::ThreadContext;
 use crate::hle::CpuType;
 use crate::jit::jit_memory::JitMemory;
-use crate::scheduler::IO_SCHEDULER;
 use crate::utils::FastCell;
+use sdl2::event::Event;
+use sdl2::pixels::{Color, PixelFormatEnum};
+use sdl2::rect::Rect;
+use std::os::unix::prelude::JoinHandleExt;
 use std::rc::Rc;
-use std::sync::{mpsc, Mutex};
+use std::sync::Mutex;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use std::{env, mem, thread};
 
 mod cartridge;
@@ -40,11 +43,37 @@ mod hle;
 mod jit;
 mod logging;
 mod mmap;
-mod scheduler;
 mod utils;
+
+#[cfg(target_os = "vita")]
+#[link(
+    name = "SceAudioIn_stub",
+    kind = "static",
+    modifiers = "+whole-archive"
+)]
+#[link(name = "SceAudio_stub", kind = "static", modifiers = "+whole-archive")]
+#[link(
+    name = "SceCommonDialog_stub",
+    kind = "static",
+    modifiers = "+whole-archive"
+)]
+#[link(name = "SceCtrl_stub", kind = "static", modifiers = "+whole-archive")]
+#[link(
+    name = "SceDisplay_stub",
+    kind = "static",
+    modifiers = "+whole-archive"
+)]
+#[link(name = "SceGxm_stub", kind = "static", modifiers = "+whole-archive")]
+#[link(name = "SceHid_stub", kind = "static", modifiers = "+whole-archive")]
+#[link(name = "SceMotion_stub", kind = "static", modifiers = "+whole-archive")]
+#[link(name = "SceTouch_stub", kind = "static", modifiers = "+whole-archive")]
+extern "C" {}
 
 pub const DEBUG: bool = cfg!(debug_assertions);
 // pub const DEBUG: bool = false;
+
+const SCREEN_WIDTH: u32 = 960;
+const SCREEN_HEIGHT: u32 = 544;
 
 #[cfg(target_os = "linux")]
 fn get_file_path() -> String {
@@ -114,10 +143,10 @@ pub fn main() {
         env::set_var("RUST_BACKTRACE", "full");
     }
 
-    let (tx, rx) = mpsc::channel::<()>();
-    IO_SCHEDULER.schedule(move || {
-        tx.send(()).unwrap();
-    });
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build_global()
+        .unwrap();
 
     let cartridge = Cartridge::from_file(&get_file_path()).unwrap();
 
@@ -127,6 +156,25 @@ pub fn main() {
     let arm7_entry_addr = cartridge.header.arm7_values.entry_address;
 
     assert_eq!(arm9_ram_addr, regions::MAIN_MEMORY_OFFSET);
+
+    let sdl = sdl2::init().unwrap();
+    let sdl_video = sdl.video().unwrap();
+    let sdl_window = sdl_video
+        .window("DSPSV", SCREEN_WIDTH, SCREEN_HEIGHT)
+        .build()
+        .unwrap();
+    let mut sdl_canvas = sdl_window.into_canvas().target_texture().build().unwrap();
+    let sdl_texture_creator = sdl_canvas.texture_creator();
+    let mut sdl_texture = sdl_texture_creator
+        .create_texture_target(
+            PixelFormatEnum::RGBA8888,
+            DISPLAY_WIDTH as u32 * 2,
+            DISPLAY_HEIGHT as u32,
+        )
+        .unwrap();
+    sdl_canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
+    sdl_canvas.clear();
+    sdl_canvas.present();
 
     let main_memory = Arc::new(RwLock::new(MainMemory::new()));
     {
@@ -162,15 +210,6 @@ pub fn main() {
     }
 
     let cycle_manager = Arc::new(CycleManager::new());
-    let cpu_regs_arm9 = Arc::new(CpuRegs::<{ CpuType::ARM9 }>::new());
-    let cpu_regs_arm7 = Arc::new(CpuRegs::<{ CpuType::ARM7 }>::new());
-    let gpu_2d_context_a = Rc::new(FastCell::new(Gpu2DContext::new()));
-    let gpu_2d_context_b = Rc::new(FastCell::new(Gpu2DContext::new()));
-    let gpu_context = Arc::new(RwLock::new(GpuContext::new(
-        cycle_manager.clone(),
-        gpu_2d_context_a.clone(),
-        gpu_2d_context_b.clone(),
-    )));
     let jit_memory = Arc::new(Mutex::new(JitMemory::new()));
     let wram_context = Arc::new(WramContext::new());
     let spi_context = Arc::new(RwLock::new(SpiContext::new()));
@@ -180,9 +219,33 @@ pub fn main() {
     let rtc_context = Rc::new(FastCell::new(RtcContext::new()));
     let spu_context = Rc::new(FastCell::new(SpuContext::new()));
     let palettes_context = Rc::new(FastCell::new(PalettesContext::new()));
-    let cp15_context = Rc::new(FastCell::new(Cp15Context::new()));
     let tcm_context = Rc::new(FastCell::new(TcmContext::new()));
     let oam_context = Rc::new(FastCell::new(OamContext::new()));
+    let cpu_regs_arm9 = Arc::new(CpuRegs::new(cycle_manager.clone()));
+    let cpu_regs_arm7 = Arc::new(CpuRegs::new(cycle_manager.clone()));
+    let cp15_context = Rc::new(FastCell::new(Cp15Context::new(cpu_regs_arm9.clone())));
+
+    let gpu_2d_context_a = Rc::new(FastCell::new(Gpu2DContext::new(
+        vram_context.clone(),
+        palettes_context.clone(),
+    )));
+    let gpu_2d_context_b = Rc::new(FastCell::new(Gpu2DContext::new(
+        vram_context.clone(),
+        palettes_context.clone(),
+    )));
+    let dma_arm9 = Arc::new(RwLock::new(Dma::new(cycle_manager.clone())));
+    let dma_arm7 = Arc::new(RwLock::new(Dma::new(cycle_manager.clone())));
+    let swapchain = Arc::new(Swapchain::new());
+    let gpu_context = Arc::new(RwLock::new(GpuContext::new(
+        cycle_manager.clone(),
+        gpu_2d_context_a.clone(),
+        gpu_2d_context_b.clone(),
+        dma_arm9.clone(),
+        dma_arm7.clone(),
+        cpu_regs_arm9.clone(),
+        cpu_regs_arm7.clone(),
+        swapchain.clone(),
+    )));
 
     let mut arm9_thread = ThreadContext::<{ CpuType::ARM9 }>::new(
         cycle_manager.clone(),
@@ -196,13 +259,14 @@ pub fn main() {
         gpu_context.clone(),
         gpu_2d_context_a.clone(),
         gpu_2d_context_b.clone(),
+        dma_arm9,
         rtc_context.clone(),
         spu_context.clone(),
         palettes_context.clone(),
-        cpu_regs_arm9,
         cp15_context.clone(),
         tcm_context.clone(),
         oam_context.clone(),
+        cpu_regs_arm9,
     );
     initialize_arm9_thread(arm9_entry_adrr, &mut arm9_thread);
 
@@ -218,17 +282,16 @@ pub fn main() {
         gpu_context,
         gpu_2d_context_a,
         gpu_2d_context_b,
+        dma_arm7,
         rtc_context,
         spu_context,
         palettes_context,
-        cpu_regs_arm7,
         cp15_context,
         tcm_context,
         oam_context,
+        cpu_regs_arm7,
     );
     initialize_arm7_thread(arm7_entry_addr, &mut arm7_thread);
-
-    rx.recv().unwrap();
 
     let arm9_thread = thread::Builder::new()
         .name("arm9_thread".to_owned())
@@ -244,6 +307,37 @@ pub fn main() {
         })
         .unwrap();
 
-    arm9_thread.join().ok();
-    arm7_thread.join().ok();
+    let mut instant = Instant::now();
+
+    let sdl_rect = Rect::new(0, 0, DISPLAY_WIDTH as u32 * 2, DISPLAY_HEIGHT as u32);
+    let mut sdl_event_pump = sdl.event_pump().unwrap();
+    'render: loop {
+        for event in sdl_event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. } => {
+                    break 'render;
+                }
+                _ => {}
+            }
+        }
+
+        sdl_canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
+        sdl_canvas.clear();
+
+        let fb = swapchain.consume();
+        let (_, aligned, _) = unsafe { fb.align_to::<u8>() };
+        sdl_texture
+            .update(None, aligned, DISPLAY_WIDTH * 8)
+            .unwrap();
+
+        sdl_canvas.copy(&sdl_texture, None, None).unwrap();
+        sdl_canvas.present();
+        println!("Consumed fb {} ms", instant.elapsed().as_millis());
+        instant = Instant::now();
+    }
+
+    unsafe {
+        libc::pthread_kill(arm9_thread.as_pthread_t(), libc::SIGKILL);
+        libc::pthread_kill(arm7_thread.as_pthread_t(), libc::SIGKILL);
+    }
 }

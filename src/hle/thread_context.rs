@@ -31,7 +31,7 @@ use std::thread;
 pub struct ThreadContext<const CPU: CpuType> {
     jit: JitAsm<CPU>,
     cycle_manager: Arc<CycleManager>,
-    pub regs: Rc<FastCell<ThreadRegs>>,
+    pub regs: Rc<FastCell<ThreadRegs<CPU>>>,
     pub cp15_context: Rc<FastCell<Cp15Context>>,
     pub mem_handler: Arc<MemHandler<CPU>>,
     cpu_regs: Arc<CpuRegs<CPU>>,
@@ -52,16 +52,16 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
         gpu_context: Arc<RwLock<GpuContext>>,
         gpu_2d_context_a: Rc<FastCell<Gpu2DContext<{ A }>>>,
         gpu_2d_context_b: Rc<FastCell<Gpu2DContext<{ B }>>>,
+        dma: Arc<RwLock<Dma<CPU>>>,
         rtc_context: Rc<FastCell<RtcContext>>,
         spu_context: Rc<FastCell<SpuContext>>,
         palettes_context: Rc<FastCell<PalettesContext>>,
-        cpu_regs: Arc<CpuRegs<CPU>>,
         cp15_context: Rc<FastCell<Cp15Context>>,
         tcm_context: Rc<FastCell<TcmContext>>,
         oam: Rc<FastCell<OamContext>>,
+        cpu_regs: Arc<CpuRegs<CPU>>,
     ) -> Self {
-        let regs = ThreadRegs::new();
-        let dma = Rc::new(FastCell::new(Dma::new(cycle_manager.clone())));
+        let regs = ThreadRegs::new(cpu_regs.clone());
         let timers_context = Arc::new(RwLock::new(TimersContext::new(cycle_manager.clone())));
 
         let io_ports = IoPorts::new(
@@ -91,7 +91,7 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
             oam,
         ));
 
-        dma.borrow_mut().set_mem_handler(mem_handler.clone());
+        dma.write().unwrap().set_mem_handler(mem_handler.clone());
 
         ThreadContext {
             jit: JitAsm::new(

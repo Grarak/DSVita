@@ -12,6 +12,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             | Op::LdrbImm5T
             | Op::LdrImm5T
             | Op::LdrhRegT
+            | Op::LdrRegT
             | Op::LdrhImm5T
             | Op::LdrPcT
             | Op::LdrSpT => true,
@@ -25,6 +26,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             | Op::LdrbImm5T
             | Op::LdrImm5T
             | Op::LdrhRegT
+            | Op::LdrRegT
             | Op::LdrhImm5T
             | Op::LdrPcT
             | Op::LdrSpT => false,
@@ -44,7 +46,8 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_str_thumb(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
         let pre = match op {
-            Op::StrbImm5T
+            Op::StrbRegT
+            | Op::StrbImm5T
             | Op::StrhRegT
             | Op::StrhImm5T
             | Op::StrRegT
@@ -54,7 +57,8 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         };
 
         let write_back = match op {
-            Op::StrbImm5T
+            Op::StrbRegT
+            | Op::StrbImm5T
             | Op::StrhRegT
             | Op::StrhImm5T
             | Op::StrRegT
@@ -102,12 +106,14 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_stm_thumb(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
         let mut pre = match op {
-            Op::PushLrT => true,
+            Op::StmiaT => false,
+            Op::PushT | Op::PushLrT => true,
             _ => todo!("{:?}", op),
         };
 
         let decrement = match op {
-            Op::PushLrT => {
+            Op::StmiaT => false,
+            Op::PushT | Op::PushLrT => {
                 pre = !pre;
                 true
             }
@@ -115,7 +121,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         };
 
         let write_back = match op {
-            Op::PushLrT => true,
+            Op::StmiaT | Op::PushT | Op::PushLrT => true,
             _ => todo!("{:?}", op),
         };
 

@@ -84,7 +84,7 @@ impl JitBuf {
 pub struct JitAsm<const CPU: CpuType> {
     jit_memory: Arc<Mutex<JitMemory>>,
     pub inst_mem_handler: InstMemHandler<CPU>,
-    pub thread_regs: Rc<FastCell<ThreadRegs>>,
+    pub thread_regs: Rc<FastCell<ThreadRegs<CPU>>>,
     pub cpu_regs: Arc<CpuRegs<CPU>>,
     pub cp15_context: Rc<FastCell<Cp15Context>>,
     pub bios_context: BiosContext<CPU>,
@@ -108,7 +108,7 @@ pub struct JitAsm<const CPU: CpuType> {
 impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn new(
         jit_memory: Arc<Mutex<JitMemory>>,
-        thread_regs: Rc<FastCell<ThreadRegs>>,
+        thread_regs: Rc<FastCell<ThreadRegs<CPU>>>,
         cpu_regs: Arc<CpuRegs<CPU>>,
         cp15_context: Rc<FastCell<Cp15Context>>,
         timers_context: Arc<RwLock<TimersContext<CPU>>>,
@@ -349,31 +349,33 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         let guest_pc_end = entry + self.jit_buf.instructions.len() as u32 * pc_step_size;
         // TODO statically analyze generated insts
-        let mut jit_memory = self.jit_memory.lock().unwrap();
 
-        jit_memory.insert_block(
-            &self.jit_buf.emit_opcodes,
-            Some(entry),
-            Some(self.jit_buf.jit_addr_mapping.clone()),
-            Some(self.jit_buf.insts_cycle_counts.clone()),
-            Some(guest_pc_end),
-        );
+        {
+            let mut jit_memory = self.jit_memory.lock().unwrap();
 
-        if DEBUG {
-            for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
-                let pc = index as u32 * pc_step_size + entry;
-                let (jit_addr, _, _, _) = jit_memory.get_jit_start_addr(pc).unwrap();
+            jit_memory.insert_block(
+                &self.jit_buf.emit_opcodes,
+                Some(entry),
+                Some(self.jit_buf.jit_addr_mapping.clone()),
+                Some(self.jit_buf.insts_cycle_counts.clone()),
+                Some(guest_pc_end),
+            );
 
-                debug_println!(
+            if DEBUG {
+                for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
+                    let pc = index as u32 * pc_step_size + entry;
+                    let (jit_addr, _, _, _) = jit_memory.get_jit_start_addr(pc).unwrap();
+
+                    debug_println!(
                     "{:?} Mapping {:#010x} to {:#010x} {:?}",
                     CPU,
                     pc,
                     jit_addr,
                     inst_info
                 );
+                }
             }
         }
-
         self.jit_buf.clear_all();
     }
 
@@ -467,8 +469,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 let (op, func) = lookup_opcode(opcode);
                 func(opcode, *op)
             };
-            debug_inst_info(
-                CPU,
+            debug_inst_info::<CPU>(
                 RegReserve::gp(),
                 self.thread_regs.borrow().deref(),
                 self.guest_branch_out_pc,
@@ -497,10 +498,9 @@ unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: 
     );
 }
 
-fn debug_inst_info(
-    cpu_type: CpuType,
+fn debug_inst_info<const CPU: CpuType>(
     regs_to_log: RegReserve,
-    regs: &ThreadRegs,
+    regs: &ThreadRegs<CPU>,
     pc: u32,
     append: &str,
 ) {
@@ -513,7 +513,7 @@ fn debug_inst_info(
         };
         output += &format!("{:?}: {:x}, ", reg, value);
     }
-    debug_println!("{:?} {}{}", cpu_type, output, append);
+    debug_println!("{:?} {}{}", CPU, output, append);
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
@@ -534,8 +534,7 @@ unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(
     };
 
     let regs = (*asm).thread_regs.borrow();
-    debug_inst_info(
-        CPU,
+    debug_inst_info::<CPU>(
         inst_info.src_regs + inst_info.out_regs,
         regs.deref(),
         pc,

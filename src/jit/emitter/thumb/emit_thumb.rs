@@ -9,9 +9,10 @@ use std::ptr;
 impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_thumb(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
+        let op = inst_info.op;
         let out_regs = inst_info.out_regs;
 
-        let emit_func = match inst_info.op {
+        let emit_func = match op {
             Op::AdcDpT
             | Op::AddImm3T
             | Op::AddImm8T
@@ -22,11 +23,13 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             | Op::BicDpT
             | Op::CmpDpT
             | Op::CmpImm8T
+            | Op::EorDpT
             | Op::LslImmT
             | Op::LslDpT
             | Op::LsrImmT
             | Op::MovImm8T
             | Op::MulDpT
+            | Op::MvnDpT
             | Op::NegDpT
             | Op::RorDpT
             | Op::SbcDpT
@@ -57,24 +60,26 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             | Op::BleT => JitAsm::emit_b_thumb,
             Op::BlSetupT => JitAsm::emit_bl_setup_thumb,
             Op::BlOffT => JitAsm::emit_bl_thumb,
-            Op::BxRegT => JitAsm::emit_bx_thumb,
+            Op::BxRegT | Op::BlxRegT => JitAsm::emit_bx_thumb,
 
             Op::LdrshRegT
             | Op::LdrbRegT
             | Op::LdrbImm5T
             | Op::LdrhRegT
+            | Op::LdrRegT
             | Op::LdrhImm5T
             | Op::LdrImm5T
             | Op::LdrPcT
             | Op::LdrSpT => JitAsm::emit_ldr_thumb,
-            Op::StrbImm5T
+            Op::StrbRegT
+            | Op::StrbImm5T
             | Op::StrhImm5T
             | Op::StrhRegT
             | Op::StrRegT
             | Op::StrImm5T
             | Op::StrSpT => JitAsm::emit_str_thumb,
             Op::LdmiaT | Op::PopT | Op::PopPcT => JitAsm::emit_ldm_thumb,
-            Op::PushLrT => JitAsm::emit_stm_thumb,
+            Op::StmiaT | Op::PushT | Op::PushLrT => JitAsm::emit_stm_thumb,
 
             Op::SwiT => JitAsm::emit_swi_thumb,
             _ => todo!("{:?}", inst_info),
@@ -98,6 +103,22 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 Reg::LR,
                 ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
             ));
+
+            if CPU == CpuType::ARM7 || op != Op::PopPcT {
+                let thread_regs = self.thread_regs.borrow();
+                self.jit_buf
+                    .emit_opcodes
+                    .extend(thread_regs.emit_get_reg(Reg::R1, Reg::PC));
+                self.jit_buf
+                    .emit_opcodes
+                    .push(AluImm::orr_al(Reg::R1, Reg::R1, 1));
+                self.jit_buf.emit_opcodes.extend(thread_regs.emit_set_reg(
+                    Reg::PC,
+                    Reg::R1,
+                    Reg::R2,
+                ));
+            }
+
             self.jit_buf
                 .emit_opcodes
                 .push(LdrStrImm::str_al(Reg::R0, Reg::LR));

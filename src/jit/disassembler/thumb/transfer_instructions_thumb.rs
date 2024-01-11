@@ -41,7 +41,17 @@ mod transfer_thumb_ops {
 
     #[inline]
     pub fn strb_reg_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let op0 = Reg::from((opcode & 0x7) as u8);
+        let op1 = Reg::from(((opcode >> 3) & 0x7) as u8);
+        let op2 = Reg::from(((opcode >> 6) & 0x7) as u8);
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
+            reg_reserve!(op0, op1, op2),
+            reg_reserve!(),
+            2,
+        )
     }
 
     #[inline]
@@ -70,13 +80,23 @@ mod transfer_thumb_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
             reg_reserve!(op0, op1, op2),
             reg_reserve!(),
-            3,
+            2,
         )
     }
 
     #[inline]
     pub fn ldr_reg_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let op0 = Reg::from((opcode & 0x7) as u8);
+        let op1 = Reg::from(((opcode >> 3) & 0x7) as u8);
+        let op2 = Reg::from(((opcode >> 6) & 0x7) as u8);
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
+            reg_reserve!(op1, op2),
+            reg_reserve!(op0),
+            3,
+        )
     }
 
     #[inline]
@@ -90,7 +110,7 @@ mod transfer_thumb_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
             reg_reserve!(op0, op1, op2),
             reg_reserve!(),
-            3,
+            2,
         )
     }
 
@@ -278,7 +298,16 @@ mod transfer_thumb_ops {
 
     #[inline]
     pub fn stmia_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let op0 = Reg::from(((opcode >> 8) & 0x7) as u8);
+        let rlist = RegReserve::from((opcode & 0xFF) as u32);
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::reg(op0)),
+            reg_reserve!(op0) + rlist,
+            reg_reserve!(op0),
+            rlist.len() as u8 + 1,
+        )
     }
 
     #[inline]
@@ -296,7 +325,15 @@ mod transfer_thumb_ops {
 
     #[inline]
     pub fn push_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let rlist = RegReserve::from((opcode & 0xFF) as u32);
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::reg(Reg::SP)),
+            rlist + Reg::SP,
+            reg_reserve!(Reg::SP),
+            rlist.len() as u8 + 1,
+        )
     }
 
     #[inline]
@@ -321,7 +358,7 @@ mod transfer_thumb_ops {
             Operands::new_1(Operand::reg(Reg::SP)),
             rlist + Reg::SP,
             reg_reserve!(Reg::SP),
-            rlist.len() as u8 + 2,
+            rlist.len() as u8 + 1,
         )
     }
 }

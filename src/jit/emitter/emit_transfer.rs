@@ -1,8 +1,8 @@
 use crate::hle::CpuType;
+use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::{MemoryAmount, Op};
 use std::ptr;
-use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple};
 
 impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_transfer_indirect(
@@ -75,13 +75,13 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let op = self.jit_buf.instructions[buf_index].op;
         let mut pre = match op {
             Op::Stmia | Op::StmiaW => false,
-            Op::StmdbW => true,
+            Op::Stmdb | Op::StmdbW => true,
             _ => todo!("{:?}", op),
         };
 
         let decrement = match op {
             Op::Stmia | Op::StmiaW => false,
-            Op::StmdbW => {
+            Op::Stmdb | Op::StmdbW => {
                 pre = !pre;
                 true
             }
@@ -89,7 +89,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         };
 
         let write_back = match op {
-            Op::Stmia => false,
+            Op::Stmia | Op::Stmdb => false,
             Op::StmiaW | Op::StmdbW => true,
             _ => todo!("{:?}", op),
         };

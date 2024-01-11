@@ -19,7 +19,7 @@ mod alu_variations {
     pub fn imm(opcode: u32) -> u32 {
         let value = opcode & 0xFF;
         let shift = (opcode >> 7) & 0x1E;
-        unsafe { value.unchecked_shl(32 - shift) | (value >> shift) }
+        value.wrapping_shl(32 - shift) | (value >> shift)
     }
 }
 
@@ -55,7 +55,20 @@ mod alu_ops {
 
     #[inline]
     pub fn _and_lri_impl(opcode: u32, op: Op, operand2: (Reg, u8)) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::LSR, operand2.1),
+            ),
+            reg_reserve!(op1, operand2.0),
+            reg_reserve!(op0),
+            1,
+        )
     }
 
     #[inline]
@@ -1585,7 +1598,17 @@ mod alu_ops {
 
     #[inline]
     pub fn mul(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op1 = Reg::from((opcode & 0xF) as u8);
+        let op2 = Reg::from(((opcode >> 8) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
+            reg_reserve!(op1, op2),
+            reg_reserve!(op0),
+            4,
+        )
     }
 
     #[inline]

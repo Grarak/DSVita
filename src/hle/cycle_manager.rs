@@ -37,7 +37,7 @@ impl CycleManager {
                 .iter()
                 .rev()
                 .enumerate()
-                .find(|(index, (cycles, _))| cycle_count < *cycles)
+                .find(|(_, (cycles, _))| cycle_count < *cycles)
             {
                 index
             } else {

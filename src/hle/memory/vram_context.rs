@@ -286,9 +286,9 @@ impl VramBanks {
 }
 
 const LCDC_OFFSET: u32 = 0x800000;
-const BG_A_OFFSET: u32 = 0x000000;
+pub const BG_A_OFFSET: u32 = 0x000000;
 const OBJ_A_OFFSET: u32 = 0x400000;
-const BG_B_OFFSET: u32 = 0x200000;
+pub const BG_B_OFFSET: u32 = 0x200000;
 const OBJ_B_OFFSET: u32 = 0x600000;
 
 struct VramInner {
@@ -649,9 +649,7 @@ impl VramInner {
                 OBJ_A_OFFSET => {
                     todo!()
                 }
-                BG_B_OFFSET => {
-                    todo!()
-                }
+                BG_B_OFFSET => self.bg_b.read_slice(addr, slice),
                 OBJ_B_OFFSET => {
                     todo!()
                 }
@@ -679,9 +677,7 @@ impl VramInner {
                 OBJ_A_OFFSET => {
                     todo!()
                 }
-                BG_B_OFFSET => {
-                    todo!()
-                }
+                BG_B_OFFSET => self.bg_b.write_slice(addr, slice),
                 OBJ_B_OFFSET => {
                     todo!()
                 }

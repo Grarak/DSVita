@@ -21,7 +21,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             Op::LdrOfim | Op::LdrOfip | Op::LdrbOfrplr | Op::LdrPtip => JitAsm::emit_ldr,
             Op::LdmiaW => JitAsm::emit_ldm,
             Op::StrOfip | Op::StrbOfip | Op::StrhOfip | Op::StrPrim => JitAsm::emit_str,
-            Op::Stmia | Op::StmiaW | Op::StmdbW => JitAsm::emit_stm,
+            Op::Stmia | Op::Stmdb | Op::StmiaW | Op::StmdbW => JitAsm::emit_stm,
             Op::Mcr | Op::Mrc => JitAsm::emit_cp15,
             Op::MsrRc | Op::MsrIc => JitAsm::emit_msr_cprs,
             Op::MrsRc => JitAsm::emit_mrs_cprs,

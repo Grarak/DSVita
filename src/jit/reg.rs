@@ -43,7 +43,7 @@ impl Reg {
     }
 
     pub fn is_high_gp_reg(&self) -> bool {
-        !self.is_emulated() && !RegReserve::gp_thumb().is_reserved(*self)
+        !self.is_emulated() && !RegReserve::gp_thumb().is_reserved(*self) && *self != Reg::SP
     }
 }
 

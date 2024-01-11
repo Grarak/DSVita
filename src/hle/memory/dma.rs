@@ -2,12 +2,11 @@ use crate::hle::cycle_manager::{CycleEvent, CycleManager};
 use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::CpuType;
 use crate::logging::debug_println;
-use crate::scheduler::IO_SCHEDULER;
 use crate::utils;
 use crate::utils::FastCell;
 use bilge::prelude::*;
 use std::mem;
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 
 const CHANNEL_COUNT: usize = 4;
 
@@ -188,6 +187,23 @@ impl<const CPU: CpuType> Dma<CPU> {
         let mut channel = self.channels[channel_num].borrow_mut();
         channel.fill = (channel.fill & !mask) | (value & mask);
     }
+
+    pub fn trigger_all(&self, mode: DmaTransferMode) {
+        self.trigger(mode, 0xF);
+    }
+
+    pub fn trigger(&self, mode: DmaTransferMode, channels: u8) {
+        for (index, channel) in self.channels.iter().enumerate() {
+            if channels & (1 << index) != 0 {
+                let channel = channel.borrow();
+                if bool::from(DmaCntArm9::from(channel.cnt).enable())
+                    && DmaTransferMode::from_cnt::<CPU>(channel.cnt, index) == mode
+                {
+                    todo!()
+                }
+            }
+        }
+    }
 }
 
 struct DmaEvent<const CPU: CpuType> {
@@ -229,8 +245,8 @@ impl<const CPU: CpuType> DmaEvent<CPU> {
                 dest_addr
             );
 
-            let src = mem_handler.read_lock::<false, T>(src_addr);
-            mem_handler.write_lock::<false, T>(dest_addr, src);
+            let src = mem_handler.read::<T>(src_addr);
+            mem_handler.write(dest_addr, src);
 
             match src_addr_ctrl {
                 DmaAddrCtrl::Increment => src_addr += step_size,
@@ -251,55 +267,39 @@ impl<const CPU: CpuType> DmaEvent<CPU> {
     }
 }
 
-struct DmaChannelWrapper(Arc<FastCell<DmaChannel>>);
-
-unsafe impl Send for DmaChannelWrapper {}
-
 impl<const CPU: CpuType> CycleEvent for DmaEvent<CPU> {
     fn scheduled(&mut self, _: &u64) {}
 
     fn trigger(&mut self, _: u16) {
-        let mem_handler = self.mem_handler.clone();
-        let channel_num = self.channel_num;
+        let (cnt, mode, dest, src, count) = {
+            let channel = self.channel.borrow();
+            (
+                DmaCntArm9::from(channel.cnt),
+                DmaTransferMode::from_cnt::<CPU>(channel.cnt, self.channel_num),
+                channel.current_dest,
+                channel.current_src,
+                channel.current_count,
+            )
+        };
 
-        let channel = DmaChannelWrapper(self.channel.clone());
-        let (tx, rc) = mpsc::channel::<()>();
-        IO_SCHEDULER.schedule(move || {
-            let _lock = mem_handler.dma_transfer_lock.write().unwrap();
-            tx.send(()).unwrap();
+        if bool::from(cnt.transfer_type()) {
+            Self::do_transfer::<u32>(self.mem_handler.clone(), dest, src, count, &cnt, mode);
+        } else {
+            Self::do_transfer::<u16>(self.mem_handler.clone(), dest, src, count, &cnt, mode);
+        }
 
-            let channel = channel;
-            let (cnt, mode, dest, src, count) = {
-                let channel = channel.0.borrow();
-                (
-                    DmaCntArm9::from(channel.cnt),
-                    DmaTransferMode::from_cnt::<CPU>(channel.cnt, channel_num),
-                    channel.current_dest,
-                    channel.current_src,
-                    channel.current_count,
-                )
-            };
+        if mode == DmaTransferMode::GeometryCmdFifo {
+            todo!()
+        }
 
-            if bool::from(cnt.transfer_type()) {
-                Self::do_transfer::<u32>(mem_handler.clone(), dest, src, count, &cnt, mode);
-            } else {
-                Self::do_transfer::<u16>(mem_handler.clone(), dest, src, count, &cnt, mode);
-            }
+        if bool::from(cnt.repeat()) && mode != DmaTransferMode::StartImm {
+            todo!()
+        } else {
+            self.channel.borrow_mut().cnt &= !(1 << 31);
+        }
 
-            if mode == DmaTransferMode::GeometryCmdFifo {
-                todo!()
-            }
-
-            if bool::from(cnt.repeat()) && mode != DmaTransferMode::StartImm {
-                todo!()
-            } else {
-                channel.0.borrow_mut().cnt &= !(1 << 31);
-            }
-
-            if bool::from(cnt.irq_at_end()) {
-                todo!()
-            }
-        });
-        rc.recv().unwrap();
+        if bool::from(cnt.irq_at_end()) {
+            todo!()
+        }
     }
 }

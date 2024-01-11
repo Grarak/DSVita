@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 pub struct InstMemHandler<const CPU: CpuType> {
-    thread_regs: Rc<FastCell<ThreadRegs>>,
+    thread_regs: Rc<FastCell<ThreadRegs<CPU>>>,
     mem_handler: Arc<MemHandler<CPU>>,
 }
 
@@ -28,7 +28,10 @@ fn get_inst_info<const THUMB: bool>(opcode: u32) -> InstInfo {
 }
 
 impl<const CPU: CpuType> InstMemHandler<CPU> {
-    pub fn new(thread_regs: Rc<FastCell<ThreadRegs>>, mem_handler: Arc<MemHandler<CPU>>) -> Self {
+    pub fn new(
+        thread_regs: Rc<FastCell<ThreadRegs<CPU>>>,
+        mem_handler: Arc<MemHandler<CPU>>,
+    ) -> Self {
         InstMemHandler {
             thread_regs,
             mem_handler,
@@ -52,11 +55,11 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         let op0 = operands[0].as_reg_no_shift().unwrap();
         let op1 = operands[1].as_reg_no_shift().unwrap();
 
-        let get_reg_value = |regs: &ThreadRegs, reg: Reg| match reg {
+        let get_reg_value = |regs: &ThreadRegs<CPU>, reg: Reg| match reg {
             Reg::PC => pc + 4 + 4 * !THUMB as u32,
             _ => *regs.get_reg_value(reg),
         };
-        let set_reg_value = |regs: &mut ThreadRegs, reg: Reg, value: u32| {
+        let set_reg_value = |regs: &mut ThreadRegs<CPU>, reg: Reg, value: u32| {
             *regs.get_reg_value_mut(reg) = value;
         };
 
@@ -79,21 +82,17 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
 
                             match shift_type {
                                 ShiftType::LSL => {
-                                    op2_value = unsafe { op2_value.unchecked_shl(shift_value) }
+                                    op2_value = op2_value << shift_value;
                                 }
                                 ShiftType::LSR => {
-                                    op2_value = unsafe { op2_value.unchecked_shr(shift_value) }
+                                    op2_value = op2_value >> shift_value;
                                 }
                                 ShiftType::ASR => {
-                                    op2_value =
-                                        unsafe { (op2_value as i32).unchecked_shr(shift_value) }
-                                            as u32
+                                    op2_value = ((op2_value as i32) >> shift_value) as u32;
                                 }
                                 ShiftType::ROR => {
-                                    op2_value = unsafe {
-                                        op2_value.unchecked_shr(shift_value)
-                                            | op2_value.unchecked_shl(32 - shift_value)
-                                    };
+                                    op2_value = op2_value.wrapping_shl(32 - shift_value)
+                                        | (op2_value >> shift_value);
                                 }
                             }
                         }
@@ -104,7 +103,7 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
                     _ => panic!(),
                 };
 
-                op1_value = unsafe { op1_value.unchecked_add(op2_value) };
+                op1_value = op1_value.wrapping_add(op2_value);
             }
 
             op1_value

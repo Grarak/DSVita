@@ -19,11 +19,32 @@ mod branch_thumb_ops {
 
     #[inline]
     pub fn blx_reg_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let op0 = Reg::from(((opcode >> 3) & 0xF) as u8);
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::reg(op0)),
+            reg_reserve!(op0),
+            reg_reserve!(),
+            1,
+        )
     }
 
     #[inline]
     pub fn b_t(opcode: u16, op: Op) -> InstInfoThumb {
+        let op0 = (opcode << 5) as i16 >> 4; // * 2 (in steps of 2)
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::imm(op0 as u32)),
+            reg_reserve!(),
+            reg_reserve!(),
+            1,
+        )
+    }
+
+    #[inline]
+    fn b_cond(opcode: u16, op: Op) -> InstInfoThumb {
         let op0 = ((opcode & 0xFF) as i8) as i32 * 2;
         InstInfoThumb::new(
             opcode,
@@ -37,77 +58,77 @@ mod branch_thumb_ops {
 
     #[inline]
     pub fn beq_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bne_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bcs_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bcc_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bmi_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bpl_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bvs_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bvc_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bhi_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bls_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bge_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn blt_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bgt_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn ble_t(opcode: u16, op: Op) -> InstInfoThumb {
-        b_t(opcode, op)
+        b_cond(opcode, op)
     }
 
     #[inline]
     pub fn bl_setup_t(opcode: u16, op: Op) -> InstInfoThumb {
-        let op0 = unsafe { (opcode as u32).unchecked_shl(21) } as i32 >> 9;
+        let op0 = ((opcode as u32) << 21) as i32 >> 9;
         InstInfoThumb::new(
             opcode,
             op,

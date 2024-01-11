@@ -20,7 +20,7 @@ pub struct AluImm {
 impl AluImm {
     #[inline]
     pub fn add(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
-        let op = u32::from(AluImm::new(
+        let op = u32::from(Self::new(
             op2,
             u4::new(shift),
             u4::new(op0 as u8),
@@ -37,12 +37,12 @@ impl AluImm {
 
     #[inline]
     pub fn add_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
-        AluImm::add(op0, op1, op2, 0, Cond::AL)
+        Self::add(op0, op1, op2, 0, Cond::AL)
     }
 
     #[inline]
     pub fn adds(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
-        let op = u32::from(AluImm::new(
+        let op = u32::from(Self::new(
             op2,
             u4::new(shift),
             u4::new(op0 as u8),
@@ -59,12 +59,12 @@ impl AluImm {
 
     #[inline]
     pub fn adds_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
-        AluImm::adds(op0, op1, op2, 0, Cond::AL)
+        Self::adds(op0, op1, op2, 0, Cond::AL)
     }
 
     #[inline]
     pub fn and(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluImm::new(
+        u32::from(Self::new(
             op2,
             u4::new(shift),
             u4::new(op0 as u8),
@@ -79,7 +79,7 @@ impl AluImm {
 
     #[inline]
     pub fn bic(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluImm::new(
+        u32::from(Self::new(
             op2,
             u4::new(shift),
             u4::new(op0 as u8),
@@ -94,7 +94,7 @@ impl AluImm {
 
     #[inline]
     pub fn cmp(op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
-        let op = u32::from(AluImm::new(
+        let op = u32::from(Self::new(
             op2,
             u4::new(shift),
             u4::new(0),
@@ -111,12 +111,12 @@ impl AluImm {
 
     #[inline]
     pub fn cmp_al(op1: Reg, op2: u8) -> u32 {
-        AluImm::cmp(op1, op2, 0, Cond::AL)
+        Self::cmp(op1, op2, 0, Cond::AL)
     }
 
     #[inline]
     pub fn orr(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluImm::new(
+        u32::from(Self::new(
             op2,
             u4::new(shift),
             u4::new(op0 as u8),
@@ -130,8 +130,13 @@ impl AluImm {
     }
 
     #[inline]
+    pub fn orr_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
+        Self::orr(op0, op1, op2, 0, Cond::AL)
+    }
+
+    #[inline]
     pub fn sub(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
-        let op = u32::from(AluImm::new(
+        let op = u32::from(Self::new(
             op2,
             u4::new(shift),
             u4::new(op0 as u8),
@@ -148,12 +153,12 @@ impl AluImm {
 
     #[inline]
     pub fn sub_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
-        AluImm::sub(op0, op1, op2, 0, Cond::AL)
+        Self::sub(op0, op1, op2, 0, Cond::AL)
     }
 
     #[inline]
     pub fn subs(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
-        let op = u32::from(AluImm::new(
+        let op = u32::from(Self::new(
             op2,
             u4::new(shift),
             u4::new(op0 as u8),
@@ -170,12 +175,12 @@ impl AluImm {
 
     #[inline]
     pub fn subs_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
-        AluImm::subs(op0, op1, op2, 0, Cond::AL)
+        Self::subs(op0, op1, op2, 0, Cond::AL)
     }
 
     #[inline]
     pub fn rsbs(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
-        let op = u32::from(AluImm::new(
+        let op = u32::from(Self::new(
             op2,
             u4::new(shift),
             u4::new(op0 as u8),
@@ -192,12 +197,12 @@ impl AluImm {
 
     #[inline]
     pub fn rsbs_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
-        AluImm::rsbs(op0, op1, op2, 0, Cond::AL)
+        Self::rsbs(op0, op1, op2, 0, Cond::AL)
     }
 
     #[inline]
     pub fn mov(op0: Reg, op2: u8, ror: u8, cond: Cond) -> u32 {
-        let op = u32::from(AluImm::new(
+        let op = u32::from(Self::new(
             op2,
             u4::new(ror),
             u4::new(op0 as u8),
@@ -214,12 +219,12 @@ impl AluImm {
 
     #[inline]
     pub fn mov_al(op0: Reg, op2: u8) -> u32 {
-        AluImm::mov(op0, op2, 0, Cond::AL)
+        Self::mov(op0, op2, 0, Cond::AL)
     }
 
     #[inline]
     pub fn movs(op0: Reg, op2: u8, ror: u8, cond: Cond) -> u32 {
-        let op = u32::from(AluImm::new(
+        let op = u32::from(Self::new(
             op2,
             u4::new(ror),
             u4::new(op0 as u8),
@@ -236,12 +241,12 @@ impl AluImm {
 
     #[inline]
     pub fn movs_al(op0: Reg, op2: u8) -> u32 {
-        AluImm::movs(op0, op2, 0, Cond::AL)
+        Self::movs(op0, op2, 0, Cond::AL)
     }
 
     #[inline]
     pub fn mov16(op0: Reg, op2: u16, cond: Cond) -> u32 {
-        u32::from(AluImm::new(
+        u32::from(Self::new(
             (op2 & 0xFF) as u8,
             u4::new(((op2 >> 8) & 0xF) as u8),
             u4::new(op0 as u8),
@@ -256,12 +261,12 @@ impl AluImm {
 
     #[inline]
     pub fn mov16_al(op0: Reg, op2: u16) -> u32 {
-        AluImm::mov16(op0, op2, Cond::AL)
+        Self::mov16(op0, op2, Cond::AL)
     }
 
     #[inline]
     pub fn mov_t(op0: Reg, op2: u16, cond: Cond) -> u32 {
-        u32::from(AluImm::new(
+        u32::from(Self::new(
             (op2 & 0xFF) as u8,
             u4::new(((op2 >> 8) & 0xF) as u8),
             u4::new(op0 as u8),
@@ -276,17 +281,17 @@ impl AluImm {
 
     #[inline]
     pub fn mov_t_al(op0: Reg, op2: u16) -> u32 {
-        AluImm::mov_t(op0, op2, Cond::AL)
+        Self::mov_t(op0, op2, Cond::AL)
     }
 
     #[inline]
     pub fn mov32(op0: Reg, op2: u32) -> Vec<u32> {
         if op2 & 0xFFFFFF00 == 0 {
-            vec![AluImm::mov_al(op0, op2 as u8)]
+            vec![Self::mov_al(op0, op2 as u8)]
         } else {
             vec![
-                AluImm::mov16_al(op0, (op2 & 0xFFFF) as u16),
-                AluImm::mov_t_al(op0, (op2 >> 16) as u16),
+                Self::mov16_al(op0, (op2 & 0xFFFF) as u16),
+                Self::mov_t_al(op0, (op2 >> 16) as u16),
             ]
         }
     }
@@ -311,7 +316,7 @@ pub struct AluShiftImm {
 impl AluShiftImm {
     #[inline]
     pub fn and(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -328,7 +333,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn ands(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -345,12 +350,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn ands_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::ands(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::ands(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn adcs(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -367,12 +372,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn adcs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::adcs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::adcs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn add(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -389,12 +394,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn add_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::add(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::add(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn adds(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -411,12 +416,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn adds_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::adds(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::adds(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn bic(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -433,7 +438,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn bics(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -450,12 +455,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn bics_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::bics(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::bics(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn cmp(op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -472,12 +477,34 @@ impl AluShiftImm {
 
     #[inline]
     pub fn cmp_al(op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::cmp(op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::cmp(op1, op2, ShiftType::LSL, 0, Cond::AL)
+    }
+
+    #[inline]
+    pub fn eors(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(Self::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0x1),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn eors_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
+        Self::eors(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn orr(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -494,12 +521,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn orr_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::orr(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::orr(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn orrs(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -516,12 +543,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn orrs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::orrs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::orrs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn sbcs(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -538,12 +565,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn sbcs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::sbcs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::sbcs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn sub(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -560,12 +587,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn sub_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::sub(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::sub(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn subs(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -582,12 +609,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn subs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::subs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::subs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn tst(op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -604,12 +631,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn tst_al(op1: Reg, op2: Reg) -> u32 {
-        AluShiftImm::tst(op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::tst(op1, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn mov(op0: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -626,12 +653,12 @@ impl AluShiftImm {
 
     #[inline]
     pub fn mov_al(op0: Reg, op2: Reg) -> u32 {
-        AluShiftImm::mov(op0, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::mov(op0, op2, ShiftType::LSL, 0, Cond::AL)
     }
 
     #[inline]
     pub fn movs(op0: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
-        u32::from(AluShiftImm::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
             u2::new(shift_type as u8),
@@ -648,7 +675,29 @@ impl AluShiftImm {
 
     #[inline]
     pub fn movs_al(op0: Reg, op2: Reg) -> u32 {
-        AluShiftImm::movs(op0, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::movs(op0, op2, ShiftType::LSL, 0, Cond::AL)
+    }
+
+    #[inline]
+    pub fn mvns(op0: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(Self::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(op0 as u8),
+            u4::new(0),
+            u1::new(1),
+            u4::new(0xF),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn mvns_al(op0: Reg, op2: Reg) -> u32 {
+        Self::mvns(op0, op2, ShiftType::LSL, 0, Cond::AL)
     }
 }
 
@@ -672,7 +721,7 @@ pub struct AluReg {
 impl AluReg {
     #[inline]
     pub fn movs(op0: Reg, op2: Reg, shift_type: ShiftType, shift_reg: Reg, cond: Cond) -> u32 {
-        u32::from(AluReg::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(1),
             u2::new(shift_type as u8),
@@ -706,7 +755,7 @@ pub struct MulReg {
 impl MulReg {
     #[inline]
     pub fn muls(op0: Reg, op1: Reg, op2: Reg, cond: Cond) -> u32 {
-        u32::from(MulReg::new(
+        u32::from(Self::new(
             u4::new(op2 as u8),
             u4::new(0b1001),
             u4::new(op1 as u8),
@@ -721,10 +770,10 @@ impl MulReg {
 
     #[inline]
     pub fn muls_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        MulReg::muls(op0, op1, op2, Cond::AL)
+        Self::muls(op0, op1, op2, Cond::AL)
     }
 }
 
 // TODO Add const asserts once const features has been added back to rust
 // https://github.com/rust-lang/rust/issues/110395
-//const_assert_eq!(lookup_opcode(AluImm::add(0, 0, 0, 0)).0 as u8, And as u8);
+//const_assert_eq!(lookup_opcode(Self::add(0, 0, 0, 0)).0 as u8, And as u8);

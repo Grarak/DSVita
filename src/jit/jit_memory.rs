@@ -1,7 +1,6 @@
 use crate::logging::debug_println;
 use crate::mmap::Mmap;
 use crate::{utils, DEBUG};
-use im::OrdMap;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -40,9 +39,9 @@ impl CodeBlock {
 
 pub struct JitMemory {
     pub memory: Mmap,
-    blocks: OrdMap<JitBlockStartAddr, JitBlockSize>,
+    blocks: Vec<(JitBlockStartAddr, JitBlockSize)>,
     guest_start_mapping: HashMap<GuestPc, (u32, Rc<CodeBlock>, u16)>,
-    code_blocks: OrdMap<GuestStartPc, Rc<CodeBlock>>,
+    code_blocks: Vec<(GuestStartPc, Rc<CodeBlock>)>,
     current_thread_holder: Option<thread::ThreadId>,
 }
 
@@ -50,9 +49,9 @@ impl JitMemory {
     pub fn new() -> Self {
         JitMemory {
             memory: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
-            blocks: OrdMap::new(),
+            blocks: Vec::new(),
             guest_start_mapping: HashMap::new(),
-            code_blocks: OrdMap::new(),
+            code_blocks: Vec::new(),
             current_thread_holder: None,
         }
     }
@@ -105,26 +104,42 @@ impl JitMemory {
         utils::write_to_mem_slice(&mut self.memory, new_addr, opcodes);
         self.flush_cache(new_addr, (opcodes.len() * 4) as u32);
 
-        self.blocks.insert(new_addr, aligned_size);
+        match self
+            .blocks
+            .binary_search_by_key(&new_addr, |(addr, _)| *addr)
+        {
+            Ok(_) => panic!(),
+            Err(index) => self.blocks.insert(index, (new_addr, aligned_size)),
+        };
 
         if let Some(guest_start_pc) = guest_start_pc {
-            self.code_blocks.insert(
-                guest_start_pc,
-                Rc::new(CodeBlock::new(
-                    guest_pc_to_jit_addr_offset.unwrap(),
-                    guest_insts_cycle_counts.unwrap(),
-                    guest_pc_end.unwrap(),
-                    new_addr,
-                )),
-            );
+            match self
+                .code_blocks
+                .binary_search_by_key(&guest_start_pc, |(addr, _)| *addr)
+            {
+                Ok(_) => panic!(),
+                Err(index) => self.code_blocks.insert(
+                    index,
+                    (
+                        guest_start_pc,
+                        Rc::new(CodeBlock::new(
+                            guest_pc_to_jit_addr_offset.unwrap(),
+                            guest_insts_cycle_counts.unwrap(),
+                            guest_pc_end.unwrap(),
+                            new_addr,
+                        )),
+                    ),
+                ),
+            }
         }
 
         if DEBUG {
-            let allocated_space = self.blocks.values().sum::<u32>();
+            let allocated_space = self.blocks.iter().fold(0u32, |sum, (_, size)| sum + *size);
             let per = (allocated_space * 100) as f32 / JIT_MEMORY_SIZE as f32;
-            println!(
+            debug_println!(
                 "Insert new block with size {}, {}% allocated",
-                aligned_size, per
+                aligned_size,
+                per
             )
         }
         new_addr + self.memory.as_ptr() as u32
@@ -132,24 +147,35 @@ impl JitMemory {
 
     fn get_code_block(&mut self, guest_pc: u32) -> Option<(u32, Rc<CodeBlock>, u16)> {
         match self.guest_start_mapping.get(&guest_pc) {
-            None => match self.code_blocks.get_prev(&guest_pc) {
-                Some((guest_start_pc, code_block)) => {
-                    if guest_pc == *guest_start_pc {
+            None => {
+                match self
+                    .code_blocks
+                    .binary_search_by_key(&guest_pc, |(addr, _)| *addr)
+                {
+                    Ok(index) => {
+                        let (guest_start_pc, code_block) = &self.code_blocks[index];
                         let ret = (*guest_start_pc, code_block.clone(), 0);
                         self.guest_start_mapping.insert(guest_pc, ret.clone());
                         Some(ret)
-                    } else if let Some(offset) =
-                        code_block.guest_pc_to_jit_addr_offset.get(&guest_pc)
-                    {
-                        let ret = (*guest_start_pc, code_block.clone(), *offset);
-                        self.guest_start_mapping.insert(guest_pc, ret.clone());
-                        Some(ret.clone())
-                    } else {
-                        None
+                    }
+                    Err(index) => {
+                        if index == 0 {
+                            None
+                        } else {
+                            let (guest_start_pc, code_block) = &self.code_blocks[index - 1];
+                            if let Some(offset) =
+                                code_block.guest_pc_to_jit_addr_offset.get(&guest_pc)
+                            {
+                                let ret = (*guest_start_pc, code_block.clone(), *offset);
+                                self.guest_start_mapping.insert(guest_pc, ret.clone());
+                                Some(ret.clone())
+                            } else {
+                                None
+                            }
+                        }
                     }
                 }
-                None => None,
-            },
+            }
             Some(ret) => Some(ret.clone()),
         }
     }
@@ -174,10 +200,25 @@ impl JitMemory {
                 guest_start_pc
             );
 
-            let jit_start_addr = code_block.jit_start_addr;
             self.guest_start_mapping.remove(&guest_pc);
-            self.blocks.remove(&jit_start_addr);
-            self.code_blocks.remove(&guest_start_pc);
+            match self
+                .blocks
+                .binary_search_by_key(&code_block.jit_start_addr, |(addr, _)| *addr)
+            {
+                Ok(index) => {
+                    self.blocks.remove(index);
+                }
+                Err(_) => {}
+            }
+            match self
+                .code_blocks
+                .binary_search_by_key(&guest_start_pc, |(addr, _)| *addr)
+            {
+                Ok(index) => {
+                    self.code_blocks.remove(index);
+                }
+                Err(_) => {}
+            }
         }
     }
 

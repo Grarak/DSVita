@@ -141,39 +141,67 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let op0 = inst_info.operands()[0].as_reg_no_shift().unwrap();
 
         let mut reg_reserve = !(RegReserve::gp_thumb() + *op0).get_gp_regs();
+        let pc_tmp_reg = reg_reserve.pop().unwrap();
         let tmp_reg = reg_reserve.pop().unwrap();
         let tmp_reg2 = reg_reserve.pop().unwrap();
 
-        self.jit_buf.emit_opcodes.extend(AluImm::mov32(tmp_reg, pc));
+        self.jit_buf
+            .emit_opcodes
+            .extend(AluImm::mov32(pc_tmp_reg, pc));
         self.jit_buf.emit_opcodes.extend(AluImm::mov32(
-            tmp_reg2,
+            tmp_reg,
             ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
         ));
         self.jit_buf
             .emit_opcodes
-            .push(LdrStrImm::str_al(tmp_reg, tmp_reg2));
+            .push(LdrStrImm::str_al(pc_tmp_reg, tmp_reg));
 
         if op0.is_emulated() {
             let thread_regs = self.thread_regs.borrow();
             if *op0 == Reg::PC {
                 self.jit_buf
                     .emit_opcodes
-                    .push(AluImm::add_al(tmp_reg, tmp_reg, 4));
+                    .push(AluImm::add_al(tmp_reg2, pc_tmp_reg, 4));
             } else {
                 self.jit_buf
                     .emit_opcodes
-                    .extend(thread_regs.emit_get_reg(tmp_reg, *op0));
+                    .extend(thread_regs.emit_get_reg(tmp_reg2, *op0));
             }
             self.jit_buf
                 .emit_opcodes
-                .extend(thread_regs.emit_set_reg(Reg::PC, tmp_reg, tmp_reg2));
+                .extend(thread_regs.emit_set_reg(Reg::PC, tmp_reg2, tmp_reg));
+        } else if op0.is_high_gp_reg() {
+            let thread_regs = self.thread_regs.borrow();
+            self.jit_buf
+                .emit_opcodes
+                .extend(thread_regs.emit_get_reg(tmp_reg, *op0));
+            self.jit_buf
+                .emit_opcodes
+                .extend(
+                    self.thread_regs
+                        .borrow()
+                        .emit_set_reg(Reg::PC, tmp_reg, tmp_reg2),
+                );
         } else {
             self.jit_buf
                 .emit_opcodes
                 .extend(
                     self.thread_regs
                         .borrow()
-                        .emit_set_reg(Reg::PC, *op0, tmp_reg),
+                        .emit_set_reg(Reg::PC, *op0, tmp_reg2),
+                );
+        }
+
+        if inst_info.op == Op::BlxRegT {
+            self.jit_buf
+                .emit_opcodes
+                .push(AluImm::add_al(tmp_reg2, pc_tmp_reg, 3));
+            self.jit_buf
+                .emit_opcodes
+                .extend(
+                    self.thread_regs
+                        .borrow()
+                        .emit_set_reg(Reg::LR, tmp_reg2, tmp_reg),
                 );
         }
 

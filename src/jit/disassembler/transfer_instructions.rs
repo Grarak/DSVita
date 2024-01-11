@@ -976,7 +976,16 @@ mod transfer_ops {
 
     #[inline]
     pub fn stmdb(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let rlist = RegReserve::from(opcode & 0xFFFF);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::reg(op0)),
+            rlist + op0,
+            reg_reserve!(),
+            rlist.len() as u8 + 1,
+        )
     }
 
     #[inline]

@@ -1,3 +1,5 @@
+use crate::hle::cpu_regs::CpuRegs;
+use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Msr};
 use crate::jit::reg::{Reg, RegReserve};
@@ -7,6 +9,7 @@ use crate::utils::FastCell;
 use bilge::prelude::*;
 use std::ptr;
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[bitsize(32)]
 #[derive(FromBits)]
@@ -45,8 +48,7 @@ pub struct OtherModeRegs {
     pub spsr: u32,
 }
 
-#[derive(Default)]
-pub struct ThreadRegs {
+pub struct ThreadRegs<const CPU: CpuType> {
     pub gp_regs: [u32; 13],
     pub sp: u32,
     pub lr: u32,
@@ -59,15 +61,34 @@ pub struct ThreadRegs {
     pub abt: OtherModeRegs,
     pub irq: OtherModeRegs,
     pub und: OtherModeRegs,
+    cpu_regs: Arc<CpuRegs<CPU>>,
     pub restore_regs_opcodes: Vec<u32>,
     pub save_regs_opcodes: Vec<u32>,
     pub restore_regs_thumb_opcodes: Vec<u32>,
     pub save_regs_thumb_opcodes: Vec<u32>,
 }
 
-impl ThreadRegs {
-    pub fn new() -> Rc<FastCell<Self>> {
-        let mut instance = Rc::new(FastCell::new(ThreadRegs::default()));
+impl<const CPU: CpuType> ThreadRegs<CPU> {
+    pub fn new(cpu_regs: Arc<CpuRegs<CPU>>) -> Rc<FastCell<Self>> {
+        let mut instance = Rc::new(FastCell::new(ThreadRegs {
+            gp_regs: [0u32; 13],
+            sp: 0,
+            lr: 0,
+            pc: 0,
+            cpsr: 0,
+            spsr: 0,
+            user: UserRegs::default(),
+            fiq: FiqRegs::default(),
+            svc: OtherModeRegs::default(),
+            abt: OtherModeRegs::default(),
+            irq: OtherModeRegs::default(),
+            und: OtherModeRegs::default(),
+            cpu_regs,
+            restore_regs_opcodes: Vec::new(),
+            save_regs_opcodes: Vec::new(),
+            restore_regs_thumb_opcodes: Vec::new(),
+            save_regs_thumb_opcodes: Vec::new(),
+        }));
 
         {
             let mut instance = instance.borrow_mut();
@@ -282,6 +303,8 @@ impl ThreadRegs {
         }
 
         self.cpsr = value;
+        self.cpu_regs
+            .set_cpsr_irq_enabled(self.cpsr & (1 << 7) == 0);
     }
 
     pub fn set_thumb(&mut self, enable: bool) {
@@ -296,6 +319,9 @@ impl ThreadRegs {
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn register_set_cpsr(context: *mut ThreadRegs, value: u32) {
+pub unsafe extern "C" fn register_set_cpsr<const CPU: CpuType>(
+    context: *mut ThreadRegs<CPU>,
+    value: u32,
+) {
     (*context).set_cpsr(value)
 }

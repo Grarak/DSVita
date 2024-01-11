@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 pub struct BiosContext<const CPU: CpuType> {
-    regs: Rc<FastCell<ThreadRegs>>,
+    regs: Rc<FastCell<ThreadRegs<CPU>>>,
     mem_handler: Arc<MemHandler<CPU>>,
     cpu_regs: Arc<CpuRegs<CPU>>,
     pub cycle_correction: u16,
@@ -129,7 +129,7 @@ pub(super) use swi::*;
 
 impl<const CPU: CpuType> BiosContext<CPU> {
     pub fn new(
-        regs: Rc<FastCell<ThreadRegs>>,
+        regs: Rc<FastCell<ThreadRegs<CPU>>>,
         cpu_regs: Arc<CpuRegs<CPU>>,
         mem_handler: Arc<MemHandler<CPU>>,
     ) -> Self {

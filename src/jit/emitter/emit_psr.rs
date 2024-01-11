@@ -33,7 +33,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 }
             },
             &[Some(self.thread_regs.as_ptr() as _), None],
-            register_set_cpsr as _,
+            register_set_cpsr::<CPU> as _,
         );
     }
 
