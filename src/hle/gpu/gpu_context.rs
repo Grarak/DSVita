@@ -30,6 +30,7 @@ impl Swapchain {
     pub fn push(&self, fb_0: &[u32; DISPLAY_PIXEL_COUNT], fb_1: &[u32; DISPLAY_PIXEL_COUNT]) {
         let mut queue = self.queue.lock().unwrap();
         if queue.len() == 2 {
+            queue.swap(0, 1);
             let fb = &mut queue[1];
             fb[0..DISPLAY_PIXEL_COUNT].copy_from_slice(fb_0);
             fb[DISPLAY_PIXEL_COUNT..DISPLAY_PIXEL_COUNT * 2].copy_from_slice(fb_1);
@@ -66,7 +67,7 @@ impl Swapchain {
 }
 
 #[bitsize(16)]
-#[derive(FromBits)]
+#[derive(Clone, FromBits)]
 struct DispStat {
     v_blank_flag: u1,
     h_blank_flag: u1,
@@ -74,7 +75,8 @@ struct DispStat {
     v_blank_irq_enable: u1,
     h_blank_irq_enable: u1,
     v_counter_irq_enable: u1,
-    not_used: u2,
+    not_used: u1,
+    v_count_msb: u1,
     v_count_setting: u8,
 }
 
@@ -294,6 +296,34 @@ impl CycleEvent for Scanline355Event {
             }
             _ => {}
         }
+
+        for i in 0..2 {
+            let mut disp_stat = DispStat::from(inner.disp_stat[i]);
+            let v_match =
+                (u16::from(disp_stat.v_count_msb()) << 8) | disp_stat.v_count_setting() as u16;
+            if inner.v_count == v_match {
+                disp_stat.set_v_counter_flag(u1::new(1));
+                let irq = bool::from(disp_stat.v_counter_irq_enable());
+                inner.disp_stat[i] = u16::from(disp_stat.clone());
+                if irq {
+                    if i == 0 {
+                        inner
+                            .cpu_regs_arm9
+                            .send_interrupt(InterruptFlag::LcdVCounterMatch);
+                    } else {
+                        inner
+                            .cpu_regs_arm7
+                            .send_interrupt(InterruptFlag::LcdVCounterMatch);
+                    }
+                }
+            } else {
+                disp_stat.set_v_counter_flag(u1::new(0));
+            }
+            disp_stat.set_h_blank_flag(u1::new(0));
+
+            inner.disp_stat[i] = u16::from(disp_stat);
+        }
+
         self.cycle_manager.schedule::<{ CpuType::ARM9 }>(
             355 * 6 - delay as u32,
             Box::new(Scanline355Event::new(

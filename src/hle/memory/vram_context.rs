@@ -707,7 +707,7 @@ impl VramContext {
     }
 
     pub fn get_stat(&self) -> u8 {
-        self.stat.load(Ordering::Relaxed)
+        self.stat.load(Ordering::Acquire)
     }
 
     pub fn get_cnt(&self, bank: usize) -> u8 {

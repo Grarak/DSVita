@@ -179,6 +179,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
             Reg::LR => &self.lr,
             Reg::PC => &self.pc,
             Reg::CPSR => &self.cpsr,
+            Reg::SPSR => &self.spsr,
             Reg::None => panic!(),
             _ => {
                 if reg >= Reg::R0 && reg <= Reg::R12 {
@@ -197,6 +198,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
             Reg::LR => &mut self.lr,
             Reg::PC => &mut self.pc,
             Reg::CPSR => &mut self.cpsr,
+            Reg::SPSR => &mut self.spsr,
             Reg::None => panic!(),
             _ => {
                 if reg >= Reg::R0 && reg <= Reg::R12 {
@@ -208,7 +210,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         }
     }
 
-    pub fn set_cpsr(&mut self, value: u32) {
+    pub fn set_cpsr<const SAVE: bool>(&mut self, value: u32) {
         let old_cpsr = Cpsr::from(self.cpsr);
         let new_cpsr = Cpsr::from(value);
 
@@ -302,9 +304,12 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
             }
         }
 
+        if SAVE {
+            self.spsr = self.cpsr;
+        }
         self.cpsr = value;
         self.cpu_regs
-            .set_cpsr_irq_enabled(self.cpsr & (1 << 7) == 0);
+            .set_cpsr_irq_enabled(!bool::from(new_cpsr.irq_disable()));
     }
 
     pub fn set_thumb(&mut self, enable: bool) {
@@ -323,5 +328,5 @@ pub unsafe extern "C" fn register_set_cpsr<const CPU: CpuType>(
     context: *mut ThreadRegs<CPU>,
     value: u32,
 ) {
-    (*context).set_cpsr(value)
+    (*context).set_cpsr::<false>(value)
 }

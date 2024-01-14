@@ -21,7 +21,8 @@ pub enum Reg {
     LR = 14,
     PC = 15,
     CPSR = 16,
-    None = 17,
+    SPSR = 17,
+    None = 18,
 }
 
 const GP_REGS_BITMASK: u32 = 0x1FFF;

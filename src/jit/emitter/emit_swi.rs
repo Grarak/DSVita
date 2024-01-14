@@ -4,7 +4,6 @@ use crate::hle::exception_handler::{
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::Cond;
-use std::ptr;
 
 impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_swi(&mut self, buf_index: usize, _: u32) {
@@ -14,7 +13,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             todo!()
         }
 
-        let bios_context_addr = ptr::addr_of_mut!(self.bios_context) as u32;
+        let bios_context_addr = self.bios_context.as_ptr() as u32;
         match CPU {
             CpuType::ARM9 => {
                 self.emit_call_host_func(
@@ -25,7 +24,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                         Some(inst_info.opcode),
                         Some(ExceptionVector::SoftwareInterrupt as u32),
                     ],
-                    exception_handler_arm9 as _,
+                    exception_handler_arm9::<false> as _,
                 );
             }
             CpuType::ARM7 => {
@@ -36,7 +35,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                         Some(inst_info.opcode),
                         Some(ExceptionVector::SoftwareInterrupt as u32),
                     ],
-                    exception_handler_arm7 as _,
+                    exception_handler_arm7::<false> as _,
                 );
             }
         }

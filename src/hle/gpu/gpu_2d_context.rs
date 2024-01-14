@@ -327,7 +327,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         if BG == 0 && bool::from(disp_cnt.bg0_3d()) {
             todo!()
         }
-        let bgcnt = BgCnt::from(self.bg_cnt[BG]);
+        let bg_cnt = BgCnt::from(self.bg_cnt[BG]);
 
         let vram_offset = if ENGINE == Gpu2DEngine::A {
             BG_A_OFFSET
@@ -337,31 +337,31 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
 
         let mut tile_base_addr = vram_offset
             + u32::from(disp_cnt.screen_base()) * 64 * 1024
-            + u32::from(bgcnt.screen_base_block()) * 2 * 1024;
+            + u32::from(bg_cnt.screen_base_block()) * 2 * 1024;
         let index_base_addr = vram_offset
             + u32::from(disp_cnt.char_base()) * 64 * 1024
-            + u32::from(bgcnt.char_base_block()) * 16 * 1024;
+            + u32::from(bg_cnt.char_base_block()) * 16 * 1024;
 
-        let y_offset = (if bool::from(bgcnt.mosaic()) {
+        let y_offset = (if bool::from(bg_cnt.mosaic()) {
             todo!()
         } else {
             line
         } + self.bg_v_ofs[BG])
             & 0x1FF;
-        tile_base_addr += (y_offset as u32 & 0xF8) << 3;
 
-        if y_offset >= 256 && (u8::from(bgcnt.screen_size()) & 1) != 0 {
+        tile_base_addr += (y_offset as u32 & 0xF8) << 3;
+        if y_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 1) != 0 {
             todo!()
         }
 
-        if bool::from(bgcnt.color_palettes()) {
+        if bool::from(bg_cnt.color_palettes()) {
             todo!()
         } else {
             for i in (0..256).step_by(8) {
                 let x_offset = (i + self.bg_h_ofs[BG]) & 0x1FF;
                 let tile_addr = tile_base_addr + ((x_offset as u32 & 0xF8) >> 2);
 
-                if x_offset >= 256 && (u8::from(bgcnt.screen_size()) & 2) != 0 {
+                if x_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 2) != 0 {
                     todo!()
                 }
 
@@ -392,7 +392,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                         self.palattes_context
                             .borrow()
                             .read_slice(palette_base_addr + (indices & 0xF) * 2, &mut color);
-                        self.draw_pixel::<BG>(line, tmp_x, color[0] | (1 << 15));
+                        self.draw_pixel::<BG>(line, tmp_x, (color[0] | (1 << 15)) as u32);
                     }
                     x = x.wrapping_add(1);
                     indices >>= 4;
@@ -413,8 +413,20 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         todo!()
     }
 
-    fn draw_pixel<const BG: usize>(&mut self, line: u16, x: u16, pixel: u16) {
-        todo!()
+    fn draw_pixel<const BG: usize>(&mut self, line: u16, x: u16, pixel: u32) {
+        let disp_cnt = DispCnt::from(self.disp_cnt);
+
+        if bool::from(disp_cnt.window0_display_flag()) {
+            todo!()
+        }
+        if bool::from(disp_cnt.window1_display_flag()) {
+            todo!()
+        }
+        if bool::from(disp_cnt.obj_window_display_flag()) {
+            todo!()
+        }
+
+        self.layers[0].borrow_mut()[x as usize] = pixel;
     }
 
     fn rgb5_to_rgb6(color: u32) -> u32 {

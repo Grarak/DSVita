@@ -115,7 +115,7 @@ fn initialize_arm9_thread(entry_addr: u32, thread: &ThreadContext<{ CpuType::ARM
         regs.svc.sp = 0x3003FC0;
         regs.user.lr = entry_addr;
         regs.pc = entry_addr;
-        regs.set_cpsr(0x000000DF);
+        regs.set_cpsr::<false>(0x000000DF);
     }
 }
 
@@ -134,7 +134,7 @@ fn initialize_arm7_thread(entry_addr: u32, thread: &mut ThreadContext<{ CpuType:
         regs.user.sp = 0x380FFC0;
         regs.user.lr = entry_addr;
         regs.pc = entry_addr;
-        regs.set_cpsr(0x000000DF);
+        regs.set_cpsr::<false>(0x000000DF);
     }
 }
 
@@ -267,8 +267,7 @@ pub fn main() {
         cp15_context.clone(),
         tcm_context.clone(),
         oam_context.clone(),
-        cpu_regs_arm9.clone(),
-        cpu_regs_arm7.clone(),
+        cpu_regs_arm9,
     );
     initialize_arm9_thread(arm9_entry_adrr, &mut arm9_thread);
 
@@ -292,7 +291,6 @@ pub fn main() {
         tcm_context,
         oam_context,
         cpu_regs_arm7,
-        cpu_regs_arm9,
     );
     initialize_arm7_thread(arm7_entry_addr, &mut arm7_thread);
 

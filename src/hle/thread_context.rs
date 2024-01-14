@@ -1,3 +1,4 @@
+use crate::hle::bios_context::BiosContext;
 use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::cycle_manager::CycleManager;
@@ -28,25 +29,18 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
-pub struct ThreadContext<const CPU: CpuType>
-where
-    [(); CPU.other() as usize]:,
-{
+pub struct ThreadContext<const CPU: CpuType> {
     jit: JitAsm<CPU>,
     cycle_manager: Arc<CycleManager>,
     pub regs: Rc<FastCell<ThreadRegs<CPU>>>,
     pub cp15_context: Rc<FastCell<Cp15Context>>,
     pub mem_handler: Arc<MemHandler<CPU>>,
     cpu_regs: Arc<CpuRegs<CPU>>,
-    cpu_regs_other: Arc<CpuRegs<{ CPU.other() }>>,
 }
 
-unsafe impl<const CPU: CpuType> Send for ThreadContext<CPU> where [(); CPU.other() as usize]: {}
+unsafe impl<const CPU: CpuType> Send for ThreadContext<CPU> {}
 
-impl<const CPU: CpuType> ThreadContext<CPU>
-where
-    [(); CPU.other() as usize]:,
-{
+impl<const CPU: CpuType> ThreadContext<CPU> {
     pub fn new(
         cycle_manager: Arc<CycleManager>,
         jit_memory: Arc<Mutex<JitMemory>>,
@@ -67,11 +61,7 @@ where
         tcm_context: Rc<FastCell<TcmContext>>,
         oam: Rc<FastCell<OamContext>>,
         cpu_regs: Arc<CpuRegs<CPU>>,
-        cpu_regs_other: Arc<CpuRegs<{ CPU.other() }>>,
-    ) -> Self
-    where
-        [(); CPU.other() as usize]:,
-    {
+    ) -> Self {
         let regs = ThreadRegs::new(cpu_regs.clone());
         let timers_context = Arc::new(RwLock::new(TimersContext::new(cycle_manager.clone())));
 
@@ -104,12 +94,22 @@ where
 
         dma.write().unwrap().set_mem_handler(mem_handler.clone());
 
+        let bios_context = Rc::new(FastCell::new(BiosContext::new(
+            regs.clone(),
+            cpu_regs.clone(),
+            mem_handler.clone(),
+        )));
+
+        cpu_regs.set_bios_context(bios_context.clone());
+        cpu_regs.set_cp15_context(cp15_context.clone());
+
         ThreadContext {
             jit: JitAsm::new(
                 jit_memory,
                 regs.clone(),
                 cpu_regs.clone(),
                 cp15_context.clone(),
+                bios_context,
                 timers_context,
                 mem_handler.clone(),
             ),
@@ -118,7 +118,6 @@ where
             cp15_context,
             mem_handler,
             cpu_regs,
-            cpu_regs_other,
         }
     }
 
@@ -126,31 +125,21 @@ where
         self.cpu_regs.is_halted()
     }
 
-    fn is_other_halted(&self) -> bool {
-        self.cpu_regs_other.is_halted()
-    }
-
     pub fn run(&mut self) {
         loop {
             if self.is_halted() {
-                while self.is_other_halted() && self.is_halted() {
-                    self.cycle_manager.halt_resolve::<CPU>()
-                }
-                self.cycle_manager.remove_halt_ack::<CPU>();
+                self.cycle_manager.on_halt::<CPU>();
                 self.cycle_manager.check_events::<CPU>();
                 thread::yield_now();
             } else {
+                self.cycle_manager.on_unhalt::<CPU>();
                 let cycles = self.jit.execute();
                 let cycles_to_add = if CPU == CpuType::ARM9 {
                     (cycles + (cycles % 2)) / 2
                 } else {
                     cycles
                 };
-                self.cycle_manager.add_cycle::<CPU, true>(cycles_to_add);
-                if self.is_other_halted() {
-                    self.cycle_manager
-                        .add_cycle::<{ CPU.other() }, false>(cycles_to_add);
-                }
+                self.cycle_manager.add_cycle::<CPU>(cycles_to_add);
             }
         }
     }

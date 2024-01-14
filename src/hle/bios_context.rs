@@ -1,8 +1,9 @@
 use crate::hle::bios_lookup_table::{ARM7_SWI_LOOKUP_TABLE, ARM9_SWI_LOOKUP_TABLE};
 use crate::hle::memory::mem_handler::MemHandler;
-use crate::hle::thread_regs::ThreadRegs;
+use crate::hle::thread_regs::{Cpsr, ThreadRegs};
 use crate::logging::debug_println;
 use crate::utils::FastCell;
+use bilge::prelude::*;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -123,8 +124,10 @@ mod swi {
     }
 }
 
+use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::CpuType;
+use crate::jit::reg::Reg;
 pub(super) use swi::*;
 
 impl<const CPU: CpuType> BiosContext<CPU> {
@@ -140,20 +143,65 @@ impl<const CPU: CpuType> BiosContext<CPU> {
             cycle_correction: 0,
         }
     }
+
+    pub fn swi(&mut self, comment: u8) {
+        match CPU {
+            CpuType::ARM9 => {
+                let bios_context = self as *const _ as *mut BiosContext<{ CpuType::ARM9 }>;
+                unsafe { bios_context.as_mut() }.unwrap().swi_arm9(comment);
+            }
+            CpuType::ARM7 => {
+                let bios_context = self as *const _ as *mut BiosContext<{ CpuType::ARM7 }>;
+                unsafe { bios_context.as_mut() }.unwrap().swi_arm7(comment);
+            }
+        }
+    }
+
+    pub fn interrupt(&mut self, cp15_context: Option<&Cp15Context>) {
+        debug_println!("{:?} interrupt", CPU);
+
+        let mut thread_regs = self.regs.borrow_mut();
+        let mut cpsr = Cpsr::from(thread_regs.cpsr);
+        cpsr.set_irq_disable(u1::new(1));
+        cpsr.set_thumb(u1::new(0));
+        cpsr.set_mode(u5::new(0x12));
+        thread_regs.set_cpsr::<true>(u32::from(cpsr));
+
+        thread_regs.sp -= 4;
+        self.mem_handler.write(thread_regs.sp, thread_regs.pc); // Just save pc instead of calculating LR
+        for reg in [Reg::R12, Reg::R3, Reg::R2, Reg::R1, Reg::R0] {
+            thread_regs.sp -= 4;
+            self.mem_handler
+                .write(thread_regs.sp, *thread_regs.get_reg_value(reg));
+        }
+
+        match CPU {
+            CpuType::ARM9 => {
+                thread_regs.lr = 0xFFFF0000;
+                thread_regs.pc = self
+                    .mem_handler
+                    .read(cp15_context.unwrap().dtcm_addr + 0x3FFC);
+            }
+            CpuType::ARM7 => {
+                thread_regs.lr = 0x00000000;
+                thread_regs.pc = self.mem_handler.read(0x3FFFFFC);
+            }
+        }
+    }
 }
 
 impl BiosContext<{ CpuType::ARM9 }> {
-    pub fn swi_arm9(&mut self, comment: u8) {
+    fn swi_arm9(&mut self, comment: u8) {
         let (name, func) = &ARM9_SWI_LOOKUP_TABLE[comment as usize];
-        debug_println!("Swi call {:x} {}", comment, name);
+        debug_println!("{:?} swi call {:x} {}", CpuType::ARM9, comment, name);
         func(self);
     }
 }
 
 impl BiosContext<{ CpuType::ARM7 }> {
-    pub fn swi_arm7(&mut self, comment: u8) {
+    fn swi_arm7(&mut self, comment: u8) {
         let (name, func) = &ARM7_SWI_LOOKUP_TABLE[comment as usize];
-        debug_println!("Swi call {:x} {}", comment, name);
+        debug_println!("{:?} swi call {:x} {}", CpuType::ARM7, comment, name);
         func(self);
     }
 }

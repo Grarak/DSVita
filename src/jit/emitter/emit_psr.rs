@@ -4,7 +4,7 @@ use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::inst_info::Operand;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
-use crate::jit::Cond;
+use crate::jit::{Cond, Op};
 
 impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_msr_cprs(&mut self, buf_index: usize, _: u32) {
@@ -37,7 +37,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         );
     }
 
-    pub fn emit_mrs_cprs(&mut self, buf_index: usize, _: u32) {
+    pub fn emit_mrs(&mut self, buf_index: usize, _: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
         if inst_info.cond != Cond::AL {
@@ -48,6 +48,13 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         self.jit_buf
             .emit_opcodes
-            .extend(self.thread_regs.borrow().emit_get_reg(*op0, Reg::CPSR));
+            .extend(self.thread_regs.borrow().emit_get_reg(
+                *op0,
+                match inst_info.op {
+                    Op::MrsRc => Reg::CPSR,
+                    Op::MrsRs => Reg::SPSR,
+                    _ => todo!(),
+                },
+            ));
     }
 }

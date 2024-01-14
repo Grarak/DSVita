@@ -87,7 +87,7 @@ pub struct JitAsm<const CPU: CpuType> {
     pub thread_regs: Rc<FastCell<ThreadRegs<CPU>>>,
     pub cpu_regs: Arc<CpuRegs<CPU>>,
     pub cp15_context: Rc<FastCell<Cp15Context>>,
-    pub bios_context: BiosContext<CPU>,
+    pub bios_context: Rc<FastCell<BiosContext<CPU>>>,
     timers_context: Arc<RwLock<TimersContext<CPU>>>,
     pub mem_handler: Arc<MemHandler<CPU>>,
     pub jit_buf: JitBuf,
@@ -111,6 +111,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         thread_regs: Rc<FastCell<ThreadRegs<CPU>>>,
         cpu_regs: Arc<CpuRegs<CPU>>,
         cp15_context: Rc<FastCell<Cp15Context>>,
+        bios_context: Rc<FastCell<BiosContext<CPU>>>,
         timers_context: Arc<RwLock<TimersContext<CPU>>>,
         mem_handler: Arc<MemHandler<CPU>>,
     ) -> Self {
@@ -167,7 +168,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 thread_regs: thread_regs.clone(),
                 cpu_regs: cpu_regs.clone(),
                 cp15_context,
-                bios_context: BiosContext::new(thread_regs, cpu_regs, mem_handler.clone()),
+                bios_context,
                 timers_context,
                 mem_handler,
                 jit_buf: JitBuf::new(),
@@ -367,12 +368,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     let (jit_addr, _, _, _) = jit_memory.get_jit_start_addr(pc).unwrap();
 
                     debug_println!(
-                    "{:?} Mapping {:#010x} to {:#010x} {:?}",
-                    CPU,
-                    pc,
-                    jit_addr,
-                    inst_info
-                );
+                        "{:?} Mapping {:#010x} to {:#010x} {:?}",
+                        CPU,
+                        pc,
+                        jit_addr,
+                        inst_info
+                    );
                 }
             }
         }
@@ -429,7 +430,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         if DEBUG {
             self.guest_branch_out_pc = 0;
         }
-        self.bios_context.cycle_correction = 0;
+        self.bios_context.borrow_mut().cycle_correction = 0;
 
         unsafe {
             enter_jit(
@@ -451,7 +452,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let executed_cycles = insts_cycle_count[0..=executed_insts as usize]
             .iter()
             .fold(0u16, |sum, count| sum + *count as u16)
-            + self.bios_context.cycle_correction
+            + self.bios_context.borrow().cycle_correction
             + 2; // + 2 for branching
 
         if DEBUG {
