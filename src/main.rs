@@ -2,6 +2,7 @@
 #![feature(adt_const_params)]
 #![feature(arm_target_feature)]
 #![feature(const_trait_impl)]
+#![feature(generic_const_exprs)]
 #![feature(thread_id_value)]
 
 use crate::cartridge::Cartridge;
@@ -266,7 +267,8 @@ pub fn main() {
         cp15_context.clone(),
         tcm_context.clone(),
         oam_context.clone(),
-        cpu_regs_arm9,
+        cpu_regs_arm9.clone(),
+        cpu_regs_arm7.clone(),
     );
     initialize_arm9_thread(arm9_entry_adrr, &mut arm9_thread);
 
@@ -290,6 +292,7 @@ pub fn main() {
         tcm_context,
         oam_context,
         cpu_regs_arm7,
+        cpu_regs_arm9,
     );
     initialize_arm7_thread(arm7_entry_addr, &mut arm7_thread);
 

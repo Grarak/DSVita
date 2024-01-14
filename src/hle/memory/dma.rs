@@ -171,6 +171,14 @@ impl<const CPU: CpuType> Dma<CPU> {
             channel.current_count = u32::from(dma_cnt.word_count());
 
             if transfer_type == DmaTransferMode::StartImm {
+                debug_println!(
+                    "{:?} dma schedule imm {:x} {:x} {:x} {:x}",
+                    CPU,
+                    channel.cnt,
+                    channel.current_dest,
+                    channel.current_src,
+                    channel.current_count
+                );
                 self.cycle_manager.schedule::<CPU>(
                     1,
                     Box::new(DmaEvent::new(

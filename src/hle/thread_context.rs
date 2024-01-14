@@ -28,18 +28,25 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
-pub struct ThreadContext<const CPU: CpuType> {
+pub struct ThreadContext<const CPU: CpuType>
+where
+    [(); CPU.other() as usize]:,
+{
     jit: JitAsm<CPU>,
     cycle_manager: Arc<CycleManager>,
     pub regs: Rc<FastCell<ThreadRegs<CPU>>>,
     pub cp15_context: Rc<FastCell<Cp15Context>>,
     pub mem_handler: Arc<MemHandler<CPU>>,
     cpu_regs: Arc<CpuRegs<CPU>>,
+    cpu_regs_other: Arc<CpuRegs<{ CPU.other() }>>,
 }
 
-unsafe impl<const CPU: CpuType> Send for ThreadContext<CPU> {}
+unsafe impl<const CPU: CpuType> Send for ThreadContext<CPU> where [(); CPU.other() as usize]: {}
 
-impl<const CPU: CpuType> ThreadContext<CPU> {
+impl<const CPU: CpuType> ThreadContext<CPU>
+where
+    [(); CPU.other() as usize]:,
+{
     pub fn new(
         cycle_manager: Arc<CycleManager>,
         jit_memory: Arc<Mutex<JitMemory>>,
@@ -60,7 +67,11 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
         tcm_context: Rc<FastCell<TcmContext>>,
         oam: Rc<FastCell<OamContext>>,
         cpu_regs: Arc<CpuRegs<CPU>>,
-    ) -> Self {
+        cpu_regs_other: Arc<CpuRegs<{ CPU.other() }>>,
+    ) -> Self
+    where
+        [(); CPU.other() as usize]:,
+    {
         let regs = ThreadRegs::new(cpu_regs.clone());
         let timers_context = Arc::new(RwLock::new(TimersContext::new(cycle_manager.clone())));
 
@@ -107,6 +118,7 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
             cp15_context,
             mem_handler,
             cpu_regs,
+            cpu_regs_other,
         }
     }
 
@@ -114,18 +126,30 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
         self.cpu_regs.is_halted()
     }
 
+    fn is_other_halted(&self) -> bool {
+        self.cpu_regs_other.is_halted()
+    }
+
     pub fn run(&mut self) {
         loop {
             if self.is_halted() {
-                self.cycle_manager.add_cycle::<CPU, true>(0);
+                while self.is_other_halted() && self.is_halted() {
+                    self.cycle_manager.halt_resolve::<CPU>()
+                }
+                self.cycle_manager.remove_halt_ack::<CPU>();
+                self.cycle_manager.check_events::<CPU>();
                 thread::yield_now();
             } else {
                 let cycles = self.jit.execute();
-                if CPU == CpuType::ARM9 {
-                    self.cycle_manager
-                        .add_cycle::<CPU, false>((cycles + (cycles % 2)) / 2);
+                let cycles_to_add = if CPU == CpuType::ARM9 {
+                    (cycles + (cycles % 2)) / 2
                 } else {
-                    self.cycle_manager.add_cycle::<CPU, false>(cycles);
+                    cycles
+                };
+                self.cycle_manager.add_cycle::<CPU, true>(cycles_to_add);
+                if self.is_other_halted() {
+                    self.cycle_manager
+                        .add_cycle::<{ CPU.other() }, false>(cycles_to_add);
                 }
             }
         }

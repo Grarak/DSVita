@@ -25,13 +25,19 @@ pub enum CpuType {
     ARM7 = 1,
 }
 
-impl const ops::Not for CpuType {
-    type Output = Self;
-
-    fn not(self) -> Self::Output {
+impl CpuType {
+    pub const fn other(self) -> Self {
         match self {
             CpuType::ARM9 => CpuType::ARM7,
             CpuType::ARM7 => CpuType::ARM9,
         }
+    }
+}
+
+impl const ops::Not for CpuType {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        self.other()
     }
 }
