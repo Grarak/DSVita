@@ -5,17 +5,17 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{
     parse_macro_input, Arm, Block, Expr, ExprBlock, ExprMatch, Lit, LitInt, Pat, PatLit, PatOr,
-    Token,
+    Stmt, Token,
 };
 
-fn write_block(base: u32, size: usize, block: &str) -> Block {
+fn write_block(base: u32, size: usize) -> Block {
     let block = if size == 1 {
         format!(
             "
 {{
     let value = bytes_window[index];
     addr_offset_tmp += 1;
-    {{ {block} }}
+    {{ block_placeholder() }}
 }}
 ",
         )
@@ -41,7 +41,7 @@ fn write_block(base: u32, size: usize, block: &str) -> Block {
     let mask = u{}::from_le_bytes([{le_mask_arg}]);
     index = index_end - 1;
     addr_offset_tmp = addr_offset + {size};
-    {{ {block} }}
+    {{ block_placeholder() }}
 }}
 ",
             size * 8,
@@ -52,14 +52,14 @@ fn write_block(base: u32, size: usize, block: &str) -> Block {
     syn::parse_str(&block).unwrap()
 }
 
-fn read_block(base: u32, size: usize, block: &str) -> Block {
+fn read_block(base: u32, size: usize) -> Block {
     let block = if size == 1 {
         format!(
             "
 {{
     #[allow(unreachable_code)]
     {{
-        let ret: u{} = {{ {block} }};
+        let ret: u{} = {{ block_placeholder() }};
         bytes_window[index] = ret;
         addr_offset_tmp += 1;
     }}
@@ -73,7 +73,7 @@ fn read_block(base: u32, size: usize, block: &str) -> Block {
 {{
     #[allow(unreachable_code)]
     {{
-        let ret: [u{}; 1] = [{{ {block} }}];
+        let ret: [u{}; 1] = [{{ block_placeholder() }}];
         let (_, bytes, _) = unsafe {{ ret.align_to::<u8>() }};
         let offset = addr_offset_tmp - {base};
         let index_start = index - offset as usize;
@@ -91,28 +91,65 @@ fn read_block(base: u32, size: usize, block: &str) -> Block {
     syn::parse_str(&block).unwrap()
 }
 
+fn place_block(block: &mut Block, replacement: &Expr) {
+    for stmt in &mut block.stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                if let Some(local_init) = &mut local.init {
+                    match local_init.expr.as_mut() {
+                        Expr::Array(array) => {
+                            for elem in &mut array.elems {
+                                if let Expr::Block(block) = elem {
+                                    place_block(&mut block.block, replacement)
+                                }
+                            }
+                        }
+                        Expr::Block(block) => {
+                            place_block(&mut block.block, replacement);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Stmt::Expr(expr, _) => match expr {
+                Expr::Block(block) => {
+                    place_block(&mut block.block, replacement);
+                }
+                Expr::Call(call) => {
+                    if let Expr::Path(path) = call.func.as_mut() {
+                        for segment in &path.path.segments {
+                            if segment.ident.to_string() == "block_placeholder" {
+                                *expr = replacement.clone();
+                                break;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
+
 fn traverse_match<const WRITE: bool>(expr: &mut ExprMatch) {
     for arm in &mut expr.arms {
         if let Pat::TupleStruct(tuple_struct) = &mut arm.pat {
             if tuple_struct.path.segments.len() == 1 {
                 let ident = &tuple_struct.path.segments.first().unwrap().ident;
-                let get_addr =
-                    || {
-                        assert_eq!(tuple_struct.elems.len(), 1);
-                        if let Pat::Lit(lit) = tuple_struct.elems.first().unwrap() {
-                            if let Lit::Int(lit) = &lit.lit {
-                                return Some((
-                                    u32::from_str_radix(
-                                        lit.to_string().trim_start_matches("0x"),
-                                        16,
-                                    )
+                let get_addr = || {
+                    assert_eq!(tuple_struct.elems.len(), 1);
+                    if let Pat::Lit(lit) = tuple_struct.elems.first().unwrap() {
+                        if let Lit::Int(lit) = &lit.lit {
+                            return Some((
+                                u32::from_str_radix(lit.to_string().trim_start_matches("0x"), 16)
                                     .unwrap(),
-                                    lit.span(),
-                                ));
-                            }
+                                lit.span(),
+                            ));
                         }
-                        None
-                    };
+                    }
+                    None
+                };
                 let replace = |arm: &mut Arm, addrs: &[u32], span: Span| {
                     let mut cases: Punctuated<Pat, Token![|]> = Punctuated::new();
                     for addr in addrs {
@@ -127,22 +164,18 @@ fn traverse_match<const WRITE: bool>(expr: &mut ExprMatch) {
                         cases,
                     });
 
+                    let mut new_block = if WRITE {
+                        write_block(addrs[0], addrs.len())
+                    } else {
+                        read_block(addrs[0], addrs.len())
+                    };
+
+                    place_block(&mut new_block, &arm.body);
+
                     arm.body = Box::new(Expr::Block(ExprBlock {
                         attrs: Vec::new(),
                         label: None,
-                        block: if WRITE {
-                            write_block(
-                                addrs[0],
-                                addrs.len(),
-                                &arm.body.to_token_stream().to_string(),
-                            )
-                        } else {
-                            read_block(
-                                addrs[0],
-                                addrs.len(),
-                                &arm.body.to_token_stream().to_string(),
-                            )
-                        },
+                        block: new_block,
                     }));
                 };
                 match ident.to_string().as_str() {

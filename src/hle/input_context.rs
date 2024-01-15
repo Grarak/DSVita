@@ -18,10 +18,14 @@ struct KeyInput {
 
 pub struct InputContext {
     pub key_input: u16,
+    pub ext_key_in: u16,
 }
 
 impl InputContext {
     pub fn new() -> Self {
-        InputContext { key_input: 0x3FF }
+        InputContext {
+            key_input: 0x3FF,
+            ext_key_in: 0x007F,
+        }
     }
 }

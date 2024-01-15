@@ -110,7 +110,6 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
                 cpu_regs.clone(),
                 cp15_context.clone(),
                 bios_context,
-                timers_context,
                 mem_handler.clone(),
             ),
             cycle_manager,

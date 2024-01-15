@@ -3,7 +3,6 @@ use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::thread_regs::ThreadRegs;
-use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::Bx;
@@ -23,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::ptr;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 pub struct JitState {
     pub invalidated_addrs: HashSet<u32>,
@@ -88,7 +87,6 @@ pub struct JitAsm<const CPU: CpuType> {
     pub cpu_regs: Arc<CpuRegs<CPU>>,
     pub cp15_context: Rc<FastCell<Cp15Context>>,
     pub bios_context: Rc<FastCell<BiosContext<CPU>>>,
-    timers_context: Arc<RwLock<TimersContext<CPU>>>,
     pub mem_handler: Arc<MemHandler<CPU>>,
     pub jit_buf: JitBuf,
     pub host_regs: Box<HostRegs>,
@@ -112,7 +110,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         cpu_regs: Arc<CpuRegs<CPU>>,
         cp15_context: Rc<FastCell<Cp15Context>>,
         bios_context: Rc<FastCell<BiosContext<CPU>>>,
-        timers_context: Arc<RwLock<TimersContext<CPU>>>,
         mem_handler: Arc<MemHandler<CPU>>,
     ) -> Self {
         let mut instance = {
@@ -169,7 +166,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 cpu_regs: cpu_regs.clone(),
                 cp15_context,
                 bios_context,
-                timers_context,
                 mem_handler,
                 jit_buf: JitBuf::new(),
                 host_regs,
