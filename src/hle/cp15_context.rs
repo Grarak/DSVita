@@ -44,9 +44,9 @@ struct Cp15ControlReg {
 #[derive(FromBits)]
 struct TcmReg {
     reserved: u1,
-    virtual_size: u6,
-    reserved1: u1,
-    region_base: u24,
+    virtual_size: u5,
+    reserved1: u6,
+    region_base: u20,
 }
 
 const CONTROL_RW_BITS_MASK: u32 = 0x000FF085;
@@ -123,7 +123,8 @@ impl Cp15Context {
         self.dtcm_size = cmp::max(512 << u8::from(tcm_reg.virtual_size()), TCM_MIN_SIZE);
 
         debug_println!(
-            "Set dtcm to addr {:x} with size {:x}",
+            "{:?} Set dtcm to addr {:x} with size {:x}",
+            CpuType::ARM9,
             self.dtcm_addr,
             self.dtcm_size
         );
@@ -143,7 +144,6 @@ impl Cp15Context {
 
         match reg {
             0x010000 => self.set_control_reg(value),
-            0x070004 | 0x070802 => self.cpu_regs.halt(0),
             0x090100 => self.set_dtcm(value),
             0x090101 => self.set_itcm(value),
             _ => debug_println!("Unknown cp15 reg write {:x}", reg),

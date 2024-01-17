@@ -29,12 +29,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_str(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
         let pre = match op {
-            Op::StrOfip | Op::StrbOfip | Op::StrhOfip | Op::StrPrim => true,
+            Op::StrOfim | Op::StrOfip | Op::StrbOfip | Op::StrhOfip | Op::StrPrim => true,
             _ => todo!("{:?}", op),
         };
 
         let write_back = match op {
-            Op::StrOfip | Op::StrbOfip | Op::StrhOfip => false,
+            Op::StrOfim | Op::StrOfip | Op::StrbOfip | Op::StrhOfip => false,
             Op::StrPrim => true,
             _ => todo!("{:?}", op),
         };
@@ -51,13 +51,13 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_ldr(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
         let pre = match op {
-            Op::LdrOfip | Op::LdrOfim | Op::LdrbOfrplr => true,
+            Op::LdrhOfip | Op::LdrOfip | Op::LdrOfim | Op::LdrbOfrplr | Op::LdrOfrpll => true,
             Op::LdrPtip => false,
             _ => todo!("{:?}", op),
         };
 
         let write_back = match op {
-            Op::LdrOfip | Op::LdrOfim | Op::LdrbOfrplr => false,
+            Op::LdrhOfip | Op::LdrOfip | Op::LdrOfim | Op::LdrbOfrplr | Op::LdrOfrpll => false,
             Op::LdrPtip => true,
             _ => todo!("{:?}", op),
         };

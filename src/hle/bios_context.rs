@@ -124,7 +124,6 @@ mod swi {
     }
 }
 
-use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::CpuType;
 use crate::jit::reg::Reg;
@@ -157,7 +156,7 @@ impl<const CPU: CpuType> BiosContext<CPU> {
         }
     }
 
-    pub fn interrupt(&mut self, cp15_context: Option<&Cp15Context>) {
+    pub fn interrupt(&self, dtcm_addr: Option<u32>) {
         debug_println!("{:?} interrupt", CPU);
 
         let mut thread_regs = self.regs.borrow_mut();
@@ -178,15 +177,28 @@ impl<const CPU: CpuType> BiosContext<CPU> {
         match CPU {
             CpuType::ARM9 => {
                 thread_regs.lr = 0xFFFF0000;
-                thread_regs.pc = self
-                    .mem_handler
-                    .read(cp15_context.unwrap().dtcm_addr + 0x3FFC);
+                thread_regs.pc = self.mem_handler.read(dtcm_addr.unwrap() + 0x3FFC);
             }
             CpuType::ARM7 => {
                 thread_regs.lr = 0x00000000;
                 thread_regs.pc = self.mem_handler.read(0x3FFFFFC);
             }
         }
+    }
+
+    pub fn uninterrupt(&self) {
+        debug_println!("{:?} uninterrupt", CPU);
+
+        let mut thread_regs = self.regs.borrow_mut();
+
+        for reg in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR] {
+            *thread_regs.get_reg_value_mut(reg) = self.mem_handler.read(thread_regs.sp);
+            thread_regs.sp += 4;
+        }
+        thread_regs.pc = thread_regs.lr;
+
+        let spsr = thread_regs.spsr;
+        thread_regs.set_cpsr::<false>(spsr);
     }
 }
 

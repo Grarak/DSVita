@@ -125,7 +125,16 @@ mod transfer_ops {
 
     #[inline]
     pub fn ldrh_of(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
+            reg_reserve!(op1),
+            reg_reserve!(op0),
+            3,
+        )
     }
 
     #[inline]
@@ -679,7 +688,20 @@ mod transfer_ops {
 
     #[inline]
     pub fn ldr_ofrpll_impl(opcode: u32, op: Op, operand2: (Reg, u8)) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+            ),
+            reg_reserve!(op1, operand2.0),
+            reg_reserve!(op0),
+            3,
+        )
     }
 
     #[inline]
@@ -1169,7 +1191,15 @@ mod transfer_ops {
 
     #[inline]
     pub fn msr_rs(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op1 = Reg::from((opcode & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::reg(op1)),
+            reg_reserve!(op1),
+            reg_reserve!(Reg::SPSR),
+            1,
+        )
     }
 
     #[inline]

@@ -5,3 +5,4 @@ mod emit_psr;
 mod emit_swi;
 mod emit_transfer;
 mod thumb;
+mod emit_unknown;

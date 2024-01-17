@@ -36,6 +36,7 @@ pub struct ThreadContext<const CPU: CpuType> {
     pub cp15_context: Rc<FastCell<Cp15Context>>,
     pub mem_handler: Arc<MemHandler<CPU>>,
     cpu_regs: Arc<CpuRegs<CPU>>,
+    bios_context: Rc<FastCell<BiosContext<CPU>>>,
 }
 
 unsafe impl<const CPU: CpuType> Send for ThreadContext<CPU> {}
@@ -109,7 +110,7 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
                 regs.clone(),
                 cpu_regs.clone(),
                 cp15_context.clone(),
-                bios_context,
+                bios_context.clone(),
                 mem_handler.clone(),
             ),
             cycle_manager,
@@ -117,6 +118,7 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
             cp15_context,
             mem_handler,
             cpu_regs,
+            bios_context,
         }
     }
 
@@ -132,7 +134,15 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
                 thread::yield_now();
             } else {
                 self.cycle_manager.on_unhalt::<CPU>();
-                let cycles = self.jit.execute();
+                let pc = self.regs.borrow().pc;
+                let cycles = if (CPU == CpuType::ARM9 && pc == 0xFFFF0000)
+                    || (CPU == CpuType::ARM7 && pc == 0)
+                {
+                    self.bios_context.borrow_mut().uninterrupt();
+                    3
+                } else {
+                    self.jit.execute()
+                };
                 let cycles_to_add = if CPU == CpuType::ARM9 {
                     (cycles + (cycles % 2)) / 2
                 } else {

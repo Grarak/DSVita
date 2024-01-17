@@ -16,16 +16,22 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let out_regs = inst_info.out_regs;
 
         let emit_func = match inst_info.op {
-            Op::B | Op::Bl => JitAsm::emit_b,
-            Op::Bx | Op::BlxReg => JitAsm::emit_bx,
-            Op::LdrOfim | Op::LdrOfip | Op::LdrbOfrplr | Op::LdrPtip => JitAsm::emit_ldr,
-            Op::Ldmia | Op::LdmiaW => JitAsm::emit_ldm,
-            Op::StrOfip | Op::StrbOfip | Op::StrhOfip | Op::StrPrim => JitAsm::emit_str,
-            Op::Stmia | Op::Stmdb | Op::StmiaW | Op::StmdbW => JitAsm::emit_stm,
-            Op::Mcr | Op::Mrc => JitAsm::emit_cp15,
-            Op::MsrRc | Op::MsrIc => JitAsm::emit_msr_cprs,
-            Op::MrsRc | Op::MrsRs => JitAsm::emit_mrs,
-            Op::Swi => JitAsm::emit_swi,
+            Op::B | Op::Bl => Self::emit_b,
+            Op::Bx | Op::BlxReg => Self::emit_bx,
+            Op::LdrhOfip
+            | Op::LdrOfim
+            | Op::LdrOfip
+            | Op::LdrbOfrplr
+            | Op::LdrOfrpll
+            | Op::LdrPtip => Self::emit_ldr,
+            Op::Ldmia | Op::LdmiaW => Self::emit_ldm,
+            Op::StrOfim | Op::StrOfip | Op::StrbOfip | Op::StrhOfip | Op::StrPrim => Self::emit_str,
+            Op::Stmia | Op::Stmdb | Op::StmiaW | Op::StmdbW => Self::emit_stm,
+            Op::Mcr | Op::Mrc => Self::emit_cp15,
+            Op::MsrRc | Op::MsrRs => Self::emit_msr,
+            Op::MrsRc | Op::MrsRs => Self::emit_mrs,
+            Op::Swi => Self::emit_swi,
+            Op::UnkArm => Self::emit_unknown,
             _ => {
                 let src_regs = inst_info.src_regs;
                 let combined_regs = src_regs + out_regs;
@@ -60,29 +66,25 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         emit_func(self, buf_index, pc);
 
         if out_regs.is_reserved(Reg::PC) {
-            if cond != Cond::AL {
-                todo!()
-            }
+            let mut opcodes = Vec::<u32>::new();
 
-            self.jit_buf
-                .emit_opcodes
-                .extend(&self.thread_regs.borrow().save_regs_opcodes);
+            opcodes.extend(&self.thread_regs.borrow().save_regs_opcodes);
 
-            self.jit_buf
-                .emit_opcodes
-                .extend(&AluImm::mov32(Reg::R0, pc));
-            self.jit_buf.emit_opcodes.extend(AluImm::mov32(
+            opcodes.extend(&AluImm::mov32(Reg::R0, pc));
+            opcodes.extend(AluImm::mov32(
                 Reg::LR,
                 ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
             ));
-            self.jit_buf
-                .emit_opcodes
-                .push(LdrStrImm::str_al(Reg::R0, Reg::LR));
+            opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
 
-            Self::emit_host_bx(
-                self.breakout_skip_save_regs_addr,
-                &mut self.jit_buf.emit_opcodes,
-            );
+            Self::emit_host_bx(self.breakout_skip_save_regs_addr, &mut opcodes);
+
+            if cond != Cond::AL {
+                self.jit_buf
+                    .emit_opcodes
+                    .push(B::b(opcodes.len() as i32 - 1, !cond));
+            }
+            self.jit_buf.emit_opcodes.extend(opcodes);
         }
     }
 
@@ -213,15 +215,11 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             }
 
             let reg = Reg::from(FIRST_EMULATED_REG as u8 + index as u8);
-            if reg == Reg::PC {
-                todo!()
-            } else {
-                opcodes.extend(
-                    self.thread_regs
-                        .borrow()
-                        .emit_set_reg(reg, *mapped_reg, out_addr),
-                );
-            }
+            opcodes.extend(
+                self.thread_regs
+                    .borrow()
+                    .emit_set_reg(reg, *mapped_reg, out_addr),
+            );
         }
 
         if let Some(opcode) = out_reserved.emit_pop_stack(Reg::LR) {
@@ -238,7 +236,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 .push(B::b(opcodes.len() as i32 - 1, !inst_info.cond));
         }
 
-        self.jit_buf.emit_opcodes.extend(&opcodes);
+        self.jit_buf.emit_opcodes.extend(opcodes);
     }
 
     pub fn emit_host_bx(addr: u32, jit_buf: &mut Vec<u32>) {
@@ -246,7 +244,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         jit_buf.push(Bx::bx(Reg::LR, Cond::AL));
     }
 
-    pub fn emit_call_host_func<F: FnOnce(&mut JitAsm<CPU>)>(
+    pub fn emit_call_host_func<F: FnOnce(&mut Self)>(
         &mut self,
         after_host_restore: F,
         args: &[Option<u32>],

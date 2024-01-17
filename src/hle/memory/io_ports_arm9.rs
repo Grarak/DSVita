@@ -60,7 +60,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io16(0x10E) => todo!(),
                 io16(0x130) => self.input_context.read().unwrap().key_input,
                 io16(0x180) => self.ipc_handler.read().unwrap().get_sync_reg::<{ CpuType::ARM9 }>(),
-                io16(0x184) => todo!(),
+                io16(0x184) => self.ipc_handler.read().unwrap().get_fifo_cnt::<{ CpuType::ARM9 }>(),
                 io16(0x1A0) => todo!(),
                 io8(0x1A2) => todo!(),
                 io32(0x1A4) => todo!(),
@@ -136,7 +136,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io16(0x1050) => todo!(),
                 io16(0x1052) => todo!(),
                 io16(0x106C) => todo!(),
-                io32(0x100000) => todo!(),
+                io32(0x100000) => self.ipc_handler.write().unwrap().fifo_recv::<{ CpuType::ARM9 }>(),
                 io32(0x100010) => todo!(),
                 _ => {
                     if DEBUG && index == 3 {

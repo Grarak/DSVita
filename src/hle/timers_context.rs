@@ -102,7 +102,7 @@ impl<const CPU: CpuType> TimersContext<CPU> {
         if update && u8::from(cnt.prescaler()) == 0 && !cnt.is_count_up(channel_num) {
             let remaining_cycles =
                 (-((channel.current_value as i32) << channel.current_shift)) as u32;
-            channel.scheduled_cycle = self.cycle_manager.schedule::<CPU>(
+            channel.scheduled_cycle = self.cycle_manager.schedule::<CPU, _>(
                 remaining_cycles,
                 Box::new(TimersEvent::new(self.channels[channel_num].clone())),
             );

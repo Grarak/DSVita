@@ -193,31 +193,38 @@ impl JitMemory {
     }
 
     pub fn invalidate_block(&mut self, guest_pc: u32) {
-        if let Some((guest_start_pc, code_block, _)) = self.get_code_block(guest_pc) {
-            debug_println!(
-                "Removing jit block at {:x} with guest start pc {:x}",
-                self.memory.as_ptr() as u32 + code_block.jit_start_addr,
-                guest_start_pc
-            );
+        loop {
+            match self.get_code_block(guest_pc) {
+                None => {
+                    break;
+                }
+                Some((guest_start_pc, code_block, _)) => {
+                    debug_println!(
+                        "Removing jit block at {:x} with guest start pc {:x}",
+                        self.memory.as_ptr() as u32 + code_block.jit_start_addr,
+                        guest_start_pc
+                    );
 
-            self.guest_start_mapping.remove(&guest_pc);
-            match self
-                .blocks
-                .binary_search_by_key(&code_block.jit_start_addr, |(addr, _)| *addr)
-            {
-                Ok(index) => {
-                    self.blocks.remove(index);
+                    self.guest_start_mapping.remove(&guest_pc);
+                    match self
+                        .blocks
+                        .binary_search_by_key(&code_block.jit_start_addr, |(addr, _)| *addr)
+                    {
+                        Ok(index) => {
+                            self.blocks.remove(index);
+                        }
+                        Err(_) => {}
+                    }
+                    match self
+                        .code_blocks
+                        .binary_search_by_key(&guest_start_pc, |(addr, _)| *addr)
+                    {
+                        Ok(index) => {
+                            self.code_blocks.remove(index);
+                        }
+                        Err(_) => {}
+                    }
                 }
-                Err(_) => {}
-            }
-            match self
-                .code_blocks
-                .binary_search_by_key(&guest_start_pc, |(addr, _)| *addr)
-            {
-                Ok(index) => {
-                    self.code_blocks.remove(index);
-                }
-                Err(_) => {}
             }
         }
     }

@@ -4,9 +4,11 @@ use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
 use crate::hle::gpu::gpu_2d_context::Gpu2DEngine::{A, B};
 use crate::hle::memory::dma::{Dma, DmaTransferMode};
 use crate::hle::CpuType;
+use crate::logging::debug_println;
 use crate::utils::{FastCell, HeapMemU32};
 use bilge::prelude::*;
 use rayon::prelude::*;
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 
@@ -15,14 +17,14 @@ pub const DISPLAY_HEIGHT: usize = 192;
 pub const DISPLAY_PIXEL_COUNT: usize = DISPLAY_WIDTH * DISPLAY_HEIGHT;
 
 pub struct Swapchain {
-    queue: Mutex<Vec<HeapMemU32<{ DISPLAY_PIXEL_COUNT * 2 }>>>,
+    queue: Mutex<VecDeque<HeapMemU32<{ DISPLAY_PIXEL_COUNT * 2 }>>>,
     cond_var: Condvar,
 }
 
 impl Swapchain {
     pub fn new() -> Self {
         Swapchain {
-            queue: Mutex::new(Vec::new()),
+            queue: Mutex::new(VecDeque::new()),
             cond_var: Condvar::new(),
         }
     }
@@ -31,14 +33,14 @@ impl Swapchain {
         let mut queue = self.queue.lock().unwrap();
         if queue.len() == 2 {
             queue.swap(0, 1);
-            let fb = &mut queue[1];
+            let fb = queue.back_mut().unwrap();
             fb[0..DISPLAY_PIXEL_COUNT].copy_from_slice(fb_0);
             fb[DISPLAY_PIXEL_COUNT..DISPLAY_PIXEL_COUNT * 2].copy_from_slice(fb_1);
         } else {
             let mut fb = HeapMemU32::new();
             fb[0..DISPLAY_PIXEL_COUNT].copy_from_slice(fb_0);
             fb[DISPLAY_PIXEL_COUNT..DISPLAY_PIXEL_COUNT * 2].copy_from_slice(fb_1);
-            queue.push(fb);
+            queue.push_back(fb);
         }
         self.cond_var.notify_one();
     }
@@ -50,7 +52,7 @@ impl Swapchain {
                 .cond_var
                 .wait_while(queue, |queue| queue.is_empty())
                 .unwrap();
-            queue.remove(0)
+            queue.pop_front().unwrap()
         };
         fb.par_iter_mut()
             .for_each(|pixel| *pixel = Self::rgb6_to_rgb8(*pixel));
@@ -58,10 +60,9 @@ impl Swapchain {
     }
 
     fn rgb6_to_rgb8(color: u32) -> u32 {
-        const NORMALIZE: u32 = 255 / 63;
-        let r = (color & 0x3F) * NORMALIZE;
-        let g = ((color >> 6) & 0x3F) * NORMALIZE;
-        let b = ((color >> 12) & 0x3F) * NORMALIZE;
+        let r = (color & 0x3F) * 255 / 63;
+        let g = ((color >> 6) & 0x3F) * 255 / 63;
+        let b = ((color >> 12) & 0x3F) * 255 / 63;
         (0xFFu32 << 24) | (b << 16) | (g << 8) | r
     }
 }
@@ -143,12 +144,12 @@ impl GpuContext {
             swapchain,
         )));
 
-        cycle_manager.schedule::<{ CpuType::ARM9 }>(
+        cycle_manager.schedule::<{ CpuType::ARM9 }, _>(
             // 8 pixel delay according to https://melonds.kuribo64.net/board/thread.php?id=13
             (256 + 8) * 6,
             Box::new(Scanline256Event::new(cycle_manager.clone(), inner.clone())),
         );
-        cycle_manager.schedule::<{ CpuType::ARM9 }>(
+        cycle_manager.schedule::<{ CpuType::ARM9 }, _>(
             // 8 pixel delay according to https://melonds.kuribo64.net/board/thread.php?id=13
             (355 + 8) * 6,
             Box::new(Scanline355Event::new(cycle_manager.clone(), inner.clone())),
@@ -161,12 +162,14 @@ impl GpuContext {
         self.inner.borrow().disp_stat[cpu_type as usize]
     }
 
-    pub fn set_disp_stat<const CPU: CpuType>(&mut self, mask: u16, value: u16) {
+    pub fn set_disp_stat<const CPU: CpuType>(&mut self, mut mask: u16, value: u16) {
+        mask &= 0xFFB8;
         let mut inner = self.inner.borrow_mut();
         inner.disp_stat[CPU as usize] = (inner.disp_stat[CPU as usize] & !mask) | (value & mask);
     }
 
-    pub fn set_pow_cnt1(&mut self, mask: u16, value: u16) {
+    pub fn set_pow_cnt1(&mut self, mut mask: u16, value: u16) {
+        mask &= 0x820F;
         let mut inner = self.inner.borrow_mut();
         inner.pow_cnt1 = (inner.pow_cnt1 & !mask) | (value & mask);
     }
@@ -219,7 +222,7 @@ impl CycleEvent for Scanline256Event {
             }
         }
 
-        self.cycle_manager.schedule::<{ CpuType::ARM9 }>(
+        self.cycle_manager.schedule::<{ CpuType::ARM9 }, _>(
             355 * 6 - delay as u32,
             Box::new(Scanline256Event::new(
                 self.cycle_manager.clone(),
@@ -301,6 +304,12 @@ impl CycleEvent for Scanline355Event {
             let mut disp_stat = DispStat::from(inner.disp_stat[i]);
             let v_match =
                 (u16::from(disp_stat.v_count_msb()) << 8) | disp_stat.v_count_setting() as u16;
+            debug_println!(
+                "v match {:x} {} {}",
+                inner.disp_stat[i],
+                v_match,
+                inner.v_count
+            );
             if inner.v_count == v_match {
                 disp_stat.set_v_counter_flag(u1::new(1));
                 let irq = bool::from(disp_stat.v_counter_irq_enable());
@@ -324,7 +333,7 @@ impl CycleEvent for Scanline355Event {
             inner.disp_stat[i] = u16::from(disp_stat);
         }
 
-        self.cycle_manager.schedule::<{ CpuType::ARM9 }>(
+        self.cycle_manager.schedule::<{ CpuType::ARM9 }, _>(
             355 * 6 - delay as u32,
             Box::new(Scanline355Event::new(
                 self.cycle_manager.clone(),

@@ -282,7 +282,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                         debug_println!("{:?} disassemble arm {:x} {}", CPU, opcode, opcode);
                         let (op, func) = lookup_opcode(*opcode);
                         let inst_info = func(*opcode, *op);
-                        let is_branch = inst_info.op.is_branch();
+                        let is_branch = inst_info.op.is_branch() || inst_info.out_regs.is_reserved(Reg::PC);
                         let cond = inst_info.cond;
 
                         self.jit_buf.insts_cycle_counts.push(inst_info.cycle);
@@ -502,7 +502,7 @@ fn debug_inst_info<const CPU: CpuType>(
     append: &str,
 ) {
     let mut output = "Executed ".to_owned();
-    for reg in reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR) + regs_to_log {
+    for reg in reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR, Reg::SPSR) + regs_to_log {
         let value = if reg != Reg::PC {
             *regs.get_reg_value(reg)
         } else {

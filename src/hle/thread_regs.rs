@@ -6,6 +6,7 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
 use crate::utils::FastCell;
+use crate::DEBUG;
 use bilge::prelude::*;
 use std::ptr;
 use std::rc::Rc;
@@ -70,7 +71,7 @@ pub struct ThreadRegs<const CPU: CpuType> {
 
 impl<const CPU: CpuType> ThreadRegs<CPU> {
     pub fn new(cpu_regs: Arc<CpuRegs<CPU>>) -> Rc<FastCell<Self>> {
-        let mut instance = Rc::new(FastCell::new(ThreadRegs {
+        let instance = Rc::new(FastCell::new(ThreadRegs {
             gp_regs: [0u32; 13],
             sp: 0,
             lr: 0,
@@ -210,14 +211,46 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         }
     }
 
+    pub fn set_cpsr_with_flags(&mut self, value: u32, flags: u8) {
+        if flags & 1 == 1 {
+            let mask = if u8::from(Cpsr::from(self.cpsr).mode()) == 0x10 {
+                0xE0
+            } else {
+                0xFF
+            };
+            self.set_cpsr::<false>((self.cpsr & !mask) | (value & mask));
+        }
+
+        for i in 1..4 {
+            if (flags & (1 << i)) != 0 {
+                let mask = 0xFF << (i * 8);
+                self.cpsr = (self.cpsr & !mask) | (value & mask);
+            }
+        }
+    }
+
+    pub fn set_spsr_with_flags(&mut self, value: u32, flags: u8) {
+        if DEBUG {
+            let mode = u8::from(Cpsr::from(self.cpsr).mode());
+            debug_assert_ne!(mode, 0x10);
+            debug_assert_ne!(mode, 0x1F);
+        }
+        for i in 0..4 {
+            if (flags & (1 << i)) != 0 {
+                let mask = 0xFF << (i * 8);
+                self.spsr = (self.spsr & !mask) | (value & mask);
+            }
+        }
+    }
+
     pub fn set_cpsr<const SAVE: bool>(&mut self, value: u32) {
-        let old_cpsr = Cpsr::from(self.cpsr);
+        let current_cpsr = Cpsr::from(self.cpsr);
         let new_cpsr = Cpsr::from(value);
 
-        let old_mode = u8::from(old_cpsr.mode());
+        let current_mode = u8::from(current_cpsr.mode());
         let new_mode = u8::from(new_cpsr.mode());
-        if old_mode != new_mode {
-            match old_mode {
+        if current_mode != new_mode {
+            match current_mode {
                 // User | System
                 0x10 | 0x1F => {
                     self.user.gp_regs.copy_from_slice(&self.gp_regs[8..13]);
@@ -266,6 +299,9 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
                     self.gp_regs[8..13].copy_from_slice(&self.user.gp_regs);
                     self.sp = self.user.sp;
                     self.lr = self.user.lr;
+                    if DEBUG {
+                        self.spsr = 0;
+                    }
                 }
                 // FIQ
                 0x11 => {
@@ -324,9 +360,19 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
 }
 
 #[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
-pub unsafe extern "C" fn register_set_cpsr<const CPU: CpuType>(
+pub unsafe extern "C" fn register_set_cpsr_checked<const CPU: CpuType>(
     context: *mut ThreadRegs<CPU>,
     value: u32,
+    flags: u8,
 ) {
-    (*context).set_cpsr::<false>(value)
+    (*context).set_cpsr_with_flags(value, flags)
+}
+
+#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
+pub unsafe extern "C" fn register_set_spsr_checked<const CPU: CpuType>(
+    context: *mut ThreadRegs<CPU>,
+    value: u32,
+    flags: u8,
+) {
+    (*context).set_spsr_with_flags(value, flags)
 }

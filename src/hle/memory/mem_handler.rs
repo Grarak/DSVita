@@ -10,9 +10,9 @@ use crate::hle::CpuType;
 use crate::jit::jit_asm::JitState;
 use crate::logging::debug_println;
 use crate::utils::{Convert, FastCell};
+use std::mem;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
-use std::{mem, thread};
 
 pub struct MemHandler<const CPU: CpuType> {
     memory: Arc<RwLock<MainMemory>>,
@@ -53,18 +53,12 @@ impl<const CPU: CpuType> MemHandler<CPU> {
     pub fn read<T: Convert>(&self, addr: u32) -> T {
         let mut buf = [T::from(0)];
 
-        debug_println!(
-            "{} {:?} memory read at {:x}",
-            thread::current().name().unwrap(),
-            CPU,
-            addr
-        );
+        debug_println!("{:?} memory read at {:x}", CPU, addr);
 
         self.read_slice(addr, &mut buf);
 
         debug_println!(
-            "{} {:?} memory read at {:x} with value {:x}",
-            thread::current().name().unwrap(),
+            "{:?} memory read at {:x} with value {:x}",
             CPU,
             addr,
             buf[0].into()
@@ -145,8 +139,7 @@ impl<const CPU: CpuType> MemHandler<CPU> {
 
     pub fn write<T: Convert>(&self, addr: u32, value: T) {
         debug_println!(
-            "{} {:?} memory write at {:x} with value {:x}",
-            thread::current().name().unwrap(),
+            "{:?} memory write at {:x} with value {:x}",
             CPU,
             addr,
             value.into(),

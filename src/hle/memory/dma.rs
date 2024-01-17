@@ -179,7 +179,7 @@ impl<const CPU: CpuType> Dma<CPU> {
                     channel.current_src,
                     channel.current_count
                 );
-                self.cycle_manager.schedule::<CPU>(
+                self.cycle_manager.schedule::<CPU, _>(
                     1,
                     Box::new(DmaEvent::new(
                         self.channels[channel_num].clone(),

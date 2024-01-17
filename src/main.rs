@@ -10,7 +10,9 @@ use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::cycle_manager::CycleManager;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
-use crate::hle::gpu::gpu_context::{GpuContext, Swapchain, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::hle::gpu::gpu_context::{
+    GpuContext, Swapchain, DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH,
+};
 use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::dma::Dma;
@@ -166,10 +168,17 @@ pub fn main() {
         .unwrap();
     let mut sdl_canvas = sdl_window.into_canvas().target_texture().build().unwrap();
     let sdl_texture_creator = sdl_canvas.texture_creator();
-    let mut sdl_texture = sdl_texture_creator
+    let mut sdl_texture_top = sdl_texture_creator
         .create_texture_target(
-            PixelFormatEnum::RGBA8888,
-            DISPLAY_WIDTH as u32 * 2,
+            PixelFormatEnum::ARGB8888,
+            DISPLAY_WIDTH as u32,
+            DISPLAY_HEIGHT as u32,
+        )
+        .unwrap();
+    let mut sdl_texture_bottom = sdl_texture_creator
+        .create_texture_target(
+            PixelFormatEnum::ARGB8888,
+            DISPLAY_WIDTH as u32,
             DISPLAY_HEIGHT as u32,
         )
         .unwrap();
@@ -214,7 +223,6 @@ pub fn main() {
     let jit_memory = Arc::new(Mutex::new(JitMemory::new()));
     let wram_context = Arc::new(WramContext::new());
     let spi_context = Arc::new(RwLock::new(SpiContext::new()));
-    let ipc_handler = Arc::new(RwLock::new(IpcHandler::new()));
     let vram_context = Arc::new(VramContext::new());
     let input_context = Arc::new(RwLock::new(InputContext::new()));
     let rtc_context = Rc::new(FastCell::new(RtcContext::new()));
@@ -224,6 +232,10 @@ pub fn main() {
     let oam_context = Rc::new(FastCell::new(OamContext::new()));
     let cpu_regs_arm9 = Arc::new(CpuRegs::new(cycle_manager.clone()));
     let cpu_regs_arm7 = Arc::new(CpuRegs::new(cycle_manager.clone()));
+    let ipc_handler = Arc::new(RwLock::new(IpcHandler::new(
+        cpu_regs_arm9.clone(),
+        cpu_regs_arm7.clone(),
+    )));
     let cp15_context = Rc::new(FastCell::new(Cp15Context::new(cpu_regs_arm9.clone())));
 
     let gpu_2d_context_a = Rc::new(FastCell::new(Gpu2DContext::new(
@@ -310,7 +322,6 @@ pub fn main() {
 
     let mut instant = Instant::now();
 
-    let sdl_rect = Rect::new(0, 0, DISPLAY_WIDTH as u32 * 2, DISPLAY_HEIGHT as u32);
     let mut sdl_event_pump = sdl.event_pump().unwrap();
     'render: loop {
         for event in sdl_event_pump.poll_iter() {
@@ -326,12 +337,34 @@ pub fn main() {
         sdl_canvas.clear();
 
         let fb = swapchain.consume();
-        let (_, aligned, _) = unsafe { fb.align_to::<u8>() };
-        sdl_texture
-            .update(None, aligned, DISPLAY_WIDTH * 8)
+        let (_, top_aligned, _) = unsafe { fb[..DISPLAY_PIXEL_COUNT].align_to::<u8>() };
+        let (_, bottom_aligned, _) = unsafe { fb[DISPLAY_PIXEL_COUNT..].align_to::<u8>() };
+        sdl_texture_top
+            .update(None, top_aligned, DISPLAY_WIDTH * 4)
+            .unwrap();
+        sdl_texture_bottom
+            .update(None, bottom_aligned, DISPLAY_WIDTH * 4)
             .unwrap();
 
-        sdl_canvas.copy(&sdl_texture, None, None).unwrap();
+        sdl_canvas
+            .copy(
+                &sdl_texture_top,
+                None,
+                Some(Rect::new(0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT)),
+            )
+            .unwrap();
+        sdl_canvas
+            .copy(
+                &sdl_texture_bottom,
+                None,
+                Some(Rect::new(
+                    SCREEN_WIDTH as i32 / 2,
+                    0,
+                    SCREEN_WIDTH,
+                    SCREEN_HEIGHT,
+                )),
+            )
+            .unwrap();
         sdl_canvas.present();
         println!("Consumed fb {} ms", instant.elapsed().as_millis());
         instant = Instant::now();

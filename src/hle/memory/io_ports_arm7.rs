@@ -202,7 +202,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io8(0x138) => self.rtc_context.borrow_mut().set_rtc(value),
                 io16(0x180) => self.ipc_handler.write().unwrap().set_sync_reg::<{ CpuType::ARM7 }>(mask, value),
                 io16(0x184) => self.ipc_handler.write().unwrap().set_fifo_cnt::<{ CpuType::ARM7 }>(mask, value),
-                io32(0x188) => todo!(),
+                io32(0x188) => self.ipc_handler.write().unwrap().fifo_send::<{ CpuType::ARM7 }>(mask, value),
                 io16(0x1A0) => todo!(),
                 io8(0x1A2) => todo!(),
                 io32(0x1A4) => todo!(),

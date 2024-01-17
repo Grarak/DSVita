@@ -1,5 +1,4 @@
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
-use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::inst_info_thumb::InstInfoThumb;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
@@ -47,7 +46,7 @@ impl InstInfo {
     pub fn assemble(&self) -> u32 {
         let operands = self.operands();
         match self.op {
-            Op::AddImm => {
+            Op::AddImm | Op::RscsImm => {
                 let mut opcode = AluImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 let reg1 = operands[1].as_reg_no_shift().unwrap();
@@ -56,11 +55,25 @@ impl InstInfo {
 
                 u32::from(opcode)
             }
-            Op::MovLli | Op::MovRri | Op::MovsLli | Op::MovsRri => {
+            Op::MvnsImm => {
+                let mut opcode = AluImm::from(self.opcode);
+                let reg0 = operands[0].as_reg_no_shift().unwrap();
+                opcode.set_rd(u4::new(*reg0 as u8));
+
+                u32::from(opcode)
+            }
+            Op::EorLli | Op::MovLli | Op::MovRri | Op::MovsLli | Op::MovsRri => {
                 let mut opcode = AluShiftImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
-                let (reg2, shift_2) = operands[1].as_reg().unwrap();
+                let (reg1, (reg2, shift_2)) = if operands.len() == 3 {
+                    (operands[1].as_reg_no_shift(), operands[2].as_reg().unwrap())
+                } else {
+                    (None, operands[1].as_reg().unwrap())
+                };
                 opcode.set_rm(u4::new(*reg2 as u8));
+                if let Some(reg1) = reg1 {
+                    opcode.set_rn(u4::new(*reg1 as u8));
+                }
                 opcode.set_rd(u4::new(*reg0 as u8));
                 match shift_2 {
                     Some(shift) => {
@@ -70,15 +83,6 @@ impl InstInfo {
                     }
                     None => opcode.set_shift_imm(u5::new(0)),
                 }
-
-                u32::from(opcode)
-            }
-            Op::LdrOfip | Op::StrPrim => {
-                let mut opcode = LdrStrImm::from(self.opcode);
-                let reg0 = operands[0].as_reg_no_shift().unwrap();
-                let reg1 = operands[1].as_reg_no_shift().unwrap();
-                opcode.set_rd(u4::new(*reg0 as u8));
-                opcode.set_rn(u4::new(*reg1 as u8));
 
                 u32::from(opcode)
             }

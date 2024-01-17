@@ -140,12 +140,20 @@ mod transfer_delegations {
 pub(super) use transfer_delegations::*;
 
 mod unknown_delegations {
-    use crate::jit::inst_info::InstInfo;
+    use crate::jit::inst_info::{InstInfo, Operands};
+    use crate::jit::reg::reg_reserve;
     use crate::jit::Op;
 
     #[inline]
     pub fn unk_arm(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_empty(),
+            reg_reserve!(),
+            reg_reserve!(),
+            1,
+        )
     }
 }
 

@@ -178,9 +178,9 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             },
             &mut backdrop,
         );
-        backdrop[0] &= 1 << 15;
+        let backdrop = backdrop[0] & !(1 << 15);
         for layers in &mut self.layers {
-            layers.borrow_mut().fill(backdrop[0] as u32);
+            layers.borrow_mut().fill(backdrop as u32);
         }
 
         let disp_cnt = DispCnt::from(self.disp_cnt);
@@ -365,17 +365,21 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     todo!()
                 }
 
-                let mut tile = [0u16; 1];
+                let mut tile_buf = [0u16; 1];
                 self.vram_context
-                    .read_slice::<{ CpuType::ARM9 }, _>(tile_addr, &mut tile);
-                let tile = TextBgScreen::from(tile[0]);
+                    .read_slice::<{ CpuType::ARM9 }, _>(tile_addr, &mut tile_buf);
+                let tile = TextBgScreen::from(tile_buf[0]);
 
-                let palette_base_addr = u32::from(tile.palette_num()) * 32;
+                let palette_base_addr = u32::from(tile.palette_num()) * 32
+                    + match ENGINE {
+                        Gpu2DEngine::A => 0,
+                        Gpu2DEngine::B => 0x400,
+                    };
 
                 let index_addr = index_base_addr
                     + u32::from(tile.tile_num()) * 32
                     + if bool::from(tile.v_flip()) {
-                        7 - ((y_offset as u32) % 8)
+                        todo!()
                     } else {
                         y_offset as u32 % 8
                     } * 4;
@@ -430,9 +434,9 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     }
 
     fn rgb5_to_rgb6(color: u32) -> u32 {
-        let r = (color & 0x1F) << 1;
-        let g = (color & (0x1F << 5)) << 7;
-        let b = (color & (0x1F << 10)) << 13;
-        (color & 0xFFFC0000) | r | b | g
+        let r = ((color >> 0) & 0x1F) * 2;
+        let g = ((color >> 5) & 0x1F) * 2;
+        let b = ((color >> 10) & 0x1F) * 2;
+        (color & 0xFFFC0000) | (b << 12) | (g << 6) | r
     }
 }

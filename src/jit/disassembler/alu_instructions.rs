@@ -896,7 +896,16 @@ mod alu_ops {
 
     #[inline]
     pub fn rscs_imm_impl(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
+            reg_reserve!(op1),
+            reg_reserve!(op0, Reg::CPSR),
+            1,
+        )
     }
 
     #[inline]
@@ -1602,7 +1611,15 @@ mod alu_ops {
 
     #[inline]
     pub fn mvns_imm_impl(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_2(Operand::reg(op0), Operand::imm(operand2)),
+            reg_reserve!(),
+            reg_reserve!(op0, Reg::CPSR),
+            1,
+        )
     }
 
     #[inline]

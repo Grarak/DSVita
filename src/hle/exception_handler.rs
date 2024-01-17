@@ -16,23 +16,23 @@ pub enum ExceptionVector {
 
 mod exception_handler {
     use crate::hle::bios_context::BiosContext;
-    use crate::hle::cp15_context::Cp15Context;
     use crate::hle::exception_handler::ExceptionVector;
     use crate::hle::CpuType;
 
     pub fn handle<const CPU: CpuType, const THUMB: bool>(
-        cp15_context: Option<&Cp15Context>,
+        exception_addr: Option<u32>,
+        dtcm_addr: Option<u32>,
         bios_context: &mut BiosContext<CPU>,
         opcode: u32,
         vector: ExceptionVector,
     ) {
-        if CPU == CpuType::ARM7 || cp15_context.unwrap().exception_addr != 0 {
+        if CPU == CpuType::ARM7 || exception_addr.unwrap() != 0 {
             match vector {
                 ExceptionVector::SoftwareInterrupt => {
                     bios_context.swi(((opcode >> if THUMB { 0 } else { 16 }) & 0xFF) as u8);
                 }
                 ExceptionVector::NormalInterrupt => {
-                    bios_context.interrupt(cp15_context);
+                    bios_context.interrupt(dtcm_addr);
                 }
                 _ => todo!(),
             }
@@ -51,8 +51,10 @@ pub unsafe extern "C" fn exception_handler_arm9<const THUMB: bool>(
     opcode: u32,
     vector: ExceptionVector,
 ) {
+    let cp15_context = cp15_context.as_ref().unwrap();
     handle::<{ CpuType::ARM9 }, THUMB>(
-        Some(cp15_context.as_ref().unwrap()),
+        Some(cp15_context.exception_addr),
+        Some(cp15_context.dtcm_addr),
         bios_context.as_mut().unwrap(),
         opcode,
         vector,
@@ -65,5 +67,5 @@ pub unsafe extern "C" fn exception_handler_arm7<const THUMB: bool>(
     opcode: u32,
     vector: ExceptionVector,
 ) {
-    handle::<{ CpuType::ARM7 }, THUMB>(None, bios_context.as_mut().unwrap(), opcode, vector)
+    handle::<{ CpuType::ARM7 }, THUMB>(None, None, bios_context.as_mut().unwrap(), opcode, vector)
 }
