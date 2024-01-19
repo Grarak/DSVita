@@ -3,44 +3,40 @@ use crate::mmap::Mmap;
 use crate::utils::NoHashMap;
 use crate::{utils, DEBUG};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::thread;
 
 const JIT_MEMORY_SIZE: u32 = 16 * 1024 * 1024;
 
 type JitBlockStartAddr = u32;
 type JitBlockSize = u32;
-type GuestStartPc = u32;
 
-#[derive(Clone)]
-struct CodeBlock {
-    guest_pc_to_jit_addr_offset: NoHashMap<u16>,
-    guest_insts_cycle_counts: Arc<Vec<u8>>,
+struct GuestPcInfo {
+    guest_insts_cycle_counts: Rc<Vec<u8>>,
+    guest_pc_start: u32,
     guest_pc_end: u32,
-    jit_start_addr: u32,
+    jit_addr: u32,
 }
 
-impl CodeBlock {
+impl GuestPcInfo {
     fn new(
-        guest_pc_to_jit_addr_offset: NoHashMap<u16>,
-        guest_insts_cycle_counts: Vec<u8>,
+        guest_insts_cycle_counts: Rc<Vec<u8>>,
+        guest_pc_start: u32,
         guest_pc_end: u32,
-        jit_start_addr: u32,
+        jit_addr: u32,
     ) -> Self {
-        CodeBlock {
-            guest_pc_to_jit_addr_offset,
-            guest_insts_cycle_counts: Arc::new(guest_insts_cycle_counts),
+        GuestPcInfo {
+            guest_insts_cycle_counts,
+            guest_pc_start,
             guest_pc_end,
-            jit_start_addr,
+            jit_addr,
         }
     }
 }
 
 pub struct JitMemory {
-    pub memory: Mmap,
+    memory: Mmap,
     blocks: Vec<(JitBlockStartAddr, JitBlockSize)>,
-    guest_start_mapping: NoHashMap<(u32, Rc<CodeBlock>, u16)>,
-    code_blocks: Vec<(GuestStartPc, Rc<CodeBlock>)>,
+    guest_pc_mapping: NoHashMap<GuestPcInfo>,
     current_thread_holder: Option<thread::ThreadId>,
 }
 
@@ -49,8 +45,7 @@ impl JitMemory {
         JitMemory {
             memory: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
             blocks: Vec::new(),
-            guest_start_mapping: NoHashMap::default(),
-            code_blocks: Vec::new(),
+            guest_pc_mapping: NoHashMap::default(),
             current_thread_holder: None,
         }
     }
@@ -77,7 +72,7 @@ impl JitMemory {
     pub fn insert_block(
         &mut self,
         opcodes: &[u32],
-        guest_start_pc: Option<GuestStartPc>,
+        guest_start_pc: Option<u32>,
         guest_pc_to_jit_addr_offset: Option<NoHashMap<u16>>,
         guest_insts_cycle_counts: Option<Vec<u8>>,
         guest_pc_end: Option<u32>,
@@ -112,23 +107,22 @@ impl JitMemory {
         };
 
         if let Some(guest_start_pc) = guest_start_pc {
-            match self
-                .code_blocks
-                .binary_search_by_key(&guest_start_pc, |(addr, _)| *addr)
-            {
-                Ok(_) => panic!(),
-                Err(index) => self.code_blocks.insert(
-                    index,
-                    (
+            let cycle_counts = Rc::new(guest_insts_cycle_counts.unwrap());
+            let end_pc = guest_pc_end.unwrap();
+            self.guest_pc_mapping.insert(
+                guest_start_pc,
+                GuestPcInfo::new(cycle_counts.clone(), guest_start_pc, end_pc, new_addr),
+            );
+            for (guest_pc, offset) in guest_pc_to_jit_addr_offset.unwrap() {
+                self.guest_pc_mapping.insert(
+                    guest_pc,
+                    GuestPcInfo::new(
+                        cycle_counts.clone(),
                         guest_start_pc,
-                        Rc::new(CodeBlock::new(
-                            guest_pc_to_jit_addr_offset.unwrap(),
-                            guest_insts_cycle_counts.unwrap(),
-                            guest_pc_end.unwrap(),
-                            new_addr,
-                        )),
+                        end_pc,
+                        new_addr + offset as u32,
                     ),
-                ),
+                );
             }
         }
 
@@ -136,7 +130,7 @@ impl JitMemory {
             let allocated_space = self.blocks.iter().fold(0u32, |sum, (_, size)| sum + *size);
             let per = (allocated_space * 100) as f32 / JIT_MEMORY_SIZE as f32;
             debug_println!(
-                "Insert new block with size {}, {}% allocated",
+                "Insert new jit block with size {}, {}% allocated",
                 aligned_size,
                 per
             )
@@ -144,87 +138,53 @@ impl JitMemory {
         new_addr + self.memory.as_ptr() as u32
     }
 
-    fn get_code_block(&mut self, guest_pc: u32) -> Option<(GuestStartPc, Rc<CodeBlock>, u16)> {
-        match self.guest_start_mapping.get(&guest_pc) {
-            None => {
-                match self
-                    .code_blocks
-                    .binary_search_by_key(&guest_pc, |(addr, _)| *addr)
-                {
-                    Ok(index) => {
-                        let (guest_start_pc, code_block) = &self.code_blocks[index];
-                        let ret = (*guest_start_pc, code_block.clone(), 0);
-                        self.guest_start_mapping.insert(guest_pc, ret.clone());
-                        Some(ret)
-                    }
-                    Err(index) => {
-                        if index == 0 {
-                            None
-                        } else {
-                            let (guest_start_pc, code_block) = &self.code_blocks[index - 1];
-                            if let Some(offset) =
-                                code_block.guest_pc_to_jit_addr_offset.get(&guest_pc)
-                            {
-                                let ret = (*guest_start_pc, code_block.clone(), *offset);
-                                self.guest_start_mapping.insert(guest_pc, ret.clone());
-                                Some(ret.clone())
-                            } else {
-                                None
-                            }
-                        }
-                    }
-                }
-            }
-            Some(ret) => Some(ret.clone()),
-        }
-    }
-
-    pub fn get_jit_start_addr(&mut self, guest_pc: u32) -> Option<(u32, u32, u32, Arc<Vec<u8>>)> {
-        match self.get_code_block(guest_pc) {
-            Some((guest_start_pc, code_block, offset)) => Some((
-                code_block.jit_start_addr + offset as u32 + self.memory.as_ptr() as u32,
-                guest_start_pc,
-                code_block.guest_pc_end,
-                code_block.guest_insts_cycle_counts.clone(),
-            )),
+    pub fn get_jit_start_addr(
+        &mut self,
+        guest_pc: u32,
+    ) -> Option<(
+        u32,         /* jit_addr */
+        u32,         /* guest_pc_start */
+        u32,         /* guest_pc_end */
+        Rc<Vec<u8>>, /* cycle_counts */
+    )> {
+        match self.guest_pc_mapping.get(&guest_pc) {
             None => None,
+            Some(info) => Some((
+                self.memory.as_ptr() as u32 + info.jit_addr,
+                info.guest_pc_start,
+                info.guest_pc_end,
+                info.guest_insts_cycle_counts.clone(),
+            )),
         }
     }
 
     pub fn invalidate_block(&mut self, guest_pc: u32) {
         loop {
-            match self.get_code_block(guest_pc) {
+            match self.guest_pc_mapping.get(&guest_pc) {
                 None => {
                     break;
                 }
-                Some((guest_start_pc, code_block, _)) => {
+                Some(info) => {
                     debug_println!(
                         "Removing jit block at {:x} with guest start pc {:x}",
-                        self.memory.as_ptr() as u32 + code_block.jit_start_addr,
-                        guest_start_pc
+                        self.memory.as_ptr() as u32 + info.jit_addr,
+                        info.guest_pc_start
                     );
 
-                    self.guest_start_mapping.remove(&guest_pc);
-                    match self
-                        .blocks
-                        .binary_search_by_key(&code_block.jit_start_addr, |(addr, _)| *addr)
-                    {
-                        Ok(index) => {
-                            self.blocks.remove(index);
+                    if let Some(start_info) = self.guest_pc_mapping.get(&info.guest_pc_start) {
+                        match self
+                            .blocks
+                            .binary_search_by_key(&start_info.jit_addr, |(addr, _)| *addr)
+                        {
+                            Ok(index) => {
+                                self.blocks.remove(index);
+                            }
+                            Err(_) => {}
                         }
-                        Err(_) => {}
-                    }
-                    match self
-                        .code_blocks
-                        .binary_search_by_key(&guest_start_pc, |(addr, _)| *addr)
-                    {
-                        Ok(index) => {
-                            self.code_blocks.remove(index);
-                        }
-                        Err(_) => {}
                     }
                 }
             }
+            self.guest_pc_mapping.remove(&guest_pc);
         }
     }
 
