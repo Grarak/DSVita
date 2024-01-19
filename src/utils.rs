@@ -1,6 +1,8 @@
 use std::cmp::min;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
+use std::hash::{BuildHasher, Hasher};
 use std::ops::{Deref, DerefMut};
 
 pub const fn align_up(n: u32, align: u32) -> u32 {
@@ -168,3 +170,30 @@ pub const fn crc16(mut crc: u32, buf: &[u8], start: usize, size: usize) -> u16 {
     }
     crc as u16
 }
+
+pub struct NoHasher {
+    state: u32,
+}
+
+impl Hasher for NoHasher {
+    fn finish(&self) -> u64 {
+        self.state as u64
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.state = u32::from_le_bytes(bytes.try_into().unwrap());
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct BuildNoHasher;
+
+impl BuildHasher for BuildNoHasher {
+    type Hasher = NoHasher;
+    fn build_hasher(&self) -> NoHasher {
+        NoHasher { state: 0 }
+    }
+}
+
+pub type NoHashMap<V> = HashMap<u32, V, BuildNoHasher>;
+pub type NoHashSet = HashSet<u32, BuildNoHasher>;

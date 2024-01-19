@@ -1,7 +1,7 @@
 use crate::logging::debug_println;
 use crate::mmap::Mmap;
+use crate::utils::NoHashMap;
 use crate::{utils, DEBUG};
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::thread;
@@ -10,12 +10,11 @@ const JIT_MEMORY_SIZE: u32 = 16 * 1024 * 1024;
 
 type JitBlockStartAddr = u32;
 type JitBlockSize = u32;
-type GuestPc = u32;
 type GuestStartPc = u32;
 
 #[derive(Clone)]
 struct CodeBlock {
-    guest_pc_to_jit_addr_offset: HashMap<u32, u16>,
+    guest_pc_to_jit_addr_offset: NoHashMap<u16>,
     guest_insts_cycle_counts: Arc<Vec<u8>>,
     guest_pc_end: u32,
     jit_start_addr: u32,
@@ -23,7 +22,7 @@ struct CodeBlock {
 
 impl CodeBlock {
     fn new(
-        guest_pc_to_jit_addr_offset: HashMap<u32, u16>,
+        guest_pc_to_jit_addr_offset: NoHashMap<u16>,
         guest_insts_cycle_counts: Vec<u8>,
         guest_pc_end: u32,
         jit_start_addr: u32,
@@ -40,7 +39,7 @@ impl CodeBlock {
 pub struct JitMemory {
     pub memory: Mmap,
     blocks: Vec<(JitBlockStartAddr, JitBlockSize)>,
-    guest_start_mapping: HashMap<GuestPc, (u32, Rc<CodeBlock>, u16)>,
+    guest_start_mapping: NoHashMap<(u32, Rc<CodeBlock>, u16)>,
     code_blocks: Vec<(GuestStartPc, Rc<CodeBlock>)>,
     current_thread_holder: Option<thread::ThreadId>,
 }
@@ -50,7 +49,7 @@ impl JitMemory {
         JitMemory {
             memory: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
             blocks: Vec::new(),
-            guest_start_mapping: HashMap::new(),
+            guest_start_mapping: NoHashMap::default(),
             code_blocks: Vec::new(),
             current_thread_holder: None,
         }
@@ -79,7 +78,7 @@ impl JitMemory {
         &mut self,
         opcodes: &[u32],
         guest_start_pc: Option<GuestStartPc>,
-        guest_pc_to_jit_addr_offset: Option<HashMap<u32, u16>>,
+        guest_pc_to_jit_addr_offset: Option<NoHashMap<u16>>,
         guest_insts_cycle_counts: Option<Vec<u8>>,
         guest_pc_end: Option<u32>,
     ) -> u32 {
@@ -145,7 +144,7 @@ impl JitMemory {
         new_addr + self.memory.as_ptr() as u32
     }
 
-    fn get_code_block(&mut self, guest_pc: u32) -> Option<(u32, Rc<CodeBlock>, u16)> {
+    fn get_code_block(&mut self, guest_pc: u32) -> Option<(GuestStartPc, Rc<CodeBlock>, u16)> {
         match self.guest_start_mapping.get(&guest_pc) {
             None => {
                 match self

@@ -15,24 +15,23 @@ use crate::jit::jit_memory::JitMemory;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
-use crate::utils::FastCell;
+use crate::utils::{FastCell, NoHashMap, NoHashSet};
 use crate::DEBUG;
 use std::arch::asm;
-use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::ptr;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 pub struct JitState {
-    pub invalidated_addrs: HashSet<u32>,
+    pub invalidated_addrs: NoHashSet,
     pub current_block_range: (u32, u32),
 }
 
 impl JitState {
     pub fn new() -> Self {
         JitState {
-            invalidated_addrs: HashSet::new(),
+            invalidated_addrs: NoHashSet::default(),
             current_block_range: (0, 0),
         }
     }
@@ -58,7 +57,7 @@ impl HostRegs {
 pub struct JitBuf {
     pub instructions: Vec<InstInfo>,
     pub emit_opcodes: Vec<u32>,
-    pub jit_addr_mapping: HashMap<u32, u16>,
+    pub jit_addr_mapping: NoHashMap<u16>,
     pub insts_cycle_counts: Vec<u8>,
 }
 
@@ -67,7 +66,7 @@ impl JitBuf {
         JitBuf {
             instructions: Vec::new(),
             emit_opcodes: Vec::new(),
-            jit_addr_mapping: HashMap::new(),
+            jit_addr_mapping: NoHashMap::default(),
             insts_cycle_counts: Vec::new(),
         }
     }
@@ -282,7 +281,8 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                         debug_println!("{:?} disassemble arm {:x} {}", CPU, opcode, opcode);
                         let (op, func) = lookup_opcode(*opcode);
                         let inst_info = func(*opcode, *op);
-                        let is_branch = inst_info.op.is_branch() || inst_info.out_regs.is_reserved(Reg::PC);
+                        let is_branch =
+                            inst_info.op.is_branch() || inst_info.out_regs.is_reserved(Reg::PC);
                         let cond = inst_info.cond;
 
                         self.jit_buf.insts_cycle_counts.push(inst_info.cycle);

@@ -223,12 +223,8 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
             todo!()
         }
 
-        if rlist.is_reserved(Reg::PC) {
+        if rlist.is_reserved(Reg::PC) ||*op0 == Reg::PC {
             *thread_regs.get_reg_value_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
-        }
-
-        if *op0 == Reg::PC {
-            todo!()
         }
 
         let start_addr = *thread_regs.get_reg_value(*op0);
