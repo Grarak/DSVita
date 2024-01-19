@@ -38,6 +38,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     Op::CmpDpT => AluShiftImm::cmp_al(op0, *reg),
                     Op::EorDpT => AluShiftImm::eors_al(op0, op1, *reg),
                     Op::LslDpT => AluReg::movs(op0, op0, ShiftType::LSL, *reg, Cond::AL),
+                    Op::LsrDpT => AluReg::movs(op0, op0, ShiftType::LSR, *reg, Cond::AL),
                     Op::MulDpT => MulReg::muls_al(op0, op0, *reg),
                     Op::MvnDpT => AluShiftImm::mvns_al(op0, *reg),
                     Op::NegDpT => AluImm::rsbs_al(op0, *reg, 0),

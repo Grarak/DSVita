@@ -8,7 +8,7 @@ use crate::utils::FastCell;
 use std::ops::DerefMut;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]
@@ -79,7 +79,7 @@ impl<const CPU: CpuType> CpuRegsInner<CPU> {
 }
 
 pub struct CpuRegs<const CPU: CpuType> {
-    inner: Rc<FastCell<CpuRegsInner<CPU>>>,
+    inner: Arc<RwLock<CpuRegsInner<CPU>>>,
     halt: Arc<AtomicU8>,
     cycle_manager: Arc<CycleManager>,
     interrupt_mutex: Arc<Mutex<()>>,
@@ -88,7 +88,7 @@ pub struct CpuRegs<const CPU: CpuType> {
 impl<const CPU: CpuType> CpuRegs<CPU> {
     pub fn new(cycle_manager: Arc<CycleManager>) -> Self {
         CpuRegs {
-            inner: Rc::new(FastCell::new(CpuRegsInner::new())),
+            inner: Arc::new(RwLock::new(CpuRegsInner::new())),
             halt: Arc::new(AtomicU8::new(0)),
             cycle_manager,
             interrupt_mutex: Arc::new(Mutex::new(())),
@@ -96,27 +96,27 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
     }
 
     pub fn set_bios_context(&self, bios_context: Rc<FastCell<BiosContext<CPU>>>) {
-        self.inner.borrow_mut().bios_context = Some(bios_context);
+        self.inner.write().unwrap().bios_context = Some(bios_context);
     }
 
     pub fn set_cp15_context(&self, cp15_context: Rc<FastCell<Cp15Context>>) {
-        self.inner.borrow_mut().cp15_context = Some(cp15_context);
+        self.inner.write().unwrap().cp15_context = Some(cp15_context);
     }
 
     pub fn get_ime(&self) -> u8 {
-        self.inner.borrow().ime
+        self.inner.read().unwrap().ime
     }
 
     pub fn get_ie(&self) -> u32 {
-        self.inner.borrow().ie
+        self.inner.read().unwrap().ie
     }
 
     pub fn get_irf(&self) -> u32 {
-        self.inner.borrow().irf
+        self.inner.read().unwrap().irf
     }
 
     pub fn set_ime(&self, value: u8) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.inner.write().unwrap();
         inner.set_ime(value);
         if inner.ime != 0 && (inner.ie & inner.irf) != 0 && inner.cpsr_irq_enabled {
             self.schedule_interrupt();
@@ -124,7 +124,7 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
     }
 
     pub fn set_ie(&self, mask: u32, value: u32) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.inner.write().unwrap();
         inner.set_ie(mask, value);
         if inner.ime != 0 && (inner.ie & inner.irf) != 0 && inner.cpsr_irq_enabled {
             self.schedule_interrupt();
@@ -144,11 +144,11 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
 
     pub fn set_irf(&self, mask: u32, value: u32) {
         debug_println!("{:?} set irf {:x} {:x}", CPU, mask, value);
-        self.inner.borrow_mut().set_irf(mask, value);
+        self.inner.write().unwrap().set_irf(mask, value);
     }
 
     pub fn set_post_flg(&self, value: u8) {
-        self.inner.borrow_mut().set_post_flg(value);
+        self.inner.write().unwrap().set_post_flg(value);
     }
 
     pub fn halt(&self, bit: u8) {
@@ -161,12 +161,12 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
     }
 
     pub fn set_cpsr_irq_enabled(&self, enabled: bool) {
-        self.inner.borrow_mut().cpsr_irq_enabled = enabled;
+        self.inner.write().unwrap().cpsr_irq_enabled = enabled;
     }
 
     pub fn send_interrupt(&self, flag: InterruptFlag) {
         let _guard = self.interrupt_mutex.lock().unwrap();
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.inner.write().unwrap();
         inner.irf |= 1 << flag as u8;
         debug_println!(
             "{:?} send interrupt {:?} {:x} {:x} {:x} {}",
@@ -189,14 +189,14 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
 }
 
 struct InterruptEvent<const CPU: CpuType> {
-    inner: Rc<FastCell<CpuRegsInner<CPU>>>,
+    inner: Arc<RwLock<CpuRegsInner<CPU>>>,
     halt: Arc<AtomicU8>,
     interrupt_mutex: Arc<Mutex<()>>,
 }
 
 impl<const CPU: CpuType> InterruptEvent<CPU> {
     fn new(
-        inner: Rc<FastCell<CpuRegsInner<CPU>>>,
+        inner: Arc<RwLock<CpuRegsInner<CPU>>>,
         halt: Arc<AtomicU8>,
         interrupt_mutex: Arc<Mutex<()>>,
     ) -> Self {
@@ -213,7 +213,7 @@ impl<const CPU: CpuType> CycleEvent for InterruptEvent<CPU> {
 
     fn trigger(&mut self, _: u16) {
         let guard = self.interrupt_mutex.lock().unwrap();
-        let inner = self.inner.borrow();
+        let inner = self.inner.read().unwrap();
         if inner.ime != 0 && (inner.ie & inner.irf) != 0 && inner.cpsr_irq_enabled {
             let bios_context = inner.bios_context.clone().unwrap();
             let mut bios_context = bios_context.borrow_mut();

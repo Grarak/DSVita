@@ -26,6 +26,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             | Op::EorDpT
             | Op::LslImmT
             | Op::LslDpT
+            | Op::LsrDpT
             | Op::LsrImmT
             | Op::MovImm8T
             | Op::MulDpT

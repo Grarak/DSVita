@@ -18,7 +18,8 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let emit_func = match inst_info.op {
             Op::B | Op::Bl => Self::emit_b,
             Op::Bx | Op::BlxReg => Self::emit_bx,
-            Op::LdrhOfip
+            Op::LdrbOfrpll
+            | Op::LdrhOfip
             | Op::LdrOfim
             | Op::LdrOfip
             | Op::LdrbOfrplr

@@ -51,13 +51,23 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_ldr(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
         let pre = match op {
-            Op::LdrhOfip | Op::LdrOfip | Op::LdrOfim | Op::LdrbOfrplr | Op::LdrOfrpll => true,
+            Op::LdrbOfrpll
+            | Op::LdrhOfip
+            | Op::LdrOfip
+            | Op::LdrOfim
+            | Op::LdrbOfrplr
+            | Op::LdrOfrpll => true,
             Op::LdrPtip => false,
             _ => todo!("{:?}", op),
         };
 
         let write_back = match op {
-            Op::LdrhOfip | Op::LdrOfip | Op::LdrOfim | Op::LdrbOfrplr | Op::LdrOfrpll => false,
+            Op::LdrbOfrpll
+            | Op::LdrhOfip
+            | Op::LdrOfip
+            | Op::LdrOfim
+            | Op::LdrbOfrplr
+            | Op::LdrOfrpll => false,
             Op::LdrPtip => true,
             _ => todo!("{:?}", op),
         };

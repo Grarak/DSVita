@@ -219,16 +219,16 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
             todo!()
         }
 
-        if rlist.is_reserved(*op0) {
-            todo!()
-        }
-
-        if rlist.is_reserved(Reg::PC) ||*op0 == Reg::PC {
+        if rlist.is_reserved(Reg::PC) || *op0 == Reg::PC {
             *thread_regs.get_reg_value_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
         }
 
         let start_addr = *thread_regs.get_reg_value(*op0);
         let mut addr = start_addr - (decrement as u32 * rlist.len() as u32 * 4);
+
+        if WRITE && CPU == CpuType::ARM7 && write_back && rlist.is_reserved(*op0) {
+            todo!()
+        }
 
         // TODO use batches
         if WRITE {
@@ -248,6 +248,10 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         }
 
         if write_back {
+            if !WRITE && CPU == CpuType::ARM9 && rlist.is_reserved(*op0) {
+                todo!()
+            }
+
             *thread_regs.get_reg_value_mut(*op0) = (decrement as u32 * (start_addr - rlist.len() as u32 * 4)) // decrement
                 + (!decrement as u32 * addr); // increment
         }
