@@ -38,7 +38,6 @@ use std::os::unix::prelude::JoinHandleExt;
 use std::rc::Rc;
 use std::sync::Mutex;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
 use std::{env, mem, thread};
 
 mod cartridge;
@@ -145,11 +144,6 @@ pub fn main() {
     if DEBUG {
         env::set_var("RUST_BACKTRACE", "full");
     }
-
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(2)
-        .build_global()
-        .unwrap();
 
     let cartridge = Cartridge::from_file(&get_file_path()).unwrap();
 
@@ -320,7 +314,8 @@ pub fn main() {
         })
         .unwrap();
 
-    let mut instant = Instant::now();
+    #[cfg(target_os = "linux")]
+    let mut instant = std::time::Instant::now();
 
     let mut sdl_event_pump = sdl.event_pump().unwrap();
     'render: loop {
@@ -366,8 +361,11 @@ pub fn main() {
             )
             .unwrap();
         sdl_canvas.present();
-        println!("Consumed fb {} ms", instant.elapsed().as_millis());
-        instant = Instant::now();
+        #[cfg(target_os = "linux")]
+        {
+            println!("Consumed fb {} ms", instant.elapsed().as_millis());
+            instant = std::time::Instant::now();
+        }
     }
 
     unsafe {

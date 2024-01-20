@@ -483,15 +483,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: u32) {
     asm!(
     "push {{r4-r12, lr}}",
-    "mov r0, {jit_entry}",
-    "mov r1, {host_sp_addr}",
-    "mov r2, {breakin_addr}",
     "str sp, [r1]",
     "blx r2",
     "pop {{r4-r12, lr}}",
-    jit_entry = in(reg) jit_entry,
-    host_sp_addr = in(reg) host_sp_addr,
-    breakin_addr = in(reg) breakin_addr,
+    in("r0") jit_entry,
+    in("r1") host_sp_addr,
+    in("r2") breakin_addr,
     );
 }
 

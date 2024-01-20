@@ -7,7 +7,6 @@ use crate::hle::CpuType;
 use crate::logging::debug_println;
 use crate::utils::{FastCell, HeapMemU32};
 use bilge::prelude::*;
-use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
@@ -54,7 +53,7 @@ impl Swapchain {
                 .unwrap();
             queue.pop_front().unwrap()
         };
-        fb.par_iter_mut()
+        fb.iter_mut()
             .for_each(|pixel| *pixel = Self::rgb6_to_rgb8(*pixel));
         fb
     }

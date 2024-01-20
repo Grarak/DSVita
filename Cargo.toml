@@ -14,7 +14,6 @@ title_name = "DSPSV"
 bilge = "0.2.0"
 chrono = "0.4.31"
 paste = "1.0.14"
-rayon = "1.8.0"
 static_assertions = "1.1.0"
 once_cell = "1.19.0"
 dspsv_macros = { path = "macros" }
@@ -31,4 +30,4 @@ vitasdk-sys = { version = "0.3.2", features = ["SceSysmem_stub",
     "SceGxm_stub",
     "SceHid_stub",
     "SceMotion_stub",
-    "SceTouch_stub"] }
+    "SceTouch_stub",] }

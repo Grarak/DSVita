@@ -27,7 +27,6 @@ use crate::jit::jit_memory::JitMemory;
 use crate::utils::FastCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
-use std::thread;
 
 pub struct ThreadContext<const CPU: CpuType> {
     jit: JitAsm<CPU>,
@@ -131,7 +130,6 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
             if self.is_halted() {
                 self.cycle_manager.on_halt::<CPU>();
                 self.cycle_manager.check_events::<CPU>();
-                thread::yield_now();
             } else {
                 self.cycle_manager.on_unhalt::<CPU>();
                 let pc = self.regs.borrow().pc;
