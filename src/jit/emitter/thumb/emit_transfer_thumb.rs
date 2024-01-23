@@ -1,5 +1,5 @@
 use crate::hle::CpuType;
-use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple};
+use crate::jit::inst_mem_handler::inst_mem_handler_multiple;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::{MemoryAmount, Op};
 
@@ -34,12 +34,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             _ => todo!("{:?}", op),
         };
 
-        let flags = (pre as u8) | ((write_back as u8) << 1) | ((MemoryAmount::from(op) as u8) << 2);
-        self.emit_transfer_indirect(
-            inst_mem_handler::<CPU, true, false> as _,
-            self.jit_buf.instructions[buf_index].opcode,
+        self.emit_single_transfer::<true, false>(
+            buf_index,
             pc,
-            flags,
+            pre,
+            write_back,
+            MemoryAmount::from(op),
         );
     }
 
@@ -68,12 +68,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             _ => todo!("{:?}", op),
         };
 
-        let flags = (pre as u8) | ((write_back as u8) << 1) | ((MemoryAmount::from(op) as u8) << 2);
-        self.emit_transfer_indirect(
-            inst_mem_handler::<CPU, true, true> as _,
-            self.jit_buf.instructions[buf_index].opcode,
+        self.emit_single_transfer::<true, true>(
+            buf_index,
             pc,
-            flags,
+            pre,
+            write_back,
+            MemoryAmount::from(op),
         );
     }
 

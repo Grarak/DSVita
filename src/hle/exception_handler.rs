@@ -44,7 +44,6 @@ mod exception_handler {
 
 pub(super) use exception_handler::*;
 
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn exception_handler_arm9<const THUMB: bool>(
     cp15_context: *const Cp15Context,
     bios_context: *mut BiosContext<{ CpuType::ARM9 }>,
@@ -61,7 +60,6 @@ pub unsafe extern "C" fn exception_handler_arm9<const THUMB: bool>(
     )
 }
 
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn exception_handler_arm7<const THUMB: bool>(
     bios_context: *mut BiosContext<{ CpuType::ARM7 }>,
     opcode: u32,

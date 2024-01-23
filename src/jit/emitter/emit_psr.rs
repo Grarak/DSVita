@@ -35,6 +35,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     .emit_opcodes
                     .push(AluImm::mov_al(Reg::R2, flags as u8));
             },
+            |_, _| {},
             &[Some(self.thread_regs.as_ptr() as _), None, None],
             match op {
                 Op::MsrRc => register_set_cpsr_checked::<CPU> as _,

@@ -18,6 +18,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             CpuType::ARM9 => {
                 self.emit_call_host_func(
                     |_| {},
+                    |_, _| {},
                     &[
                         Some(self.cp15_context.as_ptr() as _),
                         Some(bios_context_addr),
@@ -30,6 +31,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             CpuType::ARM7 => {
                 self.emit_call_host_func(
                     |_| {},
+                    |_, _| {},
                     &[
                         Some(bios_context_addr),
                         Some(inst_info.opcode),

@@ -236,7 +236,6 @@ impl<const CPU: CpuType> CycleEvent for InterruptEvent<CPU> {
     }
 }
 
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn cpu_regs_halt<const CPU: CpuType>(
     cpu_regs: *const Arc<CpuRegs<CPU>>,
     bit: u8,

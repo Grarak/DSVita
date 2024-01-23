@@ -167,12 +167,10 @@ impl Cp15Context {
     }
 }
 
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn cp15_write(context: *mut Cp15Context, reg: u32, value: u32) {
     (*context).write(reg, value)
 }
 
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn cp15_read(context: *const Cp15Context, reg: u32, value: *mut u32) {
     (*context).read(reg, value.as_mut().unwrap())
 }

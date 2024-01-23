@@ -27,6 +27,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         if cp15_reg == 0x070004 || cp15_reg == 0x070802 {
             self.emit_call_host_func(
                 |_| {},
+                |_, _| {},
                 &[Some(ptr::addr_of!(self.cpu_regs) as u32), Some(0)],
                 cpu_regs_halt::<CPU> as *const (),
             );
@@ -85,6 +86,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                             .push(AluShiftImm::mov_al(Reg::R2, rd));
                     }
                 },
+                |_, _| {},
                 &args,
                 addr,
             );

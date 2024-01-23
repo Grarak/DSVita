@@ -333,6 +333,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
                     self.emit_call_host_func(
                         |_| {},
+                        |_, _| {},
                         &[
                             Some(self as *const _ as u32),
                             Some(pc),
@@ -478,7 +479,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     }
 }
 
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 #[inline(never)]
 unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: u32) {
     asm!(
@@ -510,7 +510,6 @@ fn debug_inst_info<const CPU: CpuType>(
     debug_println!("{:?} {}{}", CPU, output, append);
 }
 
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(
     asm: *const JitAsm<CPU>,
     pc: u32,

@@ -39,12 +39,16 @@ impl From<u8> for Reg {
 }
 
 impl Reg {
-    pub fn is_emulated(&self) -> bool {
-        (EMULATED_REGS_BITMASK & (1 << *self as u8)) != 0
+    pub fn is_emulated(self) -> bool {
+        (EMULATED_REGS_BITMASK & (1 << self as u8)) != 0
     }
 
-    pub fn is_high_gp_reg(&self) -> bool {
-        !self.is_emulated() && !RegReserve::gp_thumb().is_reserved(*self) && *self != Reg::SP
+    pub fn is_high_gp_reg(self) -> bool {
+        !self.is_emulated() && !RegReserve::gp_thumb().is_reserved(self) && self != Reg::SP
+    }
+
+    pub fn is_call_preserved(self) -> bool {
+        (self >= Reg::R4 && self <= Reg::R11) || self == Reg::SP
     }
 }
 
@@ -124,6 +128,17 @@ impl RegReserve {
         }
         None
     }
+
+    pub fn pop_call_reserved(&mut self) -> Option<Reg> {
+        for i in Reg::R0 as u8..=Reg::CPSR as u8 {
+            let reg = Reg::from(i);
+            if reg.is_call_preserved() && self.is_reserved(reg) {
+                self.0 &= !(1 << i);
+                return Some(reg);
+            }
+        }
+        None
+    }
 }
 
 impl ops::Add<RegReserve> for RegReserve {
@@ -194,13 +209,27 @@ impl ops::Add<Reg> for RegReserve {
     type Output = RegReserve;
 
     fn add(self, rhs: Reg) -> Self::Output {
-        RegReserve(self.0 | 1 << rhs as u8)
+        RegReserve(self.0 | (1 << rhs as u8))
     }
 }
 
 impl ops::AddAssign<Reg> for RegReserve {
     fn add_assign(&mut self, rhs: Reg) {
         self.0 |= 1 << rhs as u8;
+    }
+}
+
+impl ops::Sub<Reg> for RegReserve {
+    type Output = RegReserve;
+
+    fn sub(self, rhs: Reg) -> Self::Output {
+        RegReserve(self.0 & !(1 << rhs as u8))
+    }
+}
+
+impl ops::SubAssign<Reg> for RegReserve {
+    fn sub_assign(&mut self, rhs: Reg) {
+        self.0 &= !(1 << rhs as u8)
     }
 }
 

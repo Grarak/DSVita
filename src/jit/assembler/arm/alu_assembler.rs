@@ -92,6 +92,10 @@ impl AluImm {
         ))
     }
 
+    pub fn bic_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
+        Self::bic(op0, op1, op2, 0, Cond::AL)
+    }
+
     #[inline]
     pub fn cmp(op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
         let op = u32::from(Self::new(
@@ -719,6 +723,24 @@ pub struct AluReg {
 }
 
 impl AluReg {
+    #[inline]
+    pub fn mov(op0: Reg, op2: Reg, shift_type: ShiftType, shift_reg: Reg, cond: Cond) -> u32 {
+        u32::from(Self::new(
+            u4::new(op2 as u8),
+            u1::new(1),
+            u2::new(shift_type as u8),
+            u1::new(0),
+            u4::new(shift_reg as u8),
+            u4::new(op0 as u8),
+            u4::new(0),
+            u1::new(0),
+            u4::new(0xD),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
     #[inline]
     pub fn movs(op0: Reg, op2: Reg, shift_type: ShiftType, shift_reg: Reg, cond: Cond) -> u32 {
         u32::from(Self::new(

@@ -245,12 +245,15 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         jit_buf.push(Bx::bx(Reg::LR, Cond::AL));
     }
 
-    pub fn emit_call_host_func<F: FnOnce(&mut Self)>(
+    pub fn emit_call_host_func<R, F: FnOnce(&mut Self) -> R, F1>(
         &mut self,
         after_host_restore: F,
+        before_guest_restore: F1,
         args: &[Option<u32>],
         func_addr: *const (),
-    ) {
+    ) where
+        F1: FnOnce(&mut Self, R),
+    {
         let thumb = self.thread_regs.borrow().is_thumb();
         self.jit_buf.emit_opcodes.extend(if thumb {
             &self.restore_host_thumb_opcodes
@@ -262,7 +265,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             todo!()
         }
 
-        after_host_restore(self);
+        let arg = after_host_restore(self);
 
         for (index, arg) in args.iter().enumerate() {
             if let Some(arg) = arg {
@@ -276,6 +279,8 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             .emit_opcodes
             .extend(&AluImm::mov32(Reg::LR, func_addr as u32));
         self.jit_buf.emit_opcodes.push(Bx::blx(Reg::LR, Cond::AL));
+
+        before_guest_restore(self, arg);
 
         self.jit_buf.emit_opcodes.extend(if thumb {
             &self.restore_guest_thumb_opcodes

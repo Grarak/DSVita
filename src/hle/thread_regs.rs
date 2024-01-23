@@ -359,7 +359,6 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
     }
 }
 
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn register_set_cpsr_checked<const CPU: CpuType>(
     context: *mut ThreadRegs<CPU>,
     value: u32,
@@ -368,7 +367,6 @@ pub unsafe extern "C" fn register_set_cpsr_checked<const CPU: CpuType>(
     (*context).set_cpsr_with_flags(value, flags)
 }
 
-#[cfg_attr(target_os = "vita", instruction_set(arm::a32))]
 pub unsafe extern "C" fn register_set_spsr_checked<const CPU: CpuType>(
     context: *mut ThreadRegs<CPU>,
     value: u32,

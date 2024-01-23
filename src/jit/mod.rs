@@ -1,3 +1,4 @@
+use std::marker::ConstParamTy;
 use std::{mem, ops};
 
 pub mod assembler;
@@ -723,6 +724,7 @@ pub enum ShiftType {
 }
 
 #[repr(u8)]
+#[derive(ConstParamTy, PartialEq, Eq)]
 pub enum MemoryAmount {
     BYTE,
     HALF,
