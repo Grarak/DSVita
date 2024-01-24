@@ -14,19 +14,11 @@ impl MainMemory {
         }
     }
 
-    pub fn read_main<T: Convert>(&self, addr_offset: u32) -> T {
+    pub fn read<T: Convert>(&self, addr_offset: u32) -> T {
         utils::read_from_mem(&self.main, addr_offset & (regions::MAIN_MEMORY_OFFSET - 1))
     }
 
-    pub fn read_main_slice<T: Convert>(&self, addr_offset: u32, slice: &mut [T]) -> usize {
-        utils::read_from_mem_slice(
-            &self.main,
-            addr_offset & (regions::MAIN_MEMORY_OFFSET - 1),
-            slice,
-        )
-    }
-
-    pub fn write_main<T: Convert>(&mut self, addr_offset: u32, value: T) {
+    pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T) {
         utils::write_to_mem(
             &mut self.main,
             addr_offset & (regions::MAIN_MEMORY_OFFSET - 1),
@@ -34,11 +26,11 @@ impl MainMemory {
         )
     }
 
-    pub fn write_main_slice<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) -> usize {
+    pub fn write_slice<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) {
         utils::write_to_mem_slice(
             &mut self.main,
             addr_offset & (regions::MAIN_MEMORY_OFFSET - 1),
             slice,
-        )
+        );
     }
 }

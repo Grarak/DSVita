@@ -2,7 +2,7 @@ use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use bilge::prelude::*;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::{cmp, mem};
 
 #[bitsize(32)]
@@ -62,7 +62,7 @@ pub struct Cp15Context {
     itcm: u32,
     pub itcm_state: TcmState,
     pub itcm_size: u32,
-    cpu_regs: Arc<CpuRegs<{ CpuType::ARM9 }>>,
+    cpu_regs: Rc<CpuRegs<{ CpuType::ARM9 }>>,
 }
 
 #[derive(Eq, PartialEq)]
@@ -81,7 +81,7 @@ impl From<u8> for TcmState {
 }
 
 impl Cp15Context {
-    pub fn new(cpu_regs: Arc<CpuRegs<{ CpuType::ARM9 }>>) -> Self {
+    pub fn new(cpu_regs: Rc<CpuRegs<{ CpuType::ARM9 }>>) -> Self {
         let mut control_default = Cp15ControlReg::from(0);
         control_default.set_write_buffer(u1::new(1));
         control_default.set_exception_handling(u1::new(1));
@@ -108,10 +108,10 @@ impl Cp15Context {
 
         self.exception_addr = u32::from(control_reg.exception_vectors()) * 0xFFFF0000;
         self.dtcm_state = TcmState::from(
-            u8::from(control_reg.dtcm_enable()) * 1 + u8::from(control_reg.dtcm_load_mode()),
+            u8::from(control_reg.dtcm_enable()) + u8::from(control_reg.dtcm_load_mode()),
         );
         self.itcm_state = TcmState::from(
-            u8::from(control_reg.itcm_enable()) * 1 + u8::from(control_reg.itcm_load_mode()),
+            u8::from(control_reg.itcm_enable()) + u8::from(control_reg.itcm_load_mode()),
         );
     }
 

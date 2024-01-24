@@ -5,7 +5,6 @@ use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
 use crate::hle::memory::dma::Dma;
-use crate::hle::memory::main_memory::MainMemory;
 use crate::hle::memory::vram_context::VramContext;
 use crate::hle::memory::wram_context::WramContext;
 use crate::hle::rtc_context::RtcContext;
@@ -13,48 +12,46 @@ use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
-use crate::utils::{Convert, FastCell};
+use crate::utils::Convert;
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 pub struct IoPorts<const CPU: CpuType> {
-    pub memory: Arc<RwLock<MainMemory>>,
-    pub wram_context: Arc<WramContext>,
-    pub ipc_handler: Arc<RwLock<IpcHandler>>,
-    pub cpu_regs: Arc<CpuRegs<CPU>>,
-    pub dma: Arc<RwLock<Dma<CPU>>>,
-    pub timers_context: Arc<RwLock<TimersContext<CPU>>>,
-    pub vram_context: Arc<VramContext>,
+    pub wram_context: Rc<RefCell<WramContext>>,
+    pub ipc_handler: Rc<RefCell<IpcHandler>>,
+    pub cpu_regs: Rc<CpuRegs<CPU>>,
+    pub dma: Rc<RefCell<Dma<CPU>>>,
+    pub timers_context: Rc<RefCell<TimersContext<CPU>>>,
+    pub vram_context: Rc<VramContext>,
     pub input_context: Arc<RwLock<InputContext>>,
 
-    pub gpu_context: Arc<RwLock<GpuContext>>,
-    pub gpu_2d_context_a: Rc<FastCell<Gpu2DContext<{ A }>>>,
-    pub gpu_2d_context_b: Rc<FastCell<Gpu2DContext<{ B }>>>,
+    pub gpu_context: Rc<GpuContext>,
+    pub gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
+    pub gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
 
-    pub rtc_context: Rc<FastCell<RtcContext>>,
-    pub spi_context: Arc<RwLock<SpiContext>>,
-    pub spu_context: Rc<FastCell<SpuContext>>,
+    pub rtc_context: Rc<RefCell<RtcContext>>,
+    pub spi_context: Rc<RefCell<SpiContext>>,
+    pub spu_context: Rc<RefCell<SpuContext>>,
 }
 
 impl<const CPU: CpuType> IoPorts<CPU> {
     pub fn new(
-        memory: Arc<RwLock<MainMemory>>,
-        wram_context: Arc<WramContext>,
-        ipc_handler: Arc<RwLock<IpcHandler>>,
-        cpu_regs: Arc<CpuRegs<CPU>>,
-        dma: Arc<RwLock<Dma<CPU>>>,
-        timers_context: Arc<RwLock<TimersContext<CPU>>>,
-        vram_context: Arc<VramContext>,
+        wram_context: Rc<RefCell<WramContext>>,
+        ipc_handler: Rc<RefCell<IpcHandler>>,
+        cpu_regs: Rc<CpuRegs<CPU>>,
+        dma: Rc<RefCell<Dma<CPU>>>,
+        timers_context: Rc<RefCell<TimersContext<CPU>>>,
+        vram_context: Rc<VramContext>,
         input_context: Arc<RwLock<InputContext>>,
-        gpu_context: Arc<RwLock<GpuContext>>,
-        gpu_2d_context_a: Rc<FastCell<Gpu2DContext<{ A }>>>,
-        gpu_2d_context_b: Rc<FastCell<Gpu2DContext<{ B }>>>,
-        rtc_context: Rc<FastCell<RtcContext>>,
-        spi_context: Arc<RwLock<SpiContext>>,
-        spu_context: Rc<FastCell<SpuContext>>,
+        gpu_context: Rc<GpuContext>,
+        gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
+        gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
+        rtc_context: Rc<RefCell<RtcContext>>,
+        spi_context: Rc<RefCell<SpiContext>>,
+        spu_context: Rc<RefCell<SpuContext>>,
     ) -> Self {
         IoPorts {
-            memory,
             wram_context,
             ipc_handler,
             cpu_regs,

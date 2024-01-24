@@ -3,10 +3,10 @@ use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
-use crate::utils::FastCell;
 use bilge::prelude::*;
+use std::cell::RefCell;
 use std::mem;
-use std::sync::Arc;
+use std::rc::Rc;
 
 const CHANNEL_COUNT: usize = 4;
 
@@ -104,19 +104,19 @@ struct DmaChannel {
 }
 
 pub struct Dma<const CPU: CpuType> {
-    channels: [Arc<FastCell<DmaChannel>>; CHANNEL_COUNT],
-    mem_handler: Option<Arc<MemHandler<CPU>>>,
-    cycle_manager: Arc<CycleManager>,
+    channels: [Rc<RefCell<DmaChannel>>; CHANNEL_COUNT],
+    mem_handler: Option<Rc<MemHandler<CPU>>>,
+    cycle_manager: Rc<CycleManager>,
 }
 
 impl<const CPU: CpuType> Dma<CPU> {
-    pub fn new(cycle_manager: Arc<CycleManager>) -> Self {
+    pub fn new(cycle_manager: Rc<CycleManager>) -> Self {
         Dma {
             channels: [
-                Arc::new(FastCell::new(DmaChannel::default())),
-                Arc::new(FastCell::new(DmaChannel::default())),
-                Arc::new(FastCell::new(DmaChannel::default())),
-                Arc::new(FastCell::new(DmaChannel::default())),
+                Rc::new(RefCell::new(DmaChannel::default())),
+                Rc::new(RefCell::new(DmaChannel::default())),
+                Rc::new(RefCell::new(DmaChannel::default())),
+                Rc::new(RefCell::new(DmaChannel::default())),
             ],
             mem_handler: None,
             cycle_manager,
@@ -131,7 +131,7 @@ impl<const CPU: CpuType> Dma<CPU> {
         self.channels[channel_num].borrow().fill
     }
 
-    pub fn set_mem_handler(&mut self, mem_handler: Arc<MemHandler<CPU>>) {
+    pub fn set_mem_handler(&mut self, mem_handler: Rc<MemHandler<CPU>>) {
         self.mem_handler = Some(mem_handler)
     }
 
@@ -215,16 +215,16 @@ impl<const CPU: CpuType> Dma<CPU> {
 }
 
 struct DmaEvent<const CPU: CpuType> {
-    channel: Arc<FastCell<DmaChannel>>,
+    channel: Rc<RefCell<DmaChannel>>,
     channel_num: usize,
-    mem_handler: Arc<MemHandler<CPU>>,
+    mem_handler: Rc<MemHandler<CPU>>,
 }
 
 impl<const CPU: CpuType> DmaEvent<CPU> {
     fn new(
-        channel: Arc<FastCell<DmaChannel>>,
+        channel: Rc<RefCell<DmaChannel>>,
         channel_num: usize,
-        mem_handler: Arc<MemHandler<CPU>>,
+        mem_handler: Rc<MemHandler<CPU>>,
     ) -> Self {
         DmaEvent {
             channel,
@@ -234,7 +234,7 @@ impl<const CPU: CpuType> DmaEvent<CPU> {
     }
 
     fn do_transfer<T: utils::Convert>(
-        mem_handler: Arc<MemHandler<CPU>>,
+        mem_handler: Rc<MemHandler<CPU>>,
         mut dest_addr: u32,
         mut src_addr: u32,
         count: u32,

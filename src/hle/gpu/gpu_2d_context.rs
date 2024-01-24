@@ -3,12 +3,12 @@ use crate::hle::memory::palettes_context::PalettesContext;
 use crate::hle::memory::vram_context::{VramContext, BG_A_OFFSET, BG_B_OFFSET};
 use crate::hle::CpuType;
 use crate::logging::debug_println;
-use crate::utils::{FastCell, HeapMemU32};
+use crate::utils::HeapMemU32;
 use bilge::prelude::*;
+use std::cell::RefCell;
 use std::marker::ConstParamTy;
 use std::mem;
 use std::rc::Rc;
-use std::sync::Arc;
 
 #[bitsize(32)]
 #[derive(FromBits)]
@@ -90,15 +90,15 @@ pub struct Gpu2DContext<const ENGINE: Gpu2DEngine> {
     disp_stat: u16,
     pow_cnt1: u16,
     pub framebuffer: HeapMemU32<{ DISPLAY_PIXEL_COUNT }>,
-    layers: [FastCell<HeapMemU32<{ DISPLAY_WIDTH }>>; 2],
-    vram_context: Arc<VramContext>,
-    palattes_context: Rc<FastCell<PalettesContext>>,
+    layers: [RefCell<HeapMemU32<{ DISPLAY_WIDTH }>>; 2],
+    vram_context: Rc<VramContext>,
+    palattes_context: Rc<RefCell<PalettesContext>>,
 }
 
 impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     pub fn new(
-        vram_context: Arc<VramContext>,
-        palattes_context: Rc<FastCell<PalettesContext>>,
+        vram_context: Rc<VramContext>,
+        palattes_context: Rc<RefCell<PalettesContext>>,
     ) -> Self {
         Gpu2DContext {
             disp_cnt: 0,
@@ -109,8 +109,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             pow_cnt1: 0,
             framebuffer: HeapMemU32::new(),
             layers: [
-                FastCell::new(HeapMemU32::new()),
-                FastCell::new(HeapMemU32::new()),
+                RefCell::new(HeapMemU32::new()),
+                RefCell::new(HeapMemU32::new()),
             ],
             vram_context,
             palattes_context,
@@ -126,7 +126,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     }
 
     pub fn set_bg_cnt(&mut self, bg_num: usize, mask: u16, value: u16) {
-        self.bg_cnt[bg_num] = (self.bg_cnt[bg_num] & !mask) | (value & value);
+        self.bg_cnt[bg_num] = (self.bg_cnt[bg_num] & !mask) | (value & mask);
     }
 
     pub fn set_bg_h_ofs(&mut self, bg_num: usize, mut mask: u16, value: u16) {
@@ -170,15 +170,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     pub fn set_master_bright(&mut self, mask: u16, value: u16) {}
 
     pub fn draw_scanline(&mut self, line: u16) {
-        let mut backdrop = [0u16; 1];
-        self.palattes_context.borrow().read_slice(
-            match ENGINE {
-                Gpu2DEngine::A => 0,
-                Gpu2DEngine::B => 0x400,
-            },
-            &mut backdrop,
-        );
-        let backdrop = backdrop[0] & !(1 << 15);
+        let backdrop = self.palattes_context.borrow().read::<u16>(match ENGINE {
+            Gpu2DEngine::A => 0,
+            Gpu2DEngine::B => 0x400,
+        });
+        let backdrop = backdrop & !(1 << 15);
         for layers in &mut self.layers {
             layers.borrow_mut().fill(backdrop as u32);
         }
@@ -365,10 +361,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     todo!()
                 }
 
-                let mut tile_buf = [0u16; 1];
-                self.vram_context
-                    .read_slice::<{ CpuType::ARM9 }, _>(tile_addr, &mut tile_buf);
-                let tile = TextBgScreen::from(tile_buf[0]);
+                let tile = self.vram_context.read::<{ CpuType::ARM9 }, u16>(tile_addr);
+                let tile = TextBgScreen::from(tile);
 
                 let palette_base_addr = u32::from(tile.palette_num()) * 32
                     + match ENGINE {
@@ -383,20 +377,17 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     } else {
                         y_offset as u32 % 8
                     } * 4;
-                let mut indices = [0u32; 1];
-                self.vram_context
-                    .read_slice::<{ CpuType::ARM9 }, _>(index_addr, &mut indices);
-                let mut indices = indices[0];
+                let mut indices = self.vram_context.read::<{ CpuType::ARM9 }, u32>(index_addr);
 
                 let mut x = i.wrapping_sub(x_offset % 8);
                 while indices != 0 {
                     let tmp_x = if bool::from(tile.h_flip()) { 7 - x } else { x };
                     if tmp_x < 256 && (indices & 0xF) != 0 {
-                        let mut color = [0u16; 1];
-                        self.palattes_context
+                        let color = self
+                            .palattes_context
                             .borrow()
-                            .read_slice(palette_base_addr + (indices & 0xF) * 2, &mut color);
-                        self.draw_pixel::<BG>(line, tmp_x, (color[0] | (1 << 15)) as u32);
+                            .read::<u16>(palette_base_addr + (indices & 0xF) * 2);
+                        self.draw_pixel::<BG>(line, tmp_x, (color | (1 << 15)) as u32);
                     }
                     x = x.wrapping_add(1);
                     indices >>= 4;
@@ -434,7 +425,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     }
 
     fn rgb5_to_rgb6(color: u32) -> u32 {
-        let r = ((color >> 0) & 0x1F) * 2;
+        let r = (color & 0x1F) * 2;
         let g = ((color >> 5) & 0x1F) * 2;
         let b = ((color >> 10) & 0x1F) * 2;
         (color & 0xFFFC0000) | (b << 12) | (g << 6) | r

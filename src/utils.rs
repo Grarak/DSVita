@@ -89,34 +89,6 @@ impl Display for StrErr {
 
 impl Error for StrErr {}
 
-pub type FastCell<T> = std::cell::RefCell<T>;
-// Might give better performance
-// pub struct FastCell<T: ?Sized> {
-//     value: std::cell::UnsafeCell<T>,
-// }
-//
-// impl<T> FastCell<T> {
-//     pub const fn new(value: T) -> Self {
-//         FastCell {
-//             value: std::cell::UnsafeCell::new(value),
-//         }
-//     }
-// }
-//
-// impl<T: ?Sized> FastCell<T> {
-//     pub fn borrow(&self) -> &T {
-//         unsafe { self.value.get().as_ref().unwrap() }
-//     }
-//
-//     pub fn borrow_mut(&self) -> &mut T {
-//         unsafe { self.value.get().as_mut().unwrap() }
-//     }
-//
-//     pub fn as_ptr(&self) -> *mut T {
-//         self.value.get()
-//     }
-// }
-
 pub type HeapMemU8<const SIZE: usize> = HeapMem<u8, SIZE>;
 pub type HeapMemU32<const SIZE: usize> = HeapMem<u32, SIZE>;
 

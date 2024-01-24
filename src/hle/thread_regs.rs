@@ -5,12 +5,11 @@ use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Msr};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
-use crate::utils::FastCell;
 use crate::DEBUG;
 use bilge::prelude::*;
+use std::cell::RefCell;
 use std::ptr;
 use std::rc::Rc;
-use std::sync::Arc;
 
 #[bitsize(32)]
 #[derive(FromBits)]
@@ -62,7 +61,7 @@ pub struct ThreadRegs<const CPU: CpuType> {
     pub abt: OtherModeRegs,
     pub irq: OtherModeRegs,
     pub und: OtherModeRegs,
-    cpu_regs: Arc<CpuRegs<CPU>>,
+    cpu_regs: Rc<CpuRegs<CPU>>,
     pub restore_regs_opcodes: Vec<u32>,
     pub save_regs_opcodes: Vec<u32>,
     pub restore_regs_thumb_opcodes: Vec<u32>,
@@ -70,8 +69,8 @@ pub struct ThreadRegs<const CPU: CpuType> {
 }
 
 impl<const CPU: CpuType> ThreadRegs<CPU> {
-    pub fn new(cpu_regs: Arc<CpuRegs<CPU>>) -> Rc<FastCell<Self>> {
-        let instance = Rc::new(FastCell::new(ThreadRegs {
+    pub fn new(cpu_regs: Rc<CpuRegs<CPU>>) -> Rc<RefCell<Self>> {
+        let instance = Rc::new(RefCell::new(ThreadRegs {
             gp_regs: [0u32; 13],
             sp: 0,
             lr: 0,
@@ -173,7 +172,6 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         opcodes
     }
 
-    #[inline]
     pub fn get_reg_value(&self, reg: Reg) -> &u32 {
         match reg {
             Reg::SP => &self.sp,
@@ -192,7 +190,6 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         }
     }
 
-    #[inline]
     pub fn get_reg_value_mut(&mut self, reg: Reg) -> &mut u32 {
         match reg {
             Reg::SP => &mut self.sp,

@@ -3,7 +3,7 @@ use crate::hle::CpuType;
 use crate::logging::debug_println;
 use bilge::prelude::*;
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::rc::Rc;
 
 #[bitsize(16)]
 #[derive(FromBits)]
@@ -52,14 +52,14 @@ impl Fifo {
 pub struct IpcHandler {
     sync_regs: [u16; 2],
     fifo: [Fifo; 2],
-    cpu_regs_arm9: Arc<CpuRegs<{ CpuType::ARM9 }>>,
-    cpu_regs_arm7: Arc<CpuRegs<{ CpuType::ARM7 }>>,
+    cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
+    cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
 }
 
 impl IpcHandler {
     pub fn new(
-        cpu_regs_arm9: Arc<CpuRegs<{ CpuType::ARM9 }>>,
-        cpu_regs_arm7: Arc<CpuRegs<{ CpuType::ARM7 }>>,
+        cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
+        cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
     ) -> Self {
         IpcHandler {
             sync_regs: [0u16; 2],

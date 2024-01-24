@@ -7,13 +7,12 @@ use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{MemoryAmount, Op};
 use crate::logging::debug_println;
-use crate::utils::FastCell;
+use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 
 pub struct InstMemHandler<const CPU: CpuType> {
-    thread_regs: Rc<FastCell<ThreadRegs<CPU>>>,
-    mem_handler: Arc<MemHandler<CPU>>,
+    thread_regs: Rc<RefCell<ThreadRegs<CPU>>>,
+    mem_handler: Rc<MemHandler<CPU>>,
 }
 
 fn get_inst_info<const THUMB: bool>(opcode: u32) -> InstInfo {
@@ -28,8 +27,8 @@ fn get_inst_info<const THUMB: bool>(opcode: u32) -> InstInfo {
 
 impl<const CPU: CpuType> InstMemHandler<CPU> {
     pub fn new(
-        thread_regs: Rc<FastCell<ThreadRegs<CPU>>>,
-        mem_handler: Arc<MemHandler<CPU>>,
+        thread_regs: Rc<RefCell<ThreadRegs<CPU>>>,
+        mem_handler: Rc<MemHandler<CPU>>,
     ) -> Self {
         InstMemHandler {
             thread_regs,
@@ -128,20 +127,16 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         }
 
         // TODO use batches
-        if WRITE {
-            for reg in rlist {
-                addr += pre as u32 * 4;
+        for reg in rlist {
+            addr += pre as u32 * 4;
+            if WRITE {
                 let value = *thread_regs.get_reg_value(reg);
                 self.mem_handler.write(addr, value);
-                addr += !pre as u32 * 4;
-            }
-        } else {
-            for reg in rlist {
-                addr += pre as u32 * 4;
+            } else {
                 let value = self.mem_handler.read(addr);
                 *thread_regs.get_reg_value_mut(reg) = value;
-                addr += !pre as u32 * 4;
             }
+            addr += !pre as u32 * 4;
         }
 
         if write_back {

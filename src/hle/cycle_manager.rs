@@ -1,51 +1,56 @@
 use crate::hle::CpuType;
+use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
 
 pub trait CycleEvent {
     fn scheduled(&mut self, timestamp: &u64);
     fn trigger(&mut self, delay: u16);
 }
 
+struct CycleManagerInner {
+    cycle_count: [u64; 2],
+    events: [VecDeque<(u64, Box<dyn CycleEvent>)>; 2],
+}
+
+impl CycleManagerInner {
+    fn new() -> Self {
+        CycleManagerInner {
+            cycle_count: [0; 2],
+            events: [VecDeque::new(), VecDeque::new()],
+        }
+    }
+}
+
 pub struct CycleManager {
-    cycle_count: [AtomicU64; 2],
-    events: [Mutex<VecDeque<(u64, Box<dyn CycleEvent>)>>; 2],
-    halted: [AtomicBool; 2],
+    inner: RefCell<CycleManagerInner>,
 }
 
 impl CycleManager {
     pub fn new() -> Self {
         CycleManager {
-            cycle_count: [AtomicU64::new(0), AtomicU64::new(0)],
-            events: [Mutex::new(VecDeque::new()), Mutex::new(VecDeque::new())],
-            halted: [AtomicBool::new(false), AtomicBool::new(false)],
+            inner: RefCell::new(CycleManagerInner::new()),
         }
     }
 
     pub fn get_cycle_count<const CPU: CpuType>(&self) -> u64 {
-        self.cycle_count[CPU as usize].load(Ordering::Relaxed)
+        self.inner.borrow().cycle_count[CPU as usize]
     }
 
     pub fn add_cycle<const CPU: CpuType>(&self, cycles_to_add: u16) {
-        let cycle_count =
-            self.cycle_count[CPU as usize].fetch_add(cycles_to_add as u64, Ordering::Relaxed);
-        self.check_events_internal::<CPU>(cycle_count);
-
-        if self.halted[!CPU as usize].load(Ordering::Acquire) {
-            self.cycle_count[!CPU as usize].fetch_add(cycles_to_add as u64, Ordering::Relaxed);
-        }
+        self.inner.borrow_mut().cycle_count[CPU as usize] += cycles_to_add as u64;
+        let cycles = self.inner.borrow().cycle_count[CPU as usize];
+        self.check_events_internal::<CPU>(cycles);
     }
 
     pub fn check_events<const CPU: CpuType>(&self) {
-        let cycle_count = self.cycle_count[CPU as usize].load(Ordering::Relaxed);
-        self.check_events_internal::<CPU>(cycle_count);
+        let cycles = self.inner.borrow().cycle_count[CPU as usize];
+        self.check_events_internal::<CPU>(cycles);
     }
 
     fn check_events_internal<const CPU: CpuType>(&self, cycle_count: u64) {
         let mut triggered_events = Vec::new();
         {
-            let mut events = self.events[CPU as usize].lock().unwrap();
+            let events = &mut self.inner.borrow_mut().events[CPU as usize];
             while !events.is_empty() && events.front().unwrap().0 <= cycle_count {
                 triggered_events.push(events.pop_front().unwrap());
             }
@@ -61,8 +66,9 @@ impl CycleManager {
         mut event: Box<T>,
     ) -> u64 {
         debug_assert_ne!(in_cycles, 0);
-        let cycle_count = self.cycle_count[CPU as usize].load(Ordering::Relaxed);
-        let mut events = self.events[CPU as usize].lock().unwrap();
+        let mut inner = self.inner.borrow_mut();
+        let cycle_count = inner.cycle_count[CPU as usize];
+        let events = &mut inner.events[CPU as usize];
         let event_cycle = cycle_count + in_cycles as u64;
         let index = events
             .binary_search_by_key(&event_cycle, |(cycles, _)| *cycles)
@@ -72,29 +78,21 @@ impl CycleManager {
         event_cycle
     }
 
-    pub fn on_halt<const CPU: CpuType>(&self) {
-        if self.halted[!CPU as usize].load(Ordering::Acquire) {
-            let events_arm9 = self.events[CpuType::ARM9 as usize].lock().unwrap();
-            let events_arm7 = self.events[CpuType::ARM7 as usize].lock().unwrap();
-            let next_arm9 = events_arm9.front();
-            let next_arm7 = events_arm7.front();
+    pub fn skip_to_next_event(&self) {
+        let mut inner = self.inner.borrow_mut();
+        let events_arm9 = &inner.events[CpuType::ARM9 as usize];
+        let events_arm7 = &inner.events[CpuType::ARM7 as usize];
+        let next_arm9 = events_arm9.front();
+        let next_arm7 = events_arm7.front();
 
-            if next_arm9.is_some() || next_arm7.is_some() {
-                if next_arm9.is_some()
-                    && (next_arm7.is_none() || (next_arm7.unwrap().0 > next_arm9.unwrap().0))
-                {
-                    self.cycle_count[CpuType::ARM9 as usize]
-                        .store(next_arm9.unwrap().0, Ordering::Relaxed);
-                } else {
-                    self.cycle_count[CpuType::ARM7 as usize]
-                        .store(next_arm7.unwrap().0, Ordering::Relaxed);
-                }
+        if next_arm9.is_some() || next_arm7.is_some() {
+            if next_arm9.is_some()
+                && (next_arm7.is_none() || (next_arm7.unwrap().0 > next_arm9.unwrap().0))
+            {
+                inner.cycle_count[CpuType::ARM9 as usize] = next_arm9.unwrap().0;
+            } else {
+                inner.cycle_count[CpuType::ARM7 as usize] = next_arm7.unwrap().0;
             }
         }
-        self.halted[CPU as usize].store(true, Ordering::Release);
-    }
-
-    pub fn on_unhalt<const CPU: CpuType>(&self) {
-        self.halted[CPU as usize].store(false, Ordering::Release);
     }
 }

@@ -9,20 +9,19 @@ use crate::hle::memory::wram_context::WramContext;
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitState;
 use crate::logging::debug_println;
-use crate::utils::{Convert, FastCell};
-use std::mem;
+use crate::utils::Convert;
+use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
 
 pub struct MemHandler<const CPU: CpuType> {
-    memory: Arc<RwLock<MainMemory>>,
-    wram_context: Arc<WramContext>,
-    palettes_context: Rc<FastCell<PalettesContext>>,
-    cp15_context: Rc<FastCell<Cp15Context>>,
-    tcm_context: Rc<FastCell<TcmContext>>,
+    main_memory: Rc<RefCell<MainMemory>>,
+    wram_context: Rc<RefCell<WramContext>>,
+    palettes_context: Rc<RefCell<PalettesContext>>,
+    cp15_context: Rc<RefCell<Cp15Context>>,
+    tcm_context: Rc<RefCell<TcmContext>>,
     pub io_ports: IoPorts<CPU>,
-    pub jit_state: Arc<Mutex<JitState>>,
-    oam: Rc<FastCell<OamContext>>,
+    pub jit_state: Rc<RefCell<JitState>>,
+    oam: Rc<RefCell<OamContext>>,
 }
 
 unsafe impl<const CPU: CpuType> Send for MemHandler<CPU> {}
@@ -30,100 +29,58 @@ unsafe impl<const CPU: CpuType> Sync for MemHandler<CPU> {}
 
 impl<const CPU: CpuType> MemHandler<CPU> {
     pub fn new(
-        memory: Arc<RwLock<MainMemory>>,
-        wram_context: Arc<WramContext>,
-        palettes_context: Rc<FastCell<PalettesContext>>,
-        cp15_context: Rc<FastCell<Cp15Context>>,
-        tcm_context: Rc<FastCell<TcmContext>>,
+        main_memory: Rc<RefCell<MainMemory>>,
+        wram_context: Rc<RefCell<WramContext>>,
+        palettes_context: Rc<RefCell<PalettesContext>>,
+        cp15_context: Rc<RefCell<Cp15Context>>,
+        tcm_context: Rc<RefCell<TcmContext>>,
         io_ports: IoPorts<CPU>,
-        oam: Rc<FastCell<OamContext>>,
+        oam: Rc<RefCell<OamContext>>,
     ) -> Self {
         MemHandler {
-            memory,
+            main_memory,
             wram_context,
             palettes_context,
             cp15_context,
             tcm_context,
             io_ports,
-            jit_state: Arc::new(Mutex::new(JitState::new())),
+            jit_state: Rc::new(RefCell::new(JitState::new())),
             oam,
         }
     }
 
     pub fn read<T: Convert>(&self, addr: u32) -> T {
-        let mut buf = [T::from(0)];
-
         debug_println!("{:?} memory read at {:x}", CPU, addr);
 
-        self.read_slice(addr, &mut buf);
-
-        debug_println!(
-            "{:?} memory read at {:x} with value {:x}",
-            CPU,
-            addr,
-            buf[0].into()
-        );
-
-        buf[0]
-    }
-
-    pub fn read_slice<T: Convert>(&self, addr: u32, slice: &mut [T]) -> usize {
         let addr_base = addr & 0xFF000000;
-        {
-            let addr_end = addr + (slice.len() * mem::size_of::<T>()) as u32 - 1;
-
-            let addr_end_base = addr_end & 0xFF000000;
-            debug_assert_eq!(addr_base, addr_end_base);
-        }
-
         let addr_offset = addr - addr_base;
 
-        match addr_base {
-            regions::MAIN_MEMORY_OFFSET => self
-                .memory
-                .read()
-                .unwrap()
-                .read_main_slice(addr_offset, slice),
-            regions::SHARED_WRAM_OFFSET => {
-                self.wram_context.read_slice::<CPU, _>(addr_offset, slice)
-            }
-            regions::IO_PORTS_OFFSET => {
-                for (i, value) in slice.iter_mut().enumerate() {
-                    *value = self
-                        .io_ports
-                        .read(addr_offset + (i * mem::size_of::<T>()) as u32);
-                }
-                slice.len()
-            }
-            regions::STANDARD_PALETTES_OFFSET => self
-                .palettes_context
-                .borrow()
-                .read_slice(addr_offset, slice),
-            regions::VRAM_OFFSET => self
-                .io_ports
-                .vram_context
-                .read_slice::<CPU, _>(addr_offset, slice),
-            regions::OAM_OFFSET => self.oam.borrow().read_slice(addr_offset, slice),
+        let ret = match addr_base {
+            regions::MAIN_MEMORY_OFFSET => self.main_memory.borrow().read(addr_offset),
+            regions::SHARED_WRAM_OFFSET => self.wram_context.borrow().read::<CPU, _>(addr_offset),
+            regions::IO_PORTS_OFFSET => self.io_ports.read(addr_offset),
+            regions::STANDARD_PALETTES_OFFSET => self.palettes_context.borrow().read(addr_offset),
+            regions::VRAM_OFFSET => self.io_ports.vram_context.read::<CPU, _>(addr_offset),
+            regions::OAM_OFFSET => self.oam.borrow().read(addr_offset),
             _ => {
                 let mut handled = false;
-                let mut read_amount = 0;
+                let mut ret = T::from(0);
 
                 if CPU == CpuType::ARM9 {
                     let cp15_context = self.cp15_context.borrow();
                     if addr < cp15_context.itcm_size {
                         if cp15_context.itcm_state == TcmState::RW {
-                            read_amount =
-                                self.tcm_context.borrow_mut().read_itcm_slice(addr, slice);
+                            ret = self.tcm_context.borrow_mut().read_itcm(addr);
                         }
                         handled = true;
                     } else if addr >= cp15_context.dtcm_addr
                         && addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
                     {
                         if cp15_context.dtcm_state == TcmState::RW {
-                            read_amount = self
+                            ret = self
                                 .tcm_context
                                 .borrow_mut()
-                                .read_dtcm_slice(addr - cp15_context.dtcm_addr, slice);
+                                .read_dtcm(addr - cp15_context.dtcm_addr);
                         }
                         handled = true;
                     }
@@ -132,9 +89,18 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                 if !handled {
                     todo!("{:x}", addr)
                 }
-                read_amount
+                ret
             }
-        }
+        };
+
+        debug_println!(
+            "{:?} memory read at {:x} with value {:x}",
+            CPU,
+            addr,
+            ret.into()
+        );
+
+        ret
     }
 
     pub fn write<T: Convert>(&self, addr: u32, value: T) {
@@ -145,56 +111,35 @@ impl<const CPU: CpuType> MemHandler<CPU> {
             value.into(),
         );
 
-        self.write_slice(addr, &[value]);
-    }
-
-    pub fn write_slice<T: Convert>(&self, addr: u32, slice: &[T]) -> usize {
         let addr_base = addr & 0xFF000000;
-        {
-            let addr_end = addr + (slice.len() * mem::size_of::<T>()) as u32 - 1;
-
-            let addr_end_base = addr_end & 0xFF000000;
-            debug_assert_eq!(addr_base, addr_end_base);
-        }
 
         let addr_offset = addr - addr_base;
         let mut invalidate_jit = false;
-        let write_amount = match addr_base {
-            regions::MAIN_MEMORY_OFFSET => self
-                .memory
-                .write()
-                .unwrap()
-                .write_main_slice(addr_offset, slice),
+        match addr_base {
+            regions::MAIN_MEMORY_OFFSET => self.main_memory.borrow_mut().write(addr_offset, value),
             regions::SHARED_WRAM_OFFSET => {
                 invalidate_jit = true;
-                self.wram_context.write_slice::<CPU, _>(addr_offset, slice)
+                self.wram_context
+                    .borrow_mut()
+                    .write::<CPU, _>(addr_offset, value)
             }
-            regions::IO_PORTS_OFFSET => {
-                for (i, value) in slice.iter().enumerate() {
-                    self.io_ports
-                        .write(addr_offset + (i * mem::size_of::<T>()) as u32, *value);
-                }
-                slice.len()
+            regions::IO_PORTS_OFFSET => self.io_ports.write(addr_offset, value),
+            regions::STANDARD_PALETTES_OFFSET => {
+                self.palettes_context.borrow_mut().write(addr_offset, value)
             }
-            regions::STANDARD_PALETTES_OFFSET => self
-                .palettes_context
-                .borrow_mut()
-                .write_slice(addr_offset, slice),
             regions::VRAM_OFFSET => self
                 .io_ports
                 .vram_context
-                .write_slice::<CPU, _>(addr_offset, slice),
-            regions::OAM_OFFSET => self.oam.borrow_mut().write_slice(addr_offset, slice),
+                .write::<CPU, _>(addr_offset, value),
+            regions::OAM_OFFSET => self.oam.borrow_mut().write(addr_offset, value),
             _ => {
                 let mut handled = false;
-                let mut write_amount = 0;
 
                 if CPU == CpuType::ARM9 {
                     let cp15_context = self.cp15_context.borrow();
                     if addr < cp15_context.itcm_size {
                         if cp15_context.itcm_state != TcmState::Disabled {
-                            write_amount =
-                                self.tcm_context.borrow_mut().write_itcm_slice(addr, slice);
+                            self.tcm_context.borrow_mut().write_itcm(addr, value);
                             invalidate_jit = true;
                         }
                         handled = true;
@@ -202,10 +147,9 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                         && addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
                     {
                         if cp15_context.dtcm_state != TcmState::Disabled {
-                            write_amount = self
-                                .tcm_context
+                            self.tcm_context
                                 .borrow_mut()
-                                .write_dtcm_slice(addr - cp15_context.dtcm_addr, slice);
+                                .write_dtcm(addr - cp15_context.dtcm_addr, value);
                         }
                         handled = true;
                     }
@@ -214,24 +158,17 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                 if !handled {
                     todo!("{:x}", addr)
                 }
-                write_amount
             }
         };
 
         if invalidate_jit {
-            let mut jit_state = self.jit_state.lock().unwrap();
-            for addr in (addr..addr + (slice.len() * mem::size_of::<T>()) as u32)
-                .step_by(mem::size_of::<T>())
-            {
-                jit_state.invalidated_addrs.insert(addr);
+            let mut jit_state = self.jit_state.borrow_mut();
+            jit_state.invalidated_addrs.insert(addr);
 
-                let (current_jit_block_start, current_jit_block_end) =
-                    jit_state.current_block_range;
-                if addr >= current_jit_block_start && addr <= current_jit_block_end {
-                    todo!()
-                }
+            let (current_jit_block_start, current_jit_block_end) = jit_state.current_block_range;
+            if addr >= current_jit_block_start && addr <= current_jit_block_end {
+                todo!()
             }
         }
-        write_amount
     }
 }

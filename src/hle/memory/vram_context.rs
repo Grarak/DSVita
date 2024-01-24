@@ -4,11 +4,9 @@ use crate::utils;
 use crate::utils::HeapMemU8;
 use bilge::prelude::*;
 use static_assertions::const_assert_eq;
-use std::cmp::min;
+use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, RwLock};
-use std::{mem, ptr, slice};
+use std::{ptr, slice};
 
 const BANK_SIZE: usize = 9;
 
@@ -129,25 +127,22 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
         self.count += 1;
     }
 
-    pub fn read_slice<T: utils::Convert>(&self, index: u32, slice: &mut [T]) {
-        let mut buf = vec![T::from(0); slice.len()];
+    pub fn read<T: utils::Convert>(&self, index: u32) -> T {
+        let mut ret = 0;
         for i in 0..self.count {
             let map = &self.overlaps[i];
             debug_assert_ne!(map.ptr, ptr::null());
-            let read_amount = utils::read_from_mem_slice(&map, index, &mut buf);
-            slice[..read_amount]
-                .iter_mut()
-                .zip(&buf[..read_amount])
-                .for_each(|(a, b)| *a = T::from((*a).into() | (*b).into()))
+            ret |= utils::read_from_mem::<T>(&map, index).into();
         }
+        T::from(ret)
     }
 
-    pub fn write_slice<T: utils::Convert>(&mut self, index: u32, slice: &[T]) {
+    pub fn write<T: utils::Convert>(&mut self, index: u32, value: T) {
         for i in 0..self.count {
             let map = &mut self.overlaps[i];
             let mut map = map.as_mut();
             debug_assert_ne!(map.ptr, ptr::null_mut());
-            utils::write_to_mem_slice(&mut map, index, slice);
+            utils::write_to_mem(&mut map, index, value);
         }
     }
 }
@@ -172,48 +167,20 @@ impl<const SIZE: usize, const CHUNK_SIZE: usize, const SECTIONS_COUNT: usize>
         }
     }
 
-    pub fn read_slice<T: utils::Convert>(&self, mut addr: u32, slice: &mut [T]) -> usize {
+    pub fn read<T: utils::Convert>(&self, mut addr: u32) -> T {
         addr &= SIZE as u32 - 1;
-        debug_assert!(addr as usize + slice.len() < SIZE);
 
-        let mut slice_index = 0;
-        while slice_index < slice.len() {
-            let section_index = (addr as usize + slice_index * mem::size_of::<T>()) / CHUNK_SIZE;
-            let section_offset = (addr as usize + slice_index * mem::size_of::<T>()) % CHUNK_SIZE;
-
-            let read_amount = min(
-                (CHUNK_SIZE - section_offset) / mem::size_of::<T>(),
-                slice.len() - slice_index,
-            );
-            self.sections[section_index].read_slice(
-                section_offset as u32,
-                &mut slice[slice_index..slice_index + read_amount],
-            );
-            slice_index += read_amount;
-        }
-        slice_index
+        let section_index = addr as usize / CHUNK_SIZE;
+        let section_offset = addr as usize % CHUNK_SIZE;
+        self.sections[section_index].read(section_offset as u32)
     }
 
-    pub fn write_slice<T: utils::Convert>(&mut self, mut addr: u32, slice: &[T]) -> usize {
+    pub fn write<T: utils::Convert>(&mut self, mut addr: u32, value: T) {
         addr &= SIZE as u32 - 1;
-        debug_assert!(addr as usize + slice.len() < SIZE);
 
-        let mut slice_index = 0;
-        while slice_index < slice.len() {
-            let section_index = (addr as usize + slice_index * mem::size_of::<T>()) / CHUNK_SIZE;
-            let section_offset = (addr as usize + slice_index * mem::size_of::<T>()) % CHUNK_SIZE;
-
-            let write_amount = min(
-                (CHUNK_SIZE - section_offset) / mem::size_of::<T>(),
-                slice.len() - slice_index,
-            );
-            self.sections[section_index].write_slice(
-                section_offset as u32,
-                &slice[slice_index..slice_index + write_amount],
-            );
-            slice_index += write_amount;
-        }
-        slice_index
+        let section_index = addr as usize / CHUNK_SIZE;
+        let section_offset = addr as usize % CHUNK_SIZE;
+        self.sections[section_index].write(section_offset as u32, value);
     }
 }
 
@@ -292,7 +259,7 @@ pub const BG_B_OFFSET: u32 = 0x200000;
 const OBJ_B_OFFSET: u32 = 0x600000;
 
 struct VramInner {
-    stat: Arc<AtomicU8>,
+    stat: u8,
     cnt: [u8; BANK_SIZE],
     banks: VramBanks,
 
@@ -315,9 +282,9 @@ struct VramInner {
 }
 
 impl VramInner {
-    fn new(stat: Arc<AtomicU8>) -> Self {
+    fn new() -> Self {
         let instance = VramInner {
-            stat,
+            stat: 0,
             cnt: [0u8; BANK_SIZE],
             banks: VramBanks::new(),
 
@@ -635,21 +602,17 @@ impl VramInner {
         }
     }
 
-    pub fn read_slice<const CPU: CpuType, T: utils::Convert>(
-        &self,
-        addr: u32,
-        slice: &mut [T],
-    ) -> usize {
+    pub fn read<const CPU: CpuType, T: utils::Convert>(&self, addr: u32) -> T {
         match CPU {
             CpuType::ARM9 => match addr & 0xE00000 {
-                LCDC_OFFSET => self.lcdc.read_slice(addr, slice),
+                LCDC_OFFSET => self.lcdc.read(addr),
                 BG_A_OFFSET => {
                     todo!()
                 }
                 OBJ_A_OFFSET => {
                     todo!()
                 }
-                BG_B_OFFSET => self.bg_b.read_slice(addr, slice),
+                BG_B_OFFSET => self.bg_b.read(addr),
                 OBJ_B_OFFSET => {
                     todo!()
                 }
@@ -663,21 +626,17 @@ impl VramInner {
         }
     }
 
-    pub fn write_slice<const CPU: CpuType, T: utils::Convert>(
-        &mut self,
-        addr: u32,
-        slice: &[T],
-    ) -> usize {
+    pub fn write<const CPU: CpuType, T: utils::Convert>(&mut self, addr: u32, value: T) {
         match CPU {
             CpuType::ARM9 => match addr & 0xE00000 {
-                LCDC_OFFSET => self.lcdc.write_slice(addr, slice),
+                LCDC_OFFSET => self.lcdc.write(addr, value),
                 BG_A_OFFSET => {
                     todo!()
                 }
                 OBJ_A_OFFSET => {
                     todo!()
                 }
-                BG_B_OFFSET => self.bg_b.write_slice(addr, slice),
+                BG_B_OFFSET => self.bg_b.write(addr, value),
                 OBJ_B_OFFSET => {
                     todo!()
                 }
@@ -688,55 +647,38 @@ impl VramInner {
             CpuType::ARM7 => {
                 todo!()
             }
-        }
+        };
     }
 }
 
 pub struct VramContext {
-    stat: Arc<AtomicU8>,
-    inner: RwLock<VramInner>,
+    inner: RefCell<VramInner>,
 }
 
 impl VramContext {
     pub fn new() -> Self {
-        let stat = Arc::new(AtomicU8::new(0));
         VramContext {
-            stat: stat.clone(),
-            inner: RwLock::new(VramInner::new(stat)),
+            inner: RefCell::new(VramInner::new()),
         }
     }
 
     pub fn get_stat(&self) -> u8 {
-        self.stat.load(Ordering::Acquire)
+        self.inner.borrow().stat
     }
 
     pub fn get_cnt(&self, bank: usize) -> u8 {
-        self.inner.read().unwrap().cnt[bank]
+        self.inner.borrow().cnt[bank]
     }
 
     pub fn set_cnt(&self, bank: usize, value: u8) {
-        self.inner.write().unwrap().set_cnt(bank, value);
+        self.inner.borrow_mut().set_cnt(bank, value);
     }
 
-    pub fn read_slice<const CPU: CpuType, T: utils::Convert>(
-        &self,
-        addr_offset: u32,
-        slice: &mut [T],
-    ) -> usize {
-        self.inner
-            .read()
-            .unwrap()
-            .read_slice::<CPU, _>(addr_offset, slice)
+    pub fn read<const CPU: CpuType, T: utils::Convert>(&self, addr_offset: u32) -> T {
+        self.inner.borrow().read::<CPU, _>(addr_offset)
     }
 
-    pub fn write_slice<const CPU: CpuType, T: utils::Convert>(
-        &self,
-        addr_offset: u32,
-        slice: &[T],
-    ) -> usize {
-        self.inner
-            .write()
-            .unwrap()
-            .write_slice::<CPU, _>(addr_offset, slice)
+    pub fn write<const CPU: CpuType, T: utils::Convert>(&self, addr_offset: u32, value: T) {
+        self.inner.borrow_mut().write::<CPU, _>(addr_offset, value);
     }
 }

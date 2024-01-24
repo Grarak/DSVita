@@ -24,49 +24,48 @@ use crate::hle::timers_context::TimersContext;
 use crate::hle::CpuType;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::jit_memory::JitMemory;
-use crate::utils::FastCell;
+use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 pub struct ThreadContext<const CPU: CpuType> {
-    jit: JitAsm<CPU>,
-    cycle_manager: Arc<CycleManager>,
-    pub regs: Rc<FastCell<ThreadRegs<CPU>>>,
-    pub cp15_context: Rc<FastCell<Cp15Context>>,
-    pub mem_handler: Arc<MemHandler<CPU>>,
-    cpu_regs: Arc<CpuRegs<CPU>>,
-    bios_context: Rc<FastCell<BiosContext<CPU>>>,
+    pub jit: JitAsm<CPU>,
+    pub cycle_manager: Rc<CycleManager>,
+    pub regs: Rc<RefCell<ThreadRegs<CPU>>>,
+    pub cp15_context: Rc<RefCell<Cp15Context>>,
+    pub mem_handler: Rc<MemHandler<CPU>>,
+    cpu_regs: Rc<CpuRegs<CPU>>,
+    bios_context: Rc<RefCell<BiosContext<CPU>>>,
 }
 
 unsafe impl<const CPU: CpuType> Send for ThreadContext<CPU> {}
 
 impl<const CPU: CpuType> ThreadContext<CPU> {
     pub fn new(
-        cycle_manager: Arc<CycleManager>,
-        jit_memory: Arc<Mutex<JitMemory>>,
-        memory: Arc<RwLock<MainMemory>>,
-        wram_context: Arc<WramContext>,
-        spi_context: Arc<RwLock<SpiContext>>,
-        ipc_handler: Arc<RwLock<IpcHandler>>,
-        vram_context: Arc<VramContext>,
+        cycle_manager: Rc<CycleManager>,
+        jit_memory: Rc<RefCell<JitMemory>>,
+        main_memory: Rc<RefCell<MainMemory>>,
+        wram_context: Rc<RefCell<WramContext>>,
+        spi_context: Rc<RefCell<SpiContext>>,
+        ipc_handler: Rc<RefCell<IpcHandler>>,
+        vram_context: Rc<VramContext>,
         input_context: Arc<RwLock<InputContext>>,
-        gpu_context: Arc<RwLock<GpuContext>>,
-        gpu_2d_context_a: Rc<FastCell<Gpu2DContext<{ A }>>>,
-        gpu_2d_context_b: Rc<FastCell<Gpu2DContext<{ B }>>>,
-        dma: Arc<RwLock<Dma<CPU>>>,
-        rtc_context: Rc<FastCell<RtcContext>>,
-        spu_context: Rc<FastCell<SpuContext>>,
-        palettes_context: Rc<FastCell<PalettesContext>>,
-        cp15_context: Rc<FastCell<Cp15Context>>,
-        tcm_context: Rc<FastCell<TcmContext>>,
-        oam: Rc<FastCell<OamContext>>,
-        cpu_regs: Arc<CpuRegs<CPU>>,
+        gpu_context: Rc<GpuContext>,
+        gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
+        gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
+        dma: Rc<RefCell<Dma<CPU>>>,
+        rtc_context: Rc<RefCell<RtcContext>>,
+        spu_context: Rc<RefCell<SpuContext>>,
+        palettes_context: Rc<RefCell<PalettesContext>>,
+        cp15_context: Rc<RefCell<Cp15Context>>,
+        tcm_context: Rc<RefCell<TcmContext>>,
+        oam: Rc<RefCell<OamContext>>,
+        cpu_regs: Rc<CpuRegs<CPU>>,
     ) -> Self {
         let regs = ThreadRegs::new(cpu_regs.clone());
-        let timers_context = Arc::new(RwLock::new(TimersContext::new(cycle_manager.clone())));
+        let timers_context = Rc::new(RefCell::new(TimersContext::new(cycle_manager.clone())));
 
         let io_ports = IoPorts::new(
-            memory.clone(),
             wram_context.clone(),
             ipc_handler,
             cpu_regs.clone(),
@@ -82,8 +81,8 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
             spu_context,
         );
 
-        let mem_handler = Arc::new(MemHandler::new(
-            memory.clone(),
+        let mem_handler = Rc::new(MemHandler::new(
+            main_memory.clone(),
             wram_context,
             palettes_context,
             cp15_context.clone(),
@@ -92,9 +91,9 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
             oam,
         ));
 
-        dma.write().unwrap().set_mem_handler(mem_handler.clone());
+        dma.borrow_mut().set_mem_handler(mem_handler.clone());
 
-        let bios_context = Rc::new(FastCell::new(BiosContext::new(
+        let bios_context = Rc::new(RefCell::new(BiosContext::new(
             regs.clone(),
             cpu_regs.clone(),
             mem_handler.clone(),
@@ -121,33 +120,23 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
         }
     }
 
-    fn is_halted(&self) -> bool {
+    pub fn is_halted(&self) -> bool {
         self.cpu_regs.is_halted()
     }
 
-    pub fn run(&mut self) {
-        loop {
-            if self.is_halted() {
-                self.cycle_manager.on_halt::<CPU>();
-                self.cycle_manager.check_events::<CPU>();
+    pub fn run(&mut self) -> u16 {
+        let pc = self.regs.borrow().pc;
+        let cycles =
+            if (CPU == CpuType::ARM9 && pc == 0xFFFF0000) || (CPU == CpuType::ARM7 && pc == 0) {
+                self.bios_context.borrow_mut().uninterrupt();
+                3
             } else {
-                self.cycle_manager.on_unhalt::<CPU>();
-                let pc = self.regs.borrow().pc;
-                let cycles = if (CPU == CpuType::ARM9 && pc == 0xFFFF0000)
-                    || (CPU == CpuType::ARM7 && pc == 0)
-                {
-                    self.bios_context.borrow_mut().uninterrupt();
-                    3
-                } else {
-                    self.jit.execute()
-                };
-                let cycles_to_add = if CPU == CpuType::ARM9 {
-                    (cycles + (cycles % 2)) / 2
-                } else {
-                    cycles
-                };
-                self.cycle_manager.add_cycle::<CPU>(cycles_to_add);
-            }
+                self.jit.execute()
+            };
+        if CPU == CpuType::ARM9 {
+            (cycles + (cycles % 2)) / 2
+        } else {
+            cycles
         }
     }
 }

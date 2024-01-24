@@ -622,14 +622,14 @@ pub enum Op {
 }
 
 impl Op {
-    pub const fn is_branch(&self) -> bool {
+    pub const fn is_branch(self) -> bool {
         match self {
             Op::Bx | Op::BlxReg | Op::B | Op::Bl => true,
             _ => false,
         }
     }
 
-    pub const fn is_branch_thumb(&self) -> bool {
+    pub const fn is_branch_thumb(self) -> bool {
         match self {
             Op::BxRegT
             | Op::BlxRegT
@@ -654,9 +654,41 @@ impl Op {
         }
     }
 
-    pub const fn is_unconditional_branch_thumb(&self) -> bool {
+    pub const fn is_uncond_branch_thumb(self) -> bool {
         match self {
             Op::BxRegT | Op::BlxRegT | Op::BT | Op::BlOffT | Op::BlxOffT => true,
+            _ => false,
+        }
+    }
+
+    pub const fn requires_breakout(self) -> bool {
+        match self {
+            Op::LdrbOfrpll
+            | Op::LdrhOfip
+            | Op::LdrOfim
+            | Op::LdrOfip
+            | Op::LdrbOfrplr
+            | Op::LdrOfrpll
+            | Op::LdrPtip
+            | Op::Ldmia
+            | Op::LdmiaW
+            | Op::StrOfim
+            | Op::StrOfip
+            | Op::StrbOfip
+            | Op::StrhOfip
+            | Op::StrPrim
+            | Op::Stmia
+            | Op::Stmdb
+            | Op::StmiaW
+            | Op::StmdbW
+            | Op::Mcr
+            | Op::Mrc
+            | Op::MsrRc
+            | Op::MsrRs
+            | Op::MrsRc
+            | Op::MrsRs
+            | Op::Swi
+            | Op::UnkArm => true,
             _ => false,
         }
     }

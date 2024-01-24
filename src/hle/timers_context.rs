@@ -1,10 +1,9 @@
 use crate::hle::cycle_manager::{CycleEvent, CycleManager};
 use crate::hle::CpuType;
 use crate::utils;
-use crate::utils::FastCell;
 use bilge::prelude::*;
+use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 
 const CHANNEL_COUNT: usize = 4;
 
@@ -35,19 +34,19 @@ struct TimerChannel {
 }
 
 pub struct TimersContext<const CPU: CpuType> {
-    cycle_manager: Arc<CycleManager>,
-    channels: [Rc<FastCell<TimerChannel>>; CHANNEL_COUNT],
+    cycle_manager: Rc<CycleManager>,
+    channels: [Rc<RefCell<TimerChannel>>; CHANNEL_COUNT],
 }
 
 impl<const CPU: CpuType> TimersContext<CPU> {
-    pub fn new(cycle_manager: Arc<CycleManager>) -> Self {
+    pub fn new(cycle_manager: Rc<CycleManager>) -> Self {
         TimersContext {
             cycle_manager,
             channels: [
-                Rc::new(FastCell::new(TimerChannel::default())),
-                Rc::new(FastCell::new(TimerChannel::default())),
-                Rc::new(FastCell::new(TimerChannel::default())),
-                Rc::new(FastCell::new(TimerChannel::default())),
+                Rc::new(RefCell::new(TimerChannel::default())),
+                Rc::new(RefCell::new(TimerChannel::default())),
+                Rc::new(RefCell::new(TimerChannel::default())),
+                Rc::new(RefCell::new(TimerChannel::default())),
             ],
         }
     }
@@ -111,12 +110,12 @@ impl<const CPU: CpuType> TimersContext<CPU> {
 }
 
 struct TimersEvent {
-    channel: Rc<FastCell<TimerChannel>>,
+    channel: Rc<RefCell<TimerChannel>>,
     scheduled_at: u64,
 }
 
 impl TimersEvent {
-    fn new(channel: Rc<FastCell<TimerChannel>>) -> Self {
+    fn new(channel: Rc<RefCell<TimerChannel>>) -> Self {
         TimersEvent {
             channel,
             scheduled_at: 0,

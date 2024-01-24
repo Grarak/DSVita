@@ -1,10 +1,10 @@
 use crate::hle::memory::regions;
 use crate::hle::CpuType;
 use crate::utils;
-use crate::utils::{Convert, FastCell, HeapMemU8};
+use crate::utils::{Convert, HeapMemU8};
+use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
-use std::sync::RwLock;
 use std::{ptr, slice};
 
 struct SharedWramMap<'a> {
@@ -171,101 +171,78 @@ impl SharedWram {
         SharedWramMapMut::new(self.arm7_ptr, self.arm7_size)
     }
 
-    fn read_slice_arm9<T: Convert>(&self, addr_offset: u32, slice: &mut [T]) -> usize {
+    fn read_arm9<T: Convert>(&self, addr_offset: u32) -> T {
         let mem = self.get_map_arm9();
-        utils::read_from_mem_slice(&mem, addr_offset & (mem.len() - 1) as u32, slice)
+        utils::read_from_mem(&mem, addr_offset & (mem.len() - 1) as u32)
     }
 
-    fn read_slice_arm7<T: Convert>(&self, addr_offset: u32, slice: &mut [T]) -> usize {
+    fn read_arm7<T: Convert>(&self, addr_offset: u32) -> T {
         let mem = self.get_map_arm7();
-        utils::read_from_mem_slice(&mem, addr_offset & (mem.len() - 1) as u32, slice)
+        utils::read_from_mem(&mem, addr_offset & (mem.len() - 1) as u32)
     }
 
-    fn write_slice_arm9<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) -> usize {
+    fn write_arm9<T: Convert>(&mut self, addr_offset: u32, value: T) {
         let mut mem = self.get_map_arm9_mut();
         let mem_len = mem.len();
-        utils::write_to_mem_slice(&mut mem, addr_offset & (mem_len - 1) as u32, slice)
+        utils::write_to_mem(&mut mem, addr_offset & (mem_len - 1) as u32, value);
     }
 
-    fn write_slice_arm7<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) -> usize {
+    fn write_arm7<T: Convert>(&mut self, addr_offset: u32, value: T) {
         let mut mem = self.get_map_arm7_mut();
         let mem_len = mem.len();
-        utils::write_to_mem_slice(&mut mem, addr_offset & (mem_len - 1) as u32, slice)
+        utils::write_to_mem(&mut mem, addr_offset & (mem_len - 1) as u32, value);
     }
 }
 
 pub struct WramContext {
-    wram_arm7: FastCell<HeapMemU8<{ regions::ARM7_WRAM_SIZE as usize }>>,
-    shared: RwLock<SharedWram>,
+    wram_arm7: RefCell<HeapMemU8<{ regions::ARM7_WRAM_SIZE as usize }>>,
+    shared: SharedWram,
 }
 
 impl WramContext {
     pub fn new() -> Self {
         WramContext {
-            wram_arm7: FastCell::new(HeapMemU8::new()),
-            shared: RwLock::new(SharedWram::new()),
+            wram_arm7: RefCell::new(HeapMemU8::new()),
+            shared: SharedWram::new(),
         }
     }
 
     pub fn get_cnt(&self) -> u8 {
-        self.shared.read().unwrap().cnt
+        self.shared.cnt
     }
 
-    pub fn set_cnt(&self, value: u8) {
-        self.shared.write().unwrap().set_cnt(value)
+    pub fn set_cnt(&mut self, value: u8) {
+        self.shared.set_cnt(value)
     }
 
-    pub fn read_slice<const CPU: CpuType, T: Convert>(
-        &self,
-        addr_offset: u32,
-        slice: &mut [T],
-    ) -> usize {
+    pub fn read<const CPU: CpuType, T: Convert>(&self, addr_offset: u32) -> T {
         match CPU {
-            CpuType::ARM9 => self
-                .shared
-                .read()
-                .unwrap()
-                .read_slice_arm9(addr_offset, slice),
+            CpuType::ARM9 => self.shared.read_arm9(addr_offset),
             CpuType::ARM7 => {
                 if addr_offset & regions::ARM7_WRAM_OFFSET != 0 {
-                    utils::read_from_mem_slice(
+                    utils::read_from_mem(
                         self.wram_arm7.borrow().as_slice(),
                         addr_offset & (regions::ARM7_WRAM_SIZE - 1),
-                        slice,
                     )
                 } else {
-                    self.shared
-                        .read()
-                        .unwrap()
-                        .read_slice_arm7(addr_offset, slice)
+                    self.shared.read_arm7(addr_offset)
                 }
             }
         }
     }
 
-    pub fn write_slice<const CPU: CpuType, T: Convert>(
-        &self,
-        addr_offset: u32,
-        slice: &[T],
-    ) -> usize {
+    pub fn write<const CPU: CpuType, T: Convert>(&mut self, addr_offset: u32, value: T) {
         match CPU {
-            CpuType::ARM9 => self
-                .shared
-                .write()
-                .unwrap()
-                .write_slice_arm9(addr_offset, slice),
+            CpuType::ARM9 => self.shared.write_arm9(addr_offset, value),
             CpuType::ARM7 => {
                 if addr_offset & regions::ARM7_WRAM_OFFSET != 0 {
-                    utils::write_to_mem_slice(
+                    utils::write_to_mem(
                         self.wram_arm7.borrow_mut().as_mut_slice(),
                         addr_offset & (regions::ARM7_WRAM_SIZE - 1),
-                        slice,
+                        value,
                     )
                 } else {
-                    self.shared
-                        .write()
-                        .unwrap()
-                        .write_slice_arm7(addr_offset, slice)
+                    self.shared.write_arm7(addr_offset, value)
                 }
             }
         }

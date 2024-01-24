@@ -13,19 +13,15 @@ impl OamContext {
         }
     }
 
-    pub fn read_slice<T: Convert>(&self, addr_offset: u32, slice: &mut [T]) -> usize {
-        utils::read_from_mem_slice(
-            self.mem.as_slice(),
-            addr_offset & (regions::OAM_SIZE - 1),
-            slice,
-        )
+    pub fn read<T: Convert>(&self, addr_offset: u32) -> T {
+        utils::read_from_mem(self.mem.as_slice(), addr_offset & (regions::OAM_SIZE - 1))
     }
 
-    pub fn write_slice<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) -> usize {
-        utils::write_to_mem_slice(
+    pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T) {
+        utils::write_to_mem(
             self.mem.as_mut_slice(),
             addr_offset & (regions::OAM_SIZE - 1),
-            slice,
+            value,
         )
     }
 }

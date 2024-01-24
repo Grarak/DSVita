@@ -344,6 +344,7 @@ impl RegReserve {
             if inst.op.is_branch()
                 || inst.op.is_branch_thumb()
                 || inst.out_regs.is_reserved(Reg::PC)
+                || inst.op.requires_breakout()
             {
                 break;
             }

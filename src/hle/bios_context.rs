@@ -2,15 +2,14 @@ use crate::hle::bios_lookup_table::{ARM7_SWI_LOOKUP_TABLE, ARM9_SWI_LOOKUP_TABLE
 use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::thread_regs::{Cpsr, ThreadRegs};
 use crate::logging::debug_println;
-use crate::utils::FastCell;
 use bilge::prelude::*;
+use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 
 pub struct BiosContext<const CPU: CpuType> {
-    regs: Rc<FastCell<ThreadRegs<CPU>>>,
-    mem_handler: Arc<MemHandler<CPU>>,
-    cpu_regs: Arc<CpuRegs<CPU>>,
+    regs: Rc<RefCell<ThreadRegs<CPU>>>,
+    mem_handler: Rc<MemHandler<CPU>>,
+    cpu_regs: Rc<CpuRegs<CPU>>,
     pub cycle_correction: u16,
 }
 
@@ -55,7 +54,9 @@ mod swi {
         };
 
         let mut buf = vec![0u8; len as usize];
-        context.mem_handler.read_slice(addr, &mut buf);
+        buf.iter_mut().enumerate().for_each(|(index, value)| {
+            *value = context.mem_handler.read(addr + index as u32);
+        });
         let ret = utils::crc16(initial, &buf, 0, len as usize);
         *context.regs.borrow_mut().get_reg_value_mut(Reg::R0) = ret as u32;
     }
@@ -131,9 +132,9 @@ pub(super) use swi::*;
 
 impl<const CPU: CpuType> BiosContext<CPU> {
     pub fn new(
-        regs: Rc<FastCell<ThreadRegs<CPU>>>,
-        cpu_regs: Arc<CpuRegs<CPU>>,
-        mem_handler: Arc<MemHandler<CPU>>,
+        regs: Rc<RefCell<ThreadRegs<CPU>>>,
+        cpu_regs: Rc<CpuRegs<CPU>>,
+        mem_handler: Rc<MemHandler<CPU>>,
     ) -> Self {
         BiosContext {
             regs,

@@ -4,11 +4,9 @@ use crate::hle::cycle_manager::{CycleEvent, CycleManager};
 use crate::hle::exception_handler::ExceptionVector;
 use crate::hle::{exception_handler, CpuType};
 use crate::logging::debug_println;
-use crate::utils::FastCell;
+use std::cell::RefCell;
 use std::ops::DerefMut;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]
@@ -45,8 +43,8 @@ struct CpuRegsInner<const CPU: CpuType> {
     irf: u32,
     post_flg: u8,
     cpsr_irq_enabled: bool,
-    bios_context: Option<Rc<FastCell<BiosContext<CPU>>>>,
-    cp15_context: Option<Rc<FastCell<Cp15Context>>>,
+    bios_context: Option<Rc<RefCell<BiosContext<CPU>>>>,
+    cp15_context: Option<Rc<RefCell<Cp15Context>>>,
 }
 
 impl<const CPU: CpuType> CpuRegsInner<CPU> {
@@ -79,44 +77,42 @@ impl<const CPU: CpuType> CpuRegsInner<CPU> {
 }
 
 pub struct CpuRegs<const CPU: CpuType> {
-    inner: Arc<RwLock<CpuRegsInner<CPU>>>,
-    halt: Arc<AtomicU8>,
-    cycle_manager: Arc<CycleManager>,
-    interrupt_mutex: Arc<Mutex<()>>,
+    inner: Rc<RefCell<CpuRegsInner<CPU>>>,
+    halt: Rc<RefCell<u8>>,
+    cycle_manager: Rc<CycleManager>,
 }
 
 impl<const CPU: CpuType> CpuRegs<CPU> {
-    pub fn new(cycle_manager: Arc<CycleManager>) -> Self {
+    pub fn new(cycle_manager: Rc<CycleManager>) -> Self {
         CpuRegs {
-            inner: Arc::new(RwLock::new(CpuRegsInner::new())),
-            halt: Arc::new(AtomicU8::new(0)),
+            inner: Rc::new(RefCell::new(CpuRegsInner::new())),
+            halt: Rc::new(RefCell::new(0)),
             cycle_manager,
-            interrupt_mutex: Arc::new(Mutex::new(())),
         }
     }
 
-    pub fn set_bios_context(&self, bios_context: Rc<FastCell<BiosContext<CPU>>>) {
-        self.inner.write().unwrap().bios_context = Some(bios_context);
+    pub fn set_bios_context(&self, bios_context: Rc<RefCell<BiosContext<CPU>>>) {
+        self.inner.borrow_mut().bios_context = Some(bios_context);
     }
 
-    pub fn set_cp15_context(&self, cp15_context: Rc<FastCell<Cp15Context>>) {
-        self.inner.write().unwrap().cp15_context = Some(cp15_context);
+    pub fn set_cp15_context(&self, cp15_context: Rc<RefCell<Cp15Context>>) {
+        self.inner.borrow_mut().cp15_context = Some(cp15_context);
     }
 
     pub fn get_ime(&self) -> u8 {
-        self.inner.read().unwrap().ime
+        self.inner.borrow().ime
     }
 
     pub fn get_ie(&self) -> u32 {
-        self.inner.read().unwrap().ie
+        self.inner.borrow().ie
     }
 
     pub fn get_irf(&self) -> u32 {
-        self.inner.read().unwrap().irf
+        self.inner.borrow().irf
     }
 
     pub fn set_ime(&self, value: u8) {
-        let mut inner = self.inner.write().unwrap();
+        let mut inner = self.inner.borrow_mut();
         inner.set_ime(value);
         if inner.ime != 0 && (inner.ie & inner.irf) != 0 && inner.cpsr_irq_enabled {
             self.schedule_interrupt();
@@ -124,7 +120,7 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
     }
 
     pub fn set_ie(&self, mask: u32, value: u32) {
-        let mut inner = self.inner.write().unwrap();
+        let mut inner = self.inner.borrow_mut();
         inner.set_ie(mask, value);
         if inner.ime != 0 && (inner.ie & inner.irf) != 0 && inner.cpsr_irq_enabled {
             self.schedule_interrupt();
@@ -134,39 +130,34 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
     fn schedule_interrupt(&self) {
         self.cycle_manager.schedule::<CPU, _>(
             1,
-            Box::new(InterruptEvent::new(
-                self.inner.clone(),
-                self.halt.clone(),
-                self.interrupt_mutex.clone(),
-            )),
+            Box::new(InterruptEvent::new(self.inner.clone(), self.halt.clone())),
         );
     }
 
     pub fn set_irf(&self, mask: u32, value: u32) {
         debug_println!("{:?} set irf {:x} {:x}", CPU, mask, value);
-        self.inner.write().unwrap().set_irf(mask, value);
+        self.inner.borrow_mut().set_irf(mask, value);
     }
 
     pub fn set_post_flg(&self, value: u8) {
-        self.inner.write().unwrap().set_post_flg(value);
+        self.inner.borrow_mut().set_post_flg(value);
     }
 
     pub fn halt(&self, bit: u8) {
         debug_println!("{:?} halt with bit {}", CPU, bit);
-        self.halt.fetch_or(1 << bit, Ordering::Relaxed);
+        *self.halt.borrow_mut() |= 1;
     }
 
     pub fn is_halted(&self) -> bool {
-        self.halt.load(Ordering::Relaxed) != 0
+        *self.halt.borrow() != 0
     }
 
     pub fn set_cpsr_irq_enabled(&self, enabled: bool) {
-        self.inner.write().unwrap().cpsr_irq_enabled = enabled;
+        self.inner.borrow_mut().cpsr_irq_enabled = enabled;
     }
 
     pub fn send_interrupt(&self, flag: InterruptFlag) {
-        let _guard = self.interrupt_mutex.lock().unwrap();
-        let mut inner = self.inner.write().unwrap();
+        let mut inner = self.inner.borrow_mut();
         inner.irf |= 1 << flag as u8;
         debug_println!(
             "{:?} send interrupt {:?} {:x} {:x} {:x} {}",
@@ -182,29 +173,20 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
                 debug_println!("{:?} schedule interrupt {:?}", CPU, flag);
                 self.schedule_interrupt();
             } else if CPU == CpuType::ARM7 || inner.ime != 0 {
-                self.halt.fetch_and(!1, Ordering::Relaxed);
+                *self.halt.borrow_mut() &= !1;
             }
         }
     }
 }
 
 struct InterruptEvent<const CPU: CpuType> {
-    inner: Arc<RwLock<CpuRegsInner<CPU>>>,
-    halt: Arc<AtomicU8>,
-    interrupt_mutex: Arc<Mutex<()>>,
+    inner: Rc<RefCell<CpuRegsInner<CPU>>>,
+    halt: Rc<RefCell<u8>>,
 }
 
 impl<const CPU: CpuType> InterruptEvent<CPU> {
-    fn new(
-        inner: Arc<RwLock<CpuRegsInner<CPU>>>,
-        halt: Arc<AtomicU8>,
-        interrupt_mutex: Arc<Mutex<()>>,
-    ) -> Self {
-        InterruptEvent {
-            inner,
-            halt,
-            interrupt_mutex,
-        }
+    fn new(inner: Rc<RefCell<CpuRegsInner<CPU>>>, halt: Rc<RefCell<u8>>) -> Self {
+        InterruptEvent { inner, halt }
     }
 }
 
@@ -212,8 +194,7 @@ impl<const CPU: CpuType> CycleEvent for InterruptEvent<CPU> {
     fn scheduled(&mut self, _: &u64) {}
 
     fn trigger(&mut self, _: u16) {
-        let guard = self.interrupt_mutex.lock().unwrap();
-        let inner = self.inner.read().unwrap();
+        let inner = self.inner.borrow();
         if inner.ime != 0 && (inner.ie & inner.irf) != 0 && inner.cpsr_irq_enabled {
             let bios_context = inner.bios_context.clone().unwrap();
             let mut bios_context = bios_context.borrow_mut();
@@ -223,7 +204,6 @@ impl<const CPU: CpuType> CycleEvent for InterruptEvent<CPU> {
                 (cp15_context.exception_addr, cp15_context.dtcm_addr)
             };
             drop(inner);
-            drop(guard);
             exception_handler::handle::<CPU, false>(
                 Some(exception_addr),
                 Some(dtcm_addr),
@@ -231,14 +211,11 @@ impl<const CPU: CpuType> CycleEvent for InterruptEvent<CPU> {
                 0,
                 ExceptionVector::NormalInterrupt,
             );
-            self.halt.fetch_and(!1, Ordering::Relaxed);
+            *self.halt.borrow_mut() &= !1;
         }
     }
 }
 
-pub unsafe extern "C" fn cpu_regs_halt<const CPU: CpuType>(
-    cpu_regs: *const Arc<CpuRegs<CPU>>,
-    bit: u8,
-) {
+pub unsafe extern "C" fn cpu_regs_halt<const CPU: CpuType>(cpu_regs: *const CpuRegs<CPU>, bit: u8) {
     cpu_regs.as_ref().unwrap().halt(bit)
 }

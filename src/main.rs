@@ -30,13 +30,12 @@ use crate::hle::spu_context::SpuContext;
 use crate::hle::thread_context::ThreadContext;
 use crate::hle::CpuType;
 use crate::jit::jit_memory::JitMemory;
-use crate::utils::FastCell;
 use sdl2::event::Event;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
+use std::cell::RefCell;
 use std::os::unix::prelude::JoinHandleExt;
 use std::rc::Rc;
-use std::sync::Mutex;
 use std::sync::{Arc, RwLock};
 use std::{env, mem, thread};
 
@@ -120,7 +119,7 @@ fn initialize_arm9_thread(entry_addr: u32, thread: &ThreadContext<{ CpuType::ARM
     }
 }
 
-fn initialize_arm7_thread(entry_addr: u32, thread: &mut ThreadContext<{ CpuType::ARM7 }>) {
+fn initialize_arm7_thread(entry_addr: u32, thread: &ThreadContext<{ CpuType::ARM7 }>) {
     {
         // I/O Ports
         thread.mem_handler.write(0x4000300, 0x01u8); // POWCNT1
@@ -160,90 +159,98 @@ pub fn main() {
         .window("DSPSV", SCREEN_WIDTH, SCREEN_HEIGHT)
         .build()
         .unwrap();
+    #[cfg(target_os = "linux")]
+    let mut sdl_canvas = sdl_window
+        .into_canvas()
+        .software()
+        .target_texture()
+        .build()
+        .unwrap();
+    #[cfg(target_os = "vita")]
     let mut sdl_canvas = sdl_window.into_canvas().target_texture().build().unwrap();
     let sdl_texture_creator = sdl_canvas.texture_creator();
     let mut sdl_texture_top = sdl_texture_creator
-        .create_texture_target(
+        .create_texture_streaming(
             PixelFormatEnum::ARGB8888,
             DISPLAY_WIDTH as u32,
             DISPLAY_HEIGHT as u32,
         )
         .unwrap();
     let mut sdl_texture_bottom = sdl_texture_creator
-        .create_texture_target(
+        .create_texture_streaming(
             PixelFormatEnum::ARGB8888,
             DISPLAY_WIDTH as u32,
             DISPLAY_HEIGHT as u32,
         )
         .unwrap();
-    sdl_canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
+    sdl_canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
     sdl_canvas.clear();
     sdl_canvas.present();
 
-    let main_memory = Arc::new(RwLock::new(MainMemory::new()));
+    let main_memory = Rc::new(RefCell::new(MainMemory::new()));
     {
-        let memory = &mut main_memory.write().unwrap();
+        let mut main_memory = main_memory.borrow_mut();
 
         let header: &[u8; cartridge::HEADER_IN_RAM_SIZE] =
             unsafe { mem::transmute(&cartridge.header) };
-        memory.write_main_slice(0x27FFE00, header);
+        main_memory.write_slice(0x27FFE00, header);
 
-        memory.write_main(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
-        memory.write_main(0x27FF880, 0x0007u16); // Message from ARM9 to ARM7
-        memory.write_main(0x27FF884, 0x0006u16); // ARM7 boot task
-        memory.write_main(0x27FFC10, 0x5835u16); // Copy of ARM7 BIOS CRC
-        memory.write_main(0x27FFC40, 0x0001u16); // Boot indicator
+        main_memory.write(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
+        main_memory.write(0x27FF880, 0x0007u16); // Message from ARM9 to ARM7
+        main_memory.write(0x27FF884, 0x0006u16); // ARM7 boot task
+        main_memory.write(0x27FFC10, 0x5835u16); // Copy of ARM7 BIOS CRC
+        main_memory.write(0x27FFC40, 0x0001u16); // Boot indicator
 
-        memory.write_main(0x27FF800, 0x00001FC2u32); // Chip ID 1
-        memory.write_main(0x27FF804, 0x00001FC2u32); // Chip ID 2
-        memory.write_main(0x27FFC00, 0x00001FC2u32); // Copy of chip ID 1
-        memory.write_main(0x27FFC04, 0x00001FC2u32); // Copy of chip ID 2
+        main_memory.write(0x27FF800, 0x00001FC2u32); // Chip ID 1
+        main_memory.write(0x27FF804, 0x00001FC2u32); // Chip ID 2
+        main_memory.write(0x27FFC00, 0x00001FC2u32); // Copy of chip ID 1
+        main_memory.write(0x27FFC04, 0x00001FC2u32); // Copy of chip ID 2
 
         // User settings
-        memory.write_main_slice(
+        main_memory.write_slice(
             0x27FFC80,
             &spi_context::SPI_FIRMWARE
                 [spi_context::USER_SETTINGS_1_ADDR..spi_context::USER_SETTINGS_1_ADDR + 0x70],
         );
 
         let arm9_code = cartridge.read_arm9_code().unwrap();
-        memory.write_main_slice(arm9_ram_addr, &arm9_code);
+        main_memory.write_slice(arm9_ram_addr, &arm9_code);
 
         let arm7_code = cartridge.read_arm7_code().unwrap();
-        memory.write_main_slice(arm7_ram_addr, &arm7_code);
+        main_memory.write_slice(arm7_ram_addr, &arm7_code);
     }
 
-    let cycle_manager = Arc::new(CycleManager::new());
-    let jit_memory = Arc::new(Mutex::new(JitMemory::new()));
-    let wram_context = Arc::new(WramContext::new());
-    let spi_context = Arc::new(RwLock::new(SpiContext::new()));
-    let vram_context = Arc::new(VramContext::new());
+    let cycle_manager = Rc::new(CycleManager::new());
+    let jit_memory = Rc::new(RefCell::new(JitMemory::new()));
+    let wram_context = Rc::new(RefCell::new(WramContext::new()));
+    let spi_context = Rc::new(RefCell::new(SpiContext::new()));
+    let vram_context = Rc::new(VramContext::new());
     let input_context = Arc::new(RwLock::new(InputContext::new()));
-    let rtc_context = Rc::new(FastCell::new(RtcContext::new()));
-    let spu_context = Rc::new(FastCell::new(SpuContext::new()));
-    let palettes_context = Rc::new(FastCell::new(PalettesContext::new()));
-    let tcm_context = Rc::new(FastCell::new(TcmContext::new()));
-    let oam_context = Rc::new(FastCell::new(OamContext::new()));
-    let cpu_regs_arm9 = Arc::new(CpuRegs::new(cycle_manager.clone()));
-    let cpu_regs_arm7 = Arc::new(CpuRegs::new(cycle_manager.clone()));
-    let ipc_handler = Arc::new(RwLock::new(IpcHandler::new(
+    let rtc_context = Rc::new(RefCell::new(RtcContext::new()));
+    let spu_context = Rc::new(RefCell::new(SpuContext::new()));
+    let palettes_context = Rc::new(RefCell::new(PalettesContext::new()));
+    let tcm_context = Rc::new(RefCell::new(TcmContext::new()));
+    let oam_context = Rc::new(RefCell::new(OamContext::new()));
+    let cpu_regs_arm9 = Rc::new(CpuRegs::new(cycle_manager.clone()));
+    let cpu_regs_arm7 = Rc::new(CpuRegs::new(cycle_manager.clone()));
+    let ipc_handler = Rc::new(RefCell::new(IpcHandler::new(
         cpu_regs_arm9.clone(),
         cpu_regs_arm7.clone(),
     )));
-    let cp15_context = Rc::new(FastCell::new(Cp15Context::new(cpu_regs_arm9.clone())));
+    let cp15_context = Rc::new(RefCell::new(Cp15Context::new(cpu_regs_arm9.clone())));
 
-    let gpu_2d_context_a = Rc::new(FastCell::new(Gpu2DContext::new(
+    let gpu_2d_context_a = Rc::new(RefCell::new(Gpu2DContext::new(
         vram_context.clone(),
         palettes_context.clone(),
     )));
-    let gpu_2d_context_b = Rc::new(FastCell::new(Gpu2DContext::new(
+    let gpu_2d_context_b = Rc::new(RefCell::new(Gpu2DContext::new(
         vram_context.clone(),
         palettes_context.clone(),
     )));
-    let dma_arm9 = Arc::new(RwLock::new(Dma::new(cycle_manager.clone())));
-    let dma_arm7 = Arc::new(RwLock::new(Dma::new(cycle_manager.clone())));
+    let dma_arm9 = Rc::new(RefCell::new(Dma::new(cycle_manager.clone())));
+    let dma_arm7 = Rc::new(RefCell::new(Dma::new(cycle_manager.clone())));
     let swapchain = Arc::new(Swapchain::new());
-    let gpu_context = Arc::new(RwLock::new(GpuContext::new(
+    let gpu_context = Rc::new(GpuContext::new(
         cycle_manager.clone(),
         gpu_2d_context_a.clone(),
         gpu_2d_context_b.clone(),
@@ -252,7 +259,7 @@ pub fn main() {
         cpu_regs_arm9.clone(),
         cpu_regs_arm7.clone(),
         swapchain.clone(),
-    )));
+    ));
 
     let mut arm9_thread = ThreadContext::<{ CpuType::ARM9 }>::new(
         cycle_manager.clone(),
@@ -275,7 +282,7 @@ pub fn main() {
         oam_context.clone(),
         cpu_regs_arm9,
     );
-    initialize_arm9_thread(arm9_entry_adrr, &mut arm9_thread);
+    initialize_arm9_thread(arm9_entry_adrr, &arm9_thread);
 
     let mut arm7_thread = ThreadContext::<{ CpuType::ARM7 }>::new(
         cycle_manager,
@@ -286,7 +293,7 @@ pub fn main() {
         ipc_handler,
         vram_context,
         input_context,
-        gpu_context,
+        gpu_context.clone(),
         gpu_2d_context_a,
         gpu_2d_context_b,
         dma_arm7,
@@ -298,38 +305,64 @@ pub fn main() {
         oam_context,
         cpu_regs_arm7,
     );
-    initialize_arm7_thread(arm7_entry_addr, &mut arm7_thread);
+    initialize_arm7_thread(arm7_entry_addr, &arm7_thread);
 
-    let arm9_thread = thread::Builder::new()
-        .name("arm9_thread".to_owned())
+    let cpu_thread = thread::Builder::new()
+        .name("cpu".to_owned())
         .spawn(move || {
-            arm9_thread.run();
+            arm9_thread.jit.jit_memory.borrow_mut().open();
+            loop {
+                let mut arm9_cycles = if !arm9_thread.is_halted() {
+                    arm9_thread.run()
+                } else {
+                    0
+                };
+
+                let arm7_cycles = if !arm7_thread.is_halted() {
+                    arm7_thread.run()
+                } else {
+                    0
+                };
+
+                while !arm9_thread.is_halted() && arm7_cycles > arm9_cycles {
+                    arm9_cycles += arm9_thread.run();
+                }
+
+                if arm9_cycles == 0 && arm7_cycles == 0 {
+                    arm9_thread.cycle_manager.skip_to_next_event();
+                    arm9_thread
+                        .cycle_manager
+                        .check_events::<{ CpuType::ARM9 }>();
+                    arm9_thread
+                        .cycle_manager
+                        .check_events::<{ CpuType::ARM7 }>();
+                } else {
+                    arm9_thread
+                        .cycle_manager
+                        .add_cycle::<{ CpuType::ARM9 }>(if arm9_cycles != 0 {
+                            arm9_cycles
+                        } else {
+                            arm7_cycles
+                        });
+                    arm9_thread
+                        .cycle_manager
+                        .add_cycle::<{ CpuType::ARM7 }>(if arm7_cycles != 0 {
+                            arm7_cycles
+                        } else {
+                            arm9_cycles
+                        });
+                }
+            }
         })
         .unwrap();
-
-    let arm7_thread = thread::Builder::new()
-        .name("arm7_thread".to_owned())
-        .spawn(move || {
-            arm7_thread.run();
-        })
-        .unwrap();
-
-    #[cfg(target_os = "linux")]
-    let mut instant = std::time::Instant::now();
 
     let mut sdl_event_pump = sdl.event_pump().unwrap();
     'render: loop {
         for event in sdl_event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. } => {
-                    break 'render;
-                }
-                _ => {}
+            if let Event::Quit { .. } = event {
+                break 'render;
             }
         }
-
-        sdl_canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
-        sdl_canvas.clear();
 
         let fb = swapchain.consume();
         let (_, top_aligned, _) = unsafe { fb[..DISPLAY_PIXEL_COUNT].align_to::<u8>() };
@@ -341,6 +374,7 @@ pub fn main() {
             .update(None, bottom_aligned, DISPLAY_WIDTH * 4)
             .unwrap();
 
+        sdl_canvas.clear();
         sdl_canvas
             .copy(
                 &sdl_texture_top,
@@ -361,15 +395,14 @@ pub fn main() {
             )
             .unwrap();
         sdl_canvas.present();
+
         #[cfg(target_os = "linux")]
-        {
-            println!("Consumed fb {} ms", instant.elapsed().as_millis());
-            instant = std::time::Instant::now();
+        if let Some(fps) = gpu_context.query_fps() {
+            println!("fps {}", fps);
         }
     }
 
     unsafe {
-        libc::pthread_kill(arm9_thread.as_pthread_t(), libc::SIGKILL);
-        libc::pthread_kill(arm7_thread.as_pthread_t(), libc::SIGKILL);
+        libc::pthread_kill(cpu_thread.as_pthread_t(), libc::SIGKILL);
     }
 }

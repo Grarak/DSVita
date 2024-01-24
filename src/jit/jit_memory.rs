@@ -3,7 +3,6 @@ use crate::mmap::Mmap;
 use crate::utils::NoHashMap;
 use crate::{utils, DEBUG};
 use std::rc::Rc;
-use std::thread;
 
 const JIT_MEMORY_SIZE: u32 = 16 * 1024 * 1024;
 
@@ -37,7 +36,6 @@ pub struct JitMemory {
     memory: Mmap,
     blocks: Vec<(JitBlockStartAddr, JitBlockSize)>,
     guest_pc_mapping: NoHashMap<GuestPcInfo>,
-    current_thread_holder: Option<thread::ThreadId>,
 }
 
 impl JitMemory {
@@ -46,7 +44,6 @@ impl JitMemory {
             memory: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
             blocks: Vec::new(),
             guest_pc_mapping: NoHashMap::default(),
-            current_thread_holder: None,
         }
     }
 
@@ -79,21 +76,6 @@ impl JitMemory {
     ) -> u32 {
         let aligned_size = utils::align_up((opcodes.len() * 4) as u32, 16);
         let new_addr = self.find_free_start(aligned_size);
-
-        let current_thread_id = thread::current().id();
-        match self.current_thread_holder {
-            Some(thread_id) => {
-                if thread_id != current_thread_id {
-                    self.close();
-                    self.open();
-                    self.current_thread_holder = Some(current_thread_id);
-                }
-            }
-            None => {
-                self.open();
-                self.current_thread_holder = Some(current_thread_id);
-            }
-        }
 
         utils::write_to_mem_slice(&mut self.memory, new_addr, opcodes);
         self.flush_cache(new_addr, (opcodes.len() * 4) as u32);
@@ -139,7 +121,7 @@ impl JitMemory {
     }
 
     pub fn get_jit_start_addr(
-        &mut self,
+        &self,
         guest_pc: u32,
     ) -> Option<(
         u32,         /* jit_addr */
@@ -147,58 +129,46 @@ impl JitMemory {
         u32,         /* guest_pc_end */
         Rc<Vec<u8>>, /* cycle_counts */
     )> {
-        match self.guest_pc_mapping.get(&guest_pc) {
-            None => None,
-            Some(info) => Some((
+        self.guest_pc_mapping.get(&guest_pc).map(|info| {
+            (
                 self.memory.as_ptr() as u32 + info.jit_addr,
                 info.guest_pc_start,
                 info.guest_pc_end,
                 info.guest_insts_cycle_counts.clone(),
-            )),
-        }
+            )
+        })
     }
 
     pub fn invalidate_block(&mut self, guest_pc: u32) {
-        loop {
-            match self.guest_pc_mapping.get(&guest_pc) {
-                None => {
-                    break;
-                }
-                Some(info) => {
-                    debug_println!(
-                        "Removing jit block at {:x} with guest start pc {:x}",
-                        self.memory.as_ptr() as u32 + info.jit_addr,
-                        info.guest_pc_start
-                    );
+        if let Some(info) = self.guest_pc_mapping.remove(&guest_pc) {
+            debug_println!(
+                "Removing jit block at {:x} with guest start pc {:x}",
+                self.memory.as_ptr() as u32 + info.jit_addr,
+                info.guest_pc_start
+            );
 
-                    if let Some(start_info) = self.guest_pc_mapping.get(&info.guest_pc_start) {
-                        match self
-                            .blocks
-                            .binary_search_by_key(&start_info.jit_addr, |(addr, _)| *addr)
-                        {
-                            Ok(index) => {
-                                self.blocks.remove(index);
-                            }
-                            Err(_) => {}
-                        }
-                    }
+            if let Some(start_info) = self.guest_pc_mapping.get(&info.guest_pc_start) {
+                if let Ok(index) = self
+                    .blocks
+                    .binary_search_by_key(&start_info.jit_addr, |(addr, _)| *addr)
+                {
+                    self.blocks.remove(index);
                 }
             }
-            self.guest_pc_mapping.remove(&guest_pc);
         }
     }
 
     #[cfg(target_os = "linux")]
-    fn open(&mut self) {}
+    pub fn open(&mut self) {}
 
     #[cfg(target_os = "linux")]
-    fn close(&mut self) {}
+    pub fn close(&mut self) {}
 
     #[cfg(target_os = "linux")]
     fn flush_cache(&self, _: JitBlockStartAddr, _: JitBlockSize) {}
 
     #[cfg(target_os = "vita")]
-    fn open(&mut self) {
+    pub fn open(&mut self) {
         let ret = unsafe { vitasdk_sys::sceKernelOpenVMDomain() };
         if ret < vitasdk_sys::SCE_OK as _ {
             panic!("Can't open vm domain {}", ret);
@@ -206,7 +176,7 @@ impl JitMemory {
     }
 
     #[cfg(target_os = "vita")]
-    fn close(&mut self) {
+    pub fn close(&mut self) {
         let ret = unsafe { vitasdk_sys::sceKernelCloseVMDomain() };
         if ret < vitasdk_sys::SCE_OK as _ {
             panic!("Can't close vm domain {}", ret);

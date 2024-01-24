@@ -28,7 +28,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             self.emit_call_host_func(
                 |_| {},
                 |_, _| {},
-                &[Some(ptr::addr_of!(self.cpu_regs) as u32), Some(0)],
+                &[Some(self.cpu_regs.as_ref() as *const _ as u32), Some(0)],
                 cpu_regs_halt::<CPU> as *const (),
             );
 
