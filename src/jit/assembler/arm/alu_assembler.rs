@@ -354,7 +354,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn ands_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::ands(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::ands(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -376,7 +376,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn adcs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::adcs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::adcs(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -398,7 +398,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn add_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::add(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::add(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -420,7 +420,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn adds_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::adds(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::adds(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -459,7 +459,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn bics_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::bics(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::bics(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -481,7 +481,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn cmp_al(op1: Reg, op2: Reg) -> u32 {
-        Self::cmp(op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::cmp(op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -503,7 +503,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn eors_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::eors(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::eors(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -525,7 +525,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn orr_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::orr(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::orr(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -547,7 +547,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn orrs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::orrs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::orrs(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -569,7 +569,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn sbcs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::sbcs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::sbcs(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -591,7 +591,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn sub_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::sub(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::sub(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -613,7 +613,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn subs_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::subs(op0, op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::subs(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -635,7 +635,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn tst_al(op1: Reg, op2: Reg) -> u32 {
-        Self::tst(op1, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::tst(op1, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -657,7 +657,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn mov_al(op0: Reg, op2: Reg) -> u32 {
-        Self::mov(op0, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::mov(op0, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -679,7 +679,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn movs_al(op0: Reg, op2: Reg) -> u32 {
-        Self::movs(op0, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::movs(op0, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 
     #[inline]
@@ -701,7 +701,7 @@ impl AluShiftImm {
 
     #[inline]
     pub fn mvns_al(op0: Reg, op2: Reg) -> u32 {
-        Self::mvns(op0, op2, ShiftType::LSL, 0, Cond::AL)
+        Self::mvns(op0, op2, ShiftType::Lsl, 0, Cond::AL)
     }
 }
 

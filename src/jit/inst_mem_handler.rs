@@ -43,16 +43,16 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
     ) {
         if WRITE {
             match AMOUNT {
-                MemoryAmount::BYTE => {
+                MemoryAmount::Byte => {
                     self.mem_handler.write(addr, *op0 as u8);
                 }
-                MemoryAmount::HALF => {
+                MemoryAmount::Half => {
                     self.mem_handler.write(addr, *op0 as u16);
                 }
-                MemoryAmount::WORD => {
+                MemoryAmount::Word => {
                     self.mem_handler.write(addr, *op0);
                 }
-                MemoryAmount::DOUBLE => {
+                MemoryAmount::Double => {
                     self.mem_handler.write(addr, *op0);
                     let next_reg =
                         unsafe { (((op0 as *mut _ as u32) + 4) as *mut u32).as_ref().unwrap() };
@@ -61,16 +61,16 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
             }
         } else {
             match AMOUNT {
-                MemoryAmount::BYTE => {
+                MemoryAmount::Byte => {
                     *op0 = self.mem_handler.read::<u8>(addr) as u32;
                 }
-                MemoryAmount::HALF => {
+                MemoryAmount::Half => {
                     *op0 = self.mem_handler.read::<u16>(addr) as u32;
                 }
-                MemoryAmount::WORD => {
+                MemoryAmount::Word => {
                     *op0 = self.mem_handler.read(addr);
                 }
-                MemoryAmount::DOUBLE => {
+                MemoryAmount::Double => {
                     *op0 = self.mem_handler.read(addr);
                     let next_reg =
                         unsafe { (((op0 as *mut _ as u32) + 4) as *mut u32).as_mut().unwrap() };

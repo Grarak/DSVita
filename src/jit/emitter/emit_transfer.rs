@@ -87,10 +87,10 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                                     }
                                 };
                             let opcode = match shift {
-                                Shift::LSL(v) => handle_shift(ShiftType::LSL, *v),
-                                Shift::LSR(v) => handle_shift(ShiftType::LSR, *v),
-                                Shift::ASR(v) => handle_shift(ShiftType::ASR, *v),
-                                Shift::ROR(v) => handle_shift(ShiftType::ROR, *v),
+                                Shift::LSL(v) => handle_shift(ShiftType::Lsl, *v),
+                                Shift::LSR(v) => handle_shift(ShiftType::Lsr, *v),
+                                Shift::ASR(v) => handle_shift(ShiftType::Asr, *v),
+                                Shift::ROR(v) => handle_shift(ShiftType::Ror, *v),
                             };
                             opcodes.push(opcode);
                             tmp_reg
@@ -150,17 +150,17 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         let mem_handler_addr = ptr::addr_of_mut!(self.inst_mem_handler) as u32;
         let func_addr = match amount {
-            MemoryAmount::BYTE => {
-                inst_mem_handler::<CPU, WRITE, { MemoryAmount::BYTE }> as *const _
+            MemoryAmount::Byte => {
+                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }> as *const _
             }
-            MemoryAmount::HALF => {
-                inst_mem_handler::<CPU, WRITE, { MemoryAmount::HALF }> as *const _
+            MemoryAmount::Half => {
+                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }> as *const _
             }
-            MemoryAmount::WORD => {
-                inst_mem_handler::<CPU, WRITE, { MemoryAmount::WORD }> as *const _
+            MemoryAmount::Word => {
+                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Word }> as *const _
             }
-            MemoryAmount::DOUBLE => {
-                inst_mem_handler::<CPU, WRITE, { MemoryAmount::DOUBLE }> as *const _
+            MemoryAmount::Double => {
+                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Double }> as *const _
             }
         };
 

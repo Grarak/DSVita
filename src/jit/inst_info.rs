@@ -158,10 +158,10 @@ impl Operand {
         Operand::Reg {
             reg,
             shift: Some(match shift_type {
-                ShiftType::LSL => Shift::LSL(shift_value),
-                ShiftType::LSR => Shift::LSR(shift_value),
-                ShiftType::ASR => Shift::ASR(shift_value),
-                ShiftType::ROR => Shift::ROR(shift_value),
+                ShiftType::Lsl => Shift::LSL(shift_value),
+                ShiftType::Lsr => Shift::LSR(shift_value),
+                ShiftType::Asr => Shift::ASR(shift_value),
+                ShiftType::Ror => Shift::ROR(shift_value),
             }),
         }
     }
@@ -227,10 +227,10 @@ pub enum Shift {
 impl Into<(ShiftType, ShiftValue)> for Shift {
     fn into(self) -> (ShiftType, ShiftValue) {
         match self {
-            Shift::LSL(v) => (ShiftType::LSL, v),
-            Shift::LSR(v) => (ShiftType::LSR, v),
-            Shift::ASR(v) => (ShiftType::ASR, v),
-            Shift::ROR(v) => (ShiftType::ROR, v),
+            Shift::LSL(v) => (ShiftType::Lsl, v),
+            Shift::LSR(v) => (ShiftType::Lsr, v),
+            Shift::ASR(v) => (ShiftType::Asr, v),
+            Shift::ROR(v) => (ShiftType::Ror, v),
         }
     }
 }

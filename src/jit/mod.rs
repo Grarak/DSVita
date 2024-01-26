@@ -623,74 +623,71 @@ pub enum Op {
 
 impl Op {
     pub const fn is_branch(self) -> bool {
-        match self {
-            Op::Bx | Op::BlxReg | Op::B | Op::Bl => true,
-            _ => false,
-        }
+        matches!(self, Op::Bx | Op::BlxReg | Op::B | Op::Bl)
     }
 
     pub const fn is_branch_thumb(self) -> bool {
-        match self {
+        matches!(
+            self,
             Op::BxRegT
-            | Op::BlxRegT
-            | Op::BT
-            | Op::BeqT
-            | Op::BneT
-            | Op::BcsT
-            | Op::BccT
-            | Op::BmiT
-            | Op::BplT
-            | Op::BvsT
-            | Op::BvcT
-            | Op::BhiT
-            | Op::BlsT
-            | Op::BgeT
-            | Op::BltT
-            | Op::BgtT
-            | Op::BleT
-            | Op::BlOffT
-            | Op::BlxOffT => true,
-            _ => false,
-        }
+                | Op::BlxRegT
+                | Op::BT
+                | Op::BeqT
+                | Op::BneT
+                | Op::BcsT
+                | Op::BccT
+                | Op::BmiT
+                | Op::BplT
+                | Op::BvsT
+                | Op::BvcT
+                | Op::BhiT
+                | Op::BlsT
+                | Op::BgeT
+                | Op::BltT
+                | Op::BgtT
+                | Op::BleT
+                | Op::BlOffT
+                | Op::BlxOffT
+        )
     }
 
     pub const fn is_uncond_branch_thumb(self) -> bool {
-        match self {
-            Op::BxRegT | Op::BlxRegT | Op::BT | Op::BlOffT | Op::BlxOffT => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Op::BxRegT | Op::BlxRegT | Op::BT | Op::BlOffT | Op::BlxOffT
+        )
     }
 
     pub const fn requires_breakout(self) -> bool {
-        match self {
+        matches!(
+            self,
             Op::LdrbOfrpll
-            | Op::LdrhOfip
-            | Op::LdrOfim
-            | Op::LdrOfip
-            | Op::LdrbOfrplr
-            | Op::LdrOfrpll
-            | Op::LdrPtip
-            | Op::Ldmia
-            | Op::LdmiaW
-            | Op::StrOfim
-            | Op::StrOfip
-            | Op::StrbOfip
-            | Op::StrhOfip
-            | Op::StrPrim
-            | Op::Stmia
-            | Op::Stmdb
-            | Op::StmiaW
-            | Op::StmdbW
-            | Op::Mcr
-            | Op::Mrc
-            | Op::MsrRc
-            | Op::MsrRs
-            | Op::MrsRc
-            | Op::MrsRs
-            | Op::Swi
-            | Op::UnkArm => true,
-            _ => false,
-        }
+                | Op::LdrhOfip
+                | Op::LdrOfim
+                | Op::LdrOfip
+                | Op::LdrbOfrplr
+                | Op::LdrOfrpll
+                | Op::LdrPtip
+                | Op::Ldmia
+                | Op::LdmiaW
+                | Op::StrOfim
+                | Op::StrOfip
+                | Op::StrbOfip
+                | Op::StrhOfip
+                | Op::StrPrim
+                | Op::Stmia
+                | Op::Stmdb
+                | Op::StmiaW
+                | Op::StmdbW
+                | Op::Mcr
+                | Op::Mrc
+                | Op::MsrRc
+                | Op::MsrRs
+                | Op::MrsRc
+                | Op::MrsRs
+                | Op::Swi
+                | Op::UnkArm
+        )
     }
 }
 
@@ -749,19 +746,19 @@ impl ops::Not for Cond {
 
 #[repr(u8)]
 pub enum ShiftType {
-    LSL = 0,
-    LSR = 1,
-    ASR = 2,
-    ROR = 3,
+    Lsl = 0,
+    Lsr = 1,
+    Asr = 2,
+    Ror = 3,
 }
 
 #[repr(u8)]
 #[derive(ConstParamTy, PartialEq, Eq)]
 pub enum MemoryAmount {
-    BYTE,
-    HALF,
-    WORD,
-    DOUBLE,
+    Byte,
+    Half,
+    Word,
+    Double,
 }
 
 impl From<Op> for MemoryAmount {
@@ -830,7 +827,7 @@ impl From<Op> for MemoryAmount {
             | Op::LdrbRegT
             | Op::LdrbImm5T
             | Op::StrbRegT
-            | Op::StrbImm5T => MemoryAmount::BYTE,
+            | Op::StrbImm5T => MemoryAmount::Byte,
             Op::LdrhOfim
             | Op::LdrhOfip
             | Op::LdrhOfrm
@@ -859,7 +856,7 @@ impl From<Op> for MemoryAmount {
             | Op::LdrhRegT
             | Op::LdrhImm5T
             | Op::StrhRegT
-            | Op::StrhImm5T => MemoryAmount::HALF,
+            | Op::StrhImm5T => MemoryAmount::Half,
             Op::LdrOfim
             | Op::LdrOfip
             | Op::LdrOfrmar
@@ -950,7 +947,7 @@ impl From<Op> for MemoryAmount {
             | Op::LdrSpT
             | Op::StrRegT
             | Op::StrImm5T
-            | Op::StrSpT => MemoryAmount::WORD,
+            | Op::StrSpT => MemoryAmount::Word,
             Op::LdrdOfim
             | Op::LdrdOfip
             | Op::LdrdOfrm
@@ -974,7 +971,7 @@ impl From<Op> for MemoryAmount {
             | Op::StrdPtim
             | Op::StrdPtip
             | Op::StrdPtrm
-            | Op::StrdPtrp => MemoryAmount::DOUBLE,
+            | Op::StrdPtrp => MemoryAmount::Double,
             _ => todo!("{:?}", value),
         }
     }
@@ -982,7 +979,7 @@ impl From<Op> for MemoryAmount {
 
 impl From<u8> for MemoryAmount {
     fn from(value: u8) -> Self {
-        debug_assert!(value <= MemoryAmount::DOUBLE as u8);
+        debug_assert!(value <= MemoryAmount::Double as u8);
         unsafe { mem::transmute(value) }
     }
 }

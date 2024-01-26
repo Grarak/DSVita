@@ -20,8 +20,8 @@ use crate::DEBUG;
 use std::arch::asm;
 use std::cell::RefCell;
 use std::ops::Deref;
-use std::ptr;
 use std::rc::Rc;
+use std::{mem, ptr};
 
 pub struct JitState {
     pub invalidated_addrs: NoHashSet,
@@ -277,14 +277,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     debug_println!("{:?} disassemble arm {:x} {}", CPU, opcode, opcode);
                     let (op, func) = lookup_opcode(opcode);
                     let inst_info = func(opcode, *op);
-                    let is_branch =
-                        inst_info.op.is_branch() || inst_info.out_regs.is_reserved(Reg::PC);
-                    let cond = inst_info.cond;
+                    let is_uncond_branch = inst_info.op.is_branch() && inst_info.cond == Cond::AL;
 
                     self.jit_buf.insts_cycle_counts.push(inst_info.cycle);
                     self.jit_buf.instructions.push(inst_info);
 
-                    if is_branch && cond == Cond::AL {
+                    if is_uncond_branch {
                         break;
                     }
                     index += 4;
@@ -318,25 +316,21 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             if DEBUG {
                 let inst_info = &self.jit_buf.instructions[i];
 
-                if (THUMB && !inst_info.op.is_uncond_branch_thumb())
-                    || (!THUMB && (!inst_info.op.is_branch() || inst_info.cond != Cond::AL))
-                {
-                    self.jit_buf.emit_opcodes.extend(&[
-                        AluShiftImm::mov_al(Reg::R0, Reg::R0), // NOP
-                        AluShiftImm::mov_al(Reg::R0, Reg::R0), // NOP
-                    ]);
+                self.jit_buf.emit_opcodes.extend(&[
+                    AluShiftImm::mov_al(Reg::R0, Reg::R0), // NOP
+                    AluShiftImm::mov_al(Reg::R0, Reg::R0), // NOP
+                ]);
 
-                    self.emit_call_host_func(
-                        |_| {},
-                        |_, _| {},
-                        &[
-                            Some(self as *const _ as u32),
-                            Some(pc),
-                            Some(inst_info.opcode),
-                        ],
-                        debug_after_exec_op::<CPU> as _,
-                    );
-                }
+                self.emit_call_host_func(
+                    |_| {},
+                    |_, _| {},
+                    &[
+                        Some(self as *const _ as u32),
+                        Some(pc),
+                        Some(inst_info.opcode),
+                    ],
+                    debug_after_exec_op::<CPU> as _,
+                );
             }
         }
 
@@ -472,14 +466,14 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 #[inline(never)]
 unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: u32) {
     asm!(
-    "push {{r4-r12, lr}}",
-    "str sp, [r1]",
-    "blx r2",
-    "pop {{r4-r12, lr}}",
-    in("r0") jit_entry,
-    in("r1") host_sp_addr,
-    in("r2") breakin_addr,
+        "push {{r4-r11}}",
+        "str sp, [r1]",
+        in("r0") jit_entry,
+        in("r1") host_sp_addr,
     );
+    let breakin: fn() = mem::transmute(breakin_addr);
+    breakin();
+    asm!("pop {{r4-r11}}");
 }
 
 fn debug_inst_info<const CPU: CpuType>(

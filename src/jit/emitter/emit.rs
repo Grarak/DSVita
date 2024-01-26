@@ -123,29 +123,26 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         };
 
         for operand in inst_info.operands_mut() {
-            match operand {
-                Operand::Reg { reg, shift } => {
-                    if let Some(shift) = shift {
-                        match match shift {
-                            Shift::LSL(v) => v,
-                            Shift::LSR(v) => v,
-                            Shift::ASR(v) => v,
-                            Shift::ROR(v) => v,
-                        } {
-                            ShiftValue::Reg(shift_reg) => {
-                                if emulated_src_regs.is_reserved(*shift_reg) {
-                                    handle_src_reg(shift_reg)
-                                }
+            if let Operand::Reg { reg, shift } = operand {
+                if let Some(shift) = shift {
+                    match match shift {
+                        Shift::LSL(v) => v,
+                        Shift::LSR(v) => v,
+                        Shift::ASR(v) => v,
+                        Shift::ROR(v) => v,
+                    } {
+                        ShiftValue::Reg(shift_reg) => {
+                            if emulated_src_regs.is_reserved(*shift_reg) {
+                                handle_src_reg(shift_reg)
                             }
-                            ShiftValue::Imm(_) => {}
                         }
-                    }
-
-                    if emulated_src_regs.is_reserved(*reg) {
-                        handle_src_reg(reg);
+                        ShiftValue::Imm(_) => {}
                     }
                 }
-                _ => {}
+
+                if emulated_src_regs.is_reserved(*reg) {
+                    handle_src_reg(reg);
+                }
             }
         }
 

@@ -40,7 +40,7 @@ mod alu_ops {
             Operands::new_3(
                 Operand::reg(op0),
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
@@ -63,7 +63,7 @@ mod alu_ops {
             Operands::new_3(
                 Operand::reg(op0),
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSR, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsr, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
@@ -120,7 +120,7 @@ mod alu_ops {
             Operands::new_3(
                 Operand::reg(op0),
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0, Reg::CPSR),
@@ -178,7 +178,7 @@ mod alu_ops {
             Operands::new_3(
                 Operand::reg(op0),
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
@@ -281,7 +281,7 @@ mod alu_ops {
             Operands::new_3(
                 Operand::reg(op0),
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
@@ -304,7 +304,7 @@ mod alu_ops {
             Operands::new_3(
                 Operand::reg(op0),
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSR, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsr, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
@@ -361,7 +361,7 @@ mod alu_ops {
             Operands::new_3(
                 Operand::reg(op0),
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
@@ -527,7 +527,7 @@ mod alu_ops {
             Operands::new_3(
                 Operand::reg(op0),
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
@@ -916,7 +916,7 @@ mod alu_ops {
             op,
             Operands::new_2(
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(Reg::CPSR),
@@ -1025,7 +1025,7 @@ mod alu_ops {
             op,
             Operands::new_2(
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(Reg::CPSR),
@@ -1046,7 +1046,7 @@ mod alu_ops {
             op,
             Operands::new_2(
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSR, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsr, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(Reg::CPSR),
@@ -1147,7 +1147,7 @@ mod alu_ops {
             Operands::new_3(
                 Operand::reg(op0),
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
@@ -1170,7 +1170,7 @@ mod alu_ops {
             Operands::new_3(
                 Operand::reg(op0),
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSR, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsr, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0),
@@ -1270,7 +1270,7 @@ mod alu_ops {
             op,
             Operands::new_2(
                 Operand::reg(op0),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(operand2.0),
             reg_reserve!(op0),
@@ -1291,7 +1291,7 @@ mod alu_ops {
             op,
             Operands::new_2(
                 Operand::reg(op0),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSR, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsr, operand2.1),
             ),
             reg_reserve!(operand2.0),
             reg_reserve!(op0),
@@ -1345,7 +1345,7 @@ mod alu_ops {
             op,
             Operands::new_2(
                 Operand::reg(op0),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(operand2.0),
             reg_reserve!(op0, Reg::CPSR),
@@ -1366,7 +1366,7 @@ mod alu_ops {
             op,
             Operands::new_2(
                 Operand::reg(op0),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSR, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsr, operand2.1),
             ),
             reg_reserve!(operand2.0),
             reg_reserve!(op0, Reg::CPSR),
@@ -1468,7 +1468,7 @@ mod alu_ops {
             Operands::new_3(
                 Operand::reg(op0),
                 Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, ShiftType::LSL, operand2.1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsl, operand2.1),
             ),
             reg_reserve!(op1, operand2.0),
             reg_reserve!(op0, Reg::CPSR),
