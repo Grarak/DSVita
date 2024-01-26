@@ -220,7 +220,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
 
         for i in 1..4 {
             if (flags & (1 << i)) != 0 {
-                let mask = 0xFF << (i * 8);
+                let mask = 0xFF << (i << 3);
                 self.cpsr = (self.cpsr & !mask) | (value & mask);
             }
         }
@@ -234,7 +234,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         }
         for i in 0..4 {
             if (flags & (1 << i)) != 0 {
-                let mask = 0xFF << (i * 8);
+                let mask = 0xFF << (i << 3);
                 self.spsr = (self.spsr & !mask) | (value & mask);
             }
         }

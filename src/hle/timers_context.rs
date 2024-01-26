@@ -90,7 +90,7 @@ impl<const CPU: CpuType> TimersContext<CPU> {
             let shift = if u8::from(cnt.prescaler()) == 0 || cnt.is_count_up(channel_num) {
                 0
             } else {
-                4 + u8::from(cnt.prescaler()) * 2
+                4 + u8::from(cnt.prescaler()) << 1
             };
             if channel.current_shift != shift {
                 channel.current_shift = shift;

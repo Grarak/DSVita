@@ -332,11 +332,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         };
 
         let mut tile_base_addr = vram_offset
-            + u32::from(disp_cnt.screen_base()) * 64 * 1024
-            + u32::from(bg_cnt.screen_base_block()) * 2 * 1024;
+            + (u32::from(disp_cnt.screen_base()) << 16)
+            + (u32::from(bg_cnt.screen_base_block()) << 11);
         let index_base_addr = vram_offset
-            + u32::from(disp_cnt.char_base()) * 64 * 1024
-            + u32::from(bg_cnt.char_base_block()) * 16 * 1024;
+            + (u32::from(disp_cnt.char_base()) << 16)
+            + (u32::from(bg_cnt.char_base_block()) << 14);
 
         let y_offset = (if bool::from(bg_cnt.mosaic()) {
             todo!()
@@ -364,29 +364,29 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 let tile = self.vram_context.read::<{ CpuType::ARM9 }, u16>(tile_addr);
                 let tile = TextBgScreen::from(tile);
 
-                let palette_base_addr = u32::from(tile.palette_num()) * 32
+                let palette_base_addr = (u32::from(tile.palette_num()) << 5)
                     + match ENGINE {
                         Gpu2DEngine::A => 0,
                         Gpu2DEngine::B => 0x400,
                     };
 
                 let index_addr = index_base_addr
-                    + u32::from(tile.tile_num()) * 32
-                    + if bool::from(tile.v_flip()) {
+                    + (u32::from(tile.tile_num()) << 5)
+                    + (if bool::from(tile.v_flip()) {
                         todo!()
                     } else {
-                        y_offset as u32 % 8
-                    } * 4;
+                        y_offset as u32 & 7
+                    } << 2);
                 let mut indices = self.vram_context.read::<{ CpuType::ARM9 }, u32>(index_addr);
 
-                let mut x = i.wrapping_sub(x_offset % 8);
+                let mut x = i.wrapping_sub(x_offset & 7);
                 while indices != 0 {
                     let tmp_x = if bool::from(tile.h_flip()) { 7 - x } else { x };
                     if tmp_x < 256 && (indices & 0xF) != 0 {
                         let color = self
                             .palattes_context
                             .borrow()
-                            .read::<u16>(palette_base_addr + (indices & 0xF) * 2);
+                            .read::<u16>(palette_base_addr + ((indices & 0xF) << 1));
                         self.draw_pixel::<BG>(line, tmp_x, (color | (1 << 15)) as u32);
                     }
                     x = x.wrapping_add(1);
@@ -425,9 +425,9 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     }
 
     fn rgb5_to_rgb6(color: u32) -> u32 {
-        let r = (color & 0x1F) * 2;
-        let g = ((color >> 5) & 0x1F) * 2;
-        let b = ((color >> 10) & 0x1F) * 2;
+        let r = (color & 0x1F) << 1;
+        let g = ((color >> 5) & 0x1F) << 1;
+        let b = ((color >> 10) & 0x1F) << 1;
         (color & 0xFFFC0000) | (b << 12) | (g << 6) | r
     }
 }

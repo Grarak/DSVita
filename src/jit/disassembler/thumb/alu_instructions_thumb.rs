@@ -85,7 +85,7 @@ mod alu_thumb_ops {
     #[inline]
     pub fn add_sp_t(opcode: u16, op: Op) -> InstInfoThumb {
         let op0 = Reg::from(((opcode >> 8) & 0x7) as u8);
-        let op2 = (opcode & 0xFF) * 4;
+        let op2 = (opcode & 0xFF) << 2;
         InstInfoThumb::new(
             opcode,
             op,

@@ -106,7 +106,11 @@ impl Cp15Context {
         self.control = (self.control & (!CONTROL_RW_BITS_MASK)) | (value & CONTROL_RW_BITS_MASK);
         let control_reg = Cp15ControlReg::from(self.control);
 
-        self.exception_addr = u32::from(control_reg.exception_vectors()) * 0xFFFF0000;
+        self.exception_addr = if bool::from(control_reg.exception_vectors()) {
+            0xFFFF0000
+        } else {
+            0x00000000
+        };
         self.dtcm_state = TcmState::from(
             u8::from(control_reg.dtcm_enable()) + u8::from(control_reg.dtcm_load_mode()),
         );

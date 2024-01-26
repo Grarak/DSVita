@@ -122,7 +122,9 @@ impl GpuInner {
 }
 
 pub struct GpuContext {
+    #[cfg(target_os = "linux")]
     frame_count: Arc<AtomicU16>,
+    #[cfg(target_os = "linux")]
     last_fps_query: RefCell<Instant>,
     inner: Rc<RefCell<GpuInner>>,
 }
@@ -159,13 +161,16 @@ impl GpuContext {
             (355 + 8) * 6,
             Box::new(Scanline355Event::new(
                 cycle_manager.clone(),
+                #[cfg(target_os = "linux")]
                 frame_count.clone(),
                 inner.clone(),
             )),
         );
 
         GpuContext {
+            #[cfg(target_os = "linux")]
             frame_count,
+            #[cfg(target_os = "linux")]
             last_fps_query: RefCell::new(Instant::now()),
             inner,
         }
@@ -187,6 +192,7 @@ impl GpuContext {
         inner.pow_cnt1 = (inner.pow_cnt1 & !mask) | (value & mask);
     }
 
+    #[cfg(target_os = "linux")]
     pub fn query_fps(&self) -> Option<u16> {
         let now = Instant::now();
         let mut last = self.last_fps_query.borrow_mut();
@@ -258,6 +264,7 @@ impl CycleEvent for Scanline256Event {
 
 struct Scanline355Event {
     cycle_manager: Rc<CycleManager>,
+    #[cfg(target_os = "linux")]
     frame_count: Arc<AtomicU16>,
     inner: Rc<RefCell<GpuInner>>,
 }
@@ -265,11 +272,12 @@ struct Scanline355Event {
 impl Scanline355Event {
     fn new(
         cycle_manager: Rc<CycleManager>,
-        frame_count: Arc<AtomicU16>,
+        #[cfg(target_os = "linux")] frame_count: Arc<AtomicU16>,
         inner: Rc<RefCell<GpuInner>>,
     ) -> Self {
         Scanline355Event {
             cycle_manager,
+            #[cfg(target_os = "linux")]
             frame_count,
             inner,
         }
@@ -321,6 +329,7 @@ impl CycleEvent for Scanline355Event {
                     disp_stat.set_v_blank_flag(u1::new(0));
                     *stat = u16::from(disp_stat);
                 }
+                #[cfg(target_os = "linux")]
                 self.frame_count.fetch_add(1, Ordering::Relaxed);
             }
             263 => {
@@ -366,6 +375,7 @@ impl CycleEvent for Scanline355Event {
             355 * 6 - delay as u32,
             Box::new(Scanline355Event::new(
                 self.cycle_manager.clone(),
+                #[cfg(target_os = "linux")]
                 self.frame_count.clone(),
                 self.inner.clone(),
             )),

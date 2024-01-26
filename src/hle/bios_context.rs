@@ -100,7 +100,7 @@ mod swi {
     pub fn wait_by_loop<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         let mut regs = context.regs.borrow_mut();
         let delay = regs.get_reg_value_mut(Reg::R0);
-        context.cycle_correction = *delay as u16 * 4;
+        context.cycle_correction = (*delay as u16) << 2;
         *delay = 0;
     }
 

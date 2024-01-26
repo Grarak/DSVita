@@ -44,8 +44,8 @@ fn write_block(base: u32, size: usize) -> Block {
     {{ block_placeholder() }}
 }}
 ",
-            size * 8,
-            size * 8,
+            size << 3,
+            size << 3,
         )
     };
 
@@ -65,7 +65,7 @@ fn read_block(base: u32, size: usize) -> Block {
     }}
 }}
         ",
-            size * 8
+            size << 3
         )
     } else {
         format!(
@@ -84,7 +84,7 @@ fn read_block(base: u32, size: usize) -> Block {
     }}
 }}
 ",
-            size * 8,
+            size << 3,
         )
     };
 

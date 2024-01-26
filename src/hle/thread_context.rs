@@ -134,7 +134,7 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
                 self.jit.execute()
             };
         if CPU == CpuType::ARM9 {
-            (cycles + (cycles % 2)) / 2
+            (cycles + 1) >> 1
         } else {
             cycles
         }

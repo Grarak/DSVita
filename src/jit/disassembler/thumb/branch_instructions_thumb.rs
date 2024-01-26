@@ -45,7 +45,7 @@ mod branch_thumb_ops {
 
     #[inline]
     fn b_cond(opcode: u16, op: Op) -> InstInfoThumb {
-        let op0 = ((opcode & 0xFF) as i8) as i32 * 2;
+        let op0 = (((opcode & 0xFF) as i8) as i32) << 1;
         InstInfoThumb::new(
             opcode,
             op,
@@ -141,7 +141,7 @@ mod branch_thumb_ops {
 
     #[inline]
     pub fn bl_off_t(opcode: u16, op: Op) -> InstInfoThumb {
-        let op0 = (opcode & 0x7FF) * 2; // * 2 (in steps of 2)
+        let op0 = (opcode & 0x7FF) << 1; // * 2 (in steps of 2)
         InstInfoThumb::new(
             opcode,
             op,

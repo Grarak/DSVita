@@ -1,7 +1,6 @@
 use static_assertions::const_assert_eq;
 use std::fs::File;
 use std::io::Read;
-use std::num::Wrapping;
 use std::os::unix::fs::FileExt;
 use std::{io, mem};
 
@@ -179,15 +178,15 @@ impl Key1 {
             key_buf: [0u32; KEY1_BUF_SIZE],
         };
 
-        let mut keycode = [id_code, id_code / 2, id_code * 2];
+        let mut keycode = [id_code, id_code >> 1, id_code << 1];
         if level >= 1 {
             instance.apply_keycode(&mut keycode, modulo);
         }
         if level >= 2 {
             instance.apply_keycode(&mut keycode, modulo);
         }
-        keycode[1] = (Wrapping(keycode[1]) * Wrapping(2)).0;
-        keycode[2] /= 2;
+        keycode[1] = keycode[1].wrapping_mul(2);
+        keycode[2] >>= 1;
         if level >= 3 {
             instance.apply_keycode(&mut keycode, modulo);
         }

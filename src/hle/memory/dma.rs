@@ -76,7 +76,7 @@ impl DmaTransferMode {
                 match mode {
                     2 => DmaTransferMode::DsCartSlot,
                     3 => DmaTransferMode::from(
-                        DmaTransferMode::WirelessInterrupt as u8 - (channel_num as u8 % 2) * 2,
+                        DmaTransferMode::WirelessInterrupt as u8 - (channel_num as u8 % 2) << 1,
                     ),
                     _ => DmaTransferMode::from(mode),
                 }
@@ -136,13 +136,21 @@ impl<const CPU: CpuType> Dma<CPU> {
     }
 
     pub fn set_sad(&mut self, channel_num: usize, mut mask: u32, value: u32) {
-        mask &= ((CPU == CpuType::ARM9 || channel_num != 0) as u32 * 0x8000000) | 0x07FFFFFF;
+        mask &= if CPU == CpuType::ARM9 || channel_num != 0 {
+            0x0FFFFFFF
+        } else {
+            0x07FFFFFF
+        };
         let mut channel = self.channels[channel_num].borrow_mut();
         channel.sad = (channel.sad & !mask) | (value & mask);
     }
 
     pub fn set_dad(&mut self, channel_num: usize, mut mask: u32, value: u32) {
-        mask &= ((CPU == CpuType::ARM9 || channel_num != 0) as u32 * 0x8000000) | 0x07FFFFFF;
+        mask &= if CPU == CpuType::ARM9 || channel_num != 0 {
+            0x0FFFFFFF
+        } else {
+            0x07FFFFFF
+        };
         let mut channel = self.channels[channel_num].borrow_mut();
         channel.dad = (channel.dad & !mask) | (value & mask);
     }
@@ -153,7 +161,13 @@ impl<const CPU: CpuType> Dma<CPU> {
 
         mask &= match CPU {
             CpuType::ARM9 => 0xFFFFFFFF,
-            CpuType::ARM7 => ((channel_num == 3) as u32 * 0xC000) | 0xF7E03FFF,
+            CpuType::ARM7 => {
+                if channel_num == 3 {
+                    0xF7E0FFFF
+                } else {
+                    0xF7E03FFF
+                }
+            }
         };
 
         channel.cnt = (channel.cnt & !mask) | value & mask;

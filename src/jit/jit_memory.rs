@@ -74,11 +74,11 @@ impl JitMemory {
         guest_insts_cycle_counts: Option<Vec<u8>>,
         guest_pc_end: Option<u32>,
     ) -> u32 {
-        let aligned_size = utils::align_up((opcodes.len() * 4) as u32, 16);
+        let aligned_size = utils::align_up((opcodes.len() << 2) as u32, 16);
         let new_addr = self.find_free_start(aligned_size);
 
         utils::write_to_mem_slice(&mut self.memory, new_addr, opcodes);
-        self.flush_cache(new_addr, (opcodes.len() * 4) as u32);
+        self.flush_cache(new_addr, (opcodes.len() << 2) as u32);
 
         match self
             .blocks

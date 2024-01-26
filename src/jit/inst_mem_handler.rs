@@ -128,7 +128,7 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
 
         // TODO use batches
         for reg in rlist {
-            addr += pre as u32 * 4;
+            addr += (pre as u32) << 2;
             if WRITE {
                 let value = *thread_regs.get_reg_value(reg);
                 self.mem_handler.write(addr, value);
@@ -136,7 +136,7 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
                 let value = self.mem_handler.read(addr);
                 *thread_regs.get_reg_value_mut(reg) = value;
             }
-            addr += !pre as u32 * 4;
+            addr += (!pre as u32) << 2;
         }
 
         if write_back {

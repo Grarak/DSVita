@@ -234,7 +234,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 instance.breakout_addr =
                     jit_memory.insert_block(jit_opcodes, None, None, None, None);
                 instance.breakout_skip_save_regs_addr =
-                    instance.breakout_addr + jit_skip_save_regs_offset * 4;
+                    instance.breakout_addr + (jit_skip_save_regs_offset << 2);
 
                 let save_regs_thumb_opcodes =
                     &instance.thread_regs.borrow().save_regs_thumb_opcodes;
@@ -243,7 +243,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 instance.breakout_thumb_addr =
                     jit_memory.insert_block(jit_opcodes, None, None, None, None);
                 instance.breakout_skip_save_regs_thumb_addr =
-                    instance.breakout_thumb_addr + jit_skip_save_regs_offset * 4;
+                    instance.breakout_thumb_addr + (jit_skip_save_regs_offset << 2);
 
                 jit_opcodes.clear();
             }
@@ -290,14 +290,14 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             }
         }
 
-        let pc_step_size = if THUMB { 2 } else { 4 };
+        let pc_step_size = if THUMB { 1 } else { 2 };
         for i in 0..self.jit_buf.instructions.len() {
-            let pc = i as u32 * pc_step_size + entry;
+            let pc = ((i as u32) << pc_step_size) + entry;
             let opcodes_len = self.jit_buf.emit_opcodes.len();
             if opcodes_len > 0 {
                 self.jit_buf
                     .jit_addr_mapping
-                    .insert(pc, (opcodes_len * 4) as u16);
+                    .insert(pc, (opcodes_len << 2) as u16);
             }
 
             if DEBUG {
@@ -334,7 +334,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             }
         }
 
-        let guest_pc_end = entry + self.jit_buf.instructions.len() as u32 * pc_step_size;
+        let guest_pc_end = entry + ((self.jit_buf.instructions.len() as u32) << pc_step_size);
         // TODO statically analyze generated insts
 
         {
@@ -350,7 +350,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
             if DEBUG {
                 for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
-                    let pc = index as u32 * pc_step_size + entry;
+                    let pc = ((index as u32) << pc_step_size) + entry;
                     let (jit_addr, _, _, _) = jit_memory.get_jit_start_addr(pc).unwrap();
 
                     debug_println!(
@@ -426,9 +426,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         };
         debug_assert_ne!(self.guest_branch_out_pc, 0);
 
-        let executed_insts = (self.guest_branch_out_pc - guest_pc) / (!thumb as u32 * 2 + 2);
-        let insts_cycle_count =
-            &insts_cycle_count[((guest_pc - guest_pc_start) / (!thumb as u32 * 2 + 2)) as usize..];
+        let executed_insts = (self.guest_branch_out_pc - guest_pc) >> if thumb { 1 } else { 2 };
+        let insts_cycle_count = &insts_cycle_count
+            [((guest_pc - guest_pc_start) >> if thumb { 1 } else { 2 }) as usize..];
         // TODO cycle correction for conds
         let executed_cycles = insts_cycle_count[0..=executed_insts as usize]
             .iter()

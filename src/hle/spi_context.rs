@@ -159,7 +159,7 @@ impl SpiContext {
                 SpiDevice::Firmware => {
                     if self.cmd == 3 {
                         if self.write_count < 4 {
-                            self.addr |= (value as u32) << ((3 - self.write_count as u32) * 8);
+                            self.addr |= (value as u32) << ((3 - self.write_count as u32) << 3);
                         } else {
                             self.data = if self.addr < FIRMWARE_SIZE as u32 {
                                 SPI_FIRMWARE[self.addr as usize]

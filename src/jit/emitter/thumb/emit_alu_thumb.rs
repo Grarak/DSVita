@@ -52,7 +52,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             }
             Operand::Imm(imm) => match inst_info.op {
                 Op::AddImm3T | Op::AddImm8T => AluImm::adds_al(op0, op1, *imm as u8),
-                Op::AddSpT => AluImm::add(op0, op1, (*imm / 4) as u8, 15, Cond::AL), // imm in steps of 4, ror by 15 * 2
+                Op::AddSpT => AluImm::add(op0, op1, (*imm >> 2) as u8, 15, Cond::AL), // imm in steps of 4, ror by 15 * 2
                 Op::AsrImmT => AluShiftImm::movs(op0, op1, ShiftType::Asr, *imm as u8, Cond::AL),
                 Op::CmpImm8T => AluImm::cmp_al(op0, *imm as u8),
                 Op::LslImmT => AluShiftImm::movs(op0, op1, ShiftType::Lsl, *imm as u8, Cond::AL),
