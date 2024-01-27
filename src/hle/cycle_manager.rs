@@ -48,14 +48,13 @@ impl CycleManager {
     }
 
     fn check_events_internal<const CPU: CpuType>(&self, cycle_count: u64) {
-        let mut triggered_events = Vec::new();
-        {
-            let events = &mut self.inner.borrow_mut().events[CPU as usize];
-            while !events.is_empty() && events.front().unwrap().0 <= cycle_count {
-                triggered_events.push(events.pop_front().unwrap());
-            }
-        }
-        for (cycles, mut event) in triggered_events {
+        while {
+            let events = &self.inner.borrow().events[CPU as usize];
+            !events.is_empty() && events.front().unwrap().0 <= cycle_count
+        } {
+            let (cycles, mut event) = self.inner.borrow_mut().events[CPU as usize]
+                .pop_front()
+                .unwrap();
             event.trigger((cycle_count - cycles) as u16);
         }
     }
