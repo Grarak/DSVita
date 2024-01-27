@@ -67,16 +67,16 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io8(0x208) => self.cpu_regs.get_ime(),
                 io32(0x210) => self.cpu_regs.get_ie(),
                 io32(0x214) => self.cpu_regs.get_irf(),
-                io8(0x240) => self.vram_context.get_cnt(0),
-                io8(0x242) => self.vram_context.get_cnt(1),
-                io8(0x243) => self.vram_context.get_cnt(2),
-                io8(0x241) => self.vram_context.get_cnt(3),
-                io8(0x244) => self.vram_context.get_cnt(4),
-                io8(0x245) => self.vram_context.get_cnt(5),
-                io8(0x246) => self.vram_context.get_cnt(6),
+                io8(0x240) => self.vram_context.borrow().cnt[0],
+                io8(0x242) => self.vram_context.borrow().cnt[1],
+                io8(0x243) => self.vram_context.borrow().cnt[2],
+                io8(0x241) => self.vram_context.borrow().cnt[3],
+                io8(0x244) => self.vram_context.borrow().cnt[4],
+                io8(0x245) => self.vram_context.borrow().cnt[5],
+                io8(0x246) => self.vram_context.borrow().cnt[6],
                 io8(0x247) => self.wram_context.borrow().get_cnt(),
-                io8(0x248) => self.vram_context.get_cnt(7),
-                io8(0x249) => self.vram_context.get_cnt(8),
+                io8(0x248) => self.vram_context.borrow().cnt[7],
+                io8(0x249) => self.vram_context.borrow().cnt[8],
                 io16(0x280) => todo!(),
                 io32(0x290) => todo!(),
                 io32(0x294) => todo!(),
@@ -161,8 +161,8 @@ impl<const CPU: CpuType> IoPorts<CPU> {
     }
 
     pub fn write_arm9<T: Convert>(&self, addr_offset: u32, value: T) {
-        let value_array = [value];
-        let (_, bytes, _) = unsafe { value_array.align_to::<u8>() };
+        let bytes = value.into().to_le_bytes();
+        let bytes = &bytes[..mem::size_of::<T>()];
         /*
          * Use moving windows to handle reads and writes
          * |0|0|0|  x  |   x   |   x   |   x   |0|0|0|
@@ -252,16 +252,16 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io8(0x208) => self.cpu_regs.set_ime(value),
                 io32(0x210) => self.cpu_regs.set_ie(mask, value),
                 io32(0x214) => self.cpu_regs.set_irf(mask, value),
-                io8(0x240) => self.vram_context.set_cnt(0, value),
-                io8(0x241) => self.vram_context.set_cnt(1, value),
-                io8(0x242) => self.vram_context.set_cnt(2, value),
-                io8(0x243) => self.vram_context.set_cnt(3, value),
-                io8(0x244) => self.vram_context.set_cnt(4, value),
-                io8(0x245) => self.vram_context.set_cnt(5, value),
-                io8(0x246) => self.vram_context.set_cnt(6, value),
+                io8(0x240) => self.vram_context.borrow_mut().set_cnt(0, value),
+                io8(0x241) => self.vram_context.borrow_mut().set_cnt(1, value),
+                io8(0x242) => self.vram_context.borrow_mut().set_cnt(2, value),
+                io8(0x243) => self.vram_context.borrow_mut().set_cnt(3, value),
+                io8(0x244) => self.vram_context.borrow_mut().set_cnt(4, value),
+                io8(0x245) => self.vram_context.borrow_mut().set_cnt(5, value),
+                io8(0x246) => self.vram_context.borrow_mut().set_cnt(6, value),
                 io8(0x247) => self.wram_context.borrow_mut().set_cnt(value),
-                io8(0x248) => self.vram_context.set_cnt(7, value),
-                io8(0x249) => self.vram_context.set_cnt(8, value),
+                io8(0x248) => self.vram_context.borrow_mut().set_cnt(7, value),
+                io8(0x249) => self.vram_context.borrow_mut().set_cnt(8, value),
                 io16(0x280) => todo!(),
                 io32(0x290) => todo!(),
                 io32(0x294) => todo!(),

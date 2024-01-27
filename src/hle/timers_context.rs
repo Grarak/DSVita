@@ -55,7 +55,7 @@ impl<const CPU: CpuType> TimersContext<CPU> {
         let mut channel = self.channels[channel_num].borrow_mut();
         let cnt = TimerCntH::from(channel.cnt_h);
         if bool::from(cnt.start()) && cnt.is_count_up(channel_num) {
-            let current_cycle_count = self.cycle_manager.get_cycle_count::<CPU>();
+            let current_cycle_count = self.cycle_manager.get_cycle_count();
             let diff = if channel.scheduled_cycle > current_cycle_count {
                 channel.scheduled_cycle - current_cycle_count
             } else {
@@ -90,7 +90,7 @@ impl<const CPU: CpuType> TimersContext<CPU> {
             let shift = if u8::from(cnt.prescaler()) == 0 || cnt.is_count_up(channel_num) {
                 0
             } else {
-                4 + u8::from(cnt.prescaler()) << 1
+                4 + (u8::from(cnt.prescaler()) << 1)
             };
             if channel.current_shift != shift {
                 channel.current_shift = shift;
@@ -101,7 +101,7 @@ impl<const CPU: CpuType> TimersContext<CPU> {
         if update && u8::from(cnt.prescaler()) == 0 && !cnt.is_count_up(channel_num) {
             let remaining_cycles =
                 (-((channel.current_value as i32) << channel.current_shift)) as u32;
-            channel.scheduled_cycle = self.cycle_manager.schedule::<CPU, _>(
+            channel.scheduled_cycle = self.cycle_manager.schedule(
                 remaining_cycles,
                 Box::new(TimersEvent::new(self.channels[channel_num].clone())),
             );

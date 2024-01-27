@@ -6,12 +6,13 @@ use crate::logging::debug_println;
 use crate::utils::HeapMemU32;
 use bilge::prelude::*;
 use std::cell::RefCell;
+use std::hint::unreachable_unchecked;
 use std::marker::ConstParamTy;
 use std::mem;
 use std::rc::Rc;
 
 #[bitsize(32)]
-#[derive(FromBits)]
+#[derive(Copy, Clone, FromBits)]
 struct DispCnt {
     bg_mode: u3,
     bg0_3d: u1,
@@ -91,13 +92,13 @@ pub struct Gpu2DContext<const ENGINE: Gpu2DEngine> {
     pow_cnt1: u16,
     pub framebuffer: HeapMemU32<{ DISPLAY_PIXEL_COUNT }>,
     layers: [RefCell<HeapMemU32<{ DISPLAY_WIDTH }>>; 2],
-    vram_context: Rc<VramContext>,
+    vram_context: Rc<RefCell<VramContext>>,
     palattes_context: Rc<RefCell<PalettesContext>>,
 }
 
 impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     pub fn new(
-        vram_context: Rc<VramContext>,
+        vram_context: Rc<RefCell<VramContext>>,
         palattes_context: Rc<RefCell<PalettesContext>>,
     ) -> Self {
         Gpu2DContext {
@@ -278,10 +279,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 }
             }
             7 => {
-                todo!()
+                debug_println!("Unknown engine {:?} bg mode {}", ENGINE, disp_cnt.bg_mode());
             }
             _ => {
-                debug_println!("Unknown engine {:?} bg mode {}", ENGINE, disp_cnt.bg_mode());
+                unsafe { unreachable_unchecked() };
             }
         }
 
@@ -350,6 +351,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             todo!()
         }
 
+        let vram_context = self.vram_context.borrow();
         if bool::from(bg_cnt.color_palettes()) {
             todo!()
         } else {
@@ -361,7 +363,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     todo!()
                 }
 
-                let tile = self.vram_context.read::<{ CpuType::ARM9 }, u16>(tile_addr);
+                let tile = vram_context.read::<{ CpuType::ARM9 }, u16>(tile_addr);
                 let tile = TextBgScreen::from(tile);
 
                 let palette_base_addr = (u32::from(tile.palette_num()) << 5)
@@ -377,7 +379,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     } else {
                         y_offset as u32 & 7
                     } << 2);
-                let mut indices = self.vram_context.read::<{ CpuType::ARM9 }, u32>(index_addr);
+                let mut indices = vram_context.read::<{ CpuType::ARM9 }, u32>(index_addr);
 
                 let mut x = i.wrapping_sub(x_offset & 7);
                 while indices != 0 {
@@ -387,7 +389,13 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                             .palattes_context
                             .borrow()
                             .read::<u16>(palette_base_addr + ((indices & 0xF) << 1));
-                        self.draw_pixel::<BG>(line, tmp_x, (color | (1 << 15)) as u32);
+                        Self::draw_pixel::<BG>(
+                            disp_cnt,
+                            line,
+                            tmp_x,
+                            (color | (1 << 15)) as u32,
+                            &self.layers,
+                        );
                     }
                     x = x.wrapping_add(1);
                     indices >>= 4;
@@ -408,9 +416,13 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         todo!()
     }
 
-    fn draw_pixel<const BG: usize>(&mut self, line: u16, x: u16, pixel: u32) {
-        let disp_cnt = DispCnt::from(self.disp_cnt);
-
+    fn draw_pixel<const BG: usize>(
+        disp_cnt: DispCnt,
+        line: u16,
+        x: u16,
+        pixel: u32,
+        layers: &[RefCell<HeapMemU32<{ DISPLAY_WIDTH }>>; 2],
+    ) {
         if bool::from(disp_cnt.window0_display_flag()) {
             todo!()
         }
@@ -421,7 +433,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             todo!()
         }
 
-        self.layers[0].borrow_mut()[x as usize] = pixel;
+        layers[0].borrow_mut()[x as usize] = pixel;
     }
 
     fn rgb5_to_rgb6(color: u32) -> u32 {

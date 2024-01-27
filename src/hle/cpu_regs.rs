@@ -128,7 +128,7 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
     }
 
     fn schedule_interrupt(&self) {
-        self.cycle_manager.schedule::<CPU, _>(
+        self.cycle_manager.schedule(
             1,
             Box::new(InterruptEvent::new(self.inner.clone(), self.halt.clone())),
         );

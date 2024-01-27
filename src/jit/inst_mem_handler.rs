@@ -1,28 +1,26 @@
 use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::thread_regs::ThreadRegs;
 use crate::hle::CpuType;
-use crate::jit::disassembler::lookup_table::lookup_opcode;
-use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
-use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{Reg, RegReserve};
-use crate::jit::{MemoryAmount, Op};
+use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
+use bilge::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+#[bitsize(32)]
+#[derive(FromBits)]
+pub struct InstMemMultipleArgs {
+    pre: u1,
+    write_back: u1,
+    decrement: u1,
+    op0_reg: u5,
+    rlist: u24,
+}
 
 pub struct InstMemHandler<const CPU: CpuType> {
     thread_regs: Rc<RefCell<ThreadRegs<CPU>>>,
     mem_handler: Rc<MemHandler<CPU>>,
-}
-
-fn get_inst_info<const THUMB: bool>(opcode: u32) -> InstInfo {
-    if THUMB {
-        let (op, func) = lookup_thumb_opcode(opcode as u16);
-        InstInfo::from(&func(opcode as u16, *op))
-    } else {
-        let (op, func) = lookup_opcode(opcode);
-        func(opcode, *op)
-    }
 }
 
 impl<const CPU: CpuType> InstMemHandler<CPU> {
@@ -82,9 +80,8 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
 
     fn handle_multiple_request<const THUMB: bool, const WRITE: bool>(
         &mut self,
-        opcode: u32,
         pc: u32,
-        flags: u8,
+        args: u32,
     ) {
         debug_println!(
             "handle multiple request at {:x} thumb: {} write: {}",
@@ -93,21 +90,13 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
             WRITE
         );
 
-        let inst_info = get_inst_info::<THUMB>(opcode);
+        let args = InstMemMultipleArgs::from(args);
 
-        let pre = flags & 1 != 0;
-        let write_back = flags & 2 != 0;
-        let decrement = flags & 4 != 0;
-
-        let operands = inst_info.operands();
-
-        let op0 = operands[0].as_reg_no_shift().unwrap();
-        let mut rlist = RegReserve::from(inst_info.opcode & if THUMB { 0xFF } else { 0xFFFF });
-        if inst_info.op == Op::PushLrT {
-            rlist += Reg::LR;
-        } else if inst_info.op == Op::PopPcT {
-            rlist += Reg::PC;
-        }
+        let rlist = RegReserve::from(u32::from(args.rlist()));
+        let op0 = Reg::from(u8::from(args.op0_reg()));
+        let pre = bool::from(args.pre());
+        let write_back = bool::from(args.write_back());
+        let decrement = bool::from(args.decrement());
 
         let mut thread_regs = self.thread_regs.borrow_mut();
 
@@ -115,37 +104,42 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
             todo!()
         }
 
-        if rlist.is_reserved(Reg::PC) || *op0 == Reg::PC {
+        if rlist.is_reserved(Reg::PC) || op0 == Reg::PC {
             *thread_regs.get_reg_value_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
         }
 
-        let start_addr = *thread_regs.get_reg_value(*op0);
-        let mut addr = start_addr - (decrement as u32 * rlist.len() as u32 * 4);
+        let start_addr = if decrement {
+            *thread_regs.get_reg_value(op0) - ((rlist.len() as u32) << 2)
+        } else {
+            *thread_regs.get_reg_value(op0)
+        };
+        let mut addr = start_addr;
 
-        if WRITE && CPU == CpuType::ARM7 && write_back && rlist.is_reserved(*op0) {
+        if WRITE && CPU == CpuType::ARM7 && write_back && rlist.is_reserved(op0) {
             todo!()
         }
 
-        // TODO use batches
-        for reg in rlist {
-            addr += (pre as u32) << 2;
-            if WRITE {
-                let value = *thread_regs.get_reg_value(reg);
-                self.mem_handler.write(addr, value);
-            } else {
-                let value = self.mem_handler.read(addr);
-                *thread_regs.get_reg_value_mut(reg) = value;
+        for i in Reg::R0 as u8..Reg::CPSR as u8 {
+            let reg = Reg::from(i);
+            if rlist.is_reserved(reg) {
+                addr += (pre as u32) << 2;
+                if WRITE {
+                    let value = *thread_regs.get_reg_value(reg);
+                    self.mem_handler.write(addr, value);
+                } else {
+                    let value = self.mem_handler.read(addr);
+                    *thread_regs.get_reg_value_mut(reg) = value;
+                }
+                addr += (!pre as u32) << 2;
             }
-            addr += (!pre as u32) << 2;
         }
 
         if write_back {
-            if !WRITE && CPU == CpuType::ARM9 && rlist.is_reserved(*op0) {
+            if !WRITE && CPU == CpuType::ARM9 && rlist.is_reserved(op0) {
                 todo!()
             }
 
-            *thread_regs.get_reg_value_mut(*op0) = (decrement as u32 * (start_addr - rlist.len() as u32 * 4)) // decrement
-                + (!decrement as u32 * addr); // increment
+            *thread_regs.get_reg_value_mut(op0) = if decrement { start_addr } else { addr }
         }
     }
 }
@@ -159,7 +153,7 @@ pub unsafe extern "C" fn inst_mem_handler<
     op0: *mut u32,
     handler: *mut InstMemHandler<CPU>,
 ) {
-    (*handler).handle_request::<WRITE, AMOUNT>(op0.as_mut().unwrap(), addr);
+    (*handler).handle_request::<WRITE, AMOUNT>(op0.as_mut().unwrap_unchecked(), addr);
 }
 
 pub unsafe extern "C" fn inst_mem_handler_multiple<
@@ -168,9 +162,8 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     const WRITE: bool,
 >(
     handler: *mut InstMemHandler<CPU>,
-    opcode: u32,
     pc: u32,
-    flags: u8,
+    args: u32,
 ) {
-    (*handler).handle_multiple_request::<THUMB, WRITE>(opcode, pc, flags);
+    (*handler).handle_multiple_request::<THUMB, WRITE>(pc, args);
 }

@@ -8,6 +8,7 @@ use crate::logging::debug_println;
 use crate::DEBUG;
 use bilge::prelude::*;
 use std::cell::RefCell;
+use std::hint::unreachable_unchecked;
 use std::ptr;
 use std::rc::Rc;
 
@@ -172,6 +173,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         opcodes
     }
 
+    #[inline]
     pub fn get_reg_value(&self, reg: Reg) -> &u32 {
         match reg {
             Reg::SP => &self.sp,
@@ -179,17 +181,17 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
             Reg::PC => &self.pc,
             Reg::CPSR => &self.cpsr,
             Reg::SPSR => &self.spsr,
-            Reg::None => panic!(),
             _ => {
                 if reg >= Reg::R0 && reg <= Reg::R12 {
                     &self.gp_regs[reg as usize]
                 } else {
-                    panic!()
+                    unsafe { unreachable_unchecked() };
                 }
             }
         }
     }
 
+    #[inline]
     pub fn get_reg_value_mut(&mut self, reg: Reg) -> &mut u32 {
         match reg {
             Reg::SP => &mut self.sp,
@@ -197,12 +199,11 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
             Reg::PC => &mut self.pc,
             Reg::CPSR => &mut self.cpsr,
             Reg::SPSR => &mut self.spsr,
-            Reg::None => panic!(),
             _ => {
                 if reg >= Reg::R0 && reg <= Reg::R12 {
                     &mut self.gp_regs[reg as usize]
                 } else {
-                    panic!()
+                    unsafe { unreachable_unchecked() };
                 }
             }
         }

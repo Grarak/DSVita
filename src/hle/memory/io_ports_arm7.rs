@@ -55,7 +55,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io8(0x208) => self.cpu_regs.get_ime(),
                 io32(0x210) => self.cpu_regs.get_ie(),
                 io32(0x214) => self.cpu_regs.get_irf(),
-                io8(0x240) => self.vram_context.get_stat(),
+                io8(0x240) => self.vram_context.borrow().stat,
                 io8(0x241) => self.wram_context.borrow().get_cnt(),
                 io8(0x300) => todo!(),
                 io8(0x301) => todo!(),
@@ -161,8 +161,8 @@ impl<const CPU: CpuType> IoPorts<CPU> {
     }
 
     pub fn write_arm7<T: Convert>(&self, addr_offset: u32, value: T) {
-        let value_array = [value];
-        let (_, bytes, _) = unsafe { value_array.align_to::<u8>() };
+        let bytes = value.into().to_le_bytes();
+        let bytes = &bytes[..mem::size_of::<T>()];
         /*
          * Use moving windows to handle reads and writes
          * |0|0|0|  x  |   x   |   x   |   x   |0|0|0|
@@ -175,7 +175,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
 
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
-        while (index - 3) < bytes.len() {
+        while (index - 3) < mem::size_of::<T>() {
             #[rustfmt::skip]
             io_ports_write!(match addr_offset + (index - 3) as u32 {
                 io16(0x4) => self.gpu_context.set_disp_stat::<{ CpuType::ARM7 }>(mask, value),

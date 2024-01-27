@@ -1,8 +1,9 @@
 use std::cmp::min;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{BuildHasher, Hasher};
+use std::mem;
 use std::ops::{Deref, DerefMut};
 
 pub const fn align_up(n: u32, align: u32) -> u32 {
@@ -36,24 +37,24 @@ pub fn negative<T: Convert>(n: T) -> T {
 }
 
 pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
-    let (_, aligned, _) = unsafe { mem[addr as usize..].align_to::<T>() };
+    let aligned: &[T] = unsafe { mem::transmute(&mem[addr as usize..]) };
     aligned[0].clone()
 }
 
 pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> usize {
-    let (_, aligned, _) = unsafe { mem[addr as usize..].align_to::<T>() };
+    let aligned: &[T] = unsafe { mem::transmute(&mem[addr as usize..]) };
     let read_amount = min(aligned.len(), slice.len());
     slice[..read_amount].copy_from_slice(&aligned[..read_amount]);
     read_amount
 }
 
 pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
-    let (_, aligned, _) = unsafe { mem[addr as usize..].align_to_mut::<T>() };
+    let aligned: &mut [T] = unsafe { mem::transmute(&mut mem[addr as usize..]) };
     aligned[0] = value
 }
 
 pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) -> usize {
-    let (_, aligned, _) = unsafe { mem[addr as usize..].align_to_mut::<T>() };
+    let aligned: &mut [T] = unsafe { mem::transmute(&mut mem[addr as usize..]) };
     let write_amount = min(aligned.len(), slice.len());
     aligned[..write_amount].copy_from_slice(&slice[..write_amount]);
     write_amount
@@ -168,4 +169,3 @@ impl BuildHasher for BuildNoHasher {
 }
 
 pub type NoHashMap<V> = HashMap<u32, V, BuildNoHasher>;
-pub type NoHashSet = HashSet<u32, BuildNoHasher>;

@@ -23,7 +23,7 @@ pub struct IoPorts<const CPU: CpuType> {
     pub cpu_regs: Rc<CpuRegs<CPU>>,
     pub dma: Rc<RefCell<Dma<CPU>>>,
     pub timers_context: Rc<RefCell<TimersContext<CPU>>>,
-    pub vram_context: Rc<VramContext>,
+    pub vram_context: Rc<RefCell<VramContext>>,
     pub input_context: Arc<RwLock<InputContext>>,
 
     pub gpu_context: Rc<GpuContext>,
@@ -42,7 +42,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
         cpu_regs: Rc<CpuRegs<CPU>>,
         dma: Rc<RefCell<Dma<CPU>>>,
         timers_context: Rc<RefCell<TimersContext<CPU>>>,
-        vram_context: Rc<VramContext>,
+        vram_context: Rc<RefCell<VramContext>>,
         input_context: Arc<RwLock<InputContext>>,
         gpu_context: Rc<GpuContext>,
         gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,

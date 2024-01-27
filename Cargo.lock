@@ -171,7 +171,6 @@ dependencies = [
  "chrono",
  "dspsv_macros",
  "libc",
- "once_cell",
  "paste",
  "sdl2",
  "static_assertions",

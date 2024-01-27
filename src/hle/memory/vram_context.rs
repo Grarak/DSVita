@@ -4,7 +4,6 @@ use crate::utils;
 use crate::utils::HeapMemU8;
 use bilge::prelude::*;
 use static_assertions::const_assert_eq;
-use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 use std::{ptr, slice};
 
@@ -53,7 +52,7 @@ impl<const SIZE: usize> AsRef<[u8]> for VramMap<SIZE> {
     }
 }
 
-impl<'a, const SIZE: usize> Default for VramMap<SIZE> {
+impl<const SIZE: usize> Default for VramMap<SIZE> {
     fn default() -> Self {
         VramMap {
             ptr: ptr::null_mut(),
@@ -61,7 +60,7 @@ impl<'a, const SIZE: usize> Default for VramMap<SIZE> {
     }
 }
 
-impl<'a, const SIZE: usize> From<*const u8> for VramMap<SIZE> {
+impl<const SIZE: usize> From<*const u8> for VramMap<SIZE> {
     fn from(value: *const u8) -> Self {
         VramMap { ptr: value }
     }
@@ -132,7 +131,7 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
         for i in 0..self.count {
             let map = &self.overlaps[i];
             debug_assert_ne!(map.ptr, ptr::null());
-            ret |= utils::read_from_mem::<T>(&map, index).into();
+            ret |= utils::read_from_mem::<T>(map, index).into();
         }
         T::from(ret)
     }
@@ -258,9 +257,9 @@ const OBJ_A_OFFSET: u32 = 0x400000;
 pub const BG_B_OFFSET: u32 = 0x200000;
 const OBJ_B_OFFSET: u32 = 0x600000;
 
-struct VramInner {
-    stat: u8,
-    cnt: [u8; BANK_SIZE],
+pub struct VramContext {
+    pub stat: u8,
+    pub cnt: [u8; BANK_SIZE],
     banks: VramBanks,
 
     lcdc: OverlapMapping<TOTAL_SIZE, { 16 * 1024 }, { TOTAL_SIZE / 1024 / 16 }>,
@@ -281,9 +280,9 @@ struct VramInner {
     arm7: OverlapMapping<{ 128 * 2 * 1024 }, { 128 * 1024 }, 2>,
 }
 
-impl VramInner {
-    fn new() -> Self {
-        let instance = VramInner {
+impl VramContext {
+    pub fn new() -> Self {
+        let instance = VramContext {
             stat: 0,
             cnt: [0u8; BANK_SIZE],
             banks: VramBanks::new(),
@@ -648,37 +647,5 @@ impl VramInner {
                 todo!()
             }
         };
-    }
-}
-
-pub struct VramContext {
-    inner: RefCell<VramInner>,
-}
-
-impl VramContext {
-    pub fn new() -> Self {
-        VramContext {
-            inner: RefCell::new(VramInner::new()),
-        }
-    }
-
-    pub fn get_stat(&self) -> u8 {
-        self.inner.borrow().stat
-    }
-
-    pub fn get_cnt(&self, bank: usize) -> u8 {
-        self.inner.borrow().cnt[bank]
-    }
-
-    pub fn set_cnt(&self, bank: usize, value: u8) {
-        self.inner.borrow_mut().set_cnt(bank, value);
-    }
-
-    pub fn read<const CPU: CpuType, T: utils::Convert>(&self, addr_offset: u32) -> T {
-        self.inner.borrow().read::<CPU, _>(addr_offset)
-    }
-
-    pub fn write<const CPU: CpuType, T: utils::Convert>(&self, addr_offset: u32, value: T) {
-        self.inner.borrow_mut().write::<CPU, _>(addr_offset, value);
     }
 }

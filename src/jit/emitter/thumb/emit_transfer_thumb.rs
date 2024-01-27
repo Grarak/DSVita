@@ -1,5 +1,4 @@
 use crate::hle::CpuType;
-use crate::jit::inst_mem_handler::inst_mem_handler_multiple;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::{MemoryAmount, Op};
 
@@ -94,12 +93,15 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             _ => todo!("{:?}", op),
         };
 
-        let flags = (pre as u8) | ((write_back as u8) << 1) | ((decrement as u8) << 2);
-        self.emit_transfer_indirect(
-            inst_mem_handler_multiple::<CPU, true, false> as _,
-            self.jit_buf.instructions[buf_index].opcode,
+        let inst_info = &self.jit_buf.instructions[buf_index];
+        self.emit_multiple_transfer::<true, false>(
             pc,
-            flags,
+            inst_info.opcode,
+            inst_info.op,
+            *inst_info.operands()[0].as_reg_no_shift().unwrap(),
+            pre,
+            write_back,
+            decrement,
         );
     }
 
@@ -125,13 +127,15 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             _ => todo!("{:?}", op),
         };
 
-        let flags = (pre as u8) | ((write_back as u8) << 1) | ((decrement as u8) << 2);
-
-        self.emit_transfer_indirect(
-            inst_mem_handler_multiple::<CPU, true, true> as _,
-            self.jit_buf.instructions[buf_index].opcode,
+        let inst_info = &self.jit_buf.instructions[buf_index];
+        self.emit_multiple_transfer::<true, true>(
             pc,
-            flags,
+            inst_info.opcode,
+            inst_info.op,
+            *inst_info.operands()[0].as_reg_no_shift().unwrap(),
+            pre,
+            write_back,
+            decrement,
         );
     }
 }

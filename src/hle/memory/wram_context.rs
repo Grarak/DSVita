@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::{ptr, slice};
+use std::hint::unreachable_unchecked;
 
 struct SharedWramMap<'a> {
     shared_ptr: *const u8,
@@ -151,8 +152,10 @@ impl SharedWram {
                 self.arm7_ptr = self.mem.as_mut_ptr();
                 self.arm7_size = SHARED_LEN;
             }
-            _ => panic!(),
-        }
+            _ => {
+                unsafe { unreachable_unchecked() };
+            }
+        };
     }
 
     fn get_map_arm9(&self) -> SharedWramMap {

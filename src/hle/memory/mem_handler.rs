@@ -10,12 +10,13 @@ use crate::hle::CpuType;
 use crate::jit::jit_asm::JitState;
 use crate::logging::debug_println;
 use crate::utils::Convert;
+use crate::DEBUG;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct MemHandler<const CPU: CpuType> {
-    main_memory: Rc<RefCell<MainMemory>>,
-    wram_context: Rc<RefCell<WramContext>>,
+    main_memory: *mut MainMemory,
+    wram_context: *mut WramContext,
     palettes_context: Rc<RefCell<PalettesContext>>,
     cp15_context: Rc<RefCell<Cp15Context>>,
     tcm_context: Rc<RefCell<TcmContext>>,
@@ -29,7 +30,7 @@ unsafe impl<const CPU: CpuType> Sync for MemHandler<CPU> {}
 
 impl<const CPU: CpuType> MemHandler<CPU> {
     pub fn new(
-        main_memory: Rc<RefCell<MainMemory>>,
+        main_memory: *mut MainMemory,
         wram_context: Rc<RefCell<WramContext>>,
         palettes_context: Rc<RefCell<PalettesContext>>,
         cp15_context: Rc<RefCell<Cp15Context>>,
@@ -39,7 +40,7 @@ impl<const CPU: CpuType> MemHandler<CPU> {
     ) -> Self {
         MemHandler {
             main_memory,
-            wram_context,
+            wram_context: wram_context.as_ptr(),
             palettes_context,
             cp15_context,
             tcm_context,
@@ -56,11 +57,17 @@ impl<const CPU: CpuType> MemHandler<CPU> {
         let addr_offset = addr - addr_base;
 
         let ret = match addr_base {
-            regions::MAIN_MEMORY_OFFSET => self.main_memory.borrow().read(addr_offset),
-            regions::SHARED_WRAM_OFFSET => self.wram_context.borrow().read::<CPU, _>(addr_offset),
+            regions::MAIN_MEMORY_OFFSET => unsafe { (*self.main_memory).read(addr_offset) },
+            regions::SHARED_WRAM_OFFSET => unsafe {
+                (*self.wram_context).read::<CPU, _>(addr_offset)
+            },
             regions::IO_PORTS_OFFSET => self.io_ports.read(addr_offset),
             regions::STANDARD_PALETTES_OFFSET => self.palettes_context.borrow().read(addr_offset),
-            regions::VRAM_OFFSET => self.io_ports.vram_context.read::<CPU, _>(addr_offset),
+            regions::VRAM_OFFSET => self
+                .io_ports
+                .vram_context
+                .borrow()
+                .read::<CPU, _>(addr_offset),
             regions::OAM_OFFSET => self.oam.borrow().read(addr_offset),
             _ => {
                 let mut handled = false;
@@ -116,12 +123,10 @@ impl<const CPU: CpuType> MemHandler<CPU> {
         let addr_offset = addr - addr_base;
         let mut invalidate_jit = false;
         match addr_base {
-            regions::MAIN_MEMORY_OFFSET => self.main_memory.borrow_mut().write(addr_offset, value),
+            regions::MAIN_MEMORY_OFFSET => unsafe { (*self.main_memory).write(addr_offset, value) },
             regions::SHARED_WRAM_OFFSET => {
                 invalidate_jit = true;
-                self.wram_context
-                    .borrow_mut()
-                    .write::<CPU, _>(addr_offset, value)
+                unsafe { (*self.wram_context).write::<CPU, _>(addr_offset, value) }
             }
             regions::IO_PORTS_OFFSET => self.io_ports.write(addr_offset, value),
             regions::STANDARD_PALETTES_OFFSET => {
@@ -130,6 +135,7 @@ impl<const CPU: CpuType> MemHandler<CPU> {
             regions::VRAM_OFFSET => self
                 .io_ports
                 .vram_context
+                .borrow_mut()
                 .write::<CPU, _>(addr_offset, value),
             regions::OAM_OFFSET => self.oam.borrow_mut().write(addr_offset, value),
             _ => {
@@ -163,11 +169,14 @@ impl<const CPU: CpuType> MemHandler<CPU> {
 
         if invalidate_jit {
             let mut jit_state = self.jit_state.borrow_mut();
-            jit_state.invalidated_addrs.insert(addr);
+            jit_state.invalidated_addrs.push(addr);
 
-            let (current_jit_block_start, current_jit_block_end) = jit_state.current_block_range;
-            if addr >= current_jit_block_start && addr <= current_jit_block_end {
-                todo!()
+            if DEBUG {
+                let (current_jit_block_start, current_jit_block_end) =
+                    jit_state.current_block_range;
+                if addr >= current_jit_block_start && addr <= current_jit_block_end {
+                    todo!()
+                }
             }
         }
     }

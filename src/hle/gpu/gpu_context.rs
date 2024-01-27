@@ -150,12 +150,12 @@ impl GpuContext {
             swapchain,
         )));
 
-        cycle_manager.schedule::<{ CpuType::ARM9 }, _>(
+        cycle_manager.schedule(
             // 8 pixel delay according to https://melonds.kuribo64.net/board/thread.php?id=13
             (256 + 8) * 6,
             Box::new(Scanline256Event::new(cycle_manager.clone(), inner.clone())),
         );
-        cycle_manager.schedule::<{ CpuType::ARM9 }, _>(
+        cycle_manager.schedule(
             // 8 pixel delay according to https://melonds.kuribo64.net/board/thread.php?id=13
             (355 + 8) * 6,
             Box::new(Scanline355Event::new(
@@ -253,7 +253,7 @@ impl CycleEvent for Scanline256Event {
             }
         }
 
-        self.cycle_manager.schedule::<{ CpuType::ARM9 }, _>(
+        self.cycle_manager.schedule(
             355 * 6 - delay as u32,
             Box::new(Scanline256Event::new(
                 self.cycle_manager.clone(),
@@ -373,7 +373,7 @@ impl CycleEvent for Scanline355Event {
             inner.disp_stat[i] = u16::from(disp_stat);
         }
 
-        self.cycle_manager.schedule::<{ CpuType::ARM9 }, _>(
+        self.cycle_manager.schedule(
             355 * 6 - delay as u32,
             Box::new(Scanline355Event::new(
                 self.cycle_manager.clone(),

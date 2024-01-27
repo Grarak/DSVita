@@ -2,35 +2,16 @@ use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::inst_info::{Operand, Shift, ShiftValue};
-use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple};
+use crate::jit::inst_mem_handler::{
+    inst_mem_handler, inst_mem_handler_multiple, InstMemMultipleArgs,
+};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, Op, ShiftType};
+use bilge::prelude::*;
 use std::ptr;
 
 impl<const CPU: CpuType> JitAsm<CPU> {
-    pub fn emit_transfer_indirect(
-        &mut self,
-        func_addr: *const (),
-        opcode: u32,
-        pc: u32,
-        flags: u8,
-    ) {
-        let mem_handler_addr = ptr::addr_of_mut!(self.inst_mem_handler) as u32;
-
-        self.emit_call_host_func(
-            |_| {},
-            |_, _| {},
-            &[
-                Some(mem_handler_addr),
-                Some(opcode),
-                Some(pc),
-                Some(flags as u32),
-            ],
-            func_addr,
-        );
-    }
-
     pub fn emit_single_transfer<const THUMB: bool, const WRITE: bool>(
         &mut self,
         buf_index: usize,
@@ -172,6 +153,39 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         );
     }
 
+    pub fn emit_multiple_transfer<const THUMB: bool, const WRITE: bool>(
+        &mut self,
+        pc: u32,
+        opcode: u32,
+        op: Op,
+        op0: Reg,
+        pre: bool,
+        write_back: bool,
+        decrement: bool,
+    ) {
+        let mem_handler_addr = ptr::addr_of_mut!(self.inst_mem_handler) as u32;
+        let mut rlist = (opcode & if THUMB { 0xFF } else { 0xFFFF }) as u16;
+        if op == Op::PushLrT {
+            rlist |= 1 << Reg::LR as u8;
+        } else if op == Op::PopPcT {
+            rlist |= 1 << Reg::PC as u8;
+        }
+        let args = u32::from(InstMemMultipleArgs::new(
+            u1::from(pre),
+            u1::from(write_back),
+            u1::from(decrement),
+            u5::new(op0 as u8),
+            u24::from(rlist),
+        ));
+
+        self.emit_call_host_func(
+            |_| {},
+            |_, _| {},
+            &[Some(mem_handler_addr), Some(pc), Some(args)],
+            inst_mem_handler_multiple::<CPU, THUMB, WRITE> as _,
+        );
+    }
+
     pub fn emit_str(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
 
@@ -251,12 +265,15 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             _ => todo!("{:?}", op),
         };
 
-        let flags = (pre as u8) | ((write_back as u8) << 1) | ((decrement as u8) << 2);
-        self.emit_transfer_indirect(
-            inst_mem_handler_multiple::<CPU, false, true> as _,
-            self.jit_buf.instructions[buf_index].opcode,
+        let inst_info = &self.jit_buf.instructions[buf_index];
+        self.emit_multiple_transfer::<false, true>(
             pc,
-            flags,
+            inst_info.opcode,
+            inst_info.op,
+            *inst_info.operands()[0].as_reg_no_shift().unwrap(),
+            pre,
+            write_back,
+            decrement,
         );
     }
 
@@ -278,12 +295,15 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             _ => todo!("{:?}", op),
         };
 
-        let flags = (pre as u8) | ((write_back as u8) << 1) | ((decrement as u8) << 2);
-        self.emit_transfer_indirect(
-            inst_mem_handler_multiple::<CPU, false, false> as _,
-            self.jit_buf.instructions[buf_index].opcode,
+        let inst_info = &self.jit_buf.instructions[buf_index];
+        self.emit_multiple_transfer::<false, false>(
             pc,
-            flags,
+            inst_info.opcode,
+            inst_info.op,
+            *inst_info.operands()[0].as_reg_no_shift().unwrap(),
+            pre,
+            write_back,
+            decrement,
         );
     }
 }

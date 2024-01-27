@@ -44,11 +44,11 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
     pub fn new(
         cycle_manager: Rc<CycleManager>,
         jit_memory: Rc<RefCell<JitMemory>>,
-        main_memory: Rc<RefCell<MainMemory>>,
+        main_memory: *mut MainMemory,
         wram_context: Rc<RefCell<WramContext>>,
         spi_context: Rc<RefCell<SpiContext>>,
         ipc_handler: Rc<RefCell<IpcHandler>>,
-        vram_context: Rc<VramContext>,
+        vram_context: Rc<RefCell<VramContext>>,
         input_context: Arc<RwLock<InputContext>>,
         gpu_context: Rc<GpuContext>,
         gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
@@ -82,7 +82,7 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
         );
 
         let mem_handler = Rc::new(MemHandler::new(
-            main_memory.clone(),
+            main_memory,
             wram_context,
             palettes_context,
             cp15_context.clone(),

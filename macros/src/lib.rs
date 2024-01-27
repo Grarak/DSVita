@@ -73,8 +73,9 @@ fn read_block(base: u32, size: usize) -> Block {
 {{
     #[allow(unreachable_code)]
     {{
-        let ret: [u{}; 1] = [{{ block_placeholder() }}];
-        let (_, bytes, _) = unsafe {{ ret.align_to::<u8>() }};
+        let ret: u{} = {{ block_placeholder() }};
+        let bytes = ret.to_le_bytes();
+        let bytes = bytes.as_slice();
         let offset = addr_offset_tmp - {base};
         let index_start = index - offset as usize;
         let index_end = index_start + {size};

@@ -34,10 +34,11 @@ use sdl2::event::Event;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
 use std::cell::RefCell;
+use std::cmp::min;
 use std::os::unix::prelude::JoinHandleExt;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
-use std::{env, mem, thread};
+use std::{env, mem, ptr, thread};
 
 mod cartridge;
 mod hle;
@@ -187,10 +188,8 @@ pub fn main() {
     sdl_canvas.clear();
     sdl_canvas.present();
 
-    let main_memory = Rc::new(RefCell::new(MainMemory::new()));
+    let mut main_memory = MainMemory::new();
     {
-        let mut main_memory = main_memory.borrow_mut();
-
         let header: &[u8; cartridge::HEADER_IN_RAM_SIZE] =
             unsafe { mem::transmute(&cartridge.header) };
         main_memory.write_slice(0x27FFE00, header);
@@ -224,7 +223,7 @@ pub fn main() {
     let jit_memory = Rc::new(RefCell::new(JitMemory::new()));
     let wram_context = Rc::new(RefCell::new(WramContext::new()));
     let spi_context = Rc::new(RefCell::new(SpiContext::new()));
-    let vram_context = Rc::new(VramContext::new());
+    let vram_context = Rc::new(RefCell::new(VramContext::new()));
     let input_context = Arc::new(RwLock::new(InputContext::new()));
     let rtc_context = Rc::new(RefCell::new(RtcContext::new()));
     let spu_context = Rc::new(RefCell::new(SpuContext::new()));
@@ -264,7 +263,7 @@ pub fn main() {
     let mut arm9_thread = ThreadContext::<{ CpuType::ARM9 }>::new(
         cycle_manager.clone(),
         jit_memory.clone(),
-        main_memory.clone(),
+        ptr::addr_of_mut!(main_memory),
         wram_context.clone(),
         spi_context.clone(),
         ipc_handler.clone(),
@@ -287,7 +286,7 @@ pub fn main() {
     let mut arm7_thread = ThreadContext::<{ CpuType::ARM7 }>::new(
         cycle_manager,
         jit_memory,
-        main_memory,
+        ptr::addr_of_mut!(main_memory),
         wram_context,
         spi_context,
         ipc_handler,
@@ -311,6 +310,7 @@ pub fn main() {
         .name("cpu".to_owned())
         .spawn(move || {
             arm9_thread.jit.jit_memory.borrow_mut().open();
+            let cycle_manager = arm9_thread.cycle_manager.clone();
             loop {
                 let mut arm9_cycles = if !arm9_thread.is_halted() {
                     arm9_thread.run()
@@ -328,30 +328,14 @@ pub fn main() {
                     arm9_cycles += arm9_thread.run();
                 }
 
-                if arm9_cycles == 0 && arm7_cycles == 0 {
-                    arm9_thread.cycle_manager.skip_to_next_event();
-                    arm9_thread
-                        .cycle_manager
-                        .check_events::<{ CpuType::ARM9 }>();
-                    arm9_thread
-                        .cycle_manager
-                        .check_events::<{ CpuType::ARM7 }>();
+                let cycles =
+                    min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);
+                if cycles == 0 {
+                    cycle_manager.jump_to_next_event();
                 } else {
-                    arm9_thread
-                        .cycle_manager
-                        .add_cycle::<{ CpuType::ARM9 }>(if arm9_cycles != 0 {
-                            arm9_cycles
-                        } else {
-                            arm7_cycles
-                        });
-                    arm9_thread
-                        .cycle_manager
-                        .add_cycle::<{ CpuType::ARM7 }>(if arm7_cycles != 0 {
-                            arm7_cycles
-                        } else {
-                            arm9_cycles
-                        });
+                    cycle_manager.add_cycle(cycles);
                 }
+                cycle_manager.check_events();
             }
         })
         .unwrap();
@@ -365,8 +349,8 @@ pub fn main() {
         }
 
         let fb = swapchain.consume();
-        let (_, top_aligned, _) = unsafe { fb[..DISPLAY_PIXEL_COUNT].align_to::<u8>() };
-        let (_, bottom_aligned, _) = unsafe { fb[DISPLAY_PIXEL_COUNT..].align_to::<u8>() };
+        let top_aligned: &[u8] = unsafe { mem::transmute(&fb[..DISPLAY_PIXEL_COUNT]) };
+        let bottom_aligned: &[u8] = unsafe { mem::transmute(&fb[DISPLAY_PIXEL_COUNT..]) };
         sdl_texture_top
             .update(None, top_aligned, DISPLAY_WIDTH * 4)
             .unwrap();
@@ -375,11 +359,18 @@ pub fn main() {
             .unwrap();
 
         sdl_canvas.clear();
+        const ADJUSTED_DISPLAY_HEIGHT: u32 =
+            SCREEN_WIDTH / 2 * DISPLAY_HEIGHT as u32 / DISPLAY_WIDTH as u32;
         sdl_canvas
             .copy(
                 &sdl_texture_top,
                 None,
-                Some(Rect::new(0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT)),
+                Some(Rect::new(
+                    0,
+                    ((SCREEN_HEIGHT - ADJUSTED_DISPLAY_HEIGHT) / 2) as _,
+                    SCREEN_WIDTH / 2,
+                    ADJUSTED_DISPLAY_HEIGHT,
+                )),
             )
             .unwrap();
         sdl_canvas
@@ -388,9 +379,9 @@ pub fn main() {
                 None,
                 Some(Rect::new(
                     SCREEN_WIDTH as i32 / 2,
-                    0,
-                    SCREEN_WIDTH,
-                    SCREEN_HEIGHT,
+                    ((SCREEN_HEIGHT - ADJUSTED_DISPLAY_HEIGHT) / 2) as _,
+                    SCREEN_WIDTH / 2,
+                    ADJUSTED_DISPLAY_HEIGHT,
                 )),
             )
             .unwrap();
@@ -398,7 +389,9 @@ pub fn main() {
 
         #[cfg(target_os = "linux")]
         if let Some(fps) = gpu_context.query_fps() {
-            println!("fps {}", fps);
+            sdl_canvas
+                .window_mut()
+                .set_title(&format!("DSPSV - {} fps", fps));
         }
     }
 

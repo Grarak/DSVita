@@ -20,7 +20,7 @@ mod transfer_variations {
     pub fn imm_shift(opcode: u32) -> (Reg, u8) {
         let reg = Reg::from((opcode & 0xF) as u8);
         let shift = ((opcode >> 7) & 0x1F) as u8;
-        return (reg, shift);
+        (reg, shift)
     }
 }
 

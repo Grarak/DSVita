@@ -691,6 +691,13 @@ impl Op {
     }
 }
 
+impl From<u16> for Op {
+    fn from(value: u16) -> Self {
+        debug_assert!(value <= Op::UnkThumb as u16);
+        unsafe { mem::transmute(value) }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum Cond {

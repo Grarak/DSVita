@@ -14,11 +14,11 @@ type JitBlockStartAddr = u32;
 type JitBlockSize = u32;
 
 #[derive(Clone)]
-struct GuestPcInfo {
-    guest_insts_cycle_counts: Rc<Vec<u8>>,
-    guest_pc_start: u32,
-    guest_pc_end: u32,
-    jit_addr: u32,
+pub struct GuestPcInfo {
+    pub guest_insts_cycle_counts: Rc<Vec<u8>>,
+    pub guest_pc_start: u32,
+    pub guest_pc_end: u32,
+    pub jit_addr: u32,
 }
 
 impl GuestPcInfo {
@@ -41,31 +41,33 @@ type FastGuestInfo = Option<ManuallyDrop<Box<GuestPcInfo>>>;
 
 struct FastGuestPcMap {
     mapping: Mmap,
+    size: usize,
 }
 
 impl FastGuestPcMap {
     fn new(name: &str, size: u32) -> Self {
         FastGuestPcMap {
             mapping: Mmap::rw(name, size * mem::size_of::<FastGuestPcMap>() as u32).unwrap(),
+            size: size as usize,
         }
     }
 
     fn insert(&mut self, guest_pc: u32, info: GuestPcInfo) {
         let info = ManuallyDrop::new(Box::new(info));
-        let (_, mapping, _) = unsafe { self.mapping.align_to_mut::<FastGuestInfo>() };
-        let index = guest_pc as usize & (mapping.len() - 1);
+        let index = guest_pc as usize & (self.size - 1);
+        let mapping: &mut [FastGuestInfo] = unsafe { mem::transmute(self.mapping.as_mut()) };
         mapping[index] = Some(info);
     }
 
     fn get(&self, guest_pc: u32) -> Option<&GuestPcInfo> {
-        let (_, mapping, _) = unsafe { self.mapping.align_to::<FastGuestInfo>() };
-        let index = guest_pc as usize & (mapping.len() - 1);
+        let index = guest_pc as usize & (self.size - 1);
+        let mapping: &[FastGuestInfo] = unsafe { mem::transmute(self.mapping.as_ref()) };
         mapping[index].as_ref().map(|info| info.as_ref())
     }
 
     fn invalidate(&mut self, guest_pc: u32) {
-        let (_, mapping, _) = unsafe { self.mapping.align_to_mut::<FastGuestInfo>() };
-        let index = guest_pc as usize & (mapping.len() - 1);
+        let index = guest_pc as usize & (self.size - 1);
+        let mapping: &mut [FastGuestInfo] = unsafe { mem::transmute(self.mapping.as_mut()) };
         if let Some(info) = &mut mapping[index] {
             unsafe { ManuallyDrop::drop(info) };
         }
@@ -134,6 +136,7 @@ impl JitMemory {
             Err(index) => self.blocks.insert(index, (new_addr, aligned_size)),
         };
 
+        let new_addr = new_addr + self.memory.as_ptr() as u32;
         if let Some(guest_start_pc) = guest_start_pc {
             let cycle_counts = Rc::new(guest_insts_cycle_counts.unwrap());
             let end_pc = guest_pc_end.unwrap();
@@ -185,37 +188,15 @@ impl JitMemory {
                 guest_start_pc.unwrap_or(0)
             )
         }
-        new_addr + self.memory.as_ptr() as u32
+        new_addr
     }
 
-    pub fn get_jit_start_addr<const CPU: CpuType>(
-        &self,
-        guest_pc: u32,
-    ) -> Option<(
-        u32,         /* jit_addr */
-        u32,         /* guest_pc_start */
-        u32,         /* guest_pc_end */
-        Rc<Vec<u8>>, /* cycle_counts */
-    )> {
+    pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> Option<&GuestPcInfo> {
         let addr_base = guest_pc & 0xFF000000;
         if addr_base == regions::MAIN_MEMORY_OFFSET {
-            self.main_memory_guest_pc_mapping.get(guest_pc).map(|info| {
-                (
-                    self.memory.as_ptr() as u32 + info.jit_addr,
-                    info.guest_pc_start,
-                    info.guest_pc_end,
-                    info.guest_insts_cycle_counts.clone(),
-                )
-            })
+            self.main_memory_guest_pc_mapping.get(guest_pc)
         } else {
-            self.guest_pc_mapping.get(&guest_pc).map(|info| {
-                (
-                    self.memory.as_ptr() as u32 + info.jit_addr,
-                    info.guest_pc_start,
-                    info.guest_pc_end,
-                    info.guest_insts_cycle_counts.clone(),
-                )
-            })
+            self.guest_pc_mapping.get(&guest_pc)
         }
     }
 
@@ -226,15 +207,15 @@ impl JitMemory {
         } else if let Some(info) = self.guest_pc_mapping.remove(&guest_pc) {
             debug_println!(
                 "Removing jit block at {:x} with guest start pc {:x}",
-                self.memory.as_ptr() as u32 + info.jit_addr,
+                info.jit_addr,
                 info.guest_pc_start
             );
 
             if let Some(start_info) = self.guest_pc_mapping.get(&info.guest_pc_start) {
-                if let Ok(index) = self
-                    .blocks
-                    .binary_search_by_key(&start_info.jit_addr, |(addr, _)| *addr)
-                {
+                if let Ok(index) = self.blocks.binary_search_by_key(
+                    &(start_info.jit_addr - self.memory.as_ptr() as u32),
+                    |(addr, _)| *addr,
+                ) {
                     self.blocks.remove(index);
                 }
             }
