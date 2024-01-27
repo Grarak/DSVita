@@ -5,7 +5,7 @@ debug_println {
                 let log = format!($($args)*);
                 let current_thread = std::thread::current();
                 let thread_name = current_thread.name().unwrap();
-                println!("[{}]: {}", thread_name, log);
+                println!("[{}] {}", thread_name, log);
             }
         };
     }

@@ -2,6 +2,7 @@ pub const INSTRUCTION_TCM_SIZE: u32 = 32 * 1024;
 pub const DATA_TCM_SIZE: u32 = 16 * 1024;
 
 pub const MAIN_MEMORY_OFFSET: u32 = 0x02000000;
+pub const MAIN_MEMORY_SIZE: u32 = 4 * 1024 * 1024;
 pub const MAIN_MEMORY_ADDRESS_SPACE: u32 = 16 * 1024 * 1024;
 
 pub const SHARED_WRAM_OFFSET: u32 = 0x03000000;

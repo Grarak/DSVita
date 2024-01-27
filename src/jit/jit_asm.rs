@@ -202,7 +202,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 jit_opcodes.push(LdmStm::pop_post(reg_reserve!(Reg::PC), Reg::LR, Cond::AL));
 
                 instance.breakin_addr =
-                    jit_memory.insert_block(jit_opcodes, None, None, None, None);
+                    jit_memory.insert_block::<CPU>(jit_opcodes, None, None, None, None);
 
                 let restore_regs_thumb_opcodes =
                     &instance.thread_regs.borrow().restore_regs_thumb_opcodes;
@@ -210,7 +210,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     [guest_restore_index..guest_restore_index + restore_regs_thumb_opcodes.len()]
                     .copy_from_slice(restore_regs_thumb_opcodes);
                 instance.breakin_thumb_addr =
-                    jit_memory.insert_block(jit_opcodes, None, None, None, None);
+                    jit_memory.insert_block::<CPU>(jit_opcodes, None, None, None, None);
 
                 jit_opcodes.clear();
             }
@@ -232,7 +232,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 ]);
 
                 instance.breakout_addr =
-                    jit_memory.insert_block(jit_opcodes, None, None, None, None);
+                    jit_memory.insert_block::<CPU>(jit_opcodes, None, None, None, None);
                 instance.breakout_skip_save_regs_addr =
                     instance.breakout_addr + (jit_skip_save_regs_offset << 2);
 
@@ -241,7 +241,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 jit_opcodes[..save_regs_thumb_opcodes.len()]
                     .copy_from_slice(save_regs_thumb_opcodes);
                 instance.breakout_thumb_addr =
-                    jit_memory.insert_block(jit_opcodes, None, None, None, None);
+                    jit_memory.insert_block::<CPU>(jit_opcodes, None, None, None, None);
                 instance.breakout_skip_save_regs_thumb_addr =
                     instance.breakout_thumb_addr + (jit_skip_save_regs_offset << 2);
 
@@ -340,7 +340,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         {
             let mut jit_memory = self.jit_memory.borrow_mut();
 
-            jit_memory.insert_block(
+            jit_memory.insert_block::<CPU>(
                 &self.jit_buf.emit_opcodes,
                 Some(entry),
                 Some(self.jit_buf.jit_addr_mapping.clone()),
@@ -351,7 +351,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             if DEBUG {
                 for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
                     let pc = ((index as u32) << pc_step_size) + entry;
-                    let (jit_addr, _, _, _) = jit_memory.get_jit_start_addr(pc).unwrap();
+                    let (jit_addr, _, _, _) = jit_memory.get_jit_start_addr::<CPU>(pc).unwrap();
 
                     debug_println!(
                         "{:?} Mapping {:#010x} to {:#010x} {:?}",
@@ -386,12 +386,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 {
                     let mut jit_state = self.mem_handler.jit_state.borrow_mut();
                     for addr in &jit_state.invalidated_addrs {
-                        jit_memory.invalidate_block(*addr);
+                        jit_memory.invalidate_block::<CPU>(*addr);
                     }
                     jit_state.invalidated_addrs.clear();
                 }
 
-                jit_memory.get_jit_start_addr(guest_pc)
+                jit_memory.get_jit_start_addr::<CPU>(guest_pc)
             }
             .unwrap_or_else(|| {
                 if thumb {
@@ -401,7 +401,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 }
                 self.jit_memory
                     .borrow()
-                    .get_jit_start_addr(guest_pc)
+                    .get_jit_start_addr::<CPU>(guest_pc)
                     .unwrap()
             })
         };

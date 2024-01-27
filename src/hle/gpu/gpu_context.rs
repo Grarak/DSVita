@@ -10,9 +10,7 @@ use bilge::prelude::*;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
 
 pub const DISPLAY_WIDTH: usize = 256;
 pub const DISPLAY_HEIGHT: usize = 192;
@@ -123,9 +121,9 @@ impl GpuInner {
 
 pub struct GpuContext {
     #[cfg(target_os = "linux")]
-    frame_count: Arc<AtomicU16>,
+    frame_count: Arc<std::sync::atomic::AtomicU16>,
     #[cfg(target_os = "linux")]
-    last_fps_query: RefCell<Instant>,
+    last_fps_query: RefCell<std::time::Instant>,
     inner: Rc<RefCell<GpuInner>>,
 }
 
@@ -140,7 +138,8 @@ impl GpuContext {
         cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
         swapchain: Arc<Swapchain>,
     ) -> GpuContext {
-        let frame_count = Arc::new(AtomicU16::new(0));
+        #[cfg(target_os = "linux")]
+        let frame_count = Arc::new(std::sync::atomic::AtomicU16::new(0));
         let inner = Rc::new(RefCell::new(GpuInner::new(
             gpu_2d_context_a,
             gpu_2d_context_b,
@@ -171,7 +170,7 @@ impl GpuContext {
             #[cfg(target_os = "linux")]
             frame_count,
             #[cfg(target_os = "linux")]
-            last_fps_query: RefCell::new(Instant::now()),
+            last_fps_query: RefCell::new(std::time::Instant::now()),
             inner,
         }
     }
@@ -194,10 +193,12 @@ impl GpuContext {
 
     #[cfg(target_os = "linux")]
     pub fn query_fps(&self) -> Option<u16> {
-        let now = Instant::now();
+        let now = std::time::Instant::now();
         let mut last = self.last_fps_query.borrow_mut();
         if (now - *last).as_secs() >= 1 {
-            let fps = self.frame_count.fetch_and(0, Ordering::Relaxed);
+            let fps = self
+                .frame_count
+                .fetch_and(0, std::sync::atomic::Ordering::Relaxed);
             *last = now;
             Some(fps)
         } else {
@@ -265,14 +266,14 @@ impl CycleEvent for Scanline256Event {
 struct Scanline355Event {
     cycle_manager: Rc<CycleManager>,
     #[cfg(target_os = "linux")]
-    frame_count: Arc<AtomicU16>,
+    frame_count: Arc<std::sync::atomic::AtomicU16>,
     inner: Rc<RefCell<GpuInner>>,
 }
 
 impl Scanline355Event {
     fn new(
         cycle_manager: Rc<CycleManager>,
-        #[cfg(target_os = "linux")] frame_count: Arc<AtomicU16>,
+        #[cfg(target_os = "linux")] frame_count: Arc<std::sync::atomic::AtomicU16>,
         inner: Rc<RefCell<GpuInner>>,
     ) -> Self {
         Scanline355Event {
@@ -330,7 +331,8 @@ impl CycleEvent for Scanline355Event {
                     *stat = u16::from(disp_stat);
                 }
                 #[cfg(target_os = "linux")]
-                self.frame_count.fetch_add(1, Ordering::Relaxed);
+                self.frame_count
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             263 => {
                 inner.v_count = 0;
