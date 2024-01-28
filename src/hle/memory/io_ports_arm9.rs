@@ -1,8 +1,8 @@
 use crate::hle::memory::io_ports::IoPorts;
 use crate::hle::CpuType;
+#[cfg(debug_assertions)]
 use crate::logging::debug_println;
 use crate::utils::Convert;
-use crate::DEBUG;
 use dspsv_macros::{io_ports_read, io_ports_write};
 use std::mem;
 
@@ -139,7 +139,8 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io32(0x100000) => self.ipc_handler.borrow_mut().fifo_recv::<{ CpuType::ARM9 }>(),
                 io32(0x100010) => todo!(),
                 _ => {
-                    if DEBUG && index == 3 {
+                    #[cfg(debug_assertions)]
+                    if index == 3 {
                         debug_println!(
                             "{:?} unknown io port read at {:x}",
                             CpuType::ARM9,
@@ -439,7 +440,8 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io8(0x1054) => self.gpu_2d_context_b.borrow_mut().set_bld_y(value),
                 io16(0x106C) => self.gpu_2d_context_b.borrow_mut().set_master_bright(mask, value),
                 _ => {
-                    if DEBUG && index == 3 {
+                    #[cfg(debug_assertions)]
+                    if index == 3 {
                         debug_println!(
                             "{:?} unknown io port write at {:x} with value {:x}",
                             CpuType::ARM9,

@@ -10,7 +10,6 @@ use crate::hle::CpuType;
 use crate::jit::jit_asm::JitState;
 use crate::logging::debug_println;
 use crate::utils::Convert;
-use crate::DEBUG;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -171,7 +170,8 @@ impl<const CPU: CpuType> MemHandler<CPU> {
             let mut jit_state = self.jit_state.borrow_mut();
             jit_state.invalidated_addrs.push(addr);
 
-            if DEBUG {
+            #[cfg(debug_assertions)]
+            {
                 let (current_jit_block_start, current_jit_block_end) =
                     jit_state.current_block_range;
                 if addr >= current_jit_block_start && addr <= current_jit_block_end {

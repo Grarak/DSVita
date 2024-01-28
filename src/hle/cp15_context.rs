@@ -1,8 +1,7 @@
-use crate::hle::cpu_regs::CpuRegs;
+#[cfg(debug_assertions)]
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use bilge::prelude::*;
-use std::rc::Rc;
 use std::{cmp, mem};
 
 #[bitsize(32)]
@@ -62,7 +61,6 @@ pub struct Cp15Context {
     itcm: u32,
     pub itcm_state: TcmState,
     pub itcm_size: u32,
-    cpu_regs: Rc<CpuRegs<{ CpuType::ARM9 }>>,
 }
 
 #[derive(Eq, PartialEq)]
@@ -81,7 +79,7 @@ impl From<u8> for TcmState {
 }
 
 impl Cp15Context {
-    pub fn new(cpu_regs: Rc<CpuRegs<{ CpuType::ARM9 }>>) -> Self {
+    pub fn new() -> Self {
         let mut control_default = Cp15ControlReg::from(0);
         control_default.set_write_buffer(u1::new(1));
         control_default.set_exception_handling(u1::new(1));
@@ -98,7 +96,6 @@ impl Cp15Context {
             itcm: 0,
             itcm_state: TcmState::Disabled,
             itcm_size: 0,
-            cpu_regs,
         }
     }
 

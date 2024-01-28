@@ -122,7 +122,8 @@ impl GpuInner {
 pub struct GpuContext {
     #[cfg(target_os = "linux")]
     frame_count: Arc<std::sync::atomic::AtomicU16>,
-    #[cfg(target_os = "linux")]
+    #[cfg(target_os = "vita")]
+    frame_count: Rc<RefCell<u16>>,
     last_fps_query: RefCell<std::time::Instant>,
     inner: Rc<RefCell<GpuInner>>,
 }
@@ -140,6 +141,8 @@ impl GpuContext {
     ) -> GpuContext {
         #[cfg(target_os = "linux")]
         let frame_count = Arc::new(std::sync::atomic::AtomicU16::new(0));
+        #[cfg(target_os = "vita")]
+        let frame_count = Rc::new(RefCell::new(0));
         let inner = Rc::new(RefCell::new(GpuInner::new(
             gpu_2d_context_a,
             gpu_2d_context_b,
@@ -160,16 +163,13 @@ impl GpuContext {
             (355 + 8) * 6,
             Box::new(Scanline355Event::new(
                 cycle_manager.clone(),
-                #[cfg(target_os = "linux")]
                 frame_count.clone(),
                 inner.clone(),
             )),
         );
 
         GpuContext {
-            #[cfg(target_os = "linux")]
             frame_count,
-            #[cfg(target_os = "linux")]
             last_fps_query: RefCell::new(std::time::Instant::now()),
             inner,
         }
@@ -191,14 +191,21 @@ impl GpuContext {
         inner.pow_cnt1 = (inner.pow_cnt1 & !mask) | (value & mask);
     }
 
-    #[cfg(target_os = "linux")]
     pub fn query_fps(&self) -> Option<u16> {
         let now = std::time::Instant::now();
         let mut last = self.last_fps_query.borrow_mut();
         if (now - *last).as_secs() >= 1 {
+            #[cfg(target_os = "linux")]
             let fps = self
                 .frame_count
                 .fetch_and(0, std::sync::atomic::Ordering::Relaxed);
+            #[cfg(target_os = "vita")]
+            let fps = {
+                let mut frame_count = self.frame_count.borrow_mut();
+                let fps = *frame_count;
+                *frame_count = 0;
+                fps
+            };
             *last = now;
             Some(fps)
         } else {
@@ -267,6 +274,8 @@ struct Scanline355Event {
     cycle_manager: Rc<CycleManager>,
     #[cfg(target_os = "linux")]
     frame_count: Arc<std::sync::atomic::AtomicU16>,
+    #[cfg(target_os = "vita")]
+    frame_count: Rc<RefCell<u16>>,
     inner: Rc<RefCell<GpuInner>>,
 }
 
@@ -274,11 +283,11 @@ impl Scanline355Event {
     fn new(
         cycle_manager: Rc<CycleManager>,
         #[cfg(target_os = "linux")] frame_count: Arc<std::sync::atomic::AtomicU16>,
+        #[cfg(target_os = "vita")] frame_count: Rc<RefCell<u16>>,
         inner: Rc<RefCell<GpuInner>>,
     ) -> Self {
         Scanline355Event {
             cycle_manager,
-            #[cfg(target_os = "linux")]
             frame_count,
             inner,
         }
@@ -333,6 +342,10 @@ impl CycleEvent for Scanline355Event {
                 #[cfg(target_os = "linux")]
                 self.frame_count
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                #[cfg(target_os = "vita")]
+                {
+                    *self.frame_count.borrow_mut() += 1;
+                }
             }
             263 => {
                 inner.v_count = 0;
@@ -377,7 +390,6 @@ impl CycleEvent for Scanline355Event {
             355 * 6 - delay as u32,
             Box::new(Scanline355Event::new(
                 self.cycle_manager.clone(),
-                #[cfg(target_os = "linux")]
                 self.frame_count.clone(),
                 self.inner.clone(),
             )),

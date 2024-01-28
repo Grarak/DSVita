@@ -5,7 +5,6 @@ use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Msr};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
-use crate::DEBUG;
 use bilge::prelude::*;
 use std::cell::RefCell;
 use std::ptr;
@@ -203,11 +202,13 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
     }
 
     pub fn set_spsr_with_flags(&mut self, value: u32, flags: u8) {
-        if DEBUG {
+        #[cfg(debug_assertions)]
+        {
             let mode = u8::from(Cpsr::from(self.cpsr).mode());
             debug_assert_ne!(mode, 0x10);
             debug_assert_ne!(mode, 0x1F);
         }
+
         for i in 0..4 {
             if (flags & (1 << i)) != 0 {
                 let mask = 0xFF << (i << 3);
@@ -272,7 +273,8 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
                     self.gp_regs[8..13].copy_from_slice(&self.user.gp_regs);
                     self.sp = self.user.sp;
                     self.lr = self.user.lr;
-                    if DEBUG {
+                    #[cfg(debug_assertions)]
+                    {
                         self.spsr = 0;
                     }
                 }

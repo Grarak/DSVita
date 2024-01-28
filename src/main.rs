@@ -3,6 +3,7 @@
 #![feature(arm_target_feature)]
 #![feature(const_trait_impl)]
 #![feature(generic_const_exprs)]
+#![feature(stmt_expr_attributes)]
 #![feature(thread_id_value)]
 
 use crate::cartridge::Cartridge;
@@ -71,9 +72,6 @@ mod utils;
 #[link(name = "SceTouch_stub", kind = "static", modifiers = "+whole-archive")]
 extern "C" {}
 
-pub const DEBUG: bool = cfg!(debug_assertions);
-// pub const DEBUG: bool = false;
-
 const SCREEN_WIDTH: u32 = 960;
 const SCREEN_HEIGHT: u32 = 544;
 
@@ -141,9 +139,8 @@ fn initialize_arm7_thread(entry_addr: u32, thread: &ThreadContext<{ CpuType::ARM
 
 // Must be pub for vita
 pub fn main() {
-    if DEBUG {
-        env::set_var("RUST_BACKTRACE", "full");
-    }
+    #[cfg(debug_assertions)]
+    env::set_var("RUST_BACKTRACE", "full");
 
     let cartridge = Cartridge::from_file(&get_file_path()).unwrap();
 
@@ -236,7 +233,7 @@ pub fn main() {
         cpu_regs_arm9.clone(),
         cpu_regs_arm7.clone(),
     )));
-    let cp15_context = Rc::new(RefCell::new(Cp15Context::new(cpu_regs_arm9.clone())));
+    let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
 
     let gpu_2d_context_a = Rc::new(RefCell::new(Gpu2DContext::new(
         vram_context.clone(),

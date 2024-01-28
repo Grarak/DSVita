@@ -2,8 +2,8 @@ use crate::hle::memory::regions;
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use crate::mmap::Mmap;
+use crate::utils;
 use crate::utils::NoHashMap;
-use crate::{utils, DEBUG};
 use std::mem;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
@@ -177,7 +177,8 @@ impl JitMemory {
             }
         }
 
-        if DEBUG {
+        #[cfg(debug_assertions)]
+        {
             let allocated_space = self.blocks.iter().fold(0u32, |sum, (_, size)| sum + *size);
             let per = (allocated_space * 100) as f32 / JIT_MEMORY_SIZE as f32;
             debug_println!(

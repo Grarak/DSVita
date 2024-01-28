@@ -229,6 +229,11 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         jit_buf.push(Bx::bx(Reg::LR, Cond::AL));
     }
 
+    pub fn emit_host_blx(addr: u32, jit_buf: &mut Vec<u32>) {
+        jit_buf.extend(&AluImm::mov32(Reg::LR, addr));
+        jit_buf.push(Bx::blx(Reg::LR, Cond::AL));
+    }
+
     pub fn emit_call_host_func<R, F: FnOnce(&mut Self) -> R, F1>(
         &mut self,
         after_host_restore: F,
@@ -259,10 +264,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             }
         }
 
-        self.jit_buf
-            .emit_opcodes
-            .extend(&AluImm::mov32(Reg::LR, func_addr as u32));
-        self.jit_buf.emit_opcodes.push(Bx::blx(Reg::LR, Cond::AL));
+        Self::emit_host_blx(func_addr as u32, &mut self.jit_buf.emit_opcodes);
 
         before_guest_restore(self, arg);
 

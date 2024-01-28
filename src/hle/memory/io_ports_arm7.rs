@@ -1,8 +1,8 @@
 use crate::hle::memory::io_ports::IoPorts;
 use crate::hle::CpuType;
+#[cfg(debug_assertions)]
 use crate::logging::debug_println;
 use crate::utils::Convert;
-use crate::DEBUG;
 use dspsv_macros::{io_ports_read, io_ports_write};
 use std::mem;
 
@@ -139,7 +139,8 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io16(0x800154) => todo!(),
                 io16(0x80015C) => todo!(),
                 _ => {
-                    if DEBUG && index == 3 {
+                    #[cfg(debug_assertions)]
+                    if index == 3 {
                         debug_println!(
                             "{:?} unknown io port read at {:x}",
                             CpuType::ARM7,
@@ -361,7 +362,8 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io16(0x80015A) => todo!(),
                 io16(0x80021C) => todo!(),
                 _ => {
-                    if DEBUG && index == 3 {
+                    #[cfg(debug_assertions)]
+                    if index == 3 {
                         debug_println!(
                             "{:?} unknown io port write at {:x} with value {:x}",
                             CpuType::ARM7,
