@@ -242,17 +242,19 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         jit_buf.push(Bx::bx(Reg::LR, Cond::AL));
     }
 
-    pub fn emit_call_host_func<R, F: FnOnce(&mut Self) -> R, F1>(
+    pub fn emit_call_host_func<R, F: FnOnce(&mut Self, &mut Vec<u32>) -> R, F1>(
         &mut self,
         after_host_restore: F,
         before_guest_restore: F1,
         args: &[Option<u32>],
         func_addr: *const (),
-    ) where
-        F1: FnOnce(&mut Self, R),
+    ) -> Vec<u32>
+    where
+        F1: FnOnce(&mut Self, &mut Vec<u32>, R),
     {
         let thumb = self.thread_regs.borrow().is_thumb();
-        self.jit_buf.emit_opcodes.extend(if thumb {
+        let mut opcodes = Vec::new();
+        opcodes.extend(if thumb {
             &self.restore_host_thumb_opcodes
         } else {
             &self.restore_host_opcodes
@@ -262,28 +264,25 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             todo!()
         }
 
-        let arg = after_host_restore(self);
+        let arg = after_host_restore(self, &mut opcodes);
 
         for (index, arg) in args.iter().enumerate() {
             if let Some(arg) = arg {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(AluImm::mov32(Reg::from(index as u8), *arg));
+                opcodes.extend(AluImm::mov32(Reg::from(index as u8), *arg));
             }
         }
 
-        self.jit_buf
-            .emit_opcodes
-            .extend(&AluImm::mov32(Reg::LR, func_addr as u32));
-        self.jit_buf.emit_opcodes.push(Bx::blx(Reg::LR, Cond::AL));
+        opcodes.extend(&AluImm::mov32(Reg::LR, func_addr as u32));
+        opcodes.push(Bx::blx(Reg::LR, Cond::AL));
 
-        before_guest_restore(self, arg);
+        before_guest_restore(self, &mut opcodes, arg);
 
-        self.jit_buf.emit_opcodes.extend(if thumb {
+        opcodes.extend(if thumb {
             &self.restore_guest_thumb_opcodes
         } else {
             &self.restore_guest_opcodes
         });
+        opcodes
     }
 
     pub fn handle_cpsr(&mut self, host_cpsr_reg: Reg, guest_cpsr_reg: Reg) {

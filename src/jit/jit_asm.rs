@@ -321,9 +321,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     AluShiftImm::mov_al(Reg::R0, Reg::R0), // NOP
                 ]);
 
-                self.emit_call_host_func(
-                    |_| {},
+                let opcodes = self.emit_call_host_func(
                     |_, _| {},
+                    |_, _, _| {},
                     &[
                         Some(self as *const _ as u32),
                         Some(pc),
@@ -331,6 +331,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     ],
                     debug_after_exec_op::<CPU> as _,
                 );
+                self.jit_buf.emit_opcodes.extend(opcodes);
             }
         }
 

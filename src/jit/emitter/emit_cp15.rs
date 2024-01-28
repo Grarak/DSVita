@@ -25,12 +25,15 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let cp15_context_addr = self.cp15_context.as_ptr() as u32;
 
         if cp15_reg == 0x070004 || cp15_reg == 0x070802 {
-            self.emit_call_host_func(
-                |_| {},
-                |_, _| {},
-                &[Some(self.cpu_regs.as_ref() as *const _ as u32), Some(0)],
-                cpu_regs_halt::<CPU> as *const (),
-            );
+            {
+                let opcodes = self.emit_call_host_func(
+                    |_, _| {},
+                    |_, _, _| {},
+                    &[Some(self.cpu_regs.as_ref() as *const _ as u32), Some(0)],
+                    cpu_regs_halt::<CPU> as *const (),
+                );
+                self.jit_buf.emit_opcodes.extend(opcodes);
+            }
 
             self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R0, pc));
             self.jit_buf.emit_opcodes.extend(AluImm::mov32(
@@ -78,18 +81,18 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
             let op = inst_info.op;
             let rd = *rd;
-            self.emit_call_host_func(
-                |asm| {
+
+            let opcodes = self.emit_call_host_func(
+                |asm, opcodes| {
                     if op == Op::Mcr && rd != Reg::R2 {
-                        asm.jit_buf
-                            .emit_opcodes
-                            .push(AluShiftImm::mov_al(Reg::R2, rd));
+                        opcodes.push(AluShiftImm::mov_al(Reg::R2, rd));
                     }
                 },
-                |_, _| {},
+                |_, _, _| {},
                 &args,
                 addr,
             );
+            self.jit_buf.emit_opcodes.extend(opcodes);
         }
     }
 }

@@ -11,8 +11,8 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_msr(&mut self, buf_index: usize, _: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
 
-        self.emit_call_host_func(
-            |asm| {
+        let opcodes = self.emit_call_host_func(
+            |asm, opcodes| {
                 let inst_info = &asm.jit_buf.instructions[buf_index];
 
                 if inst_info.cond != Cond::AL {
@@ -22,9 +22,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 match &inst_info.operands()[0] {
                     Operand::Reg { reg, .. } => {
                         if *reg != Reg::R1 {
-                            asm.jit_buf
-                                .emit_opcodes
-                                .push(AluShiftImm::mov_al(Reg::R1, *reg));
+                            opcodes.push(AluShiftImm::mov_al(Reg::R1, *reg));
                         }
                     }
                     Operand::Imm(imm) => todo!(),
@@ -32,11 +30,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 }
 
                 let flags = (inst_info.opcode >> 16) & 0xF;
-                asm.jit_buf
-                    .emit_opcodes
-                    .push(AluImm::mov_al(Reg::R2, flags as u8));
+                opcodes.push(AluImm::mov_al(Reg::R2, flags as u8));
             },
-            |_, _| {},
+            |_, _, _| {},
             &[Some(self.thread_regs.as_ptr() as _), None, None],
             match op {
                 Op::MsrRc => register_set_cpsr_checked::<CPU> as _,
@@ -44,6 +40,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 _ => todo!(),
             },
         );
+        self.jit_buf.emit_opcodes.extend(opcodes);
     }
 
     pub fn emit_mrs(&mut self, buf_index: usize, _: u32) {
