@@ -53,24 +53,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         Self::emit_host_bx(self.breakout_thumb_addr, &mut opcodes);
 
         if cond != Cond::AL {
-            if new_pc < pc {
-                self.jit_buf
-                    .emit_opcodes
-                    .push(B::b(opcodes.len() as i32 - 1, Cond::AL));
-            } else {
-                self.jit_buf
-                    .emit_opcodes
-                    .push(B::b(opcodes.len() as i32 - 1, !cond));
-            }
-        }
-
-        self.jit_buf.emit_opcodes.extend(&opcodes);
-
-        if cond != Cond::AL && new_pc < pc {
             self.jit_buf
                 .emit_opcodes
-                .push(B::b(-(opcodes.len() as i32) - 2, cond));
+                .push(B::b(opcodes.len() as i32 - 1, !cond));
         }
+
+        self.jit_buf.emit_opcodes.extend(opcodes);
     }
 
     pub fn emit_bl_setup_thumb(&mut self, buf_index: usize, pc: u32) {

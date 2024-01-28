@@ -35,7 +35,7 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
     }
 
     fn handle_request<const WRITE: bool, const AMOUNT: MemoryAmount>(
-        &mut self,
+        &self,
         op0: &mut u32,
         addr: u32,
     ) {
@@ -53,7 +53,7 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
                 MemoryAmount::Double => {
                     self.mem_handler.write(addr, *op0);
                     let next_reg =
-                        unsafe { (((op0 as *mut _ as u32) + 4) as *mut u32).as_ref().unwrap() };
+                        unsafe { (op0 as *mut u32).offset(1).as_ref().unwrap_unchecked() };
                     self.mem_handler.write(addr + 4, *next_reg);
                 }
             }
@@ -71,18 +71,14 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
                 MemoryAmount::Double => {
                     *op0 = self.mem_handler.read(addr);
                     let next_reg =
-                        unsafe { (((op0 as *mut _ as u32) + 4) as *mut u32).as_mut().unwrap() };
+                        unsafe { (op0 as *mut u32).offset(1).as_mut().unwrap_unchecked() };
                     *next_reg = self.mem_handler.read(addr + 4);
                 }
             }
         }
     }
 
-    fn handle_multiple_request<const THUMB: bool, const WRITE: bool>(
-        &mut self,
-        pc: u32,
-        args: u32,
-    ) {
+    fn handle_multiple_request<const THUMB: bool, const WRITE: bool>(&self, pc: u32, args: u32) {
         debug_println!(
             "handle multiple request at {:x} thumb: {} write: {}",
             pc,
@@ -151,7 +147,7 @@ pub unsafe extern "C" fn inst_mem_handler<
 >(
     addr: u32,
     op0: *mut u32,
-    handler: *mut InstMemHandler<CPU>,
+    handler: *const InstMemHandler<CPU>,
 ) {
     (*handler).handle_request::<WRITE, AMOUNT>(op0.as_mut().unwrap_unchecked(), addr);
 }
@@ -161,7 +157,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     const THUMB: bool,
     const WRITE: bool,
 >(
-    handler: *mut InstMemHandler<CPU>,
+    handler: *const InstMemHandler<CPU>,
     pc: u32,
     args: u32,
 ) {

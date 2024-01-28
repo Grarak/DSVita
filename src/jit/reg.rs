@@ -27,6 +27,7 @@ pub enum Reg {
 
 const GP_REGS_BITMASK: u32 = 0x1FFF;
 const GP_THUMB_REGS_BITMASK: u32 = 0xFF;
+const CALL_PRESERVED_BITMASK: u32 = 0x2FF0;
 const EMULATED_REGS_BITMASK: u32 = (1 << Reg::LR as u8) | (1 << Reg::PC as u8);
 pub const FIRST_EMULATED_REG: Reg = Reg::LR;
 pub const EMULATED_REGS_COUNT: usize = u32::count_ones(EMULATED_REGS_BITMASK) as usize;
@@ -39,7 +40,7 @@ impl From<u8> for Reg {
 }
 
 impl Reg {
-    pub fn is_emulated(self) -> bool {
+    pub const fn is_emulated(self) -> bool {
         (EMULATED_REGS_BITMASK & (1 << self as u8)) != 0
     }
 
@@ -47,8 +48,8 @@ impl Reg {
         !self.is_emulated() && !RegReserve::gp_thumb().is_reserved(self) && self != Reg::SP
     }
 
-    pub fn is_call_preserved(self) -> bool {
-        (self >= Reg::R4 && self <= Reg::R11) || self == Reg::SP
+    pub const fn is_call_preserved(self) -> bool {
+        (self as u8 >= Reg::R4 as u8 && self as u8 <= Reg::R11 as u8) || self as u8 == Reg::SP as u8
     }
 }
 
@@ -76,6 +77,10 @@ impl RegReserve {
 
     pub fn gp_thumb() -> Self {
         RegReserve(GP_THUMB_REGS_BITMASK)
+    }
+
+    pub fn call_preserved() -> Self {
+        RegReserve(CALL_PRESERVED_BITMASK)
     }
 
     pub fn is_reserved(&self, reg: Reg) -> bool {

@@ -1,26 +1,21 @@
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
-use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
-use crate::jit::{Cond, Op};
+use crate::jit::Op;
 use std::ptr;
 
 impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_b(&mut self, buf_index: usize, pc: u32) {
-        let (op, cond, imm) = {
+        let (op, imm) = {
             let inst_info = &self.jit_buf.instructions[buf_index];
-            (
-                inst_info.op,
-                inst_info.cond,
-                inst_info.operands()[0].as_imm().unwrap(),
-            )
+            (inst_info.op, inst_info.operands()[0].as_imm().unwrap())
         };
 
         let new_pc = (pc as i32 + 8 + *imm as i32) as u32;
 
-        let mut opcodes = Vec::<u32>::new();
+        let opcodes = &mut self.jit_buf.emit_opcodes;
 
         opcodes.extend(&self.thread_regs.borrow().save_regs_opcodes);
 
@@ -49,33 +44,13 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         opcodes.push(LdrStrImm::str_al(Reg::R1, Reg::R2));
 
-        Self::emit_host_bx(self.breakout_skip_save_regs_addr, &mut opcodes);
-
-        if cond != Cond::AL {
-            if new_pc < pc {
-                self.jit_buf
-                    .emit_opcodes
-                    .push(B::b(opcodes.len() as i32 - 1, Cond::AL));
-            } else {
-                self.jit_buf
-                    .emit_opcodes
-                    .push(B::b(opcodes.len() as i32 - 1, !cond));
-            }
-        }
-
-        self.jit_buf.emit_opcodes.extend(&opcodes);
-
-        if cond != Cond::AL && new_pc < pc {
-            self.jit_buf
-                .emit_opcodes
-                .push(B::b(-(opcodes.len() as i32) - 2, cond));
-        }
+        Self::emit_host_bx(self.breakout_skip_save_regs_addr, opcodes);
     }
 
     pub fn emit_bx(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
-        let mut opcodes = Vec::<u32>::new();
+        let opcodes = &mut self.jit_buf.emit_opcodes;
 
         opcodes.extend(&self.thread_regs.borrow().save_regs_opcodes);
 
@@ -120,14 +95,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         opcodes.push(LdrStrImm::str_al(Reg::R1, Reg::R2));
 
-        Self::emit_host_bx(self.breakout_skip_save_regs_addr, &mut opcodes);
-
-        if inst_info.cond != Cond::AL {
-            self.jit_buf
-                .emit_opcodes
-                .push(B::b(opcodes.len() as i32 - 1, !inst_info.cond));
-        }
-
-        self.jit_buf.emit_opcodes.extend(&opcodes);
+        Self::emit_host_bx(self.breakout_skip_save_regs_addr, opcodes);
     }
 }

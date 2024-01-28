@@ -37,8 +37,10 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 let src_regs = inst_info.src_regs;
                 let combined_regs = src_regs + out_regs;
                 if combined_regs.emulated_regs_count() > 0 {
-                    self.handle_emulated_regs(buf_index, pc, |_, _, _| Vec::new());
+                    self.handle_emulated_regs(buf_index, pc);
                 } else {
+                    let mut inst_info = inst_info.clone();
+                    inst_info.set_cond(Cond::AL);
                     self.jit_buf.emit_opcodes.push(inst_info.opcode);
                 }
 
@@ -67,7 +69,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         emit_func(self, buf_index, pc);
 
         if out_regs.is_reserved(Reg::PC) {
-            let mut opcodes = Vec::<u32>::new();
+            let opcodes = &mut self.jit_buf.emit_opcodes;
 
             opcodes.extend(&self.thread_regs.borrow().save_regs_opcodes);
 
@@ -78,30 +80,26 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             ));
             opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
 
-            Self::emit_host_bx(self.breakout_skip_save_regs_addr, &mut opcodes);
+            Self::emit_host_bx(self.breakout_skip_save_regs_addr, opcodes);
+        }
 
-            if cond != Cond::AL {
+        if cond != Cond::AL {
+            let len = self.jit_buf.emit_opcodes.len();
+            if len == 1 {
+                let opcode = &mut self.jit_buf.emit_opcodes[0];
+                *opcode = (*opcode & !(0xF << 28)) | ((cond as u32) << 28);
+            } else {
                 self.jit_buf
                     .emit_opcodes
-                    .push(B::b(opcodes.len() as i32 - 1, !cond));
+                    .insert(0, B::b(len as i32 - 1, !cond));
             }
-            self.jit_buf.emit_opcodes.extend(opcodes);
         }
     }
 
-    pub fn handle_emulated_regs(
-        &mut self,
-        buf_index: usize,
-        pc: u32,
-        before_assemble: fn(
-            &JitAsm<CPU>,
-            inst_info: &InstInfo,
-            reg_reserver: &mut RegPushPopHandler,
-        ) -> Vec<u32>,
-    ) {
+    pub fn handle_emulated_regs(&mut self, buf_index: usize, pc: u32) {
         let mut inst_info = self.jit_buf.instructions[buf_index].clone();
 
-        let mut opcodes = Vec::<u32>::new();
+        let opcodes = &mut self.jit_buf.emit_opcodes;
 
         let emulated_src_regs = inst_info.src_regs.get_emulated_regs();
         let mut src_reserved = inst_info.src_regs.create_push_pop_handler(
@@ -198,13 +196,10 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             }
         }
 
-        let insts = before_assemble(self, &inst_info, &mut out_reserved);
-        {
-            if let Some(opcode) = out_reserved.emit_push_stack(Reg::LR) {
-                opcodes.push(opcode);
-            }
+        if let Some(opcode) = out_reserved.emit_push_stack(Reg::LR) {
+            opcodes.push(opcode);
         }
-        opcodes.extend(&insts);
+        inst_info.set_cond(Cond::AL);
         opcodes.push(inst_info.assemble());
 
         for (index, mapped_reg) in out_reg_mapping.iter().enumerate() {
@@ -227,14 +222,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         if let Some(opcode) = src_reserved.emit_pop_stack(Reg::LR) {
             opcodes.push(opcode);
         }
-
-        if inst_info.cond != Cond::AL {
-            self.jit_buf
-                .emit_opcodes
-                .push(B::b(opcodes.len() as i32 - 1, !inst_info.cond));
-        }
-
-        self.jit_buf.emit_opcodes.extend(opcodes);
     }
 
     pub fn emit_host_bx(addr: u32, jit_buf: &mut Vec<u32>) {
@@ -242,19 +229,17 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         jit_buf.push(Bx::bx(Reg::LR, Cond::AL));
     }
 
-    pub fn emit_call_host_func<R, F: FnOnce(&mut Self, &mut Vec<u32>) -> R, F1>(
+    pub fn emit_call_host_func<R, F: FnOnce(&mut Self) -> R, F1>(
         &mut self,
         after_host_restore: F,
         before_guest_restore: F1,
         args: &[Option<u32>],
         func_addr: *const (),
-    ) -> Vec<u32>
-    where
-        F1: FnOnce(&mut Self, &mut Vec<u32>, R),
+    ) where
+        F1: FnOnce(&mut Self, R),
     {
         let thumb = self.thread_regs.borrow().is_thumb();
-        let mut opcodes = Vec::new();
-        opcodes.extend(if thumb {
+        self.jit_buf.emit_opcodes.extend(if thumb {
             &self.restore_host_thumb_opcodes
         } else {
             &self.restore_host_opcodes
@@ -264,25 +249,28 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             todo!()
         }
 
-        let arg = after_host_restore(self, &mut opcodes);
+        let arg = after_host_restore(self);
 
         for (index, arg) in args.iter().enumerate() {
             if let Some(arg) = arg {
-                opcodes.extend(AluImm::mov32(Reg::from(index as u8), *arg));
+                self.jit_buf
+                    .emit_opcodes
+                    .extend(AluImm::mov32(Reg::from(index as u8), *arg));
             }
         }
 
-        opcodes.extend(&AluImm::mov32(Reg::LR, func_addr as u32));
-        opcodes.push(Bx::blx(Reg::LR, Cond::AL));
+        self.jit_buf
+            .emit_opcodes
+            .extend(&AluImm::mov32(Reg::LR, func_addr as u32));
+        self.jit_buf.emit_opcodes.push(Bx::blx(Reg::LR, Cond::AL));
 
-        before_guest_restore(self, &mut opcodes, arg);
+        before_guest_restore(self, arg);
 
-        opcodes.extend(if thumb {
+        self.jit_buf.emit_opcodes.extend(if thumb {
             &self.restore_guest_thumb_opcodes
         } else {
             &self.restore_guest_opcodes
         });
-        opcodes
     }
 
     pub fn handle_cpsr(&mut self, host_cpsr_reg: Reg, guest_cpsr_reg: Reg) {

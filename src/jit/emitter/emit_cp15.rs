@@ -5,16 +5,12 @@ use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
-use crate::jit::{Cond, Op};
+use crate::jit::Op;
 use std::ptr;
 
 impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_cp15(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
-
-        if inst_info.cond != Cond::AL {
-            todo!()
-        }
 
         let rd = inst_info.operands()[0].as_reg_no_shift().unwrap();
         let cn = (inst_info.opcode >> 16) & 0xF;
@@ -26,13 +22,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         if cp15_reg == 0x070004 || cp15_reg == 0x070802 {
             {
-                let opcodes = self.emit_call_host_func(
+                self.emit_call_host_func(
+                    |_| {},
                     |_, _| {},
-                    |_, _, _| {},
                     &[Some(self.cpu_regs.as_ref() as *const _ as u32), Some(0)],
                     cpu_regs_halt::<CPU> as *const (),
                 );
-                self.jit_buf.emit_opcodes.extend(opcodes);
             }
 
             self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R0, pc));
@@ -82,17 +77,18 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             let op = inst_info.op;
             let rd = *rd;
 
-            let opcodes = self.emit_call_host_func(
-                |asm, opcodes| {
+            self.emit_call_host_func(
+                |asm: &mut Self| {
                     if op == Op::Mcr && rd != Reg::R2 {
-                        opcodes.push(AluShiftImm::mov_al(Reg::R2, rd));
+                        asm.jit_buf
+                            .emit_opcodes
+                            .push(AluShiftImm::mov_al(Reg::R2, rd));
                     }
                 },
-                |_, _, _| {},
+                |_, _| {},
                 &args,
                 addr,
             );
-            self.jit_buf.emit_opcodes.extend(opcodes);
         }
     }
 }

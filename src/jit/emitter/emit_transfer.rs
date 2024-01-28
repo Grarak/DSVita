@@ -1,6 +1,5 @@
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm};
-use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::inst_info::{Operand, Shift, ShiftValue};
 use crate::jit::inst_mem_handler::{
@@ -21,8 +20,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         write_back: bool,
         amount: MemoryAmount,
     ) {
-        let after_host_restore = |asm: &mut Self, opcodes: &mut Vec<u32>| {
+        let after_host_restore = |asm: &mut Self| {
             let inst_info = &asm.jit_buf.instructions[buf_index];
+            let opcodes = &mut asm.jit_buf.emit_opcodes;
 
             let operands = inst_info.operands();
             let op0 = *operands[0].as_reg_no_shift().unwrap();
@@ -116,16 +116,17 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             }
         };
 
-        let before_guest_restore =
-            |asm: &mut Self, opcodes: &mut Vec<u32>, write_back_regs: Option<(Reg, Reg)>| {
-                if let Some((op1, write_back)) = write_back_regs {
-                    opcodes.extend(
+        let before_guest_restore = |asm: &mut Self, write_back_regs: Option<(Reg, Reg)>| {
+            if let Some((op1, write_back)) = write_back_regs {
+                asm.jit_buf
+                    .emit_opcodes
+                    .extend(
                         asm.thread_regs
                             .borrow()
                             .emit_set_reg(op1, write_back, Reg::R0),
                     );
-                }
-            };
+            }
+        };
 
         let mem_handler_addr = ptr::addr_of_mut!(self.inst_mem_handler) as u32;
         let func_addr = match amount {
@@ -143,20 +144,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             }
         };
 
-        let opcodes = self.emit_call_host_func(
+        self.emit_call_host_func(
             after_host_restore,
             before_guest_restore,
             &[None, None, Some(mem_handler_addr)],
             func_addr,
         );
-
-        let cond = self.jit_buf.instructions[buf_index].cond;
-        if cond != Cond::AL {
-            self.jit_buf
-                .emit_opcodes
-                .push(B::b(opcodes.len() as i32 - 1, !cond));
-        }
-        self.jit_buf.emit_opcodes.extend(opcodes);
     }
 
     pub fn emit_multiple_transfer<const THUMB: bool, const WRITE: bool>(
@@ -165,16 +158,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         opcode: u32,
         op: Op,
         op0: Reg,
-        cond: Cond,
         pre: bool,
         write_back: bool,
         decrement: bool,
     ) {
-        if cond != Cond::AL {
-            todo!()
-        }
+        let mem_handler_addr = ptr::addr_of!(self.inst_mem_handler) as u32;
 
-        let mem_handler_addr = ptr::addr_of_mut!(self.inst_mem_handler) as u32;
         let mut rlist = (opcode & if THUMB { 0xFF } else { 0xFFFF }) as u16;
         if op == Op::PushLrT {
             rlist |= 1 << Reg::LR as u8;
@@ -189,13 +178,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             u24::from(rlist),
         ));
 
-        let opcodes = self.emit_call_host_func(
+        self.emit_call_host_func(
+            |_| {},
             |_, _| {},
-            |_, _, _| {},
             &[Some(mem_handler_addr), Some(pc), Some(args)],
             inst_mem_handler_multiple::<CPU, THUMB, WRITE> as _,
         );
-        self.jit_buf.emit_opcodes.extend(opcodes);
     }
 
     pub fn emit_str(&mut self, buf_index: usize, pc: u32) {
@@ -283,7 +271,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             inst_info.opcode,
             inst_info.op,
             *inst_info.operands()[0].as_reg_no_shift().unwrap(),
-            inst_info.cond,
             pre,
             write_back,
             decrement,
@@ -314,7 +301,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             inst_info.opcode,
             inst_info.op,
             *inst_info.operands()[0].as_reg_no_shift().unwrap(),
-            inst_info.cond,
             pre,
             write_back,
             decrement,

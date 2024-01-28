@@ -11,9 +11,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let bios_context_addr = self.bios_context.as_ptr() as u32;
         match CPU {
             CpuType::ARM9 => {
-                let opcodes = self.emit_call_host_func(
+                self.emit_call_host_func(
+                    |_| {},
                     |_, _| {},
-                    |_, _, _| {},
                     &[
                         Some(self.cp15_context.as_ptr() as _),
                         Some(bios_context_addr),
@@ -22,12 +22,11 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     ],
                     exception_handler_arm9::<true> as _,
                 );
-                self.jit_buf.emit_opcodes.extend(opcodes);
             }
             CpuType::ARM7 => {
-                let opcodes = self.emit_call_host_func(
+                self.emit_call_host_func(
+                    |_| {},
                     |_, _| {},
-                    |_, _, _| {},
                     &[
                         Some(bios_context_addr),
                         Some(inst_info.opcode),
@@ -35,7 +34,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     ],
                     exception_handler_arm7::<true> as _,
                 );
-                self.jit_buf.emit_opcodes.extend(opcodes);
             }
         }
     }

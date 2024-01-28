@@ -57,6 +57,7 @@ impl HostRegs {
 pub struct JitBuf {
     pub instructions: Vec<InstInfo>,
     pub emit_opcodes: Vec<u32>,
+    pub block_opcodes: Vec<u32>,
     pub jit_addr_mapping: NoHashMap<u16>,
     pub insts_cycle_counts: Vec<u8>,
 }
@@ -66,6 +67,7 @@ impl JitBuf {
         JitBuf {
             instructions: Vec::new(),
             emit_opcodes: Vec::new(),
+            block_opcodes: Vec::new(),
             jit_addr_mapping: NoHashMap::default(),
             insts_cycle_counts: Vec::new(),
         }
@@ -73,7 +75,7 @@ impl JitBuf {
 
     fn clear_all(&mut self) {
         self.instructions.clear();
-        self.emit_opcodes.clear();
+        self.block_opcodes.clear();
         self.jit_addr_mapping.clear();
         self.insts_cycle_counts.clear();
     }
@@ -293,7 +295,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let pc_step_size = if THUMB { 1 } else { 2 };
         for i in 0..self.jit_buf.instructions.len() {
             let pc = ((i as u32) << pc_step_size) + entry;
-            let opcodes_len = self.jit_buf.emit_opcodes.len();
+            let opcodes_len = self.jit_buf.block_opcodes.len();
             if opcodes_len > 0 {
                 self.jit_buf
                     .jit_addr_mapping
@@ -321,9 +323,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     AluShiftImm::mov_al(Reg::R0, Reg::R0), // NOP
                 ]);
 
-                let opcodes = self.emit_call_host_func(
+                self.emit_call_host_func(
+                    |_| {},
                     |_, _| {},
-                    |_, _, _| {},
                     &[
                         Some(self as *const _ as u32),
                         Some(pc),
@@ -331,8 +333,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     ],
                     debug_after_exec_op::<CPU> as _,
                 );
-                self.jit_buf.emit_opcodes.extend(opcodes);
             }
+
+            self.jit_buf
+                .block_opcodes
+                .extend(&self.jit_buf.emit_opcodes);
+            self.jit_buf.emit_opcodes.clear();
         }
 
         let guest_pc_end = entry + ((self.jit_buf.instructions.len() as u32) << pc_step_size);
@@ -340,7 +346,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         {
             jit_memory.insert_block::<CPU>(
-                &self.jit_buf.emit_opcodes,
+                &self.jit_buf.block_opcodes,
                 Some(entry),
                 Some(self.jit_buf.jit_addr_mapping.clone()),
                 Some(self.jit_buf.insts_cycle_counts.clone()),

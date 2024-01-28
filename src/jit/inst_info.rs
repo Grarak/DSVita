@@ -27,7 +27,7 @@ impl InstInfo {
         InstInfo {
             opcode,
             op,
-            cond: Cond::from(((opcode >> 28) & 0xF) as u8),
+            cond: Cond::from((opcode >> 28) as u8),
             operands,
             src_regs,
             out_regs,
@@ -43,7 +43,12 @@ impl InstInfo {
         &mut self.operands.values[..self.operands.num as usize]
     }
 
-    pub fn assemble(&self) -> u32 {
+    pub fn set_cond(&mut self, cond: Cond) {
+        self.cond = cond;
+        self.opcode = (self.opcode & !(0xF << 28)) | ((cond as u32) << 28);
+    }
+
+    pub fn assemble(self) -> u32 {
         let operands = self.operands();
         match self.op {
             Op::AddImm | Op::RscsImm => {

@@ -8,7 +8,6 @@ use crate::logging::debug_println;
 use crate::DEBUG;
 use bilge::prelude::*;
 use std::cell::RefCell;
-use std::hint::unreachable_unchecked;
 use std::ptr;
 use std::rc::Rc;
 
@@ -173,40 +172,16 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         opcodes
     }
 
-    #[inline]
     pub fn get_reg_value(&self, reg: Reg) -> &u32 {
-        match reg {
-            Reg::SP => &self.sp,
-            Reg::LR => &self.lr,
-            Reg::PC => &self.pc,
-            Reg::CPSR => &self.cpsr,
-            Reg::SPSR => &self.spsr,
-            _ => {
-                if reg >= Reg::R0 && reg <= Reg::R12 {
-                    &self.gp_regs[reg as usize]
-                } else {
-                    unsafe { unreachable_unchecked() };
-                }
-            }
-        }
+        debug_assert_ne!(reg, Reg::None);
+        let base_ptr = ptr::addr_of!(self.gp_regs[0]);
+        unsafe { base_ptr.offset(reg as _).as_ref().unwrap_unchecked() }
     }
 
-    #[inline]
     pub fn get_reg_value_mut(&mut self, reg: Reg) -> &mut u32 {
-        match reg {
-            Reg::SP => &mut self.sp,
-            Reg::LR => &mut self.lr,
-            Reg::PC => &mut self.pc,
-            Reg::CPSR => &mut self.cpsr,
-            Reg::SPSR => &mut self.spsr,
-            _ => {
-                if reg >= Reg::R0 && reg <= Reg::R12 {
-                    &mut self.gp_regs[reg as usize]
-                } else {
-                    unsafe { unreachable_unchecked() };
-                }
-            }
-        }
+        debug_assert_ne!(reg, Reg::None);
+        let base_ptr = ptr::addr_of_mut!(self.gp_regs[0]);
+        unsafe { base_ptr.offset(reg as _).as_mut().unwrap_unchecked() }
     }
 
     pub fn set_cpsr_with_flags(&mut self, value: u32, flags: u8) {

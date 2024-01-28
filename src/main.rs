@@ -391,7 +391,8 @@ pub fn main() {
         if let Some(fps) = gpu_context.query_fps() {
             sdl_canvas
                 .window_mut()
-                .set_title(&format!("DSPSV - {} fps", fps));
+                .set_title(&format!("DSPSV - {} fps", fps))
+                .unwrap();
         }
     }
 
