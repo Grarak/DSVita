@@ -4,6 +4,8 @@ use crate::logging::debug_println;
 use crate::mmap::Mmap;
 use crate::utils;
 use crate::utils::NoHashMap;
+#[cfg(not(debug_assertions))]
+use std::hint::unreachable_unchecked;
 use std::mem;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
@@ -135,7 +137,14 @@ impl JitMemory {
             .blocks
             .binary_search_by_key(&new_addr, |(addr, _)| *addr)
         {
-            Ok(_) => panic!(),
+            Ok(_) => {
+                #[cfg(debug_assertions)]
+                panic!();
+                #[cfg(not(debug_assertions))]
+                unsafe {
+                    unreachable_unchecked()
+                };
+            }
             Err(index) => self.blocks.insert(index, (new_addr, aligned_size)),
         };
 
@@ -145,37 +154,40 @@ impl JitMemory {
             let end_pc = guest_pc_end.unwrap();
 
             let addr_base = guest_start_pc & 0xFF000000;
-            if addr_base == regions::MAIN_MEMORY_OFFSET {
-                self.main_memory_guest_pc_mapping.insert(
-                    guest_start_pc,
-                    GuestPcInfo::new(cycle_counts.clone(), guest_start_pc, end_pc, new_addr),
-                );
-                for (guest_pc, offset) in guest_pc_to_jit_addr_offset.unwrap() {
+            match addr_base {
+                regions::MAIN_MEMORY_OFFSET => {
                     self.main_memory_guest_pc_mapping.insert(
-                        guest_pc,
-                        GuestPcInfo::new(
-                            cycle_counts.clone(),
-                            guest_start_pc,
-                            end_pc,
-                            new_addr + offset as u32,
-                        ),
+                        guest_start_pc,
+                        GuestPcInfo::new(cycle_counts.clone(), guest_start_pc, end_pc, new_addr),
                     );
+                    for (guest_pc, offset) in guest_pc_to_jit_addr_offset.unwrap() {
+                        self.main_memory_guest_pc_mapping.insert(
+                            guest_pc,
+                            GuestPcInfo::new(
+                                cycle_counts.clone(),
+                                guest_start_pc,
+                                end_pc,
+                                new_addr + offset as u32,
+                            ),
+                        );
+                    }
                 }
-            } else {
-                self.guest_pc_mapping.insert(
-                    guest_start_pc,
-                    GuestPcInfo::new(cycle_counts.clone(), guest_start_pc, end_pc, new_addr),
-                );
-                for (guest_pc, offset) in guest_pc_to_jit_addr_offset.unwrap() {
+                _ => {
                     self.guest_pc_mapping.insert(
-                        guest_pc,
-                        GuestPcInfo::new(
-                            cycle_counts.clone(),
-                            guest_start_pc,
-                            end_pc,
-                            new_addr + offset as u32,
-                        ),
+                        guest_start_pc,
+                        GuestPcInfo::new(cycle_counts.clone(), guest_start_pc, end_pc, new_addr),
                     );
+                    for (guest_pc, offset) in guest_pc_to_jit_addr_offset.unwrap() {
+                        self.guest_pc_mapping.insert(
+                            guest_pc,
+                            GuestPcInfo::new(
+                                cycle_counts.clone(),
+                                guest_start_pc,
+                                end_pc,
+                                new_addr + offset as u32,
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -197,18 +209,14 @@ impl JitMemory {
 
     pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> Option<&GuestPcInfo> {
         let addr_base = guest_pc & 0xFF000000;
-        if addr_base == regions::MAIN_MEMORY_OFFSET {
-            self.main_memory_guest_pc_mapping.get(guest_pc)
-        } else {
-            self.guest_pc_mapping.get(&guest_pc)
+        match addr_base {
+            regions::MAIN_MEMORY_OFFSET => self.main_memory_guest_pc_mapping.get(guest_pc),
+            _ => self.guest_pc_mapping.get(&guest_pc),
         }
     }
 
     pub fn invalidate_block<const CPU: CpuType>(&mut self, guest_pc: u32) {
-        let addr_base = guest_pc & 0xFF000000;
-        if addr_base == regions::MAIN_MEMORY_OFFSET {
-            self.main_memory_guest_pc_mapping.invalidate(guest_pc);
-        } else if let Some(info) = self.guest_pc_mapping.remove(&guest_pc) {
+        if let Some(info) = self.guest_pc_mapping.remove(&guest_pc) {
             debug_println!(
                 "Removing jit block at {:x} with guest start pc {:x}",
                 info.jit_addr,
@@ -260,6 +268,7 @@ impl JitMemory {
                 size,
             )
         };
+        #[cfg(debug_assertions)]
         if ret < vitasdk_sys::SCE_OK as _ {
             panic!("Can't sync vm domain {}", ret)
         }

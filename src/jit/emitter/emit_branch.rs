@@ -17,7 +17,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         let opcodes = &mut self.jit_buf.emit_opcodes;
 
-        opcodes.extend(&self.thread_regs.borrow().save_regs_opcodes);
+        if !self.jit_buf.regs_saved_previously {
+            opcodes.extend(&self.thread_regs.borrow().save_regs_opcodes);
+        }
 
         opcodes.extend(AluImm::mov32(Reg::R0, new_pc));
         opcodes.extend(AluImm::mov32(Reg::R1, pc));
@@ -52,7 +54,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         let opcodes = &mut self.jit_buf.emit_opcodes;
 
-        opcodes.extend(&self.thread_regs.borrow().save_regs_opcodes);
+        if !self.jit_buf.regs_saved_previously {
+            opcodes.extend(&self.thread_regs.borrow().save_regs_opcodes);
+        }
 
         let reg = inst_info.operands()[0].as_reg_no_shift().unwrap();
         if *reg == Reg::LR {

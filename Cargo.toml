@@ -12,12 +12,12 @@ title_name = "DSPSV"
 
 [dependencies]
 bilge = "0.2.0"
-chrono = "0.4.31"
+chrono = "0.4.33"
 paste = "1.0.14"
 static_assertions = "1.1.0"
 dspsv_macros = { path = "macros" }
 sdl2 = "0.36.0"
-libc = "0.2.150"
+libc = "0.2.153"
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]
 vitasdk-sys = { version = "0.3.2", features = ["SceSysmem_stub",

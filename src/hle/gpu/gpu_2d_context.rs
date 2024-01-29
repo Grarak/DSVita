@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::hint::unreachable_unchecked;
 use std::marker::ConstParamTy;
 use std::mem;
+use std::ops::Deref;
 use std::rc::Rc;
 
 #[bitsize(32)]
@@ -83,38 +84,24 @@ pub enum Gpu2DEngine {
     B,
 }
 
-pub struct Gpu2DContext<const ENGINE: Gpu2DEngine> {
-    pub disp_cnt: u32,
-    pub bg_cnt: [u16; 4],
+struct Gpu2DInner<const ENGINE: Gpu2DEngine> {
+    disp_cnt: u32,
+    bg_cnt: [u16; 4],
     bg_h_ofs: [u16; 4],
     bg_v_ofs: [u16; 4],
     disp_stat: u16,
     pow_cnt1: u16,
-    pub framebuffer: HeapMemU32<{ DISPLAY_PIXEL_COUNT }>,
-    layers: [RefCell<HeapMemU32<{ DISPLAY_WIDTH }>>; 2],
-    vram_context: Rc<RefCell<VramContext>>,
-    palattes_context: Rc<RefCell<PalettesContext>>,
 }
 
-impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
-    pub fn new(
-        vram_context: Rc<RefCell<VramContext>>,
-        palattes_context: Rc<RefCell<PalettesContext>>,
-    ) -> Self {
-        Gpu2DContext {
+impl<const ENGINE: Gpu2DEngine> Gpu2DInner<ENGINE> {
+    fn new() -> Self {
+        Gpu2DInner {
             disp_cnt: 0,
             bg_cnt: [0u16; 4],
             bg_h_ofs: [0u16; 4],
             bg_v_ofs: [0u16; 4],
             disp_stat: 0,
             pow_cnt1: 0,
-            framebuffer: HeapMemU32::new(),
-            layers: [
-                RefCell::new(HeapMemU32::new()),
-                RefCell::new(HeapMemU32::new()),
-            ],
-            vram_context,
-            palattes_context,
         }
     }
 
@@ -169,18 +156,132 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     pub fn set_bld_y(&mut self, value: u8) {}
 
     pub fn set_master_bright(&mut self, mask: u16, value: u16) {}
+}
 
-    pub fn draw_scanline(&mut self, line: u16) {
-        let backdrop = self.palattes_context.borrow().read::<u16>(match ENGINE {
-            Gpu2DEngine::A => 0,
-            Gpu2DEngine::B => 0x400,
-        });
-        let backdrop = backdrop & !(1 << 15);
-        for layers in &mut self.layers {
-            layers.borrow_mut().fill(backdrop as u32);
+pub struct Gpu2DContext<const ENGINE: Gpu2DEngine> {
+    inner: RefCell<Gpu2DInner<ENGINE>>,
+    pub framebuffer: RefCell<HeapMemU32<{ DISPLAY_PIXEL_COUNT }>>,
+    layers: [RefCell<HeapMemU32<{ DISPLAY_WIDTH }>>; 2],
+    vram_context: *const VramContext,
+    palattes_context: *const PalettesContext,
+}
+
+impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
+    pub fn new(
+        vram_context: Rc<RefCell<VramContext>>,
+        palattes_context: Rc<RefCell<PalettesContext>>,
+    ) -> Self {
+        Gpu2DContext {
+            inner: RefCell::new(Gpu2DInner::new()),
+            framebuffer: RefCell::new(HeapMemU32::new()),
+            layers: [
+                RefCell::new(HeapMemU32::new()),
+                RefCell::new(HeapMemU32::new()),
+            ],
+            vram_context: vram_context.as_ptr(),
+            palattes_context: palattes_context.as_ptr(),
         }
+    }
 
-        let disp_cnt = DispCnt::from(self.disp_cnt);
+    pub fn get_disp_cnt(&self) -> u32 {
+        self.inner.borrow().disp_cnt
+    }
+
+    pub fn get_bg_cnt(&self, bg_num: usize) -> u16 {
+        self.inner.borrow().bg_cnt[bg_num]
+    }
+
+    pub fn set_disp_cnt(&self, mask: u32, value: u32) {
+        self.inner.borrow_mut().set_disp_cnt(mask, value);
+    }
+
+    pub fn set_bg_cnt(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bg_cnt(bg_num, mask, value);
+    }
+
+    pub fn set_bg_h_ofs(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bg_h_ofs(bg_num, mask, value);
+    }
+
+    pub fn set_bg_v_ofs(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bg_v_ofs(bg_num, mask, value);
+    }
+
+    pub fn set_bg_p_a(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bg_p_a(bg_num, mask, value);
+    }
+
+    pub fn set_bg_p_b(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bg_p_b(bg_num, mask, value);
+    }
+
+    pub fn set_bg_p_c(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bg_p_c(bg_num, mask, value);
+    }
+
+    pub fn set_bg_p_d(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bg_p_d(bg_num, mask, value);
+    }
+
+    pub fn set_bg_x(&self, bg_num: usize, mask: u32, value: u32) {
+        self.inner.borrow_mut().set_bg_x(bg_num, mask, value);
+    }
+
+    pub fn set_bg_y(&self, bg_num: usize, mask: u32, value: u32) {
+        self.inner.borrow_mut().set_bg_y(bg_num, mask, value);
+    }
+
+    pub fn set_win_h(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_win_h(bg_num, mask, value);
+    }
+
+    pub fn set_win_v(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_win_v(bg_num, mask, value);
+    }
+
+    pub fn set_win_in(&self, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_win_in(mask, value);
+    }
+
+    pub fn set_win_out(&self, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_win_out(mask, value);
+    }
+
+    pub fn set_mosaic(&self, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_mosaic(mask, value);
+    }
+
+    pub fn set_bld_cnt(&self, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bld_cnt(mask, value);
+    }
+
+    pub fn set_bld_alpha(&self, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bld_alpha(mask, value);
+    }
+
+    pub fn set_bld_y(&self, value: u8) {
+        self.inner.borrow_mut().set_bld_y(value);
+    }
+
+    pub fn set_master_bright(&self, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_master_bright(mask, value);
+    }
+
+    pub fn draw_scanline(&self, line: u8) {
+        let backdrop = unsafe {
+            (*self.palattes_context).read::<u16>(match ENGINE {
+                Gpu2DEngine::A => 0,
+                Gpu2DEngine::B => 0x400,
+            })
+        };
+        let backdrop = backdrop & !(1 << 15);
+        self.layers[0].borrow_mut().fill(backdrop as u32);
+        self.layers[1].borrow_mut().fill(backdrop as u32);
+
+        let inner = self.inner.borrow();
+        let inner = inner.deref();
+
+        let disp_cnt = DispCnt::from(inner.disp_cnt);
         if bool::from(disp_cnt.screen_display_obj()) {
             if bool::from(disp_cnt.obj_window_display_flag()) {
                 self.draw_objects::<true>(line);
@@ -191,16 +292,16 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         match u8::from(disp_cnt.bg_mode()) {
             0 => {
                 if bool::from(disp_cnt.screen_display_bg3()) {
-                    self.draw_text::<3>(line);
+                    self.draw_text::<3>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
-                    self.draw_text::<2>(line);
+                    self.draw_text::<2>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(line);
+                    self.draw_text::<1>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(line);
+                    self.draw_text::<0>(inner, line);
                 }
             }
             1 => {
@@ -208,13 +309,13 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     self.draw_affine::<3>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
-                    self.draw_text::<2>(line);
+                    self.draw_text::<2>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(line);
+                    self.draw_text::<1>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(line);
+                    self.draw_text::<0>(inner, line);
                 }
             }
             2 => {
@@ -225,10 +326,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     self.draw_affine::<2>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(line);
+                    self.draw_text::<1>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(line);
+                    self.draw_text::<0>(inner, line);
                 }
             }
             3 => {
@@ -236,13 +337,13 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     self.draw_extended::<3>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
-                    self.draw_text::<2>(line);
+                    self.draw_text::<2>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(line);
+                    self.draw_text::<1>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(line);
+                    self.draw_text::<0>(inner, line);
                 }
             }
             4 => {
@@ -253,10 +354,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     self.draw_affine::<2>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(line);
+                    self.draw_text::<1>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(line);
+                    self.draw_text::<0>(inner, line);
                 }
             }
             5 => {
@@ -267,10 +368,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     self.draw_extended::<2>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(line);
+                    self.draw_text::<1>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(line);
+                    self.draw_text::<0>(inner, line);
                 }
             }
             6 => {
@@ -286,25 +387,28 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             }
         }
 
-        let mut layer_a = self.layers[0].borrow_mut();
-        let layer_b = self.layers[1].borrow().as_ptr() as u32;
-        layer_a.iter_mut().enumerate().for_each(|(index, value)| {
-            let layer_b = unsafe { (layer_b as *const [u32; 256]).as_ref().unwrap() };
-            if *value & (1 << 26) != 0 {
-                todo!()
-            } else {
-                *value = Self::rgb5_to_rgb6(*value);
+        {
+            let mut layers_a = self.layers[0].borrow_mut();
+            let mut layers_b = self.layers[1].borrow_mut();
+            for i in 0..DISPLAY_WIDTH {
+                let value = layers_a[i];
+                if value & (1 << 26) != 0 {
+                    todo!()
+                } else {
+                    layers_a[i] = Self::rgb5_to_rgb6(value);
+                }
             }
-        });
+        }
 
         let fb_start = line as usize * DISPLAY_WIDTH;
         let fb_end = fb_start + DISPLAY_WIDTH;
         match DisplayMode::from(u8::from(disp_cnt.display_mode())) {
             DisplayMode::Off => {
-                self.framebuffer[fb_start..fb_end].fill(!0);
+                self.framebuffer.borrow_mut()[fb_start..fb_end].fill(!0);
             }
             DisplayMode::Layers => {
-                self.framebuffer[fb_start..fb_end].copy_from_slice(layer_a.as_slice());
+                let mut fb = self.framebuffer.borrow_mut();
+                fb[fb_start..fb_end].copy_from_slice(self.layers[0].borrow().as_slice());
             }
             DisplayMode::Vram => {
                 todo!()
@@ -315,16 +419,16 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         }
     }
 
-    fn draw_affine<const BG: usize>(&self, line: u16) {
+    fn draw_affine<const BG: usize>(&self, line: u8) {
         todo!()
     }
 
-    fn draw_text<const BG: usize>(&mut self, line: u16) {
-        let disp_cnt = DispCnt::from(self.disp_cnt);
+    fn draw_text<const BG: usize>(&self, inner: &Gpu2DInner<ENGINE>, line: u8) {
+        let disp_cnt = DispCnt::from(inner.disp_cnt);
         if BG == 0 && bool::from(disp_cnt.bg0_3d()) {
             todo!()
         }
-        let bg_cnt = BgCnt::from(self.bg_cnt[BG]);
+        let bg_cnt = BgCnt::from(inner.bg_cnt[BG]);
 
         let vram_offset = if ENGINE == Gpu2DEngine::A {
             BG_A_OFFSET
@@ -342,8 +446,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         let y_offset = (if bool::from(bg_cnt.mosaic()) {
             todo!()
         } else {
-            line
-        } + self.bg_v_ofs[BG])
+            line as u16
+        } + inner.bg_v_ofs[BG])
             & 0x1FF;
 
         tile_base_addr += (y_offset as u32 & 0xF8) << 3;
@@ -351,12 +455,18 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             todo!()
         }
 
-        let vram_context = self.vram_context.borrow();
+        let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
+        let palattes_context = unsafe { self.palattes_context.as_ref().unwrap_unchecked() };
+        let mut layers_a = self.layers[0].borrow_mut();
+        let layers_a = layers_a.as_mut();
+        let mut layers_b = self.layers[1].borrow_mut();
+        let layers_b = layers_b.as_mut();
+
         if bool::from(bg_cnt.color_palettes()) {
             todo!()
         } else {
             for i in (0..256).step_by(8) {
-                let x_offset = (i + self.bg_h_ofs[BG]) & 0x1FF;
+                let x_offset = (i + inner.bg_h_ofs[BG]) & 0x1FF;
                 let tile_addr = tile_base_addr + ((x_offset as u32 & 0xF8) >> 2);
 
                 if x_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 2) != 0 {
@@ -385,16 +495,15 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 while indices != 0 {
                     let tmp_x = if bool::from(tile.h_flip()) { 7 - x } else { x };
                     if tmp_x < 256 && (indices & 0xF) != 0 {
-                        let color = self
-                            .palattes_context
-                            .borrow()
+                        let color = palattes_context
                             .read::<u16>(palette_base_addr + ((indices & 0xF) << 1));
                         Self::draw_pixel::<BG>(
                             disp_cnt,
                             line,
                             tmp_x,
                             (color | (1 << 15)) as u32,
-                            &self.layers,
+                            layers_a,
+                            layers_b,
                         );
                     }
                     x = x.wrapping_add(1);
@@ -404,24 +513,25 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         }
     }
 
-    fn draw_extended<const BG: usize>(&self, line: u16) {
+    fn draw_extended<const BG: usize>(&self, line: u8) {
         todo!()
     }
 
-    fn draw_large<const BG: usize>(&self, line: u16) {
+    fn draw_large<const BG: usize>(&self, line: u8) {
         todo!()
     }
 
-    fn draw_objects<const WINDOW: bool>(&self, line: u16) {
+    fn draw_objects<const WINDOW: bool>(&self, line: u8) {
         todo!()
     }
 
     fn draw_pixel<const BG: usize>(
         disp_cnt: DispCnt,
-        line: u16,
+        line: u8,
         x: u16,
         pixel: u32,
-        layers: &[RefCell<HeapMemU32<{ DISPLAY_WIDTH }>>; 2],
+        layers_a: &mut [u32; DISPLAY_WIDTH],
+        layers_b: &mut [u32; DISPLAY_WIDTH],
     ) {
         if bool::from(disp_cnt.window0_display_flag()) {
             todo!()
@@ -433,7 +543,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             todo!()
         }
 
-        layers[0].borrow_mut()[x as usize] = pixel;
+        layers_a[x as usize] = pixel;
     }
 
     fn rgb5_to_rgb6(color: u32) -> u32 {

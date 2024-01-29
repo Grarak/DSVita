@@ -96,6 +96,7 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
 
         let mut thread_regs = self.thread_regs.borrow_mut();
 
+        #[cfg(debug_assertions)]
         if rlist.len() == 0 {
             todo!()
         }
@@ -111,6 +112,7 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         };
         let mut addr = start_addr;
 
+        #[cfg(debug_assertions)]
         if WRITE && CPU == CpuType::ARM7 && write_back && rlist.is_reserved(op0) {
             todo!()
         }
@@ -131,6 +133,7 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         }
 
         if write_back {
+            #[cfg(debug_assertions)]
             if !WRITE && CPU == CpuType::ARM9 && rlist.is_reserved(op0) {
                 todo!()
             }

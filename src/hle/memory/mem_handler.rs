@@ -69,7 +69,6 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                 .read::<CPU, _>(addr_offset),
             regions::OAM_OFFSET => self.oam.borrow().read(addr_offset),
             _ => {
-                let mut handled = false;
                 let mut ret = T::from(0);
 
                 if CPU == CpuType::ARM9 {
@@ -78,7 +77,6 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                         if cp15_context.itcm_state == TcmState::RW {
                             ret = self.tcm_context.borrow_mut().read_itcm(addr);
                         }
-                        handled = true;
                     } else if addr >= cp15_context.dtcm_addr
                         && addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
                     {
@@ -88,11 +86,10 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                                 .borrow_mut()
                                 .read_dtcm(addr - cp15_context.dtcm_addr);
                         }
-                        handled = true;
+                    } else {
+                        todo!("{:x}", addr)
                     }
-                }
-
-                if !handled {
+                } else {
                     todo!("{:x}", addr)
                 }
                 ret
@@ -138,8 +135,6 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                 .write::<CPU, _>(addr_offset, value),
             regions::OAM_OFFSET => self.oam.borrow_mut().write(addr_offset, value),
             _ => {
-                let mut handled = false;
-
                 if CPU == CpuType::ARM9 {
                     let cp15_context = self.cp15_context.borrow();
                     if addr < cp15_context.itcm_size {
@@ -147,7 +142,6 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                             self.tcm_context.borrow_mut().write_itcm(addr, value);
                             invalidate_jit = true;
                         }
-                        handled = true;
                     } else if addr >= cp15_context.dtcm_addr
                         && addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
                     {
@@ -156,11 +150,10 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                                 .borrow_mut()
                                 .write_dtcm(addr - cp15_context.dtcm_addr, value);
                         }
-                        handled = true;
+                    } else {
+                        todo!("{:x}", addr)
                     }
-                }
-
-                if !handled {
+                } else {
                     todo!("{:x}", addr)
                 }
             }

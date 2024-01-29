@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Instant;
 
 pub const DISPLAY_WIDTH: usize = 256;
 pub const DISPLAY_HEIGHT: usize = 192;
@@ -54,8 +55,9 @@ impl Swapchain {
                 .unwrap();
             queue.pop_front().unwrap()
         };
-        fb.iter_mut()
-            .for_each(|pixel| *pixel = Self::rgb6_to_rgb8(*pixel));
+        fb.iter_mut().for_each(|value| {
+            *value = Self::rgb6_to_rgb8(*value);
+        });
         fb
     }
 
@@ -64,6 +66,32 @@ impl Swapchain {
         let g = ((color >> 6) & 0x3F) * 255 / 63;
         let b = ((color >> 12) & 0x3F) * 255 / 63;
         (0xFFu32 << 24) | (b << 16) | (g << 8) | r
+    }
+}
+
+struct FrameRateCounter {
+    frame_counter: u16,
+    fps: u16,
+    last_update: Instant,
+}
+
+impl FrameRateCounter {
+    fn new() -> Self {
+        FrameRateCounter {
+            frame_counter: 0,
+            fps: 0,
+            last_update: Instant::now(),
+        }
+    }
+
+    fn on_frame_ready(&mut self) {
+        self.frame_counter += 1;
+        let now = Instant::now();
+        if (now - self.last_update).as_secs_f32() >= 1f32 {
+            self.fps = self.frame_counter;
+            self.frame_counter = 0;
+            self.last_update = now;
+        }
     }
 }
 
@@ -84,73 +112,71 @@ struct DispStat {
 struct GpuInner {
     disp_stat: [u16; 2],
     pow_cnt1: u16,
-    v_count: u16,
-    gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
-    gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
     dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
     dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
     cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
     cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
     swapchain: Arc<Swapchain>,
+    frame_rate_counter: FrameRateCounter,
+    v_count: u16,
+    gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
+    gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
 }
 
 impl GpuInner {
     fn new(
-        gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
-        gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
         dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
         dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
         cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
         cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
         swapchain: Arc<Swapchain>,
+        gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
+        gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
     ) -> Self {
         GpuInner {
             disp_stat: [0u16; 2],
             pow_cnt1: 0,
-            v_count: 0,
-            gpu_2d_context_a,
-            gpu_2d_context_b,
             dma_arm9,
             dma_arm7,
             cpu_regs_arm9,
             cpu_regs_arm7,
             swapchain,
+            frame_rate_counter: FrameRateCounter::new(),
+            v_count: 0,
+            gpu_2d_context_a,
+            gpu_2d_context_b,
         }
     }
 }
 
 pub struct GpuContext {
-    #[cfg(target_os = "linux")]
-    frame_count: Arc<std::sync::atomic::AtomicU16>,
-    #[cfg(target_os = "vita")]
-    frame_count: Rc<RefCell<u16>>,
-    last_fps_query: RefCell<std::time::Instant>,
     inner: Rc<RefCell<GpuInner>>,
+    gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
+    gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
 }
+
+unsafe impl Send for GpuContext {}
+unsafe impl Sync for GpuContext {}
 
 impl GpuContext {
     pub fn new(
         cycle_manager: Rc<CycleManager>,
-        gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
-        gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
+        gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
+        gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
         dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
         dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
         cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
         cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
         swapchain: Arc<Swapchain>,
     ) -> GpuContext {
-        #[cfg(target_os = "linux")]
-        let frame_count = Arc::new(std::sync::atomic::AtomicU16::new(0));
-        #[cfg(target_os = "vita")]
-        let frame_count = Rc::new(RefCell::new(0));
         let inner = Rc::new(RefCell::new(GpuInner::new(
-            gpu_2d_context_a,
-            gpu_2d_context_b,
             dma_arm9,
             dma_arm7,
             cpu_regs_arm9,
             cpu_regs_arm7,
             swapchain,
+            gpu_2d_context_a.clone(),
+            gpu_2d_context_b.clone(),
         )));
 
         cycle_manager.schedule(
@@ -161,17 +187,13 @@ impl GpuContext {
         cycle_manager.schedule(
             // 8 pixel delay according to https://melonds.kuribo64.net/board/thread.php?id=13
             (355 + 8) * 6,
-            Box::new(Scanline355Event::new(
-                cycle_manager.clone(),
-                frame_count.clone(),
-                inner.clone(),
-            )),
+            Box::new(Scanline355Event::new(cycle_manager.clone(), inner.clone())),
         );
 
         GpuContext {
-            frame_count,
-            last_fps_query: RefCell::new(std::time::Instant::now()),
             inner,
+            gpu_2d_context_a,
+            gpu_2d_context_b,
         }
     }
 
@@ -190,30 +212,9 @@ impl GpuContext {
         let mut inner = self.inner.borrow_mut();
         inner.pow_cnt1 = (inner.pow_cnt1 & !mask) | (value & mask);
     }
-
-    pub fn query_fps(&self) -> Option<u16> {
-        let now = std::time::Instant::now();
-        let mut last = self.last_fps_query.borrow_mut();
-        if (now - *last).as_secs() >= 1 {
-            #[cfg(target_os = "linux")]
-            let fps = self
-                .frame_count
-                .fetch_and(0, std::sync::atomic::Ordering::Relaxed);
-            #[cfg(target_os = "vita")]
-            let fps = {
-                let mut frame_count = self.frame_count.borrow_mut();
-                let fps = *frame_count;
-                *frame_count = 0;
-                fps
-            };
-            *last = now;
-            Some(fps)
-        } else {
-            None
-        }
-    }
 }
 
+#[derive(Clone)]
 struct Scanline256Event {
     cycle_manager: Rc<CycleManager>,
     inner: Rc<RefCell<GpuInner>>,
@@ -234,14 +235,8 @@ impl CycleEvent for Scanline256Event {
     fn trigger(&mut self, delay: u16) {
         let mut inner = self.inner.borrow_mut();
         if inner.v_count < 192 {
-            inner
-                .gpu_2d_context_a
-                .borrow_mut()
-                .draw_scanline(inner.v_count);
-            inner
-                .gpu_2d_context_b
-                .borrow_mut()
-                .draw_scanline(inner.v_count);
+            inner.gpu_2d_context_a.draw_scanline(inner.v_count as u8);
+            inner.gpu_2d_context_b.draw_scanline(inner.v_count as u8);
 
             inner
                 .dma_arm9
@@ -249,46 +244,32 @@ impl CycleEvent for Scanline256Event {
                 .trigger_all(DmaTransferMode::StartAtHBlank);
         }
 
-        for (index, stat) in inner.disp_stat.iter_mut().enumerate() {
-            let mut disp_stat = DispStat::from(*stat);
+        for i in 0..2 {
+            let mut disp_stat = DispStat::from(inner.disp_stat[i]);
             disp_stat.set_h_blank_flag(u1::new(1));
             let irq = bool::from(disp_stat.h_blank_irq_enable());
-            *stat = u16::from(disp_stat);
+            inner.disp_stat[i] = u16::from(disp_stat);
 
             if irq {
                 todo!()
             }
         }
 
-        self.cycle_manager.schedule(
-            355 * 6 - delay as u32,
-            Box::new(Scanline256Event::new(
-                self.cycle_manager.clone(),
-                self.inner.clone(),
-            )),
-        );
+        self.cycle_manager
+            .schedule(355 * 6 - delay as u32, Box::new(self.clone()));
     }
 }
 
+#[derive(Clone)]
 struct Scanline355Event {
     cycle_manager: Rc<CycleManager>,
-    #[cfg(target_os = "linux")]
-    frame_count: Arc<std::sync::atomic::AtomicU16>,
-    #[cfg(target_os = "vita")]
-    frame_count: Rc<RefCell<u16>>,
     inner: Rc<RefCell<GpuInner>>,
 }
 
 impl Scanline355Event {
-    fn new(
-        cycle_manager: Rc<CycleManager>,
-        #[cfg(target_os = "linux")] frame_count: Arc<std::sync::atomic::AtomicU16>,
-        #[cfg(target_os = "vita")] frame_count: Rc<RefCell<u16>>,
-        inner: Rc<RefCell<GpuInner>>,
-    ) -> Self {
+    fn new(cycle_manager: Rc<CycleManager>, inner: Rc<RefCell<GpuInner>>) -> Self {
         Scanline355Event {
             cycle_manager,
-            frame_count,
             inner,
         }
     }
@@ -326,26 +307,18 @@ impl CycleEvent for Scanline355Event {
                             .trigger_all(DmaTransferMode::StartAtVBlank);
                     }
                 }
-
-                let gpu_2d_a = inner.gpu_2d_context_a.borrow();
-                let gpu_2d_b = inner.gpu_2d_context_b.borrow();
-                inner
-                    .swapchain
-                    .push(&gpu_2d_a.framebuffer, &gpu_2d_b.framebuffer);
             }
             262 => {
-                for stat in &mut inner.disp_stat {
-                    let mut disp_stat = DispStat::from(*stat);
+                for i in 0..2 {
+                    let mut disp_stat = DispStat::from(inner.disp_stat[i]);
                     disp_stat.set_v_blank_flag(u1::new(0));
-                    *stat = u16::from(disp_stat);
+                    inner.disp_stat[i] = u16::from(disp_stat);
                 }
-                #[cfg(target_os = "linux")]
-                self.frame_count
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                #[cfg(target_os = "vita")]
-                {
-                    *self.frame_count.borrow_mut() += 1;
-                }
+                inner.frame_rate_counter.on_frame_ready();
+                inner.swapchain.push(
+                    &inner.gpu_2d_context_a.framebuffer.borrow(),
+                    &inner.gpu_2d_context_b.framebuffer.borrow(),
+                )
             }
             263 => {
                 inner.v_count = 0;
@@ -386,13 +359,7 @@ impl CycleEvent for Scanline355Event {
             inner.disp_stat[i] = u16::from(disp_stat);
         }
 
-        self.cycle_manager.schedule(
-            355 * 6 - delay as u32,
-            Box::new(Scanline355Event::new(
-                self.cycle_manager.clone(),
-                self.frame_count.clone(),
-                self.inner.clone(),
-            )),
-        );
+        self.cycle_manager
+            .schedule(355 * 6 - delay as u32, Box::new(self.clone()));
     }
 }

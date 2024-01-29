@@ -3,6 +3,7 @@
 #![feature(arm_target_feature)]
 #![feature(const_trait_impl)]
 #![feature(generic_const_exprs)]
+#![feature(naked_functions)]
 #![feature(stmt_expr_attributes)]
 #![feature(thread_id_value)]
 
@@ -151,40 +152,6 @@ pub fn main() {
 
     assert_eq!(arm9_ram_addr, regions::MAIN_MEMORY_OFFSET);
 
-    let sdl = sdl2::init().unwrap();
-    let sdl_video = sdl.video().unwrap();
-    let sdl_window = sdl_video
-        .window("DSPSV", SCREEN_WIDTH, SCREEN_HEIGHT)
-        .build()
-        .unwrap();
-    #[cfg(target_os = "linux")]
-    let mut sdl_canvas = sdl_window
-        .into_canvas()
-        .software()
-        .target_texture()
-        .build()
-        .unwrap();
-    #[cfg(target_os = "vita")]
-    let mut sdl_canvas = sdl_window.into_canvas().target_texture().build().unwrap();
-    let sdl_texture_creator = sdl_canvas.texture_creator();
-    let mut sdl_texture_top = sdl_texture_creator
-        .create_texture_streaming(
-            PixelFormatEnum::ARGB8888,
-            DISPLAY_WIDTH as u32,
-            DISPLAY_HEIGHT as u32,
-        )
-        .unwrap();
-    let mut sdl_texture_bottom = sdl_texture_creator
-        .create_texture_streaming(
-            PixelFormatEnum::ARGB8888,
-            DISPLAY_WIDTH as u32,
-            DISPLAY_HEIGHT as u32,
-        )
-        .unwrap();
-    sdl_canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
-    sdl_canvas.clear();
-    sdl_canvas.present();
-
     let mut main_memory = MainMemory::new();
     {
         let header: &[u8; cartridge::HEADER_IN_RAM_SIZE] =
@@ -235,18 +202,18 @@ pub fn main() {
     )));
     let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
 
-    let gpu_2d_context_a = Rc::new(RefCell::new(Gpu2DContext::new(
+    let gpu_2d_context_a = Rc::new(Gpu2DContext::new(
         vram_context.clone(),
         palettes_context.clone(),
-    )));
-    let gpu_2d_context_b = Rc::new(RefCell::new(Gpu2DContext::new(
+    ));
+    let gpu_2d_context_b = Rc::new(Gpu2DContext::new(
         vram_context.clone(),
         palettes_context.clone(),
-    )));
+    ));
     let dma_arm9 = Rc::new(RefCell::new(Dma::new(cycle_manager.clone())));
     let dma_arm7 = Rc::new(RefCell::new(Dma::new(cycle_manager.clone())));
     let swapchain = Arc::new(Swapchain::new());
-    let gpu_context = Rc::new(GpuContext::new(
+    let gpu_context = Arc::new(GpuContext::new(
         cycle_manager.clone(),
         gpu_2d_context_a.clone(),
         gpu_2d_context_b.clone(),
@@ -290,8 +257,8 @@ pub fn main() {
         vram_context,
         input_context,
         gpu_context.clone(),
-        gpu_2d_context_a,
-        gpu_2d_context_b,
+        gpu_2d_context_a.clone(),
+        gpu_2d_context_b.clone(),
         dma_arm7,
         rtc_context,
         spu_context,
@@ -309,19 +276,14 @@ pub fn main() {
             arm9_thread.jit.jit_memory.borrow_mut().open();
             let cycle_manager = arm9_thread.cycle_manager.clone();
             loop {
-                let mut arm9_cycles = if !arm9_thread.is_halted() {
-                    arm9_thread.run()
-                } else {
-                    0
-                };
-
                 let arm7_cycles = if !arm7_thread.is_halted() {
                     arm7_thread.run()
                 } else {
                     0
                 };
 
-                while !arm9_thread.is_halted() && arm7_cycles > arm9_cycles {
+                let mut arm9_cycles = 0;
+                while !arm9_thread.is_halted() && (arm7_cycles > arm9_cycles || arm9_cycles == 0) {
                     arm9_cycles += arm9_thread.run();
                 }
 
@@ -336,6 +298,40 @@ pub fn main() {
             }
         })
         .unwrap();
+
+    let sdl = sdl2::init().unwrap();
+    let sdl_video = sdl.video().unwrap();
+    let sdl_window = sdl_video
+        .window("DSPSV", SCREEN_WIDTH, SCREEN_HEIGHT)
+        .build()
+        .unwrap();
+    #[cfg(target_os = "linux")]
+    let mut sdl_canvas = sdl_window
+        .into_canvas()
+        .software()
+        .target_texture()
+        .build()
+        .unwrap();
+    #[cfg(target_os = "vita")]
+    let mut sdl_canvas = sdl_window.into_canvas().target_texture().build().unwrap();
+    let sdl_texture_creator = sdl_canvas.texture_creator();
+    let mut sdl_texture_top = sdl_texture_creator
+        .create_texture_streaming(
+            PixelFormatEnum::ARGB8888,
+            DISPLAY_WIDTH as u32,
+            DISPLAY_HEIGHT as u32,
+        )
+        .unwrap();
+    let mut sdl_texture_bottom = sdl_texture_creator
+        .create_texture_streaming(
+            PixelFormatEnum::ARGB8888,
+            DISPLAY_WIDTH as u32,
+            DISPLAY_HEIGHT as u32,
+        )
+        .unwrap();
+    sdl_canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
+    sdl_canvas.clear();
+    sdl_canvas.present();
 
     let mut sdl_event_pump = sdl.event_pump().unwrap();
     'render: loop {
@@ -383,14 +379,6 @@ pub fn main() {
             )
             .unwrap();
         sdl_canvas.present();
-
-        #[cfg(target_os = "linux")]
-        if let Some(fps) = gpu_context.query_fps() {
-            sdl_canvas
-                .window_mut()
-                .set_title(&format!("DSPSV - {} fps", fps))
-                .unwrap();
-        }
     }
 
     unsafe {
