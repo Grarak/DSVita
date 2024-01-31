@@ -122,6 +122,9 @@ impl JitMemory {
         guest_insts_cycle_counts: Option<Vec<u8>>,
         guest_pc_end: Option<u32>,
     ) -> u32 {
+        #[cfg(target_os = "linux")]
+        let aligned_size = utils::align_up((opcodes.len() << 2) as u32, 4096);
+        #[cfg(target_os = "vita")]
         let aligned_size = utils::align_up((opcodes.len() << 2) as u32, 16);
         let new_addr = self.find_free_start(aligned_size);
 
