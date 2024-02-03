@@ -171,6 +171,19 @@ impl Operand {
         }
     }
 
+    pub fn reg_reg_shift(reg: Reg, shift_type: ShiftType, shift: Reg) -> Self {
+        let shift_value = ShiftValue::Reg(shift);
+        Operand::Reg {
+            reg,
+            shift: Some(match shift_type {
+                ShiftType::Lsl => Shift::LSL(shift_value),
+                ShiftType::Lsr => Shift::LSR(shift_value),
+                ShiftType::Asr => Shift::ASR(shift_value),
+                ShiftType::Ror => Shift::ROR(shift_value),
+            }),
+        }
+    }
+
     pub fn imm(imm: u32) -> Self {
         Operand::Imm(imm)
     }
