@@ -59,15 +59,15 @@ const fn get_firmware() -> [u8; FIRMWARE_SIZE] {
     let mut addr = USER_SETTINGS_1_ADDR - 0x100;
     while addr <= USER_SETTINGS_1_ADDR {
         // Set some user settings data
-        firmware[addr + 0x00] = 5; // Version
+        firmware[addr] = 5; // Version
         firmware[addr + 0x02] = 2; // Favorite color
         firmware[addr + 0x03] = 5; // Birthday month
         firmware[addr + 0x04] = 25; // Birthday day
-        firmware[addr + 0x06] = 'D' as u8; // Nickname, char 1
-        firmware[addr + 0x08] = 'S' as u8; // Nickname, char 2
-        firmware[addr + 0x0A] = 'P' as u8; // Nickname, char 3
-        firmware[addr + 0x0C] = 'S' as u8; // Nickname, char 4
-        firmware[addr + 0x0E] = 'V' as u8; // Nickname, char 5
+        firmware[addr + 0x06] = b'D'; // Nickname, char 1
+        firmware[addr + 0x08] = b'S'; // Nickname, char 2
+        firmware[addr + 0x0A] = b'P'; // Nickname, char 3
+        firmware[addr + 0x0C] = b'S'; // Nickname, char 4
+        firmware[addr + 0x0E] = b'V'; // Nickname, char 5
         firmware[addr + 0x1A] = 5; // Nickname length
 
         // Set the touch calibration data
@@ -172,7 +172,7 @@ impl SpiContext {
                         debug_println!("Unknown spi {:?} command {:x}", device, self.cmd);
                     }
                 }
-                SpiDevice::Touchscreen => todo!(),
+                SpiDevice::Touchscreen => {}
                 _ => {
                     debug_println!("Unknown spi device {:?}", device);
                     self.data = 0;

@@ -91,6 +91,8 @@ impl FrameRateCounter {
             self.fps = self.frame_counter;
             self.frame_counter = 0;
             self.last_update = now;
+            #[cfg(target_os = "linux")]
+            println!("{}", self.fps);
         }
     }
 }

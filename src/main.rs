@@ -26,21 +26,23 @@ use crate::hle::memory::tcm_context::TcmContext;
 use crate::hle::memory::vram_context::VramContext;
 use crate::hle::memory::wram_context::WramContext;
 use crate::hle::rtc_context::RtcContext;
-use crate::hle::spi_context;
 use crate::hle::spi_context::SpiContext;
 use crate::hle::spu_context::SpuContext;
 use crate::hle::thread_context::ThreadContext;
 use crate::hle::CpuType;
+use crate::hle::{input_context, spi_context};
 use crate::jit::jit_memory::JitMemory;
+use crate::utils::BuildNoHasher;
 use sdl2::event::Event;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
 use std::cell::RefCell;
 use std::cmp::min;
+use std::collections::HashMap;
 use std::os::unix::prelude::JoinHandleExt;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
-use std::{env, mem, ptr, thread};
+use std::{mem, ptr, thread};
 
 mod cartridge;
 mod hle;
@@ -78,7 +80,7 @@ const SCREEN_HEIGHT: u32 = 544;
 
 #[cfg(target_os = "linux")]
 fn get_file_path() -> String {
-    let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = std::env::args().collect();
     if args.len() == 2 {
         args[1].clone()
     } else {
@@ -141,7 +143,7 @@ fn initialize_arm7_thread(entry_addr: u32, thread: &ThreadContext<{ CpuType::ARM
 // Must be pub for vita
 pub fn main() {
     #[cfg(debug_assertions)]
-    env::set_var("RUST_BACKTRACE", "full");
+    std::env::set_var("RUST_BACKTRACE", "full");
 
     let cartridge = Cartridge::from_file(&get_file_path()).unwrap();
 
@@ -255,7 +257,7 @@ pub fn main() {
         spi_context,
         ipc_handler,
         vram_context,
-        input_context,
+        input_context.clone(),
         gpu_context.clone(),
         gpu_2d_context_a.clone(),
         gpu_2d_context_b.clone(),
@@ -301,6 +303,7 @@ pub fn main() {
 
     let sdl = sdl2::init().unwrap();
     let sdl_video = sdl.video().unwrap();
+
     let sdl_window = sdl_video
         .window("DSPSV", SCREEN_WIDTH, SCREEN_HEIGHT)
         .build()
@@ -333,13 +336,67 @@ pub fn main() {
     sdl_canvas.clear();
     sdl_canvas.present();
 
+    let mut key_code_mapping = HashMap::<_, _, BuildNoHasher>::default();
+    #[cfg(target_os = "linux")]
+    {
+        use sdl2::keyboard::Keycode;
+        key_code_mapping.insert(Keycode::W, input_context::Keycode::Up);
+        key_code_mapping.insert(Keycode::S, input_context::Keycode::Down);
+        key_code_mapping.insert(Keycode::A, input_context::Keycode::Left);
+        key_code_mapping.insert(Keycode::D, input_context::Keycode::Right);
+        key_code_mapping.insert(Keycode::B, input_context::Keycode::Start);
+    }
+    #[cfg(target_os = "vita")]
+    {
+        use sdl2::controller::Button;
+        key_code_mapping.insert(Button::DPadUp, input_context::Keycode::Up);
+        key_code_mapping.insert(Button::DPadDown, input_context::Keycode::Down);
+        key_code_mapping.insert(Button::DPadLeft, input_context::Keycode::Left);
+        key_code_mapping.insert(Button::DPadRight, input_context::Keycode::Right);
+        key_code_mapping.insert(Button::Start, input_context::Keycode::Start);
+    }
+
     let mut sdl_event_pump = sdl.event_pump().unwrap();
+    let mut key_map = 0xFFFF;
     'render: loop {
         for event in sdl_event_pump.poll_iter() {
-            if let Event::Quit { .. } = event {
-                break 'render;
+            match event {
+                #[cfg(target_os = "linux")]
+                Event::KeyDown {
+                    keycode: Some(code),
+                    ..
+                } => {
+                    if let Some(code) = key_code_mapping.get(&code) {
+                        key_map &= !(1 << *code as u8);
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                Event::KeyUp {
+                    keycode: Some(code),
+                    ..
+                } => {
+                    if let Some(code) = key_code_mapping.get(&code) {
+                        key_map |= 1 << *code as u8;
+                    }
+                }
+                #[cfg(target_os = "vita")]
+                Event::ControllerButtonDown { button, .. } => {
+                    if let Some(code) = key_code_mapping.get(&button) {
+                        key_map &= !(1 << *code as u8);
+                    }
+                }
+                #[cfg(target_os = "vita")]
+                Event::ControllerButtonUp { button, .. } => {
+                    if let Some(code) = key_code_mapping.get(&button) {
+                        key_map |= 1 << *code as u8;
+                    }
+                }
+                Event::Quit { .. } => break 'render,
+                _ => {}
             }
         }
+
+        input_context.write().unwrap().update_key_map(key_map);
 
         let fb = swapchain.consume();
         let top_aligned: &[u8] = unsafe { mem::transmute(&fb[..DISPLAY_PIXEL_COUNT]) };

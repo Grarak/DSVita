@@ -1,19 +1,18 @@
-use bilge::prelude::*;
-
-#[bitsize(16)]
-#[derive(FromBits)]
-struct KeyInput {
-    a: u1,
-    b: u1,
-    select: u1,
-    start: u1,
-    r: u1,
-    l: u1,
-    u: u1,
-    d: u1,
-    trigger_r: u1,
-    trigger_l: u1,
-    not_used: u6,
+#[repr(u8)]
+#[derive(Copy, Clone)]
+pub enum Keycode {
+    A = 0,
+    B = 1,
+    Select = 2,
+    Start = 3,
+    Right = 4,
+    Left = 5,
+    Up = 6,
+    Down = 7,
+    TriggerR = 8,
+    TriggerL = 9,
+    X = 10,
+    Y = 11,
 }
 
 pub struct InputContext {
@@ -27,5 +26,10 @@ impl InputContext {
             key_input: 0x3FF,
             ext_key_in: 0x007F,
         }
+    }
+
+    pub fn update_key_map(&mut self, keys: u16) {
+        self.key_input = (self.key_input & !0x1FF) | (keys & 0x1FF);
+        self.ext_key_in = (self.ext_key_in & !0x3) | ((keys >> 10) & 0x3);
     }
 }
