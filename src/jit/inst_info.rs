@@ -67,7 +67,7 @@ impl InstInfo {
 
                 u32::from(opcode)
             }
-            Op::EorLli | Op::MovLli | Op::MovRri | Op::MovsLli | Op::MovsRri => {
+            Op::AndLli | Op::EorLli | Op::MovLli | Op::MovRri | Op::MovsLli | Op::MovsRri => {
                 let mut opcode = AluShiftImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 let (reg1, (reg2, shift_2)) = if operands.len() == 3 {

@@ -4,6 +4,7 @@ use crate::utils;
 use crate::utils::HeapMemU8;
 use bilge::prelude::*;
 use static_assertions::const_assert_eq;
+use std::hint::unreachable_unchecked;
 use std::ops::{Deref, DerefMut};
 use std::{ptr, slice};
 
@@ -138,25 +139,28 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
 
     pub fn write<T: utils::Convert>(&mut self, index: u32, value: T) {
         for i in 0..self.count {
-            let map = &mut self.overlaps[i];
-            let mut map = map.as_mut();
+            let map = &mut self.overlaps[i].as_mut();
             debug_assert_ne!(map.ptr, ptr::null_mut());
-            utils::write_to_mem(&mut map, index, value);
+            utils::write_to_mem(map, index, value);
         }
     }
 }
 
 #[derive(Copy, Clone)]
-struct OverlapMapping<const SIZE: usize, const CHUNK_SIZE: usize, const SECTIONS_COUNT: usize> {
-    sections: [OverlapSection<CHUNK_SIZE>; SECTIONS_COUNT],
+struct OverlapMapping<const SIZE: usize, const CHUNK_SIZE: usize>
+where
+    [(); SIZE / CHUNK_SIZE]:,
+{
+    sections: [OverlapSection<CHUNK_SIZE>; SIZE / CHUNK_SIZE],
 }
 
-impl<const SIZE: usize, const CHUNK_SIZE: usize, const SECTIONS_COUNT: usize>
-    OverlapMapping<SIZE, CHUNK_SIZE, SECTIONS_COUNT>
+impl<const SIZE: usize, const CHUNK_SIZE: usize> OverlapMapping<SIZE, CHUNK_SIZE>
+where
+    [(); SIZE / CHUNK_SIZE]:,
 {
     fn new() -> Self {
         OverlapMapping {
-            sections: [OverlapSection::default(); SECTIONS_COUNT],
+            sections: [OverlapSection::default(); SIZE / CHUNK_SIZE],
         }
     }
 
@@ -167,16 +171,14 @@ impl<const SIZE: usize, const CHUNK_SIZE: usize, const SECTIONS_COUNT: usize>
     }
 
     pub fn read<T: utils::Convert>(&self, mut addr: u32) -> T {
-        addr &= SIZE as u32 - 1;
-
+        addr %= SIZE as u32;
         let section_index = addr as usize / CHUNK_SIZE;
         let section_offset = addr as usize % CHUNK_SIZE;
         self.sections[section_index].read(section_offset as u32)
     }
 
     pub fn write<T: utils::Convert>(&mut self, mut addr: u32, value: T) {
-        addr &= SIZE as u32 - 1;
-
+        addr %= SIZE as u32;
         let section_index = addr as usize / CHUNK_SIZE;
         let section_offset = addr as usize % CHUNK_SIZE;
         self.sections[section_index].write(section_offset as u32, value);
@@ -192,7 +194,7 @@ struct VramCnt {
     enable: u1,
 }
 
-const BANK_A_SIZE: usize = 128 * 1024;
+pub const BANK_A_SIZE: usize = 128 * 1024;
 const BANK_B_SIZE: usize = BANK_A_SIZE;
 const BANK_C_SIZE: usize = BANK_A_SIZE;
 const BANK_D_SIZE: usize = BANK_A_SIZE;
@@ -251,7 +253,7 @@ impl VramBanks {
     }
 }
 
-const LCDC_OFFSET: u32 = 0x800000;
+pub const LCDC_OFFSET: u32 = 0x800000;
 pub const BG_A_OFFSET: u32 = 0x000000;
 const OBJ_A_OFFSET: u32 = 0x400000;
 pub const BG_B_OFFSET: u32 = 0x200000;
@@ -262,22 +264,22 @@ pub struct VramContext {
     pub cnt: [u8; BANK_SIZE],
     banks: VramBanks,
 
-    lcdc: OverlapMapping<TOTAL_SIZE, { 16 * 1024 }, { TOTAL_SIZE / 1024 / 16 }>,
+    lcdc: OverlapMapping<TOTAL_SIZE, { 16 * 1024 }>,
 
-    bg_a: OverlapMapping<{ 512 * 1024 }, { 16 * 1024 }, { 512 / 16 }>,
-    obj_a: OverlapMapping<{ 256 * 1024 }, { 16 * 1024 }, { 256 / 16 }>,
+    bg_a: OverlapMapping<{ 512 * 1024 }, { 16 * 1024 }>,
+    obj_a: OverlapMapping<{ 256 * 1024 }, { 16 * 1024 }>,
     bg_ext_palette_a: [VramMap<{ 16 * 1024 }>; 64 / 16],
     obj_ext_palette_a: VramMap<{ 16 * 1024 }>,
 
     tex_rear_plane_img: [VramMap<{ 128 * 1024 }>; 4],
     tex_palette: [VramMap<{ 16 * 1024 }>; 6],
 
-    bg_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }, { 128 / 16 }>,
-    obj_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }, { 128 / 16 }>,
+    bg_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }>,
+    obj_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }>,
     bg_ext_palette_b: VramMap<{ 32 * 1024 }>,
     obj_ext_palette_b: VramMap<{ 16 * 1024 }>,
 
-    arm7: OverlapMapping<{ 128 * 2 * 1024 }, { 128 * 1024 }, 2>,
+    arm7: OverlapMapping<{ 128 * 2 * 1024 }, { 128 * 1024 }>,
 }
 
 impl VramContext {
@@ -489,134 +491,148 @@ impl VramContext {
             }
         }
 
-        let cnt_f = VramCnt::from(self.cnt[5]);
-        if bool::from(cnt_f.enable()) {
-            let mst = u8::from(cnt_f.mst());
-            match mst {
-                0 => {
-                    self.lcdc.add::<BANK_F_SIZE>(
-                        VramMap::new(&self.banks.vram_f),
-                        (BANK_A_SIZE * 4 + BANK_E_SIZE) / 1024 / 16,
-                    );
+        {
+            let cnt_f = VramCnt::from(self.cnt[5]);
+            if bool::from(cnt_f.enable()) {
+                let mst = u8::from(cnt_f.mst());
+                match mst {
+                    0 => {
+                        self.lcdc.add::<BANK_F_SIZE>(
+                            VramMap::new(&self.banks.vram_f),
+                            (BANK_A_SIZE * 4 + BANK_E_SIZE) / 1024 / 16,
+                        );
+                    }
+                    1 => {
+                        let ofs = u8::from(cnt_f.ofs()) as usize;
+                        self.bg_a.add::<BANK_F_SIZE>(
+                            VramMap::new(&self.banks.vram_f),
+                            (ofs & 1) + (64 / 16 * (ofs & 0x2)),
+                        );
+                    }
+                    2 => {
+                        todo!()
+                    }
+                    3 => {
+                        todo!()
+                    }
+                    4 => {
+                        todo!()
+                    }
+                    5 => {
+                        todo!()
+                    }
+                    _ => {}
                 }
-                1 => {
-                    let ofs = u8::from(cnt_f.ofs()) as usize;
-                    self.bg_a.add::<BANK_F_SIZE>(
-                        VramMap::new(&self.banks.vram_f),
-                        (ofs & 1) + (64 / 16 * (ofs & 0x2)),
-                    );
-                }
-                2 => {
-                    todo!()
-                }
-                3 => {
-                    todo!()
-                }
-                4 => {
-                    todo!()
-                }
-                5 => {
-                    todo!()
-                }
-                _ => {}
             }
         }
 
-        let cnt_g = VramCnt::from(self.cnt[6]);
-        if bool::from(cnt_g.enable()) {
-            let mst = u8::from(cnt_g.mst());
-            match mst {
-                0 => {
-                    self.lcdc.add::<BANK_G_SIZE>(
-                        VramMap::new(&self.banks.vram_g),
-                        (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE) / 1024 / 16,
-                    );
+        {
+            let cnt_g = VramCnt::from(self.cnt[6]);
+            if bool::from(cnt_g.enable()) {
+                let mst = u8::from(cnt_g.mst());
+                match mst {
+                    0 => {
+                        self.lcdc.add::<BANK_G_SIZE>(
+                            VramMap::new(&self.banks.vram_g),
+                            (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE) / 1024 / 16,
+                        );
+                    }
+                    1 => {
+                        let ofs = u8::from(cnt_g.ofs()) as usize;
+                        self.bg_a.add::<BANK_G_SIZE>(
+                            VramMap::new(&self.banks.vram_g),
+                            (ofs & 1) + (64 / 16 * (ofs & 0x2)),
+                        );
+                    }
+                    2 => {
+                        todo!()
+                    }
+                    3 => {
+                        todo!()
+                    }
+                    4 => {
+                        todo!()
+                    }
+                    5 => {
+                        todo!()
+                    }
+                    _ => {}
                 }
-                1 => {
-                    let ofs = u8::from(cnt_g.ofs()) as usize;
-                    self.bg_a.add::<BANK_G_SIZE>(
-                        VramMap::new(&self.banks.vram_g),
-                        (ofs & 1) + (64 / 16 * (ofs & 0x2)),
-                    );
-                }
-                2 => {
-                    todo!()
-                }
-                3 => {
-                    todo!()
-                }
-                4 => {
-                    todo!()
-                }
-                5 => {
-                    todo!()
-                }
-                _ => {}
             }
         }
 
-        let cnt_h = VramCnt::from(self.cnt[7]);
-        if bool::from(cnt_h.enable()) {
-            let mst = u8::from(cnt_h.mst()) & 0x3;
-            match mst {
-                0 => {
-                    self.lcdc.add::<BANK_H_SIZE>(
-                        VramMap::new(&self.banks.vram_h),
-                        (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE + BANK_G_SIZE) / 1024 / 16,
-                    );
+        {
+            let cnt_h = VramCnt::from(self.cnt[7]);
+            if bool::from(cnt_h.enable()) {
+                let mst = u8::from(cnt_h.mst()) & 0x3;
+                match mst {
+                    0 => {
+                        self.lcdc.add::<BANK_H_SIZE>(
+                            VramMap::new(&self.banks.vram_h),
+                            (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE + BANK_G_SIZE) / 1024 / 16,
+                        );
+                    }
+                    1 => {
+                        todo!()
+                    }
+                    2 => {
+                        todo!()
+                    }
+                    _ => {}
                 }
-                1 => {
-                    todo!()
-                }
-                2 => {
-                    todo!()
-                }
-                _ => {}
             }
         }
 
-        let cnt_i = VramCnt::from(self.cnt[8]);
-        if bool::from(cnt_i.enable()) {
-            let mst = u8::from(cnt_i.mst()) & 0x3;
-            match mst {
-                0 => {
-                    self.lcdc.add::<BANK_I_SIZE>(
-                        VramMap::new(&self.banks.vram_i),
-                        (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE + BANK_G_SIZE + BANK_H_SIZE)
-                            / 1024
-                            / 16,
-                    );
+        {
+            let cnt_i = VramCnt::from(self.cnt[8]);
+            if bool::from(cnt_i.enable()) {
+                let mst = u8::from(cnt_i.mst()) & 0x3;
+                match mst {
+                    0 => {
+                        self.lcdc.add::<BANK_I_SIZE>(
+                            VramMap::new(&self.banks.vram_i),
+                            (BANK_A_SIZE * 4
+                                + BANK_E_SIZE
+                                + BANK_F_SIZE
+                                + BANK_G_SIZE
+                                + BANK_H_SIZE)
+                                / 1024
+                                / 16,
+                        );
+                    }
+                    1 => {
+                        todo!()
+                    }
+                    2 => {
+                        todo!()
+                    }
+                    3 => {
+                        todo!()
+                    }
+                    _ => {}
                 }
-                1 => {
-                    todo!()
-                }
-                2 => {
-                    todo!()
-                }
-                3 => {
-                    todo!()
-                }
-                _ => {}
             }
         }
     }
 
     pub fn read<const CPU: CpuType, T: utils::Convert>(&self, addr: u32) -> T {
+        let base_addr = addr & 0xF00000;
+        let addr_offset = addr - base_addr;
         match CPU {
-            CpuType::ARM9 => match addr & 0xE00000 {
-                LCDC_OFFSET => self.lcdc.read(addr),
+            CpuType::ARM9 => match addr & 0xF00000 {
+                LCDC_OFFSET => self.lcdc.read(addr_offset),
                 BG_A_OFFSET => {
                     todo!()
                 }
                 OBJ_A_OFFSET => {
                     todo!()
                 }
-                BG_B_OFFSET => self.bg_b.read(addr),
+                BG_B_OFFSET => self.bg_b.read(addr_offset),
                 OBJ_B_OFFSET => {
                     todo!()
                 }
                 _ => {
-                    todo!("{:x}", addr)
+                    unsafe { unreachable_unchecked() };
                 }
             },
             CpuType::ARM7 => {
@@ -626,21 +642,23 @@ impl VramContext {
     }
 
     pub fn write<const CPU: CpuType, T: utils::Convert>(&mut self, addr: u32, value: T) {
+        let base_addr = addr & 0xF00000;
+        let addr_offset = addr - base_addr;
         match CPU {
-            CpuType::ARM9 => match addr & 0xE00000 {
-                LCDC_OFFSET => self.lcdc.write(addr, value),
+            CpuType::ARM9 => match base_addr {
+                LCDC_OFFSET => self.lcdc.write(addr_offset, value),
                 BG_A_OFFSET => {
                     todo!()
                 }
                 OBJ_A_OFFSET => {
                     todo!()
                 }
-                BG_B_OFFSET => self.bg_b.write(addr, value),
+                BG_B_OFFSET => self.bg_b.write(addr_offset, value),
                 OBJ_B_OFFSET => {
                     todo!()
                 }
                 _ => {
-                    todo!("{:x}", addr)
+                    unsafe { unreachable_unchecked() };
                 }
             },
             CpuType::ARM7 => {

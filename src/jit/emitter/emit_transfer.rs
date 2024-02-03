@@ -188,82 +188,34 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
     pub fn emit_str(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
-
-        let pre = match op {
-            Op::StrOfim | Op::StrOfip | Op::StrbOfip | Op::StrhOfip | Op::StrPrim => true,
-            _ => todo!("{:?}", op),
-        };
-
-        let write_back = match op {
-            Op::StrOfim | Op::StrOfip | Op::StrbOfip | Op::StrhOfip => false,
-            Op::StrPrim => true,
-            _ => todo!("{:?}", op),
-        };
-
         self.emit_single_transfer::<false, true>(
             buf_index,
             pc,
-            pre,
-            write_back,
+            op.mem_transfer_pre(),
+            op.mem_transfer_write_back(),
             MemoryAmount::from(op),
         );
     }
 
     pub fn emit_ldr(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
-        let pre = match op {
-            Op::LdrbOfrpll
-            | Op::LdrhOfip
-            | Op::LdrOfip
-            | Op::LdrOfim
-            | Op::LdrbOfrplr
-            | Op::LdrOfrpll => true,
-            Op::LdrPtip => false,
-            _ => todo!("{:?}", op),
-        };
-
-        let write_back = match op {
-            Op::LdrbOfrpll
-            | Op::LdrhOfip
-            | Op::LdrOfip
-            | Op::LdrOfim
-            | Op::LdrbOfrplr
-            | Op::LdrOfrpll => false,
-            Op::LdrPtip => true,
-            _ => todo!("{:?}", op),
-        };
-
         self.emit_single_transfer::<false, false>(
             buf_index,
             pc,
-            pre,
-            write_back,
+            op.mem_transfer_pre(),
+            op.mem_transfer_write_back(),
             MemoryAmount::from(op),
         );
     }
 
     pub fn emit_stm(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
-        let mut pre = match op {
-            Op::Stmia | Op::StmiaW => false,
-            Op::Stmdb | Op::StmdbW => true,
-            _ => todo!("{:?}", op),
-        };
-
-        let decrement = match op {
-            Op::Stmia | Op::StmiaW => false,
-            Op::Stmdb | Op::StmdbW => {
-                pre = !pre;
-                true
-            }
-            _ => todo!("{:?}", op),
-        };
-
-        let write_back = match op {
-            Op::Stmia | Op::Stmdb => false,
-            Op::StmiaW | Op::StmdbW => true,
-            _ => todo!("{:?}", op),
-        };
+        let mut pre = op.mem_transfer_pre();
+        let decrement = op.mem_transfer_decrement();
+        if decrement {
+            pre = !pre;
+        }
+        let write_back = op.mem_transfer_write_back();
 
         let inst_info = &self.jit_buf.instructions[buf_index];
         self.emit_multiple_transfer::<false, true>(
@@ -279,21 +231,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
     pub fn emit_ldm(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
-        let pre = match op {
-            Op::Ldmia | Op::LdmiaW => false,
-            _ => todo!("{:?}", op),
-        };
-
-        let decrement = match op {
-            Op::Ldmia | Op::LdmiaW => false,
-            _ => todo!("{:?}", op),
-        };
-
-        let write_back = match op {
-            Op::Ldmia => false,
-            Op::LdmiaW => true,
-            _ => todo!("{:?}", op),
-        };
+        let mut pre = op.mem_transfer_pre();
+        let decrement = op.mem_transfer_decrement();
+        if decrement {
+            pre = !pre;
+        }
+        let write_back = op.mem_transfer_write_back();
 
         let inst_info = &self.jit_buf.instructions[buf_index];
         self.emit_multiple_transfer::<false, false>(

@@ -1,5 +1,6 @@
 use crate::hle::gpu::gpu_context::{DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
 use crate::hle::memory::palettes_context::PalettesContext;
+use crate::hle::memory::vram_context;
 use crate::hle::memory::vram_context::{VramContext, BG_A_OFFSET, BG_B_OFFSET};
 use crate::hle::CpuType;
 use crate::logging::debug_println;
@@ -402,16 +403,27 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
 
         let fb_start = line as usize * DISPLAY_WIDTH;
         let fb_end = fb_start + DISPLAY_WIDTH;
+        let fb = &mut self.framebuffer.borrow_mut()[fb_start..fb_end];
         match DisplayMode::from(u8::from(disp_cnt.display_mode())) {
             DisplayMode::Off => {
-                self.framebuffer.borrow_mut()[fb_start..fb_end].fill(!0);
+                fb.fill(!0);
             }
             DisplayMode::Layers => {
-                let mut fb = self.framebuffer.borrow_mut();
-                fb[fb_start..fb_end].copy_from_slice(self.layers[0].borrow().as_slice());
+                fb.copy_from_slice(self.layers[0].borrow().as_slice());
             }
             DisplayMode::Vram => {
-                todo!()
+                let vram_block = u32::from(disp_cnt.vram_block());
+                let base_addr = vram_context::LCDC_OFFSET
+                    + vram_block * vram_context::BANK_A_SIZE as u32
+                    + fb_start as u32 * 2;
+                let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
+
+                fb.iter_mut().enumerate().for_each(|(i, value)| {
+                    *value = Self::rgb5_to_rgb6(
+                        vram_context.read::<{ CpuType::ARM9 }, u16>(base_addr + i as u32 * 2)
+                            as u32,
+                    );
+                });
             }
             DisplayMode::MainMemory => {
                 todo!()

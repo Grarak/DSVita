@@ -78,7 +78,20 @@ mod alu_ops {
 
     #[inline]
     pub fn _and_ari_impl(opcode: u32, op: Op, operand2: (Reg, u8)) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Asr, operand2.1),
+            ),
+            reg_reserve!(op1, operand2.0),
+            reg_reserve!(op0),
+            1,
+        )
     }
 
     #[inline]
@@ -165,7 +178,16 @@ mod alu_ops {
 
     #[inline]
     pub fn ands_imm_impl(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
+            reg_reserve!(op1),
+            reg_reserve!(op0, Reg::CPSR),
+            1,
+        )
     }
 
     #[inline]
@@ -223,7 +245,16 @@ mod alu_ops {
 
     #[inline]
     pub fn eor_imm_impl(opcode: u32, op: Op, operand2: u32) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
+            reg_reserve!(op1),
+            reg_reserve!(op0),
+            1,
+        )
     }
 
     #[inline]
@@ -1316,7 +1347,18 @@ mod alu_ops {
 
     #[inline]
     pub fn mov_rri_impl(opcode: u32, op: Op, operand2: (Reg, u8)) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_2(
+                Operand::reg(op0),
+                Operand::reg_imm_shift(operand2.0, ShiftType::Lsr, operand2.1),
+            ),
+            reg_reserve!(operand2.0),
+            reg_reserve!(op0),
+            1,
+        )
     }
 
     #[inline]

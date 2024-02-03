@@ -18,51 +18,57 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let emit_func = match inst_info.op {
             Op::B | Op::Bl => Self::emit_b,
             Op::Bx | Op::BlxReg => Self::emit_bx,
-            Op::LdrbOfrpll
-            | Op::LdrhOfip
-            | Op::LdrOfim
-            | Op::LdrOfip
-            | Op::LdrbOfrplr
-            | Op::LdrOfrpll
-            | Op::LdrPtip => Self::emit_ldr,
-            Op::Ldmia | Op::LdmiaW => Self::emit_ldm,
-            Op::StrOfim | Op::StrOfip | Op::StrbOfip | Op::StrhOfip | Op::StrPrim => Self::emit_str,
-            Op::Stmia | Op::Stmdb | Op::StmiaW | Op::StmdbW => Self::emit_stm,
             Op::Mcr | Op::Mrc => Self::emit_cp15,
             Op::MsrRc | Op::MsrRs => Self::emit_msr,
             Op::MrsRc | Op::MrsRs => Self::emit_mrs,
             Op::Swi => Self::emit_swi,
             Op::UnkArm => Self::emit_unknown,
             _ => {
-                let src_regs = inst_info.src_regs;
-                let combined_regs = src_regs + out_regs;
-                if combined_regs.emulated_regs_count() > 0 {
-                    self.handle_emulated_regs(buf_index, pc);
+                if inst_info.op.is_single_mem_transfer() {
+                    if inst_info.op.mem_is_write() {
+                        Self::emit_str
+                    } else {
+                        Self::emit_ldr
+                    }
+                } else if inst_info.op.is_multiple_mem_transfer() {
+                    if inst_info.op.mem_is_write() {
+                        Self::emit_stm
+                    } else {
+                        Self::emit_ldm
+                    }
                 } else {
-                    let mut inst_info = inst_info.clone();
-                    inst_info.set_cond(Cond::AL);
-                    self.jit_buf.emit_opcodes.push(inst_info.opcode);
-                }
-
-                if out_regs.is_reserved(Reg::CPSR) {
-                    let mut reserved = combined_regs
-                        .create_push_pop_handler(2, &self.jit_buf.instructions[buf_index + 1..]);
-
-                    let host_cpsr_reg = reserved.pop().unwrap();
-                    let guest_cpsr_reg = reserved.pop().unwrap();
-
-                    if let Some(opcode) = reserved.emit_push_stack(Reg::LR) {
-                        self.jit_buf.emit_opcodes.push(opcode)
+                    let src_regs = inst_info.src_regs;
+                    let combined_regs = src_regs + out_regs;
+                    if combined_regs.emulated_regs_count() > 0 {
+                        self.handle_emulated_regs(buf_index, pc);
+                    } else {
+                        let mut inst_info = inst_info.clone();
+                        inst_info.set_cond(Cond::AL);
+                        self.jit_buf.emit_opcodes.push(inst_info.opcode);
                     }
 
-                    self.handle_cpsr(host_cpsr_reg, guest_cpsr_reg);
+                    if out_regs.is_reserved(Reg::CPSR) {
+                        let mut reserved = combined_regs.create_push_pop_handler(
+                            2,
+                            &self.jit_buf.instructions[buf_index + 1..],
+                        );
 
-                    if let Some(opcode) = reserved.emit_pop_stack(Reg::LR) {
-                        self.jit_buf.emit_opcodes.push(opcode)
+                        let host_cpsr_reg = reserved.pop().unwrap();
+                        let guest_cpsr_reg = reserved.pop().unwrap();
+
+                        if let Some(opcode) = reserved.emit_push_stack(Reg::LR) {
+                            self.jit_buf.emit_opcodes.push(opcode)
+                        }
+
+                        self.handle_cpsr(host_cpsr_reg, guest_cpsr_reg);
+
+                        if let Some(opcode) = reserved.emit_pop_stack(Reg::LR) {
+                            self.jit_buf.emit_opcodes.push(opcode)
+                        }
                     }
-                }
 
-                |_: &mut JitAsm<CPU>, _: usize, _: u32| {}
+                    |_: &mut JitAsm<CPU>, _: usize, _: u32| {}
+                }
             }
         };
 

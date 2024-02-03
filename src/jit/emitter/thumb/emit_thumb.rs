@@ -63,27 +63,24 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             Op::BlOffT => JitAsm::emit_bl_thumb,
             Op::BxRegT | Op::BlxRegT => JitAsm::emit_bx_thumb,
 
-            Op::LdrshRegT
-            | Op::LdrbRegT
-            | Op::LdrbImm5T
-            | Op::LdrhRegT
-            | Op::LdrRegT
-            | Op::LdrhImm5T
-            | Op::LdrImm5T
-            | Op::LdrPcT
-            | Op::LdrSpT => JitAsm::emit_ldr_thumb,
-            Op::StrbRegT
-            | Op::StrbImm5T
-            | Op::StrhImm5T
-            | Op::StrhRegT
-            | Op::StrRegT
-            | Op::StrImm5T
-            | Op::StrSpT => JitAsm::emit_str_thumb,
-            Op::LdmiaT | Op::PopT | Op::PopPcT => JitAsm::emit_ldm_thumb,
-            Op::StmiaT | Op::PushT | Op::PushLrT => JitAsm::emit_stm_thumb,
-
             Op::SwiT => JitAsm::emit_swi_thumb,
-            _ => todo!("{:?}", inst_info),
+            _ => {
+                if op.is_single_mem_transfer() {
+                    if inst_info.op.mem_is_write() {
+                        Self::emit_str_thumb
+                    } else {
+                        Self::emit_ldr_thumb
+                    }
+                } else if op.is_multiple_mem_transfer() {
+                    if inst_info.op.mem_is_write() {
+                        Self::emit_stm_thumb
+                    } else {
+                        Self::emit_ldm_thumb
+                    }
+                } else {
+                    todo!("{:?}", inst_info)
+                }
+            }
         };
 
         emit_func(self, buf_index, pc);
