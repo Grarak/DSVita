@@ -101,7 +101,8 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     }
 
     pub fn handle_emulated_regs(&mut self, buf_index: usize, pc: u32) {
-        let mut inst_info = self.jit_buf.instructions[buf_index].clone();
+        let og_inst_info = &self.jit_buf.instructions[buf_index].clone();
+        let mut inst_info = og_inst_info.clone();
 
         let opcodes = &mut self.jit_buf.emit_opcodes;
 
@@ -160,7 +161,13 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
             let reg = Reg::from(FIRST_EMULATED_REG as u8 + index as u8);
             if reg == Reg::PC {
-                opcodes.extend(&AluImm::mov32(*mapped_reg, pc + 8));
+                if inst_info.op.is_alu_reg_shift()
+                    && *og_inst_info.operands().last().unwrap().as_reg().unwrap().0 == Reg::PC
+                {
+                    opcodes.extend(&AluImm::mov32(*mapped_reg, pc + 12));
+                } else {
+                    opcodes.extend(&AluImm::mov32(*mapped_reg, pc + 8));
+                }
             } else {
                 opcodes.extend(self.thread_regs.borrow().emit_get_reg(*mapped_reg, reg));
             }
