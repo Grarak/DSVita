@@ -183,6 +183,34 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         unsafe { base_ptr.offset(reg as _).as_mut().unwrap_unchecked() }
     }
 
+    pub fn get_reg_usr_value(&self, reg: Reg) -> &u32 {
+        debug_assert_ne!(reg, Reg::None);
+        match reg {
+            Reg::R8 => &self.user.gp_regs[0],
+            Reg::R9 => &self.user.gp_regs[1],
+            Reg::R10 => &self.user.gp_regs[2],
+            Reg::R11 => &self.user.gp_regs[3],
+            Reg::R12 => &self.user.gp_regs[4],
+            Reg::SP => &self.user.sp,
+            Reg::LR => &self.user.lr,
+            _ => self.get_reg_value(reg),
+        }
+    }
+
+    pub fn get_reg_usr_value_mut(&mut self, reg: Reg) -> &mut u32 {
+        debug_assert_ne!(reg, Reg::None);
+        match reg {
+            Reg::R8 => &mut self.user.gp_regs[0],
+            Reg::R9 => &mut self.user.gp_regs[1],
+            Reg::R10 => &mut self.user.gp_regs[2],
+            Reg::R11 => &mut self.user.gp_regs[3],
+            Reg::R12 => &mut self.user.gp_regs[4],
+            Reg::SP => &mut self.user.sp,
+            Reg::LR => &mut self.user.lr,
+            _ => self.get_reg_value_mut(reg),
+        }
+    }
+
     pub fn set_cpsr_with_flags(&mut self, value: u32, flags: u8) {
         if flags & 1 == 1 {
             let mask = if u8::from(Cpsr::from(self.cpsr).mode()) == 0x10 {

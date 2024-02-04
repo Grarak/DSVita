@@ -17,11 +17,14 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             | Op::AddImm3T
             | Op::AddImm8T
             | Op::AddRegT
+            | Op::AddPcT
             | Op::AddSpT
             | Op::AndDpT
             | Op::AsrImmT
+            | Op::AsrDpT
             | Op::BicDpT
             | Op::CmpDpT
+            | Op::CmnDpT
             | Op::CmpImm8T
             | Op::EorDpT
             | Op::LslImmT
@@ -72,11 +75,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                         Self::emit_ldr_thumb
                     }
                 } else if op.is_multiple_mem_transfer() {
-                    if inst_info.op.mem_is_write() {
-                        Self::emit_stm_thumb
-                    } else {
-                        Self::emit_ldm_thumb
-                    }
+                    Self::emit_multiple_transfer::<true>
                 } else {
                     todo!("{:?}", inst_info)
                 }

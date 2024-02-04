@@ -238,6 +238,20 @@ impl ops::SubAssign<Reg> for RegReserve {
     }
 }
 
+impl ops::BitAnd<Reg> for RegReserve {
+    type Output = RegReserve;
+
+    fn bitand(self, rhs: Reg) -> Self::Output {
+        RegReserve(self.0 & (1 << rhs as u8))
+    }
+}
+
+impl ops::BitAndAssign<Reg> for RegReserve {
+    fn bitand_assign(&mut self, rhs: Reg) {
+        self.0 &= 1 << rhs as u8;
+    }
+}
+
 impl From<u32> for RegReserve {
     fn from(value: u32) -> Self {
         RegReserve(value)

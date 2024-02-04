@@ -229,168 +229,335 @@ mod alu_ops {
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
             reg_reserve!(op1, op2),
             reg_reserve!(op0),
-            4,
+            5,
         )
     }
 
     #[inline]
     pub fn mla(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op1 = Reg::from((opcode & 0xF) as u8);
+        let op2 = Reg::from(((opcode >> 8) & 0xF) as u8);
+        let op3 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_4(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::reg(op2),
+                Operand::reg(op3),
+            ),
+            reg_reserve!(op1, op2, op3),
+            reg_reserve!(op0),
+            6,
+        )
     }
 
     #[inline]
     pub fn umull(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op2 = Reg::from((opcode & 0xF) as u8);
+        let op3 = Reg::from(((opcode >> 8) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_4(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::reg(op2),
+                Operand::reg(op3),
+            ),
+            reg_reserve!(op2, op3),
+            reg_reserve!(op0, op1),
+            6,
+        )
     }
 
     #[inline]
     pub fn umlal(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op2 = Reg::from((opcode & 0xF) as u8);
+        let op3 = Reg::from(((opcode >> 8) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_4(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::reg(op2),
+                Operand::reg(op3),
+            ),
+            reg_reserve!(op0, op1, op2, op3),
+            reg_reserve!(op0, op1),
+            7,
+        )
     }
 
     #[inline]
     pub fn smull(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        umull(opcode, op)
     }
 
     #[inline]
     pub fn smlal(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        umlal(opcode, op)
     }
 
     #[inline]
     pub fn muls(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op1 = Reg::from((opcode & 0xF) as u8);
+        let op2 = Reg::from(((opcode >> 8) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
+            reg_reserve!(op1, op2),
+            reg_reserve!(op0, Reg::CPSR),
+            5,
+        )
     }
 
     #[inline]
     pub fn mlas(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op1 = Reg::from((opcode & 0xF) as u8);
+        let op2 = Reg::from(((opcode >> 8) & 0xF) as u8);
+        let op3 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_4(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::reg(op2),
+                Operand::reg(op3),
+            ),
+            reg_reserve!(op1, op2, op3),
+            reg_reserve!(op0, Reg::CPSR),
+            6,
+        )
     }
 
     #[inline]
     pub fn umulls(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op2 = Reg::from((opcode & 0xF) as u8);
+        let op3 = Reg::from(((opcode >> 8) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_4(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::reg(op2),
+                Operand::reg(op3),
+            ),
+            reg_reserve!(op2, op3),
+            reg_reserve!(op0, op1, Reg::CPSR),
+            6,
+        )
     }
 
     #[inline]
     pub fn umlals(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op2 = Reg::from((opcode & 0xF) as u8);
+        let op3 = Reg::from(((opcode >> 8) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_4(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::reg(op2),
+                Operand::reg(op3),
+            ),
+            reg_reserve!(op0, op1, op2, op3),
+            reg_reserve!(op0, op1, Reg::CPSR),
+            7,
+        )
     }
 
     #[inline]
     pub fn smulls(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        umulls(opcode, op)
     }
 
     #[inline]
     pub fn smlals(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        umlals(opcode, op)
     }
 
     #[inline]
     pub fn smulbb(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op1 = Reg::from((opcode & 0xF) as u8);
+        let op2 = Reg::from(((opcode >> 8) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
+            reg_reserve!(op1, op2),
+            reg_reserve!(op0),
+            1,
+        )
     }
 
     #[inline]
     pub fn smulbt(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smulbb(opcode, op)
     }
 
     #[inline]
     pub fn smultb(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smulbb(opcode, op)
     }
 
     #[inline]
     pub fn smultt(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smulbb(opcode, op)
     }
 
     #[inline]
     pub fn smulwb(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smulbb(opcode, op)
     }
 
     #[inline]
     pub fn smulwt(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smulbb(opcode, op)
     }
 
     #[inline]
     pub fn smlabb(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op1 = Reg::from((opcode & 0xF) as u8);
+        let op2 = Reg::from(((opcode >> 8) & 0xF) as u8);
+        let op3 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_4(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::reg(op2),
+                Operand::reg(op3),
+            ),
+            reg_reserve!(op1, op2, op3),
+            reg_reserve!(op0, Reg::CPSR),
+            1,
+        )
     }
 
     #[inline]
     pub fn smlabt(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smlabb(opcode, op)
     }
 
     #[inline]
     pub fn smlatb(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smlabb(opcode, op)
     }
 
     #[inline]
     pub fn smlatt(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smlabb(opcode, op)
     }
 
     #[inline]
     pub fn smlawb(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smlabb(opcode, op)
     }
 
     #[inline]
     pub fn smlawt(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smlabb(opcode, op)
     }
 
     #[inline]
     pub fn smlalbb(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op1 = Reg::from((opcode & 0xF) as u8);
+        let op2 = Reg::from(((opcode >> 8) & 0xF) as u8);
+        let op3 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_4(
+                Operand::reg(op0),
+                Operand::reg(op1),
+                Operand::reg(op2),
+                Operand::reg(op3),
+            ),
+            reg_reserve!(op0, op1, op2, op3),
+            reg_reserve!(op0, op1),
+            1,
+        )
     }
 
     #[inline]
     pub fn smlalbt(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smlalbb(opcode, op)
     }
 
     #[inline]
     pub fn smlaltb(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smlalbb(opcode, op)
     }
 
     #[inline]
     pub fn smlaltt(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        smlalbb(opcode, op)
     }
 
     #[inline]
     pub fn qadd(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from((opcode & 0xF) as u8);
+        let op2 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
+            reg_reserve!(op1, op2),
+            reg_reserve!(op0, Reg::CPSR),
+            1,
+        )
     }
 
     #[inline]
     pub fn qsub(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        qadd(opcode, op)
     }
 
     #[inline]
     pub fn qdadd(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        qadd(opcode, op)
     }
 
     #[inline]
     pub fn qdsub(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        qadd(opcode, op)
     }
 
     #[inline]
     pub fn clz(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from((opcode & 0xF) as u8);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_2(Operand::reg(op0), Operand::reg(op1)),
+            reg_reserve!(op1),
+            reg_reserve!(op0),
+            1,
+        )
     }
 }
 

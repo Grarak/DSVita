@@ -1,4 +1,3 @@
-#[cfg(debug_assertions)]
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use bilge::prelude::*;

@@ -6,7 +6,7 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
 
 impl<const CPU: CpuType> JitAsm<CPU> {
-    pub fn emit_alu_common_thumb(&mut self, buf_index: usize, _: u32) {
+    pub fn emit_alu_common_thumb(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
         let operands = inst_info.operands();
@@ -17,42 +17,56 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             (op0, &operands[1])
         };
 
-        if op0.is_emulated() {
-            todo!()
-        }
+        let mut reg_reserve = (!RegReserve::gp_thumb()).get_gp_regs();
+        let mut handle_emulated = |reg: Reg| {
+            if reg.is_emulated() {
+                let new_reg = reg_reserve.pop().unwrap();
+                if reg == Reg::PC {
+                    self.jit_buf
+                        .emit_opcodes
+                        .extend(AluImm::mov32(new_reg, (pc + 4) & !3));
+                } else {
+                    self.jit_buf
+                        .emit_opcodes
+                        .extend(self.thread_regs.borrow().emit_get_reg(new_reg, reg));
+                }
+                new_reg
+            } else {
+                reg
+            }
+        };
 
-        if op1.is_emulated() {
-            todo!()
-        }
+        let op0 = handle_emulated(op0);
+        let op1 = handle_emulated(op1);
 
         let opcode = match op2 {
             Operand::Reg { reg, .. } => {
-                if reg.is_emulated() {
-                    todo!()
-                }
+                let reg = handle_emulated(*reg);
                 match inst_info.op {
-                    Op::AdcDpT => AluShiftImm::adcs_al(op0, op1, *reg),
-                    Op::AddRegT => AluShiftImm::adds_al(op0, op1, *reg),
-                    Op::AndDpT => AluShiftImm::ands_al(op0, op1, *reg),
-                    Op::BicDpT => AluShiftImm::bics_al(op0, op1, *reg),
-                    Op::CmpDpT => AluShiftImm::cmp_al(op0, *reg),
-                    Op::EorDpT => AluShiftImm::eors_al(op0, op1, *reg),
-                    Op::LslDpT => AluReg::movs(op0, op0, ShiftType::Lsl, *reg, Cond::AL),
-                    Op::LsrDpT => AluReg::movs(op0, op0, ShiftType::Lsr, *reg, Cond::AL),
-                    Op::MulDpT => MulReg::muls_al(op0, op0, *reg),
-                    Op::MvnDpT => AluShiftImm::mvns_al(op0, *reg),
-                    Op::NegDpT => AluImm::rsbs_al(op0, *reg, 0),
-                    Op::RorDpT => AluReg::movs(op0, op0, ShiftType::Ror, *reg, Cond::AL),
-                    Op::SbcDpT => AluShiftImm::sbcs_al(op0, op1, *reg),
-                    Op::SubRegT => AluShiftImm::subs_al(op0, op1, *reg),
-                    Op::TstDpT => AluShiftImm::tst_al(op0, *reg),
-                    Op::OrrDpT => AluShiftImm::orrs_al(op0, op1, *reg),
+                    Op::AdcDpT => AluShiftImm::adcs_al(op0, op1, reg),
+                    Op::AddRegT => AluShiftImm::adds_al(op0, op1, reg),
+                    Op::AndDpT => AluShiftImm::ands_al(op0, op1, reg),
+                    Op::AsrDpT => AluReg::movs(op0, op0, ShiftType::Asr, reg, Cond::AL),
+                    Op::BicDpT => AluShiftImm::bics_al(op0, op1, reg),
+                    Op::CmpDpT => AluShiftImm::cmp_al(op0, reg),
+                    Op::CmnDpT => AluShiftImm::cmn_al(op0, reg),
+                    Op::EorDpT => AluShiftImm::eors_al(op0, op1, reg),
+                    Op::LslDpT => AluReg::movs(op0, op0, ShiftType::Lsl, reg, Cond::AL),
+                    Op::LsrDpT => AluReg::movs(op0, op0, ShiftType::Lsr, reg, Cond::AL),
+                    Op::MulDpT => MulReg::muls_al(op0, op0, reg),
+                    Op::MvnDpT => AluShiftImm::mvns_al(op0, reg),
+                    Op::NegDpT => AluImm::rsbs_al(op0, reg, 0),
+                    Op::RorDpT => AluReg::movs(op0, op0, ShiftType::Ror, reg, Cond::AL),
+                    Op::SbcDpT => AluShiftImm::sbcs_al(op0, op1, reg),
+                    Op::SubRegT => AluShiftImm::subs_al(op0, op1, reg),
+                    Op::TstDpT => AluShiftImm::tst_al(op0, reg),
+                    Op::OrrDpT => AluShiftImm::orrs_al(op0, op1, reg),
                     _ => todo!("{:?}", inst_info),
                 }
             }
             Operand::Imm(imm) => match inst_info.op {
                 Op::AddImm3T | Op::AddImm8T => AluImm::adds_al(op0, op1, *imm as u8),
-                Op::AddSpT => AluImm::add(op0, op1, (*imm >> 2) as u8, 15, Cond::AL), // imm in steps of 4, ror by 15 * 2
+                Op::AddPcT | Op::AddSpT => AluImm::add(op0, op1, *imm as u8, 15, Cond::AL), // imm in steps of 4, ror by 15 * 2
                 Op::AsrImmT => AluShiftImm::movs(op0, op1, ShiftType::Asr, *imm as u8, Cond::AL),
                 Op::CmpImm8T => AluImm::cmp_al(op0, *imm as u8),
                 Op::LslImmT => AluShiftImm::movs(op0, op1, ShiftType::Lsl, *imm as u8, Cond::AL),
@@ -70,7 +84,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_add_sp_imm_thumb(&mut self, buf_index: usize, _: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
-        let imm = inst_info.opcode & 0x7F;
+        let imm = *inst_info.operands()[1].as_imm().unwrap();
         let sub = inst_info.opcode & (1 << 7) != 0;
         // imm in steps of 4, ror by 15 * 2
         let opcode = if sub {

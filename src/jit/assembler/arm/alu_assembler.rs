@@ -485,6 +485,28 @@ impl AluShiftImm {
     }
 
     #[inline]
+    pub fn cmn(op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
+        u32::from(Self::new(
+            u4::new(op2 as u8),
+            u1::new(0),
+            u2::new(shift_type as u8),
+            u5::new(shift),
+            u4::new(0),
+            u4::new(op1 as u8),
+            u1::new(1),
+            u4::new(0xB),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn cmn_al(op1: Reg, op2: Reg) -> u32 {
+        Self::cmn(op1, op2, ShiftType::Lsl, 0, Cond::AL)
+    }
+
+    #[inline]
     pub fn eors(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
         u32::from(Self::new(
             u4::new(op2 as u8),

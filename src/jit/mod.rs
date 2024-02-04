@@ -1306,6 +1306,28 @@ impl Op {
             | Op::PushT
             | Op::PushLrT)
     }
+
+    pub const fn mem_transfer_user(self) -> bool {
+        matches!(
+            self,
+            Op::LdmdaU
+                | Op::LdmdaUW
+                | Op::LdmdbU
+                | Op::LdmdbUW
+                | Op::LdmiaU
+                | Op::LdmiaUW
+                | Op::LdmibU
+                | Op::LdmibUW
+                | Op::StmdaU
+                | Op::StmdaUW
+                | Op::StmdbU
+                | Op::StmdbUW
+                | Op::StmiaU
+                | Op::StmiaUW
+                | Op::StmibU
+                | Op::StmibUW
+        )
+    }
 }
 
 impl From<u16> for Op {
@@ -1449,6 +1471,7 @@ impl From<Op> for MemoryAmount {
             | Op::StrbPtrpll
             | Op::StrbPtrplr
             | Op::StrbPtrprr
+            | Op::LdrsbRegT
             | Op::LdrbRegT
             | Op::LdrbImm5T
             | Op::StrbRegT

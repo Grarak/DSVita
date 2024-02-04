@@ -19,9 +19,10 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             Op::B | Op::Bl => Self::emit_b,
             Op::Bx | Op::BlxReg => Self::emit_bx,
             Op::Mcr | Op::Mrc => Self::emit_cp15,
-            Op::MsrRc | Op::MsrRs => Self::emit_msr,
+            Op::MsrRc | Op::MsrIc | Op::MsrRs => Self::emit_msr,
             Op::MrsRc | Op::MrsRs => Self::emit_mrs,
             Op::Swi => Self::emit_swi,
+            Op::Swpb | Op::Swp => Self::emit_swp,
             Op::UnkArm => Self::emit_unknown,
             _ => {
                 if inst_info.op.is_single_mem_transfer() {
@@ -31,11 +32,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                         Self::emit_ldr
                     }
                 } else if inst_info.op.is_multiple_mem_transfer() {
-                    if inst_info.op.mem_is_write() {
-                        Self::emit_stm
-                    } else {
-                        Self::emit_ldm
-                    }
+                    Self::emit_multiple_transfer::<false>
                 } else {
                     let src_regs = inst_info.src_regs;
                     let combined_regs = src_regs + out_regs;
@@ -50,6 +47,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     if out_regs.is_reserved(Reg::CPSR) {
                         let mut reserved = combined_regs.create_push_pop_handler(
                             2,
+                            &self.jit_buf.instructions[buf_index],
                             &self.jit_buf.instructions[buf_index + 1..],
                         );
 
@@ -110,6 +108,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let emulated_src_regs = inst_info.src_regs.get_emulated_regs();
         let mut src_reserved = inst_info.src_regs.create_push_pop_handler(
             emulated_src_regs.len() as u8,
+            &self.jit_buf.instructions[buf_index],
             &self.jit_buf.instructions[buf_index + 1..],
         );
         src_reserved.add_reg_reserve(inst_info.out_regs);
@@ -130,10 +129,10 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             if let Operand::Reg { reg, shift } = operand {
                 if let Some(shift) = shift {
                     match match shift {
-                        Shift::LSL(v) => v,
-                        Shift::LSR(v) => v,
-                        Shift::ASR(v) => v,
-                        Shift::ROR(v) => v,
+                        Shift::Lsl(v) => v,
+                        Shift::Lsr(v) => v,
+                        Shift::Asr(v) => v,
+                        Shift::Ror(v) => v,
                     } {
                         ShiftValue::Reg(shift_reg) => {
                             if emulated_src_regs.is_reserved(*shift_reg) {
@@ -181,6 +180,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let mut out_reserved = RegPushPopHandler::from(out_reserved)
             + RegPushPopHandler::from(out_reserved.get_writable_gp_regs(
                 num_out_reserve as u8,
+                &self.jit_buf.instructions[buf_index],
                 &self.jit_buf.instructions[buf_index + 1..],
             ));
         out_reserved.use_gp();
@@ -331,15 +331,34 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 }
 
 impl RegReserve {
-    pub fn create_push_pop_handler(&self, num: u8, insts: &[InstInfo]) -> RegPushPopHandler {
-        let mut handler = RegPushPopHandler::from(self.get_writable_gp_regs(num, insts));
+    pub fn create_push_pop_handler(
+        &self,
+        num: u8,
+        begin: &InstInfo,
+        insts: &[InstInfo],
+    ) -> RegPushPopHandler {
+        let mut handler = RegPushPopHandler::from(self.get_writable_gp_regs(num, begin, insts));
         handler.use_gp();
         handler
     }
 
-    pub fn get_writable_gp_regs(&self, num: u8, insts: &[InstInfo]) -> RegReserve {
+    pub fn get_writable_gp_regs(
+        &self,
+        num: u8,
+        begin: &InstInfo,
+        insts: &[InstInfo],
+    ) -> RegReserve {
         let mut reserve = *self;
         let mut writable_regs = RegReserve::new();
+
+        if begin.op.is_branch()
+            || begin.op.is_branch_thumb()
+            || begin.out_regs.is_reserved(Reg::PC)
+            || begin.op.requires_breakout()
+        {
+            return writable_regs;
+        }
+
         for inst in insts {
             if inst.op.is_branch()
                 || inst.op.is_branch_thumb()

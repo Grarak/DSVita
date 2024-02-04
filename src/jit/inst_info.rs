@@ -1,4 +1,4 @@
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
+use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm};
 use crate::jit::inst_info_thumb::InstInfoThumb;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
@@ -60,14 +60,28 @@ impl InstInfo {
 
                 u32::from(opcode)
             }
-            Op::MvnsImm => {
+            Op::MovImm | Op::MvnsImm => {
                 let mut opcode = AluImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 opcode.set_rd(u4::new(*reg0 as u8));
 
                 u32::from(opcode)
             }
-            Op::AndLli | Op::EorLli | Op::MovLli | Op::MovRri | Op::MovsLli | Op::MovsRri => {
+            Op::CmpImm => {
+                let mut opcode = AluImm::from(self.opcode);
+                let reg0 = operands[0].as_reg_no_shift().unwrap();
+                opcode.set_rn(u4::new(*reg0 as u8));
+
+                u32::from(opcode)
+            }
+            Op::AndLli
+            | Op::EorLli
+            | Op::MovLli
+            | Op::MovRri
+            | Op::MovsLli
+            | Op::MovsRri
+            | Op::MvnLli
+            | Op::RscsLli => {
                 let mut opcode = AluShiftImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 let (reg1, (reg2, shift_2)) = if operands.len() == 3 {
@@ -87,6 +101,27 @@ impl InstInfo {
                         opcode.set_shift_imm(u5::new(value.as_imm().unwrap()))
                     }
                     None => opcode.set_shift_imm(u5::new(0)),
+                }
+
+                u32::from(opcode)
+            }
+            Op::MovsLlr => {
+                let mut opcode = AluReg::from(self.opcode);
+                let reg0 = operands[0].as_reg_no_shift().unwrap();
+                let (reg1, (reg2, shift_2)) = if operands.len() == 3 {
+                    (operands[1].as_reg_no_shift(), operands[2].as_reg().unwrap())
+                } else {
+                    (None, operands[1].as_reg().unwrap())
+                };
+                opcode.set_rm(u4::new(*reg2 as u8));
+                if let Some(reg1) = reg1 {
+                    opcode.set_rn(u4::new(*reg1 as u8));
+                }
+                opcode.set_rd(u4::new(*reg0 as u8));
+                if let Some(shift) = shift_2 {
+                    let (shift_type, value) = (*shift).into();
+                    opcode.set_shift_type(u2::new(shift_type as u8));
+                    opcode.set_rs(u4::new(value.as_reg().unwrap() as u8))
                 }
 
                 u32::from(opcode)
@@ -112,36 +147,48 @@ impl From<&InstInfoThumb> for InstInfo {
 
 #[derive(Copy, Clone, Debug)]
 pub struct Operands {
-    values: [Operand; 3],
+    values: [Operand; 4],
     num: u8,
 }
 
 impl Operands {
     pub fn new_empty() -> Self {
         Operands {
-            values: [Operand::None; 3],
+            values: [Operand::None; 4],
             num: 0,
         }
     }
 
     pub fn new_1(operand: Operand) -> Self {
         Operands {
-            values: [operand, Operand::None, Operand::None],
+            values: [operand, Operand::None, Operand::None, Operand::None],
             num: 1,
         }
     }
 
     pub fn new_2(operand1: Operand, operand2: Operand) -> Self {
         Operands {
-            values: [operand1, operand2, Operand::None],
+            values: [operand1, operand2, Operand::None, Operand::None],
             num: 2,
         }
     }
 
     pub fn new_3(operand1: Operand, operand2: Operand, operand3: Operand) -> Self {
         Operands {
-            values: [operand1, operand2, operand3],
+            values: [operand1, operand2, operand3, Operand::None],
             num: 3,
+        }
+    }
+
+    pub fn new_4(
+        operand1: Operand,
+        operand2: Operand,
+        operand3: Operand,
+        operand4: Operand,
+    ) -> Self {
+        Operands {
+            values: [operand1, operand2, operand3, operand4],
+            num: 4,
         }
     }
 }
@@ -163,10 +210,10 @@ impl Operand {
         Operand::Reg {
             reg,
             shift: Some(match shift_type {
-                ShiftType::Lsl => Shift::LSL(shift_value),
-                ShiftType::Lsr => Shift::LSR(shift_value),
-                ShiftType::Asr => Shift::ASR(shift_value),
-                ShiftType::Ror => Shift::ROR(shift_value),
+                ShiftType::Lsl => Shift::Lsl(shift_value),
+                ShiftType::Lsr => Shift::Lsr(shift_value),
+                ShiftType::Asr => Shift::Asr(shift_value),
+                ShiftType::Ror => Shift::Ror(shift_value),
             }),
         }
     }
@@ -176,10 +223,10 @@ impl Operand {
         Operand::Reg {
             reg,
             shift: Some(match shift_type {
-                ShiftType::Lsl => Shift::LSL(shift_value),
-                ShiftType::Lsr => Shift::LSR(shift_value),
-                ShiftType::Asr => Shift::ASR(shift_value),
-                ShiftType::Ror => Shift::ROR(shift_value),
+                ShiftType::Lsl => Shift::Lsl(shift_value),
+                ShiftType::Lsr => Shift::Lsr(shift_value),
+                ShiftType::Asr => Shift::Asr(shift_value),
+                ShiftType::Ror => Shift::Ror(shift_value),
             }),
         }
     }
@@ -236,19 +283,19 @@ impl ShiftValue {
 #[derive(Copy, Clone, Debug)]
 #[repr(u8)]
 pub enum Shift {
-    LSL(ShiftValue),
-    LSR(ShiftValue),
-    ASR(ShiftValue),
-    ROR(ShiftValue),
+    Lsl(ShiftValue),
+    Lsr(ShiftValue),
+    Asr(ShiftValue),
+    Ror(ShiftValue),
 }
 
-impl Into<(ShiftType, ShiftValue)> for Shift {
-    fn into(self) -> (ShiftType, ShiftValue) {
-        match self {
-            Shift::LSL(v) => (ShiftType::Lsl, v),
-            Shift::LSR(v) => (ShiftType::Lsr, v),
-            Shift::ASR(v) => (ShiftType::Asr, v),
-            Shift::ROR(v) => (ShiftType::Ror, v),
+impl From<Shift> for (ShiftType, ShiftValue) {
+    fn from(value: Shift) -> Self {
+        match value {
+            Shift::Lsl(v) => (ShiftType::Lsl, v),
+            Shift::Lsr(v) => (ShiftType::Lsr, v),
+            Shift::Asr(v) => (ShiftType::Asr, v),
+            Shift::Ror(v) => (ShiftType::Ror, v),
         }
     }
 }

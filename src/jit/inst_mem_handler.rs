@@ -6,6 +6,7 @@ use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
 use bilge::prelude::*;
 use std::cell::RefCell;
+use std::ops::DerefMut;
 use std::rc::Rc;
 
 #[bitsize(32)]
@@ -78,7 +79,11 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         }
     }
 
-    fn handle_multiple_request<const THUMB: bool, const WRITE: bool>(&self, pc: u32, args: u32) {
+    fn handle_multiple_request<const THUMB: bool, const WRITE: bool, const USER: bool>(
+        &self,
+        pc: u32,
+        args: u32,
+    ) {
         debug_println!(
             "handle multiple request at {:x} thumb: {} write: {}",
             pc,
@@ -95,11 +100,7 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         let decrement = bool::from(args.decrement());
 
         let mut thread_regs = self.thread_regs.borrow_mut();
-
-        #[cfg(debug_assertions)]
-        if rlist.len() == 0 {
-            todo!()
-        }
+        let thread_regs = thread_regs.deref_mut();
 
         if rlist.is_reserved(Reg::PC) || op0 == Reg::PC {
             *thread_regs.get_reg_value_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
@@ -112,33 +113,59 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         };
         let mut addr = start_addr;
 
-        #[cfg(debug_assertions)]
-        if WRITE && CPU == CpuType::ARM7 && write_back && rlist.is_reserved(op0) {
-            todo!()
+        if write_back
+            && (!WRITE
+                || (CPU == CpuType::ARM7
+                    && (rlist.0 & ((1 << (op0 as u8 + 1)) - 1)) > (1 << op0 as u8)))
+        {
+            if decrement {
+                *thread_regs.get_reg_value_mut(op0) = addr;
+            } else {
+                *thread_regs.get_reg_value_mut(op0) = addr + ((rlist.len() as u32) << 2);
+            }
         }
 
+        let get_reg_fun = if USER && rlist.is_reserved(Reg::PC) {
+            ThreadRegs::<CPU>::get_reg_usr_value_mut
+        } else {
+            ThreadRegs::<CPU>::get_reg_value_mut
+        };
         for i in Reg::R0 as u8..Reg::CPSR as u8 {
             let reg = Reg::from(i);
             if rlist.is_reserved(reg) {
                 addr += (pre as u32) << 2;
                 if WRITE {
-                    let value = *thread_regs.get_reg_value(reg);
-                    self.mem_handler.write(addr, value);
+                    let value = get_reg_fun(thread_regs, reg);
+                    self.mem_handler.write(addr, *value);
                 } else {
                     let value = self.mem_handler.read(addr);
-                    *thread_regs.get_reg_value_mut(reg) = value;
+                    *get_reg_fun(thread_regs, reg) = value;
                 }
                 addr += (!pre as u32) << 2;
             }
         }
 
-        if write_back {
-            #[cfg(debug_assertions)]
-            if !WRITE && CPU == CpuType::ARM9 && rlist.is_reserved(op0) {
-                todo!()
-            }
-
+        if write_back
+            && (WRITE
+                || (CPU == CpuType::ARM9
+                    && ((rlist.0 & !((1 << (op0 as u8 + 1)) - 1)) != 0
+                        || (rlist.0 == (1 << op0 as u8)))))
+        {
             *thread_regs.get_reg_value_mut(op0) = if decrement { start_addr } else { addr }
+        }
+
+        if USER && rlist.is_reserved(Reg::PC) {
+            todo!()
+        }
+    }
+
+    fn handle_swp_request<const AMOUNT: MemoryAmount>(&self, op0: &mut u32, value: u32, addr: u32) {
+        if AMOUNT == MemoryAmount::Byte {
+            *op0 = self.mem_handler.read::<u8>(addr) as u32;
+            self.mem_handler.write(addr, (value & 0xFF) as u8);
+        } else {
+            *op0 = self.mem_handler.read(addr);
+            self.mem_handler.write(addr, value);
         }
     }
 }
@@ -164,5 +191,22 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     pc: u32,
     args: u32,
 ) {
-    (*handler).handle_multiple_request::<THUMB, WRITE>(pc, args);
+    (*handler).handle_multiple_request::<THUMB, WRITE, false>(pc, args);
+}
+
+pub unsafe extern "C" fn inst_mem_handler_multiple_user<const CPU: CpuType, const WRITE: bool>(
+    handler: *const InstMemHandler<CPU>,
+    pc: u32,
+    args: u32,
+) {
+    (*handler).handle_multiple_request::<false, WRITE, true>(pc, args);
+}
+
+pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: MemoryAmount>(
+    handler: *const InstMemHandler<CPU>,
+    op0: *mut u32,
+    value: u32,
+    addr: u32,
+) {
+    (*handler).handle_swp_request::<AMOUNT>(op0.as_mut().unwrap_unchecked(), value, addr);
 }

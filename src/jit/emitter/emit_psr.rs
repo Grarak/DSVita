@@ -23,7 +23,11 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                                 .push(AluShiftImm::mov_al(Reg::R1, *reg));
                         }
                     }
-                    Operand::Imm(imm) => todo!(),
+                    Operand::Imm(imm) => {
+                        asm.jit_buf
+                            .emit_opcodes
+                            .extend(AluImm::mov32(Reg::R1, *imm));
+                    }
                     _ => unsafe { unreachable_unchecked() },
                 }
 
@@ -35,7 +39,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             |_, _| {},
             &[Some(self.thread_regs.as_ptr() as _), None, None],
             match op {
-                Op::MsrRc => register_set_cpsr_checked::<CPU> as _,
+                Op::MsrRc | Op::MsrIc => register_set_cpsr_checked::<CPU> as _,
                 Op::MsrRs => register_set_spsr_checked::<CPU> as _,
                 _ => todo!(),
             },
@@ -45,7 +49,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_mrs(&mut self, buf_index: usize, _: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
-        let mut opcodes = &mut self.jit_buf.emit_opcodes;
+        let opcodes = &mut self.jit_buf.emit_opcodes;
 
         let op0 = inst_info.operands()[0].as_reg_no_shift().unwrap();
         opcodes.extend(self.thread_regs.borrow().emit_get_reg(

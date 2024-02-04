@@ -304,6 +304,22 @@ pub fn main() {
     let sdl = sdl2::init().unwrap();
     let sdl_video = sdl.video().unwrap();
 
+    let _controller = if let Ok(controller_subsystem) = sdl.game_controller() {
+        if let Ok(available) = controller_subsystem.num_joysticks() {
+            (0..available).find_map(|id| {
+                if !controller_subsystem.is_game_controller(id) {
+                    None
+                } else {
+                    controller_subsystem.open(id).ok()
+                }
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let sdl_window = sdl_video
         .window("DSPSV", SCREEN_WIDTH, SCREEN_HEIGHT)
         .build()
