@@ -89,7 +89,11 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             let op1 = handle_emulated(*og_op1, &mut reg_reserve, opcodes);
             let addr_reg = reg_reserve.pop_call_reserved().unwrap();
             if let Some(reg) = add_to_op1 {
-                opcodes.push(AluShiftImm::add_al(addr_reg, op1, reg));
+                if inst_info.op.mem_transfer_single_sub() {
+                    opcodes.push(AluShiftImm::sub_al(addr_reg, op1, reg));
+                } else {
+                    opcodes.push(AluShiftImm::add_al(addr_reg, op1, reg));
+                }
             }
 
             if inst_info.op == Op::LdrPcT {
@@ -110,7 +114,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 opcodes.push(LdrStrImm::str_al(Reg::R3, Reg::R1));
             }
 
-            if write_back {
+            if write_back && op0 != *og_op1 {
                 Some((*og_op1, addr_reg))
             } else {
                 None
@@ -132,16 +136,30 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let mem_handler_addr = ptr::addr_of_mut!(self.inst_mem_handler) as u32;
         let func_addr = match amount {
             MemoryAmount::Byte => {
-                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }> as *const _
+                if self.jit_buf.instructions[buf_index]
+                    .op
+                    .mem_transfer_single_signed()
+                {
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, true> as *const _
+                } else {
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, false> as *const _
+                }
             }
             MemoryAmount::Half => {
-                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }> as *const _
+                if self.jit_buf.instructions[buf_index]
+                    .op
+                    .mem_transfer_single_signed()
+                {
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, true> as *const _
+                } else {
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, false> as *const _
+                }
             }
             MemoryAmount::Word => {
-                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Word }> as *const _
+                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Word }, false> as *const _
             }
             MemoryAmount::Double => {
-                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Double }> as *const _
+                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Double }, false> as *const _
             }
         };
 

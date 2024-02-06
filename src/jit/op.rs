@@ -1435,6 +1435,140 @@ impl Op {
                 | Op::TstRrr
         )
     }
+
+    pub const fn mem_transfer_single_sub(self) -> bool {
+        matches!(
+            self,
+            Op::LdrOfim
+                | Op::LdrOfrmar
+                | Op::LdrOfrmll
+                | Op::LdrOfrmlr
+                | Op::LdrOfrmrr
+                | Op::LdrPrim
+                | Op::LdrPrrmar
+                | Op::LdrPrrmll
+                | Op::LdrPrrmlr
+                | Op::LdrPrrmrr
+                | Op::LdrPtim
+                | Op::LdrPtrmar
+                | Op::LdrPtrmll
+                | Op::LdrPtrmlr
+                | Op::LdrPtrmrr
+                | Op::LdrbOfim
+                | Op::LdrbOfrmar
+                | Op::LdrbOfrmll
+                | Op::LdrbOfrmlr
+                | Op::LdrbOfrmrr
+                | Op::LdrbPrim
+                | Op::LdrbPrrmar
+                | Op::LdrbPrrmll
+                | Op::LdrbPrrmlr
+                | Op::LdrbPrrmrr
+                | Op::LdrbPtim
+                | Op::LdrbPtrmar
+                | Op::LdrbPtrmll
+                | Op::LdrbPtrmlr
+                | Op::LdrbPtrmrr
+                | Op::LdrdOfim
+                | Op::LdrdOfrm
+                | Op::LdrdPrim
+                | Op::LdrdPrrm
+                | Op::LdrdPtim
+                | Op::LdrdPtrm
+                | Op::LdrhOfim
+                | Op::LdrhOfrm
+                | Op::LdrhPrim
+                | Op::LdrhPrrm
+                | Op::LdrhPtim
+                | Op::LdrhPtrm
+                | Op::LdrsbOfim
+                | Op::LdrsbOfrm
+                | Op::LdrsbPrim
+                | Op::LdrsbPrrm
+                | Op::LdrsbPtim
+                | Op::LdrsbPtrm
+                | Op::LdrshOfim
+                | Op::LdrshOfrm
+                | Op::LdrshPrim
+                | Op::LdrshPrrm
+                | Op::LdrshPtim
+                | Op::LdrshPtrm
+                | Op::StrOfim
+                | Op::StrOfrmar
+                | Op::StrOfrmll
+                | Op::StrOfrmlr
+                | Op::StrOfrmrr
+                | Op::StrPrim
+                | Op::StrPrrmar
+                | Op::StrPrrmll
+                | Op::StrPrrmlr
+                | Op::StrPrrmrr
+                | Op::StrPtim
+                | Op::StrPtrmar
+                | Op::StrPtrmll
+                | Op::StrPtrmlr
+                | Op::StrPtrmrr
+                | Op::StrbOfim
+                | Op::StrbOfrmar
+                | Op::StrbOfrmll
+                | Op::StrbOfrmlr
+                | Op::StrbOfrmrr
+                | Op::StrbPrim
+                | Op::StrbPrrmar
+                | Op::StrbPrrmll
+                | Op::StrbPrrmlr
+                | Op::StrbPrrmrr
+                | Op::StrbPtim
+                | Op::StrbPtrmar
+                | Op::StrbPtrmll
+                | Op::StrbPtrmlr
+                | Op::StrbPtrmrr
+                | Op::StrdOfim
+                | Op::StrdOfrm
+                | Op::StrdPrim
+                | Op::StrdPrrm
+                | Op::StrdPtim
+                | Op::StrdPtrm
+                | Op::StrhOfim
+                | Op::StrhOfrm
+                | Op::StrhPrim
+                | Op::StrhPrrm
+                | Op::StrhPtim
+                | Op::StrhPtrm
+        )
+    }
+
+    pub const fn mem_transfer_single_signed(self) -> bool {
+        matches!(
+            self,
+            Op::LdrsbOfim
+                | Op::LdrsbOfip
+                | Op::LdrsbOfrm
+                | Op::LdrsbOfrp
+                | Op::LdrsbPrim
+                | Op::LdrsbPrip
+                | Op::LdrsbPrrm
+                | Op::LdrsbPrrp
+                | Op::LdrsbPtim
+                | Op::LdrsbPtip
+                | Op::LdrsbPtrm
+                | Op::LdrsbPtrp
+                | Op::LdrshOfim
+                | Op::LdrshOfip
+                | Op::LdrshOfrm
+                | Op::LdrshOfrp
+                | Op::LdrshPrim
+                | Op::LdrshPrip
+                | Op::LdrshPrrm
+                | Op::LdrshPrrp
+                | Op::LdrshPtim
+                | Op::LdrshPtip
+                | Op::LdrshPtrm
+                | Op::LdrshPtrp
+                | Op::LdrsbRegT
+                | Op::LdrshRegT
+        )
+    }
 }
 
 impl From<u16> for Op {

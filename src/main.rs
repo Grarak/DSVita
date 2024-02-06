@@ -91,7 +91,7 @@ fn get_file_path() -> String {
 
 #[cfg(target_os = "vita")]
 fn get_file_path() -> String {
-    "ux0:hello_world.nds".to_owned()
+    "ux0:armwrestler.nds".to_owned()
 }
 
 fn initialize_arm9_thread(entry_addr: u32, thread: &ThreadContext<{ CpuType::ARM9 }>) {

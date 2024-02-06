@@ -87,7 +87,19 @@ pub enum MemoryAmount {
 impl From<Op> for MemoryAmount {
     fn from(value: Op) -> Self {
         match value {
-            Op::LdrbOfim
+            Op::LdrsbOfim
+            | Op::LdrsbOfip
+            | Op::LdrsbOfrm
+            | Op::LdrsbOfrp
+            | Op::LdrsbPrim
+            | Op::LdrsbPrip
+            | Op::LdrsbPrrm
+            | Op::LdrsbPrrp
+            | Op::LdrsbPtim
+            | Op::LdrsbPtip
+            | Op::LdrsbPtrm
+            | Op::LdrsbPtrp
+            | Op::LdrbOfim
             | Op::LdrbOfip
             | Op::LdrbOfrmar
             | Op::LdrbOfrmll
@@ -152,7 +164,19 @@ impl From<Op> for MemoryAmount {
             | Op::LdrbImm5T
             | Op::StrbRegT
             | Op::StrbImm5T => MemoryAmount::Byte,
-            Op::LdrhOfim
+            Op::LdrshOfim
+            | Op::LdrshOfip
+            | Op::LdrshOfrm
+            | Op::LdrshOfrp
+            | Op::LdrshPrim
+            | Op::LdrshPrip
+            | Op::LdrshPrrm
+            | Op::LdrshPrrp
+            | Op::LdrshPtim
+            | Op::LdrshPtip
+            | Op::LdrshPtrm
+            | Op::LdrshPtrp
+            | Op::LdrhOfim
             | Op::LdrhOfip
             | Op::LdrhOfrm
             | Op::LdrhOfrp
@@ -211,30 +235,6 @@ impl From<Op> for MemoryAmount {
             | Op::LdrPtrpll
             | Op::LdrPtrplr
             | Op::LdrPtrprr
-            | Op::LdrsbOfim
-            | Op::LdrsbOfip
-            | Op::LdrsbOfrm
-            | Op::LdrsbOfrp
-            | Op::LdrsbPrim
-            | Op::LdrsbPrip
-            | Op::LdrsbPrrm
-            | Op::LdrsbPrrp
-            | Op::LdrsbPtim
-            | Op::LdrsbPtip
-            | Op::LdrsbPtrm
-            | Op::LdrsbPtrp
-            | Op::LdrshOfim
-            | Op::LdrshOfip
-            | Op::LdrshOfrm
-            | Op::LdrshOfrp
-            | Op::LdrshPrim
-            | Op::LdrshPrip
-            | Op::LdrshPrrm
-            | Op::LdrshPrrp
-            | Op::LdrshPtim
-            | Op::LdrshPtip
-            | Op::LdrshPtrm
-            | Op::LdrshPtrp
             | Op::StrOfim
             | Op::StrOfip
             | Op::StrOfrmar

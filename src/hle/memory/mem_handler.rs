@@ -11,6 +11,7 @@ use crate::jit::jit_asm::JitState;
 use crate::logging::debug_println;
 use crate::utils::Convert;
 use std::cell::RefCell;
+use std::mem;
 use std::rc::Rc;
 
 pub struct MemHandler<const CPU: CpuType> {
@@ -49,8 +50,9 @@ impl<const CPU: CpuType> MemHandler<CPU> {
         }
     }
 
-    pub fn read<T: Convert>(&self, addr: u32) -> T {
+    pub fn read<T: Convert>(&self, mut addr: u32) -> T {
         debug_println!("{:?} memory read at {:x}", CPU, addr);
+        addr &= !(mem::size_of::<T>() as u32 - 1);
 
         let addr_base = addr & 0xFF000000;
         let addr_offset = addr - addr_base;
@@ -106,13 +108,14 @@ impl<const CPU: CpuType> MemHandler<CPU> {
         ret
     }
 
-    pub fn write<T: Convert>(&self, addr: u32, value: T) {
+    pub fn write<T: Convert>(&self, mut addr: u32, value: T) {
         debug_println!(
             "{:?} memory write at {:x} with value {:x}",
             CPU,
             addr,
             value.into(),
         );
+        addr &= !(mem::size_of::<T>() as u32 - 1);
 
         let addr_base = addr & 0xFF000000;
 

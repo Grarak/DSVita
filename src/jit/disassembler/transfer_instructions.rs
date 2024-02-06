@@ -308,7 +308,7 @@ mod transfer_ops {
             opcode,
             op,
             Operands::new_1(Operand::reg(op0)),
-            reg_reserve!(op0),
+            rlist + op0,
             (rlist & Reg::PC) + op0,
             rlist.len() as u8 + 2,
         )

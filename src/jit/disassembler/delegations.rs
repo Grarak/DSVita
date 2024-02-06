@@ -192,7 +192,6 @@ mod transfer_delegations {
     use crate::jit::disassembler::transfer_instructions::*;
     use crate::jit::inst_info::InstInfo;
     use crate::jit::{Op, ShiftType::*};
-    use crate::utils::negative;
     use paste::paste;
 
     macro_rules! generate_variation {
@@ -201,15 +200,6 @@ mod transfer_delegations {
                 #[inline]
                 pub fn [<$name _ $variation>](opcode: u32, op: Op) -> InstInfo {
                     mem_transfer_imm::<$write>(opcode, op, $processor(opcode))
-                }
-            }
-        };
-
-        ($name:ident, $write:expr, $variation:ident, $prefix:tt, $processor:ident, mem_transfer_imm) => {
-            paste! {
-                #[inline]
-                pub fn [<$name _ $variation>](opcode: u32, op: Op) -> InstInfo {
-                    mem_transfer_imm::<$write>(opcode, op, negative($processor(opcode)))
                 }
             }
         };
@@ -244,11 +234,11 @@ mod transfer_delegations {
     macro_rules! generate_op_half {
         ($name:ident, $write:expr) => {
             generate_variations!($name, $write,
-                [ofim, -, imm_h, mem_transfer_imm],
+                [ofim, imm_h, mem_transfer_imm],
                 [ofip, imm_h, mem_transfer_imm],
-                [prim, -, imm_h, mem_transfer_imm],
+                [prim, imm_h, mem_transfer_imm],
                 [prip, imm_h, mem_transfer_imm],
-                [ptim, -, imm_h, mem_transfer_imm],
+                [ptim, imm_h, mem_transfer_imm],
                 [ptip, imm_h, mem_transfer_imm],
                 [ofrm, mem_transfer_reg],
                 [ofrp, mem_transfer_reg],
@@ -263,11 +253,11 @@ mod transfer_delegations {
     macro_rules! generate_op_full {
         ($name:ident, $write:expr) => {
             generate_variations!($name, $write,
-                [ofim, -, imm, mem_transfer_imm],
+                [ofim, imm, mem_transfer_imm],
                 [ofip, imm, mem_transfer_imm],
-                [prim, -, imm, mem_transfer_imm],
+                [prim, imm, mem_transfer_imm],
                 [prip, imm, mem_transfer_imm],
-                [ptim, -, imm, mem_transfer_imm],
+                [ptim, imm, mem_transfer_imm],
                 [ptip, imm, mem_transfer_imm],
                 [ofrmll, mem_transfer_reg_shift, Lsl],
                 [ofrmlr, mem_transfer_reg_shift, Lsr],

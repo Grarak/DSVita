@@ -35,7 +35,7 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         }
     }
 
-    fn handle_request<const WRITE: bool, const AMOUNT: MemoryAmount>(
+    fn handle_request<const WRITE: bool, const AMOUNT: MemoryAmount, const SIGNED: bool>(
         &self,
         op0: &mut u32,
         addr: u32,
@@ -61,13 +61,28 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         } else {
             match AMOUNT {
                 MemoryAmount::Byte => {
-                    *op0 = self.mem_handler.read::<u8>(addr) as u32;
+                    if SIGNED {
+                        *op0 = self.mem_handler.read::<u8>(addr) as i8 as i32 as u32;
+                    } else {
+                        *op0 = self.mem_handler.read::<u8>(addr) as u32;
+                    }
                 }
                 MemoryAmount::Half => {
-                    *op0 = self.mem_handler.read::<u16>(addr) as u32;
+                    if SIGNED {
+                        *op0 = self.mem_handler.read::<u16>(addr) as i16 as i32 as u32;
+                    } else {
+                        *op0 = self.mem_handler.read::<u16>(addr) as u32;
+                    }
                 }
                 MemoryAmount::Word => {
-                    *op0 = self.mem_handler.read(addr);
+                    if (addr & 0x3) == 0 {
+                        *op0 = self.mem_handler.read(addr);
+                    } else {
+                        let value = self.mem_handler.read::<u32>(addr);
+                        let shift = (addr & 0x3) << 3;
+                        let value = (value << (32 - shift)) | (value >> shift);
+                        *op0 = value;
+                    }
                 }
                 MemoryAmount::Double => {
                     *op0 = self.mem_handler.read(addr);
@@ -125,7 +140,7 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
             }
         }
 
-        let get_reg_fun = if USER && rlist.is_reserved(Reg::PC) {
+        let get_reg_fun = if USER && !rlist.is_reserved(Reg::PC) {
             ThreadRegs::<CPU>::get_reg_usr_value_mut
         } else {
             ThreadRegs::<CPU>::get_reg_value_mut
@@ -174,12 +189,13 @@ pub unsafe extern "C" fn inst_mem_handler<
     const CPU: CpuType,
     const WRITE: bool,
     const AMOUNT: MemoryAmount,
+    const SIGNED: bool,
 >(
     addr: u32,
     op0: *mut u32,
     handler: *const InstMemHandler<CPU>,
 ) {
-    (*handler).handle_request::<WRITE, AMOUNT>(op0.as_mut().unwrap_unchecked(), addr);
+    (*handler).handle_request::<WRITE, AMOUNT, SIGNED>(op0.as_mut().unwrap_unchecked(), addr);
 }
 
 pub unsafe extern "C" fn inst_mem_handler_multiple<
