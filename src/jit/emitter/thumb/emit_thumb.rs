@@ -63,7 +63,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             | Op::BgtT
             | Op::BleT => JitAsm::emit_b_thumb,
             Op::BlSetupT => JitAsm::emit_bl_setup_thumb,
-            Op::BlOffT => JitAsm::emit_bl_thumb,
+            Op::BlOffT | Op::BlxOffT => JitAsm::emit_bl_thumb,
             Op::BxRegT | Op::BlxRegT => JitAsm::emit_bx_thumb,
 
             Op::SwiT => JitAsm::emit_swi_thumb,
@@ -101,7 +101,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
             ));
 
-            if CPU == CpuType::ARM7 || op != Op::PopPcT {
+            if CPU == CpuType::ARM7 || op != Op::PopPcT || op == Op::AddHT || op == Op::MovHT {
                 let thread_regs = self.thread_regs.borrow();
                 self.jit_buf
                     .emit_opcodes

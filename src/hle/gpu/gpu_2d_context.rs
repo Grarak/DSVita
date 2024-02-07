@@ -90,6 +90,7 @@ struct Gpu2DInner<const ENGINE: Gpu2DEngine> {
     bg_cnt: [u16; 4],
     bg_h_ofs: [u16; 4],
     bg_v_ofs: [u16; 4],
+    mosaic: u16,
     disp_stat: u16,
     pow_cnt1: u16,
 }
@@ -101,6 +102,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DInner<ENGINE> {
             bg_cnt: [0u16; 4],
             bg_h_ofs: [0u16; 4],
             bg_v_ofs: [0u16; 4],
+            mosaic: 0,
             disp_stat: 0,
             pow_cnt1: 0,
         }
@@ -148,7 +150,9 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DInner<ENGINE> {
 
     pub fn set_win_out(&mut self, mask: u16, value: u16) {}
 
-    pub fn set_mosaic(&mut self, mask: u16, value: u16) {}
+    pub fn set_mosaic(&mut self, mask: u16, value: u16) {
+        self.mosaic = (self.mosaic & !mask) | (value & mask);
+    }
 
     pub fn set_bld_cnt(&mut self, mask: u16, value: u16) {}
 
@@ -415,12 +419,12 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 let vram_block = u32::from(disp_cnt.vram_block());
                 let base_addr = vram_context::LCDC_OFFSET
                     + vram_block * vram_context::BANK_A_SIZE as u32
-                    + fb_start as u32 * 2;
+                    + ((fb_start as u32) << 1);
                 let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
 
                 fb.iter_mut().enumerate().for_each(|(i, value)| {
                     *value = Self::rgb5_to_rgb6(
-                        vram_context.read::<{ CpuType::ARM9 }, u16>(base_addr + i as u32 * 2)
+                        vram_context.read::<{ CpuType::ARM9 }, u16>(base_addr + ((i as u32) << 1))
                             as u32,
                     );
                 });
@@ -455,7 +459,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             + (u32::from(disp_cnt.char_base()) << 16)
             + (u32::from(bg_cnt.char_base_block()) << 14);
 
-        let y_offset = (if bool::from(bg_cnt.mosaic()) {
+        let y_offset = (if bool::from(bg_cnt.mosaic()) && inner.mosaic != 0 {
             todo!()
         } else {
             line as u16

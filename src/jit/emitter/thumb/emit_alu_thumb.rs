@@ -172,7 +172,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             .push(AluShiftImm::cmp_al(*op1, *op2));
     }
 
-    pub fn emit_movh_thumb(&mut self, buf_index: usize, _: u32) {
+    pub fn emit_movh_thumb(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
         let operands = inst_info.operands();
@@ -184,14 +184,38 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         }
 
         if op2.is_high_gp_reg() {
+            if !op0.is_high_gp_reg() && !op0.is_emulated() {
+                self.jit_buf
+                    .emit_opcodes
+                    .extend(self.thread_regs.borrow().emit_get_reg(*op0, op2));
+                return;
+            }
             self.jit_buf
                 .emit_opcodes
                 .extend(self.thread_regs.borrow().emit_get_reg(op2, op2));
         } else if op2.is_emulated() {
-            let tmp_reg = (RegReserve::gp_thumb() + *op0).next_free().unwrap();
-            self.jit_buf
-                .emit_opcodes
-                .extend(self.thread_regs.borrow().emit_get_reg(tmp_reg, op2));
+            if !op0.is_high_gp_reg() && !op0.is_emulated() {
+                if op2 == Reg::PC {
+                    self.jit_buf
+                        .emit_opcodes
+                        .extend(AluImm::mov32(*op0, pc + 4));
+                } else {
+                    self.jit_buf
+                        .emit_opcodes
+                        .extend(self.thread_regs.borrow().emit_get_reg(*op0, op2));
+                }
+                return;
+            }
+            let tmp_reg = (RegReserve::gp_thumb() + op2).next_free().unwrap();
+            if op2 == Reg::PC {
+                self.jit_buf
+                    .emit_opcodes
+                    .extend(AluImm::mov32(tmp_reg, pc + 4));
+            } else {
+                self.jit_buf
+                    .emit_opcodes
+                    .extend(self.thread_regs.borrow().emit_get_reg(tmp_reg, op2));
+            }
             op2 = tmp_reg;
         }
 

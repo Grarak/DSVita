@@ -12,10 +12,11 @@ use std::{ops, ptr};
 impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
+        let op = inst_info.op;
         let cond = inst_info.cond;
         let out_regs = inst_info.out_regs;
 
-        let emit_func = match inst_info.op {
+        let emit_func = match op {
             Op::B | Op::Bl => Self::emit_b,
             Op::Bx | Op::BlxReg => Self::emit_bx,
             Op::Mcr | Op::Mrc => Self::emit_cp15,
@@ -25,13 +26,13 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             Op::Swpb | Op::Swp => Self::emit_swp,
             Op::UnkArm => Self::emit_unknown,
             _ => {
-                if inst_info.op.is_single_mem_transfer() {
-                    if inst_info.op.mem_is_write() {
+                if op.is_single_mem_transfer() {
+                    if op.mem_is_write() {
                         Self::emit_str
                     } else {
                         Self::emit_ldr
                     }
-                } else if inst_info.op.is_multiple_mem_transfer() {
+                } else if op.is_multiple_mem_transfer() {
                     Self::emit_multiple_transfer::<false>
                 } else {
                     let src_regs = inst_info.src_regs;
@@ -79,10 +80,23 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
             opcodes.extend(&AluImm::mov32(Reg::R0, pc));
             opcodes.extend(AluImm::mov32(
-                Reg::LR,
+                Reg::R1,
                 ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
             ));
-            opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
+
+            if CPU == CpuType::ARM7
+                || (!op.is_single_mem_transfer() && !op.is_multiple_mem_transfer())
+            {
+                opcodes.extend(self.thread_regs.borrow().emit_get_reg(Reg::R2, Reg::PC));
+                opcodes.push(AluImm::bic_al(Reg::R2, Reg::R2, 1));
+                opcodes.extend(
+                    self.thread_regs
+                        .borrow()
+                        .emit_set_reg(Reg::PC, Reg::R2, Reg::R3),
+                );
+            }
+
+            opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::R1));
 
             Self::emit_host_bx(self.breakout_skip_save_regs_addr, opcodes);
         }
@@ -115,10 +129,10 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         src_reserved.add_reg_reserve(inst_info.out_regs);
         src_reserved.use_gp();
 
-        let mut src_reg_mapping: [Reg; EMULATED_REGS_COUNT] = [Reg::None; EMULATED_REGS_COUNT];
+        let mut reg_mapping: [Reg; EMULATED_REGS_COUNT] = [Reg::None; EMULATED_REGS_COUNT];
 
         let mut handle_src_reg = |reg: &mut Reg| {
-            let mapped_reg = &mut src_reg_mapping[(*reg as u8 - FIRST_EMULATED_REG as u8) as usize];
+            let mapped_reg = &mut reg_mapping[(*reg as u8 - FIRST_EMULATED_REG as u8) as usize];
             if *mapped_reg == Reg::None {
                 *mapped_reg = src_reserved.pop().unwrap();
             }
@@ -154,7 +168,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             opcodes.push(opcode);
         }
 
-        for (index, mapped_reg) in src_reg_mapping.iter().enumerate() {
+        for (index, mapped_reg) in reg_mapping.iter().enumerate() {
             if *mapped_reg == Reg::None {
                 continue;
             }
@@ -175,31 +189,29 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         let emulated_out_regs = inst_info.out_regs.get_emulated_regs();
 
-        let mut out_reserved: RegReserve = src_reg_mapping.iter().sum();
-        out_reserved = out_reserved.get_gp_regs();
-        out_reserved += inst_info.out_regs.get_gp_regs();
+        let mut out_used_regs: RegReserve = reg_mapping.iter().sum();
+        out_used_regs = out_used_regs.get_gp_regs();
+        out_used_regs += inst_info.out_regs.get_gp_regs();
 
         let num_out_reserve = max(
-            ((emulated_out_regs.len() + 1) as i32) - out_reserved.len() as i32,
+            ((emulated_out_regs.len() + 1) as i32) - out_used_regs.len() as i32,
             0,
         );
 
-        let mut out_reserved = RegPushPopHandler::from(out_reserved)
-            + RegPushPopHandler::from(out_reserved.get_writable_gp_regs(
-                num_out_reserve as u8,
-                &self.jit_buf.instructions[buf_index],
-                &self.jit_buf.instructions[buf_index + 1..],
-            ));
+        let mut out_reserved = RegPushPopHandler::from(out_used_regs.get_writable_gp_regs(
+            num_out_reserve as u8,
+            &self.jit_buf.instructions[buf_index],
+            &self.jit_buf.instructions[buf_index + 1..],
+        ));
+        out_reserved.set_regs_to_skip(out_used_regs);
         out_reserved.use_gp();
 
         let out_addr = out_reserved.pop().unwrap();
-        let mut out_reg_mapping: [Reg; EMULATED_REGS_COUNT] = [Reg::None; EMULATED_REGS_COUNT];
-
         for operand in inst_info.operands_mut() {
             if let Operand::Reg { reg, .. } = operand {
                 if emulated_out_regs.is_reserved(*reg) {
                     let mapped_reg =
-                        &mut out_reg_mapping[(*reg as u8 - FIRST_EMULATED_REG as u8) as usize];
+                        &mut reg_mapping[(*reg as u8 - FIRST_EMULATED_REG as u8) as usize];
                     if *mapped_reg == Reg::None {
                         *mapped_reg = out_reserved.pop().unwrap();
                     }
@@ -215,16 +227,16 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         inst_info.set_cond(Cond::AL);
         opcodes.push(inst_info.assemble());
 
-        for (index, mapped_reg) in out_reg_mapping.iter().enumerate() {
-            if *mapped_reg == Reg::None {
+        for reg in emulated_out_regs {
+            let mapped_reg = reg_mapping[reg as usize - FIRST_EMULATED_REG as usize];
+            if mapped_reg == Reg::None {
                 continue;
             }
 
-            let reg = Reg::from(FIRST_EMULATED_REG as u8 + index as u8);
             opcodes.extend(
                 self.thread_regs
                     .borrow()
-                    .emit_set_reg(reg, *mapped_reg, out_addr),
+                    .emit_set_reg(reg, mapped_reg, out_addr),
             );
         }
 
@@ -349,13 +361,8 @@ impl RegReserve {
         handler
     }
 
-    pub fn get_writable_gp_regs(
-        &self,
-        num: u8,
-        begin: &InstInfo,
-        insts: &[InstInfo],
-    ) -> RegReserve {
-        let mut reserve = *self;
+    pub fn get_writable_gp_regs(self, num: u8, begin: &InstInfo, insts: &[InstInfo]) -> RegReserve {
+        let mut reserve = self;
         let mut writable_regs = RegReserve::new();
 
         if begin.op.is_branch()

@@ -123,6 +123,14 @@ impl<const CPU: CpuType> Dma<CPU> {
         }
     }
 
+    pub fn get_sad<const CHANNEL_NUM: usize>(&self) -> u32 {
+        self.channels[CHANNEL_NUM].borrow().sad
+    }
+
+    pub fn get_dad<const CHANNEL_NUM: usize>(&self) -> u32 {
+        self.channels[CHANNEL_NUM].borrow().dad
+    }
+
     pub fn get_cnt<const CHANNEL_NUM: usize>(&self) -> u32 {
         self.channels[CHANNEL_NUM].borrow().cnt
     }

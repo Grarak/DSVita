@@ -51,7 +51,7 @@ impl InstInfo {
     pub fn assemble(self) -> u32 {
         let operands = self.operands();
         match self.op {
-            Op::AddImm | Op::RscsImm => {
+            Op::AddImm | Op::AndImm | Op::RscsImm | Op::SubImm => {
                 let mut opcode = AluImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 let reg1 = operands[1].as_reg_no_shift().unwrap();
@@ -60,7 +60,7 @@ impl InstInfo {
 
                 u32::from(opcode)
             }
-            Op::MovImm | Op::MvnsImm => {
+            Op::MovImm | Op::MvnImm | Op::MvnsImm => {
                 let mut opcode = AluImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 opcode.set_rd(u4::new(*reg0 as u8));
@@ -74,14 +74,35 @@ impl InstInfo {
 
                 u32::from(opcode)
             }
+            Op::CmpLli => {
+                let mut opcode = AluShiftImm::from(self.opcode);
+                let reg1 = operands[0].as_reg_no_shift().unwrap();
+                let (reg2, shift_2) = operands[1].as_reg().unwrap();
+                opcode.set_rm(u4::new(*reg2 as u8));
+                opcode.set_rn(u4::new(*reg1 as u8));
+                match shift_2 {
+                    Some(shift) => {
+                        let (shift_type, value) = (*shift).into();
+                        opcode.set_shift_type(u2::new(shift_type as u8));
+                        opcode.set_shift_imm(u5::new(value.as_imm().unwrap()))
+                    }
+                    None => opcode.set_shift_imm(u5::new(0)),
+                }
+
+                u32::from(opcode)
+            }
             Op::AndLli
+            | Op::AndRri
             | Op::EorLli
             | Op::MovLli
             | Op::MovRri
             | Op::MovsLli
             | Op::MovsRri
             | Op::MvnLli
-            | Op::RscsLli => {
+            | Op::OrrLli
+            | Op::RscsLli
+            | Op::RscsLri
+            | Op::SubLli => {
                 let mut opcode = AluShiftImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 let (reg1, (reg2, shift_2)) = if operands.len() == 3 {

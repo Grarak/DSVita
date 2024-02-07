@@ -92,7 +92,7 @@ impl FrameRateCounter {
             self.frame_counter = 0;
             self.last_update = now;
             #[cfg(target_os = "linux")]
-            println!("{}", self.fps);
+            eprintln!("{}", self.fps);
         }
     }
 }
@@ -158,6 +158,7 @@ pub struct GpuContext {
 }
 
 unsafe impl Send for GpuContext {}
+
 unsafe impl Sync for GpuContext {}
 
 impl GpuContext {
@@ -201,6 +202,10 @@ impl GpuContext {
 
     pub fn get_disp_stat(&self, cpu_type: CpuType) -> u16 {
         self.inner.borrow().disp_stat[cpu_type as usize]
+    }
+
+    pub fn get_v_count(&self) -> u16 {
+        self.inner.borrow().v_count
     }
 
     pub fn set_disp_stat<const CPU: CpuType>(&self, mut mask: u16, value: u16) {

@@ -154,7 +154,15 @@ mod branch_thumb_ops {
 
     #[inline]
     pub fn blx_off_t(opcode: u16, op: Op) -> InstInfoThumb {
-        todo!()
+        let op0 = (opcode & 0x7FF) << 1; // * 2 (in steps of 2)
+        InstInfoThumb::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::imm(op0 as u32)),
+            reg_reserve!(),
+            reg_reserve!(Reg::LR),
+            1,
+        )
     }
 
     #[inline]

@@ -1,6 +1,6 @@
 macro_rules! debug_println {
         ($($args:tt)*) => {
-            if cfg!(debug_assertions) {
+            if crate::DEBUG_LOG {
                 let log = format!($($args)*);
                 let current_thread = std::thread::current();
                 let thread_name = current_thread.name().unwrap();

@@ -21,7 +21,6 @@ use crate::hle::memory::dma::Dma;
 use crate::hle::memory::main_memory::MainMemory;
 use crate::hle::memory::oam_context::OamContext;
 use crate::hle::memory::palettes_context::PalettesContext;
-use crate::hle::memory::regions;
 use crate::hle::memory::tcm_context::TcmContext;
 use crate::hle::memory::vram_context::VramContext;
 use crate::hle::memory::wram_context::WramContext;
@@ -75,6 +74,8 @@ mod utils;
 #[link(name = "SceTouch_stub", kind = "static", modifiers = "+whole-archive")]
 extern "C" {}
 
+pub const DEBUG_LOG: bool = cfg!(debug_assertions);
+
 const SCREEN_WIDTH: u32 = 960;
 const SCREEN_HEIGHT: u32 = 544;
 
@@ -91,7 +92,7 @@ fn get_file_path() -> String {
 
 #[cfg(target_os = "vita")]
 fn get_file_path() -> String {
-    "ux0:armwrestler.nds".to_owned()
+    "ux0:hello_world.nds".to_owned()
 }
 
 fn initialize_arm9_thread(entry_addr: u32, thread: &ThreadContext<{ CpuType::ARM9 }>) {
@@ -152,8 +153,6 @@ pub fn main() {
     let arm7_ram_addr = cartridge.header.arm7_values.ram_address;
     let arm7_entry_addr = cartridge.header.arm7_values.entry_address;
 
-    assert_eq!(arm9_ram_addr, regions::MAIN_MEMORY_OFFSET);
-
     let mut main_memory = MainMemory::new();
     {
         let header: &[u8; cartridge::HEADER_IN_RAM_SIZE] =
@@ -177,12 +176,6 @@ pub fn main() {
             &spi_context::SPI_FIRMWARE
                 [spi_context::USER_SETTINGS_1_ADDR..spi_context::USER_SETTINGS_1_ADDR + 0x70],
         );
-
-        let arm9_code = cartridge.read_arm9_code().unwrap();
-        main_memory.write_slice(arm9_ram_addr, &arm9_code);
-
-        let arm7_code = cartridge.read_arm7_code().unwrap();
-        main_memory.write_slice(arm7_ram_addr, &arm7_code);
     }
 
     let cycle_manager = Rc::new(CycleManager::new());
@@ -272,6 +265,24 @@ pub fn main() {
     );
     initialize_arm7_thread(arm7_entry_addr, &arm7_thread);
 
+    {
+        let arm9_code = cartridge.read_arm9_code().unwrap();
+        for (i, value) in arm9_code.iter().enumerate() {
+            arm9_thread
+                .mem_handler
+                .write(arm9_ram_addr + i as u32, *value);
+        }
+    }
+
+    {
+        let arm7_code = cartridge.read_arm7_code().unwrap();
+        for (i, value) in arm7_code.iter().enumerate() {
+            arm7_thread
+                .mem_handler
+                .write(arm7_ram_addr + i as u32, *value);
+        }
+    }
+
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
         .spawn(move || {
@@ -336,14 +347,14 @@ pub fn main() {
     let sdl_texture_creator = sdl_canvas.texture_creator();
     let mut sdl_texture_top = sdl_texture_creator
         .create_texture_streaming(
-            PixelFormatEnum::ARGB8888,
+            PixelFormatEnum::ABGR8888,
             DISPLAY_WIDTH as u32,
             DISPLAY_HEIGHT as u32,
         )
         .unwrap();
     let mut sdl_texture_bottom = sdl_texture_creator
         .create_texture_streaming(
-            PixelFormatEnum::ARGB8888,
+            PixelFormatEnum::ABGR8888,
             DISPLAY_WIDTH as u32,
             DISPLAY_HEIGHT as u32,
         )
@@ -361,6 +372,8 @@ pub fn main() {
         key_code_mapping.insert(Keycode::A, input_context::Keycode::Left);
         key_code_mapping.insert(Keycode::D, input_context::Keycode::Right);
         key_code_mapping.insert(Keycode::B, input_context::Keycode::Start);
+        key_code_mapping.insert(Keycode::K, input_context::Keycode::A);
+        key_code_mapping.insert(Keycode::J, input_context::Keycode::B);
     }
     #[cfg(target_os = "vita")]
     {
@@ -370,10 +383,13 @@ pub fn main() {
         key_code_mapping.insert(Button::DPadLeft, input_context::Keycode::Left);
         key_code_mapping.insert(Button::DPadRight, input_context::Keycode::Right);
         key_code_mapping.insert(Button::Start, input_context::Keycode::Start);
+        key_code_mapping.insert(Button::A, input_context::Keycode::A);
+        key_code_mapping.insert(Button::B, input_context::Keycode::B);
     }
 
     let mut sdl_event_pump = sdl.event_pump().unwrap();
     let mut key_map = 0xFFFF;
+
     'render: loop {
         for event in sdl_event_pump.poll_iter() {
             match event {

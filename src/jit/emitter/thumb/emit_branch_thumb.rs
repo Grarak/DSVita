@@ -105,9 +105,15 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             .emit_opcodes
             .push(LdrStrImm::str_al(Reg::R10, Reg::R11));
 
-        self.jit_buf
-            .emit_opcodes
-            .extend(AluImm::mov32(Reg::R9, *op0 | 1));
+        if inst_info.op == Op::BlxOffT {
+            self.jit_buf
+                .emit_opcodes
+                .extend(AluImm::mov32(Reg::R9, *op0));
+        } else {
+            self.jit_buf
+                .emit_opcodes
+                .extend(AluImm::mov32(Reg::R9, *op0 | 1));
+        }
 
         self.jit_buf
             .emit_opcodes
@@ -116,6 +122,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         self.jit_buf
             .emit_opcodes
             .push(AluShiftImm::add_al(Reg::R8, Reg::R8, Reg::R9));
+
+        if inst_info.op == Op::BlxOffT {
+            self.jit_buf
+                .emit_opcodes
+                .push(AluImm::bic_al(Reg::R8, Reg::R8, 1));
+        }
 
         self.jit_buf
             .emit_opcodes

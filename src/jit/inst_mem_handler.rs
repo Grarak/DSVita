@@ -117,6 +117,18 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         let mut thread_regs = self.thread_regs.borrow_mut();
         let thread_regs = thread_regs.deref_mut();
 
+        if rlist.len() == 0 {
+            if WRITE {
+                *thread_regs.get_reg_value_mut(op0) -= 0x40;
+            } else {
+                *thread_regs.get_reg_value_mut(op0) += 0x40;
+            }
+            if CPU == CpuType::ARM7 {
+                todo!()
+            }
+            return;
+        }
+
         if rlist.is_reserved(Reg::PC) || op0 == Reg::PC {
             *thread_regs.get_reg_value_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
         }

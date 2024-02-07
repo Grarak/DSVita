@@ -6,7 +6,6 @@ use crate::hle::thread_regs::ThreadRegs;
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
-#[cfg(debug_assertions)]
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, Msr};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
@@ -14,27 +13,24 @@ use crate::jit::inst_info::InstInfo;
 use crate::jit::inst_mem_handler::InstMemHandler;
 use crate::jit::jit_memory::JitMemory;
 use crate::jit::reg::Reg;
-#[cfg(debug_assertions)]
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
 use crate::utils::NoHashMap;
+use crate::DEBUG_LOG;
 use std::arch::asm;
 use std::cell::RefCell;
-#[cfg(debug_assertions)]
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::ptr;
 use std::rc::Rc;
 
-#[cfg(debug_assertions)]
 #[derive(Default)]
 struct DebugRegs {
     gp: [u32; 13],
     sp: u32,
 }
 
-#[cfg(debug_assertions)]
 impl DebugRegs {
     fn emit_save_regs(&self) -> Vec<u32> {
         let last_gp_reg_addr = ptr::addr_of!(self.gp[self.gp.len() - 1]) as u32;
@@ -159,7 +155,6 @@ pub struct JitAsm<const CPU: CpuType> {
     pub restore_host_thumb_opcodes: Vec<u32>,
     pub restore_guest_thumb_opcodes: Vec<u32>,
     pub restore_host_no_save_opcodes: Vec<u32>,
-    #[cfg(debug_assertions)]
     debug_regs: DebugRegs,
 }
 
@@ -238,7 +233,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 restore_host_thumb_opcodes,
                 restore_guest_thumb_opcodes,
                 restore_host_no_save_opcodes,
-                #[cfg(debug_assertions)]
                 debug_regs: DebugRegs::default(),
             }
         };
@@ -323,6 +317,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     }
 
     fn emit_code_block<const THUMB: bool>(&mut self, entry: u32, jit_memory: &mut JitMemory) {
+        let aligned_entry = entry & !1;
         {
             let mut index = 0;
             if THUMB {
@@ -361,7 +356,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         let pc_step_size = if THUMB { 1 } else { 2 };
         for i in 0..self.jit_buf.instructions.len() {
-            let pc = ((i as u32) << pc_step_size) + entry;
+            let pc = ((i as u32) << pc_step_size) + aligned_entry;
             let opcodes_len = self.jit_buf.block_opcodes.len();
             if opcodes_len > 0 {
                 self.jit_buf
@@ -369,8 +364,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     .insert(pc, (opcodes_len << 2) as u16);
             }
 
-            #[cfg(debug_assertions)]
-            {
+            if DEBUG_LOG {
                 debug_println!("{:?} emitting {:?}", CPU, self.jit_buf.instructions[i]);
 
                 self.jit_buf
@@ -383,14 +377,8 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 self.emit(i, pc);
             };
 
-            #[cfg(debug_assertions)]
-            {
+            if DEBUG_LOG {
                 let inst_info = &self.jit_buf.instructions[i];
-
-                self.jit_buf.emit_opcodes.extend(&[
-                    AluShiftImm::mov_al(Reg::R0, Reg::R0), // NOP
-                    AluShiftImm::mov_al(Reg::R0, Reg::R0), // NOP
-                ]);
 
                 self.jit_buf
                     .emit_opcodes
@@ -443,10 +431,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 Some(guest_pc_end),
             );
 
-            #[cfg(debug_assertions)]
-            {
+            if DEBUG_LOG {
                 for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
-                    let pc = ((index as u32) << pc_step_size) + entry;
+                    let pc = ((index as u32) << pc_step_size) + aligned_entry;
                     let info = jit_memory.get_jit_start_addr::<CPU>(pc).unwrap();
 
                     debug_println!(
@@ -475,8 +462,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     }
 
     fn execute_internal<const THUMB: bool>(&mut self, guest_pc: u32) -> u16 {
-        let guest_pc = guest_pc & !1;
-
         self.thread_regs.borrow_mut().set_thumb(THUMB);
 
         let jit_memory = self.jit_memory.clone();
@@ -520,7 +505,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         };
         debug_assert_ne!(self.guest_branch_out_pc, 0);
 
-        let executed_insts = (self.guest_branch_out_pc - guest_pc) >> if THUMB { 1 } else { 2 };
+        let branch_out_pc = if THUMB {
+            self.guest_branch_out_pc | 1
+        } else {
+            self.guest_branch_out_pc
+        };
+        let executed_insts = (branch_out_pc - guest_pc) >> if THUMB { 1 } else { 2 };
         let insts_cycle_count = &jit_info.guest_insts_cycle_counts
             [((guest_pc - jit_info.guest_pc_start) >> if THUMB { 1 } else { 2 }) as usize..];
         // TODO cycle correction for conds
@@ -529,8 +519,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             |sum, count| sum + *count as u16,
         );
 
-        #[cfg(debug_assertions)]
-        {
+        if DEBUG_LOG {
             debug_println!(
                 "{:?} reading opcode of breakout at {:x}",
                 CPU,
@@ -569,7 +558,6 @@ unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: 
     );
 }
 
-#[cfg(debug_assertions)]
 fn debug_inst_info<const CPU: CpuType>(
     regs_to_log: RegReserve,
     debug_regs: Option<&DebugRegs>,
@@ -617,10 +605,9 @@ fn debug_inst_info<const CPU: CpuType>(
         }
     }
 
-    debug_println!("{:?} {}{}", CPU, output, append);
+    println!("{:?} {}{}", CPU, output, append);
 }
 
-#[cfg(debug_assertions)]
 unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(
     asm: *const JitAsm<CPU>,
     pc: u32,

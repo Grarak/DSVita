@@ -26,6 +26,7 @@ pub struct MemHandler<const CPU: CpuType> {
 }
 
 unsafe impl<const CPU: CpuType> Send for MemHandler<CPU> {}
+
 unsafe impl<const CPU: CpuType> Sync for MemHandler<CPU> {}
 
 impl<const CPU: CpuType> MemHandler<CPU> {
@@ -50,12 +51,12 @@ impl<const CPU: CpuType> MemHandler<CPU> {
         }
     }
 
-    pub fn read<T: Convert>(&self, mut addr: u32) -> T {
+    pub fn read<T: Convert>(&self, addr: u32) -> T {
         debug_println!("{:?} memory read at {:x}", CPU, addr);
-        addr &= !(mem::size_of::<T>() as u32 - 1);
+        let aligned_addr = addr & !(mem::size_of::<T>() as u32 - 1);
 
-        let addr_base = addr & 0xFF000000;
-        let addr_offset = addr - addr_base;
+        let addr_base = aligned_addr & 0xFF000000;
+        let addr_offset = aligned_addr - addr_base;
 
         let ret = match addr_base {
             regions::MAIN_MEMORY_OFFSET => unsafe { (*self.main_memory).read(addr_offset) },
@@ -75,24 +76,24 @@ impl<const CPU: CpuType> MemHandler<CPU> {
 
                 if CPU == CpuType::ARM9 {
                     let cp15_context = self.cp15_context.borrow();
-                    if addr < cp15_context.itcm_size {
+                    if aligned_addr < cp15_context.itcm_size {
                         if cp15_context.itcm_state == TcmState::RW {
-                            ret = self.tcm_context.borrow_mut().read_itcm(addr);
+                            ret = self.tcm_context.borrow_mut().read_itcm(aligned_addr);
                         }
-                    } else if addr >= cp15_context.dtcm_addr
-                        && addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
+                    } else if aligned_addr >= cp15_context.dtcm_addr
+                        && aligned_addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
                     {
                         if cp15_context.dtcm_state == TcmState::RW {
                             ret = self
                                 .tcm_context
                                 .borrow_mut()
-                                .read_dtcm(addr - cp15_context.dtcm_addr);
+                                .read_dtcm(aligned_addr - cp15_context.dtcm_addr);
                         }
                     } else {
-                        todo!("{:x}", addr)
+                        todo!("{:x} {:x}", aligned_addr, addr_base)
                     }
                 } else {
-                    todo!("{:x}", addr)
+                    todo!("{:x} {:x}", aligned_addr, addr_base)
                 }
                 ret
             }
@@ -108,18 +109,18 @@ impl<const CPU: CpuType> MemHandler<CPU> {
         ret
     }
 
-    pub fn write<T: Convert>(&self, mut addr: u32, value: T) {
+    pub fn write<T: Convert>(&self, addr: u32, value: T) {
         debug_println!(
             "{:?} memory write at {:x} with value {:x}",
             CPU,
             addr,
             value.into(),
         );
-        addr &= !(mem::size_of::<T>() as u32 - 1);
+        let aligned_addr = addr & !(mem::size_of::<T>() as u32 - 1);
 
-        let addr_base = addr & 0xFF000000;
+        let addr_base = aligned_addr & 0xFF000000;
 
-        let addr_offset = addr - addr_base;
+        let addr_offset = aligned_addr - addr_base;
         let mut invalidate_jit = false;
         match addr_base {
             regions::MAIN_MEMORY_OFFSET => unsafe { (*self.main_memory).write(addr_offset, value) },
@@ -140,24 +141,42 @@ impl<const CPU: CpuType> MemHandler<CPU> {
             _ => {
                 if CPU == CpuType::ARM9 {
                     let cp15_context = self.cp15_context.borrow();
-                    if addr < cp15_context.itcm_size {
+                    if aligned_addr < cp15_context.itcm_size {
                         if cp15_context.itcm_state != TcmState::Disabled {
-                            self.tcm_context.borrow_mut().write_itcm(addr, value);
+                            self.tcm_context
+                                .borrow_mut()
+                                .write_itcm(aligned_addr, value);
                             invalidate_jit = true;
                         }
-                    } else if addr >= cp15_context.dtcm_addr
-                        && addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
+                    } else if aligned_addr >= cp15_context.dtcm_addr
+                        && aligned_addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
                     {
                         if cp15_context.dtcm_state != TcmState::Disabled {
                             self.tcm_context
                                 .borrow_mut()
-                                .write_dtcm(addr - cp15_context.dtcm_addr, value);
+                                .write_dtcm(aligned_addr - cp15_context.dtcm_addr, value);
                         }
                     } else {
-                        todo!("{:x}", addr)
+                        #[cfg(debug_assertions)]
+                        todo!("{:?} {:x}", CPU, aligned_addr);
+                        #[cfg(not(debug_assertions))]
+                        eprintln!(
+                            "{:?} Unknown write at {:x} with value {:x}",
+                            CPU,
+                            aligned_addr,
+                            value.into()
+                        );
                     }
                 } else {
-                    todo!("{:x}", addr)
+                    #[cfg(debug_assertions)]
+                    todo!("{:?} {:x}", CPU, aligned_addr);
+                    #[cfg(not(debug_assertions))]
+                    eprintln!(
+                        "{:?} Unknown write at {:x} with value {:x}",
+                        CPU,
+                        aligned_addr,
+                        value.into()
+                    );
                 }
             }
         };

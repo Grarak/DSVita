@@ -29,4 +29,4 @@ vitasdk-sys = { version = "0.3.2", features = ["SceSysmem_stub",
     "SceGxm_stub",
     "SceHid_stub",
     "SceMotion_stub",
-    "SceTouch_stub",] }
+    "SceTouch_stub", ] }

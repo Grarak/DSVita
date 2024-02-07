@@ -66,6 +66,10 @@ impl<const CPU: CpuType> TimersContext<CPU> {
         channel.current_value as u16
     }
 
+    pub fn get_cnt_h(&self, channel_num: usize) -> u16 {
+        self.channels[channel_num].borrow().cnt_h
+    }
+
     pub fn set_cnt_l(&mut self, channel: usize, mask: u16, value: u16) {
         let mut channel = self.channels[channel].borrow_mut();
         channel.cnt_l = utils::negative((channel.cnt_l as u16 & !mask) | (value & mask)) as i16;
