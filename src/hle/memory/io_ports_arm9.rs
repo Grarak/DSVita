@@ -244,7 +244,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io16(0x10E) => self.timers_context.borrow_mut().set_cnt_h(3, mask, value),
                 io16(0x180) => self.ipc_handler.borrow_mut().set_sync_reg::<{ CpuType::ARM9 }>(mask, value),
                 io16(0x184) => self.ipc_handler.borrow_mut().set_fifo_cnt::<{ CpuType::ARM9 }>(mask, value),
-                io32(0x188) => todo!(),
+                io32(0x188) => self.ipc_handler.borrow_mut().fifo_send::<{ CpuType::ARM9 }>(mask, value),
                 io16(0x1A0) => todo!(),
                 io8(0x1A2) => todo!(),
                 io32(0x1A4) => todo!(),

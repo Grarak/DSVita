@@ -10,10 +10,12 @@ use std::rc::Rc;
 struct IpcSyncCnt {
     data_in: u4,
     not_used: u4,
-    data_out: u4, // R/W
+    data_out: u4,
+    // R/W
     not_used1: u1,
     send_irq: u1,
-    enable_irq: u1, // R/W
+    enable_irq: u1,
+    // R/W
     not_used2: u1,
 }
 
@@ -86,18 +88,19 @@ impl IpcHandler {
         );
 
         mask &= 0x4F00;
-        let current = &mut self.sync_regs[CPU as usize];
-        *current = (*current & !mask) | (value & mask);
-        let other = &mut self.sync_regs[!CPU as usize];
-        *other = (*other & !((mask >> 8) & 0xF)) | (((value & mask) >> 8) & 0xF);
+        self.sync_regs[CPU as usize] = (self.sync_regs[CPU as usize] & !mask) | (value & mask);
+        self.sync_regs[!CPU as usize] =
+            (self.sync_regs[!CPU as usize] & !((mask >> 8) & 0xF)) | (((value & mask) >> 8) & 0xF);
 
-        let current_cpu_ipc_sync = IpcSyncCnt::from(self.sync_regs[CPU as usize]);
+        let value_sync = IpcSyncCnt::from(value);
         let other_cpu_ipc_sync = IpcSyncCnt::from(self.sync_regs[!CPU as usize]);
 
-        if bool::from(current_cpu_ipc_sync.send_irq())
-            && bool::from(other_cpu_ipc_sync.enable_irq())
-        {
-            todo!()
+        if bool::from(value_sync.send_irq()) && bool::from(other_cpu_ipc_sync.enable_irq()) {
+            if CPU == CpuType::ARM9 {
+                self.cpu_regs_arm7.send_interrupt(InterruptFlag::IpcSync);
+            } else {
+                self.cpu_regs_arm9.send_interrupt(InterruptFlag::IpcSync);
+            }
         }
     }
 

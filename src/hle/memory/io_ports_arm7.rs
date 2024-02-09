@@ -81,7 +81,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io8(0x509) => todo!(),
                 io32(0x510) => todo!(),
                 io32(0x518) => todo!(),
-                io32(0x100000) => todo!(),
+                io32(0x100000) => self.ipc_handler.borrow_mut().fifo_recv::<{ CpuType::ARM7 }>(),
                 io32(0x100010) => todo!(),
                 io16(0x800006) => todo!(),
                 io16(0x800010) => todo!(),
