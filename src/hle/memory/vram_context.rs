@@ -342,6 +342,7 @@ impl VramContext {
         self.bg_ext_palette_b = VramMap::default();
         self.obj_ext_palette_b = VramMap::default();
         self.arm7 = OverlapMapping::new();
+        self.stat = 0;
 
         {
             let cnt_a = VramCnt::from(self.cnt[0]);
@@ -422,7 +423,12 @@ impl VramContext {
                         );
                     }
                     2 => {
-                        todo!()
+                        let ofs = u8::from(cnt_c.ofs());
+                        self.arm7.add::<BANK_C_SIZE>(
+                            VramMap::new(&self.banks.vram_c),
+                            (ofs & 1) as usize,
+                        );
+                        self.stat |= 1;
                     }
                     3 => {
                         todo!()
@@ -455,7 +461,12 @@ impl VramContext {
                         );
                     }
                     2 => {
-                        todo!()
+                        let ofs = u8::from(cnt_d.ofs());
+                        self.arm7.add::<BANK_D_SIZE>(
+                            VramMap::new(&self.banks.vram_d),
+                            (ofs & 1) as usize,
+                        );
+                        self.stat |= 2;
                     }
                     3 => {
                         todo!()
@@ -621,9 +632,7 @@ impl VramContext {
         match CPU {
             CpuType::ARM9 => match addr & 0xF00000 {
                 LCDC_OFFSET => self.lcdc.read(addr_offset),
-                BG_A_OFFSET => {
-                    todo!()
-                }
+                BG_A_OFFSET => self.bg_a.read(addr_offset),
                 OBJ_A_OFFSET => {
                     todo!()
                 }
@@ -635,9 +644,7 @@ impl VramContext {
                     unsafe { unreachable_unchecked() };
                 }
             },
-            CpuType::ARM7 => {
-                todo!()
-            }
+            CpuType::ARM7 => self.arm7.read(addr_offset),
         }
     }
 
@@ -647,9 +654,7 @@ impl VramContext {
         match CPU {
             CpuType::ARM9 => match base_addr {
                 LCDC_OFFSET => self.lcdc.write(addr_offset, value),
-                BG_A_OFFSET => {
-                    todo!()
-                }
+                BG_A_OFFSET => self.bg_b.write(addr_offset, value),
                 OBJ_A_OFFSET => {
                     todo!()
                 }
@@ -661,9 +666,7 @@ impl VramContext {
                     unsafe { unreachable_unchecked() };
                 }
             },
-            CpuType::ARM7 => {
-                todo!()
-            }
+            CpuType::ARM7 => self.arm7.write(addr_offset, value),
         };
     }
 }

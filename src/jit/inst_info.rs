@@ -51,7 +51,7 @@ impl InstInfo {
     pub fn assemble(self) -> u32 {
         let operands = self.operands();
         match self.op {
-            Op::AddImm | Op::AndImm | Op::RscsImm | Op::SubImm => {
+            Op::AddImm | Op::AndImm | Op::BicImm | Op::RscsImm | Op::SubImm => {
                 let mut opcode = AluImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 let reg1 = operands[1].as_reg_no_shift().unwrap();
@@ -91,10 +91,12 @@ impl InstInfo {
 
                 u32::from(opcode)
             }
-            Op::AndLli
+            Op::AddLli
+            | Op::AndLli
             | Op::AndRri
             | Op::EorLli
             | Op::MovLli
+            | Op::MovLri
             | Op::MovRri
             | Op::MovsLli
             | Op::MovsRri

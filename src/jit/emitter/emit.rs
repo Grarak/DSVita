@@ -126,7 +126,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             &self.jit_buf.instructions[buf_index],
             &self.jit_buf.instructions[buf_index + 1..],
         );
-        src_reserved.add_reg_reserve(inst_info.out_regs);
+        src_reserved.set_regs_to_skip(inst_info.out_regs);
         src_reserved.use_gp();
 
         let mut reg_mapping: [Reg; EMULATED_REGS_COUNT] = [Reg::None; EMULATED_REGS_COUNT];
@@ -206,7 +206,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         out_reserved.set_regs_to_skip(out_used_regs);
         out_reserved.use_gp();
 
-        let out_addr = out_reserved.pop().unwrap();
         for operand in inst_info.operands_mut() {
             if let Operand::Reg { reg, .. } = operand {
                 if emulated_out_regs.is_reserved(*reg) {
@@ -221,23 +220,32 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             }
         }
 
-        if let Some(opcode) = out_reserved.emit_push_stack(Reg::LR) {
-            opcodes.push(opcode);
-        }
         inst_info.set_cond(Cond::AL);
-        opcodes.push(inst_info.assemble());
+        {
+            let mut out_addr = None;
+            let mut opcodes_after_save = Vec::new();
+            opcodes_after_save.push(inst_info.assemble());
 
-        for reg in emulated_out_regs {
-            let mapped_reg = reg_mapping[reg as usize - FIRST_EMULATED_REG as usize];
-            if mapped_reg == Reg::None {
-                continue;
+            for reg in emulated_out_regs {
+                let mapped_reg = reg_mapping[reg as usize - FIRST_EMULATED_REG as usize];
+                if mapped_reg == Reg::None {
+                    continue;
+                }
+
+                if out_addr.is_none() {
+                    out_addr = Some(out_reserved.pop().unwrap());
+                }
+                opcodes_after_save.extend(self.thread_regs.borrow().emit_set_reg(
+                    reg,
+                    mapped_reg,
+                    out_addr.unwrap(),
+                ));
             }
 
-            opcodes.extend(
-                self.thread_regs
-                    .borrow()
-                    .emit_set_reg(reg, mapped_reg, out_addr),
-            );
+            if let Some(opcode) = out_reserved.emit_push_stack(Reg::LR) {
+                opcodes.push(opcode);
+            }
+            opcodes.extend(opcodes_after_save);
         }
 
         if let Some(opcode) = out_reserved.emit_pop_stack(Reg::LR) {

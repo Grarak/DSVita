@@ -452,8 +452,8 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn execute(&mut self) -> u16 {
         let entry = self.thread_regs.borrow().pc;
 
-        debug_println!("{:?} Execute {:x}", CPU, entry);
         let thumb = (entry & 1) == 1;
+        debug_println!("{:?} Execute {:x} thumb {}", CPU, entry, thumb);
         if thumb {
             self.execute_internal::<true>(entry)
         } else {

@@ -3,10 +3,10 @@ use crate::hle::CpuType;
 use crate::utils;
 use crate::utils::{Convert, HeapMemU8};
 use std::cell::RefCell;
+use std::hint::unreachable_unchecked;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::{ptr, slice};
-use std::hint::unreachable_unchecked;
 
 struct SharedWramMap<'a> {
     shared_ptr: *const u8,
@@ -215,14 +215,14 @@ impl WramContext {
     }
 
     pub fn set_cnt(&mut self, value: u8) {
-        self.shared.set_cnt(value)
+        self.shared.set_cnt(value);
     }
 
     pub fn read<const CPU: CpuType, T: Convert>(&self, addr_offset: u32) -> T {
         match CPU {
             CpuType::ARM9 => self.shared.read_arm9(addr_offset),
             CpuType::ARM7 => {
-                if addr_offset & regions::ARM7_WRAM_OFFSET != 0 {
+                if self.shared.cnt == 0 || addr_offset & regions::ARM7_WRAM_OFFSET != 0 {
                     utils::read_from_mem(
                         self.wram_arm7.borrow().as_slice(),
                         addr_offset & (regions::ARM7_WRAM_SIZE - 1),
@@ -238,7 +238,7 @@ impl WramContext {
         match CPU {
             CpuType::ARM9 => self.shared.write_arm9(addr_offset, value),
             CpuType::ARM7 => {
-                if addr_offset & regions::ARM7_WRAM_OFFSET != 0 {
+                if self.shared.cnt == 0 || addr_offset & regions::ARM7_WRAM_OFFSET != 0 {
                     utils::write_to_mem(
                         self.wram_arm7.borrow_mut().as_mut_slice(),
                         addr_offset & (regions::ARM7_WRAM_SIZE - 1),
