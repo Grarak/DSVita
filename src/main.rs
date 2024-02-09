@@ -3,6 +3,7 @@
 #![feature(arm_target_feature)]
 #![feature(const_trait_impl)]
 #![feature(generic_const_exprs)]
+#![feature(isqrt)]
 #![feature(naked_functions)]
 #![feature(stmt_expr_attributes)]
 #![feature(thread_id_value)]

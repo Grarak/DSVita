@@ -17,6 +17,7 @@ pub mod spu_context;
 pub mod thread_context;
 pub mod thread_regs;
 pub mod timers_context;
+mod div_sqrt_context;
 
 #[derive(ConstParamTy, Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]

@@ -1,4 +1,5 @@
 use crate::hle::cpu_regs::CpuRegs;
+use crate::hle::div_sqrt_context::DivSqrtContext;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
 use crate::hle::gpu::gpu_2d_context::Gpu2DEngine::{A, B};
 use crate::hle::gpu::gpu_context::GpuContext;
@@ -33,6 +34,8 @@ pub struct IoPorts<const CPU: CpuType> {
     pub rtc_context: Rc<RefCell<RtcContext>>,
     pub spi_context: Rc<RefCell<SpiContext>>,
     pub spu_context: Rc<RefCell<SpuContext>>,
+
+    pub div_sqrt_context: RefCell<DivSqrtContext>,
 }
 
 impl<const CPU: CpuType> IoPorts<CPU> {
@@ -65,6 +68,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
             rtc_context,
             spi_context,
             spu_context,
+            div_sqrt_context: RefCell::new(DivSqrtContext::new()),
         }
     }
 

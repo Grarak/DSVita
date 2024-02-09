@@ -102,7 +102,8 @@ impl InstInfo {
             | Op::OrrLli
             | Op::RscsLli
             | Op::RscsLri
-            | Op::SubLli => {
+            | Op::SubLli
+            | Op::SubsLli => {
                 let mut opcode = AluShiftImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 let (reg1, (reg2, shift_2)) = if operands.len() == 3 {
