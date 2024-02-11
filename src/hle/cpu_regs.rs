@@ -5,6 +5,7 @@ use crate::hle::exception_handler::ExceptionVector;
 use crate::hle::{exception_handler, CpuType};
 use crate::logging::debug_println;
 use std::cell::RefCell;
+use std::mem;
 use std::ops::DerefMut;
 use std::rc::Rc;
 
@@ -34,6 +35,13 @@ pub enum InterruptFlag {
     ScreensUnfolding = 22,
     SpiBus = 23,
     Wifi = 24,
+}
+
+impl From<u8> for InterruptFlag {
+    fn from(value: u8) -> Self {
+        debug_assert!(value <= InterruptFlag::Wifi as u8);
+        unsafe { mem::transmute(value) }
+    }
 }
 
 #[derive(Default)]
@@ -218,4 +226,35 @@ impl<const CPU: CpuType> CycleEvent for InterruptEvent<CPU> {
 
 pub unsafe extern "C" fn cpu_regs_halt<const CPU: CpuType>(cpu_regs: *const CpuRegs<CPU>, bit: u8) {
     cpu_regs.as_ref().unwrap().halt(bit)
+}
+
+pub struct CpuRegsContainer {
+    cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
+    cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
+}
+
+impl CpuRegsContainer {
+    pub fn new(
+        cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
+        cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
+    ) -> Self {
+        CpuRegsContainer {
+            cpu_regs_arm9,
+            cpu_regs_arm7,
+        }
+    }
+
+    pub fn send_interrupt<const CPU: CpuType>(&self, flag: InterruptFlag) {
+        match CPU {
+            CpuType::ARM9 => self.cpu_regs_arm9.send_interrupt(flag),
+            CpuType::ARM7 => self.cpu_regs_arm7.send_interrupt(flag),
+        }
+    }
+
+    pub fn send_interrupt_other<const CPU: CpuType>(&self, flag: InterruptFlag) {
+        match CPU {
+            CpuType::ARM9 => self.cpu_regs_arm7.send_interrupt(flag),
+            CpuType::ARM7 => self.cpu_regs_arm9.send_interrupt(flag),
+        }
+    }
 }

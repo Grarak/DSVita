@@ -200,8 +200,12 @@ impl GpuContext {
         }
     }
 
-    pub fn get_disp_stat(&self, cpu_type: CpuType) -> u16 {
-        self.inner.borrow().disp_stat[cpu_type as usize]
+    pub fn get_disp_stat<const CPU: CpuType>(&self) -> u16 {
+        self.inner.borrow().disp_stat[CPU]
+    }
+
+    pub fn get_pow_cnt1(&self) -> u16 {
+        self.inner.borrow().pow_cnt1
     }
 
     pub fn get_v_count(&self) -> u16 {
@@ -211,7 +215,7 @@ impl GpuContext {
     pub fn set_disp_stat<const CPU: CpuType>(&self, mut mask: u16, value: u16) {
         mask &= 0xFFB8;
         let mut inner = self.inner.borrow_mut();
-        inner.disp_stat[CPU as usize] = (inner.disp_stat[CPU as usize] & !mask) | (value & mask);
+        inner.disp_stat[CPU] = (inner.disp_stat[CPU] & !mask) | (value & mask);
     }
 
     pub fn set_pow_cnt1(&self, mut mask: u16, value: u16) {

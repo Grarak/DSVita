@@ -4,6 +4,7 @@ use crate::hle::thread_regs::{Cpsr, ThreadRegs};
 use crate::logging::debug_println;
 use bilge::prelude::*;
 use std::cell::RefCell;
+use std::mem;
 use std::rc::Rc;
 
 pub struct BiosContext<const CPU: CpuType> {
@@ -147,12 +148,12 @@ impl<const CPU: CpuType> BiosContext<CPU> {
     pub fn swi(&mut self, comment: u8) {
         match CPU {
             CpuType::ARM9 => {
-                let bios_context = self as *const _ as *mut BiosContext<{ CpuType::ARM9 }>;
-                unsafe { bios_context.as_mut() }.unwrap().swi_arm9(comment);
+                let context: &mut BiosContext<{ CpuType::ARM9 }> = unsafe { mem::transmute(self) };
+                context.swi_arm9(comment);
             }
             CpuType::ARM7 => {
-                let bios_context = self as *const _ as *mut BiosContext<{ CpuType::ARM7 }>;
-                unsafe { bios_context.as_mut() }.unwrap().swi_arm7(comment);
+                let context: &mut BiosContext<{ CpuType::ARM7 }> = unsafe { mem::transmute(self) };
+                context.swi_arm7(comment);
             }
         }
     }

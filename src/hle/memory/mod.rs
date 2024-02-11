@@ -1,3 +1,4 @@
+pub mod cartridge_context;
 pub mod dma;
 pub mod io_ports;
 mod io_ports_arm7;

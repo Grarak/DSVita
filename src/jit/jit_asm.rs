@@ -361,7 +361,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             if opcodes_len > 0 {
                 self.jit_buf
                     .jit_addr_mapping
-                    .insert(pc, (opcodes_len << 2) as u16);
+                    .insert(pc | THUMB as u32, (opcodes_len << 2) as u16);
             }
 
             if DEBUG_LOG {
@@ -433,7 +433,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
             if DEBUG_LOG {
                 for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
-                    let pc = ((index as u32) << pc_step_size) + aligned_entry;
+                    let pc = ((index as u32) << pc_step_size) + entry;
                     let info = jit_memory.get_jit_start_addr::<CPU>(pc).unwrap();
 
                     debug_println!(

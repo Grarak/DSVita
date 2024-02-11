@@ -7,6 +7,7 @@ use crate::hle::gpu::gpu_2d_context::Gpu2DEngine::{A, B};
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
+use crate::hle::memory::cartridge_context::CartridgeContext;
 use crate::hle::memory::dma::Dma;
 use crate::hle::memory::io_ports::IoPorts;
 use crate::hle::memory::main_memory::MainMemory;
@@ -61,9 +62,13 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
         tcm_context: Rc<RefCell<TcmContext>>,
         oam: Rc<RefCell<OamContext>>,
         cpu_regs: Rc<CpuRegs<CPU>>,
+        cartridge_context: Rc<RefCell<CartridgeContext>>,
     ) -> Self {
         let regs = ThreadRegs::new(cpu_regs.clone());
-        let timers_context = Rc::new(RefCell::new(TimersContext::new(cycle_manager.clone())));
+        let timers_context = Rc::new(RefCell::new(TimersContext::new(
+            cycle_manager.clone(),
+            cpu_regs.clone(),
+        )));
 
         let io_ports = IoPorts::new(
             wram_context.clone(),
@@ -79,6 +84,7 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
             rtc_context,
             spi_context,
             spu_context,
+            cartridge_context,
         );
 
         let mem_handler = Rc::new(MemHandler::new(

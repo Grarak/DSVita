@@ -1,7 +1,12 @@
+use crate::utils;
+use crate::utils::NoHashMap;
 use static_assertions::const_assert_eq;
+use std::cell::RefCell;
+use std::cmp::min;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::os::unix::fs::FileExt;
+use std::rc::Rc;
 use std::{io, mem};
 
 #[repr(C, packed)]
@@ -62,21 +67,31 @@ pub struct CartridgeHeader {
     reserved5: [u8; 0x90],
 }
 
+const PAGE_SIZE: u32 = 4096;
+
 const HEADER_SIZE: usize = mem::size_of::<CartridgeHeader>();
 pub const HEADER_IN_RAM_SIZE: usize = 0x170;
 const_assert_eq!(HEADER_SIZE, HEADER_IN_RAM_SIZE + 0x90);
 
 pub struct Cartridge {
     file: File,
+    pub file_size: u32,
     pub header: CartridgeHeader,
+    content_pages: RefCell<NoHashMap<Rc<[u8; PAGE_SIZE as usize]>>>,
 }
 
 impl Cartridge {
     pub fn new(mut file: File) -> io::Result<Self> {
         let mut raw_header = [0u8; HEADER_SIZE];
         file.read_exact(&mut raw_header)?;
+        let file_size = file.stream_len().unwrap() as u32;
         let header: CartridgeHeader = unsafe { mem::transmute(raw_header) };
-        Ok(Cartridge { file, header })
+        Ok(Cartridge {
+            file,
+            file_size,
+            header,
+            content_pages: RefCell::new(NoHashMap::default()),
+        })
     }
 
     pub fn from_file(file_path: &str) -> io::Result<Self> {
@@ -84,10 +99,40 @@ impl Cartridge {
         Self::new(file)
     }
 
-    pub fn read_arm9_code(&self) -> io::Result<Vec<u8>> {
+    fn get_page(&self, page_addr: u32) -> Rc<[u8; PAGE_SIZE as usize]> {
+        let mut pages = self.content_pages.borrow_mut();
+        match pages.get(&page_addr) {
+            None => {
+                let mut buf = [0u8; PAGE_SIZE as usize];
+                self.file.read_at(&mut buf, page_addr as u64).unwrap();
+                let buf = Rc::new(buf);
+                pages.insert(page_addr, buf.clone());
+                buf
+            }
+            Some(page) => page.clone(),
+        }
+    }
+
+    pub fn read_slice(&self, offset: u32, slice: &mut [u8]) {
+        let mut remaining = slice.len();
+        while remaining > 0 {
+            let slice_start = slice.len() - remaining;
+
+            let page_addr = utils::align_down(offset + slice_start as u32, PAGE_SIZE);
+            let page_offset = offset + slice_start as u32 - page_addr;
+            let page = self.get_page(page_addr);
+            let page_slice = &page.as_slice()[page_offset as usize..];
+
+            let read_amount = min(remaining, page_slice.len());
+            let slice_end = slice_start + read_amount;
+            slice[slice_start..slice_end].copy_from_slice(&page_slice[..read_amount]);
+            remaining -= read_amount;
+        }
+    }
+
+    pub fn read_arm9_code(&self) -> Vec<u8> {
         let mut boot_code = vec![0u8; self.header.arm9_values.size as usize];
-        self.file
-            .read_exact_at(&mut boot_code, self.header.arm9_values.rom_offset as u64)?;
+        self.read_slice(self.header.arm9_values.rom_offset, &mut boot_code);
 
         if (0x4000..0x8000).contains(&(self.header.arm9_values.rom_offset as i32)) {
             let (_, boot_code_aligned, _) = unsafe { boot_code.align_to_mut::<u32>() };
@@ -96,44 +141,41 @@ impl Cartridge {
 
             {
                 let key1 = Key1::new(id_code, 2, 2);
-                key1.decrypt(&mut boot_code_aligned[..2]);
+                key1.decrypt((&mut boot_code_aligned[..2]).try_into().unwrap());
             }
 
             {
                 let key1 = Key1::new(id_code, 3, 2);
                 for i in (0..0x200).step_by(2) {
-                    key1.decrypt(&mut boot_code_aligned[i..i + 2]);
+                    key1.decrypt((&mut boot_code_aligned[i..i + 2]).try_into().unwrap());
                 }
             }
         }
 
-        Ok(boot_code)
+        boot_code
     }
 
-    pub fn read_arm7_code(&self) -> io::Result<Vec<u8>> {
+    pub fn read_arm7_code(&self) -> Vec<u8> {
         let mut boot_code = vec![0u8; self.header.arm7_values.size as usize];
-        self.file
-            .read_exact_at(&mut boot_code, self.header.arm7_values.rom_offset as u64)?;
-        Ok(boot_code)
+        self.read_slice(self.header.arm7_values.rom_offset, &mut boot_code);
+        boot_code
     }
 }
 
 const KEY1_BUF_SIZE: usize = 0x412;
 
-struct Key1 {
+pub struct Key1 {
     key_buf: [u32; KEY1_BUF_SIZE],
 }
 
 impl Key1 {
     fn crypt(
         &self,
-        data: &mut [u32],
+        data: &mut [u32; 2],
         iter: impl IntoIterator<Item = usize>,
         x_end_index: usize,
         y_end_index: usize,
     ) {
-        debug_assert_eq!(data.len(), 2);
-
         let mut y = data[0];
         let mut x = data[1];
         for i in iter {
@@ -150,17 +192,17 @@ impl Key1 {
         data[1] = y ^ self.key_buf[y_end_index];
     }
 
-    fn encrypt(&self, data: &mut [u32]) {
+    fn encrypt(&self, data: &mut [u32; 2]) {
         self.crypt(data, 0..=0xF, 0x10, 0x11);
     }
 
-    fn decrypt(&self, data: &mut [u32]) {
+    fn decrypt(&self, data: &mut [u32; 2]) {
         self.crypt(data, (0x02..=0x11).rev(), 0x1, 0x0);
     }
 
     fn apply_keycode(&mut self, keycode: &mut [u32; 3], modulo: u32) {
-        self.encrypt(&mut keycode[1..3]);
-        self.encrypt(&mut keycode[..2]);
+        self.encrypt((&mut keycode[1..3]).try_into().unwrap());
+        self.encrypt((&mut keycode[..2]).try_into().unwrap());
 
         let mut scratch = [0u32; 2];
         for i in 0..=0x11 {

@@ -143,7 +143,7 @@ impl<const CPU: CpuType> Dma<CPU> {
         self.mem_handler = Some(mem_handler)
     }
 
-    pub fn set_sad<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32) {
+    pub fn set_sad<const CHANNEL_NUM: usize>(&self, mut mask: u32, value: u32) {
         mask &= if CPU == CpuType::ARM9 || CHANNEL_NUM != 0 {
             0x0FFFFFFF
         } else {
@@ -153,7 +153,7 @@ impl<const CPU: CpuType> Dma<CPU> {
         channel.sad = (channel.sad & !mask) | (value & mask);
     }
 
-    pub fn set_dad<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32) {
+    pub fn set_dad<const CHANNEL_NUM: usize>(&self, mut mask: u32, value: u32) {
         mask &= if CPU == CpuType::ARM9 || CHANNEL_NUM != 0 {
             0x0FFFFFFF
         } else {
@@ -163,7 +163,7 @@ impl<const CPU: CpuType> Dma<CPU> {
         channel.dad = (channel.dad & !mask) | (value & mask);
     }
 
-    pub fn set_cnt<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32) {
+    pub fn set_cnt<const CHANNEL_NUM: usize>(&self, mut mask: u32, value: u32) {
         let mut channel = self.channels[CHANNEL_NUM].borrow_mut();
         let was_enabled = bool::from(DmaCntArm9::from(channel.cnt).enable());
 
@@ -212,7 +212,7 @@ impl<const CPU: CpuType> Dma<CPU> {
         }
     }
 
-    pub fn set_fill<const CHANNEL_NUM: usize>(&mut self, mask: u32, value: u32) {
+    pub fn set_fill<const CHANNEL_NUM: usize>(&self, mask: u32, value: u32) {
         let mut channel = self.channels[CHANNEL_NUM].borrow_mut();
         channel.fill = (channel.fill & !mask) | (value & mask);
     }
@@ -323,6 +323,34 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> CycleEvent for DmaEvent<CPU, 
 
         if bool::from(cnt.irq_at_end()) {
             todo!()
+        }
+    }
+}
+
+pub struct DmaContainer {
+    dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
+    dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
+}
+
+impl DmaContainer {
+    pub fn new(
+        dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
+        dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
+    ) -> Self {
+        DmaContainer { dma_arm9, dma_arm7 }
+    }
+
+    pub fn trigger_all<const CPU: CpuType>(&self, mode: DmaTransferMode) {
+        match CPU {
+            CpuType::ARM9 => self.dma_arm9.borrow().trigger_all(mode),
+            CpuType::ARM7 => self.dma_arm7.borrow().trigger_all(mode),
+        }
+    }
+
+    pub fn get<const CPU: CpuType>(&self) -> Rc<RefCell<Dma<CPU>>> {
+        match CPU {
+            CpuType::ARM9 => unsafe { mem::transmute(self.dma_arm9.clone()) },
+            CpuType::ARM7 => unsafe { mem::transmute(self.dma_arm7.clone()) },
         }
     }
 }

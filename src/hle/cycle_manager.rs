@@ -53,7 +53,7 @@ impl CycleManager {
         }
     }
 
-    pub fn schedule<T: CycleEvent + 'static>(&self, in_cycles: u32, mut event: Box<T>) -> u64 {
+    pub fn schedule(&self, in_cycles: u32, mut event: Box<dyn CycleEvent>) -> u64 {
         debug_assert_ne!(in_cycles, 0);
         let mut inner = self.inner.borrow_mut();
         let cycle_count = inner.cycle_count;

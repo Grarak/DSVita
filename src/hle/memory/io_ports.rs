@@ -5,6 +5,7 @@ use crate::hle::gpu::gpu_2d_context::Gpu2DEngine::{A, B};
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
+use crate::hle::memory::cartridge_context::CartridgeContext;
 use crate::hle::memory::dma::Dma;
 use crate::hle::memory::vram_context::VramContext;
 use crate::hle::memory::wram_context::WramContext;
@@ -34,6 +35,7 @@ pub struct IoPorts<const CPU: CpuType> {
     pub rtc_context: Rc<RefCell<RtcContext>>,
     pub spi_context: Rc<RefCell<SpiContext>>,
     pub spu_context: Rc<RefCell<SpuContext>>,
+    pub cartridge_context: Rc<RefCell<CartridgeContext>>,
 
     pub div_sqrt_context: RefCell<DivSqrtContext>,
 }
@@ -53,6 +55,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
         rtc_context: Rc<RefCell<RtcContext>>,
         spi_context: Rc<RefCell<SpiContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
+        cartridge_context: Rc<RefCell<CartridgeContext>>,
     ) -> Self {
         IoPorts {
             wram_context,
@@ -69,6 +72,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
             spi_context,
             spu_context,
             div_sqrt_context: RefCell::new(DivSqrtContext::new()),
+            cartridge_context,
         }
     }
 

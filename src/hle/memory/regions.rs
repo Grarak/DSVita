@@ -3,7 +3,6 @@ pub const DATA_TCM_SIZE: u32 = 16 * 1024;
 
 pub const MAIN_MEMORY_OFFSET: u32 = 0x02000000;
 pub const MAIN_MEMORY_SIZE: u32 = 4 * 1024 * 1024;
-pub const MAIN_MEMORY_ADDRESS_SPACE: u32 = 16 * 1024 * 1024;
 
 pub const SHARED_WRAM_OFFSET: u32 = 0x03000000;
 pub const SHARED_WRAM_SIZE: u32 = 32 * 1024;
@@ -20,3 +19,8 @@ pub const VRAM_OFFSET: u32 = 0x06000000;
 
 pub const OAM_OFFSET: u32 = 0x07000000;
 pub const OAM_SIZE: u32 = 2 * 1024;
+
+pub const GBA_ROM_OFFSET: u32 = 0x08000000;
+pub const GBA_ROM_SIZE: u32 = 32 * 1024 * 1024;
+pub const GBA_RAM_OFFSET: u32 = 0x0A000000;
+pub const GBA_RAM_SIZE: u32 = 64 * 1024;

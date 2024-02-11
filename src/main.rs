@@ -5,12 +5,13 @@
 #![feature(generic_const_exprs)]
 #![feature(isqrt)]
 #![feature(naked_functions)]
+#![feature(seek_stream_len)]
 #![feature(stmt_expr_attributes)]
 #![feature(thread_id_value)]
 
 use crate::cartridge::Cartridge;
 use crate::hle::cp15_context::Cp15Context;
-use crate::hle::cpu_regs::CpuRegs;
+use crate::hle::cpu_regs::{CpuRegs, CpuRegsContainer};
 use crate::hle::cycle_manager::CycleManager;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
 use crate::hle::gpu::gpu_context::{
@@ -18,7 +19,8 @@ use crate::hle::gpu::gpu_context::{
 };
 use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
-use crate::hle::memory::dma::Dma;
+use crate::hle::memory::cartridge_context::CartridgeContext;
+use crate::hle::memory::dma::{Dma, DmaContainer};
 use crate::hle::memory::main_memory::MainMemory;
 use crate::hle::memory::oam_context::OamContext;
 use crate::hle::memory::palettes_context::PalettesContext;
@@ -158,7 +160,7 @@ pub fn main() {
     {
         let header: &[u8; cartridge::HEADER_IN_RAM_SIZE] =
             unsafe { mem::transmute(&cartridge.header) };
-        main_memory.write_slice(0x27FFE00, header);
+        main_memory.write_slice(0x7FFE00, header);
 
         main_memory.write(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
         main_memory.write(0x27FF880, 0x0007u16); // Message from ARM9 to ARM7
@@ -192,10 +194,10 @@ pub fn main() {
     let oam_context = Rc::new(RefCell::new(OamContext::new()));
     let cpu_regs_arm9 = Rc::new(CpuRegs::new(cycle_manager.clone()));
     let cpu_regs_arm7 = Rc::new(CpuRegs::new(cycle_manager.clone()));
-    let ipc_handler = Rc::new(RefCell::new(IpcHandler::new(
+    let ipc_handler = Rc::new(RefCell::new(IpcHandler::new(CpuRegsContainer::new(
         cpu_regs_arm9.clone(),
         cpu_regs_arm7.clone(),
-    )));
+    ))));
     let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
 
     let gpu_2d_context_a = Rc::new(Gpu2DContext::new(
@@ -219,6 +221,12 @@ pub fn main() {
         cpu_regs_arm7.clone(),
         swapchain.clone(),
     ));
+    let cartridge_context = Rc::new(RefCell::new(CartridgeContext::new(
+        cycle_manager.clone(),
+        CpuRegsContainer::new(cpu_regs_arm9.clone(), cpu_regs_arm7.clone()),
+        DmaContainer::new(dma_arm9.clone(), dma_arm7.clone()),
+        cartridge,
+    )));
 
     let mut arm9_thread = ThreadContext::<{ CpuType::ARM9 }>::new(
         cycle_manager.clone(),
@@ -240,6 +248,7 @@ pub fn main() {
         tcm_context.clone(),
         oam_context.clone(),
         cpu_regs_arm9,
+        cartridge_context.clone(),
     );
     initialize_arm9_thread(arm9_entry_adrr, &arm9_thread);
 
@@ -263,11 +272,12 @@ pub fn main() {
         tcm_context,
         oam_context,
         cpu_regs_arm7,
+        cartridge_context.clone(),
     );
     initialize_arm7_thread(arm7_entry_addr, &arm7_thread);
 
     {
-        let arm9_code = cartridge.read_arm9_code().unwrap();
+        let arm9_code = cartridge_context.borrow().cartridge.read_arm9_code();
         for (i, value) in arm9_code.iter().enumerate() {
             arm9_thread
                 .mem_handler
@@ -276,7 +286,7 @@ pub fn main() {
     }
 
     {
-        let arm7_code = cartridge.read_arm7_code().unwrap();
+        let arm7_code = cartridge_context.borrow().cartridge.read_arm7_code();
         for (i, value) in arm7_code.iter().enumerate() {
             arm7_thread
                 .mem_handler

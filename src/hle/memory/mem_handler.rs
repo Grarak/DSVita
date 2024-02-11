@@ -63,7 +63,7 @@ impl<const CPU: CpuType> MemHandler<CPU> {
 
         let ret = match addr_base {
             regions::MAIN_MEMORY_OFFSET => unsafe { (*self.main_memory).read(addr_offset) },
-            regions::SHARED_WRAM_OFFSET => unsafe {
+            regions::SHARED_WRAM_OFFSET => {
                 if CPU == CpuType::ARM9 && {
                     let cp15_context = unsafe { self.cp15_context.as_ref().unwrap_unchecked() };
                     aligned_addr >= cp15_context.dtcm_addr
@@ -74,13 +74,14 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                         .borrow_mut()
                         .read_dtcm(aligned_addr - unsafe { (*self.cp15_context).dtcm_addr })
                 } else {
-                    (*self.wram_context).read::<CPU, _>(addr_offset)
+                    unsafe { (*self.wram_context).read::<CPU, _>(addr_offset) }
                 }
-            },
+            }
             regions::IO_PORTS_OFFSET => self.io_ports.read(addr_offset),
             regions::STANDARD_PALETTES_OFFSET => self.palettes_context.borrow().read(addr_offset),
             regions::VRAM_OFFSET => unsafe { (*self.vram_context).read::<CPU, _>(addr_offset) },
             regions::OAM_OFFSET => self.oam.borrow().read(addr_offset),
+            regions::GBA_ROM_OFFSET => T::from(0),
             _ => {
                 let mut ret = T::from(0);
 
@@ -158,6 +159,7 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                 (*self.vram_context).write::<CPU, _>(addr_offset, value)
             },
             regions::OAM_OFFSET => self.oam.borrow_mut().write(addr_offset, value),
+            regions::GBA_ROM_OFFSET => {}
             _ => {
                 if CPU == CpuType::ARM9 {
                     let cp15_context = unsafe { self.cp15_context.as_ref().unwrap_unchecked() };
@@ -176,26 +178,10 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                             .borrow_mut()
                             .write_dtcm(aligned_addr - cp15_context.dtcm_addr, value);
                     } else {
-                        #[cfg(debug_assertions)]
                         todo!("{:?} {:x}", CPU, aligned_addr);
-                        #[cfg(not(debug_assertions))]
-                        eprintln!(
-                            "{:?} Unknown write at {:x} with value {:x}",
-                            CPU,
-                            aligned_addr,
-                            value.into()
-                        );
                     }
                 } else {
-                    #[cfg(debug_assertions)]
                     todo!("{:?} {:x}", CPU, aligned_addr);
-                    #[cfg(not(debug_assertions))]
-                    eprintln!(
-                        "{:?} Unknown write at {:x} with value {:x}",
-                        CPU,
-                        aligned_addr,
-                        value.into()
-                    );
                 }
             }
         };

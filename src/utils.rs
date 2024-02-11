@@ -6,6 +6,10 @@ use std::hash::{BuildHasher, Hasher};
 use std::mem;
 use std::ops::{Deref, DerefMut};
 
+pub const fn align_down(n: u32, align: u32) -> u32 {
+    n & !(align - 1)
+}
+
 pub const fn align_up(n: u32, align: u32) -> u32 {
     (n + align - 1) & !(align - 1)
 }

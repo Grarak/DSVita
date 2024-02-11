@@ -10,21 +10,21 @@ pub struct MainMemory {
 impl MainMemory {
     pub fn new() -> Self {
         MainMemory {
-            main: Mmap::rw("main", regions::MAIN_MEMORY_ADDRESS_SPACE).unwrap(),
+            main: Mmap::rw("main", regions::MAIN_MEMORY_SIZE).unwrap(),
         }
     }
 
     pub fn read<T: Convert>(&self, addr_offset: u32) -> T {
         utils::read_from_mem(
             &self.main,
-            addr_offset & (regions::MAIN_MEMORY_ADDRESS_SPACE - 1),
+            addr_offset & (regions::MAIN_MEMORY_SIZE - 1),
         )
     }
 
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T) {
         utils::write_to_mem(
             &mut self.main,
-            addr_offset & (regions::MAIN_MEMORY_ADDRESS_SPACE - 1),
+            addr_offset & (regions::MAIN_MEMORY_SIZE - 1),
             value,
         )
     }
@@ -32,7 +32,7 @@ impl MainMemory {
     pub fn write_slice<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) {
         utils::write_to_mem_slice(
             &mut self.main,
-            addr_offset & (regions::MAIN_MEMORY_ADDRESS_SPACE - 1),
+            addr_offset & (regions::MAIN_MEMORY_SIZE - 1),
             slice,
         );
     }
