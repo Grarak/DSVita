@@ -1,5 +1,6 @@
 use crate::hle::gpu::gpu_context::{DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
 use crate::hle::memory::palettes_context::PalettesContext;
+use crate::hle::memory::regions::VRAM_OFFSET;
 use crate::hle::memory::vram_context;
 use crate::hle::memory::vram_context::{VramContext, BG_A_OFFSET, BG_B_OFFSET};
 use crate::hle::CpuType;
@@ -10,7 +11,7 @@ use std::cell::RefCell;
 use std::hint::unreachable_unchecked;
 use std::marker::ConstParamTy;
 use std::mem;
-use std::ops::Deref;
+use std::ops::DerefMut;
 use std::rc::Rc;
 
 #[bitsize(32)]
@@ -90,9 +91,17 @@ struct Gpu2DInner<const ENGINE: Gpu2DEngine> {
     bg_cnt: [u16; 4],
     bg_h_ofs: [u16; 4],
     bg_v_ofs: [u16; 4],
+    bg_pa: [i16; 2],
+    bg_pb: [i16; 2],
+    bg_pc: [i16; 2],
+    bg_pd: [i16; 2],
+    bg_x: [i32; 2],
+    bg_y: [i32; 2],
     mosaic: u16,
     disp_stat: u16,
     pow_cnt1: u16,
+    internal_x: [i32; 2],
+    internal_y: [i32; 2],
 }
 
 impl<const ENGINE: Gpu2DEngine> Gpu2DInner<ENGINE> {
@@ -102,9 +111,17 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DInner<ENGINE> {
             bg_cnt: [0u16; 4],
             bg_h_ofs: [0u16; 4],
             bg_v_ofs: [0u16; 4],
+            bg_pa: [0; 2],
+            bg_pb: [0; 2],
+            bg_pc: [0; 2],
+            bg_pd: [0; 2],
+            bg_x: [0; 2],
+            bg_y: [0; 2],
             mosaic: 0,
             disp_stat: 0,
             pow_cnt1: 0,
+            internal_x: [0; 2],
+            internal_y: [0; 2],
         }
     }
 
@@ -130,17 +147,47 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DInner<ENGINE> {
         self.bg_v_ofs[bg_num] = (self.bg_v_ofs[bg_num] & !mask) | (value & mask);
     }
 
-    pub fn set_bg_p_a(&mut self, _: usize, mask: u16, value: u16) {}
+    pub fn set_bg_pa(&mut self, bg_num: usize, mask: u16, value: u16) {
+        self.bg_pa[bg_num - 2] = ((self.bg_pa[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
+    }
 
-    pub fn set_bg_p_b(&mut self, _: usize, mask: u16, value: u16) {}
+    pub fn set_bg_pb(&mut self, bg_num: usize, mask: u16, value: u16) {
+        self.bg_pb[bg_num - 2] = ((self.bg_pb[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
+    }
 
-    pub fn set_bg_p_c(&mut self, _: usize, mask: u16, value: u16) {}
+    pub fn set_bg_pc(&mut self, bg_num: usize, mask: u16, value: u16) {
+        self.bg_pc[bg_num - 2] = ((self.bg_pc[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
+    }
 
-    pub fn set_bg_p_d(&mut self, _: usize, mask: u16, value: u16) {}
+    pub fn set_bg_pd(&mut self, bg_num: usize, mask: u16, value: u16) {
+        self.bg_pd[bg_num - 2] = ((self.bg_pd[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
+    }
 
-    pub fn set_bg_x(&mut self, _: usize, mask: u32, value: u32) {}
+    pub fn set_bg_x(&mut self, bg_num: usize, mut mask: u32, value: u32) {
+        mask &= 0x0FFFFFFF;
+        let mut bg_x = (self.bg_x[bg_num - 2] as u32 & !mask) | (value & mask);
+        if bg_x & (1 << 27) != 0 {
+            bg_x |= 0xF0000000;
+        } else {
+            bg_x &= !0xF0000000;
+        }
+        let bg_x = bg_x as i32;
+        self.internal_x[bg_num - 2] = bg_x;
+        self.bg_x[bg_num - 2] = bg_x;
+    }
 
-    pub fn set_bg_y(&mut self, _: usize, mask: u32, value: u32) {}
+    pub fn set_bg_y(&mut self, bg_num: usize, mut mask: u32, value: u32) {
+        mask &= 0x0FFFFFFF;
+        let mut bg_y = (self.bg_y[bg_num - 2] as u32 & !mask) | (value & mask);
+        if bg_y & (1 << 27) != 0 {
+            bg_y |= 0xF0000000;
+        } else {
+            bg_y &= !0xF0000000;
+        }
+        let bg_y = bg_y as i32;
+        self.internal_y[bg_num - 2] = bg_y;
+        self.bg_y[bg_num - 2] = bg_y;
+    }
 
     pub fn set_win_h(&mut self, _: usize, mask: u16, value: u16) {}
 
@@ -172,6 +219,20 @@ pub struct Gpu2DContext<const ENGINE: Gpu2DEngine> {
 }
 
 impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
+    const fn get_bg_offset() -> u32 {
+        match ENGINE {
+            Gpu2DEngine::A => BG_A_OFFSET,
+            Gpu2DEngine::B => BG_B_OFFSET,
+        }
+    }
+
+    const fn get_palattes_offset() -> u32 {
+        match ENGINE {
+            Gpu2DEngine::A => 0,
+            Gpu2DEngine::B => 0x400,
+        }
+    }
+
     pub fn new(
         vram_context: Rc<RefCell<VramContext>>,
         palattes_context: Rc<RefCell<PalettesContext>>,
@@ -212,20 +273,20 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         self.inner.borrow_mut().set_bg_v_ofs(bg_num, mask, value);
     }
 
-    pub fn set_bg_p_a(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bg_p_a(bg_num, mask, value);
+    pub fn set_bg_pa(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bg_pa(bg_num, mask, value);
     }
 
-    pub fn set_bg_p_b(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bg_p_b(bg_num, mask, value);
+    pub fn set_bg_pb(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bg_pb(bg_num, mask, value);
     }
 
-    pub fn set_bg_p_c(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bg_p_c(bg_num, mask, value);
+    pub fn set_bg_pc(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bg_pc(bg_num, mask, value);
     }
 
-    pub fn set_bg_p_d(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bg_p_d(bg_num, mask, value);
+    pub fn set_bg_pd(&self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.borrow_mut().set_bg_pd(bg_num, mask, value);
     }
 
     pub fn set_bg_x(&self, bg_num: usize, mask: u32, value: u32) {
@@ -273,18 +334,13 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     }
 
     pub fn draw_scanline(&self, line: u8) {
-        let backdrop = unsafe {
-            (*self.palattes_context).read::<u16>(match ENGINE {
-                Gpu2DEngine::A => 0,
-                Gpu2DEngine::B => 0x400,
-            })
-        };
+        let backdrop = unsafe { (*self.palattes_context).read::<u16>(Self::get_palattes_offset()) };
         let backdrop = backdrop & !(1 << 15);
         self.layers[0].borrow_mut().fill(backdrop as u32);
         self.layers[1].borrow_mut().fill(backdrop as u32);
 
-        let inner = self.inner.borrow();
-        let inner = inner.deref();
+        let mut inner = self.inner.borrow_mut();
+        let inner = inner.deref_mut();
 
         let disp_cnt = DispCnt::from(inner.disp_cnt);
         if bool::from(disp_cnt.screen_display_obj()) {
@@ -339,7 +395,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             }
             3 => {
                 if bool::from(disp_cnt.screen_display_bg3()) {
-                    self.draw_extended::<3>(line);
+                    self.draw_extended::<3>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
                     self.draw_text::<2>(inner, line);
@@ -353,7 +409,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             }
             4 => {
                 if bool::from(disp_cnt.screen_display_bg3()) {
-                    self.draw_extended::<3>(line);
+                    self.draw_extended::<3>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
                     self.draw_affine::<2>(line);
@@ -367,10 +423,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             }
             5 => {
                 if bool::from(disp_cnt.screen_display_bg3()) {
-                    self.draw_extended::<3>(line);
+                    self.draw_extended::<3>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
-                    self.draw_extended::<2>(line);
+                    self.draw_extended::<2>(inner, line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
                     self.draw_text::<1>(inner, line);
@@ -446,16 +502,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         }
         let bg_cnt = BgCnt::from(inner.bg_cnt[BG]);
 
-        let vram_offset = if ENGINE == Gpu2DEngine::A {
-            BG_A_OFFSET
-        } else {
-            BG_B_OFFSET
-        };
-
-        let mut tile_base_addr = vram_offset
+        let mut tile_base_addr = Self::get_bg_offset()
             + (u32::from(disp_cnt.screen_base()) << 16)
             + (u32::from(bg_cnt.screen_base_block()) << 11);
-        let index_base_addr = vram_offset
+        let index_base_addr = Self::get_bg_offset()
             + (u32::from(disp_cnt.char_base()) << 16)
             + (u32::from(bg_cnt.char_base_block()) << 14);
 
@@ -501,7 +551,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 let index_addr = index_base_addr
                     + (u32::from(tile.tile_num()) << 5)
                     + (if bool::from(tile.v_flip()) {
-                        todo!()
+                        7 - (y_offset as u32 & 7)
                     } else {
                         y_offset as u32 & 7
                     } << 2);
@@ -509,7 +559,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
 
                 let mut x = i.wrapping_sub(x_offset & 7);
                 while indices != 0 {
-                    let tmp_x = if bool::from(tile.h_flip()) { 7 - x } else { x };
+                    let tmp_x = if bool::from(tile.h_flip()) {
+                        7u16.wrapping_sub(x)
+                    } else {
+                        x
+                    };
                     if tmp_x < 256 && (indices & 0xF) != 0 {
                         let color = palattes_context
                             .read::<u16>(palette_base_addr + ((indices & 0xF) << 1));
@@ -529,8 +583,93 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         }
     }
 
-    fn draw_extended<const BG: usize>(&self, line: u8) {
-        todo!()
+    fn draw_extended<const BG: usize>(&self, inner: &mut Gpu2DInner<ENGINE>, line: u8) {
+        let mut rot_scale_x = inner.internal_x[BG - 2] - inner.bg_pa[BG - 2] as i32;
+        let mut rot_scale_y = inner.internal_y[BG - 2] - inner.bg_pc[BG - 2] as i32;
+
+        let bg_cnt = BgCnt::from(inner.bg_cnt[BG]);
+        let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
+        let palattes_context = unsafe { self.palattes_context.as_ref().unwrap_unchecked() };
+
+        if bool::from(bg_cnt.color_palettes()) {
+            let base_data_addr = VRAM_OFFSET + (u32::from(bg_cnt.screen_base_block()) << 11);
+
+            let (size_x, size_y) = match u8::from(bg_cnt.screen_size()) {
+                0 => (128, 128),
+                1 => (256, 256),
+                2 => (512, 256),
+                3 => (512, 512),
+                _ => unsafe { unreachable_unchecked() },
+            };
+
+            let disp_cnt = DispCnt::from(inner.disp_cnt);
+            let mut layers_a = self.layers[0].borrow_mut();
+            let mut layers_b = self.layers[1].borrow_mut();
+
+            if u8::from(bg_cnt.char_base_block()) & 1 != 0 {
+                for i in 0..DISPLAY_WIDTH {
+                    rot_scale_x += inner.bg_pa[BG - 2] as i32;
+                    rot_scale_y += inner.bg_pc[BG - 2] as i32;
+                    let mut x = rot_scale_x >> 8;
+                    let mut y = rot_scale_y >> 8;
+
+                    if bool::from(bg_cnt.ext_palette_slot_display_area_overflow()) {
+                        x &= size_x - 1;
+                        y &= size_y - 1;
+                    } else if x < 0 || x >= size_x || y < 0 || y >= size_y {
+                        continue;
+                    }
+
+                    let pixel = vram_context.read::<{ CpuType::ARM9 }, u16>(
+                        (base_data_addr as i32 + (y * size_x + x) * 2) as u32,
+                    );
+                    if pixel & (1 << 15) != 0 {
+                        Self::draw_pixel::<BG>(
+                            disp_cnt,
+                            line,
+                            i as u16,
+                            pixel as u32,
+                            &mut layers_a,
+                            &mut layers_b,
+                        );
+                    }
+                }
+            } else {
+                for i in 0..DISPLAY_WIDTH {
+                    rot_scale_x += inner.bg_pa[BG - 2] as i32;
+                    rot_scale_y += inner.bg_pc[BG - 2] as i32;
+                    let mut x = rot_scale_x >> 8;
+                    let mut y = rot_scale_y >> 8;
+
+                    if bool::from(bg_cnt.ext_palette_slot_display_area_overflow()) {
+                        x &= size_x - 1;
+                        y &= size_y - 1;
+                    } else if x < 0 || x >= size_x || y < 0 || y >= size_y {
+                        continue;
+                    }
+
+                    let index = vram_context.read::<{ CpuType::ARM9 }, u8>(
+                        (base_data_addr as i32 + y * size_x + x) as u32,
+                    );
+                    if index != 0 {
+                        let pixel = palattes_context.read::<u16>(index as u32 * 2) | (1 << 15);
+                        Self::draw_pixel::<BG>(
+                            disp_cnt,
+                            line,
+                            i as u16,
+                            pixel as u32,
+                            &mut layers_a,
+                            &mut layers_b,
+                        );
+                    }
+                }
+            }
+        } else {
+            todo!()
+        }
+
+        inner.internal_x[BG - 2] += inner.bg_pb[BG - 2] as i32;
+        inner.internal_y[BG - 2] += inner.bg_pd[BG - 2] as i32;
     }
 
     fn draw_large<const BG: usize>(&self, line: u8) {
@@ -567,5 +706,13 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         let g = ((color >> 5) & 0x1F) << 1;
         let b = ((color >> 10) & 0x1F) << 1;
         (color & 0xFFFC0000) | (b << 12) | (g << 6) | r
+    }
+
+    pub fn reload_registers(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.internal_x[0] = inner.bg_x[0];
+        inner.internal_y[0] = inner.bg_y[0];
+        inner.internal_x[1] = inner.bg_x[1];
+        inner.internal_y[1] = inner.bg_y[1];
     }
 }

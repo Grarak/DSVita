@@ -67,6 +67,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             Op::BxRegT | Op::BlxRegT => JitAsm::emit_bx_thumb,
 
             Op::SwiT => JitAsm::emit_swi_thumb,
+            Op::UnkThumb => |_: &mut JitAsm<CPU>, _: usize, _: u32| {},
             _ => {
                 if op.is_single_mem_transfer() {
                     if inst_info.op.mem_is_write() {

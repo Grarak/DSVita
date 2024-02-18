@@ -654,7 +654,7 @@ impl VramContext {
         match CPU {
             CpuType::ARM9 => match base_addr {
                 LCDC_OFFSET => self.lcdc.write(addr_offset, value),
-                BG_A_OFFSET => self.bg_b.write(addr_offset, value),
+                BG_A_OFFSET => self.bg_a.write(addr_offset, value),
                 OBJ_A_OFFSET => {
                     todo!()
                 }

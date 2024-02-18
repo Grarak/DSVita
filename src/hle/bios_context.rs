@@ -79,7 +79,44 @@ mod swi {
     }
 
     pub fn lz77_uncomp<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
-        todo!()
+        let thread_regs = context.regs.borrow();
+        let src_addr = *thread_regs.get_reg_value(Reg::R0);
+        let dst_addr = *thread_regs.get_reg_value(Reg::R1);
+
+        let size = context.mem_handler.read::<u32>(src_addr) >> 8;
+        let mut src = 4;
+        let mut dst = 0;
+
+        loop {
+            let mut flags = context.mem_handler.read::<u8>(src_addr + src) as u16;
+            src += 1;
+            for _ in 0..8 {
+                if dst >= size {
+                    return;
+                }
+
+                flags <<= 1;
+                if flags & (1 << 8) != 0 {
+                    let val1 = context.mem_handler.read::<u8>(src_addr + src);
+                    src += 1;
+                    let val2 = context.mem_handler.read::<u8>(src_addr + src);
+                    src += 1;
+                    let size = 3 + ((val1 >> 4) & 0xF);
+                    let offset = 1 + ((val1 as u32 & 0xF) << 8) + val2 as u32;
+
+                    for _ in 0..size {
+                        let value = context.mem_handler.read::<u8>(dst_addr + dst - offset);
+                        context.mem_handler.write(dst_addr + dst, value);
+                        dst += 1;
+                    }
+                } else {
+                    let value = context.mem_handler.read::<u8>(src_addr + src);
+                    src += 1;
+                    context.mem_handler.write(dst_addr + dst, value);
+                    dst += 1;
+                }
+            }
+        }
     }
 
     pub fn runlen_uncomp<const CPU: CpuType>(context: &mut BiosContext<CPU>) {

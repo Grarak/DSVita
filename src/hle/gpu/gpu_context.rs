@@ -333,6 +333,8 @@ impl CycleEvent for Scanline355Event {
             }
             263 => {
                 inner.v_count = 0;
+                inner.gpu_2d_context_a.reload_registers();
+                inner.gpu_2d_context_b.reload_registers();
             }
             _ => {}
         }
