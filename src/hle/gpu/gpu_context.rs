@@ -114,6 +114,7 @@ struct DispStat {
 struct GpuInner {
     disp_stat: [u16; 2],
     pow_cnt1: u16,
+    disp_cap_cnt: u32,
     dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
     dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
     cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
@@ -138,6 +139,7 @@ impl GpuInner {
         GpuInner {
             disp_stat: [0u16; 2],
             pow_cnt1: 0,
+            disp_cap_cnt: 0,
             dma_arm9,
             dma_arm7,
             cpu_regs_arm9,
@@ -222,6 +224,12 @@ impl GpuContext {
         mask &= 0x820F;
         let mut inner = self.inner.borrow_mut();
         inner.pow_cnt1 = (inner.pow_cnt1 & !mask) | (value & mask);
+    }
+
+    pub fn set_disp_cap_cnt(&self, mut mask: u32, value: u32) {
+        mask &= 0xEF3F1F1F;
+        let mut inner = self.inner.borrow_mut();
+        inner.disp_cap_cnt = (inner.disp_cap_cnt & !mask) | (value & mask);
     }
 }
 

@@ -193,11 +193,11 @@ impl Key1 {
     }
 
     fn encrypt(&self, data: &mut [u32; 2]) {
-        self.crypt(data, 0..=0xF, 0x10, 0x11);
+        self.crypt(data, 0..0x10, 0x10, 0x11);
     }
 
     fn decrypt(&self, data: &mut [u32; 2]) {
-        self.crypt(data, (0x02..=0x11).rev(), 0x1, 0x0);
+        self.crypt(data, (0x02..0x12).rev(), 0x1, 0x0);
     }
 
     fn apply_keycode(&mut self, keycode: &mut [u32; 3], modulo: u32) {
@@ -205,10 +205,10 @@ impl Key1 {
         self.encrypt((&mut keycode[..2]).try_into().unwrap());
 
         let mut scratch = [0u32; 2];
-        for i in 0..=0x11 {
+        for i in 0..0x12 {
             self.key_buf[i] ^= u32::from_be(keycode[i % modulo as usize]);
         }
-        for i in (0..=0x410).step_by(2) {
+        for i in (0..0x411).step_by(2) {
             self.encrypt(&mut scratch);
             self.key_buf[i] = scratch[1];
             self.key_buf[i + 1] = scratch[0];

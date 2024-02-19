@@ -12,6 +12,7 @@ use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::inst_mem_handler::InstMemHandler;
 use crate::jit::jit_memory::JitMemory;
+use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::jit::Cond;
@@ -322,7 +323,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             let mut index = 0;
             if THUMB {
                 loop {
-                    let opcode = self.mem_handler.read::<u16>(entry + index);
+                    let opcode = self.mem_handler.read::<u16>(aligned_entry + index);
                     debug_println!("{:?} disassemble thumb {:x} {}", CPU, opcode, opcode);
                     let (op, func) = lookup_thumb_opcode(opcode);
                     let inst_info = func(opcode, *op);
@@ -330,14 +331,14 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     self.jit_buf.insts_cycle_counts.push(inst_info.cycle);
                     self.jit_buf.instructions.push(InstInfo::from(&inst_info));
 
-                    if inst_info.op.is_uncond_branch_thumb() {
+                    if inst_info.op.is_uncond_branch_thumb() || inst_info.op == Op::UnkThumb {
                         break;
                     }
                     index += 2;
                 }
             } else {
                 loop {
-                    let opcode = self.mem_handler.read::<u32>(entry + index);
+                    let opcode = self.mem_handler.read::<u32>(aligned_entry + index);
                     debug_println!("{:?} disassemble arm {:x} {}", CPU, opcode, opcode);
                     let (op, func) = lookup_opcode(opcode);
                     let inst_info = func(opcode, *op);
@@ -346,7 +347,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     self.jit_buf.insts_cycle_counts.push(inst_info.cycle);
                     self.jit_buf.instructions.push(inst_info);
 
-                    if is_uncond_branch {
+                    if is_uncond_branch || *op == Op::UnkArm {
                         break;
                     }
                     index += 4;
@@ -364,13 +365,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     .insert(pc | THUMB as u32, (opcodes_len << 2) as u16);
             }
 
-            if DEBUG_LOG {
-                debug_println!("{:?} emitting {:?}", CPU, self.jit_buf.instructions[i]);
-
-                self.jit_buf
-                    .emit_opcodes
-                    .push(AluShiftImm::mov_al(Reg::R0, Reg::R0)); // NOP
-            }
+            debug_println!("{:?} emitting {:?}", CPU, self.jit_buf.instructions[i]);
             if THUMB {
                 self.emit_thumb(i, pc);
             } else {
@@ -471,6 +466,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 let mut jit_state = self.mem_handler.jit_state.borrow_mut();
                 for addr in &jit_state.invalidated_addrs {
                     jit_memory.invalidate_block::<CPU>(*addr);
+                    jit_memory.invalidate_block::<CPU>(*addr + 1); // Invalidate thumb as well
                 }
                 jit_state.invalidated_addrs.clear();
             }
@@ -503,21 +499,25 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 },
             )
         };
-        debug_assert_ne!(self.guest_branch_out_pc, 0);
+        debug_assert!(self.guest_branch_out_pc != 0 || (CPU == CpuType::ARM7 && guest_pc == 0));
 
         let branch_out_pc = if THUMB {
             self.guest_branch_out_pc | 1
         } else {
             self.guest_branch_out_pc
         };
-        let executed_insts = (branch_out_pc - guest_pc) >> if THUMB { 1 } else { 2 };
-        let insts_cycle_count = &jit_info.guest_insts_cycle_counts
-            [((guest_pc - jit_info.guest_pc_start) >> if THUMB { 1 } else { 2 }) as usize..];
+        let cycles_offset =
+            ((guest_pc - jit_info.guest_pc_start) >> if THUMB { 1 } else { 2 }) as usize;
+        let executed_insts =
+            (((branch_out_pc - guest_pc) >> if THUMB { 1 } else { 2 }) + 1) as usize;
         // TODO cycle correction for conds
-        let executed_cycles = insts_cycle_count[0..=executed_insts as usize].iter().fold(
-            self.bios_context.borrow().cycle_correction + 2, // + 2 for branching
-            |sum, count| sum + *count as u16,
-        );
+        let executed_cycles = jit_info.guest_insts_cycle_counts
+            [cycles_offset..cycles_offset + executed_insts]
+            .iter()
+            .fold(
+                self.bios_context.borrow().cycle_correction + 2, // + 2 for branching
+                |sum, count| sum + *count as u16,
+            );
 
         if DEBUG_LOG {
             debug_println!(

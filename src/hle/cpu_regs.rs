@@ -50,6 +50,7 @@ struct CpuRegsInner<const CPU: CpuType> {
     ie: u32,
     irf: u32,
     post_flg: u8,
+    halt_cnt: u8,
     cpsr_irq_enabled: bool,
     bios_context: Option<Rc<RefCell<BiosContext<CPU>>>>,
     cp15_context: Option<Rc<RefCell<Cp15Context>>>,
@@ -119,17 +120,26 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
         self.inner.borrow().irf
     }
 
+    pub fn get_post_flg(&self) -> u8 {
+        self.inner.borrow().post_flg
+    }
+
+    pub fn get_halt_cnt(&self) -> u8 {
+        self.inner.borrow().halt_cnt
+    }
+
     pub fn set_ime(&self, value: u8) {
-        let mut inner = self.inner.borrow_mut();
-        inner.set_ime(value);
-        if inner.ime != 0 && (inner.ie & inner.irf) != 0 && inner.cpsr_irq_enabled {
-            self.schedule_interrupt();
-        }
+        self.inner.borrow_mut().set_ime(value);
+        self.check_for_interrupt();
     }
 
     pub fn set_ie(&self, mask: u32, value: u32) {
-        let mut inner = self.inner.borrow_mut();
-        inner.set_ie(mask, value);
+        self.inner.borrow_mut().set_ie(mask, value);
+        self.check_for_interrupt();
+    }
+
+    pub fn check_for_interrupt(&self) {
+        let inner = self.inner.borrow_mut();
         if inner.ime != 0 && (inner.ie & inner.irf) != 0 && inner.cpsr_irq_enabled {
             self.schedule_interrupt();
         }
@@ -178,11 +188,27 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
         );
         if (inner.ie & inner.irf) != 0 {
             if inner.ime != 0 && inner.cpsr_irq_enabled {
-                debug_println!("{:?} schedule interrupt {:?}", CPU, flag);
+                debug_println!("{:?} schedule send interrupt {:?}", CPU, flag);
                 self.schedule_interrupt();
             } else if CPU == CpuType::ARM7 || inner.ime != 0 {
+                debug_println!("{:?} unhalt send interrupt {:?}", CPU, flag);
                 *self.halt.borrow_mut() &= !1;
             }
+        }
+    }
+
+    pub fn set_halt_cnt(&self, value: u8) {
+        let mut inner = self.inner.borrow_mut();
+        inner.halt_cnt = value & 0xC0;
+
+        match inner.halt_cnt {
+            1 => {
+                todo!("gba mode")
+            }
+            2 => {
+                todo!("halt")
+            }
+            _ => {}
         }
     }
 }
@@ -204,6 +230,7 @@ impl<const CPU: CpuType> CycleEvent for InterruptEvent<CPU> {
     fn trigger(&mut self, _: u16) {
         let inner = self.inner.borrow();
         if inner.ime != 0 && (inner.ie & inner.irf) != 0 && inner.cpsr_irq_enabled {
+            debug_println!("{:?} interrupt {:x} {:x}", CPU, inner.ie, inner.irf);
             let bios_context = inner.bios_context.clone().unwrap();
             let mut bios_context = bios_context.borrow_mut();
             let cp15_context = inner.cp15_context.clone().unwrap();

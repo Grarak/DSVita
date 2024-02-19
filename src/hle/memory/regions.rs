@@ -22,5 +22,11 @@ pub const OAM_SIZE: u32 = 2 * 1024;
 
 pub const GBA_ROM_OFFSET: u32 = 0x08000000;
 pub const GBA_ROM_SIZE: u32 = 32 * 1024 * 1024;
+pub const GBA_ROM_OFFSET2: u32 = 0x09000000;
 pub const GBA_RAM_OFFSET: u32 = 0x0A000000;
 pub const GBA_RAM_SIZE: u32 = 64 * 1024;
+
+pub const ARM9_BIOS_OFFSET: u32 = 0xFFFF0000;
+pub const ARM9_BIOS_SIZE: u32 = 32 * 1024;
+pub const ARM7_BIOS_OFFSET: u32 = 0x00000000;
+pub const ARM7_BIOS_SIZE: u32 = 16 * 1024;

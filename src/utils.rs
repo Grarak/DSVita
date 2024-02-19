@@ -1,5 +1,5 @@
 use std::cmp::min;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{BuildHasher, Hasher};
@@ -173,3 +173,4 @@ impl BuildHasher for BuildNoHasher {
 }
 
 pub type NoHashMap<V> = HashMap<u32, V, BuildNoHasher>;
+pub type NoHashSet = HashSet<u32, BuildNoHasher>;

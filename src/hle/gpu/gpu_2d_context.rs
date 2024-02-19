@@ -529,7 +529,56 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         let layers_b = layers_b.as_mut();
 
         if bool::from(bg_cnt.color_palettes()) {
-            todo!()
+            for i in (0..256).step_by(8) {
+                let x_offset = (i + inner.bg_h_ofs[BG]) & 0x1FF;
+                let tile_addr = tile_base_addr + ((x_offset as u32 & 0xF8) >> 2);
+
+                if x_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 2) != 0 {
+                    todo!()
+                }
+
+                let tile = vram_context.read::<{ CpuType::ARM9 }, u16>(tile_addr);
+                let tile = TextBgScreen::from(tile);
+
+                if bool::from(disp_cnt.bg_extended_palettes()) {
+                    todo!()
+                }
+
+                let palette_base_addr = Self::get_palattes_offset();
+
+                let index_addr = index_base_addr
+                    + (u32::from(tile.tile_num()) << 6)
+                    + (if bool::from(tile.v_flip()) {
+                        7 - (y_offset as u32 & 7)
+                    } else {
+                        y_offset as u32 & 7
+                    } << 3);
+                let mut indices = vram_context.read::<{ CpuType::ARM9 }, u32>(index_addr) as u64
+                    | ((vram_context.read::<{ CpuType::ARM9 }, u32>(index_addr + 4) as u64) << 32);
+
+                let mut x = i.wrapping_sub(x_offset & 7);
+                while indices != 0 {
+                    let tmp_x = if bool::from(tile.h_flip()) {
+                        7u16.wrapping_sub(x)
+                    } else {
+                        x
+                    };
+                    if tmp_x < 256 && (indices & 0xF) != 0 {
+                        let color = palattes_context
+                            .read::<u16>(palette_base_addr + ((indices as u32 & 0xFF) << 1));
+                        Self::draw_pixel::<BG>(
+                            disp_cnt,
+                            line,
+                            tmp_x,
+                            (color | (1 << 15)) as u32,
+                            layers_a,
+                            layers_b,
+                        );
+                    }
+                    x = x.wrapping_add(1);
+                    indices >>= 8;
+                }
+            }
         } else {
             for i in (0..256).step_by(8) {
                 let x_offset = (i + inner.bg_h_ofs[BG]) & 0x1FF;
@@ -542,11 +591,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 let tile = vram_context.read::<{ CpuType::ARM9 }, u16>(tile_addr);
                 let tile = TextBgScreen::from(tile);
 
-                let palette_base_addr = (u32::from(tile.palette_num()) << 5)
-                    + match ENGINE {
-                        Gpu2DEngine::A => 0,
-                        Gpu2DEngine::B => 0x400,
-                    };
+                let palette_base_addr =
+                    (u32::from(tile.palette_num()) << 5) + Self::get_palattes_offset();
 
                 let index_addr = index_base_addr
                     + (u32::from(tile.tile_num()) << 5)

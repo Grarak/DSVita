@@ -88,7 +88,7 @@ impl RegReserve {
     }
 
     pub fn next_free(&self) -> Option<Reg> {
-        for i in Reg::R0 as u8..=Reg::CPSR as u8 {
+        for i in Reg::R0 as u8..Reg::SPSR as u8 {
             let reg = Reg::from(i);
             if !self.is_reserved(reg) {
                 return Some(reg);
@@ -114,7 +114,7 @@ impl RegReserve {
     }
 
     pub fn peek(&self) -> Option<Reg> {
-        for i in Reg::R0 as u8..=Reg::CPSR as u8 {
+        for i in Reg::R0 as u8..Reg::SPSR as u8 {
             let reg = Reg::from(i);
             if self.is_reserved(reg) {
                 return Some(reg);
@@ -124,7 +124,7 @@ impl RegReserve {
     }
 
     pub fn pop(&mut self) -> Option<Reg> {
-        for i in Reg::R0 as u8..=Reg::CPSR as u8 {
+        for i in Reg::R0 as u8..Reg::SPSR as u8 {
             let reg = Reg::from(i);
             if self.is_reserved(reg) {
                 self.0 &= !(1 << i);
@@ -135,7 +135,7 @@ impl RegReserve {
     }
 
     pub fn pop_call_reserved(&mut self) -> Option<Reg> {
-        for i in Reg::R0 as u8..=Reg::CPSR as u8 {
+        for i in Reg::R0 as u8..Reg::SPSR as u8 {
             let reg = Reg::from(i);
             if reg.is_call_preserved() && self.is_reserved(reg) {
                 self.0 &= !(1 << i);
@@ -261,7 +261,7 @@ impl From<u32> for RegReserve {
 impl Debug for RegReserve {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut str = "".to_owned();
-        for i in Reg::R0 as u8..=Reg::CPSR as u8 {
+        for i in Reg::R0 as u8..Reg::SPSR as u8 {
             let reg = Reg::from(i);
             if self.is_reserved(reg) {
                 str += &format!("{:?}, ", reg);

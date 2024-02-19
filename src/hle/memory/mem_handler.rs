@@ -81,30 +81,57 @@ impl<const CPU: CpuType> MemHandler<CPU> {
             regions::STANDARD_PALETTES_OFFSET => self.palettes_context.borrow().read(addr_offset),
             regions::VRAM_OFFSET => unsafe { (*self.vram_context).read::<CPU, _>(addr_offset) },
             regions::OAM_OFFSET => self.oam.borrow().read(addr_offset),
-            regions::GBA_ROM_OFFSET => T::from(0),
+            regions::GBA_ROM_OFFSET | regions::GBA_ROM_OFFSET2 | regions::GBA_RAM_OFFSET => {
+                T::from(0xFFFFFFFF)
+            }
             _ => {
                 let mut ret = T::from(0);
 
-                if CPU == CpuType::ARM9 {
-                    let cp15_context = unsafe { self.cp15_context.as_ref().unwrap_unchecked() };
-                    if aligned_addr < cp15_context.itcm_size {
-                        if cp15_context.itcm_state == TcmState::RW {
-                            ret = self.tcm_context.borrow_mut().read_itcm(aligned_addr);
+                match CPU {
+                    CpuType::ARM9 => {
+                        let cp15_context = unsafe { self.cp15_context.as_ref().unwrap_unchecked() };
+                        if aligned_addr < cp15_context.itcm_size {
+                            if cp15_context.itcm_state == TcmState::RW {
+                                ret = self.tcm_context.borrow_mut().read_itcm(aligned_addr);
+                            }
+                        } else if aligned_addr >= cp15_context.dtcm_addr
+                            && aligned_addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
+                        {
+                            if cp15_context.dtcm_state == TcmState::RW {
+                                ret = self
+                                    .tcm_context
+                                    .borrow_mut()
+                                    .read_dtcm(aligned_addr - cp15_context.dtcm_addr)
+                            }
+                        } else if addr & regions::ARM9_BIOS_OFFSET == regions::ARM9_BIOS_OFFSET {
+                            const HLE_BIOS: [u8; 8] = [0, 0, 0, 0xEC, 0, 0, 0, 0];
+                            let addr = addr & (regions::ARM9_BIOS_SIZE - 1);
+                            if addr as usize + 4 < HLE_BIOS.len() {
+                                ret = T::from(u32::from_le_bytes(
+                                    HLE_BIOS[addr as usize..addr as usize + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                ));
+                            }
+                        } else {
+                            todo!("{:x} {:x}", aligned_addr, addr_base)
                         }
-                    } else if aligned_addr >= cp15_context.dtcm_addr
-                        && aligned_addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
-                    {
-                        if cp15_context.dtcm_state == TcmState::RW {
-                            ret = self
-                                .tcm_context
-                                .borrow_mut()
-                                .read_dtcm(aligned_addr - cp15_context.dtcm_addr)
-                        }
-                    } else {
-                        todo!("{:x} {:x}", aligned_addr, addr_base)
                     }
-                } else {
-                    todo!("{:x} {:x}", aligned_addr, addr_base)
+                    CpuType::ARM7 => {
+                        if addr_base == regions::ARM7_BIOS_OFFSET {
+                            const HLE_BIOS: [u8; 8] = [0, 0, 0, 0xEC, 0, 0, 0, 0];
+                            let addr = addr & (regions::ARM7_BIOS_SIZE - 1);
+                            if addr as usize + 4 < HLE_BIOS.len() {
+                                ret = T::from(u32::from_le_bytes(
+                                    HLE_BIOS[addr as usize..addr as usize + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                ));
+                            }
+                        } else {
+                            todo!("{:x} {:x}", aligned_addr, addr_base)
+                        }
+                    }
                 }
                 ret
             }
@@ -131,7 +158,22 @@ impl<const CPU: CpuType> MemHandler<CPU> {
 
         let addr_base = aligned_addr & 0xFF000000;
         let addr_offset = aligned_addr - addr_base;
-        let mut invalidate_jit = false;
+
+        let invalidate_jit = || {
+            let mut jit_state = self.jit_state.borrow_mut();
+            for addr in aligned_addr..aligned_addr + 4 {
+                jit_state.invalidated_addrs.push(addr);
+            }
+
+            #[cfg(debug_assertions)]
+            {
+                let (current_jit_block_start, current_jit_block_end) =
+                    jit_state.current_block_range;
+                if addr >= current_jit_block_start && addr <= current_jit_block_end {
+                    todo!()
+                }
+            }
+        };
 
         match addr_base {
             regions::MAIN_MEMORY_OFFSET => unsafe { (*self.main_memory).write(addr_offset, value) },
@@ -147,8 +189,10 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                         value,
                     );
                 } else {
-                    invalidate_jit = true;
-                    unsafe { (*self.wram_context).write::<CPU, _>(addr_offset, value) }
+                    unsafe { (*self.wram_context).write::<CPU, _>(addr_offset, value) };
+                    if CPU == CpuType::ARM7 {
+                        invalidate_jit();
+                    }
                 }
             }
             regions::IO_PORTS_OFFSET => self.io_ports.write(addr_offset, value),
@@ -168,7 +212,7 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                             self.tcm_context
                                 .borrow_mut()
                                 .write_itcm(aligned_addr, value);
-                            invalidate_jit = true;
+                            invalidate_jit();
                         }
                     } else if aligned_addr >= cp15_context.dtcm_addr
                         && aligned_addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
@@ -185,19 +229,5 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                 }
             }
         };
-
-        if invalidate_jit {
-            let mut jit_state = self.jit_state.borrow_mut();
-            jit_state.invalidated_addrs.push(addr);
-
-            #[cfg(debug_assertions)]
-            {
-                let (current_jit_block_start, current_jit_block_end) =
-                    jit_state.current_block_range;
-                if addr >= current_jit_block_start && addr <= current_jit_block_end {
-                    todo!()
-                }
-            }
-        }
     }
 }

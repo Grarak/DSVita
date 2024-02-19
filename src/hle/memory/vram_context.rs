@@ -4,7 +4,6 @@ use crate::utils;
 use crate::utils::HeapMemU8;
 use bilge::prelude::*;
 use static_assertions::const_assert_eq;
-use std::hint::unreachable_unchecked;
 use std::ops::{Deref, DerefMut};
 use std::{ptr, slice};
 
@@ -640,9 +639,7 @@ impl VramContext {
                 OBJ_B_OFFSET => {
                     todo!()
                 }
-                _ => {
-                    unsafe { unreachable_unchecked() };
-                }
+                _ => unreachable!(),
             },
             CpuType::ARM7 => self.arm7.read(addr_offset),
         }
@@ -662,9 +659,7 @@ impl VramContext {
                 OBJ_B_OFFSET => {
                     todo!()
                 }
-                _ => {
-                    unsafe { unreachable_unchecked() };
-                }
+                _ => unreachable!(),
             },
             CpuType::ARM7 => self.arm7.write(addr_offset, value),
         };

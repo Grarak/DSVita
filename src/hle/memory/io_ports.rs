@@ -2,6 +2,7 @@ use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::div_sqrt_context::DivSqrtContext;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
 use crate::hle::gpu::gpu_2d_context::Gpu2DEngine::{A, B};
+use crate::hle::gpu::gpu_3d_context::Gpu3DContext;
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
@@ -31,6 +32,7 @@ pub struct IoPorts<const CPU: CpuType> {
     pub gpu_context: Arc<GpuContext>,
     pub gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
     pub gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
+    pub gpu_3d_context: Rc<RefCell<Gpu3DContext>>,
 
     pub rtc_context: Rc<RefCell<RtcContext>>,
     pub spi_context: Rc<RefCell<SpiContext>>,
@@ -52,6 +54,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
         gpu_context: Arc<GpuContext>,
         gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
         gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
+        gpu_3d_context: Rc<RefCell<Gpu3DContext>>,
         rtc_context: Rc<RefCell<RtcContext>>,
         spi_context: Rc<RefCell<SpiContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
@@ -68,6 +71,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
             gpu_context,
             gpu_2d_context_a,
             gpu_2d_context_b,
+            gpu_3d_context,
             rtc_context,
             spi_context,
             spu_context,

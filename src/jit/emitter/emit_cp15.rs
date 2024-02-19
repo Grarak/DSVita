@@ -9,6 +9,44 @@ use crate::jit::Op;
 use std::ptr;
 
 impl<const CPU: CpuType> JitAsm<CPU> {
+    pub fn emit_halt<const THUMB: bool>(&mut self, pc: u32) {
+        self.emit_call_host_func(
+            |_| {},
+            |_, _| {},
+            &[Some(self.cpu_regs.as_ref() as *const _ as u32), Some(0)],
+            cpu_regs_halt::<CPU> as *const (),
+        );
+
+        self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R0, pc));
+        self.jit_buf.emit_opcodes.extend(AluImm::mov32(
+            Reg::R1,
+            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+        ));
+        self.jit_buf
+            .emit_opcodes
+            .push(AluImm::add_al(Reg::R2, Reg::R0, if THUMB { 2 } else { 4 }));
+        if THUMB {
+            self.jit_buf
+                .emit_opcodes
+                .push(AluImm::orr_al(Reg::R2, Reg::R2, 1));
+        }
+        self.jit_buf
+            .emit_opcodes
+            .push(LdrStrImm::str_al(Reg::R0, Reg::R1));
+        self.jit_buf
+            .emit_opcodes
+            .extend(
+                self.thread_regs
+                    .borrow()
+                    .emit_set_reg(Reg::PC, Reg::R2, Reg::R3),
+            );
+
+        Self::emit_host_bx(
+            self.breakout_skip_save_regs_addr,
+            &mut self.jit_buf.emit_opcodes,
+        );
+    }
+
     pub fn emit_cp15(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
@@ -21,38 +59,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let cp15_context_addr = self.cp15_context.as_ptr() as u32;
 
         if cp15_reg == 0x070004 || cp15_reg == 0x070802 {
-            {
-                self.emit_call_host_func(
-                    |_| {},
-                    |_, _| {},
-                    &[Some(self.cpu_regs.as_ref() as *const _ as u32), Some(0)],
-                    cpu_regs_halt::<CPU> as *const (),
-                );
-            }
-
-            self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R0, pc));
-            self.jit_buf.emit_opcodes.extend(AluImm::mov32(
-                Reg::R1,
-                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-            ));
-            self.jit_buf
-                .emit_opcodes
-                .push(AluImm::add_al(Reg::R2, Reg::R0, 4));
-            self.jit_buf
-                .emit_opcodes
-                .push(LdrStrImm::str_al(Reg::R0, Reg::R1));
-            self.jit_buf
-                .emit_opcodes
-                .extend(
-                    self.thread_regs
-                        .borrow()
-                        .emit_set_reg(Reg::PC, Reg::R2, Reg::R3),
-                );
-
-            Self::emit_host_bx(
-                self.breakout_skip_save_regs_addr,
-                &mut self.jit_buf.emit_opcodes,
-            );
+            self.emit_halt::<false>(pc);
         } else {
             let (args, addr) = match inst_info.op {
                 Op::Mcr => {

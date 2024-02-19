@@ -1,7 +1,7 @@
 use crate::hle::bios_context::*;
 use crate::hle::CpuType;
 
-pub const ARM9_SWI_LOOKUP_TABLE: [(&'static str, fn(&mut BiosContext<{ CpuType::ARM9 }>)); 33] = [
+pub const ARM9_SWI_LOOKUP_TABLE: [(&str, fn(&mut BiosContext<{ CpuType::ARM9 }>)); 33] = [
     ("unknown", unknown),
     ("unknown", unknown),
     ("unknown", unknown),
@@ -37,7 +37,7 @@ pub const ARM9_SWI_LOOKUP_TABLE: [(&'static str, fn(&mut BiosContext<{ CpuType::
     ("unknown", unknown),
 ];
 
-pub const ARM7_SWI_LOOKUP_TABLE: [(&'static str, fn(&mut BiosContext<{ CpuType::ARM7 }>)); 33] = [
+pub const ARM7_SWI_LOOKUP_TABLE: [(&str, fn(&mut BiosContext<{ CpuType::ARM7 }>)); 33] = [
     ("unknown", unknown),
     ("unknown", unknown),
     ("unknown", unknown),

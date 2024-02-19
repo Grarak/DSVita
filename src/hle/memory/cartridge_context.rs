@@ -102,6 +102,10 @@ impl CartridgeContext {
         }
     }
 
+    pub fn get_aux_spi_cnt<const CPU: CpuType>(&self) -> u16 {
+        u16::from(self.inner[CPU].borrow().aux_spi_cnt)
+    }
+
     pub fn get_rom_ctrl<const CPU: CpuType>(&self) -> u32 {
         self.inner[CPU].borrow().rom_ctrl.into()
     }

@@ -60,7 +60,7 @@ impl<const CPU: CpuType> TimersContext<CPU> {
             } else {
                 0
             } as u32;
-            channel.current_value = ((TIME_OVERFLOW - diff) >> channel.current_shift) as u16;
+            channel.current_value = (TIME_OVERFLOW - (diff >> channel.current_shift)) as u16;
         }
         channel.current_value
     }

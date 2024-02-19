@@ -36,7 +36,6 @@ pub enum Cond {
 
 impl From<u8> for Cond {
     fn from(value: u8) -> Self {
-        debug_assert!(value <= Cond::AL as u8);
         unsafe { mem::transmute(value) }
     }
 }

@@ -441,6 +441,11 @@ impl AluShiftImm {
     }
 
     #[inline]
+    pub fn bic_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
+        Self::bic(op0, op1, op2, ShiftType::Lsl, 0, Cond::AL)
+    }
+
+    #[inline]
     pub fn bics(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift: u8, cond: Cond) -> u32 {
         u32::from(Self::new(
             u4::new(op2 as u8),
@@ -775,6 +780,31 @@ impl AluReg {
             u4::new(0),
             u1::new(1),
             u4::new(0xD),
+            u1::new(0),
+            u2::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn bic(
+        op0: Reg,
+        op1: Reg,
+        op2: Reg,
+        shift_type: ShiftType,
+        shift_reg: Reg,
+        cond: Cond,
+    ) -> u32 {
+        u32::from(Self::new(
+            u4::new(op2 as u8),
+            u1::new(1),
+            u2::new(shift_type as u8),
+            u1::new(0),
+            u4::new(shift_reg as u8),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(0),
+            u4::new(0xE),
             u1::new(0),
             u2::new(0),
             u4::new(cond as u8),

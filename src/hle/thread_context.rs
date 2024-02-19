@@ -4,6 +4,7 @@ use crate::hle::cpu_regs::CpuRegs;
 use crate::hle::cycle_manager::CycleManager;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
 use crate::hle::gpu::gpu_2d_context::Gpu2DEngine::{A, B};
+use crate::hle::gpu::gpu_3d_context::Gpu3DContext;
 use crate::hle::gpu::gpu_context::GpuContext;
 use crate::hle::input_context::InputContext;
 use crate::hle::ipc_handler::IpcHandler;
@@ -54,6 +55,7 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
         gpu_context: Arc<GpuContext>,
         gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
         gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
+        gpu_3d_context: Rc<RefCell<Gpu3DContext>>,
         dma: Rc<RefCell<Dma<CPU>>>,
         rtc_context: Rc<RefCell<RtcContext>>,
         spu_context: Rc<RefCell<SpuContext>>,
@@ -81,6 +83,7 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
             gpu_context,
             gpu_2d_context_a,
             gpu_2d_context_b,
+            gpu_3d_context,
             rtc_context,
             spi_context,
             spu_context,
@@ -131,14 +134,7 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
     }
 
     pub fn run(&mut self) -> u16 {
-        let pc = self.regs.borrow().pc;
-        let cycles =
-            if (CPU == CpuType::ARM9 && pc == 0xFFFF0000) || (CPU == CpuType::ARM7 && pc == 0) {
-                self.bios_context.borrow_mut().uninterrupt();
-                3
-            } else {
-                self.jit.execute()
-            };
+        let cycles = self.jit.execute();
         if CPU == CpuType::ARM9 {
             (cycles + 1) >> 1
         } else {

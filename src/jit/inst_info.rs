@@ -1,4 +1,4 @@
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm};
+use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, MulReg};
 use crate::jit::inst_info_thumb::InstInfoThumb;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
@@ -51,7 +51,13 @@ impl InstInfo {
     pub fn assemble(self) -> u32 {
         let operands = self.operands();
         match self.op {
-            Op::AddImm | Op::AndImm | Op::BicImm | Op::RscsImm | Op::SubImm => {
+            Op::AddImm
+            | Op::AndImm
+            | Op::AndsImm
+            | Op::BicImm
+            | Op::RscsImm
+            | Op::SubImm
+            | Op::SubsImm => {
                 let mut opcode = AluImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 let reg1 = operands[1].as_reg_no_shift().unwrap();
@@ -146,6 +152,22 @@ impl InstInfo {
                     let (shift_type, value) = (*shift).into();
                     opcode.set_shift_type(u2::new(shift_type as u8));
                     opcode.set_rs(u4::new(value.as_reg().unwrap() as u8))
+                }
+
+                u32::from(opcode)
+            }
+            Op::Mul | Op::Mla => {
+                let mut opcode = MulReg::from(self.opcode);
+                let reg0 = *operands[0].as_reg_no_shift().unwrap();
+                let reg1 = *operands[1].as_reg_no_shift().unwrap();
+                let reg2 = *operands[2].as_reg_no_shift().unwrap();
+                opcode.set_rd(u4::new(reg0 as u8));
+                opcode.set_rm(u4::new(reg1 as u8));
+                opcode.set_rs(u4::new(reg2 as u8));
+
+                if operands.len() == 4 {
+                    let reg3 = *operands[3].as_reg_no_shift().unwrap();
+                    opcode.set_rn(u4::new(reg3 as u8));
                 }
 
                 u32::from(opcode)

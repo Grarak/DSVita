@@ -10,7 +10,6 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, Op, ShiftType};
 use bilge::prelude::*;
-use std::ptr;
 
 impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_single_transfer<const THUMB: bool, const WRITE: bool>(
@@ -133,7 +132,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             }
         };
 
-        let mem_handler_addr = ptr::addr_of_mut!(self.inst_mem_handler) as u32;
+        let jit_asm_addr = self as *const _ as u32;
         let func_addr = match amount {
             MemoryAmount::Byte => {
                 if self.jit_buf.instructions[buf_index]
@@ -166,14 +165,14 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         self.emit_call_host_func(
             after_host_restore,
             before_guest_restore,
-            &[None, None, Some(mem_handler_addr)],
+            &[None, None, Some(pc), Some(jit_asm_addr)],
             func_addr,
         );
     }
 
     pub fn emit_multiple_transfer<const THUMB: bool>(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
-        let mem_handler_addr = ptr::addr_of!(self.inst_mem_handler) as u32;
+        let jit_asm_addr = self as *const _ as u32;
 
         let mut rlist = (inst_info.opcode & if THUMB { 0xFF } else { 0xFFFF }) as u16;
         if inst_info.op == Op::PushLrT {
@@ -212,7 +211,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         self.emit_call_host_func(
             |_| {},
             |_, _| {},
-            &[Some(mem_handler_addr), Some(pc), Some(args)],
+            &[Some(jit_asm_addr), Some(pc), Some(args)],
             func_addr,
         );
     }
@@ -239,68 +238,26 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         );
     }
 
-    pub fn emit_swp(&mut self, buf_index: usize, _: u32) {
-        let op = self.jit_buf.instructions[buf_index].op;
+    pub fn emit_swp(&mut self, buf_index: usize, pc: u32) {
+        let inst_info = &self.jit_buf.instructions[buf_index];
+        let operands = inst_info.operands();
+        let op0 = *operands[0].as_reg_no_shift().unwrap();
+        let op1 = *operands[1].as_reg_no_shift().unwrap();
+        let op2 = *operands[2].as_reg_no_shift().unwrap();
 
-        let mem_handler_addr = ptr::addr_of!(self.inst_mem_handler) as u32;
-        let func_addr = if op == Op::Swpb {
+        let reg_arg = ((op2 as u32) << 16) | ((op1 as u32) << 8) | (op0 as u32);
+
+        let jit_asm_addr = self as *const _ as u32;
+        let func_addr = if inst_info.op == Op::Swpb {
             inst_mem_handler_swp::<CPU, { MemoryAmount::Byte }> as *const ()
         } else {
             inst_mem_handler_swp::<CPU, { MemoryAmount::Word }> as *const ()
         };
 
         self.emit_call_host_func(
-            |asm| {
-                let inst_info = &asm.jit_buf.instructions[buf_index];
-
-                let operands = inst_info.operands();
-                let op0 = *operands[0].as_reg_no_shift().unwrap();
-                let op1 = *operands[1].as_reg_no_shift().unwrap();
-                let op2 = *operands[2].as_reg_no_shift().unwrap();
-
-                let mut reg_reserve =
-                    (!reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, op1, op2)).get_gp_regs();
-
-                let mut handle_emulated = |reg: Reg| {
-                    if reg == Reg::LR || reg == Reg::SP {
-                        let new_reg = reg_reserve.pop().unwrap();
-                        asm.jit_buf
-                            .emit_opcodes
-                            .extend(asm.thread_regs.borrow().emit_get_reg(new_reg, reg));
-                        new_reg
-                    } else {
-                        reg
-                    }
-                };
-
-                let op1 = handle_emulated(op1);
-                let mut op2 = handle_emulated(op2);
-
-                if op2 == Reg::R2 {
-                    let new_op2 = reg_reserve.pop().unwrap();
-                    asm.jit_buf
-                        .emit_opcodes
-                        .push(AluShiftImm::mov_al(new_op2, op2));
-                    op2 = new_op2;
-                }
-
-                if op1 != Reg::R2 {
-                    asm.jit_buf
-                        .emit_opcodes
-                        .push(AluShiftImm::mov_al(Reg::R2, op1));
-                }
-                if op2 != Reg::R3 {
-                    asm.jit_buf
-                        .emit_opcodes
-                        .push(AluShiftImm::mov_al(Reg::R3, op2));
-                }
-                asm.jit_buf.emit_opcodes.extend(AluImm::mov32(
-                    Reg::R1,
-                    asm.thread_regs.borrow_mut().get_reg_value_mut(op0) as *mut _ as _,
-                ));
-            },
+            |_| {},
             |_, _| {},
-            &[Some(mem_handler_addr), None, None, None],
+            &[Some(jit_asm_addr), Some(reg_arg), Some(pc)],
             func_addr,
         );
     }

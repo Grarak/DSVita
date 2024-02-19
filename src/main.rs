@@ -14,6 +14,7 @@ use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::{CpuRegs, CpuRegsContainer};
 use crate::hle::cycle_manager::CycleManager;
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
+use crate::hle::gpu::gpu_3d_context::Gpu3DContext;
 use crate::hle::gpu::gpu_context::{
     GpuContext, Swapchain, DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH,
 };
@@ -208,6 +209,7 @@ pub fn main() {
         vram_context.clone(),
         palettes_context.clone(),
     ));
+    let gpu3d_context = Rc::new(RefCell::new(Gpu3DContext::new()));
     let dma_arm9 = Rc::new(RefCell::new(Dma::new(cycle_manager.clone())));
     let dma_arm7 = Rc::new(RefCell::new(Dma::new(cycle_manager.clone())));
     let swapchain = Arc::new(Swapchain::new());
@@ -240,6 +242,7 @@ pub fn main() {
         gpu_context.clone(),
         gpu_2d_context_a.clone(),
         gpu_2d_context_b.clone(),
+        gpu3d_context.clone(),
         dma_arm9,
         rtc_context.clone(),
         spu_context.clone(),
@@ -264,6 +267,7 @@ pub fn main() {
         gpu_context.clone(),
         gpu_2d_context_a.clone(),
         gpu_2d_context_b.clone(),
+        gpu3d_context,
         dma_arm7,
         rtc_context,
         spu_context,

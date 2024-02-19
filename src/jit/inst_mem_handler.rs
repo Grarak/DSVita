@@ -1,6 +1,7 @@
 use crate::hle::memory::mem_handler::MemHandler;
 use crate::hle::thread_regs::ThreadRegs;
 use crate::hle::CpuType;
+use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
@@ -186,7 +187,16 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         }
     }
 
-    fn handle_swp_request<const AMOUNT: MemoryAmount>(&self, op0: &mut u32, value: u32, addr: u32) {
+    fn handle_swp_request<const AMOUNT: MemoryAmount>(&self, regs: u32) {
+        let op0 = Reg::from((regs & 0xFF) as u8);
+        let op1 = Reg::from(((regs >> 8) & 0xFF) as u8);
+        let op2 = Reg::from(((regs >> 16) & 0xFF) as u8);
+
+        let mut thread_regs = self.thread_regs.borrow_mut();
+        let value = *thread_regs.get_reg_value(op1);
+        let addr = *thread_regs.get_reg_value(op2);
+        let op0 = thread_regs.get_reg_value_mut(op0);
+
         if AMOUNT == MemoryAmount::Byte {
             *op0 = self.mem_handler.read::<u8>(addr) as u32;
             self.mem_handler.write(addr, (value & 0xFF) as u8);
@@ -205,9 +215,16 @@ pub unsafe extern "C" fn inst_mem_handler<
 >(
     addr: u32,
     op0: *mut u32,
-    handler: *const InstMemHandler<CPU>,
+    pc: u32,
+    asm: *const JitAsm<CPU>,
 ) {
-    (*handler).handle_request::<WRITE, AMOUNT, SIGNED>(op0.as_mut().unwrap_unchecked(), addr);
+    (*asm)
+        .inst_mem_handler
+        .handle_request::<WRITE, AMOUNT, SIGNED>(op0.as_mut().unwrap_unchecked(), addr);
+    // ARM7 can halt the CPU with an IO port write
+    if CPU == CpuType::ARM7 && WRITE && (*asm).cpu_regs.is_halted() {
+        todo!()
+    }
 }
 
 pub unsafe extern "C" fn inst_mem_handler_multiple<
@@ -215,26 +232,41 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     const THUMB: bool,
     const WRITE: bool,
 >(
-    handler: *const InstMemHandler<CPU>,
+    asm: *const JitAsm<CPU>,
     pc: u32,
     args: u32,
 ) {
-    (*handler).handle_multiple_request::<THUMB, WRITE, false>(pc, args);
+    (*asm)
+        .inst_mem_handler
+        .handle_multiple_request::<THUMB, WRITE, false>(pc, args);
+    // ARM7 can halt the CPU with an IO port write
+    if CPU == CpuType::ARM7 && WRITE && (*asm).cpu_regs.is_halted() {
+        todo!()
+    }
 }
 
 pub unsafe extern "C" fn inst_mem_handler_multiple_user<const CPU: CpuType, const WRITE: bool>(
-    handler: *const InstMemHandler<CPU>,
+    asm: *const JitAsm<CPU>,
     pc: u32,
     args: u32,
 ) {
-    (*handler).handle_multiple_request::<false, WRITE, true>(pc, args);
+    (*asm)
+        .inst_mem_handler
+        .handle_multiple_request::<false, WRITE, true>(pc, args);
+    // ARM7 can halt the CPU with an IO port write
+    if CPU == CpuType::ARM7 && WRITE && (*asm).cpu_regs.is_halted() {
+        todo!()
+    }
 }
 
 pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: MemoryAmount>(
-    handler: *const InstMemHandler<CPU>,
-    op0: *mut u32,
-    value: u32,
-    addr: u32,
+    asm: *const JitAsm<CPU>,
+    regs: u32,
+    pc: u32,
 ) {
-    (*handler).handle_swp_request::<AMOUNT>(op0.as_mut().unwrap_unchecked(), value, addr);
+    (*asm).inst_mem_handler.handle_swp_request::<AMOUNT>(regs);
+    // ARM7 can halt the CPU with an IO port write
+    if CPU == CpuType::ARM7 && (*asm).cpu_regs.is_halted() {
+        todo!()
+    }
 }

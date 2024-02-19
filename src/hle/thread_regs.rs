@@ -54,6 +54,7 @@ pub struct ThreadRegs<const CPU: CpuType> {
     pub pc: u32,
     pub cpsr: u32,
     pub spsr: u32,
+    is_user: bool,
     pub user: UserRegs,
     pub fiq: FiqRegs,
     pub svc: OtherModeRegs,
@@ -76,6 +77,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
             pc: 0,
             cpsr: 0,
             spsr: 0,
+            is_user: false,
             user: UserRegs::default(),
             fiq: FiqRegs::default(),
             svc: OtherModeRegs::default(),
@@ -245,6 +247,12 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         }
     }
 
+    pub fn restore_spsr(&mut self) {
+        if !self.is_user {
+            self.set_cpsr::<false>(self.spsr);
+        }
+    }
+
     pub fn set_cpsr<const SAVE: bool>(&mut self, value: u32) {
         let current_cpsr = Cpsr::from(self.cpsr);
         let new_cpsr = Cpsr::from(value);
@@ -295,6 +303,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
                 }
             }
 
+            self.is_user = false;
             match new_mode {
                 // User | System
                 0x10 | 0x1F => {
@@ -305,6 +314,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
                     {
                         self.spsr = 0;
                     }
+                    self.is_user = true;
                 }
                 // FIQ
                 0x11 => {
@@ -349,6 +359,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         self.cpsr = value;
         self.cpu_regs
             .set_cpsr_irq_enabled(!bool::from(new_cpsr.irq_disable()));
+        self.cpu_regs.check_for_interrupt();
     }
 
     pub fn set_thumb(&mut self, enable: bool) {
@@ -376,4 +387,8 @@ pub unsafe extern "C" fn register_set_spsr_checked<const CPU: CpuType>(
     flags: u8,
 ) {
     (*context).set_spsr_with_flags(value, flags)
+}
+
+pub unsafe extern "C" fn register_restore_spsr<const CPU: CpuType>(context: *mut ThreadRegs<CPU>) {
+    (*context).restore_spsr();
 }

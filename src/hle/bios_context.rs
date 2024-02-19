@@ -4,6 +4,7 @@ use crate::hle::thread_regs::{Cpsr, ThreadRegs};
 use crate::logging::debug_println;
 use bilge::prelude::*;
 use std::cell::RefCell;
+use std::cmp::min;
 use std::mem;
 use std::rc::Rc;
 
@@ -29,7 +30,28 @@ mod swi {
     }
 
     pub fn cpu_set<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
-        todo!()
+        let thread_regs = context.regs.borrow();
+        let src_addr = *thread_regs.get_reg_value(Reg::R0);
+        let dst_addr = *thread_regs.get_reg_value(Reg::R1);
+        let len_mode = *thread_regs.get_reg_value(Reg::R2);
+
+        let count = len_mode & 0xFFFFF;
+        let fill = (len_mode & (1 << 24)) != 0;
+        let is_32_bit = (len_mode & (1 << 26)) != 0;
+
+        if is_32_bit {
+            for i in 0..count {
+                let addr = src_addr + if fill { 0 } else { i << 2 };
+                let value = context.mem_handler.read::<u32>(addr);
+                context.mem_handler.write(dst_addr + (i << 2), value);
+            }
+        } else {
+            for i in 0..count {
+                let addr = src_addr + if fill { 0 } else { i << 1 };
+                let value = context.mem_handler.read::<u16>(addr);
+                context.mem_handler.write(dst_addr + (i << 1), value);
+            }
+        }
     }
 
     pub fn diff_unfilt16<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
@@ -62,8 +84,8 @@ mod swi {
         *context.regs.borrow_mut().get_reg_value_mut(Reg::R0) = ret as u32;
     }
 
-    pub fn halt<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
-        context.cpu_regs.halt(0);
+    pub fn halt<const CPU: CpuType>(_: &mut BiosContext<CPU>) {
+        panic!("{:?} swi halt shouldn't be used", CPU);
     }
 
     pub fn huff_uncomp<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
@@ -127,9 +149,7 @@ mod swi {
         todo!()
     }
 
-    pub fn unknown<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
-        todo!()
-    }
+    pub fn unknown<const CPU: CpuType>(context: &mut BiosContext<CPU>) {}
 
     pub fn v_blank_intr_wait<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
         todo!()
@@ -143,11 +163,17 @@ mod swi {
     }
 
     pub fn sleep<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
-        todo!()
+        context.cpu_regs.set_halt_cnt(0xC0);
     }
 
     pub fn sound_bias<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
-        todo!()
+        let thread_regs = context.regs.borrow();
+        let bias_level = if *thread_regs.get_reg_value(Reg::R0) != 0 {
+            0x200u16
+        } else {
+            0u16
+        };
+        context.mem_handler.write(0x4000504, bias_level);
     }
 
     pub fn get_sine_table<const CPU: CpuType>(context: &mut BiosContext<CPU>) {
@@ -205,8 +231,13 @@ impl<const CPU: CpuType> BiosContext<CPU> {
         cpsr.set_mode(u5::new(0x12));
         thread_regs.set_cpsr::<true>(u32::from(cpsr));
 
+        let is_thumb = (thread_regs.pc & 1) == 1;
+        let mut spsr = Cpsr::from(thread_regs.spsr);
+        spsr.set_thumb(u1::from(is_thumb));
+        thread_regs.spsr = u32::from(spsr);
+
         thread_regs.sp -= 4;
-        self.mem_handler.write(thread_regs.sp, thread_regs.pc); // Just save pc instead of calculating LR
+        self.mem_handler.write(thread_regs.sp, thread_regs.pc + 4);
         for reg in [Reg::R12, Reg::R3, Reg::R2, Reg::R1, Reg::R0] {
             thread_regs.sp -= 4;
             self.mem_handler
@@ -234,16 +265,22 @@ impl<const CPU: CpuType> BiosContext<CPU> {
             *thread_regs.get_reg_value_mut(reg) = self.mem_handler.read(thread_regs.sp);
             thread_regs.sp += 4;
         }
-        thread_regs.pc = thread_regs.lr;
+        thread_regs.pc = thread_regs.lr - 4;
 
         let spsr = thread_regs.spsr;
+        if bool::from(Cpsr::from(spsr).thumb()) {
+            thread_regs.pc |= 1;
+        } else {
+            thread_regs.pc &= !1;
+        }
         thread_regs.set_cpsr::<false>(spsr);
     }
 }
 
 impl BiosContext<{ CpuType::ARM9 }> {
     fn swi_arm9(&mut self, comment: u8) {
-        let (name, func) = &ARM9_SWI_LOOKUP_TABLE[comment as usize];
+        let (name, func) =
+            &ARM9_SWI_LOOKUP_TABLE[min(comment as usize, ARM9_SWI_LOOKUP_TABLE.len() - 1)];
         debug_println!("{:?} swi call {:x} {}", CpuType::ARM9, comment, name);
         func(self);
     }
@@ -251,8 +288,15 @@ impl BiosContext<{ CpuType::ARM9 }> {
 
 impl BiosContext<{ CpuType::ARM7 }> {
     fn swi_arm7(&mut self, comment: u8) {
-        let (name, func) = &ARM7_SWI_LOOKUP_TABLE[comment as usize];
+        let (name, func) =
+            &ARM7_SWI_LOOKUP_TABLE[min(comment as usize, ARM7_SWI_LOOKUP_TABLE.len() - 1)];
         debug_println!("{:?} swi call {:x} {}", CpuType::ARM7, comment, name);
         func(self);
     }
+}
+
+pub unsafe extern "C" fn bios_uninterrupt<const CPU: CpuType>(
+    bios_context: *const BiosContext<CPU>,
+) {
+    (*bios_context).uninterrupt();
 }
