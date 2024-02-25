@@ -201,14 +201,14 @@ pub fn main() {
     ))));
     let cp15_context = Rc::new(RefCell::new(Cp15Context::new()));
 
-    let gpu_2d_context_a = Rc::new(Gpu2DContext::new(
+    let gpu_2d_context_a = Rc::new(RefCell::new(Gpu2DContext::new(
         vram_context.clone(),
         palettes_context.clone(),
-    ));
-    let gpu_2d_context_b = Rc::new(Gpu2DContext::new(
+    )));
+    let gpu_2d_context_b = Rc::new(RefCell::new(Gpu2DContext::new(
         vram_context.clone(),
         palettes_context.clone(),
-    ));
+    )));
     let gpu3d_context = Rc::new(RefCell::new(Gpu3DContext::new()));
     let dma_arm9 = Rc::new(RefCell::new(Dma::new(cycle_manager.clone())));
     let dma_arm7 = Rc::new(RefCell::new(Dma::new(cycle_manager.clone())));
@@ -327,6 +327,7 @@ pub fn main() {
         })
         .unwrap();
 
+    sdl2::hint::set("SDL_HINT_NO_SIGNAL_HANDLERS", "1");
     let sdl = sdl2::init().unwrap();
     let sdl_video = sdl.video().unwrap();
 

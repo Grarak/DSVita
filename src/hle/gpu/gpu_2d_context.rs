@@ -11,7 +11,6 @@ use std::cell::RefCell;
 use std::hint::unreachable_unchecked;
 use std::marker::ConstParamTy;
 use std::mem;
-use std::ops::DerefMut;
 use std::rc::Rc;
 
 #[bitsize(32)]
@@ -86,7 +85,21 @@ pub enum Gpu2DEngine {
     B,
 }
 
-struct Gpu2DInner<const ENGINE: Gpu2DEngine> {
+struct Gpu2DInternal {
+    x: [i32; 2],
+    y: [i32; 2],
+}
+
+impl Gpu2DInternal {
+    fn new() -> Self {
+        Gpu2DInternal {
+            x: [0; 2],
+            y: [0; 2],
+        }
+    }
+}
+
+struct Gpu2DInner {
     disp_cnt: u32,
     bg_cnt: [u16; 4],
     bg_h_ofs: [u16; 4],
@@ -100,11 +113,10 @@ struct Gpu2DInner<const ENGINE: Gpu2DEngine> {
     mosaic: u16,
     disp_stat: u16,
     pow_cnt1: u16,
-    internal_x: [i32; 2],
-    internal_y: [i32; 2],
+    internal: RefCell<Gpu2DInternal>,
 }
 
-impl<const ENGINE: Gpu2DEngine> Gpu2DInner<ENGINE> {
+impl Gpu2DInner {
     fn new() -> Self {
         Gpu2DInner {
             disp_cnt: 0,
@@ -120,108 +132,21 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DInner<ENGINE> {
             mosaic: 0,
             disp_stat: 0,
             pow_cnt1: 0,
-            internal_x: [0; 2],
-            internal_y: [0; 2],
+            internal: RefCell::new(Gpu2DInternal::new()),
         }
     }
-
-    pub fn set_disp_cnt(&mut self, mut mask: u32, value: u32) {
-        if ENGINE == Gpu2DEngine::B {
-            mask &= 0xC0B1FFF7;
-        }
-        self.disp_cnt = (self.disp_cnt & !mask) | (value & mask);
-        debug_println!(
-            "GPU engine {:?} set disp cnt {:x} {}",
-            ENGINE,
-            self.disp_cnt,
-            (self.disp_cnt >> 16) & 0x3
-        );
-    }
-
-    pub fn set_bg_cnt(&mut self, bg_num: usize, mask: u16, value: u16) {
-        self.bg_cnt[bg_num] = (self.bg_cnt[bg_num] & !mask) | (value & mask);
-    }
-
-    pub fn set_bg_h_ofs(&mut self, bg_num: usize, mut mask: u16, value: u16) {
-        mask &= 0x01FF;
-        self.bg_h_ofs[bg_num] = (self.bg_h_ofs[bg_num] & !mask) | (value & mask);
-    }
-
-    pub fn set_bg_v_ofs(&mut self, bg_num: usize, mut mask: u16, value: u16) {
-        mask &= 0x01FF;
-        self.bg_v_ofs[bg_num] = (self.bg_v_ofs[bg_num] & !mask) | (value & mask);
-    }
-
-    pub fn set_bg_pa(&mut self, bg_num: usize, mask: u16, value: u16) {
-        self.bg_pa[bg_num - 2] = ((self.bg_pa[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
-    }
-
-    pub fn set_bg_pb(&mut self, bg_num: usize, mask: u16, value: u16) {
-        self.bg_pb[bg_num - 2] = ((self.bg_pb[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
-    }
-
-    pub fn set_bg_pc(&mut self, bg_num: usize, mask: u16, value: u16) {
-        self.bg_pc[bg_num - 2] = ((self.bg_pc[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
-    }
-
-    pub fn set_bg_pd(&mut self, bg_num: usize, mask: u16, value: u16) {
-        self.bg_pd[bg_num - 2] = ((self.bg_pd[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
-    }
-
-    pub fn set_bg_x(&mut self, bg_num: usize, mut mask: u32, value: u32) {
-        mask &= 0x0FFFFFFF;
-        let mut bg_x = (self.bg_x[bg_num - 2] as u32 & !mask) | (value & mask);
-        if bg_x & (1 << 27) != 0 {
-            bg_x |= 0xF0000000;
-        } else {
-            bg_x &= !0xF0000000;
-        }
-        let bg_x = bg_x as i32;
-        self.internal_x[bg_num - 2] = bg_x;
-        self.bg_x[bg_num - 2] = bg_x;
-    }
-
-    pub fn set_bg_y(&mut self, bg_num: usize, mut mask: u32, value: u32) {
-        mask &= 0x0FFFFFFF;
-        let mut bg_y = (self.bg_y[bg_num - 2] as u32 & !mask) | (value & mask);
-        if bg_y & (1 << 27) != 0 {
-            bg_y |= 0xF0000000;
-        } else {
-            bg_y &= !0xF0000000;
-        }
-        let bg_y = bg_y as i32;
-        self.internal_y[bg_num - 2] = bg_y;
-        self.bg_y[bg_num - 2] = bg_y;
-    }
-
-    pub fn set_win_h(&mut self, _: usize, mask: u16, value: u16) {}
-
-    pub fn set_win_v(&mut self, _: usize, mask: u16, value: u16) {}
-
-    pub fn set_win_in(&mut self, mask: u16, value: u16) {}
-
-    pub fn set_win_out(&mut self, mask: u16, value: u16) {}
-
-    pub fn set_mosaic(&mut self, mask: u16, value: u16) {
-        self.mosaic = (self.mosaic & !mask) | (value & mask);
-    }
-
-    pub fn set_bld_cnt(&mut self, mask: u16, value: u16) {}
-
-    pub fn set_bld_alpha(&mut self, mask: u16, value: u16) {}
-
-    pub fn set_bld_y(&mut self, value: u8) {}
-
-    pub fn set_master_bright(&mut self, mask: u16, value: u16) {}
 }
 
 pub struct Gpu2DContext<const ENGINE: Gpu2DEngine> {
-    inner: RefCell<Gpu2DInner<ENGINE>>,
+    inner: Gpu2DInner,
     pub framebuffer: RefCell<HeapMemU32<{ DISPLAY_PIXEL_COUNT }>>,
     layers: [RefCell<HeapMemU32<{ DISPLAY_WIDTH }>>; 2],
     vram_context: *const VramContext,
     palattes_context: *const PalettesContext,
 }
+
+unsafe impl<const ENGINE: Gpu2DEngine> Send for Gpu2DContext<ENGINE> {}
+unsafe impl<const ENGINE: Gpu2DEngine> Sync for Gpu2DContext<ENGINE> {}
 
 impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     const fn get_bg_offset() -> u32 {
@@ -243,7 +168,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         palattes_context: Rc<RefCell<PalettesContext>>,
     ) -> Self {
         Gpu2DContext {
-            inner: RefCell::new(Gpu2DInner::new()),
+            inner: Gpu2DInner::new(),
             framebuffer: RefCell::new(HeapMemU32::new()),
             layers: [
                 RefCell::new(HeapMemU32::new()),
@@ -255,88 +180,105 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     }
 
     pub fn get_disp_cnt(&self) -> u32 {
-        self.inner.borrow().disp_cnt
+        self.inner.disp_cnt
     }
 
     pub fn get_bg_cnt(&self, bg_num: usize) -> u16 {
-        self.inner.borrow().bg_cnt[bg_num]
+        self.inner.bg_cnt[bg_num]
     }
 
-    pub fn set_disp_cnt(&self, mask: u32, value: u32) {
-        self.inner.borrow_mut().set_disp_cnt(mask, value);
+    pub fn set_disp_cnt(&mut self, mut mask: u32, value: u32) {
+        if ENGINE == Gpu2DEngine::B {
+            mask &= 0xC0B1FFF7;
+        }
+        self.inner.disp_cnt = (self.inner.disp_cnt & !mask) | (value & mask);
+        debug_println!(
+            "GPU engine {:?} set disp cnt {:x} {}",
+            ENGINE,
+            self.inner.disp_cnt,
+            (self.inner.disp_cnt >> 16) & 0x3
+        );
     }
 
-    pub fn set_bg_cnt(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bg_cnt(bg_num, mask, value);
+    pub fn set_bg_cnt(&mut self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.bg_cnt[bg_num] = (self.inner.bg_cnt[bg_num] & !mask) | (value & mask);
     }
 
-    pub fn set_bg_h_ofs(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bg_h_ofs(bg_num, mask, value);
+    pub fn set_bg_h_ofs(&mut self, bg_num: usize, mut mask: u16, value: u16) {
+        mask &= 0x01FF;
+        self.inner.bg_h_ofs[bg_num] = (self.inner.bg_h_ofs[bg_num] & !mask) | (value & mask);
     }
 
-    pub fn set_bg_v_ofs(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bg_v_ofs(bg_num, mask, value);
+    pub fn set_bg_v_ofs(&mut self, bg_num: usize, mut mask: u16, value: u16) {
+        mask &= 0x01FF;
+        self.inner.bg_v_ofs[bg_num] = (self.inner.bg_v_ofs[bg_num] & !mask) | (value & mask);
     }
 
-    pub fn set_bg_pa(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bg_pa(bg_num, mask, value);
+    pub fn set_bg_pa(&mut self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.bg_pa[bg_num - 2] =
+            ((self.inner.bg_pa[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
     }
 
-    pub fn set_bg_pb(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bg_pb(bg_num, mask, value);
+    pub fn set_bg_pb(&mut self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.bg_pb[bg_num - 2] =
+            ((self.inner.bg_pb[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
     }
 
-    pub fn set_bg_pc(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bg_pc(bg_num, mask, value);
+    pub fn set_bg_pc(&mut self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.bg_pc[bg_num - 2] =
+            ((self.inner.bg_pc[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
     }
 
-    pub fn set_bg_pd(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bg_pd(bg_num, mask, value);
+    pub fn set_bg_pd(&mut self, bg_num: usize, mask: u16, value: u16) {
+        self.inner.bg_pd[bg_num - 2] =
+            ((self.inner.bg_pd[bg_num - 2] as u16 & !mask) | (value & mask)) as i16;
     }
 
-    pub fn set_bg_x(&self, bg_num: usize, mask: u32, value: u32) {
-        self.inner.borrow_mut().set_bg_x(bg_num, mask, value);
+    pub fn set_bg_x(&mut self, bg_num: usize, mut mask: u32, value: u32) {
+        mask &= 0x0FFFFFFF;
+        let mut bg_x = (self.inner.bg_x[bg_num - 2] as u32 & !mask) | (value & mask);
+        if bg_x & (1 << 27) != 0 {
+            bg_x |= 0xF0000000;
+        } else {
+            bg_x &= !0xF0000000;
+        }
+        let bg_x = bg_x as i32;
+        self.inner.internal.borrow_mut().x[bg_num - 2] = bg_x;
+        self.inner.bg_x[bg_num - 2] = bg_x;
     }
 
-    pub fn set_bg_y(&self, bg_num: usize, mask: u32, value: u32) {
-        self.inner.borrow_mut().set_bg_y(bg_num, mask, value);
+    pub fn set_bg_y(&mut self, bg_num: usize, mut mask: u32, value: u32) {
+        mask &= 0x0FFFFFFF;
+        let mut bg_y = (self.inner.bg_y[bg_num - 2] as u32 & !mask) | (value & mask);
+        if bg_y & (1 << 27) != 0 {
+            bg_y |= 0xF0000000;
+        } else {
+            bg_y &= !0xF0000000;
+        }
+        let bg_y = bg_y as i32;
+        self.inner.internal.borrow_mut().y[bg_num - 2] = bg_y;
+        self.inner.bg_y[bg_num - 2] = bg_y;
     }
 
-    pub fn set_win_h(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_win_h(bg_num, mask, value);
+    pub fn set_win_h(&mut self, _: usize, mask: u16, value: u16) {}
+
+    pub fn set_win_v(&mut self, _: usize, mask: u16, value: u16) {}
+
+    pub fn set_win_in(&mut self, mask: u16, value: u16) {}
+
+    pub fn set_win_out(&mut self, mask: u16, value: u16) {}
+
+    pub fn set_mosaic(&mut self, mask: u16, value: u16) {
+        self.inner.mosaic = (self.inner.mosaic & !mask) | (value & mask);
     }
 
-    pub fn set_win_v(&self, bg_num: usize, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_win_v(bg_num, mask, value);
-    }
+    pub fn set_bld_cnt(&mut self, mask: u16, value: u16) {}
 
-    pub fn set_win_in(&self, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_win_in(mask, value);
-    }
+    pub fn set_bld_alpha(&mut self, mask: u16, value: u16) {}
 
-    pub fn set_win_out(&self, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_win_out(mask, value);
-    }
+    pub fn set_bld_y(&mut self, value: u8) {}
 
-    pub fn set_mosaic(&self, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_mosaic(mask, value);
-    }
-
-    pub fn set_bld_cnt(&self, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bld_cnt(mask, value);
-    }
-
-    pub fn set_bld_alpha(&self, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_bld_alpha(mask, value);
-    }
-
-    pub fn set_bld_y(&self, value: u8) {
-        self.inner.borrow_mut().set_bld_y(value);
-    }
-
-    pub fn set_master_bright(&self, mask: u16, value: u16) {
-        self.inner.borrow_mut().set_master_bright(mask, value);
-    }
+    pub fn set_master_bright(&mut self, mask: u16, value: u16) {}
 
     pub fn draw_scanline(&self, line: u8) {
         let backdrop = unsafe { (*self.palattes_context).read::<u16>(Self::get_palattes_offset()) };
@@ -344,10 +286,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         self.layers[0].borrow_mut().fill(backdrop as u32);
         self.layers[1].borrow_mut().fill(backdrop as u32);
 
-        let mut inner = self.inner.borrow_mut();
-        let inner = inner.deref_mut();
-
-        let disp_cnt = DispCnt::from(inner.disp_cnt);
+        let disp_cnt = DispCnt::from(self.inner.disp_cnt);
         if bool::from(disp_cnt.screen_display_obj()) {
             if bool::from(disp_cnt.obj_window_display_flag()) {
                 self.draw_objects::<true>(line);
@@ -358,16 +297,16 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         match u8::from(disp_cnt.bg_mode()) {
             0 => {
                 if bool::from(disp_cnt.screen_display_bg3()) {
-                    self.draw_text::<3>(inner, line);
+                    self.draw_text::<3>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
-                    self.draw_text::<2>(inner, line);
+                    self.draw_text::<2>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(inner, line);
+                    self.draw_text::<1>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(inner, line);
+                    self.draw_text::<0>(line);
                 }
             }
             1 => {
@@ -375,13 +314,13 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     self.draw_affine::<3>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
-                    self.draw_text::<2>(inner, line);
+                    self.draw_text::<2>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(inner, line);
+                    self.draw_text::<1>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(inner, line);
+                    self.draw_text::<0>(line);
                 }
             }
             2 => {
@@ -392,52 +331,52 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     self.draw_affine::<2>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(inner, line);
+                    self.draw_text::<1>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(inner, line);
+                    self.draw_text::<0>(line);
                 }
             }
             3 => {
                 if bool::from(disp_cnt.screen_display_bg3()) {
-                    self.draw_extended::<3>(inner, line);
+                    self.draw_extended::<3>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
-                    self.draw_text::<2>(inner, line);
+                    self.draw_text::<2>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(inner, line);
+                    self.draw_text::<1>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(inner, line);
+                    self.draw_text::<0>(line);
                 }
             }
             4 => {
                 if bool::from(disp_cnt.screen_display_bg3()) {
-                    self.draw_extended::<3>(inner, line);
+                    self.draw_extended::<3>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
                     self.draw_affine::<2>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(inner, line);
+                    self.draw_text::<1>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(inner, line);
+                    self.draw_text::<0>(line);
                 }
             }
             5 => {
                 if bool::from(disp_cnt.screen_display_bg3()) {
-                    self.draw_extended::<3>(inner, line);
+                    self.draw_extended::<3>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
-                    self.draw_extended::<2>(inner, line);
+                    self.draw_extended::<2>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    self.draw_text::<1>(inner, line);
+                    self.draw_text::<1>(line);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    self.draw_text::<0>(inner, line);
+                    self.draw_text::<0>(line);
                 }
             }
             6 => {
@@ -500,13 +439,13 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         todo!()
     }
 
-    fn draw_text<const BG: usize>(&self, inner: &Gpu2DInner<ENGINE>, line: u8) {
-        let disp_cnt = DispCnt::from(inner.disp_cnt);
+    fn draw_text<const BG: usize>(&self, line: u8) {
+        let disp_cnt = DispCnt::from(self.inner.disp_cnt);
         if BG == 0 && bool::from(disp_cnt.bg0_3d()) {
             // TODO 2d
             return;
         }
-        let bg_cnt = BgCnt::from(inner.bg_cnt[BG]);
+        let bg_cnt = BgCnt::from(self.inner.bg_cnt[BG]);
 
         let mut tile_base_addr = Self::get_bg_offset()
             + (u32::from(disp_cnt.screen_base()) << 16)
@@ -515,11 +454,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             + (u32::from(disp_cnt.char_base()) << 16)
             + (u32::from(bg_cnt.char_base_block()) << 14);
 
-        let y_offset = (if bool::from(bg_cnt.mosaic()) && inner.mosaic != 0 {
+        let y_offset = (if bool::from(bg_cnt.mosaic()) && self.inner.mosaic != 0 {
             todo!()
         } else {
             line as u16
-        } + inner.bg_v_ofs[BG])
+        } + self.inner.bg_v_ofs[BG])
             & 0x1FF;
 
         tile_base_addr += (y_offset as u32 & 0xF8) << 3;
@@ -536,7 +475,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
 
         if bool::from(bg_cnt.color_palettes()) {
             for i in (0..256).step_by(8) {
-                let x_offset = (i + inner.bg_h_ofs[BG]) & 0x1FF;
+                let x_offset = (i + self.inner.bg_h_ofs[BG]) & 0x1FF;
                 let tile_addr = tile_base_addr + ((x_offset as u32 & 0xF8) >> 2);
 
                 if x_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 2) != 0 {
@@ -587,7 +526,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             }
         } else {
             for i in (0..256).step_by(8) {
-                let x_offset = (i + inner.bg_h_ofs[BG]) & 0x1FF;
+                let x_offset = (i + self.inner.bg_h_ofs[BG]) & 0x1FF;
                 let tile_addr = tile_base_addr + ((x_offset as u32 & 0xF8) >> 2);
 
                 if x_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 2) != 0 {
@@ -635,11 +574,12 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         }
     }
 
-    fn draw_extended<const BG: usize>(&self, inner: &mut Gpu2DInner<ENGINE>, line: u8) {
-        let mut rot_scale_x = inner.internal_x[BG - 2] - inner.bg_pa[BG - 2] as i32;
-        let mut rot_scale_y = inner.internal_y[BG - 2] - inner.bg_pc[BG - 2] as i32;
+    fn draw_extended<const BG: usize>(&self, line: u8) {
+        let mut internal = self.inner.internal.borrow_mut();
+        let mut rot_scale_x = internal.x[BG - 2] - self.inner.bg_pa[BG - 2] as i32;
+        let mut rot_scale_y = internal.y[BG - 2] - self.inner.bg_pc[BG - 2] as i32;
 
-        let bg_cnt = BgCnt::from(inner.bg_cnt[BG]);
+        let bg_cnt = BgCnt::from(self.inner.bg_cnt[BG]);
         let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
         let palattes_context = unsafe { self.palattes_context.as_ref().unwrap_unchecked() };
 
@@ -654,14 +594,14 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 _ => unsafe { unreachable_unchecked() },
             };
 
-            let disp_cnt = DispCnt::from(inner.disp_cnt);
+            let disp_cnt = DispCnt::from(self.inner.disp_cnt);
             let mut layers_a = self.layers[0].borrow_mut();
             let mut layers_b = self.layers[1].borrow_mut();
 
             if u8::from(bg_cnt.char_base_block()) & 1 != 0 {
                 for i in 0..DISPLAY_WIDTH {
-                    rot_scale_x += inner.bg_pa[BG - 2] as i32;
-                    rot_scale_y += inner.bg_pc[BG - 2] as i32;
+                    rot_scale_x += self.inner.bg_pa[BG - 2] as i32;
+                    rot_scale_y += self.inner.bg_pc[BG - 2] as i32;
                     let mut x = rot_scale_x >> 8;
                     let mut y = rot_scale_y >> 8;
 
@@ -688,8 +628,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 }
             } else {
                 for i in 0..DISPLAY_WIDTH {
-                    rot_scale_x += inner.bg_pa[BG - 2] as i32;
-                    rot_scale_y += inner.bg_pc[BG - 2] as i32;
+                    rot_scale_x += self.inner.bg_pa[BG - 2] as i32;
+                    rot_scale_y += self.inner.bg_pc[BG - 2] as i32;
                     let mut x = rot_scale_x >> 8;
                     let mut y = rot_scale_y >> 8;
 
@@ -720,8 +660,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             todo!()
         }
 
-        inner.internal_x[BG - 2] += inner.bg_pb[BG - 2] as i32;
-        inner.internal_y[BG - 2] += inner.bg_pd[BG - 2] as i32;
+        internal.x[BG - 2] += self.inner.bg_pb[BG - 2] as i32;
+        internal.y[BG - 2] += self.inner.bg_pd[BG - 2] as i32;
     }
 
     fn draw_large<const BG: usize>(&self, line: u8) {
@@ -759,10 +699,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     }
 
     pub fn reload_registers(&self) {
-        let mut inner = self.inner.borrow_mut();
-        inner.internal_x[0] = inner.bg_x[0];
-        inner.internal_y[0] = inner.bg_y[0];
-        inner.internal_x[1] = inner.bg_x[1];
-        inner.internal_y[1] = inner.bg_y[1];
+        let mut internal = self.inner.internal.borrow_mut();
+        internal.x[0] = self.inner.bg_x[0];
+        internal.y[0] = self.inner.bg_y[0];
+        internal.x[1] = self.inner.bg_x[1];
+        internal.y[1] = self.inner.bg_y[1];
     }
 }

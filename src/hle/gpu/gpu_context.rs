@@ -122,8 +122,8 @@ struct GpuInner {
     swapchain: Arc<Swapchain>,
     frame_rate_counter: FrameRateCounter,
     v_count: u16,
-    gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
-    gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
+    gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
+    gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
 }
 
 impl GpuInner {
@@ -133,8 +133,8 @@ impl GpuInner {
         cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
         cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
         swapchain: Arc<Swapchain>,
-        gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
-        gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
+        gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
+        gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
     ) -> Self {
         GpuInner {
             disp_stat: [0u16; 2],
@@ -155,19 +155,15 @@ impl GpuInner {
 
 pub struct GpuContext {
     inner: Rc<RefCell<GpuInner>>,
-    gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
-    gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
+    gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
+    gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
 }
-
-unsafe impl Send for GpuContext {}
-
-unsafe impl Sync for GpuContext {}
 
 impl GpuContext {
     pub fn new(
         cycle_manager: Rc<CycleManager>,
-        gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
-        gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
+        gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
+        gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
         dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
         dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
         cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
@@ -254,8 +250,8 @@ impl CycleEvent for Scanline256Event {
     fn trigger(&mut self, delay: u16) {
         let mut inner = self.inner.borrow_mut();
         if inner.v_count < 192 {
-            inner.gpu_2d_context_a.draw_scanline(inner.v_count as u8);
-            inner.gpu_2d_context_b.draw_scanline(inner.v_count as u8);
+            inner.gpu_2d_context_a.borrow().draw_scanline(inner.v_count as u8);
+            inner.gpu_2d_context_b.borrow().draw_scanline(inner.v_count as u8);
 
             inner
                 .dma_arm9
@@ -335,14 +331,14 @@ impl CycleEvent for Scanline355Event {
                 }
                 inner.frame_rate_counter.on_frame_ready();
                 inner.swapchain.push(
-                    &inner.gpu_2d_context_a.framebuffer.borrow(),
-                    &inner.gpu_2d_context_b.framebuffer.borrow(),
+                    &inner.gpu_2d_context_a.borrow().framebuffer.borrow(),
+                    &inner.gpu_2d_context_b.borrow().framebuffer.borrow(),
                 )
             }
             263 => {
                 inner.v_count = 0;
-                inner.gpu_2d_context_a.reload_registers();
-                inner.gpu_2d_context_b.reload_registers();
+                inner.gpu_2d_context_a.borrow().reload_registers();
+                inner.gpu_2d_context_b.borrow().reload_registers();
             }
             _ => {}
         }

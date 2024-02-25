@@ -22,14 +22,17 @@ impl<const SIZE: usize> VramMap<SIZE> {
     }
 
     fn extract_section<const CHUNK_SIZE: usize>(&self, offset: usize) -> VramMap<CHUNK_SIZE> {
+        assert_ne!(self.ptr, ptr::null_mut());
         VramMap::from((self.ptr as usize + CHUNK_SIZE * offset) as *const u8)
     }
 
     fn as_mut(&mut self) -> VramMapMut<SIZE> {
+        assert_ne!(self.ptr, ptr::null_mut());
         VramMapMut::new(self.ptr as _)
     }
 
     pub fn as_ptr(&self) -> *const u8 {
+        assert_ne!(self.ptr, ptr::null_mut());
         self.ptr
     }
 

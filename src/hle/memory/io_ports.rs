@@ -30,8 +30,8 @@ pub struct IoPorts<const CPU: CpuType> {
     pub input_context: Arc<RwLock<InputContext>>,
 
     pub gpu_context: Arc<GpuContext>,
-    pub gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
-    pub gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
+    pub gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
+    pub gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
     pub gpu_3d_context: Rc<RefCell<Gpu3DContext>>,
 
     pub rtc_context: Rc<RefCell<RtcContext>>,
@@ -52,8 +52,8 @@ impl<const CPU: CpuType> IoPorts<CPU> {
         vram_context: Rc<RefCell<VramContext>>,
         input_context: Arc<RwLock<InputContext>>,
         gpu_context: Arc<GpuContext>,
-        gpu_2d_context_a: Rc<Gpu2DContext<{ A }>>,
-        gpu_2d_context_b: Rc<Gpu2DContext<{ B }>>,
+        gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
+        gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
         gpu_3d_context: Rc<RefCell<Gpu3DContext>>,
         rtc_context: Rc<RefCell<RtcContext>>,
         spi_context: Rc<RefCell<SpiContext>>,
