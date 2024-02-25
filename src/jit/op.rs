@@ -1827,6 +1827,300 @@ impl Op {
                 | Op::TstRrr
         )
     }
+
+    pub const fn is_alu3_imm(self) -> bool {
+        matches!(
+            self,
+            Op::AndImm
+                | Op::AndsImm
+                | Op::EorImm
+                | Op::EorsImm
+                | Op::SubImm
+                | Op::SubsImm
+                | Op::RsbImm
+                | Op::RsbsImm
+                | Op::AddImm
+                | Op::AddsImm
+                | Op::AdcImm
+                | Op::AdcsImm
+                | Op::SbcImm
+                | Op::SbcsImm
+                | Op::RscImm
+                | Op::RscsImm
+                | Op::OrrImm
+                | Op::OrrsImm
+                | Op::BicImm
+                | Op::BicsImm
+        )
+    }
+
+    pub const fn is_alu3_imm_shift(self) -> bool {
+        matches!(
+            self,
+            Op::AndAri
+                | Op::AndLli
+                | Op::AndLri
+                | Op::AndRri
+                | Op::AndsAri
+                | Op::AndsLli
+                | Op::AndsLri
+                | Op::AndsRri
+                | Op::EorAri
+                | Op::EorLli
+                | Op::EorLri
+                | Op::EorRri
+                | Op::EorsAri
+                | Op::EorsLli
+                | Op::EorsLri
+                | Op::EorsRri
+                | Op::SubAri
+                | Op::SubLli
+                | Op::SubLri
+                | Op::SubRri
+                | Op::SubsAri
+                | Op::SubsLli
+                | Op::SubsLri
+                | Op::SubsRri
+                | Op::RsbAri
+                | Op::RsbLli
+                | Op::RsbLri
+                | Op::RsbRri
+                | Op::RsbsAri
+                | Op::RsbsLli
+                | Op::RsbsLri
+                | Op::RsbsRri
+                | Op::AddAri
+                | Op::AddLli
+                | Op::AddLri
+                | Op::AddRri
+                | Op::AddsAri
+                | Op::AddsLli
+                | Op::AddsLri
+                | Op::AddsRri
+                | Op::AdcAri
+                | Op::AdcLli
+                | Op::AdcLri
+                | Op::AdcRri
+                | Op::AdcsAri
+                | Op::AdcsLli
+                | Op::AdcsLri
+                | Op::AdcsRri
+                | Op::SbcAri
+                | Op::SbcLli
+                | Op::SbcLri
+                | Op::SbcRri
+                | Op::SbcsAri
+                | Op::SbcsLli
+                | Op::SbcsLri
+                | Op::SbcsRri
+                | Op::RscAri
+                | Op::RscLli
+                | Op::RscLri
+                | Op::RscRri
+                | Op::RscsAri
+                | Op::RscsLli
+                | Op::RscsLri
+                | Op::RscsRri
+                | Op::OrrAri
+                | Op::OrrLli
+                | Op::OrrLri
+                | Op::OrrRri
+                | Op::OrrsAri
+                | Op::OrrsLli
+                | Op::OrrsLri
+                | Op::OrrsRri
+                | Op::BicAri
+                | Op::BicLli
+                | Op::BicLri
+                | Op::BicRri
+                | Op::BicsAri
+                | Op::BicsLli
+                | Op::BicsLri
+                | Op::BicsRri
+        )
+    }
+
+    pub const fn is_alu3_reg_shift(self) -> bool {
+        matches!(
+            self,
+            Op::AndArr
+                | Op::AndLlr
+                | Op::AndLrr
+                | Op::AndRrr
+                | Op::AndsArr
+                | Op::AndsLlr
+                | Op::AndsLrr
+                | Op::AndsRrr
+                | Op::EorArr
+                | Op::EorLlr
+                | Op::EorLrr
+                | Op::EorRrr
+                | Op::EorsArr
+                | Op::EorsLlr
+                | Op::EorsLrr
+                | Op::EorsRrr
+                | Op::SubArr
+                | Op::SubLlr
+                | Op::SubLrr
+                | Op::SubRrr
+                | Op::SubsArr
+                | Op::SubsLlr
+                | Op::SubsLrr
+                | Op::SubsRrr
+                | Op::RsbArr
+                | Op::RsbLlr
+                | Op::RsbLrr
+                | Op::RsbRrr
+                | Op::RsbsArr
+                | Op::RsbsLlr
+                | Op::RsbsLrr
+                | Op::RsbsRrr
+                | Op::AddArr
+                | Op::AddLlr
+                | Op::AddLrr
+                | Op::AddRrr
+                | Op::AddsArr
+                | Op::AddsLlr
+                | Op::AddsLrr
+                | Op::AddsRrr
+                | Op::AdcArr
+                | Op::AdcLlr
+                | Op::AdcLrr
+                | Op::AdcRrr
+                | Op::AdcsArr
+                | Op::AdcsLlr
+                | Op::AdcsLrr
+                | Op::AdcsRrr
+                | Op::SbcArr
+                | Op::SbcLlr
+                | Op::SbcLrr
+                | Op::SbcRrr
+                | Op::SbcsArr
+                | Op::SbcsLlr
+                | Op::SbcsLrr
+                | Op::SbcsRrr
+                | Op::RscArr
+                | Op::RscLlr
+                | Op::RscLrr
+                | Op::RscRrr
+                | Op::RscsArr
+                | Op::RscsLlr
+                | Op::RscsLrr
+                | Op::RscsRrr
+                | Op::OrrArr
+                | Op::OrrLlr
+                | Op::OrrLrr
+                | Op::OrrRrr
+                | Op::OrrsArr
+                | Op::OrrsLlr
+                | Op::OrrsLrr
+                | Op::OrrsRrr
+                | Op::BicArr
+                | Op::BicLlr
+                | Op::BicLrr
+                | Op::BicRrr
+                | Op::BicsArr
+                | Op::BicsLlr
+                | Op::BicsLrr
+                | Op::BicsRrr
+        )
+    }
+
+    pub const fn is_alu2_op1_imm(self) -> bool {
+        matches!(self, Op::TstImm | Op::TeqImm | Op::CmpImm | Op::CmnImm)
+    }
+
+    pub const fn is_alu2_op1_imm_shift(self) -> bool {
+        matches!(
+            self,
+            Op::TstAri
+                | Op::TstLli
+                | Op::TstLri
+                | Op::TstRri
+                | Op::TeqAri
+                | Op::TeqLli
+                | Op::TeqLri
+                | Op::TeqRri
+                | Op::CmpAri
+                | Op::CmpLli
+                | Op::CmpLri
+                | Op::CmpRri
+                | Op::CmnAri
+                | Op::CmnLli
+                | Op::CmnLri
+                | Op::CmnRri
+        )
+    }
+
+    pub const fn is_alu2_op1_reg_shift(self) -> bool {
+        matches!(
+            self,
+            Op::TstArr
+                | Op::TstLlr
+                | Op::TstLrr
+                | Op::TstRrr
+                | Op::TeqArr
+                | Op::TeqLlr
+                | Op::TeqLrr
+                | Op::TeqRrr
+                | Op::CmpArr
+                | Op::CmpLlr
+                | Op::CmpLrr
+                | Op::CmpRrr
+                | Op::CmnArr
+                | Op::CmnLlr
+                | Op::CmnLrr
+                | Op::CmnRrr
+        )
+    }
+
+    pub const fn is_alu2_op0_imm(self) -> bool {
+        matches!(self, Op::MovImm | Op::MovsImm | Op::MvnImm | Op::MvnsImm)
+    }
+
+    pub const fn is_alu2_op0_imm_shift(self) -> bool {
+        matches!(
+            self,
+            Op::MovAri
+                | Op::MovLli
+                | Op::MovLri
+                | Op::MovRri
+                | Op::MovsAri
+                | Op::MovsLli
+                | Op::MovsLri
+                | Op::MovsRri
+                | Op::MvnAri
+                | Op::MvnLli
+                | Op::MvnLri
+                | Op::MvnRri
+                | Op::MvnsAri
+                | Op::MvnsLli
+                | Op::MvnsLri
+                | Op::MvnsRri
+        )
+    }
+
+    pub const fn is_alu2_op0_reg_shift(self) -> bool {
+        matches!(
+            self,
+            Op::MovArr
+                | Op::MovLlr
+                | Op::MovLrr
+                | Op::MovRrr
+                | Op::MovsArr
+                | Op::MovsLlr
+                | Op::MovsLrr
+                | Op::MovsRrr
+                | Op::MvnArr
+                | Op::MvnLlr
+                | Op::MvnLrr
+                | Op::MvnRrr
+                | Op::MvnsArr
+                | Op::MvnsLlr
+                | Op::MvnsLrr
+                | Op::MvnsRrr
+        )
+    }
 }
 
 impl From<u16> for Op {
