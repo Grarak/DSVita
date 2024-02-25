@@ -183,7 +183,7 @@ impl<const CPU: CpuType> Dma<CPU> {
         let transfer_type = DmaTransferMode::from_cnt::<CPU>(channel.cnt, CHANNEL_NUM);
 
         if transfer_type == DmaTransferMode::GeometryCmdFifo {
-            todo!()
+            // TODO 3d
         }
 
         let dma_cnt = DmaCntArm9::from(channel.cnt);

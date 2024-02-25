@@ -130,7 +130,12 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DInner<ENGINE> {
             mask &= 0xC0B1FFF7;
         }
         self.disp_cnt = (self.disp_cnt & !mask) | (value & mask);
-        debug_println!("GPU engine {:?} set disp cnt {:x}", ENGINE, self.disp_cnt);
+        debug_println!(
+            "GPU engine {:?} set disp cnt {:x} {}",
+            ENGINE,
+            self.disp_cnt,
+            (self.disp_cnt >> 16) & 0x3
+        );
     }
 
     pub fn set_bg_cnt(&mut self, bg_num: usize, mask: u16, value: u16) {
@@ -498,7 +503,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     fn draw_text<const BG: usize>(&self, inner: &Gpu2DInner<ENGINE>, line: u8) {
         let disp_cnt = DispCnt::from(inner.disp_cnt);
         if BG == 0 && bool::from(disp_cnt.bg0_3d()) {
-            todo!()
+            // TODO 2d
+            return;
         }
         let bg_cnt = BgCnt::from(inner.bg_cnt[BG]);
 
@@ -518,7 +524,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
 
         tile_base_addr += (y_offset as u32 & 0xF8) << 3;
         if y_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 1) != 0 {
-            todo!()
+            // TODO
         }
 
         let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
@@ -541,7 +547,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 let tile = TextBgScreen::from(tile);
 
                 if bool::from(disp_cnt.bg_extended_palettes()) {
-                    todo!()
+                    // TODO
                 }
 
                 let palette_base_addr = Self::get_palattes_offset();
@@ -722,9 +728,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         todo!()
     }
 
-    fn draw_objects<const WINDOW: bool>(&self, line: u8) {
-        todo!()
-    }
+    fn draw_objects<const WINDOW: bool>(&self, line: u8) {}
 
     fn draw_pixel<const BG: usize>(
         disp_cnt: DispCnt,

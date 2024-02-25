@@ -100,6 +100,7 @@ impl Cartridge {
     }
 
     fn get_page(&self, page_addr: u32) -> Rc<[u8; PAGE_SIZE as usize]> {
+        debug_assert_eq!(page_addr & (PAGE_SIZE - 1), 0);
         let mut pages = self.content_pages.borrow_mut();
         match pages.get(&page_addr) {
             None => {

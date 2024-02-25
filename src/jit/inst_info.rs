@@ -52,9 +52,12 @@ impl InstInfo {
         let operands = self.operands();
         match self.op {
             Op::AddImm
+            | Op::AdcImm
             | Op::AndImm
             | Op::AndsImm
             | Op::BicImm
+            | Op::OrrImm
+            | Op::RsbImm
             | Op::RscsImm
             | Op::SubImm
             | Op::SubsImm => {
@@ -73,7 +76,7 @@ impl InstInfo {
 
                 u32::from(opcode)
             }
-            Op::CmpImm => {
+            Op::CmpImm | Op::TstImm => {
                 let mut opcode = AluImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 opcode.set_rn(u4::new(*reg0 as u8));
@@ -98,12 +101,16 @@ impl InstInfo {
                 u32::from(opcode)
             }
             Op::AddLli
+            | Op::AddAri
+            | Op::AddsLli
             | Op::AndLli
             | Op::AndRri
+            | Op::AndAri
             | Op::EorLli
             | Op::MovLli
             | Op::MovLri
             | Op::MovRri
+            | Op::MovAri
             | Op::MovsLli
             | Op::MovsRri
             | Op::MvnLli
@@ -111,6 +118,7 @@ impl InstInfo {
             | Op::RscsLli
             | Op::RscsLri
             | Op::SubLli
+            | Op::SubAri
             | Op::SubsLli => {
                 let mut opcode = AluShiftImm::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
@@ -135,7 +143,7 @@ impl InstInfo {
 
                 u32::from(opcode)
             }
-            Op::MovsLlr => {
+            Op::MovLlr | Op::MovsLlr | Op::OrrLlr | Op::OrrLrr => {
                 let mut opcode = AluReg::from(self.opcode);
                 let reg0 = operands[0].as_reg_no_shift().unwrap();
                 let (reg1, (reg2, shift_2)) = if operands.len() == 3 {
@@ -169,6 +177,19 @@ impl InstInfo {
                     let reg3 = *operands[3].as_reg_no_shift().unwrap();
                     opcode.set_rn(u4::new(reg3 as u8));
                 }
+
+                u32::from(opcode)
+            }
+            Op::Smull | Op::Smlal | Op::Umull => {
+                let mut opcode = MulReg::from(self.opcode);
+                let reg0 = *operands[0].as_reg_no_shift().unwrap();
+                let reg1 = *operands[1].as_reg_no_shift().unwrap();
+                let reg2 = *operands[2].as_reg_no_shift().unwrap();
+                let reg3 = *operands[3].as_reg_no_shift().unwrap();
+                opcode.set_rn(u4::new(reg0 as u8));
+                opcode.set_rd(u4::new(reg1 as u8));
+                opcode.set_rm(u4::new(reg2 as u8));
+                opcode.set_rs(u4::new(reg3 as u8));
 
                 u32::from(opcode)
             }

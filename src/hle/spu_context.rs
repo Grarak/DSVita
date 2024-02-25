@@ -7,6 +7,7 @@ struct SpuChannel {
     tmr: u16,
     pnt: u16,
     len: u32,
+    cap_cnt: u8,
 }
 
 pub struct SpuContext {
@@ -26,6 +27,10 @@ impl SpuContext {
 
     pub fn get_cnt(&self, channel: usize) -> u32 {
         self.channels[channel].cnt
+    }
+
+    pub fn get_cap_cnt(&self, channel: usize) -> u8 {
+        self.channels[channel].cap_cnt
     }
 
     pub fn set_cnt(&mut self, channel: usize, mask: u32, value: u32) {

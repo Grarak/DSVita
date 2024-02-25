@@ -39,6 +39,7 @@ pub struct RomCtrl {
     block_start_status: u1,
 }
 
+#[derive(Debug)]
 enum CmdMode {
     Header,
     Chip,
@@ -49,6 +50,7 @@ enum CmdMode {
 
 struct CartridgeInner {
     aux_spi_cnt: AuxSpiCnt,
+    aux_spi_data: u8,
     bus_cmd_out: u64,
     rom_ctrl: RomCtrl,
     word_cycles: u8,
@@ -61,6 +63,7 @@ impl CartridgeInner {
     fn new() -> Self {
         CartridgeInner {
             aux_spi_cnt: AuxSpiCnt::from(0),
+            aux_spi_data: 0,
             bus_cmd_out: 0,
             rom_ctrl: RomCtrl::from(0),
             word_cycles: 0,
@@ -78,7 +81,7 @@ pub struct CartridgeContext {
     pub cartridge: Cartridge,
     cmd_mode: CmdMode,
     inner: [Rc<RefCell<CartridgeInner>>; 2],
-    read_data: Vec<u8>,
+    read_addr: u32,
 }
 
 impl CartridgeContext {
@@ -98,12 +101,16 @@ impl CartridgeContext {
                 Rc::new(RefCell::new(CartridgeInner::new())),
             ],
             cmd_mode: CmdMode::None,
-            read_data: Vec::new(),
+            read_addr: 0,
         }
     }
 
     pub fn get_aux_spi_cnt<const CPU: CpuType>(&self) -> u16 {
         u16::from(self.inner[CPU].borrow().aux_spi_cnt)
+    }
+
+    pub fn get_aux_spi_data<const CPU: CpuType>(&self) -> u8 {
+        self.inner[CPU].borrow().aux_spi_data
     }
 
     pub fn get_rom_ctrl<const CPU: CpuType>(&self) -> u32 {
@@ -136,25 +143,22 @@ impl CartridgeContext {
 
         match self.cmd_mode {
             CmdMode::Header => {
-                let offset = (inner.read_count as usize - 4) & 0xFFF;
-                u32::from_le_bytes(
-                    self.read_data.as_slice()[offset..offset + 4]
-                        .try_into()
-                        .unwrap(),
-                )
+                let offset = (inner.read_count as u32 - 4) & 0xFFF;
+                let mut buf = [0u8; 4];
+                self.cartridge.read_slice(self.read_addr + offset, &mut buf);
+                u32::from_le_bytes(buf)
             }
             CmdMode::Chip => 0x00001FC2,
             CmdMode::Secure => {
                 todo!()
             }
             CmdMode::Data => {
-                let offset = inner.read_count as usize - 4;
-                if offset + 4 < self.read_data.len() {
-                    u32::from_le_bytes(
-                        self.read_data.as_slice()[offset..offset + 4]
-                            .try_into()
-                            .unwrap(),
-                    )
+                let offset = inner.read_count as u32 - 4;
+                let addr = self.read_addr + offset;
+                if addr + 4 < self.cartridge.file_size {
+                    let mut buf = [0u8; 4];
+                    self.cartridge.read_slice(addr, &mut buf);
+                    u32::from_le_bytes(buf)
                 } else {
                     0xFFFFFFFF
                 }
@@ -168,6 +172,8 @@ impl CartridgeContext {
         let mut inner = self.inner[CPU].borrow_mut();
         inner.aux_spi_cnt = ((u16::from(inner.aux_spi_cnt) & !mask) | (value & mask)).into();
     }
+
+    pub fn set_aux_spi_data<const CPU: CpuType>(&self, value: u8) {}
 
     pub fn set_bus_cmd_out_l<const CPU: CpuType>(&self, mask: u32, value: u32) {
         let mut inner = self.inner[CPU].borrow_mut();
@@ -229,12 +235,10 @@ impl CartridgeContext {
             inner.encrypted = false;
         } else if (cmd >> 56) == 0xB7 {
             self.cmd_mode = CmdMode::Data;
-            let mut addr = (((cmd >> 24) & 0xFFFFFFFF) as u32) % self.cartridge.file_size;
-            if addr < 0x8000 {
-                addr = 0x8000 + (addr & 0x1FF);
+            self.read_addr = (((cmd >> 24) & 0xFFFFFFFF) as u32) % self.cartridge.file_size;
+            if self.read_addr < 0x8000 {
+                self.read_addr = 0x8000 + (self.read_addr & 0x1FF);
             }
-            self.read_data.resize(inner.block_size as usize, 0);
-            self.cartridge.read_slice(addr, &mut self.read_data);
         } else if cmd != 0x9F00000000000000 {
             debug_println!("Unknown rom transfer command {:x}", cmd);
         }

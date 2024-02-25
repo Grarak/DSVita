@@ -353,17 +353,16 @@ impl VramContext {
                         self.lcdc.add::<BANK_A_SIZE>(map, 0);
                     }
                     1 => {
-                        let ofs = u8::from(cnt_a.ofs());
-                        self.bg_a.add::<BANK_A_SIZE>(
-                            VramMap::new(&self.banks.vram_a),
-                            128 / 16 * ofs as usize,
-                        );
+                        let ofs = u8::from(cnt_a.ofs()) as usize;
+                        self.bg_a
+                            .add::<BANK_A_SIZE>(VramMap::new(&self.banks.vram_a), 128 / 16 * ofs);
                     }
                     2 => {
                         todo!()
                     }
                     3 => {
-                        todo!()
+                        let ofs = u8::from(cnt_a.ofs()) as usize;
+                        self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_a);
                     }
                     _ => {}
                 }
@@ -382,21 +381,20 @@ impl VramContext {
                         );
                     }
                     1 => {
-                        let ofs = u8::from(cnt_b.ofs());
-                        self.bg_a.add::<BANK_B_SIZE>(
-                            VramMap::new(&self.banks.vram_b),
-                            128 / 16 * ofs as usize,
-                        );
+                        let ofs = u8::from(cnt_b.ofs()) as usize;
+                        self.bg_a
+                            .add::<BANK_B_SIZE>(VramMap::new(&self.banks.vram_b), 128 / 16 * ofs);
                     }
                     2 => {
-                        let ofs = u8::from(cnt_b.ofs());
+                        let ofs = u8::from(cnt_b.ofs()) as usize;
                         self.obj_a.add::<BANK_B_SIZE>(
                             VramMap::new(&self.banks.vram_b),
-                            128 / 16 * (ofs & 1) as usize,
+                            128 / 16 * (ofs & 1),
                         );
                     }
                     3 => {
-                        todo!()
+                        let ofs = u8::from(cnt_b.ofs()) as usize;
+                        self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_b);
                     }
                     _ => {}
                 }
@@ -415,18 +413,14 @@ impl VramContext {
                         );
                     }
                     1 => {
-                        let ofs = u8::from(cnt_c.ofs());
-                        self.bg_a.add::<BANK_C_SIZE>(
-                            VramMap::new(&self.banks.vram_c),
-                            128 / 16 * ofs as usize,
-                        );
+                        let ofs = u8::from(cnt_c.ofs()) as usize;
+                        self.bg_a
+                            .add::<BANK_C_SIZE>(VramMap::new(&self.banks.vram_c), 128 / 16 * ofs);
                     }
                     2 => {
-                        let ofs = u8::from(cnt_c.ofs());
-                        self.arm7.add::<BANK_C_SIZE>(
-                            VramMap::new(&self.banks.vram_c),
-                            (ofs & 1) as usize,
-                        );
+                        let ofs = u8::from(cnt_c.ofs()) as usize;
+                        self.arm7
+                            .add::<BANK_C_SIZE>(VramMap::new(&self.banks.vram_c), ofs & 1);
                         self.stat |= 1;
                     }
                     3 => {
@@ -453,18 +447,14 @@ impl VramContext {
                         );
                     }
                     1 => {
-                        let ofs = u8::from(cnt_d.ofs());
-                        self.bg_a.add::<BANK_D_SIZE>(
-                            VramMap::new(&self.banks.vram_d),
-                            128 / 16 * ofs as usize,
-                        );
+                        let ofs = u8::from(cnt_d.ofs()) as usize;
+                        self.bg_a
+                            .add::<BANK_D_SIZE>(VramMap::new(&self.banks.vram_d), 128 / 16 * ofs);
                     }
                     2 => {
-                        let ofs = u8::from(cnt_d.ofs());
-                        self.arm7.add::<BANK_D_SIZE>(
-                            VramMap::new(&self.banks.vram_d),
-                            (ofs & 1) as usize,
-                        );
+                        let ofs = u8::from(cnt_d.ofs()) as usize;
+                        self.arm7
+                            .add::<BANK_D_SIZE>(VramMap::new(&self.banks.vram_d), ofs & 1);
                         self.stat |= 2;
                     }
                     3 => {
@@ -520,7 +510,11 @@ impl VramContext {
                         );
                     }
                     2 => {
-                        todo!()
+                        let ofs = u8::from(cnt_f.ofs()) as usize;
+                        self.obj_a.add::<BANK_F_SIZE>(
+                            VramMap::new(&self.banks.vram_f),
+                            16 * (ofs & 1) + 32 * (ofs & 2),
+                        );
                     }
                     3 => {
                         todo!()
@@ -558,7 +552,9 @@ impl VramContext {
                         todo!()
                     }
                     3 => {
-                        todo!()
+                        let ofs = u8::from(cnt_g.ofs()) as usize;
+                        self.tex_palette[((ofs & 2) << 1) + (ofs & 1)] =
+                            VramMap::new(&self.banks.vram_g)
                     }
                     4 => {
                         todo!()
@@ -586,7 +582,7 @@ impl VramContext {
                         todo!()
                     }
                     2 => {
-                        todo!()
+                        self.bg_ext_palette_b = VramMap::new(&self.banks.vram_h);
                     }
                     _ => {}
                 }
@@ -617,7 +613,7 @@ impl VramContext {
                         todo!()
                     }
                     3 => {
-                        todo!()
+                        self.obj_ext_palette_b = VramMap::new(&self.banks.vram_i);
                     }
                     _ => {}
                 }
@@ -632,13 +628,9 @@ impl VramContext {
             CpuType::ARM9 => match addr & 0xF00000 {
                 LCDC_OFFSET => self.lcdc.read(addr_offset),
                 BG_A_OFFSET => self.bg_a.read(addr_offset),
-                OBJ_A_OFFSET => {
-                    todo!()
-                }
+                OBJ_A_OFFSET => self.obj_a.read(addr_offset),
                 BG_B_OFFSET => self.bg_b.read(addr_offset),
-                OBJ_B_OFFSET => {
-                    todo!()
-                }
+                OBJ_B_OFFSET => self.obj_b.read(addr_offset),
                 _ => unreachable!(),
             },
             CpuType::ARM7 => self.arm7.read(addr_offset),
@@ -652,13 +644,9 @@ impl VramContext {
             CpuType::ARM9 => match base_addr {
                 LCDC_OFFSET => self.lcdc.write(addr_offset, value),
                 BG_A_OFFSET => self.bg_a.write(addr_offset, value),
-                OBJ_A_OFFSET => {
-                    todo!()
-                }
+                OBJ_A_OFFSET => self.obj_a.write(addr_offset, value),
                 BG_B_OFFSET => self.bg_b.write(addr_offset, value),
-                OBJ_B_OFFSET => {
-                    todo!()
-                }
+                OBJ_B_OFFSET => self.obj_b.write(addr_offset, value),
                 _ => unreachable!(),
             },
             CpuType::ARM7 => self.arm7.write(addr_offset, value),
