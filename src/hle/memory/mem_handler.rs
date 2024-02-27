@@ -161,16 +161,15 @@ impl<const CPU: CpuType> MemHandler<CPU> {
 
         let invalidate_jit = || {
             let mut jit_state = self.jit_state.borrow_mut();
-            for addr in aligned_addr..aligned_addr + 4 {
-                jit_state.invalidated_addrs.push(addr);
-            }
+            jit_state.invalidated = true;
+            jit_state.invalidated_range.update(addr, addr + 4);
 
             #[cfg(debug_assertions)]
             {
                 let (current_jit_block_start, current_jit_block_end) =
                     jit_state.current_block_range;
-                if addr >= current_jit_block_start && addr <= current_jit_block_end {
-                    todo!()
+                if addr >= current_jit_block_start && addr + 4 <= current_jit_block_end {
+                    todo!("{:x} {:x}", current_jit_block_start, current_jit_block_end)
                 }
             }
         };

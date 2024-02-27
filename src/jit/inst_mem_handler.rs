@@ -5,20 +5,9 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
-use bilge::prelude::*;
 use std::cell::RefCell;
 use std::ops::DerefMut;
 use std::rc::Rc;
-
-#[bitsize(32)]
-#[derive(FromBits)]
-pub struct InstMemMultipleArgs {
-    pre: u1,
-    write_back: u1,
-    decrement: u1,
-    op0_reg: u5,
-    rlist: u24,
-}
 
 pub struct InstMemHandler<const CPU: CpuType> {
     thread_regs: Rc<RefCell<ThreadRegs<CPU>>>,
@@ -95,10 +84,18 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         }
     }
 
-    fn handle_multiple_request<const THUMB: bool, const WRITE: bool, const USER: bool>(
+    fn handle_multiple_request<
+        const THUMB: bool,
+        const WRITE: bool,
+        const USER: bool,
+        const PRE: bool,
+        const WRITE_BACK: bool,
+        const DECREMENT: bool,
+    >(
         &self,
         pc: u32,
-        args: u32,
+        rlist: u16,
+        op0: u8,
     ) {
         debug_println!(
             "handle multiple request at {:x} thumb: {} write: {}",
@@ -107,13 +104,8 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
             WRITE
         );
 
-        let args = InstMemMultipleArgs::from(args);
-
-        let rlist = RegReserve::from(u32::from(args.rlist()));
-        let op0 = Reg::from(u8::from(args.op0_reg()));
-        let pre = bool::from(args.pre());
-        let write_back = bool::from(args.write_back());
-        let decrement = bool::from(args.decrement());
+        let rlist = RegReserve::from(rlist as u32);
+        let op0 = Reg::from(op0);
 
         let mut thread_regs = self.thread_regs.borrow_mut();
         let thread_regs = thread_regs.deref_mut();
@@ -134,19 +126,19 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
             *thread_regs.get_reg_value_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
         }
 
-        let start_addr = if decrement {
+        let start_addr = if DECREMENT {
             *thread_regs.get_reg_value(op0) - ((rlist.len() as u32) << 2)
         } else {
             *thread_regs.get_reg_value(op0)
         };
         let mut addr = start_addr;
 
-        if write_back
+        if WRITE_BACK
             && (!WRITE
                 || (CPU == CpuType::ARM7
                     && (rlist.0 & ((1 << (op0 as u8 + 1)) - 1)) > (1 << op0 as u8)))
         {
-            if decrement {
+            if DECREMENT {
                 *thread_regs.get_reg_value_mut(op0) = addr;
             } else {
                 *thread_regs.get_reg_value_mut(op0) = addr + ((rlist.len() as u32) << 2);
@@ -161,7 +153,9 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         for i in Reg::R0 as u8..Reg::CPSR as u8 {
             let reg = Reg::from(i);
             if rlist.is_reserved(reg) {
-                addr += (pre as u32) << 2;
+                if PRE {
+                    addr += 4;
+                }
                 if WRITE {
                     let value = get_reg_fun(thread_regs, reg);
                     self.mem_handler.write(addr, *value);
@@ -169,17 +163,19 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
                     let value = self.mem_handler.read(addr);
                     *get_reg_fun(thread_regs, reg) = value;
                 }
-                addr += (!pre as u32) << 2;
+                if !PRE {
+                    addr += 4;
+                }
             }
         }
 
-        if write_back
+        if WRITE_BACK
             && (WRITE
                 || (CPU == CpuType::ARM9
                     && ((rlist.0 & !((1 << (op0 as u8 + 1)) - 1)) != 0
                         || (rlist.0 == (1 << op0 as u8)))))
         {
-            *thread_regs.get_reg_value_mut(op0) = if decrement { start_addr } else { addr }
+            *thread_regs.get_reg_value_mut(op0) = if DECREMENT { start_addr } else { addr }
         }
 
         if USER && rlist.is_reserved(Reg::PC) {
@@ -231,28 +227,19 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     const CPU: CpuType,
     const THUMB: bool,
     const WRITE: bool,
+    const USER: bool,
+    const PRE: bool,
+    const WRITE_BACK: bool,
+    const DECREMENT: bool,
 >(
     asm: *const JitAsm<CPU>,
     pc: u32,
-    args: u32,
+    rlist: u16,
+    op0: u8,
 ) {
     (*asm)
         .inst_mem_handler
-        .handle_multiple_request::<THUMB, WRITE, false>(pc, args);
-    // ARM7 can halt the CPU with an IO port write
-    if CPU == CpuType::ARM7 && WRITE && (*asm).cpu_regs.is_halted() {
-        todo!()
-    }
-}
-
-pub unsafe extern "C" fn inst_mem_handler_multiple_user<const CPU: CpuType, const WRITE: bool>(
-    asm: *const JitAsm<CPU>,
-    pc: u32,
-    args: u32,
-) {
-    (*asm)
-        .inst_mem_handler
-        .handle_multiple_request::<false, WRITE, true>(pc, args);
+        .handle_multiple_request::<THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(pc, rlist, op0);
     // ARM7 can halt the CPU with an IO port write
     if CPU == CpuType::ARM7 && WRITE && (*asm).cpu_regs.is_halted() {
         todo!()

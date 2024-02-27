@@ -42,7 +42,6 @@ use sdl2::rect::Rect;
 use std::cell::RefCell;
 use std::cmp::min;
 use std::collections::HashMap;
-use std::os::unix::prelude::JoinHandleExt;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 use std::{mem, ptr, thread};
@@ -52,6 +51,7 @@ mod hle;
 mod jit;
 mod logging;
 mod mmap;
+mod simple_tree_map;
 mod utils;
 
 #[cfg(target_os = "vita")]
@@ -298,36 +298,7 @@ pub fn main() {
         }
     }
 
-    let cpu_thread = thread::Builder::new()
-        .name("cpu".to_owned())
-        .spawn(move || {
-            arm9_thread.jit.jit_memory.borrow_mut().open();
-            let cycle_manager = arm9_thread.cycle_manager.clone();
-            loop {
-                let arm7_cycles = if !arm7_thread.is_halted() {
-                    arm7_thread.run()
-                } else {
-                    0
-                };
-
-                let mut arm9_cycles = 0;
-                while !arm9_thread.is_halted() && (arm7_cycles > arm9_cycles || arm9_cycles == 0) {
-                    arm9_cycles += arm9_thread.run();
-                }
-
-                let cycles =
-                    min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);
-                if cycles == 0 {
-                    cycle_manager.jump_to_next_event();
-                } else {
-                    cycle_manager.add_cycle(cycles);
-                }
-                cycle_manager.check_events();
-            }
-        })
-        .unwrap();
-
-    sdl2::hint::set("SDL_HINT_NO_SIGNAL_HANDLERS", "1");
+    sdl2::hint::set("SDL_NO_SIGNAL_HANDLERS", "1");
     let sdl = sdl2::init().unwrap();
     let sdl_video = sdl.video().unwrap();
 
@@ -378,6 +349,35 @@ pub fn main() {
     sdl_canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
     sdl_canvas.clear();
     sdl_canvas.present();
+
+    let cpu_thread = thread::Builder::new()
+        .name("cpu".to_owned())
+        .spawn(move || {
+            arm9_thread.jit.jit_memory.borrow_mut().open();
+            let cycle_manager = arm9_thread.cycle_manager.clone();
+            loop {
+                let arm7_cycles = if !arm7_thread.is_halted() {
+                    arm7_thread.run()
+                } else {
+                    0
+                };
+
+                let mut arm9_cycles = 0;
+                while !arm9_thread.is_halted() && (arm7_cycles > arm9_cycles || arm9_cycles == 0) {
+                    arm9_cycles += arm9_thread.run();
+                }
+
+                let cycles =
+                    min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);
+                if cycles == 0 {
+                    cycle_manager.jump_to_next_event();
+                } else {
+                    cycle_manager.add_cycle(cycles);
+                }
+                cycle_manager.check_events();
+            }
+        })
+        .unwrap();
 
     let mut key_code_mapping = HashMap::<_, _, BuildNoHasher>::default();
     #[cfg(target_os = "linux")]
@@ -486,7 +486,5 @@ pub fn main() {
         sdl_canvas.present();
     }
 
-    unsafe {
-        libc::pthread_kill(cpu_thread.as_pthread_t(), libc::SIGKILL);
-    }
+    cpu_thread.join().unwrap();
 }

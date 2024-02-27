@@ -3,13 +3,11 @@ use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::inst_info::{Operand, Shift, ShiftValue};
 use crate::jit::inst_mem_handler::{
-    inst_mem_handler, inst_mem_handler_multiple, inst_mem_handler_multiple_user,
-    inst_mem_handler_swp, InstMemMultipleArgs,
+    inst_mem_handler, inst_mem_handler_multiple, inst_mem_handler_swp,
 };
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, Op, ShiftType};
-use bilge::prelude::*;
 
 impl<const CPU: CpuType> JitAsm<CPU> {
     pub fn emit_single_transfer<const THUMB: bool, const WRITE: bool>(
@@ -190,28 +188,57 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
 
-        let args = u32::from(InstMemMultipleArgs::new(
-            u1::from(pre),
-            u1::from(write_back),
-            u1::from(decrement),
-            u5::new(op0 as u8),
-            u24::from(rlist),
-        ));
-
+        #[rustfmt::skip]
         let func_addr = match (
-            inst_info.op.mem_transfer_user(),
             inst_info.op.mem_is_write(),
+            inst_info.op.mem_transfer_user(),
+            pre,
+            write_back,
+            decrement,
         ) {
-            (true, true) => inst_mem_handler_multiple_user::<CPU, true> as _,
-            (true, false) => inst_mem_handler_multiple_user::<CPU, false> as _,
-            (false, true) => inst_mem_handler_multiple::<CPU, THUMB, true> as _,
-            (false, false) => inst_mem_handler_multiple::<CPU, THUMB, false> as _,
+            (false, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, false> as _,
+            (true, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, false> as _,
+            (false, true, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, false> as _,
+            (true, true, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, false, false> as _,
+            (false, false, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, false, false> as _,
+            (true, false, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, false, false> as _,
+            (false, true, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, false, false> as _,
+            (true, true, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, false, false> as _,
+            (false, false, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, true, false> as _,
+            (true, false, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, true, false> as _,
+            (false, true, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, true, false> as _,
+            (true, true, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, true, false> as _,
+            (false, false, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, true, false> as _,
+            (true, false, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, true, false> as _,
+            (false, true, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, true, false> as _,
+            (true, true, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, true, false> as _,
+            (false, false, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, true> as _,
+            (true, false, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, true> as _,
+            (false, true, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, true> as _,
+            (true, true, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, false, true> as _,
+            (false, false, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, false, true> as _,
+            (true, false, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, false, true> as _,
+            (false, true, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, false, true> as _,
+            (true, true, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, false, true> as _,
+            (false, false, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, true, true> as _,
+            (true, false, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, true, true> as _,
+            (false, true, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, true, true> as _,
+            (true, true, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, true, true> as _,
+            (false, false, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, true, true> as _,
+            (true, false, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, true, true> as _,
+            (false, true, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, true, true> as _,
+            (true, true, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, true, true> as _,
         };
 
         self.emit_call_host_func(
             |_| {},
             |_, _| {},
-            &[Some(jit_asm_addr), Some(pc), Some(args)],
+            &[
+                Some(jit_asm_addr),
+                Some(pc),
+                Some(rlist as u32),
+                Some(op0 as u32),
+            ],
             func_addr,
         );
     }

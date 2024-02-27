@@ -1,273 +1,290 @@
-use crate::hle::memory::regions;
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use crate::mmap::Mmap;
-use crate::utils::NoHashMap;
+use crate::simple_tree_map::SimpleTreeMap;
 use crate::{utils, DEBUG_LOG};
-use std::hint::unreachable_unchecked;
-use std::mem;
-use std::mem::ManuallyDrop;
-use std::rc::Rc;
+use std::cell::RefCell;
 
 const JIT_MEMORY_SIZE: u32 = 16 * 1024 * 1024;
+#[cfg(target_os = "linux")]
+const JIT_PAGE_SIZE: u32 = 4096;
+#[cfg(target_os = "vita")]
+const JIT_PAGE_SIZE: u32 = 16;
 
-type JitBlockStartAddr = u32;
+type GuestPcStart = u32;
+type JitAddr = u32;
 type JitBlockSize = u32;
 
-#[derive(Clone)]
-pub struct GuestPcInfo {
-    pub guest_insts_cycle_counts: Rc<Vec<u8>>,
-    pub guest_pc_start: u32,
-    pub guest_pc_end: u32,
-    pub jit_pc_start_addr: u32,
-    pub jit_addr: u32,
+pub struct JitBlockInfo {
+    guest_insts_cycle_counts: Vec<u16>,
+    addr: u32,
+    addr_offsets: Vec<u16>,
+    used: RefCell<u64>,
 }
 
-impl GuestPcInfo {
-    fn new(
-        guest_insts_cycle_counts: Rc<Vec<u8>>,
-        guest_pc_start: u32,
-        guest_pc_end: u32,
-        jit_pc_start_addr: u32,
-        jit_addr: u32,
-    ) -> Self {
-        GuestPcInfo {
+impl JitBlockInfo {
+    fn new(guest_insts_cycle_counts: Vec<u16>, addr: u32, addr_offsets: Vec<u16>) -> Self {
+        JitBlockInfo {
             guest_insts_cycle_counts,
-            guest_pc_start,
-            guest_pc_end,
-            jit_pc_start_addr,
+            addr,
+            addr_offsets,
+            used: RefCell::new(0),
+        }
+    }
+
+    fn get_jit_addr<const THUMB: bool>(&self, guest_pc_start: u32, guest_pc: u32) -> Option<u32> {
+        let pc_offset = (guest_pc - guest_pc_start) >> if THUMB { 1 } else { 2 };
+        if pc_offset == 0 {
+            Some(self.addr)
+        } else if pc_offset as usize - 1 < self.addr_offsets.len() {
+            Some(self.addr + self.addr_offsets[pc_offset as usize - 1] as u32)
+        } else {
+            None
+        }
+    }
+}
+
+pub struct JitInsertArgs {
+    guest_start_pc: u32,
+    guest_pc_to_jit_addr_offset: Vec<u16>,
+    guest_insts_cycle_counts: Vec<u16>,
+}
+
+pub struct JitGetAddrRet<'a> {
+    pub jit_addr: u32,
+    pub guest_start_pc: u32,
+    pub guest_end_pc: u32,
+    pub guest_insts_cycle_counts: &'a Vec<u16>,
+}
+
+impl<'a> JitGetAddrRet<'a> {
+    fn new(
+        jit_addr: u32,
+        guest_start_pc: u32,
+        guest_end_pc: u32,
+        guest_insts_cycle_counts: &'a Vec<u16>,
+    ) -> Self {
+        JitGetAddrRet {
             jit_addr,
+            guest_start_pc,
+            guest_end_pc,
+            guest_insts_cycle_counts,
         }
     }
 }
 
-type FastGuestInfo = Option<ManuallyDrop<Box<GuestPcInfo>>>;
-
-struct FastGuestPcMap {
-    mapping: Mmap,
-    size: usize,
-}
-
-impl FastGuestPcMap {
-    fn new(name: &str, size: u32) -> Self {
-        FastGuestPcMap {
-            mapping: Mmap::rw(name, size * mem::size_of::<FastGuestPcMap>() as u32).unwrap(),
-            size: size as usize,
+impl JitInsertArgs {
+    pub fn new(
+        guest_start_pc: u32,
+        guest_pc_to_jit_addr_offset: Vec<u16>,
+        guest_insts_cycle_counts: Vec<u16>,
+    ) -> Self {
+        JitInsertArgs {
+            guest_start_pc,
+            guest_pc_to_jit_addr_offset,
+            guest_insts_cycle_counts,
         }
-    }
-
-    fn insert(&mut self, guest_pc: u32, info: GuestPcInfo) {
-        let info = ManuallyDrop::new(Box::new(info));
-        let index = guest_pc as usize & (self.size - 1);
-        let mapping: &mut [FastGuestInfo] = unsafe { mem::transmute(self.mapping.as_mut()) };
-        mapping[index] = Some(info);
-    }
-
-    fn get(&self, guest_pc: u32) -> Option<&GuestPcInfo> {
-        let index = guest_pc as usize & (self.size - 1);
-        let mapping: &[FastGuestInfo] = unsafe { mem::transmute(self.mapping.as_ref()) };
-        mapping[index].as_ref().map(|info| info.as_ref())
-    }
-
-    fn invalidate(&mut self, guest_pc: u32) {
-        let index = guest_pc as usize & (self.size - 1);
-        let mapping: &mut [FastGuestInfo] = unsafe { mem::transmute(self.mapping.as_mut()) };
-        if let Some(info) = &mut mapping[index] {
-            unsafe { ManuallyDrop::drop(info) };
-        }
-        mapping[index] = None;
     }
 }
 
 pub struct JitMemory {
-    memory: Mmap,
-    blocks: Vec<(JitBlockStartAddr, JitBlockSize)>,
-    guest_pc_mapping: NoHashMap<GuestPcInfo>,
-    main_memory_guest_pc_mapping: FastGuestPcMap,
+    mem: Mmap,
+    jit_blocks: [SimpleTreeMap<GuestPcStart, JitBlockInfo>; 4],
+    mem_blocks: SimpleTreeMap<JitAddr, JitBlockSize>,
 }
 
 impl JitMemory {
     pub fn new() -> Self {
         JitMemory {
-            memory: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
-            blocks: Vec::new(),
-            guest_pc_mapping: NoHashMap::default(),
-            main_memory_guest_pc_mapping: FastGuestPcMap::new(
-                "main_memory_guest_pc_mapping",
-                regions::MAIN_MEMORY_SIZE,
-            ),
+            mem: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
+            jit_blocks: [
+                SimpleTreeMap::new(),
+                SimpleTreeMap::new(),
+                SimpleTreeMap::new(),
+                SimpleTreeMap::new(),
+            ],
+            mem_blocks: SimpleTreeMap::new(),
         }
     }
 
     fn find_free_start(&self, required_size: u32) -> u32 {
-        if self.blocks.is_empty() {
-            return 0;
-        }
-
-        let mut previous_end = 0;
-        for (start_addr, size) in &self.blocks {
+        let mut previous_end = self.mem.as_ptr() as u32;
+        for (start_addr, block_size) in &self.mem_blocks {
             if (start_addr - previous_end) >= required_size {
                 return previous_end;
             }
-            previous_end = start_addr + size;
+            previous_end = *start_addr + *block_size;
         }
 
-        if (previous_end + required_size) >= JIT_MEMORY_SIZE {
+        if previous_end + required_size >= self.mem.as_ptr() as u32 + JIT_MEMORY_SIZE {
             todo!("Reordering of blocks")
         }
         previous_end
     }
 
-    pub fn insert_block<const CPU: CpuType>(
+    fn get_guest_pc_end<const THUMB: bool>(
+        guest_pc_start: GuestPcStart,
+        offsets_len: usize,
+    ) -> u32 {
+        guest_pc_start + ((offsets_len as u32) << if THUMB { 1 } else { 2 })
+    }
+
+    pub fn insert_block<const CPU: CpuType, const THUMB: bool>(
         &mut self,
         opcodes: &[u32],
-        guest_start_pc: Option<u32>,
-        guest_pc_to_jit_addr_offset: Option<NoHashMap<u16>>,
-        guest_insts_cycle_counts: Option<Vec<u8>>,
-        guest_pc_end: Option<u32>,
+        args: Option<JitInsertArgs>,
     ) -> u32 {
-        #[cfg(target_os = "linux")]
-        let aligned_size = utils::align_up((opcodes.len() << 2) as u32, 4096);
-        #[cfg(target_os = "vita")]
-        let aligned_size = utils::align_up((opcodes.len() << 2) as u32, 16);
-        let new_addr = self.find_free_start(aligned_size);
-
-        utils::write_to_mem_slice(&mut self.memory, new_addr, opcodes);
-        self.flush_cache(new_addr, (opcodes.len() << 2) as u32);
-
-        match self
-            .blocks
-            .binary_search_by_key(&new_addr, |(addr, _)| *addr)
-        {
-            Ok(_) => unsafe { unreachable_unchecked() },
-            Err(index) => self.blocks.insert(index, (new_addr, aligned_size)),
-        };
-
-        let new_addr = new_addr + self.memory.as_ptr() as u32;
-        if let Some(guest_start_pc) = guest_start_pc {
-            let cycle_counts = Rc::new(guest_insts_cycle_counts.unwrap());
-            let end_pc = guest_pc_end.unwrap();
-
-            let addr_base = guest_start_pc & 0xFF000000;
-            match addr_base {
-                regions::MAIN_MEMORY_OFFSET => {
-                    self.main_memory_guest_pc_mapping.insert(
-                        guest_start_pc,
-                        GuestPcInfo::new(
-                            cycle_counts.clone(),
-                            guest_start_pc,
-                            end_pc,
-                            new_addr,
-                            new_addr,
-                        ),
-                    );
-                    for (guest_pc, offset) in guest_pc_to_jit_addr_offset.unwrap() {
-                        self.main_memory_guest_pc_mapping.insert(
-                            guest_pc,
-                            GuestPcInfo::new(
-                                cycle_counts.clone(),
-                                guest_start_pc,
-                                end_pc,
-                                new_addr,
-                                new_addr + offset as u32,
-                            ),
-                        );
-                    }
-                }
-                _ => {
-                    self.guest_pc_mapping.insert(
-                        guest_start_pc,
-                        GuestPcInfo::new(
-                            cycle_counts.clone(),
-                            guest_start_pc,
-                            end_pc,
-                            new_addr,
-                            new_addr,
-                        ),
-                    );
-                    for (guest_pc, offset) in guest_pc_to_jit_addr_offset.unwrap() {
-                        self.guest_pc_mapping.insert(
-                            guest_pc,
-                            GuestPcInfo::new(
-                                cycle_counts.clone(),
-                                guest_start_pc,
-                                end_pc,
-                                new_addr,
-                                new_addr + offset as u32,
-                            ),
-                        );
-                    }
+        if let Some(args) = &args {
+            let jit_blocks = &mut self.jit_blocks[CPU as usize + THUMB as usize];
+            if let Some((next_block_index, (next_block_guest_pc_start, next_block_info))) =
+                jit_blocks.get_next(&args.guest_start_pc)
+            {
+                if Self::get_guest_pc_end::<THUMB>(
+                    args.guest_start_pc,
+                    args.guest_pc_to_jit_addr_offset.len(),
+                ) >= *next_block_guest_pc_start
+                {
+                    self.mem_blocks.remove(&next_block_info.addr);
+                    jit_blocks.remove_at(next_block_index);
                 }
             }
         }
 
-        if DEBUG_LOG {
-            let allocated_space = self.blocks.iter().fold(0u32, |sum, (_, size)| sum + *size);
-            let per = (allocated_space * 100) as f32 / JIT_MEMORY_SIZE as f32;
+        let aligned_size = utils::align_up((opcodes.len() << 2) as u32, JIT_PAGE_SIZE);
+        let new_addr = self.find_free_start(aligned_size);
+        let mem_start_addr = self.mem.as_ptr() as u32;
+        let offset_addr = new_addr - mem_start_addr;
+
+        self.set_rw(offset_addr, aligned_size);
+        utils::write_to_mem_slice(&mut self.mem, offset_addr, opcodes);
+        self.flush_cache(offset_addr, aligned_size);
+        self.set_rx(offset_addr, aligned_size);
+
+        self.mem_blocks.insert(new_addr, aligned_size);
+
+        if let Some(args) = args {
+            let info = JitBlockInfo::new(
+                args.guest_insts_cycle_counts,
+                new_addr,
+                args.guest_pc_to_jit_addr_offset,
+            );
+            self.jit_blocks[CPU as usize + THUMB as usize].insert(args.guest_start_pc, info);
+
+            if DEBUG_LOG {
+                let allocated_space = self
+                    .mem_blocks
+                    .iter()
+                    .fold(0u32, |sum, (_, block_size)| sum + *block_size);
+                let per = (allocated_space * 100) as f32 / JIT_MEMORY_SIZE as f32;
+                debug_println!(
+                    "{:?} Insert new jit ({:x}) block with size {} at {:x}, {}% allocated with guest pc {:x}",
+                    CPU,
+                    mem_start_addr,
+                    aligned_size,
+                    new_addr,
+                    per,
+                    args.guest_start_pc
+                );
+            }
+        } else {
             debug_println!(
-                "{:?} Insert new jit block with size {}, {}% allocated with guest pc {:x}",
+                "{:?} Insert new jit ({:x}) block with size {} at {:x}",
                 CPU,
+                mem_start_addr,
                 aligned_size,
-                per,
-                guest_start_pc.unwrap_or(0)
-            )
+                new_addr,
+            );
         }
         new_addr
     }
 
-    pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> Option<&GuestPcInfo> {
-        let addr_base = guest_pc & 0xFF000000;
-        match addr_base {
-            regions::MAIN_MEMORY_OFFSET => self.main_memory_guest_pc_mapping.get(guest_pc),
-            _ => self.guest_pc_mapping.get(&guest_pc),
+    pub fn get_jit_start_addr<const CPU: CpuType, const THUMB: bool, const INCREMENT_USED: bool>(
+        &self,
+        guest_pc: u32,
+    ) -> Option<JitGetAddrRet> {
+        match self.jit_blocks[CPU as usize + THUMB as usize].get_prev(&guest_pc) {
+            Some((_, (guest_pc_start, info))) => {
+                if let Some(jit_addr) = info.get_jit_addr::<THUMB>(*guest_pc_start, guest_pc) {
+                    if INCREMENT_USED {
+                        *info.used.borrow_mut() += 1;
+                    }
+                    Some(JitGetAddrRet::new(
+                        jit_addr,
+                        *guest_pc_start,
+                        Self::get_guest_pc_end::<THUMB>(*guest_pc_start, info.addr_offsets.len()),
+                        &info.guest_insts_cycle_counts,
+                    ))
+                } else {
+                    None
+                }
+            }
+            None => None,
         }
     }
 
-    pub fn invalidate_block<const CPU: CpuType>(&mut self, guest_pc: u32) {
-        if let Some(info) = self.guest_pc_mapping.remove(&guest_pc) {
-            debug_println!(
-                "Removing {:x} jit block at {:x} with guest start pc {:x}",
-                guest_pc,
-                info.jit_pc_start_addr,
-                info.guest_pc_start
-            );
-
-            let index = self
-                .blocks
-                .binary_search_by_key(
-                    &(info.jit_pc_start_addr - self.memory.as_ptr() as u32),
-                    |(addr, _)| *addr,
-                )
-                .unwrap();
-            self.blocks.remove(index);
-
-            let thumb = info.guest_pc_start & 1 == 1;
-            let mut pc = info.guest_pc_start;
-            if thumb {
-                while pc < info.guest_pc_end + 2 {
-                    self.guest_pc_mapping.remove(&pc);
-                    pc += 2;
+    pub fn invalidate_block<const CPU: CpuType, const THUMB: bool>(
+        &mut self,
+        guest_pc_from: u32,
+        guest_pc_to: u32,
+    ) {
+        let jit_blocks = &mut self.jit_blocks[CPU as usize + THUMB as usize];
+        if let Some((last_index, _)) = jit_blocks.get_prev(&guest_pc_to) {
+            let mut index = last_index;
+            loop {
+                let (guest_pc_start, info) = &jit_blocks[index];
+                if *guest_pc_start < guest_pc_from {
+                    if info
+                        .get_jit_addr::<THUMB>(*guest_pc_start, guest_pc_from)
+                        .is_none()
+                    {
+                        index += 1;
+                    }
+                    break;
                 }
-            } else {
-                while pc < info.guest_pc_end + 4 {
-                    self.guest_pc_mapping.remove(&pc);
-                    pc += 4;
+                if index == 0 {
+                    break;
                 }
+                index -= 1;
+            }
+            for (_, block_info) in jit_blocks.drain(index..last_index + 1) {
+                self.mem_blocks.remove(&block_info.addr)
             }
         }
     }
 
     #[cfg(target_os = "linux")]
-    pub fn open(&mut self) {}
+    pub fn open(&self) {}
 
     #[cfg(target_os = "linux")]
-    pub fn close(&mut self) {}
+    pub fn close(&self) {}
 
     #[cfg(target_os = "linux")]
-    fn flush_cache(&self, _: JitBlockStartAddr, _: JitBlockSize) {}
+    fn flush_cache(&self, _: u32, _: JitBlockSize) {}
+
+    #[cfg(target_os = "linux")]
+    fn set_rw(&self, start_addr: u32, size: JitBlockSize) {
+        unsafe {
+            libc::mprotect(
+                (self.mem.as_ptr() as u32 + start_addr) as _,
+                size as _,
+                libc::PROT_READ | libc::PROT_WRITE,
+            )
+        };
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_rx(&self, start_addr: u32, size: JitBlockSize) {
+        unsafe {
+            libc::mprotect(
+                (self.mem.as_ptr() as u32 + start_addr) as _,
+                size as _,
+                libc::PROT_READ | libc::PROT_EXEC,
+            )
+        };
+    }
 
     #[cfg(target_os = "vita")]
-    pub fn open(&mut self) {
+    pub fn open(&self) {
         let ret = unsafe { vitasdk_sys::sceKernelOpenVMDomain() };
         if ret < vitasdk_sys::SCE_OK as _ {
             panic!("Can't open vm domain {}", ret);
@@ -275,7 +292,7 @@ impl JitMemory {
     }
 
     #[cfg(target_os = "vita")]
-    pub fn close(&mut self) {
+    pub fn close(&self) {
         let ret = unsafe { vitasdk_sys::sceKernelCloseVMDomain() };
         if ret < vitasdk_sys::SCE_OK as _ {
             panic!("Can't close vm domain {}", ret);
@@ -283,11 +300,11 @@ impl JitMemory {
     }
 
     #[cfg(target_os = "vita")]
-    fn flush_cache(&self, start_addr: JitBlockStartAddr, size: JitBlockSize) {
+    fn flush_cache(&self, start_addr: u32, size: JitBlockSize) {
         let ret = unsafe {
             vitasdk_sys::sceKernelSyncVMDomain(
-                self.memory.block_uid,
-                (self.memory.as_ptr() as u32 + start_addr) as _,
+                self.mem.block_uid,
+                (self.mem.as_ptr() as u32 + start_addr) as _,
                 size,
             )
         };
@@ -296,4 +313,10 @@ impl JitMemory {
             panic!("Can't sync vm domain {}", ret)
         }
     }
+
+    #[cfg(target_os = "vita")]
+    fn set_rw(&self, _: u32, _: JitBlockSize) {}
+
+    #[cfg(target_os = "vita")]
+    fn set_rx(&self, _r: u32, _: JitBlockSize) {}
 }

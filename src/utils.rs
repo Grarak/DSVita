@@ -1,10 +1,9 @@
-use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{BuildHasher, Hasher};
-use std::mem;
 use std::ops::{Deref, DerefMut};
+use std::{cmp, mem};
 
 pub const fn align_down(n: u32, align: u32) -> u32 {
     n & !(align - 1)
@@ -47,7 +46,7 @@ pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
 
 pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> usize {
     let aligned: &[T] = unsafe { mem::transmute(&mem[addr as usize..]) };
-    let read_amount = min(aligned.len(), slice.len());
+    let read_amount = cmp::min(aligned.len(), slice.len());
     slice[..read_amount].copy_from_slice(&aligned[..read_amount]);
     read_amount
 }
@@ -59,7 +58,7 @@ pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
 
 pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) -> usize {
     let aligned: &mut [T] = unsafe { mem::transmute(&mut mem[addr as usize..]) };
-    let write_amount = min(aligned.len(), slice.len());
+    let write_amount = cmp::min(aligned.len(), slice.len());
     aligned[..write_amount].copy_from_slice(&slice[..write_amount]);
     write_amount
 }
@@ -157,8 +156,16 @@ impl Hasher for NoHasher {
         self.state as u64
     }
 
-    fn write(&mut self, bytes: &[u8]) {
-        self.state = u32::from_le_bytes(bytes.try_into().unwrap());
+    fn write(&mut self, _: &[u8]) {
+        unreachable!()
+    }
+
+    fn write_u32(&mut self, i: u32) {
+        self.state = i;
+    }
+
+    fn write_i32(&mut self, i: i32) {
+        self.state = i as u32;
     }
 }
 
@@ -174,3 +181,22 @@ impl BuildHasher for BuildNoHasher {
 
 pub type NoHashMap<V> = HashMap<u32, V, BuildNoHasher>;
 pub type NoHashSet = HashSet<u32, BuildNoHasher>;
+
+pub struct MinMaxRange {
+    pub min: u32,
+    pub max: u32,
+}
+
+impl MinMaxRange {
+    pub fn new() -> Self {
+        MinMaxRange {
+            min: u32::MAX,
+            max: u32::MIN,
+        }
+    }
+
+    pub fn update(&mut self, min: u32, max: u32) {
+        self.min = cmp::min(self.min, min);
+        self.max = cmp::max(self.max, max);
+    }
+}

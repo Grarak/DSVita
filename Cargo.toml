@@ -17,6 +17,8 @@ paste = "1.0.14"
 static_assertions = "1.1.0"
 dspsv_macros = { path = "macros" }
 sdl2 = "0.36.0"
+
+[target.armv7-unknown-linux-gnueabihf.dependencies]
 libc = "0.2.153"
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]
