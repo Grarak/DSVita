@@ -86,7 +86,7 @@ mod swi {
     }
 
     pub fn halt<const CPU: CpuType>(_: &mut BiosContext<CPU>) {
-        panic!("{:?} swi halt shouldn't be used", CPU);
+        todo!("{:?} swi halt shouldn't be used", CPU);
     }
 
     pub fn huff_uncomp<const CPU: CpuType>(context: &mut BiosContext<CPU>) {

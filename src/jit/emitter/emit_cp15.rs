@@ -78,7 +78,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                         cp15_read_addr,
                     )
                 }
-                _ => panic!(),
+                _ => {
+                    unreachable!()
+                }
             };
 
             let op = inst_info.op;

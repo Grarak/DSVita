@@ -75,7 +75,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 Op::SubImm3T | Op::SubImm8T => AluImm::subs_al(op0, op1, *imm as u8),
                 _ => todo!("{:?}", inst_info),
             },
-            _ => panic!(),
+            _ => {
+                unreachable!()
+            }
         };
 
         self.jit_buf.emit_opcodes.push(opcode)

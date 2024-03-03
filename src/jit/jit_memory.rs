@@ -285,33 +285,23 @@ impl JitMemory {
 
     #[cfg(target_os = "vita")]
     pub fn open(&self) {
-        let ret = unsafe { vitasdk_sys::sceKernelOpenVMDomain() };
-        if ret < vitasdk_sys::SCE_OK as _ {
-            panic!("Can't open vm domain {}", ret);
-        }
+        unsafe { vitasdk_sys::sceKernelOpenVMDomain() };
     }
 
     #[cfg(target_os = "vita")]
     pub fn close(&self) {
-        let ret = unsafe { vitasdk_sys::sceKernelCloseVMDomain() };
-        if ret < vitasdk_sys::SCE_OK as _ {
-            panic!("Can't close vm domain {}", ret);
-        }
+        unsafe { vitasdk_sys::sceKernelCloseVMDomain() };
     }
 
     #[cfg(target_os = "vita")]
     fn flush_cache(&self, start_addr: u32, size: JitBlockSize) {
-        let ret = unsafe {
+        unsafe {
             vitasdk_sys::sceKernelSyncVMDomain(
                 self.mem.block_uid,
                 (self.mem.as_ptr() as u32 + start_addr) as _,
                 size,
             )
         };
-        #[cfg(debug_assertions)]
-        if ret < vitasdk_sys::SCE_OK as _ {
-            panic!("Can't sync vm domain {}", ret)
-        }
     }
 
     #[cfg(target_os = "vita")]

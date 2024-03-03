@@ -379,6 +379,14 @@ pub fn main() {
         })
         .unwrap();
 
+    let gpu_context_clone = gpu_context.clone();
+    let gpu_2d_thread = thread::Builder::new()
+        .name("gpu_2d".to_owned())
+        .spawn(move || loop {
+            gpu_context_clone.draw_scanline_thread();
+        })
+        .unwrap();
+
     let mut key_code_mapping = HashMap::<_, _, BuildNoHasher>::default();
     #[cfg(target_os = "linux")]
     {
@@ -484,7 +492,14 @@ pub fn main() {
             )
             .unwrap();
         sdl_canvas.present();
+
+        #[cfg(target_os = "linux")]
+        sdl_canvas
+            .window_mut()
+            .set_title(&format!("DSPSV - {} fps", gpu_context.get_fps()))
+            .unwrap();
     }
 
     cpu_thread.join().unwrap();
+    gpu_2d_thread.join().unwrap();
 }
