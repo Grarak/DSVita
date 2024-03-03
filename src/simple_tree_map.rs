@@ -61,9 +61,9 @@ impl<K: Ord, V> SimpleTreeMap<K, V> {
         self.0.remove(index)
     }
 
-    pub fn remove(&mut self, key: &K) {
+    pub fn remove(&mut self, key: &K) -> (K, V) {
         let index = self.get(key).unwrap().0;
-        self.remove_at(index);
+        self.remove_at(index)
     }
 
     pub fn drain(&mut self, range: impl RangeBounds<usize>) -> Drain<'_, (K, V)> {

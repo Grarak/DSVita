@@ -91,6 +91,7 @@ pub struct JitMemory {
     mem: Mmap,
     jit_blocks: [SimpleTreeMap<GuestPcStart, JitBlockInfo>; 4],
     mem_blocks: SimpleTreeMap<JitAddr, JitBlockSize>,
+    blocks_to_remove: Vec<u32>,
 }
 
 impl JitMemory {
@@ -104,10 +105,11 @@ impl JitMemory {
                 SimpleTreeMap::new(),
             ],
             mem_blocks: SimpleTreeMap::new(),
+            blocks_to_remove: Vec::new(),
         }
     }
 
-    fn find_free_start(&self, required_size: u32) -> u32 {
+    fn find_free_start(&mut self, required_size: u32) -> u32 {
         let mut previous_end = self.mem.as_ptr() as u32;
         for (start_addr, block_size) in &self.mem_blocks {
             if (start_addr - previous_end) >= required_size {
@@ -117,9 +119,32 @@ impl JitMemory {
         }
 
         if previous_end + required_size >= self.mem.as_ptr() as u32 + JIT_MEMORY_SIZE {
-            todo!("Reordering of blocks")
+            for i in 0..4 {
+                let mut min_used = u64::MAX;
+                for (addr, info) in &self.jit_blocks[i] {
+                    let used = *info.used.borrow();
+                    if used < min_used {
+                        self.blocks_to_remove.clear();
+                        self.blocks_to_remove.push(*addr);
+                        min_used = used;
+                    } else if used == min_used {
+                        self.blocks_to_remove.push(*addr);
+                    }
+                }
+
+                while let Some(addr) = self.blocks_to_remove.pop() {
+                    let (_, info) = self.jit_blocks[i].remove(&addr);
+                    self.mem_blocks.remove(&info.addr);
+                }
+
+                for (_, info) in &self.jit_blocks[i] {
+                    *info.used.borrow_mut() = 0;
+                }
+            }
+            self.find_free_start(required_size)
+        } else {
+            previous_end
         }
-        previous_end
     }
 
     fn get_guest_pc_end<const THUMB: bool>(
@@ -247,7 +272,7 @@ impl JitMemory {
                 index -= 1;
             }
             for (_, block_info) in jit_blocks.drain(index..last_index + 1) {
-                self.mem_blocks.remove(&block_info.addr)
+                self.mem_blocks.remove(&block_info.addr);
             }
         }
     }

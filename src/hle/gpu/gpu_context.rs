@@ -183,7 +183,6 @@ pub struct GpuContext {
     gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
     gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
     draw_state: Arc<AtomicU8>,
-    v_count: Arc<AtomicU8>,
     fps: Arc<AtomicU16>,
 }
 
@@ -202,7 +201,6 @@ impl GpuContext {
         swapchain: Arc<Swapchain>,
     ) -> GpuContext {
         let draw_state = Arc::new(AtomicU8::new(0));
-        let v_count = Arc::new(AtomicU8::new(0));
         let fps = Arc::new(AtomicU16::new(0));
 
         let inner = Rc::new(RefCell::new(GpuInner::new(
@@ -223,7 +221,6 @@ impl GpuContext {
                 cycle_manager.clone(),
                 inner.clone(),
                 draw_state.clone(),
-                v_count.clone(),
             )),
         );
         cycle_manager.schedule(
@@ -233,7 +230,6 @@ impl GpuContext {
                 cycle_manager.clone(),
                 inner.clone(),
                 draw_state.clone(),
-                v_count.clone(),
             )),
         );
 
@@ -242,7 +238,6 @@ impl GpuContext {
             gpu_2d_context_a,
             gpu_2d_context_b,
             draw_state,
-            v_count,
             fps,
         }
     }
@@ -288,7 +283,7 @@ impl GpuContext {
             .is_err()
         {}
         unsafe {
-            let v_count = self.v_count.load(Ordering::Acquire);
+            let v_count = (*self.inner.as_ptr()).v_count as u8;
             (*self.gpu_2d_context_a.as_ptr()).draw_scanline(v_count);
             if self
                 .draw_state
@@ -307,7 +302,6 @@ struct Scanline256Event {
     cycle_manager: Rc<CycleManager>,
     inner: Rc<RefCell<GpuInner>>,
     draw_state: Arc<AtomicU8>,
-    v_count: Arc<AtomicU8>,
 }
 
 impl Scanline256Event {
@@ -315,13 +309,11 @@ impl Scanline256Event {
         cycle_manager: Rc<CycleManager>,
         inner: Rc<RefCell<GpuInner>>,
         draw_state: Arc<AtomicU8>,
-        v_count: Arc<AtomicU8>,
     ) -> Self {
         Scanline256Event {
             cycle_manager,
             inner,
             draw_state,
-            v_count,
         }
     }
 }
@@ -371,7 +363,6 @@ struct Scanline355Event {
     cycle_manager: Rc<CycleManager>,
     inner: Rc<RefCell<GpuInner>>,
     draw_state: Arc<AtomicU8>,
-    v_count: Arc<AtomicU8>,
 }
 
 impl Scanline355Event {
@@ -379,13 +370,11 @@ impl Scanline355Event {
         cycle_manager: Rc<CycleManager>,
         inner: Rc<RefCell<GpuInner>>,
         draw_state: Arc<AtomicU8>,
-        v_count: Arc<AtomicU8>,
     ) -> Self {
         Scanline355Event {
             cycle_manager,
             inner,
             draw_state,
-            v_count,
         }
     }
 }
@@ -460,7 +449,6 @@ impl CycleEvent for Scanline355Event {
 
         if inner.v_count < 192 {
             self.draw_state.store(1, Ordering::Release);
-            self.v_count.store(inner.v_count as u8, Ordering::Release);
         }
 
         for i in 0..2 {

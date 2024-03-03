@@ -494,10 +494,14 @@ pub fn main() {
         sdl_canvas.present();
 
         #[cfg(target_os = "linux")]
-        sdl_canvas
-            .window_mut()
-            .set_title(&format!("DSPSV - {} fps", gpu_context.get_fps()))
-            .unwrap();
+        {
+            let fps = gpu_context.get_fps();
+            sdl_canvas
+                .window_mut()
+                .set_title(&format!("DSPSV - {fps} fps"))
+                .unwrap();
+            eprintln!("{fps}");
+        }
     }
 
     cpu_thread.join().unwrap();
