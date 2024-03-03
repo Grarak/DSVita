@@ -1,3 +1,4 @@
+use crate::hle::gpu::gpu_2d_context::Gpu2DEngine;
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
@@ -270,7 +271,7 @@ pub struct VramContext {
 
     bg_a: OverlapMapping<{ 512 * 1024 }, { 16 * 1024 }>,
     obj_a: OverlapMapping<{ 256 * 1024 }, { 16 * 1024 }>,
-    bg_ext_palette_a: [VramMap<{ 16 * 1024 }>; 64 / 16],
+    bg_ext_palette_a: [VramMap<{ 8 * 1024 }>; 4],
     obj_ext_palette_a: VramMap<{ 16 * 1024 }>,
 
     tex_rear_plane_img: [VramMap<{ 128 * 1024 }>; 4],
@@ -278,7 +279,7 @@ pub struct VramContext {
 
     bg_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }>,
     obj_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }>,
-    bg_ext_palette_b: VramMap<{ 32 * 1024 }>,
+    bg_ext_palette_b: [VramMap<{ 8 * 1024 }>; 4],
     obj_ext_palette_b: VramMap<{ 16 * 1024 }>,
 
     arm7: OverlapMapping<{ 128 * 2 * 1024 }, { 128 * 1024 }>,
@@ -295,7 +296,7 @@ impl VramContext {
 
             bg_a: OverlapMapping::new(),
             obj_a: OverlapMapping::new(),
-            bg_ext_palette_a: [VramMap::default(); 64 / 16],
+            bg_ext_palette_a: [VramMap::default(); 4],
             obj_ext_palette_a: VramMap::default(),
 
             tex_rear_plane_img: [VramMap::default(); 4],
@@ -303,7 +304,7 @@ impl VramContext {
 
             bg_b: OverlapMapping::new(),
             obj_b: OverlapMapping::new(),
-            bg_ext_palette_b: VramMap::default(),
+            bg_ext_palette_b: [VramMap::default(); 4],
             obj_ext_palette_b: VramMap::default(),
 
             arm7: OverlapMapping::new(),
@@ -341,7 +342,7 @@ impl VramContext {
         self.tex_palette.fill(VramMap::default());
         self.bg_b = OverlapMapping::new();
         self.obj_b = OverlapMapping::new();
-        self.bg_ext_palette_b = VramMap::default();
+        self.bg_ext_palette_b.fill(VramMap::default());
         self.obj_ext_palette_b = VramMap::default();
         self.arm7 = OverlapMapping::new();
         self.stat = 0;
@@ -585,7 +586,10 @@ impl VramContext {
                         todo!()
                     }
                     2 => {
-                        self.bg_ext_palette_b = VramMap::new(&self.banks.vram_h);
+                        let vram_map = VramMap::<BANK_H_SIZE>::new(&self.banks.vram_h);
+                        for i in 0..4 {
+                            self.bg_ext_palette_b[i] = vram_map.extract_section(i);
+                        }
                     }
                     _ => {}
                 }
@@ -654,5 +658,25 @@ impl VramContext {
             },
             CpuType::ARM7 => self.arm7.write(addr_offset, value),
         };
+    }
+
+    pub fn is_bg_ext_palette_mapped<const ENGINE: Gpu2DEngine>(&self, slot: usize) -> bool {
+        let vram_map = match ENGINE {
+            Gpu2DEngine::A => &self.bg_ext_palette_a[slot],
+            Gpu2DEngine::B => &self.bg_ext_palette_b[slot],
+        };
+        vram_map.ptr != ptr::null_mut()
+    }
+
+    pub fn read_bg_ext_palette<const ENGINE: Gpu2DEngine, T: utils::Convert>(
+        &self,
+        slot: usize,
+        addr: u32,
+    ) -> T {
+        let vram_map = match ENGINE {
+            Gpu2DEngine::A => &self.bg_ext_palette_a[slot],
+            Gpu2DEngine::B => &self.bg_ext_palette_b[slot],
+        };
+        utils::read_from_mem(vram_map, addr & (8 * 1024 - 1))
     }
 }

@@ -250,8 +250,14 @@ impl CycleEvent for Scanline256Event {
     fn trigger(&mut self, delay: u16) {
         let mut inner = self.inner.borrow_mut();
         if inner.v_count < 192 {
-            inner.gpu_2d_context_a.borrow().draw_scanline(inner.v_count as u8);
-            inner.gpu_2d_context_b.borrow().draw_scanline(inner.v_count as u8);
+            inner
+                .gpu_2d_context_a
+                .borrow_mut()
+                .draw_scanline(inner.v_count as u8);
+            inner
+                .gpu_2d_context_b
+                .borrow_mut()
+                .draw_scanline(inner.v_count as u8);
 
             inner
                 .dma_arm9
@@ -331,14 +337,14 @@ impl CycleEvent for Scanline355Event {
                 }
                 inner.frame_rate_counter.on_frame_ready();
                 inner.swapchain.push(
-                    &inner.gpu_2d_context_a.borrow().framebuffer.borrow(),
-                    &inner.gpu_2d_context_b.borrow().framebuffer.borrow(),
+                    &inner.gpu_2d_context_a.borrow().framebuffer,
+                    &inner.gpu_2d_context_b.borrow().framebuffer,
                 )
             }
             263 => {
                 inner.v_count = 0;
-                inner.gpu_2d_context_a.borrow().reload_registers();
-                inner.gpu_2d_context_b.borrow().reload_registers();
+                inner.gpu_2d_context_a.borrow_mut().reload_registers();
+                inner.gpu_2d_context_b.borrow_mut().reload_registers();
             }
             _ => {}
         }
