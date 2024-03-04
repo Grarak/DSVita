@@ -167,13 +167,17 @@ impl GpuInner {
 }
 
 struct DrawingThread {
-    drawing_state: [AtomicU8; 2],
+    state: AtomicU8,
+    running: Mutex<bool>,
+    condvar: Condvar,
 }
 
 impl DrawingThread {
     fn new() -> Self {
         DrawingThread {
-            drawing_state: [AtomicU8::new(0), AtomicU8::new(0)],
+            state: AtomicU8::new(0),
+            running: Mutex::new(false),
+            condvar: Condvar::new(),
         }
     }
 }
@@ -182,7 +186,7 @@ pub struct GpuContext {
     inner: Rc<RefCell<GpuInner>>,
     gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
     gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
-    draw_state: Arc<AtomicU8>,
+    drawing_thread: Arc<DrawingThread>,
     fps: Arc<AtomicU16>,
 }
 
@@ -200,7 +204,7 @@ impl GpuContext {
         cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
         swapchain: Arc<Swapchain>,
     ) -> GpuContext {
-        let draw_state = Arc::new(AtomicU8::new(0));
+        let drawing_thread = Arc::new(DrawingThread::new());
         let fps = Arc::new(AtomicU16::new(0));
 
         let inner = Rc::new(RefCell::new(GpuInner::new(
@@ -220,7 +224,7 @@ impl GpuContext {
             Box::new(Scanline256Event::new(
                 cycle_manager.clone(),
                 inner.clone(),
-                draw_state.clone(),
+                drawing_thread.clone(),
             )),
         );
         cycle_manager.schedule(
@@ -229,7 +233,7 @@ impl GpuContext {
             Box::new(Scanline355Event::new(
                 cycle_manager.clone(),
                 inner.clone(),
-                draw_state.clone(),
+                drawing_thread.clone(),
             )),
         );
 
@@ -237,7 +241,7 @@ impl GpuContext {
             inner,
             gpu_2d_context_a,
             gpu_2d_context_b,
-            draw_state,
+            drawing_thread,
             fps,
         }
     }
@@ -277,23 +281,33 @@ impl GpuContext {
     }
 
     pub fn draw_scanline_thread(&self) {
-        while self
-            .draw_state
+        let drawing_thread = &self.drawing_thread;
+        if drawing_thread
+            .state
             .compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {}
-        unsafe {
-            let v_count = (*self.inner.as_ptr()).v_count as u8;
-            (*self.gpu_2d_context_a.as_ptr()).draw_scanline(v_count);
-            if self
-                .draw_state
-                .compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                (*self.gpu_2d_context_b.as_ptr()).draw_scanline(v_count);
+            .is_ok()
+        {
+            unsafe {
+                let v_count = (*self.inner.as_ptr()).v_count as u8;
+                (*self.gpu_2d_context_a.as_ptr()).draw_scanline(v_count);
+                if drawing_thread
+                    .state
+                    .compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    (*self.gpu_2d_context_b.as_ptr()).draw_scanline(v_count);
+                }
+                drawing_thread.state.store(0, Ordering::Release);
+                if v_count == 191 {
+                    let mut running = drawing_thread.running.lock().unwrap();
+                    *running = false;
+                    let _guard = drawing_thread
+                        .condvar
+                        .wait_while(running, |running| !*running)
+                        .unwrap();
+                }
             }
         }
-        self.draw_state.store(0, Ordering::Release);
     }
 }
 
@@ -301,19 +315,19 @@ impl GpuContext {
 struct Scanline256Event {
     cycle_manager: Rc<CycleManager>,
     inner: Rc<RefCell<GpuInner>>,
-    draw_state: Arc<AtomicU8>,
+    drawing_thread: Arc<DrawingThread>,
 }
 
 impl Scanline256Event {
     fn new(
         cycle_manager: Rc<CycleManager>,
         inner: Rc<RefCell<GpuInner>>,
-        draw_state: Arc<AtomicU8>,
+        drawing_thread: Arc<DrawingThread>,
     ) -> Self {
         Scanline256Event {
             cycle_manager,
             inner,
-            draw_state,
+            drawing_thread,
         }
     }
 }
@@ -325,7 +339,8 @@ impl CycleEvent for Scanline256Event {
         let mut inner = self.inner.borrow_mut();
         if inner.v_count < 192 {
             if self
-                .draw_state
+                .drawing_thread
+                .state
                 .compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
@@ -334,7 +349,7 @@ impl CycleEvent for Scanline256Event {
                     .borrow_mut()
                     .draw_scanline(inner.v_count as u8);
             }
-            while self.draw_state.load(Ordering::Acquire) != 0 {}
+            while self.drawing_thread.state.load(Ordering::Acquire) != 0 {}
 
             inner
                 .dma_arm9
@@ -362,19 +377,19 @@ impl CycleEvent for Scanline256Event {
 struct Scanline355Event {
     cycle_manager: Rc<CycleManager>,
     inner: Rc<RefCell<GpuInner>>,
-    draw_state: Arc<AtomicU8>,
+    drawing_thread: Arc<DrawingThread>,
 }
 
 impl Scanline355Event {
     fn new(
         cycle_manager: Rc<CycleManager>,
         inner: Rc<RefCell<GpuInner>>,
-        draw_state: Arc<AtomicU8>,
+        drawing_thread: Arc<DrawingThread>,
     ) -> Self {
         Scanline355Event {
             cycle_manager,
             inner,
-            draw_state,
+            drawing_thread,
         }
     }
 }
@@ -448,7 +463,14 @@ impl CycleEvent for Scanline355Event {
         }
 
         if inner.v_count < 192 {
-            self.draw_state.store(1, Ordering::Release);
+            self.drawing_thread.state.store(1, Ordering::Release);
+            if inner.v_count == 0 {
+                {
+                    let mut running = self.drawing_thread.running.lock().unwrap();
+                    *running = true;
+                    self.drawing_thread.condvar.notify_one();
+                }
+            }
         }
 
         for i in 0..2 {

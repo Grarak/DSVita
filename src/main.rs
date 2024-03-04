@@ -96,7 +96,45 @@ fn get_file_path() -> String {
 
 #[cfg(target_os = "vita")]
 fn get_file_path() -> String {
-    "ux0:hello_world.nds".to_owned()
+    "ux0:ace_attorney.nds".to_owned()
+}
+
+enum ThreadPriority {
+    Low,
+    Default,
+    High,
+}
+
+enum ThreadAffinity {
+    Core0,
+    Core1,
+    Core2,
+}
+
+#[cfg(target_os = "linux")]
+fn set_thread_prio_affinity(_: ThreadPriority, _: ThreadAffinity) {}
+
+#[cfg(target_os = "vita")]
+fn set_thread_prio_affinity(thread_priority: ThreadPriority, thread_affinity: ThreadAffinity) {
+    unsafe {
+        let id = vitasdk_sys::sceKernelGetThreadId();
+        vitasdk_sys::sceKernelChangeThreadPriority(
+            id,
+            match thread_priority {
+                ThreadPriority::Low => vitasdk_sys::SCE_KERNEL_PROCESS_PRIORITY_USER_LOW,
+                ThreadPriority::Default => vitasdk_sys::SCE_KERNEL_PROCESS_PRIORITY_USER_DEFAULT,
+                ThreadPriority::High => vitasdk_sys::SCE_KERNEL_PROCESS_PRIORITY_USER_HIGH,
+            } as _,
+        );
+        vitasdk_sys::sceKernelChangeThreadCpuAffinityMask(
+            id,
+            match thread_affinity {
+                ThreadAffinity::Core0 => vitasdk_sys::SCE_KERNEL_CPU_MASK_USER_0,
+                ThreadAffinity::Core1 => vitasdk_sys::SCE_KERNEL_CPU_MASK_USER_1,
+                ThreadAffinity::Core2 => vitasdk_sys::SCE_KERNEL_CPU_MASK_USER_2,
+            } as _,
+        );
+    }
 }
 
 fn initialize_arm9_thread(entry_addr: u32, thread: &ThreadContext<{ CpuType::ARM9 }>) {
@@ -353,6 +391,7 @@ pub fn main() {
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
         .spawn(move || {
+            set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
             arm9_thread.jit.jit_memory.borrow_mut().open();
             let cycle_manager = arm9_thread.cycle_manager.clone();
             loop {
@@ -382,8 +421,11 @@ pub fn main() {
     let gpu_context_clone = gpu_context.clone();
     let gpu_2d_thread = thread::Builder::new()
         .name("gpu_2d".to_owned())
-        .spawn(move || loop {
-            gpu_context_clone.draw_scanline_thread();
+        .spawn(move || {
+            set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core1);
+            loop {
+                gpu_context_clone.draw_scanline_thread();
+            }
         })
         .unwrap();
 
@@ -413,6 +455,8 @@ pub fn main() {
 
     let mut sdl_event_pump = sdl.event_pump().unwrap();
     let mut key_map = 0xFFFF;
+
+    set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core0);
 
     'render: loop {
         for event in sdl_event_pump.poll_iter() {
