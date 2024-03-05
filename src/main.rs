@@ -9,6 +9,8 @@
 #![feature(stmt_expr_attributes)]
 #![feature(thread_id_value)]
 
+extern crate core;
+
 use crate::cartridge::Cartridge;
 use crate::hle::cp15_context::Cp15Context;
 use crate::hle::cpu_regs::{CpuRegs, CpuRegsContainer};
@@ -242,10 +244,12 @@ pub fn main() {
     let gpu_2d_context_a = Rc::new(RefCell::new(Gpu2DContext::new(
         vram_context.clone(),
         palettes_context.clone(),
+        oam_context.clone(),
     )));
     let gpu_2d_context_b = Rc::new(RefCell::new(Gpu2DContext::new(
         vram_context.clone(),
         palettes_context.clone(),
+        oam_context.clone(),
     )));
     let gpu3d_context = Rc::new(RefCell::new(Gpu3DContext::new()));
     let dma_arm9 = Rc::new(RefCell::new(Dma::new(cycle_manager.clone())));
@@ -309,10 +313,10 @@ pub fn main() {
         dma_arm7,
         rtc_context,
         spu_context,
-        palettes_context,
+        palettes_context.clone(),
         cp15_context,
-        tcm_context,
-        oam_context,
+        tcm_context.clone(),
+        oam_context.clone(),
         cpu_regs_arm7,
         cartridge_context.clone(),
     );
@@ -539,12 +543,10 @@ pub fn main() {
 
         #[cfg(target_os = "linux")]
         {
-            let fps = gpu_context.get_fps();
             sdl_canvas
                 .window_mut()
-                .set_title(&format!("DSPSV - {fps} fps"))
+                .set_title(&format!("DSPSV - {} fps", gpu_context.get_fps()))
                 .unwrap();
-            eprintln!("{fps}");
         }
     }
 

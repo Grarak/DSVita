@@ -81,7 +81,7 @@ pub struct CartridgeContext {
     pub cartridge: Cartridge,
     cmd_mode: CmdMode,
     inner: [Rc<RefCell<CartridgeInner>>; 2],
-    read_addr: u32,
+    read_buf: Vec<u8>,
 }
 
 impl CartridgeContext {
@@ -101,7 +101,7 @@ impl CartridgeContext {
                 Rc::new(RefCell::new(CartridgeInner::new())),
             ],
             cmd_mode: CmdMode::None,
-            read_addr: 0,
+            read_buf: Vec::new(),
         }
     }
 
@@ -143,9 +143,9 @@ impl CartridgeContext {
 
         match self.cmd_mode {
             CmdMode::Header => {
-                let offset = (inner.read_count as u32 - 4) & 0xFFF;
+                let offset = ((inner.read_count as u32 - 4) & 0xFFF) as usize;
                 let mut buf = [0u8; 4];
-                self.cartridge.read_slice(self.read_addr + offset, &mut buf);
+                buf.copy_from_slice(&self.read_buf[offset..offset + 4]);
                 u32::from_le_bytes(buf)
             }
             CmdMode::Chip => 0x00001FC2,
@@ -153,11 +153,10 @@ impl CartridgeContext {
                 todo!()
             }
             CmdMode::Data => {
-                let offset = inner.read_count as u32 - 4;
-                let addr = self.read_addr + offset;
-                if addr + 4 < self.cartridge.file_size {
+                let offset = (inner.read_count as u32 - 4) as usize;
+                if offset + 3 < self.read_buf.len() {
                     let mut buf = [0u8; 4];
-                    self.cartridge.read_slice(addr, &mut buf);
+                    buf.copy_from_slice(&self.read_buf[offset..offset + 4]);
                     u32::from_le_bytes(buf)
                 } else {
                     0xFFFFFFFF
@@ -235,10 +234,12 @@ impl CartridgeContext {
             inner.encrypted = false;
         } else if (cmd >> 56) == 0xB7 {
             self.cmd_mode = CmdMode::Data;
-            self.read_addr = (((cmd >> 24) & 0xFFFFFFFF) as u32) % self.cartridge.file_size;
-            if self.read_addr < 0x8000 {
-                self.read_addr = 0x8000 + (self.read_addr & 0x1FF);
+            let mut read_addr = (((cmd >> 24) & 0xFFFFFFFF) as u32) % self.cartridge.file_size;
+            if read_addr < 0x8000 {
+                read_addr = 0x8000 + (read_addr & 0x1FF);
             }
+            self.read_buf.resize(inner.block_size as usize, 0);
+            self.cartridge.read_slice(read_addr, &mut self.read_buf);
         } else if cmd != 0x9F00000000000000 {
             debug_println!("Unknown rom transfer command {:x}", cmd);
         }

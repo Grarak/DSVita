@@ -90,6 +90,8 @@ impl FrameRateCounter {
         let now = Instant::now();
         if (now - self.last_update).as_secs_f32() >= 1f32 {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
+            #[cfg(target_os = "linux")]
+            eprintln!("{}", self.frame_counter);
             self.frame_counter = 0;
             self.last_update = now;
         }
@@ -191,6 +193,7 @@ pub struct GpuContext {
 }
 
 unsafe impl Send for GpuContext {}
+
 unsafe impl Sync for GpuContext {}
 
 impl GpuContext {
@@ -281,7 +284,11 @@ impl GpuContext {
     }
 
     pub fn draw_scanline_thread(&self) {
-        let drawing_thread = &self.drawing_thread;
+        let drawing_thread = unsafe {
+            (self.drawing_thread.as_ref() as *const DrawingThread)
+                .as_ref()
+                .unwrap_unchecked()
+        };
         if drawing_thread
             .state
             .compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire)

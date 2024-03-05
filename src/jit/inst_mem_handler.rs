@@ -6,12 +6,11 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
 use std::cell::RefCell;
-use std::ops::DerefMut;
 use std::rc::Rc;
 
 pub struct InstMemHandler<const CPU: CpuType> {
-    thread_regs: Rc<RefCell<ThreadRegs<CPU>>>,
-    mem_handler: Rc<MemHandler<CPU>>,
+    thread_regs: *mut ThreadRegs<CPU>,
+    mem_handler: *const MemHandler<CPU>,
 }
 
 impl<const CPU: CpuType> InstMemHandler<CPU> {
@@ -20,8 +19,8 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         mem_handler: Rc<MemHandler<CPU>>,
     ) -> Self {
         InstMemHandler {
-            thread_regs,
-            mem_handler,
+            thread_regs: thread_regs.as_ptr(),
+            mem_handler: mem_handler.as_ref(),
         }
     }
 
@@ -30,55 +29,56 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
         op0: &mut u32,
         addr: u32,
     ) {
+        let mem_handler = unsafe { self.mem_handler.as_ref().unwrap_unchecked() };
         if WRITE {
             match AMOUNT {
                 MemoryAmount::Byte => {
-                    self.mem_handler.write(addr, *op0 as u8);
+                    mem_handler.write(addr, *op0 as u8);
                 }
                 MemoryAmount::Half => {
-                    self.mem_handler.write(addr, *op0 as u16);
+                    mem_handler.write(addr, *op0 as u16);
                 }
                 MemoryAmount::Word => {
-                    self.mem_handler.write(addr, *op0);
+                    mem_handler.write(addr, *op0);
                 }
                 MemoryAmount::Double => {
-                    self.mem_handler.write(addr, *op0);
+                    mem_handler.write(addr, *op0);
                     let next_reg =
                         unsafe { (op0 as *mut u32).offset(1).as_ref().unwrap_unchecked() };
-                    self.mem_handler.write(addr + 4, *next_reg);
+                    mem_handler.write(addr + 4, *next_reg);
                 }
             }
         } else {
             match AMOUNT {
                 MemoryAmount::Byte => {
                     if SIGNED {
-                        *op0 = self.mem_handler.read::<u8>(addr) as i8 as i32 as u32;
+                        *op0 = mem_handler.read::<u8>(addr) as i8 as i32 as u32;
                     } else {
-                        *op0 = self.mem_handler.read::<u8>(addr) as u32;
+                        *op0 = mem_handler.read::<u8>(addr) as u32;
                     }
                 }
                 MemoryAmount::Half => {
                     if SIGNED {
-                        *op0 = self.mem_handler.read::<u16>(addr) as i16 as i32 as u32;
+                        *op0 = mem_handler.read::<u16>(addr) as i16 as i32 as u32;
                     } else {
-                        *op0 = self.mem_handler.read::<u16>(addr) as u32;
+                        *op0 = mem_handler.read::<u16>(addr) as u32;
                     }
                 }
                 MemoryAmount::Word => {
                     if (addr & 0x3) == 0 {
-                        *op0 = self.mem_handler.read(addr);
+                        *op0 = mem_handler.read(addr);
                     } else {
-                        let value = self.mem_handler.read::<u32>(addr);
+                        let value = mem_handler.read::<u32>(addr);
                         let shift = (addr & 0x3) << 3;
                         let value = (value << (32 - shift)) | (value >> shift);
                         *op0 = value;
                     }
                 }
                 MemoryAmount::Double => {
-                    *op0 = self.mem_handler.read(addr);
+                    *op0 = mem_handler.read(addr);
                     let next_reg =
                         unsafe { (op0 as *mut u32).offset(1).as_mut().unwrap_unchecked() };
-                    *next_reg = self.mem_handler.read(addr + 4);
+                    *next_reg = mem_handler.read(addr + 4);
                 }
             }
         }
@@ -104,11 +104,11 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
             WRITE
         );
 
+        let mem_handler = unsafe { self.mem_handler.as_ref().unwrap_unchecked() };
+        let thread_regs = unsafe { self.thread_regs.as_mut().unwrap_unchecked() };
+
         let rlist = RegReserve::from(rlist as u32);
         let op0 = Reg::from(op0);
-
-        let mut thread_regs = self.thread_regs.borrow_mut();
-        let thread_regs = thread_regs.deref_mut();
 
         if rlist.len() == 0 {
             if WRITE {
@@ -158,9 +158,9 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
                 }
                 if WRITE {
                     let value = get_reg_fun(thread_regs, reg);
-                    self.mem_handler.write(addr, *value);
+                    mem_handler.write(addr, *value);
                 } else {
-                    let value = self.mem_handler.read(addr);
+                    let value = mem_handler.read(addr);
                     *get_reg_fun(thread_regs, reg) = value;
                 }
                 if !PRE {
@@ -184,21 +184,23 @@ impl<const CPU: CpuType> InstMemHandler<CPU> {
     }
 
     fn handle_swp_request<const AMOUNT: MemoryAmount>(&self, regs: u32) {
+        let mem_handler = unsafe { self.mem_handler.as_ref().unwrap_unchecked() };
+        let thread_regs = unsafe { self.thread_regs.as_mut().unwrap_unchecked() };
+
         let op0 = Reg::from((regs & 0xFF) as u8);
         let op1 = Reg::from(((regs >> 8) & 0xFF) as u8);
         let op2 = Reg::from(((regs >> 16) & 0xFF) as u8);
 
-        let mut thread_regs = self.thread_regs.borrow_mut();
         let value = *thread_regs.get_reg_value(op1);
         let addr = *thread_regs.get_reg_value(op2);
         let op0 = thread_regs.get_reg_value_mut(op0);
 
         if AMOUNT == MemoryAmount::Byte {
-            *op0 = self.mem_handler.read::<u8>(addr) as u32;
-            self.mem_handler.write(addr, (value & 0xFF) as u8);
+            *op0 = mem_handler.read::<u8>(addr) as u32;
+            mem_handler.write(addr, (value & 0xFF) as u8);
         } else {
-            *op0 = self.mem_handler.read(addr);
-            self.mem_handler.write(addr, value);
+            *op0 = mem_handler.read(addr);
+            mem_handler.write(addr, value);
         }
     }
 }
@@ -218,7 +220,7 @@ pub unsafe extern "C" fn inst_mem_handler<
         .inst_mem_handler
         .handle_request::<WRITE, AMOUNT, SIGNED>(op0.as_mut().unwrap_unchecked(), addr);
     // ARM7 can halt the CPU with an IO port write
-    if CPU == CpuType::ARM7 && WRITE && (*asm).cpu_regs.is_halted() {
+    if CPU == CpuType::ARM7 && WRITE && (*asm).cpu_regs.as_ref().is_halted() {
         todo!()
     }
 }
@@ -241,7 +243,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
         .inst_mem_handler
         .handle_multiple_request::<THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(pc, rlist, op0);
     // ARM7 can halt the CPU with an IO port write
-    if CPU == CpuType::ARM7 && WRITE && (*asm).cpu_regs.is_halted() {
+    if CPU == CpuType::ARM7 && WRITE && (*asm).cpu_regs.as_ref().is_halted() {
         todo!()
     }
 }
@@ -253,7 +255,7 @@ pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: 
 ) {
     (*asm).inst_mem_handler.handle_swp_request::<AMOUNT>(regs);
     // ARM7 can halt the CPU with an IO port write
-    if CPU == CpuType::ARM7 && (*asm).cpu_regs.is_halted() {
+    if CPU == CpuType::ARM7 && (*asm).cpu_regs.as_ref().is_halted() {
         todo!()
     }
 }

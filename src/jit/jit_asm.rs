@@ -268,15 +268,14 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     Cond::AL,
                 ));
 
-                instance.breakin_addr = jit_memory.insert_block::<CPU, false>(jit_opcodes, None);
+                instance.breakin_addr = jit_memory.insert_block::<false>(jit_opcodes, None);
 
                 let restore_regs_thumb_opcodes =
                     &instance.thread_regs.borrow().restore_regs_thumb_opcodes;
                 jit_opcodes
                     [guest_restore_index..guest_restore_index + restore_regs_thumb_opcodes.len()]
                     .copy_from_slice(restore_regs_thumb_opcodes);
-                instance.breakin_thumb_addr =
-                    jit_memory.insert_block::<CPU, false>(jit_opcodes, None);
+                instance.breakin_thumb_addr = jit_memory.insert_block::<false>(jit_opcodes, None);
 
                 jit_opcodes.clear();
             }
@@ -296,7 +295,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     LdrStrImm::ldr_offset_al(Reg::PC, Reg::R0, 4), // Restore host LR and write to PC
                 ]);
 
-                instance.breakout_addr = jit_memory.insert_block::<CPU, false>(jit_opcodes, None);
+                instance.breakout_addr = jit_memory.insert_block::<false>(jit_opcodes, None);
                 instance.breakout_skip_save_regs_addr =
                     instance.breakout_addr + (jit_skip_save_regs_offset << 2);
 
@@ -304,8 +303,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     &instance.thread_regs.borrow().save_regs_thumb_opcodes;
                 jit_opcodes[..save_regs_thumb_opcodes.len()]
                     .copy_from_slice(save_regs_thumb_opcodes);
-                instance.breakout_thumb_addr =
-                    jit_memory.insert_block::<CPU, false>(jit_opcodes, None);
+                instance.breakout_thumb_addr = jit_memory.insert_block::<false>(jit_opcodes, None);
                 instance.breakout_skip_save_regs_thumb_addr =
                     instance.breakout_thumb_addr + (jit_skip_save_regs_offset << 2);
 
@@ -431,7 +429,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         // TODO statically analyze generated insts
 
         {
-            jit_memory.insert_block::<CPU, THUMB>(
+            jit_memory.insert_block::<THUMB>(
                 &self.jit_buf.block_opcodes,
                 Some(JitInsertArgs::new(
                     entry,
@@ -443,9 +441,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             if DEBUG_LOG {
                 for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
                     let pc = ((index as u32) << pc_step_size) + entry;
-                    let info = jit_memory
-                        .get_jit_start_addr::<CPU, THUMB, false>(pc)
-                        .unwrap();
+                    let info = jit_memory.get_jit_start_addr::<THUMB, false>(pc).unwrap();
 
                     debug_println!(
                         "{:?} Mapping {:#010x} to {:#010x} {:?}",
@@ -482,19 +478,19 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 let mut jit_state = self.mem_handler.jit_state.borrow_mut();
                 if jit_state.invalidated {
                     let range = &jit_state.invalidated_range;
-                    jit_memory.invalidate_block::<CPU, false>(range.min & !1, range.max & !1);
-                    jit_memory.invalidate_block::<CPU, true>(range.min | 1, range.max | 1);
+                    jit_memory.invalidate_block::<false>(range.min & !1, range.max & !1);
+                    jit_memory.invalidate_block::<true>(range.min | 1, range.max | 1);
                     jit_state.invalidated_range = MinMaxRange::new();
                     jit_state.invalidated = false;
                 }
             }
 
-            match jit_memory.get_jit_start_addr::<CPU, THUMB, true>(guest_pc) {
+            match jit_memory.get_jit_start_addr::<THUMB, true>(guest_pc) {
                 Some(info) => info,
                 None => {
                     self.emit_code_block::<THUMB>(guest_pc, jit_memory.deref_mut());
                     jit_memory
-                        .get_jit_start_addr::<CPU, THUMB, false>(guest_pc)
+                        .get_jit_start_addr::<THUMB, false>(guest_pc)
                         .unwrap()
                 }
             }

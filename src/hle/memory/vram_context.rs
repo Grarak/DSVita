@@ -258,9 +258,9 @@ impl VramBanks {
 
 pub const LCDC_OFFSET: u32 = 0x800000;
 pub const BG_A_OFFSET: u32 = 0x000000;
-const OBJ_A_OFFSET: u32 = 0x400000;
+pub const OBJ_A_OFFSET: u32 = 0x400000;
 pub const BG_B_OFFSET: u32 = 0x200000;
-const OBJ_B_OFFSET: u32 = 0x600000;
+pub const OBJ_B_OFFSET: u32 = 0x600000;
 
 pub struct VramContext {
     pub stat: u8,
@@ -272,7 +272,7 @@ pub struct VramContext {
     bg_a: OverlapMapping<{ 512 * 1024 }, { 16 * 1024 }>,
     obj_a: OverlapMapping<{ 256 * 1024 }, { 16 * 1024 }>,
     bg_ext_palette_a: [VramMap<{ 8 * 1024 }>; 4],
-    obj_ext_palette_a: VramMap<{ 16 * 1024 }>,
+    obj_ext_palette_a: VramMap<{ 8 * 1024 }>,
 
     tex_rear_plane_img: [VramMap<{ 128 * 1024 }>; 4],
     tex_palette: [VramMap<{ 16 * 1024 }>; 6],
@@ -280,7 +280,7 @@ pub struct VramContext {
     bg_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }>,
     obj_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }>,
     bg_ext_palette_b: [VramMap<{ 8 * 1024 }>; 4],
-    obj_ext_palette_b: VramMap<{ 16 * 1024 }>,
+    obj_ext_palette_b: VramMap<{ 8 * 1024 }>,
 
     arm7: OverlapMapping<{ 128 * 2 * 1024 }, { 128 * 1024 }>,
 }
@@ -362,13 +362,19 @@ impl VramContext {
                             .add::<BANK_A_SIZE>(VramMap::new(&self.banks.vram_a), 128 / 16 * ofs);
                     }
                     2 => {
-                        todo!()
+                        let ofs = u8::from(cnt_a.ofs()) as usize;
+                        self.obj_a.add::<BANK_A_SIZE>(
+                            VramMap::new(&self.banks.vram_a),
+                            128 / 16 * (ofs & 1),
+                        );
                     }
                     3 => {
                         let ofs = u8::from(cnt_a.ofs()) as usize;
                         self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_a);
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -400,7 +406,9 @@ impl VramContext {
                         let ofs = u8::from(cnt_b.ofs()) as usize;
                         self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_b);
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -434,7 +442,9 @@ impl VramContext {
                         self.bg_b
                             .add::<BANK_C_SIZE>(VramMap::new(&self.banks.vram_c), 0);
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -464,7 +474,13 @@ impl VramContext {
                     3 => {
                         todo!()
                     }
-                    _ => {}
+                    4 => {
+                        self.obj_b
+                            .add::<BANK_D_SIZE>(VramMap::new(&self.banks.vram_d), 0);
+                    }
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -490,7 +506,9 @@ impl VramContext {
                     3 => {
                         todo!()
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -510,14 +528,14 @@ impl VramContext {
                         let ofs = u8::from(cnt_f.ofs()) as usize;
                         self.bg_a.add::<BANK_F_SIZE>(
                             VramMap::new(&self.banks.vram_f),
-                            (ofs & 1) + (64 / 16 * (ofs & 0x2)),
+                            (ofs & 1) + 2 * (ofs & 2),
                         );
                     }
                     2 => {
                         let ofs = u8::from(cnt_f.ofs()) as usize;
                         self.obj_a.add::<BANK_F_SIZE>(
                             VramMap::new(&self.banks.vram_f),
-                            16 * (ofs & 1) + 32 * (ofs & 2),
+                            (ofs & 1) + 2 * (ofs & 2),
                         );
                     }
                     3 => {
@@ -529,7 +547,9 @@ impl VramContext {
                     5 => {
                         todo!()
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -549,7 +569,7 @@ impl VramContext {
                         let ofs = u8::from(cnt_g.ofs()) as usize;
                         self.bg_a.add::<BANK_G_SIZE>(
                             VramMap::new(&self.banks.vram_g),
-                            (ofs & 1) + (64 / 16 * (ofs & 0x2)),
+                            (ofs & 1) + 2 * (ofs & 2),
                         );
                     }
                     2 => {
@@ -566,7 +586,9 @@ impl VramContext {
                     5 => {
                         todo!()
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -591,7 +613,9 @@ impl VramContext {
                             self.bg_ext_palette_b[i] = vram_map.extract_section(i);
                         }
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -620,14 +644,18 @@ impl VramContext {
                         todo!()
                     }
                     3 => {
-                        self.obj_ext_palette_b = VramMap::new(&self.banks.vram_i);
+                        self.obj_ext_palette_b =
+                            VramMap::<BANK_I_SIZE>::new(&self.banks.vram_i).extract_section(0);
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
     }
 
+    #[inline]
     pub fn read<const CPU: CpuType, T: utils::Convert>(&self, addr: u32) -> T {
         let base_addr = addr & 0xF00000;
         let addr_offset = addr - base_addr;
@@ -644,6 +672,7 @@ impl VramContext {
         }
     }
 
+    #[inline]
     pub fn write<const CPU: CpuType, T: utils::Convert>(&mut self, addr: u32, value: T) {
         let base_addr = addr & 0xF00000;
         let addr_offset = addr - base_addr;
@@ -665,7 +694,15 @@ impl VramContext {
             Gpu2DEngine::A => &self.bg_ext_palette_a[slot],
             Gpu2DEngine::B => &self.bg_ext_palette_b[slot],
         };
-        vram_map.ptr != ptr::null_mut()
+        !vram_map.ptr.is_null()
+    }
+
+    pub fn is_obj_ext_palette_mapped<const ENGINE: Gpu2DEngine>(&self) -> bool {
+        let vram_map = match ENGINE {
+            Gpu2DEngine::A => &self.obj_ext_palette_a,
+            Gpu2DEngine::B => &self.obj_ext_palette_b,
+        };
+        !vram_map.ptr.is_null()
     }
 
     pub fn read_bg_ext_palette<const ENGINE: Gpu2DEngine, T: utils::Convert>(
@@ -677,6 +714,17 @@ impl VramContext {
             Gpu2DEngine::A => &self.bg_ext_palette_a[slot],
             Gpu2DEngine::B => &self.bg_ext_palette_b[slot],
         };
-        utils::read_from_mem(vram_map, addr & (8 * 1024 - 1))
+        utils::read_from_mem(vram_map, addr % vram_map.len() as u32)
+    }
+
+    pub fn read_obj_ext_palette<const ENGINE: Gpu2DEngine, T: utils::Convert>(
+        &self,
+        addr: u32,
+    ) -> T {
+        let vram_map = match ENGINE {
+            Gpu2DEngine::A => &self.obj_ext_palette_a,
+            Gpu2DEngine::B => &self.obj_ext_palette_b,
+        };
+        utils::read_from_mem(vram_map, addr % vram_map.len() as u32)
     }
 }

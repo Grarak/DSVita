@@ -40,8 +40,7 @@ pub fn negative<T: Convert>(n: T) -> T {
 }
 
 pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
-    let aligned: &[T] = unsafe { mem::transmute(&mem[addr as usize..]) };
-    aligned[0].clone()
+    unsafe { (mem.as_ptr().add(addr as _) as *const T).read() }
 }
 
 pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> usize {
@@ -52,8 +51,7 @@ pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> u
 }
 
 pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
-    let aligned: &mut [T] = unsafe { mem::transmute(&mut mem[addr as usize..]) };
-    aligned[0] = value
+    unsafe { (mem.as_ptr().add(addr as _) as *mut T).write(value) }
 }
 
 pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) -> usize {
@@ -94,6 +92,7 @@ impl Display for StrErr {
 impl Error for StrErr {}
 
 pub type HeapMemU8<const SIZE: usize> = HeapMem<u8, SIZE>;
+pub type HeapMemI8<const SIZE: usize> = HeapMem<i8, SIZE>;
 pub type HeapMemU32<const SIZE: usize> = HeapMem<u32, SIZE>;
 
 pub struct HeapMem<T: Sized, const SIZE: usize>(Box<[T; SIZE]>);

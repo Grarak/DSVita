@@ -18,13 +18,13 @@ use std::rc::Rc;
 pub struct MemHandler<const CPU: CpuType> {
     main_memory: *mut MainMemory,
     wram_context: *mut WramContext,
-    palettes_context: Rc<RefCell<PalettesContext>>,
+    palettes_context: *mut PalettesContext,
     cp15_context: *const Cp15Context,
     vram_context: *mut VramContext,
-    tcm_context: Rc<RefCell<TcmContext>>,
+    tcm_context: *mut TcmContext,
     pub io_ports: IoPorts<CPU>,
-    pub jit_state: Rc<RefCell<JitState>>,
-    oam: Rc<RefCell<OamContext>>,
+    pub jit_state: RefCell<JitState>,
+    oam: *mut OamContext,
 }
 
 unsafe impl<const CPU: CpuType> Send for MemHandler<CPU> {}
@@ -44,13 +44,13 @@ impl<const CPU: CpuType> MemHandler<CPU> {
         MemHandler {
             main_memory,
             wram_context: wram_context.as_ptr(),
-            palettes_context,
+            palettes_context: palettes_context.as_ptr(),
             cp15_context: cp15_context.as_ptr(),
             vram_context: io_ports.vram_context.as_ptr(),
-            tcm_context,
+            tcm_context: tcm_context.as_ptr(),
             io_ports,
-            jit_state: Rc::new(RefCell::new(JitState::new())),
-            oam,
+            jit_state: RefCell::new(JitState::new()),
+            oam: oam.as_ptr(),
         }
     }
 
@@ -70,17 +70,19 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                         && aligned_addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
                         && cp15_context.dtcm_state == TcmState::RW
                 } {
-                    self.tcm_context
-                        .borrow_mut()
-                        .read_dtcm(aligned_addr - unsafe { (*self.cp15_context).dtcm_addr })
+                    unsafe {
+                        (*self.tcm_context).read_dtcm(aligned_addr - (*self.cp15_context).dtcm_addr)
+                    }
                 } else {
                     unsafe { (*self.wram_context).read::<CPU, _>(addr_offset) }
                 }
             }
             regions::IO_PORTS_OFFSET => self.io_ports.read(addr_offset),
-            regions::STANDARD_PALETTES_OFFSET => self.palettes_context.borrow().read(addr_offset),
+            regions::STANDARD_PALETTES_OFFSET => unsafe {
+                (*self.palettes_context).read(addr_offset)
+            },
             regions::VRAM_OFFSET => unsafe { (*self.vram_context).read::<CPU, _>(addr_offset) },
-            regions::OAM_OFFSET => self.oam.borrow().read(addr_offset),
+            regions::OAM_OFFSET => unsafe { (*self.oam).read(addr_offset) },
             regions::GBA_ROM_OFFSET | regions::GBA_ROM_OFFSET2 | regions::GBA_RAM_OFFSET => {
                 T::from(0xFFFFFFFF)
             }
@@ -92,16 +94,16 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                         let cp15_context = unsafe { self.cp15_context.as_ref().unwrap_unchecked() };
                         if aligned_addr < cp15_context.itcm_size {
                             if cp15_context.itcm_state == TcmState::RW {
-                                ret = self.tcm_context.borrow_mut().read_itcm(aligned_addr);
+                                ret = unsafe { (*self.tcm_context).read_itcm(aligned_addr) };
                             }
                         } else if aligned_addr >= cp15_context.dtcm_addr
                             && aligned_addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
                         {
                             if cp15_context.dtcm_state == TcmState::RW {
-                                ret = self
-                                    .tcm_context
-                                    .borrow_mut()
-                                    .read_dtcm(aligned_addr - cp15_context.dtcm_addr)
+                                ret = unsafe {
+                                    (*self.tcm_context)
+                                        .read_dtcm(aligned_addr - cp15_context.dtcm_addr)
+                                }
                             }
                         } else if addr & regions::ARM9_BIOS_OFFSET == regions::ARM9_BIOS_OFFSET {
                             const HLE_BIOS: [u8; 8] = [0, 0, 0, 0xEC, 0, 0, 0, 0];
@@ -183,10 +185,10 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                         && aligned_addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
                         && cp15_context.dtcm_state != TcmState::Disabled
                 } {
-                    self.tcm_context.borrow_mut().write_dtcm(
-                        aligned_addr - unsafe { (*self.cp15_context).dtcm_addr },
-                        value,
-                    );
+                    unsafe {
+                        (*self.tcm_context)
+                            .write_dtcm(aligned_addr - (*self.cp15_context).dtcm_addr, value)
+                    };
                 } else {
                     unsafe { (*self.wram_context).write::<CPU, _>(addr_offset, value) };
                     if CPU == CpuType::ARM7 {
@@ -195,31 +197,30 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                 }
             }
             regions::IO_PORTS_OFFSET => self.io_ports.write(addr_offset, value),
-            regions::STANDARD_PALETTES_OFFSET => {
-                self.palettes_context.borrow_mut().write(addr_offset, value)
-            }
+            regions::STANDARD_PALETTES_OFFSET => unsafe {
+                (*self.palettes_context).write(addr_offset, value)
+            },
             regions::VRAM_OFFSET => unsafe {
                 (*self.vram_context).write::<CPU, _>(addr_offset, value)
             },
-            regions::OAM_OFFSET => self.oam.borrow_mut().write(addr_offset, value),
+            regions::OAM_OFFSET => unsafe { (*self.oam).write(addr_offset, value) },
             regions::GBA_ROM_OFFSET => {}
             _ => {
                 if CPU == CpuType::ARM9 {
                     let cp15_context = unsafe { self.cp15_context.as_ref().unwrap_unchecked() };
                     if aligned_addr < cp15_context.itcm_size {
                         if cp15_context.itcm_state != TcmState::Disabled {
-                            self.tcm_context
-                                .borrow_mut()
-                                .write_itcm(aligned_addr, value);
+                            unsafe { (*self.tcm_context).write_itcm(aligned_addr, value) };
                             invalidate_jit();
                         }
                     } else if aligned_addr >= cp15_context.dtcm_addr
                         && aligned_addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
                         && cp15_context.dtcm_state != TcmState::Disabled
                     {
-                        self.tcm_context
-                            .borrow_mut()
-                            .write_dtcm(aligned_addr - cp15_context.dtcm_addr, value);
+                        unsafe {
+                            (*self.tcm_context)
+                                .write_dtcm(aligned_addr - cp15_context.dtcm_addr, value)
+                        };
                     } else {
                         todo!("{:?} {:x}", CPU, aligned_addr);
                     }

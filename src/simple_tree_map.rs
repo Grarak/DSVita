@@ -38,10 +38,16 @@ impl<K: Ord, V> SimpleTreeMap<K, V> {
         ret.1.map(|kv| (ret.0, kv))
     }
 
-    pub fn insert(&mut self, key: K, value: V) {
+    pub fn insert(&mut self, key: K, value: V) -> usize {
         match self.0.binary_search_by(|(k, _)| k.cmp(&key)) {
-            Ok(index) => self.0[index].1 = value,
-            Err(index) => self.0.insert(index, (key, value)),
+            Ok(index) => {
+                self.0[index].1 = value;
+                index
+            }
+            Err(index) => {
+                self.0.insert(index, (key, value));
+                index
+            }
         }
     }
 

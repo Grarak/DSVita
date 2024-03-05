@@ -1,11 +1,15 @@
-use crate::hle::gpu::gpu_context::{DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
+use crate::hle::gpu::gpu_context::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
+use crate::hle::memory::oam_context::OamContext;
 use crate::hle::memory::palettes_context::PalettesContext;
 use crate::hle::memory::regions::VRAM_OFFSET;
 use crate::hle::memory::vram_context;
-use crate::hle::memory::vram_context::{VramContext, BG_A_OFFSET, BG_B_OFFSET};
+use crate::hle::memory::vram_context::{
+    VramContext, BG_A_OFFSET, BG_B_OFFSET, OBJ_A_OFFSET, OBJ_B_OFFSET,
+};
 use crate::hle::CpuType;
 use crate::logging::debug_println;
-use crate::utils::{HeapMemU32, HeapMemU8};
+use crate::utils;
+use crate::utils::{HeapMemI8, HeapMemU32};
 use bilge::prelude::*;
 use std::cell::RefCell;
 use std::hint::unreachable_unchecked;
@@ -44,6 +48,14 @@ struct DispCnt {
 impl Default for DispCnt {
     fn default() -> Self {
         DispCnt::from(0)
+    }
+}
+
+impl DispCnt {
+    fn is_any_window_enabled(&self) -> bool {
+        bool::from(self.window0_display_flag())
+            || bool::from(self.window1_display_flag())
+            || bool::from(self.obj_window_display_flag())
     }
 }
 
@@ -158,8 +170,8 @@ pub enum Gpu2DLayer {
 
 struct Gpu2DLayers {
     pixels: HeapMemU32<{ DISPLAY_WIDTH * 2 }>,
-    priorities: HeapMemU8<{ DISPLAY_WIDTH * 2 }>,
-    blend_bits: HeapMemU8<{ DISPLAY_WIDTH * 2 }>,
+    priorities: HeapMemI8<{ DISPLAY_WIDTH * 2 }>,
+    blend_bits: HeapMemI8<{ DISPLAY_WIDTH * 2 }>,
 }
 
 impl Gpu2DLayers {
@@ -167,8 +179,8 @@ impl Gpu2DLayers {
         let pixels = HeapMemU32::new();
         Gpu2DLayers {
             pixels,
-            priorities: HeapMemU8::new(),
-            blend_bits: HeapMemU8::new(),
+            priorities: HeapMemI8::new(),
+            blend_bits: HeapMemI8::new(),
         }
     }
 
@@ -184,25 +196,25 @@ impl Gpu2DLayers {
         }
     }
 
-    fn get_priorities_mut<const LAYER: Gpu2DLayer>(&mut self) -> &'static mut [u8; DISPLAY_WIDTH] {
+    fn get_priorities_mut<const LAYER: Gpu2DLayer>(&mut self) -> &'static mut [i8; DISPLAY_WIDTH] {
         let ptr = match LAYER {
             Gpu2DLayer::A => self.priorities[..DISPLAY_WIDTH].as_mut_ptr(),
             Gpu2DLayer::B => self.priorities[DISPLAY_WIDTH..].as_mut_ptr(),
         };
         unsafe {
-            (ptr as *mut [u8; DISPLAY_WIDTH])
+            (ptr as *mut [i8; DISPLAY_WIDTH])
                 .as_mut()
                 .unwrap_unchecked()
         }
     }
 
-    fn get_blend_bits_mut<const LAYER: Gpu2DLayer>(&mut self) -> &'static mut [u8; DISPLAY_WIDTH] {
+    fn get_blend_bits_mut<const LAYER: Gpu2DLayer>(&mut self) -> &'static mut [i8; DISPLAY_WIDTH] {
         let ptr = match LAYER {
             Gpu2DLayer::A => self.blend_bits[..DISPLAY_WIDTH].as_mut_ptr(),
             Gpu2DLayer::B => self.blend_bits[DISPLAY_WIDTH..].as_mut_ptr(),
         };
         unsafe {
-            (ptr as *mut [u8; DISPLAY_WIDTH])
+            (ptr as *mut [i8; DISPLAY_WIDTH])
                 .as_mut()
                 .unwrap_unchecked()
         }
@@ -215,6 +227,7 @@ pub struct Gpu2DContext<const ENGINE: Gpu2DEngine> {
     pub framebuffer: HeapMemU32<{ DISPLAY_PIXEL_COUNT }>,
     vram_context: *const VramContext,
     palettes_context: *const PalettesContext,
+    oam_context: *const OamContext,
 }
 
 impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
@@ -225,16 +238,47 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         }
     }
 
-    const fn get_palattes_offset() -> u32 {
+    const fn get_palettes_offset() -> u32 {
         match ENGINE {
             Gpu2DEngine::A => 0,
             Gpu2DEngine::B => 0x400,
         }
     }
 
+    const fn get_obj_offset() -> u32 {
+        match ENGINE {
+            Gpu2DEngine::A => OBJ_A_OFFSET,
+            Gpu2DEngine::B => OBJ_B_OFFSET,
+        }
+    }
+
+    const fn get_oam_offset() -> u32 {
+        match ENGINE {
+            Gpu2DEngine::A => 0,
+            Gpu2DEngine::B => 0x400,
+        }
+    }
+
+    fn read_bg<T: utils::Convert>(&self, addr: u32) -> T {
+        unsafe { (*self.vram_context).read::<{ CpuType::ARM9 }, _>(Self::get_bg_offset() + addr) }
+    }
+
+    fn read_obj<T: utils::Convert>(&self, addr: u32) -> T {
+        unsafe { (*self.vram_context).read::<{ CpuType::ARM9 }, _>(Self::get_obj_offset() + addr) }
+    }
+
+    fn read_palettes<T: utils::Convert>(&self, addr: u32) -> T {
+        unsafe { (*self.palettes_context).read(Self::get_palettes_offset() + addr) }
+    }
+
+    fn read_oam<T: utils::Convert>(&self, addr: u32) -> T {
+        unsafe { (*self.oam_context).read(Self::get_oam_offset() + addr) }
+    }
+
     pub fn new(
         vram_context: Rc<RefCell<VramContext>>,
         palattes_context: Rc<RefCell<PalettesContext>>,
+        oam_context: Rc<RefCell<OamContext>>,
     ) -> Self {
         Gpu2DContext {
             inner: Gpu2DInner::default(),
@@ -242,6 +286,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             framebuffer: HeapMemU32::new(),
             vram_context: vram_context.as_ptr(),
             palettes_context: palattes_context.as_ptr(),
+            oam_context: oam_context.as_ptr(),
         }
     }
 
@@ -351,13 +396,14 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
     pub fn set_master_bright(&mut self, mask: u16, value: u16) {}
 
     pub fn draw_scanline(&mut self, line: u8) {
-        let backdrop = unsafe { (*self.palettes_context).read::<u16>(Self::get_palattes_offset()) };
+        let backdrop = self.read_palettes::<u16>(0);
         let backdrop = backdrop & !(1 << 15);
         self.layers.pixels.fill(backdrop as u32);
         self.layers.priorities.fill(4);
         self.layers.blend_bits.fill(5);
 
         let disp_cnt = self.inner.disp_cnt;
+
         if bool::from(disp_cnt.screen_display_obj()) {
             if bool::from(disp_cnt.obj_window_display_flag()) {
                 self.draw_objects::<true>(line);
@@ -453,12 +499,12 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         for i in 0..DISPLAY_WIDTH {
             let value = pixels_a[i];
             if value & (1 << 26) != 0 {
-                todo!()
+                // TODO 3d
             } else {
                 pixels_a[i] = Self::rgb5_to_rgb6(value);
                 if pixels_a[i] & (1 << 25) != 0 {
                     if bld_cnt_raw & (1 << (8 + blend_bits_b[i])) != 0 {
-                        todo!()
+                        // TODO
                     } else if bld_mode < 2 || (bld_cnt_raw & (1 << blend_bits_a[i])) == 0 {
                         continue;
                     }
@@ -503,7 +549,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
 
     fn draw_text<const BG: usize>(&mut self, line: u8) {
         if BG == 0 && bool::from(self.inner.disp_cnt.bg0_3d()) {
-            // TODO 2d
+            // TODO 3d
             return;
         }
 
@@ -518,12 +564,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         let disp_cnt = self.inner.disp_cnt;
         let bg_cnt = self.inner.bg_cnt[BG];
 
-        let mut tile_base_addr = Self::get_bg_offset()
-            + (u32::from(disp_cnt.screen_base()) << 16)
+        let mut tile_base_addr = (u32::from(disp_cnt.screen_base()) << 16)
             + (u32::from(bg_cnt.screen_base_block()) << 11);
-        let index_base_addr = Self::get_bg_offset()
-            + (u32::from(disp_cnt.char_base()) << 16)
-            + (u32::from(bg_cnt.char_base_block()) << 14);
+        let index_base_addr =
+            (u32::from(disp_cnt.char_base()) << 16) + (u32::from(bg_cnt.char_base_block()) << 14);
 
         let y_offset = (if bool::from(bg_cnt.mosaic()) && self.inner.mosaic != 0 {
             todo!()
@@ -534,13 +578,17 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
 
         tile_base_addr += (y_offset as u32 & 0xF8) << 3;
         if y_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 1) != 0 {
-            // TODO
+            tile_base_addr += if u8::from(bg_cnt.screen_size()) != 0 {
+                0x1000
+            } else {
+                0x800
+            };
         }
 
         let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
         let palattes_context = unsafe { self.palettes_context.as_ref().unwrap_unchecked() };
 
-        let mut palettes_base_addr = Self::get_palattes_offset();
+        let mut palettes_base_addr = Self::get_palettes_offset();
         let read_palettes = if BIT8 && bool::from(disp_cnt.bg_extended_palettes()) {
             palettes_base_addr = 0;
             if BG < 2 && bool::from(bg_cnt.ext_palette_slot_display_area_overflow()) {
@@ -572,7 +620,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 todo!()
             }
 
-            let tile = vram_context.read::<{ CpuType::ARM9 }, u16>(tile_addr);
+            let tile = self.read_bg::<u16>(tile_addr);
             let tile = TextBgScreen::from(tile);
 
             let palette_addr = palettes_base_addr
@@ -603,10 +651,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                         } << 2)
                 };
             let mut indices = if BIT8 {
-                vram_context.read::<{ CpuType::ARM9 }, u32>(index_addr) as u64
-                    | ((vram_context.read::<{ CpuType::ARM9 }, u32>(index_addr + 4) as u64) << 32)
+                self.read_bg::<u32>(index_addr) as u64
+                    | ((self.read_bg::<u32>(index_addr + 4) as u64) << 32)
             } else {
-                vram_context.read::<{ CpuType::ARM9 }, u32>(index_addr) as u64
+                self.read_bg::<u32>(index_addr) as u64
             };
 
             let mut x = i.wrapping_sub(x_offset & 7);
@@ -709,7 +757,449 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         todo!()
     }
 
-    fn draw_objects<const WINDOW: bool>(&self, line: u8) {}
+    fn draw_objects<const WINDOW: bool>(&mut self, line: u8) {
+        let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
+        let palettes_context = unsafe { self.palettes_context.as_ref().unwrap_unchecked() };
+
+        let bound = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) {
+            32u32 << u8::from(self.inner.disp_cnt.tile_obj_1d_boundary())
+        } else {
+            32u32
+        };
+
+        let read_palette = if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
+            if !vram_context.is_obj_ext_palette_mapped::<ENGINE>() {
+                return;
+            }
+            |vram_context: &VramContext, _: &PalettesContext, addr: u32| {
+                vram_context.read_obj_ext_palette::<ENGINE, u16>(addr)
+            }
+        } else {
+            |_: &VramContext, palettes_context: &PalettesContext, addr: u32| {
+                palettes_context.read::<u16>(addr)
+            }
+        };
+
+        for i in 0..128 {
+            let byte = self.read_oam::<u8>(i * 8 + 1);
+            let type_ = (byte >> 2) & 0x3;
+
+            if (byte & 0x3) == 2 || (type_ == 2) != WINDOW {
+                continue;
+            }
+
+            let object = [
+                self.read_oam::<u16>(i * 8),
+                self.read_oam::<u16>(i * 8 + 2),
+                self.read_oam::<u16>(i * 8 + 4),
+            ];
+
+            let (width, height) = match ((object[0] >> 12) & 0xC) | ((object[1] >> 14) & 0x3) {
+                0x0 => (8u32, 8u32),
+                0x1 => (16, 16),
+                0x2 => (32, 32),
+                0x3 => (64, 64),
+                0x4 => (16, 8),
+                0x5 => (32, 8),
+                0x6 => (32, 16),
+                0x7 => (64, 32),
+                0x8 => (8, 16),
+                0x9 => (8, 32),
+                0xA => (16, 32),
+                0xB => (32, 64),
+                _ => {
+                    continue;
+                }
+            };
+
+            let (width2, height2) = if (object[0] & 0x300) == 0x300 {
+                (width << 1, height << 1)
+            } else {
+                (width, height)
+            };
+
+            let mut y = (object[0] & 0xFF) as i32;
+            if y >= DISPLAY_HEIGHT as i32 {
+                y -= DISPLAY_WIDTH as i32;
+            }
+
+            let sprite_y = if (object[0] & (1 << 12)) != 0 {
+                line as i32 - (line as u16 % (((self.inner.mosaic >> 12) & 0xF) + 1)) as i32
+            } else {
+                line as i32
+            } - y;
+            if sprite_y < 0 || sprite_y >= height2 as i32 {
+                continue;
+            }
+
+            let mut x = (object[1] & 0x1FF) as i32;
+            if x >= DISPLAY_WIDTH as i32 {
+                x -= DISPLAY_WIDTH as i32 * 2;
+            }
+
+            let priority = (((object[2] >> 10) & 0x3) - 1) as i8;
+
+            if type_ == 3 {
+                todo!();
+                let (data_base_addr, bitmap_width) =
+                    if bool::from(self.inner.disp_cnt.bitmap_obj_mapping()) {
+                        (
+                            (object[2] as u32 & 0x3FF)
+                                * if bool::from(self.inner.disp_cnt.bitmap_obj_1d_boundary()) {
+                                    256
+                                } else {
+                                    128
+                                },
+                            width,
+                        )
+                    } else {
+                        let mask = if bool::from(self.inner.disp_cnt.bitmap_obj_2d()) {
+                            0x1F
+                        } else {
+                            0xF
+                        };
+                        (
+                            (object[2] as u32 & mask) * 0x10
+                                + (object[2] as u32 & 0x3FF & !mask) * 0x80,
+                            if bool::from(self.inner.disp_cnt.bitmap_obj_2d()) {
+                                256
+                            } else {
+                                128
+                            },
+                        )
+                    };
+                let data_base_addr = Self::get_obj_offset() + data_base_addr;
+
+                if object[0] & (1 << 8) != 0 {
+                    let params_base_addr = ((object[1] >> 9) & 0x1F) as u32 * 0x20;
+                    let params = [
+                        self.read_oam::<u16>(params_base_addr + 0x6) as i16,
+                        self.read_oam::<u16>(params_base_addr + 0xE) as i16,
+                        self.read_oam::<u16>(params_base_addr + 0x16) as i16,
+                        self.read_oam::<u16>(params_base_addr + 0x1E) as i16,
+                    ];
+
+                    for j in 0..width2 {
+                        let offset = x + j as i32;
+                        if offset < 0 || offset >= DISPLAY_WIDTH as i32 {
+                            continue;
+                        }
+
+                        let rot_scale_x = ((params[0] as i32 * (j as i32 - (width2 as i32 >> 1))
+                            + params[1] as i32 * (sprite_y - (height2 as i32 >> 1)))
+                            >> 8)
+                            + (width2 as i32 >> 1);
+                        if rot_scale_x < 0 || rot_scale_x >= width as i32 {
+                            continue;
+                        }
+
+                        let rot_scale_y = ((params[2] as i32 * (j as i32 - (width2 as i32 >> 1))
+                            + params[3] as i32 * (sprite_y - (height2 as i32 >> 1)))
+                            >> 8)
+                            + (height as i32 >> 1);
+                        if rot_scale_y < 0 || rot_scale_y >= height as i32 {
+                            continue;
+                        }
+
+                        let pixel = vram_context.read::<{ CpuType::ARM9 }, u16>(
+                            data_base_addr
+                                + ((rot_scale_y as u32 * bitmap_width + rot_scale_x as u32) << 1),
+                        );
+                        if pixel * (1 << 15) != 0 {
+                            self.draw_obj_pixel(line, offset as usize, pixel as u32, priority);
+                        }
+                    }
+                } else {
+                    let data_base_addr = (data_base_addr as i32
+                        + if object[1] & (1 << 13) != 0 {
+                            height as i32 - sprite_y - 1
+                        } else {
+                            sprite_y
+                        } * (bitmap_width << 1) as i32)
+                        as u32;
+
+                    for j in 0..width {
+                        let offset = if object[1] & (1 << 12) != 0 {
+                            x + width as i32 - j as i32 - 1
+                        } else {
+                            x + j as i32
+                        };
+                        if offset < 0 || offset >= DISPLAY_WIDTH as i32 {
+                            continue;
+                        }
+
+                        let pixel =
+                            vram_context.read::<{ CpuType::ARM9 }, u16>(data_base_addr + (j << 1));
+                        if pixel & (1 << 15) != 0 {
+                            self.draw_obj_pixel(line, offset as usize, pixel as u32, priority);
+                        }
+                    }
+                }
+
+                continue;
+            }
+
+            let tile_base_addr = (object[2] as u32 & 0x3FF) * bound;
+
+            if object[0] & (1 << 8) != 0 {
+                let params_base_addr = ((object[1] >> 9) & 0x1F) as u32 * 0x20;
+                let params = [
+                    self.read_oam::<u16>(params_base_addr + 0x6) as i16,
+                    self.read_oam::<u16>(params_base_addr + 0xE) as i16,
+                    self.read_oam::<u16>(params_base_addr + 0x16) as i16,
+                    self.read_oam::<u16>(params_base_addr + 0x1E) as i16,
+                ];
+
+                if object[0] & (1 << 13) != 0 {
+                    let map_width = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) {
+                        width
+                    } else {
+                        DISPLAY_WIDTH as u32 / 2
+                    };
+
+                    let mut palette_base_addr =
+                        if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
+                            ((object[2] & 0xF000) >> 3) as u32
+                        } else {
+                            Self::get_palettes_offset() + 0x200
+                        };
+
+                    for j in 0..width2 {
+                        let offset = x + j as i32;
+                        if offset < 0 || offset >= DISPLAY_WIDTH as i32 {
+                            continue;
+                        }
+
+                        let rot_scale_x = ((params[0] as i32 * (j as i32 - (width2 as i32 >> 1))
+                            + params[1] as i32 * (sprite_y - (height2 as i32 >> 1)))
+                            >> 8)
+                            + (width as i32 >> 1);
+                        if rot_scale_x < 0 || rot_scale_x >= width as i32 {
+                            continue;
+                        }
+
+                        let rot_scale_y = ((params[2] as i32 * (j as i32 - (width2 as i32 >> 1))
+                            + params[3] as i32 * (sprite_y - (height2 as i32 >> 1)))
+                            >> 8)
+                            + (height as i32 >> 1);
+                        if rot_scale_y < 0 || rot_scale_y >= width as i32 {
+                            continue;
+                        }
+                        let rot_scale_x = rot_scale_x as u32;
+                        let rot_scale_y = rot_scale_y as u32;
+
+                        let index = self.read_obj::<u8>(
+                            tile_base_addr
+                                + (((rot_scale_y >> 3) * map_width + (rot_scale_y & 7)) << 3)
+                                + ((rot_scale_x >> 3) << 6)
+                                + (rot_scale_x & 7),
+                        );
+
+                        if index != 0 {
+                            if type_ == 2 {
+                                self.framebuffer[((line as usize) << 8) + offset as usize] |=
+                                    1 << 24;
+                            } else {
+                                self.draw_obj_pixel(
+                                    line,
+                                    offset as usize,
+                                    (((type_ == 1) as u32) << 25)
+                                        | (1 << 15)
+                                        | read_palette(
+                                            vram_context,
+                                            palettes_context,
+                                            palette_base_addr + ((index as u32) << 1),
+                                        ) as u32,
+                                    priority,
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    let map_width = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) {
+                        width
+                    } else {
+                        DISPLAY_WIDTH as u32
+                    };
+
+                    let palette_addr = 0x200 + (((object[2] as u32 & 0xF000) >> 12) << 5);
+
+                    for j in 0..width2 {
+                        let offset = x + j as i32;
+                        if offset < 0 || offset >= DISPLAY_WIDTH as i32 {
+                            continue;
+                        }
+
+                        let rot_scale_x = ((params[0] as i32 * (j as i32 - (width2 as i32 >> 1))
+                            + params[1] as i32 * (sprite_y - (height2 as i32 >> 1)))
+                            >> 8)
+                            + (width as i32 >> 1);
+                        if rot_scale_x < 0 || rot_scale_x >= width as i32 {
+                            continue;
+                        }
+
+                        let rot_scale_y = ((params[2] as i32 * (j as i32 - (width2 as i32 >> 1))
+                            + params[3] as i32 * (sprite_y - (height2 as i32 >> 1)))
+                            >> 8)
+                            + (height as i32 >> 1);
+                        if rot_scale_y < 0 || rot_scale_y >= width as i32 {
+                            continue;
+                        }
+                        let rot_scale_x = rot_scale_x as u32;
+                        let rot_scale_y = rot_scale_y as u32;
+
+                        let index = self.read_obj::<u8>(
+                            tile_base_addr
+                                + ((((rot_scale_y >> 3) * map_width + (rot_scale_y & 7)) << 3)
+                                    << 2)
+                                + ((rot_scale_x >> 3) << 5)
+                                + ((rot_scale_x & 7) >> 1),
+                        );
+                        let index = if j & 1 != 0 {
+                            (index & 0xF0) >> 4
+                        } else {
+                            index & 0xF
+                        };
+
+                        if index != 0 {
+                            if type_ == 2 {
+                                self.framebuffer[((line as usize) << 8) + offset as usize] |=
+                                    1 << 24;
+                            } else {
+                                self.draw_obj_pixel(
+                                    line,
+                                    offset as usize,
+                                    (((type_ == 1) as u32) << 25)
+                                        | (1 << 15)
+                                        | self.read_palettes::<u16>(
+                                            palette_addr + ((index as u32) << 1),
+                                        ) as u32,
+                                    priority,
+                                );
+                            }
+                        }
+                    }
+                }
+            } else if object[0] & (1 << 13) != 0 {
+                let map_width = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) {
+                    width
+                } else {
+                    DISPLAY_WIDTH as u32 / 2
+                };
+                let sprite_y = sprite_y as u32;
+                let tile_base_addr = tile_base_addr
+                    + if object[1] & (1 << 13) != 0 {
+                        (7 - (sprite_y & 7) + ((height - 1 - sprite_y) >> 3) * map_width) << 3
+                    } else {
+                        ((sprite_y & 7) + (sprite_y >> 3) * map_width) << 3
+                    };
+
+                let mut palette_base_addr = 0;
+                let read_palette = if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
+                    if !vram_context.is_obj_ext_palette_mapped::<ENGINE>() {
+                        continue;
+                    }
+                    palette_base_addr = ((object[2] & 0xF000) >> 3) as u32;
+                    |vram_context: &VramContext, _: &PalettesContext, addr: u32| {
+                        vram_context.read_obj_ext_palette::<ENGINE, u16>(addr)
+                    }
+                } else {
+                    palette_base_addr = Self::get_palettes_offset() + 0x200;
+                    |_: &VramContext, palettes_context: &PalettesContext, addr: u32| {
+                        palettes_context.read::<u16>(addr)
+                    }
+                };
+
+                for j in 0..width {
+                    let offset = if object[1] & (1 << 12) != 0 {
+                        x + width as i32 - j as i32 - 1
+                    } else {
+                        x + j as i32
+                    };
+                    if offset < 0 || offset >= DISPLAY_WIDTH as i32 {
+                        continue;
+                    }
+
+                    let index = self.read_obj::<u8>(tile_base_addr + ((j >> 3) << 6) + (j & 7));
+                    let index = if j & 1 != 0 {
+                        (index & 0xF0) >> 4
+                    } else {
+                        index & 0xF
+                    };
+
+                    if index != 0 {
+                        if type_ == 2 {
+                            self.framebuffer[((line as usize) << 8) + offset as usize] |= 1 << 24;
+                        } else {
+                            self.draw_obj_pixel(
+                                line,
+                                offset as usize,
+                                (((type_ == 1) as u32) << 25)
+                                    | (1 << 15)
+                                    | read_palette(
+                                        vram_context,
+                                        palettes_context,
+                                        palette_base_addr + ((index as u32) << 1),
+                                    ) as u32,
+                                priority,
+                            );
+                        }
+                    }
+                }
+            } else {
+                let map_width = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) {
+                    width
+                } else {
+                    DISPLAY_WIDTH as u32
+                };
+                let sprite_y = sprite_y as u32;
+                let tile_base_addr = tile_base_addr
+                    + if object[1] & (1 << 13) != 0 {
+                        (7 - (sprite_y & 7) + ((height - 1 - sprite_y) >> 3) * map_width) << 2
+                    } else {
+                        ((sprite_y & 7) + (sprite_y >> 3) * map_width) << 2
+                    };
+
+                let palette_addr = 0x200 + (((object[2] as u32 & 0xF000) >> 12) << 5);
+
+                for j in 0..width {
+                    let offset = if object[1] & (1 << 12) != 0 {
+                        x + width as i32 - j as i32 - 1
+                    } else {
+                        x + j as i32
+                    };
+                    if offset < 0 || offset >= DISPLAY_WIDTH as i32 {
+                        continue;
+                    }
+
+                    let index =
+                        self.read_obj::<u8>(tile_base_addr + ((j >> 3) << 5) + ((j & 7) >> 1));
+                    let index = if j & 1 != 0 {
+                        (index & 0xF0) >> 4
+                    } else {
+                        index & 0xF
+                    };
+
+                    if index != 0 {
+                        if type_ == 2 {
+                            self.framebuffer[((line as usize) << 8) + offset as usize] |= 1 << 24;
+                        } else {
+                            self.draw_obj_pixel(
+                                line,
+                                offset as usize,
+                                (((type_ == 1) as u32) << 25)
+                                    | (1 << 15)
+                                    | self
+                                        .read_palettes::<u16>(palette_addr + ((index as u32) << 1))
+                                        as u32,
+                                priority,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     fn draw_bg_pixel<const BG: usize>(&mut self, line: u8, x: usize, pixel: u32) {
         let pixels_a = self.layers.get_pixels_mut::<{ Gpu2DLayer::A }>();
@@ -719,17 +1209,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         let blend_bits_a = self.layers.get_blend_bits_mut::<{ Gpu2DLayer::A }>();
         let blend_bits_b = self.layers.get_blend_bits_mut::<{ Gpu2DLayer::B }>();
 
-        if bool::from(self.inner.disp_cnt.window0_display_flag()) {
-            todo!()
-        }
-        if bool::from(self.inner.disp_cnt.window1_display_flag()) {
-            todo!()
-        }
-        if bool::from(self.inner.disp_cnt.obj_window_display_flag()) {
+        if self.inner.disp_cnt.is_any_window_enabled() {
             todo!()
         }
 
-        let bg_priority = u8::from(self.inner.bg_cnt[BG].priority());
+        let bg_priority = u8::from(self.inner.bg_cnt[BG].priority()) as i8;
         if bg_priority <= priorities_a[x] {
             pixels_b[x] = pixels_a[x];
             priorities_b[x] = priorities_a[x];
@@ -737,11 +1221,27 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
 
             pixels_a[x] = pixel;
             priorities_a[x] = bg_priority;
-            blend_bits_a[x] = BG as u8;
+            blend_bits_a[x] = BG as i8;
         } else if bg_priority <= priorities_b[x] {
             pixels_b[x] = pixel;
             priorities_b[x] = bg_priority;
-            blend_bits_b[x] = BG as u8;
+            blend_bits_b[x] = BG as i8;
+        }
+    }
+
+    fn draw_obj_pixel(&mut self, line: u8, x: usize, pixel: u32, priority: i8) {
+        let pixels_a = self.layers.get_pixels_mut::<{ Gpu2DLayer::A }>();
+        let priorities_a = self.layers.get_priorities_mut::<{ Gpu2DLayer::A }>();
+        let blend_bits_a = self.layers.get_blend_bits_mut::<{ Gpu2DLayer::A }>();
+
+        if self.inner.disp_cnt.is_any_window_enabled() {
+            todo!()
+        }
+
+        if pixels_a[x] & (1 << 15) == 0 || priority < priorities_a[x] {
+            pixels_a[x] = pixel;
+            priorities_a[x] = priority;
+            blend_bits_a[x] = 4;
         }
     }
 
