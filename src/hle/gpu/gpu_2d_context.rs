@@ -1094,20 +1094,13 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                         ((sprite_y & 7) + (sprite_y >> 3) * map_width) << 3
                     };
 
-                let mut palette_base_addr = 0;
-                let read_palette = if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
+                let palette_base_addr = if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
                     if !vram_context.is_obj_ext_palette_mapped::<ENGINE>() {
                         continue;
                     }
-                    palette_base_addr = ((object[2] & 0xF000) >> 3) as u32;
-                    |vram_context: &VramContext, _: &PalettesContext, addr: u32| {
-                        vram_context.read_obj_ext_palette::<ENGINE, u16>(addr)
-                    }
+                    ((object[2] & 0xF000) >> 3) as u32
                 } else {
-                    palette_base_addr = Self::get_palettes_offset() + 0x200;
-                    |_: &VramContext, palettes_context: &PalettesContext, addr: u32| {
-                        palettes_context.read::<u16>(addr)
-                    }
+                    Self::get_palettes_offset() + 0x200
                 };
 
                 for j in 0..width {
@@ -1214,18 +1207,20 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         }
 
         let bg_priority = u8::from(self.inner.bg_cnt[BG].priority()) as i8;
-        if bg_priority <= priorities_a[x] {
-            pixels_b[x] = pixels_a[x];
-            priorities_b[x] = priorities_a[x];
-            blend_bits_b[x] = blend_bits_a[x];
+        unsafe {
+            if bg_priority <= *priorities_a.get_unchecked(x) {
+                *pixels_b.get_unchecked_mut(x) = *pixels_a.get_unchecked(x);
+                *priorities_b.get_unchecked_mut(x) = *priorities_a.get_unchecked(x);
+                *blend_bits_b.get_unchecked_mut(x) = *blend_bits_a.get_unchecked(x);
 
-            pixels_a[x] = pixel;
-            priorities_a[x] = bg_priority;
-            blend_bits_a[x] = BG as i8;
-        } else if bg_priority <= priorities_b[x] {
-            pixels_b[x] = pixel;
-            priorities_b[x] = bg_priority;
-            blend_bits_b[x] = BG as i8;
+                *pixels_a.get_unchecked_mut(x) = pixel;
+                *priorities_a.get_unchecked_mut(x) = bg_priority;
+                *blend_bits_a.get_unchecked_mut(x) = BG as i8;
+            } else if bg_priority <= *priorities_b.get_unchecked(x) {
+                *pixels_b.get_unchecked_mut(x) = pixel;
+                *priorities_b.get_unchecked_mut(x) = bg_priority;
+                *blend_bits_b.get_unchecked_mut(x) = BG as i8;
+            }
         }
     }
 
@@ -1238,10 +1233,12 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             todo!()
         }
 
-        if pixels_a[x] & (1 << 15) == 0 || priority < priorities_a[x] {
-            pixels_a[x] = pixel;
-            priorities_a[x] = priority;
-            blend_bits_a[x] = 4;
+        unsafe {
+            if pixels_a[x] & (1 << 15) == 0 || priority < *priorities_a.get_unchecked(x) {
+                *pixels_a.get_unchecked_mut(x) = pixel;
+                *priorities_a.get_unchecked_mut(x) = priority;
+                *blend_bits_a.get_unchecked_mut(x) = 4;
+            }
         }
     }
 

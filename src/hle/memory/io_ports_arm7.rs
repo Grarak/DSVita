@@ -56,7 +56,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io32(0x210) => self.cpu_regs.get_ie(),
                 io32(0x214) => self.cpu_regs.get_irf(),
                 io8(0x240) => self.vram_context.borrow().stat,
-                io8(0x241) => self.wram_context.borrow().get_cnt(),
+                io8(0x241) => self.wram_context.borrow().cnt,
                 io8(0x300) => self.cpu_regs.get_post_flg(),
                 io8(0x301) => self.cpu_regs.get_halt_cnt(),
                 io32(0x400) => self.spu_context.borrow().get_cnt(0),

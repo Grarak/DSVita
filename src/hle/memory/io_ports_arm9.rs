@@ -74,7 +74,7 @@ impl<const CPU: CpuType> IoPorts<CPU> {
                 io8(0x244) => self.vram_context.borrow().cnt[4],
                 io8(0x245) => self.vram_context.borrow().cnt[5],
                 io8(0x246) => self.vram_context.borrow().cnt[6],
-                io8(0x247) => self.wram_context.borrow().get_cnt(),
+                io8(0x247) => self.wram_context.borrow().cnt,
                 io8(0x248) => self.vram_context.borrow().cnt[7],
                 io8(0x249) => self.vram_context.borrow().cnt[8],
                 io16(0x280) => self.div_sqrt_context.borrow().div_cnt,

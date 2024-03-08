@@ -92,7 +92,7 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
 
         let mem_handler = Rc::new(MemHandler::new(
             main_memory,
-            wram_context,
+            wram_context.clone(),
             palettes_context,
             cp15_context.clone(),
             tcm_context,

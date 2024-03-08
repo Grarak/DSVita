@@ -1,8 +1,8 @@
-use crate::hle::cpu_regs::{CpuRegs, InterruptFlag};
+use crate::hle::cpu_regs::{CpuRegsContainer, InterruptFlag};
 use crate::hle::cycle_manager::{CycleEvent, CycleManager};
 use crate::hle::gpu::gpu_2d_context::Gpu2DContext;
 use crate::hle::gpu::gpu_2d_context::Gpu2DEngine::{A, B};
-use crate::hle::memory::dma::{Dma, DmaTransferMode};
+use crate::hle::memory::dma::{DmaContainer, DmaTransferMode};
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use crate::utils::HeapMemU32;
@@ -126,13 +126,11 @@ struct PowCnt1 {
 }
 
 struct GpuInner {
-    disp_stat: [u16; 2],
+    disp_stat: [DispStat; 2],
     pow_cnt1: u16,
     disp_cap_cnt: u32,
-    dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
-    dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
-    cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
-    cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
+    dma: DmaContainer,
+    cpu_regs: CpuRegsContainer,
     swapchain: Arc<Swapchain>,
     frame_rate_counter: FrameRateCounter,
     v_count: u16,
@@ -142,23 +140,19 @@ struct GpuInner {
 
 impl GpuInner {
     fn new(
-        dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
-        dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
-        cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
-        cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
+        dma: DmaContainer,
+        cpu_regs: CpuRegsContainer,
         swapchain: Arc<Swapchain>,
         gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
         gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
         fps: Arc<AtomicU16>,
     ) -> Self {
         GpuInner {
-            disp_stat: [0u16; 2],
+            disp_stat: [DispStat::from(0); 2],
             pow_cnt1: 0,
             disp_cap_cnt: 0,
-            dma_arm9,
-            dma_arm7,
-            cpu_regs_arm9,
-            cpu_regs_arm7,
+            dma,
+            cpu_regs,
             swapchain,
             frame_rate_counter: FrameRateCounter::new(fps),
             v_count: 0,
@@ -201,20 +195,16 @@ impl GpuContext {
         cycle_manager: Rc<CycleManager>,
         gpu_2d_context_a: Rc<RefCell<Gpu2DContext<{ A }>>>,
         gpu_2d_context_b: Rc<RefCell<Gpu2DContext<{ B }>>>,
-        dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
-        dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
-        cpu_regs_arm9: Rc<CpuRegs<{ CpuType::ARM9 }>>,
-        cpu_regs_arm7: Rc<CpuRegs<{ CpuType::ARM7 }>>,
+        dma: DmaContainer,
+        cpu_regs: CpuRegsContainer,
         swapchain: Arc<Swapchain>,
     ) -> GpuContext {
         let drawing_thread = Arc::new(DrawingThread::new());
         let fps = Arc::new(AtomicU16::new(0));
 
         let inner = Rc::new(RefCell::new(GpuInner::new(
-            dma_arm9,
-            dma_arm7,
-            cpu_regs_arm9,
-            cpu_regs_arm7,
+            dma,
+            cpu_regs,
             swapchain,
             gpu_2d_context_a.clone(),
             gpu_2d_context_b.clone(),
@@ -250,7 +240,7 @@ impl GpuContext {
     }
 
     pub fn get_disp_stat<const CPU: CpuType>(&self) -> u16 {
-        self.inner.borrow().disp_stat[CPU]
+        self.inner.borrow().disp_stat[CPU].into()
     }
 
     pub fn get_pow_cnt1(&self) -> u16 {
@@ -264,7 +254,7 @@ impl GpuContext {
     pub fn set_disp_stat<const CPU: CpuType>(&self, mut mask: u16, value: u16) {
         mask &= 0xFFB8;
         let mut inner = self.inner.borrow_mut();
-        inner.disp_stat[CPU] = (inner.disp_stat[CPU] & !mask) | (value & mask);
+        inner.disp_stat[CPU] = ((u16::from(inner.disp_stat[CPU]) & !mask) | (value & mask)).into();
     }
 
     pub fn set_pow_cnt1(&self, mut mask: u16, value: u16) {
@@ -289,19 +279,13 @@ impl GpuContext {
                 .as_ref()
                 .unwrap_unchecked()
         };
-        if drawing_thread
-            .state
-            .compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
+        let state = drawing_thread.state.load(Ordering::Acquire);
+        if state != 0 {
             unsafe {
                 let v_count = (*self.inner.as_ptr()).v_count as u8;
-                (*self.gpu_2d_context_a.as_ptr()).draw_scanline(v_count);
-                if drawing_thread
-                    .state
-                    .compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire)
-                    .is_ok()
-                {
+                if state == 1 {
+                    (*self.gpu_2d_context_a.as_ptr()).draw_scanline(v_count);
+                } else {
                     (*self.gpu_2d_context_b.as_ptr()).draw_scanline(v_count);
                 }
                 drawing_thread.state.store(0, Ordering::Release);
@@ -345,32 +329,28 @@ impl CycleEvent for Scanline256Event {
     fn trigger(&mut self, delay: u16) {
         let mut inner = self.inner.borrow_mut();
         if inner.v_count < 192 {
-            if self
-                .drawing_thread
-                .state
-                .compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                inner
-                    .gpu_2d_context_b
-                    .borrow_mut()
-                    .draw_scanline(inner.v_count as u8);
-            }
+            // if self
+            //     .drawing_thread
+            //     .state
+            //     .compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire)
+            //     .is_ok()
+            // {
+            //     inner
+            //         .gpu_2d_context_b
+            //         .borrow_mut()
+            //         .draw_scanline(inner.v_count as u8);
+            // }
             while self.drawing_thread.state.load(Ordering::Acquire) != 0 {}
 
             inner
-                .dma_arm9
-                .borrow()
-                .trigger_all(DmaTransferMode::StartAtHBlank);
+                .dma
+                .trigger_all::<{ CpuType::ARM9 }>(DmaTransferMode::StartAtHBlank);
         }
 
         for i in 0..2 {
-            let mut disp_stat = DispStat::from(inner.disp_stat[i]);
+            let mut disp_stat = &mut inner.disp_stat[i];
             disp_stat.set_h_blank_flag(u1::new(1));
-            let irq = bool::from(disp_stat.h_blank_irq_enable());
-            inner.disp_stat[i] = u16::from(disp_stat);
-
-            if irq {
+            if bool::from(disp_stat.h_blank_irq_enable()) {
                 todo!()
             }
         }
@@ -410,27 +390,24 @@ impl CycleEvent for Scanline355Event {
         match inner.v_count {
             192 => {
                 for i in 0..2 {
-                    let mut disp_stat = DispStat::from(inner.disp_stat[i]);
+                    let mut disp_stat = &mut inner.disp_stat[i];
                     disp_stat.set_v_blank_flag(u1::new(1));
-                    let irq = bool::from(disp_stat.v_blank_irq_enable());
-                    inner.disp_stat[i] = u16::from(disp_stat);
-
-                    if i == 0 {
-                        if irq {
-                            inner.cpu_regs_arm9.send_interrupt(InterruptFlag::LcdVBlank);
+                    if bool::from(disp_stat.v_blank_irq_enable()) {
+                        if i == 0 {
+                            inner
+                                .cpu_regs
+                                .send_interrupt::<{ CpuType::ARM9 }>(InterruptFlag::LcdVBlank);
+                            inner
+                                .dma
+                                .trigger_all::<{ CpuType::ARM9 }>(DmaTransferMode::StartAtVBlank);
+                        } else {
+                            inner
+                                .cpu_regs
+                                .send_interrupt::<{ CpuType::ARM7 }>(InterruptFlag::LcdVBlank);
+                            inner
+                                .dma
+                                .trigger_all::<{ CpuType::ARM7 }>(DmaTransferMode::StartAtVBlank);
                         }
-                        inner
-                            .dma_arm9
-                            .borrow()
-                            .trigger_all(DmaTransferMode::StartAtVBlank);
-                    } else {
-                        if irq {
-                            inner.cpu_regs_arm7.send_interrupt(InterruptFlag::LcdVBlank);
-                        }
-                        inner
-                            .dma_arm7
-                            .borrow()
-                            .trigger_all(DmaTransferMode::StartAtVBlank);
                     }
                 }
 
@@ -455,9 +432,7 @@ impl CycleEvent for Scanline355Event {
             }
             262 => {
                 for i in 0..2 {
-                    let mut disp_stat = DispStat::from(inner.disp_stat[i]);
-                    disp_stat.set_v_blank_flag(u1::new(0));
-                    inner.disp_stat[i] = u16::from(disp_stat);
+                    inner.disp_stat[i].set_v_blank_flag(u1::new(0));
                 }
                 inner.frame_rate_counter.on_frame_ready();
             }
@@ -470,7 +445,10 @@ impl CycleEvent for Scanline355Event {
         }
 
         if inner.v_count < 192 {
-            self.drawing_thread.state.store(1, Ordering::Release);
+            self.drawing_thread.state.store(
+                1 + (inner.frame_rate_counter.frame_counter & 1) as u8,
+                Ordering::Release,
+            );
             if inner.v_count == 0 {
                 {
                     let mut running = self.drawing_thread.running.lock().unwrap();
@@ -481,36 +459,31 @@ impl CycleEvent for Scanline355Event {
         }
 
         for i in 0..2 {
-            let mut disp_stat = DispStat::from(inner.disp_stat[i]);
-            let v_match =
-                (u16::from(disp_stat.v_count_msb()) << 8) | disp_stat.v_count_setting() as u16;
+            let v_match = (u16::from(inner.disp_stat[i].v_count_msb()) << 8)
+                | inner.disp_stat[i].v_count_setting() as u16;
             debug_println!(
                 "v match {:x} {} {}",
-                inner.disp_stat[i],
+                u16::from(inner.disp_stat[i]),
                 v_match,
                 inner.v_count
             );
             if inner.v_count == v_match {
-                disp_stat.set_v_counter_flag(u1::new(1));
-                let irq = bool::from(disp_stat.v_counter_irq_enable());
-                inner.disp_stat[i] = u16::from(disp_stat);
-                if irq {
+                inner.disp_stat[i].set_v_counter_flag(u1::new(1));
+                if bool::from(inner.disp_stat[i].v_counter_irq_enable()) {
                     if i == 0 {
                         inner
-                            .cpu_regs_arm9
-                            .send_interrupt(InterruptFlag::LcdVCounterMatch);
+                            .cpu_regs
+                            .send_interrupt::<{ CpuType::ARM9 }>(InterruptFlag::LcdVCounterMatch);
                     } else {
                         inner
-                            .cpu_regs_arm7
-                            .send_interrupt(InterruptFlag::LcdVCounterMatch);
+                            .cpu_regs
+                            .send_interrupt::<{ CpuType::ARM7 }>(InterruptFlag::LcdVCounterMatch);
                     }
                 }
             } else {
-                disp_stat.set_v_counter_flag(u1::new(0));
+                inner.disp_stat[i].set_v_counter_flag(u1::new(0));
             }
-            disp_stat.set_h_blank_flag(u1::new(0));
-
-            inner.disp_stat[i] = u16::from(disp_stat);
+            inner.disp_stat[i].set_h_blank_flag(u1::new(0));
         }
 
         self.cycle_manager

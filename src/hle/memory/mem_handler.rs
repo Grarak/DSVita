@@ -8,7 +8,6 @@ use crate::hle::memory::tcm_context::TcmContext;
 use crate::hle::memory::vram_context::VramContext;
 use crate::hle::memory::wram_context::WramContext;
 use crate::hle::CpuType;
-use crate::jit::jit_asm::JitState;
 use crate::logging::debug_println;
 use crate::utils::Convert;
 use std::cell::RefCell;
@@ -23,7 +22,6 @@ pub struct MemHandler<const CPU: CpuType> {
     vram_context: *mut VramContext,
     tcm_context: *mut TcmContext,
     pub io_ports: IoPorts<CPU>,
-    pub jit_state: RefCell<JitState>,
     oam: *mut OamContext,
 }
 
@@ -49,7 +47,6 @@ impl<const CPU: CpuType> MemHandler<CPU> {
             vram_context: io_ports.vram_context.as_ptr(),
             tcm_context: tcm_context.as_ptr(),
             io_ports,
-            jit_state: RefCell::new(JitState::new()),
             oam: oam.as_ptr(),
         }
     }
@@ -161,21 +158,6 @@ impl<const CPU: CpuType> MemHandler<CPU> {
         let addr_base = aligned_addr & 0xFF000000;
         let addr_offset = aligned_addr - addr_base;
 
-        let invalidate_jit = || {
-            let mut jit_state = self.jit_state.borrow_mut();
-            jit_state.invalidated = true;
-            jit_state.invalidated_range.update(addr, addr + 4);
-
-            #[cfg(debug_assertions)]
-            {
-                let (current_jit_block_start, current_jit_block_end) =
-                    jit_state.current_block_range;
-                if addr >= current_jit_block_start && addr + 4 <= current_jit_block_end {
-                    todo!("{:x} {:x}", current_jit_block_start, current_jit_block_end)
-                }
-            }
-        };
-
         match addr_base {
             regions::MAIN_MEMORY_OFFSET => unsafe { (*self.main_memory).write(addr_offset, value) },
             regions::SHARED_WRAM_OFFSET => {
@@ -191,9 +173,6 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                     };
                 } else {
                     unsafe { (*self.wram_context).write::<CPU, _>(addr_offset, value) };
-                    if CPU == CpuType::ARM7 {
-                        invalidate_jit();
-                    }
                 }
             }
             regions::IO_PORTS_OFFSET => self.io_ports.write(addr_offset, value),
@@ -211,7 +190,6 @@ impl<const CPU: CpuType> MemHandler<CPU> {
                     if aligned_addr < cp15_context.itcm_size {
                         if cp15_context.itcm_state != TcmState::Disabled {
                             unsafe { (*self.tcm_context).write_itcm(aligned_addr, value) };
-                            invalidate_jit();
                         }
                     } else if aligned_addr >= cp15_context.dtcm_addr
                         && aligned_addr < cp15_context.dtcm_addr + cp15_context.dtcm_size

@@ -17,7 +17,6 @@ use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
-use crate::utils::MinMaxRange;
 use crate::DEBUG_LOG;
 use std::arch::asm;
 use std::cell::RefCell;
@@ -59,24 +58,6 @@ impl DebugRegs {
             LdrStrImm::ldr_al(Reg::SP, Reg::SP),
         ]);
         opcodes
-    }
-}
-
-pub struct JitState {
-    pub invalidated: bool,
-    pub invalidated_range: MinMaxRange,
-    #[cfg(debug_assertions)]
-    pub current_block_range: (u32, u32),
-}
-
-impl JitState {
-    pub fn new() -> Self {
-        JitState {
-            invalidated: false,
-            invalidated_range: MinMaxRange::new(),
-            #[cfg(debug_assertions)]
-            current_block_range: (0, 0),
-        }
     }
 }
 
@@ -474,17 +455,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let jit_memory = self.jit_memory.clone();
         let mut jit_memory = jit_memory.borrow_mut();
         let jit_info = {
-            {
-                let mut jit_state = self.mem_handler.jit_state.borrow_mut();
-                if jit_state.invalidated {
-                    let range = &jit_state.invalidated_range;
-                    jit_memory.invalidate_block::<false>(range.min & !1, range.max & !1);
-                    jit_memory.invalidate_block::<true>(range.min | 1, range.max | 1);
-                    jit_state.invalidated_range = MinMaxRange::new();
-                    jit_state.invalidated = false;
-                }
-            }
-
             match jit_memory.get_jit_start_addr::<THUMB, true>(guest_pc) {
                 Some(info) => info,
                 None => {

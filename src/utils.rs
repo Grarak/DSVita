@@ -180,22 +180,3 @@ impl BuildHasher for BuildNoHasher {
 
 pub type NoHashMap<V> = HashMap<u32, V, BuildNoHasher>;
 pub type NoHashSet = HashSet<u32, BuildNoHasher>;
-
-pub struct MinMaxRange {
-    pub min: u32,
-    pub max: u32,
-}
-
-impl MinMaxRange {
-    pub fn new() -> Self {
-        MinMaxRange {
-            min: u32::MAX,
-            max: u32::MIN,
-        }
-    }
-
-    pub fn update(&mut self, min: u32, max: u32) {
-        self.min = cmp::min(self.min, min);
-        self.max = cmp::max(self.max, max);
-    }
-}

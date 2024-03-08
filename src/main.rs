@@ -259,10 +259,8 @@ pub fn main() {
         cycle_manager.clone(),
         gpu_2d_context_a.clone(),
         gpu_2d_context_b.clone(),
-        dma_arm9.clone(),
-        dma_arm7.clone(),
-        cpu_regs_arm9.clone(),
-        cpu_regs_arm7.clone(),
+        DmaContainer::new(dma_arm9.clone(), dma_arm7.clone()),
+        CpuRegsContainer::new(cpu_regs_arm9.clone(), cpu_regs_arm7.clone()),
         swapchain.clone(),
     ));
     let cartridge_context = Rc::new(RefCell::new(CartridgeContext::new(
@@ -295,7 +293,6 @@ pub fn main() {
         cpu_regs_arm9,
         cartridge_context.clone(),
     );
-    initialize_arm9_thread(arm9_entry_adrr, &arm9_thread);
 
     let mut arm7_thread = ThreadContext::<{ CpuType::ARM7 }>::new(
         cycle_manager,
@@ -320,6 +317,8 @@ pub fn main() {
         cpu_regs_arm7,
         cartridge_context.clone(),
     );
+
+    initialize_arm9_thread(arm9_entry_adrr, &arm9_thread);
     initialize_arm7_thread(arm7_entry_addr, &arm7_thread);
 
     {

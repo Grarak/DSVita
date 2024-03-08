@@ -45,9 +45,21 @@ impl JitBlockInfo {
         if pc_offset == 0 {
             Some(self.addr)
         } else if pc_offset as usize - 1 < self.addr_offsets.len() {
-            Some(self.addr + self.addr_offsets[pc_offset as usize - 1] as u32)
+            Some(
+                self.addr
+                    + unsafe { *self.addr_offsets.get_unchecked(pc_offset as usize - 1) as u32 },
+            )
         } else {
             None
+        }
+    }
+
+    fn get_jit_addr_unchecked<const THUMB: bool>(&self, guest_pc: u32) -> u32 {
+        let pc_offset = (guest_pc - self.guest_pc_start) >> if THUMB { 1 } else { 2 };
+        if pc_offset == 0 {
+            self.addr
+        } else {
+            self.addr + unsafe { *self.addr_offsets.get_unchecked(pc_offset as usize - 1) as u32 }
         }
     }
 }
@@ -145,6 +157,8 @@ impl JitInsertArgs {
 pub struct JitMemory {
     mem: Mmap,
     main_jit_blocks: FastMap,
+    shared_wram_jit_blocks: FastMap,
+    wram_arm7_jit_blocks: FastMap,
     jit_blocks: [SimpleTreeMap<GuestPcStart, Box<JitBlockInfo>>; 2],
     mem_blocks: SimpleTreeMap<JitAddr, JitBlockSize>,
     blocks_to_remove: Vec<u32>,
@@ -155,6 +169,11 @@ impl JitMemory {
         JitMemory {
             mem: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
             main_jit_blocks: FastMap::new("main_jit_blocks", regions::MAIN_MEMORY_SIZE),
+            shared_wram_jit_blocks: FastMap::new(
+                "shared_wram_jit_blocks",
+                regions::SHARED_WRAM_SIZE,
+            ),
+            wram_arm7_jit_blocks: FastMap::new("wram_arm7_jit_blocks", regions::ARM7_WRAM_SIZE),
             jit_blocks: [SimpleTreeMap::new(), SimpleTreeMap::new()],
             mem_blocks: SimpleTreeMap::new(),
             blocks_to_remove: Vec::new(),
@@ -304,6 +323,7 @@ impl JitMemory {
         new_addr
     }
 
+    #[inline]
     pub fn get_jit_start_addr<const THUMB: bool, const INCREMENT_USED: bool>(
         &self,
         guest_pc: u32,
@@ -318,7 +338,7 @@ impl JitMemory {
                         unsafe { *info.used.as_ptr() += 1 };
                     }
                     Some(JitGetAddrRet::new(
-                        info.get_jit_addr::<THUMB>(guest_pc).unwrap(),
+                        info.get_jit_addr_unchecked::<THUMB>(guest_pc),
                         info.guest_pc_start,
                         Self::get_guest_pc_end::<THUMB>(
                             info.guest_pc_start,
@@ -348,29 +368,6 @@ impl JitMemory {
                     }
                 }
                 None => None,
-            }
-        }
-    }
-
-    pub fn invalidate_block<const THUMB: bool>(&mut self, guest_pc_from: u32, guest_pc_to: u32) {
-        let jit_blocks = &mut self.jit_blocks[THUMB as usize];
-        if let Some((last_index, _)) = jit_blocks.get_prev(&guest_pc_to) {
-            let mut index = last_index;
-            loop {
-                let (_, info) = &jit_blocks[index];
-                if info.guest_pc_start < guest_pc_from {
-                    if info.get_jit_addr::<THUMB>(guest_pc_from).is_none() {
-                        index += 1;
-                    }
-                    break;
-                }
-                if index == 0 {
-                    break;
-                }
-                index -= 1;
-            }
-            for (_, block_info) in jit_blocks.drain(index..last_index + 1) {
-                self.mem_blocks.remove(&block_info.addr);
             }
         }
     }

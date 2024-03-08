@@ -249,7 +249,7 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> DmaEvent<CPU, CHANNEL_NUM> {
     }
 
     fn do_transfer<T: utils::Convert>(
-        mem_handler: Rc<MemHandler<CPU>>,
+        mem_handler: &MemHandler<CPU>,
         mut dest_addr: u32,
         mut src_addr: u32,
         count: u32,
@@ -306,9 +306,9 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> CycleEvent for DmaEvent<CPU, 
         };
 
         if bool::from(cnt.transfer_type()) {
-            Self::do_transfer::<u32>(self.mem_handler.clone(), dest, src, count, &cnt, mode);
+            Self::do_transfer::<u32>(self.mem_handler.as_ref(), dest, src, count, &cnt, mode);
         } else {
-            Self::do_transfer::<u16>(self.mem_handler.clone(), dest, src, count, &cnt, mode);
+            Self::do_transfer::<u16>(self.mem_handler.as_ref(), dest, src, count, &cnt, mode);
         }
 
         if mode == DmaTransferMode::GeometryCmdFifo {
