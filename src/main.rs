@@ -53,7 +53,6 @@ mod hle;
 mod jit;
 mod logging;
 mod mmap;
-mod simple_tree_map;
 mod utils;
 
 #[cfg(target_os = "vita")]

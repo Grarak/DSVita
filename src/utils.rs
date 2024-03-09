@@ -40,7 +40,8 @@ pub fn negative<T: Convert>(n: T) -> T {
 }
 
 pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
-    unsafe { (mem.as_ptr().add(addr as _) as *const T).read() }
+    let aligned: &[T] = unsafe { mem::transmute(&mem[addr as usize..]) };
+    aligned[0].clone()
 }
 
 pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> usize {
@@ -51,7 +52,8 @@ pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> u
 }
 
 pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
-    unsafe { (mem.as_ptr().add(addr as _) as *mut T).write(value) }
+    let aligned: &mut [T] = unsafe { mem::transmute(&mut mem[addr as usize..]) };
+    aligned[0] = value;
 }
 
 pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) -> usize {

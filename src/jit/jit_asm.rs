@@ -249,14 +249,15 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     Cond::AL,
                 ));
 
-                instance.breakin_addr = jit_memory.insert_block::<false>(jit_opcodes, None);
+                instance.breakin_addr = jit_memory.insert_block::<CPU, false>(jit_opcodes, None);
 
                 let restore_regs_thumb_opcodes =
                     &instance.thread_regs.borrow().restore_regs_thumb_opcodes;
                 jit_opcodes
                     [guest_restore_index..guest_restore_index + restore_regs_thumb_opcodes.len()]
                     .copy_from_slice(restore_regs_thumb_opcodes);
-                instance.breakin_thumb_addr = jit_memory.insert_block::<false>(jit_opcodes, None);
+                instance.breakin_thumb_addr =
+                    jit_memory.insert_block::<CPU, false>(jit_opcodes, None);
 
                 jit_opcodes.clear();
             }
@@ -276,7 +277,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     LdrStrImm::ldr_offset_al(Reg::PC, Reg::R0, 4), // Restore host LR and write to PC
                 ]);
 
-                instance.breakout_addr = jit_memory.insert_block::<false>(jit_opcodes, None);
+                instance.breakout_addr = jit_memory.insert_block::<CPU, false>(jit_opcodes, None);
                 instance.breakout_skip_save_regs_addr =
                     instance.breakout_addr + (jit_skip_save_regs_offset << 2);
 
@@ -284,7 +285,8 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                     &instance.thread_regs.borrow().save_regs_thumb_opcodes;
                 jit_opcodes[..save_regs_thumb_opcodes.len()]
                     .copy_from_slice(save_regs_thumb_opcodes);
-                instance.breakout_thumb_addr = jit_memory.insert_block::<false>(jit_opcodes, None);
+                instance.breakout_thumb_addr =
+                    jit_memory.insert_block::<CPU, false>(jit_opcodes, None);
                 instance.breakout_skip_save_regs_thumb_addr =
                     instance.breakout_thumb_addr + (jit_skip_save_regs_offset << 2);
 
@@ -410,7 +412,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         // TODO statically analyze generated insts
 
         {
-            jit_memory.insert_block::<THUMB>(
+            jit_memory.insert_block::<CPU, THUMB>(
                 &self.jit_buf.block_opcodes,
                 Some(JitInsertArgs::new(
                     entry,
@@ -422,7 +424,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             if DEBUG_LOG {
                 for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
                     let pc = ((index as u32) << pc_step_size) + entry;
-                    let info = jit_memory.get_jit_start_addr::<THUMB>(pc).unwrap();
+                    let info = jit_memory.get_jit_start_addr::<CPU>(pc).unwrap();
 
                     debug_println!(
                         "{:?} Mapping {:#010x} to {:#010x} {:?}",
@@ -455,23 +457,20 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let jit_memory = self.jit_memory.clone();
         let mut jit_memory = jit_memory.borrow_mut();
         let jit_info = {
-            match jit_memory.get_jit_start_addr::<THUMB>(guest_pc) {
+            match jit_memory.get_jit_start_addr::<CPU>(guest_pc) {
                 Some(info) => info,
                 None => {
                     self.emit_code_block::<THUMB>(guest_pc, jit_memory.deref_mut());
-                    jit_memory
-                        .get_jit_start_addr::<THUMB>(guest_pc)
-                        .unwrap()
+                    jit_memory.get_jit_start_addr::<CPU>(guest_pc).unwrap()
                 }
             }
         };
 
         #[cfg(debug_assertions)]
         {
-            self.mem_handler.jit_state.borrow_mut().current_block_range =
-                (guest_pc, jit_info.guest_end_pc);
             self.guest_branch_out_pc = 0;
         }
+
         self.bios_context.borrow_mut().cycle_correction = 0;
 
         unsafe {
@@ -493,17 +492,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             self.guest_branch_out_pc
         };
 
-        let cycles_start =
-            ((guest_pc - jit_info.guest_start_pc) >> if THUMB { 1 } else { 2 }) as usize;
-        let cycles_index = ((branch_out_pc - guest_pc) >> if THUMB { 1 } else { 2 }) as usize;
-
-        // TODO cycle correction for conds
-        let mut executed_cycles = jit_info.guest_insts_cycle_counts[cycles_start + cycles_index]
+        let branch_out_jit_info = jit_memory.get_jit_start_addr::<CPU>(branch_out_pc).unwrap();
+        let executed_cycles = branch_out_jit_info.pre_cycle_count_sum
+            + branch_out_jit_info.cycle_count as u16
+            - jit_info.pre_cycle_count_sum
             + self.bios_context.borrow().cycle_correction
-            + 2; // + 2 for branching
-        if cycles_start != 0 {
-            executed_cycles -= jit_info.guest_insts_cycle_counts[cycles_start - 1];
-        }
+            + 2;
 
         if DEBUG_LOG {
             debug_println!(
