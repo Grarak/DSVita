@@ -422,7 +422,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             if DEBUG_LOG {
                 for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
                     let pc = ((index as u32) << pc_step_size) + entry;
-                    let info = jit_memory.get_jit_start_addr::<THUMB, false>(pc).unwrap();
+                    let info = jit_memory.get_jit_start_addr::<THUMB>(pc).unwrap();
 
                     debug_println!(
                         "{:?} Mapping {:#010x} to {:#010x} {:?}",
@@ -455,12 +455,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let jit_memory = self.jit_memory.clone();
         let mut jit_memory = jit_memory.borrow_mut();
         let jit_info = {
-            match jit_memory.get_jit_start_addr::<THUMB, true>(guest_pc) {
+            match jit_memory.get_jit_start_addr::<THUMB>(guest_pc) {
                 Some(info) => info,
                 None => {
                     self.emit_code_block::<THUMB>(guest_pc, jit_memory.deref_mut());
                     jit_memory
-                        .get_jit_start_addr::<THUMB, false>(guest_pc)
+                        .get_jit_start_addr::<THUMB>(guest_pc)
                         .unwrap()
                 }
             }

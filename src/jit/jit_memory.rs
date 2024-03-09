@@ -3,7 +3,6 @@ use crate::logging::debug_println;
 use crate::mmap::Mmap;
 use crate::simple_tree_map::SimpleTreeMap;
 use crate::{utils, DEBUG_LOG};
-use std::cell::RefCell;
 use std::{mem, ptr};
 
 const JIT_MEMORY_SIZE: u32 = 16 * 1024 * 1024;
@@ -21,7 +20,6 @@ struct JitBlockInfo {
     guest_pc_start: u32,
     addr: u32,
     addr_offsets: Vec<u16>,
-    used: RefCell<u64>,
 }
 
 impl JitBlockInfo {
@@ -36,7 +34,6 @@ impl JitBlockInfo {
             guest_pc_start,
             addr,
             addr_offsets,
-            used: RefCell::new(0),
         }
     }
 
@@ -156,18 +153,20 @@ impl JitInsertArgs {
 
 pub struct JitMemory {
     mem: Mmap,
+    mem_common_offset: u32,
+    mem_offset: u32,
     main_jit_blocks: FastMap,
     shared_wram_jit_blocks: FastMap,
     wram_arm7_jit_blocks: FastMap,
     jit_blocks: [SimpleTreeMap<GuestPcStart, Box<JitBlockInfo>>; 2],
-    mem_blocks: SimpleTreeMap<JitAddr, JitBlockSize>,
-    blocks_to_remove: Vec<u32>,
 }
 
 impl JitMemory {
     pub fn new() -> Self {
         JitMemory {
             mem: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
+            mem_common_offset: 0,
+            mem_offset: 0,
             main_jit_blocks: FastMap::new("main_jit_blocks", regions::MAIN_MEMORY_SIZE),
             shared_wram_jit_blocks: FastMap::new(
                 "shared_wram_jit_blocks",
@@ -175,63 +174,24 @@ impl JitMemory {
             ),
             wram_arm7_jit_blocks: FastMap::new("wram_arm7_jit_blocks", regions::ARM7_WRAM_SIZE),
             jit_blocks: [SimpleTreeMap::new(), SimpleTreeMap::new()],
-            mem_blocks: SimpleTreeMap::new(),
-            blocks_to_remove: Vec::new(),
         }
     }
 
-    fn find_free_start(&mut self, required_size: u32) -> u32 {
-        let mut previous_end = self.mem.as_ptr() as u32;
-        for (start_addr, block_size) in &self.mem_blocks {
-            if (start_addr - previous_end) >= required_size {
-                return previous_end;
-            }
-            previous_end = *start_addr + *block_size;
-        }
-
-        if previous_end + required_size >= self.mem.as_ptr() as u32 + JIT_MEMORY_SIZE {
-            for i in 0..self.jit_blocks.len() {
-                let mut min_used = u64::MAX;
-                for (addr, info) in &self.jit_blocks[i] {
-                    let used = *info.used.borrow();
-                    if used < min_used {
-                        self.blocks_to_remove.clear();
-                        self.blocks_to_remove.push(*addr);
-                        min_used = used;
-                    } else if used == min_used {
-                        self.blocks_to_remove.push(*addr);
-                    }
-                }
-
-                while let Some(addr) = self.blocks_to_remove.pop() {
-                    let (guest_pc_start, info) = self.jit_blocks[i].remove(&addr);
-                    if guest_pc_start & 0xFF000000 == regions::MAIN_MEMORY_OFFSET {
-                        let start = guest_pc_start & (regions::MAIN_MEMORY_SIZE - 1);
-                        if i == 0 {
-                            let end = Self::get_guest_pc_end::<false>(
-                                guest_pc_start,
-                                info.addr_offsets.len(),
-                            ) & (regions::MAIN_MEMORY_SIZE - 1);
-                            self.main_jit_blocks.remove_block::<false>(start, end);
-                        } else {
-                            let end = Self::get_guest_pc_end::<true>(
-                                guest_pc_start,
-                                info.addr_offsets.len(),
-                            ) & (regions::MAIN_MEMORY_SIZE - 1);
-                            self.main_jit_blocks.remove_block::<true>(start, end);
-                        }
-                    }
-                    self.mem_blocks.remove(&info.addr);
-                }
-
-                for (_, info) in &self.jit_blocks[i] {
-                    *info.used.borrow_mut() = 0;
-                }
-            }
-            self.find_free_start(required_size)
+    fn allocate_block(&mut self, required_size: u32) -> u32 {
+        let offset = if self.mem_offset + required_size >= JIT_MEMORY_SIZE {
+            self.mem_offset = self.mem_common_offset;
+            self.jit_blocks[0].clear();
+            self.jit_blocks[1].clear();
+            self.main_jit_blocks.mem_map.fill(0);
+            self.shared_wram_jit_blocks.mem_map.fill(0);
+            self.wram_arm7_jit_blocks.mem_map.fill(0);
+            self.mem_offset
         } else {
-            previous_end
-        }
+            let addr = self.mem_offset;
+            self.mem_offset += required_size;
+            addr
+        };
+        offset + self.mem.as_ptr() as u32
     }
 
     const fn get_guest_pc_end<const THUMB: bool>(
@@ -246,24 +206,8 @@ impl JitMemory {
         opcodes: &[u32],
         args: Option<JitInsertArgs>,
     ) -> u32 {
-        if let Some(args) = &args {
-            let jit_blocks = &mut self.jit_blocks[THUMB as usize];
-            if let Some((next_block_index, (next_block_guest_pc_start, next_block_info))) =
-                jit_blocks.get_next(&args.guest_start_pc)
-            {
-                if Self::get_guest_pc_end::<THUMB>(
-                    args.guest_start_pc,
-                    args.guest_pc_to_jit_addr_offset.len(),
-                ) >= *next_block_guest_pc_start
-                {
-                    self.mem_blocks.remove(&next_block_info.addr);
-                    jit_blocks.remove_at(next_block_index);
-                }
-            }
-        }
-
         let aligned_size = utils::align_up((opcodes.len() << 2) as u32, JIT_PAGE_SIZE);
-        let new_addr = self.find_free_start(aligned_size);
+        let new_addr = self.allocate_block(aligned_size);
         let mem_start_addr = self.mem.as_ptr() as u32;
         let offset_addr = new_addr - mem_start_addr;
 
@@ -272,38 +216,34 @@ impl JitMemory {
         self.flush_cache(offset_addr, aligned_size);
         self.set_rx(offset_addr, aligned_size);
 
-        self.mem_blocks.insert(new_addr, aligned_size);
-
-        if let Some(args) = args {
-            let info = JitBlockInfo::new(
-                args.guest_insts_cycle_counts,
-                args.guest_start_pc,
-                new_addr,
-                args.guest_pc_to_jit_addr_offset,
-            );
-            {
-                let blocks = &mut self.jit_blocks[THUMB as usize];
-                let insert_index = blocks.insert(args.guest_start_pc, Box::new(info));
-                if args.guest_start_pc & 0xFF000000 == regions::MAIN_MEMORY_OFFSET {
-                    let block = blocks[insert_index].1.as_ref();
-                    self.main_jit_blocks.insert_block::<THUMB>(
-                        block.guest_pc_start & (regions::MAIN_MEMORY_SIZE - 1),
-                        Self::get_guest_pc_end::<THUMB>(
-                            block.guest_pc_start,
-                            block.addr_offsets.len(),
-                        ) & (regions::MAIN_MEMORY_SIZE - 1),
-                        block,
-                    );
+        match args {
+            Some(args) => {
+                let info = JitBlockInfo::new(
+                    args.guest_insts_cycle_counts,
+                    args.guest_start_pc,
+                    new_addr,
+                    args.guest_pc_to_jit_addr_offset,
+                );
+                {
+                    let blocks = &mut self.jit_blocks[THUMB as usize];
+                    let insert_index = blocks.insert(args.guest_start_pc, Box::new(info));
+                    if args.guest_start_pc & 0xFF000000 == regions::MAIN_MEMORY_OFFSET {
+                        let block = blocks[insert_index].1.as_ref();
+                        self.main_jit_blocks.insert_block::<THUMB>(
+                            block.guest_pc_start & (regions::MAIN_MEMORY_SIZE - 1),
+                            Self::get_guest_pc_end::<THUMB>(
+                                block.guest_pc_start,
+                                block.addr_offsets.len(),
+                            ) & (regions::MAIN_MEMORY_SIZE - 1),
+                            block,
+                        );
+                    }
                 }
-            }
 
-            if DEBUG_LOG {
-                let allocated_space = self
-                    .mem_blocks
-                    .iter()
-                    .fold(0u32, |sum, (_, block_size)| sum + *block_size);
-                let per = (allocated_space * 100) as f32 / JIT_MEMORY_SIZE as f32;
-                debug_println!(
+                if DEBUG_LOG {
+                    let per = ((self.mem_offset - self.mem.as_ptr() as u32) * 100) as f32
+                        / JIT_MEMORY_SIZE as f32;
+                    debug_println!(
                     "Insert new jit ({:x}) block with size {} at {:x}, {}% allocated with guest pc {:x}",
                     mem_start_addr,
                     aligned_size,
@@ -311,49 +251,41 @@ impl JitMemory {
                     per,
                     args.guest_start_pc
                 );
+                }
             }
-        } else {
-            debug_println!(
-                "Insert new jit ({:x}) block with size {} at {:x}",
-                mem_start_addr,
-                aligned_size,
-                new_addr,
-            );
+            None => {
+                // Inserts without args is common code, happens on initialization, adjust offset
+                self.mem_common_offset = new_addr - self.mem.as_ptr() as u32 + aligned_size;
+                debug_println!(
+                    "Insert new jit ({:x}) block with size {} at {:x}",
+                    mem_start_addr,
+                    aligned_size,
+                    new_addr,
+                );
+            }
         }
         new_addr
     }
 
     #[inline]
-    pub fn get_jit_start_addr<const THUMB: bool, const INCREMENT_USED: bool>(
-        &self,
-        guest_pc: u32,
-    ) -> Option<JitGetAddrRet> {
+    pub fn get_jit_start_addr<const THUMB: bool>(&self, guest_pc: u32) -> Option<JitGetAddrRet> {
         if guest_pc & 0xFF000000 == regions::MAIN_MEMORY_OFFSET {
             match self
                 .main_jit_blocks
                 .get((guest_pc & (regions::MAIN_MEMORY_SIZE - 1)) as usize)
             {
-                Some(info) => {
-                    if INCREMENT_USED {
-                        unsafe { *info.used.as_ptr() += 1 };
-                    }
-                    Some(JitGetAddrRet::new(
-                        info.get_jit_addr_unchecked::<THUMB>(guest_pc),
-                        info.guest_pc_start,
-                        Self::get_guest_pc_end::<THUMB>(
-                            info.guest_pc_start,
-                            info.addr_offsets.len(),
-                        ),
-                        &info.guest_insts_cycle_counts,
-                    ))
-                }
+                Some(info) => Some(JitGetAddrRet::new(
+                    info.get_jit_addr_unchecked::<THUMB>(guest_pc),
+                    info.guest_pc_start,
+                    Self::get_guest_pc_end::<THUMB>(info.guest_pc_start, info.addr_offsets.len()),
+                    &info.guest_insts_cycle_counts,
+                )),
                 None => None,
             }
         } else {
             match self.jit_blocks[THUMB as usize].get_prev(&guest_pc) {
                 Some((_, (_, info))) => {
                     if let Some(jit_addr) = info.get_jit_addr::<THUMB>(guest_pc) {
-                        unsafe { *info.used.as_ptr() += 1 };
                         Some(JitGetAddrRet::new(
                             jit_addr,
                             info.guest_pc_start,

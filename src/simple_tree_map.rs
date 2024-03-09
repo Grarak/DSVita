@@ -75,6 +75,10 @@ impl<K: Ord, V> SimpleTreeMap<K, V> {
     pub fn drain(&mut self, range: impl RangeBounds<usize>) -> Drain<'_, (K, V)> {
         self.0.drain(range)
     }
+    
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
 }
 
 impl<'a, K: Ord, V> IntoIterator for &'a SimpleTreeMap<K, V> {
