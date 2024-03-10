@@ -15,14 +15,14 @@ pub enum Keycode {
     Y = 11,
 }
 
-pub struct InputContext {
+pub struct Input {
     pub key_input: u16,
     pub ext_key_in: u16,
 }
 
-impl InputContext {
+impl Input {
     pub fn new() -> Self {
-        InputContext {
+        Input {
             key_input: 0x3FF,
             ext_key_in: 0x007F,
         }

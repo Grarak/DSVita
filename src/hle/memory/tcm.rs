@@ -2,20 +2,20 @@ use crate::hle::memory::regions;
 use crate::utils;
 use crate::utils::{Convert, HeapMemU8};
 
-pub struct TcmContext {
+pub struct Tcm {
     itcm: HeapMemU8<{ regions::INSTRUCTION_TCM_SIZE as usize }>,
     dtcm: HeapMemU8<{ regions::DATA_TCM_SIZE as usize }>,
 }
 
-impl TcmContext {
+impl Tcm {
     pub fn new() -> Self {
-        TcmContext {
+        Tcm {
             itcm: HeapMemU8::new(),
             dtcm: HeapMemU8::new(),
         }
     }
 
-    pub fn read_itcm<T: Convert>(&mut self, addr: u32) -> T {
+    pub fn read_itcm<T: Convert>(&self, addr: u32) -> T {
         utils::read_from_mem(
             self.itcm.as_slice(),
             addr & (regions::INSTRUCTION_TCM_SIZE - 1),
@@ -30,7 +30,7 @@ impl TcmContext {
         )
     }
 
-    pub fn read_dtcm<T: Convert>(&mut self, addr: u32) -> T {
+    pub fn read_dtcm<T: Convert>(&self, addr: u32) -> T {
         utils::read_from_mem(self.dtcm.as_slice(), addr & (regions::DATA_TCM_SIZE - 1))
     }
 

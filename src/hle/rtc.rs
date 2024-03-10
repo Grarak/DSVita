@@ -16,7 +16,7 @@ struct RtcReg {
 }
 
 #[derive(Default)]
-pub struct RtcContext {
+pub struct Rtc {
     rtc: u8,
     cs: bool,
     sck: bool,
@@ -27,9 +27,9 @@ pub struct RtcContext {
     date_time: [u8; 7],
 }
 
-impl RtcContext {
+impl Rtc {
     pub fn new() -> Self {
-        RtcContext::default()
+        Rtc::default()
     }
 
     pub fn get_rtc(&self) -> u8 {

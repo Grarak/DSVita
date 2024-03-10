@@ -1,3 +1,4 @@
+use crate::hle::hle::get_regs;
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
@@ -6,7 +7,7 @@ use crate::jit::reg::Reg;
 use crate::jit::Op;
 use std::ptr;
 
-impl<const CPU: CpuType> JitAsm<CPU> {
+impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_thumb(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
         let op = inst_info.op;
@@ -67,7 +68,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             Op::BxRegT | Op::BlxRegT => JitAsm::emit_bx_thumb,
 
             Op::SwiT => JitAsm::emit_swi::<true>,
-            Op::UnkThumb => |_: &mut JitAsm<CPU>, _: usize, _: u32| {},
+            Op::UnkThumb => |_: &mut JitAsm<'a, CPU>, _: usize, _: u32| {},
             _ => {
                 if op.is_single_mem_transfer() {
                     if inst_info.op.mem_is_write() {
@@ -92,7 +93,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         if out_regs.is_reserved(Reg::PC) {
             self.jit_buf
                 .emit_opcodes
-                .extend(&self.thread_regs.borrow().save_regs_thumb_opcodes);
+                .extend(&get_regs!(self.hle, CPU).save_regs_thumb_opcodes);
 
             self.jit_buf
                 .emit_opcodes
@@ -103,7 +104,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             ));
 
             if CPU == CpuType::ARM7 || op != Op::PopPcT || op == Op::AddHT || op == Op::MovHT {
-                let thread_regs = self.thread_regs.borrow();
+                let thread_regs = get_regs!(self.hle, CPU);
                 self.jit_buf
                     .emit_opcodes
                     .extend(thread_regs.emit_get_reg(Reg::R1, Reg::PC));

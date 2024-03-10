@@ -220,13 +220,13 @@ impl JitMemory {
                 0xFF000000 => {
                     get_info!(self.arm9_bios_info)
                 }
-                _ => todo!("{:?}", guest_pc),
+                _ => todo!("{:x}", guest_pc),
             },
             CpuType::ARM7 => match guest_pc & 0xFF000000 {
                 regions::MAIN_MEMORY_OFFSET => get_info!(self.get_main_info_slice()),
                 regions::SHARED_WRAM_OFFSET => get_info!(self.wram_info),
                 regions::ARM7_BIOS_OFFSET => get_info!(self.arm7_bios_info),
-                _ => todo!("{:?}", guest_pc),
+                _ => todo!("{:x}", guest_pc),
             },
         }
     }

@@ -2,13 +2,13 @@ use crate::hle::memory::regions;
 use crate::utils;
 use crate::utils::{Convert, HeapMemU8};
 
-pub struct PalettesContext {
+pub struct Palettes {
     mem: HeapMemU8<{ regions::STANDARD_PALETTES_SIZE as usize }>,
 }
 
-impl PalettesContext {
+impl Palettes {
     pub fn new() -> Self {
-        PalettesContext {
+        Palettes {
             mem: HeapMemU8::new(),
         }
     }

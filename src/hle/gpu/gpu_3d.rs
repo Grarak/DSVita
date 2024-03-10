@@ -18,13 +18,13 @@ struct Disp3DCnt {
     not_used: u1,
 }
 
-pub struct Gpu3DContext {
-    pub disp_cnt: Disp3DCnt,
+pub struct Gpu3D {
+    disp_cnt: Disp3DCnt,
 }
 
-impl Gpu3DContext {
+impl Gpu3D {
     pub fn new() -> Self {
-        Gpu3DContext {
+        Gpu3D {
             disp_cnt: Disp3DCnt::from(0),
         }
     }

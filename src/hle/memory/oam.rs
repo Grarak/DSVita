@@ -2,13 +2,13 @@ use crate::hle::memory::regions;
 use crate::utils;
 use crate::utils::{Convert, HeapMemU8};
 
-pub struct OamContext {
+pub struct Oam {
     mem: HeapMemU8<{ regions::OAM_SIZE as usize }>,
 }
 
-impl OamContext {
+impl Oam {
     pub fn new() -> Self {
-        OamContext {
+        Oam {
             mem: HeapMemU8::new(),
         }
     }

@@ -1,9 +1,9 @@
-use crate::hle::cpu_regs::{CpuRegs, InterruptFlag};
+use crate::hle::cpu_regs::InterruptFlag;
 use crate::hle::cycle_manager::{CycleEvent, CycleManager};
+use crate::hle::hle::{get_cm, get_cpu_regs_mut, io_timers, io_timers_mut, Hle};
 use crate::hle::CpuType;
+use crate::hle::CpuType::{ARM7, ARM9};
 use bilge::prelude::*;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 const CHANNEL_COUNT: usize = 4;
 const TIME_OVERFLOW: u32 = 0x10000;
@@ -34,27 +34,24 @@ struct TimerChannel {
     scheduled_cycle: u64,
 }
 
-pub struct TimersContext<const CPU: CpuType> {
-    cycle_manager: Rc<CycleManager>,
-    cpu_regs: Rc<CpuRegs<CPU>>,
-    channels: Rc<RefCell<[TimerChannel; CHANNEL_COUNT]>>,
+pub struct Timers {
+    cpu_type: CpuType,
+    channels: [TimerChannel; CHANNEL_COUNT],
 }
 
-impl<const CPU: CpuType> TimersContext<CPU> {
-    pub fn new(cycle_manager: Rc<CycleManager>, cpu_regs: Rc<CpuRegs<CPU>>) -> Self {
-        TimersContext {
-            cycle_manager,
-            cpu_regs,
-            channels: Rc::new(RefCell::new([TimerChannel::default(); CHANNEL_COUNT])),
+impl Timers {
+    pub fn new(cpu_type: CpuType) -> Self {
+        Timers {
+            cpu_type,
+            channels: [TimerChannel::default(); CHANNEL_COUNT],
         }
     }
 
-    pub fn get_cnt_l<const CHANNEL_NUM: usize>(&self) -> u16 {
-        let mut channels = self.channels.borrow_mut();
-        let channel = &mut channels[CHANNEL_NUM];
+    pub fn get_cnt_l<const CHANNEL_NUM: usize>(&mut self, cycle_manager: &CycleManager) -> u16 {
+        let channel = &mut self.channels[CHANNEL_NUM];
         let cnt = TimerCntH::from(channel.cnt_h);
         if bool::from(cnt.start()) && !cnt.is_count_up(CHANNEL_NUM) {
-            let current_cycle_count = self.cycle_manager.get_cycle_count();
+            let current_cycle_count = cycle_manager.get_cycle_count();
             let diff = if channel.scheduled_cycle > current_cycle_count {
                 channel.scheduled_cycle - current_cycle_count
             } else {
@@ -66,18 +63,21 @@ impl<const CPU: CpuType> TimersContext<CPU> {
     }
 
     pub fn get_cnt_h<const CHANNEL_NUM: usize>(&self) -> u16 {
-        self.channels.borrow()[CHANNEL_NUM].cnt_h
+        self.channels[CHANNEL_NUM].cnt_h
     }
 
     pub fn set_cnt_l<const CHANNEL_NUM: usize>(&mut self, mask: u16, value: u16) {
-        let mut channels = self.channels.borrow_mut();
-        let channel = &mut channels[CHANNEL_NUM];
-        channel.cnt_l = (channel.cnt_l & !mask) | (value & mask);
+        self.channels[CHANNEL_NUM].cnt_l =
+            (self.channels[CHANNEL_NUM].cnt_l & !mask) | (value & mask);
     }
 
-    pub fn set_cnt_h<const CHANNEL_NUM: usize>(&mut self, mut mask: u16, value: u16) {
-        let mut channels = self.channels.borrow_mut();
-        let channel = &mut channels[CHANNEL_NUM];
+    pub fn set_cnt_h<const CHANNEL_NUM: usize>(
+        &mut self,
+        mut mask: u16,
+        value: u16,
+        hle: &mut Hle,
+    ) {
+        let channel = &mut self.channels[CHANNEL_NUM];
         let current_cnt = TimerCntH::from(channel.cnt_h);
 
         mask &= 0xC7;
@@ -106,44 +106,33 @@ impl<const CPU: CpuType> TimersContext<CPU> {
         if update && bool::from(cnt.start()) && !cnt.is_count_up(CHANNEL_NUM) {
             let remaining_cycles =
                 (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
-            let event = TimersEvent::<CPU, CHANNEL_NUM>::new(
-                self.channels.clone(),
-                self.cycle_manager.clone(),
-                self.cpu_regs.clone(),
-            );
-            channel.scheduled_cycle = self
-                .cycle_manager
-                .schedule(remaining_cycles, Box::new(event));
+            channel.scheduled_cycle = match self.cpu_type {
+                ARM9 => get_cm!(hle).schedule(
+                    remaining_cycles,
+                    Box::new(TimersEvent::<{ ARM9 }, CHANNEL_NUM>::new()),
+                ),
+                ARM7 => get_cm!(hle).schedule(
+                    remaining_cycles,
+                    Box::new(TimersEvent::<{ ARM7 }, CHANNEL_NUM>::new()),
+                ),
+            };
         }
     }
 }
 
 #[derive(Clone)]
 struct TimersEvent<const CPU: CpuType, const CHANNEL_NUM: usize> {
-    channels: Rc<RefCell<[TimerChannel; CHANNEL_COUNT]>>,
     scheduled_at: u64,
-    cycle_manager: Rc<CycleManager>,
-    cpu_regs: Rc<CpuRegs<CPU>>,
 }
 
 impl<const CPU: CpuType, const CHANNEL_NUM: usize> TimersEvent<CPU, CHANNEL_NUM> {
-    fn new(
-        channels: Rc<RefCell<[TimerChannel; CHANNEL_COUNT]>>,
-        cycle_manager: Rc<CycleManager>,
-        cpu_regs: Rc<CpuRegs<CPU>>,
-    ) -> Self {
-        TimersEvent {
-            channels,
-            scheduled_at: 0,
-            cycle_manager,
-            cpu_regs,
-        }
+    fn new() -> Self {
+        TimersEvent { scheduled_at: 0 }
     }
 
-    fn overflow(&self, count_up_num: usize) {
+    fn overflow(hle: &mut Hle, count_up_num: usize) {
         {
-            let mut channels = self.channels.borrow_mut();
-            let channel = &mut channels[count_up_num];
+            let channel = &mut io_timers_mut!(hle, CPU).channels[count_up_num];
             let cnt = TimerCntH::from(channel.cnt_h);
             if !bool::from(cnt.start()) {
                 return;
@@ -152,22 +141,23 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> TimersEvent<CPU, CHANNEL_NUM>
             if !cnt.is_count_up(count_up_num) {
                 let remaining_cycles =
                     (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
-                channel.scheduled_cycle = self
-                    .cycle_manager
-                    .schedule(remaining_cycles, Box::new(self.clone()))
+                channel.scheduled_cycle = get_cm!(hle).schedule(
+                    remaining_cycles,
+                    Box::new(TimersEvent::<CPU, CHANNEL_NUM>::new()),
+                )
             }
 
             if bool::from(cnt.irq_enable()) {
-                self.cpu_regs.send_interrupt(InterruptFlag::from(
-                    InterruptFlag::Timer0Overflow as u8 + count_up_num as u8,
-                ))
+                get_cpu_regs_mut!(hle, CPU).send_interrupt(
+                    InterruptFlag::from(InterruptFlag::Timer0Overflow as u8 + count_up_num as u8),
+                    get_cm!(hle),
+                );
             }
         }
         if count_up_num < 3 {
             let mut overflow = false;
             {
-                let mut channels = self.channels.borrow_mut();
-                let channel = &mut channels[count_up_num + 1];
+                let channel = &mut io_timers_mut!(hle, CPU).channels[count_up_num];
                 let cnt = TimerCntH::from(channel.cnt_h);
                 if bool::from(cnt.count_up()) {
                     channel.current_value += 1;
@@ -175,7 +165,7 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> TimersEvent<CPU, CHANNEL_NUM>
                 }
             }
             if overflow {
-                self.overflow(count_up_num + 1);
+                Self::overflow(hle, count_up_num + 1);
             }
         }
     }
@@ -186,14 +176,9 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> CycleEvent for TimersEvent<CP
         self.scheduled_at = *timestamp;
     }
 
-    fn trigger(&mut self, _: u16) {
-        {
-            let mut channels = self.channels.borrow_mut();
-            let channel = &mut channels[CHANNEL_NUM];
-            if self.scheduled_at != channel.scheduled_cycle {
-                return;
-            }
+    fn trigger(&mut self, _: u16, hle: &mut Hle) {
+        if self.scheduled_at == io_timers!(hle, CPU).channels[CHANNEL_NUM].scheduled_cycle {
+            Self::overflow(hle, CHANNEL_NUM);
         }
-        self.overflow(CHANNEL_NUM);
     }
 }

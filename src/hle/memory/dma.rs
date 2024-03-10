@@ -1,12 +1,11 @@
-use crate::hle::cycle_manager::{CycleEvent, CycleManager};
-use crate::hle::memory::mem_handler::MemHandler;
+use crate::hle::cycle_manager::CycleEvent;
+use crate::hle::hle::{get_cm, io_dma, io_dma_mut, Hle};
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
 use bilge::prelude::*;
-use std::cell::RefCell;
 use std::mem;
-use std::rc::Rc;
+use CpuType::{ARM7, ARM9};
 
 const CHANNEL_COUNT: usize = 4;
 
@@ -68,10 +67,10 @@ pub enum DmaTransferMode {
 }
 
 impl DmaTransferMode {
-    fn from_cnt<const CPU: CpuType>(cnt: u32, channel_num: usize) -> Self {
-        match CPU {
-            CpuType::ARM9 => DmaTransferMode::from(u8::from(DmaCntArm9::from(cnt).transfer_mode())),
-            CpuType::ARM7 => {
+    fn from_cnt(cpu_type: CpuType, cnt: u32, channel_num: usize) -> Self {
+        match cpu_type {
+            ARM9 => DmaTransferMode::from(u8::from(DmaCntArm9::from(cnt).transfer_mode())),
+            ARM7 => {
                 let mode = u8::from(DmaCntArm7::from(cnt).transfer_mode());
                 match mode {
                     2 => DmaTransferMode::DsCartSlot,
@@ -103,73 +102,60 @@ struct DmaChannel {
     current_count: u32,
 }
 
-pub struct Dma<const CPU: CpuType> {
-    channels: [Rc<RefCell<DmaChannel>>; CHANNEL_COUNT],
-    mem_handler: Option<Rc<MemHandler<CPU>>>,
-    cycle_manager: Rc<CycleManager>,
+pub struct Dma {
+    cpu_type: CpuType,
+    channels: [DmaChannel; CHANNEL_COUNT],
 }
 
-impl<const CPU: CpuType> Dma<CPU> {
-    pub fn new(cycle_manager: Rc<CycleManager>) -> Self {
+impl Dma {
+    pub fn new(cpu_type: CpuType) -> Self {
         Dma {
-            channels: [
-                Rc::new(RefCell::new(DmaChannel::default())),
-                Rc::new(RefCell::new(DmaChannel::default())),
-                Rc::new(RefCell::new(DmaChannel::default())),
-                Rc::new(RefCell::new(DmaChannel::default())),
-            ],
-            mem_handler: None,
-            cycle_manager,
+            cpu_type,
+            channels: [DmaChannel::default(); CHANNEL_COUNT],
         }
     }
 
     pub fn get_sad<const CHANNEL_NUM: usize>(&self) -> u32 {
-        self.channels[CHANNEL_NUM].borrow().sad
+        self.channels[CHANNEL_NUM].sad
     }
 
     pub fn get_dad<const CHANNEL_NUM: usize>(&self) -> u32 {
-        self.channels[CHANNEL_NUM].borrow().dad
+        self.channels[CHANNEL_NUM].dad
     }
 
     pub fn get_cnt<const CHANNEL_NUM: usize>(&self) -> u32 {
-        self.channels[CHANNEL_NUM].borrow().cnt
+        self.channels[CHANNEL_NUM].cnt
     }
 
     pub fn get_fill<const CHANNEL_NUM: usize>(&self) -> u32 {
-        self.channels[CHANNEL_NUM].borrow().fill
+        self.channels[CHANNEL_NUM].fill
     }
 
-    pub fn set_mem_handler(&mut self, mem_handler: Rc<MemHandler<CPU>>) {
-        self.mem_handler = Some(mem_handler)
-    }
-
-    pub fn set_sad<const CHANNEL_NUM: usize>(&self, mut mask: u32, value: u32) {
-        mask &= if CPU == CpuType::ARM9 || CHANNEL_NUM != 0 {
+    pub fn set_sad<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32) {
+        mask &= if self.cpu_type == ARM9 || CHANNEL_NUM != 0 {
             0x0FFFFFFF
         } else {
             0x07FFFFFF
         };
-        let mut channel = self.channels[CHANNEL_NUM].borrow_mut();
-        channel.sad = (channel.sad & !mask) | (value & mask);
+        self.channels[CHANNEL_NUM].sad = (self.channels[CHANNEL_NUM].sad & !mask) | (value & mask);
     }
 
-    pub fn set_dad<const CHANNEL_NUM: usize>(&self, mut mask: u32, value: u32) {
-        mask &= if CPU == CpuType::ARM9 || CHANNEL_NUM != 0 {
+    pub fn set_dad<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32) {
+        mask &= if self.cpu_type == ARM9 || CHANNEL_NUM != 0 {
             0x0FFFFFFF
         } else {
             0x07FFFFFF
         };
-        let mut channel = self.channels[CHANNEL_NUM].borrow_mut();
-        channel.dad = (channel.dad & !mask) | (value & mask);
+        self.channels[CHANNEL_NUM].dad = (self.channels[CHANNEL_NUM].dad & !mask) | (value & mask);
     }
 
-    pub fn set_cnt<const CHANNEL_NUM: usize>(&self, mut mask: u32, value: u32) {
-        let mut channel = self.channels[CHANNEL_NUM].borrow_mut();
+    pub fn set_cnt<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32, hle: &mut Hle) {
+        let channel = &mut self.channels[CHANNEL_NUM];
         let was_enabled = bool::from(DmaCntArm9::from(channel.cnt).enable());
 
-        mask &= match CPU {
-            CpuType::ARM9 => 0xFFFFFFFF,
-            CpuType::ARM7 => {
+        mask &= match self.cpu_type {
+            ARM9 => 0xFFFFFFFF,
+            ARM7 => {
                 if CHANNEL_NUM == 3 {
                     0xF7E0FFFF
                 } else {
@@ -180,7 +166,7 @@ impl<const CPU: CpuType> Dma<CPU> {
 
         channel.cnt = (channel.cnt & !mask) | value & mask;
 
-        let transfer_type = DmaTransferMode::from_cnt::<CPU>(channel.cnt, CHANNEL_NUM);
+        let transfer_type = DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, CHANNEL_NUM);
 
         if transfer_type == DmaTransferMode::GeometryCmdFifo {
             // TODO 3d
@@ -195,26 +181,28 @@ impl<const CPU: CpuType> Dma<CPU> {
             if transfer_type == DmaTransferMode::StartImm {
                 debug_println!(
                     "{:?} dma schedule imm {:x} {:x} {:x} {:x}",
-                    CPU,
+                    self.cpu_type,
                     channel.cnt,
                     channel.current_dest,
                     channel.current_src,
                     channel.current_count
                 );
-                self.cycle_manager.schedule(
-                    1,
-                    Box::new(DmaEvent::<CPU, CHANNEL_NUM>::new(
-                        self.channels[CHANNEL_NUM].clone(),
-                        self.mem_handler.clone().unwrap(),
-                    )),
-                );
+
+                match self.cpu_type {
+                    ARM9 => {
+                        get_cm!(hle).schedule(1, Box::new(DmaEvent::<{ ARM9 }, CHANNEL_NUM>::new()))
+                    }
+                    ARM7 => {
+                        get_cm!(hle).schedule(1, Box::new(DmaEvent::<{ ARM7 }, CHANNEL_NUM>::new()))
+                    }
+                };
             }
         }
     }
 
-    pub fn set_fill<const CHANNEL_NUM: usize>(&self, mask: u32, value: u32) {
-        let mut channel = self.channels[CHANNEL_NUM].borrow_mut();
-        channel.fill = (channel.fill & !mask) | (value & mask);
+    pub fn set_fill<const CHANNEL_NUM: usize>(&mut self, mask: u32, value: u32) {
+        self.channels[CHANNEL_NUM].fill =
+            (self.channels[CHANNEL_NUM].fill & !mask) | (value & mask);
     }
 
     pub fn trigger_all(&self, mode: DmaTransferMode) {
@@ -223,33 +211,25 @@ impl<const CPU: CpuType> Dma<CPU> {
 
     pub fn trigger(&self, mode: DmaTransferMode, channels: u8) {
         for (index, channel) in self.channels.iter().enumerate() {
-            if channels & (1 << index) != 0 {
-                let channel = channel.borrow();
-                if bool::from(DmaCntArm9::from(channel.cnt).enable())
-                    && DmaTransferMode::from_cnt::<CPU>(channel.cnt, index) == mode
-                {
-                    todo!()
-                }
+            if channels & (1 << index) != 0
+                && bool::from(DmaCntArm9::from(channel.cnt).enable())
+                && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode
+            {
+                todo!()
             }
         }
     }
 }
 
-struct DmaEvent<const CPU: CpuType, const CHANNEL_NUM: usize> {
-    channel: Rc<RefCell<DmaChannel>>,
-    mem_handler: Rc<MemHandler<CPU>>,
-}
+struct DmaEvent<const CPU: CpuType, const CHANNEL_NUM: usize> {}
 
 impl<const CPU: CpuType, const CHANNEL_NUM: usize> DmaEvent<CPU, CHANNEL_NUM> {
-    fn new(channel: Rc<RefCell<DmaChannel>>, mem_handler: Rc<MemHandler<CPU>>) -> Self {
-        DmaEvent {
-            channel,
-            mem_handler,
-        }
+    fn new() -> Self {
+        DmaEvent {}
     }
 
     fn do_transfer<T: utils::Convert>(
-        mem_handler: &MemHandler<CPU>,
+        hle: &mut Hle,
         mut dest_addr: u32,
         mut src_addr: u32,
         count: u32,
@@ -268,8 +248,8 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> DmaEvent<CPU, CHANNEL_NUM> {
                 dest_addr
             );
 
-            let src = mem_handler.read::<T>(src_addr);
-            mem_handler.write(dest_addr, src);
+            let src = hle.mem_read_no_tcm::<CPU, T>(src_addr);
+            hle.mem_write_no_tcm::<CPU, T>(dest_addr, src);
 
             match src_addr_ctrl {
                 DmaAddrCtrl::Increment => src_addr += step_size,
@@ -293,12 +273,12 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> DmaEvent<CPU, CHANNEL_NUM> {
 impl<const CPU: CpuType, const CHANNEL_NUM: usize> CycleEvent for DmaEvent<CPU, CHANNEL_NUM> {
     fn scheduled(&mut self, _: &u64) {}
 
-    fn trigger(&mut self, _: u16) {
+    fn trigger(&mut self, _: u16, hle: &mut Hle) {
         let (cnt, mode, dest, src, count) = {
-            let channel = self.channel.borrow();
+            let channel = &io_dma!(hle, CPU).channels[CHANNEL_NUM];
             (
                 DmaCntArm9::from(channel.cnt),
-                DmaTransferMode::from_cnt::<CPU>(channel.cnt, CHANNEL_NUM),
+                DmaTransferMode::from_cnt(CPU, channel.cnt, CHANNEL_NUM),
                 channel.current_dest,
                 channel.current_src,
                 channel.current_count,
@@ -306,9 +286,9 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> CycleEvent for DmaEvent<CPU, 
         };
 
         if bool::from(cnt.transfer_type()) {
-            Self::do_transfer::<u32>(self.mem_handler.as_ref(), dest, src, count, &cnt, mode);
+            Self::do_transfer::<u32>(hle, dest, src, count, &cnt, mode);
         } else {
-            Self::do_transfer::<u16>(self.mem_handler.as_ref(), dest, src, count, &cnt, mode);
+            Self::do_transfer::<u16>(hle, dest, src, count, &cnt, mode);
         }
 
         if mode == DmaTransferMode::GeometryCmdFifo {
@@ -318,39 +298,11 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> CycleEvent for DmaEvent<CPU, 
         if bool::from(cnt.repeat()) && mode != DmaTransferMode::StartImm {
             todo!()
         } else {
-            self.channel.borrow_mut().cnt &= !(1 << 31);
+            io_dma_mut!(hle, CPU).channels[CHANNEL_NUM].cnt &= !(1 << 31);
         }
 
         if bool::from(cnt.irq_at_end()) {
             todo!()
-        }
-    }
-}
-
-pub struct DmaContainer {
-    dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
-    dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
-}
-
-impl DmaContainer {
-    pub fn new(
-        dma_arm9: Rc<RefCell<Dma<{ CpuType::ARM9 }>>>,
-        dma_arm7: Rc<RefCell<Dma<{ CpuType::ARM7 }>>>,
-    ) -> Self {
-        DmaContainer { dma_arm9, dma_arm7 }
-    }
-
-    pub fn trigger_all<const CPU: CpuType>(&self, mode: DmaTransferMode) {
-        match CPU {
-            CpuType::ARM9 => self.dma_arm9.borrow().trigger_all(mode),
-            CpuType::ARM7 => self.dma_arm7.borrow().trigger_all(mode),
-        }
-    }
-
-    pub fn get<const CPU: CpuType>(&self) -> Rc<RefCell<Dma<CPU>>> {
-        match CPU {
-            CpuType::ARM9 => unsafe { mem::transmute(self.dma_arm9.clone()) },
-            CpuType::ARM7 => unsafe { mem::transmute(self.dma_arm7.clone()) },
         }
     }
 }

@@ -8,9 +8,6 @@ pub struct Mmap {
     size: u32,
 }
 
-unsafe impl Send for Mmap {}
-unsafe impl Sync for Mmap {}
-
 impl Mmap {
     pub fn rw(_: &str, size: u32) -> io::Result<Self> {
         Mmap::new(libc::PROT_READ | libc::PROT_WRITE, size)

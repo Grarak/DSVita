@@ -1,19 +1,22 @@
-use crate::hle::cp15_context::{cp15_read, cp15_write};
-use crate::hle::cpu_regs::cpu_regs_halt;
+use crate::hle::hle::{get_cp15, get_cp15_mut, get_cpu_regs_mut, get_regs, get_regs_mut};
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
+use crate::jit::inst_cp15_handler::{cp15_read, cp15_write};
+use crate::jit::inst_cpu_regs_handler::cpu_regs_halt;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::Op;
 use std::ptr;
 
-impl<const CPU: CpuType> JitAsm<CPU> {
+impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_halt<const THUMB: bool>(&mut self, pc: u32) {
+        let cpu_regs_addr = get_cpu_regs_mut!(self.hle, CPU) as *mut _ as _;
+
         self.emit_call_host_func(
             |_| {},
             |_, _| {},
-            &[Some(self.cpu_regs.as_ref() as *const _ as u32), Some(0)],
+            &[Some(cpu_regs_addr), Some(0)],
             cpu_regs_halt::<CPU> as *const (),
         );
 
@@ -35,11 +38,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             .push(LdrStrImm::str_al(Reg::R0, Reg::R1));
         self.jit_buf
             .emit_opcodes
-            .extend(
-                self.thread_regs
-                    .borrow()
-                    .emit_set_reg(Reg::PC, Reg::R2, Reg::R3),
-            );
+            .extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, Reg::R2, Reg::R3));
 
         Self::emit_host_bx(
             self.breakout_skip_save_regs_addr,
@@ -56,26 +55,28 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let cp = (inst_info.opcode >> 5) & 0x7;
 
         let cp15_reg = (cn << 16) | (cm << 8) | cp;
-        let cp15_context_addr = self.cp15_context.as_ptr() as u32;
 
         if cp15_reg == 0x070004 || cp15_reg == 0x070802 {
             self.emit_halt::<false>(pc);
         } else {
             let (args, addr) = match inst_info.op {
-                Op::Mcr => {
-                    let cp15_write_addr = cp15_write as *const ();
-                    (
-                        [Some(cp15_context_addr), Some(cp15_reg), None],
-                        cp15_write_addr,
-                    )
-                }
+                Op::Mcr => (
+                    [
+                        Some(get_cp15_mut!(self.hle, CPU) as *mut _ as _),
+                        Some(cp15_reg),
+                        None,
+                    ],
+                    cp15_write as _,
+                ),
                 Op::Mrc => {
-                    let reg_addr =
-                        self.thread_regs.borrow_mut().get_reg_value_mut(*rd) as *mut _ as u32;
-                    let cp15_read_addr = cp15_read as *const ();
+                    let reg_addr = get_regs_mut!(self.hle, CPU).get_reg_mut(*rd) as *mut _ as u32;
                     (
-                        [Some(cp15_context_addr), Some(cp15_reg), Some(reg_addr)],
-                        cp15_read_addr,
+                        [
+                            Some(get_cp15!(self.hle, CPU) as *const _ as _),
+                            Some(cp15_reg),
+                            Some(reg_addr),
+                        ],
+                        cp15_read as _,
                     )
                 }
                 _ => {

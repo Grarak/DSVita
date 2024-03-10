@@ -1,12 +1,12 @@
-use crate::hle::bios_context::bios_uninterrupt;
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
+use crate::jit::inst_exception_handler::bios_uninterrupt;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use std::ptr;
 
-impl<const CPU: CpuType> JitAsm<CPU> {
+impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_unknown(&mut self, buf_index: usize, pc: u32) {
         let opcode = self.jit_buf.instructions[buf_index].opcode;
         if (opcode & 0xE000000) == 0xA000000 {
@@ -17,7 +17,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             self.jit_buf.emit_opcodes.extend(&self.restore_host_opcodes);
             self.jit_buf
                 .emit_opcodes
-                .extend(AluImm::mov32(Reg::R0, self.bios_context.as_ptr() as u32));
+                .extend(AluImm::mov32(Reg::R0, self.hle as *mut _ as _));
             Self::emit_host_blx(
                 bios_uninterrupt::<CPU> as *const () as _,
                 &mut self.jit_buf.emit_opcodes,

@@ -1,6 +1,4 @@
-use std::hint::unreachable_unchecked;
-
-pub struct DivSqrtContext {
+pub struct DivSqrt {
     pub sqrt_cnt: u16,
     pub sqrt_result: u32,
     sqrt_param: u64,
@@ -11,9 +9,9 @@ pub struct DivSqrtContext {
     divrem_result: i64,
 }
 
-impl DivSqrtContext {
+impl DivSqrt {
     pub fn new() -> Self {
-        DivSqrtContext {
+        DivSqrt {
             sqrt_cnt: 0,
             sqrt_result: 0,
             sqrt_param: 0,
@@ -142,7 +140,7 @@ impl DivSqrtContext {
                 }
             }
             _ => {
-                unsafe { unreachable_unchecked() };
+                unreachable!()
             }
         }
     }

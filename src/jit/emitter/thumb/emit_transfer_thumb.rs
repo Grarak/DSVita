@@ -2,7 +2,7 @@ use crate::hle::CpuType;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::MemoryAmount;
 
-impl<const CPU: CpuType> JitAsm<CPU> {
+impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_ldr_thumb(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
         self.emit_single_transfer::<true, false>(

@@ -180,3 +180,41 @@ impl BuildHasher for BuildNoHasher {
 
 pub type NoHashMap<V> = HashMap<u32, V, BuildNoHasher>;
 pub type NoHashSet = HashSet<u32, BuildNoHasher>;
+
+pub enum ThreadPriority {
+    Low,
+    Default,
+    High,
+}
+
+pub enum ThreadAffinity {
+    Core0,
+    Core1,
+    Core2,
+}
+
+#[cfg(target_os = "linux")]
+pub fn set_thread_prio_affinity(_: ThreadPriority, _: ThreadAffinity) {}
+
+#[cfg(target_os = "vita")]
+pub fn set_thread_prio_affinity(thread_priority: ThreadPriority, thread_affinity: ThreadAffinity) {
+    unsafe {
+        let id = vitasdk_sys::sceKernelGetThreadId();
+        vitasdk_sys::sceKernelChangeThreadPriority(
+            id,
+            match thread_priority {
+                ThreadPriority::Low => vitasdk_sys::SCE_KERNEL_PROCESS_PRIORITY_USER_LOW,
+                ThreadPriority::Default => vitasdk_sys::SCE_KERNEL_PROCESS_PRIORITY_USER_DEFAULT,
+                ThreadPriority::High => vitasdk_sys::SCE_KERNEL_PROCESS_PRIORITY_USER_HIGH,
+            } as _,
+        );
+        vitasdk_sys::sceKernelChangeThreadCpuAffinityMask(
+            id,
+            match thread_affinity {
+                ThreadAffinity::Core0 => vitasdk_sys::SCE_KERNEL_CPU_MASK_USER_0,
+                ThreadAffinity::Core1 => vitasdk_sys::SCE_KERNEL_CPU_MASK_USER_1,
+                ThreadAffinity::Core2 => vitasdk_sys::SCE_KERNEL_CPU_MASK_USER_2,
+            } as _,
+        );
+    }
+}

@@ -125,7 +125,7 @@ struct SpiCnt {
 }
 
 #[derive(Default)]
-pub struct SpiContext {
+pub struct Spi {
     pub cnt: u16,
     pub data: u8,
     write_count: usize,
@@ -133,9 +133,9 @@ pub struct SpiContext {
     addr: u32,
 }
 
-impl SpiContext {
+impl Spi {
     pub fn new() -> Self {
-        SpiContext::default()
+        Spi::default()
     }
 
     pub fn set_cnt(&mut self, mut mask: u16, value: u16) {

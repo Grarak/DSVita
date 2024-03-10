@@ -1,24 +1,26 @@
+use crate::hle::CpuType::{ARM7, ARM9};
 use std::marker::ConstParamTy;
 use std::ops;
 use std::ops::{Index, IndexMut};
 
-pub mod bios_context;
+pub mod bios;
 mod bios_lookup_table;
-pub mod cp15_context;
+pub mod cp15;
+pub mod cpu;
 pub mod cpu_regs;
 pub mod cycle_manager;
-mod div_sqrt_context;
+mod div_sqrt;
 pub mod exception_handler;
 pub mod gpu;
-pub mod input_context;
-pub mod ipc_handler;
+pub mod hle;
+pub mod input;
+pub mod ipc;
 pub mod memory;
-pub mod rtc_context;
-pub mod spi_context;
-pub mod spu_context;
-pub mod thread_context;
+pub mod rtc;
+pub mod spi;
+pub mod spu;
 pub mod thread_regs;
-pub mod timers_context;
+pub mod timers;
 
 #[derive(ConstParamTy, Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -30,9 +32,24 @@ pub enum CpuType {
 impl CpuType {
     pub const fn other(self) -> Self {
         match self {
-            CpuType::ARM9 => CpuType::ARM7,
-            CpuType::ARM7 => CpuType::ARM9,
+            ARM9 => ARM7,
+            ARM7 => ARM9,
         }
+    }
+}
+
+impl const From<bool> for CpuType {
+    fn from(value: bool) -> Self {
+        match value {
+            false => ARM9,
+            true => ARM7,
+        }
+    }
+}
+
+impl const From<u8> for CpuType {
+    fn from(value: u8) -> Self {
+        CpuType::from(value != 0)
     }
 }
 

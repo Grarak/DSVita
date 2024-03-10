@@ -73,20 +73,22 @@ const HEADER_SIZE: usize = mem::size_of::<CartridgeHeader>();
 pub const HEADER_IN_RAM_SIZE: usize = 0x170;
 const_assert_eq!(HEADER_SIZE, HEADER_IN_RAM_SIZE + 0x90);
 
-pub struct Cartridge {
+pub struct CartridgeReader {
     file: File,
     pub file_size: u32,
     pub header: CartridgeHeader,
     content_pages: RefCell<NoHashMap<Rc<[u8; PAGE_SIZE as usize]>>>,
 }
 
-impl Cartridge {
+unsafe impl Send for CartridgeReader {}
+
+impl CartridgeReader {
     pub fn new(mut file: File) -> io::Result<Self> {
         let mut raw_header = [0u8; HEADER_SIZE];
         file.read_exact(&mut raw_header)?;
         let file_size = file.stream_len().unwrap() as u32;
         let header: CartridgeHeader = unsafe { mem::transmute(raw_header) };
-        Ok(Cartridge {
+        Ok(CartridgeReader {
             file,
             file_size,
             header,

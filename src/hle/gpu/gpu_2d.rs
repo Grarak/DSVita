@@ -1,21 +1,16 @@
-use crate::hle::gpu::gpu_context::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
-use crate::hle::memory::oam_context::OamContext;
-use crate::hle::memory::palettes_context::PalettesContext;
+use crate::hle::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
+use crate::hle::memory::mem::Memory;
 use crate::hle::memory::regions::VRAM_OFFSET;
-use crate::hle::memory::vram_context;
-use crate::hle::memory::vram_context::{
-    VramContext, BG_A_OFFSET, BG_B_OFFSET, OBJ_A_OFFSET, OBJ_B_OFFSET,
-};
-use crate::hle::CpuType;
+use crate::hle::memory::vram;
+use crate::hle::memory::vram::{BG_A_OFFSET, BG_B_OFFSET, OBJ_A_OFFSET, OBJ_B_OFFSET};
+use crate::hle::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::utils;
 use crate::utils::{HeapMemI8, HeapMemU32};
 use bilge::prelude::*;
-use std::cell::RefCell;
 use std::hint::unreachable_unchecked;
 use std::marker::ConstParamTy;
 use std::mem;
-use std::rc::Rc;
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
@@ -221,16 +216,13 @@ impl Gpu2DLayers {
     }
 }
 
-pub struct Gpu2DContext<const ENGINE: Gpu2DEngine> {
+pub struct Gpu2D<const ENGINE: Gpu2DEngine> {
     inner: Gpu2DInner,
     layers: Gpu2DLayers,
     pub framebuffer: HeapMemU32<{ DISPLAY_PIXEL_COUNT }>,
-    vram_context: *const VramContext,
-    palettes_context: *const PalettesContext,
-    oam_context: *const OamContext,
 }
 
-impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
+impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
     const fn get_bg_offset() -> u32 {
         match ENGINE {
             Gpu2DEngine::A => BG_A_OFFSET,
@@ -259,34 +251,27 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         }
     }
 
-    fn read_bg<T: utils::Convert>(&self, addr: u32) -> T {
-        unsafe { (*self.vram_context).read::<{ CpuType::ARM9 }, _>(Self::get_bg_offset() + addr) }
+    fn read_bg<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
+        mem.vram.read::<{ ARM9 }, _>(Self::get_bg_offset() + addr)
     }
 
-    fn read_obj<T: utils::Convert>(&self, addr: u32) -> T {
-        unsafe { (*self.vram_context).read::<{ CpuType::ARM9 }, _>(Self::get_obj_offset() + addr) }
+    fn read_obj<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
+        mem.vram.read::<{ ARM9 }, _>(Self::get_obj_offset() + addr)
     }
 
-    fn read_palettes<T: utils::Convert>(&self, addr: u32) -> T {
-        unsafe { (*self.palettes_context).read(Self::get_palettes_offset() + addr) }
+    fn read_palettes<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
+        mem.palettes.read(Self::get_palettes_offset() + addr)
     }
 
-    fn read_oam<T: utils::Convert>(&self, addr: u32) -> T {
-        unsafe { (*self.oam_context).read(Self::get_oam_offset() + addr) }
+    fn read_oam<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
+        mem.oam.read(Self::get_oam_offset() + addr)
     }
 
-    pub fn new(
-        vram_context: Rc<RefCell<VramContext>>,
-        palattes_context: Rc<RefCell<PalettesContext>>,
-        oam_context: Rc<RefCell<OamContext>>,
-    ) -> Self {
-        Gpu2DContext {
+    pub fn new() -> Self {
+        Gpu2D {
             inner: Gpu2DInner::default(),
             layers: Gpu2DLayers::new(),
             framebuffer: HeapMemU32::new(),
-            vram_context: vram_context.as_ptr(),
-            palettes_context: palattes_context.as_ptr(),
-            oam_context: oam_context.as_ptr(),
         }
     }
 
@@ -395,8 +380,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
 
     pub fn set_master_bright(&mut self, mask: u16, value: u16) {}
 
-    pub fn draw_scanline(&mut self, line: u8) {
-        let backdrop = self.read_palettes::<u16>(0);
+    pub fn draw_scanline(&mut self, line: u8, mem: &Memory) {
+        let backdrop = self.read_palettes::<u16>(0, mem);
         let backdrop = backdrop & !(1 << 15);
         self.layers.pixels.fill(backdrop as u32);
         self.layers.priorities.fill(4);
@@ -406,24 +391,24 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
 
         if bool::from(disp_cnt.screen_display_obj()) {
             if bool::from(disp_cnt.obj_window_display_flag()) {
-                self.draw_objects::<true>(line);
+                self.draw_objects::<true>(line, mem);
             }
-            self.draw_objects::<false>(line);
+            self.draw_objects::<false>(line, mem);
         }
 
         macro_rules! draw {
             ($bg3:expr, $bg2:expr, $bg1:expr, $bg0:expr) => {
                 if bool::from(disp_cnt.screen_display_bg3()) {
-                    $bg3;
+                    $bg3(self, line, mem);
                 }
                 if bool::from(disp_cnt.screen_display_bg2()) {
-                    $bg2;
+                    $bg2(self, line, mem);
                 }
                 if bool::from(disp_cnt.screen_display_bg1()) {
-                    $bg1;
+                    $bg1(self, line, mem);
                 }
                 if bool::from(disp_cnt.screen_display_bg0()) {
-                    $bg0;
+                    $bg0(self, line, mem);
                 }
             };
         }
@@ -431,54 +416,56 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         match u8::from(disp_cnt.bg_mode()) {
             0 => {
                 draw!(
-                    self.draw_text::<3>(line),
-                    self.draw_text::<2>(line),
-                    self.draw_text::<1>(line),
-                    self.draw_text::<0>(line)
+                    Self::draw_text::<3>,
+                    Self::draw_text::<2>,
+                    Self::draw_text::<1>,
+                    Self::draw_text::<0>
                 );
             }
             1 => {
                 draw!(
-                    self.draw_affine::<3>(line),
-                    self.draw_text::<2>(line),
-                    self.draw_text::<1>(line),
-                    self.draw_text::<0>(line)
+                    Self::draw_affine::<3>,
+                    Self::draw_text::<2>,
+                    Self::draw_text::<1>,
+                    Self::draw_text::<0>
                 );
             }
             2 => {
                 draw!(
-                    self.draw_affine::<3>(line),
-                    self.draw_affine::<2>(line),
-                    self.draw_text::<1>(line),
-                    self.draw_text::<0>(line)
+                    Self::draw_affine::<3>,
+                    Self::draw_affine::<2>,
+                    Self::draw_text::<1>,
+                    Self::draw_text::<0>
                 );
             }
             3 => {
                 draw!(
-                    self.draw_extended::<3>(line),
-                    self.draw_text::<2>(line),
-                    self.draw_text::<1>(line),
-                    self.draw_text::<0>(line)
+                    Self::draw_extended::<3>,
+                    Self::draw_text::<2>,
+                    Self::draw_text::<1>,
+                    Self::draw_text::<0>
                 );
             }
             4 => {
                 draw!(
-                    self.draw_extended::<3>(line),
-                    self.draw_affine::<2>(line),
-                    self.draw_text::<1>(line),
-                    self.draw_text::<0>(line)
+                    Self::draw_extended::<3>,
+                    Self::draw_affine::<2>,
+                    Self::draw_text::<1>,
+                    Self::draw_text::<0>
                 );
             }
             5 => {
                 draw!(
-                    self.draw_extended::<3>(line),
-                    self.draw_extended::<2>(line),
-                    self.draw_text::<1>(line),
-                    self.draw_text::<0>(line)
+                    Self::draw_extended::<3>,
+                    Self::draw_extended::<2>,
+                    Self::draw_text::<1>,
+                    Self::draw_text::<0>
                 );
             }
             6 => {
-                draw!({}, self.draw_large::<2>(line), {}, {});
+                if bool::from(disp_cnt.screen_display_bg2()) {
+                    self.draw_large::<2>(line, mem);
+                }
             }
             7 => {
                 debug_println!("Unknown engine {:?} bg mode {}", ENGINE, disp_cnt.bg_mode());
@@ -525,14 +512,14 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             DisplayMode::Layers => fb.copy_from_slice(pixels_a),
             DisplayMode::Vram => {
                 let vram_block = u32::from(disp_cnt.vram_block());
-                let base_addr = vram_context::LCDC_OFFSET
-                    + vram_block * vram_context::BANK_A_SIZE as u32
+                let base_addr = vram::LCDC_OFFSET
+                    + vram_block * vram::BANK_A_SIZE as u32
                     + ((fb_start as u32) << 1);
-                let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
 
                 fb.iter_mut().enumerate().for_each(|(i, value)| {
                     *value = Self::rgb5_to_rgb6(
-                        vram_context.read::<{ CpuType::ARM9 }, u16>(base_addr + ((i as u32) << 1))
+                        mem.vram
+                            .read::<{ ARM9 }, u16>(base_addr + ((i as u32) << 1))
                             as u32,
                     );
                 });
@@ -543,24 +530,24 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         }
     }
 
-    fn draw_affine<const BG: usize>(&mut self, line: u8) {
+    fn draw_affine<const BG: usize>(&mut self, line: u8, mem: &Memory) {
         todo!()
     }
 
-    fn draw_text<const BG: usize>(&mut self, line: u8) {
+    fn draw_text<const BG: usize>(&mut self, line: u8, mem: &Memory) {
         if BG == 0 && bool::from(self.inner.disp_cnt.bg0_3d()) {
             // TODO 3d
             return;
         }
 
         if bool::from(self.inner.bg_cnt[BG].color_palettes()) {
-            self.draw_text_pixels::<BG, true>(line);
+            self.draw_text_pixels::<BG, true>(line, mem);
         } else {
-            self.draw_text_pixels::<BG, false>(line);
+            self.draw_text_pixels::<BG, false>(line, mem);
         }
     }
 
-    fn draw_text_pixels<const BG: usize, const BIT8: bool>(&mut self, line: u8) {
+    fn draw_text_pixels<const BG: usize, const BIT8: bool>(&mut self, line: u8, mem: &Memory) {
         let disp_cnt = self.inner.disp_cnt;
         let bg_cnt = self.inner.bg_cnt[BG];
 
@@ -585,31 +572,22 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             };
         }
 
-        let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
-        let palattes_context = unsafe { self.palettes_context.as_ref().unwrap_unchecked() };
-
         let mut palettes_base_addr = Self::get_palettes_offset();
         let read_palettes = if BIT8 && bool::from(disp_cnt.bg_extended_palettes()) {
             palettes_base_addr = 0;
             if BG < 2 && bool::from(bg_cnt.ext_palette_slot_display_area_overflow()) {
-                if !vram_context.is_bg_ext_palette_mapped::<ENGINE>(BG + 2) {
+                if !mem.vram.is_bg_ext_palette_mapped::<ENGINE>(BG + 2) {
                     return;
                 }
-                |vram_context: &VramContext, _: &PalettesContext, addr: u32| {
-                    vram_context.read_bg_ext_palette::<ENGINE, u16>(BG + 2, addr)
-                }
+                |mem: &Memory, addr: u32| mem.vram.read_bg_ext_palette::<ENGINE, u16>(BG + 2, addr)
             } else {
-                if !vram_context.is_bg_ext_palette_mapped::<ENGINE>(BG) {
+                if !mem.vram.is_bg_ext_palette_mapped::<ENGINE>(BG) {
                     return;
                 }
-                |vram_context: &VramContext, _: &PalettesContext, addr: u32| {
-                    vram_context.read_bg_ext_palette::<ENGINE, u16>(BG, addr)
-                }
+                |mem: &Memory, addr: u32| mem.vram.read_bg_ext_palette::<ENGINE, u16>(BG, addr)
             }
         } else {
-            |_: &VramContext, palettes_context: &PalettesContext, addr: u32| {
-                palettes_context.read(addr)
-            }
+            |mem: &Memory, addr: u32| mem.palettes.read(addr)
         };
 
         for i in (0..DISPLAY_WIDTH as u32).step_by(8) {
@@ -620,7 +598,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 todo!()
             }
 
-            let tile = self.read_bg::<u16>(tile_addr);
+            let tile = self.read_bg::<u16>(tile_addr, mem);
             let tile = TextBgScreen::from(tile);
 
             let palette_addr = palettes_base_addr
@@ -651,10 +629,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                         } << 2)
                 };
             let mut indices = if BIT8 {
-                self.read_bg::<u32>(index_addr) as u64
-                    | ((self.read_bg::<u32>(index_addr + 4) as u64) << 32)
+                self.read_bg::<u32>(index_addr, mem) as u64
+                    | ((self.read_bg::<u32>(index_addr + 4, mem) as u64) << 32)
             } else {
-                self.read_bg::<u32>(index_addr) as u64
+                self.read_bg::<u32>(index_addr, mem) as u64
             };
 
             let mut x = i.wrapping_sub(x_offset & 7);
@@ -666,8 +644,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 };
                 if tmp_x < 256 && (indices & if BIT8 { 0xFF } else { 0xF }) != 0 {
                     let color = read_palettes(
-                        vram_context,
-                        palattes_context,
+                        mem,
                         palette_addr + ((indices as u32 & if BIT8 { 0xFF } else { 0xF }) << 1),
                     );
                     self.draw_bg_pixel::<BG>(line, tmp_x as usize, (color | (1 << 15)) as u32);
@@ -682,13 +659,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         }
     }
 
-    fn draw_extended<const BG: usize>(&mut self, line: u8) {
+    fn draw_extended<const BG: usize>(&mut self, line: u8, mem: &Memory) {
         let mut rot_scale_x = self.inner.internal.x[BG - 2] - self.inner.bg_pa[BG - 2] as i32;
         let mut rot_scale_y = self.inner.internal.y[BG - 2] - self.inner.bg_pc[BG - 2] as i32;
 
         let bg_cnt = self.inner.bg_cnt[BG];
-        let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
-        let palattes_context = unsafe { self.palettes_context.as_ref().unwrap_unchecked() };
 
         if bool::from(bg_cnt.color_palettes()) {
             let base_data_addr = VRAM_OFFSET + (u32::from(bg_cnt.screen_base_block()) << 11);
@@ -715,7 +690,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                         continue;
                     }
 
-                    let pixel = vram_context.read::<{ CpuType::ARM9 }, u16>(
+                    let pixel = mem.vram.read::<{ ARM9 }, u16>(
                         (base_data_addr as i32 + (y * size_x + x) * 2) as u32,
                     );
                     if pixel & (1 << 15) != 0 {
@@ -736,11 +711,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                         continue;
                     }
 
-                    let index = vram_context.read::<{ CpuType::ARM9 }, u8>(
-                        (base_data_addr as i32 + y * size_x + x) as u32,
-                    );
+                    let index = mem
+                        .vram
+                        .read::<{ ARM9 }, u8>((base_data_addr as i32 + y * size_x + x) as u32);
                     if index != 0 {
-                        let pixel = palattes_context.read::<u16>(index as u32 * 2) | (1 << 15);
+                        let pixel = mem.palettes.read::<u16>(index as u32 * 2) | (1 << 15);
                         self.draw_bg_pixel::<BG>(line, i, pixel as u32);
                     }
                 }
@@ -753,14 +728,12 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         self.inner.internal.y[BG - 2] += self.inner.bg_pd[BG - 2] as i32;
     }
 
-    fn draw_large<const BG: usize>(&self, line: u8) {
+    fn draw_large<const BG: usize>(&self, line: u8, mem: &Memory) {
         todo!()
     }
 
-    fn draw_objects<const WINDOW: bool>(&mut self, line: u8) {
-        let vram_context = unsafe { self.vram_context.as_ref().unwrap_unchecked() };
-        let palettes_context = unsafe { self.palettes_context.as_ref().unwrap_unchecked() };
-
+    #[inline(never)]
+    fn draw_objects<const WINDOW: bool>(&mut self, line: u8, mem: &Memory) {
         let bound = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) {
             32u32 << u8::from(self.inner.disp_cnt.tile_obj_1d_boundary())
         } else {
@@ -768,20 +741,16 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
         };
 
         let read_palette = if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
-            if !vram_context.is_obj_ext_palette_mapped::<ENGINE>() {
+            if !mem.vram.is_obj_ext_palette_mapped::<ENGINE>() {
                 return;
             }
-            |vram_context: &VramContext, _: &PalettesContext, addr: u32| {
-                vram_context.read_obj_ext_palette::<ENGINE, u16>(addr)
-            }
+            |mem: &Memory, addr: u32| mem.vram.read_obj_ext_palette::<ENGINE, u16>(addr)
         } else {
-            |_: &VramContext, palettes_context: &PalettesContext, addr: u32| {
-                palettes_context.read::<u16>(addr)
-            }
+            |mem: &Memory, addr: u32| mem.palettes.read::<u16>(addr)
         };
 
         for i in 0..128 {
-            let byte = self.read_oam::<u8>(i * 8 + 1);
+            let byte = self.read_oam::<u8>(i * 8 + 1, mem);
             let type_ = (byte >> 2) & 0x3;
 
             if (byte & 0x3) == 2 || (type_ == 2) != WINDOW {
@@ -789,9 +758,9 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             }
 
             let object = [
-                self.read_oam::<u16>(i * 8),
-                self.read_oam::<u16>(i * 8 + 2),
-                self.read_oam::<u16>(i * 8 + 4),
+                self.read_oam::<u16>(i * 8, mem),
+                self.read_oam::<u16>(i * 8 + 2, mem),
+                self.read_oam::<u16>(i * 8 + 4, mem),
             ];
 
             let (width, height) = match ((object[0] >> 12) & 0xC) | ((object[1] >> 14) & 0x3) {
@@ -873,10 +842,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                 if object[0] & (1 << 8) != 0 {
                     let params_base_addr = ((object[1] >> 9) & 0x1F) as u32 * 0x20;
                     let params = [
-                        self.read_oam::<u16>(params_base_addr + 0x6) as i16,
-                        self.read_oam::<u16>(params_base_addr + 0xE) as i16,
-                        self.read_oam::<u16>(params_base_addr + 0x16) as i16,
-                        self.read_oam::<u16>(params_base_addr + 0x1E) as i16,
+                        self.read_oam::<u16>(params_base_addr + 0x6, mem) as i16,
+                        self.read_oam::<u16>(params_base_addr + 0xE, mem) as i16,
+                        self.read_oam::<u16>(params_base_addr + 0x16, mem) as i16,
+                        self.read_oam::<u16>(params_base_addr + 0x1E, mem) as i16,
                     ];
 
                     for j in 0..width2 {
@@ -901,7 +870,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                             continue;
                         }
 
-                        let pixel = vram_context.read::<{ CpuType::ARM9 }, u16>(
+                        let pixel = mem.vram.read::<{ ARM9 }, u16>(
                             data_base_addr
                                 + ((rot_scale_y as u32 * bitmap_width + rot_scale_x as u32) << 1),
                         );
@@ -928,8 +897,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                             continue;
                         }
 
-                        let pixel =
-                            vram_context.read::<{ CpuType::ARM9 }, u16>(data_base_addr + (j << 1));
+                        let pixel = mem.vram.read::<{ ARM9 }, u16>(data_base_addr + (j << 1));
                         if pixel & (1 << 15) != 0 {
                             self.draw_obj_pixel(line, offset as usize, pixel as u32, priority);
                         }
@@ -944,10 +912,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
             if object[0] & (1 << 8) != 0 {
                 let params_base_addr = ((object[1] >> 9) & 0x1F) as u32 * 0x20;
                 let params = [
-                    self.read_oam::<u16>(params_base_addr + 0x6) as i16,
-                    self.read_oam::<u16>(params_base_addr + 0xE) as i16,
-                    self.read_oam::<u16>(params_base_addr + 0x16) as i16,
-                    self.read_oam::<u16>(params_base_addr + 0x1E) as i16,
+                    self.read_oam::<u16>(params_base_addr + 0x6, mem) as i16,
+                    self.read_oam::<u16>(params_base_addr + 0xE, mem) as i16,
+                    self.read_oam::<u16>(params_base_addr + 0x16, mem) as i16,
+                    self.read_oam::<u16>(params_base_addr + 0x1E, mem) as i16,
                 ];
 
                 if object[0] & (1 << 13) != 0 {
@@ -993,6 +961,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                                 + (((rot_scale_y >> 3) * map_width + (rot_scale_y & 7)) << 3)
                                 + ((rot_scale_x >> 3) << 6)
                                 + (rot_scale_x & 7),
+                            mem,
                         );
 
                         if index != 0 {
@@ -1006,8 +975,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                                     (((type_ == 1) as u32) << 25)
                                         | (1 << 15)
                                         | read_palette(
-                                            vram_context,
-                                            palettes_context,
+                                            mem,
                                             palette_base_addr + ((index as u32) << 1),
                                         ) as u32,
                                     priority,
@@ -1054,6 +1022,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                                     << 2)
                                 + ((rot_scale_x >> 3) << 5)
                                 + ((rot_scale_x & 7) >> 1),
+                            mem,
                         );
                         let index = if j & 1 != 0 {
                             (index & 0xF0) >> 4
@@ -1073,6 +1042,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                                         | (1 << 15)
                                         | self.read_palettes::<u16>(
                                             palette_addr + ((index as u32) << 1),
+                                            mem,
                                         ) as u32,
                                     priority,
                                 );
@@ -1095,7 +1065,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     };
 
                 let palette_base_addr = if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
-                    if !vram_context.is_obj_ext_palette_mapped::<ENGINE>() {
+                    if !mem.vram.is_obj_ext_palette_mapped::<ENGINE>() {
                         continue;
                     }
                     ((object[2] & 0xF000) >> 3) as u32
@@ -1113,7 +1083,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                         continue;
                     }
 
-                    let index = self.read_obj::<u8>(tile_base_addr + ((j >> 3) << 6) + (j & 7));
+                    let index =
+                        self.read_obj::<u8>(tile_base_addr + ((j >> 3) << 6) + (j & 7), mem);
                     let index = if j & 1 != 0 {
                         (index & 0xF0) >> 4
                     } else {
@@ -1129,11 +1100,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                                 offset as usize,
                                 (((type_ == 1) as u32) << 25)
                                     | (1 << 15)
-                                    | read_palette(
-                                        vram_context,
-                                        palettes_context,
-                                        palette_base_addr + ((index as u32) << 1),
-                                    ) as u32,
+                                    | read_palette(mem, palette_base_addr + ((index as u32) << 1))
+                                        as u32,
                                 priority,
                             );
                         }
@@ -1166,7 +1134,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                     }
 
                     let index =
-                        self.read_obj::<u8>(tile_base_addr + ((j >> 3) << 5) + ((j & 7) >> 1));
+                        self.read_obj::<u8>(tile_base_addr + ((j >> 3) << 5) + ((j & 7) >> 1), mem);
                     let index = if j & 1 != 0 {
                         (index & 0xF0) >> 4
                     } else {
@@ -1182,9 +1150,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DContext<ENGINE> {
                                 offset as usize,
                                 (((type_ == 1) as u32) << 25)
                                     | (1 << 15)
-                                    | self
-                                        .read_palettes::<u16>(palette_addr + ((index as u32) << 1))
-                                        as u32,
+                                    | self.read_palettes::<u16>(
+                                        palette_addr + ((index as u32) << 1),
+                                        mem,
+                                    ) as u32,
                                 priority,
                             );
                         }

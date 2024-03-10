@@ -10,15 +10,15 @@ struct SpuChannel {
     cap_cnt: u8,
 }
 
-pub struct SpuContext {
+pub struct Spu {
     channels: [SpuChannel; CHANNEL_COUNT],
     pub main_sound_cnt: u16,
     sound_bias: u16,
 }
 
-impl SpuContext {
+impl Spu {
     pub fn new() -> Self {
-        SpuContext {
+        Spu {
             channels: [SpuChannel::default(); CHANNEL_COUNT],
             main_sound_cnt: 0,
             sound_bias: 0,

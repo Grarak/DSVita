@@ -1,14 +1,16 @@
-use crate::hle::thread_regs::{register_set_cpsr_checked, register_set_spsr_checked};
+use crate::hle::hle::{get_cm, get_regs, get_regs_mut};
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::inst_info::Operand;
+use crate::jit::inst_threag_regs_handler::{register_set_cpsr_checked, register_set_spsr_checked};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::Op;
-use std::hint::unreachable_unchecked;
 
-impl<const CPU: CpuType> JitAsm<CPU> {
+impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_msr(&mut self, buf_index: usize, _: u32) {
+        let regs_addr = get_regs_mut!(self.hle, CPU) as *mut _ as _;
+        let cm_addr = get_cm!(self.hle) as *const _ as _;
         let op = self.jit_buf.instructions[buf_index].op;
 
         self.emit_call_host_func(
@@ -17,30 +19,30 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
                 match &inst_info.operands()[0] {
                     Operand::Reg { reg, .. } => {
-                        if *reg != Reg::R1 {
+                        if *reg != Reg::R2 {
                             asm.jit_buf
                                 .emit_opcodes
-                                .push(AluShiftImm::mov_al(Reg::R1, *reg));
+                                .push(AluShiftImm::mov_al(Reg::R2, *reg));
                         }
                     }
                     Operand::Imm(imm) => {
                         asm.jit_buf
                             .emit_opcodes
-                            .extend(AluImm::mov32(Reg::R1, *imm));
+                            .extend(AluImm::mov32(Reg::R2, *imm));
                     }
-                    _ => unsafe { unreachable_unchecked() },
+                    _ => unreachable!(),
                 }
 
                 let flags = (inst_info.opcode >> 16) & 0xF;
                 asm.jit_buf
                     .emit_opcodes
-                    .push(AluImm::mov_al(Reg::R2, flags as u8));
+                    .push(AluImm::mov_al(Reg::R3, flags as u8));
             },
             |_, _| {},
-            &[Some(self.thread_regs.as_ptr() as _), None, None],
+            &[Some(regs_addr), Some(cm_addr), None, None],
             match op {
-                Op::MsrRc | Op::MsrIc => register_set_cpsr_checked::<CPU> as _,
-                Op::MsrRs => register_set_spsr_checked::<CPU> as _,
+                Op::MsrRc | Op::MsrIc => register_set_cpsr_checked as _,
+                Op::MsrRs => register_set_spsr_checked as _,
                 _ => todo!(),
             },
         );
@@ -52,7 +54,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         let opcodes = &mut self.jit_buf.emit_opcodes;
 
         let op0 = inst_info.operands()[0].as_reg_no_shift().unwrap();
-        opcodes.extend(self.thread_regs.borrow().emit_get_reg(
+        opcodes.extend(get_regs!(self.hle, CPU).emit_get_reg(
             *op0,
             match inst_info.op {
                 Op::MrsRc => Reg::CPSR,

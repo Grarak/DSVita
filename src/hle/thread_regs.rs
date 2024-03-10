@@ -1,14 +1,14 @@
 use crate::hle::cpu_regs::CpuRegs;
+use crate::hle::cycle_manager::CycleManager;
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Msr};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
+use crate::DEBUG_LOG;
 use bilge::prelude::*;
-use std::cell::RefCell;
 use std::ptr;
-use std::rc::Rc;
 
 #[bitsize(32)]
 #[derive(FromBits)]
@@ -47,7 +47,7 @@ pub struct OtherModeRegs {
     pub spsr: u32,
 }
 
-pub struct ThreadRegs<const CPU: CpuType> {
+pub struct ThreadRegs {
     pub gp_regs: [u32; 13],
     pub sp: u32,
     pub lr: u32,
@@ -61,16 +61,17 @@ pub struct ThreadRegs<const CPU: CpuType> {
     pub abt: OtherModeRegs,
     pub irq: OtherModeRegs,
     pub und: OtherModeRegs,
-    cpu_regs: Rc<CpuRegs<CPU>>,
     pub restore_regs_opcodes: Vec<u32>,
     pub save_regs_opcodes: Vec<u32>,
     pub restore_regs_thumb_opcodes: Vec<u32>,
     pub save_regs_thumb_opcodes: Vec<u32>,
+    pub cpu: CpuRegs,
+    pub cycle_correction: i16,
 }
 
-impl<const CPU: CpuType> ThreadRegs<CPU> {
-    pub fn new(cpu_regs: Rc<CpuRegs<CPU>>) -> Rc<RefCell<Self>> {
-        let instance = Rc::new(RefCell::new(ThreadRegs {
+impl ThreadRegs {
+    pub fn new(cpu_type: CpuType) -> Box<Self> {
+        let mut instance = Box::new(ThreadRegs {
             gp_regs: [0u32; 13],
             sp: 0,
             lr: 0,
@@ -84,15 +85,15 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
             abt: OtherModeRegs::default(),
             irq: OtherModeRegs::default(),
             und: OtherModeRegs::default(),
-            cpu_regs,
             restore_regs_opcodes: Vec::new(),
             save_regs_opcodes: Vec::new(),
             restore_regs_thumb_opcodes: Vec::new(),
             save_regs_thumb_opcodes: Vec::new(),
-        }));
+            cpu: CpuRegs::new(cpu_type),
+            cycle_correction: 0,
+        });
 
         {
-            let mut instance = instance.borrow_mut();
             let gp_regs_addr = instance.gp_regs.as_ptr() as u32;
             let last_regs_addr = ptr::addr_of!(instance.gp_regs[instance.gp_regs.len() - 1]) as u32;
             let last_regs_thumb_addr = ptr::addr_of!(instance.gp_regs[7]) as u32;
@@ -154,7 +155,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
     }
 
     pub fn emit_get_reg(&self, dest_reg: Reg, src_reg: Reg) -> Vec<u32> {
-        let reg_addr = self.get_reg_value(src_reg) as *const _ as u32;
+        let reg_addr = self.get_reg(src_reg) as *const _ as u32;
 
         let mut opcodes = Vec::new();
         opcodes.extend(AluImm::mov32(dest_reg, reg_addr));
@@ -165,7 +166,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
     pub fn emit_set_reg(&self, dest_reg: Reg, src_reg: Reg, tmp_reg: Reg) -> Vec<u32> {
         debug_assert_ne!(src_reg, tmp_reg);
 
-        let reg_addr = self.get_reg_value(dest_reg) as *const _ as u32;
+        let reg_addr = self.get_reg(dest_reg) as *const _ as u32;
 
         let mut opcodes = Vec::new();
         opcodes.extend(AluImm::mov32(tmp_reg, reg_addr));
@@ -173,19 +174,19 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         opcodes
     }
 
-    pub fn get_reg_value(&self, reg: Reg) -> &u32 {
+    pub fn get_reg(&self, reg: Reg) -> &u32 {
         debug_assert_ne!(reg, Reg::None);
         let base_ptr = ptr::addr_of!(self.gp_regs[0]);
         unsafe { base_ptr.offset(reg as _).as_ref().unwrap_unchecked() }
     }
 
-    pub fn get_reg_value_mut(&mut self, reg: Reg) -> &mut u32 {
+    pub fn get_reg_mut(&mut self, reg: Reg) -> &mut u32 {
         debug_assert_ne!(reg, Reg::None);
         let base_ptr = ptr::addr_of_mut!(self.gp_regs[0]);
         unsafe { base_ptr.offset(reg as _).as_mut().unwrap_unchecked() }
     }
 
-    pub fn get_reg_usr_value(&self, reg: Reg) -> &u32 {
+    pub fn get_reg_usr(&self, reg: Reg) -> &u32 {
         debug_assert_ne!(reg, Reg::None);
         match reg {
             Reg::R8 => &self.user.gp_regs[0],
@@ -195,11 +196,11 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
             Reg::R12 => &self.user.gp_regs[4],
             Reg::SP => &self.user.sp,
             Reg::LR => &self.user.lr,
-            _ => self.get_reg_value(reg),
+            _ => self.get_reg(reg),
         }
     }
 
-    pub fn get_reg_usr_value_mut(&mut self, reg: Reg) -> &mut u32 {
+    pub fn get_reg_usr_mut(&mut self, reg: Reg) -> &mut u32 {
         debug_assert_ne!(reg, Reg::None);
         match reg {
             Reg::R8 => &mut self.user.gp_regs[0],
@@ -209,18 +210,18 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
             Reg::R12 => &mut self.user.gp_regs[4],
             Reg::SP => &mut self.user.sp,
             Reg::LR => &mut self.user.lr,
-            _ => self.get_reg_value_mut(reg),
+            _ => self.get_reg_mut(reg),
         }
     }
 
-    pub fn set_cpsr_with_flags(&mut self, value: u32, flags: u8) {
+    pub fn set_cpsr_with_flags(&mut self, value: u32, flags: u8, cycle_manager: &CycleManager) {
         if flags & 1 == 1 {
             let mask = if u8::from(Cpsr::from(self.cpsr).mode()) == 0x10 {
                 0xE0
             } else {
                 0xFF
             };
-            self.set_cpsr::<false>((self.cpsr & !mask) | (value & mask));
+            self.set_cpsr::<false>((self.cpsr & !mask) | (value & mask), cycle_manager);
         }
 
         for i in 1..4 {
@@ -232,8 +233,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
     }
 
     pub fn set_spsr_with_flags(&mut self, value: u32, flags: u8) {
-        #[cfg(debug_assertions)]
-        {
+        if DEBUG_LOG {
             let mode = u8::from(Cpsr::from(self.cpsr).mode());
             debug_assert_ne!(mode, 0x10);
             debug_assert_ne!(mode, 0x1F);
@@ -247,13 +247,13 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
         }
     }
 
-    pub fn restore_spsr(&mut self) {
+    pub fn restore_spsr(&mut self, cycle_manager: &CycleManager) {
         if !self.is_user {
-            self.set_cpsr::<false>(self.spsr);
+            self.set_cpsr::<false>(self.spsr, cycle_manager);
         }
     }
 
-    pub fn set_cpsr<const SAVE: bool>(&mut self, value: u32) {
+    pub fn set_cpsr<const SAVE: bool>(&mut self, value: u32, cycle_manager: &CycleManager) {
         let current_cpsr = Cpsr::from(self.cpsr);
         let new_cpsr = Cpsr::from(value);
 
@@ -310,8 +310,7 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
                     self.gp_regs[8..13].copy_from_slice(&self.user.gp_regs);
                     self.sp = self.user.sp;
                     self.lr = self.user.lr;
-                    #[cfg(debug_assertions)]
-                    {
+                    if DEBUG_LOG {
                         self.spsr = 0;
                     }
                     self.is_user = true;
@@ -357,9 +356,9 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
             self.spsr = self.cpsr;
         }
         self.cpsr = value;
-        self.cpu_regs
+        self.cpu
             .set_cpsr_irq_enabled(!bool::from(new_cpsr.irq_disable()));
-        self.cpu_regs.check_for_interrupt();
+        self.cpu.check_for_interrupt(cycle_manager);
     }
 
     pub fn set_thumb(&mut self, enable: bool) {
@@ -371,24 +370,4 @@ impl<const CPU: CpuType> ThreadRegs<CPU> {
     pub fn is_thumb(&self) -> bool {
         bool::from(Cpsr::from(self.cpsr).thumb())
     }
-}
-
-pub unsafe extern "C" fn register_set_cpsr_checked<const CPU: CpuType>(
-    context: *mut ThreadRegs<CPU>,
-    value: u32,
-    flags: u8,
-) {
-    (*context).set_cpsr_with_flags(value, flags)
-}
-
-pub unsafe extern "C" fn register_set_spsr_checked<const CPU: CpuType>(
-    context: *mut ThreadRegs<CPU>,
-    value: u32,
-    flags: u8,
-) {
-    (*context).set_spsr_with_flags(value, flags)
-}
-
-pub unsafe extern "C" fn register_restore_spsr<const CPU: CpuType>(context: *mut ThreadRegs<CPU>) {
-    (*context).restore_spsr();
 }

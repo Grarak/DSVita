@@ -1,4 +1,5 @@
-use crate::hle::cpu_regs::{CpuRegsContainer, InterruptFlag};
+use crate::hle::cpu_regs::InterruptFlag;
+use crate::hle::hle::{get_cm, get_cpu_regs_mut, Hle};
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use bilge::prelude::*;
@@ -50,18 +51,16 @@ impl Fifo {
     }
 }
 
-pub struct IpcHandler {
+pub struct Ipc {
     sync_regs: [u16; 2],
     fifo: [Fifo; 2],
-    cpu_regs: CpuRegsContainer,
 }
 
-impl IpcHandler {
-    pub fn new(cpu_regs: CpuRegsContainer) -> Self {
-        IpcHandler {
+impl Ipc {
+    pub fn new() -> Self {
+        Ipc {
             sync_regs: [0u16; 2],
             fifo: [Fifo::new(), Fifo::new()],
-            cpu_regs,
         }
     }
 
@@ -73,7 +72,7 @@ impl IpcHandler {
         self.fifo[CPU].cnt
     }
 
-    pub fn set_sync_reg<const CPU: CpuType>(&mut self, mut mask: u16, value: u16) {
+    pub fn set_sync_reg<const CPU: CpuType>(&mut self, mut mask: u16, value: u16, hle: &mut Hle) {
         debug_println!(
             "{:?} set ipc sync with mask {:x} and value {:x}",
             CPU,
@@ -90,12 +89,11 @@ impl IpcHandler {
         let other_cpu_ipc_sync = IpcSyncCnt::from(self.sync_regs[!CPU]);
 
         if bool::from(value_sync.send_irq()) && bool::from(other_cpu_ipc_sync.enable_irq()) {
-            self.cpu_regs
-                .send_interrupt_other::<CPU>(InterruptFlag::IpcSync);
+            get_cpu_regs_mut!(hle, !CPU).send_interrupt(InterruptFlag::IpcSync, get_cm!(hle));
         }
     }
 
-    pub fn set_fifo_cnt<const CPU: CpuType>(&mut self, mut mask: u16, value: u16) {
+    pub fn set_fifo_cnt<const CPU: CpuType>(&mut self, mut mask: u16, value: u16, hle: &mut Hle) {
         let mut current_fifo = IpcFifoCnt::from(self.fifo[CPU].cnt);
         let new_fifo = IpcFifoCnt::from(value);
 
@@ -121,16 +119,16 @@ impl IpcHandler {
             && !bool::from(current_fifo.send_empty_irq())
             && bool::from(new_fifo.send_empty_irq())
         {
-            self.cpu_regs
-                .send_interrupt::<CPU>(InterruptFlag::IpcSendFifoEmpty);
+            get_cpu_regs_mut!(hle, CPU)
+                .send_interrupt(InterruptFlag::IpcSendFifoEmpty, get_cm!(hle));
         }
 
         if !bool::from(current_fifo.recv_empty())
             && !bool::from(current_fifo.recv_not_empty_irq())
             && bool::from(new_fifo.recv_not_empty_irq())
         {
-            self.cpu_regs
-                .send_interrupt::<CPU>(InterruptFlag::IpcRecvFifoNotEmpty);
+            get_cpu_regs_mut!(hle, CPU)
+                .send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, get_cm!(hle));
         }
 
         if bool::from(new_fifo.err()) {
@@ -142,7 +140,7 @@ impl IpcHandler {
         self.fifo[CPU].cnt = (self.fifo[CPU].cnt & !mask) | (value & mask);
     }
 
-    pub fn fifo_send<const CPU: CpuType>(&mut self, mask: u32, value: u32) {
+    pub fn fifo_send<const CPU: CpuType>(&mut self, mask: u32, value: u32, hle: &mut Hle) {
         let mut fifo_cnt = IpcFifoCnt::from(self.fifo[CPU].cnt);
         if bool::from(fifo_cnt.enable()) {
             let fifo_len = self.fifo[CPU].queue.len();
@@ -160,8 +158,8 @@ impl IpcHandler {
                     self.fifo[!CPU].cnt = u16::from(other_fifo_cnt);
 
                     if irq {
-                        self.cpu_regs
-                            .send_interrupt_other::<CPU>(InterruptFlag::IpcRecvFifoNotEmpty);
+                        get_cpu_regs_mut!(hle, !CPU)
+                            .send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, get_cm!(hle));
                     }
                 } else if fifo_len == 15 {
                     let mut other_fifo_cnt = IpcFifoCnt::from(self.fifo[!CPU].cnt);
@@ -179,7 +177,7 @@ impl IpcHandler {
         }
     }
 
-    pub fn fifo_recv<const CPU: CpuType>(&mut self) -> u32 {
+    pub fn fifo_recv<const CPU: CpuType>(&mut self, hle: &mut Hle) -> u32 {
         let mut fifo_cnt = IpcFifoCnt::from(self.fifo[CPU].cnt);
         let other_fifo_len = self.fifo[!CPU].queue.len();
         if other_fifo_len > 0 {
@@ -199,8 +197,8 @@ impl IpcHandler {
                     self.fifo[!CPU].cnt = u16::from(other_fifo_cnt);
 
                     if irq {
-                        self.cpu_regs
-                            .send_interrupt_other::<CPU>(InterruptFlag::IpcSendFifoEmpty);
+                        get_cpu_regs_mut!(hle, !CPU)
+                            .send_interrupt(InterruptFlag::IpcSendFifoEmpty, get_cm!(hle));
                     }
                 } else if other_fifo_len == 16 {
                     let mut other_fifo_cnt = IpcFifoCnt::from(self.fifo[!CPU].cnt);

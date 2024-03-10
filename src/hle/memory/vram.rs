@@ -1,4 +1,4 @@
-use crate::hle::gpu::gpu_2d_context::Gpu2DEngine;
+use crate::hle::gpu::gpu_2d::Gpu2DEngine;
 use crate::hle::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
@@ -262,7 +262,7 @@ pub const OBJ_A_OFFSET: u32 = 0x400000;
 pub const BG_B_OFFSET: u32 = 0x200000;
 pub const OBJ_B_OFFSET: u32 = 0x600000;
 
-pub struct VramContext {
+pub struct Vram {
     pub stat: u8,
     pub cnt: [u8; BANK_SIZE],
     banks: VramBanks,
@@ -285,9 +285,9 @@ pub struct VramContext {
     arm7: OverlapMapping<{ 128 * 2 * 1024 }, { 128 * 1024 }>,
 }
 
-impl VramContext {
+impl Vram {
     pub fn new() -> Self {
-        let instance = VramContext {
+        let instance = Vram {
             stat: 0,
             cnt: [0u8; BANK_SIZE],
             banks: VramBanks::new(),

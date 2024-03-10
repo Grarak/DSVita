@@ -1,3 +1,4 @@
+use crate::hle::hle::get_regs;
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, MulReg};
 use crate::jit::inst_info::Operand;
@@ -5,7 +6,7 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
 
-impl<const CPU: CpuType> JitAsm<CPU> {
+impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_alu_common_thumb(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
@@ -28,7 +29,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 } else {
                     self.jit_buf
                         .emit_opcodes
-                        .extend(self.thread_regs.borrow().emit_get_reg(new_reg, reg));
+                        .extend(get_regs!(self.hle, CPU).emit_get_reg(new_reg, reg));
                 }
                 new_reg
             } else {
@@ -113,18 +114,18 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         if op2.is_high_gp_reg() {
             self.jit_buf
                 .emit_opcodes
-                .extend(self.thread_regs.borrow().emit_get_reg(*op2, *op2));
+                .extend(get_regs!(self.hle, CPU).emit_get_reg(*op2, *op2));
         }
 
         if op0.is_high_gp_reg() {
             self.jit_buf
                 .emit_opcodes
-                .extend(self.thread_regs.borrow().emit_get_reg(op0, op0));
+                .extend(get_regs!(self.hle, CPU).emit_get_reg(op0, op0));
         } else if op0.is_emulated() {
             let tmp_reg = (RegReserve::gp_thumb() + *op2).next_free().unwrap();
             self.jit_buf
                 .emit_opcodes
-                .extend(self.thread_regs.borrow().emit_get_reg(tmp_reg, op0));
+                .extend(get_regs!(self.hle, CPU).emit_get_reg(tmp_reg, op0));
             op0 = tmp_reg;
         }
 
@@ -134,11 +135,9 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         if og_op0.is_high_gp_reg() || og_op0.is_emulated() {
             let tmp_reg = (RegReserve::gp_thumb() + op0).next_free().unwrap();
-            self.jit_buf.emit_opcodes.extend(
-                self.thread_regs
-                    .borrow()
-                    .emit_set_reg(*og_op0, op0, tmp_reg),
-            );
+            self.jit_buf
+                .emit_opcodes
+                .extend(get_regs!(self.hle, CPU).emit_set_reg(*og_op0, op0, tmp_reg));
         }
     }
 
@@ -160,13 +159,13 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         if op2.is_high_gp_reg() {
             self.jit_buf
                 .emit_opcodes
-                .extend(self.thread_regs.borrow().emit_get_reg(*op2, *op2));
+                .extend(get_regs!(self.hle, CPU).emit_get_reg(*op2, *op2));
         }
 
         if op1.is_high_gp_reg() {
             self.jit_buf
                 .emit_opcodes
-                .extend(self.thread_regs.borrow().emit_get_reg(*op1, *op1));
+                .extend(get_regs!(self.hle, CPU).emit_get_reg(*op1, *op1));
         }
 
         self.jit_buf
@@ -189,12 +188,12 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             if !op0.is_high_gp_reg() && !op0.is_emulated() {
                 self.jit_buf
                     .emit_opcodes
-                    .extend(self.thread_regs.borrow().emit_get_reg(*op0, op2));
+                    .extend(get_regs!(self.hle, CPU).emit_get_reg(*op0, op2));
                 return;
             }
             self.jit_buf
                 .emit_opcodes
-                .extend(self.thread_regs.borrow().emit_get_reg(op2, op2));
+                .extend(get_regs!(self.hle, CPU).emit_get_reg(op2, op2));
         } else if op2.is_emulated() {
             if !op0.is_high_gp_reg() && !op0.is_emulated() {
                 if op2 == Reg::PC {
@@ -204,7 +203,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                 } else {
                     self.jit_buf
                         .emit_opcodes
-                        .extend(self.thread_regs.borrow().emit_get_reg(*op0, op2));
+                        .extend(get_regs!(self.hle, CPU).emit_get_reg(*op0, op2));
                 }
                 return;
             }
@@ -216,7 +215,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             } else {
                 self.jit_buf
                     .emit_opcodes
-                    .extend(self.thread_regs.borrow().emit_get_reg(tmp_reg, op2));
+                    .extend(get_regs!(self.hle, CPU).emit_get_reg(tmp_reg, op2));
             }
             op2 = tmp_reg;
         }
@@ -225,7 +224,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             let tmp_reg = (RegReserve::gp_thumb() + op2).next_free().unwrap();
             self.jit_buf
                 .emit_opcodes
-                .extend(self.thread_regs.borrow().emit_set_reg(*op0, op2, tmp_reg));
+                .extend(get_regs!(self.hle, CPU).emit_set_reg(*op0, op2, tmp_reg));
         } else {
             self.jit_buf
                 .emit_opcodes

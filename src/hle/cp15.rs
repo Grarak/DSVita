@@ -50,7 +50,7 @@ struct TcmReg {
 const CONTROL_RW_BITS_MASK: u32 = 0x000FF085;
 const TCM_MIN_SIZE: u32 = 4 * 1024;
 
-pub struct Cp15Context {
+pub struct Cp15 {
     control: u32,
     pub exception_addr: u32,
     dtcm: u32,
@@ -77,7 +77,7 @@ impl From<u8> for TcmState {
     }
 }
 
-impl Cp15Context {
+impl Cp15 {
     pub fn new() -> Self {
         let mut control_default = Cp15ControlReg::from(0);
         control_default.set_write_buffer(u1::new(1));
@@ -85,7 +85,7 @@ impl Cp15Context {
         control_default.set_address26bit_faults(u1::new(1));
         control_default.set_abort_model(u1::new(1));
 
-        Cp15Context {
+        Cp15 {
             control: u32::from(control_default),
             exception_addr: 0,
             dtcm: 0,
@@ -165,12 +165,4 @@ impl Cp15Context {
             }
         }
     }
-}
-
-pub unsafe extern "C" fn cp15_write(context: *mut Cp15Context, reg: u32, value: u32) {
-    (*context).write(reg, value)
-}
-
-pub unsafe extern "C" fn cp15_read(context: *const Cp15Context, reg: u32, value: *mut u32) {
-    (*context).read(reg, value.as_mut().unwrap())
 }

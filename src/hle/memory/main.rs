@@ -3,13 +3,13 @@ use crate::mmap::Mmap;
 use crate::utils;
 use crate::utils::Convert;
 
-pub struct MainMemory {
+pub struct Main {
     main: Mmap,
 }
 
-impl MainMemory {
+impl Main {
     pub fn new() -> Self {
-        MainMemory {
+        Main {
             main: Mmap::rw("main_memory", regions::MAIN_MEMORY_SIZE).unwrap(),
         }
     }

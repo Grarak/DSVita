@@ -98,7 +98,7 @@ impl AsMut<[u8]> for SharedWramMapMut {
     }
 }
 
-pub struct WramContext {
+pub struct Wram {
     wram_arm7: HeapMemU8<{ regions::ARM7_WRAM_SIZE as usize }>,
     pub cnt: u8,
     shared_mem: HeapMemU8<{ regions::SHARED_WRAM_SIZE as usize }>,
@@ -106,9 +106,9 @@ pub struct WramContext {
     arm7_map: SharedWramMap,
 }
 
-impl WramContext {
+impl Wram {
     pub fn new() -> Self {
-        let mut instance = WramContext {
+        let mut instance = Wram {
             wram_arm7: HeapMemU8::new(),
             cnt: 0,
             shared_mem: HeapMemU8::new(),

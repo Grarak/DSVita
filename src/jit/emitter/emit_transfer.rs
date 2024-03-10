@@ -1,3 +1,4 @@
+use crate::hle::hle::{get_regs, get_regs_mut};
 use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
@@ -9,7 +10,7 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, Op, ShiftType};
 
-impl<const CPU: CpuType> JitAsm<CPU> {
+impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_single_transfer<const THUMB: bool, const WRITE: bool>(
         &mut self,
         buf_index: usize,
@@ -18,6 +19,8 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         write_back: bool,
         amount: MemoryAmount,
     ) {
+        let hle_addr = self.hle as *mut _ as _;
+
         let after_host_restore = |asm: &mut Self| {
             let inst_info = &asm.jit_buf.instructions[buf_index];
             let opcodes = &mut asm.jit_buf.emit_opcodes;
@@ -35,7 +38,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
                         if reg == Reg::PC {
                             opcodes.extend(AluImm::mov32(tmp_reg, pc + if THUMB { 4 } else { 8 }));
                         } else {
-                            opcodes.extend(asm.thread_regs.borrow().emit_get_reg(tmp_reg, reg));
+                            opcodes.extend(get_regs!(asm.hle, CPU).emit_get_reg(tmp_reg, reg));
                         }
                         tmp_reg
                     } else {
@@ -104,7 +107,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             }
             opcodes.extend(AluImm::mov32(
                 Reg::R1,
-                asm.thread_regs.borrow_mut().get_reg_value_mut(op0) as *mut _ as _,
+                get_regs_mut!(asm.hle, CPU).get_reg_mut(op0) as *mut _ as _,
             ));
             if WRITE && op0 == Reg::PC {
                 opcodes.extend(AluImm::mov32(Reg::R3, pc + if THUMB { 4 } else { 8 }));
@@ -122,15 +125,10 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             if let Some((op1, write_back)) = write_back_regs {
                 asm.jit_buf
                     .emit_opcodes
-                    .extend(
-                        asm.thread_regs
-                            .borrow()
-                            .emit_set_reg(op1, write_back, Reg::R0),
-                    );
+                    .extend(get_regs!(asm.hle, CPU).emit_set_reg(op1, write_back, Reg::R0));
             }
         };
 
-        let jit_asm_addr = self as *const _ as u32;
         let func_addr = match amount {
             MemoryAmount::Byte => {
                 if self.jit_buf.instructions[buf_index]
@@ -163,14 +161,14 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         self.emit_call_host_func(
             after_host_restore,
             before_guest_restore,
-            &[None, None, Some(pc), Some(jit_asm_addr)],
+            &[None, None, Some(pc), Some(hle_addr)],
             func_addr,
         );
     }
 
     pub fn emit_multiple_transfer<const THUMB: bool>(&mut self, buf_index: usize, pc: u32) {
+        let hle_addr = self.hle as *mut _ as _;
         let inst_info = &self.jit_buf.instructions[buf_index];
-        let jit_asm_addr = self as *const _ as u32;
 
         let mut rlist = (inst_info.opcode & if THUMB { 0xFF } else { 0xFFFF }) as u16;
         if inst_info.op == Op::PushLrT {
@@ -234,10 +232,10 @@ impl<const CPU: CpuType> JitAsm<CPU> {
             |_| {},
             |_, _| {},
             &[
-                Some(jit_asm_addr),
                 Some(pc),
                 Some(rlist as u32),
                 Some(op0 as u32),
+                Some(hle_addr),
             ],
             func_addr,
         );
@@ -266,6 +264,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
     }
 
     pub fn emit_swp(&mut self, buf_index: usize, pc: u32) {
+        let hle_addr = self.hle as *mut _ as _;
         let inst_info = &self.jit_buf.instructions[buf_index];
         let operands = inst_info.operands();
         let op0 = *operands[0].as_reg_no_shift().unwrap();
@@ -274,7 +273,6 @@ impl<const CPU: CpuType> JitAsm<CPU> {
 
         let reg_arg = ((op2 as u32) << 16) | ((op1 as u32) << 8) | (op0 as u32);
 
-        let jit_asm_addr = self as *const _ as u32;
         let func_addr = if inst_info.op == Op::Swpb {
             inst_mem_handler_swp::<CPU, { MemoryAmount::Byte }> as *const ()
         } else {
@@ -284,7 +282,7 @@ impl<const CPU: CpuType> JitAsm<CPU> {
         self.emit_call_host_func(
             |_| {},
             |_, _| {},
-            &[Some(jit_asm_addr), Some(reg_arg), Some(pc)],
+            &[Some(reg_arg), Some(pc), Some(hle_addr)],
             func_addr,
         );
     }

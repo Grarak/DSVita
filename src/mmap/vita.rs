@@ -11,9 +11,6 @@ pub struct Mmap {
     size: u32,
 }
 
-unsafe impl Send for Mmap {}
-unsafe impl Sync for Mmap {}
-
 impl Mmap {
     pub fn rw(name: &str, size: u32) -> io::Result<Self> {
         let c_name = CString::new(name).unwrap();
