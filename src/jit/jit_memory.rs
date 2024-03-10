@@ -5,6 +5,7 @@ use crate::mmap::Mmap;
 use crate::utils::HeapMem;
 use crate::{utils, DEBUG_LOG};
 use core::slice;
+use std::intrinsics::likely;
 use std::mem;
 
 const JIT_MEMORY_SIZE: u32 = 16 * 1024 * 1024;
@@ -13,6 +14,7 @@ const JIT_PAGE_SIZE: u32 = 4096;
 #[cfg(target_os = "vita")]
 const JIT_PAGE_SIZE: u32 = 16;
 
+#[repr(C, packed)]
 #[derive(Copy, Clone, Default)]
 pub struct JitInstInfo {
     pub jit_addr: u32,
@@ -154,15 +156,7 @@ impl JitMemory {
                             insert_block(self.itcm_info.as_mut_slice())
                         }
                         regions::MAIN_MEMORY_OFFSET => insert_block(self.get_main_info_slice_mut()),
-                        0xFF000000 => {
-                            if args.guest_start_pc & regions::ARM9_BIOS_OFFSET
-                                == regions::ARM9_BIOS_OFFSET
-                            {
-                                insert_block(self.arm9_bios_info.as_mut_slice())
-                            } else {
-                                todo!("{:x}", args.guest_start_pc)
-                            }
-                        }
+                        0xFF000000 => insert_block(self.arm9_bios_info.as_mut_slice()),
                         _ => {
                             todo!("{:x}", args.guest_start_pc)
                         }
@@ -210,7 +204,7 @@ impl JitMemory {
         macro_rules! get_info {
             ($blocks:expr) => {{
                 let block = &$blocks[guest_pc as usize % $blocks.len()];
-                if block.jit_addr != 0 {
+                if likely(block.jit_addr != 0) {
                     Some(block)
                 } else {
                     None
@@ -224,23 +218,15 @@ impl JitMemory {
                 }
                 regions::MAIN_MEMORY_OFFSET => get_info!(self.get_main_info_slice()),
                 0xFF000000 => {
-                    if guest_pc & regions::ARM9_BIOS_OFFSET == regions::ARM9_BIOS_OFFSET {
-                        get_info!(self.arm9_bios_info)
-                    } else {
-                        todo!("{:x}", guest_pc)
-                    }
+                    get_info!(self.arm9_bios_info)
                 }
-                _ => {
-                    todo!("{:x}", guest_pc)
-                }
+                _ => todo!("{:?}", guest_pc),
             },
             CpuType::ARM7 => match guest_pc & 0xFF000000 {
                 regions::MAIN_MEMORY_OFFSET => get_info!(self.get_main_info_slice()),
                 regions::SHARED_WRAM_OFFSET => get_info!(self.wram_info),
                 regions::ARM7_BIOS_OFFSET => get_info!(self.arm7_bios_info),
-                _ => {
-                    todo!("{:x}", guest_pc)
-                }
+                _ => todo!("{:?}", guest_pc),
             },
         }
     }

@@ -167,7 +167,7 @@ impl<const CPU: CpuType> CpuRegs<CPU> {
     }
 
     pub fn is_halted(&self) -> bool {
-        *self.halt.borrow() != 0
+        unsafe { self.halt.as_ptr().read() != 0 }
     }
 
     pub fn set_cpsr_irq_enabled(&self, enabled: bool) {

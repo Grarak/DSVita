@@ -2,6 +2,7 @@
 #![feature(adt_const_params)]
 #![feature(arm_target_feature)]
 #![feature(const_trait_impl)]
+#![feature(core_intrinsics)]
 #![feature(generic_const_exprs)]
 #![feature(isqrt)]
 #![feature(naked_functions)]
@@ -44,6 +45,7 @@ use sdl2::rect::Rect;
 use std::cell::RefCell;
 use std::cmp::min;
 use std::collections::HashMap;
+use std::intrinsics::{likely, unlikely};
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 use std::{mem, ptr, thread};
@@ -394,23 +396,25 @@ pub fn main() {
         .name("cpu".to_owned())
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
-            arm9_thread.jit.jit_memory.borrow_mut().open();
+            arm9_thread.jit.jit_memory.borrow().open();
             let cycle_manager = arm9_thread.cycle_manager.clone();
             loop {
-                let arm7_cycles = if !arm7_thread.is_halted() {
+                let arm7_cycles = if likely(!arm7_thread.is_halted()) {
                     arm7_thread.run()
                 } else {
                     0
                 };
 
                 let mut arm9_cycles = 0;
-                while !arm9_thread.is_halted() && (arm7_cycles > arm9_cycles || arm9_cycles == 0) {
+                while likely(
+                    !arm9_thread.is_halted() && (arm9_cycles == 0 || arm7_cycles > arm9_cycles),
+                ) {
                     arm9_cycles += arm9_thread.run();
                 }
 
                 let cycles =
                     min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);
-                if cycles == 0 {
+                if unlikely(cycles == 0) {
                     cycle_manager.jump_to_next_event();
                 } else {
                     cycle_manager.add_cycle(cycles);

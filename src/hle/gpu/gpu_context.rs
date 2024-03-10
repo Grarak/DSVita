@@ -348,7 +348,7 @@ impl CycleEvent for Scanline256Event {
         }
 
         for i in 0..2 {
-            let mut disp_stat = &mut inner.disp_stat[i];
+            let disp_stat = &mut inner.disp_stat[i];
             disp_stat.set_h_blank_flag(u1::new(1));
             if bool::from(disp_stat.h_blank_irq_enable()) {
                 todo!()
@@ -390,7 +390,7 @@ impl CycleEvent for Scanline355Event {
         match inner.v_count {
             192 => {
                 for i in 0..2 {
-                    let mut disp_stat = &mut inner.disp_stat[i];
+                    let disp_stat = &mut inner.disp_stat[i];
                     disp_stat.set_v_blank_flag(u1::new(1));
                     if bool::from(disp_stat.v_blank_irq_enable()) {
                         if i == 0 {

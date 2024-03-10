@@ -6,6 +6,7 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
 use std::cell::RefCell;
+use std::intrinsics::unlikely;
 use std::rc::Rc;
 
 pub struct InstMemHandler<const CPU: CpuType> {
@@ -220,7 +221,7 @@ pub unsafe extern "C" fn inst_mem_handler<
         .inst_mem_handler
         .handle_request::<WRITE, AMOUNT, SIGNED>(op0.as_mut().unwrap_unchecked(), addr);
     // ARM7 can halt the CPU with an IO port write
-    if CPU == CpuType::ARM7 && WRITE && (*asm).cpu_regs.as_ref().is_halted() {
+    if CPU == CpuType::ARM7 && WRITE && unlikely((*(*asm).cpu_regs_ptr).is_halted()) {
         todo!()
     }
 }
@@ -243,7 +244,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
         .inst_mem_handler
         .handle_multiple_request::<THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(pc, rlist, op0);
     // ARM7 can halt the CPU with an IO port write
-    if CPU == CpuType::ARM7 && WRITE && (*asm).cpu_regs.as_ref().is_halted() {
+    if CPU == CpuType::ARM7 && WRITE && unlikely((*(*asm).cpu_regs_ptr).is_halted()) {
         todo!()
     }
 }
@@ -255,7 +256,7 @@ pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: 
 ) {
     (*asm).inst_mem_handler.handle_swp_request::<AMOUNT>(regs);
     // ARM7 can halt the CPU with an IO port write
-    if CPU == CpuType::ARM7 && (*asm).cpu_regs.as_ref().is_halted() {
+    if CPU == CpuType::ARM7 && unlikely((*(*asm).cpu_regs_ptr).is_halted()) {
         todo!()
     }
 }

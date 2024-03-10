@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::intrinsics::unlikely;
 
 pub trait CycleEvent {
     fn scheduled(&mut self, timestamp: &u64);
@@ -41,11 +42,11 @@ impl CycleManager {
 
     #[inline]
     pub fn check_events(&self) {
-        let cycle_count = self.inner.borrow_mut().cycle_count;
+        let cycle_count = self.inner.borrow().cycle_count;
         while {
             match self.inner.borrow().events.front() {
                 None => false,
-                Some((cycles, _)) => *cycles <= cycle_count,
+                Some((cycles, _)) => unlikely(*cycles <= cycle_count),
             }
         } {
             let (cycles, mut event) = self.inner.borrow_mut().events.pop_front().unwrap();
@@ -70,7 +71,6 @@ impl CycleManager {
     pub fn jump_to_next_event(&self) {
         let mut inner = self.inner.borrow_mut();
         let events = &inner.events;
-
         inner.cycle_count = events.front().unwrap().0;
     }
 }

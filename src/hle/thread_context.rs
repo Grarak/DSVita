@@ -36,8 +36,6 @@ pub struct ThreadContext<const CPU: CpuType> {
     pub regs: Rc<RefCell<ThreadRegs<CPU>>>,
     pub cp15_context: Rc<RefCell<Cp15Context>>,
     pub mem_handler: Rc<MemHandler<CPU>>,
-    cpu_regs: Rc<CpuRegs<CPU>>,
-    bios_context: Rc<RefCell<BiosContext<CPU>>>,
 }
 
 unsafe impl<const CPU: CpuType> Send for ThreadContext<CPU> {}
@@ -124,13 +122,11 @@ impl<const CPU: CpuType> ThreadContext<CPU> {
             regs,
             cp15_context,
             mem_handler,
-            cpu_regs,
-            bios_context,
         }
     }
 
     pub fn is_halted(&self) -> bool {
-        self.cpu_regs.is_halted()
+        unsafe { (*self.jit.cpu_regs_ptr).is_halted() }
     }
 
     pub fn run(&mut self) -> u16 {
