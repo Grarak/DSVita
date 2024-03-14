@@ -60,24 +60,24 @@ impl Memory {
         let addr_base = aligned_addr & 0xFF000000;
         let addr_offset = aligned_addr - addr_base;
 
+        if CPU == ARM9 && TCM {
+            let cp15 = get_cp15!(hle, ARM9);
+            if aligned_addr >= cp15.dtcm_addr
+                && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size
+                && cp15.dtcm_state == TcmState::RW
+            {
+                return self.tcm.read_dtcm(aligned_addr - cp15.dtcm_addr);
+            }
+        }
+
         let ret = match addr_base {
             regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => match CPU {
                 ARM9 => {
                     let mut ret = T::from(0);
                     if TCM {
                         let cp15 = get_cp15!(hle, ARM9);
-                        if addr_offset < cp15.itcm_size {
-                            if cp15.itcm_state == TcmState::RW {
-                                ret = self.tcm.read_itcm(addr_offset);
-                            }
-                        } else if aligned_addr >= cp15.dtcm_addr
-                            && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size
-                        {
-                            if cp15.dtcm_state == TcmState::RW {
-                                ret = self.tcm.read_dtcm(aligned_addr - cp15.dtcm_addr);
-                            }
-                        } else {
-                            todo!("{:x} {:x}", aligned_addr, addr_base)
+                        if cp15.itcm_state == TcmState::RW {
+                            ret = self.tcm.read_itcm(addr_offset);
                         }
                     } else {
                         // todo!("{:x} {:x}", aligned_addr, addr_base)
@@ -103,19 +103,7 @@ impl Memory {
                 }
             },
             regions::MAIN_MEMORY_OFFSET => self.main.read(addr_offset),
-            regions::SHARED_WRAM_OFFSET => {
-                if CPU == ARM9 && TCM && {
-                    let cpi15 = get_cp15!(hle, ARM9);
-                    aligned_addr >= cpi15.dtcm_addr
-                        && aligned_addr < cpi15.dtcm_addr + cpi15.dtcm_size
-                        && cpi15.dtcm_state == TcmState::RW
-                } {
-                    self.tcm
-                        .read_dtcm(aligned_addr - get_cp15!(hle, ARM9).dtcm_addr)
-                } else {
-                    self.wram.read::<CPU, _>(addr_offset)
-                }
-            }
+            regions::SHARED_WRAM_OFFSET => self.wram.read::<CPU, _>(addr_offset),
             regions::IO_PORTS_OFFSET => match CPU {
                 ARM9 => self.io_arm9.read(addr_offset, hle),
                 ARM7 => self.io_arm7.read(addr_offset, hle),
@@ -149,23 +137,7 @@ impl Memory {
                 }
             },
             _ => {
-                let mut ret = T::from(0);
-                if CPU == ARM9 && TCM {
-                    let cp15 = get_cp15!(hle, ARM9);
-                    if aligned_addr >= cp15.dtcm_addr
-                        && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size
-                    {
-                        if cp15.dtcm_state == TcmState::RW {
-                            ret = self.tcm.read_dtcm(aligned_addr - cp15.dtcm_addr);
-                        }
-                    } else {
-                        todo!("{:x} {:x}", aligned_addr, addr_base)
-                    }
-                } else {
-                    todo!("{:x} {:x}", aligned_addr, addr_base)
-                }
-
-                ret
+                todo!("{:x} {:x}", aligned_addr, addr_base)
             }
         };
 
@@ -209,24 +181,25 @@ impl Memory {
         let addr_base = aligned_addr & 0xFF000000;
         let addr_offset = aligned_addr - addr_base;
 
+        if CPU == ARM9 && TCM {
+            let cp15 = get_cp15!(hle, ARM9);
+            if aligned_addr >= cp15.dtcm_addr
+                && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size
+                && cp15.dtcm_state != TcmState::Disabled
+            {
+                self.tcm.write_dtcm(aligned_addr - cp15.dtcm_addr, value);
+                return;
+            }
+        }
+
         match addr_base {
             regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => match CPU {
                 ARM9 => {
                     if TCM {
                         let cp15 = get_cp15!(hle, ARM9);
-                        if addr_offset < cp15.itcm_size {
-                            if cp15.itcm_state != TcmState::Disabled {
-                                self.tcm.write_itcm(addr_offset, value);
-                            }
-                        } else if aligned_addr >= cp15.dtcm_addr
-                            && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size
-                        {
-                            if cp15.dtcm_state != TcmState::Disabled {
-                                self.tcm.write_dtcm(aligned_addr - cp15.dtcm_addr, value);
-                            }
+                        if cp15.itcm_state != TcmState::Disabled {
+                            self.tcm.write_itcm(addr_offset, value);
                         }
-                    } else {
-                        // todo!("{:x} {:x}", aligned_addr, addr_base)
                     }
                 }
                 // Bios of arm7 has same offset as itcm on arm9
@@ -235,19 +208,7 @@ impl Memory {
                 }
             },
             regions::MAIN_MEMORY_OFFSET => self.main.write(addr_offset, value),
-            regions::SHARED_WRAM_OFFSET => {
-                if CPU == ARM9 && TCM && {
-                    let cp15_context = get_cp15!(hle, ARM9);
-                    aligned_addr >= cp15_context.dtcm_addr
-                        && aligned_addr < cp15_context.dtcm_addr + cp15_context.dtcm_size
-                        && cp15_context.dtcm_state != TcmState::Disabled
-                } {
-                    self.tcm
-                        .write_dtcm(aligned_addr - get_cp15!(hle, ARM9).dtcm_addr, value);
-                } else {
-                    self.wram.write::<CPU, _>(addr_offset, value);
-                }
-            }
+            regions::SHARED_WRAM_OFFSET => self.wram.write::<CPU, _>(addr_offset, value),
             regions::IO_PORTS_OFFSET => match CPU {
                 ARM9 => self.io_arm9.write(addr_offset, value, hle),
                 ARM7 => self.io_arm7.write(addr_offset, value, hle),
@@ -257,20 +218,7 @@ impl Memory {
             regions::OAM_OFFSET => self.oam.write(addr_offset, value),
             regions::GBA_ROM_OFFSET => {}
             _ => {
-                if CPU == ARM9 && TCM {
-                    let cp15 = get_cp15!(hle, ARM9);
-                    if aligned_addr >= cp15.dtcm_addr
-                        && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size
-                    {
-                        if cp15.dtcm_state != TcmState::Disabled {
-                            self.tcm.write_dtcm(aligned_addr - cp15.dtcm_addr, value);
-                        }
-                    } else {
-                        todo!("{:x} {:x}", aligned_addr, addr_base)
-                    }
-                } else {
-                    todo!("{:x} {:x}", aligned_addr, addr_base)
-                }
+                todo!("{:x} {:x}", aligned_addr, addr_base)
             }
         };
     }

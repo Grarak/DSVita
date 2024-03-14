@@ -150,6 +150,8 @@ struct Gpu2DInner {
     bld_cnt: BldCnt,
     win_x1: [u8; 2],
     win_x2: [u8; 2],
+    win_in: u16,
+    win_out: u16,
     mosaic: u16,
     disp_stat: u16,
     pow_cnt1: u16,
@@ -283,6 +285,14 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         self.inner.bg_cnt[bg_num].into()
     }
 
+    pub fn get_win_in(&self) -> u16 {
+        self.inner.win_in
+    }
+
+    pub fn get_win_out(&self) -> u16 {
+        self.inner.win_out
+    }
+
     pub fn set_disp_cnt(&mut self, mut mask: u32, value: u32) {
         if ENGINE == Gpu2DEngine::B {
             mask &= 0xC0B1FFF7;
@@ -361,9 +371,15 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
 
     pub fn set_win_v(&mut self, _: usize, mask: u16, value: u16) {}
 
-    pub fn set_win_in(&mut self, mask: u16, value: u16) {}
+    pub fn set_win_in(&mut self, mut mask: u16, value: u16) {
+        mask &= 0x3F3F;
+        self.inner.win_in = (self.inner.win_in & !mask) | (value & mask);
+    }
 
-    pub fn set_win_out(&mut self, mask: u16, value: u16) {}
+    pub fn set_win_out(&mut self, mut mask: u16, value: u16) {
+        mask &= 0x3F3F;
+        self.inner.win_out = (self.inner.win_out & !mask) | (value & mask);
+    }
 
     pub fn set_mosaic(&mut self, mask: u16, value: u16) {
         self.inner.mosaic = (self.inner.mosaic & !mask) | (value & mask);
@@ -806,7 +822,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                 x -= DISPLAY_WIDTH as i32 * 2;
             }
 
-            let priority = (((object[2] >> 10) & 0x3) - 1) as i8;
+            let priority = ((object[2] >> 10) & 0x3) as i8 - 1;
 
             if type_ == 3 {
                 todo!();
@@ -1172,7 +1188,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         let blend_bits_b = self.layers.get_blend_bits_mut::<{ Gpu2DLayer::B }>();
 
         if self.inner.disp_cnt.is_any_window_enabled() {
-            todo!()
+            // TODO
         }
 
         let bg_priority = u8::from(self.inner.bg_cnt[BG].priority()) as i8;
@@ -1199,7 +1215,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         let blend_bits_a = self.layers.get_blend_bits_mut::<{ Gpu2DLayer::A }>();
 
         if self.inner.disp_cnt.is_any_window_enabled() {
-            todo!()
+            // TODO
         }
 
         unsafe {

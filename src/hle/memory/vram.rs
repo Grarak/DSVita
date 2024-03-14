@@ -372,9 +372,7 @@ impl Vram {
                         let ofs = u8::from(cnt_a.ofs()) as usize;
                         self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_a);
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => {}
                 }
             }
         }
@@ -406,9 +404,7 @@ impl Vram {
                         let ofs = u8::from(cnt_b.ofs()) as usize;
                         self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_b);
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => {}
                 }
             }
         }
@@ -442,9 +438,7 @@ impl Vram {
                         self.bg_b
                             .add::<BANK_C_SIZE>(VramMap::new(&self.banks.vram_c), 0);
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => {}
                 }
             }
         }
@@ -472,15 +466,14 @@ impl Vram {
                         self.stat |= 2;
                     }
                     3 => {
-                        todo!()
+                        let ofs = u8::from(cnt_d.ofs()) as usize;
+                        self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_d);
                     }
                     4 => {
                         self.obj_b
                             .add::<BANK_D_SIZE>(VramMap::new(&self.banks.vram_d), 0);
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => {}
                 }
             }
         }
@@ -506,9 +499,7 @@ impl Vram {
                     3 => {
                         todo!()
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => {}
                 }
             }
         }
@@ -539,7 +530,9 @@ impl Vram {
                         );
                     }
                     3 => {
-                        todo!()
+                        let ofs = u8::from(cnt_f.ofs()) as usize;
+                        self.tex_palette[(ofs & 1) + ((ofs & 2) * 2)] =
+                            VramMap::new(&self.banks.vram_f);
                     }
                     4 => {
                         todo!()
@@ -547,9 +540,7 @@ impl Vram {
                     5 => {
                         todo!()
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => {}
                 }
             }
         }
@@ -584,11 +575,10 @@ impl Vram {
                         todo!()
                     }
                     5 => {
-                        todo!()
+                        self.obj_ext_palette_a = VramMap::<BANK_G_SIZE>::new(&self.banks.vram_g)
+                            .extract_section::<{ 8 * 1024 }>(0);
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => {}
                 }
             }
         }
@@ -613,9 +603,7 @@ impl Vram {
                             self.bg_ext_palette_b[i] = vram_map.extract_section(i);
                         }
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => {}
                 }
             }
         }
@@ -641,15 +629,14 @@ impl Vram {
                         todo!()
                     }
                     2 => {
-                        todo!()
+                        self.obj_b
+                            .add(VramMap::<BANK_I_SIZE>::new(&self.banks.vram_i), 0);
                     }
                     3 => {
                         self.obj_ext_palette_b =
                             VramMap::<BANK_I_SIZE>::new(&self.banks.vram_i).extract_section(0);
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => {}
                 }
             }
         }

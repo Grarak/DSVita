@@ -179,7 +179,7 @@ impl Cartridge {
             && bool::from(new_rom_ctrl.block_start_status());
 
         mask &= 0xDF7F7FFF;
-        inner.rom_ctrl = ((u32::from(inner.rom_ctrl) | !mask) | (value & mask)).into();
+        inner.rom_ctrl = ((u32::from(inner.rom_ctrl) & !mask) | (value & mask)).into();
 
         inner.word_cycles = if bool::from(inner.rom_ctrl.transfer_clk_rate()) {
             4 * 8
@@ -259,6 +259,6 @@ impl<const CPU: CpuType> CycleEvent for WordReadEvent<CPU> {
         hle.common.cartridge.inner[CPU]
             .rom_ctrl
             .set_data_word_status(u1::new(1));
-        io_dma!(hle, CPU).trigger_all(DmaTransferMode::DsCartSlot);
+        io_dma!(hle, CPU).trigger_all(DmaTransferMode::DsCartSlot, get_cm!(hle));
     }
 }

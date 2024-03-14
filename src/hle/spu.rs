@@ -7,7 +7,7 @@ struct SpuChannel {
     tmr: u16,
     pnt: u16,
     len: u32,
-    cap_cnt: u8,
+    snd_cap_cnt: u8,
 }
 
 pub struct Spu {
@@ -29,8 +29,8 @@ impl Spu {
         self.channels[channel].cnt
     }
 
-    pub fn get_cap_cnt(&self, channel: usize) -> u8 {
-        self.channels[channel].cap_cnt
+    pub fn get_snd_cap_cnt(&self, channel: usize) -> u8 {
+        self.channels[channel].snd_cap_cnt
     }
 
     pub fn set_cnt(&mut self, channel: usize, mask: u32, value: u32) {
@@ -60,4 +60,10 @@ impl Spu {
     pub fn set_sound_bias(&mut self, mask: u16, value: u16) {
         self.sound_bias = (self.sound_bias & !mask) | (value & mask);
     }
+
+    pub fn set_snd_cap_cnt(&mut self, channel: usize, value: u8) {}
+
+    pub fn set_snd_cap_dad(&mut self, channel: usize, mask: u32, value: u32) {}
+
+    pub fn set_snd_cap_len(&mut self, channel: usize, mask: u16, value: u16) {}
 }

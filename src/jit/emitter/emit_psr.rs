@@ -42,8 +42,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             &[Some(regs_addr), Some(cm_addr), None, None],
             match op {
                 Op::MsrRc | Op::MsrIc => register_set_cpsr_checked as _,
-                Op::MsrRs => register_set_spsr_checked as _,
-                _ => todo!(),
+                Op::MsrRs | Op::MsrIs => register_set_spsr_checked as _,
+                _ => unreachable!(),
             },
         );
     }

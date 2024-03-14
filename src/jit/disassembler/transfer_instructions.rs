@@ -401,7 +401,17 @@ mod transfer_ops {
 
     #[inline]
     pub fn msr_is(opcode: u32, op: Op) -> InstInfo {
-        todo!()
+        let op1 = opcode & 0xFF;
+        let shift = (opcode >> 7) & 0x1E;
+        let op1 = (op1 << (32 - shift)) | (op1 >> shift);
+        InstInfo::new(
+            opcode,
+            op,
+            Operands::new_1(Operand::imm(op1)),
+            reg_reserve!(),
+            reg_reserve!(Reg::SPSR),
+            1,
+        )
     }
 
     #[inline]

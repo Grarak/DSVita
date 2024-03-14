@@ -22,7 +22,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             Op::B | Op::Bl => Self::emit_b,
             Op::Bx | Op::BlxReg => Self::emit_bx,
             Op::Mcr | Op::Mrc => Self::emit_cp15,
-            Op::MsrRc | Op::MsrIc | Op::MsrRs => Self::emit_msr,
+            Op::MsrRc | Op::MsrIc | Op::MsrRs | Op::MsrIs => Self::emit_msr,
             Op::MrsRc | Op::MrsRs => Self::emit_mrs,
             Op::Swi => Self::emit_swi::<false>,
             Op::Swpb | Op::Swp => Self::emit_swp,

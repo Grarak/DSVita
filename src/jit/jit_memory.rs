@@ -4,6 +4,7 @@ use crate::logging::debug_println;
 use crate::mmap::Mmap;
 use crate::utils::HeapMem;
 use crate::{utils, DEBUG_LOG};
+use bilge::prelude::*;
 use core::slice;
 use std::intrinsics::likely;
 use std::mem;
@@ -14,19 +15,24 @@ const JIT_PAGE_SIZE: u32 = 4096;
 #[cfg(target_os = "vita")]
 const JIT_PAGE_SIZE: u32 = 16;
 
+#[bitsize(32)]
+#[derive(FromBits)]
+struct AddrCycleInfo {
+    jit_add_offset: u24,
+    cycle_count: u8,
+}
+
 #[repr(C, packed)]
 #[derive(Copy, Clone, Default)]
 pub struct JitInstInfo {
-    pub jit_addr: u32,
-    pub cycle_count: u8,          // Cycle count of this instruction
-    pub pre_cycle_count_sum: u16, // Sum of cycle counts of block up until this instruction
+    inst_info: u32,
+    pre_cycle_count_sum: u16, // Sum of cycle counts of block up until this instruction
 }
 
 impl JitInstInfo {
-    fn new(jit_addr: u32, cycle_count: u8, pre_cycle_count_sum: u16) -> Self {
+    fn new(jit_addr_offset: u32, cycle_count: u8, pre_cycle_count_sum: u16) -> Self {
         JitInstInfo {
-            jit_addr,
-            cycle_count,
+            inst_info: AddrCycleInfo::new(u24::new(jit_addr_offset), cycle_count).into(),
             pre_cycle_count_sum,
         }
     }
@@ -101,7 +107,7 @@ impl JitMemory {
     }
 
     fn allocate_block(&mut self, required_size: u32) -> u32 {
-        let offset = if self.mem_offset + required_size >= JIT_MEMORY_SIZE {
+        if self.mem_offset + required_size >= JIT_MEMORY_SIZE {
             self.mem_offset = self.mem_common_offset;
             self.itcm_info.fill(JitInstInfo::default());
             self.main_info.fill(0);
@@ -113,8 +119,7 @@ impl JitMemory {
             let addr = self.mem_offset;
             self.mem_offset += required_size;
             addr
-        };
-        offset + self.mem.as_ptr() as u32
+        }
     }
 
     pub fn insert_block<const CPU: CpuType, const THUMB: bool>(
@@ -123,25 +128,26 @@ impl JitMemory {
         args: Option<JitInsertArgs>,
     ) -> u32 {
         let aligned_size = utils::align_up((opcodes.len() << 2) as u32, JIT_PAGE_SIZE);
-        let new_addr = self.allocate_block(aligned_size);
-        let mem_start_addr = self.mem.as_ptr() as u32;
-        let offset_addr = new_addr - mem_start_addr;
+        let allocated_offset_addr = self.allocate_block(aligned_size);
 
-        self.set_rw(offset_addr, aligned_size);
-        utils::write_to_mem_slice(&mut self.mem, offset_addr, opcodes);
-        self.flush_cache(offset_addr, aligned_size);
-        self.set_rx(offset_addr, aligned_size);
+        self.set_rw(allocated_offset_addr, aligned_size);
+        utils::write_to_mem_slice(&mut self.mem, allocated_offset_addr, opcodes);
+        self.flush_cache(allocated_offset_addr, aligned_size);
+        self.set_rx(allocated_offset_addr, aligned_size);
 
         match args {
             Some(args) => {
                 let insert_block = |mem: &mut [JitInstInfo]| {
                     let start_addr = args.guest_start_pc as usize % mem.len();
-                    mem[start_addr] =
-                        JitInstInfo::new(new_addr, args.guest_insts_cycle_counts[0] as u8, 0);
+                    mem[start_addr] = JitInstInfo::new(
+                        allocated_offset_addr,
+                        args.guest_insts_cycle_counts[0] as u8,
+                        0,
+                    );
                     for i in 0..args.guest_pc_to_jit_addr_offset.len() {
                         mem[(start_addr + ((i + 1) << if THUMB { 1 } else { 2 })) % mem.len()] =
                             JitInstInfo::new(
-                                new_addr + args.guest_pc_to_jit_addr_offset[i] as u32,
+                                allocated_offset_addr + args.guest_pc_to_jit_addr_offset[i] as u32,
                                 (args.guest_insts_cycle_counts[i + 1]
                                     - args.guest_insts_cycle_counts[i])
                                     as u8,
@@ -177,9 +183,9 @@ impl JitMemory {
                     let per = (self.mem_offset * 100) as f32 / JIT_MEMORY_SIZE as f32;
                     debug_println!(
                     "Insert new jit ({:x}) block with size {} at {:x}, {}% allocated with guest pc {:x}",
-                    mem_start_addr,
+                    self.mem.as_ptr() as u32,
                     aligned_size,
-                    new_addr,
+                    allocated_offset_addr,
                     per,
                     args.guest_start_pc
                 );
@@ -187,25 +193,28 @@ impl JitMemory {
             }
             None => {
                 // Inserts without args is common code, happens on initialization, adjust offset
-                self.mem_common_offset = new_addr - self.mem.as_ptr() as u32 + aligned_size;
+                self.mem_common_offset = allocated_offset_addr + aligned_size;
                 debug_println!(
                     "Insert new jit ({:x}) block with size {} at {:x}",
-                    mem_start_addr,
+                    self.mem.as_ptr() as u32,
                     aligned_size,
-                    new_addr,
+                    allocated_offset_addr,
                 );
             }
         }
-        new_addr
+        allocated_offset_addr + self.mem.as_ptr() as u32
     }
 
     #[inline]
-    pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> Option<&JitInstInfo> {
+    pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> Option<(u32, u8, u16)> {
         macro_rules! get_info {
             ($blocks:expr) => {{
                 let block = &$blocks[guest_pc as usize % $blocks.len()];
-                if likely(block.jit_addr != 0) {
-                    Some(block)
+                // Just check if inst info is not 0
+                // Addr offset can't be at 0 since we always have common functions which allocate the first couple blocks in mem
+                if likely(block.inst_info != 0) {
+                    let info = AddrCycleInfo::from(block.inst_info);
+                    Some((u32::from(info.jit_add_offset()) + self.mem.as_ptr() as u32, info.cycle_count(), block.pre_cycle_count_sum))
                 } else {
                     None
                 }

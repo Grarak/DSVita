@@ -2,7 +2,7 @@ use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Mul
 use crate::jit::inst_info_thumb::InstInfoThumb;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
-use bilge::prelude::{u2, u4, u5};
+use bilge::prelude::*;
 
 #[derive(Clone, Debug)]
 pub struct InstInfo {
@@ -140,7 +140,7 @@ impl InstInfo {
                 }
                 u32::from(opcode)
             }
-            Op::Mul | Op::Mla => {
+            Op::Mul | Op::Mla | Op::Smulbb | Op::Smlabb => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();

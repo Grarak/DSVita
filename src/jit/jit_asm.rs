@@ -395,9 +395,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             if DEBUG_LOG {
                 for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
                     let pc = ((index as u32) << pc_step_size) + entry;
-                    let info = jit_memory.get_jit_start_addr::<CPU>(pc).unwrap();
+                    let (jit_addr, _, _) = jit_memory.get_jit_start_addr::<CPU>(pc).unwrap();
 
-                    let jit_addr = info.jit_addr;
                     debug_println!(
                         "{:?} Mapping {:#010x} to {:#010x} {:?}",
                         CPU,
@@ -433,7 +432,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         get_regs_mut!(self.hle, CPU).set_thumb(THUMB);
 
         let jit_info = jit_memory.get_jit_start_addr::<CPU>(guest_pc);
-        let jit_info = if likely(jit_info.is_some()) {
+        let (jit_addr, inst_cycle_count, pre_cycle_count_sum) = if likely(jit_info.is_some()) {
             unsafe { jit_info.unwrap_unchecked() }
         } else {
             self.emit_code_block::<THUMB>(guest_pc, jit_memory);
@@ -450,7 +449,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         unsafe {
             enter_jit(
-                jit_info.jit_addr,
+                jit_addr,
                 self.host_regs.get_sp_addr(),
                 if THUMB {
                     self.breakin_thumb_addr
@@ -467,7 +466,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.guest_branch_out_pc
         };
 
-        let branch_out_jit_info = unsafe {
+        let (_, branch_out_inst_cycle_count, branch_out_pre_cyclec_count_sum) = unsafe {
             jit_memory
                 .get_jit_start_addr::<CPU>(branch_out_pc)
                 .unwrap_unchecked()
@@ -480,9 +479,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             correction
         };
 
-        let executed_cycles = (branch_out_jit_info.pre_cycle_count_sum
-            + branch_out_jit_info.cycle_count as u16
-            - jit_info.pre_cycle_count_sum
+        let executed_cycles = (branch_out_pre_cyclec_count_sum + branch_out_inst_cycle_count as u16
+            - pre_cycle_count_sum
             + 2) as i16
             + cycle_correction; // + for branching out
 
