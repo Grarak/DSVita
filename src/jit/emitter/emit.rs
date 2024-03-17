@@ -319,17 +319,11 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         F1: FnOnce(&mut Self, R),
     {
         let thumb = get_regs!(self.hle, CPU).is_thumb();
-        if self.jit_buf.regs_saved_previously {
-            self.jit_buf
-                .emit_opcodes
-                .extend(&self.restore_host_no_save_opcodes);
+        self.jit_buf.emit_opcodes.extend(if thumb {
+            &self.restore_host_thumb_opcodes
         } else {
-            self.jit_buf.emit_opcodes.extend(if thumb {
-                &self.restore_host_thumb_opcodes
-            } else {
-                &self.restore_host_opcodes
-            });
-        }
+            &self.restore_host_opcodes
+        });
 
         if args.len() > 4 {
             todo!()
@@ -354,8 +348,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         } else {
             &self.restore_guest_opcodes
         });
-
-        self.jit_buf.regs_saved = true;
     }
 
     pub fn handle_cpsr(&mut self, host_cpsr_reg: Reg, guest_cpsr_reg: Reg) {

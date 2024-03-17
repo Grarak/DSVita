@@ -62,12 +62,11 @@ impl Rtc {
         } else {
             self.sck
         };
-        let sio =
-            if bool::from(dir_reg.data_dir()) {
-                bool::from(data_reg.data_io())
-            } else {
-                self.sio
-            };
+        let sio = if bool::from(dir_reg.data_dir()) {
+            bool::from(data_reg.data_io())
+        } else {
+            self.sio
+        };
 
         self.update_rtc(cs, sck, sio);
     }
@@ -154,14 +153,13 @@ impl Rtc {
         let year = local_now.year() as u32 % 100;
         let month = local_now.month() as u8;
         let day = local_now.day() as u8;
-        let (hour, is_pm) =
-            {
-                let hour = local_now.hour();
-                (
-                    (if self.cnt & 0x2 == 0 { hour % 12 } else { hour }) as u8,
-                    hour >= 12,
-                )
-            };
+        let (hour, is_pm) = {
+            let hour = local_now.hour();
+            (
+                (if self.cnt & 0x2 == 0 { hour % 12 } else { hour }) as u8,
+                hour >= 12,
+            )
+        };
         let min = local_now.minute() as u8;
         let sec = local_now.second() as u8;
 

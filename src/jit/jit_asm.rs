@@ -84,8 +84,6 @@ pub struct JitBuf {
     pub block_opcodes: Vec<u32>,
     pub jit_addr_offsets: Vec<u16>,
     pub insts_cycle_counts: Vec<u16>,
-    pub regs_saved_previously: bool,
-    pub regs_saved: bool,
 }
 
 impl JitBuf {
@@ -96,8 +94,6 @@ impl JitBuf {
             block_opcodes: Vec::new(),
             jit_addr_offsets: Vec::new(),
             insts_cycle_counts: Vec::new(),
-            regs_saved_previously: false,
-            regs_saved: false,
         }
     }
 
@@ -106,7 +102,6 @@ impl JitBuf {
         self.block_opcodes.clear();
         self.jit_addr_offsets.clear();
         self.insts_cycle_counts.clear();
-        self.regs_saved_previously = false;
     }
 }
 
@@ -290,7 +285,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     }
                     self.jit_buf.instructions.push(InstInfo::from(&inst_info));
 
-                    if inst_info.op.is_uncond_branch_thumb() || inst_info.op == Op::UnkThumb {
+                    if inst_info.op.is_uncond_branch_thumb()
+                        || inst_info.op == Op::UnkThumb
+                        || inst_info.out_regs.is_reserved(Reg::PC)
+                    {
                         break;
                     }
                     index += 2;
@@ -302,6 +300,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     let (op, func) = lookup_opcode(opcode);
                     let inst_info = func(opcode, *op);
                     let is_uncond_branch = inst_info.op.is_branch() && inst_info.cond == Cond::AL;
+                    let is_uncond_pc_in_out =
+                        inst_info.out_regs.is_reserved(Reg::PC) && inst_info.cond == Cond::AL;
 
                     if let Some(last) = self.jit_buf.insts_cycle_counts.last() {
                         self.jit_buf
@@ -312,7 +312,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     }
                     self.jit_buf.instructions.push(inst_info);
 
-                    if is_uncond_branch || *op == Op::UnkArm {
+                    if is_uncond_branch || *op == Op::UnkArm || is_uncond_pc_in_out {
                         break;
                     }
                     index += 4;
@@ -375,10 +375,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 .block_opcodes
                 .extend(&self.jit_buf.emit_opcodes);
             self.jit_buf.emit_opcodes.clear();
-
-            self.jit_buf.regs_saved_previously =
-                self.jit_buf.regs_saved && self.jit_buf.instructions[i].cond == Cond::AL;
-            self.jit_buf.regs_saved = false;
         }
         // TODO statically analyze generated insts
 
@@ -485,10 +481,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             + cycle_correction; // + for branching out
 
         if DEBUG_LOG {
-            debug_println!(
+            println!(
                 "{:?} reading opcode of breakout at {:x}",
-                CPU,
-                self.guest_branch_out_pc
+                CPU, self.guest_branch_out_pc
             );
             let inst_info = if THUMB {
                 let opcode = self.hle.mem_read::<CPU, _>(self.guest_branch_out_pc);

@@ -48,11 +48,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, Reg::R10, Reg::R11));
 
-        if self.jit_buf.regs_saved_previously {
-            Self::emit_host_bx(self.breakout_skip_save_regs_thumb_addr, &mut opcodes);
-        } else {
-            Self::emit_host_bx(self.breakout_thumb_addr, &mut opcodes);
-        }
+        Self::emit_host_bx(self.breakout_thumb_addr, &mut opcodes);
 
         if cond != Cond::AL {
             self.jit_buf
@@ -130,14 +126,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             .emit_opcodes
             .extend(thread_regs.emit_set_reg(Reg::PC, Reg::R8, Reg::R9));
 
-        if self.jit_buf.regs_saved_previously {
-            Self::emit_host_bx(
-                self.breakout_skip_save_regs_thumb_addr,
-                &mut self.jit_buf.emit_opcodes,
-            );
-        } else {
-            Self::emit_host_bx(self.breakout_thumb_addr, &mut self.jit_buf.emit_opcodes);
-        }
+        Self::emit_host_bx(self.breakout_thumb_addr, &mut self.jit_buf.emit_opcodes);
     }
 
     pub fn emit_bx_thumb(&mut self, buf_index: usize, pc: u32) {
@@ -198,13 +187,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 .extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::LR, tmp_reg2, tmp_reg));
         }
 
-        if self.jit_buf.regs_saved_previously {
-            Self::emit_host_bx(
-                self.breakout_skip_save_regs_thumb_addr,
-                &mut self.jit_buf.emit_opcodes,
-            );
-        } else {
-            Self::emit_host_bx(self.breakout_thumb_addr, &mut self.jit_buf.emit_opcodes);
-        }
+        Self::emit_host_bx(self.breakout_thumb_addr, &mut self.jit_buf.emit_opcodes);
     }
 }
