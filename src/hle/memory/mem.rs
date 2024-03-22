@@ -218,7 +218,7 @@ impl Memory {
             }
 
             self.jit
-                .invalidate_block::<CPU>(aligned_addr, mem::size_of::<T>());
+                .invalidate_block::<CPU>(aligned_addr, mem::size_of::<T>() as u32);
         };
 
         match addr_base {

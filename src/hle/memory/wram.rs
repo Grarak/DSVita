@@ -1,5 +1,8 @@
+use crate::hle::hle::Hle;
 use crate::hle::memory::regions;
 use crate::hle::CpuType;
+use crate::hle::CpuType::ARM7;
+use crate::jit::jit_memory::JIT_BLOCK_SIZE;
 use crate::utils;
 use crate::utils::{Convert, HeapMemU8};
 use std::hint::unreachable_unchecked;
@@ -151,9 +154,17 @@ impl Wram {
         }
     }
 
-    pub fn set_cnt(&mut self, value: u8) {
+    pub fn set_cnt(&mut self, value: u8, hle: &mut Hle) {
         self.cnt = value & 0x3;
         self.init_maps();
+
+        for addr in
+            (regions::SHARED_WRAM_OFFSET..regions::IO_PORTS_OFFSET).step_by(JIT_BLOCK_SIZE as usize)
+        {
+            hle.mem
+                .jit
+                .invalidate_block::<{ ARM7 }>(addr, JIT_BLOCK_SIZE);
+        }
     }
 
     fn read_arm9<T: Convert>(&self, addr_offset: u32) -> T {

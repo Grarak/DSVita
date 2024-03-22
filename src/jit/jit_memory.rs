@@ -267,7 +267,54 @@ impl JitMemory {
         }
     }
 
-    pub fn invalidate_block<const CPU: CpuType>(&mut self, addr: u32, size: usize) {}
+    pub fn invalidate_block<const CPU: CpuType>(&mut self, addr: u32, size: u32) {
+        let invalidate = |blocks: &mut [JitBlock], blocks_thumb: &mut [JitBlock]| {
+            let addr_entry = (addr >> JIT_BLOCK_SIZE_SHIFT) as usize % blocks.len();
+            blocks[addr_entry].jit_addr = 0;
+            blocks_thumb[addr_entry].jit_addr = 0;
+            let addr_entry = ((addr + size - 1) >> JIT_BLOCK_SIZE_SHIFT) as usize % blocks.len();
+            blocks[addr_entry].jit_addr = 0;
+            blocks_thumb[addr_entry].jit_addr = 0;
+        };
+        match CPU {
+            CpuType::ARM9 => match addr & 0xFF000000 {
+                regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => {
+                    invalidate(
+                        self.jit_blocks.itcm.deref_mut(),
+                        self.jit_blocks_thumb.itcm.deref_mut(),
+                    )
+                }
+                regions::MAIN_MEMORY_OFFSET => {
+                    invalidate(
+                        self.jit_blocks.main_arm9.deref_mut(),
+                        self.jit_blocks_thumb.main_arm9.deref_mut(),
+                    );
+                    invalidate(
+                        self.jit_blocks.main_arm7.deref_mut(),
+                        self.jit_blocks_thumb.main_arm7.deref_mut(),
+                    )
+                }
+                _ => {}
+            },
+            CpuType::ARM7 => match addr & 0xFF000000 {
+                regions::MAIN_MEMORY_OFFSET => {
+                    invalidate(
+                        self.jit_blocks.main_arm9.deref_mut(),
+                        self.jit_blocks_thumb.main_arm9.deref_mut(),
+                    );
+                    invalidate(
+                        self.jit_blocks.main_arm7.deref_mut(),
+                        self.jit_blocks_thumb.main_arm7.deref_mut(),
+                    )
+                }
+                regions::SHARED_WRAM_OFFSET => invalidate(
+                    self.jit_blocks.wram.deref_mut(),
+                    self.jit_blocks_thumb.wram.deref_mut(),
+                ),
+                _ => {}
+            },
+        }
+    }
 
     #[cfg(target_os = "linux")]
     pub fn open(&mut self) {}

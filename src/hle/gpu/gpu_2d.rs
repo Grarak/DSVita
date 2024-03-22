@@ -748,7 +748,6 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         todo!()
     }
 
-    #[inline(never)]
     fn draw_objects<const WINDOW: bool>(&mut self, line: u8, mem: &Memory) {
         let bound = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) {
             32u32 << u8::from(self.inner.disp_cnt.tile_obj_1d_boundary())

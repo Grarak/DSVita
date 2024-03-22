@@ -180,6 +180,7 @@ where
         self.sections[section_index].read(section_offset as u32)
     }
 
+    #[inline]
     pub fn write<T: utils::Convert>(&mut self, mut addr: u32, value: T) {
         addr %= SIZE as u32;
         let section_index = addr as usize / CHUNK_SIZE;

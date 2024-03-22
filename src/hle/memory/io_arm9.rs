@@ -274,7 +274,7 @@ impl IoArm9 {
                 io8(0x244) => mem.vram.set_cnt(4, value),
                 io8(0x245) => mem.vram.set_cnt(5, value),
                 io8(0x246) => mem.vram.set_cnt(6, value),
-                io8(0x247) => mem.wram.set_cnt(value),
+                io8(0x247) => mem.wram.set_cnt(value, hle),
                 io8(0x248) => mem.vram.set_cnt(7, value),
                 io8(0x249) => mem.vram.set_cnt(8, value),
                 io16(0x280) => self.div_sqrt.set_div_cnt(mask, value),
