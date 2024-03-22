@@ -190,6 +190,7 @@ impl IoArm9 {
         let mut index = 3usize;
         let hle_ptr = hle as *mut Hle;
         let common = unsafe { &mut hle_ptr.as_mut().unwrap_unchecked().common };
+        let mem = unsafe { &mut hle_ptr.as_mut().unwrap_unchecked().mem };
         while (index - 3) < bytes.len() {
             io_ports_write!(match addr_offset + (index - 3) as u32 {
                 io32(0x0) => common.gpu.gpu_2d_a.set_disp_cnt(mask, value),
@@ -266,16 +267,16 @@ impl IoArm9 {
                 io8(0x208) => get_cpu_regs_mut!(hle, ARM9).set_ime(value, get_cm!(hle)),
                 io32(0x210) => get_cpu_regs_mut!(hle, ARM9).set_ie(mask, value, get_cm!(hle)),
                 io32(0x214) => get_cpu_regs_mut!(hle, ARM9).set_irf(mask, value),
-                io8(0x240) => hle.mem.vram.set_cnt(0, value),
-                io8(0x241) => hle.mem.vram.set_cnt(1, value),
-                io8(0x242) => hle.mem.vram.set_cnt(2, value),
-                io8(0x243) => hle.mem.vram.set_cnt(3, value),
-                io8(0x244) => hle.mem.vram.set_cnt(4, value),
-                io8(0x245) => hle.mem.vram.set_cnt(5, value),
-                io8(0x246) => hle.mem.vram.set_cnt(6, value),
-                io8(0x247) => hle.mem.wram.set_cnt(value),
-                io8(0x248) => hle.mem.vram.set_cnt(7, value),
-                io8(0x249) => hle.mem.vram.set_cnt(8, value),
+                io8(0x240) => mem.vram.set_cnt(0, value),
+                io8(0x241) => mem.vram.set_cnt(1, value),
+                io8(0x242) => mem.vram.set_cnt(2, value),
+                io8(0x243) => mem.vram.set_cnt(3, value),
+                io8(0x244) => mem.vram.set_cnt(4, value),
+                io8(0x245) => mem.vram.set_cnt(5, value),
+                io8(0x246) => mem.vram.set_cnt(6, value),
+                io8(0x247) => mem.wram.set_cnt(value),
+                io8(0x248) => mem.vram.set_cnt(7, value),
+                io8(0x249) => mem.vram.set_cnt(8, value),
                 io16(0x280) => self.div_sqrt.set_div_cnt(mask, value),
                 io32(0x290) => self.div_sqrt.set_div_numer_l(mask, value),
                 io32(0x294) => self.div_sqrt.set_div_numer_h(mask, value),

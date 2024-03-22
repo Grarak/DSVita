@@ -615,48 +615,11 @@ impl Op {
         matches!(self, Op::Bx | Op::BlxReg | Op::B | Op::Bl)
     }
 
-    pub const fn is_branch_thumb(self) -> bool {
-        matches!(
-            self,
-            Op::BxRegT
-                | Op::BlxRegT
-                | Op::BT
-                | Op::BeqT
-                | Op::BneT
-                | Op::BcsT
-                | Op::BccT
-                | Op::BmiT
-                | Op::BplT
-                | Op::BvsT
-                | Op::BvcT
-                | Op::BhiT
-                | Op::BlsT
-                | Op::BgeT
-                | Op::BltT
-                | Op::BgtT
-                | Op::BleT
-                | Op::BlOffT
-                | Op::BlxOffT
-        )
-    }
-
     pub const fn is_uncond_branch_thumb(self) -> bool {
         matches!(
             self,
             Op::BxRegT | Op::BlxRegT | Op::BT | Op::BlOffT | Op::BlxOffT
         )
-    }
-
-    pub const fn requires_breakout(self) -> bool {
-        self.is_single_mem_transfer()
-            || self.is_multiple_mem_transfer()
-            || matches!(self, |Op::Mcr| Op::Mrc
-                | Op::MsrRc
-                | Op::MsrRs
-                | Op::MrsRc
-                | Op::MrsRs
-                | Op::Swi
-                | Op::UnkArm)
     }
 
     pub const fn is_single_mem_transfer(self) -> bool {

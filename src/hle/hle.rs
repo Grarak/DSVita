@@ -6,6 +6,7 @@ use crate::hle::input::Input;
 use crate::hle::ipc::Ipc;
 use crate::hle::memory::cartridge::Cartridge;
 use crate::hle::memory::mem::Memory;
+use crate::hle::CpuType;
 use crate::utils::Convert;
 use std::ptr;
 use std::sync::{Arc, RwLock};
@@ -115,8 +116,21 @@ macro_rules! get_cm {
         &$hle.common.cycle_manager
     };
 }
-use crate::hle::CpuType;
 pub(crate) use get_cm;
+
+macro_rules! get_jit {
+    ($hle:expr) => {
+        &$hle.mem.jit
+    };
+}
+pub(crate) use get_jit;
+
+macro_rules! get_jit_mut {
+    ($hle:expr) => {
+        &mut $hle.mem.jit
+    };
+}
+pub(crate) use get_jit_mut;
 
 pub struct Cpus {
     pub arm9: CpuArm9,

@@ -3,13 +3,12 @@ use crate::hle::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::{Bx, B};
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs};
-use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
+use crate::jit::inst_info::{Operand, Shift, ShiftValue};
 use crate::jit::inst_threag_regs_handler::register_restore_spsr;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve, EMULATED_REGS_COUNT, FIRST_EMULATED_REG};
 use crate::jit::{Cond, Op, ShiftType};
-use std::cmp::max;
-use std::{ops, ptr};
+use std::ptr;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit(&mut self, buf_index: usize, pc: u32) {
@@ -48,11 +47,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     }
 
                     if out_regs.is_reserved(Reg::CPSR) {
-                        let mut reserved = combined_regs.create_push_pop_handler(
-                            2,
-                            &self.jit_buf.instructions[buf_index],
-                            &self.jit_buf.instructions[buf_index + 1..],
-                        );
+                        let mut reserved = RegPushPopHandler::new();
+                        reserved.set_regs_to_skip(combined_regs);
 
                         let host_cpsr_reg = reserved.pop().unwrap();
                         let guest_cpsr_reg = reserved.pop().unwrap();
@@ -138,7 +134,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             Self::emit_host_bx(self.breakout_skip_save_regs_addr, opcodes);
         }
 
-        if cond != Cond::AL {
+        if cond != Cond::AL && !self.jit_buf.emit_opcodes.is_empty() {
             if cond != Cond::NV {
                 let len = self.jit_buf.emit_opcodes.len();
                 if len == 1 {
@@ -162,13 +158,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let opcodes = &mut self.jit_buf.emit_opcodes;
 
         let emulated_src_regs = inst_info.src_regs.get_emulated_regs();
-        let mut src_reserved = inst_info.src_regs.create_push_pop_handler(
-            emulated_src_regs.len() as u8,
-            &self.jit_buf.instructions[buf_index],
-            &self.jit_buf.instructions[buf_index + 1..],
-        );
+        let mut src_reserved = RegPushPopHandler::new();
         src_reserved.set_regs_to_skip(inst_info.src_regs + inst_info.out_regs);
-        src_reserved.use_gp();
 
         let mut reg_mapping: [Reg; EMULATED_REGS_COUNT] = [Reg::None; EMULATED_REGS_COUNT];
 
@@ -234,19 +225,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         out_used_regs = out_used_regs.get_gp_regs();
         out_used_regs += inst_info.out_regs.get_gp_regs();
 
-        let num_out_reserve = max(
-            ((emulated_out_regs.len() + 1) as i32) - out_used_regs.len() as i32,
-            0,
-        );
-
-        let mut out_reserved = RegPushPopHandler::from(out_used_regs.get_writable_gp_regs(
-            num_out_reserve as u8,
-            &self.jit_buf.instructions[buf_index],
-            &self.jit_buf.instructions[buf_index + 1..],
-        ));
+        let mut out_reserved = RegPushPopHandler::new();
         out_reserved.set_regs_to_skip(out_used_regs);
         out_reserved.set_regs_to_skip(inst_info.src_regs + inst_info.out_regs);
-        out_reserved.use_gp();
 
         for operand in inst_info.operands_mut() {
             if let Operand::Reg { reg, .. } = operand {
@@ -388,103 +369,32 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 }
 
-impl RegReserve {
-    pub fn create_push_pop_handler(
-        &self,
-        num: u8,
-        begin: &InstInfo,
-        insts: &[InstInfo],
-    ) -> RegPushPopHandler {
-        let mut handler = RegPushPopHandler::from(self.get_writable_gp_regs(num, begin, insts));
-        handler.use_gp();
-        handler
-    }
-
-    pub fn get_writable_gp_regs(self, num: u8, begin: &InstInfo, insts: &[InstInfo]) -> RegReserve {
-        let mut reserve = self;
-        let mut writable_regs = RegReserve::new();
-
-        if begin.op.is_branch()
-            || begin.op.is_branch_thumb()
-            || begin.out_regs.is_reserved(Reg::PC)
-            || begin.op.requires_breakout()
-            || begin.cond != Cond::AL
-        {
-            return writable_regs;
-        }
-
-        for inst in insts {
-            if inst.op.is_branch()
-                || inst.op.is_branch_thumb()
-                || inst.out_regs.is_reserved(Reg::PC)
-                || inst.op.requires_breakout()
-                || inst.cond != Cond::AL
-            {
-                break;
-            }
-
-            reserve += inst.src_regs;
-            let writable = (reserve & inst.out_regs) ^ inst.out_regs;
-            writable_regs += writable;
-
-            let gp = writable_regs.get_gp_regs();
-            if gp.len() >= num as usize {
-                return gp;
-            }
-        }
-        writable_regs.get_gp_regs()
-    }
-}
-
 pub struct RegPushPopHandler {
-    reg_reserve: RegReserve,
     not_reserved: RegReserve,
     regs_to_save: RegReserve,
-    regs_to_skip: RegReserve,
     pushed: bool,
 }
 
-impl From<RegReserve> for RegPushPopHandler {
-    fn from(value: RegReserve) -> Self {
+impl RegPushPopHandler {
+    pub fn new() -> Self {
         RegPushPopHandler {
-            reg_reserve: value,
-            not_reserved: !value,
+            not_reserved: RegReserve::gp(),
             regs_to_save: RegReserve::new(),
-            regs_to_skip: RegReserve::new(),
             pushed: false,
         }
     }
-}
 
-impl RegPushPopHandler {
     pub fn set_regs_to_skip(&mut self, regs_to_skip: RegReserve) {
-        self.reg_reserve -= regs_to_skip;
         self.not_reserved -= regs_to_skip;
-        self.regs_to_skip = regs_to_skip;
-    }
-
-    pub fn use_gp(&mut self) {
-        self.reg_reserve = self.reg_reserve.get_gp_regs();
-        self.not_reserved = self.not_reserved.get_gp_regs();
-        self.regs_to_save = self.regs_to_save.get_gp_regs();
-    }
-
-    pub fn add_reg_reserve(&mut self, reg_reserve: RegReserve) {
-        self.reg_reserve += reg_reserve;
     }
 
     pub fn pop(&mut self) -> Option<Reg> {
         debug_assert!(!self.pushed);
-        match self.reg_reserve.pop() {
-            Some(reg) => Some(reg),
-            None => {
-                let reg = self.not_reserved.pop();
-                if let Some(reg) = reg {
-                    self.regs_to_save += reg
-                }
-                reg
-            }
+        let reg = self.not_reserved.pop();
+        if let Some(reg) = reg {
+            self.regs_to_save += reg
         }
+        reg
     }
 
     pub fn emit_push_stack(&mut self, sp: Reg) -> Option<u32> {
@@ -504,22 +414,5 @@ impl RegPushPopHandler {
         } else {
             Some(LdmStm::pop_post(self.regs_to_save, sp, Cond::AL))
         }
-    }
-}
-
-impl ops::Add<RegPushPopHandler> for RegPushPopHandler {
-    type Output = RegPushPopHandler;
-
-    fn add(self, rhs: RegPushPopHandler) -> Self::Output {
-        let reg_reserve = self.reg_reserve + rhs.reg_reserve;
-        let mut instance = RegPushPopHandler {
-            reg_reserve,
-            not_reserved: !reg_reserve,
-            regs_to_save: RegReserve::new(),
-            regs_to_skip: RegReserve::new(),
-            pushed: false,
-        };
-        instance.set_regs_to_skip(self.regs_to_skip + rhs.regs_to_skip);
-        instance
     }
 }

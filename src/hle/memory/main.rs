@@ -23,7 +23,7 @@ impl Main {
             &mut self.main,
             addr_offset & (regions::MAIN_MEMORY_SIZE - 1),
             value,
-        )
+        );
     }
 
     pub fn write_slice<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) {

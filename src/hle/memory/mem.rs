@@ -11,8 +11,10 @@ use crate::hle::memory::vram::Vram;
 use crate::hle::memory::wram::Wram;
 use crate::hle::CpuType;
 use crate::hle::CpuType::ARM9;
+use crate::jit::jit_memory::JitMemory;
 use crate::logging::debug_println;
 use crate::utils::Convert;
+use std::intrinsics::unlikely;
 use std::mem;
 use CpuType::ARM7;
 
@@ -25,6 +27,8 @@ pub struct Memory {
     pub palettes: Palettes,
     pub vram: Vram,
     pub oam: Oam,
+    pub jit: JitMemory,
+    pub current_jit_block_range: (u32, u32), // Check if the jit block we are currently executing gets written to
 }
 
 impl Memory {
@@ -38,6 +42,8 @@ impl Memory {
             palettes: Palettes::new(),
             vram: Vram::new(),
             oam: Oam::new(),
+            jit: JitMemory::new(),
+            current_jit_block_range: (0, 0),
         }
     }
 
@@ -137,7 +143,7 @@ impl Memory {
                 }
             },
             _ => {
-                todo!("{:x} {:x}", aligned_addr, addr_base)
+                todo!("{:?} {:x} {:x}", CPU, aligned_addr, addr_base)
             }
         };
 
@@ -192,6 +198,29 @@ impl Memory {
             }
         }
 
+        let mut invalidate_jit = |size: u32, offset: u32| {
+            let jit_block_region = self.current_jit_block_range.0 & 0xFF000000;
+            if addr_base == jit_block_region {
+                let addr_base = aligned_addr & !(offset - 1);
+                let current_jit_block_base = self.current_jit_block_range.0 & !(offset - 1);
+                if unlikely(
+                    addr_base == current_jit_block_base
+                        && addr_offset & (size - 1) >= self.current_jit_block_range.0 & (size - 1)
+                        && addr_offset & (size - 1) <= self.current_jit_block_range.1 & (size - 1),
+                ) {
+                    todo!(
+                        "Write in currently running jit block {:x} {:x}-{:x}",
+                        aligned_addr,
+                        self.current_jit_block_range.0,
+                        self.current_jit_block_range.1
+                    );
+                }
+            }
+
+            self.jit
+                .invalidate_block::<CPU>(aligned_addr, mem::size_of::<T>());
+        };
+
         match addr_base {
             regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => match CPU {
                 ARM9 => {
@@ -199,6 +228,10 @@ impl Memory {
                         let cp15 = get_cp15!(hle, ARM9);
                         if cp15.itcm_state != TcmState::Disabled {
                             self.tcm.write_itcm(addr_offset, value);
+                            invalidate_jit(
+                                regions::INSTRUCTION_TCM_SIZE,
+                                regions::INSTRUCTION_TCM_OFFSET,
+                            );
                         }
                     }
                 }
@@ -207,8 +240,14 @@ impl Memory {
                     todo!("{:x} {:x}", aligned_addr, addr_base)
                 }
             },
-            regions::MAIN_MEMORY_OFFSET => self.main.write(addr_offset, value),
-            regions::SHARED_WRAM_OFFSET => self.wram.write::<CPU, _>(addr_offset, value),
+            regions::MAIN_MEMORY_OFFSET => {
+                self.main.write(addr_offset, value);
+                invalidate_jit(regions::MAIN_MEMORY_SIZE, regions::MAIN_MEMORY_OFFSET);
+            }
+            regions::SHARED_WRAM_OFFSET => {
+                let (size, offset) = self.wram.write::<CPU, _>(addr_offset, value);
+                invalidate_jit(size, offset);
+            }
             regions::IO_PORTS_OFFSET => match CPU {
                 ARM9 => self.io_arm9.write(addr_offset, value, hle),
                 ARM7 => self.io_arm7.write(addr_offset, value, hle),

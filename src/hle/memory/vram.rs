@@ -23,17 +23,17 @@ impl<const SIZE: usize> VramMap<SIZE> {
     }
 
     fn extract_section<const CHUNK_SIZE: usize>(&self, offset: usize) -> VramMap<CHUNK_SIZE> {
-        assert_ne!(self.ptr, ptr::null_mut());
+        debug_assert_ne!(self.ptr, ptr::null_mut());
         VramMap::from((self.ptr as usize + CHUNK_SIZE * offset) as *const u8)
     }
 
     fn as_mut(&mut self) -> VramMapMut<SIZE> {
-        assert_ne!(self.ptr, ptr::null_mut());
+        debug_assert_ne!(self.ptr, ptr::null_mut());
         VramMapMut::new(self.ptr as _)
     }
 
     pub fn as_ptr(&self) -> *const u8 {
-        assert_ne!(self.ptr, ptr::null_mut());
+        debug_assert_ne!(self.ptr, ptr::null_mut());
         self.ptr
     }
 
@@ -372,7 +372,9 @@ impl Vram {
                         let ofs = u8::from(cnt_a.ofs()) as usize;
                         self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_a);
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -404,7 +406,9 @@ impl Vram {
                         let ofs = u8::from(cnt_b.ofs()) as usize;
                         self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_b);
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -438,7 +442,9 @@ impl Vram {
                         self.bg_b
                             .add::<BANK_C_SIZE>(VramMap::new(&self.banks.vram_c), 0);
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -473,7 +479,9 @@ impl Vram {
                         self.obj_b
                             .add::<BANK_D_SIZE>(VramMap::new(&self.banks.vram_d), 0);
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -497,9 +505,20 @@ impl Vram {
                         todo!()
                     }
                     3 => {
-                        todo!()
+                        let vram_map = VramMap::<BANK_E_SIZE>::new(&self.banks.vram_e);
+                        for i in 0..4 {
+                            self.tex_palette[i] = vram_map.extract_section(i);
+                        }
                     }
-                    _ => {}
+                    4 => {
+                        let vram_map = VramMap::<BANK_E_SIZE>::new(&self.banks.vram_e);
+                        for i in 0..3 {
+                            self.bg_ext_palette_a[i] = vram_map.extract_section(i);
+                        }
+                    }
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -540,7 +559,9 @@ impl Vram {
                     5 => {
                         todo!()
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -572,13 +593,19 @@ impl Vram {
                             VramMap::new(&self.banks.vram_g)
                     }
                     4 => {
-                        todo!()
+                        let ofs = u8::from(cnt_g.ofs()) as usize;
+                        let vram_map = VramMap::<BANK_G_SIZE>::new(&self.banks.vram_g);
+                        for i in 0..2 {
+                            self.bg_ext_palette_a[(ofs & 1) * 2 + i] = vram_map.extract_section(i);
+                        }
                     }
                     5 => {
-                        self.obj_ext_palette_a = VramMap::<BANK_G_SIZE>::new(&self.banks.vram_g)
-                            .extract_section::<{ 8 * 1024 }>(0);
+                        self.obj_ext_palette_a =
+                            VramMap::<BANK_G_SIZE>::new(&self.banks.vram_g).extract_section(0);
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -603,7 +630,9 @@ impl Vram {
                             self.bg_ext_palette_b[i] = vram_map.extract_section(i);
                         }
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -636,7 +665,9 @@ impl Vram {
                         self.obj_ext_palette_b =
                             VramMap::<BANK_I_SIZE>::new(&self.banks.vram_i).extract_section(0);
                     }
-                    _ => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
             }
         }

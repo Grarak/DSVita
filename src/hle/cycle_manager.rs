@@ -54,6 +54,6 @@ impl CycleManager {
     }
 
     pub fn jump_to_next_event(&mut self) {
-        self.cycle_count = unsafe { (*self.events.get()).front().unwrap().0 };
+        self.cycle_count = unsafe { (*self.events.get()).front().unwrap_unchecked().0 };
     }
 }

@@ -1,4 +1,4 @@
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, MulReg};
+use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Clz, MulReg};
 use crate::jit::inst_info_thumb::InstInfoThumb;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
@@ -140,7 +140,7 @@ impl InstInfo {
                 }
                 u32::from(opcode)
             }
-            Op::Mul | Op::Mla | Op::Smulbb | Op::Smlabb => {
+            Op::Mul | Op::Muls | Op::Mla | Op::Mlas | Op::Smulbb | Op::Smlabb | Op::Smlatb => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();
@@ -155,7 +155,7 @@ impl InstInfo {
                 }
                 u32::from(opcode)
             }
-            Op::Smull | Op::Smlal | Op::Umull => {
+            Op::Smull | Op::Smlal | Op::Umull | Op::Umlal => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();
@@ -167,6 +167,14 @@ impl InstInfo {
                 opcode.set_rs(u4::new(reg3 as u8));
                 u32::from(opcode)
             }
+            Op::Clz => {
+                let mut opcode = Clz::from(self.opcode);
+                let reg0 = *operands[0].as_reg_no_shift().unwrap();
+                let reg1 = *operands[1].as_reg_no_shift().unwrap();
+                opcode.set_rd(u4::new(reg0 as u8));
+                opcode.set_rm(u4::new(reg1 as u8));
+                u32::from(opcode)
+            }
             _ => {
                 todo!("{:?}", self)
             }
@@ -174,8 +182,8 @@ impl InstInfo {
     }
 }
 
-impl From<&InstInfoThumb> for InstInfo {
-    fn from(value: &InstInfoThumb) -> Self {
+impl From<InstInfoThumb> for InstInfo {
+    fn from(value: InstInfoThumb) -> Self {
         InstInfo {
             opcode: value.opcode as u32,
             op: value.op,

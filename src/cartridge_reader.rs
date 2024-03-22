@@ -1,4 +1,3 @@
-use crate::utils;
 use crate::utils::NoHashMap;
 use static_assertions::const_assert_eq;
 use std::cell::RefCell;
@@ -121,7 +120,7 @@ impl CartridgeReader {
         while remaining > 0 {
             let slice_start = slice.len() - remaining;
 
-            let page_addr = utils::align_down(offset + slice_start as u32, PAGE_SIZE);
+            let page_addr = (offset + slice_start as u32) & !(PAGE_SIZE - 1);
             let page_offset = offset + slice_start as u32 - page_addr;
             let page = self.get_page(page_addr);
             let page_slice = &page.as_slice()[page_offset as usize..];

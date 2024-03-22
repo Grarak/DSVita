@@ -18,7 +18,6 @@ use crate::hle::hle::{get_cm, get_cp15_mut, get_cpu_regs, get_regs_mut, Hle};
 use crate::hle::input::Input;
 use crate::hle::{input, spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
-use crate::jit::jit_memory::JitMemory;
 use crate::utils::{set_thread_prio_affinity, BuildNoHasher, ThreadAffinity, ThreadPriority};
 use sdl2::event::Event;
 use sdl2::pixels::{Color, PixelFormatEnum};
@@ -193,17 +192,13 @@ fn run_cpu(
 #[inline(never)]
 fn execute_jit(hle: &mut Hle) {
     let hle_ptr = hle as *mut Hle;
-    let mut jit_memory = JitMemory::new();
-    // Jit asm must be constructed in the same function where it gets executed, since sp must be preserved
-    let mut jit_asm_arm9 =
-        JitAsm::<{ ARM9 }>::new(&mut jit_memory, unsafe { hle_ptr.as_mut().unwrap() });
-    let mut jit_asm_arm7 =
-        JitAsm::<{ ARM7 }>::new(&mut jit_memory, unsafe { hle_ptr.as_mut().unwrap() });
-    jit_memory.open();
+    let mut jit_asm_arm9 = JitAsm::<{ ARM9 }>::new(unsafe { hle_ptr.as_mut().unwrap() });
+    let mut jit_asm_arm7 = JitAsm::<{ ARM7 }>::new(unsafe { hle_ptr.as_mut().unwrap() });
+    hle.mem.jit.open();
 
     loop {
         let arm7_cycles = if likely(!get_cpu_regs!(hle, ARM7).is_halted()) {
-            jit_asm_arm7.execute(&mut jit_memory)
+            jit_asm_arm7.execute()
         } else {
             0
         };
@@ -213,7 +208,7 @@ fn execute_jit(hle: &mut Hle) {
             !get_cpu_regs!(hle, ARM9).is_halted()
                 && (arm9_cycles == 0 || arm7_cycles > arm9_cycles),
         ) {
-            arm9_cycles += (jit_asm_arm9.execute(&mut jit_memory) + 1) >> 1;
+            arm9_cycles += (jit_asm_arm9.execute() + 1) >> 1;
         }
 
         let cycles = min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);

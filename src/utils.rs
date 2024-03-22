@@ -5,10 +5,6 @@ use std::hash::{BuildHasher, Hasher};
 use std::ops::{Deref, DerefMut};
 use std::{cmp, mem};
 
-pub const fn align_down(n: u32, align: u32) -> u32 {
-    n & !(align - 1)
-}
-
 pub const fn align_up(n: u32, align: u32) -> u32 {
     (n + align - 1) & !(align - 1)
 }
@@ -40,7 +36,8 @@ pub fn negative<T: Convert>(n: T) -> T {
 }
 
 pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
-    unsafe { (mem.as_ptr().add(addr as _) as *const T).read() }
+    let aligned: &[T] = unsafe { mem::transmute(&mem[addr as usize..]) };
+    aligned[0].clone()
 }
 
 pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> usize {
@@ -51,7 +48,8 @@ pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> u
 }
 
 pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
-    unsafe { (mem.as_ptr().add(addr as _) as *mut T).write(value) }
+    let aligned: &mut [T] = unsafe { mem::transmute(&mut mem[addr as usize..]) };
+    aligned[0] = value;
 }
 
 pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) -> usize {
@@ -103,23 +101,25 @@ impl<T: Sized + Default + Copy, const SIZE: usize> HeapMem<T, SIZE> {
     }
 }
 
-impl<T: Sized + Default + Copy, const SIZE: usize> Deref for HeapMem<T, SIZE> {
-    type Target = Box<[T; SIZE]>;
+impl<T: Sized + Default, const SIZE: usize> Deref for HeapMem<T, SIZE> {
+    type Target = [T; SIZE];
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        self.0.deref()
     }
 }
 
-impl<T: Sized + Default + Copy, const SIZE: usize> DerefMut for HeapMem<T, SIZE> {
+impl<T: Sized + Default, const SIZE: usize> DerefMut for HeapMem<T, SIZE> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        self.0.deref_mut()
     }
 }
 
-impl<T: Sized + Default + Copy, const SIZE: usize> Default for HeapMem<T, SIZE> {
+impl<T: Sized + Default, const SIZE: usize> Default for HeapMem<T, SIZE> {
     fn default() -> Self {
-        HeapMem::new()
+        let mut mem: Box<[T; SIZE]> = Box::new(unsafe { mem::zeroed() });
+        mem.fill_with(|| T::default());
+        HeapMem(mem)
     }
 }
 

@@ -1,5 +1,6 @@
 use crate::hle::hle::{get_cp15, get_cp15_mut, get_cpu_regs_mut, get_regs, get_regs_mut};
 use crate::hle::CpuType;
+use crate::hle::CpuType::ARM9;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::inst_cp15_handler::{cp15_read, cp15_write};
@@ -47,6 +48,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn emit_cp15(&mut self, buf_index: usize, pc: u32) {
+        if CPU != ARM9 {
+            return;
+        }
+
         let inst_info = &self.jit_buf.instructions[buf_index];
 
         let rd = inst_info.operands()[0].as_reg_no_shift().unwrap();

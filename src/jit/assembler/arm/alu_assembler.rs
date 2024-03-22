@@ -848,6 +848,16 @@ impl MulReg {
     }
 }
 
+#[bitsize(32)]
+#[derive(FromBits)]
+pub struct Clz {
+    pub rm: u4,
+    pub id: u8,
+    pub rd: u4,
+    pub id2: u12,
+    pub cond: u4,
+}
+
 // TODO Add const asserts once const features has been added back to rust
 // https://github.com/rust-lang/rust/issues/110395
 //const_assert_eq!(lookup_opcode(Self::add(0, 0, 0, 0)).0 as u8, And as u8);

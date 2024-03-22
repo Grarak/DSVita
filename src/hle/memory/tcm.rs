@@ -27,7 +27,7 @@ impl Tcm {
             self.itcm.as_mut_slice(),
             addr & (regions::INSTRUCTION_TCM_SIZE - 1),
             value,
-        )
+        );
     }
 
     pub fn read_dtcm<T: Convert>(&self, addr: u32) -> T {
