@@ -7,7 +7,7 @@ use crate::jit::inst_mem_handler::{
     inst_mem_handler, inst_mem_handler_multiple, inst_mem_handler_swp,
 };
 use crate::jit::jit_asm::JitAsm;
-use crate::jit::reg::{reg_reserve, Reg, RegReserve};
+use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, Op, ShiftType};
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
@@ -19,7 +19,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         write_back: bool,
         amount: MemoryAmount,
     ) {
-        let hle_addr = self.hle as *mut _ as _;
+        let jit_asm_addr = self as *mut _ as _;
 
         let after_host_restore = |asm: &mut Self| {
             let inst_info = &asm.jit_buf.instructions[buf_index];
@@ -28,8 +28,26 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             let operands = inst_info.operands();
             let op0 = *operands[0].as_reg_no_shift().unwrap();
             let og_op1 = operands[1].as_reg_no_shift().unwrap();
+            let op2 = &operands[2];
 
-            let mut reg_reserve = (!reg_reserve!(*og_op1)).get_gp_regs();
+            let mut reg_reserve = RegReserve::gp();
+            reg_reserve -= *og_op1;
+            if let Operand::Reg { reg, shift } = op2 {
+                reg_reserve -= *reg;
+                if let Some(shift) = shift {
+                    let mut handle_shift = |value| {
+                        if let ShiftValue::Reg(reg) = value {
+                            reg_reserve -= reg;
+                        }
+                    };
+                    match shift {
+                        Shift::Lsl(v) => handle_shift(*v),
+                        Shift::Lsr(v) => handle_shift(*v),
+                        Shift::Asr(v) => handle_shift(*v),
+                        Shift::Ror(v) => handle_shift(*v),
+                    }
+                }
+            }
 
             let handle_emulated =
                 |reg: Reg, reg_reserve: &mut RegReserve, opcodes: &mut Vec<u32>| {
@@ -46,53 +64,86 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     }
                 };
 
-            let add_to_op1 = match &operands[2] {
+            let op1 = handle_emulated(*og_op1, &mut reg_reserve, opcodes);
+            let (op2, op2_shift) = match op2 {
                 Operand::Reg { reg, shift } => {
                     let reg = handle_emulated(*reg, &mut reg_reserve, opcodes);
-                    Some(match shift {
-                        None => {
-                            reg_reserve -= reg;
-                            reg
-                        }
+                    match shift {
+                        None => (Some(reg), None),
                         Some(shift) => {
-                            let tmp_reg = reg_reserve.pop().unwrap();
                             let mut handle_shift =
                                 |shift_type: ShiftType, value: ShiftValue| match value {
                                     ShiftValue::Reg(shift_reg) => {
-                                        let shift_reg =
+                                        let reg =
                                             handle_emulated(shift_reg, &mut reg_reserve, opcodes);
-                                        AluReg::mov(tmp_reg, reg, shift_type, shift_reg, Cond::AL)
+                                        (Operand::reg(reg), shift_type)
                                     }
-                                    ShiftValue::Imm(imm) => {
-                                        AluShiftImm::mov(tmp_reg, reg, shift_type, imm, Cond::AL)
-                                    }
+                                    ShiftValue::Imm(imm) => (Operand::imm(imm as u32), shift_type),
                                 };
-                            let opcode = match shift {
-                                Shift::Lsl(v) => handle_shift(ShiftType::Lsl, *v),
-                                Shift::Lsr(v) => handle_shift(ShiftType::Lsr, *v),
-                                Shift::Asr(v) => handle_shift(ShiftType::Asr, *v),
-                                Shift::Ror(v) => handle_shift(ShiftType::Ror, *v),
-                            };
-                            opcodes.push(opcode);
-                            tmp_reg
+                            (
+                                Some(reg),
+                                Some(match shift {
+                                    Shift::Lsl(v) => handle_shift(ShiftType::Lsl, *v),
+                                    Shift::Lsr(v) => handle_shift(ShiftType::Lsr, *v),
+                                    Shift::Asr(v) => handle_shift(ShiftType::Asr, *v),
+                                    Shift::Ror(v) => handle_shift(ShiftType::Ror, *v),
+                                }),
+                            )
                         }
-                    })
+                    }
                 }
                 Operand::Imm(imm) => {
                     let tmp_reg = reg_reserve.pop().unwrap();
                     opcodes.extend(AluImm::mov32(tmp_reg, *imm));
-                    Some(tmp_reg)
+                    (Some(tmp_reg), None)
                 }
-                _ => None,
+                _ => (None, None),
             };
 
-            let op1 = handle_emulated(*og_op1, &mut reg_reserve, opcodes);
             let addr_reg = reg_reserve.pop_call_reserved().unwrap();
-            if let Some(reg) = add_to_op1 {
-                if inst_info.op.mem_transfer_single_sub() {
-                    opcodes.push(AluShiftImm::sub_al(addr_reg, op1, reg));
-                } else {
-                    opcodes.push(AluShiftImm::add_al(addr_reg, op1, reg));
+
+            if let Some(op2) = op2 {
+                match op2_shift {
+                    Some((reg, shift_type)) => match reg {
+                        Operand::Reg { reg, .. } => {
+                            opcodes.push(if inst_info.op.mem_transfer_single_sub() {
+                                AluReg::sub(addr_reg, op1, op2, shift_type, reg, Cond::AL)
+                            } else {
+                                AluReg::add(addr_reg, op1, op2, shift_type, reg, Cond::AL)
+                            });
+                        }
+                        Operand::Imm(imm) => {
+                            opcodes.push(if inst_info.op.mem_transfer_single_sub() {
+                                AluShiftImm::sub(
+                                    addr_reg,
+                                    op1,
+                                    op2,
+                                    shift_type,
+                                    imm as u8,
+                                    Cond::AL,
+                                )
+                            } else {
+                                AluShiftImm::add(
+                                    addr_reg,
+                                    op1,
+                                    op2,
+                                    shift_type,
+                                    imm as u8,
+                                    Cond::AL,
+                                )
+                            });
+                        }
+                        Operand::None => {
+                            unreachable!()
+                        }
+                    },
+                    None => {
+                        opcodes.push(if inst_info.op.mem_transfer_single_sub() {
+                            AluShiftImm::sub_al(addr_reg, op1, op2)
+                        } else {
+                            AluShiftImm::add_al(addr_reg, op1, op2)
+                        });
+                    }
                 }
             }
 
@@ -135,9 +186,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     .op
                     .mem_transfer_single_signed()
                 {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, true> as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, true> as *const _
                 } else {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, false> as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, false> as *const _
                 }
             }
             MemoryAmount::Half => {
@@ -145,23 +196,23 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     .op
                     .mem_transfer_single_signed()
                 {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, true> as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, true> as *const _
                 } else {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, false> as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, false> as *const _
                 }
             }
             MemoryAmount::Word => {
-                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Word }, false> as *const _
+                inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Word }, false> as *const _
             }
             MemoryAmount::Double => {
-                inst_mem_handler::<CPU, WRITE, { MemoryAmount::Double }, false> as *const _
+                inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Double }, false> as *const _
             }
         };
 
         self.emit_call_host_func(
             after_host_restore,
             before_guest_restore,
-            &[None, None, Some(pc), Some(hle_addr)],
+            &[None, None, Some(pc), Some(jit_asm_addr)],
             func_addr,
         );
     }

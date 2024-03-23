@@ -1,6 +1,8 @@
-use crate::hle::hle::{get_cpu_regs, Hle};
+use crate::hle::hle::{get_regs_mut, Hle};
 use crate::hle::CpuType;
 use crate::jit::MemoryAmount;
+use std::arch::asm;
+use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 
 mod handler {
@@ -10,8 +12,9 @@ mod handler {
     use crate::jit::reg::{Reg, RegReserve};
     use crate::jit::MemoryAmount;
     use crate::logging::debug_println;
-    use std::intrinsics::likely;
+    use std::intrinsics::{likely, unlikely};
 
+    #[inline(never)]
     pub fn handle_request<
         const CPU: CpuType,
         const WRITE: bool,
@@ -75,6 +78,7 @@ mod handler {
         }
     }
 
+    #[inline(never)]
     pub fn handle_multiple_request<
         const CPU: CpuType,
         const THUMB: bool,
@@ -99,7 +103,7 @@ mod handler {
         let rlist = RegReserve::from(rlist as u32);
         let op0 = Reg::from(op0);
 
-        if rlist.len() == 0 {
+        if unlikely(rlist.len() == 0) {
             if WRITE {
                 *get_regs_mut!(hle, CPU).get_reg_mut(op0) -= 0x40;
             } else {
@@ -111,7 +115,7 @@ mod handler {
             return;
         }
 
-        if rlist.is_reserved(Reg::PC) || op0 == Reg::PC {
+        if unlikely(rlist.is_reserved(Reg::PC) || op0 == Reg::PC) {
             *get_regs_mut!(hle, CPU).get_reg_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
         }
 
@@ -125,7 +129,7 @@ mod handler {
         if WRITE_BACK
             && (!WRITE
                 || (CPU == CpuType::ARM7
-                    && (rlist.0 & ((1 << (op0 as u8 + 1)) - 1)) > (1 << op0 as u8)))
+                    && unlikely((rlist.0 & ((1 << (op0 as u8 + 1)) - 1)) > (1 << op0 as u8))))
         {
             if DECREMENT {
                 *get_regs_mut!(hle, CPU).get_reg_mut(op0) = addr;
@@ -134,7 +138,7 @@ mod handler {
             }
         }
 
-        let get_reg_fun = if USER && !rlist.is_reserved(Reg::PC) {
+        let get_reg_fun = if USER && likely(!rlist.is_reserved(Reg::PC)) {
             ThreadRegs::get_reg_usr_mut
         } else {
             ThreadRegs::get_reg_mut
@@ -161,17 +165,20 @@ mod handler {
         if WRITE_BACK
             && (WRITE
                 || (CPU == CpuType::ARM9
-                    && ((rlist.0 & !((1 << (op0 as u8 + 1)) - 1)) != 0
-                        || (rlist.0 == (1 << op0 as u8)))))
+                    && unlikely(
+                        (rlist.0 & !((1 << (op0 as u8 + 1)) - 1)) != 0
+                            || (rlist.0 == (1 << op0 as u8)),
+                    )))
         {
             *get_regs_mut!(hle, CPU).get_reg_mut(op0) = if DECREMENT { start_addr } else { addr }
         }
 
-        if USER && rlist.is_reserved(Reg::PC) {
+        if USER && unlikely(rlist.is_reserved(Reg::PC)) {
             todo!()
         }
     }
 
+    #[inline(never)]
     pub fn handle_swp_request<const CPU: CpuType, const AMOUNT: MemoryAmount>(
         regs: u32,
         hle: &mut Hle,
@@ -192,10 +199,16 @@ mod handler {
         }
     }
 }
+use crate::jit::jit_asm::JitAsm;
 use handler::*;
+
+pub unsafe extern "C" fn test() {
+    println!("Some test")
+}
 
 pub unsafe extern "C" fn inst_mem_handler<
     const CPU: CpuType,
+    const THUMB: bool,
     const WRITE: bool,
     const AMOUNT: MemoryAmount,
     const SIGNED: bool,
@@ -203,19 +216,20 @@ pub unsafe extern "C" fn inst_mem_handler<
     addr: u32,
     op0: *mut u32,
     pc: u32,
-    hle: *mut Hle,
+    asm: *mut JitAsm<CPU>,
 ) {
-    handle_request::<CPU, WRITE, AMOUNT, SIGNED>(
-        op0.as_mut().unwrap_unchecked(),
-        addr,
-        hle.as_mut().unwrap_unchecked(),
-    );
-    // ARM7 can halt the CPU with an IO port write
-    if CPU == CpuType::ARM7
-        && WRITE
-        && unlikely(get_cpu_regs!(hle.as_ref().unwrap_unchecked(), CPU).is_halted())
-    {
-        todo!()
+    let asm = asm.as_mut().unwrap_unchecked();
+    handle_request::<CPU, WRITE, AMOUNT, SIGNED>(op0.as_mut().unwrap_unchecked(), addr, asm.hle);
+    if WRITE && unlikely(asm.hle.mem.breakout_imm) {
+        asm.guest_branch_out_pc = pc;
+        get_regs_mut!(asm.hle, CPU).pc = pc + if THUMB { 2 } else { 4 };
+        asm.hle.mem.breakout_imm = false;
+        if THUMB {
+            asm!("bx {}", in(reg) asm.breakout_skip_save_regs_thumb_addr);
+        } else {
+            asm!("bx {}", in(reg) asm.breakout_skip_save_regs_addr);
+        }
+        unreachable_unchecked();
     }
 }
 
@@ -239,11 +253,8 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
         op0,
         hle.as_mut().unwrap_unchecked(),
     );
-    // ARM7 can halt the CPU with an IO port write
-    if CPU == CpuType::ARM7
-        && WRITE
-        && unlikely(get_cpu_regs!(hle.as_ref().unwrap_unchecked(), CPU).is_halted())
-    {
+    if WRITE && unlikely((*hle).mem.breakout_imm) {
+        get_regs_mut!(*hle, CPU).pc = pc + if THUMB { 2 } else { 4 };
         todo!()
     }
 }
@@ -254,10 +265,8 @@ pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: 
     hle: *mut Hle,
 ) {
     handle_swp_request::<CPU, AMOUNT>(regs, hle.as_mut().unwrap_unchecked());
-    // ARM7 can halt the CPU with an IO port write
-    if CPU == CpuType::ARM7
-        && unlikely(get_cpu_regs!(hle.as_ref().unwrap_unchecked(), CPU).is_halted())
-    {
+    if unlikely((*hle).mem.breakout_imm) {
+        get_regs_mut!(*hle, CPU).pc = pc + 4;
         todo!()
     }
 }

@@ -940,7 +940,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         DISPLAY_WIDTH as u32 / 2
                     };
 
-                    let mut palette_base_addr =
+                    let palette_base_addr =
                         if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
                             ((object[2] & 0xF000) >> 3) as u32
                         } else {

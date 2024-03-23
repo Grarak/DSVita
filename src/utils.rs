@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{BuildHasher, Hasher};
@@ -29,10 +29,6 @@ impl Convert for u32 {
     fn from(value: u32) -> Self {
         value
     }
-}
-
-pub fn negative<T: Convert>(n: T) -> T {
-    T::from(!n.into().wrapping_sub(1))
 }
 
 pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
@@ -179,7 +175,6 @@ impl BuildHasher for BuildNoHasher {
 }
 
 pub type NoHashMap<V> = HashMap<u32, V, BuildNoHasher>;
-pub type NoHashSet = HashSet<u32, BuildNoHasher>;
 
 pub enum ThreadPriority {
     Low,

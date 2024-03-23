@@ -463,10 +463,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         };
         debug_assert!(self.guest_branch_out_pc != 0 || (CPU == CpuType::ARM7 && guest_pc == 0));
 
-        let (_, branch_out_pre_cycle_count_sum, branch_out_inst_cycle_count) = unsafe {
-            get_jit!(self.hle)
-                .get_jit_start_addr::<CPU, THUMB>(self.guest_branch_out_pc)
-                .unwrap_unchecked()
+        let (branch_out_pre_cycle_count_sum, branch_out_inst_cycle_count) = unsafe {
+            get_jit!(self.hle).get_cycle_counts_unchecked::<CPU, THUMB>(self.guest_branch_out_pc)
         };
 
         let cycle_correction = {

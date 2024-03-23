@@ -148,14 +148,13 @@ impl InstInfo {
                 opcode.set_rd(u4::new(reg0 as u8));
                 opcode.set_rm(u4::new(reg1 as u8));
                 opcode.set_rs(u4::new(reg2 as u8));
-
                 if operands.len() == 4 {
                     let reg3 = *operands[3].as_reg_no_shift().unwrap();
                     opcode.set_rn(u4::new(reg3 as u8));
                 }
                 u32::from(opcode)
             }
-            Op::Smull | Op::Smlal | Op::Umull | Op::Umlal => {
+            Op::Smull | Op::Smulls | Op::Smlal | Op::Umull | Op::Umlal => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();

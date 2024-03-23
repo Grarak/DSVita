@@ -141,36 +141,48 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
     }
 
-    pub fn emit_cmp_h_thumb(&mut self, buf_index: usize, _: u32) {
+    pub fn emit_cmp_h_thumb(&mut self, buf_index: usize, pc: u32) {
         let inst_info = &self.jit_buf.instructions[buf_index];
 
         let operands = inst_info.operands();
-        let op1 = operands[0].as_reg_no_shift().unwrap();
-        let op2 = operands[1].as_reg_no_shift().unwrap();
+        let op1 = *operands[0].as_reg_no_shift().unwrap();
+        let mut op2 = *operands[1].as_reg_no_shift().unwrap();
+
+        let mut reg_reserve = (!RegReserve::gp_thumb()).get_gp_regs();
+        reg_reserve -= op1;
+        reg_reserve -= op2;
 
         if op1.is_emulated() {
             todo!()
         }
 
         if op2.is_emulated() {
-            todo!()
-        }
-
-        if op2.is_high_gp_reg() {
+            let tmp_op2 = reg_reserve.pop().unwrap();
+            if op2 == Reg::PC {
+                self.jit_buf
+                    .emit_opcodes
+                    .extend(AluImm::mov32(tmp_op2, pc + 4));
+            } else {
+                self.jit_buf
+                    .emit_opcodes
+                    .extend(get_regs!(self.hle, CPU).emit_get_reg(tmp_op2, op2));
+            }
+            op2 = tmp_op2;
+        } else if op2.is_high_gp_reg() {
             self.jit_buf
                 .emit_opcodes
-                .extend(get_regs!(self.hle, CPU).emit_get_reg(*op2, *op2));
+                .extend(get_regs!(self.hle, CPU).emit_get_reg(op2, op2));
         }
 
         if op1.is_high_gp_reg() {
             self.jit_buf
                 .emit_opcodes
-                .extend(get_regs!(self.hle, CPU).emit_get_reg(*op1, *op1));
+                .extend(get_regs!(self.hle, CPU).emit_get_reg(op1, op1));
         }
 
         self.jit_buf
             .emit_opcodes
-            .push(AluShiftImm::cmp_al(*op1, *op2));
+            .push(AluShiftImm::cmp_al(op1, op2));
     }
 
     pub fn emit_movh_thumb(&mut self, buf_index: usize, pc: u32) {

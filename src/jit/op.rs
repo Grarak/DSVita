@@ -611,17 +611,6 @@ pub enum Op {
 }
 
 impl Op {
-    pub const fn is_branch(self) -> bool {
-        matches!(self, Op::Bx | Op::BlxReg | Op::B | Op::Bl)
-    }
-
-    pub const fn is_uncond_branch_thumb(self) -> bool {
-        matches!(
-            self,
-            Op::BxRegT | Op::BlxRegT | Op::BT | Op::BlOffT | Op::BlxOffT
-        )
-    }
-
     pub const fn is_single_mem_transfer(self) -> bool {
         matches!(
             self,

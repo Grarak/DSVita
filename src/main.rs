@@ -197,17 +197,19 @@ fn execute_jit(hle: &mut Hle) {
     hle.mem.jit.open();
 
     loop {
+        let mut arm9_cycles = if likely(!get_cpu_regs!(hle, ARM9).is_halted()) {
+            (jit_asm_arm9.execute() + 1) >> 1
+        } else {
+            0
+        };
+
         let arm7_cycles = if likely(!get_cpu_regs!(hle, ARM7).is_halted()) {
             jit_asm_arm7.execute()
         } else {
             0
         };
 
-        let mut arm9_cycles = 0;
-        while likely(
-            !get_cpu_regs!(hle, ARM9).is_halted()
-                && (arm9_cycles == 0 || arm7_cycles > arm9_cycles),
-        ) {
+        while likely(!get_cpu_regs!(hle, ARM9).is_halted()) && (arm7_cycles > arm9_cycles) {
             arm9_cycles += (jit_asm_arm9.execute() + 1) >> 1;
         }
 

@@ -29,6 +29,7 @@ pub struct Memory {
     pub oam: Oam,
     pub jit: JitMemory,
     pub current_jit_block_range: (u32, u32), // Check if the jit block we are currently executing gets written to
+    pub breakout_imm: bool,
 }
 
 impl Memory {
@@ -44,6 +45,7 @@ impl Memory {
             oam: Oam::new(),
             jit: JitMemory::new(),
             current_jit_block_range: (0, 0),
+            breakout_imm: false,
         }
     }
 
@@ -208,12 +210,7 @@ impl Memory {
                         && addr_offset & (size - 1) >= self.current_jit_block_range.0 & (size - 1)
                         && addr_offset & (size - 1) <= self.current_jit_block_range.1 & (size - 1),
                 ) {
-                    todo!(
-                        "Write in currently running jit block {:x} {:x}-{:x}",
-                        aligned_addr,
-                        self.current_jit_block_range.0,
-                        self.current_jit_block_range.1
-                    );
+                    self.breakout_imm = true;
                 }
             }
 

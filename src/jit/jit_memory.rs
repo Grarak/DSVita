@@ -223,10 +223,10 @@ impl JitMemory {
         &self,
         guest_pc: u32,
     ) -> Option<(u32, u16, u8)> {
-        let addr_entry = (guest_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
         let get_addr_block = |blocks: &[JitBlock]| {
+            let addr_entry = (guest_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
             let addr_entry = addr_entry % blocks.len();
-            let block = &blocks[addr_entry];
+            let block = unsafe { blocks.get_unchecked(addr_entry) };
             if likely(block.jit_addr != 0) {
                 let guest_pc_block_base = guest_pc & !(JIT_BLOCK_SIZE - 1);
                 let inst_offset = (guest_pc - guest_pc_block_base) >> if THUMB { 1 } else { 2 };
@@ -267,14 +267,55 @@ impl JitMemory {
         }
     }
 
+    #[inline]
+    pub unsafe fn get_cycle_counts_unchecked<const CPU: CpuType, const THUMB: bool>(
+        &self,
+        guest_pc: u32,
+    ) -> (u16, u8) {
+        let get_cycle_counts = |blocks: &[JitBlock]| {
+            let addr_entry = (guest_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
+            let addr_entry = addr_entry % blocks.len();
+            let block = blocks.get_unchecked(addr_entry);
+            let guest_pc_block_base = guest_pc & !(JIT_BLOCK_SIZE - 1);
+            let inst_offset = (guest_pc - guest_pc_block_base) >> if THUMB { 1 } else { 2 };
+            let inst_entry = unsafe { block.inst_entries.get_unchecked(inst_offset as usize) };
+            (inst_entry.pre_cycle_sum, inst_entry.inst_cycle_count)
+        };
+        macro_rules! get_counts {
+            ($block_name:ident) => {{
+                if THUMB {
+                    get_cycle_counts(self.jit_blocks_thumb.$block_name.deref())
+                } else {
+                    get_cycle_counts(self.jit_blocks.$block_name.deref())
+                }
+            }};
+        }
+        match CPU {
+            CpuType::ARM9 => match guest_pc & 0xFF000000 {
+                regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => {
+                    get_counts!(itcm)
+                }
+                regions::MAIN_MEMORY_OFFSET => get_counts!(main_arm9),
+                0xFF000000 => get_counts!(arm9_bios),
+                _ => todo!("{:x} {:x}", guest_pc, guest_pc & 0xFF000000),
+            },
+            CpuType::ARM7 => match guest_pc & 0xFF000000 {
+                regions::ARM7_BIOS_OFFSET => get_counts!(arm7_bios),
+                regions::MAIN_MEMORY_OFFSET => get_counts!(main_arm7),
+                regions::SHARED_WRAM_OFFSET => get_counts!(wram),
+                _ => todo!("{:x} {:x}", guest_pc, guest_pc & 0xFF000000),
+            },
+        }
+    }
+
     pub fn invalidate_block<const CPU: CpuType>(&mut self, addr: u32, size: u32) {
-        let invalidate = |blocks: &mut [JitBlock], blocks_thumb: &mut [JitBlock]| {
+        let invalidate = |blocks: &mut [JitBlock], blocks_thumb: &mut [JitBlock]| unsafe {
             let addr_entry = (addr >> JIT_BLOCK_SIZE_SHIFT) as usize % blocks.len();
-            blocks[addr_entry].jit_addr = 0;
-            blocks_thumb[addr_entry].jit_addr = 0;
+            blocks.get_unchecked_mut(addr_entry).jit_addr = 0;
+            blocks_thumb.get_unchecked_mut(addr_entry).jit_addr = 0;
             let addr_entry = ((addr + size - 1) >> JIT_BLOCK_SIZE_SHIFT) as usize % blocks.len();
-            blocks[addr_entry].jit_addr = 0;
-            blocks_thumb[addr_entry].jit_addr = 0;
+            blocks.get_unchecked_mut(addr_entry).jit_addr = 0;
+            blocks_thumb.get_unchecked_mut(addr_entry).jit_addr = 0;
         };
         match CPU {
             CpuType::ARM9 => match addr & 0xFF000000 {
