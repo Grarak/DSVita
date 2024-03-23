@@ -165,7 +165,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 opcodes.push(LdrStrImm::str_al(Reg::R3, Reg::R1));
             }
 
-            if write_back && op0 != *og_op1 {
+            if write_back && (WRITE || op0 != *og_op1) {
                 Some((*og_op1, addr_reg))
             } else {
                 None
