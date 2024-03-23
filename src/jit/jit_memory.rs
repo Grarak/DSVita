@@ -5,7 +5,7 @@ use crate::mmap::Mmap;
 use crate::utils::HeapMem;
 use crate::{utils, DEBUG_LOG};
 use std::intrinsics::likely;
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 
 const JIT_MEMORY_SIZE: u32 = 16 * 1024 * 1024;
 #[cfg(target_os = "linux")]
@@ -13,7 +13,7 @@ const JIT_PAGE_SIZE: u32 = 4096;
 #[cfg(target_os = "vita")]
 const JIT_PAGE_SIZE: u32 = 16;
 
-const JIT_BLOCK_SIZE_SHIFT: u32 = 8;
+const JIT_BLOCK_SIZE_SHIFT: u32 = 9;
 pub const JIT_BLOCK_SIZE: u32 = 1 << JIT_BLOCK_SIZE_SHIFT;
 
 #[derive(Copy, Clone, Default)]
@@ -24,9 +24,9 @@ struct JitInstEntry {
 }
 
 #[derive(Default)]
-struct JitBlock {
+struct JitBlock<const SIZE: usize> {
     jit_addr: u32,
-    inst_entries: Vec<JitInstEntry>,
+    inst_entries: HeapMem<JitInstEntry, SIZE>,
 }
 
 pub struct JitInsertArgs {
@@ -54,7 +54,7 @@ macro_rules! create_jit_block {
         #[derive(Default)]
         struct $struct_name {
             $(
-                $block_name: HeapMem<JitBlock, { $size as usize / JIT_BLOCK_SIZE as usize }>,
+                $block_name: HeapMem<JitBlock<{ JIT_BLOCK_SIZE as usize / $inst_length }>, { $size as usize / JIT_BLOCK_SIZE as usize }>,
             )*
         }
 
@@ -63,8 +63,6 @@ macro_rules! create_jit_block {
                 $(
                     for block in self.$block_name.deref_mut() {
                         block.jit_addr = 0;
-                        block.inst_entries.clear();
-                        block.inst_entries.shrink_to_fit();
                     }
                 )*
             }
@@ -158,33 +156,30 @@ impl JitMemory {
         let (allocated_offset_addr, aligned_size) = self.insert(opcodes);
 
         let addr_entry = (insert_args.guest_start_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
-        let insert_to_block = |blocks: &mut [JitBlock]| {
-            let addr_entry = addr_entry % blocks.len();
-            let block = &mut blocks[addr_entry];
-            block.jit_addr = allocated_offset_addr + self.mem.as_ptr() as u32;
-            if block.inst_entries.is_empty() {
-                block.inst_entries.resize(
-                    JIT_BLOCK_SIZE as usize >> if THUMB { 1 } else { 2 },
-                    JitInstEntry::default(),
-                );
-            }
-            block.inst_entries[0].addr_offset = 0;
-            block.inst_entries[0].pre_cycle_sum = 0;
-            block.inst_entries[0].inst_cycle_count = insert_args.guest_insts_cycle_counts[0] as u8;
-            for i in 1..insert_args.guest_pc_to_jit_addr_offset.len() {
-                let entry = &mut block.inst_entries[i];
-                entry.addr_offset = insert_args.guest_pc_to_jit_addr_offset[i];
-                entry.pre_cycle_sum = insert_args.guest_insts_cycle_counts[i - 1];
-                entry.inst_cycle_count =
-                    (insert_args.guest_insts_cycle_counts[i] - entry.pre_cycle_sum) as u8;
-            }
-        };
+        macro_rules! insert_to_block {
+            ($blocks:expr) => {{
+                let addr_entry = addr_entry % $blocks.len();
+                let block = &mut $blocks[addr_entry];
+                block.jit_addr = allocated_offset_addr + self.mem.as_ptr() as u32;
+                block.inst_entries[0].addr_offset = 0;
+                block.inst_entries[0].pre_cycle_sum = 0;
+                block.inst_entries[0].inst_cycle_count =
+                    insert_args.guest_insts_cycle_counts[0] as u8;
+                for i in 1..insert_args.guest_pc_to_jit_addr_offset.len() {
+                    let entry = &mut block.inst_entries[i];
+                    entry.addr_offset = insert_args.guest_pc_to_jit_addr_offset[i];
+                    entry.pre_cycle_sum = insert_args.guest_insts_cycle_counts[i - 1];
+                    entry.inst_cycle_count =
+                        (insert_args.guest_insts_cycle_counts[i] - entry.pre_cycle_sum) as u8;
+                }
+            }};
+        }
         macro_rules! insert {
             ($block_name:ident) => {{
                 if THUMB {
-                    insert_to_block(self.jit_blocks_thumb.$block_name.deref_mut())
+                    insert_to_block!(self.jit_blocks_thumb.$block_name)
                 } else {
-                    insert_to_block(self.jit_blocks.$block_name.deref_mut())
+                    insert_to_block!(self.jit_blocks.$block_name)
                 }
             }};
         }
@@ -218,34 +213,35 @@ impl JitMemory {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn get_jit_start_addr<const CPU: CpuType, const THUMB: bool>(
         &self,
         guest_pc: u32,
-    ) -> Option<(u32, u16, u8)> {
-        let get_addr_block = |blocks: &[JitBlock]| {
-            let addr_entry = (guest_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
-            let addr_entry = addr_entry % blocks.len();
-            let block = unsafe { blocks.get_unchecked(addr_entry) };
-            if likely(block.jit_addr != 0) {
-                let guest_pc_block_base = guest_pc & !(JIT_BLOCK_SIZE - 1);
-                let inst_offset = (guest_pc - guest_pc_block_base) >> if THUMB { 1 } else { 2 };
-                let inst_entry = unsafe { block.inst_entries.get_unchecked(inst_offset as usize) };
-                Some((
-                    block.jit_addr + inst_entry.addr_offset as u32,
-                    inst_entry.pre_cycle_sum,
-                    inst_entry.inst_cycle_count,
-                ))
-            } else {
-                None
-            }
-        };
+    ) -> Option<(u32, u16)> {
+        macro_rules! get_addr_block {
+            ($blocks:expr) => {{
+                let addr_entry = (guest_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
+                let addr_entry = addr_entry % $blocks.len();
+                let block = &$blocks[addr_entry];
+                if likely(block.jit_addr != 0) {
+                    let guest_pc_block_base = guest_pc & !(JIT_BLOCK_SIZE - 1);
+                    let inst_offset = (guest_pc - guest_pc_block_base) >> if THUMB { 1 } else { 2 };
+                    let inst_entry = &block.inst_entries[inst_offset as usize];
+                    Some((
+                        block.jit_addr + inst_entry.addr_offset as u32,
+                        inst_entry.pre_cycle_sum,
+                    ))
+                } else {
+                    None
+                }
+            }};
+        }
         macro_rules! get_addr {
             ($block_name:ident) => {{
                 if THUMB {
-                    get_addr_block(self.jit_blocks_thumb.$block_name.deref())
+                    get_addr_block!(self.jit_blocks_thumb.$block_name)
                 } else {
-                    get_addr_block(self.jit_blocks.$block_name.deref())
+                    get_addr_block!(self.jit_blocks.$block_name)
                 }
             }};
         }
@@ -268,25 +264,27 @@ impl JitMemory {
     }
 
     #[inline]
-    pub unsafe fn get_cycle_counts_unchecked<const CPU: CpuType, const THUMB: bool>(
+    pub fn get_cycle_counts_unchecked<const CPU: CpuType, const THUMB: bool>(
         &self,
         guest_pc: u32,
     ) -> (u16, u8) {
-        let get_cycle_counts = |blocks: &[JitBlock]| {
-            let addr_entry = (guest_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
-            let addr_entry = addr_entry % blocks.len();
-            let block = blocks.get_unchecked(addr_entry);
-            let guest_pc_block_base = guest_pc & !(JIT_BLOCK_SIZE - 1);
-            let inst_offset = (guest_pc - guest_pc_block_base) >> if THUMB { 1 } else { 2 };
-            let inst_entry = unsafe { block.inst_entries.get_unchecked(inst_offset as usize) };
-            (inst_entry.pre_cycle_sum, inst_entry.inst_cycle_count)
-        };
+        macro_rules! get_cycle_counts {
+            ($blocks:expr) => {{
+                let addr_entry = (guest_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
+                let addr_entry = addr_entry % $blocks.len();
+                let block = &$blocks[addr_entry];
+                let guest_pc_block_base = guest_pc & !(JIT_BLOCK_SIZE - 1);
+                let inst_offset = (guest_pc - guest_pc_block_base) >> if THUMB { 1 } else { 2 };
+                let inst_entry = &block.inst_entries[inst_offset as usize];
+                (inst_entry.pre_cycle_sum, inst_entry.inst_cycle_count)
+            }};
+        }
         macro_rules! get_counts {
             ($block_name:ident) => {{
                 if THUMB {
-                    get_cycle_counts(self.jit_blocks_thumb.$block_name.deref())
+                    get_cycle_counts!(self.jit_blocks_thumb.$block_name)
                 } else {
-                    get_cycle_counts(self.jit_blocks.$block_name.deref())
+                    get_cycle_counts!(self.jit_blocks.$block_name)
                 }
             }};
         }
@@ -309,49 +307,36 @@ impl JitMemory {
     }
 
     pub fn invalidate_block<const CPU: CpuType>(&mut self, addr: u32, size: u32) {
-        let invalidate = |blocks: &mut [JitBlock], blocks_thumb: &mut [JitBlock]| unsafe {
-            let addr_entry = (addr >> JIT_BLOCK_SIZE_SHIFT) as usize % blocks.len();
-            blocks.get_unchecked_mut(addr_entry).jit_addr = 0;
-            blocks_thumb.get_unchecked_mut(addr_entry).jit_addr = 0;
-            let addr_entry = ((addr + size - 1) >> JIT_BLOCK_SIZE_SHIFT) as usize % blocks.len();
-            blocks.get_unchecked_mut(addr_entry).jit_addr = 0;
-            blocks_thumb.get_unchecked_mut(addr_entry).jit_addr = 0;
-        };
+        macro_rules! invalidate {
+            ($blocks:expr, $blocks_thumb:expr) => {{
+                let addr_entry = (addr >> JIT_BLOCK_SIZE_SHIFT) as usize % $blocks.len();
+                let addr_entry_end =
+                    ((addr + size - 1) >> JIT_BLOCK_SIZE_SHIFT) as usize % $blocks.len();
+                $blocks[addr_entry].jit_addr = 0;
+                $blocks[addr_entry_end].jit_addr = 0;
+                $blocks_thumb[addr_entry].jit_addr = 0;
+                $blocks_thumb[addr_entry_end].jit_addr = 0;
+            }};
+        }
         match CPU {
             CpuType::ARM9 => match addr & 0xFF000000 {
                 regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => {
-                    invalidate(
-                        self.jit_blocks.itcm.deref_mut(),
-                        self.jit_blocks_thumb.itcm.deref_mut(),
-                    )
+                    invalidate!(self.jit_blocks.itcm, self.jit_blocks_thumb.itcm)
                 }
                 regions::MAIN_MEMORY_OFFSET => {
-                    invalidate(
-                        self.jit_blocks.main_arm9.deref_mut(),
-                        self.jit_blocks_thumb.main_arm9.deref_mut(),
-                    );
-                    invalidate(
-                        self.jit_blocks.main_arm7.deref_mut(),
-                        self.jit_blocks_thumb.main_arm7.deref_mut(),
-                    )
+                    invalidate!(self.jit_blocks.main_arm9, self.jit_blocks_thumb.main_arm9);
+                    invalidate!(self.jit_blocks.main_arm7, self.jit_blocks_thumb.main_arm7)
                 }
                 _ => {}
             },
             CpuType::ARM7 => match addr & 0xFF000000 {
                 regions::MAIN_MEMORY_OFFSET => {
-                    invalidate(
-                        self.jit_blocks.main_arm9.deref_mut(),
-                        self.jit_blocks_thumb.main_arm9.deref_mut(),
-                    );
-                    invalidate(
-                        self.jit_blocks.main_arm7.deref_mut(),
-                        self.jit_blocks_thumb.main_arm7.deref_mut(),
-                    )
+                    invalidate!(self.jit_blocks.main_arm9, self.jit_blocks_thumb.main_arm9);
+                    invalidate!(self.jit_blocks.main_arm7, self.jit_blocks_thumb.main_arm7)
                 }
-                regions::SHARED_WRAM_OFFSET => invalidate(
-                    self.jit_blocks.wram.deref_mut(),
-                    self.jit_blocks_thumb.wram.deref_mut(),
-                ),
+                regions::SHARED_WRAM_OFFSET => {
+                    invalidate!(self.jit_blocks.wram, self.jit_blocks_thumb.wram)
+                }
                 _ => {}
             },
         }

@@ -9,7 +9,8 @@ use crate::hle::memory::mem::Memory;
 use crate::hle::CpuType;
 use crate::utils::Convert;
 use std::ptr;
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::AtomicU16;
+use std::sync::Arc;
 
 macro_rules! get_regs {
     ($hle:expr, $cpu:expr) => {{
@@ -147,27 +148,27 @@ impl Cpus {
 }
 
 pub struct Common {
-    pub input: Arc<RwLock<Input>>,
     pub ipc: Ipc,
     pub cartridge: Cartridge,
     pub gpu: Gpu,
     pub cycle_manager: CycleManager,
     pub cpus: Cpus,
+    pub input: Input,
 }
 
 impl Common {
     fn new(
         cartridge_reader: CartridgeReader,
         swapchain: Arc<Swapchain>,
-        input: Arc<RwLock<Input>>,
+        key_map: Arc<AtomicU16>,
     ) -> Self {
         Common {
-            input,
             ipc: Ipc::new(),
             cartridge: Cartridge::new(cartridge_reader),
             gpu: Gpu::new(swapchain),
             cycle_manager: CycleManager::new(),
             cpus: Cpus::new(),
+            input: Input::new(key_map),
         }
     }
 }
@@ -181,10 +182,10 @@ impl Hle {
     pub fn new(
         cartridge_reader: CartridgeReader,
         swapchain: Arc<Swapchain>,
-        input: Arc<RwLock<Input>>,
+        key_map: Arc<AtomicU16>,
     ) -> Self {
         Hle {
-            common: Common::new(cartridge_reader, swapchain, input),
+            common: Common::new(cartridge_reader, swapchain, key_map),
             mem: Memory::new(),
         }
     }

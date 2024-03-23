@@ -1,3 +1,6 @@
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
+
 #[repr(u8)]
 #[derive(Copy, Clone)]
 pub enum Keycode {
@@ -16,20 +19,27 @@ pub enum Keycode {
 }
 
 pub struct Input {
-    pub key_input: u16,
-    pub ext_key_in: u16,
+    key_input: u16,
+    ext_key_in: u16,
+    key_map: Arc<AtomicU16>,
 }
 
 impl Input {
-    pub fn new() -> Self {
+    pub fn new(key_map: Arc<AtomicU16>) -> Self {
         Input {
             key_input: 0x3FF,
             ext_key_in: 0x007F,
+            key_map,
         }
     }
 
-    pub fn update_key_map(&mut self, keys: u16) {
-        self.key_input = (self.key_input & !0x1FF) | (keys & 0x1FF);
-        self.ext_key_in = (self.ext_key_in & !0x3) | ((keys >> 10) & 0x3);
+    pub fn get_key_input(&self) -> u16 {
+        let key_map = self.key_map.load(Ordering::Relaxed);
+        (self.key_input & !0x1FF) | (key_map & 0x1FF)
+    }
+
+    pub fn get_ext_key_in(&self) -> u16 {
+        let key_map = self.key_map.load(Ordering::Relaxed);
+        (self.ext_key_in & !0x3) | ((key_map >> 10) & 0x3)
     }
 }

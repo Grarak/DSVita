@@ -202,10 +202,6 @@ mod handler {
 use crate::jit::jit_asm::JitAsm;
 use handler::*;
 
-pub unsafe extern "C" fn test() {
-    println!("Some test")
-}
-
 pub unsafe extern "C" fn inst_mem_handler<
     const CPU: CpuType,
     const THUMB: bool,

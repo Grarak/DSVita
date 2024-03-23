@@ -15,7 +15,6 @@ extern crate core;
 use crate::cartridge_reader::CartridgeReader;
 use crate::hle::gpu::gpu::{Gpu, Swapchain, DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
 use crate::hle::hle::{get_cm, get_cp15_mut, get_cpu_regs, get_regs_mut, Hle};
-use crate::hle::input::Input;
 use crate::hle::{input, spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::utils::{set_thread_prio_affinity, BuildNoHasher, ThreadAffinity, ThreadPriority};
@@ -25,7 +24,8 @@ use sdl2::rect::Rect;
 use std::cmp::min;
 use std::collections::HashMap;
 use std::intrinsics::{likely, unlikely};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
 use std::{mem, ptr, thread};
 use CpuType::{ARM7, ARM9};
 
@@ -81,17 +81,13 @@ fn get_file_path() -> String {
     "ux0:ace_attorney.nds".to_owned()
 }
 
-fn run_cpu(
-    cartridge_reader: CartridgeReader,
-    swapchain: Arc<Swapchain>,
-    input: Arc<RwLock<Input>>,
-) {
+fn run_cpu(cartridge_reader: CartridgeReader, swapchain: Arc<Swapchain>, key_map: Arc<AtomicU16>) {
     let arm9_ram_addr = cartridge_reader.header.arm9_values.ram_address;
     let arm9_entry_addr = cartridge_reader.header.arm9_values.entry_address;
     let arm7_ram_addr = cartridge_reader.header.arm7_values.ram_address;
     let arm7_entry_addr = cartridge_reader.header.arm7_values.entry_address;
 
-    let mut hle = Hle::new(cartridge_reader, swapchain, input);
+    let mut hle = Hle::new(cartridge_reader, swapchain, key_map);
 
     {
         let cartridge_header: &[u8; cartridge_reader::HEADER_IN_RAM_SIZE] =
@@ -234,14 +230,14 @@ pub fn main() {
     let swapchain = Arc::new(Swapchain::new());
     let swapchain_clone = swapchain.clone();
 
-    let input = Arc::new(RwLock::new(Input::new()));
-    let input_clone = input.clone();
+    let key_map = Arc::new(AtomicU16::new(0xFFFF));
+    let key_map_clone = key_map.clone();
 
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
-            run_cpu(cartridge_reader, swapchain_clone, input_clone)
+            run_cpu(cartridge_reader, swapchain_clone, key_map_clone)
         })
         .unwrap();
 
@@ -324,7 +320,6 @@ pub fn main() {
     }
 
     let mut sdl_event_pump = sdl.event_pump().unwrap();
-    let mut key_map = 0xFFFF;
 
     'render: loop {
         for event in sdl_event_pump.poll_iter() {
@@ -335,7 +330,7 @@ pub fn main() {
                     ..
                 } => {
                     if let Some(code) = key_code_mapping.get(&code) {
-                        key_map &= !(1 << *code as u8);
+                        key_map.fetch_and(!(1 << *code as u8), Ordering::Relaxed);
                     }
                 }
                 #[cfg(target_os = "linux")]
@@ -344,27 +339,25 @@ pub fn main() {
                     ..
                 } => {
                     if let Some(code) = key_code_mapping.get(&code) {
-                        key_map |= 1 << *code as u8;
+                        key_map.fetch_or(1 << *code as u8, Ordering::Relaxed);
                     }
                 }
                 #[cfg(target_os = "vita")]
                 Event::ControllerButtonDown { button, .. } => {
                     if let Some(code) = key_code_mapping.get(&button) {
-                        key_map &= !(1 << *code as u8);
+                        key_map.fetch_and(!(1 << *code as u8), Ordering::Relaxed);
                     }
                 }
                 #[cfg(target_os = "vita")]
                 Event::ControllerButtonUp { button, .. } => {
                     if let Some(code) = key_code_mapping.get(&button) {
-                        key_map |= 1 << *code as u8;
+                        key_map.fetch_or(1 << *code as u8, Ordering::Relaxed);
                     }
                 }
                 Event::Quit { .. } => break 'render,
                 _ => {}
             }
         }
-
-        input.write().unwrap().update_key_map(key_map);
 
         let fb = swapchain.consume();
         let top_aligned: &[u8] = unsafe { mem::transmute(&fb[..DISPLAY_PIXEL_COUNT]) };

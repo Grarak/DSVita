@@ -410,7 +410,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if DEBUG_LOG {
             for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
                 let pc = ((index as u32) << if THUMB { 1 } else { 2 }) + guest_pc_block_base;
-                let (jit_addr, _, _) = get_jit!(self.hle)
+                let (jit_addr, _) = get_jit!(self.hle)
                     .get_jit_start_addr::<CPU, THUMB>(pc)
                     .unwrap();
 
@@ -426,7 +426,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         self.jit_buf.clear_all();
     }
 
-    #[inline]
     pub fn execute(&mut self) -> u16 {
         let entry = get_regs!(self.hle, CPU).pc;
 
@@ -439,13 +438,12 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
     }
 
-    #[inline]
     fn execute_internal<const THUMB: bool>(&mut self, guest_pc: u32) -> u16 {
         get_regs_mut!(self.hle, CPU).set_thumb(THUMB);
         let guest_pc_block_base = guest_pc & !(JIT_BLOCK_SIZE - 1);
 
         let jit_info = get_jit!(self.hle).get_jit_start_addr::<CPU, THUMB>(guest_pc);
-        let (jit_addr, pre_cycle_count_sum, _) = if likely(jit_info.is_some()) {
+        let (jit_addr, pre_cycle_count_sum) = if likely(jit_info.is_some()) {
             unsafe { jit_info.unwrap_unchecked() }
         } else {
             self.emit_code_block::<THUMB>(guest_pc_block_base);
@@ -478,9 +476,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         };
         debug_assert!(self.guest_branch_out_pc != 0 || (CPU == CpuType::ARM7 && guest_pc == 0));
 
-        let (branch_out_pre_cycle_count_sum, branch_out_inst_cycle_count) = unsafe {
-            get_jit!(self.hle).get_cycle_counts_unchecked::<CPU, THUMB>(self.guest_branch_out_pc)
-        };
+        let (branch_out_pre_cycle_count_sum, branch_out_inst_cycle_count) =
+            get_jit!(self.hle).get_cycle_counts_unchecked::<CPU, THUMB>(self.guest_branch_out_pc);
 
         let cycle_correction = {
             let regs = get_regs_mut!(self.hle, CPU);
@@ -491,8 +488,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let executed_cycles = (branch_out_pre_cycle_count_sum + branch_out_inst_cycle_count as u16
             - pre_cycle_count_sum
+            // + 2 for branching out
             + 2) as i16
-            + cycle_correction; // + for branching out
+            + cycle_correction;
 
         if DEBUG_LOG {
             println!(
