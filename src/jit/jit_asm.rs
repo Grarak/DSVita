@@ -248,9 +248,24 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 instance.breakout_skip_save_regs_addr =
                     instance.breakout_addr + (jit_skip_save_regs_offset << 2);
 
-                let save_regs_thumb_opcodes = &get_regs!(instance.hle, CPU).save_regs_thumb_opcodes;
-                jit_opcodes[..save_regs_thumb_opcodes.len()]
-                    .copy_from_slice(save_regs_thumb_opcodes);
+                jit_opcodes.clear();
+            }
+
+            {
+                // Common thumb function to exit guest (breakout)
+                // Save guest
+                jit_opcodes.extend(&get_regs!(instance.hle, CPU).save_regs_thumb_opcodes);
+
+                // Some emits already save regs themselves, add skip addr
+                let jit_skip_save_regs_offset = jit_opcodes.len() as u32;
+
+                let host_sp_addr = instance.host_regs.get_sp_addr();
+                jit_opcodes.extend(&AluImm::mov32(Reg::R0, host_sp_addr));
+                jit_opcodes.extend(&[
+                    LdrStrImm::ldr_al(Reg::SP, Reg::R0),           // Restore host SP
+                    LdrStrImm::ldr_offset_al(Reg::PC, Reg::R0, 4), // Restore host LR and write to PC
+                ]);
+
                 instance.breakout_thumb_addr =
                     get_jit_mut!(instance.hle).insert_common(jit_opcodes);
                 instance.breakout_skip_save_regs_thumb_addr =
