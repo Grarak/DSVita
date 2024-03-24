@@ -1,5 +1,7 @@
 use crate::hle::gpu::gpu_2d::Gpu2DEngine;
+use crate::hle::hle::{get_mmu, Hle};
 use crate::hle::CpuType;
+use crate::hle::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
 use crate::utils;
 use crate::utils::HeapMemU8;
@@ -130,7 +132,15 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
         self.count += 1;
     }
 
-    pub fn read<T: utils::Convert>(&self, index: u32) -> T {
+    fn get_ptr(&self, index: u32) -> *const u8 {
+        if self.count == 1 {
+            unsafe { self.overlaps[0].ptr.add(index as usize) }
+        } else {
+            ptr::null()
+        }
+    }
+
+    fn read<T: utils::Convert>(&self, index: u32) -> T {
         let mut ret = 0;
         for i in 0..self.count {
             let map = &self.overlaps[i];
@@ -140,7 +150,7 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
         T::from(ret)
     }
 
-    pub fn write<T: utils::Convert>(&mut self, index: u32, value: T) {
+    fn write<T: utils::Convert>(&mut self, index: u32, value: T) {
         for i in 0..self.count {
             let map = &mut self.overlaps[i].as_mut();
             debug_assert_ne!(map.ptr, ptr::null_mut());
@@ -171,6 +181,13 @@ where
         for i in 0..(MAP_SIZE / CHUNK_SIZE) {
             self.sections[offset + i].add(map.extract_section::<CHUNK_SIZE>(i))
         }
+    }
+
+    pub fn get_ptr(&self, mut addr: u32) -> *const u8 {
+        addr %= SIZE as u32;
+        let section_index = addr as usize / CHUNK_SIZE;
+        let section_offset = addr as usize % CHUNK_SIZE;
+        self.sections[section_index].get_ptr(section_offset as u32)
     }
 
     pub fn read<T: utils::Convert>(&self, mut addr: u32) -> T {
@@ -207,7 +224,7 @@ const BANK_F_SIZE: usize = 16 * 1024;
 const BANK_G_SIZE: usize = 16 * 1024;
 const BANK_H_SIZE: usize = 32 * 1024;
 const BANK_I_SIZE: usize = 16 * 1024;
-const TOTAL_SIZE: usize = BANK_A_SIZE
+pub const TOTAL_SIZE: usize = BANK_A_SIZE
     + BANK_B_SIZE
     + BANK_C_SIZE
     + BANK_D_SIZE
@@ -218,6 +235,7 @@ const TOTAL_SIZE: usize = BANK_A_SIZE
     + BANK_I_SIZE;
 const_assert_eq!(TOTAL_SIZE, 656 * 1024);
 
+#[derive(Default)]
 struct VramBanks {
     vram_a: HeapMemU8<BANK_A_SIZE>,
     vram_b: HeapMemU8<BANK_B_SIZE>,
@@ -232,17 +250,7 @@ struct VramBanks {
 
 impl VramBanks {
     fn new() -> Self {
-        let instance = VramBanks {
-            vram_a: HeapMemU8::new(),
-            vram_b: HeapMemU8::new(),
-            vram_c: HeapMemU8::new(),
-            vram_d: HeapMemU8::new(),
-            vram_e: HeapMemU8::new(),
-            vram_f: HeapMemU8::new(),
-            vram_g: HeapMemU8::new(),
-            vram_h: HeapMemU8::new(),
-            vram_i: HeapMemU8::new(),
-        };
+        let instance = VramBanks::default();
 
         debug_println!(
             "Allocating vram banks at a: {:x}, b: {:x}, c: {:x}, d: {:x}, e: {:x}, f: {:x}, g: {:x}, h: {:x}, i: {:x}",
@@ -257,6 +265,11 @@ impl VramBanks {
     }
 }
 
+pub const BG_A_SIZE: u32 = 512 * 1024;
+pub const OBJ_A_SIZE: u32 = 256 * 1024;
+pub const BG_B_SIZE: u32 = 128 * 1024;
+pub const OBJ_B_SIZE: u32 = 128 * 1024;
+
 pub const LCDC_OFFSET: u32 = 0x800000;
 pub const BG_A_OFFSET: u32 = 0x000000;
 pub const OBJ_A_OFFSET: u32 = 0x400000;
@@ -270,7 +283,7 @@ pub struct Vram {
 
     lcdc: OverlapMapping<TOTAL_SIZE, { 16 * 1024 }>,
 
-    bg_a: OverlapMapping<{ 512 * 1024 }, { 16 * 1024 }>,
+    bg_a: OverlapMapping<{ BG_A_SIZE as usize }, { 16 * 1024 }>,
     obj_a: OverlapMapping<{ 256 * 1024 }, { 16 * 1024 }>,
     bg_ext_palette_a: [VramMap<{ 8 * 1024 }>; 4],
     obj_ext_palette_a: VramMap<{ 8 * 1024 }>,
@@ -278,7 +291,7 @@ pub struct Vram {
     tex_rear_plane_img: [VramMap<{ 128 * 1024 }>; 4],
     tex_palette: [VramMap<{ 16 * 1024 }>; 6],
 
-    bg_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }>,
+    bg_b: OverlapMapping<{ BG_B_SIZE as usize }, { 16 * 1024 }>,
     obj_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }>,
     bg_ext_palette_b: [VramMap<{ 8 * 1024 }>; 4],
     obj_ext_palette_b: VramMap<{ 8 * 1024 }>,
@@ -325,14 +338,15 @@ impl Vram {
         instance
     }
 
-    pub fn set_cnt(&mut self, bank: usize, value: u8) {
-        debug_println!("Set vram cnt {:x} to {:x}", bank, value);
+    pub fn set_cnt(&mut self, bank: usize, value: u8, hle: &Hle) {
         const MASKS: [u8; 9] = [0x9B, 0x9B, 0x9F, 0x9F, 0x87, 0x9F, 0x9F, 0x83, 0x83];
         let value = value & MASKS[bank];
         if self.cnt[bank] == value {
             return;
         }
         self.cnt[bank] = value;
+
+        debug_println!("Set vram cnt {:x} to {:x}", bank, value);
 
         self.lcdc = OverlapMapping::new();
         self.bg_a = OverlapMapping::new();
@@ -672,14 +686,33 @@ impl Vram {
                 }
             }
         }
+
+        get_mmu!(hle, ARM9).update_vram(hle);
+        get_mmu!(hle, ARM7).update_vram(hle);
+    }
+
+    pub fn get_ptr<const CPU: CpuType>(&self, addr: u32) -> *const u8 {
+        let base_addr = addr & 0xF00000;
+        let addr_offset = (addr - base_addr) & 0xFFFFF;
+        match CPU {
+            ARM9 => match addr & 0xF00000 {
+                LCDC_OFFSET => self.lcdc.get_ptr(addr_offset),
+                BG_A_OFFSET => self.bg_a.get_ptr(addr_offset),
+                OBJ_A_OFFSET => self.obj_a.get_ptr(addr_offset),
+                BG_B_OFFSET => self.bg_b.get_ptr(addr_offset),
+                OBJ_B_OFFSET => self.obj_b.get_ptr(addr_offset),
+                _ => ptr::null(),
+            },
+            ARM7 => self.arm7.get_ptr(addr_offset),
+        }
     }
 
     #[inline]
     pub fn read<const CPU: CpuType, T: utils::Convert>(&self, addr: u32) -> T {
         let base_addr = addr & 0xF00000;
-        let addr_offset = addr - base_addr;
+        let addr_offset = (addr - base_addr) & 0xFFFFF;
         match CPU {
-            CpuType::ARM9 => match addr & 0xF00000 {
+            ARM9 => match addr & 0xF00000 {
                 LCDC_OFFSET => self.lcdc.read(addr_offset),
                 BG_A_OFFSET => self.bg_a.read(addr_offset),
                 OBJ_A_OFFSET => self.obj_a.read(addr_offset),
@@ -687,16 +720,16 @@ impl Vram {
                 OBJ_B_OFFSET => self.obj_b.read(addr_offset),
                 _ => unreachable!(),
             },
-            CpuType::ARM7 => self.arm7.read(addr_offset),
+            ARM7 => self.arm7.read(addr_offset),
         }
     }
 
     #[inline]
     pub fn write<const CPU: CpuType, T: utils::Convert>(&mut self, addr: u32, value: T) {
         let base_addr = addr & 0xF00000;
-        let addr_offset = addr - base_addr;
+        let addr_offset = (addr - base_addr) & 0xFFFFF;
         match CPU {
-            CpuType::ARM9 => match base_addr {
+            ARM9 => match base_addr {
                 LCDC_OFFSET => self.lcdc.write(addr_offset, value),
                 BG_A_OFFSET => self.bg_a.write(addr_offset, value),
                 OBJ_A_OFFSET => self.obj_a.write(addr_offset, value),
@@ -704,7 +737,7 @@ impl Vram {
                 OBJ_B_OFFSET => self.obj_b.write(addr_offset, value),
                 _ => unreachable!(),
             },
-            CpuType::ARM7 => self.arm7.write(addr_offset, value),
+            ARM7 => self.arm7.write(addr_offset, value),
         };
     }
 

@@ -52,6 +52,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             return;
         }
 
+        let hle_addr = self.hle as *mut _ as _;
+
         let inst_info = &self.jit_buf.instructions[buf_index];
 
         let rd = inst_info.operands()[0].as_reg_no_shift().unwrap();
@@ -70,6 +72,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                         Some(get_cp15_mut!(self.hle, CPU) as *mut _ as _),
                         Some(cp15_reg),
                         None,
+                        Some(hle_addr),
                     ],
                     cp15_write as _,
                 ),
@@ -80,6 +83,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                             Some(get_cp15!(self.hle, CPU) as *const _ as _),
                             Some(cp15_reg),
                             Some(reg_addr),
+                            None,
                         ],
                         cp15_read as _,
                     )

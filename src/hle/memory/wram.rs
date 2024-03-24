@@ -1,4 +1,4 @@
-use crate::hle::hle::Hle;
+use crate::hle::hle::{get_mmu, Hle};
 use crate::hle::memory::regions;
 use crate::hle::CpuType;
 use crate::hle::CpuType::ARM7;
@@ -8,6 +8,7 @@ use crate::utils::{Convert, HeapMemU8};
 use std::hint::unreachable_unchecked;
 use std::ops::{Deref, DerefMut};
 use std::{ptr, slice};
+use CpuType::ARM9;
 
 struct SharedWramMap {
     shared_ptr: *const u8,
@@ -165,6 +166,9 @@ impl Wram {
                 .jit
                 .invalidate_block::<{ ARM7 }>(addr, JIT_BLOCK_SIZE);
         }
+
+        get_mmu!(hle, ARM9).update_wram(hle);
+        get_mmu!(hle, ARM7).update_wram(hle);
     }
 
     fn read_arm9<T: Convert>(&self, addr_offset: u32) -> T {
@@ -189,10 +193,37 @@ impl Wram {
         utils::write_to_mem(&mut mem, addr_offset & (mem_len - 1) as u32, value);
     }
 
+    pub fn get_ptr<const CPU: CpuType>(&self, addr: u32) -> *const u8 {
+        unsafe {
+            match CPU {
+                ARM9 => {
+                    if self.arm9_map.len() == 0 {
+                        ptr::null()
+                    } else {
+                        self.arm9_map
+                            .as_ptr()
+                            .add(addr as usize & (self.arm9_map.len() - 1))
+                    }
+                }
+                ARM7 => {
+                    if addr & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
+                        self.wram_arm7
+                            .as_ptr()
+                            .add(addr as usize & (self.wram_arm7.len() - 1))
+                    } else {
+                        self.arm7_map
+                            .as_ptr()
+                            .add(addr as usize & (self.arm7_map.len() - 1))
+                    }
+                }
+            }
+        }
+    }
+
     pub fn read<const CPU: CpuType, T: Convert>(&self, addr_offset: u32) -> T {
         match CPU {
-            CpuType::ARM9 => self.read_arm9(addr_offset),
-            CpuType::ARM7 => {
+            ARM9 => self.read_arm9(addr_offset),
+            ARM7 => {
                 if addr_offset & regions::ARM7_WRAM_OFFSET != 0 {
                     utils::read_from_mem(
                         self.wram_arm7.as_slice(),
@@ -211,11 +242,11 @@ impl Wram {
         value: T,
     ) -> (u32, u32) {
         match CPU {
-            CpuType::ARM9 => {
+            ARM9 => {
                 self.write_arm9(addr_offset, value);
                 (self.arm9_map.size as u32, regions::SHARED_WRAM_OFFSET)
             }
-            CpuType::ARM7 => {
+            ARM7 => {
                 if self.cnt == 0 || addr_offset & regions::ARM7_WRAM_OFFSET != 0 {
                     utils::write_to_mem(
                         self.wram_arm7.as_mut_slice(),

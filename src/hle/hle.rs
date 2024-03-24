@@ -133,6 +133,16 @@ macro_rules! get_jit_mut {
 }
 pub(crate) use get_jit_mut;
 
+macro_rules! get_mmu {
+    ($hle:expr, $cpu:expr) => {{
+        match $cpu {
+            crate::hle::CpuType::ARM9 => &$hle.mem.mmu_arm9 as &dyn crate::hle::memory::mmu::Mmu,
+            crate::hle::CpuType::ARM7 => &$hle.mem.mmu_arm7 as &dyn crate::hle::memory::mmu::Mmu,
+        }
+    }};
+}
+pub(crate) use get_mmu;
+
 pub struct Cpus {
     pub arm9: CpuArm9,
     pub arm7: CpuArm7,

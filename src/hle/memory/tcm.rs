@@ -15,6 +15,14 @@ impl Tcm {
         }
     }
 
+    pub fn get_itcm_ptr(&self, addr: u32) -> *const u8 {
+        unsafe {
+            self.itcm
+                .as_ptr()
+                .add((addr & (regions::INSTRUCTION_TCM_SIZE - 1)) as usize)
+        }
+    }
+
     pub fn read_itcm<T: Convert>(&self, addr: u32) -> T {
         utils::read_from_mem(
             self.itcm.as_slice(),
@@ -28,6 +36,14 @@ impl Tcm {
             addr & (regions::INSTRUCTION_TCM_SIZE - 1),
             value,
         );
+    }
+
+    pub fn get_dtcm_ptr(&self, addr: u32) -> *const u8 {
+        unsafe {
+            self.dtcm
+                .as_ptr()
+                .add((addr & (regions::DATA_TCM_SIZE - 1)) as usize)
+        }
     }
 
     pub fn read_dtcm<T: Convert>(&self, addr: u32) -> T {

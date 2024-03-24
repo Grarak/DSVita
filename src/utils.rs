@@ -93,7 +93,10 @@ pub struct HeapMem<T: Sized, const SIZE: usize>(Box<[T; SIZE]>);
 
 impl<T: Sized + Default + Copy, const SIZE: usize> HeapMem<T, SIZE> {
     pub fn new() -> Self {
-        HeapMem(Box::new([T::default(); SIZE]))
+        HeapMem(
+            #[rustc_box]
+            Box::new([T::default(); SIZE]),
+        )
     }
 }
 
@@ -113,7 +116,8 @@ impl<T: Sized + Default, const SIZE: usize> DerefMut for HeapMem<T, SIZE> {
 
 impl<T: Sized + Default, const SIZE: usize> Default for HeapMem<T, SIZE> {
     fn default() -> Self {
-        let mut mem: Box<[T; SIZE]> = Box::new(unsafe { mem::zeroed() });
+        let mut mem: Box<[T; SIZE]> = #[rustc_box]
+        Box::new(unsafe { mem::zeroed() });
         mem.fill_with(|| T::default());
         HeapMem(mem)
     }

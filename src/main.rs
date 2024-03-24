@@ -6,6 +6,7 @@
 #![feature(generic_const_exprs)]
 #![feature(isqrt)]
 #![feature(naked_functions)]
+#![feature(rustc_attrs)]
 #![feature(seek_stream_len)]
 #![feature(stmt_expr_attributes)]
 #![feature(thread_id_value)]
@@ -14,7 +15,7 @@ extern crate core;
 
 use crate::cartridge_reader::CartridgeReader;
 use crate::hle::gpu::gpu::{Gpu, Swapchain, DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
-use crate::hle::hle::{get_cm, get_cp15_mut, get_cpu_regs, get_regs_mut, Hle};
+use crate::hle::hle::{get_cm, get_cp15_mut, get_cpu_regs, get_mmu, get_regs_mut, Hle};
 use crate::hle::{input, spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::utils::{set_thread_prio_affinity, BuildNoHasher, ThreadAffinity, ThreadPriority};
@@ -113,10 +114,12 @@ fn run_cpu(cartridge_reader: CartridgeReader, swapchain: Arc<Swapchain>, key_map
     }
 
     {
+        let hle_ptr = ptr::addr_of!(hle);
         let cp15 = get_cp15_mut!(hle, ARM9);
-        cp15.write(0x010000, 0x0005707D); // control
-        cp15.write(0x090100, 0x0300000A); // dtcm addr/size
-        cp15.write(0x090101, 0x00000020); // itcm size
+        let hle_tmp = unsafe { hle_ptr.as_ref().unwrap_unchecked() };
+        cp15.write(0x010000, 0x0005707D, hle_tmp); // control
+        cp15.write(0x090100, 0x0300000A, hle_tmp); // dtcm addr/size
+        cp15.write(0x090101, 0x00000020, hle_tmp); // itcm size
     }
 
     {
@@ -192,6 +195,9 @@ fn execute_jit(hle: &mut Hle) {
     let mut jit_asm_arm7 = JitAsm::<{ ARM7 }>::new(unsafe { hle_ptr.as_mut().unwrap() });
     hle.mem.jit.open();
 
+    get_mmu!(jit_asm_arm9.hle, ARM9).update_all(hle);
+    get_mmu!(jit_asm_arm7.hle, ARM7).update_all(hle);
+
     loop {
         let mut arm9_cycles = if likely(!get_cpu_regs!(hle, ARM9).is_halted()) {
             (jit_asm_arm9.execute() + 1) >> 1
@@ -221,6 +227,8 @@ fn execute_jit(hle: &mut Hle) {
 
 // Must be pub for vita
 pub fn main() {
+    set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core0);
+    
     if DEBUG_LOG {
         std::env::set_var("RUST_BACKTRACE", "full");
     }
@@ -240,8 +248,6 @@ pub fn main() {
             run_cpu(cartridge_reader, swapchain_clone, key_map_clone)
         })
         .unwrap();
-
-    set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core0);
 
     sdl2::hint::set("SDL_NO_SIGNAL_HANDLERS", "1");
     let sdl = sdl2::init().unwrap();
