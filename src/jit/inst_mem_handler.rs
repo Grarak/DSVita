@@ -20,6 +20,7 @@ mod handler {
         const WRITE: bool,
         const AMOUNT: MemoryAmount,
         const SIGNED: bool,
+        const MMU: bool,
     >(
         op0: &mut u32,
         addr: u32,
@@ -47,32 +48,30 @@ mod handler {
             match AMOUNT {
                 MemoryAmount::Byte => {
                     if SIGNED {
-                        *op0 = hle.mem_read::<CPU, u8>(addr) as i8 as i32 as u32;
+                        *op0 = hle.mem_read_with_options::<CPU, true, MMU, u8>(addr) as i8 as i32
+                            as u32;
                     } else {
-                        *op0 = hle.mem_read::<CPU, u8>(addr) as u32;
+                        *op0 = hle.mem_read_with_options::<CPU, true, MMU, u8>(addr) as u32;
                     }
                 }
                 MemoryAmount::Half => {
                     if SIGNED {
-                        *op0 = hle.mem_read::<CPU, u16>(addr) as i16 as i32 as u32;
+                        *op0 = hle.mem_read_with_options::<CPU, true, MMU, u16>(addr) as i16 as i32
+                            as u32;
                     } else {
-                        *op0 = hle.mem_read::<CPU, u16>(addr) as u32;
+                        *op0 = hle.mem_read_with_options::<CPU, true, MMU, u16>(addr) as u32;
                     }
                 }
                 MemoryAmount::Word => {
-                    *op0 = if likely(addr & 0x3 == 0) {
-                        hle.mem_read::<CPU, u32>(addr)
-                    } else {
-                        let value = hle.mem_read::<CPU, u32>(addr);
-                        let shift = (addr & 0x3) << 3;
-                        (value << (32 - shift)) | (value >> shift)
-                    };
+                    let value = hle.mem_read_with_options::<CPU, true, MMU, u32>(addr);
+                    let shift = (addr & 0x3) << 3;
+                    *op0 = value.wrapping_shl(32 - shift) | (value >> shift)
                 }
                 MemoryAmount::Double => {
-                    *op0 = hle.mem_read::<CPU, u32>(addr);
+                    *op0 = hle.mem_read_with_options::<CPU, true, MMU, u32>(addr);
                     let next_reg =
                         unsafe { (op0 as *mut u32).offset(1).as_mut().unwrap_unchecked() };
-                    *next_reg = hle.mem_read::<CPU, u32>(addr + 4);
+                    *next_reg = hle.mem_read_with_options::<CPU, true, MMU, u32>(addr + 4);
                 }
             }
         }
@@ -208,6 +207,7 @@ pub unsafe extern "C" fn inst_mem_handler<
     const WRITE: bool,
     const AMOUNT: MemoryAmount,
     const SIGNED: bool,
+    const MMU: bool,
 >(
     addr: u32,
     op0: *mut u32,
@@ -215,10 +215,14 @@ pub unsafe extern "C" fn inst_mem_handler<
     asm: *mut JitAsm<CPU>,
 ) {
     let asm = asm.as_mut().unwrap_unchecked();
-    handle_request::<CPU, WRITE, AMOUNT, SIGNED>(op0.as_mut().unwrap_unchecked(), addr, asm.hle);
+    handle_request::<CPU, WRITE, AMOUNT, SIGNED, MMU>(
+        op0.as_mut().unwrap_unchecked(),
+        addr,
+        asm.hle,
+    );
     if WRITE && unlikely(asm.hle.mem.breakout_imm) {
         asm.guest_branch_out_pc = pc;
-        get_regs_mut!(asm.hle, CPU).pc = pc + if THUMB { 2 } else { 4 };
+        get_regs_mut!(asm.hle, CPU).pc = pc + if THUMB { 3 } else { 4 };
         asm.hle.mem.breakout_imm = false;
         if THUMB {
             asm!("bx {}", in(reg) asm.breakout_skip_save_regs_thumb_addr);
@@ -241,17 +245,22 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     pc: u32,
     rlist: u16,
     op0: u8,
-    hle: *mut Hle,
+    asm: *mut JitAsm<CPU>,
 ) {
+    let asm = asm.as_mut().unwrap_unchecked();
     handle_multiple_request::<CPU, THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(
-        pc,
-        rlist,
-        op0,
-        hle.as_mut().unwrap_unchecked(),
+        pc, rlist, op0, asm.hle,
     );
-    if WRITE && unlikely((*hle).mem.breakout_imm) {
-        get_regs_mut!(*hle, CPU).pc = pc + if THUMB { 2 } else { 4 };
-        todo!()
+    if WRITE && unlikely(asm.hle.mem.breakout_imm) {
+        asm.guest_branch_out_pc = pc;
+        get_regs_mut!(asm.hle, CPU).pc = pc + if THUMB { 3 } else { 4 };
+        asm.hle.mem.breakout_imm = false;
+        if THUMB {
+            asm!("bx {}", in(reg) asm.breakout_skip_save_regs_thumb_addr);
+        } else {
+            asm!("bx {}", in(reg) asm.breakout_skip_save_regs_addr);
+        }
+        unreachable_unchecked();
     }
 }
 

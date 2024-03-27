@@ -290,17 +290,16 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         jit_buf.push(Bx::blx(Reg::LR, Cond::AL));
     }
 
-    pub fn emit_call_host_func<R, F: FnOnce(&mut Self) -> R, F1>(
-        &mut self,
+    pub fn emit_call_host_func<F: FnOnce(&Self, &mut Vec<u32>)>(
+        &self,
         after_host_restore: F,
-        before_guest_restore: F1,
         args: &[Option<u32>],
         func_addr: *const (),
-    ) where
-        F1: FnOnce(&mut Self, R),
-    {
+    ) -> Vec<u32> {
+        let mut opcodes = Vec::new();
+
         let thumb = get_regs!(self.hle, CPU).is_thumb();
-        self.jit_buf.emit_opcodes.extend(if thumb {
+        opcodes.extend(if thumb {
             &self.restore_host_thumb_opcodes
         } else {
             &self.restore_host_opcodes
@@ -310,25 +309,22 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             todo!()
         }
 
-        let arg = after_host_restore(self);
+        after_host_restore(self, &mut opcodes);
 
         for (index, arg) in args.iter().enumerate() {
             if let Some(arg) = arg {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(AluImm::mov32(Reg::from(index as u8), *arg));
+                opcodes.extend(AluImm::mov32(Reg::from(index as u8), *arg));
             }
         }
 
-        Self::emit_host_blx(func_addr as u32, &mut self.jit_buf.emit_opcodes);
+        Self::emit_host_blx(func_addr as u32, &mut opcodes);
 
-        before_guest_restore(self, arg);
-
-        self.jit_buf.emit_opcodes.extend(if thumb {
+        opcodes.extend(if thumb {
             &self.restore_guest_thumb_opcodes
         } else {
             &self.restore_guest_opcodes
         });
+        opcodes
     }
 
     pub fn handle_cpsr(&mut self, host_cpsr_reg: Reg, guest_cpsr_reg: Reg) {
@@ -369,6 +365,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 }
 
+#[derive(Clone)]
 pub struct RegPushPopHandler {
     not_reserved: RegReserve,
     regs_to_save: RegReserve,

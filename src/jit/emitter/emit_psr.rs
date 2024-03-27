@@ -13,39 +13,32 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let cm_addr = get_cm!(self.hle) as *const _ as _;
         let op = self.jit_buf.instructions[buf_index].op;
 
-        self.emit_call_host_func(
-            |asm| {
+        self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
+            |asm, opcodes| {
                 let inst_info = &asm.jit_buf.instructions[buf_index];
 
                 match &inst_info.operands()[0] {
                     Operand::Reg { reg, .. } => {
                         if *reg != Reg::R2 {
-                            asm.jit_buf
-                                .emit_opcodes
-                                .push(AluShiftImm::mov_al(Reg::R2, *reg));
+                            opcodes.push(AluShiftImm::mov_al(Reg::R2, *reg));
                         }
                     }
                     Operand::Imm(imm) => {
-                        asm.jit_buf
-                            .emit_opcodes
-                            .extend(AluImm::mov32(Reg::R2, *imm));
+                        opcodes.extend(AluImm::mov32(Reg::R2, *imm));
                     }
                     _ => unreachable!(),
                 }
 
                 let flags = (inst_info.opcode >> 16) & 0xF;
-                asm.jit_buf
-                    .emit_opcodes
-                    .push(AluImm::mov_al(Reg::R3, flags as u8));
+                opcodes.push(AluImm::mov_al(Reg::R3, flags as u8));
             },
-            |_, _| {},
             &[Some(regs_addr), Some(cm_addr), None, None],
             match op {
                 Op::MsrRc | Op::MsrIc => register_set_cpsr_checked as _,
                 Op::MsrRs | Op::MsrIs => register_set_spsr_checked as _,
                 _ => unreachable!(),
             },
-        );
+        ));
     }
 
     pub fn emit_mrs(&mut self, buf_index: usize, _: u32) {

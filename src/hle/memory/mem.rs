@@ -16,7 +16,7 @@ use crate::hle::CpuType::ARM9;
 use crate::jit::jit_memory::JitMemory;
 use crate::logging::debug_println;
 use crate::utils::Convert;
-use std::intrinsics::{likely, unlikely};
+use std::intrinsics::likely;
 use std::mem;
 use CpuType::ARM7;
 
@@ -32,7 +32,8 @@ pub struct Memory {
     pub jit: JitMemory,
     pub bios_arm9: BiosArm9,
     pub bios_arm7: BiosArm7,
-    pub current_jit_block_range: (u32, u32), // Check if the jit block we are currently executing gets written to
+    pub current_mode_is_thumb: bool,
+    pub current_jit_block_addr: u32, // Check if the jit block we are currently executing gets written to
     pub breakout_imm: bool,
     pub mmu_arm9: MmuArm9,
     pub mmu_arm7: MmuArm7,
@@ -61,7 +62,8 @@ impl Memory {
             jit: JitMemory::new(),
             bios_arm9: BiosArm9::new(),
             bios_arm7: BiosArm7::new(),
-            current_jit_block_range: (0, 0),
+            current_mode_is_thumb: false,
+            current_jit_block_addr: 0,
             breakout_imm: false,
             mmu_arm9: MmuArm9::new(),
             mmu_arm7: MmuArm7::new(),
@@ -69,14 +71,18 @@ impl Memory {
     }
 
     pub fn read<const CPU: CpuType, T: Convert>(&mut self, addr: u32, hle: &mut Hle) -> T {
-        self.read_internal::<CPU, true, T>(addr, hle)
+        self.read_with_options::<CPU, true, true, T>(addr, hle)
+    }
+
+    pub fn read_no_mmu<const CPU: CpuType, T: Convert>(&mut self, addr: u32, hle: &mut Hle) -> T {
+        self.read_with_options::<CPU, true, false, T>(addr, hle)
     }
 
     pub fn read_no_tcm<const CPU: CpuType, T: Convert>(&mut self, addr: u32, hle: &mut Hle) -> T {
-        self.read_internal::<CPU, false, T>(addr, hle)
+        self.read_with_options::<CPU, false, true, T>(addr, hle)
     }
 
-    fn read_internal<const CPU: CpuType, const TCM: bool, T: Convert>(
+    pub fn read_with_options<const CPU: CpuType, const TCM: bool, const MMU: bool, T: Convert>(
         &mut self,
         addr: u32,
         hle: &mut Hle,
@@ -87,13 +93,20 @@ impl Memory {
         let addr_base = aligned_addr & 0xFF000000;
         let addr_offset = aligned_addr - addr_base;
 
-        if CPU == ARM7 || TCM {
+        if MMU && (CPU == ARM7 || TCM) {
             let base_ptr = get_mem_mmu!(self, CPU).get_base_ptr(aligned_addr);
             if likely(!base_ptr.is_null()) {
-                return unsafe {
+                let ret = unsafe {
                     (base_ptr.add((aligned_addr & (MMU_BLOCK_SIZE - 1)) as usize) as *const T)
                         .read()
                 };
+                debug_println!(
+                    "{:?} mmu read at {:x} with value {:x}",
+                    CPU,
+                    aligned_addr,
+                    ret.into()
+                );
+                return ret;
             }
         }
 
@@ -208,22 +221,15 @@ impl Memory {
             }
         }
 
-        let mut invalidate_jit = |size: u32, offset: u32| {
-            let jit_block_region = self.current_jit_block_range.0 & 0xFF000000;
-            if addr_base == jit_block_region {
-                let addr_base = aligned_addr & !(offset - 1);
-                let current_jit_block_base = self.current_jit_block_range.0 & !(offset - 1);
-                if unlikely(
-                    addr_base == current_jit_block_base
-                        && addr_offset & (size - 1) >= self.current_jit_block_range.0 & (size - 1)
-                        && addr_offset & (size - 1) <= self.current_jit_block_range.1 & (size - 1),
-                ) {
-                    self.breakout_imm = true;
-                }
-            }
-
-            self.jit
+        let mut invalidate_jit = || {
+            let (block_addr, block_addr_thumb) = self
+                .jit
                 .invalidate_block::<CPU>(aligned_addr, mem::size_of::<T>() as u32);
+            self.breakout_imm = if self.current_mode_is_thumb {
+                block_addr_thumb == self.current_jit_block_addr
+            } else {
+                block_addr == self.current_jit_block_addr
+            }
         };
 
         match addr_base {
@@ -233,10 +239,7 @@ impl Memory {
                         let cp15 = get_cp15!(hle, ARM9);
                         if aligned_addr < cp15.itcm_size && cp15.itcm_state != TcmState::Disabled {
                             self.tcm.write_itcm(addr_offset, value);
-                            invalidate_jit(
-                                regions::INSTRUCTION_TCM_SIZE,
-                                regions::INSTRUCTION_TCM_OFFSET,
-                            );
+                            invalidate_jit();
                         }
                     }
                 }
@@ -247,11 +250,11 @@ impl Memory {
             },
             regions::MAIN_MEMORY_OFFSET => {
                 self.main.write(addr_offset, value);
-                invalidate_jit(regions::MAIN_MEMORY_SIZE, regions::MAIN_MEMORY_OFFSET);
+                invalidate_jit();
             }
             regions::SHARED_WRAM_OFFSET => {
-                let (size, offset) = self.wram.write::<CPU, _>(addr_offset, value);
-                invalidate_jit(size, offset);
+                self.wram.write::<CPU, _>(addr_offset, value);
+                invalidate_jit();
             }
             regions::IO_PORTS_OFFSET => match CPU {
                 ARM9 => self.io_arm9.write(addr_offset, value, hle),

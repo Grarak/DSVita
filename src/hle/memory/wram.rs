@@ -236,27 +236,18 @@ impl Wram {
         }
     }
 
-    pub fn write<const CPU: CpuType, T: Convert>(
-        &mut self,
-        addr_offset: u32,
-        value: T,
-    ) -> (u32, u32) {
+    pub fn write<const CPU: CpuType, T: Convert>(&mut self, addr_offset: u32, value: T) {
         match CPU {
-            ARM9 => {
-                self.write_arm9(addr_offset, value);
-                (self.arm9_map.size as u32, regions::SHARED_WRAM_OFFSET)
-            }
+            ARM9 => self.write_arm9(addr_offset, value),
             ARM7 => {
                 if self.cnt == 0 || addr_offset & regions::ARM7_WRAM_OFFSET != 0 {
                     utils::write_to_mem(
                         self.wram_arm7.as_mut_slice(),
                         addr_offset & (regions::ARM7_WRAM_SIZE - 1),
                         value,
-                    );
-                    (regions::ARM7_WRAM_SIZE, regions::ARM7_WRAM_OFFSET)
+                    )
                 } else {
-                    self.write_arm7(addr_offset, value);
-                    (self.arm7_map.size as u32, regions::SHARED_WRAM_OFFSET)
+                    self.write_arm7(addr_offset, value)
                 }
             }
         }

@@ -6,7 +6,8 @@ use crate::logging::debug_println;
 use crate::utils;
 use crate::utils::HeapMemU8;
 use bilge::prelude::*;
-use static_assertions::const_assert_eq;
+use paste::paste;
+use static_assertions::{const_assert, const_assert_eq};
 use std::ops::{Deref, DerefMut};
 use std::{ptr, slice};
 
@@ -18,9 +19,9 @@ struct VramMap<const SIZE: usize> {
 }
 
 impl<const SIZE: usize> VramMap<SIZE> {
-    fn new<const T: usize>(heap: &HeapMemU8<T>) -> Self {
+    fn new<const T: usize>(bank: &[u8; T]) -> Self {
         VramMap {
-            ptr: heap.as_ptr() as _,
+            ptr: bank.as_ptr() as _,
         }
     }
 
@@ -235,34 +236,45 @@ pub const TOTAL_SIZE: usize = BANK_A_SIZE
     + BANK_I_SIZE;
 const_assert_eq!(TOTAL_SIZE, 656 * 1024);
 
-#[derive(Default)]
-struct VramBanks {
-    vram_a: HeapMemU8<BANK_A_SIZE>,
-    vram_b: HeapMemU8<BANK_B_SIZE>,
-    vram_c: HeapMemU8<BANK_C_SIZE>,
-    vram_d: HeapMemU8<BANK_D_SIZE>,
-    vram_e: HeapMemU8<BANK_E_SIZE>,
-    vram_f: HeapMemU8<BANK_F_SIZE>,
-    vram_g: HeapMemU8<BANK_G_SIZE>,
-    vram_h: HeapMemU8<BANK_H_SIZE>,
-    vram_i: HeapMemU8<BANK_I_SIZE>,
+struct VramBanks(HeapMemU8<TOTAL_SIZE>);
+
+macro_rules! create_vram_bank {
+    ($name:ident, $offset:expr, $size:expr) => {
+        paste! {
+            fn [<get _ $name>](&self) -> &[u8; $size] {
+                const_assert!($offset + $size <= TOTAL_SIZE);
+                unsafe {
+                    (self.0[$offset..$offset + $size].as_ptr() as *const [u8; $size])
+                        .as_ref()
+                        .unwrap_unchecked()
+                }
+            }
+        }
+    };
 }
 
 impl VramBanks {
     fn new() -> Self {
-        let instance = VramBanks::default();
-
-        debug_println!(
-            "Allocating vram banks at a: {:x}, b: {:x}, c: {:x}, d: {:x}, e: {:x}, f: {:x}, g: {:x}, h: {:x}, i: {:x}",
-            instance.vram_a.as_ptr() as u32, instance.vram_b.as_ptr() as u32,
-            instance.vram_c.as_ptr() as u32, instance.vram_d.as_ptr() as u32,
-            instance.vram_e.as_ptr() as u32, instance.vram_f.as_ptr() as u32,
-            instance.vram_g.as_ptr() as u32, instance.vram_h.as_ptr() as u32,
-            instance.vram_i.as_ptr() as u32
-        );
-
-        instance
+        VramBanks(HeapMemU8::new())
     }
+
+    create_vram_bank!(a, 0, BANK_A_SIZE);
+    create_vram_bank!(b, BANK_A_SIZE, BANK_B_SIZE);
+    create_vram_bank!(c, BANK_A_SIZE * 2, BANK_C_SIZE);
+    create_vram_bank!(d, BANK_A_SIZE * 3, BANK_D_SIZE);
+    create_vram_bank!(e, BANK_A_SIZE * 4, BANK_E_SIZE);
+    create_vram_bank!(f, BANK_A_SIZE * 4 + BANK_E_SIZE, BANK_F_SIZE);
+    create_vram_bank!(g, BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE, BANK_G_SIZE);
+    create_vram_bank!(
+        h,
+        BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE + BANK_G_SIZE,
+        BANK_H_SIZE
+    );
+    create_vram_bank!(
+        i,
+        BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE + BANK_G_SIZE + BANK_H_SIZE,
+        BANK_I_SIZE
+    );
 }
 
 pub const BG_A_SIZE: u32 = 512 * 1024;
@@ -301,7 +313,7 @@ pub struct Vram {
 
 impl Vram {
     pub fn new() -> Self {
-        let instance = Vram {
+        Vram {
             stat: 0,
             cnt: [0u8; BANK_SIZE],
             banks: VramBanks::new(),
@@ -322,20 +334,7 @@ impl Vram {
             obj_ext_palette_b: VramMap::default(),
 
             arm7: OverlapMapping::new(),
-        };
-        debug_assert_eq!(
-            instance.banks.vram_a.len()
-                + instance.banks.vram_b.len()
-                + instance.banks.vram_c.len()
-                + instance.banks.vram_d.len()
-                + instance.banks.vram_e.len()
-                + instance.banks.vram_f.len()
-                + instance.banks.vram_g.len()
-                + instance.banks.vram_h.len()
-                + instance.banks.vram_i.len(),
-            TOTAL_SIZE
-        );
-        instance
+        }
     }
 
     pub fn set_cnt(&mut self, bank: usize, value: u8, hle: &Hle) {
@@ -368,24 +367,24 @@ impl Vram {
                 let mst = u8::from(cnt_a.mst()) & 0x3;
                 match mst {
                     0 => {
-                        let map: VramMap<BANK_A_SIZE> = VramMap::new(&self.banks.vram_a);
+                        let map: VramMap<BANK_A_SIZE> = VramMap::new(&self.banks.get_a());
                         self.lcdc.add::<BANK_A_SIZE>(map, 0);
                     }
                     1 => {
                         let ofs = u8::from(cnt_a.ofs()) as usize;
                         self.bg_a
-                            .add::<BANK_A_SIZE>(VramMap::new(&self.banks.vram_a), 128 / 16 * ofs);
+                            .add::<BANK_A_SIZE>(VramMap::new(&self.banks.get_a()), 128 / 16 * ofs);
                     }
                     2 => {
                         let ofs = u8::from(cnt_a.ofs()) as usize;
                         self.obj_a.add::<BANK_A_SIZE>(
-                            VramMap::new(&self.banks.vram_a),
+                            VramMap::new(&self.banks.get_a()),
                             128 / 16 * (ofs & 1),
                         );
                     }
                     3 => {
                         let ofs = u8::from(cnt_a.ofs()) as usize;
-                        self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_a);
+                        self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.get_a());
                     }
                     _ => {
                         unreachable!()
@@ -401,25 +400,25 @@ impl Vram {
                 match mst {
                     0 => {
                         self.lcdc.add::<BANK_B_SIZE>(
-                            VramMap::new(&self.banks.vram_b),
+                            VramMap::new(&self.banks.get_b()),
                             BANK_A_SIZE / 1024 / 16,
                         );
                     }
                     1 => {
                         let ofs = u8::from(cnt_b.ofs()) as usize;
                         self.bg_a
-                            .add::<BANK_B_SIZE>(VramMap::new(&self.banks.vram_b), 128 / 16 * ofs);
+                            .add::<BANK_B_SIZE>(VramMap::new(&self.banks.get_b()), 128 / 16 * ofs);
                     }
                     2 => {
                         let ofs = u8::from(cnt_b.ofs()) as usize;
                         self.obj_a.add::<BANK_B_SIZE>(
-                            VramMap::new(&self.banks.vram_b),
+                            VramMap::new(&self.banks.get_b()),
                             128 / 16 * (ofs & 1),
                         );
                     }
                     3 => {
                         let ofs = u8::from(cnt_b.ofs()) as usize;
-                        self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_b);
+                        self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.get_b());
                     }
                     _ => {
                         unreachable!()
@@ -435,19 +434,19 @@ impl Vram {
                 match mst {
                     0 => {
                         self.lcdc.add::<BANK_C_SIZE>(
-                            VramMap::new(&self.banks.vram_c),
+                            VramMap::new(&self.banks.get_c()),
                             BANK_A_SIZE / 1024 / 16 * 2,
                         );
                     }
                     1 => {
                         let ofs = u8::from(cnt_c.ofs()) as usize;
                         self.bg_a
-                            .add::<BANK_C_SIZE>(VramMap::new(&self.banks.vram_c), 128 / 16 * ofs);
+                            .add::<BANK_C_SIZE>(VramMap::new(&self.banks.get_c()), 128 / 16 * ofs);
                     }
                     2 => {
                         let ofs = u8::from(cnt_c.ofs()) as usize;
                         self.arm7
-                            .add::<BANK_C_SIZE>(VramMap::new(&self.banks.vram_c), ofs & 1);
+                            .add::<BANK_C_SIZE>(VramMap::new(&self.banks.get_c()), ofs & 1);
                         self.stat |= 1;
                     }
                     3 => {
@@ -455,7 +454,7 @@ impl Vram {
                     }
                     4 => {
                         self.bg_b
-                            .add::<BANK_C_SIZE>(VramMap::new(&self.banks.vram_c), 0);
+                            .add::<BANK_C_SIZE>(VramMap::new(&self.banks.get_c()), 0);
                     }
                     _ => {
                         unreachable!()
@@ -471,28 +470,28 @@ impl Vram {
                 match mst {
                     0 => {
                         self.lcdc.add::<BANK_D_SIZE>(
-                            VramMap::new(&self.banks.vram_d),
+                            VramMap::new(&self.banks.get_d()),
                             BANK_A_SIZE / 1024 / 16 * 3,
                         );
                     }
                     1 => {
                         let ofs = u8::from(cnt_d.ofs()) as usize;
                         self.bg_a
-                            .add::<BANK_D_SIZE>(VramMap::new(&self.banks.vram_d), 128 / 16 * ofs);
+                            .add::<BANK_D_SIZE>(VramMap::new(&self.banks.get_d()), 128 / 16 * ofs);
                     }
                     2 => {
                         let ofs = u8::from(cnt_d.ofs()) as usize;
                         self.arm7
-                            .add::<BANK_D_SIZE>(VramMap::new(&self.banks.vram_d), ofs & 1);
+                            .add::<BANK_D_SIZE>(VramMap::new(&self.banks.get_d()), ofs & 1);
                         self.stat |= 2;
                     }
                     3 => {
                         let ofs = u8::from(cnt_d.ofs()) as usize;
-                        self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.vram_d);
+                        self.tex_rear_plane_img[ofs] = VramMap::new(&self.banks.get_d());
                     }
                     4 => {
                         self.obj_b
-                            .add::<BANK_D_SIZE>(VramMap::new(&self.banks.vram_d), 0);
+                            .add::<BANK_D_SIZE>(VramMap::new(&self.banks.get_d()), 0);
                     }
                     _ => {
                         unreachable!()
@@ -508,25 +507,25 @@ impl Vram {
                 match mst {
                     0 => {
                         self.lcdc.add::<BANK_E_SIZE>(
-                            VramMap::new(&self.banks.vram_e),
+                            VramMap::new(&self.banks.get_e()),
                             BANK_A_SIZE / 1024 / 16 * 4,
                         );
                     }
                     1 => {
                         self.bg_a
-                            .add::<BANK_E_SIZE>(VramMap::new(&self.banks.vram_e), 0);
+                            .add::<BANK_E_SIZE>(VramMap::new(&self.banks.get_e()), 0);
                     }
                     2 => {
                         todo!()
                     }
                     3 => {
-                        let vram_map = VramMap::<BANK_E_SIZE>::new(&self.banks.vram_e);
+                        let vram_map = VramMap::<BANK_E_SIZE>::new(&self.banks.get_e());
                         for i in 0..4 {
                             self.tex_palette[i] = vram_map.extract_section(i);
                         }
                     }
                     4 => {
-                        let vram_map = VramMap::<BANK_E_SIZE>::new(&self.banks.vram_e);
+                        let vram_map = VramMap::<BANK_E_SIZE>::new(&self.banks.get_e());
                         for i in 0..3 {
                             self.bg_ext_palette_a[i] = vram_map.extract_section(i);
                         }
@@ -545,28 +544,28 @@ impl Vram {
                 match mst {
                     0 => {
                         self.lcdc.add::<BANK_F_SIZE>(
-                            VramMap::new(&self.banks.vram_f),
+                            VramMap::new(&self.banks.get_f()),
                             (BANK_A_SIZE * 4 + BANK_E_SIZE) / 1024 / 16,
                         );
                     }
                     1 => {
                         let ofs = u8::from(cnt_f.ofs()) as usize;
                         self.bg_a.add::<BANK_F_SIZE>(
-                            VramMap::new(&self.banks.vram_f),
+                            VramMap::new(&self.banks.get_f()),
                             (ofs & 1) + 2 * (ofs & 2),
                         );
                     }
                     2 => {
                         let ofs = u8::from(cnt_f.ofs()) as usize;
                         self.obj_a.add::<BANK_F_SIZE>(
-                            VramMap::new(&self.banks.vram_f),
+                            VramMap::new(&self.banks.get_f()),
                             (ofs & 1) + 2 * (ofs & 2),
                         );
                     }
                     3 => {
                         let ofs = u8::from(cnt_f.ofs()) as usize;
                         self.tex_palette[(ofs & 1) + ((ofs & 2) * 2)] =
-                            VramMap::new(&self.banks.vram_f);
+                            VramMap::new(&self.banks.get_f());
                     }
                     4 => {
                         todo!()
@@ -588,14 +587,14 @@ impl Vram {
                 match mst {
                     0 => {
                         self.lcdc.add::<BANK_G_SIZE>(
-                            VramMap::new(&self.banks.vram_g),
+                            VramMap::new(&self.banks.get_g()),
                             (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE) / 1024 / 16,
                         );
                     }
                     1 => {
                         let ofs = u8::from(cnt_g.ofs()) as usize;
                         self.bg_a.add::<BANK_G_SIZE>(
-                            VramMap::new(&self.banks.vram_g),
+                            VramMap::new(&self.banks.get_g()),
                             (ofs & 1) + 2 * (ofs & 2),
                         );
                     }
@@ -605,18 +604,18 @@ impl Vram {
                     3 => {
                         let ofs = u8::from(cnt_g.ofs()) as usize;
                         self.tex_palette[((ofs & 2) << 1) + (ofs & 1)] =
-                            VramMap::new(&self.banks.vram_g)
+                            VramMap::new(&self.banks.get_g())
                     }
                     4 => {
                         let ofs = u8::from(cnt_g.ofs()) as usize;
-                        let vram_map = VramMap::<BANK_G_SIZE>::new(&self.banks.vram_g);
+                        let vram_map = VramMap::<BANK_G_SIZE>::new(&self.banks.get_g());
                         for i in 0..2 {
                             self.bg_ext_palette_a[(ofs & 1) * 2 + i] = vram_map.extract_section(i);
                         }
                     }
                     5 => {
                         self.obj_ext_palette_a =
-                            VramMap::<BANK_G_SIZE>::new(&self.banks.vram_g).extract_section(0);
+                            VramMap::<BANK_G_SIZE>::new(&self.banks.get_g()).extract_section(0);
                     }
                     _ => {
                         unreachable!()
@@ -632,7 +631,7 @@ impl Vram {
                 match mst {
                     0 => {
                         self.lcdc.add::<BANK_H_SIZE>(
-                            VramMap::new(&self.banks.vram_h),
+                            VramMap::new(&self.banks.get_h()),
                             (BANK_A_SIZE * 4 + BANK_E_SIZE + BANK_F_SIZE + BANK_G_SIZE) / 1024 / 16,
                         );
                     }
@@ -640,7 +639,7 @@ impl Vram {
                         todo!()
                     }
                     2 => {
-                        let vram_map = VramMap::<BANK_H_SIZE>::new(&self.banks.vram_h);
+                        let vram_map = VramMap::<BANK_H_SIZE>::new(&self.banks.get_h());
                         for i in 0..4 {
                             self.bg_ext_palette_b[i] = vram_map.extract_section(i);
                         }
@@ -659,7 +658,7 @@ impl Vram {
                 match mst {
                     0 => {
                         self.lcdc.add::<BANK_I_SIZE>(
-                            VramMap::new(&self.banks.vram_i),
+                            VramMap::new(&self.banks.get_i()),
                             (BANK_A_SIZE * 4
                                 + BANK_E_SIZE
                                 + BANK_F_SIZE
@@ -674,11 +673,11 @@ impl Vram {
                     }
                     2 => {
                         self.obj_b
-                            .add(VramMap::<BANK_I_SIZE>::new(&self.banks.vram_i), 0);
+                            .add(VramMap::<BANK_I_SIZE>::new(&self.banks.get_i()), 0);
                     }
                     3 => {
                         self.obj_ext_palette_b =
-                            VramMap::<BANK_I_SIZE>::new(&self.banks.vram_i).extract_section(0);
+                            VramMap::<BANK_I_SIZE>::new(&self.banks.get_i()).extract_section(0);
                     }
                     _ => {
                         unreachable!()
@@ -687,8 +686,8 @@ impl Vram {
             }
         }
 
-        get_mmu!(hle, ARM9).update_vram(hle);
-        get_mmu!(hle, ARM7).update_vram(hle);
+        // get_mmu!(hle, ARM9).update_vram(hle);
+        // get_mmu!(hle, ARM7).update_vram(hle);
     }
 
     pub fn get_ptr<const CPU: CpuType>(&self, addr: u32) -> *const u8 {

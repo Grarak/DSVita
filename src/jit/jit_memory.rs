@@ -6,6 +6,7 @@ use crate::utils::HeapMem;
 use crate::{utils, DEBUG_LOG};
 use std::intrinsics::likely;
 use std::ops::DerefMut;
+use std::ptr;
 
 const JIT_MEMORY_SIZE: u32 = 16 * 1024 * 1024;
 #[cfg(target_os = "linux")]
@@ -13,7 +14,7 @@ const JIT_PAGE_SIZE: u32 = 4096;
 #[cfg(target_os = "vita")]
 const JIT_PAGE_SIZE: u32 = 16;
 
-const JIT_BLOCK_SIZE_SHIFT: u32 = 9;
+const JIT_BLOCK_SIZE_SHIFT: u32 = 8;
 pub const JIT_BLOCK_SIZE: u32 = 1 << JIT_BLOCK_SIZE_SHIFT;
 
 #[derive(Copy, Clone, Default)]
@@ -217,7 +218,7 @@ impl JitMemory {
     pub fn get_jit_start_addr<const CPU: CpuType, const THUMB: bool>(
         &self,
         guest_pc: u32,
-    ) -> Option<(u32, u16)> {
+    ) -> Option<(u32, u16, u32)> {
         macro_rules! get_addr_block {
             ($blocks:expr) => {{
                 let addr_entry = (guest_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
@@ -230,6 +231,7 @@ impl JitMemory {
                     Some((
                         block.jit_addr + inst_entry.addr_offset as u32,
                         inst_entry.pre_cycle_sum,
+                        block as *const _ as u32,
                     ))
                 } else {
                     None
@@ -306,7 +308,7 @@ impl JitMemory {
         }
     }
 
-    pub fn invalidate_block<const CPU: CpuType>(&mut self, addr: u32, size: u32) {
+    pub fn invalidate_block<const CPU: CpuType>(&mut self, addr: u32, size: u32) -> (u32, u32) {
         macro_rules! invalidate {
             ($blocks:expr, $blocks_thumb:expr) => {{
                 let addr_entry = (addr >> JIT_BLOCK_SIZE_SHIFT) as usize % $blocks.len();
@@ -316,6 +318,10 @@ impl JitMemory {
                 $blocks[addr_entry_end].jit_addr = 0;
                 $blocks_thumb[addr_entry].jit_addr = 0;
                 $blocks_thumb[addr_entry_end].jit_addr = 0;
+                (
+                    ptr::addr_of!($blocks[addr_entry]) as u32,
+                    ptr::addr_of!($blocks_thumb[addr_entry]) as u32,
+                )
             }};
         }
         match CPU {
@@ -324,10 +330,10 @@ impl JitMemory {
                     invalidate!(self.jit_blocks.itcm, self.jit_blocks_thumb.itcm)
                 }
                 regions::MAIN_MEMORY_OFFSET => {
-                    invalidate!(self.jit_blocks.main_arm9, self.jit_blocks_thumb.main_arm9);
-                    invalidate!(self.jit_blocks.main_arm7, self.jit_blocks_thumb.main_arm7)
+                    invalidate!(self.jit_blocks.main_arm7, self.jit_blocks_thumb.main_arm7);
+                    invalidate!(self.jit_blocks.main_arm9, self.jit_blocks_thumb.main_arm9)
                 }
-                _ => {}
+                _ => (0, 0),
             },
             CpuType::ARM7 => match addr & 0xFF000000 {
                 regions::MAIN_MEMORY_OFFSET => {
@@ -337,7 +343,7 @@ impl JitMemory {
                 regions::SHARED_WRAM_OFFSET => {
                     invalidate!(self.jit_blocks.wram, self.jit_blocks_thumb.wram)
                 }
-                _ => {}
+                _ => (0, 0),
             },
         }
     }

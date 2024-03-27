@@ -14,12 +14,11 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_halt<const THUMB: bool>(&mut self, pc: u32) {
         let cpu_regs_addr = get_cpu_regs_mut!(self.hle, CPU) as *mut _ as _;
 
-        self.emit_call_host_func(
-            |_| {},
+        self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
             |_, _| {},
             &[Some(cpu_regs_addr), Some(0)],
             cpu_regs_halt::<CPU> as *const (),
-        );
+        ));
 
         self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R0, pc));
         self.jit_buf.emit_opcodes.extend(AluImm::mov32(
@@ -96,18 +95,15 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             let op = inst_info.op;
             let rd = *rd;
 
-            self.emit_call_host_func(
-                |asm: &mut Self| {
+            self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
+                |_, opcodes| {
                     if op == Op::Mcr && rd != Reg::R2 {
-                        asm.jit_buf
-                            .emit_opcodes
-                            .push(AluShiftImm::mov_al(Reg::R2, rd));
+                        opcodes.push(AluShiftImm::mov_al(Reg::R2, rd));
                     }
                 },
-                |_, _| {},
                 &args,
                 addr,
-            );
+            ));
         }
     }
 }

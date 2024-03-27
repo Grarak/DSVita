@@ -79,7 +79,7 @@ pub enum ShiftType {
 }
 
 #[repr(u8)]
-#[derive(ConstParamTy, PartialEq, Eq)]
+#[derive(Copy, Clone, ConstParamTy, PartialEq, Eq)]
 pub enum MemoryAmount {
     Byte,
     Half,

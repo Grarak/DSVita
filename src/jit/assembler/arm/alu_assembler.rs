@@ -908,6 +908,31 @@ pub struct Clz {
     pub cond: u4,
 }
 
+#[bitsize(32)]
+#[derive(FromBits)]
+pub struct Bfc {
+    id: u7,
+    lsb: u5,
+    rd: u4,
+    msb: u5,
+    id2: u7,
+    cond: u4,
+}
+
+impl Bfc {
+    #[inline]
+    pub fn create(rd: Reg, lsb: u8, width: u8, cond: Cond) -> u32 {
+        u32::from(Bfc::new(
+            u7::new(0b0011111),
+            u5::new(lsb),
+            u4::new(rd as u8),
+            u5::new(lsb + width - 1),
+            u7::new(0b111110),
+            u4::new(cond as u8),
+        ))
+    }
+}
+
 // TODO Add const asserts once const features has been added back to rust
 // https://github.com/rust-lang/rust/issues/110395
 //const_assert_eq!(lookup_opcode(Self::add(0, 0, 0, 0)).0 as u8, And as u8);

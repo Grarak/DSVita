@@ -14,8 +14,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.emit_halt::<THUMB>(pc);
         } else {
             let hle_addr = self.hle as *mut _ as _;
-            self.emit_call_host_func(
-                |_| {},
+            self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
                 |_, _| {},
                 &[
                     Some(hle_addr),
@@ -23,7 +22,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     Some(ExceptionVector::SoftwareInterrupt as u32),
                 ],
                 exception_handler::<CPU, THUMB> as _,
-            );
+            ));
         }
     }
 }

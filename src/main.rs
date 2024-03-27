@@ -228,7 +228,7 @@ fn execute_jit(hle: &mut Hle) {
 // Must be pub for vita
 pub fn main() {
     set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core0);
-    
+
     if DEBUG_LOG {
         std::env::set_var("RUST_BACKTRACE", "full");
     }
@@ -310,8 +310,13 @@ pub fn main() {
         key_code_mapping.insert(Keycode::A, input::Keycode::Left);
         key_code_mapping.insert(Keycode::D, input::Keycode::Right);
         key_code_mapping.insert(Keycode::B, input::Keycode::Start);
+        key_code_mapping.insert(Keycode::V, input::Keycode::Select);
         key_code_mapping.insert(Keycode::K, input::Keycode::A);
         key_code_mapping.insert(Keycode::J, input::Keycode::B);
+        key_code_mapping.insert(Keycode::U, input::Keycode::X);
+        key_code_mapping.insert(Keycode::I, input::Keycode::Y);
+        key_code_mapping.insert(Keycode::Num8, input::Keycode::TriggerL);
+        key_code_mapping.insert(Keycode::Num9, input::Keycode::TriggerR);
     }
     #[cfg(target_os = "vita")]
     {
@@ -321,8 +326,13 @@ pub fn main() {
         key_code_mapping.insert(Button::DPadLeft, input::Keycode::Left);
         key_code_mapping.insert(Button::DPadRight, input::Keycode::Right);
         key_code_mapping.insert(Button::Start, input::Keycode::Start);
-        key_code_mapping.insert(Button::A, input::Keycode::A);
-        key_code_mapping.insert(Button::B, input::Keycode::B);
+        key_code_mapping.insert(Button::Back, input::Keycode::Select);
+        key_code_mapping.insert(Button::B, input::Keycode::A);
+        key_code_mapping.insert(Button::A, input::Keycode::B);
+        key_code_mapping.insert(Button::Y, input::Keycode::X);
+        key_code_mapping.insert(Button::X, input::Keycode::Y);
+        key_code_mapping.insert(Button::LeftShoulder, input::Keycode::TriggerL);
+        key_code_mapping.insert(Button::RightShoulder, input::Keycode::TriggerR);
     }
 
     let mut sdl_event_pump = sdl.event_pump().unwrap();

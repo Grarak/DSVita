@@ -206,16 +206,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 let guest_restore_index = jit_opcodes.len();
                 jit_opcodes.extend(&get_regs!(instance.hle, CPU).restore_regs_opcodes);
 
-                jit_opcodes.push(LdrStrImm::ldr(
-                    4,
-                    Reg::PC,
-                    Reg::LR,
-                    false,
-                    false,
-                    false,
-                    true,
-                    Cond::AL,
-                ));
+                jit_opcodes.push(LdrStrImm::ldr_sub_offset_al(Reg::PC, Reg::LR, 4));
 
                 instance.breakin_addr = get_jit_mut!(instance.hle).insert_common(jit_opcodes);
 
@@ -410,7 +401,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if DEBUG_LOG {
             for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
                 let pc = ((index as u32) << if THUMB { 1 } else { 2 }) + guest_pc_block_base;
-                let (jit_addr, _) = get_jit!(self.hle)
+                let (jit_addr, _, _) = get_jit!(self.hle)
                     .get_jit_start_addr::<CPU, THUMB>(pc)
                     .unwrap();
 
@@ -443,7 +434,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let guest_pc_block_base = guest_pc & !(JIT_BLOCK_SIZE - 1);
 
         let jit_info = get_jit!(self.hle).get_jit_start_addr::<CPU, THUMB>(guest_pc);
-        let (jit_addr, pre_cycle_count_sum) = if likely(jit_info.is_some()) {
+        let (jit_addr, pre_cycle_count_sum, jit_block_addr) = if likely(jit_info.is_some()) {
             unsafe { jit_info.unwrap_unchecked() }
         } else {
             self.emit_code_block::<THUMB>(guest_pc_block_base);
@@ -458,10 +449,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.guest_branch_out_pc = 0;
         }
 
-        self.hle.mem.current_jit_block_range = (
-            guest_pc,
-            guest_pc_block_base + JIT_BLOCK_SIZE - if THUMB { 2 } else { 4 },
-        );
+        self.hle.mem.current_mode_is_thumb = THUMB;
+        self.hle.mem.current_jit_block_addr = jit_block_addr;
 
         unsafe {
             enter_jit(

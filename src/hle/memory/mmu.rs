@@ -6,7 +6,10 @@ use crate::utils::HeapMemU32;
 use std::cell::UnsafeCell;
 use std::cmp::max;
 use std::ops::DerefMut;
-use std::ptr;
+
+const MMU_BLOCK_SHIFT: u32 = 12;
+pub const MMU_BLOCK_SIZE: u32 = 1 << MMU_BLOCK_SHIFT;
+pub const MMU_SIZE: usize = ((1u64 << 32) / MMU_BLOCK_SIZE as u64) as usize;
 
 pub trait Mmu {
     fn update_all(&self, hle: &Hle);
@@ -15,13 +18,11 @@ pub trait Mmu {
     fn update_wram(&self, hle: &Hle);
     fn update_vram(&self, hle: &Hle);
     fn get_base_ptr(&self, addr: u32) -> *const u8;
+    fn get_mmu_ptr(&self) -> *const u32;
 }
 
-const MMU_BLOCK_SHIFT: u32 = 12;
-pub const MMU_BLOCK_SIZE: u32 = 1 << MMU_BLOCK_SHIFT;
-
 struct MmuArm9Inner {
-    read_map: HeapMemU32<{ ((1u64 << 32) / MMU_BLOCK_SIZE as u64) as usize }>,
+    read_map: HeapMemU32<MMU_SIZE>,
     current_itcm_size: u32,
     current_dtcm_addr: u32,
     current_dtcm_size: u32,
@@ -163,10 +164,14 @@ impl Mmu for MmuArm9 {
     fn get_base_ptr(&self, addr: u32) -> *const u8 {
         unsafe { (*self.inner.get()).get_base_ptr(addr) }
     }
+
+    fn get_mmu_ptr(&self) -> *const u32 {
+        unsafe { (*self.inner.get()).read_map.as_ptr() }
+    }
 }
 
 struct MmuArm7Inner {
-    read_map: HeapMemU32<{ ((1u64 << 32) / MMU_BLOCK_SIZE as u64) as usize }>,
+    read_map: HeapMemU32<MMU_SIZE>,
 }
 
 impl MmuArm7Inner {
@@ -243,5 +248,9 @@ impl Mmu for MmuArm7 {
 
     fn get_base_ptr(&self, addr: u32) -> *const u8 {
         unsafe { (*self.inner.get()).get_base_ptr(addr) }
+    }
+
+    fn get_mmu_ptr(&self) -> *const u32 {
+        unsafe { (*self.inner.get()).read_map.as_ptr() }
     }
 }
