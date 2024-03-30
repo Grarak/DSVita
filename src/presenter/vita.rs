@@ -32,6 +32,7 @@ extern "C" {
     pub fn vita2d_end_drawing();
 
     pub fn vita2d_set_clear_color(color: c_uint);
+    pub fn vita2d_set_vblank_wait(enable: c_int);
 
     pub fn vita2d_create_empty_texture(w: c_uint, h: c_uint) -> *mut Vita2dTexture;
 
@@ -105,6 +106,7 @@ impl Presenter {
         unsafe {
             vita2d_init();
             vita2d_set_clear_color(rgba8(0, 0, 0, 255));
+            vita2d_set_vblank_wait(0);
             let pgf = vita2d_load_default_pgf();
             let top_texture = vita2d_create_empty_texture(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
             let bottom_texture =
@@ -227,7 +229,11 @@ impl Presenter {
                 self.pgf,
                 (PRESENTER_SCREEN_WIDTH - 170) as _,
                 40,
-                rgba8(0, 255, 0, 255),
+                if fps < 60 {
+                    rgba8(255, 0, 0, 255)
+                } else {
+                    rgba8(0, 255, 0, 255)
+                },
                 1f32,
                 fps_str.as_c_str().as_ptr(),
             );
