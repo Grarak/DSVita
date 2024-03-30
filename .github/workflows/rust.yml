@@ -1,0 +1,54 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout vitasdk
+        uses: actions/checkout@v4
+        with:
+          repository: vitasdk/vdpm
+          path: vdpm
+
+      - name: Install vitasdk
+        run: |
+          cd vdpm
+          ./bootstrap-vitasdk.sh
+          ./install-all.sh
+        env:
+          VITASDK: /usr/local/vitasdk
+
+      - name: Setup rust
+        run: |
+          rustup toolchain install nightly
+          rustup override set nightly
+          rustup component add rust-src --toolchain nightly
+
+      - name: Install cargo-vita
+        run: cargo +nightly install cargo-vita
+        env:
+          VITASDK: /usr/local/vitasdk
+
+      - name: Build release
+        run: cargo vita build vpk --release
+        env:
+          VITASDK: /usr/local/vitasdk
+
+      - name: Upload vpk
+        uses: actions/upload-artifact@v4
+        with:
+          name: dspsv
+          path: target/armv7-sony-vita-newlibeabihf/release/dspsv.vpk
