@@ -75,15 +75,15 @@ impl Swapchain {
 
 struct FrameRateCounter {
     frame_counter: u16,
-    fps: AtomicU16,
+    fps: Arc<AtomicU16>,
     last_update: Instant,
 }
 
 impl FrameRateCounter {
-    fn new() -> Self {
+    fn new(fps: Arc<AtomicU16>) -> Self {
         FrameRateCounter {
             frame_counter: 0,
-            fps: AtomicU16::new(0),
+            fps,
             last_update: Instant::now(),
         }
     }
@@ -93,8 +93,6 @@ impl FrameRateCounter {
         let now = Instant::now();
         if (now - self.last_update).as_secs_f32() >= 1f32 {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
-            #[cfg(target_os = "linux")]
-            eprintln!("{}", self.frame_counter);
             self.frame_counter = 0;
             self.last_update = now;
         }
@@ -145,13 +143,13 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    pub fn new(swapchain: Arc<Swapchain>) -> Gpu {
+    pub fn new(swapchain: Arc<Swapchain>, fps: Arc<AtomicU16>) -> Gpu {
         Gpu {
             disp_stat: [DispStat::from(0); 2],
             pow_cnt1: 0,
             disp_cap_cnt: 0,
             swapchain,
-            frame_rate_counter: FrameRateCounter::new(),
+            frame_rate_counter: FrameRateCounter::new(fps),
             v_count: 0,
             gpu_2d_a: Gpu2D::new(),
             gpu_2d_b: Gpu2D::new(),

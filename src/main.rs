@@ -14,16 +14,13 @@
 extern crate core;
 
 use crate::cartridge_reader::CartridgeReader;
-use crate::hle::gpu::gpu::{Gpu, Swapchain, DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
+use crate::hle::gpu::gpu::{Gpu, Swapchain, DISPLAY_PIXEL_COUNT};
 use crate::hle::hle::{get_cm, get_cp15_mut, get_cpu_regs, get_mmu, get_regs_mut, Hle};
-use crate::hle::{input, spi, CpuType};
+use crate::hle::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
-use crate::utils::{set_thread_prio_affinity, BuildNoHasher, ThreadAffinity, ThreadPriority};
-use sdl2::event::Event;
-use sdl2::pixels::{Color, PixelFormatEnum};
-use sdl2::rect::Rect;
+use crate::presenter::Presenter;
+use crate::utils::{set_thread_prio_affinity, ThreadAffinity, ThreadPriority};
 use std::cmp::min;
-use std::collections::HashMap;
 use std::intrinsics::{likely, unlikely};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
@@ -35,36 +32,10 @@ mod hle;
 mod jit;
 mod logging;
 mod mmap;
+mod presenter;
 mod utils;
 
-#[cfg(target_os = "vita")]
-#[link(
-    name = "SceAudioIn_stub",
-    kind = "static",
-    modifiers = "+whole-archive"
-)]
-#[link(name = "SceAudio_stub", kind = "static", modifiers = "+whole-archive")]
-#[link(
-    name = "SceCommonDialog_stub",
-    kind = "static",
-    modifiers = "+whole-archive"
-)]
-#[link(name = "SceCtrl_stub", kind = "static", modifiers = "+whole-archive")]
-#[link(
-    name = "SceDisplay_stub",
-    kind = "static",
-    modifiers = "+whole-archive"
-)]
-#[link(name = "SceGxm_stub", kind = "static", modifiers = "+whole-archive")]
-#[link(name = "SceHid_stub", kind = "static", modifiers = "+whole-archive")]
-#[link(name = "SceMotion_stub", kind = "static", modifiers = "+whole-archive")]
-#[link(name = "SceTouch_stub", kind = "static", modifiers = "+whole-archive")]
-extern "C" {}
-
 pub const DEBUG_LOG: bool = cfg!(debug_assertions);
-
-const SCREEN_WIDTH: u32 = 960;
-const SCREEN_HEIGHT: u32 = 544;
 
 #[cfg(target_os = "linux")]
 fn get_file_path() -> String {
@@ -82,13 +53,18 @@ fn get_file_path() -> String {
     "ux0:ace_attorney.nds".to_owned()
 }
 
-fn run_cpu(cartridge_reader: CartridgeReader, swapchain: Arc<Swapchain>, key_map: Arc<AtomicU16>) {
+fn run_cpu(
+    cartridge_reader: CartridgeReader,
+    swapchain: Arc<Swapchain>,
+    fps: Arc<AtomicU16>,
+    key_map: Arc<AtomicU16>,
+) {
     let arm9_ram_addr = cartridge_reader.header.arm9_values.ram_address;
     let arm9_entry_addr = cartridge_reader.header.arm9_values.entry_address;
     let arm7_ram_addr = cartridge_reader.header.arm7_values.ram_address;
     let arm7_entry_addr = cartridge_reader.header.arm7_values.entry_address;
 
-    let mut hle = Hle::new(cartridge_reader, swapchain, key_map);
+    let mut hle = Hle::new(cartridge_reader, swapchain, fps, key_map);
 
     {
         let cartridge_header: &[u8; cartridge_reader::HEADER_IN_RAM_SIZE] =
@@ -237,6 +213,8 @@ pub fn main() {
 
     let swapchain = Arc::new(Swapchain::new());
     let swapchain_clone = swapchain.clone();
+    let fps = Arc::new(AtomicU16::new(0));
+    let fps_clone = fps.clone();
 
     let key_map = Arc::new(AtomicU16::new(0xFFFF));
     let key_map_clone = key_map.clone();
@@ -245,174 +223,25 @@ pub fn main() {
         .name("cpu".to_owned())
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
-            run_cpu(cartridge_reader, swapchain_clone, key_map_clone)
+            run_cpu(cartridge_reader, swapchain_clone, fps_clone, key_map_clone);
         })
         .unwrap();
 
-    sdl2::hint::set("SDL_NO_SIGNAL_HANDLERS", "1");
-    let sdl = sdl2::init().unwrap();
-    let sdl_video = sdl.video().unwrap();
+    let mut presenter = Presenter::new(key_map);
 
-    let _controller = if let Ok(controller_subsystem) = sdl.game_controller() {
-        if let Ok(available) = controller_subsystem.num_joysticks() {
-            (0..available).find_map(|id| {
-                if !controller_subsystem.is_game_controller(id) {
-                    None
-                } else {
-                    controller_subsystem.open(id).ok()
-                }
-            })
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let sdl_window = sdl_video
-        .window("DSPSV", SCREEN_WIDTH, SCREEN_HEIGHT)
-        .build()
-        .unwrap();
-    #[cfg(target_os = "linux")]
-    let mut sdl_canvas = sdl_window
-        .into_canvas()
-        .software()
-        .target_texture()
-        .build()
-        .unwrap();
-    #[cfg(target_os = "vita")]
-    let mut sdl_canvas = sdl_window.into_canvas().target_texture().build().unwrap();
-    let sdl_texture_creator = sdl_canvas.texture_creator();
-    let mut sdl_texture_top = sdl_texture_creator
-        .create_texture_streaming(
-            PixelFormatEnum::ABGR8888,
-            DISPLAY_WIDTH as u32,
-            DISPLAY_HEIGHT as u32,
-        )
-        .unwrap();
-    let mut sdl_texture_bottom = sdl_texture_creator
-        .create_texture_streaming(
-            PixelFormatEnum::ABGR8888,
-            DISPLAY_WIDTH as u32,
-            DISPLAY_HEIGHT as u32,
-        )
-        .unwrap();
-    sdl_canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
-    sdl_canvas.clear();
-    sdl_canvas.present();
-
-    let mut key_code_mapping = HashMap::<_, _, BuildNoHasher>::default();
-    #[cfg(target_os = "linux")]
-    {
-        use sdl2::keyboard::Keycode;
-        key_code_mapping.insert(Keycode::W, input::Keycode::Up);
-        key_code_mapping.insert(Keycode::S, input::Keycode::Down);
-        key_code_mapping.insert(Keycode::A, input::Keycode::Left);
-        key_code_mapping.insert(Keycode::D, input::Keycode::Right);
-        key_code_mapping.insert(Keycode::B, input::Keycode::Start);
-        key_code_mapping.insert(Keycode::V, input::Keycode::Select);
-        key_code_mapping.insert(Keycode::K, input::Keycode::A);
-        key_code_mapping.insert(Keycode::J, input::Keycode::B);
-        key_code_mapping.insert(Keycode::U, input::Keycode::X);
-        key_code_mapping.insert(Keycode::I, input::Keycode::Y);
-        key_code_mapping.insert(Keycode::Num8, input::Keycode::TriggerL);
-        key_code_mapping.insert(Keycode::Num9, input::Keycode::TriggerR);
-    }
-    #[cfg(target_os = "vita")]
-    {
-        use sdl2::controller::Button;
-        key_code_mapping.insert(Button::DPadUp, input::Keycode::Up);
-        key_code_mapping.insert(Button::DPadDown, input::Keycode::Down);
-        key_code_mapping.insert(Button::DPadLeft, input::Keycode::Left);
-        key_code_mapping.insert(Button::DPadRight, input::Keycode::Right);
-        key_code_mapping.insert(Button::Start, input::Keycode::Start);
-        key_code_mapping.insert(Button::Back, input::Keycode::Select);
-        key_code_mapping.insert(Button::B, input::Keycode::A);
-        key_code_mapping.insert(Button::A, input::Keycode::B);
-        key_code_mapping.insert(Button::Y, input::Keycode::X);
-        key_code_mapping.insert(Button::X, input::Keycode::Y);
-        key_code_mapping.insert(Button::LeftShoulder, input::Keycode::TriggerL);
-        key_code_mapping.insert(Button::RightShoulder, input::Keycode::TriggerR);
-    }
-
-    let mut sdl_event_pump = sdl.event_pump().unwrap();
-
-    'render: loop {
-        for event in sdl_event_pump.poll_iter() {
-            match event {
-                #[cfg(target_os = "linux")]
-                Event::KeyDown {
-                    keycode: Some(code),
-                    ..
-                } => {
-                    if let Some(code) = key_code_mapping.get(&code) {
-                        key_map.fetch_and(!(1 << *code as u8), Ordering::Relaxed);
-                    }
-                }
-                #[cfg(target_os = "linux")]
-                Event::KeyUp {
-                    keycode: Some(code),
-                    ..
-                } => {
-                    if let Some(code) = key_code_mapping.get(&code) {
-                        key_map.fetch_or(1 << *code as u8, Ordering::Relaxed);
-                    }
-                }
-                #[cfg(target_os = "vita")]
-                Event::ControllerButtonDown { button, .. } => {
-                    if let Some(code) = key_code_mapping.get(&button) {
-                        key_map.fetch_and(!(1 << *code as u8), Ordering::Relaxed);
-                    }
-                }
-                #[cfg(target_os = "vita")]
-                Event::ControllerButtonUp { button, .. } => {
-                    if let Some(code) = key_code_mapping.get(&button) {
-                        key_map.fetch_or(1 << *code as u8, Ordering::Relaxed);
-                    }
-                }
-                Event::Quit { .. } => break 'render,
-                _ => {}
-            }
-        }
-
+    while presenter.event_poll() {
         let fb = swapchain.consume();
-        let top_aligned: &[u8] = unsafe { mem::transmute(&fb[..DISPLAY_PIXEL_COUNT]) };
-        let bottom_aligned: &[u8] = unsafe { mem::transmute(&fb[DISPLAY_PIXEL_COUNT..]) };
-        sdl_texture_top
-            .update(None, top_aligned, DISPLAY_WIDTH * 4)
-            .unwrap();
-        sdl_texture_bottom
-            .update(None, bottom_aligned, DISPLAY_WIDTH * 4)
-            .unwrap();
-
-        sdl_canvas.clear();
-        const ADJUSTED_DISPLAY_HEIGHT: u32 =
-            SCREEN_WIDTH / 2 * DISPLAY_HEIGHT as u32 / DISPLAY_WIDTH as u32;
-        sdl_canvas
-            .copy(
-                &sdl_texture_top,
-                None,
-                Some(Rect::new(
-                    0,
-                    ((SCREEN_HEIGHT - ADJUSTED_DISPLAY_HEIGHT) / 2) as _,
-                    SCREEN_WIDTH / 2,
-                    ADJUSTED_DISPLAY_HEIGHT,
-                )),
-            )
-            .unwrap();
-        sdl_canvas
-            .copy(
-                &sdl_texture_bottom,
-                None,
-                Some(Rect::new(
-                    SCREEN_WIDTH as i32 / 2,
-                    ((SCREEN_HEIGHT - ADJUSTED_DISPLAY_HEIGHT) / 2) as _,
-                    SCREEN_WIDTH / 2,
-                    ADJUSTED_DISPLAY_HEIGHT,
-                )),
-            )
-            .unwrap();
-        sdl_canvas.present();
+        let top = unsafe {
+            (fb[..DISPLAY_PIXEL_COUNT].as_ptr() as *const [u32; DISPLAY_PIXEL_COUNT])
+                .as_ref()
+                .unwrap_unchecked()
+        };
+        let bottom = unsafe {
+            (fb[DISPLAY_PIXEL_COUNT..].as_ptr() as *const [u32; DISPLAY_PIXEL_COUNT])
+                .as_ref()
+                .unwrap_unchecked()
+        };
+        presenter.present(top, bottom, fps.load(Ordering::Relaxed));
     }
 
     cpu_thread.join().unwrap();

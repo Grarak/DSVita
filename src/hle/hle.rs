@@ -170,12 +170,13 @@ impl Common {
     fn new(
         cartridge_reader: CartridgeReader,
         swapchain: Arc<Swapchain>,
+        fps: Arc<AtomicU16>,
         key_map: Arc<AtomicU16>,
     ) -> Self {
         Common {
             ipc: Ipc::new(),
             cartridge: Cartridge::new(cartridge_reader),
-            gpu: Gpu::new(swapchain),
+            gpu: Gpu::new(swapchain, fps),
             cycle_manager: CycleManager::new(),
             cpus: Cpus::new(),
             input: Input::new(key_map),
@@ -192,10 +193,11 @@ impl Hle {
     pub fn new(
         cartridge_reader: CartridgeReader,
         swapchain: Arc<Swapchain>,
+        fps: Arc<AtomicU16>,
         key_map: Arc<AtomicU16>,
     ) -> Self {
         Hle {
-            common: Common::new(cartridge_reader, swapchain, key_map),
+            common: Common::new(cartridge_reader, swapchain, fps, key_map),
             mem: Memory::new(),
         }
     }

@@ -16,21 +16,20 @@ chrono = "0.4.33"
 paste = "1.0.14"
 static_assertions = "1.1.0"
 dspsv_macros = { path = "macros" }
-sdl2 = "0.36.0"
 
 [target.armv7-unknown-linux-gnueabihf.dependencies]
 libc = "0.2.153"
+sdl2 = "0.36.0"
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]
-vitasdk-sys = { version = "0.3.2", features = ["SceSysmem_stub",
-    "SceAudioIn_stub",
-    "SceAudio_stub",
+vitasdk-sys = { version = "0.3.2", features = [
+    "SceAppMgr_stub",
     "SceCommonDialog_stub",
     "SceCtrl_stub",
     "SceDisplay_stub",
     "SceGxm_stub",
-    "SceHid_stub",
-    "SceMotion_stub",
-    "SceTouch_stub",
+    "SceKernelThreadMgr_stub",
     "SceLibKernel_stub",
-    "SceKernelThreadMgr_stub"] }
+    "SceSysmem_stub",
+    "ScePgf_stub"
+] }
