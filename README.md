@@ -1,5 +1,7 @@
 # DSPSV
 
+[![Rust](https://github.com/Grarak/DSPSV/actions/workflows/rust.yml/badge.svg)](https://github.com/Grarak/DSPSV/actions/workflows/rust.yml)
+
 Experimental NDS Emulator for ARM32
 
 ## Status
