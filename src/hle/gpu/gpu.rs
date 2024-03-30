@@ -132,6 +132,7 @@ pub struct Gpu {
     disp_cap_cnt: u32,
     swapchain: Arc<Swapchain>,
     frame_rate_counter: FrameRateCounter,
+    pub frame_skip: bool,
     pub v_count: u16,
     pub gpu_2d_a: Gpu2D<{ A }>,
     pub gpu_2d_b: Gpu2D<{ B }>,
@@ -150,6 +151,7 @@ impl Gpu {
             disp_cap_cnt: 0,
             swapchain,
             frame_rate_counter: FrameRateCounter::new(fps),
+            frame_skip: false,
             v_count: 0,
             gpu_2d_a: Gpu2D::new(),
             gpu_2d_b: Gpu2D::new(),
@@ -241,14 +243,16 @@ impl CycleEvent for Scanline256Event {
         let gpu = &mut hle.common.gpu;
 
         if gpu.v_count < 192 {
-            if gpu
-                .draw_state
-                .compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                gpu.gpu_2d_b.draw_scanline(gpu.v_count as u8, &hle.mem);
+            if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
+                if gpu
+                    .draw_state
+                    .compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    gpu.gpu_2d_b.draw_scanline(gpu.v_count as u8, &hle.mem);
+                }
+                while gpu.draw_state.load(Ordering::Acquire) != 0 {}
             }
-            while gpu.draw_state.load(Ordering::Acquire) != 0 {}
 
             io_dma!(hle, ARM9).trigger_all(DmaTransferMode::StartAtHBlank, get_cm!(hle));
         }
@@ -294,18 +298,20 @@ impl CycleEvent for Scanline355Event {
                     }
                 }
 
-                let pow_cnt1 = PowCnt1::from(gpu.pow_cnt1);
-                if bool::from(pow_cnt1.enable()) {
-                    if bool::from(pow_cnt1.display_swap()) {
-                        gpu.swapchain
-                            .push(&gpu.gpu_2d_a.framebuffer, &gpu.gpu_2d_b.framebuffer)
+                if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
+                    let pow_cnt1 = PowCnt1::from(gpu.pow_cnt1);
+                    if bool::from(pow_cnt1.enable()) {
+                        if bool::from(pow_cnt1.display_swap()) {
+                            gpu.swapchain
+                                .push(&gpu.gpu_2d_a.framebuffer, &gpu.gpu_2d_b.framebuffer)
+                        } else {
+                            gpu.swapchain
+                                .push(&gpu.gpu_2d_b.framebuffer, &gpu.gpu_2d_a.framebuffer);
+                        }
                     } else {
                         gpu.swapchain
-                            .push(&gpu.gpu_2d_b.framebuffer, &gpu.gpu_2d_a.framebuffer);
+                            .push(&[0u32; DISPLAY_PIXEL_COUNT], &[0u32; DISPLAY_PIXEL_COUNT]);
                     }
-                } else {
-                    gpu.swapchain
-                        .push(&[0u32; DISPLAY_PIXEL_COUNT], &[0u32; DISPLAY_PIXEL_COUNT]);
                 }
             }
             262 => {
@@ -322,7 +328,7 @@ impl CycleEvent for Scanline355Event {
             _ => {}
         }
 
-        if gpu.v_count < 192 {
+        if gpu.v_count < 192 && (!gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0) {
             gpu.draw_state.store(1, Ordering::Release);
             if gpu.v_count == 0 {
                 let mut draw_idling = gpu.draw_idling.lock().unwrap();

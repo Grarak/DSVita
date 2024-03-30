@@ -140,7 +140,14 @@ impl InstInfo {
                 }
                 u32::from(opcode)
             }
-            Op::Mul | Op::Muls | Op::Mla | Op::Mlas | Op::Smulbb | Op::Smlabb | Op::Smlatb => {
+            Op::Mul
+            | Op::Muls
+            | Op::Mla
+            | Op::Mlas
+            | Op::Smulbb
+            | Op::Smulwb
+            | Op::Smlabb
+            | Op::Smlatb => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();

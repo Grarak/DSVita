@@ -1,6 +1,7 @@
 use crate::hle::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
 use crate::hle::input;
-use crate::presenter::{PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::presenter::menu::Menu;
+use crate::presenter::{PresentEvent, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::utils::BuildNoHasher;
 use sdl2::event::Event;
 use sdl2::pixels::{Color, PixelFormatEnum};
@@ -9,13 +10,10 @@ use sdl2::render::{Texture, TextureCreator, WindowCanvas};
 use sdl2::video::WindowContext;
 use sdl2::{keyboard, EventPump};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::Arc;
 use std::{mem, ptr};
 
 pub struct Presenter {
     key_code_mapping: HashMap<keyboard::Keycode, input::Keycode, BuildNoHasher>,
-    key_map: Arc<AtomicU16>,
     canvas: WindowCanvas,
     _texture_creator: TextureCreator<WindowContext>,
     texture_top: Texture<'static>,
@@ -24,7 +22,7 @@ pub struct Presenter {
 }
 
 impl Presenter {
-    pub fn new(key_map: Arc<AtomicU16>) -> Self {
+    pub fn new() -> Self {
         let mut key_code_mapping = HashMap::default();
         key_code_mapping.insert(keyboard::Keycode::W, input::Keycode::Up);
         key_code_mapping.insert(keyboard::Keycode::S, input::Keycode::Down);
@@ -78,7 +76,6 @@ impl Presenter {
 
         Presenter {
             key_code_mapping,
-            key_map,
             canvas,
             _texture_creator: texture_creator,
             texture_top,
@@ -87,7 +84,8 @@ impl Presenter {
         }
     }
 
-    pub fn event_poll(&mut self) -> bool {
+    pub fn event_poll(&mut self) -> PresentEvent {
+        let mut key_map = 0xFFFF;
         for event in self.event_pump.poll_iter() {
             match event {
                 Event::KeyDown {
@@ -95,8 +93,7 @@ impl Presenter {
                     ..
                 } => {
                     if let Some(code) = self.key_code_mapping.get(&code) {
-                        self.key_map
-                            .fetch_and(!(1 << *code as u8), Ordering::Relaxed);
+                        key_map &= !(1 << *code as u8);
                     }
                 }
                 Event::KeyUp {
@@ -104,17 +101,19 @@ impl Presenter {
                     ..
                 } => {
                     if let Some(code) = self.key_code_mapping.get(&code) {
-                        self.key_map.fetch_or(1 << *code as u8, Ordering::Relaxed);
+                        key_map |= 1 << *code as u8;
                     }
                 }
-                Event::Quit { .. } => return false,
+                Event::Quit { .. } => return PresentEvent::Quit,
                 _ => {}
             }
         }
-        true
+        PresentEvent::Keymap(key_map)
     }
 
-    pub fn present(
+    pub fn present_menu(&mut self, menu: &Menu) {}
+
+    pub fn present_textures(
         &mut self,
         top: &[u32; DISPLAY_PIXEL_COUNT],
         bottom: &[u32; DISPLAY_PIXEL_COUNT],
@@ -163,4 +162,6 @@ impl Presenter {
             .set_title(&format!("DSPSV - Internal fps {}", fps))
             .unwrap();
     }
+
+    pub fn wait_vsync(&self) {}
 }

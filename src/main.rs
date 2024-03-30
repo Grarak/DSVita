@@ -18,46 +18,35 @@ use crate::hle::gpu::gpu::{Gpu, Swapchain, DISPLAY_PIXEL_COUNT};
 use crate::hle::hle::{get_cm, get_cp15_mut, get_cpu_regs, get_mmu, get_regs_mut, Hle};
 use crate::hle::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
-use crate::presenter::Presenter;
+use crate::presenter::{PresentEvent, Presenter};
+use crate::settings::{create_settings_mut, Settings, FRAMESKIP_SETTING};
 use crate::utils::{set_thread_prio_affinity, ThreadAffinity, ThreadPriority};
+use std::cell::RefCell;
 use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
+use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::{mem, ptr, thread};
 use CpuType::{ARM7, ARM9};
-
 mod cartridge_reader;
 mod hle;
 mod jit;
 mod logging;
 mod mmap;
 mod presenter;
+mod settings;
 mod utils;
 
 pub const DEBUG_LOG: bool = cfg!(debug_assertions);
-
-#[cfg(target_os = "linux")]
-fn get_file_path() -> String {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() == 2 {
-        args[1].clone()
-    } else {
-        eprintln!("Usage {} <path_to_nds>", args[0]);
-        std::process::exit(1);
-    }
-}
-
-#[cfg(target_os = "vita")]
-fn get_file_path() -> String {
-    "ux0:ace_attorney.nds".to_owned()
-}
 
 fn run_cpu(
     cartridge_reader: CartridgeReader,
     swapchain: Arc<Swapchain>,
     fps: Arc<AtomicU16>,
     key_map: Arc<AtomicU16>,
+    settings: Arc<Settings>,
 ) {
     let arm9_ram_addr = cartridge_reader.header.arm9_values.ram_address;
     let arm9_entry_addr = cartridge_reader.header.arm9_values.entry_address;
@@ -147,6 +136,7 @@ fn run_cpu(
     }
 
     Gpu::initialize_schedule(get_cm!(hle));
+    hle.common.gpu.frame_skip = settings[FRAMESKIP_SETTING].value.as_bool().unwrap();
 
     let hle_ptr = ptr::addr_of_mut!(hle) as u32;
     let gpu2d_thread = thread::Builder::new()
@@ -209,7 +199,84 @@ pub fn main() {
         std::env::set_var("RUST_BACKTRACE", "full");
     }
 
-    let cartridge_reader = CartridgeReader::from_file(&get_file_path()).unwrap();
+    let settings_mut = Rc::new(RefCell::new(create_settings_mut()));
+    let file_path = Rc::new(RefCell::new(PathBuf::new()));
+
+    let mut presenter = Presenter::new();
+
+    #[cfg(target_os = "vita")]
+    {
+        use crate::presenter::menu::{Menu, MenuAction, MenuPresenter};
+        use std::fs;
+
+        let root_menu = Menu::new(
+            "DSPSV",
+            vec![
+                Menu::new("Settings", Vec::new(), |menu| {
+                    menu.entries = settings_mut
+                        .borrow()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, setting)| {
+                            let settings_clone = settings_mut.clone();
+                            Menu::new(
+                                format!("{} - {}", setting.title, setting.value),
+                                Vec::new(),
+                                move |_| {
+                                    settings_clone.borrow_mut()[index].value.next();
+                                    MenuAction::Refresh
+                                },
+                            )
+                        })
+                        .collect();
+                    MenuAction::EnterSubMenu
+                }),
+                Menu::new("Select ROM", Vec::new(), |menu| {
+                    let dirs = fs::read_dir("ux0:").unwrap();
+                    menu.entries = dirs
+                        .into_iter()
+                        .filter_map(|dir| {
+                            dir.ok().and_then(|dir| {
+                                dir.file_type().ok().and_then(|file_type| {
+                                    if file_type.is_file() {
+                                        Some(dir)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                        })
+                        .map(|dir| {
+                            let file_path_clone = file_path.clone();
+                            Menu::new(dir.path().to_str().unwrap(), Vec::new(), move |_| {
+                                *file_path_clone.borrow_mut() = dir.path();
+                                MenuAction::Quit
+                            })
+                        })
+                        .collect();
+                    MenuAction::EnterSubMenu
+                }),
+            ],
+            |_| MenuAction::EnterSubMenu,
+        );
+        let mut menu_presenter = MenuPresenter::new(&mut presenter, root_menu);
+        menu_presenter.present();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if args.len() == 2 {
+            *file_path.borrow_mut() = args[1].clone().into()
+        } else {
+            eprintln!("Usage {} <path_to_nds>", args[0]);
+            std::process::exit(1);
+        }
+    }
+
+    let cartridge_reader =
+        CartridgeReader::from_file(file_path.borrow().to_str().unwrap()).unwrap();
+    drop(file_path);
 
     let swapchain = Arc::new(Swapchain::new());
     let swapchain_clone = swapchain.clone();
@@ -219,17 +286,26 @@ pub fn main() {
     let key_map = Arc::new(AtomicU16::new(0xFFFF));
     let key_map_clone = key_map.clone();
 
+    let settings = Arc::new(settings_mut.borrow().clone());
+    drop(settings_mut);
+
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
-            run_cpu(cartridge_reader, swapchain_clone, fps_clone, key_map_clone);
+            run_cpu(
+                cartridge_reader,
+                swapchain_clone,
+                fps_clone,
+                key_map_clone,
+                settings,
+            );
         })
         .unwrap();
 
-    let mut presenter = Presenter::new(key_map);
+    while let PresentEvent::Keymap(value) = presenter.event_poll() {
+        key_map.store(value, Ordering::Relaxed);
 
-    while presenter.event_poll() {
         let fb = swapchain.consume();
         let top = unsafe {
             (fb[..DISPLAY_PIXEL_COUNT].as_ptr() as *const [u32; DISPLAY_PIXEL_COUNT])
@@ -241,7 +317,7 @@ pub fn main() {
                 .as_ref()
                 .unwrap_unchecked()
         };
-        presenter.present(top, bottom, fps.load(Ordering::Relaxed));
+        presenter.present_textures(top, bottom, fps.load(Ordering::Relaxed));
     }
 
     cpu_thread.join().unwrap();

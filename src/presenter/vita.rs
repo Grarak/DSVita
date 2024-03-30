@@ -1,11 +1,10 @@
 use crate::hle::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
 use crate::hle::input::Keycode;
-use crate::presenter::{PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::presenter::menu::Menu;
+use crate::presenter::{PresentEvent, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use std::ffi::CString;
 use std::mem::MaybeUninit;
 use std::ptr;
-use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::Arc;
 use vitasdk_sys::*;
 
 type Vita2dPgf = *mut c_void;
@@ -62,6 +61,16 @@ extern "C" {
         scale: c_float,
         text: *const c_char,
     ) -> c_int;
+    pub fn vita2d_pgf_text_width(
+        font: *mut Vita2dPgf,
+        scale: c_float,
+        text: *const c_char,
+    ) -> c_int;
+    pub fn vita2d_pgf_text_height(
+        font: *mut Vita2dPgf,
+        scale: c_float,
+        text: *const c_char,
+    ) -> c_int;
 }
 
 const fn rgba8(r: u8, g: u8, b: u8, a: u8) -> u32 {
@@ -84,7 +93,6 @@ const KEY_CODE_MAPPING: [(SceCtrlButtons, Keycode); 12] = [
 ];
 
 pub struct Presenter {
-    key_map: Arc<AtomicU16>,
     pgf: *mut Vita2dPgf,
     top_texture: *mut Vita2dTexture,
     bottom_texture: *mut Vita2dTexture,
@@ -93,7 +101,7 @@ pub struct Presenter {
 }
 
 impl Presenter {
-    pub fn new(key_map: Arc<AtomicU16>) -> Self {
+    pub fn new() -> Self {
         unsafe {
             vita2d_init();
             vita2d_set_clear_color(rgba8(0, 0, 0, 255));
@@ -103,7 +111,6 @@ impl Presenter {
                 vita2d_create_empty_texture(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
             Presenter {
-                key_map,
                 pgf,
                 top_texture,
                 bottom_texture,
@@ -113,7 +120,8 @@ impl Presenter {
         }
     }
 
-    pub fn event_poll(&mut self) -> bool {
+    pub fn event_poll(&mut self) -> PresentEvent {
+        let mut keymap = 0xFFFF;
         unsafe {
             let pressed = MaybeUninit::<SceCtrlData>::uninit();
             let mut pressed = pressed.assume_init();
@@ -121,18 +129,57 @@ impl Presenter {
 
             for (host_key, guest_key) in KEY_CODE_MAPPING {
                 if pressed.buttons & host_key != 0 {
-                    self.key_map
-                        .fetch_and(!(1 << guest_key as u8), Ordering::Relaxed);
+                    keymap &= !(1 << guest_key as u8);
                 } else {
-                    self.key_map
-                        .fetch_or(1 << guest_key as u8, Ordering::Relaxed);
+                    keymap |= 1 << guest_key as u8;
                 }
             }
         }
-        true
+        PresentEvent::Keymap(keymap)
     }
 
-    pub fn present(
+    pub fn present_menu(&mut self, menu: &Menu) {
+        unsafe {
+            vita2d_start_drawing();
+            vita2d_clear_screen();
+
+            let title = CString::new(menu.title.clone()).unwrap();
+            let mut y_offset = vita2d_pgf_text_height(self.pgf, 1f32, title.as_c_str().as_ptr());
+
+            vita2d_pgf_draw_text(
+                self.pgf,
+                0,
+                y_offset,
+                rgba8(0, 0, 255, 255),
+                1f32,
+                title.as_c_str().as_ptr(),
+            );
+
+            y_offset *= 2;
+
+            for (i, sub_menu) in menu.entries.iter().enumerate() {
+                let title = CString::new(sub_menu.title.clone()).unwrap();
+                y_offset += vita2d_pgf_text_height(self.pgf, 1f32, title.as_c_str().as_ptr());
+                vita2d_pgf_draw_text(
+                    self.pgf,
+                    0,
+                    y_offset,
+                    if menu.selected == i {
+                        rgba8(0, 255, 0, 255)
+                    } else {
+                        rgba8(255, 255, 255, 255)
+                    },
+                    1f32,
+                    title.as_c_str().as_ptr(),
+                );
+            }
+
+            vita2d_end_drawing();
+            vita2d_swap_buffers();
+        }
+    }
+
+    pub fn present_textures(
         &mut self,
         top: &[u32; DISPLAY_PIXEL_COUNT],
         bottom: &[u32; DISPLAY_PIXEL_COUNT],
@@ -188,6 +235,10 @@ impl Presenter {
             vita2d_end_drawing();
             vita2d_swap_buffers();
         }
+    }
+
+    pub fn wait_vsync(&self) {
+        unsafe { sceDisplayWaitVblankStart() };
     }
 }
 
