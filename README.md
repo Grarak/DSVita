@@ -6,7 +6,12 @@ Experimental NDS Emulator for ARM32
 
 ## Status
 
-This currently only runs the [hello world example](https://github.com/devkitPro/nds-examples/tree/master/hello_world).
+This runs some games, however following things are missing:
+- No 3D
+- No touchscreen
+- Some 2D rendering glitches
+- No sound
+- No saves
 
 ## Credits
 
