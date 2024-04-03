@@ -18,6 +18,7 @@ use crate::hle::gpu::gpu::{Gpu, Swapchain, DISPLAY_PIXEL_COUNT};
 use crate::hle::hle::{get_cm, get_cp15_mut, get_cpu_regs, get_mmu, get_regs_mut, Hle};
 use crate::hle::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
+use crate::logging::debug_println;
 use crate::presenter::{PresentEvent, Presenter};
 use crate::settings::{create_settings_mut, Settings, FRAMESKIP_SETTING};
 use crate::utils::{set_thread_prio_affinity, ThreadAffinity, ThreadPriority};
@@ -126,10 +127,12 @@ fn run_cpu(
         let arm9_code = hle.common.cartridge.reader.read_arm9_code();
         let arm7_code = hle.common.cartridge.reader.read_arm7_code();
 
+        debug_println!("write ARM9 code at {:x}", arm9_ram_addr);
         for (i, value) in arm9_code.iter().enumerate() {
             hle.mem_write::<{ ARM9 }, _>(arm9_ram_addr + i as u32, *value);
         }
 
+        debug_println!("write ARM7 code at {:x}", arm7_ram_addr);
         for (i, value) in arm7_code.iter().enumerate() {
             hle.mem_write::<{ ARM7 }, _>(arm7_ram_addr + i as u32, *value);
         }
@@ -232,28 +235,46 @@ pub fn main() {
                     MenuAction::EnterSubMenu
                 }),
                 Menu::new("Select ROM", Vec::new(), |menu| {
-                    let dirs = fs::read_dir("ux0:").unwrap();
-                    menu.entries = dirs
-                        .into_iter()
-                        .filter_map(|dir| {
-                            dir.ok().and_then(|dir| {
-                                dir.file_type().ok().and_then(|file_type| {
-                                    if file_type.is_file() {
-                                        Some(dir)
-                                    } else {
-                                        None
-                                    }
+                    match fs::read_dir("ux0:dspsv") {
+                        Ok(dirs) => {
+                            menu.entries = dirs
+                                .into_iter()
+                                .filter_map(|dir| {
+                                    dir.ok().and_then(|dir| {
+                                        dir.file_type().ok().and_then(|file_type| {
+                                            if file_type.is_file() {
+                                                Some(dir)
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                    })
                                 })
-                            })
-                        })
-                        .map(|dir| {
-                            let file_path_clone = file_path.clone();
-                            Menu::new(dir.path().to_str().unwrap(), Vec::new(), move |_| {
-                                *file_path_clone.borrow_mut() = dir.path();
-                                MenuAction::Quit
-                            })
-                        })
-                        .collect();
+                                .map(|dir| {
+                                    let file_path_clone = file_path.clone();
+                                    Menu::new(dir.path().to_str().unwrap(), Vec::new(), move |_| {
+                                        *file_path_clone.borrow_mut() = dir.path();
+                                        MenuAction::Quit
+                                    })
+                                })
+                                .collect();
+                            if menu.entries.is_empty() {
+                                menu.entries.push(Menu::new(
+                                    "ux0:dspsv does not contain any files!",
+                                    Vec::new(),
+                                    |_| MenuAction::Refresh,
+                                ))
+                            }
+                        }
+                        Err(_) => {
+                            menu.entries.clear();
+                            menu.entries.push(Menu::new(
+                                "ux0:dspsv does not exist!",
+                                Vec::new(),
+                                |_| MenuAction::Refresh,
+                            ));
+                        }
+                    }
                     MenuAction::EnterSubMenu
                 }),
             ],

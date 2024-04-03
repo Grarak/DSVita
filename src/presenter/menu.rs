@@ -48,7 +48,9 @@ impl<'a> MenuPresenter<'a> {
             } else if keys_pressed & (1 << Keycode::Up as u8) != 0 {
                 menu.selected = min(menu.selected.wrapping_sub(1), menu.entries.len() - 1);
             } else if keys_pressed & (1 << Keycode::Down as u8) != 0 {
-                menu.selected = (menu.selected + 1) % menu.entries.len();
+                if !menu.entries.is_empty() {
+                    menu.selected = (menu.selected + 1) % menu.entries.len();
+                }
             }
 
             self.presenter.wait_vsync();
