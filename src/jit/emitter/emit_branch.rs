@@ -1,5 +1,6 @@
 use crate::hle::hle::get_regs;
 use crate::hle::CpuType;
+use crate::hle::CpuType::ARM9;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
@@ -69,6 +70,40 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             opcodes.push(AluImm::add_al(Reg::R3, Reg::R1, 4));
             opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::LR, Reg::R3, Reg::R4));
         }
+
+        opcodes.push(LdrStrImm::str_al(Reg::R1, Reg::R2));
+
+        Self::emit_host_bx(self.breakout_skip_save_regs_addr, opcodes);
+    }
+
+    pub fn emit_blx_label(&mut self, buf_index: usize, pc: u32) {
+        if CPU != ARM9 {
+            return;
+        }
+
+        let imm = {
+            let inst_info = &self.jit_buf.instructions[buf_index];
+            inst_info.operands()[0].as_imm().unwrap()
+        };
+
+        let new_pc = (pc as i32 + 8 + *imm as i32) as u32;
+
+        let opcodes = &mut self.jit_buf.emit_opcodes;
+
+        opcodes.extend(&get_regs!(self.hle, CPU).save_regs_opcodes);
+
+        opcodes.extend(AluImm::mov32(Reg::R0, new_pc | 1));
+        opcodes.extend(AluImm::mov32(Reg::R1, pc));
+
+        opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, Reg::R0, Reg::R3));
+
+        opcodes.extend(AluImm::mov32(
+            Reg::R2,
+            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
+        ));
+
+        opcodes.push(AluImm::add_al(Reg::R0, Reg::R1, 4));
+        opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::LR, Reg::R0, Reg::R5));
 
         opcodes.push(LdrStrImm::str_al(Reg::R1, Reg::R2));
 

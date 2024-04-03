@@ -77,6 +77,7 @@ pub enum Op {
     BicsRri,
     BicsRrr,
     Bl,
+    Blx,
     BlxReg,
     Bx,
     Clz,

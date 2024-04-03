@@ -20,6 +20,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let emit_func: fn(&mut JitAsm<'a, CPU>, buf_index: usize, pc: u32) = match op {
             Op::B | Op::Bl => Self::emit_b,
             Op::Bx | Op::BlxReg => Self::emit_bx,
+            Op::Blx => Self::emit_blx_label,
             Op::Mcr | Op::Mrc => Self::emit_cp15,
             Op::MsrRc | Op::MsrIc | Op::MsrRs | Op::MsrIs => Self::emit_msr,
             Op::MrsRc | Op::MrsRs => Self::emit_mrs,
