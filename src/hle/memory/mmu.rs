@@ -48,7 +48,7 @@ impl MmuArm9Inner {
                 regions::SHARED_WRAM_OFFSET => {
                     *read_ptr = hle.mem.wram.get_ptr::<{ ARM9 }>(addr) as u32
                 }
-                regions::VRAM_OFFSET => *read_ptr = hle.mem.vram.get_ptr::<{ ARM9 }>(addr) as u32,
+                // regions::VRAM_OFFSET => *read_ptr = hle.mem.vram.get_ptr::<{ ARM9 }>(addr) as u32,
                 0xFF000000 => {
                     if addr & 0xFFFF8000 == regions::ARM9_BIOS_OFFSET {
                         *read_ptr = hle.mem.bios_arm9.get_ptr(addr) as u32
@@ -196,7 +196,7 @@ impl MmuArm7Inner {
                 regions::SHARED_WRAM_OFFSET => {
                     *read_ptr = hle.mem.wram.get_ptr::<{ ARM7 }>(addr) as u32
                 }
-                regions::VRAM_OFFSET => *read_ptr = hle.mem.vram.get_ptr::<{ ARM7 }>(addr) as u32,
+                // regions::VRAM_OFFSET => *read_ptr = hle.mem.vram.get_ptr::<{ ARM7 }>(addr) as u32,
                 _ => {}
             }
         }

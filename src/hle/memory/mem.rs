@@ -116,7 +116,14 @@ impl Memory {
                 && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size
                 && cp15.dtcm_state == TcmState::RW
             {
-                return self.tcm.read_dtcm(aligned_addr - cp15.dtcm_addr);
+                let ret: T = self.tcm.read_dtcm(aligned_addr - cp15.dtcm_addr);
+                debug_println!(
+                    "{:?} dtcm read at {:x} with value {:x}",
+                    CPU,
+                    aligned_addr,
+                    ret.into()
+                );
+                return ret;
             }
         }
 
@@ -127,7 +134,8 @@ impl Memory {
                     if TCM {
                         let cp15 = get_cp15!(hle, ARM9);
                         if aligned_addr < cp15.itcm_size && cp15.itcm_state == TcmState::RW {
-                            ret = self.tcm.read_itcm(addr_offset);
+                            debug_println!("{:?} itcm read at {:x}", CPU, aligned_addr);
+                            ret = self.tcm.read_itcm(aligned_addr);
                         }
                     }
                     ret
@@ -217,6 +225,12 @@ impl Memory {
                 && cp15.dtcm_state != TcmState::Disabled
             {
                 self.tcm.write_dtcm(aligned_addr - cp15.dtcm_addr, value);
+                debug_println!(
+                    "{:?} dtcm write at {:x} with value {:x}",
+                    CPU,
+                    aligned_addr,
+                    value.into(),
+                );
                 return;
             }
         }
@@ -238,14 +252,20 @@ impl Memory {
                     if TCM {
                         let cp15 = get_cp15!(hle, ARM9);
                         if aligned_addr < cp15.itcm_size && cp15.itcm_state != TcmState::Disabled {
-                            self.tcm.write_itcm(addr_offset, value);
+                            self.tcm.write_itcm(aligned_addr, value);
+                            debug_println!(
+                                "{:?} itcm write at {:x} with value {:x}",
+                                CPU,
+                                aligned_addr,
+                                value.into(),
+                            );
                             invalidate_jit();
                         }
                     }
                 }
                 // Bios of arm7 has same offset as itcm on arm9
                 ARM7 => {
-                    todo!("{:x} {:x}", aligned_addr, addr_base)
+                    // todo!("{:x} {:x}", aligned_addr, addr_base)
                 }
             },
             regions::MAIN_MEMORY_OFFSET => {

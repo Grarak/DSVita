@@ -13,6 +13,12 @@ impl Gpu3D {
 
     pub fn set_viewport(&mut self, mask: u32, value: u32) {}
 
+    pub fn set_box_test(&mut self, mask: u32, value: u32) {}
+
+    pub fn set_pos_test(&mut self, mask: u32, value: u32) {}
+
+    pub fn set_vec_test(&mut self, mask: u32, value: u32) {}
+
     pub fn set_gx_fifo(&mut self, mask: u32, value: u32) {}
 
     pub fn set_mtx_mode(&mut self, mask: u32, value: u32) {}

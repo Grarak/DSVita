@@ -93,6 +93,8 @@ impl FrameRateCounter {
         let now = Instant::now();
         if (now - self.last_update).as_secs_f32() >= 1f32 {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
+            #[cfg(target_os = "linux")]
+            eprintln!("{}", self.frame_counter);
             self.frame_counter = 0;
             self.last_update = now;
         }

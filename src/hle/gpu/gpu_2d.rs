@@ -14,30 +14,30 @@ use std::mem;
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
-struct DispCnt {
-    bg_mode: u3,
-    bg0_3d: u1,
-    tile_obj_mapping: u1,
-    bitmap_obj_2d: u1,
-    bitmap_obj_mapping: u1,
-    forced_blank: u1,
-    screen_display_bg0: u1,
-    screen_display_bg1: u1,
-    screen_display_bg2: u1,
-    screen_display_bg3: u1,
-    screen_display_obj: u1,
-    window0_display_flag: u1,
-    window1_display_flag: u1,
-    obj_window_display_flag: u1,
-    display_mode: u2,
-    vram_block: u2,
-    tile_obj_1d_boundary: u2,
-    bitmap_obj_1d_boundary: u1,
-    obj_processing_during_h_blank: u1,
-    char_base: u3,
-    screen_base: u3,
-    bg_extended_palettes: u1,
-    obj_extended_palettes: u1,
+pub struct DispCnt {
+    pub bg_mode: u3,
+    pub bg0_3d: u1,
+    pub tile_obj_mapping: u1,
+    pub bitmap_obj_2d: u1,
+    pub bitmap_obj_mapping: u1,
+    pub forced_blank: u1,
+    pub screen_display_bg0: u1,
+    pub screen_display_bg1: u1,
+    pub screen_display_bg2: u1,
+    pub screen_display_bg3: u1,
+    pub screen_display_obj: u1,
+    pub window0_display_flag: u1,
+    pub window1_display_flag: u1,
+    pub obj_window_display_flag: u1,
+    pub display_mode: u2,
+    pub vram_block: u2,
+    pub tile_obj_1d_boundary: u2,
+    pub bitmap_obj_1d_boundary: u1,
+    pub obj_processing_during_h_blank: u1,
+    pub char_base: u3,
+    pub screen_base: u3,
+    pub bg_extended_palettes: u1,
+    pub obj_extended_palettes: u1,
 }
 
 impl Default for DispCnt {
@@ -71,15 +71,15 @@ impl From<u8> for DisplayMode {
 
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
-struct BgCnt {
-    priority: u2,
-    char_base_block: u2,
-    not_used: u2,
-    mosaic: u1,
-    color_palettes: u1,
-    screen_base_block: u5,
-    ext_palette_slot_display_area_overflow: u1,
-    screen_size: u2,
+pub struct BgCnt {
+    pub priority: u2,
+    pub char_base_block: u2,
+    pub not_used: u2,
+    pub mosaic: u1,
+    pub color_palettes: u1,
+    pub screen_base_block: u5,
+    pub ext_palette_slot_display_area_overflow: u1,
+    pub screen_size: u2,
 }
 
 impl Default for BgCnt {
@@ -115,11 +115,11 @@ impl Default for BldCnt {
 
 #[bitsize(16)]
 #[derive(FromBits)]
-struct TextBgScreen {
-    tile_num: u10,
-    h_flip: u1,
-    v_flip: u1,
-    palette_num: u4,
+pub struct TextBgScreen {
+    pub tile_num: u10,
+    pub h_flip: u1,
+    pub v_flip: u1,
+    pub palette_num: u4,
 }
 
 #[derive(ConstParamTy, Debug, Eq, PartialEq)]
@@ -136,11 +136,11 @@ struct Gpu2DInternal {
 }
 
 #[derive(Default)]
-struct Gpu2DInner {
-    disp_cnt: DispCnt,
-    bg_cnt: [BgCnt; 4],
-    bg_h_ofs: [u16; 4],
-    bg_v_ofs: [u16; 4],
+pub struct Gpu2DInner {
+    pub disp_cnt: DispCnt,
+    pub bg_cnt: [BgCnt; 4],
+    pub bg_h_ofs: [u16; 4],
+    pub bg_v_ofs: [u16; 4],
     bg_pa: [i16; 2],
     bg_pb: [i16; 2],
     bg_pc: [i16; 2],
@@ -152,7 +152,7 @@ struct Gpu2DInner {
     win_x2: [u8; 2],
     win_in: u16,
     win_out: u16,
-    mosaic: u16,
+    pub mosaic: u16,
     disp_stat: u16,
     pow_cnt1: u16,
     internal: Gpu2DInternal,
@@ -219,7 +219,7 @@ impl Gpu2DLayers {
 }
 
 pub struct Gpu2D<const ENGINE: Gpu2DEngine> {
-    inner: Gpu2DInner,
+    pub inner: Gpu2DInner,
     layers: Gpu2DLayers,
     pub framebuffer: HeapMemU32<{ DISPLAY_PIXEL_COUNT }>,
 }
@@ -232,7 +232,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
     }
 
-    const fn get_palettes_offset() -> u32 {
+    pub const fn get_palettes_offset() -> u32 {
         match ENGINE {
             Gpu2DEngine::A => 0,
             Gpu2DEngine::B => 0x400,
@@ -253,7 +253,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
     }
 
-    fn read_bg<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
+    pub fn read_bg<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
         mem.vram.read::<{ ARM9 }, _>(Self::get_bg_offset() + addr)
     }
 
@@ -291,6 +291,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
 
     pub fn get_win_out(&self) -> u16 {
         self.inner.win_out
+    }
+
+    pub fn get_bld_cnt(&self) -> u16 {
+        self.inner.bld_cnt.into()
     }
 
     pub fn set_disp_cnt(&mut self, mut mask: u32, value: u32) {
@@ -550,131 +554,6 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         todo!()
     }
 
-    fn draw_text<const BG: usize>(&mut self, line: u8, mem: &Memory) {
-        if BG == 0 && bool::from(self.inner.disp_cnt.bg0_3d()) {
-            // TODO 3d
-            return;
-        }
-
-        if bool::from(self.inner.bg_cnt[BG].color_palettes()) {
-            self.draw_text_pixels::<BG, true>(line, mem);
-        } else {
-            self.draw_text_pixels::<BG, false>(line, mem);
-        }
-    }
-
-    fn draw_text_pixels<const BG: usize, const BIT8: bool>(&mut self, line: u8, mem: &Memory) {
-        let disp_cnt = self.inner.disp_cnt;
-        let bg_cnt = self.inner.bg_cnt[BG];
-
-        let mut tile_base_addr = (u32::from(disp_cnt.screen_base()) << 16)
-            + (u32::from(bg_cnt.screen_base_block()) << 11);
-        let index_base_addr =
-            (u32::from(disp_cnt.char_base()) << 16) + (u32::from(bg_cnt.char_base_block()) << 14);
-
-        let y_offset = (if bool::from(bg_cnt.mosaic()) && self.inner.mosaic != 0 {
-            todo!()
-        } else {
-            line as u16
-        } + self.inner.bg_v_ofs[BG])
-            & 0x1FF;
-
-        tile_base_addr += (y_offset as u32 & 0xF8) << 3;
-        if y_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 1) != 0 {
-            tile_base_addr += if u8::from(bg_cnt.screen_size()) != 0 {
-                0x1000
-            } else {
-                0x800
-            };
-        }
-
-        let mut palettes_base_addr = Self::get_palettes_offset();
-        let read_palettes = if BIT8 && bool::from(disp_cnt.bg_extended_palettes()) {
-            palettes_base_addr = 0;
-            if BG < 2 && bool::from(bg_cnt.ext_palette_slot_display_area_overflow()) {
-                if !mem.vram.is_bg_ext_palette_mapped::<ENGINE>(BG + 2) {
-                    return;
-                }
-                |mem: &Memory, addr: u32| mem.vram.read_bg_ext_palette::<ENGINE, u16>(BG + 2, addr)
-            } else {
-                if !mem.vram.is_bg_ext_palette_mapped::<ENGINE>(BG) {
-                    return;
-                }
-                |mem: &Memory, addr: u32| mem.vram.read_bg_ext_palette::<ENGINE, u16>(BG, addr)
-            }
-        } else {
-            |mem: &Memory, addr: u32| mem.palettes.read(addr)
-        };
-
-        for i in (0..DISPLAY_WIDTH as u32).step_by(8) {
-            let x_offset = (i + self.inner.bg_h_ofs[BG] as u32) & 0x1FF;
-            let tile_addr = tile_base_addr + ((x_offset & 0xF8) >> 2);
-
-            if x_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 2) != 0 {
-                todo!()
-            }
-
-            let tile = self.read_bg::<u16>(tile_addr, mem);
-            let tile = TextBgScreen::from(tile);
-
-            let palette_addr = palettes_base_addr
-                + if BIT8 {
-                    if bool::from(disp_cnt.bg_extended_palettes()) {
-                        u32::from(tile.palette_num()) << 9
-                    } else {
-                        0
-                    }
-                } else {
-                    u32::from(tile.palette_num()) << 5
-                };
-
-            let index_addr = index_base_addr
-                + if BIT8 {
-                    (u32::from(tile.tile_num()) << 6)
-                        + (if bool::from(tile.v_flip()) {
-                            7 - (y_offset as u32 & 7)
-                        } else {
-                            y_offset as u32 & 7
-                        } << 3)
-                } else {
-                    (u32::from(tile.tile_num()) << 5)
-                        + (if bool::from(tile.v_flip()) {
-                            7 - (y_offset as u32 & 7)
-                        } else {
-                            y_offset as u32 & 7
-                        } << 2)
-                };
-            let mut indices = if BIT8 {
-                self.read_bg::<u32>(index_addr, mem) as u64
-                    | ((self.read_bg::<u32>(index_addr + 4, mem) as u64) << 32)
-            } else {
-                self.read_bg::<u32>(index_addr, mem) as u64
-            };
-
-            let mut x = i.wrapping_sub(x_offset & 7);
-            while indices != 0 {
-                let tmp_x = if bool::from(tile.h_flip()) {
-                    7u32.wrapping_sub(x)
-                } else {
-                    x
-                };
-                if tmp_x < 256 && (indices & if BIT8 { 0xFF } else { 0xF }) != 0 {
-                    let color = read_palettes(
-                        mem,
-                        palette_addr + ((indices as u32 & if BIT8 { 0xFF } else { 0xF }) << 1),
-                    );
-                    self.draw_bg_pixel::<BG>(line, tmp_x as usize, (color | (1 << 15)) as u32);
-                }
-                x = x.wrapping_add(1);
-                if BIT8 {
-                    indices >>= 8;
-                } else {
-                    indices >>= 4;
-                }
-            }
-        }
-    }
-
     fn draw_extended<const BG: usize>(&mut self, line: u8, mem: &Memory) {
         let mut rot_scale_x = self.inner.internal.x[BG - 2] - self.inner.bg_pa[BG - 2] as i32;
         let mut rot_scale_y = self.inner.internal.y[BG - 2] - self.inner.bg_pc[BG - 2] as i32;
@@ -737,7 +616,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                 }
             }
         } else {
-            todo!()
+            // todo!()
         }
 
         self.inner.internal.x[BG - 2] += self.inner.bg_pb[BG - 2] as i32;
@@ -1178,7 +1057,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
     }
 
-    fn draw_bg_pixel<const BG: usize>(&mut self, line: u8, x: usize, pixel: u32) {
+    pub fn draw_bg_pixel<const BG: usize>(&mut self, line: u8, x: usize, pixel: u32) {
         let pixels_a = self.layers.get_pixels_mut::<{ Gpu2DLayer::A }>();
         let pixels_b = self.layers.get_pixels_mut::<{ Gpu2DLayer::B }>();
         let priorities_a = self.layers.get_priorities_mut::<{ Gpu2DLayer::A }>();
