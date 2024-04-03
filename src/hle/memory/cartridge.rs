@@ -206,6 +206,8 @@ impl Cartridge {
         self.cmd_mode = CmdMode::None;
         if cmd == 0 {
             self.cmd_mode = CmdMode::Header;
+            self.read_buf.resize(inner.block_size as usize, 0);
+            self.reader.read_slice(0, &mut self.read_buf);
         } else if cmd == 0x9000000000000000 || (cmd >> 60) == 0x1 || cmd == 0xB800000000000000 {
             self.cmd_mode = CmdMode::Chip;
         } else if (cmd >> 56) == 0x3C {
