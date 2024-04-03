@@ -136,23 +136,23 @@ impl CartridgeReader {
         let mut boot_code = vec![0u8; self.header.arm9_values.size as usize];
         self.read_slice(self.header.arm9_values.rom_offset, &mut boot_code);
 
-        if (0x4000..0x8000).contains(&(self.header.arm9_values.rom_offset as i32)) {
-            let (_, boot_code_aligned, _) = unsafe { boot_code.align_to_mut::<u32>() };
-            let (_, game_code_aligned, _) = unsafe { self.header.game_code.align_to::<u32>() };
-            let id_code = game_code_aligned[0];
-
-            {
-                let key1 = Key1::new(id_code, 2, 2);
-                key1.decrypt((&mut boot_code_aligned[..2]).try_into().unwrap());
-            }
-
-            {
-                let key1 = Key1::new(id_code, 3, 2);
-                for i in (0..0x200).step_by(2) {
-                    key1.decrypt((&mut boot_code_aligned[i..i + 2]).try_into().unwrap());
-                }
-            }
-        }
+        // if (0x4000..0x8000).contains(&(self.header.arm9_values.rom_offset as i32)) {
+        //     let (_, boot_code_aligned, _) = unsafe { boot_code.align_to_mut::<u32>() };
+        //     let (_, game_code_aligned, _) = unsafe { self.header.game_code.align_to::<u32>() };
+        //     let id_code = game_code_aligned[0];
+        // 
+        //     {
+        //         let key1 = Key1::new(id_code, 2, 2);
+        //         key1.decrypt((&mut boot_code_aligned[..2]).try_into().unwrap());
+        //     }
+        // 
+        //     {
+        //         let key1 = Key1::new(id_code, 3, 2);
+        //         for i in (0..0x200).step_by(2) {
+        //             key1.decrypt((&mut boot_code_aligned[i..i + 2]).try_into().unwrap());
+        //         }
+        //     }
+        // }
 
         boot_code
     }
