@@ -147,7 +147,9 @@ impl InstInfo {
             | Op::Smulbb
             | Op::Smulwb
             | Op::Smlabb
-            | Op::Smlatb => {
+            | Op::Smlatb
+            | Op::Smlawb
+            | Op::Smlawt => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();
@@ -161,7 +163,7 @@ impl InstInfo {
                 }
                 u32::from(opcode)
             }
-            Op::Smull | Op::Smulls | Op::Smlal | Op::Umull | Op::Umlal => {
+            Op::Smull | Op::Smulls | Op::Smlal | Op::Smlals | Op::Umull | Op::Umlal => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();
