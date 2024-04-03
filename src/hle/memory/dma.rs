@@ -53,7 +53,7 @@ struct DmaCntArm7 {
     enable: u1,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum DmaTransferMode {
     StartImm = 0,
@@ -209,6 +209,15 @@ impl Dma {
                 && bool::from(DmaCntArm9::from(channel.cnt).enable())
                 && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode
             {
+                debug_println!(
+                    "{:?} dma trigger {:?} {:x} {:x} {:x} {:x}",
+                    self.cpu_type,
+                    mode,
+                    channel.cnt,
+                    channel.current_dest,
+                    channel.current_src,
+                    channel.current_count
+                );
                 cycle_manager.schedule(1, Box::new(DmaEvent::new(self.cpu_type, index)));
             }
         }
@@ -230,8 +239,8 @@ impl DmaEvent {
 
     fn do_transfer<const CPU: CpuType, T: utils::Convert>(
         hle: &mut Hle,
-        mut dest_addr: u32,
-        mut src_addr: u32,
+        dest_addr: &mut u32,
+        src_addr: &mut u32,
         count: u32,
         cnt: &DmaCntArm9,
         mode: DmaTransferMode,
@@ -242,24 +251,25 @@ impl DmaEvent {
         let step_size = mem::size_of::<T>() as u32;
         for _ in 0..count {
             debug_println!(
-                "{:?} dma transfer from {:x} to {:x}",
+                "{:?} dma transfer {:?} from {:x} to {:x}",
                 CPU,
+                mode,
                 src_addr,
                 dest_addr
             );
 
-            let src = hle.mem_read_no_tcm::<CPU, T>(src_addr);
-            hle.mem_write_no_tcm::<CPU, T>(dest_addr, src);
+            let src = hle.mem_read_no_tcm::<CPU, T>(*src_addr);
+            hle.mem_write_no_tcm::<CPU, T>(*dest_addr, src);
 
             match src_addr_ctrl {
-                DmaAddrCtrl::Increment => src_addr += step_size,
-                DmaAddrCtrl::Decrement => src_addr -= step_size,
+                DmaAddrCtrl::Increment => *src_addr += step_size,
+                DmaAddrCtrl::Decrement => *src_addr -= step_size,
                 _ => {}
             }
 
             match dest_addr_ctrl {
-                DmaAddrCtrl::Increment | DmaAddrCtrl::ReloadProhibited => dest_addr += step_size,
-                DmaAddrCtrl::Decrement => dest_addr -= step_size,
+                DmaAddrCtrl::Increment | DmaAddrCtrl::ReloadProhibited => *dest_addr += step_size,
+                DmaAddrCtrl::Decrement => *dest_addr -= step_size,
                 DmaAddrCtrl::Fixed => {}
             }
 
@@ -274,7 +284,7 @@ impl CycleEvent for DmaEvent {
     fn scheduled(&mut self, _: &u64) {}
 
     fn trigger(&mut self, _: u16, hle: &mut Hle) {
-        let (cnt, mode, dest, src, count) = {
+        let (cnt, mode, mut dest, mut src, count) = {
             let channel = &io_dma!(hle, self.cpu_type).channels[self.channel_num];
             (
                 DmaCntArm9::from(channel.cnt),
@@ -287,15 +297,29 @@ impl CycleEvent for DmaEvent {
 
         if bool::from(cnt.transfer_type()) {
             match self.cpu_type {
-                ARM9 => Self::do_transfer::<{ ARM9 }, u32>(hle, dest, src, count, &cnt, mode),
-                ARM7 => Self::do_transfer::<{ ARM7 }, u32>(hle, dest, src, count, &cnt, mode),
+                ARM9 => {
+                    Self::do_transfer::<{ ARM9 }, u32>(hle, &mut dest, &mut src, count, &cnt, mode)
+                }
+                ARM7 => {
+                    Self::do_transfer::<{ ARM7 }, u32>(hle, &mut dest, &mut src, count, &cnt, mode)
+                }
             }
         } else {
             match self.cpu_type {
-                ARM9 => Self::do_transfer::<{ ARM9 }, u16>(hle, dest, src, count, &cnt, mode),
-                ARM7 => Self::do_transfer::<{ ARM7 }, u16>(hle, dest, src, count, &cnt, mode),
+                ARM9 => {
+                    Self::do_transfer::<{ ARM9 }, u16>(hle, &mut dest, &mut src, count, &cnt, mode)
+                }
+                ARM7 => {
+                    Self::do_transfer::<{ ARM7 }, u16>(hle, &mut dest, &mut src, count, &cnt, mode)
+                }
             }
         };
+
+        {
+            let channel = &mut io_dma_mut!(hle, self.cpu_type).channels[self.channel_num];
+            channel.current_dest = dest;
+            channel.current_src = src;
+        }
 
         if mode == DmaTransferMode::GeometryCmdFifo {
             todo!()
