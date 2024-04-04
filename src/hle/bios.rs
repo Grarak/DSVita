@@ -76,7 +76,23 @@ pub fn bit_unpack<const CPU: CpuType>(hle: &mut Hle) {
 }
 
 pub fn cpu_fast_set<const CPU: CpuType>(hle: &mut Hle) {
-    todo!()
+    let (src, dest, length_mode) = {
+        let regs = get_regs!(hle, CPU);
+        (
+            *regs.get_reg(Reg::R0),
+            *regs.get_reg(Reg::R1),
+            *regs.get_reg(Reg::R2),
+        )
+    };
+
+    let fixed = length_mode & (1 << 24) != 0;
+    let size = (length_mode & 0xFFFFF) << 2;
+
+    for i in (0..size).step_by(4) {
+        let addr = if fixed { src } else { src + i };
+        let value = hle.mem_read::<CPU, u32>(addr);
+        hle.mem_write::<CPU, u32>(dest + i, value);
+    }
 }
 
 pub fn cpu_set<const CPU: CpuType>(hle: &mut Hle) {

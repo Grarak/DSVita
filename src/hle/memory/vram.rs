@@ -570,7 +570,11 @@ impl Vram {
                             VramMap::new(self.banks.get_f());
                     }
                     4 => {
-                        todo!()
+                        let ofs = u8::from(cnt_f.ofs()) as usize;
+                        let vram_map = VramMap::<BANK_F_SIZE>::new(self.banks.get_f());
+                        for i in 0..2 {
+                            self.bg_ext_palette_a[(ofs & 1) * 2 + i] = vram_map.extract_section(i);
+                        }
                     }
                     5 => {
                         self.obj_ext_palette_a =

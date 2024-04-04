@@ -1,95 +1,82 @@
+#![feature(proc_macro_quote)]
+
 extern crate proc_macro;
+
 use proc_macro::{Span, TokenStream};
+use syn::__private::quote::{format_ident, quote_spanned};
 use syn::__private::ToTokens;
 use syn::parse::{Parse, ParseStream};
-use syn::punctuated::Punctuated;
+use syn::token::DotDotEq;
 use syn::{
-    parse_macro_input, Arm, Block, Expr, ExprBlock, ExprMatch, Lit, LitInt, Pat, PatLit, PatOr,
-    Stmt, Token,
+    parse_macro_input, parse_quote_spanned, Arm, Block, Expr, ExprBlock, ExprLit, ExprMatch,
+    ExprRange, Lit, LitInt, Pat, RangeLimits, Stmt,
 };
 
-fn write_block(base: u32, size: usize) -> Block {
-    let block = if size == 1 {
-        format!(
-            "
-{{
-    let value = bytes_window[index];
-    addr_offset_tmp += 1;
-    {{ block_placeholder() }}
-}}
-",
-        )
+fn write_block(base: u32, size: usize, span: Span) -> Block {
+    if size == 1 {
+        parse_quote_spanned! {span.into()=>{
+            let value = bytes_window[index];
+            addr_offset_tmp += 1;
+            #[allow(unused_braces)]
+            { block_placeholder() }
+        }}
     } else {
+        let type_str = format_ident!("u{}", size << 3);
         let (le_bytes_arg, le_mask_arg) = if size == 2 {
             (
-                "bytes_window[index_start], bytes_window[index_start + 1]",
-                "mask_window[index_start], mask_window[index_start + 1]",
+                quote_spanned!(span.into()=> [bytes_window[index_start], bytes_window[index_start + 1]]),
+                quote_spanned!(span.into()=> [mask_window[index_start], mask_window[index_start + 1]]),
             )
         } else {
             (
-                "bytes_window[index_start], bytes_window[index_start + 1], bytes_window[index_start + 2], bytes_window[index_start + 3]",
-                "mask_window[index_start], mask_window[index_start + 1], mask_window[index_start + 2], mask_window[index_start + 3]",
+                quote_spanned!(span.into()=> [bytes_window[index_start], bytes_window[index_start + 1], bytes_window[index_start + 2], bytes_window[index_start + 3]]),
+                quote_spanned!(span.into()=> [mask_window[index_start], mask_window[index_start + 1], mask_window[index_start + 2], mask_window[index_start + 3]]),
             )
         };
-        format!(
-            "
-{{
-    let offset = addr_offset_tmp - {base};
-    let index_start = index - offset as usize;
-    let index_end = index_start + {size};
-    let value = u{}::from_le_bytes([{le_bytes_arg}]);
-    let mask = u{}::from_le_bytes([{le_mask_arg}]);
-    index = index_end - 1;
-    addr_offset_tmp = addr_offset + {size};
-    {{ block_placeholder() }}
-}}
-",
-            size << 3,
-            size << 3,
-        )
-    };
-
-    syn::parse_str(&block).unwrap()
+        parse_quote_spanned! {span.into()=>{
+            #[allow(unused_variables)]
+            {
+                let offset = addr_offset_tmp - #base;
+                let index_start = index - offset as usize;
+                let index_end = index_start + #size;
+                let value = #type_str::from_le_bytes(#le_bytes_arg);
+                let mask = #type_str::from_le_bytes(#le_mask_arg);
+                index = index_end - 1;
+                addr_offset_tmp = addr_offset + #size as u32;
+                #[allow(unused_braces)]
+                { block_placeholder() }
+            }
+        }}
+    }
 }
 
-fn read_block(base: u32, size: usize) -> Block {
-    let block = if size == 1 {
-        format!(
-            "
-{{
-    #[allow(unreachable_code)]
-    {{
-        let ret: u{} = {{ block_placeholder() }};
-        bytes_window[index] = ret;
-        addr_offset_tmp += 1;
-    }}
-}}
-        ",
-            size << 3
-        )
+fn read_block(base: u32, size: usize, span: Span) -> Block {
+    let type_str = format_ident!("u{}", size << 3);
+    if size == 1 {
+        parse_quote_spanned! {span.into()=>{
+            #[allow(unreachable_code)]
+            {
+                let ret: #type_str = { block_placeholder() };
+                bytes_window[index] = ret;
+                addr_offset_tmp += 1;
+            }
+        }}
     } else {
-        format!(
-            "
-{{
-    #[allow(unreachable_code)]
-    {{
-        let ret: u{} = {{ block_placeholder() }};
-        let bytes = ret.to_le_bytes();
-        let bytes = bytes.as_slice();
-        let offset = addr_offset_tmp - {base};
-        let index_start = index - offset as usize;
-        let index_end = index_start + {size};
-        bytes_window[index_start..index_end].copy_from_slice(bytes);
-        index = index_end - 1;
-        addr_offset_tmp = addr_offset + {size};
-    }}
-}}
-",
-            size << 3,
-        )
-    };
-
-    syn::parse_str(&block).unwrap()
+        parse_quote_spanned! {span.into()=>{
+            #[allow(unreachable_code)]
+            {
+                let ret: #type_str = { block_placeholder() };
+                let bytes = ret.to_le_bytes();
+                let bytes = bytes.as_slice();
+                let offset = addr_offset_tmp - #base;
+                let index_start = index - offset as usize;
+                let index_end = index_start + #size;
+                bytes_window[index_start..index_end].copy_from_slice(bytes);
+                index = index_end - 1;
+                addr_offset_tmp = addr_offset + #size as u32;
+            }
+        }}
+    }
 }
 
 fn place_block(block: &mut Block, replacement: &Expr) {
@@ -119,7 +106,7 @@ fn place_block(block: &mut Block, replacement: &Expr) {
                 Expr::Call(call) => {
                     if let Expr::Path(path) = call.func.as_mut() {
                         for segment in &path.path.segments {
-                            if segment.ident.to_string() == "block_placeholder" {
+                            if segment.ident == "block_placeholder" {
                                 *expr = replacement.clone();
                                 break;
                             }
@@ -151,24 +138,36 @@ fn traverse_match<const WRITE: bool>(expr: &mut ExprMatch) {
                     }
                     None
                 };
-                let replace = |arm: &mut Arm, addrs: &[u32], span: Span| {
-                    let mut cases: Punctuated<Pat, Token![|]> = Punctuated::new();
-                    for addr in addrs {
-                        cases.push(Pat::Lit(PatLit {
+                let replace = |arm: &mut Arm, addr: u32, length: u32, span: Span| {
+                    arm.pat = if length == 1 {
+                        Pat::Lit(ExprLit {
                             attrs: Vec::new(),
                             lit: Lit::Int(LitInt::new(&addr.to_string(), span.into())),
-                        }));
-                    }
-                    arm.pat = Pat::Or(PatOr {
-                        attrs: Vec::new(),
-                        leading_vert: None,
-                        cases,
-                    });
+                        })
+                    } else {
+                        Pat::Range(ExprRange {
+                            attrs: Vec::new(),
+                            start: Some(Box::new(Expr::Lit(ExprLit {
+                                attrs: Vec::new(),
+                                lit: Lit::Int(LitInt::new(&addr.to_string(), span.into())),
+                            }))),
+                            limits: RangeLimits::Closed(DotDotEq {
+                                spans: [span.into(); 3],
+                            }),
+                            end: Some(Box::new(Expr::Lit(ExprLit {
+                                attrs: Vec::new(),
+                                lit: Lit::Int(LitInt::new(
+                                    &(addr + length - 1).to_string(),
+                                    span.into(),
+                                )),
+                            }))),
+                        })
+                    };
 
                     let mut new_block = if WRITE {
-                        write_block(addrs[0], addrs.len())
+                        write_block(addr, length as usize, span)
                     } else {
-                        read_block(addrs[0], addrs.len())
+                        read_block(addr, length as usize, span)
                     };
 
                     place_block(&mut new_block, &arm.body);
@@ -182,17 +181,17 @@ fn traverse_match<const WRITE: bool>(expr: &mut ExprMatch) {
                 match ident.to_string().as_str() {
                     "io8" => {
                         if let Some((addr, span)) = get_addr() {
-                            replace(arm, &[addr], span.unwrap());
+                            replace(arm, addr, 1, span.unwrap());
                         }
                     }
                     "io16" => {
                         if let Some((addr, span)) = get_addr() {
-                            replace(arm, &[addr, addr + 1], span.unwrap());
+                            replace(arm, addr, 2, span.unwrap());
                         }
                     }
                     "io32" => {
                         if let Some((addr, span)) = get_addr() {
-                            replace(arm, &[addr, addr + 1, addr + 2, addr + 3], span.unwrap());
+                            replace(arm, addr, 4, span.unwrap());
                         }
                     }
                     _ => {}

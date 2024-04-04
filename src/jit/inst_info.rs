@@ -149,7 +149,8 @@ impl InstInfo {
             | Op::Smlabb
             | Op::Smlatb
             | Op::Smlawb
-            | Op::Smlawt => {
+            | Op::Smlawt
+            | Op::Smlabt => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();

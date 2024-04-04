@@ -3,7 +3,7 @@ use crate::hle::gpu::gpu_2d::{Gpu2D, Gpu2DEngine};
 use crate::hle::memory::mem::Memory;
 
 impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
-    pub fn draw_text<const BG: usize>(&mut self, line: u8, mem: &Memory) {
+    pub(super) fn draw_text<const BG: usize>(&mut self, line: u8, mem: &Memory) {
         if BG == 0 && bool::from(self.inner.disp_cnt.bg0_3d()) {
             // TODO 3d
             return;
@@ -16,7 +16,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
     }
 
-    pub fn draw_text_pixels<const BG: usize, const BIT8: bool>(&mut self, line: u8, mem: &Memory) {
+    pub(super) fn draw_text_pixels<const BG: usize, const BIT8: bool>(
+        &mut self,
+        line: u8,
+        mem: &Memory,
+    ) {
         let disp_cnt = self.inner.disp_cnt;
         let bg_cnt = self.inner.bg_cnt[BG];
 
@@ -64,7 +68,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
             let tile_addr = tile_base_addr + ((x_offset & 0xF8) >> 2);
 
             if x_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 2) != 0 {
-                todo!()
+                // todo!()
             }
 
             let tile = self.read_bg::<u16>(tile_addr, mem);

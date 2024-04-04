@@ -14,7 +14,7 @@ use std::mem;
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
-pub struct DispCnt {
+pub(super) struct DispCnt {
     pub bg_mode: u3,
     pub bg0_3d: u1,
     pub tile_obj_mapping: u1,
@@ -71,7 +71,7 @@ impl From<u8> for DisplayMode {
 
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
-pub struct BgCnt {
+pub(super) struct BgCnt {
     pub priority: u2,
     pub char_base_block: u2,
     pub not_used: u2,
@@ -115,7 +115,7 @@ impl Default for BldCnt {
 
 #[bitsize(16)]
 #[derive(FromBits)]
-pub struct TextBgScreen {
+pub(super) struct TextBgScreen {
     pub tile_num: u10,
     pub h_flip: u1,
     pub v_flip: u1,
@@ -136,7 +136,7 @@ struct Gpu2DInternal {
 }
 
 #[derive(Default)]
-pub struct Gpu2DInner {
+pub(super) struct Gpu2DInner {
     pub disp_cnt: DispCnt,
     pub bg_cnt: [BgCnt; 4],
     pub bg_h_ofs: [u16; 4],
@@ -148,6 +148,7 @@ pub struct Gpu2DInner {
     bg_x: [i32; 2],
     bg_y: [i32; 2],
     bld_cnt: BldCnt,
+    bld_alpha: u16,
     win_x1: [u8; 2],
     win_x2: [u8; 2],
     win_in: u16,
@@ -219,7 +220,7 @@ impl Gpu2DLayers {
 }
 
 pub struct Gpu2D<const ENGINE: Gpu2DEngine> {
-    pub inner: Gpu2DInner,
+    pub(super) inner: Gpu2DInner,
     layers: Gpu2DLayers,
     pub framebuffer: HeapMemU32<{ DISPLAY_PIXEL_COUNT }>,
 }
@@ -232,7 +233,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
     }
 
-    pub const fn get_palettes_offset() -> u32 {
+    pub(super) const fn get_palettes_offset() -> u32 {
         match ENGINE {
             Gpu2DEngine::A => 0,
             Gpu2DEngine::B => 0x400,
@@ -253,7 +254,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
     }
 
-    pub fn read_bg<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
+    pub(super) fn read_bg<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
         mem.vram.read::<{ ARM9 }, _>(Self::get_bg_offset() + addr)
     }
 
@@ -295,6 +296,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
 
     pub fn get_bld_cnt(&self) -> u16 {
         self.inner.bld_cnt.into()
+    }
+
+    pub fn get_bld_alpha(&self) -> u16 {
+        self.inner.bld_alpha
     }
 
     pub fn set_disp_cnt(&mut self, mut mask: u32, value: u32) {
@@ -703,7 +708,6 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
             let priority = ((object[2] >> 10) & 0x3) as i8 - 1;
 
             if type_ == 3 {
-                todo!();
                 let (data_base_addr, bitmap_width) =
                     if bool::from(self.inner.disp_cnt.bitmap_obj_mapping()) {
                         (
@@ -1057,7 +1061,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
     }
 
-    pub fn draw_bg_pixel<const BG: usize>(&mut self, line: u8, x: usize, pixel: u32) {
+    pub(super) fn draw_bg_pixel<const BG: usize>(&mut self, line: u8, x: usize, pixel: u32) {
         let pixels_a = self.layers.get_pixels_mut::<{ Gpu2DLayer::A }>();
         let pixels_b = self.layers.get_pixels_mut::<{ Gpu2DLayer::B }>();
         let priorities_a = self.layers.get_priorities_mut::<{ Gpu2DLayer::A }>();

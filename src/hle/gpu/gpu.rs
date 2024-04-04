@@ -263,7 +263,8 @@ impl CycleEvent for Scanline256Event {
             let disp_stat = &mut gpu.disp_stat[i];
             disp_stat.set_h_blank_flag(u1::new(1));
             if bool::from(disp_stat.h_blank_irq_enable()) {
-                todo!()
+                get_cpu_regs_mut!(hle, CpuType::from(i as u8))
+                    .send_interrupt(InterruptFlag::LcdHBlank, get_cm!(hle));
             }
         }
 
