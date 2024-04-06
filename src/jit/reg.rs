@@ -27,7 +27,6 @@ pub enum Reg {
 
 const GP_REGS_BITMASK: u32 = 0x1FFF;
 const GP_THUMB_REGS_BITMASK: u32 = 0xFF;
-const CALL_PRESERVED_BITMASK: u32 = 0x2FF0;
 const EMULATED_REGS_BITMASK: u32 = (1 << Reg::LR as u8) | (1 << Reg::PC as u8);
 pub const FIRST_EMULATED_REG: Reg = Reg::LR;
 pub const EMULATED_REGS_COUNT: usize = u32::count_ones(EMULATED_REGS_BITMASK) as usize;
@@ -63,12 +62,27 @@ impl<'a> iter::Sum<&'a Reg> for RegReserve {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct RegReserve(pub u32);
+
+macro_rules! reg_reserve {
+    ($($reg:expr),*) => {
+        {
+            #[allow(unused_mut)]
+            let mut reg_reserve = crate::jit::reg::RegReserve::new();
+            $(
+                reg_reserve += ($reg);
+            )*
+            reg_reserve
+        }
+    };
+}
+
+pub(crate) use reg_reserve;
 
 impl RegReserve {
     pub fn new() -> Self {
-        RegReserve(0)
+        RegReserve::default()
     }
 
     pub fn gp() -> Self {
@@ -79,8 +93,8 @@ impl RegReserve {
         RegReserve(GP_THUMB_REGS_BITMASK)
     }
 
-    pub fn call_preserved() -> Self {
-        RegReserve(CALL_PRESERVED_BITMASK)
+    pub fn caller_saved_gp() -> Self {
+        reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12)
     }
 
     pub fn is_reserved(&self, reg: Reg) -> bool {
@@ -305,18 +319,3 @@ impl Iterator for RegReserveIter {
         None
     }
 }
-
-macro_rules! reg_reserve {
-    ($($reg:expr),*) => {
-        {
-            #[allow(unused_mut)]
-            let mut reg_reserve = crate::jit::reg::RegReserve::new();
-            $(
-                reg_reserve += ($reg);
-            )*
-            reg_reserve
-        }
-    };
-}
-
-pub(crate) use reg_reserve;

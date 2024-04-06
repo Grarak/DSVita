@@ -44,7 +44,7 @@ impl CycleManager {
     pub fn schedule(&self, in_cycles: u32, mut event: Box<dyn CycleEvent>) -> u64 {
         debug_assert_ne!(in_cycles, 0);
         let event_cycle = self.cycle_count + in_cycles as u64;
-        let events = unsafe { self.events.get().as_mut().unwrap_unchecked() };
+        let events = unsafe { self.events.get().as_mut().unwrap() };
         let index = events
             .binary_search_by_key(&event_cycle, |(cycles, _)| *cycles)
             .unwrap_or_else(|index| index);

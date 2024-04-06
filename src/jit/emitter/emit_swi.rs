@@ -11,7 +11,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let is_halt = swi_code == 6;
 
         if is_halt {
-            self.emit_halt::<THUMB>(pc);
+            self.emit_halt::<THUMB>(buf_index, pc);
         } else {
             let emu_addr = self.emu as *mut _ as _;
             self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(

@@ -5,17 +5,17 @@ use std::{mem, ops};
 pub mod assembler;
 pub mod disassembler;
 mod emitter;
+mod inst_cp15_handler;
+mod inst_cpu_regs_handler;
+mod inst_exception_handler;
 pub mod inst_info;
 mod inst_info_thumb;
 mod inst_mem_handler;
+mod inst_threag_regs_handler;
 pub mod jit_asm;
 pub mod jit_memory;
 pub mod op;
 pub mod reg;
-mod inst_exception_handler;
-mod inst_threag_regs_handler;
-mod inst_cp15_handler;
-mod inst_cpu_regs_handler;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]

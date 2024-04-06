@@ -216,48 +216,6 @@ impl JitMemory {
         }
     }
 
-    pub fn get_jit_start_addr_unchecked<const THUMB: bool>(
-        &self,
-        guest_pc: u32,
-        jit_block_addr: u32,
-    ) -> Option<(u32, u16, u32)> {
-        if THUMB {
-            let block = unsafe {
-                (jit_block_addr as *const JitBlock<{ JIT_BLOCK_SIZE as usize / 2 }>)
-                    .as_ref()
-                    .unwrap_unchecked()
-            };
-            if likely(block.jit_addr != 0) {
-                let inst_offset = (guest_pc & (JIT_BLOCK_SIZE - 1)) >> 1;
-                let inst_entry = &block.inst_entries[inst_offset as usize];
-                Some((
-                    block.jit_addr + inst_entry.addr_offset as u32,
-                    inst_entry.pre_cycle_sum,
-                    block as *const _ as u32,
-                ))
-            } else {
-                None
-            }
-        } else {
-            let block = unsafe {
-                (jit_block_addr as *const JitBlock<{ JIT_BLOCK_SIZE as usize / 4 }>)
-                    .as_ref()
-                    .unwrap_unchecked()
-            };
-            if likely(block.jit_addr != 0) {
-                let inst_offset = (guest_pc & (JIT_BLOCK_SIZE - 1)) >> 2;
-                let inst_entry = &block.inst_entries[inst_offset as usize];
-                Some((
-                    block.jit_addr + inst_entry.addr_offset as u32,
-                    inst_entry.pre_cycle_sum,
-                    block as *const _ as u32,
-                ))
-            } else {
-                None
-            }
-        }
-    }
-
     #[inline(always)]
     pub fn get_jit_start_addr<const CPU: CpuType, const THUMB: bool>(
         &self,
@@ -309,7 +267,6 @@ impl JitMemory {
         }
     }
 
-    #[inline]
     pub fn get_cycle_counts_unchecked<const THUMB: bool>(
         &self,
         guest_pc: u32,

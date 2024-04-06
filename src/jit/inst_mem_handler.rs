@@ -1,4 +1,4 @@
-use crate::emu::emu::{get_regs_mut, Emu};
+use crate::emu::emu::{get_jit, get_regs_mut, Emu};
 use crate::emu::CpuType;
 use crate::jit::MemoryAmount;
 use std::arch::asm;
@@ -221,7 +221,13 @@ pub unsafe extern "C" fn inst_mem_handler<
         asm.emu,
     );
     if WRITE && unlikely(asm.emu.mem.breakout_imm) {
-        asm.branch_out_data.guest_pc = pc;
+        asm.runtime_data.branch_out_pc = pc;
+        let (pre_cycles_sum, inst_cycle_count) = get_jit!(asm.emu)
+            .get_cycle_counts_unchecked::<THUMB>(
+                asm.runtime_data.branch_out_pc,
+                asm.emu.mem.current_jit_block_addr,
+            );
+        asm.runtime_data.branch_out_total_cycles = pre_cycles_sum + inst_cycle_count as u16;
         get_regs_mut!(asm.emu, CPU).pc = pc + if THUMB { 3 } else { 4 };
         asm.emu.mem.breakout_imm = false;
         if THUMB {
@@ -252,7 +258,13 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
         pc, rlist, op0, asm.emu,
     );
     if WRITE && unlikely(asm.emu.mem.breakout_imm) {
-        asm.branch_out_data.guest_pc = pc;
+        asm.runtime_data.branch_out_pc = pc;
+        let (pre_cycles_sum, inst_cycle_count) = get_jit!(asm.emu)
+            .get_cycle_counts_unchecked::<THUMB>(
+                asm.runtime_data.branch_out_pc,
+                asm.emu.mem.current_jit_block_addr,
+            );
+        asm.runtime_data.branch_out_total_cycles = pre_cycles_sum + inst_cycle_count as u16;
         get_regs_mut!(asm.emu, CPU).pc = pc + if THUMB { 3 } else { 4 };
         asm.emu.mem.breakout_imm = false;
         if THUMB {

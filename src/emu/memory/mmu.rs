@@ -94,6 +94,7 @@ impl MmuArm9 {
 }
 
 impl Mmu for MmuArm9 {
+    #[inline(never)]
     fn update_all(&self, emu: &Emu) {
         unsafe { (*self.inner.get()).update(0, u32::MAX, emu) };
     }
@@ -220,6 +221,7 @@ impl MmuArm7 {
 }
 
 impl Mmu for MmuArm7 {
+    #[inline(never)]
     fn update_all(&self, emu: &Emu) {
         unsafe { (*self.inner.get()).update(0, u32::MAX, emu) };
     }

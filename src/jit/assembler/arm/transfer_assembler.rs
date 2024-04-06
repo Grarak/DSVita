@@ -305,6 +305,52 @@ impl LdrStrRegSBHD {
 
 #[bitsize(32)]
 #[derive(FromBits)]
+pub struct LdrStrImmSBHD {
+    pub imm_lower: u4,
+    id: u1,
+    pub opcode: u2,
+    id2: u1,
+    pub imm_upper: u4,
+    pub rd: u4,
+    pub rn: u4,
+    pub load_store: u1,
+    pub write_back: u1,
+    pub imm: u1,
+    pub up_down: u1,
+    pub pre_post: u1,
+    id3: u3,
+    pub cond: u4,
+}
+
+impl LdrStrImmSBHD {
+    #[inline]
+    pub fn strh(op0: Reg, op1: Reg, op2: u8, cond: Cond) -> u32 {
+        u32::from(Self::new(
+            u4::new(op2 & 0xF),
+            u1::new(1),
+            u2::new(1),
+            u1::new(1),
+            u4::new(op2 >> 4),
+            u4::new(op0 as u8),
+            u4::new(op1 as u8),
+            u1::new(0),
+            u1::new(0),
+            u1::new(1),
+            u1::new(1),
+            u1::new(1),
+            u3::new(0),
+            u4::new(cond as u8),
+        ))
+    }
+
+    #[inline]
+    pub fn strh_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
+        Self::strh(op0, op1, op2, Cond::AL)
+    }
+}
+
+#[bitsize(32)]
+#[derive(FromBits)]
 pub struct LdmStm {
     pub rlist: u16,
     pub rn: u4,

@@ -2,7 +2,7 @@ use crate::emu::emu::{get_cm, get_regs, get_regs_mut};
 use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::{Bx, B};
-use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs};
+use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, LdrStrImmSBHD, Mrs};
 use crate::jit::inst_info::{Operand, Shift, ShiftValue};
 use crate::jit::inst_threag_regs_handler::register_restore_spsr;
 use crate::jit::jit_asm::JitAsm;
@@ -86,7 +86,11 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
 
             opcodes.extend(&AluImm::mov32(Reg::R0, pc));
-            opcodes.extend(self.branch_out_data.emit_get_guest_pc_addr(Reg::R1));
+            opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R1));
+            opcodes.push(AluImm::mov16_al(
+                Reg::R5,
+                self.jit_buf.insts_cycle_counts[buf_index],
+            ));
 
             if CPU == CpuType::ARM7
                 || (!op.is_single_mem_transfer() && !op.is_multiple_mem_transfer())
@@ -125,8 +129,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 opcodes.push(AluShiftImm::orr_al(Reg::R2, Reg::R2, Reg::R3));
                 opcodes.extend(regs.emit_set_reg(Reg::PC, Reg::R2, Reg::R3));
             }
-
+            
             opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::R1));
+            opcodes.push(LdrStrImmSBHD::strh_al(Reg::R5, Reg::R1, 4));
 
             Self::emit_host_bx(self.breakout_skip_save_regs_addr, opcodes);
         }
