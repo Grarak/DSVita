@@ -8,7 +8,6 @@ use crate::jit::inst_cpu_regs_handler::cpu_regs_halt;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::Op;
-use std::ptr;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_halt<const THUMB: bool>(&mut self, pc: u32) {
@@ -21,10 +20,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         ));
 
         self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R0, pc));
-        self.jit_buf.emit_opcodes.extend(AluImm::mov32(
-            Reg::R1,
-            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-        ));
+        self.jit_buf
+            .emit_opcodes
+            .extend(self.branch_out_data.emit_get_guest_pc_addr(Reg::R1));
         self.jit_buf
             .emit_opcodes
             .push(AluImm::add_al(Reg::R2, Reg::R0, if THUMB { 2 } else { 4 }));

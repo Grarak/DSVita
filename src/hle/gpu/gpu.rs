@@ -171,11 +171,6 @@ impl Gpu {
             (256 + 8) * 6,
             Box::new(Scanline256Event::new()),
         );
-        cycle_manager.schedule(
-            // 8 pixel delay according to https://melonds.kuribo64.net/board/thread.php?id=13
-            (355 + 8) * 6,
-            Box::new(Scanline355Event::new()),
-        );
     }
 
     pub fn get_disp_stat<const CPU: CpuType>(&self) -> u16 {
@@ -229,7 +224,6 @@ impl Gpu {
     }
 }
 
-#[derive(Clone)]
 struct Scanline256Event {}
 
 impl Scanline256Event {
@@ -268,11 +262,10 @@ impl CycleEvent for Scanline256Event {
             }
         }
 
-        get_cm!(hle).schedule(355 * 6 - delay as u32, Box::new(self.clone()));
+        get_cm!(hle).schedule((355 - 256) * 6, Box::new(Scanline355Event::new()));
     }
 }
 
-#[derive(Clone)]
 struct Scanline355Event {}
 
 impl Scanline355Event {
@@ -361,6 +354,6 @@ impl CycleEvent for Scanline355Event {
             gpu.disp_stat[i].set_h_blank_flag(u1::new(0));
         }
 
-        get_cm!(hle).schedule(355 * 6 - delay as u32, Box::new(self.clone()));
+        get_cm!(hle).schedule(256 * 6, Box::new(Scanline256Event::new()));
     }
 }

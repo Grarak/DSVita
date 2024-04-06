@@ -5,7 +5,6 @@ use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::Op;
-use std::ptr;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_thumb(&mut self, buf_index: usize, pc: u32) {
@@ -98,10 +97,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.jit_buf
                 .emit_opcodes
                 .extend(&AluImm::mov32(Reg::R0, pc));
-            self.jit_buf.emit_opcodes.extend(AluImm::mov32(
-                Reg::LR,
-                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-            ));
+            self.jit_buf
+                .emit_opcodes
+                .extend(self.branch_out_data.emit_get_guest_pc_addr(Reg::LR));
 
             if CPU == CpuType::ARM7 || op != Op::PopPcT || op == Op::AddHT || op == Op::MovHT {
                 let thread_regs = get_regs!(self.hle, CPU);

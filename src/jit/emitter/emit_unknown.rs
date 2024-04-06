@@ -4,7 +4,6 @@ use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::inst_exception_handler::bios_uninterrupt;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
-use std::ptr;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_unknown(&mut self, buf_index: usize, pc: u32) {
@@ -24,10 +23,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             );
 
             self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R0, pc));
-            self.jit_buf.emit_opcodes.extend(AluImm::mov32(
-                Reg::R1,
-                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-            ));
+            self.jit_buf
+                .emit_opcodes
+                .extend(self.branch_out_data.emit_get_guest_pc_addr(Reg::R1));
             self.jit_buf
                 .emit_opcodes
                 .push(LdrStrImm::str_al(Reg::R0, Reg::R1));

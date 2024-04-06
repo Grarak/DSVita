@@ -1,4 +1,6 @@
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Clz, MulReg};
+use crate::jit::assembler::arm::alu_assembler::{
+    AluImm, AluReg, AluShiftImm, Clz, MulReg, QAddSub,
+};
 use crate::jit::inst_info_thumb::InstInfoThumb;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
@@ -150,7 +152,10 @@ impl InstInfo {
             | Op::Smlatb
             | Op::Smlawb
             | Op::Smlawt
-            | Op::Smlabt => {
+            | Op::Smlabt
+            | Op::Smlaltt
+            | Op::Smultt
+            | Op::Smulwt => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();
@@ -164,7 +169,13 @@ impl InstInfo {
                 }
                 u32::from(opcode)
             }
-            Op::Smull | Op::Smulls | Op::Smlal | Op::Smlals | Op::Umull | Op::Umlal => {
+            Op::Smull
+            | Op::Smulls
+            | Op::Smlal
+            | Op::Smlals
+            | Op::Umull
+            | Op::Umulls
+            | Op::Umlal => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();
@@ -174,6 +185,16 @@ impl InstInfo {
                 opcode.set_rd(u4::new(reg1 as u8));
                 opcode.set_rm(u4::new(reg2 as u8));
                 opcode.set_rs(u4::new(reg3 as u8));
+                u32::from(opcode)
+            }
+            Op::Qsub => {
+                let mut opcode = QAddSub::from(self.opcode);
+                let reg0 = *operands[0].as_reg_no_shift().unwrap();
+                let reg1 = *operands[1].as_reg_no_shift().unwrap();
+                let reg2 = *operands[2].as_reg_no_shift().unwrap();
+                opcode.set_rd(u4::new(reg0 as u8));
+                opcode.set_rm(u4::new(reg1 as u8));
+                opcode.set_rn(u4::new(reg2 as u8));
                 u32::from(opcode)
             }
             Op::Clz => {

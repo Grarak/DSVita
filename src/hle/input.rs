@@ -35,7 +35,7 @@ impl Input {
 
     pub fn get_key_input(&self) -> u16 {
         let key_map = self.key_map.load(Ordering::Relaxed);
-        (self.key_input & !0x1FF) | (key_map & 0x1FF)
+        (self.key_input & !0x3FF) | (key_map & 0x3FF)
     }
 
     pub fn get_ext_key_in(&self) -> u16 {

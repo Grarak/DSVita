@@ -900,6 +900,18 @@ impl MulReg {
 
 #[bitsize(32)]
 #[derive(FromBits)]
+pub struct QAddSub {
+    pub rm: u4,
+    id: u8,
+    pub rd: u4,
+    pub rn: u4,
+    pub op: u4,
+    id2: u4,
+    pub cond: u4,
+}
+
+#[bitsize(32)]
+#[derive(FromBits)]
 pub struct Clz {
     pub rm: u4,
     pub id: u8,

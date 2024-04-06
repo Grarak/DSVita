@@ -383,9 +383,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         // if base_ptr == nullptr
         let mut slow_read_opcodes = Vec::new();
         {
-            // Restore cpsr flags
-            slow_read_opcodes.push(Msr::cpsr_flags(physical_addr_reg, Cond::AL));
-
             static mut CALCULATED_ADDR_TMP: u32 = 0;
             unsafe {
                 let tmp_ptr = ptr::addr_of_mut!(CALCULATED_ADDR_TMP) as u32;

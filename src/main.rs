@@ -167,30 +167,31 @@ fn execute_jit(hle: &mut Hle) {
     get_mmu!(jit_asm_arm9.hle, ARM9).update_all(hle);
     get_mmu!(jit_asm_arm7.hle, ARM7).update_all(hle);
 
+    let cpu_regs_arm9 = get_cpu_regs!(hle, ARM9);
+    let cpu_regs_arm7 = get_cpu_regs!(hle, ARM7);
+
+    let cm = &mut hle.common.cycle_manager;
+
     loop {
-        let mut arm9_cycles = if likely(!get_cpu_regs!(hle, ARM9).is_halted()) {
+        let arm9_cycles = if likely(!cpu_regs_arm9.is_halted()) {
             (jit_asm_arm9.execute() + 1) >> 1
         } else {
             0
         };
 
-        let arm7_cycles = if likely(!get_cpu_regs!(hle, ARM7).is_halted()) {
+        let arm7_cycles = if likely(!cpu_regs_arm7.is_halted()) {
             jit_asm_arm7.execute()
         } else {
             0
         };
 
-        while likely(!get_cpu_regs!(hle, ARM9).is_halted()) && (arm7_cycles > arm9_cycles) {
-            arm9_cycles += (jit_asm_arm9.execute() + 1) >> 1;
-        }
-
         let cycles = min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);
         if unlikely(cycles == 0) {
-            hle.common.cycle_manager.jump_to_next_event();
+            cm.jump_to_next_event();
         } else {
-            hle.common.cycle_manager.add_cycle(cycles);
+            cm.add_cycle(cycles);
         }
-        get_cm!(hle).check_events(jit_asm_arm9.hle);
+        cm.check_events(jit_asm_arm9.hle);
     }
 }
 

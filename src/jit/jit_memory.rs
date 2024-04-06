@@ -111,7 +111,9 @@ impl JitMemory {
             self.mem_offset = self.mem_common_offset;
             self.jit_blocks.reset();
             self.jit_blocks_thumb.reset();
-            self.mem_offset
+            let addr = self.mem_offset;
+            self.mem_offset += required_size;
+            addr
         } else {
             let addr = self.mem_offset;
             self.mem_offset += required_size;
@@ -214,6 +216,48 @@ impl JitMemory {
         }
     }
 
+    pub fn get_jit_start_addr_unchecked<const THUMB: bool>(
+        &self,
+        guest_pc: u32,
+        jit_block_addr: u32,
+    ) -> Option<(u32, u16, u32)> {
+        if THUMB {
+            let block = unsafe {
+                (jit_block_addr as *const JitBlock<{ JIT_BLOCK_SIZE as usize / 2 }>)
+                    .as_ref()
+                    .unwrap_unchecked()
+            };
+            if likely(block.jit_addr != 0) {
+                let inst_offset = (guest_pc & (JIT_BLOCK_SIZE - 1)) >> 1;
+                let inst_entry = &block.inst_entries[inst_offset as usize];
+                Some((
+                    block.jit_addr + inst_entry.addr_offset as u32,
+                    inst_entry.pre_cycle_sum,
+                    block as *const _ as u32,
+                ))
+            } else {
+                None
+            }
+        } else {
+            let block = unsafe {
+                (jit_block_addr as *const JitBlock<{ JIT_BLOCK_SIZE as usize / 4 }>)
+                    .as_ref()
+                    .unwrap_unchecked()
+            };
+            if likely(block.jit_addr != 0) {
+                let inst_offset = (guest_pc & (JIT_BLOCK_SIZE - 1)) >> 2;
+                let inst_entry = &block.inst_entries[inst_offset as usize];
+                Some((
+                    block.jit_addr + inst_entry.addr_offset as u32,
+                    inst_entry.pre_cycle_sum,
+                    block as *const _ as u32,
+                ))
+            } else {
+                None
+            }
+        }
+    }
+
     #[inline(always)]
     pub fn get_jit_start_addr<const CPU: CpuType, const THUMB: bool>(
         &self,
@@ -225,8 +269,8 @@ impl JitMemory {
                 let addr_entry = addr_entry % $blocks.len();
                 let block = &$blocks[addr_entry];
                 if likely(block.jit_addr != 0) {
-                    let guest_pc_block_base = guest_pc & !(JIT_BLOCK_SIZE - 1);
-                    let inst_offset = (guest_pc - guest_pc_block_base) >> if THUMB { 1 } else { 2 };
+                    let inst_offset =
+                        (guest_pc & (JIT_BLOCK_SIZE - 1)) >> if THUMB { 1 } else { 2 };
                     let inst_entry = &block.inst_entries[inst_offset as usize];
                     Some((
                         block.jit_addr + inst_entry.addr_offset as u32,
@@ -266,45 +310,29 @@ impl JitMemory {
     }
 
     #[inline]
-    pub fn get_cycle_counts_unchecked<const CPU: CpuType, const THUMB: bool>(
+    pub fn get_cycle_counts_unchecked<const THUMB: bool>(
         &self,
         guest_pc: u32,
+        jit_block_addr: u32,
     ) -> (u16, u8) {
-        macro_rules! get_cycle_counts {
-            ($blocks:expr) => {{
-                let addr_entry = (guest_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
-                let addr_entry = addr_entry % $blocks.len();
-                let block = &$blocks[addr_entry];
-                let guest_pc_block_base = guest_pc & !(JIT_BLOCK_SIZE - 1);
-                let inst_offset = (guest_pc - guest_pc_block_base) >> if THUMB { 1 } else { 2 };
-                let inst_entry = &block.inst_entries[inst_offset as usize];
-                (inst_entry.pre_cycle_sum, inst_entry.inst_cycle_count)
-            }};
-        }
-        macro_rules! get_counts {
-            ($block_name:ident) => {{
-                if THUMB {
-                    get_cycle_counts!(self.jit_blocks_thumb.$block_name)
-                } else {
-                    get_cycle_counts!(self.jit_blocks.$block_name)
-                }
-            }};
-        }
-        match CPU {
-            CpuType::ARM9 => match guest_pc & 0xFF000000 {
-                regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => {
-                    get_counts!(itcm)
-                }
-                regions::MAIN_MEMORY_OFFSET => get_counts!(main_arm9),
-                0xFF000000 => get_counts!(arm9_bios),
-                _ => todo!("{:x} {:x}", guest_pc, guest_pc & 0xFF000000),
-            },
-            CpuType::ARM7 => match guest_pc & 0xFF000000 {
-                regions::ARM7_BIOS_OFFSET => get_counts!(arm7_bios),
-                regions::MAIN_MEMORY_OFFSET => get_counts!(main_arm7),
-                regions::SHARED_WRAM_OFFSET => get_counts!(wram),
-                _ => todo!("{:x} {:x}", guest_pc, guest_pc & 0xFF000000),
-            },
+        if THUMB {
+            let block = unsafe {
+                (jit_block_addr as *const JitBlock<{ JIT_BLOCK_SIZE as usize / 2 }>)
+                    .as_ref()
+                    .unwrap_unchecked()
+            };
+            let inst_offset = (guest_pc & (JIT_BLOCK_SIZE - 1)) >> 1;
+            let inst_entry = &block.inst_entries[inst_offset as usize];
+            (inst_entry.pre_cycle_sum, inst_entry.inst_cycle_count)
+        } else {
+            let block = unsafe {
+                (jit_block_addr as *const JitBlock<{ JIT_BLOCK_SIZE as usize / 4 }>)
+                    .as_ref()
+                    .unwrap_unchecked()
+            };
+            let inst_offset = (guest_pc & (JIT_BLOCK_SIZE - 1)) >> 2;
+            let inst_entry = &block.inst_entries[inst_offset as usize];
+            (inst_entry.pre_cycle_sum, inst_entry.inst_cycle_count)
         }
     }
 

@@ -8,7 +8,6 @@ use crate::jit::inst_threag_regs_handler::register_restore_spsr;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve, EMULATED_REGS_COUNT, FIRST_EMULATED_REG};
 use crate::jit::{Cond, Op, ShiftType};
-use std::ptr;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit(&mut self, buf_index: usize, pc: u32) {
@@ -87,10 +86,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
 
             opcodes.extend(&AluImm::mov32(Reg::R0, pc));
-            opcodes.extend(AluImm::mov32(
-                Reg::R1,
-                ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-            ));
+            opcodes.extend(self.branch_out_data.emit_get_guest_pc_addr(Reg::R1));
 
             if CPU == CpuType::ARM7
                 || (!op.is_single_mem_transfer() && !op.is_multiple_mem_transfer())

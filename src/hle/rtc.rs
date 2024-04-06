@@ -121,7 +121,7 @@ impl Rtc {
                 if self.write_count == 8 {
                     self.update_date_time();
                 }
-                (self.date_time[(self.write_count / 8 - 5) as usize] >> (self.write_count & 7)) & 1
+                (self.date_time[(self.write_count / 8 + 3) as usize] >> (self.write_count & 7)) & 1
                     == 1
             }
             _ => {

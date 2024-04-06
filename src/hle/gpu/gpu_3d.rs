@@ -9,6 +9,10 @@ impl Gpu3D {
         }
     }
 
+    pub fn get_clip_mtx_result(&self, index: usize) -> u32 {
+        0
+    }
+
     pub fn set_swap_buffers(&mut self, mask: u32, value: u32) {}
 
     pub fn set_viewport(&mut self, mask: u32, value: u32) {}

@@ -47,17 +47,17 @@ impl LdrStrImm {
 
     #[inline]
     pub fn ldr_offset_al(op0: Reg, op1: Reg, offset: u16) -> u32 {
-        LdrStrImm::ldr(op0, op1, offset, false, false, true, true, Cond::AL)
+        Self::ldr(op0, op1, offset, false, false, true, true, Cond::AL)
     }
 
     #[inline]
     pub fn ldr_sub_offset_al(op0: Reg, op1: Reg, offset: u16) -> u32 {
-        LdrStrImm::ldr(op0, op1, offset, false, false, false, true, Cond::AL)
+        Self::ldr(op0, op1, offset, false, false, false, true, Cond::AL)
     }
 
     #[inline]
     pub fn ldr_al(op0: Reg, op1: Reg) -> u32 {
-        LdrStrImm::ldr_offset_al(op0, op1, 0)
+        Self::ldr_offset_al(op0, op1, 0)
     }
 
     #[inline]
@@ -88,12 +88,17 @@ impl LdrStrImm {
 
     #[inline]
     pub fn str_al(op0: Reg, op1: Reg) -> u32 {
-        LdrStrImm::str_offset_al(op0, op1, 0)
+        Self::str_offset_al(op0, op1, 0)
     }
 
     #[inline]
     pub fn str_offset_al(op0: Reg, op1: Reg, offset: u16) -> u32 {
-        LdrStrImm::str(offset, op0, op1, false, false, true, true, Cond::AL)
+        Self::str(offset, op0, op1, false, false, true, true, Cond::AL)
+    }
+
+    #[inline]
+    pub fn strb_offset_al(op0: Reg, op1: Reg, offset: u16) -> u32 {
+        Self::str(offset, op0, op1, false, true, true, true, Cond::AL)
     }
 }
 

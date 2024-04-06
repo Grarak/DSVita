@@ -221,7 +221,7 @@ pub unsafe extern "C" fn inst_mem_handler<
         asm.hle,
     );
     if WRITE && unlikely(asm.hle.mem.breakout_imm) {
-        asm.guest_branch_out_pc = pc;
+        asm.branch_out_data.guest_pc = pc;
         get_regs_mut!(asm.hle, CPU).pc = pc + if THUMB { 3 } else { 4 };
         asm.hle.mem.breakout_imm = false;
         if THUMB {
@@ -252,7 +252,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
         pc, rlist, op0, asm.hle,
     );
     if WRITE && unlikely(asm.hle.mem.breakout_imm) {
-        asm.guest_branch_out_pc = pc;
+        asm.branch_out_data.guest_pc = pc;
         get_regs_mut!(asm.hle, CPU).pc = pc + if THUMB { 3 } else { 4 };
         asm.hle.mem.breakout_imm = false;
         if THUMB {

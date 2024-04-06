@@ -6,8 +6,6 @@ use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op};
-use std::hint::unreachable_unchecked;
-use std::ptr;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_b_thumb(&mut self, buf_index: usize, pc: u32) {
@@ -15,6 +13,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let imm = *inst_info.operands()[0].as_imm().unwrap() as i32;
         let new_pc = (pc as i32 + 4 + imm) as u32;
+        let local_branch = if new_pc > pc {
+            let diff = (new_pc - pc) >> 1;
+            (buf_index + diff as usize) < self.jit_buf.instructions.len()
+        } else {
+            let diff = (pc - new_pc) >> 1;
+            buf_index >= diff as usize
+        };
 
         let cond = match inst_info.op {
             Op::BT => Cond::AL,
@@ -32,19 +37,20 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             Op::BltT => Cond::LT,
             Op::BgtT => Cond::GT,
             Op::BleT => Cond::LE,
-            _ => unsafe { unreachable_unchecked() },
+            _ => unreachable!(),
         };
 
         let mut opcodes = Vec::<u32>::new();
 
         opcodes.extend(AluImm::mov32(Reg::R8, pc));
-        opcodes.extend(AluImm::mov32(
-            Reg::R9,
-            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-        ));
+        opcodes.extend(self.branch_out_data.emit_get_guest_pc_addr(Reg::R9));
         opcodes.extend(AluImm::mov32(Reg::R10, new_pc | 1));
 
         opcodes.push(LdrStrImm::str_al(Reg::R8, Reg::R9));
+        if local_branch {
+            opcodes.push(AluImm::mov_al(Reg::R11, 1));
+            opcodes.push(LdrStrImm::strb_offset_al(Reg::R11, Reg::R9, 4));
+        }
 
         opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, Reg::R10, Reg::R11));
 
@@ -80,10 +86,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         self.jit_buf
             .emit_opcodes
             .extend(AluImm::mov32(Reg::R10, pc));
-        self.jit_buf.emit_opcodes.extend(AluImm::mov32(
-            Reg::R11,
-            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-        ));
+        self.jit_buf
+            .emit_opcodes
+            .extend(self.branch_out_data.emit_get_guest_pc_addr(Reg::R11));
 
         let thread_regs = get_regs!(self.hle, CPU);
         self.jit_buf
@@ -142,10 +147,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         self.jit_buf
             .emit_opcodes
             .extend(AluImm::mov32(pc_tmp_reg, pc));
-        self.jit_buf.emit_opcodes.extend(AluImm::mov32(
-            tmp_reg,
-            ptr::addr_of_mut!(self.guest_branch_out_pc) as u32,
-        ));
+        self.jit_buf
+            .emit_opcodes
+            .extend(self.branch_out_data.emit_get_guest_pc_addr(tmp_reg));
         self.jit_buf
             .emit_opcodes
             .push(LdrStrImm::str_al(pc_tmp_reg, tmp_reg));

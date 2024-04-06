@@ -9,6 +9,7 @@ edition = "2021"
 [package.metadata.vita]
 title_id = "DSPSV0000"
 title_name = "DSPSV"
+build_std = "std,panic_abort"
 
 [dependencies]
 bilge = "0.2.0"
@@ -33,3 +34,6 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceSysmem_stub",
     "ScePgf_stub"
 ] }
+
+[profile.release]
+panic = "abort"
