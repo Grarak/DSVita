@@ -1,6 +1,6 @@
-use crate::hle::cpu_regs::CpuRegs;
-use crate::hle::cycle_manager::CycleManager;
-use crate::hle::CpuType;
+use crate::emu::cpu_regs::CpuRegs;
+use crate::emu::cycle_manager::CycleManager;
+use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Msr};
 use crate::jit::reg::{Reg, RegReserve};

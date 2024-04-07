@@ -1,8 +1,8 @@
-use crate::hle::bios::*;
-use crate::hle::hle::Hle;
-use crate::hle::CpuType::{ARM7, ARM9};
+use crate::emu::bios::*;
+use crate::emu::emu::Emu;
+use crate::emu::CpuType::{ARM7, ARM9};
 
-pub const ARM9_SWI_LOOKUP_TABLE: [(&str, fn(&mut Hle)); 33] = [
+pub const ARM9_SWI_LOOKUP_TABLE: [(&str, fn(&mut Emu)); 33] = [
     ("unknown", unknown::<{ ARM9 }>),
     ("unknown", unknown::<{ ARM9 }>),
     ("unknown", unknown::<{ ARM9 }>),
@@ -38,7 +38,7 @@ pub const ARM9_SWI_LOOKUP_TABLE: [(&str, fn(&mut Hle)); 33] = [
     ("unknown", unknown::<{ ARM9 }>),
 ];
 
-pub const ARM7_SWI_LOOKUP_TABLE: [(&str, fn(&mut Hle)); 33] = [
+pub const ARM7_SWI_LOOKUP_TABLE: [(&str, fn(&mut Emu)); 33] = [
     ("unknown", unknown::<{ ARM7 }>),
     ("unknown", unknown::<{ ARM7 }>),
     ("unknown", unknown::<{ ARM7 }>),

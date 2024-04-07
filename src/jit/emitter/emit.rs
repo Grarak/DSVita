@@ -1,5 +1,5 @@
-use crate::hle::hle::{get_cm, get_regs, get_regs_mut};
-use crate::hle::CpuType;
+use crate::emu::emu::{get_cm, get_regs, get_regs_mut};
+use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::{Bx, B};
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Mrs};
@@ -75,11 +75,11 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             let opcodes = &mut self.jit_buf.emit_opcodes;
             let restore_spsr = out_regs.is_reserved(Reg::CPSR) && op.is_arm_alu();
 
-            let regs = get_regs_mut!(self.hle, CPU);
+            let regs = get_regs_mut!(self.emu, CPU);
             if restore_spsr {
                 opcodes.extend(&self.restore_host_opcodes);
                 opcodes.extend(AluImm::mov32(Reg::R0, regs as *mut _ as _));
-                opcodes.extend(AluImm::mov32(Reg::R1, get_cm!(self.hle) as *const _ as _));
+                opcodes.extend(AluImm::mov32(Reg::R1, get_cm!(self.emu) as *const _ as _));
                 Self::emit_host_blx(register_restore_spsr as *const () as _, opcodes);
             } else {
                 opcodes.extend(&regs.save_regs_opcodes);
@@ -212,7 +212,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     opcodes.extend(&AluImm::mov32(*mapped_reg, pc + 8));
                 }
             } else {
-                opcodes.extend(get_regs!(self.hle, CPU).emit_get_reg(*mapped_reg, reg));
+                opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(*mapped_reg, reg));
             }
         }
 
@@ -255,7 +255,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 if out_addr.is_none() {
                     out_addr = Some(out_reserved.pop().unwrap());
                 }
-                opcodes_after_save.extend(get_regs!(self.hle, CPU).emit_set_reg(
+                opcodes_after_save.extend(get_regs!(self.emu, CPU).emit_set_reg(
                     reg,
                     mapped_reg,
                     out_addr.unwrap(),
@@ -295,7 +295,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     ) -> Vec<u32> {
         let mut opcodes = Vec::new();
 
-        let thumb = get_regs!(self.hle, CPU).is_thumb();
+        let thumb = get_regs!(self.emu, CPU).is_thumb();
         opcodes.extend(if thumb {
             &self.restore_host_thumb_opcodes
         } else {
@@ -330,7 +330,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             .push(Mrs::cpsr(host_cpsr_reg, Cond::AL));
         self.jit_buf
             .emit_opcodes
-            .extend(get_regs!(self.hle, CPU).emit_get_reg(guest_cpsr_reg, Reg::CPSR));
+            .extend(get_regs!(self.emu, CPU).emit_get_reg(guest_cpsr_reg, Reg::CPSR));
 
         // Only copy the cond flags from host cpsr
         self.jit_buf.emit_opcodes.push(AluImm::and(
@@ -354,7 +354,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         ));
         self.jit_buf
             .emit_opcodes
-            .extend(get_regs!(self.hle, CPU).emit_set_reg(
+            .extend(get_regs!(self.emu, CPU).emit_set_reg(
                 Reg::CPSR,
                 guest_cpsr_reg,
                 host_cpsr_reg,

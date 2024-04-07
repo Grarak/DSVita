@@ -1,8 +1,8 @@
-use crate::hle::div_sqrt::DivSqrt;
-use crate::hle::hle::{get_cm, get_cpu_regs, get_cpu_regs_mut, Hle};
-use crate::hle::memory::dma::Dma;
-use crate::hle::timers::Timers;
-use crate::hle::CpuType::ARM9;
+use crate::emu::div_sqrt::DivSqrt;
+use crate::emu::emu::{get_cm, get_cpu_regs, get_cpu_regs_mut, Emu};
+use crate::emu::memory::dma::Dma;
+use crate::emu::timers::Timers;
+use crate::emu::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::utils::Convert;
 use dspsv_macros::{io_ports_read, io_ports_write};
@@ -23,7 +23,7 @@ impl IoArm9 {
         }
     }
 
-    pub fn read<T: Convert>(&mut self, addr_offset: u32, hle: &mut Hle) -> T {
+    pub fn read<T: Convert>(&mut self, addr_offset: u32, emu: &mut Emu) -> T {
         /*
          * Use moving windows to handle reads and writes
          * |0|0|0|  x  |   x   |   x   |   x   |0|0|0|
@@ -33,8 +33,8 @@ impl IoArm9 {
 
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
-        let hle_ptr = hle as *mut Hle;
-        let common = unsafe { &mut hle_ptr.as_mut().unwrap_unchecked().common };
+        let emu_ptr = emu as *mut Emu;
+        let common = unsafe { &mut emu_ptr.as_mut().unwrap_unchecked().common };
         while (index - 3) < mem::size_of::<T>() {
             io_ports_read!(match addr_offset + (index - 3) as u32 {
                 io32(0x0) => common.gpu.gpu_2d_a.get_disp_cnt(),
@@ -67,13 +67,13 @@ impl IoArm9 {
                 io32(0xE4) => self.dma.get_fill::<1>(),
                 io32(0xE8) => self.dma.get_fill::<2>(),
                 io32(0xEC) => self.dma.get_fill::<3>(),
-                io16(0x100) => self.timers.get_cnt_l::<0>(get_cm!(hle)),
+                io16(0x100) => self.timers.get_cnt_l::<0>(get_cm!(emu)),
                 io16(0x102) => self.timers.get_cnt_h::<0>(),
-                io16(0x104) => self.timers.get_cnt_l::<1>(get_cm!(hle)),
+                io16(0x104) => self.timers.get_cnt_l::<1>(get_cm!(emu)),
                 io16(0x106) => self.timers.get_cnt_h::<1>(),
-                io16(0x108) => self.timers.get_cnt_l::<2>(get_cm!(hle)),
+                io16(0x108) => self.timers.get_cnt_l::<2>(get_cm!(emu)),
                 io16(0x10A) => self.timers.get_cnt_h::<2>(),
-                io16(0x10C) => self.timers.get_cnt_l::<3>(get_cm!(hle)),
+                io16(0x10C) => self.timers.get_cnt_l::<3>(get_cm!(emu)),
                 io16(0x10E) => self.timers.get_cnt_h::<3>(),
                 io16(0x130) => common.input.get_key_input(),
                 io16(0x180) => common.ipc.get_sync_reg::<{ ARM9 }>(),
@@ -81,19 +81,19 @@ impl IoArm9 {
                 io16(0x1A0) => common.cartridge.get_aux_spi_cnt::<{ ARM9 }>(),
                 io8(0x1A2) => common.cartridge.get_aux_spi_data::<{ ARM9 }>(),
                 io32(0x1A4) => common.cartridge.get_rom_ctrl::<{ ARM9 }>(),
-                io8(0x208) => get_cpu_regs!(hle, ARM9).ime,
-                io32(0x210) => get_cpu_regs!(hle, ARM9).ie,
-                io32(0x214) => get_cpu_regs!(hle, ARM9).irf,
-                io8(0x240) => hle.mem.vram.cnt[0],
-                io8(0x242) => hle.mem.vram.cnt[1],
-                io8(0x243) => hle.mem.vram.cnt[2],
-                io8(0x241) => hle.mem.vram.cnt[3],
-                io8(0x244) => hle.mem.vram.cnt[4],
-                io8(0x245) => hle.mem.vram.cnt[5],
-                io8(0x246) => hle.mem.vram.cnt[6],
-                io8(0x247) => hle.mem.wram.cnt,
-                io8(0x248) => hle.mem.vram.cnt[7],
-                io8(0x249) => hle.mem.vram.cnt[8],
+                io8(0x208) => get_cpu_regs!(emu, ARM9).ime,
+                io32(0x210) => get_cpu_regs!(emu, ARM9).ie,
+                io32(0x214) => get_cpu_regs!(emu, ARM9).irf,
+                io8(0x240) => emu.mem.vram.cnt[0],
+                io8(0x242) => emu.mem.vram.cnt[1],
+                io8(0x243) => emu.mem.vram.cnt[2],
+                io8(0x241) => emu.mem.vram.cnt[3],
+                io8(0x244) => emu.mem.vram.cnt[4],
+                io8(0x245) => emu.mem.vram.cnt[5],
+                io8(0x246) => emu.mem.vram.cnt[6],
+                io8(0x247) => emu.mem.wram.cnt,
+                io8(0x248) => emu.mem.vram.cnt[7],
+                io8(0x249) => emu.mem.vram.cnt[8],
                 io16(0x280) => self.div_sqrt.div_cnt,
                 io32(0x290) => self.div_sqrt.get_div_numer_l(),
                 io32(0x294) => self.div_sqrt.get_div_numer_h(),
@@ -107,7 +107,7 @@ impl IoArm9 {
                 io32(0x2B4) => self.div_sqrt.sqrt_result,
                 io32(0x2B8) => self.div_sqrt.get_sqrt_param_l(),
                 io32(0x2BC) => self.div_sqrt.get_sqrt_param_h(),
-                io8(0x300) => get_cpu_regs!(hle, ARM9).post_flg,
+                io8(0x300) => get_cpu_regs!(emu, ARM9).post_flg,
                 io16(0x304) => common.gpu.pow_cnt1,
                 io32(0x600) => common.gpu.gpu_3d.gx_stat,
                 io32(0x604) => todo!(),
@@ -153,8 +153,8 @@ impl IoArm9 {
                 io16(0x1050) => common.gpu.gpu_2d_b.get_bld_cnt(),
                 io16(0x1052) => common.gpu.gpu_2d_b.get_bld_alpha(),
                 io16(0x106C) => todo!(),
-                io32(0x100000) => common.ipc.fifo_recv::<{ ARM9 }>(hle),
-                io32(0x100010) => common.cartridge.get_rom_data_in::<{ ARM9 }>(hle),
+                io32(0x100000) => common.ipc.fifo_recv::<{ ARM9 }>(emu),
+                io32(0x100010) => common.cartridge.get_rom_data_in::<{ ARM9 }>(emu),
                 _ => {
                     if index == 3 {
                         debug_println!("{:?} unknown io port read at {:x}", ARM9, addr_offset);
@@ -173,7 +173,7 @@ impl IoArm9 {
         ]))
     }
 
-    pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, hle: &mut Hle) {
+    pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, emu: &mut Emu) {
         let bytes = value.into().to_le_bytes();
         let bytes = &bytes[..mem::size_of::<T>()];
         /*
@@ -188,9 +188,9 @@ impl IoArm9 {
 
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
-        let hle_ptr = hle as *mut Hle;
-        let common = unsafe { &mut hle_ptr.as_mut().unwrap_unchecked().common };
-        let mem = unsafe { &mut hle_ptr.as_mut().unwrap_unchecked().mem };
+        let emu_ptr = emu as *mut Emu;
+        let common = unsafe { &mut emu_ptr.as_mut().unwrap_unchecked().common };
+        let mem = unsafe { &mut emu_ptr.as_mut().unwrap_unchecked().mem };
         while (index - 3) < bytes.len() {
             io_ports_write!(match addr_offset + (index - 3) as u32 {
                 io32(0x0) => common.gpu.gpu_2d_a.set_disp_cnt(mask, value),
@@ -234,49 +234,49 @@ impl IoArm9 {
                 io16(0x6C) => common.gpu.gpu_2d_a.set_master_bright(mask, value),
                 io32(0xB0) => self.dma.set_sad::<0>(mask, value),
                 io32(0xB4) => self.dma.set_dad::<0>(mask, value),
-                io32(0xB8) => self.dma.set_cnt::<0>(mask, value, hle),
+                io32(0xB8) => self.dma.set_cnt::<0>(mask, value, emu),
                 io32(0xBC) => self.dma.set_sad::<1>(mask, value),
                 io32(0xC0) => self.dma.set_dad::<1>(mask, value),
-                io32(0xC4) => self.dma.set_cnt::<1>(mask, value, hle),
+                io32(0xC4) => self.dma.set_cnt::<1>(mask, value, emu),
                 io32(0xC8) => self.dma.set_sad::<2>(mask, value),
                 io32(0xCC) => self.dma.set_dad::<2>(mask, value),
-                io32(0xD0) => self.dma.set_cnt::<2>(mask, value, hle),
+                io32(0xD0) => self.dma.set_cnt::<2>(mask, value, emu),
                 io32(0xD4) => self.dma.set_sad::<3>(mask, value),
                 io32(0xD8) => self.dma.set_dad::<3>(mask, value),
-                io32(0xDC) => self.dma.set_cnt::<3>(mask, value, hle),
+                io32(0xDC) => self.dma.set_cnt::<3>(mask, value, emu),
                 io32(0xE0) => self.dma.set_fill::<0>(mask, value),
                 io32(0xE4) => self.dma.set_fill::<1>(mask, value),
                 io32(0xE8) => self.dma.set_fill::<2>(mask, value),
                 io32(0xEC) => self.dma.set_fill::<3>(mask, value),
                 io16(0x100) => self.timers.set_cnt_l::<0>(mask, value),
-                io16(0x102) => self.timers.set_cnt_h::<0>(mask, value, hle),
+                io16(0x102) => self.timers.set_cnt_h::<0>(mask, value, emu),
                 io16(0x104) => self.timers.set_cnt_l::<1>(mask, value),
-                io16(0x106) => self.timers.set_cnt_h::<1>(mask, value, hle),
+                io16(0x106) => self.timers.set_cnt_h::<1>(mask, value, emu),
                 io16(0x108) => self.timers.set_cnt_l::<2>(mask, value),
-                io16(0x10A) => self.timers.set_cnt_h::<2>(mask, value, hle),
+                io16(0x10A) => self.timers.set_cnt_h::<2>(mask, value, emu),
                 io16(0x10C) => self.timers.set_cnt_l::<3>(mask, value),
-                io16(0x10E) => self.timers.set_cnt_h::<3>(mask, value, hle),
-                io16(0x180) => common.ipc.set_sync_reg::<{ ARM9 }>(mask, value, hle),
-                io16(0x184) => common.ipc.set_fifo_cnt::<{ ARM9 }>(mask, value, hle),
-                io32(0x188) => common.ipc.fifo_send::<{ ARM9 }>(mask, value, hle),
+                io16(0x10E) => self.timers.set_cnt_h::<3>(mask, value, emu),
+                io16(0x180) => common.ipc.set_sync_reg::<{ ARM9 }>(mask, value, emu),
+                io16(0x184) => common.ipc.set_fifo_cnt::<{ ARM9 }>(mask, value, emu),
+                io32(0x188) => common.ipc.fifo_send::<{ ARM9 }>(mask, value, emu),
                 io16(0x1A0) => common.cartridge.set_aux_spi_cnt::<{ ARM9 }>(mask, value),
                 io8(0x1A2) => common.cartridge.set_aux_spi_data::<{ ARM9 }>(value),
-                io32(0x1A4) => common.cartridge.set_rom_ctrl::<{ ARM9 }>(mask, value, hle),
+                io32(0x1A4) => common.cartridge.set_rom_ctrl::<{ ARM9 }>(mask, value, emu),
                 io32(0x1A8) => common.cartridge.set_bus_cmd_out_l::<{ ARM9 }>(mask, value),
                 io32(0x1AC) => common.cartridge.set_bus_cmd_out_h::<{ ARM9 }>(mask, value),
-                io8(0x208) => get_cpu_regs_mut!(hle, ARM9).set_ime(value, get_cm!(hle)),
-                io32(0x210) => get_cpu_regs_mut!(hle, ARM9).set_ie(mask, value, get_cm!(hle)),
-                io32(0x214) => get_cpu_regs_mut!(hle, ARM9).set_irf(mask, value),
-                io8(0x240) => mem.vram.set_cnt(0, value, hle),
-                io8(0x241) => mem.vram.set_cnt(1, value, hle),
-                io8(0x242) => mem.vram.set_cnt(2, value, hle),
-                io8(0x243) => mem.vram.set_cnt(3, value, hle),
-                io8(0x244) => mem.vram.set_cnt(4, value, hle),
-                io8(0x245) => mem.vram.set_cnt(5, value, hle),
-                io8(0x246) => mem.vram.set_cnt(6, value, hle),
-                io8(0x247) => mem.wram.set_cnt(value, hle),
-                io8(0x248) => mem.vram.set_cnt(7, value, hle),
-                io8(0x249) => mem.vram.set_cnt(8, value, hle),
+                io8(0x208) => get_cpu_regs_mut!(emu, ARM9).set_ime(value, get_cm!(emu)),
+                io32(0x210) => get_cpu_regs_mut!(emu, ARM9).set_ie(mask, value, get_cm!(emu)),
+                io32(0x214) => get_cpu_regs_mut!(emu, ARM9).set_irf(mask, value),
+                io8(0x240) => mem.vram.set_cnt(0, value, emu),
+                io8(0x241) => mem.vram.set_cnt(1, value, emu),
+                io8(0x242) => mem.vram.set_cnt(2, value, emu),
+                io8(0x243) => mem.vram.set_cnt(3, value, emu),
+                io8(0x244) => mem.vram.set_cnt(4, value, emu),
+                io8(0x245) => mem.vram.set_cnt(5, value, emu),
+                io8(0x246) => mem.vram.set_cnt(6, value, emu),
+                io8(0x247) => mem.wram.set_cnt(value, emu),
+                io8(0x248) => mem.vram.set_cnt(7, value, emu),
+                io8(0x249) => mem.vram.set_cnt(8, value, emu),
                 io16(0x280) => self.div_sqrt.set_div_cnt(mask, value),
                 io32(0x290) => self.div_sqrt.set_div_numer_l(mask, value),
                 io32(0x294) => self.div_sqrt.set_div_numer_h(mask, value),
@@ -285,7 +285,7 @@ impl IoArm9 {
                 io16(0x2B0) => self.div_sqrt.set_sqrt_cnt(mask, value),
                 io32(0x2B8) => self.div_sqrt.set_sqrt_param_l(mask, value),
                 io32(0x2BC) => self.div_sqrt.set_sqrt_param_h(mask, value),
-                io8(0x300) => get_cpu_regs_mut!(hle, ARM9).set_post_flg(value),
+                io8(0x300) => get_cpu_regs_mut!(emu, ARM9).set_post_flg(value),
                 io16(0x304) => common.gpu.set_pow_cnt1(mask, value),
                 io16(0x330) => common.gpu.gpu_3d_renderer.set_edge_color(0, mask, value),
                 io16(0x332) => common.gpu.gpu_3d_renderer.set_edge_color(1, mask, value),

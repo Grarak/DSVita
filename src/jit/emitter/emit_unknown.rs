@@ -1,4 +1,4 @@
-use crate::hle::CpuType;
+use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::inst_exception_handler::bios_uninterrupt;
@@ -16,7 +16,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.jit_buf.emit_opcodes.extend(&self.restore_host_opcodes);
             self.jit_buf
                 .emit_opcodes
-                .extend(AluImm::mov32(Reg::R0, self.hle as *mut _ as _));
+                .extend(AluImm::mov32(Reg::R0, self.emu as *mut _ as _));
             Self::emit_host_blx(
                 bios_uninterrupt::<CPU> as *const () as _,
                 &mut self.jit_buf.emit_opcodes,

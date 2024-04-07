@@ -1,9 +1,9 @@
-use crate::hle::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
-use crate::hle::memory::mem::Memory;
-use crate::hle::memory::regions::VRAM_OFFSET;
-use crate::hle::memory::vram;
-use crate::hle::memory::vram::{BG_A_OFFSET, BG_B_OFFSET, OBJ_A_OFFSET, OBJ_B_OFFSET};
-use crate::hle::CpuType::ARM9;
+use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
+use crate::emu::memory::mem::Memory;
+use crate::emu::memory::regions::VRAM_OFFSET;
+use crate::emu::memory::vram;
+use crate::emu::memory::vram::{BG_A_OFFSET, BG_B_OFFSET, OBJ_A_OFFSET, OBJ_B_OFFSET};
+use crate::emu::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::utils;
 use crate::utils::{HeapMemI8, HeapMemU32};

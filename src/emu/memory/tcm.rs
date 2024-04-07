@@ -1,4 +1,4 @@
-use crate::hle::memory::regions;
+use crate::emu::memory::regions;
 use crate::utils;
 use crate::utils::{Convert, HeapMemU8};
 

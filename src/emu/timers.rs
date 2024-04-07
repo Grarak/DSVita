@@ -1,8 +1,8 @@
-use crate::hle::cpu_regs::InterruptFlag;
-use crate::hle::cycle_manager::{CycleEvent, CycleManager};
-use crate::hle::hle::{get_cm, get_cpu_regs_mut, io_timers, io_timers_mut, Hle};
-use crate::hle::CpuType;
-use crate::hle::CpuType::{ARM7, ARM9};
+use crate::emu::cpu_regs::InterruptFlag;
+use crate::emu::cycle_manager::{CycleEvent, CycleManager};
+use crate::emu::emu::{get_cm, get_cpu_regs_mut, io_timers, io_timers_mut, Emu};
+use crate::emu::CpuType;
+use crate::emu::CpuType::{ARM7, ARM9};
 use bilge::prelude::*;
 
 const CHANNEL_COUNT: usize = 4;
@@ -75,7 +75,7 @@ impl Timers {
         &mut self,
         mut mask: u16,
         value: u16,
-        hle: &mut Hle,
+        emu: &mut Emu,
     ) {
         let channel = &mut self.channels[CHANNEL_NUM];
         let current_cnt = TimerCntH::from(channel.cnt_h);
@@ -107,11 +107,11 @@ impl Timers {
             let remaining_cycles =
                 (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
             channel.scheduled_cycle = match self.cpu_type {
-                ARM9 => get_cm!(hle).schedule(
+                ARM9 => get_cm!(emu).schedule(
                     remaining_cycles,
                     Box::new(TimersEvent::<{ ARM9 }, CHANNEL_NUM>::new()),
                 ),
-                ARM7 => get_cm!(hle).schedule(
+                ARM7 => get_cm!(emu).schedule(
                     remaining_cycles,
                     Box::new(TimersEvent::<{ ARM7 }, CHANNEL_NUM>::new()),
                 ),
@@ -130,9 +130,9 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> TimersEvent<CPU, CHANNEL_NUM>
         TimersEvent { scheduled_at: 0 }
     }
 
-    fn overflow(hle: &mut Hle, count_up_num: usize) {
+    fn overflow(emu: &mut Emu, count_up_num: usize) {
         {
-            let channel = &mut io_timers_mut!(hle, CPU).channels[count_up_num];
+            let channel = &mut io_timers_mut!(emu, CPU).channels[count_up_num];
             let cnt = TimerCntH::from(channel.cnt_h);
             if !bool::from(cnt.start()) {
                 return;
@@ -141,23 +141,23 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> TimersEvent<CPU, CHANNEL_NUM>
             if !cnt.is_count_up(count_up_num) {
                 let remaining_cycles =
                     (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
-                channel.scheduled_cycle = get_cm!(hle).schedule(
+                channel.scheduled_cycle = get_cm!(emu).schedule(
                     remaining_cycles,
                     Box::new(TimersEvent::<CPU, CHANNEL_NUM>::new()),
                 )
             }
 
             if bool::from(cnt.irq_enable()) {
-                get_cpu_regs_mut!(hle, CPU).send_interrupt(
+                get_cpu_regs_mut!(emu, CPU).send_interrupt(
                     InterruptFlag::from(InterruptFlag::Timer0Overflow as u8 + count_up_num as u8),
-                    get_cm!(hle),
+                    get_cm!(emu),
                 );
             }
         }
         if count_up_num < 3 {
             let mut overflow = false;
             {
-                let channel = &mut io_timers_mut!(hle, CPU).channels[count_up_num];
+                let channel = &mut io_timers_mut!(emu, CPU).channels[count_up_num];
                 let cnt = TimerCntH::from(channel.cnt_h);
                 if bool::from(cnt.count_up()) {
                     channel.current_value += 1;
@@ -165,7 +165,7 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> TimersEvent<CPU, CHANNEL_NUM>
                 }
             }
             if overflow {
-                Self::overflow(hle, count_up_num + 1);
+                Self::overflow(emu, count_up_num + 1);
             }
         }
     }
@@ -176,9 +176,9 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> CycleEvent for TimersEvent<CP
         self.scheduled_at = *timestamp;
     }
 
-    fn trigger(&mut self, _: u16, hle: &mut Hle) {
-        if self.scheduled_at == io_timers!(hle, CPU).channels[CHANNEL_NUM].scheduled_cycle {
-            Self::overflow(hle, CHANNEL_NUM);
+    fn trigger(&mut self, _: u16, emu: &mut Emu) {
+        if self.scheduled_at == io_timers!(emu, CPU).channels[CHANNEL_NUM].scheduled_cycle {
+            Self::overflow(emu, CHANNEL_NUM);
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::hle::CpuType::{ARM7, ARM9};
+use crate::emu::CpuType::{ARM7, ARM9};
 use std::marker::ConstParamTy;
 use std::ops;
 use std::ops::{Index, IndexMut};
@@ -12,7 +12,7 @@ pub mod cycle_manager;
 mod div_sqrt;
 pub mod exception_handler;
 pub mod gpu;
-pub mod hle;
+pub mod emu;
 pub mod input;
 pub mod ipc;
 pub mod memory;

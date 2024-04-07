@@ -1,5 +1,5 @@
-use crate::hle::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
-use crate::hle::input::Keycode;
+use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
+use crate::emu::input::Keycode;
 use crate::presenter::menu::Menu;
 use crate::presenter::{PresentEvent, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use std::ffi::CString;

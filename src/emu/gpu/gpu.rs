@@ -1,14 +1,14 @@
-use crate::hle::cpu_regs::InterruptFlag;
-use crate::hle::cycle_manager::{CycleEvent, CycleManager};
-use crate::hle::gpu::gpu_2d::Gpu2D;
-use crate::hle::gpu::gpu_2d::Gpu2DEngine::{A, B};
-use crate::hle::gpu::gpu_3d::Gpu3D;
-use crate::hle::gpu::gpu_3d_renderer::Gpu3dRenderer;
-use crate::hle::hle::{get_cm, get_cpu_regs_mut, io_dma, Hle};
-use crate::hle::memory::dma::DmaTransferMode;
-use crate::hle::memory::mem::Memory;
-use crate::hle::CpuType;
-use crate::hle::CpuType::ARM9;
+use crate::emu::cpu_regs::InterruptFlag;
+use crate::emu::cycle_manager::{CycleEvent, CycleManager};
+use crate::emu::gpu::gpu_2d::Gpu2D;
+use crate::emu::gpu::gpu_2d::Gpu2DEngine::{A, B};
+use crate::emu::gpu::gpu_3d::Gpu3D;
+use crate::emu::gpu::gpu_3d_renderer::Gpu3dRenderer;
+use crate::emu::emu::{get_cm, get_cpu_regs_mut, io_dma, Emu};
+use crate::emu::memory::dma::DmaTransferMode;
+use crate::emu::memory::mem::Memory;
+use crate::emu::CpuType;
+use crate::emu::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::utils::HeapMemU32;
 use bilge::prelude::*;
@@ -235,8 +235,8 @@ impl Scanline256Event {
 impl CycleEvent for Scanline256Event {
     fn scheduled(&mut self, _: &u64) {}
 
-    fn trigger(&mut self, delay: u16, hle: &mut Hle) {
-        let gpu = &mut hle.common.gpu;
+    fn trigger(&mut self, delay: u16, emu: &mut Emu) {
+        let gpu = &mut emu.common.gpu;
 
         if gpu.v_count < 192 {
             if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
@@ -245,24 +245,24 @@ impl CycleEvent for Scanline256Event {
                     .compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
-                    gpu.gpu_2d_b.draw_scanline(gpu.v_count as u8, &hle.mem);
+                    gpu.gpu_2d_b.draw_scanline(gpu.v_count as u8, &emu.mem);
                 }
                 while gpu.draw_state.load(Ordering::Acquire) != 0 {}
             }
 
-            io_dma!(hle, ARM9).trigger_all(DmaTransferMode::StartAtHBlank, get_cm!(hle));
+            io_dma!(emu, ARM9).trigger_all(DmaTransferMode::StartAtHBlank, get_cm!(emu));
         }
 
         for i in 0..2 {
             let disp_stat = &mut gpu.disp_stat[i];
             disp_stat.set_h_blank_flag(u1::new(1));
             if bool::from(disp_stat.h_blank_irq_enable()) {
-                get_cpu_regs_mut!(hle, CpuType::from(i as u8))
-                    .send_interrupt(InterruptFlag::LcdHBlank, get_cm!(hle));
+                get_cpu_regs_mut!(emu, CpuType::from(i as u8))
+                    .send_interrupt(InterruptFlag::LcdHBlank, get_cm!(emu));
             }
         }
 
-        get_cm!(hle).schedule((355 - 256) * 6, Box::new(Scanline355Event::new()));
+        get_cm!(emu).schedule((355 - 256) * 6, Box::new(Scanline355Event::new()));
     }
 }
 
@@ -277,8 +277,8 @@ impl Scanline355Event {
 impl CycleEvent for Scanline355Event {
     fn scheduled(&mut self, _: &u64) {}
 
-    fn trigger(&mut self, delay: u16, hle: &mut Hle) {
-        let gpu = &mut hle.common.gpu;
+    fn trigger(&mut self, delay: u16, emu: &mut Emu) {
+        let gpu = &mut emu.common.gpu;
 
         gpu.v_count += 1;
         match gpu.v_count {
@@ -287,10 +287,10 @@ impl CycleEvent for Scanline355Event {
                     let disp_stat = &mut gpu.disp_stat[i];
                     disp_stat.set_v_blank_flag(u1::new(1));
                     if bool::from(disp_stat.v_blank_irq_enable()) {
-                        get_cpu_regs_mut!(hle, CpuType::from(i as u8))
-                            .send_interrupt(InterruptFlag::LcdVBlank, get_cm!(hle));
-                        io_dma!(hle, CpuType::from(i as u8))
-                            .trigger_all(DmaTransferMode::StartAtVBlank, get_cm!(hle));
+                        get_cpu_regs_mut!(emu, CpuType::from(i as u8))
+                            .send_interrupt(InterruptFlag::LcdVBlank, get_cm!(emu));
+                        io_dma!(emu, CpuType::from(i as u8))
+                            .trigger_all(DmaTransferMode::StartAtVBlank, get_cm!(emu));
                     }
                 }
 
@@ -345,8 +345,8 @@ impl CycleEvent for Scanline355Event {
             if gpu.v_count == v_match {
                 gpu.disp_stat[i].set_v_counter_flag(u1::new(1));
                 if bool::from(gpu.disp_stat[i].v_counter_irq_enable()) {
-                    get_cpu_regs_mut!(hle, CpuType::from(i as u8))
-                        .send_interrupt(InterruptFlag::LcdVCounterMatch, get_cm!(hle));
+                    get_cpu_regs_mut!(emu, CpuType::from(i as u8))
+                        .send_interrupt(InterruptFlag::LcdVCounterMatch, get_cm!(emu));
                 }
             } else {
                 gpu.disp_stat[i].set_v_counter_flag(u1::new(0));
@@ -354,6 +354,6 @@ impl CycleEvent for Scanline355Event {
             gpu.disp_stat[i].set_h_blank_flag(u1::new(0));
         }
 
-        get_cm!(hle).schedule(256 * 6, Box::new(Scanline256Event::new()));
+        get_cm!(emu).schedule(256 * 6, Box::new(Scanline256Event::new()));
     }
 }

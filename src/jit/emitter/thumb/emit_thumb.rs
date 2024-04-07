@@ -1,5 +1,5 @@
-use crate::hle::hle::get_regs;
-use crate::hle::CpuType;
+use crate::emu::emu::get_regs;
+use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
@@ -92,7 +92,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if out_regs.is_reserved(Reg::PC) {
             self.jit_buf
                 .emit_opcodes
-                .extend(&get_regs!(self.hle, CPU).save_regs_thumb_opcodes);
+                .extend(&get_regs!(self.emu, CPU).save_regs_thumb_opcodes);
 
             self.jit_buf
                 .emit_opcodes
@@ -102,7 +102,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 .extend(self.branch_out_data.emit_get_guest_pc_addr(Reg::LR));
 
             if CPU == CpuType::ARM7 || op != Op::PopPcT || op == Op::AddHT || op == Op::MovHT {
-                let thread_regs = get_regs!(self.hle, CPU);
+                let thread_regs = get_regs!(self.emu, CPU);
                 self.jit_buf
                     .emit_opcodes
                     .extend(thread_regs.emit_get_reg(Reg::R1, Reg::PC));

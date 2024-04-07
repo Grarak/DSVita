@@ -1,4 +1,4 @@
-use crate::hle::input::Keycode;
+use crate::emu::input::Keycode;
 use crate::presenter::{PresentEvent, Presenter};
 use std::cmp::min;
 use std::rc::Rc;

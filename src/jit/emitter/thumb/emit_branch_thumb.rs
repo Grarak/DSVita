@@ -1,5 +1,5 @@
-use crate::hle::hle::get_regs;
-use crate::hle::CpuType;
+use crate::emu::emu::get_regs;
+use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
@@ -52,7 +52,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             opcodes.push(LdrStrImm::strb_offset_al(Reg::R11, Reg::R9, 4));
         }
 
-        opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, Reg::R10, Reg::R11));
+        opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R10, Reg::R11));
 
         Self::emit_host_bx(self.breakout_thumb_addr, &mut opcodes);
 
@@ -74,7 +74,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R8, lr));
         self.jit_buf
             .emit_opcodes
-            .extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::LR, Reg::R8, Reg::R9));
+            .extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::LR, Reg::R8, Reg::R9));
     }
 
     pub fn emit_bl_thumb(&mut self, buf_index: usize, pc: u32) {
@@ -90,7 +90,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             .emit_opcodes
             .extend(self.branch_out_data.emit_get_guest_pc_addr(Reg::R11));
 
-        let thread_regs = get_regs!(self.hle, CPU);
+        let thread_regs = get_regs!(self.emu, CPU);
         self.jit_buf
             .emit_opcodes
             .extend(thread_regs.emit_get_reg(Reg::R8, Reg::LR));
@@ -155,7 +155,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             .push(LdrStrImm::str_al(pc_tmp_reg, tmp_reg));
 
         if op0.is_emulated() {
-            let thread_regs = get_regs!(self.hle, CPU);
+            let thread_regs = get_regs!(self.emu, CPU);
             if *op0 == Reg::PC {
                 self.jit_buf
                     .emit_opcodes
@@ -169,17 +169,17 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 .emit_opcodes
                 .extend(thread_regs.emit_set_reg(Reg::PC, tmp_reg2, tmp_reg));
         } else if op0.is_high_gp_reg() {
-            let thread_regs = get_regs!(self.hle, CPU);
+            let thread_regs = get_regs!(self.emu, CPU);
             self.jit_buf
                 .emit_opcodes
                 .extend(thread_regs.emit_get_reg(tmp_reg, *op0));
             self.jit_buf
                 .emit_opcodes
-                .extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, tmp_reg, tmp_reg2));
+                .extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, tmp_reg, tmp_reg2));
         } else {
             self.jit_buf
                 .emit_opcodes
-                .extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, *op0, tmp_reg2));
+                .extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, *op0, tmp_reg2));
         }
 
         if inst_info.op == Op::BlxRegT {
@@ -188,7 +188,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 .push(AluImm::add_al(tmp_reg2, pc_tmp_reg, 3));
             self.jit_buf
                 .emit_opcodes
-                .extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::LR, tmp_reg2, tmp_reg));
+                .extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::LR, tmp_reg2, tmp_reg));
         }
 
         Self::emit_host_bx(self.breakout_thumb_addr, &mut self.jit_buf.emit_opcodes);

@@ -1,8 +1,8 @@
-use crate::hle::cycle_manager::{CycleEvent, CycleManager};
-use crate::hle::exception_handler::ExceptionVector;
-use crate::hle::hle::{get_cpu_regs, get_cpu_regs_mut, Hle};
-use crate::hle::CpuType::ARM7;
-use crate::hle::{exception_handler, CpuType};
+use crate::emu::cycle_manager::{CycleEvent, CycleManager};
+use crate::emu::exception_handler::ExceptionVector;
+use crate::emu::emu::{get_cpu_regs, get_cpu_regs_mut, Emu};
+use crate::emu::CpuType::ARM7;
+use crate::emu::{exception_handler, CpuType};
 use crate::logging::debug_println;
 use std::mem;
 use CpuType::ARM9;
@@ -167,9 +167,9 @@ impl<const CPU: CpuType> InterruptEvent<CPU> {
 impl<const CPU: CpuType> CycleEvent for InterruptEvent<CPU> {
     fn scheduled(&mut self, _: &u64) {}
 
-    fn trigger(&mut self, _: u16, hle: &mut Hle) {
+    fn trigger(&mut self, _: u16, emu: &mut Emu) {
         let interrupted = {
-            let cpu_regs = get_cpu_regs!(hle, CPU);
+            let cpu_regs = get_cpu_regs!(emu, CPU);
             let interrupt =
                 cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && cpu_regs.cpsr_irq_enabled;
             if interrupt {
@@ -183,8 +183,8 @@ impl<const CPU: CpuType> CycleEvent for InterruptEvent<CPU> {
             interrupt
         };
         if interrupted {
-            exception_handler::handle::<CPU, false>(hle, 0, ExceptionVector::NormalInterrupt);
-            get_cpu_regs_mut!(hle, CPU).halt &= !1;
+            exception_handler::handle::<CPU, false>(emu, 0, ExceptionVector::NormalInterrupt);
+            get_cpu_regs_mut!(emu, CPU).halt &= !1;
         }
     }
 }

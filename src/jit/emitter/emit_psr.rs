@@ -1,5 +1,5 @@
-use crate::hle::hle::{get_cm, get_regs, get_regs_mut};
-use crate::hle::CpuType;
+use crate::emu::emu::{get_cm, get_regs, get_regs_mut};
+use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::inst_info::Operand;
 use crate::jit::inst_threag_regs_handler::{register_set_cpsr_checked, register_set_spsr_checked};
@@ -9,8 +9,8 @@ use crate::jit::Op;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_msr(&mut self, buf_index: usize, _: u32) {
-        let regs_addr = get_regs_mut!(self.hle, CPU) as *mut _ as _;
-        let cm_addr = get_cm!(self.hle) as *const _ as _;
+        let regs_addr = get_regs_mut!(self.emu, CPU) as *mut _ as _;
+        let cm_addr = get_cm!(self.emu) as *const _ as _;
         let op = self.jit_buf.instructions[buf_index].op;
 
         self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
@@ -47,7 +47,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let opcodes = &mut self.jit_buf.emit_opcodes;
 
         let op0 = inst_info.operands()[0].as_reg_no_shift().unwrap();
-        opcodes.extend(get_regs!(self.hle, CPU).emit_get_reg(
+        opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(
             *op0,
             match inst_info.op {
                 Op::MrsRc => Reg::CPSR,

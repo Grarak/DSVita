@@ -14,9 +14,9 @@
 extern crate core;
 
 use crate::cartridge_reader::CartridgeReader;
-use crate::hle::gpu::gpu::{Gpu, Swapchain, DISPLAY_PIXEL_COUNT};
-use crate::hle::hle::{get_cm, get_cp15_mut, get_cpu_regs, get_mmu, get_regs_mut, Hle};
-use crate::hle::{spi, CpuType};
+use crate::emu::emu::{get_cm, get_cp15_mut, get_cpu_regs, get_mmu, get_regs_mut, Emu};
+use crate::emu::gpu::gpu::{Gpu, Swapchain, DISPLAY_PIXEL_COUNT};
+use crate::emu::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
 use crate::presenter::{PresentEvent, Presenter};
@@ -32,7 +32,7 @@ use std::sync::Arc;
 use std::{mem, ptr, thread};
 use CpuType::{ARM7, ARM9};
 mod cartridge_reader;
-mod hle;
+mod emu;
 mod jit;
 mod logging;
 mod mmap;
@@ -54,123 +54,123 @@ fn run_cpu(
     let arm7_ram_addr = cartridge_reader.header.arm7_values.ram_address;
     let arm7_entry_addr = cartridge_reader.header.arm7_values.entry_address;
 
-    let mut hle = Hle::new(cartridge_reader, swapchain, fps, key_map);
+    let mut emu = Emu::new(cartridge_reader, swapchain, fps, key_map);
 
     {
         let cartridge_header: &[u8; cartridge_reader::HEADER_IN_RAM_SIZE] =
-            unsafe { mem::transmute(&hle.common.cartridge.reader.header) };
-        hle.mem.main.write_slice(0x7FFE00, cartridge_header);
+            unsafe { mem::transmute(&emu.common.cartridge.reader.header) };
+        emu.mem.main.write_slice(0x7FFE00, cartridge_header);
 
-        hle.mem.main.write(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
-        hle.mem.main.write(0x27FF880, 0x0007u16); // Message from ARM9 to ARM7
-        hle.mem.main.write(0x27FF884, 0x0006u16); // ARM7 boot task
-        hle.mem.main.write(0x27FFC10, 0x5835u16); // Copy of ARM7 BIOS CRC
-        hle.mem.main.write(0x27FFC40, 0x0001u16); // Boot indicator
+        emu.mem.main.write(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
+        emu.mem.main.write(0x27FF880, 0x0007u16); // Message from ARM9 to ARM7
+        emu.mem.main.write(0x27FF884, 0x0006u16); // ARM7 boot task
+        emu.mem.main.write(0x27FFC10, 0x5835u16); // Copy of ARM7 BIOS CRC
+        emu.mem.main.write(0x27FFC40, 0x0001u16); // Boot indicator
 
-        hle.mem.main.write(0x27FF800, 0x00001FC2u32); // Chip ID 1
-        hle.mem.main.write(0x27FF804, 0x00001FC2u32); // Chip ID 2
-        hle.mem.main.write(0x27FFC00, 0x00001FC2u32); // Copy of chip ID 1
-        hle.mem.main.write(0x27FFC04, 0x00001FC2u32); // Copy of chip ID 2
+        emu.mem.main.write(0x27FF800, 0x00001FC2u32); // Chip ID 1
+        emu.mem.main.write(0x27FF804, 0x00001FC2u32); // Chip ID 2
+        emu.mem.main.write(0x27FFC00, 0x00001FC2u32); // Copy of chip ID 1
+        emu.mem.main.write(0x27FFC04, 0x00001FC2u32); // Copy of chip ID 2
 
         // User settings
-        hle.mem.main.write_slice(
+        emu.mem.main.write_slice(
             0x27FFC80,
             &spi::SPI_FIRMWARE[spi::USER_SETTINGS_1_ADDR..spi::USER_SETTINGS_1_ADDR + 0x70],
         );
     }
 
     {
-        let hle_ptr = ptr::addr_of!(hle);
-        let cp15 = get_cp15_mut!(hle, ARM9);
-        let hle_tmp = unsafe { hle_ptr.as_ref().unwrap_unchecked() };
-        cp15.write(0x010000, 0x0005707D, hle_tmp); // control
-        cp15.write(0x090100, 0x0300000A, hle_tmp); // dtcm addr/size
-        cp15.write(0x090101, 0x00000020, hle_tmp); // itcm size
+        let emu_ptr = ptr::addr_of!(emu);
+        let cp15 = get_cp15_mut!(emu, ARM9);
+        let emu = unsafe { emu_ptr.as_ref().unwrap_unchecked() };
+        cp15.write(0x010000, 0x0005707D, emu); // control
+        cp15.write(0x090100, 0x0300000A, emu); // dtcm addr/size
+        cp15.write(0x090101, 0x00000020, emu); // itcm size
     }
 
     {
         // I/O Ports
-        hle.mem_write::<{ ARM9 }, _>(0x4000247, 0x03u8);
-        hle.mem_write::<{ ARM9 }, _>(0x4000300, 0x01u8);
-        hle.mem_write::<{ ARM9 }, _>(0x4000304, 0x0001u16);
+        emu.mem_write::<{ ARM9 }, _>(0x4000247, 0x03u8);
+        emu.mem_write::<{ ARM9 }, _>(0x4000300, 0x01u8);
+        emu.mem_write::<{ ARM9 }, _>(0x4000304, 0x0001u16);
     }
 
     {
-        let regs = get_regs_mut!(hle, ARM9);
+        let regs = get_regs_mut!(emu, ARM9);
         regs.user.gp_regs[4] = arm9_entry_addr; // R12
         regs.user.sp = 0x3002F7C;
         regs.irq.sp = 0x3003F80;
         regs.svc.sp = 0x3003FC0;
         regs.user.lr = arm9_entry_addr;
         regs.pc = arm9_entry_addr;
-        regs.set_cpsr::<false>(0x000000DF, get_cm!(hle));
+        regs.set_cpsr::<false>(0x000000DF, get_cm!(emu));
     }
 
     {
         // I/O Ports
-        hle.mem_write::<{ ARM7 }, _>(0x4000300, 0x01u8); // POWCNT1
-        hle.mem_write::<{ ARM7 }, _>(0x4000504, 0x0200u16); // SOUNDBIAS
+        emu.mem_write::<{ ARM7 }, _>(0x4000300, 0x01u8); // POWCNT1
+        emu.mem_write::<{ ARM7 }, _>(0x4000504, 0x0200u16); // SOUNDBIAS
     }
 
     {
-        let regs = get_regs_mut!(hle, ARM7);
+        let regs = get_regs_mut!(emu, ARM7);
         regs.user.gp_regs[4] = arm7_entry_addr; // R12
         regs.user.sp = 0x380FD80;
         regs.irq.sp = 0x380FF80;
         regs.user.sp = 0x380FFC0;
         regs.user.lr = arm7_entry_addr;
         regs.pc = arm7_entry_addr;
-        regs.set_cpsr::<false>(0x000000DF, get_cm!(hle));
+        regs.set_cpsr::<false>(0x000000DF, get_cm!(emu));
     }
 
     {
-        let arm9_code = hle.common.cartridge.reader.read_arm9_code();
-        let arm7_code = hle.common.cartridge.reader.read_arm7_code();
+        let arm9_code = emu.common.cartridge.reader.read_arm9_code();
+        let arm7_code = emu.common.cartridge.reader.read_arm7_code();
 
         debug_println!("write ARM9 code at {:x}", arm9_ram_addr);
         for (i, value) in arm9_code.iter().enumerate() {
-            hle.mem_write::<{ ARM9 }, _>(arm9_ram_addr + i as u32, *value);
+            emu.mem_write::<{ ARM9 }, _>(arm9_ram_addr + i as u32, *value);
         }
 
         debug_println!("write ARM7 code at {:x}", arm7_ram_addr);
         for (i, value) in arm7_code.iter().enumerate() {
-            hle.mem_write::<{ ARM7 }, _>(arm7_ram_addr + i as u32, *value);
+            emu.mem_write::<{ ARM7 }, _>(arm7_ram_addr + i as u32, *value);
         }
     }
 
-    Gpu::initialize_schedule(get_cm!(hle));
-    hle.common.gpu.frame_skip = settings[FRAMESKIP_SETTING].value.as_bool().unwrap();
+    Gpu::initialize_schedule(get_cm!(emu));
+    emu.common.gpu.frame_skip = settings[FRAMESKIP_SETTING].value.as_bool().unwrap();
 
-    let hle_ptr = ptr::addr_of_mut!(hle) as u32;
+    let emu_ptr = ptr::addr_of_mut!(emu) as u32;
     let gpu2d_thread = thread::Builder::new()
         .name("gpu2d".to_owned())
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core1);
-            let hle = unsafe { (hle_ptr as *mut Hle).as_mut().unwrap() };
+            let emu = unsafe { (emu_ptr as *mut Emu).as_mut().unwrap() };
             loop {
-                hle.common.gpu.draw_scanline_thread(&hle.mem);
+                emu.common.gpu.draw_scanline_thread(&emu.mem);
             }
         })
         .unwrap();
 
-    execute_jit(&mut hle);
+    execute_jit(&mut emu);
     gpu2d_thread.join().unwrap();
 }
 
 #[inline(never)]
-fn execute_jit(hle: &mut Hle) {
-    let hle_ptr = hle as *mut Hle;
-    let mut jit_asm_arm9 = JitAsm::<{ ARM9 }>::new(unsafe { hle_ptr.as_mut().unwrap() });
-    let mut jit_asm_arm7 = JitAsm::<{ ARM7 }>::new(unsafe { hle_ptr.as_mut().unwrap() });
-    hle.mem.jit.open();
+fn execute_jit(emu: &mut Emu) {
+    let emu_ptr = emu as *mut Emu;
+    let mut jit_asm_arm9 = JitAsm::<{ ARM9 }>::new(unsafe { emu_ptr.as_mut().unwrap() });
+    let mut jit_asm_arm7 = JitAsm::<{ ARM7 }>::new(unsafe { emu_ptr.as_mut().unwrap() });
+    emu.mem.jit.open();
 
-    get_mmu!(jit_asm_arm9.hle, ARM9).update_all(hle);
-    get_mmu!(jit_asm_arm7.hle, ARM7).update_all(hle);
+    get_mmu!(jit_asm_arm9.emu, ARM9).update_all(emu);
+    get_mmu!(jit_asm_arm7.emu, ARM7).update_all(emu);
 
-    let cpu_regs_arm9 = get_cpu_regs!(hle, ARM9);
-    let cpu_regs_arm7 = get_cpu_regs!(hle, ARM7);
+    let cpu_regs_arm9 = get_cpu_regs!(emu, ARM9);
+    let cpu_regs_arm7 = get_cpu_regs!(emu, ARM7);
 
-    let cm = &mut hle.common.cycle_manager;
+    let cm = &mut emu.common.cycle_manager;
 
     loop {
         let arm9_cycles = if likely(!cpu_regs_arm9.is_halted()) {
@@ -191,7 +191,7 @@ fn execute_jit(hle: &mut Hle) {
         } else {
             cm.add_cycle(cycles);
         }
-        cm.check_events(jit_asm_arm9.hle);
+        cm.check_events(jit_asm_arm9.emu);
     }
 }
 

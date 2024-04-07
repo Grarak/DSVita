@@ -1,5 +1,5 @@
-use crate::hle::exception_handler::ExceptionVector;
-use crate::hle::CpuType;
+use crate::emu::exception_handler::ExceptionVector;
+use crate::emu::CpuType;
 use crate::jit::inst_exception_handler::exception_handler;
 use crate::jit::jit_asm::JitAsm;
 
@@ -13,11 +13,11 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if is_halt {
             self.emit_halt::<THUMB>(pc);
         } else {
-            let hle_addr = self.hle as *mut _ as _;
+            let emu_addr = self.emu as *mut _ as _;
             self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
                 |_, _| {},
                 &[
-                    Some(hle_addr),
+                    Some(emu_addr),
                     Some(inst_info.opcode),
                     Some(ExceptionVector::SoftwareInterrupt as u32),
                 ],

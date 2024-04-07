@@ -1,143 +1,143 @@
 use crate::cartridge_reader::CartridgeReader;
-use crate::hle::cpu::{CpuArm7, CpuArm9};
-use crate::hle::cycle_manager::CycleManager;
-use crate::hle::gpu::gpu::{Gpu, Swapchain};
-use crate::hle::input::Input;
-use crate::hle::ipc::Ipc;
-use crate::hle::memory::cartridge::Cartridge;
-use crate::hle::memory::mem::Memory;
-use crate::hle::CpuType;
+use crate::emu::cpu::{CpuArm7, CpuArm9};
+use crate::emu::cycle_manager::CycleManager;
+use crate::emu::gpu::gpu::{Gpu, Swapchain};
+use crate::emu::input::Input;
+use crate::emu::ipc::Ipc;
+use crate::emu::memory::cartridge::Cartridge;
+use crate::emu::memory::mem::Memory;
+use crate::emu::CpuType;
 use crate::utils::Convert;
 use std::ptr;
 use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 
 macro_rules! get_regs {
-    ($hle:expr, $cpu:expr) => {{
+    ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::hle::CpuType::ARM9 => $hle.common.cpus.arm9.regs(),
-            crate::hle::CpuType::ARM7 => $hle.common.cpus.arm7.regs(),
+            crate::emu::CpuType::ARM9 => $emu.common.cpus.arm9.regs(),
+            crate::emu::CpuType::ARM7 => $emu.common.cpus.arm7.regs(),
         }
     }};
 }
 pub(crate) use get_regs;
 
 macro_rules! get_regs_mut {
-    ($hle:expr, $cpu:expr) => {{
+    ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::hle::CpuType::ARM9 => $hle.common.cpus.arm9.regs_mut(),
-            crate::hle::CpuType::ARM7 => $hle.common.cpus.arm7.regs_mut(),
+            crate::emu::CpuType::ARM9 => $emu.common.cpus.arm9.regs_mut(),
+            crate::emu::CpuType::ARM7 => $emu.common.cpus.arm7.regs_mut(),
         }
     }};
 }
 pub(crate) use get_regs_mut;
 
 macro_rules! get_cpu_regs {
-    ($hle:expr, $cpu:expr) => {{
+    ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::hle::CpuType::ARM9 => &$hle.common.cpus.arm9.regs().cpu,
-            crate::hle::CpuType::ARM7 => &$hle.common.cpus.arm7.regs().cpu,
+            crate::emu::CpuType::ARM9 => &$emu.common.cpus.arm9.regs().cpu,
+            crate::emu::CpuType::ARM7 => &$emu.common.cpus.arm7.regs().cpu,
         }
     }};
 }
 pub(crate) use get_cpu_regs;
 
 macro_rules! get_cpu_regs_mut {
-    ($hle:expr, $cpu:expr) => {{
+    ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::hle::CpuType::ARM9 => &mut $hle.common.cpus.arm9.regs_mut().cpu,
-            crate::hle::CpuType::ARM7 => &mut $hle.common.cpus.arm7.regs_mut().cpu,
+            crate::emu::CpuType::ARM9 => &mut $emu.common.cpus.arm9.regs_mut().cpu,
+            crate::emu::CpuType::ARM7 => &mut $emu.common.cpus.arm7.regs_mut().cpu,
         }
     }};
 }
 pub(crate) use get_cpu_regs_mut;
 
 macro_rules! get_cp15 {
-    ($hle:expr, $cpu:expr) => {{
+    ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::hle::CpuType::ARM9 => $hle.common.cpus.arm9.cp15(),
-            crate::hle::CpuType::ARM7 => $hle.common.cpus.arm7.cp15(),
+            crate::emu::CpuType::ARM9 => $emu.common.cpus.arm9.cp15(),
+            crate::emu::CpuType::ARM7 => $emu.common.cpus.arm7.cp15(),
         }
     }};
 }
 pub(crate) use get_cp15;
 
 macro_rules! get_cp15_mut {
-    ($hle:expr, $cpu:expr) => {{
+    ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::hle::CpuType::ARM9 => $hle.common.cpus.arm9.cp15_mut(),
-            crate::hle::CpuType::ARM7 => $hle.common.cpus.arm7.cp15_mut(),
+            crate::emu::CpuType::ARM9 => $emu.common.cpus.arm9.cp15_mut(),
+            crate::emu::CpuType::ARM7 => $emu.common.cpus.arm7.cp15_mut(),
         }
     }};
 }
 pub(crate) use get_cp15_mut;
 
 macro_rules! io_dma {
-    ($hle:expr, $cpu:expr) => {{
+    ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::hle::CpuType::ARM9 => &$hle.mem.io_arm9.dma,
-            crate::hle::CpuType::ARM7 => &$hle.mem.io_arm7.dma,
+            crate::emu::CpuType::ARM9 => &$emu.mem.io_arm9.dma,
+            crate::emu::CpuType::ARM7 => &$emu.mem.io_arm7.dma,
         }
     }};
 }
 pub(crate) use io_dma;
 
 macro_rules! io_dma_mut {
-    ($hle:expr, $cpu:expr) => {{
+    ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::hle::CpuType::ARM9 => &mut $hle.mem.io_arm9.dma,
-            crate::hle::CpuType::ARM7 => &mut $hle.mem.io_arm7.dma,
+            crate::emu::CpuType::ARM9 => &mut $emu.mem.io_arm9.dma,
+            crate::emu::CpuType::ARM7 => &mut $emu.mem.io_arm7.dma,
         }
     }};
 }
 pub(crate) use io_dma_mut;
 
 macro_rules! io_timers {
-    ($hle:expr, $cpu:expr) => {{
+    ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::hle::CpuType::ARM9 => &$hle.mem.io_arm9.timers,
-            crate::hle::CpuType::ARM7 => &$hle.mem.io_arm7.timers,
+            crate::emu::CpuType::ARM9 => &$emu.mem.io_arm9.timers,
+            crate::emu::CpuType::ARM7 => &$emu.mem.io_arm7.timers,
         }
     }};
 }
 pub(crate) use io_timers;
 
 macro_rules! io_timers_mut {
-    ($hle:expr, $cpu:expr) => {{
+    ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::hle::CpuType::ARM9 => &mut $hle.mem.io_arm9.timers,
-            crate::hle::CpuType::ARM7 => &mut $hle.mem.io_arm7.timers,
+            crate::emu::CpuType::ARM9 => &mut $emu.mem.io_arm9.timers,
+            crate::emu::CpuType::ARM7 => &mut $emu.mem.io_arm7.timers,
         }
     }};
 }
 pub(crate) use io_timers_mut;
 
 macro_rules! get_cm {
-    ($hle:expr) => {
-        &$hle.common.cycle_manager
+    ($emu:expr) => {
+        &$emu.common.cycle_manager
     };
 }
 pub(crate) use get_cm;
 
 macro_rules! get_jit {
-    ($hle:expr) => {
-        &$hle.mem.jit
+    ($emu:expr) => {
+        &$emu.mem.jit
     };
 }
 pub(crate) use get_jit;
 
 macro_rules! get_jit_mut {
-    ($hle:expr) => {
-        &mut $hle.mem.jit
+    ($emu:expr) => {
+        &mut $emu.mem.jit
     };
 }
 pub(crate) use get_jit_mut;
 
 macro_rules! get_mmu {
-    ($hle:expr, $cpu:expr) => {{
+    ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::hle::CpuType::ARM9 => &$hle.mem.mmu_arm9 as &dyn crate::hle::memory::mmu::Mmu,
-            crate::hle::CpuType::ARM7 => &$hle.mem.mmu_arm7 as &dyn crate::hle::memory::mmu::Mmu,
+            crate::emu::CpuType::ARM9 => &$emu.mem.mmu_arm9 as &dyn crate::emu::memory::mmu::Mmu,
+            crate::emu::CpuType::ARM7 => &$emu.mem.mmu_arm7 as &dyn crate::emu::memory::mmu::Mmu,
         }
     }};
 }
@@ -184,19 +184,19 @@ impl Common {
     }
 }
 
-pub struct Hle {
+pub struct Emu {
     pub common: Common,
     pub mem: Memory,
 }
 
-impl Hle {
+impl Emu {
     pub fn new(
         cartridge_reader: CartridgeReader,
         swapchain: Arc<Swapchain>,
         fps: Arc<AtomicU16>,
         key_map: Arc<AtomicU16>,
     ) -> Self {
-        Hle {
+        Emu {
             common: Common::new(cartridge_reader, swapchain, fps, key_map),
             mem: Memory::new(),
         }

@@ -1,7 +1,7 @@
-use crate::hle::hle::{get_mmu, Hle};
-use crate::hle::memory::regions;
-use crate::hle::CpuType;
-use crate::hle::CpuType::ARM7;
+use crate::emu::emu::{get_mmu, Emu};
+use crate::emu::memory::regions;
+use crate::emu::CpuType;
+use crate::emu::CpuType::ARM7;
 use crate::jit::jit_memory::JIT_BLOCK_SIZE;
 use crate::utils;
 use crate::utils::{Convert, HeapMemU8};
@@ -155,20 +155,20 @@ impl Wram {
         }
     }
 
-    pub fn set_cnt(&mut self, value: u8, hle: &mut Hle) {
+    pub fn set_cnt(&mut self, value: u8, emu: &mut Emu) {
         self.cnt = value & 0x3;
         self.init_maps();
 
         for addr in
             (regions::SHARED_WRAM_OFFSET..regions::IO_PORTS_OFFSET).step_by(JIT_BLOCK_SIZE as usize)
         {
-            hle.mem
+            emu.mem
                 .jit
                 .invalidate_block::<{ ARM7 }>(addr, JIT_BLOCK_SIZE);
         }
 
-        get_mmu!(hle, ARM9).update_wram(hle);
-        get_mmu!(hle, ARM7).update_wram(hle);
+        get_mmu!(emu, ARM9).update_wram(emu);
+        get_mmu!(emu, ARM7).update_wram(emu);
     }
 
     fn read_arm9<T: Convert>(&self, addr_offset: u32) -> T {

@@ -1,6 +1,6 @@
-use crate::hle::hle::{get_cp15, get_cp15_mut, get_cpu_regs_mut, get_regs, get_regs_mut};
-use crate::hle::CpuType;
-use crate::hle::CpuType::ARM9;
+use crate::emu::emu::{get_cp15, get_cp15_mut, get_cpu_regs_mut, get_regs, get_regs_mut};
+use crate::emu::CpuType;
+use crate::emu::CpuType::ARM9;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::inst_cp15_handler::{cp15_read, cp15_write};
@@ -11,7 +11,7 @@ use crate::jit::Op;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_halt<const THUMB: bool>(&mut self, pc: u32) {
-        let cpu_regs_addr = get_cpu_regs_mut!(self.hle, CPU) as *mut _ as _;
+        let cpu_regs_addr = get_cpu_regs_mut!(self.emu, CPU) as *mut _ as _;
 
         self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
             |_, _| {},
@@ -36,7 +36,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             .push(LdrStrImm::str_al(Reg::R0, Reg::R1));
         self.jit_buf
             .emit_opcodes
-            .extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, Reg::R2, Reg::R3));
+            .extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R2, Reg::R3));
 
         Self::emit_host_bx(
             self.breakout_skip_save_regs_addr,
@@ -49,7 +49,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             return;
         }
 
-        let hle_addr = self.hle as *mut _ as _;
+        let emu_addr = self.emu as *mut _ as _;
 
         let inst_info = &self.jit_buf.instructions[buf_index];
 
@@ -66,18 +66,18 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             let (args, addr) = match inst_info.op {
                 Op::Mcr => (
                     [
-                        Some(get_cp15_mut!(self.hle, CPU) as *mut _ as _),
+                        Some(get_cp15_mut!(self.emu, CPU) as *mut _ as _),
                         Some(cp15_reg),
                         None,
-                        Some(hle_addr),
+                        Some(emu_addr),
                     ],
                     cp15_write as _,
                 ),
                 Op::Mrc => {
-                    let reg_addr = get_regs_mut!(self.hle, CPU).get_reg_mut(*rd) as *mut _ as u32;
+                    let reg_addr = get_regs_mut!(self.emu, CPU).get_reg_mut(*rd) as *mut _ as u32;
                     (
                         [
-                            Some(get_cp15!(self.hle, CPU) as *const _ as _),
+                            Some(get_cp15!(self.emu, CPU) as *const _ as _),
                             Some(cp15_reg),
                             Some(reg_addr),
                             None,

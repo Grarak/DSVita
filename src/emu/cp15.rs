@@ -1,5 +1,5 @@
-use crate::hle::hle::{get_mmu, Hle};
-use crate::hle::CpuType::ARM9;
+use crate::emu::emu::{get_mmu, Emu};
+use crate::emu::CpuType::ARM9;
 use crate::logging::debug_println;
 use bilge::prelude::*;
 use std::{cmp, mem};
@@ -99,7 +99,7 @@ impl Cp15 {
         }
     }
 
-    fn set_control_reg(&mut self, value: u32, hle: &Hle) {
+    fn set_control_reg(&mut self, value: u32, emu: &Emu) {
         self.control = (self.control & (!CONTROL_RW_BITS_MASK)) | (value & CONTROL_RW_BITS_MASK);
         let control_reg = Cp15ControlReg::from(self.control);
 
@@ -115,18 +115,18 @@ impl Cp15 {
             u8::from(control_reg.itcm_enable()) + u8::from(control_reg.itcm_load_mode()),
         );
 
-        get_mmu!(hle, ARM9).update_itcm(hle);
-        get_mmu!(hle, ARM9).update_dtcm(hle);
+        get_mmu!(emu, ARM9).update_itcm(emu);
+        get_mmu!(emu, ARM9).update_dtcm(emu);
     }
 
-    fn set_dtcm(&mut self, value: u32, hle: &Hle) {
+    fn set_dtcm(&mut self, value: u32, emu: &Emu) {
         let tcm_reg = TcmReg::from(value);
 
         self.dtcm = value;
         self.dtcm_addr = u32::from(tcm_reg.region_base()) << 12;
         self.dtcm_size = cmp::max(512 << u8::from(tcm_reg.virtual_size()), TCM_MIN_SIZE);
 
-        get_mmu!(hle, ARM9).update_dtcm(hle);
+        get_mmu!(emu, ARM9).update_dtcm(emu);
 
         debug_println!(
             "{:?} Set dtcm to addr {:x} with size {:x}",
@@ -136,24 +136,24 @@ impl Cp15 {
         );
     }
 
-    fn set_itcm(&mut self, value: u32, hle: &Hle) {
+    fn set_itcm(&mut self, value: u32, emu: &Emu) {
         let tcm_reg = TcmReg::from(value);
 
         self.itcm = value;
         self.itcm_size = cmp::max(512 << u8::from(tcm_reg.virtual_size()), TCM_MIN_SIZE);
 
-        get_mmu!(hle, ARM9).update_itcm(hle);
+        get_mmu!(emu, ARM9).update_itcm(emu);
 
         debug_println!("Set itcm with size {:x}", self.itcm_size);
     }
 
-    pub fn write(&mut self, reg: u32, value: u32, hle: &Hle) {
+    pub fn write(&mut self, reg: u32, value: u32, emu: &Emu) {
         debug_println!("Writing to cp15 reg {:x} {:x}", reg, value);
 
         match reg {
-            0x010000 => self.set_control_reg(value, hle),
-            0x090100 => self.set_dtcm(value, hle),
-            0x090101 => self.set_itcm(value, hle),
+            0x010000 => self.set_control_reg(value, emu),
+            0x090100 => self.set_dtcm(value, emu),
+            0x090101 => self.set_itcm(value, emu),
             _ => debug_println!("Unknown cp15 reg write {:x}", reg),
         }
     }

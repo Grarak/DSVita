@@ -1,10 +1,10 @@
-use crate::hle::hle::{get_cm, get_cpu_regs, get_cpu_regs_mut, Hle};
-use crate::hle::memory::dma::Dma;
-use crate::hle::rtc::Rtc;
-use crate::hle::spi::Spi;
-use crate::hle::spu::Spu;
-use crate::hle::timers::Timers;
-use crate::hle::CpuType::ARM7;
+use crate::emu::emu::{get_cm, get_cpu_regs, get_cpu_regs_mut, Emu};
+use crate::emu::memory::dma::Dma;
+use crate::emu::rtc::Rtc;
+use crate::emu::spi::Spi;
+use crate::emu::spu::Spu;
+use crate::emu::timers::Timers;
+use crate::emu::CpuType::ARM7;
 use crate::logging::debug_println;
 use crate::utils::Convert;
 use dspsv_macros::{io_ports_read, io_ports_write};
@@ -29,7 +29,7 @@ impl IoArm7 {
         }
     }
 
-    pub fn read<T: Convert>(&mut self, addr_offset: u32, hle: &mut Hle) -> T {
+    pub fn read<T: Convert>(&mut self, addr_offset: u32, emu: &mut Emu) -> T {
         /*
          * Use moving windows to handle reads and writes
          * |0|0|0|  x  |   x   |   x   |   x   |0|0|0|
@@ -39,8 +39,8 @@ impl IoArm7 {
 
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
-        let hle_ptr = hle as *mut Hle;
-        let common = unsafe { &mut hle_ptr.as_mut().unwrap_unchecked().common };
+        let emu_ptr = emu as *mut Emu;
+        let common = unsafe { &mut emu_ptr.as_mut().unwrap_unchecked().common };
         while (index - 3) < mem::size_of::<T>() {
             io_ports_read!(match addr_offset + (index - 3) as u32 {
                 io16(0x4) => common.gpu.get_disp_stat::<{ ARM7 }>(),
@@ -57,13 +57,13 @@ impl IoArm7 {
                 io32(0xD4) => self.dma.get_sad::<3>(),
                 io32(0xD8) => self.dma.get_dad::<3>(),
                 io32(0xDC) => self.dma.get_cnt::<3>(),
-                io16(0x100) => self.timers.get_cnt_l::<0>(get_cm!(hle)),
+                io16(0x100) => self.timers.get_cnt_l::<0>(get_cm!(emu)),
                 io16(0x102) => self.timers.get_cnt_h::<0>(),
-                io16(0x104) => self.timers.get_cnt_l::<1>(get_cm!(hle)),
+                io16(0x104) => self.timers.get_cnt_l::<1>(get_cm!(emu)),
                 io16(0x106) => self.timers.get_cnt_h::<1>(),
-                io16(0x108) => self.timers.get_cnt_l::<2>(get_cm!(hle)),
+                io16(0x108) => self.timers.get_cnt_l::<2>(get_cm!(emu)),
                 io16(0x10A) => self.timers.get_cnt_h::<2>(),
-                io16(0x10C) => self.timers.get_cnt_l::<3>(get_cm!(hle)),
+                io16(0x10C) => self.timers.get_cnt_l::<3>(get_cm!(emu)),
                 io16(0x10E) => self.timers.get_cnt_h::<3>(),
                 io16(0x130) => common.input.get_key_input(),
                 io16(0x136) => common.input.get_ext_key_in(),
@@ -75,13 +75,13 @@ impl IoArm7 {
                 io32(0x1A4) => common.cartridge.get_rom_ctrl::<{ ARM7 }>(),
                 io16(0x1C0) => self.spi.cnt,
                 io8(0x1C2) => self.spi.data,
-                io8(0x208) => get_cpu_regs!(hle, ARM7).ime,
-                io32(0x210) => get_cpu_regs!(hle, ARM7).ie,
-                io32(0x214) => get_cpu_regs!(hle, ARM7).irf,
-                io8(0x240) => hle.mem.vram.stat,
-                io8(0x241) => hle.mem.wram.cnt,
-                io8(0x300) => get_cpu_regs!(hle, ARM7).post_flg,
-                io8(0x301) => get_cpu_regs!(hle, ARM7).halt_cnt,
+                io8(0x208) => get_cpu_regs!(emu, ARM7).ime,
+                io32(0x210) => get_cpu_regs!(emu, ARM7).ie,
+                io32(0x214) => get_cpu_regs!(emu, ARM7).irf,
+                io8(0x240) => emu.mem.vram.stat,
+                io8(0x241) => emu.mem.wram.cnt,
+                io8(0x300) => get_cpu_regs!(emu, ARM7).post_flg,
+                io8(0x301) => get_cpu_regs!(emu, ARM7).halt_cnt,
                 io32(0x400) => self.spu.get_cnt(0),
                 io32(0x410) => self.spu.get_cnt(1),
                 io32(0x420) => self.spu.get_cnt(2),
@@ -104,7 +104,7 @@ impl IoArm7 {
                 io8(0x509) => self.spu.get_snd_cap_cnt(1),
                 io32(0x510) => todo!(),
                 io32(0x518) => todo!(),
-                io32(0x100000) => common.ipc.fifo_recv::<{ ARM7 }>(hle),
+                io32(0x100000) => common.ipc.fifo_recv::<{ ARM7 }>(emu),
                 io32(0x100010) => todo!(),
                 io16(0x800006) => todo!(),
                 io16(0x800010) => todo!(),
@@ -179,7 +179,7 @@ impl IoArm7 {
         ]))
     }
 
-    pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, hle: &mut Hle) {
+    pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, emu: &mut Emu) {
         let bytes = value.into().to_le_bytes();
         let bytes = &bytes[..mem::size_of::<T>()];
         /*
@@ -194,46 +194,46 @@ impl IoArm7 {
 
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
-        let hle_ptr = hle as *mut Hle;
-        let common = unsafe { &mut hle_ptr.as_mut().unwrap_unchecked().common };
+        let emu_ptr = emu as *mut Emu;
+        let common = unsafe { &mut emu_ptr.as_mut().unwrap_unchecked().common };
         while (index - 3) < mem::size_of::<T>() {
             io_ports_write!(match addr_offset + (index - 3) as u32 {
                 io16(0x4) => common.gpu.set_disp_stat::<{ ARM7 }>(mask, value),
                 io32(0xB0) => self.dma.set_sad::<0>(mask, value),
                 io32(0xB4) => self.dma.set_dad::<0>(mask, value),
-                io32(0xB8) => self.dma.set_cnt::<0>(mask, value, hle),
+                io32(0xB8) => self.dma.set_cnt::<0>(mask, value, emu),
                 io32(0xBC) => self.dma.set_sad::<1>(mask, value),
                 io32(0xC0) => self.dma.set_dad::<1>(mask, value),
-                io32(0xC4) => self.dma.set_cnt::<1>(mask, value, hle),
+                io32(0xC4) => self.dma.set_cnt::<1>(mask, value, emu),
                 io32(0xC8) => self.dma.set_sad::<2>(mask, value),
                 io32(0xCC) => self.dma.set_dad::<2>(mask, value),
-                io32(0xD0) => self.dma.set_cnt::<2>(mask, value, hle),
+                io32(0xD0) => self.dma.set_cnt::<2>(mask, value, emu),
                 io32(0xD4) => self.dma.set_sad::<3>(mask, value),
                 io32(0xD8) => self.dma.set_dad::<3>(mask, value),
-                io32(0xDC) => self.dma.set_cnt::<3>(mask, value, hle),
+                io32(0xDC) => self.dma.set_cnt::<3>(mask, value, emu),
                 io16(0x100) => self.timers.set_cnt_l::<0>(mask, value),
-                io16(0x102) => self.timers.set_cnt_h::<0>(mask, value, hle),
+                io16(0x102) => self.timers.set_cnt_h::<0>(mask, value, emu),
                 io16(0x104) => self.timers.set_cnt_l::<1>(mask, value),
-                io16(0x106) => self.timers.set_cnt_h::<1>(mask, value, hle),
+                io16(0x106) => self.timers.set_cnt_h::<1>(mask, value, emu),
                 io16(0x108) => self.timers.set_cnt_l::<2>(mask, value),
-                io16(0x10A) => self.timers.set_cnt_h::<2>(mask, value, hle),
+                io16(0x10A) => self.timers.set_cnt_h::<2>(mask, value, emu),
                 io16(0x10C) => self.timers.set_cnt_l::<3>(mask, value),
-                io16(0x10E) => self.timers.set_cnt_h::<3>(mask, value, hle),
+                io16(0x10E) => self.timers.set_cnt_h::<3>(mask, value, emu),
                 io8(0x138) => self.rtc.set_rtc(value),
-                io16(0x180) => common.ipc.set_sync_reg::<{ ARM7 }>(mask, value, hle),
-                io16(0x184) => common.ipc.set_fifo_cnt::<{ ARM7 }>(mask, value, hle),
-                io32(0x188) => common.ipc.fifo_send::<{ ARM7 }>(mask, value, hle),
+                io16(0x180) => common.ipc.set_sync_reg::<{ ARM7 }>(mask, value, emu),
+                io16(0x184) => common.ipc.set_fifo_cnt::<{ ARM7 }>(mask, value, emu),
+                io32(0x188) => common.ipc.fifo_send::<{ ARM7 }>(mask, value, emu),
                 io16(0x1A0) => common.cartridge.set_aux_spi_cnt::<{ ARM7 }>(mask, value),
                 io8(0x1A2) => common.cartridge.set_aux_spi_data::<{ ARM7 }>(value),
-                io32(0x1A4) => common.cartridge.set_rom_ctrl::<{ ARM7 }>(mask, value, hle),
+                io32(0x1A4) => common.cartridge.set_rom_ctrl::<{ ARM7 }>(mask, value, emu),
                 io32(0x1A8) => common.cartridge.set_bus_cmd_out_l::<{ ARM7 }>(mask, value),
                 io32(0x1AC) => common.cartridge.set_bus_cmd_out_h::<{ ARM7 }>(mask, value),
                 io16(0x1C0) => self.spi.set_cnt(mask, value),
                 io8(0x1C2) => self.spi.set_data(value),
-                io8(0x208) => get_cpu_regs_mut!(hle, ARM7).set_ime(value, get_cm!(hle)),
-                io32(0x210) => get_cpu_regs_mut!(hle, ARM7).set_ie(mask, value, get_cm!(hle)),
-                io32(0x214) => get_cpu_regs_mut!(hle, ARM7).set_irf(mask, value),
-                io8(0x300) => get_cpu_regs_mut!(hle, ARM7).set_post_flg(value),
+                io8(0x208) => get_cpu_regs_mut!(emu, ARM7).set_ime(value, get_cm!(emu)),
+                io32(0x210) => get_cpu_regs_mut!(emu, ARM7).set_ie(mask, value, get_cm!(emu)),
+                io32(0x214) => get_cpu_regs_mut!(emu, ARM7).set_irf(mask, value),
+                io8(0x300) => get_cpu_regs_mut!(emu, ARM7).set_post_flg(value),
                 io8(0x301) => todo!(),
                 io32(0x400) => self.spu.set_cnt(0, mask, value),
                 io32(0x404) => self.spu.set_sad(0, mask, value),

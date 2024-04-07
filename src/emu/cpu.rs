@@ -1,6 +1,6 @@
-use crate::hle::cp15::Cp15;
-use crate::hle::thread_regs::ThreadRegs;
-use crate::hle::CpuType::{ARM7, ARM9};
+use crate::emu::cp15::Cp15;
+use crate::emu::thread_regs::ThreadRegs;
+use crate::emu::CpuType::{ARM7, ARM9};
 use std::ops::DerefMut;
 
 pub struct CpuArm9 {

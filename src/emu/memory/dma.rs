@@ -1,7 +1,7 @@
-use crate::hle::cpu_regs::InterruptFlag;
-use crate::hle::cycle_manager::{CycleEvent, CycleManager};
-use crate::hle::hle::{get_cm, get_cpu_regs_mut, io_dma, io_dma_mut, Hle};
-use crate::hle::CpuType;
+use crate::emu::cpu_regs::InterruptFlag;
+use crate::emu::cycle_manager::{CycleEvent, CycleManager};
+use crate::emu::emu::{get_cm, get_cpu_regs_mut, io_dma, io_dma_mut, Emu};
+use crate::emu::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
 use bilge::prelude::*;
@@ -150,7 +150,7 @@ impl Dma {
         self.channels[CHANNEL_NUM].dad = (self.channels[CHANNEL_NUM].dad & !mask) | (value & mask);
     }
 
-    pub fn set_cnt<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32, hle: &mut Hle) {
+    pub fn set_cnt<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32, emu: &mut Emu) {
         let channel = &mut self.channels[CHANNEL_NUM];
         let was_enabled = bool::from(DmaCntArm9::from(channel.cnt).enable());
 
@@ -189,7 +189,7 @@ impl Dma {
                     channel.current_count
                 );
 
-                get_cm!(hle).schedule(1, Box::new(DmaEvent::new(self.cpu_type, CHANNEL_NUM)));
+                get_cm!(emu).schedule(1, Box::new(DmaEvent::new(self.cpu_type, CHANNEL_NUM)));
             }
         }
     }
@@ -238,7 +238,7 @@ impl DmaEvent {
     }
 
     fn do_transfer<const CPU: CpuType, T: utils::Convert>(
-        hle: &mut Hle,
+        emu: &mut Emu,
         dest_addr: &mut u32,
         src_addr: &mut u32,
         count: u32,
@@ -258,8 +258,8 @@ impl DmaEvent {
                 dest_addr
             );
 
-            let src = hle.mem_read_no_tcm::<CPU, T>(*src_addr);
-            hle.mem_write_no_tcm::<CPU, T>(*dest_addr, src);
+            let src = emu.mem_read_no_tcm::<CPU, T>(*src_addr);
+            emu.mem_write_no_tcm::<CPU, T>(*dest_addr, src);
 
             match src_addr_ctrl {
                 DmaAddrCtrl::Increment => *src_addr += step_size,
@@ -283,9 +283,9 @@ impl DmaEvent {
 impl CycleEvent for DmaEvent {
     fn scheduled(&mut self, _: &u64) {}
 
-    fn trigger(&mut self, _: u16, hle: &mut Hle) {
+    fn trigger(&mut self, _: u16, emu: &mut Emu) {
         let (cnt, mode, mut dest, mut src, count) = {
-            let channel = &io_dma!(hle, self.cpu_type).channels[self.channel_num];
+            let channel = &io_dma!(emu, self.cpu_type).channels[self.channel_num];
             (
                 DmaCntArm9::from(channel.cnt),
                 DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, self.channel_num),
@@ -298,25 +298,25 @@ impl CycleEvent for DmaEvent {
         if bool::from(cnt.transfer_type()) {
             match self.cpu_type {
                 ARM9 => {
-                    Self::do_transfer::<{ ARM9 }, u32>(hle, &mut dest, &mut src, count, &cnt, mode)
+                    Self::do_transfer::<{ ARM9 }, u32>(emu, &mut dest, &mut src, count, &cnt, mode)
                 }
                 ARM7 => {
-                    Self::do_transfer::<{ ARM7 }, u32>(hle, &mut dest, &mut src, count, &cnt, mode)
+                    Self::do_transfer::<{ ARM7 }, u32>(emu, &mut dest, &mut src, count, &cnt, mode)
                 }
             }
         } else {
             match self.cpu_type {
                 ARM9 => {
-                    Self::do_transfer::<{ ARM9 }, u16>(hle, &mut dest, &mut src, count, &cnt, mode)
+                    Self::do_transfer::<{ ARM9 }, u16>(emu, &mut dest, &mut src, count, &cnt, mode)
                 }
                 ARM7 => {
-                    Self::do_transfer::<{ ARM7 }, u16>(hle, &mut dest, &mut src, count, &cnt, mode)
+                    Self::do_transfer::<{ ARM7 }, u16>(emu, &mut dest, &mut src, count, &cnt, mode)
                 }
             }
         };
 
         {
-            let channel = &mut io_dma_mut!(hle, self.cpu_type).channels[self.channel_num];
+            let channel = &mut io_dma_mut!(emu, self.cpu_type).channels[self.channel_num];
             channel.current_dest = dest;
             channel.current_src = src;
         }
@@ -326,15 +326,15 @@ impl CycleEvent for DmaEvent {
         }
 
         if !bool::from(cnt.repeat()) || mode == DmaTransferMode::StartImm {
-            io_dma_mut!(hle, self.cpu_type).channels[self.channel_num].cnt &= !(1 << 31);
+            io_dma_mut!(emu, self.cpu_type).channels[self.channel_num].cnt &= !(1 << 31);
         } else if mode == DmaTransferMode::GeometryCmdFifo {
             todo!()
         }
 
         if bool::from(cnt.irq_at_end()) {
-            get_cpu_regs_mut!(hle, self.cpu_type).send_interrupt(
+            get_cpu_regs_mut!(emu, self.cpu_type).send_interrupt(
                 InterruptFlag::from(InterruptFlag::Dma0 as u8 + self.channel_num as u8),
-                get_cm!(hle),
+                get_cm!(emu),
             );
         }
     }

@@ -1,6 +1,6 @@
-use crate::hle::hle::get_regs;
-use crate::hle::CpuType;
-use crate::hle::CpuType::ARM9;
+use crate::emu::emu::get_regs;
+use crate::emu::CpuType;
+use crate::emu::CpuType::ARM9;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::jit_asm::JitAsm;
@@ -25,18 +25,18 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let opcodes = &mut self.jit_buf.emit_opcodes;
 
-        opcodes.extend(&get_regs!(self.hle, CPU).save_regs_opcodes);
+        opcodes.extend(&get_regs!(self.emu, CPU).save_regs_opcodes);
 
         opcodes.extend(AluImm::mov32(Reg::R0, new_pc));
         opcodes.extend(AluImm::mov32(Reg::R1, pc));
 
-        opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, Reg::R0, Reg::R3));
+        opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R0, Reg::R3));
 
         opcodes.extend(self.branch_out_data.emit_get_guest_pc_addr(Reg::R2));
 
         if op == Op::Bl {
             opcodes.push(AluImm::add_al(Reg::R0, Reg::R1, 4));
-            opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::LR, Reg::R0, Reg::R5));
+            opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::LR, Reg::R0, Reg::R5));
         }
 
         opcodes.push(LdrStrImm::str_al(Reg::R1, Reg::R2));
@@ -53,17 +53,17 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let opcodes = &mut self.jit_buf.emit_opcodes;
 
-        opcodes.extend(&get_regs!(self.hle, CPU).save_regs_opcodes);
+        opcodes.extend(&get_regs!(self.emu, CPU).save_regs_opcodes);
 
         let reg = inst_info.operands()[0].as_reg_no_shift().unwrap();
         if *reg == Reg::LR {
-            opcodes.extend(get_regs!(self.hle, CPU).emit_get_reg(Reg::R0, Reg::LR));
-            opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, Reg::R0, Reg::LR));
+            opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(Reg::R0, Reg::LR));
+            opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R0, Reg::LR));
         } else if *reg == Reg::PC {
             opcodes.extend(AluImm::mov32(Reg::R0, pc + 8));
-            opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, Reg::R0, Reg::LR));
+            opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R0, Reg::LR));
         } else {
-            opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, *reg, Reg::LR));
+            opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, *reg, Reg::LR));
         }
 
         opcodes.extend(AluImm::mov32(Reg::R1, pc));
@@ -72,7 +72,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         if inst_info.op == Op::BlxReg {
             opcodes.push(AluImm::add_al(Reg::R3, Reg::R1, 4));
-            opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::LR, Reg::R3, Reg::R4));
+            opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::LR, Reg::R3, Reg::R4));
         }
 
         opcodes.push(LdrStrImm::str_al(Reg::R1, Reg::R2));
@@ -94,17 +94,17 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let opcodes = &mut self.jit_buf.emit_opcodes;
 
-        opcodes.extend(&get_regs!(self.hle, CPU).save_regs_opcodes);
+        opcodes.extend(&get_regs!(self.emu, CPU).save_regs_opcodes);
 
         opcodes.extend(AluImm::mov32(Reg::R0, new_pc | 1));
         opcodes.extend(AluImm::mov32(Reg::R1, pc));
 
-        opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::PC, Reg::R0, Reg::R3));
+        opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R0, Reg::R3));
 
         opcodes.extend(self.branch_out_data.emit_get_guest_pc_addr(Reg::R2));
 
         opcodes.push(AluImm::add_al(Reg::R0, Reg::R1, 4));
-        opcodes.extend(get_regs!(self.hle, CPU).emit_set_reg(Reg::LR, Reg::R0, Reg::R5));
+        opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::LR, Reg::R0, Reg::R5));
 
         opcodes.push(LdrStrImm::str_al(Reg::R1, Reg::R2));
 

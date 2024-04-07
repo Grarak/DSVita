@@ -1,11 +1,11 @@
-use crate::hle::hle::Hle;
+use crate::emu::emu::Emu;
 use std::cell::UnsafeCell;
 use std::collections::VecDeque;
 use std::intrinsics::unlikely;
 
 pub trait CycleEvent {
     fn scheduled(&mut self, timestamp: &u64);
-    fn trigger(&mut self, delay: u16, hle: &mut Hle);
+    fn trigger(&mut self, delay: u16, emu: &mut Emu);
 }
 
 pub struct CycleManager {
@@ -29,7 +29,7 @@ impl CycleManager {
         self.cycle_count += cycles_to_add as u64;
     }
 
-    pub fn check_events(&self, hle: &mut Hle) {
+    pub fn check_events(&self, emu: &mut Emu) {
         let cycle_count = self.cycle_count;
         let events = unsafe { self.events.get().as_mut().unwrap_unchecked() };
         while {
@@ -37,7 +37,7 @@ impl CycleManager {
             unlikely(*cycles <= cycle_count)
         } {
             let (cycles, mut event) = unsafe { events.pop_front().unwrap_unchecked() };
-            event.trigger((cycle_count - cycles) as u16, hle);
+            event.trigger((cycle_count - cycles) as u16, emu);
         }
     }
 

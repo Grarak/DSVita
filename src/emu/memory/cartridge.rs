@@ -1,9 +1,9 @@
 use crate::cartridge_reader::CartridgeReader;
-use crate::hle::cpu_regs::InterruptFlag;
-use crate::hle::cycle_manager::CycleEvent;
-use crate::hle::hle::{get_cm, get_cpu_regs_mut, io_dma, Hle};
-use crate::hle::memory::dma::DmaTransferMode;
-use crate::hle::CpuType;
+use crate::emu::cpu_regs::InterruptFlag;
+use crate::emu::cycle_manager::CycleEvent;
+use crate::emu::emu::{get_cm, get_cpu_regs_mut, io_dma, Emu};
+use crate::emu::memory::dma::DmaTransferMode;
+use crate::emu::CpuType;
 use crate::logging::debug_println;
 use bilge::prelude::*;
 
@@ -102,7 +102,7 @@ impl Cartridge {
         self.inner[CPU].rom_ctrl.into()
     }
 
-    pub fn get_rom_data_in<const CPU: CpuType>(&mut self, hle: &mut Hle) -> u32 {
+    pub fn get_rom_data_in<const CPU: CpuType>(&mut self, emu: &mut Emu) -> u32 {
         let inner = &mut self.inner[CPU];
         if !bool::from(inner.rom_ctrl.data_word_status()) {
             return 0;
@@ -113,13 +113,13 @@ impl Cartridge {
         if inner.read_count == inner.block_size {
             inner.rom_ctrl.set_block_start_status(u1::new(0));
             if bool::from(inner.aux_spi_cnt.transfer_ready_irq()) {
-                get_cpu_regs_mut!(hle, CPU).send_interrupt(
+                get_cpu_regs_mut!(emu, CPU).send_interrupt(
                     InterruptFlag::NdsSlotTransferCompletion,
-                    &mut hle.common.cycle_manager,
+                    &mut emu.common.cycle_manager,
                 );
             }
         } else {
-            get_cm!(hle).schedule(
+            get_cm!(emu).schedule(
                 inner.word_cycles as u32,
                 Box::new(WordReadEvent::<CPU>::new()),
             );
@@ -168,7 +168,7 @@ impl Cartridge {
             (self.inner[CPU].bus_cmd_out & !((mask as u64) << 32)) | ((value & mask) as u64) << 32;
     }
 
-    pub fn set_rom_ctrl<const CPU: CpuType>(&mut self, mut mask: u32, value: u32, hle: &mut Hle) {
+    pub fn set_rom_ctrl<const CPU: CpuType>(&mut self, mut mask: u32, value: u32, emu: &mut Emu) {
         let new_rom_ctrl = RomCtrl::from(value);
         let inner = &mut self.inner[CPU];
 
@@ -233,11 +233,11 @@ impl Cartridge {
             inner.rom_ctrl.set_data_word_status(u1::new(0));
             inner.rom_ctrl.set_block_start_status(u1::new(0));
             if bool::from(inner.aux_spi_cnt.transfer_ready_irq()) {
-                get_cpu_regs_mut!(hle, CPU)
-                    .send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm!(hle));
+                get_cpu_regs_mut!(emu, CPU)
+                    .send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm!(emu));
             }
         } else {
-            get_cm!(hle).schedule(
+            get_cm!(emu).schedule(
                 inner.word_cycles as u32,
                 Box::new(WordReadEvent::<CPU>::new()),
             );
@@ -257,10 +257,10 @@ impl<const CPU: CpuType> WordReadEvent<CPU> {
 impl<const CPU: CpuType> CycleEvent for WordReadEvent<CPU> {
     fn scheduled(&mut self, _: &u64) {}
 
-    fn trigger(&mut self, _: u16, hle: &mut Hle) {
-        hle.common.cartridge.inner[CPU]
+    fn trigger(&mut self, _: u16, emu: &mut Emu) {
+        emu.common.cartridge.inner[CPU]
             .rom_ctrl
             .set_data_word_status(u1::new(1));
-        io_dma!(hle, CPU).trigger_all(DmaTransferMode::DsCartSlot, get_cm!(hle));
+        io_dma!(emu, CPU).trigger_all(DmaTransferMode::DsCartSlot, get_cm!(emu));
     }
 }

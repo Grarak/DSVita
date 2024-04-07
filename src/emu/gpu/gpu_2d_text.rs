@@ -1,6 +1,6 @@
-use crate::hle::gpu::gpu::DISPLAY_WIDTH;
-use crate::hle::gpu::gpu_2d::{Gpu2D, Gpu2DEngine};
-use crate::hle::memory::mem::Memory;
+use crate::emu::gpu::gpu::DISPLAY_WIDTH;
+use crate::emu::gpu::gpu_2d::{Gpu2D, Gpu2DEngine};
+use crate::emu::memory::mem::Memory;
 
 impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
     pub(super) fn draw_text<const BG: usize>(&mut self, line: u8, mem: &Memory) {
@@ -72,7 +72,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
             }
 
             let tile = self.read_bg::<u16>(tile_addr, mem);
-            let tile = crate::hle::gpu::gpu_2d::TextBgScreen::from(tile);
+            let tile = crate::emu::gpu::gpu_2d::TextBgScreen::from(tile);
 
             let palette_addr = palettes_base_addr
                 + if BIT8 {
