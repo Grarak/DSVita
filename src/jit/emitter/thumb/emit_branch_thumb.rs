@@ -6,6 +6,7 @@ use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op};
+use crate::DEBUG_LOG_BRANCH_OUT;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_b_thumb(&mut self, buf_index: usize, pc: u32) {
@@ -35,7 +36,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let mut opcodes = Vec::<u32>::new();
 
-        opcodes.extend(AluImm::mov32(Reg::R8, pc));
         opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R9));
         opcodes.push(AluImm::mov16_al(
             Reg::R11,
@@ -44,7 +44,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         opcodes.extend(AluImm::mov32(Reg::R10, new_pc | 1));
 
-        opcodes.push(LdrStrImm::str_al(Reg::R8, Reg::R9));
+        if DEBUG_LOG_BRANCH_OUT {
+            opcodes.extend(AluImm::mov32(Reg::R8, pc));
+            opcodes.push(LdrStrImm::str_al(Reg::R8, Reg::R9));
+        }
         opcodes.push(LdrStrImmSBHD::strh_al(Reg::R11, Reg::R9, 4));
 
         opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R10, Reg::R11));
@@ -80,7 +83,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let opcodes = &mut self.jit_buf.emit_opcodes;
 
-        opcodes.extend(AluImm::mov32(Reg::R10, pc));
         opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R11));
         opcodes.push(AluImm::mov16_al(
             Reg::R9,
@@ -90,7 +92,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let thread_regs = get_regs!(self.emu, CPU);
         opcodes.extend(thread_regs.emit_get_reg(Reg::R8, Reg::LR));
 
-        opcodes.push(LdrStrImm::str_al(Reg::R10, Reg::R11));
+        if DEBUG_LOG_BRANCH_OUT {
+            opcodes.extend(AluImm::mov32(Reg::R10, pc));
+            opcodes.push(LdrStrImm::str_al(Reg::R10, Reg::R11));
+        }
         opcodes.push(LdrStrImmSBHD::strh_al(Reg::R9, Reg::R11, 4));
 
         if inst_info.op == Op::BlxOffT {
@@ -133,7 +138,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.jit_buf.insts_cycle_counts[buf_index],
         ));
 
-        opcodes.push(LdrStrImm::str_al(pc_tmp_reg, tmp_reg));
+        if DEBUG_LOG_BRANCH_OUT {
+            opcodes.push(LdrStrImm::str_al(pc_tmp_reg, tmp_reg));
+        }
         opcodes.push(LdrStrImmSBHD::strh_al(tmp_reg2, tmp_reg, 4));
 
         if op0.is_emulated() {

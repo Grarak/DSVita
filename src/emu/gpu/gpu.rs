@@ -1,10 +1,10 @@
 use crate::emu::cpu_regs::InterruptFlag;
 use crate::emu::cycle_manager::{CycleEvent, CycleManager};
+use crate::emu::emu::{get_cm, get_cpu_regs_mut, io_dma, Emu};
 use crate::emu::gpu::gpu_2d::Gpu2D;
 use crate::emu::gpu::gpu_2d::Gpu2DEngine::{A, B};
 use crate::emu::gpu::gpu_3d::Gpu3D;
 use crate::emu::gpu::gpu_3d_renderer::Gpu3dRenderer;
-use crate::emu::emu::{get_cm, get_cpu_regs_mut, io_dma, Emu};
 use crate::emu::memory::dma::DmaTransferMode;
 use crate::emu::memory::mem::Memory;
 use crate::emu::CpuType;
@@ -235,7 +235,7 @@ impl Scanline256Event {
 impl CycleEvent for Scanline256Event {
     fn scheduled(&mut self, _: &u64) {}
 
-    fn trigger(&mut self, delay: u16, emu: &mut Emu) {
+    fn trigger(&mut self, emu: &mut Emu) {
         let gpu = &mut emu.common.gpu;
 
         if gpu.v_count < 192 {
@@ -277,7 +277,7 @@ impl Scanline355Event {
 impl CycleEvent for Scanline355Event {
     fn scheduled(&mut self, _: &u64) {}
 
-    fn trigger(&mut self, delay: u16, emu: &mut Emu) {
+    fn trigger(&mut self, emu: &mut Emu) {
         let gpu = &mut emu.common.gpu;
 
         gpu.v_count += 1;

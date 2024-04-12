@@ -1,5 +1,8 @@
 use crate::emu::bios_lookup_table::{ARM7_SWI_LOOKUP_TABLE, ARM9_SWI_LOOKUP_TABLE};
-use crate::emu::emu::{get_cm, get_cp15, get_cpu_regs_mut, get_regs, get_regs_mut, Emu};
+use crate::emu::cpu_regs::InterruptFlag;
+use crate::emu::emu::{
+    get_cm, get_cp15, get_cpu_regs, get_cpu_regs_mut, get_regs, get_regs_mut, Emu,
+};
 use crate::emu::thread_regs::Cpsr;
 use crate::emu::CpuType;
 use crate::jit::reg::Reg;
@@ -55,6 +58,10 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
 
 pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
     debug_println!("{:?} uninterrupt", CPU);
+
+    if get_cpu_regs!(emu, CPU).bios_wait_flags != 0 {
+        check_wait_flags::<CPU>(emu);
+    }
 
     for reg in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR] {
         *get_regs_mut!(emu, CPU).get_reg_mut(reg) = emu.mem_read::<CPU, _>(get_regs!(emu, CPU).sp);
@@ -150,16 +157,44 @@ pub fn get_crc16<const CPU: CpuType>(emu: &mut Emu) {
     *get_regs_mut!(emu, CPU).get_reg_mut(Reg::R0) = ret as u32;
 }
 
-pub fn halt<const CPU: CpuType>(_: &mut Emu) {
-    panic!("{:?} bios swi halt shouldn't be called directly", CPU);
+pub fn halt<const CPU: CpuType>(emu: &mut Emu) {
+    get_cpu_regs_mut!(emu, CPU).halt(0);
 }
 
 pub fn huff_uncomp<const CPU: CpuType>(emu: &mut Emu) {
     todo!()
 }
 
+pub fn check_wait_flags<const CPU: CpuType>(emu: &mut Emu) {
+    let addr = match CPU {
+        ARM9 => get_cp15!(emu, ARM9).dtcm_addr + 0x3FF8,
+        ARM7 => 0x3FFFFF8,
+    };
+    let flags = emu.mem_read::<CPU, u32>(addr);
+    let wait_flags = get_cpu_regs!(emu, CPU).bios_wait_flags;
+
+    if flags & wait_flags != 0 {
+        emu.mem_write::<CPU, _>(addr, flags & !wait_flags);
+        get_cpu_regs_mut!(emu, CPU).bios_wait_flags = 0;
+    } else {
+        get_cpu_regs_mut!(emu, CPU).halt(0);
+    }
+}
+
 pub fn interrupt_wait<const CPU: CpuType>(emu: &mut Emu) {
-    todo!()
+    let (discard_old, wait_flags) = {
+        let regs = get_regs!(emu, CPU);
+        (*regs.get_reg(Reg::R0) != 0, *regs.get_reg(Reg::R1))
+    };
+    get_cpu_regs_mut!(emu, CPU).bios_wait_flags = wait_flags;
+
+    if discard_old {
+        check_wait_flags::<CPU>(emu);
+        get_cpu_regs_mut!(emu, CPU).bios_wait_flags = wait_flags;
+        get_cpu_regs_mut!(emu, CPU).halt(0);
+    } else if CPU == ARM7 {
+        check_wait_flags::<CPU>(emu);
+    }
 }
 
 pub fn is_debugger<const CPU: CpuType>(emu: &mut Emu) {
@@ -218,7 +253,12 @@ pub fn square_root<const CPU: CpuType>(emu: &mut Emu) {
 pub fn unknown<const CPU: CpuType>(emu: &mut Emu) {}
 
 pub fn v_blank_intr_wait<const CPU: CpuType>(emu: &mut Emu) {
-    todo!()
+    {
+        let regs = get_regs_mut!(emu, CPU);
+        *regs.get_reg_mut(Reg::R0) = 1;
+        *regs.get_reg_mut(Reg::R1) = 1 << InterruptFlag::LcdVBlank as u8;
+    }
+    interrupt_wait::<CPU>(emu);
 }
 
 pub fn wait_by_loop<const CPU: CpuType>(emu: &mut Emu) {

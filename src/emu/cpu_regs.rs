@@ -1,6 +1,6 @@
 use crate::emu::cycle_manager::{CycleEvent, CycleManager};
-use crate::emu::exception_handler::ExceptionVector;
 use crate::emu::emu::{get_cpu_regs, get_cpu_regs_mut, Emu};
+use crate::emu::exception_handler::ExceptionVector;
 use crate::emu::CpuType::ARM7;
 use crate::emu::{exception_handler, CpuType};
 use crate::logging::debug_println;
@@ -51,6 +51,7 @@ pub struct CpuRegs {
     pub halt_cnt: u8,
     cpsr_irq_enabled: bool,
     halt: u8,
+    pub bios_wait_flags: u32,
 }
 
 impl CpuRegs {
@@ -64,6 +65,7 @@ impl CpuRegs {
             halt_cnt: 0,
             cpsr_irq_enabled: false,
             halt: 0,
+            bios_wait_flags: 0,
         }
     }
 
@@ -167,7 +169,7 @@ impl<const CPU: CpuType> InterruptEvent<CPU> {
 impl<const CPU: CpuType> CycleEvent for InterruptEvent<CPU> {
     fn scheduled(&mut self, _: &u64) {}
 
-    fn trigger(&mut self, _: u16, emu: &mut Emu) {
+    fn trigger(&mut self, emu: &mut Emu) {
         let interrupted = {
             let cpu_regs = get_cpu_regs!(emu, CPU);
             let interrupt =

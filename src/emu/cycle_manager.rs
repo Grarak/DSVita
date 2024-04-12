@@ -5,11 +5,11 @@ use std::intrinsics::unlikely;
 
 pub trait CycleEvent {
     fn scheduled(&mut self, timestamp: &u64);
-    fn trigger(&mut self, delay: u16, emu: &mut Emu);
+    fn trigger(&mut self, emu: &mut Emu);
 }
 
 pub struct CycleManager {
-    cycle_count: u64,
+    pub cycle_count: u64,
     events: UnsafeCell<VecDeque<(u64, Box<dyn CycleEvent>)>>,
 }
 
@@ -21,23 +21,23 @@ impl CycleManager {
         }
     }
 
-    pub fn get_cycle_count(&self) -> u64 {
-        self.cycle_count
-    }
-
     pub fn add_cycle(&mut self, cycles_to_add: u16) {
         self.cycle_count += cycles_to_add as u64;
+    }
+
+    pub fn next_event_cycle(&self) -> u64 {
+        unsafe { (*self.events.get()).front().unwrap_unchecked().0 }
     }
 
     pub fn check_events(&self, emu: &mut Emu) {
         let cycle_count = self.cycle_count;
         let events = unsafe { self.events.get().as_mut().unwrap_unchecked() };
         while {
-            let (cycles, _) = unsafe { events.front().unwrap_unchecked() };
+            let (cycles, event) = unsafe { events.front().unwrap_unchecked() };
             unlikely(*cycles <= cycle_count)
         } {
-            let (cycles, mut event) = unsafe { events.pop_front().unwrap_unchecked() };
-            event.trigger((cycle_count - cycles) as u16, emu);
+            let (_, mut event) = unsafe { events.pop_front().unwrap_unchecked() };
+            event.trigger(emu);
         }
     }
 

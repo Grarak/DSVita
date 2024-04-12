@@ -12,7 +12,7 @@ use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::jit::Cond;
 use crate::logging::debug_println;
-use crate::DEBUG_LOG;
+use crate::{DEBUG_LOG, DEBUG_LOG_BRANCH_OUT};
 use std::arch::asm;
 use std::intrinsics::likely;
 use std::ptr;
@@ -378,20 +378,24 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 opcodes.extend(&regs.save_regs_opcodes);
             }
 
-            opcodes.extend(&AluImm::mov32(
-                Reg::R0,
-                guest_pc_block_base + JIT_BLOCK_SIZE - if THUMB { 2 } else { 4 },
-            ));
+            let new_pc = guest_pc_block_base + JIT_BLOCK_SIZE;
 
             opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R1));
             opcodes.push(AluImm::mov16_al(
                 Reg::R4,
                 *self.jit_buf.insts_cycle_counts.last().unwrap(),
             ));
-            opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::R1));
+            if DEBUG_LOG_BRANCH_OUT {
+                opcodes.extend(&AluImm::mov32(Reg::R0, new_pc - if THUMB { 2 } else { 4 }));
+                opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::R1));
+            }
             opcodes.push(LdrStrImmSBHD::strh_al(Reg::R4, Reg::R1, 4));
 
-            opcodes.push(AluImm::add_al(Reg::R2, Reg::R0, if THUMB { 3 } else { 4 }));
+            if THUMB {
+                opcodes.extend(&AluImm::mov32(Reg::R2, new_pc + 1));
+            } else {
+                opcodes.extend(&AluImm::mov32(Reg::R2, new_pc));
+            }
             opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R2, Reg::R3));
 
             if THUMB {
@@ -419,12 +423,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     .get_jit_start_addr::<CPU, THUMB>(pc)
                     .unwrap();
 
-                debug_println!(
+                println!(
                     "{:?} Mapping {:#010x} to {:#010x} {:?}",
-                    CPU,
-                    pc,
-                    jit_addr,
-                    inst_info
+                    CPU, pc, jit_addr, inst_info
                 );
             }
         }
@@ -498,7 +499,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             + 2) as i16
             + cycle_correction;
 
-        if DEBUG_LOG {
+        if DEBUG_LOG_BRANCH_OUT {
             println!(
                 "{:?} reading opcode of breakout at {:x}",
                 CPU, self.runtime_data.branch_out_pc

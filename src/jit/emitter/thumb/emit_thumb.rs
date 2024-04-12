@@ -5,6 +5,7 @@ use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::jit::Op;
+use crate::DEBUG_LOG_BRANCH_OUT;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_thumb(&mut self, buf_index: usize, pc: u32) {
@@ -94,7 +95,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
             opcodes.extend(&get_regs!(self.emu, CPU).save_regs_thumb_opcodes);
 
-            opcodes.extend(&AluImm::mov32(Reg::R0, pc));
             opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::LR));
             opcodes.push(AluImm::mov16_al(
                 Reg::R3,
@@ -108,7 +108,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 opcodes.extend(thread_regs.emit_set_reg(Reg::PC, Reg::R1, Reg::R2));
             }
 
-            opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
+            if DEBUG_LOG_BRANCH_OUT {
+                opcodes.extend(&AluImm::mov32(Reg::R0, pc));
+                opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
+            }
             opcodes.push(LdrStrImmSBHD::strh_al(Reg::R3, Reg::LR, 4));
 
             Self::emit_host_bx(self.breakout_skip_save_regs_thumb_addr, opcodes);

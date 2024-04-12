@@ -257,7 +257,7 @@ impl<const CPU: CpuType> WordReadEvent<CPU> {
 impl<const CPU: CpuType> CycleEvent for WordReadEvent<CPU> {
     fn scheduled(&mut self, _: &u64) {}
 
-    fn trigger(&mut self, _: u16, emu: &mut Emu) {
+    fn trigger(&mut self, emu: &mut Emu) {
         emu.common.cartridge.inner[CPU]
             .rom_ctrl
             .set_data_word_status(u1::new(1));

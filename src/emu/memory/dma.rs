@@ -283,7 +283,7 @@ impl DmaEvent {
 impl CycleEvent for DmaEvent {
     fn scheduled(&mut self, _: &u64) {}
 
-    fn trigger(&mut self, _: u16, emu: &mut Emu) {
+    fn trigger(&mut self, emu: &mut Emu) {
         let (cnt, mode, mut dest, mut src, count) = {
             let channel = &io_dma!(emu, self.cpu_type).channels[self.channel_num];
             (

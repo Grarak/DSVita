@@ -51,13 +51,9 @@ impl Timers {
         let channel = &mut self.channels[CHANNEL_NUM];
         let cnt = TimerCntH::from(channel.cnt_h);
         if bool::from(cnt.start()) && !cnt.is_count_up(CHANNEL_NUM) {
-            let current_cycle_count = cycle_manager.get_cycle_count();
-            let diff = if channel.scheduled_cycle > current_cycle_count {
-                channel.scheduled_cycle - current_cycle_count
-            } else {
-                0
-            } as u32;
-            channel.current_value = (TIME_OVERFLOW - (diff >> channel.current_shift)) as u16;
+            let current_cycle_count = cycle_manager.cycle_count;
+            let diff = channel.scheduled_cycle.wrapping_sub(current_cycle_count);
+            channel.current_value = (TIME_OVERFLOW - (diff >> channel.current_shift) as u32) as u16;
         }
         channel.current_value
     }
@@ -176,7 +172,7 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> CycleEvent for TimersEvent<CP
         self.scheduled_at = *timestamp;
     }
 
-    fn trigger(&mut self, _: u16, emu: &mut Emu) {
+    fn trigger(&mut self, emu: &mut Emu) {
         if self.scheduled_at == io_timers!(emu, CPU).channels[CHANNEL_NUM].scheduled_cycle {
             Self::overflow(emu, CHANNEL_NUM);
         }

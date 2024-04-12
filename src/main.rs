@@ -41,6 +41,7 @@ mod settings;
 mod utils;
 
 pub const DEBUG_LOG: bool = cfg!(debug_assertions);
+pub const DEBUG_LOG_BRANCH_OUT: bool = DEBUG_LOG;
 
 fn run_cpu(
     cartridge_reader: CartridgeReader,
