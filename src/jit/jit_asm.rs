@@ -483,8 +483,11 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 },
             )
         };
-        debug_assert_ne!(self.runtime_data.branch_out_pc, u32::MAX);
-        debug_assert_ne!(self.runtime_data.branch_out_total_cycles, 0);
+
+        if DEBUG_LOG {
+            assert_ne!(self.runtime_data.branch_out_pc, u32::MAX);
+            assert_ne!(self.runtime_data.branch_out_total_cycles, 0);
+        }
 
         let cycle_correction = {
             let regs = get_regs_mut!(self.emu, CPU);
@@ -528,6 +531,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 #[naked]
 unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: u32) {
     asm!(
+        "pld [r0]",
         "push {{r4-r11,lr}}",
         "str sp, [r1]",
         "blx r2",

@@ -3,7 +3,6 @@ use crate::emu::exception_handler::ExceptionVector;
 use crate::emu::{bios, exception_handler, CpuType};
 use crate::jit::inst_mem_handler::imm_breakout;
 use crate::jit::jit_asm::JitAsm;
-use std::hint::unreachable_unchecked;
 
 pub unsafe extern "C" fn exception_handler<const CPU: CpuType, const THUMB: bool>(
     asm: *mut JitAsm<CPU>,

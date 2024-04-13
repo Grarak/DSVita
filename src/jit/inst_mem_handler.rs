@@ -1,6 +1,5 @@
 use crate::emu::CpuType;
 use crate::jit::MemoryAmount;
-use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 
 mod handler {
@@ -205,10 +204,7 @@ macro_rules! imm_breakout {
             $asm.runtime_data.branch_out_pc = $pc;
         }
         let (pre_cycles_sum, inst_cycle_count) = crate::emu::emu::get_jit!($asm.emu)
-            .get_cycle_counts_unchecked::<$thumb>(
-                $asm.runtime_data.branch_out_pc,
-                $asm.emu.mem.current_jit_block_addr,
-            );
+            .get_cycle_counts_unchecked::<$thumb>($pc,$asm.emu.mem.current_jit_block_addr);
         $asm.runtime_data.branch_out_total_cycles = pre_cycles_sum + inst_cycle_count as u16;
         crate::emu::emu::get_regs_mut!($asm.emu, CPU).pc = $pc + if $thumb { 3 } else { 4 };
         $asm.emu.mem.breakout_imm = false;
@@ -217,7 +213,7 @@ macro_rules! imm_breakout {
         } else {
             std::arch::asm!("bx {}", in(reg) $asm.breakout_skip_save_regs_addr);
         }
-        unreachable_unchecked();
+        std::hint::unreachable_unchecked();
     }};
 }
 pub(super) use imm_breakout;

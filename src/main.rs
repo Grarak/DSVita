@@ -6,10 +6,9 @@
 #![feature(generic_const_exprs)]
 #![feature(isqrt)]
 #![feature(naked_functions)]
-#![feature(rustc_attrs)]
+#![feature(new_uninit)]
 #![feature(seek_stream_len)]
 #![feature(stmt_expr_attributes)]
-#![feature(thread_id_value)]
 
 extern crate core;
 

@@ -50,5 +50,11 @@ jobs:
       - name: Upload vpk
         uses: actions/upload-artifact@v4
         with:
-          name: dspsv
+          name: dspsv-vpk
           path: target/armv7-sony-vita-newlibeabihf/release/dspsv.vpk
+
+      - name: Upload elf
+        uses: actions/upload-artifact@v4
+        with:
+          name: dspsv-elf
+          path: target/armv7-sony-vita-newlibeabihf/release/dspsv.elf
