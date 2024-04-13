@@ -90,7 +90,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.handle_cpsr(Reg::R8, Reg::R9);
         }
 
-        if out_regs.is_reserved(Reg::PC) {
+        if out_regs.is_reserved(Reg::PC) && !op.is_multiple_mem_transfer() {
             let opcodes = &mut self.jit_buf.emit_opcodes;
 
             opcodes.extend(&get_regs!(self.emu, CPU).save_regs_thumb_opcodes);
@@ -101,12 +101,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 self.jit_buf.insts_cycle_counts[buf_index],
             ));
 
-            if CPU == CpuType::ARM7 || op != Op::PopPcT || op == Op::AddHT || op == Op::MovHT {
-                let thread_regs = get_regs!(self.emu, CPU);
-                opcodes.extend(thread_regs.emit_get_reg(Reg::R1, Reg::PC));
-                opcodes.push(AluImm::orr_al(Reg::R1, Reg::R1, 1));
-                opcodes.extend(thread_regs.emit_set_reg(Reg::PC, Reg::R1, Reg::R2));
-            }
+            let thread_regs = get_regs!(self.emu, CPU);
+            opcodes.extend(thread_regs.emit_get_reg(Reg::R1, Reg::PC));
+            opcodes.push(AluImm::orr_al(Reg::R1, Reg::R1, 1));
+            opcodes.extend(thread_regs.emit_set_reg(Reg::PC, Reg::R1, Reg::R2));
 
             if DEBUG_LOG_BRANCH_OUT {
                 opcodes.extend(&AluImm::mov32(Reg::R0, pc));

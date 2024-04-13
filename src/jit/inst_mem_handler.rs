@@ -1,5 +1,8 @@
+use crate::emu::emu::get_regs_mut;
 use crate::emu::CpuType;
+use crate::emu::CpuType::ARM7;
 use crate::jit::MemoryAmount;
+use crate::DEBUG_LOG_BRANCH_OUT;
 use std::intrinsics::unlikely;
 
 mod handler {
@@ -170,7 +173,7 @@ mod handler {
         }
 
         if USER && unlikely(rlist.is_reserved(Reg::PC)) {
-            todo!()
+            todo!("restore spsr")
         }
     }
 
@@ -250,17 +253,38 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     const PRE: bool,
     const WRITE_BACK: bool,
     const DECREMENT: bool,
+    const HAS_PC: bool,
 >(
     pc: u32,
-    rlist: u16,
-    op0: u8,
+    op0_rlist: u32,
+    total_cycles: u16,
     asm: *mut JitAsm<CPU>,
 ) {
     let asm = asm.as_mut().unwrap_unchecked();
     handle_multiple_request::<CPU, THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(
-        pc, rlist, op0, asm.emu,
+        pc,
+        (op0_rlist & 0xFFFF) as u16,
+        (op0_rlist >> 16) as u8,
+        asm.emu,
     );
-    if WRITE && unlikely(asm.emu.mem.breakout_imm) {
+    if !WRITE && HAS_PC {
+        if DEBUG_LOG_BRANCH_OUT {
+            asm.runtime_data.branch_out_pc = pc;
+        }
+        asm.runtime_data.branch_out_total_cycles = total_cycles;
+        if THUMB {
+            if CPU == ARM7 {
+                get_regs_mut!(asm.emu, CPU).pc |= 1;
+            }
+            std::arch::asm!("bx {}", in(reg) asm.breakout_skip_save_regs_thumb_addr);
+        } else {
+            if CPU == ARM7 {
+                get_regs_mut!(asm.emu, CPU).pc &= !1;
+            }
+            std::arch::asm!("bx {}", in(reg) asm.breakout_skip_save_regs_addr);
+        }
+        std::hint::unreachable_unchecked();
+    } else if WRITE && unlikely(asm.emu.mem.breakout_imm) {
         imm_breakout!(asm, pc, THUMB);
     }
 }

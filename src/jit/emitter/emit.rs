@@ -72,7 +72,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         emit_func(self, buf_index, pc);
 
-        if out_regs.is_reserved(Reg::PC) {
+        if out_regs.is_reserved(Reg::PC) && !op.is_multiple_mem_transfer() {
             let opcodes = &mut self.jit_buf.emit_opcodes;
             let restore_spsr = out_regs.is_reserved(Reg::CPSR) && op.is_arm_alu();
 
@@ -92,9 +92,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 self.jit_buf.insts_cycle_counts[buf_index],
             ));
 
-            if CPU == CpuType::ARM7
-                || (!op.is_single_mem_transfer() && !op.is_multiple_mem_transfer())
-            {
+            if CPU == CpuType::ARM7 || !op.is_single_mem_transfer() {
                 opcodes.extend(regs.emit_get_reg(Reg::R2, Reg::PC));
                 if restore_spsr {
                     opcodes.extend(regs.emit_get_reg(Reg::R3, Reg::CPSR));

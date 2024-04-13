@@ -531,7 +531,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 #[naked]
 unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: u32) {
     asm!(
-        "pld [r0]",
         "push {{r4-r11,lr}}",
         "str sp, [r1]",
         "blx r2",

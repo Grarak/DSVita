@@ -547,11 +547,11 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let jit_asm_addr = self as *mut _ as _;
         let inst_info = &self.jit_buf.instructions[buf_index];
 
-        let mut rlist = (inst_info.opcode & if THUMB { 0xFF } else { 0xFFFF }) as u16;
+        let mut rlist = RegReserve::from(inst_info.opcode & if THUMB { 0xFF } else { 0xFFFF });
         if inst_info.op == Op::PushLrT {
-            rlist |= 1 << Reg::LR as u8;
+            rlist += Reg::LR;
         } else if inst_info.op == Op::PopPcT {
-            rlist |= 1 << Reg::PC as u8;
+            rlist += Reg::PC;
         }
 
         let mut pre = inst_info.op.mem_transfer_pre();
@@ -560,6 +560,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             pre = !pre;
         }
         let write_back = inst_info.op.mem_transfer_write_back();
+        let has_pc = rlist.is_reserved(Reg::PC);
 
         let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
 
@@ -570,47 +571,80 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             pre,
             write_back,
             decrement,
+            has_pc,
         ) {
-            (false, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, false> as _,
-            (true, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, false> as _,
-            (false, true, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, false> as _,
-            (true, true, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, false, false> as _,
-            (false, false, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, false, false> as _,
-            (true, false, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, false, false> as _,
-            (false, true, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, false, false> as _,
-            (true, true, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, false, false> as _,
-            (false, false, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, true, false> as _,
-            (true, false, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, true, false> as _,
-            (false, true, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, true, false> as _,
-            (true, true, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, true, false> as _,
-            (false, false, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, true, false> as _,
-            (true, false, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, true, false> as _,
-            (false, true, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, true, false> as _,
-            (true, true, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, true, false> as _,
-            (false, false, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, true> as _,
-            (true, false, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, true> as _,
-            (false, true, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, true> as _,
-            (true, true, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, false, true> as _,
-            (false, false, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, false, true> as _,
-            (true, false, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, false, true> as _,
-            (false, true, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, false, true> as _,
-            (true, true, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, false, true> as _,
-            (false, false, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, true, true> as _,
-            (true, false, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, true, true> as _,
-            (false, true, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, true, true> as _,
-            (true, true, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, true, true> as _,
-            (false, false, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, true, true> as _,
-            (true, false, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, true, true> as _,
-            (false, true, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, true, true> as _,
-            (true, true, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, true, true> as _,
+            (false, false, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, false, false> as _,
+            (true, false, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, false, false> as _,
+            (false, true, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, false, false> as _,
+            (true, true, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, false, false, false> as _,
+            (false, false, true, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, false, false, false> as _,
+            (true, false, true, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, false, false, false> as _,
+            (false, true, true, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, false, false, false> as _,
+            (true, true, true, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, false, false, false> as _,
+            (false, false, false, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, true, false, false> as _,
+            (true, false, false, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, true, false, false> as _,
+            (false, true, false, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, true, false, false> as _,
+            (true, true, false, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, true, false, false> as _,
+            (false, false, true, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, true, false, false> as _,
+            (true, false, true, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, true, false, false> as _,
+            (false, true, true, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, true, false, false> as _,
+            (true, true, true, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, true, false, false> as _,
+            (false, false, false, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, true, false> as _,
+            (true, false, false, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, true, false> as _,
+            (false, true, false, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, true, false> as _,
+            (true, true, false, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, false, true, false> as _,
+            (false, false, true, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, false, true, false> as _,
+            (true, false, true, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, false, true, false> as _,
+            (false, true, true, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, false, true, false> as _,
+            (true, true, true, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, false, true, false> as _,
+            (false, false, false, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, true, true, false> as _,
+            (true, false, false, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, true, true, false> as _,
+            (false, true, false, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, true, true, false> as _,
+            (true, true, false, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, true, true, false> as _,
+            (false, false, true, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, true, true, false> as _,
+            (true, false, true, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, true, true, false> as _,
+            (false, true, true, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, true, true, false> as _,
+            (true, true, true, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, true, true, false> as _,
+            (false, false, false, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, false, true> as _,
+            (true, false, false, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, false, true> as _,
+            (false, true, false, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, false, true> as _,
+            (true, true, false, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, false, false, true> as _,
+            (false, false, true, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, false, false, true> as _,
+            (true, false, true, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, false, false, true> as _,
+            (false, true, true, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, false, false, true> as _,
+            (true, true, true, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, false, false, true> as _,
+            (false, false, false, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, true, false, true> as _,
+            (true, false, false, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, true, false, true> as _,
+            (false, true, false, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, true, false, true> as _,
+            (true, true, false, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, true, false, true> as _,
+            (false, false, true, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, true, false, true> as _,
+            (true, false, true, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, true, false, true> as _,
+            (false, true, true, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, true, false, true> as _,
+            (true, true, true, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, true, false, true> as _,
+            (false, false, false, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, true, true> as _,
+            (true, false, false, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, true, true> as _,
+            (false, true, false, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, true, true> as _,
+            (true, true, false, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, false, true, true> as _,
+            (false, false, true, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, false, true, true> as _,
+            (true, false, true, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, false, true, true> as _,
+            (false, true, true, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, false, true, true> as _,
+            (true, true, true, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, false, true, true> as _,
+            (false, false, false, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, true, true, true> as _,
+            (true, false, false, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, true, true, true> as _,
+            (false, true, false, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, true, true, true> as _,
+            (true, true, false, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, true, true, true> as _,
+            (false, false, true, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, true, true, true> as _,
+            (true, false, true, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, true, true, true> as _,
+            (false, true, true, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, true, true, true> as _,
+            (true, true, true, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, true, true, true> as _,
         };
 
         self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
             |_, _| {},
             &[
                 Some(pc),
-                Some(rlist as u32),
-                Some(op0 as u32),
+                Some(rlist.0 | ((op0 as u32) << 16)),
+                Some(self.jit_buf.insts_cycle_counts[buf_index] as u32),
                 Some(jit_asm_addr),
             ],
             func_addr,
