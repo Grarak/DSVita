@@ -419,7 +419,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if DEBUG_LOG {
             for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
                 let pc = ((index as u32) << if THUMB { 1 } else { 2 }) + guest_pc_block_base;
-                let (jit_addr, _, _) = get_jit!(self.emu)
+                let (jit_addr, _) = get_jit!(self.emu)
                     .get_jit_start_addr::<CPU, THUMB>(pc)
                     .unwrap();
 
@@ -449,7 +449,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     fn execute_internal<const THUMB: bool>(&mut self, guest_pc: u32) -> u16 {
         get_regs_mut!(self.emu, CPU).set_thumb(THUMB);
 
-        let (jit_addr, pre_cycle_count_sum, jit_block_addr) = {
+        let (jit_addr, jit_block_addr) = {
             let jit_info = get_jit!(self.emu).get_jit_start_addr::<CPU, THUMB>(guest_pc);
             if likely(jit_info.is_some()) {
                 unsafe { jit_info.unwrap_unchecked() }
@@ -495,6 +495,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             regs.cycle_correction = 0;
             correction
         };
+
+        let (pre_cycle_count_sum, _) =
+            get_jit!(self.emu).get_cycle_counts_unchecked::<THUMB>(guest_pc, jit_block_addr);
 
         let executed_cycles = (self.runtime_data.branch_out_total_cycles
             - pre_cycle_count_sum

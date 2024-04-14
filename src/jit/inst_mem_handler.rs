@@ -114,7 +114,7 @@ mod handler {
             return;
         }
 
-        if unlikely(rlist.is_reserved(Reg::PC) || op0 == Reg::PC) {
+        if WRITE && unlikely(rlist.is_reserved(Reg::PC) || op0 == Reg::PC) {
             *get_regs_mut!(emu, CPU).get_reg_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
         }
 
@@ -142,9 +142,10 @@ mod handler {
         } else {
             ThreadRegs::get_reg_mut
         };
+
         for i in Reg::R0 as u8..Reg::CPSR as u8 {
             let reg = Reg::from(i);
-            if rlist.is_reserved(reg) {
+            if unlikely(rlist.is_reserved(reg)) {
                 if PRE {
                     addr += 4;
                 }

@@ -155,7 +155,8 @@ impl InstInfo {
             | Op::Smlabt
             | Op::Smlaltt
             | Op::Smultt
-            | Op::Smulwt => {
+            | Op::Smulwt
+            | Op::Smulbt => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();

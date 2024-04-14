@@ -25,15 +25,11 @@ impl CycleManager {
         self.cycle_count += cycles_to_add as u64;
     }
 
-    pub fn next_event_cycle(&self) -> u64 {
-        unsafe { (*self.events.get()).front().unwrap_unchecked().0 }
-    }
-
     pub fn check_events(&self, emu: &mut Emu) {
         let cycle_count = self.cycle_count;
         let events = unsafe { self.events.get().as_mut().unwrap_unchecked() };
         while {
-            let (cycles, event) = unsafe { events.front().unwrap_unchecked() };
+            let (cycles, _) = unsafe { events.front().unwrap_unchecked() };
             unlikely(*cycles <= cycle_count)
         } {
             let (_, mut event) = unsafe { events.pop_front().unwrap_unchecked() };
