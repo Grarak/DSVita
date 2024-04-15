@@ -57,6 +57,8 @@ pub struct Presenter {
     keymap: u32,
 }
 
+pub static mut LOGGING: bool = false;
+
 impl Presenter {
     pub fn new() -> Self {
         let mut key_code_mapping = HashMap::default();
@@ -68,8 +70,8 @@ impl Presenter {
         key_code_mapping.insert(keyboard::Keycode::V, input::Keycode::Select);
         key_code_mapping.insert(keyboard::Keycode::K, input::Keycode::A);
         key_code_mapping.insert(keyboard::Keycode::J, input::Keycode::B);
-        key_code_mapping.insert(keyboard::Keycode::U, input::Keycode::X);
-        key_code_mapping.insert(keyboard::Keycode::I, input::Keycode::Y);
+        key_code_mapping.insert(keyboard::Keycode::I, input::Keycode::X);
+        key_code_mapping.insert(keyboard::Keycode::U, input::Keycode::Y);
         key_code_mapping.insert(keyboard::Keycode::Num8, input::Keycode::TriggerL);
         key_code_mapping.insert(keyboard::Keycode::Num9, input::Keycode::TriggerR);
 

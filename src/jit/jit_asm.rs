@@ -1,4 +1,4 @@
-use crate::emu::emu::{get_jit, get_jit_mut, get_regs, get_regs_mut, Emu};
+use crate::emu::emu::{get_jit, get_jit_mut, get_mem_mut, get_regs, get_regs_mut, Emu};
 use crate::emu::thread_regs::ThreadRegs;
 use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
@@ -343,24 +343,24 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 self.emit(i, pc);
             };
 
-            // if DEBUG_LOG {
-            //     let inst_info = &self.jit_buf.instructions[i];
-            // 
-            //     let jit_asm_addr = self as *const _ as u32;
-            //     let opcodes = &mut self.jit_buf.emit_opcodes;
-            // 
-            //     opcodes.extend(self.debug_regs.emit_save_regs());
-            //     opcodes.extend(self.host_regs.emit_restore_sp());
-            // 
-            //     opcodes.extend(AluImm::mov32(Reg::R0, jit_asm_addr));
-            //     opcodes.extend(AluImm::mov32(Reg::R1, pc));
-            //     opcodes.extend(AluImm::mov32(Reg::R2, inst_info.opcode));
-            // 
-            //     Self::emit_host_blx(debug_after_exec_op::<CPU> as *const () as _, opcodes);
-            // 
-            //     opcodes.push(AluShiftImm::mov_al(Reg::LR, Reg::SP));
-            //     opcodes.extend(self.debug_regs.emit_restore_regs(get_regs!(self.emu, CPU)));
-            // }
+            if DEBUG_LOG {
+                let inst_info = &self.jit_buf.instructions[i];
+
+                let jit_asm_addr = self as *const _ as u32;
+                let opcodes = &mut self.jit_buf.emit_opcodes;
+
+                opcodes.extend(self.debug_regs.emit_save_regs());
+                opcodes.extend(self.host_regs.emit_restore_sp());
+
+                opcodes.extend(AluImm::mov32(Reg::R0, jit_asm_addr));
+                opcodes.extend(AluImm::mov32(Reg::R1, pc));
+                opcodes.extend(AluImm::mov32(Reg::R2, inst_info.opcode));
+
+                Self::emit_host_blx(debug_after_exec_op::<CPU> as *const () as _, opcodes);
+
+                opcodes.push(AluShiftImm::mov_al(Reg::LR, Reg::SP));
+                opcodes.extend(self.debug_regs.emit_restore_regs(get_regs!(self.emu, CPU)));
+            }
 
             self.jit_buf
                 .block_opcodes
@@ -469,8 +469,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.runtime_data.branch_out_total_cycles = 0;
         }
 
-        self.emu.mem.current_mode_is_thumb = THUMB;
-        self.emu.mem.current_jit_block_addr = jit_block_addr;
+        get_mem_mut!(self.emu).current_mode_is_thumb = THUMB;
+        get_mem_mut!(self.emu).current_jit_block_addr = jit_block_addr;
 
         unsafe {
             enter_jit(

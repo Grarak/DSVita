@@ -1,5 +1,5 @@
 use crate::emu::cp15::TcmState;
-use crate::emu::emu::Emu;
+use crate::emu::emu::{get_cp15, get_mem, Emu};
 use crate::emu::memory::{regions, vram};
 use crate::emu::CpuType::{ARM7, ARM9};
 use crate::utils::HeapMemU32;
@@ -44,33 +44,33 @@ impl MmuArm9Inner {
             *read_ptr = 0;
 
             match addr & 0xFF000000 {
-                regions::MAIN_MEMORY_OFFSET => *read_ptr = emu.mem.main.get_ptr(addr) as u32,
+                regions::MAIN_MEMORY_OFFSET => *read_ptr = get_mem!(emu).main.get_ptr(addr) as u32,
                 regions::SHARED_WRAM_OFFSET => {
-                    *read_ptr = emu.mem.wram.get_ptr::<{ ARM9 }>(addr) as u32
+                    *read_ptr = get_mem!(emu).wram.get_ptr::<{ ARM9 }>(addr) as u32
                 }
                 // regions::VRAM_OFFSET => *read_ptr = emu.mem.vram.get_ptr::<{ ARM9 }>(addr) as u32,
                 0xFF000000 => {
                     if addr & 0xFFFF8000 == regions::ARM9_BIOS_OFFSET {
-                        *read_ptr = emu.mem.bios_arm9.get_ptr(addr) as u32
+                        *read_ptr = get_mem!(emu).bios_arm9.get_ptr(addr) as u32
                     }
                 }
                 _ => {}
             }
 
-            let cp15 = emu.common.cpus.arm9.cp15();
+            let cp15 = get_cp15!(emu, ARM9);
             if addr < cp15.itcm_size {
                 if cp15.itcm_state == TcmState::RW {
-                    *read_ptr = emu.mem.tcm.get_itcm_ptr(addr) as u32;
+                    *read_ptr = get_mem!(emu).tcm.get_itcm_ptr(addr) as u32;
                 }
             } else if addr >= cp15.dtcm_addr
                 && addr < cp15.dtcm_addr + cp15.dtcm_size
                 && cp15.dtcm_state == TcmState::RW
             {
-                *read_ptr = emu.mem.tcm.get_dtcm_ptr(addr) as u32;
+                *read_ptr = get_mem!(emu).tcm.get_dtcm_ptr(addr) as u32;
             }
         }
 
-        let cp15 = emu.common.cpus.arm9.cp15();
+        let cp15 = get_cp15!(emu, ARM9);
         self.current_itcm_size = cp15.itcm_size;
         self.current_dtcm_addr = cp15.dtcm_addr;
         self.current_dtcm_size = cp15.dtcm_size;
@@ -103,10 +103,7 @@ impl Mmu for MmuArm9 {
         let inner = unsafe { self.inner.get().as_mut().unwrap_unchecked() };
         inner.update(
             regions::INSTRUCTION_TCM_OFFSET,
-            max(
-                inner.current_itcm_size,
-                emu.common.cpus.arm9.cp15().itcm_size,
-            ),
+            max(inner.current_itcm_size, get_cp15!(emu, ARM9).itcm_size),
             emu,
         );
     }
@@ -118,7 +115,7 @@ impl Mmu for MmuArm9 {
             inner.current_dtcm_addr + inner.current_dtcm_size,
             emu,
         );
-        let cp15 = emu.common.cpus.arm9.cp15();
+        let cp15 = get_cp15!(emu, ARM9);
         inner.update(cp15.dtcm_addr, cp15.dtcm_addr + cp15.dtcm_size, emu);
     }
 
@@ -135,7 +132,7 @@ impl Mmu for MmuArm9 {
             ($start:expr, $end:expr) => {{
                 for addr in ($start..$end).step_by(MMU_BLOCK_SIZE as usize) {
                     let read_ptr = &mut read_map[(addr >> MMU_BLOCK_SHIFT) as usize];
-                    *read_ptr = emu.mem.vram.get_ptr::<{ ARM9 }>(addr) as u32;
+                    *read_ptr = get_mem!(emu).vram.get_ptr::<{ ARM9 }>(addr) as u32;
                 }
             }};
         }
@@ -190,12 +187,12 @@ impl MmuArm7Inner {
             match addr & 0xFF000000 {
                 regions::ARM7_BIOS_OFFSET => {
                     if addr < regions::ARM7_BIOS_SIZE {
-                        *read_ptr = emu.mem.bios_arm7.get_ptr(addr) as u32
+                        *read_ptr = get_mem!(emu).bios_arm7.get_ptr(addr) as u32
                     }
                 }
-                regions::MAIN_MEMORY_OFFSET => *read_ptr = emu.mem.main.get_ptr(addr) as u32,
+                regions::MAIN_MEMORY_OFFSET => *read_ptr = get_mem!(emu).main.get_ptr(addr) as u32,
                 regions::SHARED_WRAM_OFFSET => {
-                    *read_ptr = emu.mem.wram.get_ptr::<{ ARM7 }>(addr) as u32
+                    *read_ptr = get_mem!(emu).wram.get_ptr::<{ ARM7 }>(addr) as u32
                 }
                 // regions::VRAM_OFFSET => *read_ptr = emu.mem.vram.get_ptr::<{ ARM7 }>(addr) as u32,
                 _ => {}
@@ -244,7 +241,7 @@ impl Mmu for MmuArm7 {
         let read_map = unsafe { (*self.inner.get()).read_map.deref_mut() };
         for addr in (regions::VRAM_OFFSET..0x6200000).step_by(MMU_BLOCK_SIZE as usize) {
             let read_ptr = &mut read_map[(addr >> MMU_BLOCK_SHIFT) as usize];
-            *read_ptr = emu.mem.vram.get_ptr::<{ ARM7 }>(addr) as u32;
+            *read_ptr = get_mem!(emu).vram.get_ptr::<{ ARM7 }>(addr) as u32;
         }
     }
 

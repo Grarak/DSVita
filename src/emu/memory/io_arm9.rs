@@ -1,5 +1,5 @@
 use crate::emu::div_sqrt::DivSqrt;
-use crate::emu::emu::{get_cm, get_cpu_regs, get_cpu_regs_mut, Emu};
+use crate::emu::emu::{get_cm, get_cpu_regs, get_cpu_regs_mut, Emu, get_common_mut, get_mem_mut, get_mem};
 use crate::emu::memory::dma::Dma;
 use crate::emu::timers::Timers;
 use crate::emu::CpuType::ARM9;
@@ -33,8 +33,7 @@ impl IoArm9 {
 
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
-        let emu_ptr = emu as *mut Emu;
-        let common = unsafe { &mut emu_ptr.as_mut().unwrap_unchecked().common };
+        let common = get_common_mut!(emu);
         while (index - 3) < mem::size_of::<T>() {
             io_ports_read!(match addr_offset + (index - 3) as u32 {
                 io32(0x0) => common.gpu.gpu_2d_a.get_disp_cnt(),
@@ -84,16 +83,16 @@ impl IoArm9 {
                 io8(0x208) => get_cpu_regs!(emu, ARM9).ime,
                 io32(0x210) => get_cpu_regs!(emu, ARM9).ie,
                 io32(0x214) => get_cpu_regs!(emu, ARM9).irf,
-                io8(0x240) => emu.mem.vram.cnt[0],
-                io8(0x242) => emu.mem.vram.cnt[1],
-                io8(0x243) => emu.mem.vram.cnt[2],
-                io8(0x241) => emu.mem.vram.cnt[3],
-                io8(0x244) => emu.mem.vram.cnt[4],
-                io8(0x245) => emu.mem.vram.cnt[5],
-                io8(0x246) => emu.mem.vram.cnt[6],
-                io8(0x247) => emu.mem.wram.cnt,
-                io8(0x248) => emu.mem.vram.cnt[7],
-                io8(0x249) => emu.mem.vram.cnt[8],
+                io8(0x240) => get_mem!(emu).vram.cnt[0],
+                io8(0x242) => get_mem!(emu).vram.cnt[1],
+                io8(0x243) => get_mem!(emu).vram.cnt[2],
+                io8(0x241) => get_mem!(emu).vram.cnt[3],
+                io8(0x244) => get_mem!(emu).vram.cnt[4],
+                io8(0x245) => get_mem!(emu).vram.cnt[5],
+                io8(0x246) => get_mem!(emu).vram.cnt[6],
+                io8(0x247) => get_mem!(emu).wram.cnt,
+                io8(0x248) => get_mem!(emu).vram.cnt[7],
+                io8(0x249) => get_mem!(emu).vram.cnt[8],
                 io16(0x280) => self.div_sqrt.div_cnt,
                 io32(0x290) => self.div_sqrt.get_div_numer_l(),
                 io32(0x294) => self.div_sqrt.get_div_numer_h(),
@@ -188,9 +187,8 @@ impl IoArm9 {
 
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
-        let emu_ptr = emu as *mut Emu;
-        let common = unsafe { &mut emu_ptr.as_mut().unwrap_unchecked().common };
-        let mem = unsafe { &mut emu_ptr.as_mut().unwrap_unchecked().mem };
+        let common = get_common_mut!(emu);
+        let mem = get_mem_mut!(emu);
         while (index - 3) < bytes.len() {
             io_ports_write!(match addr_offset + (index - 3) as u32 {
                 io32(0x0) => common.gpu.gpu_2d_a.set_disp_cnt(mask, value),
@@ -267,16 +265,16 @@ impl IoArm9 {
                 io8(0x208) => get_cpu_regs_mut!(emu, ARM9).set_ime(value, get_cm!(emu)),
                 io32(0x210) => get_cpu_regs_mut!(emu, ARM9).set_ie(mask, value, get_cm!(emu)),
                 io32(0x214) => get_cpu_regs_mut!(emu, ARM9).set_irf(mask, value),
-                io8(0x240) => mem.vram.set_cnt(0, value, emu),
-                io8(0x241) => mem.vram.set_cnt(1, value, emu),
-                io8(0x242) => mem.vram.set_cnt(2, value, emu),
-                io8(0x243) => mem.vram.set_cnt(3, value, emu),
-                io8(0x244) => mem.vram.set_cnt(4, value, emu),
-                io8(0x245) => mem.vram.set_cnt(5, value, emu),
-                io8(0x246) => mem.vram.set_cnt(6, value, emu),
+                io8(0x240) => mem.vram.set_cnt(0, value),
+                io8(0x241) => mem.vram.set_cnt(1, value),
+                io8(0x242) => mem.vram.set_cnt(2, value),
+                io8(0x243) => mem.vram.set_cnt(3, value),
+                io8(0x244) => mem.vram.set_cnt(4, value),
+                io8(0x245) => mem.vram.set_cnt(5, value),
+                io8(0x246) => mem.vram.set_cnt(6, value),
                 io8(0x247) => mem.wram.set_cnt(value, emu),
-                io8(0x248) => mem.vram.set_cnt(7, value, emu),
-                io8(0x249) => mem.vram.set_cnt(8, value, emu),
+                io8(0x248) => mem.vram.set_cnt(7, value),
+                io8(0x249) => mem.vram.set_cnt(8, value),
                 io16(0x280) => self.div_sqrt.set_div_cnt(mask, value),
                 io32(0x290) => self.div_sqrt.set_div_numer_l(mask, value),
                 io32(0x294) => self.div_sqrt.set_div_numer_h(mask, value),

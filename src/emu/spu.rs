@@ -1,5 +1,5 @@
 use crate::emu::cycle_manager::{CycleEvent, CycleManager};
-use crate::emu::emu::{get_cm, get_spu, get_spu_mut, Emu};
+use crate::emu::emu::{get_arm7_hle_mut, get_cm, get_spu, get_spu_mut, Emu};
 use crate::emu::CpuType::ARM7;
 use crate::presenter::{PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE};
 use crate::utils::HeapMemU32;
@@ -11,7 +11,7 @@ use std::intrinsics::unlikely;
 use std::mem;
 use std::sync::{Arc, Condvar, Mutex};
 
-const CHANNEL_COUNT: usize = 16;
+pub const CHANNEL_COUNT: usize = 16;
 const SAMPLE_RATE: usize = 32768;
 const SAMPLE_BUFFER_SIZE: usize =
     SAMPLE_RATE * PRESENTER_AUDIO_BUF_SIZE / PRESENTER_AUDIO_SAMPLE_RATE;
@@ -73,18 +73,18 @@ const ADPCM_TABLE: [i16; 89] = [
 
 #[bitsize(32)]
 #[derive(Copy, Clone, Default, FromBits)]
-struct SoundCnt {
-    volume_mul: u7,
+pub struct SoundCnt {
+    pub volume_mul: u7,
     not_used: u1,
-    volume_div: u2,
+    pub volume_div: u2,
     not_used1: u5,
-    hold: u1,
-    panning: u7,
+    pub hold: u1,
+    pub panning: u7,
     not_used2: u1,
-    wave_duty: u3,
-    repeat_mode: u2,
-    format: u2,
-    start_status: u1,
+    pub wave_duty: u3,
+    pub repeat_mode: u2,
+    pub format: u2,
+    pub start_status: u1,
 }
 
 impl SoundCnt {
@@ -95,11 +95,17 @@ impl SoundCnt {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum SoundChannelFormat {
+pub enum SoundChannelFormat {
     Pcm8 = 0,
     Pcm16 = 1,
     ImaAdpcm = 2,
     PsgNoise = 3,
+}
+
+impl Default for SoundChannelFormat {
+    fn default() -> Self {
+        SoundChannelFormat::Pcm8
+    }
 }
 
 impl From<u8> for SoundChannelFormat {
@@ -111,19 +117,19 @@ impl From<u8> for SoundChannelFormat {
 
 #[bitsize(16)]
 #[derive(Copy, Clone, Default, FromBits)]
-struct MainSoundCnt {
-    master_volume: u7,
+pub struct MainSoundCnt {
+    pub master_volume: u7,
     not_used: u1,
-    left_output_from: u2,
-    right_output_from: u2,
-    output_ch1_to_mixer: u1,
-    output_ch3_to_mixer: u1,
+    pub left_output_from: u2,
+    pub right_output_from: u2,
+    pub output_ch1_to_mixer: u1,
+    pub output_ch3_to_mixer: u1,
     not_used2: u1,
-    master_enable: u1,
+    pub master_enable: u1,
 }
 
 #[derive(Copy, Clone, Default)]
-struct SpuChannel {
+pub struct SpuChannel {
     cnt: SoundCnt,
     sad: u32,
     tmr: u16,
@@ -148,8 +154,19 @@ struct AdpcmHeader {
     not_used: u9,
 }
 
+#[bitsize(8)]
+#[derive(FromBits)]
+pub struct SoundCapCnt {
+    pub cnt_associated_channels: u1,
+    pub cap_src_select: u1,
+    pub cap_repeat: u1,
+    pub cap_format: u1,
+    not_used: u3,
+    pub cap_start_status: u1,
+}
+
 pub struct Spu {
-    channels: [SpuChannel; CHANNEL_COUNT],
+    pub channels: [SpuChannel; CHANNEL_COUNT],
     main_sound_cnt: MainSoundCnt,
     sound_bias: u16,
     duty_cycles: [i32; 6],
@@ -173,10 +190,6 @@ impl Spu {
 
     pub fn initialize_schedule(cycle_manager: &CycleManager) {
         cycle_manager.schedule(512 * 2, Box::new(SpuSample::new()));
-    }
-
-    pub fn schedule_after_scanline(cycle_manager: &CycleManager) {
-        cycle_manager.schedule(512, Box::new(SpuSample::new()));
     }
 
     pub fn get_cnt(&self, channel: usize) -> u32 {
@@ -305,8 +318,7 @@ impl Spu {
     }
 }
 
-#[derive(Clone)]
-pub struct SpuSample {}
+pub struct SpuSample;
 
 impl SpuSample {
     pub fn new() -> Self {

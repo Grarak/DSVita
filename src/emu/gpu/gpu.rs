@@ -7,11 +7,14 @@ use bilge::prelude::*;
 
 use crate::emu::cpu_regs::InterruptFlag;
 use crate::emu::cycle_manager::{CycleEvent, CycleManager};
-use crate::emu::emu::{get_cm, get_cpu_regs_mut, io_dma, Emu};
+use crate::emu::emu::{
+    get_arm7_hle_mut, get_cm, get_common_mut, get_cpu_regs_mut, get_mem, io_dma, Emu,
+};
 use crate::emu::gpu::gpu_2d::Gpu2D;
 use crate::emu::gpu::gpu_2d::Gpu2DEngine::{A, B};
 use crate::emu::gpu::gpu_3d::Gpu3D;
 use crate::emu::gpu::gpu_3d_renderer::Gpu3dRenderer;
+use crate::emu::hle::arm7_hle::Arm7Hle;
 use crate::emu::memory::dma::DmaTransferMode;
 use crate::emu::memory::mem::Memory;
 use crate::emu::CpuType;
@@ -137,6 +140,7 @@ pub struct Gpu {
     swapchain: Arc<Swapchain>,
     frame_rate_counter: FrameRateCounter,
     pub frame_skip: bool,
+    pub arm7_hle: bool,
     pub v_count: u16,
     pub gpu_2d_a: Gpu2D<{ A }>,
     pub gpu_2d_b: Gpu2D<{ B }>,
@@ -156,6 +160,7 @@ impl Gpu {
             swapchain,
             frame_rate_counter: FrameRateCounter::new(fps),
             frame_skip: false,
+            arm7_hle: false,
             v_count: 0,
             gpu_2d_a: Gpu2D::new(),
             gpu_2d_b: Gpu2D::new(),
@@ -226,7 +231,7 @@ impl Gpu {
     }
 }
 
-struct Scanline256Event {}
+struct Scanline256Event;
 
 impl Scanline256Event {
     fn new() -> Self {
@@ -238,7 +243,7 @@ impl CycleEvent for Scanline256Event {
     fn scheduled(&mut self, _: &u64) {}
 
     fn trigger(&mut self, emu: &mut Emu) {
-        let gpu = &mut emu.common.gpu;
+        let gpu = &mut get_common_mut!(emu).gpu;
 
         if gpu.v_count < 192 {
             if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
@@ -247,7 +252,7 @@ impl CycleEvent for Scanline256Event {
                     .compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
-                    gpu.gpu_2d_b.draw_scanline(gpu.v_count as u8, &emu.mem);
+                    gpu.gpu_2d_b.draw_scanline(gpu.v_count as u8, get_mem!(emu));
                 }
                 while gpu.draw_state.load(Ordering::Acquire) != 0 {}
             }
@@ -268,7 +273,7 @@ impl CycleEvent for Scanline256Event {
     }
 }
 
-struct Scanline355Event {}
+struct Scanline355Event;
 
 impl Scanline355Event {
     fn new() -> Self {
@@ -280,7 +285,7 @@ impl CycleEvent for Scanline355Event {
     fn scheduled(&mut self, _: &u64) {}
 
     fn trigger(&mut self, emu: &mut Emu) {
-        let gpu = &mut emu.common.gpu;
+        let gpu = &mut get_common_mut!(emu).gpu;
 
         gpu.v_count += 1;
         match gpu.v_count {
@@ -322,6 +327,10 @@ impl CycleEvent for Scanline355Event {
                 gpu.v_count = 0;
                 gpu.gpu_2d_a.reload_registers();
                 gpu.gpu_2d_b.reload_registers();
+
+                if gpu.arm7_hle {
+                    Arm7Hle::on_frame(emu);
+                }
             }
             _ => {}
         }
@@ -354,6 +363,10 @@ impl CycleEvent for Scanline355Event {
                 gpu.disp_stat[i].set_v_counter_flag(u1::new(0));
             }
             gpu.disp_stat[i].set_h_blank_flag(u1::new(0));
+        }
+
+        if gpu.arm7_hle {
+            get_arm7_hle_mut!(emu).on_scanline(gpu.v_count, emu);
         }
 
         get_cm!(emu).schedule(256 * 6, Box::new(Scanline256Event::new()));

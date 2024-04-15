@@ -1,7 +1,7 @@
 use crate::cartridge_reader::CartridgeReader;
 use crate::emu::cpu_regs::InterruptFlag;
 use crate::emu::cycle_manager::CycleEvent;
-use crate::emu::emu::{get_cm, get_cpu_regs_mut, io_dma, Emu};
+use crate::emu::emu::{get_cm, get_common_mut, get_cpu_regs_mut, io_dma, Emu};
 use crate::emu::memory::dma::DmaTransferMode;
 use crate::emu::CpuType;
 use crate::logging::debug_println;
@@ -113,10 +113,8 @@ impl Cartridge {
         if inner.read_count == inner.block_size {
             inner.rom_ctrl.set_block_start_status(u1::new(0));
             if bool::from(inner.aux_spi_cnt.transfer_ready_irq()) {
-                get_cpu_regs_mut!(emu, CPU).send_interrupt(
-                    InterruptFlag::NdsSlotTransferCompletion,
-                    &mut emu.common.cycle_manager,
-                );
+                get_cpu_regs_mut!(emu, CPU)
+                    .send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm!(emu));
             }
         } else {
             get_cm!(emu).schedule(
@@ -258,7 +256,7 @@ impl<const CPU: CpuType> CycleEvent for WordReadEvent<CPU> {
     fn scheduled(&mut self, _: &u64) {}
 
     fn trigger(&mut self, emu: &mut Emu) {
-        emu.common.cartridge.inner[CPU]
+        get_common_mut!(emu).cartridge.inner[CPU]
             .rom_ctrl
             .set_data_word_status(u1::new(1));
         io_dma!(emu, CPU).trigger_all(DmaTransferMode::DsCartSlot, get_cm!(emu));

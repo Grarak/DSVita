@@ -1,4 +1,4 @@
-use crate::emu::emu::{get_mmu, Emu};
+use crate::emu::emu::{get_jit_mut, get_mmu, Emu};
 use crate::emu::memory::regions;
 use crate::emu::CpuType;
 use crate::emu::CpuType::ARM7;
@@ -162,9 +162,7 @@ impl Wram {
         for addr in
             (regions::SHARED_WRAM_OFFSET..regions::IO_PORTS_OFFSET).step_by(JIT_BLOCK_SIZE as usize)
         {
-            emu.mem
-                .jit
-                .invalidate_block::<{ ARM7 }>(addr, JIT_BLOCK_SIZE);
+            get_jit_mut!(emu).invalidate_block::<{ ARM7 }>(addr, JIT_BLOCK_SIZE);
         }
 
         get_mmu!(emu, ARM9).update_wram(emu);

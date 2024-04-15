@@ -1,0 +1,10 @@
+pub mod arm7_hle;
+pub mod bios;
+mod bios_lookup_table;
+mod touchscreen_hle;
+mod cart_hle;
+mod sound_hle;
+mod sound_nitro;
+mod power_manager_hle;
+mod rtc_hle;
+mod firmware_hle;

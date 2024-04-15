@@ -1,5 +1,4 @@
 use crate::emu::gpu::gpu_2d::Gpu2DEngine;
-use crate::emu::emu::{get_mmu, Emu};
 use crate::emu::CpuType;
 use crate::emu::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
@@ -337,7 +336,7 @@ impl Vram {
         }
     }
 
-    pub fn set_cnt(&mut self, bank: usize, value: u8, emu: &Emu) {
+    pub fn set_cnt(&mut self, bank: usize, value: u8) {
         const MASKS: [u8; 9] = [0x9B, 0x9B, 0x9F, 0x9F, 0x87, 0x9F, 0x9F, 0x83, 0x83];
         let value = value & MASKS[bank];
         if self.cnt[bank] == value {
@@ -698,9 +697,6 @@ impl Vram {
                 }
             }
         }
-
-        // get_mmu!(emu, ARM9).update_vram(emu);
-        // get_mmu!(emu, ARM7).update_vram(emu);
     }
 
     pub fn get_ptr<const CPU: CpuType>(&self, addr: u32) -> *const u8 {

@@ -1,4 +1,4 @@
-use crate::emu::emu::{get_cm, get_cpu_regs, get_cpu_regs_mut, Emu};
+use crate::emu::emu::{get_cm, get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, Emu};
 use crate::emu::memory::dma::Dma;
 use crate::emu::rtc::Rtc;
 use crate::emu::spi::Spi;
@@ -13,7 +13,7 @@ use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 
 pub struct IoArm7 {
-    spi: Spi,
+    pub spi: Spi,
     rtc: Rtc,
     pub spu: Spu,
     pub dma: Dma,
@@ -41,8 +41,7 @@ impl IoArm7 {
 
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
-        let emu_ptr = emu as *mut Emu;
-        let common = unsafe { &mut emu_ptr.as_mut().unwrap_unchecked().common };
+        let common = get_common_mut!(emu);
         while (index - 3) < mem::size_of::<T>() {
             io_ports_read!(match addr_offset + (index - 3) as u32 {
                 io16(0x4) => common.gpu.get_disp_stat::<{ ARM7 }>(),
@@ -80,8 +79,8 @@ impl IoArm7 {
                 io8(0x208) => get_cpu_regs!(emu, ARM7).ime,
                 io32(0x210) => get_cpu_regs!(emu, ARM7).ie,
                 io32(0x214) => get_cpu_regs!(emu, ARM7).irf,
-                io8(0x240) => emu.mem.vram.stat,
-                io8(0x241) => emu.mem.wram.cnt,
+                io8(0x240) => get_mem!(emu).vram.stat,
+                io8(0x241) => get_mem!(emu).wram.cnt,
                 io8(0x300) => get_cpu_regs!(emu, ARM7).post_flg,
                 io8(0x301) => get_cpu_regs!(emu, ARM7).halt_cnt,
                 io32(0x400) => self.spu.get_cnt(0),
@@ -196,8 +195,7 @@ impl IoArm7 {
 
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
-        let emu_ptr = emu as *mut Emu;
-        let common = unsafe { &mut emu_ptr.as_mut().unwrap_unchecked().common };
+        let common = get_common_mut!(emu);
         while (index - 3) < mem::size_of::<T>() {
             io_ports_write!(match addr_offset + (index - 3) as u32 {
                 io16(0x4) => common.gpu.set_disp_stat::<{ ARM7 }>(mask, value),

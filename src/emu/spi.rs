@@ -169,7 +169,8 @@ impl Spi {
                 SpiDevice::Firmware => {
                     if self.cmd == 3 {
                         if self.write_count < 4 {
-                            self.addr |= (value as u32) << ((3 - self.write_count as u32) << 3);
+                            self.addr <<= 8;
+                            self.addr |= value as u32;
                         } else {
                             self.data = if self.addr < FIRMWARE_SIZE as u32 {
                                 SPI_FIRMWARE[self.addr as usize]
@@ -183,48 +184,21 @@ impl Spi {
                     }
                 }
                 SpiDevice::Touchscreen => {
-                    const ADC_X1: i32 = u16::from_le_bytes([
-                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA8],
-                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA7],
-                    ]) as i32;
-                    const ADC_Y1: i32 = u16::from_le_bytes([
-                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA6],
-                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA5],
-                    ]) as i32;
-                    const SCR_X1: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0xA4] as i32;
-                    const SCR_Y1: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0xA3] as i32;
-                    const ADC_X2: i32 = u16::from_le_bytes([
-                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA2],
-                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA1],
-                    ]) as i32;
-                    const ADC_Y2: i32 = u16::from_le_bytes([
-                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA0],
-                        SPI_FIRMWARE[FIRMWARE_SIZE - 0x9F],
-                    ]) as i32;
-                    const SCR_X2: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0x9E] as i32;
-                    const SCR_Y2: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0x9D] as i32;
-
                     self.data = match (self.cmd & 0x70) >> 4 {
                         1 => {
-                            let y = self.touch_points.load(Ordering::Relaxed) >> 8;
-                            let y = min(max(y, 1), 190) as i32;
-                            let touch_y =
-                                (y - SCR_Y1 + 1) * (ADC_Y2 - ADC_Y1) / (SCR_Y2 - SCR_Y1) + ADC_Y1;
+                            let y = self.get_touch_coordinates().1;
                             if self.write_count & 1 != 0 {
-                                (touch_y >> 5) as u8
+                                (y >> 5) as u8
                             } else {
-                                (touch_y << 3) as u8
+                                (y << 3) as u8
                             }
                         }
                         5 => {
-                            let x = self.touch_points.load(Ordering::Relaxed) & 0xFF;
-                            let x = min(max(x, 1), 254) as i32;
-                            let touch_x =
-                                (x - SCR_X1 + 1) * (ADC_X2 - ADC_X1) / (SCR_X2 - SCR_X1) + ADC_X1;
+                            let x = self.get_touch_coordinates().0;
                             if self.write_count & 1 != 0 {
-                                (touch_x >> 5) as u8
+                                (x >> 5) as u8
                             } else {
-                                (touch_x << 3) as u8
+                                (x << 3) as u8
                             }
                         }
                         6 => 0,
@@ -247,5 +221,39 @@ impl Spi {
         if bool::from(cnt.interrupt_request()) {
             todo!()
         }
+    }
+
+    pub fn get_touch_coordinates(&self) -> (u16, u16) {
+        const ADC_X1: i32 = u16::from_le_bytes([
+            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA8],
+            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA7],
+        ]) as i32;
+        const ADC_Y1: i32 = u16::from_le_bytes([
+            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA6],
+            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA5],
+        ]) as i32;
+        const SCR_X1: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0xA4] as i32;
+        const SCR_Y1: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0xA3] as i32;
+        const ADC_X2: i32 = u16::from_le_bytes([
+            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA2],
+            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA1],
+        ]) as i32;
+        const ADC_Y2: i32 = u16::from_le_bytes([
+            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA0],
+            SPI_FIRMWARE[FIRMWARE_SIZE - 0x9F],
+        ]) as i32;
+        const SCR_X2: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0x9E] as i32;
+        const SCR_Y2: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0x9D] as i32;
+
+        let points = self.touch_points.load(Ordering::Relaxed);
+        let x = points & 0xFF;
+        let x = min(max(x, 1), 254) as i32;
+        let y = points >> 8;
+        let y = min(max(y, 1), 190) as i32;
+
+        let touch_x = (x - SCR_X1 + 1) * (ADC_X2 - ADC_X1) / (SCR_X2 - SCR_X1) + ADC_X1;
+        let touch_y = (y - SCR_Y1 + 1) * (ADC_Y2 - ADC_Y1) / (SCR_Y2 - SCR_Y1) + ADC_Y1;
+
+        (touch_x as u16, touch_y as u16)
     }
 }

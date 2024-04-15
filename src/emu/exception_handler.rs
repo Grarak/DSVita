@@ -13,7 +13,8 @@ pub enum ExceptionVector {
 mod handler {
     use crate::emu::emu::{get_cp15, Emu};
     use crate::emu::exception_handler::ExceptionVector;
-    use crate::emu::{bios, CpuType};
+    use crate::emu::hle::bios;
+    use crate::emu::CpuType;
 
     #[inline(never)]
     pub fn handle<const CPU: CpuType, const THUMB: bool>(

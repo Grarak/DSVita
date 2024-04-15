@@ -1,5 +1,5 @@
-use crate::emu::bios::*;
 use crate::emu::emu::Emu;
+use crate::emu::hle::bios::*;
 use crate::emu::CpuType::{ARM7, ARM9};
 
 pub const ARM9_SWI_LOOKUP_TABLE: [(&str, fn(&mut Emu)); 33] = [

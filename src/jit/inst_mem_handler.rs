@@ -1,4 +1,4 @@
-use crate::emu::emu::get_regs_mut;
+use crate::emu::emu::{get_mem, get_regs_mut};
 use crate::emu::CpuType;
 use crate::emu::CpuType::ARM7;
 use crate::jit::MemoryAmount;
@@ -208,10 +208,10 @@ macro_rules! imm_breakout {
             $asm.runtime_data.branch_out_pc = $pc;
         }
         let (pre_cycles_sum, inst_cycle_count) = crate::emu::emu::get_jit!($asm.emu)
-            .get_cycle_counts_unchecked::<$thumb>($pc,$asm.emu.mem.current_jit_block_addr);
+            .get_cycle_counts_unchecked::<$thumb>($pc, crate::emu::emu::get_mem!($asm.emu).current_jit_block_addr);
         $asm.runtime_data.branch_out_total_cycles = pre_cycles_sum + inst_cycle_count as u16;
         crate::emu::emu::get_regs_mut!($asm.emu, CPU).pc = $pc + if $thumb { 3 } else { 4 };
-        $asm.emu.mem.breakout_imm = false;
+        crate::emu::emu::get_mem_mut!($asm.emu).breakout_imm = false;
         if $thumb {
             std::arch::asm!("bx {}", in(reg) $asm.breakout_skip_save_regs_thumb_addr);
         } else {
@@ -241,7 +241,7 @@ pub unsafe extern "C" fn inst_mem_handler<
         addr,
         asm.emu,
     );
-    if WRITE && unlikely(asm.emu.mem.breakout_imm) {
+    if WRITE && unlikely(get_mem!(asm.emu).breakout_imm) {
         imm_breakout!(asm, pc, THUMB);
     }
 }
@@ -285,7 +285,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
             std::arch::asm!("bx {}", in(reg) asm.breakout_skip_save_regs_addr);
         }
         std::hint::unreachable_unchecked();
-    } else if WRITE && unlikely(asm.emu.mem.breakout_imm) {
+    } else if WRITE && unlikely(get_mem!(asm.emu).breakout_imm) {
         imm_breakout!(asm, pc, THUMB);
     }
 }
@@ -295,9 +295,9 @@ pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: 
     pc: u32,
     asm: *mut JitAsm<CPU>,
 ) {
-    handle_swp_request::<CPU, AMOUNT>(regs, (*asm).emu);
-    if unlikely((*asm).emu.mem.breakout_imm) {
-        let asm = asm.as_mut().unwrap_unchecked();
+    let asm = asm.as_mut().unwrap_unchecked();
+    handle_swp_request::<CPU, AMOUNT>(regs, asm.emu);
+    if unlikely(get_mem!(asm.emu).breakout_imm) {
         imm_breakout!(asm, pc, false);
     }
 }

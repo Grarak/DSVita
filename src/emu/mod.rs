@@ -3,16 +3,15 @@ use std::marker::ConstParamTy;
 use std::ops;
 use std::ops::{Index, IndexMut};
 
-pub mod bios;
-mod bios_lookup_table;
 pub mod cp15;
 pub mod cpu;
 pub mod cpu_regs;
 pub mod cycle_manager;
 mod div_sqrt;
+pub mod emu;
 pub mod exception_handler;
 pub mod gpu;
-pub mod emu;
+pub mod hle;
 pub mod input;
 pub mod ipc;
 pub mod memory;
