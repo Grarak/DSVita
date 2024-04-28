@@ -1,10 +1,14 @@
 use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
 use crate::emu::input::Keycode;
 use crate::presenter::menu::Menu;
-use crate::presenter::{PresentEvent, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::presenter::{
+    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT,
+    PRESENTER_SCREEN_WIDTH,
+};
 use std::ffi::CString;
 use std::mem::MaybeUninit;
 use std::ptr;
+use vitasdk_sys::sceAudioOutOpenPort;
 use vitasdk_sys::*;
 
 type Vita2dPgf = *mut c_void;
@@ -93,12 +97,39 @@ const KEY_CODE_MAPPING: [(SceCtrlButtons, Keycode); 12] = [
     (SCE_CTRL_RTRIGGER, Keycode::TriggerR),
 ];
 
+#[derive(Clone)]
+pub struct PresenterAudio {
+    audio_port: c_int,
+}
+
+impl PresenterAudio {
+    fn new() -> Self {
+        unsafe {
+            PresenterAudio {
+                audio_port: sceAudioOutOpenPort(
+                    SCE_AUDIO_OUT_PORT_TYPE_MAIN,
+                    PRESENTER_AUDIO_BUF_SIZE as _,
+                    PRESENTER_AUDIO_SAMPLE_RATE as _,
+                    SCE_AUDIO_OUT_MODE_STEREO,
+                ),
+            }
+        }
+    }
+
+    pub fn play(&self, buffer: &[u32; PRESENTER_AUDIO_BUF_SIZE]) {
+        unsafe { sceAudioOutOutput(self.audio_port, buffer.as_slice().as_ptr() as _) };
+    }
+}
+
+unsafe impl Send for PresenterAudio {}
+
 pub struct Presenter {
     pgf: *mut Vita2dPgf,
     top_texture: *mut Vita2dTexture,
     bottom_texture: *mut Vita2dTexture,
     top_texture_data_ptr: *mut u32,
     bottom_texture_data_ptr: *mut u32,
+    presenter_audio: PresenterAudio,
 }
 
 impl Presenter {
@@ -118,6 +149,7 @@ impl Presenter {
                 bottom_texture,
                 top_texture_data_ptr: vita2d_texture_get_datap(top_texture) as *mut u32,
                 bottom_texture_data_ptr: vita2d_texture_get_datap(bottom_texture) as *mut u32,
+                presenter_audio: PresenterAudio::new(),
             }
         }
     }
@@ -241,6 +273,10 @@ impl Presenter {
             vita2d_end_drawing();
             vita2d_swap_buffers();
         }
+    }
+
+    pub fn get_presenter_audio(&self) -> PresenterAudio {
+        self.presenter_audio.clone()
     }
 
     pub fn wait_vsync(&self) {

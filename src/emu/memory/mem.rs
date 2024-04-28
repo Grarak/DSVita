@@ -11,6 +11,7 @@ use crate::emu::memory::regions;
 use crate::emu::memory::tcm::Tcm;
 use crate::emu::memory::vram::Vram;
 use crate::emu::memory::wram::Wram;
+use crate::emu::spu::SoundSampler;
 use crate::emu::CpuType;
 use crate::emu::CpuType::ARM9;
 use crate::jit::jit_memory::JitMemory;
@@ -18,6 +19,7 @@ use crate::logging::debug_println;
 use crate::utils::Convert;
 use std::intrinsics::likely;
 use std::mem;
+use std::sync::Arc;
 use CpuType::ARM7;
 
 pub struct Memory {
@@ -49,12 +51,12 @@ macro_rules! get_mem_mmu {
 }
 
 impl Memory {
-    pub fn new() -> Self {
+    pub fn new(sound_sampler: Arc<SoundSampler>) -> Self {
         Memory {
             tcm: Tcm::new(),
             main: Main::new(),
             wram: Wram::new(),
-            io_arm7: IoArm7::new(),
+            io_arm7: IoArm7::new(sound_sampler),
             io_arm9: IoArm9::new(),
             palettes: Palettes::new(),
             vram: Vram::new(),

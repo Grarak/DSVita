@@ -1,3 +1,10 @@
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU16, AtomicU8, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Instant;
+
+use bilge::prelude::*;
+
 use crate::emu::cpu_regs::InterruptFlag;
 use crate::emu::cycle_manager::{CycleEvent, CycleManager};
 use crate::emu::emu::{get_cm, get_cpu_regs_mut, io_dma, Emu};
@@ -11,11 +18,6 @@ use crate::emu::CpuType;
 use crate::emu::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::utils::HeapMemU32;
-use bilge::prelude::*;
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU16, AtomicU8, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
 
 pub const DISPLAY_WIDTH: usize = 256;
 pub const DISPLAY_HEIGHT: usize = 192;
@@ -34,7 +36,7 @@ impl Swapchain {
         }
     }
 
-    pub fn push(&self, fb_0: &[u32; DISPLAY_PIXEL_COUNT], fb_1: &[u32; DISPLAY_PIXEL_COUNT]) {
+    fn push(&self, fb_0: &[u32; DISPLAY_PIXEL_COUNT], fb_1: &[u32; DISPLAY_PIXEL_COUNT]) {
         let mut queue = self.queue.lock().unwrap();
         if queue.len() == 2 {
             queue.swap(0, 1);

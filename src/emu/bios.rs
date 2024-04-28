@@ -136,7 +136,13 @@ pub fn diff_unfilt8<const CPU: CpuType>(emu: &mut Emu) {
 }
 
 pub fn divide<const CPU: CpuType>(emu: &mut Emu) {
-    todo!()
+    let regs = get_regs_mut!(emu, CPU);
+    let dividend = *regs.get_reg(Reg::R0) as i32;
+    let divisor = *regs.get_reg(Reg::R1) as i32;
+    let quotient = dividend / divisor;
+    *regs.get_reg_mut(Reg::R0) = quotient as u32;
+    *regs.get_reg_mut(Reg::R1) = (dividend % divisor) as u32;
+    *regs.get_reg_mut(Reg::R3) = quotient.abs() as u32;
 }
 
 pub fn get_crc16<const CPU: CpuType>(emu: &mut Emu) {

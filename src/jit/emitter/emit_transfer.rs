@@ -58,16 +58,16 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         write_back: bool,
         amount: MemoryAmount,
     ) {
-        if !WRITE && amount != MemoryAmount::Double {
-            let func = match (write_back, pre) {
-                (false, false) => Self::emit_single_read_transfer::<THUMB, false, false>,
-                (true, false) => Self::emit_single_read_transfer::<THUMB, true, false>,
-                (false, true) => Self::emit_single_read_transfer::<THUMB, false, true>,
-                (true, true) => Self::emit_single_read_transfer::<THUMB, true, true>,
-            };
-            func(self, buf_index, pc, amount);
-            return;
-        }
+        // if !WRITE && amount != MemoryAmount::Double {
+        //     let func = match (write_back, pre) {
+        //         (false, false) => Self::emit_single_read_transfer::<THUMB, false, false>,
+        //         (true, false) => Self::emit_single_read_transfer::<THUMB, true, false>,
+        //         (false, true) => Self::emit_single_read_transfer::<THUMB, false, true>,
+        //         (true, true) => Self::emit_single_read_transfer::<THUMB, true, true>,
+        //     };
+        //     func(self, buf_index, pc, amount);
+        //     return;
+        // }
 
         let jit_asm_addr = self as *mut _ as _;
 

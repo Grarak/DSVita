@@ -49,10 +49,14 @@ impl Setting {
     }
 }
 
-pub type Settings = [Setting; 1];
+pub type Settings = [Setting; 2];
 
 pub const FRAMESKIP_SETTING: usize = 0;
-pub const DEFAULT_SETTINGS: Settings = [Setting::new("Frameskip", SettingValue::Bool(false))];
+pub const AUDIO_SETTING: usize = 1;
+pub const DEFAULT_SETTINGS: Settings = [
+    Setting::new("Frameskip", SettingValue::Bool(false)),
+    Setting::new("Audio", SettingValue::Bool(true)),
+];
 
 pub fn create_settings_mut() -> Settings {
     DEFAULT_SETTINGS.clone()

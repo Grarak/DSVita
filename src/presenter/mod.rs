@@ -16,3 +16,6 @@ pub enum PresentEvent {
     Keymap(u16),
     Quit,
 }
+
+pub const PRESENTER_AUDIO_SAMPLE_RATE: usize = 48000;
+pub const PRESENTER_AUDIO_BUF_SIZE: usize = 1024;

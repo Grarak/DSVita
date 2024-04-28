@@ -143,6 +143,21 @@ macro_rules! get_mmu {
 }
 pub(crate) use get_mmu;
 
+macro_rules! get_spu {
+    ($emu:expr) => {{
+        &$emu.mem.io_arm7.spu
+    }};
+}
+pub(crate) use get_spu;
+
+macro_rules! get_spu_mut {
+    ($emu:expr) => {{
+        &mut $emu.mem.io_arm7.spu
+    }};
+}
+use crate::emu::spu::SoundSampler;
+pub(crate) use get_spu_mut;
+
 pub struct Cpus {
     pub arm9: CpuArm9,
     pub arm7: CpuArm7,
@@ -195,10 +210,11 @@ impl Emu {
         swapchain: Arc<Swapchain>,
         fps: Arc<AtomicU16>,
         key_map: Arc<AtomicU16>,
+        sound_sampler: Arc<SoundSampler>,
     ) -> Self {
         Emu {
             common: Common::new(cartridge_reader, swapchain, fps, key_map),
-            mem: Memory::new(),
+            mem: Memory::new(sound_sampler),
         }
     }
 

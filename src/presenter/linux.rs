@@ -1,8 +1,12 @@
 use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
 use crate::emu::input;
 use crate::presenter::menu::Menu;
-use crate::presenter::{PresentEvent, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::presenter::{
+    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT,
+    PRESENTER_SCREEN_WIDTH,
+};
 use crate::utils::BuildNoHasher;
+use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
@@ -10,7 +14,34 @@ use sdl2::render::{Texture, TextureCreator, WindowCanvas};
 use sdl2::video::WindowContext;
 use sdl2::{keyboard, EventPump};
 use std::collections::HashMap;
-use std::{mem, ptr};
+use std::rc::Rc;
+use std::{mem, ptr, slice};
+
+#[derive(Clone)]
+pub struct PresenterAudio {
+    audio_queue: Rc<AudioQueue<i16>>,
+}
+
+unsafe impl Send for PresenterAudio {}
+
+impl PresenterAudio {
+    fn new(audio_queue: AudioQueue<i16>) -> Self {
+        PresenterAudio {
+            audio_queue: Rc::new(audio_queue),
+        }
+    }
+
+    pub fn play(&self, buffer: &[u32; PRESENTER_AUDIO_BUF_SIZE]) {
+        self.audio_queue.clear();
+        let raw = unsafe {
+            slice::from_raw_parts(
+                buffer.as_slice().as_ptr() as *const i16,
+                PRESENTER_AUDIO_BUF_SIZE * 2,
+            )
+        };
+        self.audio_queue.queue_audio(raw).unwrap();
+    }
+}
 
 pub struct Presenter {
     key_code_mapping: HashMap<keyboard::Keycode, input::Keycode, BuildNoHasher>,
@@ -18,6 +49,7 @@ pub struct Presenter {
     _texture_creator: TextureCreator<WindowContext>,
     texture_top: Texture<'static>,
     texture_bottom: Texture<'static>,
+    presenter_audio: PresenterAudio,
     event_pump: EventPump,
 }
 
@@ -40,6 +72,18 @@ impl Presenter {
         sdl2::hint::set("SDL_NO_SIGNAL_HANDLERS", "1");
         let sdl = sdl2::init().unwrap();
         let sdl_video = sdl.video().unwrap();
+        let sdl_audio = sdl.audio().unwrap();
+        let audio_queue = sdl_audio
+            .open_queue(
+                None,
+                &AudioSpecDesired {
+                    freq: Some(PRESENTER_AUDIO_SAMPLE_RATE as i32),
+                    channels: Some(2),
+                    samples: Some(PRESENTER_AUDIO_BUF_SIZE as u16),
+                },
+            )
+            .unwrap();
+        audio_queue.resume();
 
         let window = sdl_video
             .window("DSPSV", PRESENTER_SCREEN_WIDTH, PRESENTER_SCREEN_HEIGHT)
@@ -80,6 +124,7 @@ impl Presenter {
             _texture_creator: texture_creator,
             texture_top,
             texture_bottom,
+            presenter_audio: PresenterAudio::new(audio_queue),
             event_pump,
         }
     }
@@ -161,6 +206,10 @@ impl Presenter {
             .window_mut()
             .set_title(&format!("DSPSV - Internal fps {}", fps))
             .unwrap();
+    }
+
+    pub fn get_presenter_audio(&self) -> PresenterAudio {
+        self.presenter_audio.clone()
     }
 
     pub fn wait_vsync(&self) {}

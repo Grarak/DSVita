@@ -126,7 +126,7 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> TimersEvent<CPU, CHANNEL_NUM>
         TimersEvent { scheduled_at: 0 }
     }
 
-    fn overflow(emu: &mut Emu, count_up_num: usize) {
+    fn overflow(count_up_num: usize, emu: &mut Emu) {
         {
             let channel = &mut io_timers_mut!(emu, CPU).channels[count_up_num];
             let cnt = TimerCntH::from(channel.cnt_h);
@@ -161,7 +161,7 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> TimersEvent<CPU, CHANNEL_NUM>
                 }
             }
             if overflow {
-                Self::overflow(emu, count_up_num + 1);
+                Self::overflow(count_up_num + 1, emu);
             }
         }
     }
@@ -174,7 +174,7 @@ impl<const CPU: CpuType, const CHANNEL_NUM: usize> CycleEvent for TimersEvent<CP
 
     fn trigger(&mut self, emu: &mut Emu) {
         if self.scheduled_at == io_timers!(emu, CPU).channels[CHANNEL_NUM].scheduled_cycle {
-            Self::overflow(emu, CHANNEL_NUM);
+            Self::overflow(CHANNEL_NUM, emu);
         }
     }
 }

@@ -15,21 +15,24 @@ extern crate core;
 use crate::cartridge_reader::CartridgeReader;
 use crate::emu::emu::{get_cm, get_cp15_mut, get_cpu_regs, get_mmu, get_regs_mut, Emu};
 use crate::emu::gpu::gpu::{Gpu, Swapchain, DISPLAY_PIXEL_COUNT};
+use crate::emu::spu::{SoundSampler, Spu};
 use crate::emu::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
-use crate::presenter::{PresentEvent, Presenter};
-use crate::settings::{create_settings_mut, Settings, FRAMESKIP_SETTING};
-use crate::utils::{set_thread_prio_affinity, ThreadAffinity, ThreadPriority};
+use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
+use crate::settings::{create_settings_mut, Settings, AUDIO_SETTING, FRAMESKIP_SETTING};
+use crate::utils::{set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::RefCell;
 use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::{mem, ptr, thread};
 use CpuType::{ARM7, ARM9};
+
 mod cartridge_reader;
 mod emu;
 mod jit;
@@ -47,6 +50,7 @@ fn run_cpu(
     swapchain: Arc<Swapchain>,
     fps: Arc<AtomicU16>,
     key_map: Arc<AtomicU16>,
+    sound_sampler: Arc<SoundSampler>,
     settings: Arc<Settings>,
 ) {
     let arm9_ram_addr = cartridge_reader.header.arm9_values.ram_address;
@@ -54,7 +58,7 @@ fn run_cpu(
     let arm7_ram_addr = cartridge_reader.header.arm7_values.ram_address;
     let arm7_entry_addr = cartridge_reader.header.arm7_values.entry_address;
 
-    let mut emu = Emu::new(cartridge_reader, swapchain, fps, key_map);
+    let mut emu = Emu::new(cartridge_reader, swapchain, fps, key_map, sound_sampler);
 
     {
         let cartridge_header: &[u8; cartridge_reader::HEADER_IN_RAM_SIZE] =
@@ -140,6 +144,10 @@ fn run_cpu(
 
     Gpu::initialize_schedule(get_cm!(emu));
     emu.common.gpu.frame_skip = settings[FRAMESKIP_SETTING].value.as_bool().unwrap();
+
+    if settings[AUDIO_SETTING].value.as_bool().unwrap() {
+        Spu::initialize_schedule(get_cm!(emu));
+    }
 
     let emu_ptr = ptr::addr_of_mut!(emu) as u32;
     let gpu2d_thread = thread::Builder::new()
@@ -308,8 +316,13 @@ pub fn main() {
     let key_map = Arc::new(AtomicU16::new(0xFFFF));
     let key_map_clone = key_map.clone();
 
+    let sound_sampler = Arc::new(SoundSampler::new());
+    let sound_sampler_clone = sound_sampler.clone();
+
     let settings = Arc::new(settings_mut.borrow().clone());
     drop(settings_mut);
+
+    let audio_enabled = settings[AUDIO_SETTING].value.as_bool().unwrap();
 
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
@@ -320,10 +333,31 @@ pub fn main() {
                 swapchain_clone,
                 fps_clone,
                 key_map_clone,
+                sound_sampler_clone,
                 settings,
             );
         })
         .unwrap();
+
+    let presenter_audio = presenter.get_presenter_audio();
+
+    let audio_thread = if audio_enabled {
+        Some(
+            thread::Builder::new()
+                .name("audio".to_owned())
+                .spawn(move || {
+                    set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core0);
+                    let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_BUF_SIZE }>::new();
+                    loop {
+                        sound_sampler.consume(audio_buffer.deref_mut());
+                        presenter_audio.play(audio_buffer.deref());
+                    }
+                })
+                .unwrap(),
+        )
+    } else {
+        None
+    };
 
     while let PresentEvent::Keymap(value) = presenter.event_poll() {
         key_map.store(value, Ordering::Relaxed);
@@ -343,4 +377,7 @@ pub fn main() {
     }
 
     cpu_thread.join().unwrap();
+    if let Some(audio_thread) = audio_thread {
+        audio_thread.join().unwrap();
+    }
 }
