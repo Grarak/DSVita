@@ -3,11 +3,12 @@ use crate::emu::input;
 use crate::presenter::menu::Menu;
 use crate::presenter::{
     PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT,
-    PRESENTER_SCREEN_WIDTH,
+    PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN,
 };
 use crate::utils::BuildNoHasher;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
+use sdl2::mouse::MouseButton;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
 use sdl2::render::{Texture, TextureCreator, WindowCanvas};
@@ -51,6 +52,9 @@ pub struct Presenter {
     texture_bottom: Texture<'static>,
     presenter_audio: PresenterAudio,
     event_pump: EventPump,
+    mouse_pressed: bool,
+    mouse_id: Option<u32>,
+    keymap: u32,
 }
 
 impl Presenter {
@@ -126,11 +130,22 @@ impl Presenter {
             texture_bottom,
             presenter_audio: PresenterAudio::new(audio_queue),
             event_pump,
+            mouse_pressed: false,
+            mouse_id: None,
+            keymap: 0xFFFFFFFF,
         }
     }
 
     pub fn event_poll(&mut self) -> PresentEvent {
-        let mut key_map = 0xFFFF;
+        let mut touch = None;
+
+        let mut sample_touch_points = |x, y| {
+            let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x as _, y as _);
+            let x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
+            let y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height) as u8;
+            touch = Some((x, y));
+        };
+
         for event in self.event_pump.poll_iter() {
             match event {
                 Event::KeyDown {
@@ -138,7 +153,7 @@ impl Presenter {
                     ..
                 } => {
                     if let Some(code) = self.key_code_mapping.get(&code) {
-                        key_map &= !(1 << *code as u8);
+                        self.keymap &= !(1 << *code as u8);
                     }
                 }
                 Event::KeyUp {
@@ -146,17 +161,51 @@ impl Presenter {
                     ..
                 } => {
                     if let Some(code) = self.key_code_mapping.get(&code) {
-                        key_map |= 1 << *code as u8;
+                        self.keymap |= 1 << *code as u8;
+                    }
+                }
+                Event::MouseButtonUp {
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } => {
+                    self.mouse_pressed = false;
+                    self.keymap |= 1 << 16;
+                }
+                Event::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
+                    which,
+                    x,
+                    y,
+                    ..
+                } => {
+                    self.mouse_pressed = true;
+                    self.mouse_id = Some(which);
+                    if PRESENTER_SUB_BOTTOM_SCREEN.is_within(x as _, y as _) {
+                        sample_touch_points(x, y);
+                        self.keymap &= !(1 << 16);
+                    }
+                }
+                Event::MouseMotion { which, x, y, .. } => {
+                    if let Some(mouse_id) = self.mouse_id {
+                        if self.mouse_pressed
+                            && mouse_id == which
+                            && PRESENTER_SUB_BOTTOM_SCREEN.is_within(x as _, y as _)
+                        {
+                            sample_touch_points(x, y);
+                        }
                     }
                 }
                 Event::Quit { .. } => return PresentEvent::Quit,
                 _ => {}
             }
         }
-        PresentEvent::Keymap(key_map)
+        PresentEvent::Inputs {
+            keymap: self.keymap,
+            touch,
+        }
     }
 
-    pub fn present_menu(&mut self, menu: &Menu) {}
+    pub fn present_menu(&mut self, _: &Menu) {}
 
     pub fn present_textures(
         &mut self,
@@ -174,17 +223,15 @@ impl Presenter {
             .unwrap();
 
         self.canvas.clear();
-        const ADJUSTED_DISPLAY_HEIGHT: u32 =
-            PRESENTER_SCREEN_WIDTH / 2 * DISPLAY_HEIGHT as u32 / DISPLAY_WIDTH as u32;
         self.canvas
             .copy(
                 &self.texture_top,
                 None,
                 Some(Rect::new(
-                    0,
-                    ((PRESENTER_SCREEN_HEIGHT - ADJUSTED_DISPLAY_HEIGHT) / 2) as _,
-                    PRESENTER_SCREEN_WIDTH / 2,
-                    ADJUSTED_DISPLAY_HEIGHT,
+                    PRESENTER_SUB_TOP_SCREEN.x as _,
+                    PRESENTER_SUB_TOP_SCREEN.y as _,
+                    PRESENTER_SUB_TOP_SCREEN.width,
+                    PRESENTER_SUB_TOP_SCREEN.height,
                 )),
             )
             .unwrap();
@@ -193,10 +240,10 @@ impl Presenter {
                 &self.texture_bottom,
                 None,
                 Some(Rect::new(
-                    PRESENTER_SCREEN_WIDTH as i32 / 2,
-                    ((PRESENTER_SCREEN_HEIGHT - ADJUSTED_DISPLAY_HEIGHT) / 2) as _,
-                    PRESENTER_SCREEN_WIDTH / 2,
-                    ADJUSTED_DISPLAY_HEIGHT,
+                    PRESENTER_SUB_BOTTOM_SCREEN.x as _,
+                    PRESENTER_SUB_BOTTOM_SCREEN.y as _,
+                    PRESENTER_SUB_BOTTOM_SCREEN.width,
+                    PRESENTER_SUB_BOTTOM_SCREEN.height,
                 )),
             )
             .unwrap();

@@ -9,7 +9,7 @@ use crate::emu::memory::mem::Memory;
 use crate::emu::CpuType;
 use crate::utils::Convert;
 use std::ptr;
-use std::sync::atomic::AtomicU16;
+use std::sync::atomic::{AtomicU16, AtomicU32};
 use std::sync::Arc;
 
 macro_rules! get_regs {
@@ -186,7 +186,7 @@ impl Common {
         cartridge_reader: CartridgeReader,
         swapchain: Arc<Swapchain>,
         fps: Arc<AtomicU16>,
-        key_map: Arc<AtomicU16>,
+        key_map: Arc<AtomicU32>,
     ) -> Self {
         Common {
             ipc: Ipc::new(),
@@ -209,12 +209,13 @@ impl Emu {
         cartridge_reader: CartridgeReader,
         swapchain: Arc<Swapchain>,
         fps: Arc<AtomicU16>,
-        key_map: Arc<AtomicU16>,
+        key_map: Arc<AtomicU32>,
+        touch_points: Arc<AtomicU16>,
         sound_sampler: Arc<SoundSampler>,
     ) -> Self {
         Emu {
             common: Common::new(cartridge_reader, swapchain, fps, key_map),
-            mem: Memory::new(sound_sampler),
+            mem: Memory::new(touch_points, sound_sampler),
         }
     }
 

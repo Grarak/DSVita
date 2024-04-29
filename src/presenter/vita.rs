@@ -3,13 +3,13 @@ use crate::emu::input::Keycode;
 use crate::presenter::menu::Menu;
 use crate::presenter::{
     PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT,
-    PRESENTER_SCREEN_WIDTH,
+    PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN,
 };
 use std::ffi::CString;
 use std::mem::MaybeUninit;
 use std::ptr;
-use vitasdk_sys::sceAudioOutOpenPort;
 use vitasdk_sys::*;
+use vitasdk_sys::{sceAudioOutOpenPort, sceTouchPeek};
 
 type Vita2dPgf = *mut c_void;
 
@@ -130,6 +130,7 @@ pub struct Presenter {
     top_texture_data_ptr: *mut u32,
     bottom_texture_data_ptr: *mut u32,
     presenter_audio: PresenterAudio,
+    keymap: u32,
 }
 
 impl Presenter {
@@ -143,6 +144,8 @@ impl Presenter {
             let bottom_texture =
                 vita2d_create_empty_texture(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
+            sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START);
+
             Presenter {
                 pgf,
                 top_texture,
@@ -150,12 +153,14 @@ impl Presenter {
                 top_texture_data_ptr: vita2d_texture_get_datap(top_texture) as *mut u32,
                 bottom_texture_data_ptr: vita2d_texture_get_datap(bottom_texture) as *mut u32,
                 presenter_audio: PresenterAudio::new(),
+                keymap: 0xFFFFFFFF,
             }
         }
     }
 
     pub fn event_poll(&mut self) -> PresentEvent {
-        let mut keymap = 0xFFFF;
+        let mut touch = None;
+
         unsafe {
             let pressed = MaybeUninit::<SceCtrlData>::uninit();
             let mut pressed = pressed.assume_init();
@@ -163,13 +168,35 @@ impl Presenter {
 
             for (host_key, guest_key) in KEY_CODE_MAPPING {
                 if pressed.buttons & host_key != 0 {
-                    keymap &= !(1 << guest_key as u8);
+                    self.keymap &= !(1 << guest_key as u8);
                 } else {
-                    keymap |= 1 << guest_key as u8;
+                    self.keymap |= 1 << guest_key as u8;
                 }
             }
+
+            let touch_report = MaybeUninit::<SceTouchData>::uninit();
+            let mut touch_report = touch_report.assume_init();
+            sceTouchPeek(SCE_TOUCH_PORT_FRONT, ptr::addr_of_mut!(touch_report), 1);
+
+            if touch_report.reportNum > 0 {
+                let report = touch_report.report.first().unwrap();
+                let x = report.x as u32 * PRESENTER_SCREEN_WIDTH / 1920;
+                let y = report.y as u32 * PRESENTER_SCREEN_HEIGHT / 1080;
+                if PRESENTER_SUB_BOTTOM_SCREEN.is_within(x, y) {
+                    let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x, y);
+                    let x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
+                    let y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height) as u8;
+                    touch = Some((x, y));
+                    self.keymap &= !(1 << 16);
+                }
+            } else {
+                self.keymap |= 1 << 16;
+            }
         }
-        PresentEvent::Keymap(keymap)
+        PresentEvent::Inputs {
+            keymap: self.keymap,
+            touch,
+        }
     }
 
     pub fn present_menu(&mut self, menu: &Menu) {
@@ -230,31 +257,28 @@ impl Presenter {
             vita2d_start_drawing();
             vita2d_clear_screen();
 
-            const ADJUSTED_DISPLAY_HEIGHT: u32 =
-                PRESENTER_SCREEN_WIDTH / 2 * DISPLAY_HEIGHT as u32 / DISPLAY_WIDTH as u32;
-
             vita2d_draw_texture_part_scale(
                 self.top_texture,
-                0f32,
-                ((PRESENTER_SCREEN_HEIGHT - ADJUSTED_DISPLAY_HEIGHT) / 2) as _,
+                PRESENTER_SUB_TOP_SCREEN.x as _,
+                PRESENTER_SUB_TOP_SCREEN.y as _,
                 0f32,
                 0f32,
                 DISPLAY_WIDTH as f32,
                 DISPLAY_HEIGHT as f32,
-                (PRESENTER_SCREEN_WIDTH as f32 / 2f32) / DISPLAY_WIDTH as f32,
-                ADJUSTED_DISPLAY_HEIGHT as f32 / DISPLAY_HEIGHT as f32,
+                PRESENTER_SUB_TOP_SCREEN.width as f32 / DISPLAY_WIDTH as f32,
+                PRESENTER_SUB_TOP_SCREEN.height as f32 / DISPLAY_HEIGHT as f32,
             );
 
             vita2d_draw_texture_part_scale(
                 self.bottom_texture,
-                PRESENTER_SCREEN_WIDTH as f32 / 2f32,
-                ((PRESENTER_SCREEN_HEIGHT - ADJUSTED_DISPLAY_HEIGHT) / 2) as _,
+                PRESENTER_SUB_BOTTOM_SCREEN.x as _,
+                PRESENTER_SUB_BOTTOM_SCREEN.y as _,
                 0f32,
                 0f32,
                 DISPLAY_WIDTH as f32,
                 DISPLAY_HEIGHT as f32,
-                (PRESENTER_SCREEN_WIDTH as f32 / 2f32) / DISPLAY_WIDTH as f32,
-                ADJUSTED_DISPLAY_HEIGHT as f32 / DISPLAY_HEIGHT as f32,
+                PRESENTER_SUB_BOTTOM_SCREEN.width as f32 / DISPLAY_WIDTH as f32,
+                PRESENTER_SUB_BOTTOM_SCREEN.height as f32 / DISPLAY_HEIGHT as f32,
             );
 
             vita2d_pgf_draw_text(

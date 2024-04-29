@@ -1,7 +1,10 @@
 use crate::logging::debug_println;
 use crate::utils;
 use bilge::prelude::*;
+use std::cmp::{max, min};
 use std::mem;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
 
 const FIRMWARE_SIZE: usize = 128 * 1024;
 pub const USER_SETTINGS_1_ADDR: usize = 0x1FF00;
@@ -124,18 +127,25 @@ struct SpiCnt {
     spi_bus_enable: u1,
 }
 
-#[derive(Default)]
 pub struct Spi {
     pub cnt: u16,
     pub data: u8,
     write_count: usize,
     cmd: u8,
     addr: u32,
+    touch_points: Arc<AtomicU16>,
 }
 
 impl Spi {
-    pub fn new() -> Self {
-        Spi::default()
+    pub fn new(touch_points: Arc<AtomicU16>) -> Self {
+        Spi {
+            cnt: 0,
+            data: 0,
+            write_count: 0,
+            cmd: 0,
+            addr: 0,
+            touch_points,
+        }
     }
 
     pub fn set_cnt(&mut self, mut mask: u16, value: u16) {
@@ -172,7 +182,55 @@ impl Spi {
                         debug_println!("Unknown spi {:?} command {:x}", device, self.cmd);
                     }
                 }
-                SpiDevice::Touchscreen => {}
+                SpiDevice::Touchscreen => {
+                    const ADC_X1: i32 = u16::from_le_bytes([
+                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA8],
+                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA7],
+                    ]) as i32;
+                    const ADC_Y1: i32 = u16::from_le_bytes([
+                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA6],
+                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA5],
+                    ]) as i32;
+                    const SCR_X1: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0xA4] as i32;
+                    const SCR_Y1: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0xA3] as i32;
+                    const ADC_X2: i32 = u16::from_le_bytes([
+                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA2],
+                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA1],
+                    ]) as i32;
+                    const ADC_Y2: i32 = u16::from_le_bytes([
+                        SPI_FIRMWARE[FIRMWARE_SIZE - 0xA0],
+                        SPI_FIRMWARE[FIRMWARE_SIZE - 0x9F],
+                    ]) as i32;
+                    const SCR_X2: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0x9E] as i32;
+                    const SCR_Y2: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0x9D] as i32;
+
+                    self.data = match (self.cmd & 0x70) >> 4 {
+                        1 => {
+                            let y = self.touch_points.load(Ordering::Relaxed) >> 8;
+                            let y = min(max(y, 1), 190) as i32;
+                            let touch_y =
+                                (y - SCR_Y1 + 1) * (ADC_Y2 - ADC_Y1) / (SCR_Y2 - SCR_Y1) + ADC_Y1;
+                            if self.write_count & 1 != 0 {
+                                (touch_y >> 5) as u8
+                            } else {
+                                (touch_y << 3) as u8
+                            }
+                        }
+                        5 => {
+                            let x = self.touch_points.load(Ordering::Relaxed) & 0xFF;
+                            let x = min(max(x, 1), 254) as i32;
+                            let touch_x =
+                                (x - SCR_X1 + 1) * (ADC_X2 - ADC_X1) / (SCR_X2 - SCR_X1) + ADC_X1;
+                            if self.write_count & 1 != 0 {
+                                (touch_x >> 5) as u8
+                            } else {
+                                (touch_x << 3) as u8
+                            }
+                        }
+                        6 => 0,
+                        _ => 0,
+                    }
+                }
                 _ => {
                     debug_println!("Unknown spi device {:?}", device);
                     self.data = 0;

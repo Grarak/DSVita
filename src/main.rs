@@ -28,7 +28,7 @@ use std::intrinsics::{likely, unlikely};
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::{mem, ptr, thread};
 use CpuType::{ARM7, ARM9};
@@ -49,7 +49,8 @@ fn run_cpu(
     cartridge_reader: CartridgeReader,
     swapchain: Arc<Swapchain>,
     fps: Arc<AtomicU16>,
-    key_map: Arc<AtomicU16>,
+    key_map: Arc<AtomicU32>,
+    touch_points: Arc<AtomicU16>,
     sound_sampler: Arc<SoundSampler>,
     settings: Arc<Settings>,
 ) {
@@ -58,7 +59,14 @@ fn run_cpu(
     let arm7_ram_addr = cartridge_reader.header.arm7_values.ram_address;
     let arm7_entry_addr = cartridge_reader.header.arm7_values.entry_address;
 
-    let mut emu = Emu::new(cartridge_reader, swapchain, fps, key_map, sound_sampler);
+    let mut emu = Emu::new(
+        cartridge_reader,
+        swapchain,
+        fps,
+        key_map,
+        touch_points,
+        sound_sampler,
+    );
 
     {
         let cartridge_header: &[u8; cartridge_reader::HEADER_IN_RAM_SIZE] =
@@ -313,8 +321,11 @@ pub fn main() {
     let fps = Arc::new(AtomicU16::new(0));
     let fps_clone = fps.clone();
 
-    let key_map = Arc::new(AtomicU16::new(0xFFFF));
+    let key_map = Arc::new(AtomicU32::new(0xFFFFFFFF));
     let key_map_clone = key_map.clone();
+
+    let touch_points = Arc::new(AtomicU16::new(0));
+    let touch_points_clone = touch_points.clone();
 
     let sound_sampler = Arc::new(SoundSampler::new());
     let sound_sampler_clone = sound_sampler.clone();
@@ -333,6 +344,7 @@ pub fn main() {
                 swapchain_clone,
                 fps_clone,
                 key_map_clone,
+                touch_points_clone,
                 sound_sampler_clone,
                 settings,
             );
@@ -359,8 +371,11 @@ pub fn main() {
         None
     };
 
-    while let PresentEvent::Keymap(value) = presenter.event_poll() {
-        key_map.store(value, Ordering::Relaxed);
+    while let PresentEvent::Inputs { keymap, touch } = presenter.event_poll() {
+        if let Some((x, y)) = touch {
+            touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
+        }
+        key_map.store(keymap, Ordering::Relaxed);
 
         let fb = swapchain.consume();
         let top = unsafe {

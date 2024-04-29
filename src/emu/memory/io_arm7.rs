@@ -9,6 +9,7 @@ use crate::logging::debug_println;
 use crate::utils::Convert;
 use dspsv_macros::{io_ports_read, io_ports_write};
 use std::mem;
+use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 
 pub struct IoArm7 {
@@ -20,9 +21,9 @@ pub struct IoArm7 {
 }
 
 impl IoArm7 {
-    pub fn new(sound_sampler: Arc<SoundSampler>) -> Self {
+    pub fn new(touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
         IoArm7 {
-            spi: Spi::new(),
+            spi: Spi::new(touch_points),
             rtc: Rtc::new(),
             spu: Spu::new(sound_sampler),
             dma: Dma::new(ARM7),

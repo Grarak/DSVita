@@ -19,6 +19,7 @@ use crate::logging::debug_println;
 use crate::utils::Convert;
 use std::intrinsics::likely;
 use std::mem;
+use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 use CpuType::ARM7;
 
@@ -51,12 +52,12 @@ macro_rules! get_mem_mmu {
 }
 
 impl Memory {
-    pub fn new(sound_sampler: Arc<SoundSampler>) -> Self {
+    pub fn new(touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
         Memory {
             tcm: Tcm::new(),
             main: Main::new(),
             wram: Wram::new(),
-            io_arm7: IoArm7::new(sound_sampler),
+            io_arm7: IoArm7::new(touch_points, sound_sampler),
             io_arm9: IoArm9::new(),
             palettes: Palettes::new(),
             vram: Vram::new(),

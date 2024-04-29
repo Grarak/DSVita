@@ -21,13 +21,13 @@ impl<'a> MenuPresenter<'a> {
     }
 
     pub fn present(&mut self) {
-        while let PresentEvent::Keymap(value) = self.presenter.event_poll() {
+        while let PresentEvent::Inputs { keymap, .. } = self.presenter.event_poll() {
             let mut menu = &mut self.root_menu;
             for i in &self.menu_stack {
                 menu = &mut menu.entries[*i];
             }
 
-            let pressed = !value;
+            let pressed = !keymap;
             let keys_pressed = if self.pressed { 0 } else { pressed };
             self.pressed = pressed != 0;
             self.presenter.present_menu(menu);

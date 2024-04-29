@@ -33,6 +33,7 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceKernelThreadMgr_stub",
     "SceLibKernel_stub",
     "SceSysmem_stub",
+    "SceTouch_stub",
     "ScePgf_stub"
 ] }
 
