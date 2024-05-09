@@ -8,9 +8,7 @@ Experimental NDS Emulator for ARM32
 
 This runs some games, however following things are missing:
 - No 3D
-- No touchscreen
 - Some 2D rendering glitches
-- No sound
 - No saves
 
 ## Credits
