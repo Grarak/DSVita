@@ -1,7 +1,5 @@
 use crate::emu::cpu_regs::InterruptFlag;
-use crate::emu::emu::{
-    get_cm, get_cp15, get_cpu_regs, get_cpu_regs_mut, get_regs, get_regs_mut, Emu,
-};
+use crate::emu::emu::{get_cp15, get_cpu_regs, get_cpu_regs_mut, get_regs, get_regs_mut, Emu, get_cm_mut};
 use crate::emu::hle::bios_lookup_table::{ARM7_SWI_LOOKUP_TABLE, ARM9_SWI_LOOKUP_TABLE};
 use crate::emu::thread_regs::Cpsr;
 use crate::emu::CpuType;
@@ -28,7 +26,7 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
     cpsr.set_irq_disable(u1::new(1));
     cpsr.set_thumb(u1::new(0));
     cpsr.set_mode(u5::new(0x12));
-    get_regs_mut!(emu, CPU).set_cpsr::<true>(u32::from(cpsr), get_cm!(emu));
+    get_regs_mut!(emu, CPU).set_cpsr::<true>(u32::from(cpsr), get_cm_mut!(emu));
 
     let is_thumb = (get_regs!(emu, CPU).pc & 1) == 1;
     let mut spsr = Cpsr::from(get_regs!(emu, CPU).spsr);
@@ -75,7 +73,7 @@ pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
     } else {
         get_regs_mut!(emu, CPU).pc &= !1;
     }
-    get_regs_mut!(emu, CPU).set_cpsr::<false>(spsr, get_cm!(emu));
+    get_regs_mut!(emu, CPU).set_cpsr::<false>(spsr, get_cm_mut!(emu));
 }
 
 pub fn bit_unpack<const CPU: CpuType>(emu: &mut Emu) {

@@ -1,7 +1,7 @@
 use crate::cartridge_reader::CartridgeReader;
 use crate::emu::cpu_regs::InterruptFlag;
-use crate::emu::cycle_manager::CycleEvent;
-use crate::emu::emu::{get_cm, get_common_mut, get_cpu_regs_mut, io_dma, Emu};
+use crate::emu::cycle_manager::EventType;
+use crate::emu::emu::{get_cm_mut, get_common_mut, get_cpu_regs_mut, io_dma, Emu};
 use crate::emu::memory::dma::DmaTransferMode;
 use crate::emu::CpuType;
 use crate::logging::debug_println;
@@ -114,12 +114,15 @@ impl Cartridge {
             inner.rom_ctrl.set_block_start_status(u1::new(0));
             if bool::from(inner.aux_spi_cnt.transfer_ready_irq()) {
                 get_cpu_regs_mut!(emu, CPU)
-                    .send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm!(emu));
+                    .send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm_mut!(emu));
             }
         } else {
-            get_cm!(emu).schedule(
+            get_cm_mut!(emu).schedule(
                 inner.word_cycles as u32,
-                Box::new(WordReadEvent::<CPU>::new()),
+                match CPU {
+                    CpuType::ARM9 => EventType::CartridgeWordReadArm9,
+                    CpuType::ARM7 => EventType::CartridgeWordReadArm7,
+                },
             );
         }
 
@@ -232,33 +235,24 @@ impl Cartridge {
             inner.rom_ctrl.set_block_start_status(u1::new(0));
             if bool::from(inner.aux_spi_cnt.transfer_ready_irq()) {
                 get_cpu_regs_mut!(emu, CPU)
-                    .send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm!(emu));
+                    .send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm_mut!(emu));
             }
         } else {
-            get_cm!(emu).schedule(
+            get_cm_mut!(emu).schedule(
                 inner.word_cycles as u32,
-                Box::new(WordReadEvent::<CPU>::new()),
+                match CPU {
+                    CpuType::ARM9 => EventType::CartridgeWordReadArm9,
+                    CpuType::ARM7 => EventType::CartridgeWordReadArm7,
+                },
             );
             inner.read_count = 0;
         }
     }
-}
 
-pub struct WordReadEvent<const CPU: CpuType> {}
-
-impl<const CPU: CpuType> WordReadEvent<CPU> {
-    fn new() -> Self {
-        WordReadEvent {}
-    }
-}
-
-impl<const CPU: CpuType> CycleEvent for WordReadEvent<CPU> {
-    fn scheduled(&mut self, _: &u64) {}
-
-    fn trigger(&mut self, emu: &mut Emu) {
+    pub fn on_word_read_event<const CPU: CpuType>(emu: &mut Emu) {
         get_common_mut!(emu).cartridge.inner[CPU]
             .rom_ctrl
             .set_data_word_status(u1::new(1));
-        io_dma!(emu, CPU).trigger_all(DmaTransferMode::DsCartSlot, get_cm!(emu));
+        io_dma!(emu, CPU).trigger_all(DmaTransferMode::DsCartSlot, get_cm_mut!(emu));
     }
 }

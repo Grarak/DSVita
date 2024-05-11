@@ -1,5 +1,5 @@
 use crate::emu::cpu_regs::InterruptFlag;
-use crate::emu::emu::{get_cm, get_common, get_cpu_regs_mut, get_ipc, get_ipc_mut, Emu};
+use crate::emu::emu::{get_common, get_cpu_regs_mut, get_ipc, get_ipc_mut, Emu, get_cm_mut};
 use crate::emu::hle::cart_hle::CartHle;
 use crate::emu::hle::firmware_hle::FirmwareHle;
 use crate::emu::hle::power_manager_hle::PowerManagerHle;
@@ -45,7 +45,7 @@ impl Arm7Hle {
             fifo.queue.push_back(val);
             if fifo.queue.len() == 1 {
                 get_cpu_regs_mut!(emu, ARM9)
-                    .send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, get_cm!(emu));
+                    .send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, get_cm_mut!(emu));
             }
         }
     }
@@ -56,7 +56,7 @@ impl Arm7Hle {
             && bool::from(get_ipc!(emu).fifo[ARM9].cnt.send_empty_irq())
         {
             get_cpu_regs_mut!(emu, ARM9)
-                .send_interrupt(InterruptFlag::IpcSendFifoEmpty, get_cm!(emu));
+                .send_interrupt(InterruptFlag::IpcSendFifoEmpty, get_cm_mut!(emu));
         }
 
         let service = val & 0x1F;

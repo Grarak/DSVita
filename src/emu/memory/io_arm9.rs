@@ -1,5 +1,5 @@
 use crate::emu::div_sqrt::DivSqrt;
-use crate::emu::emu::{get_cm, get_cpu_regs, get_cpu_regs_mut, Emu, get_common_mut, get_mem_mut, get_mem};
+use crate::emu::emu::{get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, get_mem_mut, Emu, get_cm_mut};
 use crate::emu::memory::dma::Dma;
 use crate::emu::timers::Timers;
 use crate::emu::CpuType::ARM9;
@@ -66,13 +66,13 @@ impl IoArm9 {
                 io32(0xE4) => self.dma.get_fill::<1>(),
                 io32(0xE8) => self.dma.get_fill::<2>(),
                 io32(0xEC) => self.dma.get_fill::<3>(),
-                io16(0x100) => self.timers.get_cnt_l::<0>(get_cm!(emu)),
+                io16(0x100) => self.timers.get_cnt_l::<0>(get_cm_mut!(emu)),
                 io16(0x102) => self.timers.get_cnt_h::<0>(),
-                io16(0x104) => self.timers.get_cnt_l::<1>(get_cm!(emu)),
+                io16(0x104) => self.timers.get_cnt_l::<1>(get_cm_mut!(emu)),
                 io16(0x106) => self.timers.get_cnt_h::<1>(),
-                io16(0x108) => self.timers.get_cnt_l::<2>(get_cm!(emu)),
+                io16(0x108) => self.timers.get_cnt_l::<2>(get_cm_mut!(emu)),
                 io16(0x10A) => self.timers.get_cnt_h::<2>(),
-                io16(0x10C) => self.timers.get_cnt_l::<3>(get_cm!(emu)),
+                io16(0x10C) => self.timers.get_cnt_l::<3>(get_cm_mut!(emu)),
                 io16(0x10E) => self.timers.get_cnt_h::<3>(),
                 io16(0x130) => common.input.get_key_input(),
                 io16(0x180) => common.ipc.get_sync_reg::<{ ARM9 }>(),
@@ -262,8 +262,8 @@ impl IoArm9 {
                 io32(0x1A4) => common.cartridge.set_rom_ctrl::<{ ARM9 }>(mask, value, emu),
                 io32(0x1A8) => common.cartridge.set_bus_cmd_out_l::<{ ARM9 }>(mask, value),
                 io32(0x1AC) => common.cartridge.set_bus_cmd_out_h::<{ ARM9 }>(mask, value),
-                io8(0x208) => get_cpu_regs_mut!(emu, ARM9).set_ime(value, get_cm!(emu)),
-                io32(0x210) => get_cpu_regs_mut!(emu, ARM9).set_ie(mask, value, get_cm!(emu)),
+                io8(0x208) => get_cpu_regs_mut!(emu, ARM9).set_ime(value, get_cm_mut!(emu)),
+                io32(0x210) => get_cpu_regs_mut!(emu, ARM9).set_ie(mask, value, get_cm_mut!(emu)),
                 io32(0x214) => get_cpu_regs_mut!(emu, ARM9).set_irf(mask, value),
                 io8(0x240) => mem.vram.set_cnt(0, value),
                 io8(0x241) => mem.vram.set_cnt(1, value),

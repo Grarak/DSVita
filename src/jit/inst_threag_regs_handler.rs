@@ -3,11 +3,11 @@ use crate::emu::thread_regs::ThreadRegs;
 
 pub unsafe extern "C" fn register_set_cpsr_checked(
     regs: *mut ThreadRegs,
-    cm: *const CycleManager,
+    cm: *mut CycleManager,
     value: u32,
     flags: u8,
 ) {
-    (*regs).set_cpsr_with_flags(value, flags, cm.as_ref().unwrap())
+    (*regs).set_cpsr_with_flags(value, flags, cm.as_mut().unwrap())
 }
 
 pub unsafe extern "C" fn register_set_spsr_checked(

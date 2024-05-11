@@ -17,7 +17,7 @@ const JIT_PAGE_SIZE: u32 = 16;
 const JIT_BLOCK_SIZE_SHIFT: u32 = 9;
 pub const JIT_BLOCK_SIZE: u32 = 1 << JIT_BLOCK_SIZE_SHIFT;
 
-#[derive(Copy, Clone, Default)]
+#[derive(Default)]
 struct JitCycle {
     pre_cycle_sum: u16,
     inst_cycle_count: u8,
@@ -34,7 +34,7 @@ impl<const SIZE: usize> Default for JitBlock<SIZE> {
         JitBlock {
             jit_addr: 0,
             offsets: unsafe { mem::zeroed() },
-            cycles: HeapMem::default(),
+            cycles: HeapMem::new(),
         }
     }
 }
@@ -95,9 +95,9 @@ macro_rules! create_jit_blocks {
 create_jit_blocks!(
     [itcm, regions::INSTRUCTION_TCM_SIZE],
     [main_arm9, regions::MAIN_MEMORY_SIZE],
-    [wram, (regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE)],
-    [main_arm7, regions::MAIN_MEMORY_SIZE],
     [arm9_bios, regions::ARM9_BIOS_SIZE],
+    [main_arm7, regions::MAIN_MEMORY_SIZE],
+    [wram, (regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE)],
     [arm7_bios, regions::ARM7_BIOS_SIZE]
 );
 

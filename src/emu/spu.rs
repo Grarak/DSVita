@@ -1,5 +1,5 @@
-use crate::emu::cycle_manager::{CycleEvent, CycleManager};
-use crate::emu::emu::{get_arm7_hle_mut, get_cm, get_spu, get_spu_mut, Emu};
+use crate::emu::cycle_manager::{CycleManager, EventType};
+use crate::emu::emu::{get_cm_mut, get_spu, get_spu_mut, Emu};
 use crate::emu::CpuType::ARM7;
 use crate::presenter::{PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE};
 use crate::utils::HeapMemU32;
@@ -7,7 +7,7 @@ use bilge::prelude::*;
 use std::cmp::{max, min};
 use std::collections::VecDeque;
 use std::hint::unreachable_unchecked;
-use std::intrinsics::unlikely;
+use std::intrinsics::{likely, unlikely};
 use std::mem;
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -188,8 +188,8 @@ impl Spu {
         }
     }
 
-    pub fn initialize_schedule(cycle_manager: &CycleManager) {
-        cycle_manager.schedule(512 * 2, Box::new(SpuSample::new()));
+    pub fn initialize_schedule(cycle_manager: &mut CycleManager) {
+        cycle_manager.schedule(512 * 2, EventType::SpuSample);
     }
 
     pub fn get_cnt(&self, channel: usize) -> u32 {
@@ -316,20 +316,70 @@ impl Spu {
 
         channel.active = true;
     }
-}
 
-pub struct SpuSample;
-
-impl SpuSample {
-    pub fn new() -> Self {
-        SpuSample {}
+    fn next_sample_pcm(channel: &mut SpuChannel) {
+        channel.sad_current += 1 + u8::from(channel.cnt.format()) as u32;
     }
-}
 
-impl CycleEvent for SpuSample {
-    fn scheduled(&mut self, _: &u64) {}
+    fn next_sample_adpcm(channel: &mut SpuChannel, emu: &mut Emu) {
+        if channel.sad_current == channel.sad + ((channel.pnt as u32) << 2) && !channel.adpcm_toggle
+        {
+            channel.adpcm_loop_value = channel.adpcm_value;
+            channel.adpcm_loop_index = channel.adpcm_index;
+        }
 
-    fn trigger(&mut self, emu: &mut Emu) {
+        let sad_current = channel.sad_current;
+        let adpcm_data = emu.mem_read::<{ ARM7 }, u8>(sad_current);
+
+        let adpcm_data = if channel.adpcm_toggle {
+            adpcm_data >> 4
+        } else {
+            adpcm_data & 0xF
+        };
+
+        let mut diff = (ADPCM_TABLE[channel.adpcm_index as usize] / 8) as i32;
+        if adpcm_data & 1 != 0 {
+            diff += (ADPCM_TABLE[channel.adpcm_index as usize] / 4) as i32;
+        }
+        if adpcm_data & 2 != 0 {
+            diff += (ADPCM_TABLE[channel.adpcm_index as usize] / 2) as i32;
+        }
+        if adpcm_data & 4 != 0 {
+            diff += ADPCM_TABLE[channel.adpcm_index as usize] as i32;
+        }
+
+        if adpcm_data & 8 != 0 {
+            channel.adpcm_value += diff;
+            channel.adpcm_value = min(channel.adpcm_value, 0x7FFF);
+        } else {
+            channel.adpcm_value -= diff;
+            channel.adpcm_value = max(channel.adpcm_value, -0x7FFF);
+        }
+
+        channel.adpcm_index += ADPCM_INDEX_TABLE[(adpcm_data & 0x7) as usize] as i32;
+        channel.adpcm_index = min(max(channel.adpcm_index, 0), 88);
+
+        channel.adpcm_toggle = !channel.adpcm_toggle;
+        if !channel.adpcm_toggle {
+            channel.sad_current += 1;
+        }
+    }
+
+    fn next_sample_psg(&mut self, channel_num: usize) {
+        if (8..=13).contains(&channel_num) {
+            self.duty_cycles[channel_num - 8] = (self.duty_cycles[channel_num - 8] + 1) % 8;
+        } else if channel_num >= 14 {
+            self.noise_values[channel_num - 14] &= !(1 << 15);
+            if self.noise_values[channel_num - 14] & 1 != 0 {
+                self.noise_values[channel_num - 14] =
+                    (1 << 15) | ((self.noise_values[channel_num - 14] >> 1) ^ 0x6000);
+            } else {
+                self.noise_values[channel_num - 14] >>= 1;
+            }
+        }
+    }
+
+    pub fn on_sample_event(emu: &mut Emu) {
         let mut mixer_left = 0;
         let mut mixer_right = 0;
         let mut channels_left = [0; 2];
@@ -348,7 +398,7 @@ impl CycleEvent for SpuSample {
         }
 
         for i in 0..CHANNEL_COUNT {
-            if !get_channel!(emu, i).active {
+            if likely(!get_channel!(emu, i).active) {
                 continue;
             }
 
@@ -397,72 +447,14 @@ impl CycleEvent for SpuSample {
                 overflow = get_channel!(emu, i).tmr_current < get_channel!(emu, i).tmr;
 
                 match format {
-                    SoundChannelFormat::Pcm8 => {
-                        get_channel_mut!(emu, i).sad_current += 1;
-                    }
-                    SoundChannelFormat::Pcm16 => {
-                        get_channel_mut!(emu, i).sad_current += 2;
+                    SoundChannelFormat::Pcm8 | SoundChannelFormat::Pcm16 => {
+                        Self::next_sample_pcm(get_channel_mut!(emu, i))
                     }
                     SoundChannelFormat::ImaAdpcm => {
-                        let channel = get_channel_mut!(emu, i);
-                        if channel.sad_current == channel.sad + ((channel.pnt as u32) << 2)
-                            && !channel.adpcm_toggle
-                        {
-                            channel.adpcm_loop_value = channel.adpcm_value;
-                            channel.adpcm_loop_index = channel.adpcm_index;
-                        }
-
-                        let sad_current = channel.sad_current;
-                        let adpcm_data = emu.mem_read::<{ ARM7 }, u8>(sad_current);
-
-                        let channel = get_channel_mut!(emu, i);
-                        let adpcm_data = if channel.adpcm_toggle {
-                            adpcm_data >> 4
-                        } else {
-                            adpcm_data & 0xF
-                        };
-
-                        let mut diff = (ADPCM_TABLE[channel.adpcm_index as usize] / 8) as i32;
-                        if adpcm_data & 1 != 0 {
-                            diff += (ADPCM_TABLE[channel.adpcm_index as usize] / 4) as i32;
-                        }
-                        if adpcm_data & 2 != 0 {
-                            diff += (ADPCM_TABLE[channel.adpcm_index as usize] / 2) as i32;
-                        }
-                        if adpcm_data & 4 != 0 {
-                            diff += ADPCM_TABLE[channel.adpcm_index as usize] as i32;
-                        }
-
-                        if adpcm_data & 8 != 0 {
-                            channel.adpcm_value += diff;
-                            channel.adpcm_value = min(channel.adpcm_value, 0x7FFF);
-                        } else {
-                            channel.adpcm_value -= diff;
-                            channel.adpcm_value = max(channel.adpcm_value, -0x7FFF);
-                        }
-
-                        channel.adpcm_index +=
-                            ADPCM_INDEX_TABLE[(adpcm_data & 0x7) as usize] as i32;
-                        channel.adpcm_index = min(max(channel.adpcm_index, 0), 88);
-
-                        channel.adpcm_toggle = !channel.adpcm_toggle;
-                        if !channel.adpcm_toggle {
-                            channel.sad_current += 1;
-                        }
+                        Self::next_sample_adpcm(get_channel_mut!(emu, i), emu)
                     }
                     SoundChannelFormat::PsgNoise => {
-                        let spu = get_spu_mut!(emu);
-                        if (8..=13).contains(&i) {
-                            spu.duty_cycles[i - 8] = (spu.duty_cycles[i - 8] + 1) % 8;
-                        } else if i >= 14 {
-                            spu.noise_values[i - 14] &= !(1 << 15);
-                            if spu.noise_values[i - 14] & 1 != 0 {
-                                spu.noise_values[i - 14] =
-                                    (1 << 15) | ((spu.noise_values[i - 14] >> 1) ^ 0x6000);
-                            } else {
-                                spu.noise_values[i - 14] >>= 1;
-                            }
-                        }
+                        get_spu_mut!(emu).next_sample_psg(i);
                     }
                 }
 
@@ -567,6 +559,6 @@ impl CycleEvent for SpuSample {
             spu.samples_buffer.clear();
         }
 
-        get_cm!(emu).schedule(512 * 2, Box::new(SpuSample::new()));
+        get_cm_mut!(emu).schedule(512 * 2, EventType::SpuSample);
     }
 }

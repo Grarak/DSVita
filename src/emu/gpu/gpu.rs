@@ -1,14 +1,7 @@
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU16, AtomicU8, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
-
-use bilge::prelude::*;
-
 use crate::emu::cpu_regs::InterruptFlag;
-use crate::emu::cycle_manager::{CycleEvent, CycleManager};
+use crate::emu::cycle_manager::{CycleManager, EventType};
 use crate::emu::emu::{
-    get_arm7_hle_mut, get_cm, get_common_mut, get_cpu_regs_mut, get_mem, io_dma, Emu,
+    get_arm7_hle_mut, get_cm_mut, get_common_mut, get_cpu_regs_mut, get_mem, io_dma, Emu,
 };
 use crate::emu::gpu::gpu_2d::Gpu2D;
 use crate::emu::gpu::gpu_2d::Gpu2DEngine::{A, B};
@@ -21,6 +14,11 @@ use crate::emu::CpuType;
 use crate::emu::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::utils::HeapMemU32;
+use bilge::prelude::*;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU16, AtomicU8, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Instant;
 
 pub const DISPLAY_WIDTH: usize = 256;
 pub const DISPLAY_HEIGHT: usize = 192;
@@ -172,11 +170,11 @@ impl Gpu {
         }
     }
 
-    pub fn initialize_schedule(cycle_manager: &CycleManager) {
+    pub fn initialize_schedule(cycle_manager: &mut CycleManager) {
         cycle_manager.schedule(
             // 8 pixel delay according to https://melonds.kuribo64.net/board/thread.php?id=13
             (256 + 8) * 6,
-            Box::new(Scanline256Event::new()),
+            EventType::GpuScanline256,
         );
     }
 
@@ -229,20 +227,8 @@ impl Gpu {
             }
         }
     }
-}
 
-struct Scanline256Event;
-
-impl Scanline256Event {
-    fn new() -> Self {
-        Scanline256Event {}
-    }
-}
-
-impl CycleEvent for Scanline256Event {
-    fn scheduled(&mut self, _: &u64) {}
-
-    fn trigger(&mut self, emu: &mut Emu) {
+    pub fn on_scanline256_event(emu: &mut Emu) {
         let gpu = &mut get_common_mut!(emu).gpu;
 
         if gpu.v_count < 192 {
@@ -257,7 +243,7 @@ impl CycleEvent for Scanline256Event {
                 while gpu.draw_state.load(Ordering::Acquire) != 0 {}
             }
 
-            io_dma!(emu, ARM9).trigger_all(DmaTransferMode::StartAtHBlank, get_cm!(emu));
+            io_dma!(emu, ARM9).trigger_all(DmaTransferMode::StartAtHBlank, get_cm_mut!(emu));
         }
 
         for i in 0..2 {
@@ -265,26 +251,14 @@ impl CycleEvent for Scanline256Event {
             disp_stat.set_h_blank_flag(u1::new(1));
             if bool::from(disp_stat.h_blank_irq_enable()) {
                 get_cpu_regs_mut!(emu, CpuType::from(i as u8))
-                    .send_interrupt(InterruptFlag::LcdHBlank, get_cm!(emu));
+                    .send_interrupt(InterruptFlag::LcdHBlank, get_cm_mut!(emu));
             }
         }
 
-        get_cm!(emu).schedule((355 - 256) * 6, Box::new(Scanline355Event::new()));
+        get_cm_mut!(emu).schedule((355 - 256) * 6, EventType::GpuScanline355);
     }
-}
 
-struct Scanline355Event;
-
-impl Scanline355Event {
-    fn new() -> Self {
-        Scanline355Event {}
-    }
-}
-
-impl CycleEvent for Scanline355Event {
-    fn scheduled(&mut self, _: &u64) {}
-
-    fn trigger(&mut self, emu: &mut Emu) {
+    pub fn on_scanline355_event(emu: &mut Emu) {
         let gpu = &mut get_common_mut!(emu).gpu;
 
         gpu.v_count += 1;
@@ -295,9 +269,9 @@ impl CycleEvent for Scanline355Event {
                     disp_stat.set_v_blank_flag(u1::new(1));
                     if bool::from(disp_stat.v_blank_irq_enable()) {
                         get_cpu_regs_mut!(emu, CpuType::from(i as u8))
-                            .send_interrupt(InterruptFlag::LcdVBlank, get_cm!(emu));
+                            .send_interrupt(InterruptFlag::LcdVBlank, get_cm_mut!(emu));
                         io_dma!(emu, CpuType::from(i as u8))
-                            .trigger_all(DmaTransferMode::StartAtVBlank, get_cm!(emu));
+                            .trigger_all(DmaTransferMode::StartAtVBlank, get_cm_mut!(emu));
                     }
                 }
 
@@ -357,7 +331,7 @@ impl CycleEvent for Scanline355Event {
                 gpu.disp_stat[i].set_v_counter_flag(u1::new(1));
                 if bool::from(gpu.disp_stat[i].v_counter_irq_enable()) {
                     get_cpu_regs_mut!(emu, CpuType::from(i as u8))
-                        .send_interrupt(InterruptFlag::LcdVCounterMatch, get_cm!(emu));
+                        .send_interrupt(InterruptFlag::LcdVCounterMatch, get_cm_mut!(emu));
                 }
             } else {
                 gpu.disp_stat[i].set_v_counter_flag(u1::new(0));
@@ -369,6 +343,6 @@ impl CycleEvent for Scanline355Event {
             get_arm7_hle_mut!(emu).on_scanline(gpu.v_count, emu);
         }
 
-        get_cm!(emu).schedule(256 * 6, Box::new(Scanline256Event::new()));
+        get_cm_mut!(emu).schedule(256 * 6, EventType::GpuScanline256);
     }
 }

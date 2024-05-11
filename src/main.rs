@@ -1,5 +1,6 @@
 #![allow(incomplete_features)]
 #![feature(adt_const_params)]
+#![feature(allocator_api)]
 #![feature(arm_target_feature)]
 #![feature(const_trait_impl)]
 #![feature(core_intrinsics)]
@@ -14,8 +15,8 @@ extern crate core;
 
 use crate::cartridge_reader::CartridgeReader;
 use crate::emu::emu::{
-    get_cm, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem, get_mem_mut, get_mmu,
-    get_regs_mut, Emu,
+    get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem, get_mem_mut,
+    get_mmu, get_regs_mut, Emu,
 };
 use crate::emu::gpu::gpu::{Gpu, Swapchain, DISPLAY_PIXEL_COUNT};
 use crate::emu::spu::{SoundSampler, Spu};
@@ -121,7 +122,7 @@ fn run_cpu(
         regs.svc.sp = 0x3003FC0;
         regs.user.lr = arm9_entry_addr;
         regs.pc = arm9_entry_addr;
-        regs.set_cpsr::<false>(0x000000DF, get_cm!(emu));
+        regs.set_cpsr::<false>(0x000000DF, get_cm_mut!(emu));
     }
 
     {
@@ -138,7 +139,7 @@ fn run_cpu(
         regs.user.sp = 0x380FFC0;
         regs.user.lr = arm7_entry_addr;
         regs.pc = arm7_entry_addr;
-        regs.set_cpsr::<false>(0x000000DF, get_cm!(emu));
+        regs.set_cpsr::<false>(0x000000DF, get_cm_mut!(emu));
     }
 
     {
@@ -156,11 +157,11 @@ fn run_cpu(
         }
     }
 
-    Gpu::initialize_schedule(get_cm!(emu));
+    Gpu::initialize_schedule(get_cm_mut!(emu));
     common.gpu.frame_skip = settings[FRAMESKIP_SETTING].value.as_bool().unwrap();
 
     if settings[AUDIO_SETTING].value.as_bool().unwrap() {
-        Spu::initialize_schedule(get_cm!(emu));
+        Spu::initialize_schedule(get_cm_mut!(emu));
     }
 
     let emu_ptr = emu_unsafe.get() as u32;

@@ -146,12 +146,12 @@ macro_rules! io_timers_mut {
 }
 pub(crate) use io_timers_mut;
 
-macro_rules! get_cm {
+macro_rules! get_cm_mut {
     ($emu:expr) => {
-        &crate::emu::emu::get_common!($emu).cycle_manager
+        &mut crate::emu::emu::get_common_mut!($emu).cycle_manager
     };
 }
-pub(crate) use get_cm;
+pub(crate) use get_cm_mut;
 
 macro_rules! get_jit {
     ($emu:expr) => {
@@ -188,13 +188,6 @@ macro_rules! get_spi {
 }
 pub(crate) use get_spi;
 
-macro_rules! get_spi_mut {
-    ($emu:expr) => {{
-        &mut crate::emu::emu::get_mem_mut!($emu).io_arm7.spi
-    }};
-}
-pub(crate) use get_spi_mut;
-
 macro_rules! get_spu {
     ($emu:expr) => {{
         &crate::emu::emu::get_mem!($emu).io_arm7.spu
@@ -222,13 +215,6 @@ macro_rules! get_ipc_mut {
     };
 }
 pub(crate) use get_ipc_mut;
-
-macro_rules! get_arm7_hle {
-    ($emu:expr) => {{
-        unsafe { $emu.arm7_hle.get().as_ref().unwrap_unchecked() }
-    }};
-}
-pub(crate) use get_arm7_hle;
 
 macro_rules! get_arm7_hle_mut {
     ($emu:expr) => {{

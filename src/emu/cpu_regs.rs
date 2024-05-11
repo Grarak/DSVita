@@ -1,4 +1,4 @@
-use crate::emu::cycle_manager::{CycleEvent, CycleManager};
+use crate::emu::cycle_manager::{CycleManager, EventType};
 use crate::emu::emu::{get_cpu_regs, get_cpu_regs_mut, Emu};
 use crate::emu::exception_handler::ExceptionVector;
 use crate::emu::CpuType::ARM7;
@@ -69,12 +69,12 @@ impl CpuRegs {
         }
     }
 
-    pub fn set_ime(&mut self, value: u8, cycle_manager: &CycleManager) {
+    pub fn set_ime(&mut self, value: u8, cycle_manager: &mut CycleManager) {
         self.ime = value & 0x1;
         self.check_for_interrupt(cycle_manager);
     }
 
-    pub fn set_ie(&mut self, mut mask: u32, value: u32, cycle_manager: &CycleManager) {
+    pub fn set_ie(&mut self, mut mask: u32, value: u32, cycle_manager: &mut CycleManager) {
         mask &= match self.cpu_type {
             ARM9 => 0x003F3F7F,
             ARM7 => 0x01FF3FFF,
@@ -83,16 +83,16 @@ impl CpuRegs {
         self.check_for_interrupt(cycle_manager);
     }
 
-    pub fn check_for_interrupt(&self, cycle_manager: &CycleManager) {
+    pub fn check_for_interrupt(&self, cycle_manager: &mut CycleManager) {
         if self.ime != 0 && (self.ie & self.irf) != 0 && self.cpsr_irq_enabled {
             self.schedule_interrupt(cycle_manager);
         }
     }
 
-    fn schedule_interrupt(&self, cycle_manager: &CycleManager) {
+    fn schedule_interrupt(&self, cycle_manager: &mut CycleManager) {
         match self.cpu_type {
-            ARM9 => cycle_manager.schedule(1, Box::new(InterruptEvent::<{ ARM9 }>::new())),
-            ARM7 => cycle_manager.schedule(1, Box::new(InterruptEvent::<{ ARM7 }>::new())),
+            ARM9 => cycle_manager.schedule(1, EventType::CpuInterruptArm9),
+            ARM7 => cycle_manager.schedule(1, EventType::CpuInterruptArm7),
         };
     }
 
@@ -121,7 +121,7 @@ impl CpuRegs {
         self.cpsr_irq_enabled = enabled;
     }
 
-    pub fn send_interrupt(&mut self, flag: InterruptFlag, cycle_manager: &CycleManager) {
+    pub fn send_interrupt(&mut self, flag: InterruptFlag, cycle_manager: &mut CycleManager) {
         self.irf |= 1 << flag as u8;
         debug_println!(
             "{:?} send interrupt {:?} {:x} {:x} {:x} {}",
@@ -156,20 +156,8 @@ impl CpuRegs {
             _ => {}
         }
     }
-}
 
-struct InterruptEvent<const CPU: CpuType> {}
-
-impl<const CPU: CpuType> InterruptEvent<CPU> {
-    fn new() -> Self {
-        InterruptEvent {}
-    }
-}
-
-impl<const CPU: CpuType> CycleEvent for InterruptEvent<CPU> {
-    fn scheduled(&mut self, _: &u64) {}
-
-    fn trigger(&mut self, emu: &mut Emu) {
+    pub fn on_interrupt_event<const CPU: CpuType>(emu: &mut Emu) {
         let interrupted = {
             let cpu_regs = get_cpu_regs!(emu, CPU);
             let interrupt =

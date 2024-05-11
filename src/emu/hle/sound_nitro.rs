@@ -1,5 +1,5 @@
-use crate::emu::cycle_manager::CycleEvent;
-use crate::emu::emu::{get_arm7_hle_mut, get_cm, get_spu, get_spu_mut, Emu};
+use crate::emu::cycle_manager::EventType;
+use crate::emu::emu::{get_arm7_hle_mut, get_cm_mut, get_spu, get_spu_mut, Emu};
 use crate::emu::hle::arm7_hle::Arm7Hle;
 use crate::emu::hle::bios::{PITCH_TABLE, VOLUME_TABLE};
 use crate::emu::spu::{MainSoundCnt, SoundCapCnt, SoundChannelFormat, SoundCnt, CHANNEL_COUNT};
@@ -176,7 +176,7 @@ const BASE_VOLUME_TABLE: [i16; 128] = [
 ];
 
 #[derive(Default)]
-pub(super) struct SoundNitro {
+pub struct SoundNitro {
     cmd_queue: VecDeque<u32>,
     counter: u32,
     channels: [Channel; CHANNEL_COUNT],
@@ -226,7 +226,7 @@ impl SoundNitro {
         main_cnt.set_master_enable(u1::new(1));
         get_spu_mut!(emu).set_main_sound_cnt(!0, u16::from(main_cnt), emu);
 
-        get_cm!(emu).schedule(174592, Box::new(SoundCmdEvent::new()));
+        get_cm_mut!(emu).schedule(174592, EventType::SoundCmdHle);
     }
 
     fn on_alarm(&mut self, alarm_id: usize, emu: &mut Emu) {
@@ -239,7 +239,7 @@ impl SoundNitro {
 
         let delay = alarm.repeat;
         if delay != 0 {
-            get_cm!(emu).schedule(delay * 64, Box::new(SoundAlarmEvent::new(alarm_id)));
+            get_cm_mut!(emu).schedule(delay * 64, EventType::SoundAlarmHle(alarm_id as u8));
         } else {
             alarm.active = false;
         }
@@ -896,7 +896,8 @@ impl SoundNitro {
                                 delay = alarm.delay;
                             }
 
-                            get_cm!(emu).schedule(delay * 64, Box::new(SoundAlarmEvent::new(i)));
+                            get_cm_mut!(emu)
+                                .schedule(delay * 64, EventType::SoundAlarmHle(i as u8));
                         }
 
                         self.report_hardware_status(emu);
@@ -2345,7 +2346,7 @@ impl SoundNitro {
 
     fn process(&mut self, param: u32, emu: &mut Emu) {
         if param != 0 {
-            get_cm!(emu).schedule(174592, Box::new(SoundCmdEvent::new()));
+            get_cm_mut!(emu).schedule(174592, EventType::SoundCmdHle);
         }
 
         self.update_hardware_channels(emu);
@@ -2363,41 +2364,15 @@ impl SoundNitro {
             self.cmd_queue.push_back(data);
         }
     }
-}
 
-struct SoundCmdEvent;
-
-impl SoundCmdEvent {
-    fn new() -> Self {
-        SoundCmdEvent {}
-    }
-}
-
-impl CycleEvent for SoundCmdEvent {
-    fn scheduled(&mut self, _: &u64) {}
-
-    fn trigger(&mut self, emu: &mut Emu) {
+    pub fn on_cmd_event(emu: &mut Emu) {
         get_arm7_hle_mut!(emu).sound.nitro.process(1, emu);
     }
-}
 
-struct SoundAlarmEvent {
-    alarm_id: usize,
-}
-
-impl SoundAlarmEvent {
-    fn new(alarm_id: usize) -> Self {
-        SoundAlarmEvent { alarm_id }
-    }
-}
-
-impl CycleEvent for SoundAlarmEvent {
-    fn scheduled(&mut self, _: &u64) {}
-
-    fn trigger(&mut self, emu: &mut Emu) {
+    pub fn on_alarm_event(id: u8, emu: &mut Emu) {
         get_arm7_hle_mut!(emu)
             .sound
             .nitro
-            .on_alarm(self.alarm_id, emu);
+            .on_alarm(id as usize, emu);
     }
 }

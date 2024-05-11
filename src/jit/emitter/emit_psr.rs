@@ -1,4 +1,4 @@
-use crate::emu::emu::{get_cm, get_regs, get_regs_mut};
+use crate::emu::emu::{get_cm_mut, get_regs, get_regs_mut};
 use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::inst_info::Operand;
@@ -10,7 +10,7 @@ use crate::jit::Op;
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_msr(&mut self, buf_index: usize, _: u32) {
         let regs_addr = get_regs_mut!(self.emu, CPU) as *mut _ as _;
-        let cm_addr = get_cm!(self.emu) as *const _ as _;
+        let cm_addr = get_cm_mut!(self.emu) as *mut _ as _;
         let op = self.jit_buf.instructions[buf_index].op;
 
         self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(

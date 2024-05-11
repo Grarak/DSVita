@@ -218,7 +218,7 @@ impl ThreadRegs {
         }
     }
 
-    pub fn set_cpsr_with_flags(&mut self, value: u32, flags: u8, cycle_manager: &CycleManager) {
+    pub fn set_cpsr_with_flags(&mut self, value: u32, flags: u8, cycle_manager: &mut CycleManager) {
         if flags & 1 == 1 {
             let mask = if u8::from(Cpsr::from(self.cpsr).mode()) == 0x10 {
                 0xE0
@@ -251,13 +251,13 @@ impl ThreadRegs {
         }
     }
 
-    pub fn restore_spsr(&mut self, cycle_manager: &CycleManager) {
+    pub fn restore_spsr(&mut self, cycle_manager: &mut CycleManager) {
         if !self.is_user {
             self.set_cpsr::<false>(self.spsr, cycle_manager);
         }
     }
 
-    pub fn set_cpsr<const SAVE: bool>(&mut self, value: u32, cycle_manager: &CycleManager) {
+    pub fn set_cpsr<const SAVE: bool>(&mut self, value: u32, cycle_manager: &mut CycleManager) {
         let current_cpsr = Cpsr::from(self.cpsr);
         let new_cpsr = Cpsr::from(value);
 

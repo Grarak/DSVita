@@ -1,5 +1,5 @@
 use crate::emu::cpu_regs::InterruptFlag;
-use crate::emu::emu::{get_arm7_hle_mut, get_cm, get_cpu_regs_mut, get_ipc, get_ipc_mut, Emu};
+use crate::emu::emu::{get_arm7_hle_mut, get_cpu_regs_mut, get_ipc, get_ipc_mut, Emu, get_cm_mut};
 use crate::emu::hle::arm7_hle::Arm7Hle;
 use crate::emu::CpuType;
 use crate::emu::CpuType::{ARM7, ARM9};
@@ -91,7 +91,7 @@ impl IpcInner for IpcLle {
         if bool::from(IpcSyncCnt::from(value).send_irq())
             && bool::from(get_ipc!(emu).sync_regs[!cpu].enable_irq())
         {
-            get_cpu_regs_mut!(emu, !cpu).send_interrupt(InterruptFlag::IpcSync, get_cm!(emu));
+            get_cpu_regs_mut!(emu, !cpu).send_interrupt(InterruptFlag::IpcSync, get_cm_mut!(emu));
         }
     }
 
@@ -109,7 +109,7 @@ impl IpcInner for IpcLle {
 
                     if bool::from(get_ipc!(emu).fifo[!cpu].cnt.recv_not_empty_irq()) {
                         get_cpu_regs_mut!(emu, !cpu)
-                            .send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, get_cm!(emu));
+                            .send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, get_cm_mut!(emu));
                     }
                 } else if fifo_len == 15 {
                     get_ipc_mut!(emu).fifo[cpu]
@@ -246,7 +246,7 @@ impl Ipc {
             && bool::from(new_fifo.send_empty_irq())
         {
             get_cpu_regs_mut!(emu, CPU)
-                .send_interrupt(InterruptFlag::IpcSendFifoEmpty, get_cm!(emu));
+                .send_interrupt(InterruptFlag::IpcSendFifoEmpty, get_cm_mut!(emu));
         }
 
         if !bool::from(self.fifo[CPU].cnt.recv_empty())
@@ -254,7 +254,7 @@ impl Ipc {
             && bool::from(new_fifo.recv_not_empty_irq())
         {
             get_cpu_regs_mut!(emu, CPU)
-                .send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, get_cm!(emu));
+                .send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, get_cm_mut!(emu));
         }
 
         if bool::from(new_fifo.err()) {
@@ -283,7 +283,7 @@ impl Ipc {
 
                     if bool::from(self.fifo[!CPU].cnt.send_empty_irq()) {
                         get_cpu_regs_mut!(emur, !CPU)
-                            .send_interrupt(InterruptFlag::IpcSendFifoEmpty, get_cm!(emur));
+                            .send_interrupt(InterruptFlag::IpcSendFifoEmpty, get_cm_mut!(emur));
                     }
                 } else if other_fifo_len == 16 {
                     self.fifo[CPU].cnt.set_recv_full(u1::new(0));

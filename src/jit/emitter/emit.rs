@@ -1,4 +1,4 @@
-use crate::emu::emu::{get_cm, get_regs, get_regs_mut};
+use crate::emu::emu::{get_cm_mut, get_regs, get_regs_mut};
 use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::{Bx, B};
@@ -80,7 +80,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             if restore_spsr {
                 opcodes.extend(&self.restore_host_opcodes);
                 opcodes.extend(AluImm::mov32(Reg::R0, regs as *mut _ as _));
-                opcodes.extend(AluImm::mov32(Reg::R1, get_cm!(self.emu) as *const _ as _));
+                opcodes.extend(AluImm::mov32(Reg::R1, get_cm_mut!(self.emu) as *const _ as _));
                 Self::emit_host_blx(register_restore_spsr as *const () as _, opcodes);
             } else {
                 opcodes.extend(&regs.save_regs_opcodes);
