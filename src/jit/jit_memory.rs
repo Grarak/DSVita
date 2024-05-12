@@ -14,7 +14,7 @@ const JIT_PAGE_SIZE: u32 = 4096;
 #[cfg(target_os = "vita")]
 const JIT_PAGE_SIZE: u32 = 16;
 
-const JIT_BLOCK_SIZE_SHIFT: u32 = 9;
+const JIT_BLOCK_SIZE_SHIFT: u32 = 8;
 pub const JIT_BLOCK_SIZE: u32 = 1 << JIT_BLOCK_SIZE_SHIFT;
 
 #[derive(Default)]

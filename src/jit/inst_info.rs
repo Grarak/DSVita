@@ -188,7 +188,7 @@ impl InstInfo {
                 opcode.set_rs(u4::new(reg3 as u8));
                 u32::from(opcode)
             }
-            Op::Qsub => {
+            Op::Qadd | Op::Qsub | Op::Qdadd | Op::Qdsub => {
                 let mut opcode = QAddSub::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();

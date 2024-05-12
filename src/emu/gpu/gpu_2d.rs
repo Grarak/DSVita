@@ -625,7 +625,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         let bg_cnt = self.inner.bg_cnt[BG];
 
         if bool::from(bg_cnt.color_palettes()) {
-            let base_data_addr = VRAM_OFFSET + (u32::from(bg_cnt.screen_base_block()) << 11);
+            let base_data_addr = u32::from(bg_cnt.screen_base_block()) << 11;
 
             let (size_x, size_y) = match u8::from(bg_cnt.screen_size()) {
                 0 => (128, 128),
@@ -654,9 +654,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         continue;
                     }
 
-                    let pixel = mem.vram.read::<{ ARM9 }, u16>(
-                        (base_data_addr as i32 + (y * size_x + x) * 2) as u32,
-                    );
+                    let pixel = self
+                        .read_bg::<u16>((base_data_addr as i32 + (y * size_x + x) * 2) as u32, mem);
                     if pixel & (1 << 15) != 0 {
                         self.draw_bg_pixel::<BG>(line, i, pixel as u32);
                     }
@@ -680,9 +679,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         continue;
                     }
 
-                    let index = mem
-                        .vram
-                        .read::<{ ARM9 }, u8>((base_data_addr as i32 + y * size_x + x) as u32);
+                    let index =
+                        self.read_bg::<u8>((base_data_addr as i32 + y * size_x + x) as u32, mem);
                     if index != 0 {
                         let pixel = mem.palettes.read::<u16>(index as u32 * 2) | (1 << 15);
                         self.draw_bg_pixel::<BG>(line, i, pixel as u32);
@@ -804,7 +802,6 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                             },
                         )
                     };
-                let data_base_addr = Self::get_obj_offset() + data_base_addr;
 
                 if object[0] & (1 << 8) != 0 {
                     let params_base_addr = ((object[1] >> 9) & 0x1F) as u32 * 0x20;
@@ -841,9 +838,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                             continue;
                         }
 
-                        let pixel = mem.vram.read::<{ ARM9 }, u16>(
+                        let pixel = self.read_obj::<u16>(
                             data_base_addr
                                 + ((rot_scale_y as u32 * bitmap_width + rot_scale_x as u32) << 1),
+                            mem,
                         );
                         if pixel * (1 << 15) != 0 {
                             self.draw_obj_pixel(line, offset as usize, pixel as u32, priority);
@@ -872,7 +870,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                             continue;
                         }
 
-                        let pixel = mem.vram.read::<{ ARM9 }, u16>(data_base_addr + (j << 1));
+                        let pixel = self.read_obj::<u16>(data_base_addr + (j << 1), mem);
                         if pixel & (1 << 15) != 0 {
                             self.draw_obj_pixel(line, offset as usize, pixel as u32, priority);
                         }

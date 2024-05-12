@@ -57,8 +57,6 @@ pub struct Presenter {
     keymap: u32,
 }
 
-pub static mut LOGGING: bool = false;
-
 impl Presenter {
     pub fn new() -> Self {
         let mut key_code_mapping = HashMap::default();
