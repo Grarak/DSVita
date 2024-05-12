@@ -41,8 +41,7 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 [[package]]
 name = "bilge"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc707ed8ebf81de5cd6c7f48f54b4c8621760926cdf35a57000747c512e67b57"
+source = "git+https://github.com/Grarak/bilge.git#fbaa54ab4f87e6ec8481bf463f68e0d8a6338ca1"
 dependencies = [
  "arbitrary-int",
  "bilge-impl",
@@ -51,8 +50,7 @@ dependencies = [
 [[package]]
 name = "bilge-impl"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "feb11e002038ad243af39c2068c8a72bcf147acf05025dcdb916fcc000adb2d8"
+source = "git+https://github.com/Grarak/bilge.git#fbaa54ab4f87e6ec8481bf463f68e0d8a6338ca1"
 dependencies = [
  "itertools",
  "proc-macro-error",

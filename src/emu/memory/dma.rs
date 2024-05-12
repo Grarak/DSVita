@@ -1,6 +1,6 @@
 use crate::emu::cpu_regs::InterruptFlag;
 use crate::emu::cycle_manager::{CycleManager, EventType};
-use crate::emu::emu::{get_cpu_regs_mut, io_dma, io_dma_mut, Emu, get_cm_mut};
+use crate::emu::emu::{get_cm_mut, get_cpu_regs_mut, io_dma, io_dma_mut, Emu};
 use crate::emu::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
@@ -11,6 +11,7 @@ use CpuType::{ARM7, ARM9};
 const CHANNEL_COUNT: usize = 4;
 
 #[repr(u8)]
+#[derive(Eq, PartialEq)]
 enum DmaAddrCtrl {
     Increment = 0,
     Decrement = 1,
@@ -31,10 +32,10 @@ struct DmaCntArm9 {
     word_count: u21,
     dest_addr_ctrl: u2,
     src_addr_ctrl: u2,
-    repeat: u1,
+    repeat: bool,
     transfer_type: u1,
     transfer_mode: u3,
-    irq_at_end: u1,
+    irq_at_end: bool,
     enable: u1,
 }
 
@@ -45,11 +46,11 @@ struct DmaCntArm7 {
     not_used: u5,
     dest_addr_ctrl: u2,
     src_addr_ctrl: u2,
-    repeat: u1,
+    repeat: bool,
     transfer_type: u1,
     not_used1: u1,
     transfer_mode: u2,
-    irq_at_end: u1,
+    irq_at_end: bool,
     enable: u1,
 }
 
@@ -306,13 +307,21 @@ impl Dma {
             todo!()
         }
 
-        if !bool::from(cnt.repeat()) || mode == DmaTransferMode::StartImm {
+        if cnt.repeat() && mode != DmaTransferMode::StartImm {
+            let channel = &mut io_dma_mut!(emu, CPU).channels[channel_num];
+            channel.current_count = u32::from(DmaCntArm9::from(channel.cnt).word_count());
+            if DmaAddrCtrl::from(u8::from(cnt.dest_addr_ctrl())) == DmaAddrCtrl::ReloadProhibited {
+                channel.current_dest = channel.dad;
+            }
+
+            if mode == DmaTransferMode::GeometryCmdFifo {
+                todo!()
+            }
+        } else {
             io_dma_mut!(emu, CPU).channels[channel_num].cnt &= !(1 << 31);
-        } else if mode == DmaTransferMode::GeometryCmdFifo {
-            todo!()
         }
 
-        if bool::from(cnt.irq_at_end()) {
+        if cnt.irq_at_end() {
             get_cpu_regs_mut!(emu, CPU).send_interrupt(
                 InterruptFlag::from(InterruptFlag::Dma0 as u8 + channel_num as u8),
                 get_cm_mut!(emu),

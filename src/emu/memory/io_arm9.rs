@@ -193,7 +193,7 @@ impl IoArm9 {
             io_ports_write!(match addr_offset + (index - 3) as u32 {
                 io32(0x0) => common.gpu.gpu_2d_a.set_disp_cnt(mask, value),
                 io16(0x4) => common.gpu.set_disp_stat::<{ ARM9 }>(mask, value),
-                io16(0x08) => common.gpu.gpu_2d_a.set_bg_cnt(0, mask, value),
+                io16(0x8) => common.gpu.gpu_2d_a.set_bg_cnt(0, mask, value),
                 io16(0xA) => common.gpu.gpu_2d_a.set_bg_cnt(1, mask, value),
                 io16(0xC) => common.gpu.gpu_2d_a.set_bg_cnt(2, mask, value),
                 io16(0xE) => common.gpu.gpu_2d_a.set_bg_cnt(3, mask, value),

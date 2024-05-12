@@ -10,7 +10,8 @@ use crate::utils::{HeapMemI8, HeapMemU32};
 use bilge::prelude::*;
 use std::hint::unreachable_unchecked;
 use std::marker::ConstParamTy;
-use std::mem;
+use std::ptr::swap;
+use std::{mem, ptr};
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
@@ -21,14 +22,14 @@ pub(super) struct DispCnt {
     pub bitmap_obj_2d: u1,
     pub bitmap_obj_mapping: u1,
     pub forced_blank: u1,
-    pub screen_display_bg0: u1,
-    pub screen_display_bg1: u1,
-    pub screen_display_bg2: u1,
-    pub screen_display_bg3: u1,
-    pub screen_display_obj: u1,
-    pub window0_display_flag: u1,
-    pub window1_display_flag: u1,
-    pub obj_window_display_flag: u1,
+    pub screen_display_bg0: bool,
+    pub screen_display_bg1: bool,
+    pub screen_display_bg2: bool,
+    pub screen_display_bg3: bool,
+    pub screen_display_obj: bool,
+    pub window0_display_flag: bool,
+    pub window1_display_flag: bool,
+    pub obj_window_display_flag: bool,
     pub display_mode: u2,
     pub vram_block: u2,
     pub tile_obj_1d_boundary: u2,
@@ -48,9 +49,7 @@ impl Default for DispCnt {
 
 impl DispCnt {
     fn is_any_window_enabled(&self) -> bool {
-        bool::from(self.window0_display_flag())
-            || bool::from(self.window1_display_flag())
-            || bool::from(self.obj_window_display_flag())
+        self.window0_display_flag() || self.window1_display_flag() || self.obj_window_display_flag()
     }
 }
 
@@ -113,15 +112,6 @@ impl Default for BldCnt {
     }
 }
 
-#[bitsize(16)]
-#[derive(FromBits)]
-pub(super) struct TextBgScreen {
-    pub tile_num: u10,
-    pub h_flip: u1,
-    pub v_flip: u1,
-    pub palette_num: u4,
-}
-
 #[derive(ConstParamTy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum Gpu2DEngine {
@@ -133,6 +123,8 @@ pub enum Gpu2DEngine {
 struct Gpu2DInternal {
     x: [i32; 2],
     y: [i32; 2],
+    win_h_flip: [bool; 2],
+    win_v_flip: [bool; 2],
 }
 
 #[derive(Default)]
@@ -151,6 +143,8 @@ pub(super) struct Gpu2DInner {
     bld_alpha: u16,
     win_x1: [u8; 2],
     win_x2: [u8; 2],
+    win_y1: [u8; 2],
+    win_y2: [u8; 2],
     win_in: u16,
     win_out: u16,
     pub mosaic: u16,
@@ -311,7 +305,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
             "GPU engine {:?} set disp cnt {:x} {}",
             ENGINE,
             u32::from(self.inner.disp_cnt),
-            (u32::from(self.inner.disp_cnt) >> 16) & 0x3
+            u8::from(self.inner.disp_cnt.display_mode()),
         );
     }
 
@@ -376,9 +370,43 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         self.inner.bg_y[bg_num - 2] = bg_y;
     }
 
-    pub fn set_win_h(&mut self, _: usize, mask: u16, value: u16) {}
+    pub fn set_win_h(&mut self, win: usize, mask: u16, value: u16) {
+        if (mask & 0x00FF) != 0 {
+            self.inner.win_x2[win] = value as u8
+        }
+        if (mask & 0xFF00) != 0 {
+            self.inner.win_x1[win] = (value >> 8) as u8
+        }
 
-    pub fn set_win_v(&mut self, _: usize, mask: u16, value: u16) {}
+        self.inner.internal.win_h_flip[win] = self.inner.win_x1[win] > self.inner.win_x2[win];
+        if self.inner.internal.win_h_flip[win] {
+            unsafe {
+                swap(
+                    ptr::addr_of_mut!(self.inner.win_x1[win]),
+                    ptr::addr_of_mut!(self.inner.win_x2[win]),
+                )
+            };
+        }
+    }
+
+    pub fn set_win_v(&mut self, win: usize, mask: u16, value: u16) {
+        if (mask & 0x00FF) != 0 {
+            self.inner.win_y2[win] = value as u8
+        }
+        if (mask & 0xFF00) != 0 {
+            self.inner.win_y1[win] = (value >> 8) as u8
+        }
+
+        self.inner.internal.win_v_flip[win] = self.inner.win_y1[win] > self.inner.win_y2[win];
+        if self.inner.internal.win_v_flip[win] {
+            unsafe {
+                swap(
+                    ptr::addr_of_mut!(self.inner.win_y1[win]),
+                    ptr::addr_of_mut!(self.inner.win_y2[win]),
+                )
+            };
+        }
+    }
 
     pub fn set_win_in(&mut self, mut mask: u16, value: u16) {
         mask &= 0x3F3F;
@@ -414,8 +442,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
 
         let disp_cnt = self.inner.disp_cnt;
 
-        if bool::from(disp_cnt.screen_display_obj()) {
-            if bool::from(disp_cnt.obj_window_display_flag()) {
+        if disp_cnt.screen_display_obj() {
+            if disp_cnt.obj_window_display_flag() {
                 self.draw_objects::<true>(line, mem);
             }
             self.draw_objects::<false>(line, mem);
@@ -423,16 +451,16 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
 
         macro_rules! draw {
             ($bg3:expr, $bg2:expr, $bg1:expr, $bg0:expr) => {
-                if bool::from(disp_cnt.screen_display_bg3()) {
+                if disp_cnt.screen_display_bg3() {
                     $bg3(self, line, mem);
                 }
-                if bool::from(disp_cnt.screen_display_bg2()) {
+                if disp_cnt.screen_display_bg2() {
                     $bg2(self, line, mem);
                 }
-                if bool::from(disp_cnt.screen_display_bg1()) {
+                if disp_cnt.screen_display_bg1() {
                     $bg1(self, line, mem);
                 }
-                if bool::from(disp_cnt.screen_display_bg0()) {
+                if disp_cnt.screen_display_bg0() {
                     $bg0(self, line, mem);
                 }
             };
@@ -488,7 +516,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                 );
             }
             6 => {
-                if bool::from(disp_cnt.screen_display_bg2()) {
+                if disp_cnt.screen_display_bg2() {
                     self.draw_large::<2>(line, mem);
                 }
             }
@@ -555,6 +583,37 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
     }
 
+    pub(super) fn is_within_window<const BG: usize>(&self, line: u8, x: u8) -> bool {
+        if self.inner.disp_cnt.is_any_window_enabled() {
+            let enabled = if self.inner.disp_cnt.window0_display_flag()
+                && (x >= self.inner.win_x1[0] && x < self.inner.win_x2[0])
+                    != self.inner.internal.win_h_flip[0]
+                && (line >= self.inner.win_y1[0] && line < self.inner.win_y2[0])
+                    != self.inner.internal.win_v_flip[0]
+            {
+                self.inner.win_in
+            } else if self.inner.disp_cnt.window1_display_flag()
+                && (x >= self.inner.win_x1[1] && x < self.inner.win_x2[1])
+                    != self.inner.internal.win_h_flip[1]
+                && (line >= self.inner.win_y1[1] && line < self.inner.win_y2[1])
+                    != self.inner.internal.win_v_flip[1]
+            {
+                self.inner.win_in >> 8
+            } else if self.inner.disp_cnt.obj_window_display_flag()
+                && (self.framebuffer[line as usize * DISPLAY_WIDTH + x as usize] & (1 << 24)) != 0
+            {
+                self.inner.win_out >> 8
+            } else {
+                self.inner.win_out
+            };
+
+            if enabled & (1 << BG) == 0 {
+                return false;
+            }
+        }
+        true
+    }
+
     fn draw_affine<const BG: usize>(&mut self, line: u8, mem: &Memory) {
         todo!()
     }
@@ -580,6 +639,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                 for i in 0..DISPLAY_WIDTH {
                     rot_scale_x += self.inner.bg_pa[BG - 2] as i32;
                     rot_scale_y += self.inner.bg_pc[BG - 2] as i32;
+
+                    if !self.is_within_window::<BG>(line, i as u8) {
+                        continue;
+                    }
+
                     let mut x = rot_scale_x >> 8;
                     let mut y = rot_scale_y >> 8;
 
@@ -601,6 +665,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                 for i in 0..DISPLAY_WIDTH {
                     rot_scale_x += self.inner.bg_pa[BG - 2] as i32;
                     rot_scale_y += self.inner.bg_pc[BG - 2] as i32;
+
+                    if !self.is_within_window::<BG>(line, i as u8) {
+                        continue;
+                    }
+
                     let mut x = rot_scale_x >> 8;
                     let mut y = rot_scale_y >> 8;
 
@@ -752,6 +821,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                             continue;
                         }
 
+                        if !self.is_within_window::<4>(line, offset as u8) {
+                            continue;
+                        }
+
                         let rot_scale_x = ((params[0] as i32 * (j as i32 - (width2 as i32 >> 1))
                             + params[1] as i32 * (sprite_y - (height2 as i32 >> 1)))
                             >> 8)
@@ -795,6 +868,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                             continue;
                         }
 
+                        if !self.is_within_window::<4>(line, offset as u8) {
+                            continue;
+                        }
+
                         let pixel = mem.vram.read::<{ ARM9 }, u16>(data_base_addr + (j << 1));
                         if pixel & (1 << 15) != 0 {
                             self.draw_obj_pixel(line, offset as usize, pixel as u32, priority);
@@ -833,6 +910,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                     for j in 0..width2 {
                         let offset = x + j as i32;
                         if offset < 0 || offset >= DISPLAY_WIDTH as i32 {
+                            continue;
+                        }
+
+                        if !self.is_within_window::<4>(line, offset as u8) {
                             continue;
                         }
 
@@ -893,6 +974,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                     for j in 0..width2 {
                         let offset = x + j as i32;
                         if offset < 0 || offset >= DISPLAY_WIDTH as i32 {
+                            continue;
+                        }
+
+                        if !self.is_within_window::<4>(line, offset as u8) {
                             continue;
                         }
 
@@ -981,6 +1066,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         continue;
                     }
 
+                    if !self.is_within_window::<4>(line, offset as u8) {
+                        continue;
+                    }
+
                     let index =
                         self.read_obj::<u8>(tile_base_addr + ((j >> 3) << 6) + (j & 7), mem);
                     let index = if j & 1 != 0 {
@@ -1031,6 +1120,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         continue;
                     }
 
+                    if !self.is_within_window::<4>(line, offset as u8) {
+                        continue;
+                    }
+
                     let index =
                         self.read_obj::<u8>(tile_base_addr + ((j >> 3) << 5) + ((j & 7) >> 1), mem);
                     let index = if j & 1 != 0 {
@@ -1069,10 +1162,6 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         let blend_bits_a = self.layers.get_blend_bits_mut::<{ Gpu2DLayer::A }>();
         let blend_bits_b = self.layers.get_blend_bits_mut::<{ Gpu2DLayer::B }>();
 
-        if self.inner.disp_cnt.is_any_window_enabled() {
-            // TODO
-        }
-
         let bg_priority = u8::from(self.inner.bg_cnt[BG].priority()) as i8;
         unsafe {
             if bg_priority <= *priorities_a.get_unchecked(x) {
@@ -1095,10 +1184,6 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         let pixels_a = self.layers.get_pixels_mut::<{ Gpu2DLayer::A }>();
         let priorities_a = self.layers.get_priorities_mut::<{ Gpu2DLayer::A }>();
         let blend_bits_a = self.layers.get_blend_bits_mut::<{ Gpu2DLayer::A }>();
-
-        if self.inner.disp_cnt.is_any_window_enabled() {
-            // TODO
-        }
 
         unsafe {
             if pixels_a[x] & (1 << 15) == 0 || priority < *priorities_a.get_unchecked(x) {

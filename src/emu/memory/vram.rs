@@ -7,6 +7,7 @@ use crate::utils::HeapMemU8;
 use bilge::prelude::*;
 use paste::paste;
 use static_assertions::{const_assert, const_assert_eq};
+use std::hint::unreachable_unchecked;
 use std::ops::{Deref, DerefMut};
 use std::{ptr, slice};
 
@@ -385,9 +386,7 @@ impl Vram {
                         let ofs = u8::from(cnt_a.ofs()) as usize;
                         self.tex_rear_plane_img[ofs] = VramMap::new(self.banks.get_a());
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => unsafe { unreachable_unchecked() },
                 }
             }
         }
@@ -419,9 +418,7 @@ impl Vram {
                         let ofs = u8::from(cnt_b.ofs()) as usize;
                         self.tex_rear_plane_img[ofs] = VramMap::new(self.banks.get_b());
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => unsafe { unreachable_unchecked() },
                 }
             }
         }
@@ -691,9 +688,7 @@ impl Vram {
                         self.obj_ext_palette_b =
                             VramMap::<BANK_I_SIZE>::new(self.banks.get_i()).extract_section(0);
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => unsafe { unreachable_unchecked() },
                 }
             }
         }
