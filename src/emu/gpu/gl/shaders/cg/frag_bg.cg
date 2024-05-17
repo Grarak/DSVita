@@ -1,0 +1,84 @@
+uniform sampler2D bgTex : TEXUNIT0;
+uniform sampler2D palTex : TEXUNIT1;
+
+uniform BgUbo {
+    int dispCnt;
+    int cnts[4];
+    int hOfs[4];
+    int vOfs[4];
+} bgUbo : BUFFER[0];
+
+int readBg8(int addr) {
+    float x = float((addr >> 2) & 0x1FF) / 511.0f;
+    float y = float((addr >> 2) >> 9) / 255.0f;
+    return int(tex2D(bgTex, float2(x, y))[addr & 3] * 255.0f);
+}
+
+int readBg16(int addr) {
+    return readBg8(addr) | (readBg8(addr + 1) << 8);
+}
+
+float4 readPal(short index) {
+    return tex2D(palTex, float2(float(index) / 511.0, 1.0));
+}
+
+float3 drawText(short x, short y) {
+    short bgCnt = bgUbo.cnts[3];
+
+    int screenAddr = ((bgUbo.dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
+    int charAddr = ((bgUbo.dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
+
+    x += bgUbo.hOfs[3];
+    x &= 0x1FF;
+    y += bgUbo.vOfs[3];
+    y &= 0x1FF;
+
+    bool is512Width = (bgCnt & (1 << 14)) != 0;
+    if (x > 255 && is512Width) {
+        screenAddr += 0x800;
+    }
+
+    int xBlock = x & 0xF8;
+    int xInBlock = x & 7;
+    int yBlock = y & 0xF8;
+    int yInBlock = y & 7;
+
+    screenAddr += yBlock << 3;
+    screenAddr += xBlock >> 2;
+    int screenEntry = readBg16(screenAddr);
+
+    bool isHFlip = (screenEntry >> 10) & 1;
+    bool isVFlip = (screenEntry >> 11) & 1;
+
+    if (isHFlip) {
+        xInBlock = 7 - xInBlock;
+    }
+    if (isVFlip) {
+        yInBlock = 7 - yInBlock;
+    }
+
+    bool is8bit = (bgCnt & (1 << 7)) != 0;
+    if (is8bit) {
+        charAddr += ((screenEntry & 0x3FF) << 6) + (yInBlock << 3);
+        charAddr += xInBlock;
+    } else {
+        charAddr += ((screenEntry & 0x3FF) << 5) + (yInBlock << 2);
+        charAddr += xInBlock >> 1;
+    }
+
+    int colorIndex = readBg8(charAddr);
+    if (!is8bit) {
+        colorIndex >>= 4 * (xInBlock & 1);
+        colorIndex &= 0xF;
+        colorIndex += (screenEntry & 0xF000) >> 8;
+    }
+
+    return readPal(colorIndex).rgb;
+}
+
+void main(
+    float2 screenPos : TEXCOORD0,
+    out float4 color : COLOR
+) {
+    color = float4(drawText(short(screenPos.x) + 1, short(screenPos.y)), 1.0f);
+}

@@ -21,7 +21,7 @@ impl<'a> MenuPresenter<'a> {
     }
 
     pub fn present(&mut self) {
-        while let PresentEvent::Inputs { keymap, .. } = self.presenter.event_poll() {
+        while let PresentEvent::Inputs { keymap, .. } = self.presenter.poll_event() {
             let mut menu = &mut self.root_menu;
             for i in &self.menu_stack {
                 menu = &mut menu.entries[*i];
@@ -47,10 +47,8 @@ impl<'a> MenuPresenter<'a> {
                 self.menu_stack.pop();
             } else if keys_pressed & (1 << Keycode::Up as u8) != 0 {
                 menu.selected = min(menu.selected.wrapping_sub(1), menu.entries.len() - 1);
-            } else if keys_pressed & (1 << Keycode::Down as u8) != 0 {
-                if !menu.entries.is_empty() {
-                    menu.selected = (menu.selected + 1) % menu.entries.len();
-                }
+            } else if keys_pressed & (1 << Keycode::Down as u8) != 0 && !menu.entries.is_empty() {
+                menu.selected = (menu.selected + 1) % menu.entries.len();
             }
 
             self.presenter.wait_vsync();

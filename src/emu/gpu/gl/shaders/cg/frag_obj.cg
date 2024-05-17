@@ -1,0 +1,6 @@
+void main(
+    float2 screenPos : TEXCOORD0,
+    out float4 color : COLOR
+) {
+    color = float4(screenPos.x / 255.0, screenPos.y / 191.0, 0.0, 1.0);
+}

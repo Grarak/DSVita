@@ -1,0 +1,8 @@
+void main(
+    float2 position,
+    float2 out screenPos : TEXCOORD0,
+    float4 out gl_Position : POSITION
+) {
+    screenPos = float2((position.x * 0.5 + 0.5) * 255.0, position.y - 1.0);
+    gl_Position = float4(position.x, 1.0 - position.y / 191.0 * 2.0, 0.0, 1.0);
+}

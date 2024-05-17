@@ -60,14 +60,8 @@ pub struct StrErr {
 }
 
 impl StrErr {
-    pub fn new(str: String) -> Self {
-        StrErr { str }
-    }
-}
-
-impl From<&str> for StrErr {
-    fn from(value: &str) -> Self {
-        StrErr::new(value.to_string())
+    pub fn new(str: impl Into<String>) -> Self {
+        StrErr { str: str.into() }
     }
 }
 
@@ -97,7 +91,7 @@ impl<T: Sized + Default, const SIZE: usize> HeapMem<T, SIZE> {
     }
 }
 
-impl<T: Sized + Default, const SIZE: usize> Deref for HeapMem<T, SIZE> {
+impl<T: Sized, const SIZE: usize> Deref for HeapMem<T, SIZE> {
     type Target = [T; SIZE];
 
     fn deref(&self) -> &Self::Target {
@@ -105,7 +99,7 @@ impl<T: Sized + Default, const SIZE: usize> Deref for HeapMem<T, SIZE> {
     }
 }
 
-impl<T: Sized + Default, const SIZE: usize> DerefMut for HeapMem<T, SIZE> {
+impl<T: Sized, const SIZE: usize> DerefMut for HeapMem<T, SIZE> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.0.deref_mut()
     }
@@ -115,6 +109,14 @@ impl<T: Sized + Default, const SIZE: usize> Default for HeapMem<T, SIZE> {
     fn default() -> Self {
         let mut mem: Box<[T; SIZE]> = unsafe { Box::new_zeroed().assume_init() };
         mem.fill_with(|| T::default());
+        HeapMem(mem)
+    }
+}
+
+impl<T: Sized + Copy, const SIZE: usize> Clone for HeapMem<T, SIZE> {
+    fn clone(&self) -> Self {
+        let mut mem: Box<[T; SIZE]> = unsafe { Box::new_zeroed().assume_init() };
+        mem.copy_from_slice(self.deref());
         HeapMem(mem)
     }
 }

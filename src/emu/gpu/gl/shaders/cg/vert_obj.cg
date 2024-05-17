@@ -1,0 +1,52 @@
+uniform sampler2D oamTex : TEXUNIT0;
+
+int readOam8(int addr) {
+    float x = float(addr >> 2) / 255.0f;
+    return int(tex2D(oamTex, float2(x, 1.0))[addr & 3] * 255.0f);
+}
+
+int readOam16(int addr) {
+    return readOam8(addr) | (readOam8(addr + 1) << 8);
+}
+
+static const float2 SizeLookup[12] = {
+    float2(8.0, 8.0), float2(16.0, 16.0), float2(32.0, 32.0), float2(64.0, 64.0), float2(16.0, 8.0), float2(32.0, 8.0),
+    float2(32.0, 16.0), float2(64.0, 32.0), float2(8.0, 16.0), float2(8.0, 32.0), float2(16.0, 32.0), float2(32.0, 64.0),
+};
+
+void main(
+    float2 position,
+    float oamIndex,
+    float2 out screenPos : TEXCOORD0,
+    float4 out gl_Position : POSITION
+) {
+    float test = 1.0;
+    int test2 = floatToRawIntBits(test);
+
+    int attrib0 = readOam16(int(oamIndex) * 8);
+    int attrib1 = readOam16(int(oamIndex) * 8 + 2);
+    int attrib2 = readOam16(int(oamIndex) * 8 + 4);
+
+    int oamX = attrib1 & 0x1FF;
+    int oamY = attrib0 & 0xFF;
+
+    int shape = (attrib0 >> 12);
+    int size = (attrib1 >> 14);
+
+    float2 oamDims = SizeLookup[shape | size];
+    float oamWidth = oamDims.x;
+    float oamHeight = oamDims.y;
+
+    if (oamX >= 256) {
+        oamX -= 512;
+    }
+
+    if (oamY >= 192) {
+        oamY -= 256;
+    }
+
+    float x = float(oamX) + oamWidth * position.x;
+    float y = float(oamY) + oamHeight * position.y;
+    screenPos = float2(x, y);
+    gl_Position = float4(x / 255.0 * 2.0 - 1.0, 1.0 - y / 191.0 * 2.0, 0.0, 1.0);
+}

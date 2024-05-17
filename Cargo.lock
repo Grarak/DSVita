@@ -168,6 +168,7 @@ dependencies = [
  "bilge",
  "chrono",
  "dspsv_macros",
+ "gl",
  "libc",
  "paste",
  "sdl2",
@@ -215,6 +216,24 @@ checksum = "a258e46cdc063eb8519c00b9fc845fc47bcfca4130e2f08e88665ceda8474245"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "gl"
+version = "0.14.0"
+source = "git+https://github.com/bjz/gl-rs#1cd256c7b59a0baac8af7863ca0f768bfc1a4b51"
+dependencies = [
+ "gl_generator",
+]
+
+[[package]]
+name = "gl_generator"
+version = "0.14.1"
+source = "git+https://github.com/bjz/gl-rs#1cd256c7b59a0baac8af7863ca0f768bfc1a4b51"
+dependencies = [
+ "khronos_api",
+ "log",
+ "xml-rs",
 ]
 
 [[package]]
@@ -317,6 +336,11 @@ checksum = "cee9c64da59eae3b50095c18d3e74f8b73c0b86d2792824ff01bbce68ba229ca"
 dependencies = [
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "khronos_api"
+version = "3.2.0"
+source = "git+https://github.com/bjz/gl-rs#1cd256c7b59a0baac8af7863ca0f768bfc1a4b51"
 
 [[package]]
 name = "lazy_static"
@@ -942,3 +966,9 @@ checksum = "b7cf47b659b318dccbd69cc4797a39ae128f533dce7902a1096044d1967b9c16"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "xml-rs"
+version = "0.8.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "791978798f0597cfc70478424c2b4fdc2b7a8024aaff78497ef00f24ef674193"

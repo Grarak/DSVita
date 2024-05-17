@@ -1,8 +1,7 @@
+use crate::emu::gpu::gl::gpu_2d_renderer::GpuMemBuf;
 use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
-use crate::emu::memory::mem::Memory;
-use crate::emu::memory::regions::VRAM_OFFSET;
 use crate::emu::memory::vram;
-use crate::emu::memory::vram::{BG_A_OFFSET, BG_B_OFFSET, OBJ_A_OFFSET, OBJ_B_OFFSET};
+use crate::emu::memory::vram::{Vram, OBJ_A_OFFSET, OBJ_B_OFFSET};
 use crate::emu::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::utils;
@@ -10,6 +9,7 @@ use crate::utils::{HeapMemI8, HeapMemU32};
 use bilge::prelude::*;
 use std::hint::unreachable_unchecked;
 use std::marker::ConstParamTy;
+use std::ops::Deref;
 use std::ptr::swap;
 use std::{mem, ptr};
 
@@ -18,7 +18,7 @@ use std::{mem, ptr};
 pub(super) struct DispCnt {
     pub bg_mode: u3,
     pub bg0_3d: u1,
-    pub tile_obj_mapping: u1,
+    pub tile_obj_mapping: bool,
     pub bitmap_obj_2d: u1,
     pub bitmap_obj_mapping: u1,
     pub forced_blank: u1,
@@ -119,7 +119,7 @@ pub enum Gpu2DEngine {
     B,
 }
 
-#[derive(Default)]
+#[derive(Copy, Clone, Default)]
 struct Gpu2DInternal {
     x: [i32; 2],
     y: [i32; 2],
@@ -128,7 +128,7 @@ struct Gpu2DInternal {
 }
 
 #[derive(Default)]
-pub(super) struct Gpu2DInner {
+pub struct Gpu2DInner {
     pub disp_cnt: DispCnt,
     pub bg_cnt: [BgCnt; 4],
     pub bg_h_ofs: [u16; 4],
@@ -208,48 +208,78 @@ pub struct Gpu2D<const ENGINE: Gpu2DEngine> {
 }
 
 impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
-    const fn get_bg_offset() -> u32 {
+    pub(super) fn read_bg<T: utils::Convert>(addr: u32, mem: &GpuMemBuf) -> T {
+        utils::read_from_mem(
+            match ENGINE {
+                Gpu2DEngine::A => mem.bg_a.as_slice(),
+                Gpu2DEngine::B => mem.bg_b.as_slice(),
+            },
+            addr,
+        )
+    }
+
+    pub(super) fn read_obj<T: utils::Convert>(addr: u32, mem: &GpuMemBuf) -> T {
+        utils::read_from_mem(
+            match ENGINE {
+                Gpu2DEngine::A => mem.obj_a.as_slice(),
+                Gpu2DEngine::B => mem.obj_b.as_slice(),
+            },
+            addr,
+        )
+    }
+
+    pub(super) fn read_palettes<T: utils::Convert>(addr: u32, mem: &GpuMemBuf) -> T {
+        utils::read_from_mem(
+            match ENGINE {
+                Gpu2DEngine::A => mem.pal_a.deref(),
+                Gpu2DEngine::B => mem.pal_b.deref(),
+            },
+            addr,
+        )
+    }
+
+    pub(super) fn read_oam<T: utils::Convert>(addr: u32, mem: &GpuMemBuf) -> T {
+        utils::read_from_mem(
+            match ENGINE {
+                Gpu2DEngine::A => mem.oam_a.deref(),
+                Gpu2DEngine::B => mem.oam_b.deref(),
+            },
+            addr,
+        )
+    }
+
+    pub(super) fn read_bg_ext_palette<T: utils::Convert>(slot: usize, addr: u32, mem: &GpuMemBuf) -> T {
+        utils::read_from_mem(
+            &match ENGINE {
+                Gpu2DEngine::A => mem.bg_a_ext_palette.deref(),
+                Gpu2DEngine::B => mem.bg_b_ext_palette.deref(),
+            }[slot << 13..],
+            addr,
+        )
+    }
+
+    pub(super) fn read_obj_ext_palette<T: utils::Convert>(addr: u32, mem: &GpuMemBuf) -> T {
+        utils::read_from_mem(
+            match ENGINE {
+                Gpu2DEngine::A => mem.obj_a_ext_palette.deref(),
+                Gpu2DEngine::B => mem.obj_b_ext_palette.deref(),
+            },
+            addr,
+        )
+    }
+
+    pub(super) fn is_bg_ext_palette_mapped(slot: usize, mem: &GpuMemBuf) -> bool {
         match ENGINE {
-            Gpu2DEngine::A => BG_A_OFFSET,
-            Gpu2DEngine::B => BG_B_OFFSET,
+            Gpu2DEngine::A => mem.bg_a_ext_palette_mapped[slot],
+            Gpu2DEngine::B => mem.bg_b_ext_palette_mapped[slot],
         }
     }
 
-    pub(super) const fn get_palettes_offset() -> u32 {
+    pub(super) fn is_obj_ext_palette_mapped(mem: &GpuMemBuf) -> bool {
         match ENGINE {
-            Gpu2DEngine::A => 0,
-            Gpu2DEngine::B => 0x400,
+            Gpu2DEngine::A => mem.obj_a_ext_palette_mapped,
+            Gpu2DEngine::B => mem.obj_b_ext_palette_mapped,
         }
-    }
-
-    const fn get_obj_offset() -> u32 {
-        match ENGINE {
-            Gpu2DEngine::A => OBJ_A_OFFSET,
-            Gpu2DEngine::B => OBJ_B_OFFSET,
-        }
-    }
-
-    const fn get_oam_offset() -> u32 {
-        match ENGINE {
-            Gpu2DEngine::A => 0,
-            Gpu2DEngine::B => 0x400,
-        }
-    }
-
-    pub(super) fn read_bg<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
-        mem.vram.read::<{ ARM9 }, _>(Self::get_bg_offset() + addr)
-    }
-
-    fn read_obj<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
-        mem.vram.read::<{ ARM9 }, _>(Self::get_obj_offset() + addr)
-    }
-
-    fn read_palettes<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
-        mem.palettes.read(Self::get_palettes_offset() + addr)
-    }
-
-    fn read_oam<T: utils::Convert>(&self, addr: u32, mem: &Memory) -> T {
-        mem.oam.read(Self::get_oam_offset() + addr)
     }
 
     pub fn new() -> Self {
@@ -406,8 +436,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
 
     pub fn set_master_bright(&mut self, mask: u16, value: u16) {}
 
-    pub fn draw_scanline(&mut self, line: u8, mem: &Memory) {
-        let backdrop = self.read_palettes::<u16>(0, mem);
+    pub fn draw_scanline(&mut self, line: u8, mem: &GpuMemBuf, vram: &Vram) {
+        let backdrop = Self::read_palettes::<u16>(0, mem);
         let backdrop = backdrop & !(1 << 15);
         self.layers.pixels.fill(backdrop as u32);
         self.layers.priorities.fill(4);
@@ -423,7 +453,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
 
         macro_rules! draw {
-            ($bg3:expr, $bg2:expr, $bg1:expr, $bg0:expr) => {
+            ($bg3:expr, $bg2:expr, $bg1:expr, $bg0:expr) => {{
                 if disp_cnt.screen_display_bg3() {
                     $bg3(self, line, mem);
                 }
@@ -436,39 +466,23 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                 if disp_cnt.screen_display_bg0() {
                     $bg0(self, line, mem);
                 }
-            };
+            }};
         }
 
         match u8::from(disp_cnt.bg_mode()) {
-            0 => {
-                draw!(Self::draw_text::<3>, Self::draw_text::<2>, Self::draw_text::<1>, Self::draw_text::<0>);
-            }
-            1 => {
-                draw!(Self::draw_affine::<3>, Self::draw_text::<2>, Self::draw_text::<1>, Self::draw_text::<0>);
-            }
-            2 => {
-                draw!(Self::draw_affine::<3>, Self::draw_affine::<2>, Self::draw_text::<1>, Self::draw_text::<0>);
-            }
-            3 => {
-                draw!(Self::draw_extended::<3>, Self::draw_text::<2>, Self::draw_text::<1>, Self::draw_text::<0>);
-            }
-            4 => {
-                draw!(Self::draw_extended::<3>, Self::draw_affine::<2>, Self::draw_text::<1>, Self::draw_text::<0>);
-            }
-            5 => {
-                draw!(Self::draw_extended::<3>, Self::draw_extended::<2>, Self::draw_text::<1>, Self::draw_text::<0>);
-            }
+            0 => draw!(Self::draw_text::<3>, Self::draw_text::<2>, Self::draw_text::<1>, Self::draw_text::<0>),
+            1 => draw!(Self::draw_affine::<3>, Self::draw_text::<2>, Self::draw_text::<1>, Self::draw_text::<0>),
+            2 => draw!(Self::draw_affine::<3>, Self::draw_affine::<2>, Self::draw_text::<1>, Self::draw_text::<0>),
+            3 => draw!(Self::draw_extended::<3>, Self::draw_text::<2>, Self::draw_text::<1>, Self::draw_text::<0>),
+            4 => draw!(Self::draw_extended::<3>, Self::draw_affine::<2>, Self::draw_text::<1>, Self::draw_text::<0>),
+            5 => draw!(Self::draw_extended::<3>, Self::draw_extended::<2>, Self::draw_text::<1>, Self::draw_text::<0>),
             6 => {
                 if disp_cnt.screen_display_bg2() {
                     self.draw_large::<2>(line, mem);
                 }
             }
-            7 => {
-                debug_println!("Unknown engine {:?} bg mode {}", ENGINE, disp_cnt.bg_mode());
-            }
-            _ => {
-                unsafe { unreachable_unchecked() };
-            }
+            7 => debug_println!("Unknown engine {:?} bg mode {}", ENGINE, disp_cnt.bg_mode()),
+            _ => unsafe { unreachable_unchecked() },
         }
 
         let pixels_a = self.layers.get_pixels_mut::<{ Gpu2DLayer::A }>();
@@ -508,7 +522,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                 let base_addr = vram::LCDC_OFFSET + vram_block * vram::BANK_A_SIZE as u32 + ((fb_start as u32) << 1);
 
                 fb.iter_mut().enumerate().for_each(|(i, value)| {
-                    *value = Self::rgb5_to_rgb6(mem.vram.read::<{ ARM9 }, u16>(base_addr + ((i as u32) << 1)) as u32);
+                    *value = Self::rgb5_to_rgb6(vram.read::<{ ARM9 }, u16>(base_addr + ((i as u32) << 1)) as u32);
                 });
             }
             DisplayMode::MainMemory => {
@@ -542,11 +556,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         true
     }
 
-    fn draw_affine<const BG: usize>(&mut self, line: u8, mem: &Memory) {
+    fn draw_affine<const BG: usize>(&mut self, line: u8, mem: &GpuMemBuf) {
         todo!()
     }
 
-    fn draw_extended<const BG: usize>(&mut self, line: u8, mem: &Memory) {
+    fn draw_extended<const BG: usize>(&mut self, line: u8, mem: &GpuMemBuf) {
         let mut rot_scale_x = self.inner.internal.x[BG - 2] - self.inner.bg_pa[BG - 2] as i32;
         let mut rot_scale_y = self.inner.internal.y[BG - 2] - self.inner.bg_pc[BG - 2] as i32;
 
@@ -582,7 +596,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         continue;
                     }
 
-                    let pixel = self.read_bg::<u16>((base_data_addr as i32 + (y * size_x + x) * 2) as u32, mem);
+                    let pixel = Self::read_bg::<u16>((base_data_addr as i32 + (y * size_x + x) * 2) as u32, mem);
                     if pixel & (1 << 15) != 0 {
                         self.draw_bg_pixel::<BG>(line, i, pixel as u32);
                     }
@@ -606,9 +620,9 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         continue;
                     }
 
-                    let index = self.read_bg::<u8>((base_data_addr as i32 + y * size_x + x) as u32, mem);
+                    let index = Self::read_bg::<u8>((base_data_addr as i32 + y * size_x + x) as u32, mem);
                     if index != 0 {
-                        let pixel = mem.palettes.read::<u16>(index as u32 * 2) | (1 << 15);
+                        let pixel = Self::read_palettes::<u16>(index as u32 * 2, mem) | (1 << 15);
                         self.draw_bg_pixel::<BG>(line, i, pixel as u32);
                     }
                 }
@@ -621,11 +635,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         self.inner.internal.y[BG - 2] += self.inner.bg_pd[BG - 2] as i32;
     }
 
-    fn draw_large<const BG: usize>(&self, line: u8, mem: &Memory) {
+    fn draw_large<const BG: usize>(&self, line: u8, mem: &GpuMemBuf) {
         todo!()
     }
 
-    fn draw_objects<const WINDOW: bool>(&mut self, line: u8, mem: &Memory) {
+    fn draw_objects<const WINDOW: bool>(&mut self, line: u8, mem: &GpuMemBuf) {
         let bound = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) {
             32u32 << u8::from(self.inner.disp_cnt.tile_obj_1d_boundary())
         } else {
@@ -633,23 +647,23 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         };
 
         let read_palette = if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
-            if !mem.vram.is_obj_ext_palette_mapped::<ENGINE>() {
+            if !Self::is_obj_ext_palette_mapped(mem) {
                 return;
             }
-            |mem: &Memory, addr: u32| mem.vram.read_obj_ext_palette::<ENGINE, u16>(addr)
+            |mem: &GpuMemBuf, addr: u32| Self::read_obj_ext_palette::<u16>(addr, mem)
         } else {
-            |mem: &Memory, addr: u32| mem.palettes.read::<u16>(addr)
+            |mem: &GpuMemBuf, addr: u32| Self::read_palettes::<u16>(addr, mem)
         };
 
         for i in 0..128 {
-            let byte = self.read_oam::<u8>(i * 8 + 1, mem);
+            let byte = Self::read_oam::<u8>(i * 8 + 1, mem);
             let type_ = (byte >> 2) & 0x3;
 
             if (byte & 0x3) == 2 || (type_ == 2) != WINDOW {
                 continue;
             }
 
-            let object = [self.read_oam::<u16>(i * 8, mem), self.read_oam::<u16>(i * 8 + 2, mem), self.read_oam::<u16>(i * 8 + 4, mem)];
+            let object = [Self::read_oam::<u16>(i * 8, mem), Self::read_oam::<u16>(i * 8 + 2, mem), Self::read_oam::<u16>(i * 8 + 4, mem)];
 
             let (width, height) = match ((object[0] >> 12) & 0xC) | ((object[1] >> 14) & 0x3) {
                 0x0 => (8u32, 8u32),
@@ -673,7 +687,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
 
             let mut y = (object[0] & 0xFF) as i32;
             if y >= DISPLAY_HEIGHT as i32 {
-                y -= DISPLAY_WIDTH as i32;
+                y -= 256;
             }
 
             let sprite_y = if (object[0] & (1 << 12)) != 0 {
@@ -687,7 +701,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
 
             let mut x = (object[1] & 0x1FF) as i32;
             if x >= DISPLAY_WIDTH as i32 {
-                x -= DISPLAY_WIDTH as i32 * 2;
+                x -= 512;
             }
 
             let priority = ((object[2] >> 10) & 0x3) as i8 - 1;
@@ -706,10 +720,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                 if object[0] & (1 << 8) != 0 {
                     let params_base_addr = ((object[1] >> 9) & 0x1F) as u32 * 0x20;
                     let params = [
-                        self.read_oam::<u16>(params_base_addr + 0x6, mem) as i16,
-                        self.read_oam::<u16>(params_base_addr + 0xE, mem) as i16,
-                        self.read_oam::<u16>(params_base_addr + 0x16, mem) as i16,
-                        self.read_oam::<u16>(params_base_addr + 0x1E, mem) as i16,
+                        Self::read_oam::<u16>(params_base_addr + 0x6, mem) as i16,
+                        Self::read_oam::<u16>(params_base_addr + 0xE, mem) as i16,
+                        Self::read_oam::<u16>(params_base_addr + 0x16, mem) as i16,
+                        Self::read_oam::<u16>(params_base_addr + 0x1E, mem) as i16,
                     ];
 
                     for j in 0..width2 {
@@ -732,7 +746,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                             continue;
                         }
 
-                        let pixel = self.read_obj::<u16>(data_base_addr + ((rot_scale_y as u32 * bitmap_width + rot_scale_x as u32) << 1), mem);
+                        let pixel = Self::read_obj::<u16>(data_base_addr + ((rot_scale_y as u32 * bitmap_width + rot_scale_x as u32) << 1), mem);
                         if pixel * (1 << 15) != 0 {
                             self.draw_obj_pixel(line, offset as usize, pixel as u32, priority);
                         }
@@ -750,7 +764,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                             continue;
                         }
 
-                        let pixel = self.read_obj::<u16>(data_base_addr + (j << 1), mem);
+                        let pixel = Self::read_obj::<u16>(data_base_addr + (j << 1), mem);
                         if pixel & (1 << 15) != 0 {
                             self.draw_obj_pixel(line, offset as usize, pixel as u32, priority);
                         }
@@ -765,10 +779,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
             if object[0] & (1 << 8) != 0 {
                 let params_base_addr = ((object[1] >> 9) & 0x1F) as u32 * 0x20;
                 let params = [
-                    self.read_oam::<u16>(params_base_addr + 0x6, mem) as i16,
-                    self.read_oam::<u16>(params_base_addr + 0xE, mem) as i16,
-                    self.read_oam::<u16>(params_base_addr + 0x16, mem) as i16,
-                    self.read_oam::<u16>(params_base_addr + 0x1E, mem) as i16,
+                    Self::read_oam::<u16>(params_base_addr + 0x6, mem) as i16,
+                    Self::read_oam::<u16>(params_base_addr + 0xE, mem) as i16,
+                    Self::read_oam::<u16>(params_base_addr + 0x16, mem) as i16,
+                    Self::read_oam::<u16>(params_base_addr + 0x1E, mem) as i16,
                 ];
 
                 if object[0] & (1 << 13) != 0 {
@@ -777,7 +791,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                     let palette_base_addr = if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
                         ((object[2] & 0xF000) >> 3) as u32
                     } else {
-                        Self::get_palettes_offset() + 0x200
+                        0x200
                     };
 
                     for j in 0..width2 {
@@ -802,7 +816,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         let rot_scale_x = rot_scale_x as u32;
                         let rot_scale_y = rot_scale_y as u32;
 
-                        let index = self.read_obj::<u8>(
+                        let index = Self::read_obj::<u8>(
                             tile_base_addr + (((rot_scale_y >> 3) * map_width + (rot_scale_y & 7)) << 3) + ((rot_scale_x >> 3) << 6) + (rot_scale_x & 7),
                             mem,
                         );
@@ -847,7 +861,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         let rot_scale_x = rot_scale_x as u32;
                         let rot_scale_y = rot_scale_y as u32;
 
-                        let index = self.read_obj::<u8>(
+                        let index = Self::read_obj::<u8>(
                             tile_base_addr + ((((rot_scale_y >> 3) * map_width + (rot_scale_y & 7)) << 3) << 2) + ((rot_scale_x >> 3) << 5) + ((rot_scale_x & 7) >> 1),
                             mem,
                         );
@@ -860,7 +874,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                                 self.draw_obj_pixel(
                                     line,
                                     offset as usize,
-                                    (((type_ == 1) as u32) << 25) | (1 << 15) | self.read_palettes::<u16>(palette_addr + ((index as u32) << 1), mem) as u32,
+                                    (((type_ == 1) as u32) << 25) | (1 << 15) | Self::read_palettes::<u16>(palette_addr + ((index as u32) << 1), mem) as u32,
                                     priority,
                                 );
                             }
@@ -878,12 +892,12 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                     };
 
                 let palette_base_addr = if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
-                    if !mem.vram.is_obj_ext_palette_mapped::<ENGINE>() {
+                    if !Self::is_obj_ext_palette_mapped(mem) {
                         continue;
                     }
                     ((object[2] & 0xF000) >> 3) as u32
                 } else {
-                    Self::get_palettes_offset() + 0x200
+                    0x200
                 };
 
                 for j in 0..width {
@@ -896,7 +910,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         continue;
                     }
 
-                    let index = self.read_obj::<u8>(tile_base_addr + ((j >> 3) << 6) + (j & 7), mem);
+                    let index = Self::read_obj::<u8>(tile_base_addr + ((j >> 3) << 6) + (j & 7), mem);
                     let index = if j & 1 != 0 { (index & 0xF0) >> 4 } else { index & 0xF };
 
                     if index != 0 {
@@ -913,7 +927,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                     }
                 }
             } else {
-                let map_width = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) { width } else { DISPLAY_WIDTH as u32 };
+                let map_width = if self.inner.disp_cnt.tile_obj_mapping() { width } else { DISPLAY_WIDTH as u32 };
                 let sprite_y = sprite_y as u32;
                 let tile_base_addr = tile_base_addr
                     + if object[1] & (1 << 13) != 0 {
@@ -934,7 +948,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         continue;
                     }
 
-                    let index = self.read_obj::<u8>(tile_base_addr + ((j >> 3) << 5) + ((j & 7) >> 1), mem);
+                    let index = Self::read_obj::<u8>(tile_base_addr + ((j >> 3) << 5) + ((j & 7) >> 1), mem);
                     let index = if j & 1 != 0 { (index & 0xF0) >> 4 } else { index & 0xF };
 
                     if index != 0 {
@@ -944,7 +958,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                             self.draw_obj_pixel(
                                 line,
                                 offset as usize,
-                                (((type_ == 1) as u32) << 25) | (1 << 15) | self.read_palettes::<u16>(palette_addr + ((index as u32) << 1), mem) as u32,
+                                (((type_ == 1) as u32) << 25) | (1 << 15) | Self::read_palettes::<u16>(palette_addr + ((index as u32) << 1), mem) as u32,
                                 priority,
                             );
                         }

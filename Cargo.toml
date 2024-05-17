@@ -17,6 +17,7 @@ chrono = "0.4.33"
 paste = "1.0.14"
 static_assertions = "1.1.0"
 dspsv_macros = { path = "macros" }
+gl = { git = "https://github.com/bjz/gl-rs" }
 
 [target.armv7-unknown-linux-gnueabihf.dependencies]
 libc = "0.2.153"
@@ -34,7 +35,9 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceLibKernel_stub",
     "SceSysmem_stub",
     "SceTouch_stub",
-    "ScePgf_stub"
+    "ScePgf_stub",
+    "SceKernelDmacMgr_stub",
+    "SceShaccCg_stub",
 ] }
 
 [profile.release]

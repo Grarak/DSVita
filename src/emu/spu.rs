@@ -345,7 +345,7 @@ impl Spu {
     }
 
     fn next_sample_psg(&mut self, channel_num: usize) {
-        if (8..=13).contains(&channel_num) {
+        if channel_num >= 8 && channel_num <= 13 {
             self.duty_cycles[channel_num - 8] = (self.duty_cycles[channel_num - 8] + 1) % 8;
         } else if channel_num >= 14 {
             self.noise_values[channel_num - 14] &= !(1 << 15);
@@ -387,7 +387,7 @@ impl Spu {
                 SoundChannelFormat::Pcm16 => emu.mem_read::<{ ARM7 }, u16>(get_channel!(emu, i).sad_current) as i16 as i64,
                 SoundChannelFormat::ImaAdpcm => get_channel!(emu, i).adpcm_value as i64,
                 SoundChannelFormat::PsgNoise => {
-                    if (8..=13).contains(&i) {
+                    if i >= 8 && i <= 13 {
                         let duty = 7 - u8::from(get_channel!(emu, i).cnt.wave_duty());
                         if get_spu!(emu).duty_cycles[i - 8] < duty as i32 {
                             -0x7FFF

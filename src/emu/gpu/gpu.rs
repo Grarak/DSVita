@@ -1,20 +1,21 @@
 use crate::emu::cpu_regs::InterruptFlag;
 use crate::emu::cycle_manager::{CycleManager, EventType};
-use crate::emu::emu::{get_arm7_hle_mut, get_cm_mut, get_common_mut, get_cpu_regs_mut, get_mem, io_dma, Emu};
+use crate::emu::emu::{get_arm7_hle_mut, get_cm_mut, get_common_mut, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
+use crate::emu::gpu::gl::gpu_2d_renderer::Gpu2dRenderer;
 use crate::emu::gpu::gpu_2d::Gpu2D;
 use crate::emu::gpu::gpu_2d::Gpu2DEngine::{A, B};
 use crate::emu::gpu::gpu_3d::Gpu3D;
 use crate::emu::gpu::gpu_3d_renderer::Gpu3dRenderer;
 use crate::emu::hle::arm7_hle::Arm7Hle;
 use crate::emu::memory::dma::DmaTransferMode;
-use crate::emu::memory::mem::Memory;
 use crate::emu::CpuType;
 use crate::emu::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::utils::HeapMemU32;
 use bilge::prelude::*;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU16, AtomicU8, Ordering};
+use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
@@ -91,7 +92,7 @@ impl FrameRateCounter {
         let now = Instant::now();
         if (now - self.last_update).as_secs_f32() >= 1f32 {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
-            #[cfg(target_os = "linux")]
+            // #[cfg(target_os = "linux")]
             eprintln!("{}", self.frame_counter);
             self.frame_counter = 0;
             self.last_update = now;
@@ -139,9 +140,7 @@ pub struct Gpu {
     pub gpu_2d_b: Gpu2D<{ B }>,
     pub gpu_3d: Gpu3D,
     pub gpu_3d_renderer: Gpu3dRenderer,
-    draw_state: AtomicU8,
-    draw_idling: Mutex<bool>,
-    draw_condvar: Condvar,
+    pub gpu_2d_renderer: Option<NonNull<Gpu2dRenderer>>,
 }
 
 impl Gpu {
@@ -159,9 +158,7 @@ impl Gpu {
             gpu_2d_b: Gpu2D::new(),
             gpu_3d: Gpu3D::new(),
             gpu_3d_renderer: Gpu3dRenderer::new(),
-            draw_state: AtomicU8::new(0),
-            draw_idling: Mutex::new(false),
-            draw_condvar: Condvar::new(),
+            gpu_2d_renderer: None,
         }
     }
 
@@ -196,33 +193,13 @@ impl Gpu {
         self.frame_rate_counter.fps.load(Ordering::Relaxed)
     }
 
-    pub fn draw_scanline_thread(&mut self, mem: &Memory) {
-        if self.draw_state.compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire).is_ok() {
-            let v_count = self.v_count as u8;
-            self.gpu_2d_a.draw_scanline(v_count, mem);
-            if self.draw_state.compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire).is_ok() {
-                self.gpu_2d_b.draw_scanline(v_count, mem);
-            }
-            self.draw_state.store(0, Ordering::Release);
-            if v_count == 191 {
-                let mut draw_idling = self.draw_idling.lock().unwrap();
-                *draw_idling = true;
-                let _guard = self.draw_condvar.wait_while(draw_idling, |idling| *idling).unwrap();
-            }
-        }
-    }
-
     pub fn on_scanline256_event(emu: &mut Emu) {
         let gpu = &mut get_common_mut!(emu).gpu;
 
         if gpu.v_count < 192 {
             if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
-                if gpu.draw_state.compare_exchange(2, 3, Ordering::AcqRel, Ordering::Acquire).is_ok() {
-                    gpu.gpu_2d_b.draw_scanline(gpu.v_count as u8, get_mem!(emu));
-                }
-                while gpu.draw_state.load(Ordering::Acquire) != 0 {}
+                unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut().on_scanline(&gpu.gpu_2d_a.inner, &gpu.gpu_2d_b.inner, gpu.v_count as u8) }
             }
-
             io_dma!(emu, ARM9).trigger_all(DmaTransferMode::StartAtHBlank, get_cm_mut!(emu));
         }
 
@@ -243,25 +220,17 @@ impl Gpu {
         gpu.v_count += 1;
         match gpu.v_count {
             192 => {
+                if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
+                    unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.on_frame(&gpu.gpu_2d_a.inner, &gpu.gpu_2d_b.inner, get_mem_mut!(emu));
+                    unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.start_drawing();
+                }
+
                 for i in 0..2 {
                     let disp_stat = &mut gpu.disp_stat[i];
                     disp_stat.set_v_blank_flag(u1::new(1));
                     if bool::from(disp_stat.v_blank_irq_enable()) {
                         get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdVBlank, get_cm_mut!(emu));
                         io_dma!(emu, CpuType::from(i as u8)).trigger_all(DmaTransferMode::StartAtVBlank, get_cm_mut!(emu));
-                    }
-                }
-
-                if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
-                    let pow_cnt1 = PowCnt1::from(gpu.pow_cnt1);
-                    if bool::from(pow_cnt1.enable()) {
-                        if bool::from(pow_cnt1.display_swap()) {
-                            gpu.swapchain.push(&gpu.gpu_2d_a.framebuffer, &gpu.gpu_2d_b.framebuffer)
-                        } else {
-                            gpu.swapchain.push(&gpu.gpu_2d_b.framebuffer, &gpu.gpu_2d_a.framebuffer);
-                        }
-                    } else {
-                        gpu.swapchain.push(&[0u32; DISPLAY_PIXEL_COUNT], &[0u32; DISPLAY_PIXEL_COUNT]);
                     }
                 }
             }
@@ -275,21 +244,13 @@ impl Gpu {
                 gpu.v_count = 0;
                 gpu.gpu_2d_a.reload_registers();
                 gpu.gpu_2d_b.reload_registers();
+                unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.reload_registers();
 
                 if gpu.arm7_hle {
                     Arm7Hle::on_frame(emu);
                 }
             }
             _ => {}
-        }
-
-        if gpu.v_count < 192 && (!gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0) {
-            gpu.draw_state.store(1, Ordering::Release);
-            if gpu.v_count == 0 {
-                let mut draw_idling = gpu.draw_idling.lock().unwrap();
-                *draw_idling = false;
-                gpu.draw_condvar.notify_one();
-            }
         }
 
         for i in 0..2 {

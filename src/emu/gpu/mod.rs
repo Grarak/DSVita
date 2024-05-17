@@ -1,3 +1,4 @@
+pub mod gl;
 pub mod gpu;
 pub mod gpu_2d;
 mod gpu_2d_text;

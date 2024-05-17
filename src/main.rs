@@ -14,8 +14,9 @@
 extern crate core;
 
 use crate::cartridge_reader::CartridgeReader;
-use crate::emu::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem, get_mem_mut, get_mmu, get_regs_mut, Emu};
-use crate::emu::gpu::gpu::{Gpu, Swapchain, DISPLAY_PIXEL_COUNT};
+use crate::emu::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, Emu};
+use crate::emu::gpu::gl::gpu_2d_renderer::Gpu2dRenderer;
+use crate::emu::gpu::gpu::{Gpu, Swapchain};
 use crate::emu::spu::{SoundSampler, Spu};
 use crate::emu::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
@@ -28,6 +29,7 @@ use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
+use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -54,6 +56,7 @@ fn run_cpu(
     touch_points: Arc<AtomicU16>,
     sound_sampler: Arc<SoundSampler>,
     settings: Arc<Settings>,
+    gpu_2d_renderer: NonNull<Gpu2dRenderer>,
 ) {
     let arm9_ram_addr = cartridge_reader.header.arm9_values.ram_address;
     let arm9_entry_addr = cartridge_reader.header.arm9_values.entry_address;
@@ -143,23 +146,11 @@ fn run_cpu(
 
     Gpu::initialize_schedule(get_cm_mut!(emu));
     common.gpu.frame_skip = settings[FRAMESKIP_SETTING].value.as_bool().unwrap();
+    common.gpu.gpu_2d_renderer = Some(gpu_2d_renderer);
 
     if settings[AUDIO_SETTING].value.as_bool().unwrap() {
         Spu::initialize_schedule(get_cm_mut!(emu));
     }
-
-    let emu_ptr = emu_unsafe.get() as u32;
-    let gpu2d_thread = thread::Builder::new()
-        .name("gpu2d".to_owned())
-        .spawn(move || {
-            set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core1);
-            let emu = unsafe { (emu_ptr as *mut Emu).as_mut().unwrap() };
-            let common = get_common_mut!(emu);
-            loop {
-                common.gpu.draw_scanline_thread(get_mem!(emu));
-            }
-        })
-        .unwrap();
 
     if settings[ARM7_HLE_SETTINGS].value.as_bool().unwrap() {
         common.ipc.use_hle();
@@ -168,7 +159,6 @@ fn run_cpu(
     } else {
         execute_jit::<false>(&mut emu_unsafe);
     }
-    gpu2d_thread.join().unwrap();
 }
 
 #[inline(never)]
@@ -213,7 +203,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
 
 // Must be pub for vita
 pub fn main() {
-    set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core0);
+    set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core0);
 
     if DEBUG_LOG {
         std::env::set_var("RUST_BACKTRACE", "full");
@@ -226,57 +216,80 @@ pub fn main() {
 
     #[cfg(target_os = "vita")]
     {
-        use crate::presenter::menu::{Menu, MenuAction, MenuPresenter};
-        use std::fs;
-
-        let root_menu = Menu::new(
-            "DSPSV",
-            vec![
-                Menu::new("Settings", Vec::new(), |menu| {
-                    menu.entries = settings_mut
-                        .borrow()
-                        .iter()
-                        .enumerate()
-                        .map(|(index, setting)| {
-                            let settings_clone = settings_mut.clone();
-                            Menu::new(format!("{} - {}", setting.title, setting.value), Vec::new(), move |_| {
-                                settings_clone.borrow_mut()[index].value.next();
-                                MenuAction::Refresh
-                            })
-                        })
-                        .collect();
-                    MenuAction::EnterSubMenu
-                }),
-                Menu::new("Select ROM", Vec::new(), |menu| {
-                    match fs::read_dir("ux0:dspsv") {
-                        Ok(dirs) => {
-                            menu.entries = dirs
-                                .into_iter()
-                                .filter_map(|dir| dir.ok().and_then(|dir| dir.file_type().ok().and_then(|file_type| if file_type.is_file() { Some(dir) } else { None })))
-                                .map(|dir| {
-                                    let file_path_clone = file_path.clone();
-                                    Menu::new(dir.path().to_str().unwrap(), Vec::new(), move |_| {
-                                        *file_path_clone.borrow_mut() = dir.path();
-                                        MenuAction::Quit
-                                    })
-                                })
-                                .collect();
-                            if menu.entries.is_empty() {
-                                menu.entries.push(Menu::new("ux0:dspsv does not contain any files!", Vec::new(), |_| MenuAction::Refresh))
-                            }
-                        }
-                        Err(_) => {
-                            menu.entries.clear();
-                            menu.entries.push(Menu::new("ux0:dspsv does not exist!", Vec::new(), |_| MenuAction::Refresh));
-                        }
-                    }
-                    MenuAction::EnterSubMenu
-                }),
-            ],
-            |_| MenuAction::EnterSubMenu,
-        );
-        let mut menu_presenter = MenuPresenter::new(&mut presenter, root_menu);
-        menu_presenter.present();
+        // use crate::presenter::menu::{Menu, MenuAction, MenuPresenter};
+        // use std::fs;
+        //
+        // let root_menu = Menu::new(
+        //     "DSPSV",
+        //     vec![
+        //         Menu::new("Settings", Vec::new(), |menu| {
+        //             menu.entries = settings_mut
+        //                 .borrow()
+        //                 .iter()
+        //                 .enumerate()
+        //                 .map(|(index, setting)| {
+        //                     let settings_clone = settings_mut.clone();
+        //                     Menu::new(
+        //                         format!("{} - {}", setting.title, setting.value),
+        //                         Vec::new(),
+        //                         move |_| {
+        //                             settings_clone.borrow_mut()[index].value.next();
+        //                             MenuAction::Refresh
+        //                         },
+        //                     )
+        //                 })
+        //                 .collect();
+        //             MenuAction::EnterSubMenu
+        //         }),
+        //         Menu::new("Select ROM", Vec::new(), |menu| {
+        //             match fs::read_dir("ux0:dspsv") {
+        //                 Ok(dirs) => {
+        //                     menu.entries = dirs
+        //                         .into_iter()
+        //                         .filter_map(|dir| {
+        //                             dir.ok().and_then(|dir| {
+        //                                 dir.file_type().ok().and_then(|file_type| {
+        //                                     if file_type.is_file() {
+        //                                         Some(dir)
+        //                                     } else {
+        //                                         None
+        //                                     }
+        //                                 })
+        //                             })
+        //                         })
+        //                         .map(|dir| {
+        //                             let file_path_clone = file_path.clone();
+        //                             Menu::new(dir.path().to_str().unwrap(), Vec::new(), move |_| {
+        //                                 *file_path_clone.borrow_mut() = dir.path();
+        //                                 MenuAction::Quit
+        //                             })
+        //                         })
+        //                         .collect();
+        //                     if menu.entries.is_empty() {
+        //                         menu.entries.push(Menu::new(
+        //                             "ux0:dspsv does not contain any files!",
+        //                             Vec::new(),
+        //                             |_| MenuAction::Refresh,
+        //                         ))
+        //                     }
+        //                 }
+        //                 Err(_) => {
+        //                     menu.entries.clear();
+        //                     menu.entries.push(Menu::new(
+        //                         "ux0:dspsv does not exist!",
+        //                         Vec::new(),
+        //                         |_| MenuAction::Refresh,
+        //                     ));
+        //                 }
+        //             }
+        //             MenuAction::EnterSubMenu
+        //         }),
+        //     ],
+        //     |_| MenuAction::EnterSubMenu,
+        // );
+        // let mut menu_presenter = MenuPresenter::new(&mut presenter, root_menu);
+        // menu_presenter.present();
+        *file_path.borrow_mut() = PathBuf::from("ux0:dspsv/pokemon_blue_rescue.nds");
     }
 
     #[cfg(target_os = "linux")]
@@ -312,22 +325,13 @@ pub fn main() {
 
     let audio_enabled = settings[AUDIO_SETTING].value.as_bool().unwrap();
 
-    let cpu_thread = thread::Builder::new()
-        .name("cpu".to_owned())
-        .spawn(move || {
-            set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
-            run_cpu(cartridge_reader, swapchain_clone, fps_clone, key_map_clone, touch_points_clone, sound_sampler_clone, settings);
-        })
-        .unwrap();
-
     let presenter_audio = presenter.get_presenter_audio();
-
     let audio_thread = if audio_enabled {
         Some(
             thread::Builder::new()
                 .name("audio".to_owned())
                 .spawn(move || {
-                    set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core0);
+                    set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core1);
                     let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_BUF_SIZE }>::new();
                     loop {
                         sound_sampler.consume(audio_buffer.deref_mut());
@@ -340,20 +344,38 @@ pub fn main() {
         None
     };
 
-    while let PresentEvent::Inputs { keymap, touch } = presenter.event_poll() {
+    let gpu_2d_renderer = UnsafeCell::new(Gpu2dRenderer::new());
+    let gpu_2d_renderer_ptr = gpu_2d_renderer.get() as u32;
+
+    let cpu_thread = thread::Builder::new()
+        .name("cpu".to_owned())
+        .spawn(move || {
+            set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
+            run_cpu(
+                cartridge_reader,
+                swapchain_clone,
+                fps_clone,
+                key_map_clone,
+                touch_points_clone,
+                sound_sampler_clone,
+                settings,
+                NonNull::new(gpu_2d_renderer_ptr as *mut Gpu2dRenderer).unwrap(),
+            );
+        })
+        .unwrap();
+
+    let gpu_2d_renderer = unsafe { gpu_2d_renderer.get().as_mut().unwrap() };
+    while let PresentEvent::Inputs { keymap, touch } = presenter.poll_event() {
         if let Some((x, y)) = touch {
             touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
         }
         key_map.store(keymap, Ordering::Relaxed);
 
-        let fb = swapchain.consume();
-        let top = unsafe { (fb[..DISPLAY_PIXEL_COUNT].as_ptr() as *const [u32; DISPLAY_PIXEL_COUNT]).as_ref().unwrap_unchecked() };
-        let bottom = unsafe { (fb[DISPLAY_PIXEL_COUNT..].as_ptr() as *const [u32; DISPLAY_PIXEL_COUNT]).as_ref().unwrap_unchecked() };
-        presenter.present_textures(top, bottom, fps.load(Ordering::Relaxed));
+        unsafe { gpu_2d_renderer.draw(&mut presenter) };
     }
 
-    cpu_thread.join().unwrap();
     if let Some(audio_thread) = audio_thread {
         audio_thread.join().unwrap();
     }
+    cpu_thread.join().unwrap();
 }

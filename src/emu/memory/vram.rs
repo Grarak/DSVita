@@ -7,20 +7,22 @@ use crate::utils::HeapMemU8;
 use bilge::prelude::*;
 use paste::paste;
 use static_assertions::{const_assert, const_assert_eq};
+use std::cell::UnsafeCell;
 use std::hint::unreachable_unchecked;
 use std::ops::{Deref, DerefMut};
-use std::{ptr, slice};
+use std::{array, mem, ptr, slice};
 
 const BANK_SIZE: usize = 9;
 
 #[derive(Copy, Clone)]
 struct VramMap<const SIZE: usize> {
     ptr: *const u8,
+    dirty: bool,
 }
 
 impl<const SIZE: usize> VramMap<SIZE> {
     fn new<const T: usize>(bank: &[u8; T]) -> Self {
-        VramMap { ptr: bank.as_ptr() as _ }
+        VramMap { ptr: bank.as_ptr() as _, dirty: true }
     }
 
     fn extract_section<const CHUNK_SIZE: usize>(&self, offset: usize) -> VramMap<CHUNK_SIZE> {
@@ -59,13 +61,13 @@ impl<const SIZE: usize> AsRef<[u8]> for VramMap<SIZE> {
 
 impl<const SIZE: usize> Default for VramMap<SIZE> {
     fn default() -> Self {
-        VramMap { ptr: ptr::null_mut() }
+        VramMap { ptr: ptr::null_mut(), dirty: true }
     }
 }
 
 impl<const SIZE: usize> From<*const u8> for VramMap<SIZE> {
     fn from(value: *const u8) -> Self {
-        VramMap { ptr: value }
+        VramMap { ptr: value, dirty: true }
     }
 }
 
@@ -117,10 +119,10 @@ impl<const SIZE: usize> AsMut<[u8]> for VramMapMut<SIZE> {
     }
 }
 
-#[derive(Copy, Clone, Default)]
 struct OverlapSection<const SIZE: usize> {
     overlaps: [VramMap<SIZE>; 4],
     count: usize,
+    read_buf: UnsafeCell<HeapMemU8<SIZE>>,
 }
 
 impl<const SIZE: usize> OverlapSection<SIZE> {
@@ -147,16 +149,44 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
         T::from(ret)
     }
 
+    fn read_all(&mut self, index: u32, buf: &mut [u8; SIZE]) {
+        let dirty = self.overlaps.iter().any(|map| map.dirty);
+        if dirty {
+            buf.fill(0);
+            let read_buf = unsafe { self.read_buf.get().as_mut().unwrap_unchecked() };
+            for i in 0..self.count {
+                self.overlaps[i].dirty = false;
+                let map = self.overlaps[i];
+                if !map.ptr.is_null() {
+                    utils::read_from_mem_slice(&map, index, read_buf.deref_mut());
+                    for i in 0..SIZE {
+                        buf[i] |= read_buf[i];
+                    }
+                }
+            }
+        }
+    }
+
     fn write<T: utils::Convert>(&mut self, index: u32, value: T) {
         for i in 0..self.count {
-            let map = &mut self.overlaps[i].as_mut();
+            self.overlaps[i].dirty = true;
+            let mut map = self.overlaps[i].as_mut();
             debug_assert_ne!(map.ptr, ptr::null_mut());
-            utils::write_to_mem(map, index, value);
+            utils::write_to_mem(&mut map, index, value);
         }
     }
 }
 
-#[derive(Copy, Clone)]
+impl<const SIZE: usize> Default for OverlapSection<SIZE> {
+    fn default() -> Self {
+        OverlapSection {
+            overlaps: unsafe { mem::zeroed() },
+            count: 0,
+            read_buf: UnsafeCell::new(HeapMemU8::new()),
+        }
+    }
+}
+
 struct OverlapMapping<const SIZE: usize, const CHUNK_SIZE: usize>
 where
     [(); SIZE / CHUNK_SIZE]:,
@@ -170,7 +200,13 @@ where
 {
     fn new() -> Self {
         OverlapMapping {
-            sections: [OverlapSection::default(); SIZE / CHUNK_SIZE],
+            sections: array::from_fn(|_| OverlapSection::default()),
+        }
+    }
+
+    fn reset(&mut self) {
+        for s in &mut self.sections {
+            s.count = 0;
         }
     }
 
@@ -180,22 +216,34 @@ where
         }
     }
 
-    pub fn get_ptr(&self, mut addr: u32) -> *const u8 {
+    fn get_ptr(&self, mut addr: u32) -> *const u8 {
         addr %= SIZE as u32;
         let section_index = addr as usize / CHUNK_SIZE;
         let section_offset = addr as usize % CHUNK_SIZE;
         self.sections[section_index].get_ptr(section_offset as u32)
     }
 
-    pub fn read<T: utils::Convert>(&self, mut addr: u32) -> T {
+    fn read<T: utils::Convert>(&self, mut addr: u32) -> T {
         addr %= SIZE as u32;
         let section_index = addr as usize / CHUNK_SIZE;
         let section_offset = addr as usize % CHUNK_SIZE;
         self.sections[section_index].read(section_offset as u32)
     }
 
+    fn read_all(&mut self, mut addr: u32, buf: &mut [u8; SIZE]) {
+        addr %= SIZE as u32;
+        for chunk_addr in (addr..addr + SIZE as u32).step_by(CHUNK_SIZE) {
+            let section_index = chunk_addr as usize / CHUNK_SIZE;
+            let section_offset = chunk_addr as usize % CHUNK_SIZE;
+            let buf_start = (chunk_addr - addr) as usize;
+            let buf_end = buf_start + CHUNK_SIZE;
+            let chunk_buf = unsafe { (buf[buf_start..buf_end].as_mut_ptr() as *mut [u8; CHUNK_SIZE]).as_mut().unwrap_unchecked() };
+            self.sections[section_index].read_all(section_offset as u32, chunk_buf);
+        }
+    }
+
     #[inline]
-    pub fn write<T: utils::Convert>(&mut self, mut addr: u32, value: T) {
+    fn write<T: utils::Convert>(&mut self, mut addr: u32, value: T) {
         addr %= SIZE as u32;
         let section_index = addr as usize / CHUNK_SIZE;
         let section_offset = addr as usize % CHUNK_SIZE;
@@ -327,18 +375,18 @@ impl Vram {
 
         debug_println!("Set vram cnt {:x} to {:x}", bank, value);
 
-        self.lcdc = OverlapMapping::new();
-        self.bg_a = OverlapMapping::new();
-        self.obj_a = OverlapMapping::new();
+        self.lcdc.reset();
+        self.bg_a.reset();
+        self.obj_a.reset();
         self.bg_ext_palette_a.fill(VramMap::default());
         self.obj_ext_palette_a = VramMap::default();
         self.tex_rear_plane_img.fill(VramMap::default());
         self.tex_palette.fill(VramMap::default());
-        self.bg_b = OverlapMapping::new();
-        self.obj_b = OverlapMapping::new();
+        self.bg_b.reset();
+        self.obj_b.reset();
         self.bg_ext_palette_b.fill(VramMap::default());
         self.obj_ext_palette_b = VramMap::default();
-        self.arm7 = OverlapMapping::new();
+        self.arm7.reset();
         self.stat = 0;
 
         {
@@ -661,6 +709,74 @@ impl Vram {
         };
     }
 
+    pub fn read_all_bg_a(&mut self, buf: &mut [u8; BG_A_SIZE as usize]) {
+        self.bg_a.read_all(0, buf)
+    }
+
+    pub fn read_all_obj_a(&mut self, buf: &mut [u8; OBJ_A_SIZE as usize]) {
+        self.obj_a.read_all(0, buf)
+    }
+
+    pub fn read_all_bg_a_ext_palette(&mut self, buf: &mut [u8; 32 * 1024]) {
+        for i in 0..self.bg_ext_palette_a.len() {
+            let map = &mut self.bg_ext_palette_a[i];
+            if map.dirty {
+                let buf = &mut buf[i << 13..(i << 13) + 8 * 1024];
+                if !map.ptr.is_null() {
+                    buf.copy_from_slice(map);
+                } else {
+                    buf.fill(0);
+                }
+                map.dirty = false;
+            }
+        }
+    }
+
+    pub fn read_all_obj_a_ext_palette(&mut self, buf: &mut [u8; 8 * 1024]) {
+        if self.obj_ext_palette_a.dirty {
+            if !self.obj_ext_palette_a.ptr.is_null() {
+                buf.copy_from_slice(&self.obj_ext_palette_a);
+            } else {
+                buf.fill(0);
+            }
+            self.obj_ext_palette_a.dirty = false;
+        }
+    }
+
+    pub fn read_bg_b(&mut self, buf: &mut [u8; BG_B_SIZE as usize]) {
+        self.bg_b.read_all(0, buf)
+    }
+
+    pub fn read_all_obj_b(&mut self, buf: &mut [u8; OBJ_B_SIZE as usize]) {
+        self.obj_b.read_all(0, buf)
+    }
+
+    pub fn read_all_bg_b_ext_palette(&mut self, buf: &mut [u8; 32 * 1024]) {
+        for i in 0..self.bg_ext_palette_b.len() {
+            let map = &mut self.bg_ext_palette_b[i];
+            if map.dirty {
+                let buf = &mut buf[i << 13..(i << 13) + 8 * 1024];
+                if !map.ptr.is_null() {
+                    buf.copy_from_slice(map);
+                } else {
+                    buf.fill(0);
+                }
+                map.dirty = false;
+            }
+        }
+    }
+
+    pub fn read_all_obj_b_ext_palette(&mut self, buf: &mut [u8; 8 * 1024]) {
+        if self.obj_ext_palette_b.dirty {
+            if !self.obj_ext_palette_b.ptr.is_null() {
+                buf.copy_from_slice(&self.obj_ext_palette_b);
+            } else {
+                buf.fill(0);
+            }
+            self.obj_ext_palette_b.dirty = false;
+        }
+    }
+
     pub fn is_bg_ext_palette_mapped<const ENGINE: Gpu2DEngine>(&self, slot: usize) -> bool {
         let vram_map = match ENGINE {
             Gpu2DEngine::A => &self.bg_ext_palette_a[slot],
@@ -675,21 +791,5 @@ impl Vram {
             Gpu2DEngine::B => &self.obj_ext_palette_b,
         };
         !vram_map.ptr.is_null()
-    }
-
-    pub fn read_bg_ext_palette<const ENGINE: Gpu2DEngine, T: utils::Convert>(&self, slot: usize, addr: u32) -> T {
-        let vram_map = match ENGINE {
-            Gpu2DEngine::A => &self.bg_ext_palette_a[slot],
-            Gpu2DEngine::B => &self.bg_ext_palette_b[slot],
-        };
-        utils::read_from_mem(vram_map, addr % vram_map.len() as u32)
-    }
-
-    pub fn read_obj_ext_palette<const ENGINE: Gpu2DEngine, T: utils::Convert>(&self, addr: u32) -> T {
-        let vram_map = match ENGINE {
-            Gpu2DEngine::A => &self.obj_ext_palette_a,
-            Gpu2DEngine::B => &self.obj_ext_palette_b,
-        };
-        utils::read_from_mem(vram_map, addr % vram_map.len() as u32)
     }
 }

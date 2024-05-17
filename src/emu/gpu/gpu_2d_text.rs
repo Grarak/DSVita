@@ -1,6 +1,6 @@
+use crate::emu::gpu::gl::gpu_2d_renderer::GpuMemBuf;
 use crate::emu::gpu::gpu::DISPLAY_WIDTH;
 use crate::emu::gpu::gpu_2d::{Gpu2D, Gpu2DEngine};
-use crate::emu::memory::mem::Memory;
 use bilge::prelude::*;
 
 #[bitsize(16)]
@@ -13,7 +13,7 @@ struct TextBgScreen {
 }
 
 impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
-    pub(super) fn draw_text<const BG: usize>(&mut self, line: u8, mem: &Memory) {
+    pub(super) fn draw_text<const BG: usize>(&mut self, line: u8, mem: &GpuMemBuf) {
         if BG == 0 && bool::from(self.inner.disp_cnt.bg0_3d()) {
             // TODO 3d
             return;
@@ -26,7 +26,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
     }
 
-    pub(super) fn draw_text_pixels<const BG: usize, const BIT8: bool>(&mut self, line: u8, mem: &Memory) {
+    pub(super) fn draw_text_pixels<const BG: usize, const BIT8: bool>(&mut self, line: u8, mem: &GpuMemBuf) {
         let disp_cnt = self.inner.disp_cnt;
         let bg_cnt = self.inner.bg_cnt[BG];
 
@@ -40,22 +40,20 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
             screen_base_addr += if u8::from(bg_cnt.screen_size()) & 1 != 0 { 0x1000 } else { 0x800 };
         }
 
-        let mut palettes_base_addr = Self::get_palettes_offset();
         let read_palettes = if BIT8 && bool::from(disp_cnt.bg_extended_palettes()) {
-            palettes_base_addr = 0;
             if BG < 2 && bool::from(bg_cnt.ext_palette_slot_display_area_overflow()) {
-                if !mem.vram.is_bg_ext_palette_mapped::<ENGINE>(BG + 2) {
+                if !Self::is_bg_ext_palette_mapped(BG + 2, mem) {
                     return;
                 }
-                |mem: &Memory, addr: u32| mem.vram.read_bg_ext_palette::<ENGINE, u16>(BG + 2, addr)
+                |mem: &GpuMemBuf, addr: u32| Self::read_bg_ext_palette::<u16>(BG + 2, addr, mem)
             } else {
-                if !mem.vram.is_bg_ext_palette_mapped::<ENGINE>(BG) {
+                if !Self::is_bg_ext_palette_mapped(BG, mem) {
                     return;
                 }
-                |mem: &Memory, addr: u32| mem.vram.read_bg_ext_palette::<ENGINE, u16>(BG, addr)
+                |mem: &GpuMemBuf, addr: u32| Self::read_bg_ext_palette::<u16>(BG, addr, mem)
             }
         } else {
-            |mem: &Memory, addr: u32| mem.palettes.read(addr)
+            |mem: &GpuMemBuf, addr: u32| Self::read_palettes(addr, mem)
         };
 
         for i in (0..=DISPLAY_WIDTH as u32).step_by(8) {
@@ -66,19 +64,18 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                 screen_addr += 0x800;
             }
 
-            let screen_entry = self.read_bg::<u16>(screen_addr, mem);
+            let screen_entry = Self::read_bg::<u16>(screen_addr, mem);
             let screen_entry = TextBgScreen::from(screen_entry);
 
-            let palette_addr = palettes_base_addr
-                + if BIT8 {
-                    if bool::from(disp_cnt.bg_extended_palettes()) {
-                        u32::from(screen_entry.palette_num()) << 9
-                    } else {
-                        0
-                    }
+            let palette_addr = if BIT8 {
+                if bool::from(disp_cnt.bg_extended_palettes()) {
+                    u32::from(screen_entry.palette_num()) << 9
                 } else {
-                    u32::from(screen_entry.palette_num()) << 5
-                };
+                    0
+                }
+            } else {
+                u32::from(screen_entry.palette_num()) << 5
+            };
 
             let char_index_addr = char_base_addr
                 + if BIT8 {
@@ -87,9 +84,9 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                     (u32::from(screen_entry.tile_num()) << 5) + (if bool::from(screen_entry.v_flip()) { 7 - (y_offset as u32 & 7) } else { y_offset as u32 & 7 } << 2)
                 };
             let mut indices = if BIT8 {
-                self.read_bg::<u32>(char_index_addr, mem) as u64 | ((self.read_bg::<u32>(char_index_addr + 4, mem) as u64) << 32)
+                Self::read_bg::<u32>(char_index_addr, mem) as u64 | ((Self::read_bg::<u32>(char_index_addr + 4, mem) as u64) << 32)
             } else {
-                self.read_bg::<u32>(char_index_addr, mem) as u64
+                Self::read_bg::<u32>(char_index_addr, mem) as u64
             };
 
             let x_origin = i.wrapping_sub(x_offset & 7);
