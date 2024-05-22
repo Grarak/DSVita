@@ -66,11 +66,7 @@ pub struct Menu<'a> {
 }
 
 impl<'a> Menu<'a> {
-    pub fn new<F: Fn(&mut Menu<'a>) -> MenuAction + 'a>(
-        title: impl Into<String>,
-        entries: Vec<Menu<'a>>,
-        on_select: F,
-    ) -> Self {
+    pub fn new<F: Fn(&mut Menu<'a>) -> MenuAction + 'a>(title: impl Into<String>, entries: Vec<Menu<'a>>, on_select: F) -> Self {
         Menu {
             title: title.into(),
             entries,

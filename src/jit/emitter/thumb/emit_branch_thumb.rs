@@ -37,10 +37,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let mut opcodes = Vec::<u32>::new();
 
         opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R9));
-        opcodes.push(AluImm::mov16_al(
-            Reg::R11,
-            self.jit_buf.insts_cycle_counts[buf_index],
-        ));
+        opcodes.push(AluImm::mov16_al(Reg::R11, self.jit_buf.insts_cycle_counts[buf_index]));
 
         opcodes.extend(AluImm::mov32(Reg::R10, new_pc | 1));
 
@@ -55,9 +52,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         Self::emit_host_bx(self.breakout_thumb_addr, &mut opcodes);
 
         if cond != Cond::AL {
-            self.jit_buf
-                .emit_opcodes
-                .push(B::b(opcodes.len() as i32 - 1, !cond));
+            self.jit_buf.emit_opcodes.push(B::b(opcodes.len() as i32 - 1, !cond));
         }
 
         self.jit_buf.emit_opcodes.extend(opcodes);
@@ -70,9 +65,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let lr = (pc as i32 + 4 + op0) as u32;
 
         self.jit_buf.emit_opcodes.extend(AluImm::mov32(Reg::R8, lr));
-        self.jit_buf
-            .emit_opcodes
-            .extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::LR, Reg::R8, Reg::R9));
+        self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::LR, Reg::R8, Reg::R9));
     }
 
     pub fn emit_bl_thumb(&mut self, buf_index: usize, pc: u32) {
@@ -84,10 +77,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let opcodes = &mut self.jit_buf.emit_opcodes;
 
         opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R11));
-        opcodes.push(AluImm::mov16_al(
-            Reg::R9,
-            self.jit_buf.insts_cycle_counts[buf_index],
-        ));
+        opcodes.push(AluImm::mov16_al(Reg::R9, self.jit_buf.insts_cycle_counts[buf_index]));
 
         let thread_regs = get_regs!(self.emu, CPU);
         opcodes.extend(thread_regs.emit_get_reg(Reg::R8, Reg::LR));
@@ -133,10 +123,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         opcodes.extend(AluImm::mov32(pc_tmp_reg, pc));
         opcodes.extend(self.runtime_data.emit_get_branch_out_addr(tmp_reg));
-        opcodes.push(AluImm::mov16_al(
-            tmp_reg2,
-            self.jit_buf.insts_cycle_counts[buf_index],
-        ));
+        opcodes.push(AluImm::mov16_al(tmp_reg2, self.jit_buf.insts_cycle_counts[buf_index]));
 
         if DEBUG_LOG_BRANCH_OUT {
             opcodes.push(LdrStrImm::str_al(pc_tmp_reg, tmp_reg));

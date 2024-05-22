@@ -48,21 +48,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             Op::CmpHT => JitAsm::emit_cmp_h_thumb,
             Op::MovHT => JitAsm::emit_movh_thumb,
 
-            Op::BT
-            | Op::BeqT
-            | Op::BneT
-            | Op::BcsT
-            | Op::BccT
-            | Op::BmiT
-            | Op::BplT
-            | Op::BvsT
-            | Op::BvcT
-            | Op::BhiT
-            | Op::BlsT
-            | Op::BgeT
-            | Op::BltT
-            | Op::BgtT
-            | Op::BleT => JitAsm::emit_b_thumb,
+            Op::BT | Op::BeqT | Op::BneT | Op::BcsT | Op::BccT | Op::BmiT | Op::BplT | Op::BvsT | Op::BvcT | Op::BhiT | Op::BlsT | Op::BgeT | Op::BltT | Op::BgtT | Op::BleT => JitAsm::emit_b_thumb,
             Op::BlSetupT => JitAsm::emit_bl_setup_thumb,
             Op::BlOffT | Op::BlxOffT => JitAsm::emit_bl_thumb,
             Op::BxRegT | Op::BlxRegT => JitAsm::emit_bx_thumb,
@@ -96,10 +82,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             opcodes.extend(&get_regs!(self.emu, CPU).save_regs_thumb_opcodes);
 
             opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::LR));
-            opcodes.push(AluImm::mov16_al(
-                Reg::R3,
-                self.jit_buf.insts_cycle_counts[buf_index],
-            ));
+            opcodes.push(AluImm::mov16_al(Reg::R3, self.jit_buf.insts_cycle_counts[buf_index]));
 
             let thread_regs = get_regs!(self.emu, CPU);
             opcodes.extend(thread_regs.emit_get_reg(Reg::R1, Reg::PC));

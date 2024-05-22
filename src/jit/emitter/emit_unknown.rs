@@ -16,10 +16,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             Self::emit_host_blx(bios_uninterrupt::<CPU> as *const () as _, opcodes);
 
             opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R1));
-            opcodes.push(AluImm::mov16_al(
-                Reg::R2,
-                self.jit_buf.insts_cycle_counts[buf_index],
-            ));
+            opcodes.push(AluImm::mov16_al(Reg::R2, self.jit_buf.insts_cycle_counts[buf_index]));
 
             if DEBUG_LOG_BRANCH_OUT {
                 opcodes.extend(AluImm::mov32(Reg::R0, pc));

@@ -20,16 +20,7 @@ pub struct LdrStrImm {
 
 impl LdrStrImm {
     #[inline]
-    pub fn ldr(
-        rd: Reg,
-        rn: Reg,
-        imm_offset: u16,
-        t_w: bool,
-        byte: bool,
-        add: bool,
-        pre: bool,
-        cond: Cond,
-    ) -> u32 {
+    pub fn ldr(rd: Reg, rn: Reg, imm_offset: u16, t_w: bool, byte: bool, add: bool, pre: bool, cond: Cond) -> u32 {
         u32::from(LdrStrImm::new(
             u12::new(imm_offset),
             u4::new(rd as u8),
@@ -61,16 +52,7 @@ impl LdrStrImm {
     }
 
     #[inline]
-    pub fn str(
-        imm_offset: u16,
-        rd: Reg,
-        rn: Reg,
-        t_w: bool,
-        byte: bool,
-        add: bool,
-        pre: bool,
-        cond: Cond,
-    ) -> u32 {
+    pub fn str(imm_offset: u16, rd: Reg, rn: Reg, t_w: bool, byte: bool, add: bool, pre: bool, cond: Cond) -> u32 {
         u32::from(LdrStrImm::new(
             u12::new(imm_offset),
             u4::new(rd as u8),
@@ -123,14 +105,7 @@ pub struct LdrStrReg {
 
 impl LdrStrReg {
     #[inline]
-    pub fn ldrb(
-        op0: Reg,
-        op1: Reg,
-        op2: Reg,
-        shift_amount: u8,
-        shift_type: ShiftType,
-        cond: Cond,
-    ) -> u32 {
+    pub fn ldrb(op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, cond: Cond) -> u32 {
         u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
@@ -155,14 +130,7 @@ impl LdrStrReg {
     }
 
     #[inline]
-    pub fn ldr(
-        op0: Reg,
-        op1: Reg,
-        op2: Reg,
-        shift_amount: u8,
-        shift_type: ShiftType,
-        cond: Cond,
-    ) -> u32 {
+    pub fn ldr(op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, cond: Cond) -> u32 {
         u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),

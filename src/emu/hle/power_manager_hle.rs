@@ -27,28 +27,13 @@ impl PowerManagerHle {
                 Arm7Hle::send_ipc_fifo(0x8, 0x0300E300, 0, emu);
             }
             4 => {
-                Arm7Hle::send_ipc_fifo(
-                    0x8,
-                    0x03008000 | (((self.data[1] as u32 + 0x70) & 0xFF) << 8),
-                    0,
-                    emu,
-                );
+                Arm7Hle::send_ipc_fifo(0x8, 0x03008000 | (((self.data[1] as u32 + 0x70) & 0xFF) << 8), 0, emu);
             }
             5 => {
-                Arm7Hle::send_ipc_fifo(
-                    0x8,
-                    0x03008000 | (((self.data[1] as u32 + 0x70) & 0xFF) << 8),
-                    0,
-                    emu,
-                );
+                Arm7Hle::send_ipc_fifo(0x8, 0x03008000 | (((self.data[1] as u32 + 0x70) & 0xFF) << 8), 0, emu);
             }
             6 => {
-                Arm7Hle::send_ipc_fifo(
-                    0x8,
-                    0x03008000 | (((self.data[1] as u32 + 0x70) & 0xFF) << 8),
-                    0,
-                    emu,
-                );
+                Arm7Hle::send_ipc_fifo(0x8, 0x03008000 | (((self.data[1] as u32 + 0x70) & 0xFF) << 8), 0, emu);
             }
             _ => {}
         }

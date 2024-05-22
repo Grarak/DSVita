@@ -1,10 +1,7 @@
 use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
 use crate::emu::input::Keycode;
 use crate::presenter::menu::Menu;
-use crate::presenter::{
-    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT,
-    PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN,
-};
+use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN};
 use std::ffi::CString;
 use std::mem::MaybeUninit;
 use std::ptr;
@@ -44,38 +41,13 @@ extern "C" {
 
     pub fn vita2d_texture_get_datap(texture: *const Vita2dTexture) -> *mut c_void;
 
-    pub fn vita2d_draw_texture_part_scale(
-        texture: *const Vita2dTexture,
-        x: c_float,
-        y: c_float,
-        tex_x: c_float,
-        tex_y: c_float,
-        tex_w: c_float,
-        tex_h: c_float,
-        x_scale: c_float,
-        y_scale: c_float,
-    );
+    pub fn vita2d_draw_texture_part_scale(texture: *const Vita2dTexture, x: c_float, y: c_float, tex_x: c_float, tex_y: c_float, tex_w: c_float, tex_h: c_float, x_scale: c_float, y_scale: c_float);
 
     pub fn vita2d_load_default_pgf() -> *mut Vita2dPgf;
     pub fn vita2d_free_pgf(font: *mut Vita2dPgf);
-    pub fn vita2d_pgf_draw_text(
-        font: *mut Vita2dPgf,
-        x: c_int,
-        y: c_int,
-        color: c_uint,
-        scale: c_float,
-        text: *const c_char,
-    ) -> c_int;
-    pub fn vita2d_pgf_text_width(
-        font: *mut Vita2dPgf,
-        scale: c_float,
-        text: *const c_char,
-    ) -> c_int;
-    pub fn vita2d_pgf_text_height(
-        font: *mut Vita2dPgf,
-        scale: c_float,
-        text: *const c_char,
-    ) -> c_int;
+    pub fn vita2d_pgf_draw_text(font: *mut Vita2dPgf, x: c_int, y: c_int, color: c_uint, scale: c_float, text: *const c_char) -> c_int;
+    pub fn vita2d_pgf_text_width(font: *mut Vita2dPgf, scale: c_float, text: *const c_char) -> c_int;
+    pub fn vita2d_pgf_text_height(font: *mut Vita2dPgf, scale: c_float, text: *const c_char) -> c_int;
 }
 
 const fn rgba8(r: u8, g: u8, b: u8, a: u8) -> u32 {
@@ -106,12 +78,7 @@ impl PresenterAudio {
     fn new() -> Self {
         unsafe {
             PresenterAudio {
-                audio_port: sceAudioOutOpenPort(
-                    SCE_AUDIO_OUT_PORT_TYPE_MAIN,
-                    PRESENTER_AUDIO_BUF_SIZE as _,
-                    PRESENTER_AUDIO_SAMPLE_RATE as _,
-                    SCE_AUDIO_OUT_MODE_STEREO,
-                ),
+                audio_port: sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN, PRESENTER_AUDIO_BUF_SIZE as _, PRESENTER_AUDIO_SAMPLE_RATE as _, SCE_AUDIO_OUT_MODE_STEREO),
             }
         }
     }
@@ -141,8 +108,7 @@ impl Presenter {
             vita2d_set_vblank_wait(0);
             let pgf = vita2d_load_default_pgf();
             let top_texture = vita2d_create_empty_texture(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
-            let bottom_texture =
-                vita2d_create_empty_texture(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+            let bottom_texture = vita2d_create_empty_texture(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
             sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START);
 
@@ -193,10 +159,7 @@ impl Presenter {
                 self.keymap |= 1 << 16;
             }
         }
-        PresentEvent::Inputs {
-            keymap: self.keymap,
-            touch,
-        }
+        PresentEvent::Inputs { keymap: self.keymap, touch }
     }
 
     pub fn present_menu(&mut self, menu: &Menu) {
@@ -207,14 +170,7 @@ impl Presenter {
             let title = CString::new(menu.title.clone()).unwrap();
             let mut y_offset = vita2d_pgf_text_height(self.pgf, 1f32, title.as_c_str().as_ptr());
 
-            vita2d_pgf_draw_text(
-                self.pgf,
-                0,
-                y_offset,
-                rgba8(0, 0, 255, 255),
-                1f32,
-                title.as_c_str().as_ptr(),
-            );
+            vita2d_pgf_draw_text(self.pgf, 0, y_offset, rgba8(0, 0, 255, 255), 1f32, title.as_c_str().as_ptr());
 
             y_offset *= 2;
 
@@ -225,11 +181,7 @@ impl Presenter {
                     self.pgf,
                     0,
                     y_offset,
-                    if menu.selected == i {
-                        rgba8(0, 255, 0, 255)
-                    } else {
-                        rgba8(255, 255, 255, 255)
-                    },
+                    if menu.selected == i { rgba8(0, 255, 0, 255) } else { rgba8(255, 255, 255, 255) },
                     1f32,
                     title.as_c_str().as_ptr(),
                 );
@@ -240,19 +192,12 @@ impl Presenter {
         }
     }
 
-    pub fn present_textures(
-        &mut self,
-        top: &[u32; DISPLAY_PIXEL_COUNT],
-        bottom: &[u32; DISPLAY_PIXEL_COUNT],
-        fps: u16,
-    ) {
+    pub fn present_textures(&mut self, top: &[u32; DISPLAY_PIXEL_COUNT], bottom: &[u32; DISPLAY_PIXEL_COUNT], fps: u16) {
         let fps_str = CString::new(format!("Internal fps {}", fps)).unwrap();
 
         unsafe {
-            self.top_texture_data_ptr
-                .copy_from(top.as_ptr(), DISPLAY_PIXEL_COUNT);
-            self.bottom_texture_data_ptr
-                .copy_from(bottom.as_ptr(), DISPLAY_PIXEL_COUNT);
+            self.top_texture_data_ptr.copy_from(top.as_ptr(), DISPLAY_PIXEL_COUNT);
+            self.bottom_texture_data_ptr.copy_from(bottom.as_ptr(), DISPLAY_PIXEL_COUNT);
 
             vita2d_start_drawing();
             vita2d_clear_screen();
@@ -285,11 +230,7 @@ impl Presenter {
                 self.pgf,
                 (PRESENTER_SCREEN_WIDTH - 170) as _,
                 40,
-                if fps < 60 {
-                    rgba8(255, 0, 0, 255)
-                } else {
-                    rgba8(0, 255, 0, 255)
-                },
+                if fps < 60 { rgba8(255, 0, 0, 255) } else { rgba8(0, 255, 0, 255) },
                 1f32,
                 fps_str.as_c_str().as_ptr(),
             );

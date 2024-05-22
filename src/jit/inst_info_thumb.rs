@@ -13,14 +13,7 @@ pub struct InstInfoThumb {
 }
 
 impl InstInfoThumb {
-    pub fn new(
-        opcode: u16,
-        op: Op,
-        operands: Operands,
-        src_regs: RegReserve,
-        out_regs: RegReserve,
-        cycle: u8,
-    ) -> Self {
+    pub fn new(opcode: u16, op: Op, operands: Operands, src_regs: RegReserve, out_regs: RegReserve, cycle: u8) -> Self {
         InstInfoThumb {
             opcode,
             op,

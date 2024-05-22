@@ -10,12 +10,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
             |_, _| {},
-            &[
-                Some(jit_asm_addr),
-                Some(inst_info.opcode),
-                Some(ExceptionVector::SoftwareInterrupt as u32),
-                Some(pc),
-            ],
+            &[Some(jit_asm_addr), Some(inst_info.opcode), Some(ExceptionVector::SoftwareInterrupt as u32), Some(pc)],
             exception_handler::<CPU, THUMB> as _,
         ));
     }

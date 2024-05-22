@@ -87,10 +87,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
 
             opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R1));
-            opcodes.push(AluImm::mov16_al(
-                Reg::R5,
-                self.jit_buf.insts_cycle_counts[buf_index],
-            ));
+            opcodes.push(AluImm::mov16_al(Reg::R5, self.jit_buf.insts_cycle_counts[buf_index]));
 
             if CPU == CpuType::ARM7 || !op.is_single_mem_transfer() {
                 opcodes.extend(regs.emit_get_reg(Reg::R2, Reg::PC));
@@ -98,14 +95,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     opcodes.extend(regs.emit_get_reg(Reg::R3, Reg::CPSR));
                     opcodes.push(AluImm::mov_al(Reg::R4, 1));
                     opcodes.push(AluShiftImm::bic_al(Reg::R2, Reg::R2, Reg::R4));
-                    opcodes.push(AluShiftImm::and(
-                        Reg::R3,
-                        Reg::R4,
-                        Reg::R3,
-                        ShiftType::Lsr,
-                        5,
-                        Cond::AL,
-                    ));
+                    opcodes.push(AluShiftImm::and(Reg::R3, Reg::R4, Reg::R3, ShiftType::Lsr, 5, Cond::AL));
                     opcodes.push(AluShiftImm::orr_al(Reg::R2, Reg::R2, Reg::R3));
                 } else {
                     opcodes.push(AluImm::bic_al(Reg::R2, Reg::R2, 1));
@@ -116,14 +106,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 opcodes.extend(regs.emit_get_reg(Reg::R3, Reg::CPSR));
                 opcodes.push(AluImm::mov_al(Reg::R4, 1));
                 opcodes.push(AluShiftImm::bic_al(Reg::R2, Reg::R2, Reg::R4));
-                opcodes.push(AluShiftImm::and(
-                    Reg::R3,
-                    Reg::R4,
-                    Reg::R3,
-                    ShiftType::Lsr,
-                    5,
-                    Cond::AL,
-                ));
+                opcodes.push(AluShiftImm::and(Reg::R3, Reg::R4, Reg::R3, ShiftType::Lsr, 5, Cond::AL));
                 opcodes.push(AluShiftImm::orr_al(Reg::R2, Reg::R2, Reg::R3));
                 opcodes.extend(regs.emit_set_reg(Reg::PC, Reg::R2, Reg::R3));
             }
@@ -144,9 +127,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     let opcode = &mut self.jit_buf.emit_opcodes[0];
                     *opcode = (*opcode & !(0xF << 28)) | ((cond as u32) << 28);
                 } else {
-                    self.jit_buf
-                        .emit_opcodes
-                        .insert(0, B::b(len as i32 - 1, !cond));
+                    self.jit_buf.emit_opcodes.insert(0, B::b(len as i32 - 1, !cond));
                 }
             } else {
                 self.jit_buf.emit_opcodes.clear();
@@ -210,9 +191,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
             let reg = Reg::from(FIRST_EMULATED_REG as u8 + index as u8);
             if reg == Reg::PC {
-                if inst_info.op.is_alu_reg_shift()
-                    && *og_inst_info.operands().last().unwrap().as_reg().unwrap().0 == Reg::PC
-                {
+                if inst_info.op.is_alu_reg_shift() && *og_inst_info.operands().last().unwrap().as_reg().unwrap().0 == Reg::PC {
                     opcodes.extend(&AluImm::mov32(*mapped_reg, pc + 12));
                 } else {
                     opcodes.extend(&AluImm::mov32(*mapped_reg, pc + 8));
@@ -235,8 +214,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         for operand in inst_info.operands_mut() {
             if let Operand::Reg { reg, .. } = operand {
                 if emulated_out_regs.is_reserved(*reg) {
-                    let mapped_reg =
-                        &mut reg_mapping[(*reg as u8 - FIRST_EMULATED_REG as u8) as usize];
+                    let mapped_reg = &mut reg_mapping[(*reg as u8 - FIRST_EMULATED_REG as u8) as usize];
                     if *mapped_reg == Reg::None {
                         *mapped_reg = out_reserved.pop().unwrap();
                     }
@@ -261,11 +239,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 if out_addr.is_none() {
                     out_addr = Some(out_reserved.pop().unwrap());
                 }
-                opcodes_after_save.extend(get_regs!(self.emu, CPU).emit_set_reg(
-                    reg,
-                    mapped_reg,
-                    out_addr.unwrap(),
-                ));
+                opcodes_after_save.extend(get_regs!(self.emu, CPU).emit_set_reg(reg, mapped_reg, out_addr.unwrap()));
             }
 
             if let Some(opcode) = out_reserved.emit_push_stack(Reg::LR) {
@@ -293,20 +267,11 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         jit_buf.push(Bx::blx(Reg::LR, Cond::AL));
     }
 
-    pub fn emit_call_host_func<F: FnOnce(&Self, &mut Vec<u32>)>(
-        &self,
-        after_host_restore: F,
-        args: &[Option<u32>],
-        func_addr: *const (),
-    ) -> Vec<u32> {
+    pub fn emit_call_host_func<F: FnOnce(&Self, &mut Vec<u32>)>(&self, after_host_restore: F, args: &[Option<u32>], func_addr: *const ()) -> Vec<u32> {
         let mut opcodes = Vec::new();
 
         let thumb = get_regs!(self.emu, CPU).is_thumb();
-        opcodes.extend(if thumb {
-            &self.restore_host_thumb_opcodes
-        } else {
-            &self.restore_host_opcodes
-        });
+        opcodes.extend(if thumb { &self.restore_host_thumb_opcodes } else { &self.restore_host_opcodes });
 
         if args.len() > 4 {
             todo!()
@@ -322,21 +287,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         Self::emit_host_blx(func_addr as u32, &mut opcodes);
 
-        opcodes.extend(if thumb {
-            &self.restore_guest_thumb_opcodes
-        } else {
-            &self.restore_guest_opcodes
-        });
+        opcodes.extend(if thumb { &self.restore_guest_thumb_opcodes } else { &self.restore_guest_opcodes });
         opcodes
     }
 
     pub fn handle_cpsr(&mut self, host_cpsr_reg: Reg, guest_cpsr_reg: Reg) {
-        self.jit_buf
-            .emit_opcodes
-            .push(Mrs::cpsr(host_cpsr_reg, Cond::AL));
-        self.jit_buf
-            .emit_opcodes
-            .extend(get_regs!(self.emu, CPU).emit_get_reg(guest_cpsr_reg, Reg::CPSR));
+        self.jit_buf.emit_opcodes.push(Mrs::cpsr(host_cpsr_reg, Cond::AL));
+        self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(guest_cpsr_reg, Reg::CPSR));
 
         // Only copy the cond flags from host cpsr
         self.jit_buf.emit_opcodes.push(AluImm::and(
@@ -353,18 +310,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             4, // 8 Bytes, steps of 2
             Cond::AL,
         ));
-        self.jit_buf.emit_opcodes.push(AluShiftImm::orr_al(
-            guest_cpsr_reg,
-            host_cpsr_reg,
-            guest_cpsr_reg,
-        ));
-        self.jit_buf
-            .emit_opcodes
-            .extend(get_regs!(self.emu, CPU).emit_set_reg(
-                Reg::CPSR,
-                guest_cpsr_reg,
-                host_cpsr_reg,
-            ));
+        self.jit_buf.emit_opcodes.push(AluShiftImm::orr_al(guest_cpsr_reg, host_cpsr_reg, guest_cpsr_reg));
+        self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::CPSR, guest_cpsr_reg, host_cpsr_reg));
     }
 }
 

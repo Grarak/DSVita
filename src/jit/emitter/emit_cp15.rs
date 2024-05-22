@@ -16,17 +16,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let mut opcodes = Vec::new();
 
-        opcodes.extend(self.emit_call_host_func(
-            |_, _| {},
-            &[Some(cpu_regs_addr), Some(0)],
-            cpu_regs_halt::<CPU> as *const (),
-        ));
+        opcodes.extend(self.emit_call_host_func(|_, _| {}, &[Some(cpu_regs_addr), Some(0)], cpu_regs_halt::<CPU> as *const ()));
 
         opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R1));
-        opcodes.push(AluImm::mov16_al(
-            Reg::R4,
-            self.jit_buf.insts_cycle_counts[buf_index],
-        ));
+        opcodes.push(AluImm::mov16_al(Reg::R4, self.jit_buf.insts_cycle_counts[buf_index]));
 
         if DEBUG_LOG_BRANCH_OUT {
             opcodes.extend(AluImm::mov32(Reg::R0, pc));
@@ -62,26 +55,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.emit_halt(buf_index, pc);
         } else {
             let (args, addr) = match inst_info.op {
-                Op::Mcr => (
-                    [
-                        Some(get_cp15_mut!(self.emu, CPU) as *mut _ as _),
-                        Some(cp15_reg),
-                        None,
-                        Some(emu_addr),
-                    ],
-                    cp15_write as _,
-                ),
+                Op::Mcr => ([Some(get_cp15_mut!(self.emu, CPU) as *mut _ as _), Some(cp15_reg), None, Some(emu_addr)], cp15_write as _),
                 Op::Mrc => {
                     let reg_addr = get_regs_mut!(self.emu, CPU).get_reg_mut(*rd) as *mut _ as u32;
-                    (
-                        [
-                            Some(get_cp15!(self.emu, CPU) as *const _ as _),
-                            Some(cp15_reg),
-                            Some(reg_addr),
-                            None,
-                        ],
-                        cp15_read as _,
-                    )
+                    ([Some(get_cp15!(self.emu, CPU) as *const _ as _), Some(cp15_reg), Some(reg_addr), None], cp15_read as _)
                 }
                 _ => {
                     unreachable!()

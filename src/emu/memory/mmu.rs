@@ -45,9 +45,7 @@ impl MmuArm9Inner {
 
             match addr & 0xFF000000 {
                 regions::MAIN_MEMORY_OFFSET => *read_ptr = get_mem!(emu).main.get_ptr(addr) as u32,
-                regions::SHARED_WRAM_OFFSET => {
-                    *read_ptr = get_mem!(emu).wram.get_ptr::<{ ARM9 }>(addr) as u32
-                }
+                regions::SHARED_WRAM_OFFSET => *read_ptr = get_mem!(emu).wram.get_ptr::<{ ARM9 }>(addr) as u32,
                 // regions::VRAM_OFFSET => *read_ptr = emu.mem.vram.get_ptr::<{ ARM9 }>(addr) as u32,
                 0xFF000000 => {
                     if addr & 0xFFFF8000 == regions::ARM9_BIOS_OFFSET {
@@ -62,10 +60,7 @@ impl MmuArm9Inner {
                 if cp15.itcm_state == TcmState::RW {
                     *read_ptr = get_mem!(emu).tcm.get_itcm_ptr(addr) as u32;
                 }
-            } else if addr >= cp15.dtcm_addr
-                && addr < cp15.dtcm_addr + cp15.dtcm_size
-                && cp15.dtcm_state == TcmState::RW
-            {
+            } else if addr >= cp15.dtcm_addr && addr < cp15.dtcm_addr + cp15.dtcm_size && cp15.dtcm_state == TcmState::RW {
                 *read_ptr = get_mem!(emu).tcm.get_dtcm_ptr(addr) as u32;
             }
         }
@@ -101,28 +96,18 @@ impl Mmu for MmuArm9 {
 
     fn update_itcm(&self, emu: &Emu) {
         let inner = unsafe { self.inner.get().as_mut().unwrap_unchecked() };
-        inner.update(
-            regions::INSTRUCTION_TCM_OFFSET,
-            max(inner.current_itcm_size, get_cp15!(emu, ARM9).itcm_size),
-            emu,
-        );
+        inner.update(regions::INSTRUCTION_TCM_OFFSET, max(inner.current_itcm_size, get_cp15!(emu, ARM9).itcm_size), emu);
     }
 
     fn update_dtcm(&self, emu: &Emu) {
         let inner = unsafe { self.inner.get().as_mut().unwrap_unchecked() };
-        inner.update(
-            inner.current_dtcm_addr,
-            inner.current_dtcm_addr + inner.current_dtcm_size,
-            emu,
-        );
+        inner.update(inner.current_dtcm_addr, inner.current_dtcm_addr + inner.current_dtcm_size, emu);
         let cp15 = get_cp15!(emu, ARM9);
         inner.update(cp15.dtcm_addr, cp15.dtcm_addr + cp15.dtcm_size, emu);
     }
 
     fn update_wram(&self, emu: &Emu) {
-        unsafe {
-            (*self.inner.get()).update(regions::SHARED_WRAM_OFFSET, regions::IO_PORTS_OFFSET, emu)
-        };
+        unsafe { (*self.inner.get()).update(regions::SHARED_WRAM_OFFSET, regions::IO_PORTS_OFFSET, emu) };
     }
 
     fn update_vram(&self, emu: &Emu) {
@@ -137,26 +122,11 @@ impl Mmu for MmuArm9 {
             }};
         }
 
-        update_range!(
-            regions::VRAM_OFFSET + vram::BG_A_OFFSET,
-            regions::VRAM_OFFSET + vram::BG_A_OFFSET + vram::BG_A_SIZE
-        );
-        update_range!(
-            regions::VRAM_OFFSET + vram::BG_B_OFFSET,
-            regions::VRAM_OFFSET + vram::BG_B_OFFSET + vram::BG_B_SIZE
-        );
-        update_range!(
-            regions::VRAM_OFFSET + vram::OBJ_A_OFFSET,
-            regions::VRAM_OFFSET + vram::OBJ_A_OFFSET + vram::OBJ_A_SIZE
-        );
-        update_range!(
-            regions::VRAM_OFFSET + vram::OBJ_B_OFFSET,
-            regions::VRAM_OFFSET + vram::OBJ_B_OFFSET + vram::OBJ_B_OFFSET
-        );
-        update_range!(
-            regions::VRAM_OFFSET + vram::LCDC_OFFSET,
-            regions::VRAM_OFFSET + vram::LCDC_OFFSET + vram::TOTAL_SIZE as u32
-        );
+        update_range!(regions::VRAM_OFFSET + vram::BG_A_OFFSET, regions::VRAM_OFFSET + vram::BG_A_OFFSET + vram::BG_A_SIZE);
+        update_range!(regions::VRAM_OFFSET + vram::BG_B_OFFSET, regions::VRAM_OFFSET + vram::BG_B_OFFSET + vram::BG_B_SIZE);
+        update_range!(regions::VRAM_OFFSET + vram::OBJ_A_OFFSET, regions::VRAM_OFFSET + vram::OBJ_A_OFFSET + vram::OBJ_A_SIZE);
+        update_range!(regions::VRAM_OFFSET + vram::OBJ_B_OFFSET, regions::VRAM_OFFSET + vram::OBJ_B_OFFSET + vram::OBJ_B_OFFSET);
+        update_range!(regions::VRAM_OFFSET + vram::LCDC_OFFSET, regions::VRAM_OFFSET + vram::LCDC_OFFSET + vram::TOTAL_SIZE as u32);
     }
 
     fn get_base_ptr(&self, addr: u32) -> *const u8 {
@@ -174,9 +144,7 @@ struct MmuArm7Inner {
 
 impl MmuArm7Inner {
     fn new() -> Self {
-        MmuArm7Inner {
-            read_map: HeapMemU32::new(),
-        }
+        MmuArm7Inner { read_map: HeapMemU32::new() }
     }
 
     fn update(&mut self, start: u32, end: u32, emu: &Emu) {
@@ -191,9 +159,7 @@ impl MmuArm7Inner {
                     }
                 }
                 regions::MAIN_MEMORY_OFFSET => *read_ptr = get_mem!(emu).main.get_ptr(addr) as u32,
-                regions::SHARED_WRAM_OFFSET => {
-                    *read_ptr = get_mem!(emu).wram.get_ptr::<{ ARM7 }>(addr) as u32
-                }
+                regions::SHARED_WRAM_OFFSET => *read_ptr = get_mem!(emu).wram.get_ptr::<{ ARM7 }>(addr) as u32,
                 // regions::VRAM_OFFSET => *read_ptr = emu.mem.vram.get_ptr::<{ ARM7 }>(addr) as u32,
                 _ => {}
             }
@@ -232,9 +198,7 @@ impl Mmu for MmuArm7 {
     }
 
     fn update_wram(&self, emu: &Emu) {
-        unsafe {
-            (*self.inner.get()).update(regions::SHARED_WRAM_OFFSET, regions::IO_PORTS_OFFSET, emu)
-        };
+        unsafe { (*self.inner.get()).update(regions::SHARED_WRAM_OFFSET, regions::IO_PORTS_OFFSET, emu) };
     }
 
     fn update_vram(&self, emu: &Emu) {

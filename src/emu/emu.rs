@@ -39,12 +39,8 @@ pub(crate) use get_regs;
 macro_rules! get_regs_mut {
     ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::emu::CpuType::ARM9 => {
-                crate::emu::emu::get_common_mut!($emu).cpus.arm9.regs_mut()
-            }
-            crate::emu::CpuType::ARM7 => {
-                crate::emu::emu::get_common_mut!($emu).cpus.arm7.regs_mut()
-            }
+            crate::emu::CpuType::ARM9 => crate::emu::emu::get_common_mut!($emu).cpus.arm9.regs_mut(),
+            crate::emu::CpuType::ARM7 => crate::emu::emu::get_common_mut!($emu).cpus.arm7.regs_mut(),
         }
     }};
 }
@@ -63,20 +59,8 @@ pub(crate) use get_cpu_regs;
 macro_rules! get_cpu_regs_mut {
     ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::emu::CpuType::ARM9 => {
-                &mut crate::emu::emu::get_common_mut!($emu)
-                    .cpus
-                    .arm9
-                    .regs_mut()
-                    .cpu
-            }
-            crate::emu::CpuType::ARM7 => {
-                &mut crate::emu::emu::get_common_mut!($emu)
-                    .cpus
-                    .arm7
-                    .regs_mut()
-                    .cpu
-            }
+            crate::emu::CpuType::ARM9 => &mut crate::emu::emu::get_common_mut!($emu).cpus.arm9.regs_mut().cpu,
+            crate::emu::CpuType::ARM7 => &mut crate::emu::emu::get_common_mut!($emu).cpus.arm7.regs_mut().cpu,
         }
     }};
 }
@@ -95,12 +79,8 @@ pub(crate) use get_cp15;
 macro_rules! get_cp15_mut {
     ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::emu::CpuType::ARM9 => {
-                crate::emu::emu::get_common_mut!($emu).cpus.arm9.cp15_mut()
-            }
-            crate::emu::CpuType::ARM7 => {
-                crate::emu::emu::get_common_mut!($emu).cpus.arm7.cp15_mut()
-            }
+            crate::emu::CpuType::ARM9 => crate::emu::emu::get_common_mut!($emu).cpus.arm9.cp15_mut(),
+            crate::emu::CpuType::ARM7 => crate::emu::emu::get_common_mut!($emu).cpus.arm7.cp15_mut(),
         }
     }};
 }
@@ -170,12 +150,8 @@ pub(crate) use get_jit_mut;
 macro_rules! get_mmu {
     ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::emu::CpuType::ARM9 => {
-                &crate::emu::emu::get_mem!($emu).mmu_arm9 as &dyn crate::emu::memory::mmu::Mmu
-            }
-            crate::emu::CpuType::ARM7 => {
-                &crate::emu::emu::get_mem!($emu).mmu_arm7 as &dyn crate::emu::memory::mmu::Mmu
-            }
+            crate::emu::CpuType::ARM9 => &crate::emu::emu::get_mem!($emu).mmu_arm9 as &dyn crate::emu::memory::mmu::Mmu,
+            crate::emu::CpuType::ARM7 => &crate::emu::emu::get_mem!($emu).mmu_arm7 as &dyn crate::emu::memory::mmu::Mmu,
         }
     }};
 }
@@ -263,12 +239,7 @@ pub struct Common {
 }
 
 impl Common {
-    fn new(
-        cartridge_reader: CartridgeReader,
-        swapchain: Arc<Swapchain>,
-        fps: Arc<AtomicU16>,
-        key_map: Arc<AtomicU32>,
-    ) -> Self {
+    fn new(cartridge_reader: CartridgeReader, swapchain: Arc<Swapchain>, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>) -> Self {
         Common {
             ipc: Ipc::new(),
             cartridge: Cartridge::new(cartridge_reader),
@@ -287,14 +258,7 @@ pub struct Emu {
 }
 
 impl Emu {
-    pub fn new(
-        cartridge_reader: CartridgeReader,
-        swapchain: Arc<Swapchain>,
-        fps: Arc<AtomicU16>,
-        key_map: Arc<AtomicU32>,
-        touch_points: Arc<AtomicU16>,
-        sound_sampler: Arc<SoundSampler>,
-    ) -> Self {
+    pub fn new(cartridge_reader: CartridgeReader, swapchain: Arc<Swapchain>, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
         Emu {
             common: UnsafeCell::new(Common::new(cartridge_reader, swapchain, fps, key_map)),
             mem: UnsafeCell::new(Memory::new(touch_points, sound_sampler)),
@@ -310,15 +274,7 @@ impl Emu {
         unsafe { (*self.mem.get()).read_no_tcm::<CPU, T>(addr, self) }
     }
 
-    pub fn mem_read_with_options<
-        const CPU: CpuType,
-        const TCM: bool,
-        const MMU: bool,
-        T: Convert,
-    >(
-        &mut self,
-        addr: u32,
-    ) -> T {
+    pub fn mem_read_with_options<const CPU: CpuType, const TCM: bool, const MMU: bool, T: Convert>(&mut self, addr: u32) -> T {
         unsafe { (*self.mem.get()).read_with_options::<CPU, TCM, MMU, T>(addr, self) }
     }
 

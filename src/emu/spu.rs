@@ -13,8 +13,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 pub const CHANNEL_COUNT: usize = 16;
 const SAMPLE_RATE: usize = 32768;
-const SAMPLE_BUFFER_SIZE: usize =
-    SAMPLE_RATE * PRESENTER_AUDIO_BUF_SIZE / PRESENTER_AUDIO_SAMPLE_RATE;
+const SAMPLE_BUFFER_SIZE: usize = SAMPLE_RATE * PRESENTER_AUDIO_BUF_SIZE / PRESENTER_AUDIO_SAMPLE_RATE;
 
 pub struct SoundSampler {
     samples: Mutex<VecDeque<HeapMemU32<{ SAMPLE_BUFFER_SIZE }>>>,
@@ -46,10 +45,7 @@ impl SoundSampler {
     pub fn consume(&self, ret: &mut [u32; PRESENTER_AUDIO_BUF_SIZE]) {
         let samples = {
             let samples = self.samples.lock().unwrap();
-            let mut samples = self
-                .cond_var
-                .wait_while(samples, |samples| samples.is_empty())
-                .unwrap();
+            let mut samples = self.cond_var.wait_while(samples, |samples| samples.is_empty()).unwrap();
             samples.pop_front().unwrap()
         };
         for i in 0..PRESENTER_AUDIO_BUF_SIZE {
@@ -61,14 +57,10 @@ impl SoundSampler {
 const ADPCM_INDEX_TABLE: [i8; 8] = [-1, -1, -1, -1, 2, 4, 6, 8];
 
 const ADPCM_TABLE: [i16; 89] = [
-    0x0007, 0x0008, 0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x000E, 0x0010, 0x0011, 0x0013, 0x0015,
-    0x0017, 0x0019, 0x001C, 0x001F, 0x0022, 0x0025, 0x0029, 0x002D, 0x0032, 0x0037, 0x003C, 0x0042,
-    0x0049, 0x0050, 0x0058, 0x0061, 0x006B, 0x0076, 0x0082, 0x008F, 0x009D, 0x00AD, 0x00BE, 0x00D1,
-    0x00E6, 0x00FD, 0x0117, 0x0133, 0x0151, 0x0173, 0x0198, 0x01C1, 0x01EE, 0x0220, 0x0256, 0x0292,
-    0x02D4, 0x031C, 0x036C, 0x03C3, 0x0424, 0x048E, 0x0502, 0x0583, 0x0610, 0x06AB, 0x0756, 0x0812,
-    0x08E0, 0x09C3, 0x0ABD, 0x0BD0, 0x0CFF, 0x0E4C, 0x0FBA, 0x114C, 0x1307, 0x14EE, 0x1706, 0x1954,
-    0x1BDC, 0x1EA5, 0x21B6, 0x2515, 0x28CA, 0x2CDF, 0x315B, 0x364B, 0x3BB9, 0x41B2, 0x4844, 0x4F7E,
-    0x5771, 0x602F, 0x69CE, 0x7462, 0x7FFF,
+    0x0007, 0x0008, 0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x000E, 0x0010, 0x0011, 0x0013, 0x0015, 0x0017, 0x0019, 0x001C, 0x001F, 0x0022, 0x0025, 0x0029, 0x002D, 0x0032, 0x0037, 0x003C, 0x0042,
+    0x0049, 0x0050, 0x0058, 0x0061, 0x006B, 0x0076, 0x0082, 0x008F, 0x009D, 0x00AD, 0x00BE, 0x00D1, 0x00E6, 0x00FD, 0x0117, 0x0133, 0x0151, 0x0173, 0x0198, 0x01C1, 0x01EE, 0x0220, 0x0256, 0x0292,
+    0x02D4, 0x031C, 0x036C, 0x03C3, 0x0424, 0x048E, 0x0502, 0x0583, 0x0610, 0x06AB, 0x0756, 0x0812, 0x08E0, 0x09C3, 0x0ABD, 0x0BD0, 0x0CFF, 0x0E4C, 0x0FBA, 0x114C, 0x1307, 0x14EE, 0x1706, 0x1954,
+    0x1BDC, 0x1EA5, 0x21B6, 0x2515, 0x28CA, 0x2CDF, 0x315B, 0x364B, 0x3BB9, 0x41B2, 0x4844, 0x4F7E, 0x5771, 0x602F, 0x69CE, 0x7462, 0x7FFF,
 ];
 
 #[bitsize(32)]
@@ -208,14 +200,12 @@ impl Spu {
         let was_disabled = !bool::from(self.channels[channel].cnt.start_status());
 
         mask &= 0xFF7F837F;
-        self.channels[channel].cnt =
-            ((u32::from(self.channels[channel].cnt) & !mask) | (value & mask)).into();
+        self.channels[channel].cnt = ((u32::from(self.channels[channel].cnt) & !mask) | (value & mask)).into();
 
         if was_disabled
             && bool::from(self.channels[channel].cnt.start_status())
             && bool::from(self.main_sound_cnt.master_enable())
-            && (self.channels[channel].sad != 0
-                || self.channels[channel].cnt.get_format() == SoundChannelFormat::PsgNoise)
+            && (self.channels[channel].sad != 0 || self.channels[channel].cnt.get_format() == SoundChannelFormat::PsgNoise)
         {
             self.start_channel(channel, emu);
         } else if !bool::from(self.channels[channel].cnt.start_status()) {
@@ -228,10 +218,7 @@ impl Spu {
         self.channels[channel].sad = (self.channels[channel].sad & !mask) | (value & mask);
 
         if self.channels[channel].cnt.get_format() != SoundChannelFormat::PsgNoise {
-            if self.channels[channel].sad != 0
-                && (bool::from(self.main_sound_cnt.master_enable())
-                    && bool::from(self.channels[channel].cnt.start_status()))
-            {
+            if self.channels[channel].sad != 0 && (bool::from(self.main_sound_cnt.master_enable()) && bool::from(self.channels[channel].cnt.start_status())) {
                 self.start_channel(channel, emu);
             } else {
                 self.channels[channel].active = false;
@@ -260,10 +247,7 @@ impl Spu {
 
         if was_disabled && bool::from(self.main_sound_cnt.master_enable()) {
             for i in 0..CHANNEL_COUNT {
-                if bool::from(self.channels[i].cnt.start_status())
-                    && (self.channels[i].sad != 0
-                        || self.channels[i].cnt.get_format() == SoundChannelFormat::PsgNoise)
-                {
+                if bool::from(self.channels[i].cnt.start_status()) && (self.channels[i].sad != 0 || self.channels[i].cnt.get_format() == SoundChannelFormat::PsgNoise) {
                     self.start_channel(i, emu);
                 }
             }
@@ -322,8 +306,7 @@ impl Spu {
     }
 
     fn next_sample_adpcm(channel: &mut SpuChannel, emu: &mut Emu) {
-        if channel.sad_current == channel.sad + ((channel.pnt as u32) << 2) && !channel.adpcm_toggle
-        {
+        if channel.sad_current == channel.sad + ((channel.pnt as u32) << 2) && !channel.adpcm_toggle {
             channel.adpcm_loop_value = channel.adpcm_value;
             channel.adpcm_loop_index = channel.adpcm_index;
         }
@@ -331,11 +314,7 @@ impl Spu {
         let sad_current = channel.sad_current;
         let adpcm_data = emu.mem_read::<{ ARM7 }, u8>(sad_current);
 
-        let adpcm_data = if channel.adpcm_toggle {
-            adpcm_data >> 4
-        } else {
-            adpcm_data & 0xF
-        };
+        let adpcm_data = if channel.adpcm_toggle { adpcm_data >> 4 } else { adpcm_data & 0xF };
 
         let mut diff = (ADPCM_TABLE[channel.adpcm_index as usize] / 8) as i32;
         if adpcm_data & 1 != 0 {
@@ -371,8 +350,7 @@ impl Spu {
         } else if channel_num >= 14 {
             self.noise_values[channel_num - 14] &= !(1 << 15);
             if self.noise_values[channel_num - 14] & 1 != 0 {
-                self.noise_values[channel_num - 14] =
-                    (1 << 15) | ((self.noise_values[channel_num - 14] >> 1) ^ 0x6000);
+                self.noise_values[channel_num - 14] = (1 << 15) | ((self.noise_values[channel_num - 14] >> 1) ^ 0x6000);
             } else {
                 self.noise_values[channel_num - 14] >>= 1;
             }
@@ -405,13 +383,8 @@ impl Spu {
             let format = get_channel!(emu, i).cnt.get_format();
 
             let mut data = match format {
-                SoundChannelFormat::Pcm8 => {
-                    (emu.mem_read::<{ ARM7 }, u8>(get_channel!(emu, i).sad_current) as i8 as i64)
-                        << 8
-                }
-                SoundChannelFormat::Pcm16 => {
-                    emu.mem_read::<{ ARM7 }, u16>(get_channel!(emu, i).sad_current) as i16 as i64
-                }
+                SoundChannelFormat::Pcm8 => (emu.mem_read::<{ ARM7 }, u8>(get_channel!(emu, i).sad_current) as i8 as i64) << 8,
+                SoundChannelFormat::Pcm16 => emu.mem_read::<{ ARM7 }, u16>(get_channel!(emu, i).sad_current) as i16 as i64,
                 SoundChannelFormat::ImaAdpcm => get_channel!(emu, i).adpcm_value as i64,
                 SoundChannelFormat::PsgNoise => {
                     if (8..=13).contains(&i) {
@@ -447,22 +420,15 @@ impl Spu {
                 overflow = get_channel!(emu, i).tmr_current < get_channel!(emu, i).tmr;
 
                 match format {
-                    SoundChannelFormat::Pcm8 | SoundChannelFormat::Pcm16 => {
-                        Self::next_sample_pcm(get_channel_mut!(emu, i))
-                    }
-                    SoundChannelFormat::ImaAdpcm => {
-                        Self::next_sample_adpcm(get_channel_mut!(emu, i), emu)
-                    }
+                    SoundChannelFormat::Pcm8 | SoundChannelFormat::Pcm16 => Self::next_sample_pcm(get_channel_mut!(emu, i)),
+                    SoundChannelFormat::ImaAdpcm => Self::next_sample_adpcm(get_channel_mut!(emu, i), emu),
                     SoundChannelFormat::PsgNoise => {
                         get_spu_mut!(emu).next_sample_psg(i);
                     }
                 }
 
                 let channel = get_channel_mut!(emu, i);
-                if format != SoundChannelFormat::PsgNoise
-                    && channel.sad_current
-                        >= (channel.sad + ((channel.pnt as u32 + channel.len) << 2))
-                {
+                if format != SoundChannelFormat::PsgNoise && channel.sad_current >= (channel.sad + ((channel.pnt as u32 + channel.len) << 2)) {
                     if u8::from(channel.cnt.repeat_mode()) == 1 {
                         channel.sad_current = channel.sad + ((channel.pnt as u32) << 2);
 
@@ -552,8 +518,7 @@ impl Spu {
         let sample_right = (sample_right - 0x200) << 5;
 
         let spu = get_spu_mut!(emu);
-        spu.samples_buffer
-            .push(((sample_right << 16) | (sample_left & 0xFFFF)) as u32);
+        spu.samples_buffer.push(((sample_right << 16) | (sample_left & 0xFFFF)) as u32);
         if unlikely(spu.samples_buffer.len() == SAMPLE_BUFFER_SIZE) {
             spu.sound_sampler.push(spu.samples_buffer.as_slice());
             spu.samples_buffer.clear();

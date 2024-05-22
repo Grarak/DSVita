@@ -23,13 +23,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             if reg.is_emulated() {
                 let new_reg = reg_reserve.pop().unwrap();
                 if reg == Reg::PC {
-                    self.jit_buf
-                        .emit_opcodes
-                        .extend(AluImm::mov32(new_reg, (pc + 4) & !3));
+                    self.jit_buf.emit_opcodes.extend(AluImm::mov32(new_reg, (pc + 4) & !3));
                 } else {
-                    self.jit_buf
-                        .emit_opcodes
-                        .extend(get_regs!(self.emu, CPU).emit_get_reg(new_reg, reg));
+                    self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(new_reg, reg));
                 }
                 new_reg
             } else {
@@ -114,48 +110,32 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if op2.is_emulated() {
             let tmp_op2 = reg_reserve.pop().unwrap();
             if op2 == Reg::PC {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(AluImm::mov32(tmp_op2, pc + 4));
+                self.jit_buf.emit_opcodes.extend(AluImm::mov32(tmp_op2, pc + 4));
             } else {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(get_regs!(self.emu, CPU).emit_get_reg(tmp_op2, op2));
+                self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(tmp_op2, op2));
             }
             op2 = tmp_op2;
         } else if op2.is_high_gp_reg() {
-            self.jit_buf
-                .emit_opcodes
-                .extend(get_regs!(self.emu, CPU).emit_get_reg(op2, op2));
+            self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(op2, op2));
         }
 
         if op0.is_high_gp_reg() {
-            self.jit_buf
-                .emit_opcodes
-                .extend(get_regs!(self.emu, CPU).emit_get_reg(op0, op0));
+            self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(op0, op0));
         } else if op0.is_emulated() {
             let tmp_reg = reg_reserve.pop().unwrap();
             if op0 == Reg::PC {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(AluImm::mov32(tmp_reg, pc + 4));
+                self.jit_buf.emit_opcodes.extend(AluImm::mov32(tmp_reg, pc + 4));
             } else {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(get_regs!(self.emu, CPU).emit_get_reg(tmp_reg, op0));
+                self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(tmp_reg, op0));
             }
             op0 = tmp_reg;
         }
 
-        self.jit_buf
-            .emit_opcodes
-            .push(AluShiftImm::add_al(op0, op0, op2));
+        self.jit_buf.emit_opcodes.push(AluShiftImm::add_al(op0, op0, op2));
 
         if og_op0.is_high_gp_reg() || og_op0.is_emulated() {
             let tmp_reg = reg_reserve.pop().unwrap();
-            self.jit_buf
-                .emit_opcodes
-                .extend(get_regs!(self.emu, CPU).emit_set_reg(*og_op0, op0, tmp_reg));
+            self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(*og_op0, op0, tmp_reg));
         }
     }
 
@@ -173,42 +153,28 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if op2.is_emulated() {
             let tmp_op2 = reg_reserve.pop().unwrap();
             if op2 == Reg::PC {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(AluImm::mov32(tmp_op2, pc + 4));
+                self.jit_buf.emit_opcodes.extend(AluImm::mov32(tmp_op2, pc + 4));
             } else {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(get_regs!(self.emu, CPU).emit_get_reg(tmp_op2, op2));
+                self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(tmp_op2, op2));
             }
             op2 = tmp_op2;
         } else if op2.is_high_gp_reg() {
-            self.jit_buf
-                .emit_opcodes
-                .extend(get_regs!(self.emu, CPU).emit_get_reg(op2, op2));
+            self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(op2, op2));
         }
 
         if op1.is_emulated() {
             let tmp_op1 = reg_reserve.pop().unwrap();
             if op1 == Reg::PC {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(AluImm::mov32(tmp_op1, pc + 4));
+                self.jit_buf.emit_opcodes.extend(AluImm::mov32(tmp_op1, pc + 4));
             } else {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(get_regs!(self.emu, CPU).emit_get_reg(tmp_op1, op1));
+                self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(tmp_op1, op1));
             }
             op1 = tmp_op1;
         } else if op1.is_high_gp_reg() {
-            self.jit_buf
-                .emit_opcodes
-                .extend(get_regs!(self.emu, CPU).emit_get_reg(op1, op1));
+            self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(op1, op1));
         }
 
-        self.jit_buf
-            .emit_opcodes
-            .push(AluShiftImm::cmp_al(op1, op2));
+        self.jit_buf.emit_opcodes.push(AluShiftImm::cmp_al(op1, op2));
     }
 
     pub fn emit_movh_thumb(&mut self, buf_index: usize, pc: u32) {
@@ -224,49 +190,33 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         if op2.is_high_gp_reg() {
             if !op0.is_high_gp_reg() && !op0.is_emulated() {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(get_regs!(self.emu, CPU).emit_get_reg(*op0, op2));
+                self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(*op0, op2));
                 return;
             }
-            self.jit_buf
-                .emit_opcodes
-                .extend(get_regs!(self.emu, CPU).emit_get_reg(op2, op2));
+            self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(op2, op2));
         } else if op2.is_emulated() {
             if !op0.is_high_gp_reg() && !op0.is_emulated() {
                 if op2 == Reg::PC {
-                    self.jit_buf
-                        .emit_opcodes
-                        .extend(AluImm::mov32(*op0, pc + 4));
+                    self.jit_buf.emit_opcodes.extend(AluImm::mov32(*op0, pc + 4));
                 } else {
-                    self.jit_buf
-                        .emit_opcodes
-                        .extend(get_regs!(self.emu, CPU).emit_get_reg(*op0, op2));
+                    self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(*op0, op2));
                 }
                 return;
             }
             let tmp_reg = (RegReserve::gp_thumb() + op2).next_free().unwrap();
             if op2 == Reg::PC {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(AluImm::mov32(tmp_reg, pc + 4));
+                self.jit_buf.emit_opcodes.extend(AluImm::mov32(tmp_reg, pc + 4));
             } else {
-                self.jit_buf
-                    .emit_opcodes
-                    .extend(get_regs!(self.emu, CPU).emit_get_reg(tmp_reg, op2));
+                self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(tmp_reg, op2));
             }
             op2 = tmp_reg;
         }
 
         if op0.is_high_gp_reg() || op0.is_emulated() {
             let tmp_reg = (RegReserve::gp_thumb() + op2).next_free().unwrap();
-            self.jit_buf
-                .emit_opcodes
-                .extend(get_regs!(self.emu, CPU).emit_set_reg(*op0, op2, tmp_reg));
+            self.jit_buf.emit_opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(*op0, op2, tmp_reg));
         } else {
-            self.jit_buf
-                .emit_opcodes
-                .push(AluShiftImm::mov_al(*op0, op2));
+            self.jit_buf.emit_opcodes.push(AluShiftImm::mov_al(*op0, op2));
         }
     }
 }

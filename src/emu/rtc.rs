@@ -52,21 +52,9 @@ impl Rtc {
         let dir_reg = RtcReg::from(self.rtc);
         let data_reg = RtcReg::from(value);
 
-        let cs = if bool::from(dir_reg.select_dir()) {
-            bool::from(data_reg.select_out())
-        } else {
-            self.cs
-        };
-        let sck = if bool::from(dir_reg.clock_dir()) {
-            !bool::from(data_reg.clock_out())
-        } else {
-            self.sck
-        };
-        let sio = if bool::from(dir_reg.data_dir()) {
-            bool::from(data_reg.data_io())
-        } else {
-            self.sio
-        };
+        let cs = if bool::from(dir_reg.select_dir()) { bool::from(data_reg.select_out()) } else { self.cs };
+        let sck = if bool::from(dir_reg.clock_dir()) { !bool::from(data_reg.clock_out()) } else { self.sck };
+        let sio = if bool::from(dir_reg.data_dir()) { bool::from(data_reg.data_io()) } else { self.sio };
 
         self.update_rtc(cs, sck, sio);
     }
@@ -114,15 +102,13 @@ impl Rtc {
                 if self.write_count == 8 {
                     self.update_date_time();
                 }
-                (self.date_time[(self.write_count / 8 - 1) as usize] >> (self.write_count & 7)) & 1
-                    == 1
+                (self.date_time[(self.write_count / 8 - 1) as usize] >> (self.write_count & 7)) & 1 == 1
             }
             3 => {
                 if self.write_count == 8 {
                     self.update_date_time();
                 }
-                (self.date_time[(self.write_count / 8 + 3) as usize] >> (self.write_count & 7)) & 1
-                    == 1
+                (self.date_time[(self.write_count / 8 + 3) as usize] >> (self.write_count & 7)) & 1 == 1
             }
             _ => {
                 debug_println!("Read from unknown rtc register: {}", index);
@@ -137,8 +123,7 @@ impl Rtc {
                 if (self.write_count & 7 == 0) && value {
                     self.reset();
                 } else if ((1 << self.write_count & 7) & 0xE) != 0 {
-                    self.cnt = (self.cnt & !(1 << (self.write_count & 7)))
-                        | ((value as u8) << (self.write_count & 7));
+                    self.cnt = (self.cnt & !(1 << (self.write_count & 7))) | ((value as u8) << (self.write_count & 7));
                 }
             }
             _ => {
@@ -155,10 +140,7 @@ impl Rtc {
         let day = local_now.day() as u8;
         let (hour, is_pm) = {
             let hour = local_now.hour();
-            (
-                (if self.cnt & 0x2 == 0 { hour % 12 } else { hour }) as u8,
-                hour >= 12,
-            )
+            ((if self.cnt & 0x2 == 0 { hour % 12 } else { hour }) as u8, hour >= 12)
         };
         let min = local_now.minute() as u8;
         let sec = local_now.second() as u8;

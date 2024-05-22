@@ -13,14 +13,10 @@ mod platform;
 pub const PRESENTER_SCREEN_WIDTH: u32 = 960;
 pub const PRESENTER_SCREEN_HEIGHT: u32 = 544;
 pub const PRESENTER_SUB_SCREEN_WIDTH: u32 = PRESENTER_SCREEN_WIDTH / 2;
-pub const PRESENTER_SUB_SCREEN_HEIGHT: u32 =
-    DISPLAY_HEIGHT as u32 * PRESENTER_SUB_SCREEN_WIDTH / DISPLAY_WIDTH as u32;
+pub const PRESENTER_SUB_SCREEN_HEIGHT: u32 = DISPLAY_HEIGHT as u32 * PRESENTER_SUB_SCREEN_WIDTH / DISPLAY_WIDTH as u32;
 
 pub enum PresentEvent {
-    Inputs {
-        keymap: u32,
-        touch: Option<(u8, u8)>,
-    },
+    Inputs { keymap: u32, touch: Option<(u8, u8)> },
     Quit,
 }
 
@@ -36,12 +32,7 @@ pub struct PresenterScreen {
 
 impl PresenterScreen {
     const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
-        PresenterScreen {
-            x,
-            y,
-            width,
-            height,
-        }
+        PresenterScreen { x, y, width, height }
     }
 
     const fn is_within(&self, x: u32, y: u32) -> bool {
@@ -53,12 +44,7 @@ impl PresenterScreen {
     }
 }
 
-const PRESENTER_SUB_TOP_SCREEN: PresenterScreen = PresenterScreen::new(
-    0,
-    (PRESENTER_SCREEN_HEIGHT - PRESENTER_SUB_SCREEN_HEIGHT) / 2,
-    PRESENTER_SUB_SCREEN_WIDTH,
-    PRESENTER_SUB_SCREEN_HEIGHT,
-);
+const PRESENTER_SUB_TOP_SCREEN: PresenterScreen = PresenterScreen::new(0, (PRESENTER_SCREEN_HEIGHT - PRESENTER_SUB_SCREEN_HEIGHT) / 2, PRESENTER_SUB_SCREEN_WIDTH, PRESENTER_SUB_SCREEN_HEIGHT);
 const PRESENTER_SUB_BOTTOM_SCREEN: PresenterScreen = PresenterScreen::new(
     PRESENTER_SUB_SCREEN_WIDTH,
     (PRESENTER_SCREEN_HEIGHT - PRESENTER_SUB_SCREEN_HEIGHT) / 2,

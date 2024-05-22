@@ -76,9 +76,7 @@ impl DmaTransferMode {
                 let mode = u8::from(DmaCntArm7::from(cnt).transfer_mode());
                 match mode {
                     2 => DmaTransferMode::DsCartSlot,
-                    3 => DmaTransferMode::from(
-                        DmaTransferMode::WirelessInterrupt as u8 - ((channel_num as u8 & 1) << 1),
-                    ),
+                    3 => DmaTransferMode::from(DmaTransferMode::WirelessInterrupt as u8 - ((channel_num as u8 & 1) << 1)),
                     _ => DmaTransferMode::from(mode),
                 }
             }
@@ -134,20 +132,12 @@ impl Dma {
     }
 
     pub fn set_sad<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32) {
-        mask &= if self.cpu_type == ARM9 || CHANNEL_NUM != 0 {
-            0x0FFFFFFF
-        } else {
-            0x07FFFFFF
-        };
+        mask &= if self.cpu_type == ARM9 || CHANNEL_NUM != 0 { 0x0FFFFFFF } else { 0x07FFFFFF };
         self.channels[CHANNEL_NUM].sad = (self.channels[CHANNEL_NUM].sad & !mask) | (value & mask);
     }
 
     pub fn set_dad<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32) {
-        mask &= if self.cpu_type == ARM9 || CHANNEL_NUM != 0 {
-            0x0FFFFFFF
-        } else {
-            0x07FFFFFF
-        };
+        mask &= if self.cpu_type == ARM9 || CHANNEL_NUM != 0 { 0x0FFFFFFF } else { 0x07FFFFFF };
         self.channels[CHANNEL_NUM].dad = (self.channels[CHANNEL_NUM].dad & !mask) | (value & mask);
     }
 
@@ -202,8 +192,7 @@ impl Dma {
     }
 
     pub fn set_fill<const CHANNEL_NUM: usize>(&mut self, mask: u32, value: u32) {
-        self.channels[CHANNEL_NUM].fill =
-            (self.channels[CHANNEL_NUM].fill & !mask) | (value & mask);
+        self.channels[CHANNEL_NUM].fill = (self.channels[CHANNEL_NUM].fill & !mask) | (value & mask);
     }
 
     pub fn trigger_all(&self, mode: DmaTransferMode, cycle_manager: &mut CycleManager) {
@@ -212,10 +201,7 @@ impl Dma {
 
     pub fn trigger(&self, mode: DmaTransferMode, channels: u8, cycle_manager: &mut CycleManager) {
         for (index, channel) in self.channels.iter().enumerate() {
-            if channels & (1 << index) != 0
-                && bool::from(DmaCntArm9::from(channel.cnt).enable())
-                && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode
-            {
+            if channels & (1 << index) != 0 && bool::from(DmaCntArm9::from(channel.cnt).enable()) && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode {
                 debug_println!(
                     "{:?} dma trigger {:?} {:x} {:x} {:x} {:x}",
                     self.cpu_type,
@@ -236,26 +222,13 @@ impl Dma {
         }
     }
 
-    fn do_transfer<const CPU: CpuType, T: utils::Convert>(
-        emu: &mut Emu,
-        dest_addr: &mut u32,
-        src_addr: &mut u32,
-        count: u32,
-        cnt: &DmaCntArm9,
-        mode: DmaTransferMode,
-    ) {
+    fn do_transfer<const CPU: CpuType, T: utils::Convert>(emu: &mut Emu, dest_addr: &mut u32, src_addr: &mut u32, count: u32, cnt: &DmaCntArm9, mode: DmaTransferMode) {
         let dest_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.dest_addr_ctrl()));
         let src_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.src_addr_ctrl()));
 
         let step_size = mem::size_of::<T>() as u32;
         for _ in 0..count {
-            debug_println!(
-                "{:?} dma transfer {:?} from {:x} to {:x}",
-                CPU,
-                mode,
-                src_addr,
-                dest_addr
-            );
+            debug_println!("{:?} dma transfer {:?} from {:x} to {:x}", CPU, mode, src_addr, dest_addr);
 
             let src = emu.mem_read_no_tcm::<CPU, T>(*src_addr);
             emu.mem_write_no_tcm::<CPU, T>(*dest_addr, src);
@@ -322,10 +295,7 @@ impl Dma {
         }
 
         if cnt.irq_at_end() {
-            get_cpu_regs_mut!(emu, CPU).send_interrupt(
-                InterruptFlag::from(InterruptFlag::Dma0 as u8 + channel_num as u8),
-                get_cm_mut!(emu),
-            );
+            get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::from(InterruptFlag::Dma0 as u8 + channel_num as u8), get_cm_mut!(emu));
         }
     }
 }

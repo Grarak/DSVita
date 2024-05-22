@@ -18,16 +18,7 @@ impl Mmap {
     }
 
     fn new(prot: i32, size: u32) -> io::Result<Self> {
-        let ptr = unsafe {
-            libc::mmap(
-                null_mut(),
-                size as _,
-                prot,
-                libc::MAP_ANON | libc::MAP_PRIVATE,
-                -1,
-                0,
-            )
-        };
+        let ptr = unsafe { libc::mmap(null_mut(), size as _, prot, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
         if ptr != libc::MAP_FAILED {
             Ok(Mmap { ptr, size })
         } else {

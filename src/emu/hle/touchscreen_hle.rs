@@ -20,8 +20,7 @@ impl TouchscreenHle {
     }
 
     fn sample(&self, emu: &mut Emu) {
-        let mut ts = (emu.mem_read::<{ ARM7 }, u16>(0x027FFFAA) as u32)
-            | ((emu.mem_read::<{ ARM7 }, u16>(0x027FFFAC) as u32) << 16);
+        let mut ts = (emu.mem_read::<{ ARM7 }, u16>(0x027FFFAA) as u32) | ((emu.mem_read::<{ ARM7 }, u16>(0x027FFFAC) as u32) << 16);
 
         let is_pressed = get_common!(emu).input.get_ext_key_in() & 0x40 == 0;
         if is_pressed {

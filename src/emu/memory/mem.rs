@@ -85,11 +85,7 @@ impl Memory {
         self.read_with_options::<CPU, false, true, T>(addr, emu)
     }
 
-    pub fn read_with_options<const CPU: CpuType, const TCM: bool, const MMU: bool, T: Convert>(
-        &mut self,
-        addr: u32,
-        emu: &mut Emu,
-    ) -> T {
+    pub fn read_with_options<const CPU: CpuType, const TCM: bool, const MMU: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu) -> T {
         debug_println!("{:?} memory read at {:x}", CPU, addr);
         let aligned_addr = addr & !(mem::size_of::<T>() as u32 - 1);
 
@@ -99,33 +95,17 @@ impl Memory {
         if MMU && (CPU == ARM7 || TCM) {
             let base_ptr = get_mem_mmu!(self, CPU).get_base_ptr(aligned_addr);
             if likely(!base_ptr.is_null()) {
-                let ret = unsafe {
-                    (base_ptr.add((aligned_addr & (MMU_BLOCK_SIZE - 1)) as usize) as *const T)
-                        .read()
-                };
-                debug_println!(
-                    "{:?} mmu read at {:x} with value {:x}",
-                    CPU,
-                    aligned_addr,
-                    ret.into()
-                );
+                let ret = unsafe { (base_ptr.add((aligned_addr & (MMU_BLOCK_SIZE - 1)) as usize) as *const T).read() };
+                debug_println!("{:?} mmu read at {:x} with value {:x}", CPU, aligned_addr, ret.into());
                 return ret;
             }
         }
 
         if CPU == ARM9 && TCM {
             let cp15 = get_cp15!(emu, ARM9);
-            if aligned_addr >= cp15.dtcm_addr
-                && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size
-                && cp15.dtcm_state == TcmState::RW
-            {
+            if aligned_addr >= cp15.dtcm_addr && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size && cp15.dtcm_state == TcmState::RW {
                 let ret: T = self.tcm.read_dtcm(aligned_addr - cp15.dtcm_addr);
-                debug_println!(
-                    "{:?} dtcm read at {:x} with value {:x}",
-                    CPU,
-                    aligned_addr,
-                    ret.into()
-                );
+                debug_println!("{:?} dtcm read at {:x} with value {:x}", CPU, aligned_addr, ret.into());
                 return ret;
             }
         }
@@ -161,9 +141,7 @@ impl Memory {
             regions::STANDARD_PALETTES_OFFSET => self.palettes.read(addr_offset),
             regions::VRAM_OFFSET => self.vram.read::<CPU, _>(addr_offset),
             regions::OAM_OFFSET => self.oam.read(addr_offset),
-            regions::GBA_ROM_OFFSET | regions::GBA_ROM_OFFSET2 | regions::GBA_RAM_OFFSET => {
-                T::from(0xFFFFFFFF)
-            }
+            regions::GBA_ROM_OFFSET | regions::GBA_ROM_OFFSET2 | regions::GBA_RAM_OFFSET => T::from(0xFFFFFFFF),
             0xFF000000 => match CPU {
                 ARM9 => {
                     if (aligned_addr & 0xFFFF8000) == regions::ARM9_BIOS_OFFSET {
@@ -181,12 +159,7 @@ impl Memory {
             }
         };
 
-        debug_println!(
-            "{:?} memory read at {:x} with value {:x}",
-            CPU,
-            addr,
-            ret.into()
-        );
+        debug_println!("{:?} memory read at {:x} with value {:x}", CPU, addr, ret.into());
 
         ret
     }
@@ -195,27 +168,12 @@ impl Memory {
         self.write_internal::<CPU, true, T>(addr, value, emu)
     }
 
-    pub fn write_no_tcm<const CPU: CpuType, T: Convert>(
-        &mut self,
-        addr: u32,
-        value: T,
-        emu: &mut Emu,
-    ) {
+    pub fn write_no_tcm<const CPU: CpuType, T: Convert>(&mut self, addr: u32, value: T, emu: &mut Emu) {
         self.write_internal::<CPU, false, T>(addr, value, emu)
     }
 
-    fn write_internal<const CPU: CpuType, const TCM: bool, T: Convert>(
-        &mut self,
-        addr: u32,
-        value: T,
-        emu: &mut Emu,
-    ) {
-        debug_println!(
-            "{:?} memory write at {:x} with value {:x}",
-            CPU,
-            addr,
-            value.into(),
-        );
+    fn write_internal<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, value: T, emu: &mut Emu) {
+        debug_println!("{:?} memory write at {:x} with value {:x}", CPU, addr, value.into(),);
         let aligned_addr = addr & !(mem::size_of::<T>() as u32 - 1);
 
         let addr_base = aligned_addr & 0xFF000000;
@@ -223,25 +181,15 @@ impl Memory {
 
         if CPU == ARM9 && TCM {
             let cp15 = get_cp15!(emu, ARM9);
-            if aligned_addr >= cp15.dtcm_addr
-                && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size
-                && cp15.dtcm_state != TcmState::Disabled
-            {
+            if aligned_addr >= cp15.dtcm_addr && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size && cp15.dtcm_state != TcmState::Disabled {
                 self.tcm.write_dtcm(aligned_addr - cp15.dtcm_addr, value);
-                debug_println!(
-                    "{:?} dtcm write at {:x} with value {:x}",
-                    CPU,
-                    aligned_addr,
-                    value.into(),
-                );
+                debug_println!("{:?} dtcm write at {:x} with value {:x}", CPU, aligned_addr, value.into(),);
                 return;
             }
         }
 
         let mut invalidate_jit = || {
-            let (block_addr, block_addr_thumb) = self
-                .jit
-                .invalidate_block::<CPU>(aligned_addr, mem::size_of::<T>() as u32);
+            let (block_addr, block_addr_thumb) = self.jit.invalidate_block::<CPU>(aligned_addr, mem::size_of::<T>() as u32);
             self.breakout_imm = if self.current_mode_is_thumb {
                 block_addr_thumb == self.current_jit_block_addr
             } else {
@@ -256,12 +204,7 @@ impl Memory {
                         let cp15 = get_cp15!(emu, ARM9);
                         if aligned_addr < cp15.itcm_size && cp15.itcm_state != TcmState::Disabled {
                             self.tcm.write_itcm(aligned_addr, value);
-                            debug_println!(
-                                "{:?} itcm write at {:x} with value {:x}",
-                                CPU,
-                                aligned_addr,
-                                value.into(),
-                            );
+                            debug_println!("{:?} itcm write at {:x} with value {:x}", CPU, aligned_addr, value.into(),);
                             invalidate_jit();
                         }
                     }

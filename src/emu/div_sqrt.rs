@@ -51,8 +51,7 @@ impl DivSqrt {
     }
 
     pub fn set_sqrt_param_h(&mut self, mask: u32, value: u32) {
-        self.sqrt_param =
-            (self.sqrt_param & !((mask as u64) << 32)) | (((value & mask) as u64) << 32);
+        self.sqrt_param = (self.sqrt_param & !((mask as u64) << 32)) | (((value & mask) as u64) << 32);
         self.sqrt();
     }
 
@@ -106,8 +105,7 @@ impl DivSqrt {
                     self.div_result = (num / denom) as i64;
                     self.divrem_result = (num % denom) as i64;
                 } else {
-                    self.div_result =
-                        (if num < 0 { 1 } else { -1i32 } as u64 ^ ((!0u32 as u64) << 32)) as i64;
+                    self.div_result = (if num < 0 { 1 } else { -1i32 } as u64 ^ ((!0u32 as u64) << 32)) as i64;
                     self.divrem_result = num as i64;
                 }
             }
@@ -157,8 +155,7 @@ impl DivSqrt {
     }
 
     pub fn set_div_numer_h(&mut self, mask: u32, value: u32) {
-        self.div_numer = ((self.div_numer as u64 & !((mask as u64) << 32))
-            | (((value & mask) as u64) << 32)) as i64;
+        self.div_numer = ((self.div_numer as u64 & !((mask as u64) << 32)) | (((value & mask) as u64) << 32)) as i64;
         self.div();
     }
 
@@ -168,8 +165,7 @@ impl DivSqrt {
     }
 
     pub fn set_div_denom_h(&mut self, mask: u32, value: u32) {
-        self.div_denom = ((self.div_denom as u64 & !((mask as u64) << 32))
-            | (((value & mask) as u64) << 32)) as i64;
+        self.div_denom = ((self.div_denom as u64 & !((mask as u64) << 32)) | (((value & mask) as u64) << 32)) as i64;
         self.div();
     }
 }

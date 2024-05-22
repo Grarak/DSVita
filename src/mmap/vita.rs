@@ -35,8 +35,7 @@ impl Mmap {
     pub fn executable(name: &str, size: u32) -> io::Result<Self> {
         let c_name = CString::new(name).unwrap();
 
-        let block_uid =
-            unsafe { vitasdk_sys::sceKernelAllocMemBlockForVM(c_name.as_c_str().as_ptr(), size) };
+        let block_uid = unsafe { vitasdk_sys::sceKernelAllocMemBlockForVM(c_name.as_c_str().as_ptr(), size) };
         Mmap::new(block_uid, size)
     }
 
@@ -45,18 +44,12 @@ impl Mmap {
             Err(Error::from(ErrorKind::AddrNotAvailable))
         } else {
             let mut base: *mut vitasdk_sys::c_void = ptr::null_mut();
-            let ret = unsafe {
-                vitasdk_sys::sceKernelGetMemBlockBase(block_uid, ptr::addr_of_mut!(base))
-            };
+            let ret = unsafe { vitasdk_sys::sceKernelGetMemBlockBase(block_uid, ptr::addr_of_mut!(base)) };
 
             if ret < vitasdk_sys::SCE_OK as i32 {
                 Err(Error::from(ErrorKind::AddrNotAvailable))
             } else {
-                Ok(Mmap {
-                    block_uid,
-                    ptr: base,
-                    size,
-                })
+                Ok(Mmap { block_uid, ptr: base, size })
             }
         }
     }

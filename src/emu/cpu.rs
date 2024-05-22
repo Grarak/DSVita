@@ -39,9 +39,7 @@ pub struct CpuArm7 {
 
 impl CpuArm7 {
     pub fn new() -> Self {
-        CpuArm7 {
-            thread_regs: ThreadRegs::new(ARM7),
-        }
+        CpuArm7 { thread_regs: ThreadRegs::new(ARM7) }
     }
 
     pub fn regs(&self) -> &ThreadRegs {

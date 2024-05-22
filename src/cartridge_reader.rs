@@ -140,12 +140,12 @@ impl CartridgeReader {
         //     let (_, boot_code_aligned, _) = unsafe { boot_code.align_to_mut::<u32>() };
         //     let (_, game_code_aligned, _) = unsafe { self.header.game_code.align_to::<u32>() };
         //     let id_code = game_code_aligned[0];
-        // 
+        //
         //     {
         //         let key1 = Key1::new(id_code, 2, 2);
         //         key1.decrypt((&mut boot_code_aligned[..2]).try_into().unwrap());
         //     }
-        // 
+        //
         //     {
         //         let key1 = Key1::new(id_code, 3, 2);
         //         for i in (0..0x200).step_by(2) {
@@ -171,13 +171,7 @@ pub struct Key1 {
 }
 
 impl Key1 {
-    fn crypt(
-        &self,
-        data: &mut [u32; 2],
-        iter: impl IntoIterator<Item = usize>,
-        x_end_index: usize,
-        y_end_index: usize,
-    ) {
+    fn crypt(&self, data: &mut [u32; 2], iter: impl IntoIterator<Item = usize>, x_end_index: usize, y_end_index: usize) {
         let mut y = data[0];
         let mut x = data[1];
         for i in iter {
@@ -218,9 +212,7 @@ impl Key1 {
     }
 
     fn new(id_code: u32, level: u8, modulo: u32) -> Self {
-        let mut instance = Key1 {
-            key_buf: [0u32; KEY1_BUF_SIZE],
-        };
+        let mut instance = Key1 { key_buf: [0u32; KEY1_BUF_SIZE] };
 
         let mut keycode = [id_code, id_code >> 1, id_code << 1];
         if level >= 1 {

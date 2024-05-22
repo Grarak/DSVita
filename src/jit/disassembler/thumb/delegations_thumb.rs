@@ -6,14 +6,7 @@ mod unknown_delegations {
 
     #[inline]
     pub fn unk_t(opcode: u16, op: Op) -> InstInfoThumb {
-        InstInfoThumb::new(
-            opcode,
-            op,
-            Operands::new_empty(),
-            reg_reserve!(),
-            reg_reserve!(),
-            1,
-        )
+        InstInfoThumb::new(opcode, op, Operands::new_empty(), reg_reserve!(), reg_reserve!(), 1)
     }
 }
 

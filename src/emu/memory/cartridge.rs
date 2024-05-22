@@ -113,8 +113,7 @@ impl Cartridge {
         if inner.read_count == inner.block_size {
             inner.rom_ctrl.set_block_start_status(u1::new(0));
             if bool::from(inner.aux_spi_cnt.transfer_ready_irq()) {
-                get_cpu_regs_mut!(emu, CPU)
-                    .send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm_mut!(emu));
+                get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm_mut!(emu));
             }
         } else {
             get_cm_mut!(emu).schedule(
@@ -153,40 +152,30 @@ impl Cartridge {
 
     pub fn set_aux_spi_cnt<const CPU: CpuType>(&mut self, mut mask: u16, value: u16) {
         mask &= 0xE043;
-        self.inner[CPU].aux_spi_cnt =
-            ((u16::from(self.inner[CPU].aux_spi_cnt) & !mask) | (value & mask)).into();
+        self.inner[CPU].aux_spi_cnt = ((u16::from(self.inner[CPU].aux_spi_cnt) & !mask) | (value & mask)).into();
     }
 
     pub fn set_aux_spi_data<const CPU: CpuType>(&self, value: u8) {}
 
     pub fn set_bus_cmd_out_l<const CPU: CpuType>(&mut self, mask: u32, value: u32) {
-        self.inner[CPU].bus_cmd_out =
-            (self.inner[CPU].bus_cmd_out & !(mask as u64)) | (value & mask) as u64;
+        self.inner[CPU].bus_cmd_out = (self.inner[CPU].bus_cmd_out & !(mask as u64)) | (value & mask) as u64;
     }
 
     pub fn set_bus_cmd_out_h<const CPU: CpuType>(&mut self, mask: u32, value: u32) {
-        self.inner[CPU].bus_cmd_out =
-            (self.inner[CPU].bus_cmd_out & !((mask as u64) << 32)) | ((value & mask) as u64) << 32;
+        self.inner[CPU].bus_cmd_out = (self.inner[CPU].bus_cmd_out & !((mask as u64) << 32)) | ((value & mask) as u64) << 32;
     }
 
     pub fn set_rom_ctrl<const CPU: CpuType>(&mut self, mut mask: u32, value: u32, emu: &mut Emu) {
         let new_rom_ctrl = RomCtrl::from(value);
         let inner = &mut self.inner[CPU];
 
-        inner
-            .rom_ctrl
-            .set_resb_release_reset(new_rom_ctrl.resb_release_reset());
-        let transfer = !bool::from(inner.rom_ctrl.block_start_status())
-            && bool::from(new_rom_ctrl.block_start_status());
+        inner.rom_ctrl.set_resb_release_reset(new_rom_ctrl.resb_release_reset());
+        let transfer = !bool::from(inner.rom_ctrl.block_start_status()) && bool::from(new_rom_ctrl.block_start_status());
 
         mask &= 0xDF7F7FFF;
         inner.rom_ctrl = ((u32::from(inner.rom_ctrl) & !mask) | (value & mask)).into();
 
-        inner.word_cycles = if bool::from(inner.rom_ctrl.transfer_clk_rate()) {
-            4 * 8
-        } else {
-            4 * 5
-        };
+        inner.word_cycles = if bool::from(inner.rom_ctrl.transfer_clk_rate()) { 4 * 8 } else { 4 * 5 };
 
         if !transfer {
             return;
@@ -234,8 +223,7 @@ impl Cartridge {
             inner.rom_ctrl.set_data_word_status(u1::new(0));
             inner.rom_ctrl.set_block_start_status(u1::new(0));
             if bool::from(inner.aux_spi_cnt.transfer_ready_irq()) {
-                get_cpu_regs_mut!(emu, CPU)
-                    .send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm_mut!(emu));
+                get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm_mut!(emu));
             }
         } else {
             get_cm_mut!(emu).schedule(
@@ -250,9 +238,7 @@ impl Cartridge {
     }
 
     pub fn on_word_read_event<const CPU: CpuType>(emu: &mut Emu) {
-        get_common_mut!(emu).cartridge.inner[CPU]
-            .rom_ctrl
-            .set_data_word_status(u1::new(1));
+        get_common_mut!(emu).cartridge.inner[CPU].rom_ctrl.set_data_word_status(u1::new(1));
         io_dma!(emu, CPU).trigger_all(DmaTransferMode::DsCartSlot, get_cm_mut!(emu));
     }
 }

@@ -1,5 +1,5 @@
-pub mod gpu_2d;
-pub mod gpu_3d;
 pub mod gpu;
-mod gpu_3d_renderer;
+pub mod gpu_2d;
 mod gpu_2d_text;
+pub mod gpu_3d;
+mod gpu_3d_renderer;

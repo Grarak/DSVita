@@ -41,11 +41,7 @@ mod transfer_ops {
             op,
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
             reg_reserve!(op1),
-            if write_back {
-                reg_reserve!(op0, op1)
-            } else {
-                reg_reserve!(op0)
-            },
+            if write_back { reg_reserve!(op0, op1) } else { reg_reserve!(op0) },
             if WRITE { 2 } else { 3 },
         )
     }
@@ -60,38 +56,22 @@ mod transfer_ops {
             op,
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(operand2)),
             reg_reserve!(op1, operand2),
-            if write_back {
-                reg_reserve!(op0, op1)
-            } else {
-                reg_reserve!(op0)
-            },
+            if write_back { reg_reserve!(op0, op1) } else { reg_reserve!(op0) },
             if WRITE { 2 } else { 3 },
         )
     }
 
     #[inline]
-    pub fn mem_transfer_reg_shift<const WRITE: bool, const SHIFT_TYPE: ShiftType>(
-        opcode: u32,
-        op: Op,
-        operand2: (Reg, u8),
-    ) -> InstInfo {
+    pub fn mem_transfer_reg_shift<const WRITE: bool, const SHIFT_TYPE: ShiftType>(opcode: u32, op: Op, operand2: (Reg, u8)) -> InstInfo {
         let write_back = op.mem_transfer_write_back();
         let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
         let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
         InstInfo::new(
             opcode,
             op,
-            Operands::new_3(
-                Operand::reg(op0),
-                Operand::reg(op1),
-                Operand::reg_imm_shift(operand2.0, SHIFT_TYPE, operand2.1),
-            ),
+            Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg_imm_shift(operand2.0, SHIFT_TYPE, operand2.1)),
             reg_reserve!(op1, operand2.0),
-            if write_back {
-                reg_reserve!(op0, op1)
-            } else {
-                reg_reserve!(op0)
-            },
+            if write_back { reg_reserve!(op0, op1) } else { reg_reserve!(op0) },
             if WRITE { 2 } else { 3 },
         )
     }
@@ -130,28 +110,14 @@ mod transfer_ops {
     pub fn ldmda(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
         let rlist = RegReserve::from(opcode & 0xFFFF);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op0)),
-            reg_reserve!(op0),
-            rlist,
-            rlist.len() as u8 + 2,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), rlist, rlist.len() as u8 + 2)
     }
 
     #[inline]
     pub fn stmda(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
         let rlist = RegReserve::from(opcode & 0xFFFF);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op0)),
-            rlist + op0,
-            reg_reserve!(),
-            rlist.len() as u8 + 1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), rlist + op0, reg_reserve!(), rlist.len() as u8 + 1)
     }
 
     #[inline]
@@ -188,28 +154,14 @@ mod transfer_ops {
     pub fn ldmda_w(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
         let rlist = RegReserve::from(opcode & 0xFFFF);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op0)),
-            reg_reserve!(op0),
-            rlist + op0,
-            rlist.len() as u8 + 2,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), rlist + op0, rlist.len() as u8 + 2)
     }
 
     #[inline]
     pub fn stmda_w(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
         let rlist = RegReserve::from(opcode & 0xFFFF);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op0)),
-            rlist + op0,
-            reg_reserve!(op0),
-            rlist.len() as u8 + 1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), rlist + op0, reg_reserve!(op0), rlist.len() as u8 + 1)
     }
 
     #[inline]
@@ -246,28 +198,14 @@ mod transfer_ops {
     pub fn ldmda_u(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
         let rlist = RegReserve::from(opcode & 0xFFFF);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op0)),
-            reg_reserve!(op0),
-            rlist & Reg::PC,
-            rlist.len() as u8 + 2,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), rlist & Reg::PC, rlist.len() as u8 + 2)
     }
 
     #[inline]
     pub fn stmda_u(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
         let rlist = RegReserve::from(opcode & 0xFFFF);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op0)),
-            rlist + op0,
-            reg_reserve!(),
-            rlist.len() as u8 + 1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), rlist + op0, reg_reserve!(), rlist.len() as u8 + 1)
     }
 
     #[inline]
@@ -304,28 +242,14 @@ mod transfer_ops {
     pub fn ldmda_u_w(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
         let rlist = RegReserve::from(opcode & 0xFFFF);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op0)),
-            rlist + op0,
-            (rlist & Reg::PC) + op0,
-            rlist.len() as u8 + 2,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), rlist + op0, (rlist & Reg::PC) + op0, rlist.len() as u8 + 2)
     }
 
     #[inline]
     pub fn stmda_u_w(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
         let rlist = RegReserve::from(opcode & 0xFFFF);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op0)),
-            rlist + op0,
-            reg_reserve!(op0),
-            rlist.len() as u8 + 1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), rlist + op0, reg_reserve!(op0), rlist.len() as u8 + 1)
     }
 
     #[inline]
@@ -361,27 +285,13 @@ mod transfer_ops {
     #[inline]
     pub fn msr_rc(opcode: u32, op: Op) -> InstInfo {
         let op1 = Reg::from((opcode & 0xF) as u8);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op1)),
-            reg_reserve!(op1),
-            reg_reserve!(Reg::CPSR),
-            1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op1)), reg_reserve!(op1), reg_reserve!(Reg::CPSR), 1)
     }
 
     #[inline]
     pub fn msr_rs(opcode: u32, op: Op) -> InstInfo {
         let op1 = Reg::from((opcode & 0xF) as u8);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op1)),
-            reg_reserve!(op1),
-            reg_reserve!(Reg::SPSR),
-            1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op1)), reg_reserve!(op1), reg_reserve!(Reg::SPSR), 1)
     }
 
     #[inline]
@@ -389,14 +299,7 @@ mod transfer_ops {
         let op1 = opcode & 0xFF;
         let shift = (opcode >> 7) & 0x1E;
         let op1 = (op1 << (32 - shift)) | (op1 >> shift);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::imm(op1)),
-            reg_reserve!(),
-            reg_reserve!(Reg::CPSR),
-            1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::imm(op1)), reg_reserve!(), reg_reserve!(Reg::CPSR), 1)
     }
 
     #[inline]
@@ -404,66 +307,31 @@ mod transfer_ops {
         let op1 = opcode & 0xFF;
         let shift = (opcode >> 7) & 0x1E;
         let op1 = (op1 << (32 - shift)) | (op1 >> shift);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::imm(op1)),
-            reg_reserve!(),
-            reg_reserve!(Reg::SPSR),
-            1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::imm(op1)), reg_reserve!(), reg_reserve!(Reg::SPSR), 1)
     }
 
     #[inline]
     pub fn mrs_rc(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op0)),
-            reg_reserve!(Reg::CPSR),
-            reg_reserve!(op0),
-            1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(Reg::CPSR), reg_reserve!(op0), 1)
     }
 
     #[inline]
     pub fn mrs_rs(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op0)),
-            reg_reserve!(Reg::SPSR),
-            reg_reserve!(op0),
-            1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(Reg::SPSR), reg_reserve!(op0), 1)
     }
 
     #[inline]
     pub fn mrc(opcode: u32, op: Op) -> InstInfo {
         let op2 = Reg::from(((opcode >> 12) & 0xF) as u8);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op2)),
-            reg_reserve!(),
-            reg_reserve!(op2),
-            1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op2)), reg_reserve!(), reg_reserve!(op2), 1)
     }
 
     #[inline]
     pub fn mcr(opcode: u32, op: Op) -> InstInfo {
         let op2 = Reg::from(((opcode >> 12) & 0xF) as u8);
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_1(Operand::reg(op2)),
-            reg_reserve!(op2),
-            reg_reserve!(),
-            1,
-        )
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op2)), reg_reserve!(op2), reg_reserve!(), 1)
     }
 }
 

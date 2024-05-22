@@ -8,9 +8,7 @@ pub struct Oam {
 
 impl Oam {
     pub fn new() -> Self {
-        Oam {
-            mem: HeapMemU8::new(),
-        }
+        Oam { mem: HeapMemU8::new() }
     }
 
     pub fn read<T: Convert>(&self, addr_offset: u32) -> T {
@@ -18,10 +16,6 @@ impl Oam {
     }
 
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T) {
-        utils::write_to_mem(
-            self.mem.as_mut_slice(),
-            addr_offset & (regions::OAM_SIZE - 1),
-            value,
-        )
+        utils::write_to_mem(self.mem.as_mut_slice(), addr_offset & (regions::OAM_SIZE - 1), value)
     }
 }

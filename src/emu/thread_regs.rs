@@ -116,11 +116,7 @@ impl ThreadRegs {
             {
                 let save_regs_opcodes = &mut instance.save_regs_opcodes;
                 save_regs_opcodes.extend(AluImm::mov32(Reg::LR, sp_addr));
-                save_regs_opcodes.push(LdmStm::push_post(
-                    RegReserve::gp() + Reg::SP,
-                    Reg::LR,
-                    Cond::AL,
-                ));
+                save_regs_opcodes.push(LdmStm::push_post(RegReserve::gp() + Reg::SP, Reg::LR, Cond::AL));
                 save_regs_opcodes.shrink_to_fit();
             }
 
@@ -131,11 +127,7 @@ impl ThreadRegs {
                     LdrStrImm::ldr_offset_al(Reg::R0, Reg::SP, (cpsr_addr - gp_regs_addr) as u16),
                     Msr::cpsr_flags(Reg::R0, Cond::AL),
                     LdmStm::pop_post_al(RegReserve::gp_thumb()),
-                    LdrStrImm::ldr_offset_al(
-                        Reg::SP,
-                        Reg::SP,
-                        (sp_addr - last_regs_thumb_addr - 4) as u16,
-                    ),
+                    LdrStrImm::ldr_offset_al(Reg::SP, Reg::SP, (sp_addr - last_regs_thumb_addr - 4) as u16),
                 ]);
                 restore_regs_thumb_opcodes.shrink_to_fit();
             }
@@ -144,11 +136,7 @@ impl ThreadRegs {
                 let save_regs_thumb_opcodes = &mut instance.save_regs_thumb_opcodes;
                 save_regs_thumb_opcodes.extend(AluImm::mov32(Reg::LR, last_regs_thumb_addr));
                 save_regs_thumb_opcodes.extend([
-                    LdrStrImm::str_offset_al(
-                        Reg::SP,
-                        Reg::LR,
-                        (sp_addr - last_regs_thumb_addr) as u16,
-                    ),
+                    LdrStrImm::str_offset_al(Reg::SP, Reg::LR, (sp_addr - last_regs_thumb_addr) as u16),
                     LdmStm::push_post(RegReserve::gp_thumb(), Reg::LR, Cond::AL),
                 ]);
                 save_regs_thumb_opcodes.shrink_to_fit();
@@ -220,11 +208,7 @@ impl ThreadRegs {
 
     pub fn set_cpsr_with_flags(&mut self, value: u32, flags: u8, cycle_manager: &mut CycleManager) {
         if flags & 1 == 1 {
-            let mask = if u8::from(Cpsr::from(self.cpsr).mode()) == 0x10 {
-                0xE0
-            } else {
-                0xFF
-            };
+            let mask = if u8::from(Cpsr::from(self.cpsr).mode()) == 0x10 { 0xE0 } else { 0xFF };
             self.set_cpsr::<false>((self.cpsr & !mask) | (value & mask), cycle_manager);
         }
 
@@ -360,8 +344,7 @@ impl ThreadRegs {
             self.spsr = self.cpsr;
         }
         self.cpsr = value;
-        self.cpu
-            .set_cpsr_irq_enabled(!bool::from(new_cpsr.irq_disable()));
+        self.cpu.set_cpsr_irq_enabled(!bool::from(new_cpsr.irq_disable()));
         self.cpu.check_for_interrupt(cycle_manager);
     }
 

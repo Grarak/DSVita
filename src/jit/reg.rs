@@ -298,10 +298,7 @@ impl IntoIterator for RegReserve {
     type IntoIter = RegReserveIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        RegReserveIter {
-            reserve: self,
-            current: 0,
-        }
+        RegReserveIter { reserve: self, current: 0 }
     }
 }
 

@@ -172,11 +172,7 @@ impl Spi {
                             self.addr <<= 8;
                             self.addr |= value as u32;
                         } else {
-                            self.data = if self.addr < FIRMWARE_SIZE as u32 {
-                                SPI_FIRMWARE[self.addr as usize]
-                            } else {
-                                0
-                            };
+                            self.data = if self.addr < FIRMWARE_SIZE as u32 { SPI_FIRMWARE[self.addr as usize] } else { 0 };
                             self.addr += u32::from(cnt.transfer_size()) + 1;
                         }
                     } else {
@@ -224,24 +220,12 @@ impl Spi {
     }
 
     pub fn get_touch_coordinates(&self) -> (u16, u16) {
-        const ADC_X1: i32 = u16::from_le_bytes([
-            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA8],
-            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA7],
-        ]) as i32;
-        const ADC_Y1: i32 = u16::from_le_bytes([
-            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA6],
-            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA5],
-        ]) as i32;
+        const ADC_X1: i32 = u16::from_le_bytes([SPI_FIRMWARE[FIRMWARE_SIZE - 0xA8], SPI_FIRMWARE[FIRMWARE_SIZE - 0xA7]]) as i32;
+        const ADC_Y1: i32 = u16::from_le_bytes([SPI_FIRMWARE[FIRMWARE_SIZE - 0xA6], SPI_FIRMWARE[FIRMWARE_SIZE - 0xA5]]) as i32;
         const SCR_X1: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0xA4] as i32;
         const SCR_Y1: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0xA3] as i32;
-        const ADC_X2: i32 = u16::from_le_bytes([
-            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA2],
-            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA1],
-        ]) as i32;
-        const ADC_Y2: i32 = u16::from_le_bytes([
-            SPI_FIRMWARE[FIRMWARE_SIZE - 0xA0],
-            SPI_FIRMWARE[FIRMWARE_SIZE - 0x9F],
-        ]) as i32;
+        const ADC_X2: i32 = u16::from_le_bytes([SPI_FIRMWARE[FIRMWARE_SIZE - 0xA2], SPI_FIRMWARE[FIRMWARE_SIZE - 0xA1]]) as i32;
+        const ADC_Y2: i32 = u16::from_le_bytes([SPI_FIRMWARE[FIRMWARE_SIZE - 0xA0], SPI_FIRMWARE[FIRMWARE_SIZE - 0x9F]]) as i32;
         const SCR_X2: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0x9E] as i32;
         const SCR_Y2: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0x9D] as i32;
 

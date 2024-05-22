@@ -14,19 +14,14 @@
 extern crate core;
 
 use crate::cartridge_reader::CartridgeReader;
-use crate::emu::emu::{
-    get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem, get_mem_mut,
-    get_mmu, get_regs_mut, Emu,
-};
+use crate::emu::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem, get_mem_mut, get_mmu, get_regs_mut, Emu};
 use crate::emu::gpu::gpu::{Gpu, Swapchain, DISPLAY_PIXEL_COUNT};
 use crate::emu::spu::{SoundSampler, Spu};
 use crate::emu::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
-use crate::settings::{
-    create_settings_mut, Settings, ARM7_HLE_SETTINGS, AUDIO_SETTING, FRAMESKIP_SETTING,
-};
+use crate::settings::{create_settings_mut, Settings, ARM7_HLE_SETTINGS, AUDIO_SETTING, FRAMESKIP_SETTING};
 use crate::utils::{set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::{RefCell, UnsafeCell};
 use std::cmp::min;
@@ -65,21 +60,13 @@ fn run_cpu(
     let arm7_ram_addr = cartridge_reader.header.arm7_values.ram_address;
     let arm7_entry_addr = cartridge_reader.header.arm7_values.entry_address;
 
-    let mut emu_unsafe = UnsafeCell::new(Emu::new(
-        cartridge_reader,
-        swapchain,
-        fps,
-        key_map,
-        touch_points,
-        sound_sampler,
-    ));
+    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_reader, swapchain, fps, key_map, touch_points, sound_sampler));
     let emu = emu_unsafe.get_mut();
     let common = get_common_mut!(emu);
     let mem = get_mem_mut!(emu);
 
     {
-        let cartridge_header: &[u8; cartridge_reader::HEADER_IN_RAM_SIZE] =
-            unsafe { mem::transmute(&common.cartridge.reader.header) };
+        let cartridge_header: &[u8; cartridge_reader::HEADER_IN_RAM_SIZE] = unsafe { mem::transmute(&common.cartridge.reader.header) };
         mem.main.write_slice(0x7FFE00, cartridge_header);
 
         mem.main.write(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
@@ -94,10 +81,7 @@ fn run_cpu(
         mem.main.write(0x27FFC04, 0x00001FC2u32); // Copy of chip ID 2
 
         // User settings
-        mem.main.write_slice(
-            0x27FFC80,
-            &spi::SPI_FIRMWARE[spi::USER_SETTINGS_1_ADDR..spi::USER_SETTINGS_1_ADDR + 0x70],
-        );
+        mem.main.write_slice(0x27FFC80, &spi::SPI_FIRMWARE[spi::USER_SETTINGS_1_ADDR..spi::USER_SETTINGS_1_ADDR + 0x70]);
     }
 
     {
@@ -204,11 +188,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     let cm = &mut get_common_mut!(emu).cycle_manager;
 
     loop {
-        let arm9_cycles = if likely(!cpu_regs_arm9.is_halted()) {
-            (jit_asm_arm9.execute() + 1) >> 1
-        } else {
-            0
-        };
+        let arm9_cycles = if likely(!cpu_regs_arm9.is_halted()) { (jit_asm_arm9.execute() + 1) >> 1 } else { 0 };
 
         if ARM7_HLE {
             if unlikely(arm9_cycles == 0) {
@@ -217,14 +197,9 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
                 cm.add_cycle(arm9_cycles);
             }
         } else {
-            let arm7_cycles = if likely(!cpu_regs_arm7.is_halted()) {
-                jit_asm_arm7.execute()
-            } else {
-                0
-            };
+            let arm7_cycles = if likely(!cpu_regs_arm7.is_halted()) { jit_asm_arm7.execute() } else { 0 };
 
-            let cycles =
-                min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);
+            let cycles = min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);
             if unlikely(cycles == 0) {
                 cm.jump_to_next_event();
             } else {
@@ -264,14 +239,10 @@ pub fn main() {
                         .enumerate()
                         .map(|(index, setting)| {
                             let settings_clone = settings_mut.clone();
-                            Menu::new(
-                                format!("{} - {}", setting.title, setting.value),
-                                Vec::new(),
-                                move |_| {
-                                    settings_clone.borrow_mut()[index].value.next();
-                                    MenuAction::Refresh
-                                },
-                            )
+                            Menu::new(format!("{} - {}", setting.title, setting.value), Vec::new(), move |_| {
+                                settings_clone.borrow_mut()[index].value.next();
+                                MenuAction::Refresh
+                            })
                         })
                         .collect();
                     MenuAction::EnterSubMenu
@@ -281,17 +252,7 @@ pub fn main() {
                         Ok(dirs) => {
                             menu.entries = dirs
                                 .into_iter()
-                                .filter_map(|dir| {
-                                    dir.ok().and_then(|dir| {
-                                        dir.file_type().ok().and_then(|file_type| {
-                                            if file_type.is_file() {
-                                                Some(dir)
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                    })
-                                })
+                                .filter_map(|dir| dir.ok().and_then(|dir| dir.file_type().ok().and_then(|file_type| if file_type.is_file() { Some(dir) } else { None })))
                                 .map(|dir| {
                                     let file_path_clone = file_path.clone();
                                     Menu::new(dir.path().to_str().unwrap(), Vec::new(), move |_| {
@@ -301,20 +262,12 @@ pub fn main() {
                                 })
                                 .collect();
                             if menu.entries.is_empty() {
-                                menu.entries.push(Menu::new(
-                                    "ux0:dspsv does not contain any files!",
-                                    Vec::new(),
-                                    |_| MenuAction::Refresh,
-                                ))
+                                menu.entries.push(Menu::new("ux0:dspsv does not contain any files!", Vec::new(), |_| MenuAction::Refresh))
                             }
                         }
                         Err(_) => {
                             menu.entries.clear();
-                            menu.entries.push(Menu::new(
-                                "ux0:dspsv does not exist!",
-                                Vec::new(),
-                                |_| MenuAction::Refresh,
-                            ));
+                            menu.entries.push(Menu::new("ux0:dspsv does not exist!", Vec::new(), |_| MenuAction::Refresh));
                         }
                     }
                     MenuAction::EnterSubMenu
@@ -337,8 +290,7 @@ pub fn main() {
         }
     }
 
-    let cartridge_reader =
-        CartridgeReader::from_file(file_path.borrow().to_str().unwrap()).unwrap();
+    let cartridge_reader = CartridgeReader::from_file(file_path.borrow().to_str().unwrap()).unwrap();
     drop(file_path);
 
     let swapchain = Arc::new(Swapchain::new());
@@ -364,15 +316,7 @@ pub fn main() {
         .name("cpu".to_owned())
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
-            run_cpu(
-                cartridge_reader,
-                swapchain_clone,
-                fps_clone,
-                key_map_clone,
-                touch_points_clone,
-                sound_sampler_clone,
-                settings,
-            );
+            run_cpu(cartridge_reader, swapchain_clone, fps_clone, key_map_clone, touch_points_clone, sound_sampler_clone, settings);
         })
         .unwrap();
 
@@ -403,16 +347,8 @@ pub fn main() {
         key_map.store(keymap, Ordering::Relaxed);
 
         let fb = swapchain.consume();
-        let top = unsafe {
-            (fb[..DISPLAY_PIXEL_COUNT].as_ptr() as *const [u32; DISPLAY_PIXEL_COUNT])
-                .as_ref()
-                .unwrap_unchecked()
-        };
-        let bottom = unsafe {
-            (fb[DISPLAY_PIXEL_COUNT..].as_ptr() as *const [u32; DISPLAY_PIXEL_COUNT])
-                .as_ref()
-                .unwrap_unchecked()
-        };
+        let top = unsafe { (fb[..DISPLAY_PIXEL_COUNT].as_ptr() as *const [u32; DISPLAY_PIXEL_COUNT]).as_ref().unwrap_unchecked() };
+        let bottom = unsafe { (fb[DISPLAY_PIXEL_COUNT..].as_ptr() as *const [u32; DISPLAY_PIXEL_COUNT]).as_ref().unwrap_unchecked() };
         presenter.present_textures(top, bottom, fps.load(Ordering::Relaxed));
     }
 

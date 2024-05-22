@@ -293,10 +293,7 @@ impl AluImm {
         if op2 & 0xFFFF0000 == 0 {
             vec![Self::mov16_al(op0, op2 as u16)]
         } else {
-            vec![
-                Self::mov16_al(op0, (op2 & 0xFFFF) as u16),
-                Self::mov_t_al(op0, (op2 >> 16) as u16),
-            ]
+            vec![Self::mov16_al(op0, (op2 & 0xFFFF) as u16), Self::mov_t_al(op0, (op2 >> 16) as u16)]
         }
     }
 }
@@ -787,14 +784,7 @@ impl AluReg {
     }
 
     #[inline]
-    pub fn add(
-        op0: Reg,
-        op1: Reg,
-        op2: Reg,
-        shift_type: ShiftType,
-        shift_reg: Reg,
-        cond: Cond,
-    ) -> u32 {
+    pub fn add(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift_reg: Reg, cond: Cond) -> u32 {
         u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(1),
@@ -812,14 +802,7 @@ impl AluReg {
     }
 
     #[inline]
-    pub fn bic(
-        op0: Reg,
-        op1: Reg,
-        op2: Reg,
-        shift_type: ShiftType,
-        shift_reg: Reg,
-        cond: Cond,
-    ) -> u32 {
+    pub fn bic(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift_reg: Reg, cond: Cond) -> u32 {
         u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(1),
@@ -837,14 +820,7 @@ impl AluReg {
     }
 
     #[inline]
-    pub fn sub(
-        op0: Reg,
-        op1: Reg,
-        op2: Reg,
-        shift_type: ShiftType,
-        shift_reg: Reg,
-        cond: Cond,
-    ) -> u32 {
+    pub fn sub(op0: Reg, op1: Reg, op2: Reg, shift_type: ShiftType, shift_reg: Reg, cond: Cond) -> u32 {
         u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(1),

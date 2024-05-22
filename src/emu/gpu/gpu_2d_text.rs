@@ -26,33 +26,18 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
     }
 
-    pub(super) fn draw_text_pixels<const BG: usize, const BIT8: bool>(
-        &mut self,
-        line: u8,
-        mem: &Memory,
-    ) {
+    pub(super) fn draw_text_pixels<const BG: usize, const BIT8: bool>(&mut self, line: u8, mem: &Memory) {
         let disp_cnt = self.inner.disp_cnt;
         let bg_cnt = self.inner.bg_cnt[BG];
 
-        let mut screen_base_addr = (u32::from(disp_cnt.screen_base()) << 16)
-            + (u32::from(bg_cnt.screen_base_block()) << 11);
-        let char_base_addr =
-            (u32::from(disp_cnt.char_base()) << 16) + (u32::from(bg_cnt.char_base_block()) << 14);
+        let mut screen_base_addr = (u32::from(disp_cnt.screen_base()) << 16) + (u32::from(bg_cnt.screen_base_block()) << 11);
+        let char_base_addr = (u32::from(disp_cnt.char_base()) << 16) + (u32::from(bg_cnt.char_base_block()) << 14);
 
-        let y_offset = (if bool::from(bg_cnt.mosaic()) && self.inner.mosaic != 0 {
-            todo!()
-        } else {
-            line as u16
-        } + self.inner.bg_v_ofs[BG])
-            & 0x1FF;
+        let y_offset = (if bool::from(bg_cnt.mosaic()) && self.inner.mosaic != 0 { todo!() } else { line as u16 } + self.inner.bg_v_ofs[BG]) & 0x1FF;
 
         screen_base_addr += (y_offset as u32 & 0xF8) << 3;
         if y_offset >= 256 && (u8::from(bg_cnt.screen_size()) & 2) != 0 {
-            screen_base_addr += if u8::from(bg_cnt.screen_size()) & 1 != 0 {
-                0x1000
-            } else {
-                0x800
-            };
+            screen_base_addr += if u8::from(bg_cnt.screen_size()) & 1 != 0 { 0x1000 } else { 0x800 };
         }
 
         let mut palettes_base_addr = Self::get_palettes_offset();
@@ -97,23 +82,12 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
 
             let char_index_addr = char_base_addr
                 + if BIT8 {
-                    (u32::from(screen_entry.tile_num()) << 6)
-                        + (if bool::from(screen_entry.v_flip()) {
-                            7 - (y_offset as u32 & 7)
-                        } else {
-                            y_offset as u32 & 7
-                        } << 3)
+                    (u32::from(screen_entry.tile_num()) << 6) + (if bool::from(screen_entry.v_flip()) { 7 - (y_offset as u32 & 7) } else { y_offset as u32 & 7 } << 3)
                 } else {
-                    (u32::from(screen_entry.tile_num()) << 5)
-                        + (if bool::from(screen_entry.v_flip()) {
-                            7 - (y_offset as u32 & 7)
-                        } else {
-                            y_offset as u32 & 7
-                        } << 2)
+                    (u32::from(screen_entry.tile_num()) << 5) + (if bool::from(screen_entry.v_flip()) { 7 - (y_offset as u32 & 7) } else { y_offset as u32 & 7 } << 2)
                 };
             let mut indices = if BIT8 {
-                self.read_bg::<u32>(char_index_addr, mem) as u64
-                    | ((self.read_bg::<u32>(char_index_addr + 4, mem) as u64) << 32)
+                self.read_bg::<u32>(char_index_addr, mem) as u64 | ((self.read_bg::<u32>(char_index_addr + 4, mem) as u64) << 32)
             } else {
                 self.read_bg::<u32>(char_index_addr, mem) as u64
             };
@@ -121,20 +95,10 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
             let x_origin = i.wrapping_sub(x_offset & 7);
             let mut x = x_origin;
             while indices != 0 {
-                let tmp_x = if bool::from(screen_entry.h_flip()) {
-                    x_origin + 7 - x + x_origin
-                } else {
-                    x
-                };
+                let tmp_x = if bool::from(screen_entry.h_flip()) { x_origin + 7 - x + x_origin } else { x };
 
-                if tmp_x < 256
-                    && (indices & if BIT8 { 0xFF } else { 0xF }) != 0
-                    && self.is_within_window::<BG>(line, tmp_x as u8)
-                {
-                    let color = read_palettes(
-                        mem,
-                        palette_addr + ((indices as u32 & if BIT8 { 0xFF } else { 0xF }) << 1),
-                    );
+                if tmp_x < 256 && (indices & if BIT8 { 0xFF } else { 0xF }) != 0 && self.is_within_window::<BG>(line, tmp_x as u8) {
+                    let color = read_palettes(mem, palette_addr + ((indices as u32 & if BIT8 { 0xFF } else { 0xF }) << 1));
                     self.draw_bg_pixel::<BG>(line, tmp_x as usize, (color | (1 << 15)) as u32);
                 }
 

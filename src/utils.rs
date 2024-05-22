@@ -120,21 +120,14 @@ impl<T: Sized + Default, const SIZE: usize> Default for HeapMem<T, SIZE> {
 }
 
 pub const fn crc16(mut crc: u32, buf: &[u8], start: usize, size: usize) -> u16 {
-    const TABLE: [u16; 8] = [
-        0xC0C1, 0xC181, 0xC301, 0xC601, 0xCC01, 0xD801, 0xF001, 0xA001,
-    ];
+    const TABLE: [u16; 8] = [0xC0C1, 0xC181, 0xC301, 0xC601, 0xCC01, 0xD801, 0xF001, 0xA001];
 
     let mut i = start;
     while i < start + size {
         crc ^= buf[i] as u32;
         let mut j = 0;
         while j < TABLE.len() {
-            crc = (crc >> 1)
-                ^ if crc & 1 != 0 {
-                    (TABLE[j] as u32) << (7 - j)
-                } else {
-                    0
-                };
+            crc = (crc >> 1) ^ if crc & 1 != 0 { (TABLE[j] as u32) << (7 - j) } else { 0 };
             j += 1;
         }
         i += 1;

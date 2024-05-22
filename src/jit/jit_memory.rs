@@ -46,11 +46,7 @@ pub struct JitInsertArgs {
 }
 
 impl JitInsertArgs {
-    pub fn new(
-        guest_start_pc: u32,
-        guest_pc_to_jit_addr_offset: Vec<u16>,
-        guest_insts_cycle_counts: Vec<u16>,
-    ) -> Self {
+    pub fn new(guest_start_pc: u32, guest_pc_to_jit_addr_offset: Vec<u16>, guest_insts_cycle_counts: Vec<u16>) -> Self {
         JitInsertArgs {
             guest_start_pc,
             guest_pc_to_jit_addr_offset,
@@ -150,25 +146,13 @@ impl JitMemory {
         let (allocated_offset_addr, aligned_size) = self.insert(opcodes);
 
         self.mem_common_offset = allocated_offset_addr + aligned_size;
-        debug_println!(
-            "Insert new jit ({:x}) block with size {} at {:x}",
-            self.mem.as_ptr() as u32,
-            aligned_size,
-            allocated_offset_addr,
-        );
+        debug_println!("Insert new jit ({:x}) block with size {} at {:x}", self.mem.as_ptr() as u32, aligned_size, allocated_offset_addr,);
 
         allocated_offset_addr + self.mem.as_ptr() as u32
     }
 
-    pub fn insert_block<const CPU: CpuType, const THUMB: bool>(
-        &mut self,
-        opcodes: &[u32],
-        insert_args: JitInsertArgs,
-    ) {
-        assert_eq!(
-            insert_args.guest_insts_cycle_counts.len() as u32,
-            JIT_BLOCK_SIZE / if THUMB { 2 } else { 4 }
-        );
+    pub fn insert_block<const CPU: CpuType, const THUMB: bool>(&mut self, opcodes: &[u32], insert_args: JitInsertArgs) {
+        assert_eq!(insert_args.guest_insts_cycle_counts.len() as u32, JIT_BLOCK_SIZE / if THUMB { 2 } else { 4 });
         let (allocated_offset_addr, aligned_size) = self.insert(opcodes);
 
         let addr_entry = (insert_args.guest_start_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
@@ -183,11 +167,8 @@ impl JitMemory {
                 for i in 1..insert_args.guest_pc_to_jit_addr_offset.len() {
                     block.offsets[i] = insert_args.guest_pc_to_jit_addr_offset[i];
                     let cycles = &mut block.cycles[i];
-                    cycles.inst_cycle_count = (insert_args.guest_insts_cycle_counts[i]
-                        - insert_args.guest_insts_cycle_counts[i - 1])
-                        as u8;
-                    cycles.pre_cycle_sum =
-                        insert_args.guest_insts_cycle_counts[i] - cycles.inst_cycle_count as u16;
+                    cycles.inst_cycle_count = (insert_args.guest_insts_cycle_counts[i] - insert_args.guest_insts_cycle_counts[i - 1]) as u8;
+                    cycles.pre_cycle_sum = insert_args.guest_insts_cycle_counts[i] - cycles.inst_cycle_count as u16;
                 }
             }};
         }
@@ -222,33 +203,26 @@ impl JitMemory {
         if DEBUG_LOG {
             let per = (self.mem_offset * 100) as f32 / JIT_MEMORY_SIZE as f32;
             debug_println!(
-                    "Insert new jit ({:x}) block with size {} at {:x}, {}% allocated with guest pc {:x}",
-                    self.mem.as_ptr() as u32,
-                    aligned_size,
-                    allocated_offset_addr,
-                    per,
-                    insert_args.guest_start_pc
-                );
+                "Insert new jit ({:x}) block with size {} at {:x}, {}% allocated with guest pc {:x}",
+                self.mem.as_ptr() as u32,
+                aligned_size,
+                allocated_offset_addr,
+                per,
+                insert_args.guest_start_pc
+            );
         }
     }
 
     #[inline(always)]
-    pub fn get_jit_start_addr<const CPU: CpuType, const THUMB: bool>(
-        &self,
-        guest_pc: u32,
-    ) -> Option<(u32, u32)> {
+    pub fn get_jit_start_addr<const CPU: CpuType, const THUMB: bool>(&self, guest_pc: u32) -> Option<(u32, u32)> {
         macro_rules! get_addr_block {
             ($blocks:expr) => {{
                 let addr_entry = (guest_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
                 let addr_entry = addr_entry % $blocks.len();
                 let block = &$blocks[addr_entry];
                 if likely(block.jit_addr != 0) {
-                    let inst_offset =
-                        (guest_pc & (JIT_BLOCK_SIZE - 1)) >> if THUMB { 1 } else { 2 };
-                    Some((
-                        block.jit_addr + block.offsets[inst_offset as usize] as u32,
-                        block as *const _ as u32,
-                    ))
+                    let inst_offset = (guest_pc & (JIT_BLOCK_SIZE - 1)) >> if THUMB { 1 } else { 2 };
+                    Some((block.jit_addr + block.offsets[inst_offset as usize] as u32, block as *const _ as u32))
                 } else {
                     None
                 }
@@ -285,26 +259,14 @@ impl JitMemory {
         }
     }
 
-    pub fn get_cycle_counts_unchecked<const THUMB: bool>(
-        &self,
-        guest_pc: u32,
-        jit_block_addr: u32,
-    ) -> (u16, u8) {
+    pub fn get_cycle_counts_unchecked<const THUMB: bool>(&self, guest_pc: u32, jit_block_addr: u32) -> (u16, u8) {
         if THUMB {
-            let block = unsafe {
-                (jit_block_addr as *const JitBlock<{ JIT_BLOCK_SIZE as usize / 2 }>)
-                    .as_ref()
-                    .unwrap_unchecked()
-            };
+            let block = unsafe { (jit_block_addr as *const JitBlock<{ JIT_BLOCK_SIZE as usize / 2 }>).as_ref().unwrap_unchecked() };
             let inst_offset = (guest_pc & (JIT_BLOCK_SIZE - 1)) >> 1;
             let cycle = &block.cycles[inst_offset as usize];
             (cycle.pre_cycle_sum, cycle.inst_cycle_count)
         } else {
-            let block = unsafe {
-                (jit_block_addr as *const JitBlock<{ JIT_BLOCK_SIZE as usize / 4 }>)
-                    .as_ref()
-                    .unwrap_unchecked()
-            };
+            let block = unsafe { (jit_block_addr as *const JitBlock<{ JIT_BLOCK_SIZE as usize / 4 }>).as_ref().unwrap_unchecked() };
             let inst_offset = (guest_pc & (JIT_BLOCK_SIZE - 1)) >> 2;
             let cycle = &block.cycles[inst_offset as usize];
             (cycle.pre_cycle_sum, cycle.inst_cycle_count)
@@ -315,16 +277,12 @@ impl JitMemory {
         macro_rules! invalidate {
             ($blocks:expr, $blocks_thumb:expr) => {{
                 let addr_entry = (addr >> JIT_BLOCK_SIZE_SHIFT) as usize % $blocks.len();
-                let addr_entry_end =
-                    ((addr + size - 1) >> JIT_BLOCK_SIZE_SHIFT) as usize % $blocks.len();
+                let addr_entry_end = ((addr + size - 1) >> JIT_BLOCK_SIZE_SHIFT) as usize % $blocks.len();
                 $blocks[addr_entry].jit_addr = 0;
                 $blocks[addr_entry_end].jit_addr = 0;
                 $blocks_thumb[addr_entry].jit_addr = 0;
                 $blocks_thumb[addr_entry_end].jit_addr = 0;
-                (
-                    ptr::addr_of!($blocks[addr_entry]) as u32,
-                    ptr::addr_of!($blocks_thumb[addr_entry]) as u32,
-                )
+                (ptr::addr_of!($blocks[addr_entry]) as u32, ptr::addr_of!($blocks_thumb[addr_entry]) as u32)
             }};
         }
         match CPU {
@@ -362,24 +320,12 @@ impl JitMemory {
 
     #[cfg(target_os = "linux")]
     fn set_rw(&mut self, start_addr: u32, size: u32) {
-        unsafe {
-            libc::mprotect(
-                (self.mem.as_ptr() as u32 + start_addr) as _,
-                size as _,
-                libc::PROT_READ | libc::PROT_WRITE,
-            )
-        };
+        unsafe { libc::mprotect((self.mem.as_ptr() as u32 + start_addr) as _, size as _, libc::PROT_READ | libc::PROT_WRITE) };
     }
 
     #[cfg(target_os = "linux")]
     fn set_rx(&mut self, start_addr: u32, size: u32) {
-        unsafe {
-            libc::mprotect(
-                (self.mem.as_ptr() as u32 + start_addr) as _,
-                size as _,
-                libc::PROT_READ | libc::PROT_EXEC,
-            )
-        };
+        unsafe { libc::mprotect((self.mem.as_ptr() as u32 + start_addr) as _, size as _, libc::PROT_READ | libc::PROT_EXEC) };
     }
 
     #[cfg(target_os = "vita")]
@@ -394,13 +340,7 @@ impl JitMemory {
 
     #[cfg(target_os = "vita")]
     fn flush_cache(&mut self, start_addr: u32, size: u32) {
-        unsafe {
-            vitasdk_sys::sceKernelSyncVMDomain(
-                self.mem.block_uid,
-                (self.mem.as_ptr() as u32 + start_addr) as _,
-                size,
-            )
-        };
+        unsafe { vitasdk_sys::sceKernelSyncVMDomain(self.mem.block_uid, (self.mem.as_ptr() as u32 + start_addr) as _, size) };
     }
 
     #[cfg(target_os = "vita")]

@@ -123,15 +123,7 @@ impl CpuRegs {
 
     pub fn send_interrupt(&mut self, flag: InterruptFlag, cycle_manager: &mut CycleManager) {
         self.irf |= 1 << flag as u8;
-        debug_println!(
-            "{:?} send interrupt {:?} {:x} {:x} {:x} {}",
-            self.cpu_type,
-            flag,
-            self.ie,
-            self.irf,
-            self.ime,
-            self.cpsr_irq_enabled
-        );
+        debug_println!("{:?} send interrupt {:?} {:x} {:x} {:x} {}", self.cpu_type, flag, self.ie, self.irf, self.ime, self.cpsr_irq_enabled);
         if (self.ie & self.irf) != 0 {
             if self.ime != 0 && self.cpsr_irq_enabled {
                 debug_println!("{:?} schedule send interrupt {:?}", self.cpu_type, flag);
@@ -160,15 +152,9 @@ impl CpuRegs {
     pub fn on_interrupt_event<const CPU: CpuType>(emu: &mut Emu) {
         let interrupted = {
             let cpu_regs = get_cpu_regs!(emu, CPU);
-            let interrupt =
-                cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && cpu_regs.cpsr_irq_enabled;
+            let interrupt = cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && cpu_regs.cpsr_irq_enabled;
             if interrupt {
-                debug_println!(
-                    "{:?} interrupt {:x} {:x}",
-                    cpu_regs.cpu_type,
-                    cpu_regs.ie,
-                    cpu_regs.irf
-                );
+                debug_println!("{:?} interrupt {:x} {:x}", cpu_regs.cpu_type, cpu_regs.ie, cpu_regs.irf);
             }
             interrupt
         };

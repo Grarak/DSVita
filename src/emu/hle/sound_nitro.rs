@@ -160,19 +160,13 @@ struct Alarm {
 }
 
 const BASE_VOLUME_TABLE: [i16; 128] = [
-    -0x8000, -0x02D2, -0x02D1, -0x028B, -0x0259, -0x0232, -0x0212, -0x01F7, -0x01E0, -0x01CC,
-    -0x01BA, -0x01A9, -0x019A, -0x018C, -0x017F, -0x0173, -0x0168, -0x015D, -0x0153, -0x014A,
-    -0x0141, -0x0139, -0x0131, -0x0129, -0x0121, -0x011A, -0x0114, -0x010D, -0x0107, -0x0101,
-    -0x00FB, -0x00F5, -0x00EF, -0x00EA, -0x00E5, -0x00E0, -0x00DB, -0x00D6, -0x00D2, -0x00CD,
-    -0x00C9, -0x00C4, -0x00C0, -0x00BC, -0x00B8, -0x00B4, -0x00B0, -0x00AD, -0x00A9, -0x00A5,
-    -0x00A2, -0x009E, -0x009B, -0x0098, -0x0095, -0x0091, -0x008E, -0x008B, -0x0088, -0x0085,
-    -0x0082, -0x007F, -0x007D, -0x007A, -0x0077, -0x0074, -0x0072, -0x006F, -0x006D, -0x006A,
-    -0x0067, -0x0065, -0x0063, -0x0060, -0x005E, -0x005B, -0x0059, -0x0057, -0x0055, -0x0052,
-    -0x0050, -0x004E, -0x004C, -0x004A, -0x0048, -0x0046, -0x0044, -0x0042, -0x0040, -0x003E,
-    -0x003C, -0x003A, -0x0038, -0x0036, -0x0034, -0x0032, -0x0031, -0x002F, -0x002D, -0x002B,
-    -0x002A, -0x0028, -0x0026, -0x0024, -0x0023, -0x0021, -0x001F, -0x001E, -0x001C, -0x001B,
-    -0x0019, -0x0017, -0x0016, -0x0014, -0x0013, -0x0011, -0x0010, -0x000E, -0x000D, -0x000B,
-    -0x000A, -0x0008, -0x0007, -0x0006, -0x0004, -0x0003, -0x0001, 0x0000,
+    -0x8000, -0x02D2, -0x02D1, -0x028B, -0x0259, -0x0232, -0x0212, -0x01F7, -0x01E0, -0x01CC, -0x01BA, -0x01A9, -0x019A, -0x018C, -0x017F, -0x0173, -0x0168, -0x015D, -0x0153, -0x014A, -0x0141,
+    -0x0139, -0x0131, -0x0129, -0x0121, -0x011A, -0x0114, -0x010D, -0x0107, -0x0101, -0x00FB, -0x00F5, -0x00EF, -0x00EA, -0x00E5, -0x00E0, -0x00DB, -0x00D6, -0x00D2, -0x00CD, -0x00C9, -0x00C4,
+    -0x00C0, -0x00BC, -0x00B8, -0x00B4, -0x00B0, -0x00AD, -0x00A9, -0x00A5, -0x00A2, -0x009E, -0x009B, -0x0098, -0x0095, -0x0091, -0x008E, -0x008B, -0x0088, -0x0085, -0x0082, -0x007F, -0x007D,
+    -0x007A, -0x0077, -0x0074, -0x0072, -0x006F, -0x006D, -0x006A, -0x0067, -0x0065, -0x0063, -0x0060, -0x005E, -0x005B, -0x0059, -0x0057, -0x0055, -0x0052, -0x0050, -0x004E, -0x004C, -0x004A,
+    -0x0048, -0x0046, -0x0044, -0x0042, -0x0040, -0x003E, -0x003C, -0x003A, -0x0038, -0x0036, -0x0034, -0x0032, -0x0031, -0x002F, -0x002D, -0x002B, -0x002A, -0x0028, -0x0026, -0x0024, -0x0023,
+    -0x0021, -0x001F, -0x001E, -0x001C, -0x001B, -0x0019, -0x0017, -0x0016, -0x0014, -0x0013, -0x0011, -0x0010, -0x000E, -0x000D, -0x000B, -0x000A, -0x0008, -0x0007, -0x0006, -0x0004, -0x0003,
+    -0x0001, 0x0000,
 ];
 
 #[derive(Default)]
@@ -276,20 +270,7 @@ impl SoundNitro {
         }
     }
 
-    fn setup_channel_wave(
-        &mut self,
-        chan_id: usize,
-        sad: u32,
-        format: SoundChannelFormat,
-        repeat: u8,
-        pnt: u16,
-        len: u32,
-        mut vol: i32,
-        vol_div: u8,
-        freq: u16,
-        mut pan: i32,
-        emu: &mut Emu,
-    ) {
+    fn setup_channel_wave(&mut self, chan_id: usize, sad: u32, format: SoundChannelFormat, repeat: u8, pnt: u16, len: u32, mut vol: i32, vol_div: u8, freq: u16, mut pan: i32, emu: &mut Emu) {
         self.channel_vol[chan_id] = vol as u8;
         self.channel_pan[chan_id] = pan as u8;
 
@@ -317,16 +298,7 @@ impl SoundNitro {
         spu.set_sad(chan_id, !0, sad, emu);
     }
 
-    fn setup_channel_psg(
-        &mut self,
-        chan_id: usize,
-        duty: u8,
-        mut vol: i32,
-        vol_div: u8,
-        freq: u16,
-        mut pan: i32,
-        emu: &mut Emu,
-    ) {
+    fn setup_channel_psg(&mut self, chan_id: usize, duty: u8, mut vol: i32, vol_div: u8, freq: u16, mut pan: i32, emu: &mut Emu) {
         self.channel_vol[chan_id] = vol as u8;
         self.channel_pan[chan_id] = pan as u8;
 
@@ -351,15 +323,7 @@ impl SoundNitro {
         spu.set_tmr(chan_id, !0, (0x10000 - freq as u32) as u16);
     }
 
-    fn setup_channel_noise(
-        &mut self,
-        chan_id: usize,
-        mut vol: i32,
-        vol_div: u8,
-        freq: u16,
-        mut pan: i32,
-        emu: &mut Emu,
-    ) {
+    fn setup_channel_noise(&mut self, chan_id: usize, mut vol: i32, vol_div: u8, freq: u16, mut pan: i32, emu: &mut Emu) {
         self.channel_vol[chan_id] = vol as u8;
         self.channel_pan[chan_id] = pan as u8;
 
@@ -445,10 +409,7 @@ impl SoundNitro {
         if rate < 109 {
             self.channels[chan_id].attack_rate = 255 - rate;
         } else {
-            const RATE_TBL: [u8; 19] = [
-                0x00, 0x01, 0x05, 0x0E, 0x1A, 0x26, 0x33, 0x3F, 0x49, 0x54, 0x5C, 0x64, 0x6D, 0x74,
-                0x7B, 0x7F, 0x84, 0x89, 0x8F,
-            ];
+            const RATE_TBL: [u8; 19] = [0x00, 0x01, 0x05, 0x0E, 0x1A, 0x26, 0x33, 0x3F, 0x49, 0x54, 0x5C, 0x64, 0x6D, 0x74, 0x7B, 0x7F, 0x84, 0x89, 0x8F];
             self.channels[chan_id].attack_rate = RATE_TBL[127 - rate as usize];
         }
     }
@@ -496,23 +457,8 @@ impl SoundNitro {
                         chan.pan as i32,
                         emu,
                     ),
-                    1 => self.setup_channel_psg(
-                        i,
-                        chan.data_addr as u8,
-                        chan.volume as i32,
-                        chan.volume_div,
-                        chan.frequency,
-                        chan.pan as i32,
-                        emu,
-                    ),
-                    2 => self.setup_channel_noise(
-                        i,
-                        chan.volume as i32,
-                        chan.volume_div,
-                        chan.frequency,
-                        chan.pan as i32,
-                        emu,
-                    ),
+                    1 => self.setup_channel_psg(i, chan.data_addr as u8, chan.volume as i32, chan.volume_div, chan.frequency, chan.pan as i32, emu),
+                    2 => self.setup_channel_noise(i, chan.volume as i32, chan.volume_div, chan.frequency, chan.pan as i32, emu),
                     _ => {}
                 }
 
@@ -553,16 +499,13 @@ impl SoundNitro {
     fn release_track(&mut self, track_id: usize, seq_id: usize, flag: bool) {
         let seq = &self.sequences[seq_id];
         let track = &self.tracks[track_id];
-        let volbase3 = BASE_VOLUME_TABLE[seq.volume] as i32
-            + BASE_VOLUME_TABLE[track.volume] as i32
-            + BASE_VOLUME_TABLE[track.expression] as i32;
+        let volbase3 = BASE_VOLUME_TABLE[seq.volume] as i32 + BASE_VOLUME_TABLE[track.volume] as i32 + BASE_VOLUME_TABLE[track.expression] as i32;
         let volbase3 = max(volbase3, -0x8000);
 
         let volbase1 = track.track_unk0a as i32 + seq.seq_unk06 as i32;
         let volbase1 = max(volbase1, -0x8000);
 
-        let freqbase = track.frequency as i32
-            + ((track.pitch_bend as i32 * ((track.pitch_bend_range as i32) << 6)) >> 7);
+        let freqbase = track.frequency as i32 + ((track.pitch_bend as i32 * ((track.pitch_bend_range as i32) << 6)) >> 7);
 
         let mut panbase = track.pan as i32;
         if track.track_unk01 != 0x7F {
@@ -693,14 +636,7 @@ impl SoundNitro {
         self.sequences[seq_id].status_flags &= !1;
     }
 
-    fn prepare_sequence(
-        &mut self,
-        seq_id: usize,
-        notedata: u32,
-        noteoffset: u32,
-        sbnk: u32,
-        emu: &mut Emu,
-    ) {
+    fn prepare_sequence(&mut self, seq_id: usize, notedata: u32, noteoffset: u32, sbnk: u32, emu: &mut Emu) {
         if self.sequences[seq_id].status_flags & 1 != 0 {
             self.finish_sequence(seq_id);
         }
@@ -896,8 +832,7 @@ impl SoundNitro {
                                 delay = alarm.delay;
                             }
 
-                            get_cm_mut!(emu)
-                                .schedule(delay * 64, EventType::SoundAlarmHle(i as u8));
+                            get_cm_mut!(emu).schedule(delay * 64, EventType::SoundAlarmHle(i as u8));
                         }
 
                         self.report_hardware_status(emu);
@@ -968,15 +903,7 @@ impl SoundNitro {
                         let freq = (args[2] >> 8) & 0xFFFF;
                         let pan = args[2] & 0x7F;
 
-                        self.setup_channel_psg(
-                            id as usize,
-                            duty as u8,
-                            vol as i32,
-                            voldiv as u8,
-                            freq as u16,
-                            pan as i32,
-                            emu,
-                        );
+                        self.setup_channel_psg(id as usize, duty as u8, vol as i32, voldiv as u8, freq as u16, pan as i32, emu);
                     }
                     0x10 => {
                         let id = args[0];
@@ -985,14 +912,7 @@ impl SoundNitro {
                         let freq = (args[2] >> 8) & 0xFFFF;
                         let pan = args[2] & 0x7F;
 
-                        self.setup_channel_noise(
-                            id as usize,
-                            vol as i32,
-                            voldiv as u8,
-                            freq as u16,
-                            pan as i32,
-                            emu,
-                        );
+                        self.setup_channel_noise(id as usize, vol as i32, voldiv as u8, freq as u16, pan as i32, emu);
                     }
                     0x11 => {
                         let dstaddr = args[0];
@@ -1048,8 +968,7 @@ impl SoundNitro {
                             let spu = get_spu_mut!(emu);
                             let mut cnt = SoundCnt::from(spu.get_cnt(i));
                             let pan = u8::from(cnt.panning());
-                            let vol =
-                                self.calc_channel_volume(self.channel_vol[i] as i32, pan as i32);
+                            let vol = self.calc_channel_volume(self.channel_vol[i] as i32, pan as i32);
                             cnt.set_volume_mul(u7::new((vol & 0xFF) as u8));
                             spu.set_cnt(i, !0, u32::from(cnt), emu);
                         }
@@ -1184,16 +1103,7 @@ impl SoundNitro {
         chan.status_flags |= 0x03;
     }
 
-    fn setup_instrument(
-        &mut self,
-        chan_id: usize,
-        tune: u8,
-        speed: u8,
-        mut len: i32,
-        sbnk: u32,
-        data: &[u8; 16],
-        emu: &mut Emu,
-    ) -> bool {
+    fn setup_instrument(&mut self, chan_id: usize, tune: u8, speed: u8, mut len: i32, sbnk: u32, data: &[u8; 16], emu: &mut Emu) -> bool {
         let mut release = data[0x0A];
         if release == 0xFF {
             release = 0;
@@ -1210,8 +1120,7 @@ impl SoundNitro {
                     let swav_num = data[0x01];
                     let swar_num = data[0x02];
 
-                    let swar =
-                        emu.mem_read::<{ ARM7 }, u32>(sbnk + 0x18 + ((swar_num as u32) << 3));
+                    let swar = emu.mem_read::<{ ARM7 }, u32>(sbnk + 0x18 + ((swar_num as u32) << 3));
                     if swar == 0 {
                         return false;
                     }
@@ -1221,8 +1130,7 @@ impl SoundNitro {
                         return false;
                     }
 
-                    let mut swav =
-                        emu.mem_read::<{ ARM7 }, u32>(swar + 0x3C + ((swav_num as u32) << 2));
+                    let mut swav = emu.mem_read::<{ ARM7 }, u32>(swar + 0x3C + ((swav_num as u32) << 2));
                     if swav == 0 {
                         return false;
                     }
@@ -1285,15 +1193,8 @@ impl SoundNitro {
         true
     }
 
-    fn allocate_channel(
-        &mut self,
-        mut chanmask: u16,
-        prio: u8,
-        flag: bool,
-        track_id: usize,
-    ) -> Option<usize> {
-        const CHAN_ORDER: [usize; CHANNEL_COUNT] =
-            [4, 5, 6, 7, 2, 0, 3, 1, 8, 9, 10, 11, 14, 12, 15, 13];
+    fn allocate_channel(&mut self, mut chanmask: u16, prio: u8, flag: bool, track_id: usize) -> Option<usize> {
+        const CHAN_ORDER: [usize; CHANNEL_COUNT] = [4, 5, 6, 7, 2, 0, 3, 1, 8, 9, 10, 11, 14, 12, 15, 13];
         const VOL_DIV: [i32; 4] = [0, 1, 2, 4];
 
         let mut ret = None;
@@ -1377,15 +1278,7 @@ impl SoundNitro {
         ret
     }
 
-    fn track_key_on(
-        &mut self,
-        track_id: usize,
-        seq_id: usize,
-        tune: u8,
-        speed: u8,
-        len: i32,
-        emu: &mut Emu,
-    ) {
+    fn track_key_on(&mut self, track_id: usize, seq_id: usize, tune: u8, speed: u8, len: i32, emu: &mut Emu) {
         let mut chan_id = None;
         if self.tracks[track_id].status_flags & (1 << 3) != 0 {
             chan_id = self.tracks[track_id].chan_list;
@@ -1397,13 +1290,7 @@ impl SoundNitro {
 
         if chan_id.is_none() {
             let mut instrdata = [0; 16];
-            if !Self::read_instrument(
-                self.sequences[seq_id].sbnk_addr,
-                self.tracks[track_id].instr_index as i32,
-                tune,
-                &mut instrdata,
-                emu,
-            ) {
+            if !Self::read_instrument(self.sequences[seq_id].sbnk_addr, self.tracks[track_id].instr_index as i32, tune, &mut instrdata, emu) {
                 return;
             }
 
@@ -1415,32 +1302,15 @@ impl SoundNitro {
             };
 
             chanmask &= self.tracks[track_id].channel_mask;
-            match self.allocate_channel(
-                chanmask,
-                self.tracks[track_id].priority,
-                self.tracks[track_id].status_flags & (1 << 7) != 0,
-                track_id,
-            ) {
+            match self.allocate_channel(chanmask, self.tracks[track_id].priority, self.tracks[track_id].status_flags & (1 << 7) != 0, track_id) {
                 None => {
                     return;
                 }
                 Some(id) => {
                     chan_id = Some(id);
-                    let len = if self.tracks[track_id].status_flags & (1 << 3) != 0 {
-                        -1
-                    } else {
-                        len
-                    };
+                    let len = if self.tracks[track_id].status_flags & (1 << 3) != 0 { -1 } else { len };
 
-                    if !self.setup_instrument(
-                        id,
-                        tune,
-                        speed,
-                        len,
-                        self.sequences[seq_id].sbnk_addr,
-                        &instrdata,
-                        emu,
-                    ) {
+                    if !self.setup_instrument(id, tune, speed, len, self.sequences[seq_id].sbnk_addr, &instrdata, emu) {
                         self.channels[id].priority = 0;
                         self.channels[id].linked = false;
                         self.channels[id].linked_track = None;
@@ -1470,8 +1340,7 @@ impl SoundNitro {
         let chan = &mut self.channels[chan_id];
         chan.freq_ramp_target = self.tracks[track_id].sweep_pitch;
         if self.tracks[track_id].status_flags & (1 << 5) != 0 {
-            chan.freq_ramp_target +=
-                (((self.tracks[track_id].track_unk14 as i32 - tune as i32) << 22) >> 16) as i16;
+            chan.freq_ramp_target += (((self.tracks[track_id].track_unk14 as i32 - tune as i32) << 22) >> 16) as i16;
         }
 
         if self.tracks[track_id].portamento_time == 0 {
@@ -1503,13 +1372,7 @@ impl SoundNitro {
         }
     }
 
-    fn read_note_op_param(
-        &mut self,
-        track_id: usize,
-        seq_id: usize,
-        typ: i32,
-        emu: &mut Emu,
-    ) -> u32 {
+    fn read_note_op_param(&mut self, track_id: usize, seq_id: usize, typ: i32, emu: &mut Emu) -> u32 {
         let track = &mut self.tracks[track_id];
         match typ {
             0 => {
@@ -1569,14 +1432,7 @@ impl SoundNitro {
         }
     }
 
-    fn update_track(
-        &mut self,
-        track_id: usize,
-        seq_id: usize,
-        id: usize,
-        process: bool,
-        emu: &mut Emu,
-    ) -> i32 {
+    fn update_track(&mut self, track_id: usize, seq_id: usize, id: usize, process: bool, emu: &mut Emu) -> i32 {
         let mut chan_id = self.tracks[track_id].chan_list;
         while let Some(id) = chan_id {
             let chan = &mut self.channels[id];
@@ -1643,14 +1499,7 @@ impl SoundNitro {
                 let tune = min(max(tune, 0), 127) as u8;
 
                 if self.tracks[track_id].status_flags & (1 << 2) == 0 && process {
-                    self.track_key_on(
-                        track_id,
-                        seq_id,
-                        tune,
-                        speed,
-                        if len <= 0 { -1 } else { len },
-                        emu,
-                    );
+                    self.track_key_on(track_id, seq_id, tune, speed, if len <= 0 { -1 } else { len }, emu);
                 }
 
                 self.tracks[track_id].track_unk14 = tune as i8;
@@ -1663,8 +1512,7 @@ impl SoundNitro {
             } else {
                 match note_op & 0xF0 {
                     0x80 => {
-                        let param =
-                            self.read_note_op_param(track_id, seq_id, paramtype, emu) as i32;
+                        let param = self.read_note_op_param(track_id, seq_id, paramtype, emu) as i32;
                         if cond {
                             match note_op {
                                 0x80 => {
@@ -1684,41 +1532,31 @@ impl SoundNitro {
                             let track = &mut self.tracks[track_id];
                             let tnum = emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr);
                             track.cur_note_addr += 1;
-                            let mut trackaddr =
-                                emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32;
+                            let mut trackaddr = emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32;
                             track.cur_note_addr += 1;
-                            trackaddr |=
-                                (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 8;
+                            trackaddr |= (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 8;
                             track.cur_note_addr += 1;
-                            trackaddr |=
-                                (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 16;
+                            trackaddr |= (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 16;
                             track.cur_note_addr += 1;
                             if cond {
-                                if let Some(thetrack_id) =
-                                    self.get_sequence_track_id(seq_id, tnum as usize)
-                                {
+                                if let Some(thetrack_id) = self.get_sequence_track_id(seq_id, tnum as usize) {
                                     if thetrack_id != track_id {
                                         self.finish_track(thetrack_id, seq_id, -1);
                                         self.unlink_track_channels(thetrack_id);
 
-                                        self.tracks[thetrack_id].note_buffer =
-                                            self.tracks[track_id].note_buffer;
-                                        self.tracks[thetrack_id].cur_note_addr =
-                                            self.tracks[track_id].note_buffer + trackaddr;
+                                        self.tracks[thetrack_id].note_buffer = self.tracks[track_id].note_buffer;
+                                        self.tracks[thetrack_id].cur_note_addr = self.tracks[track_id].note_buffer + trackaddr;
                                     }
                                 }
                             }
                         }
                         0x94 => {
                             let track = &mut self.tracks[track_id];
-                            let mut jumpaddr =
-                                emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32;
+                            let mut jumpaddr = emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32;
                             track.cur_note_addr += 1;
-                            jumpaddr |=
-                                (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 8;
+                            jumpaddr |= (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 8;
                             track.cur_note_addr += 1;
-                            jumpaddr |=
-                                (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 16;
+                            jumpaddr |= (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 16;
                             track.cur_note_addr += 1;
                             if cond {
                                 track.cur_note_addr = track.note_buffer + jumpaddr;
@@ -1726,14 +1564,11 @@ impl SoundNitro {
                         }
                         0x95 => {
                             let track = &mut self.tracks[track_id];
-                            let mut jumpaddr =
-                                emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32;
+                            let mut jumpaddr = emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32;
                             track.cur_note_addr += 1;
-                            jumpaddr |=
-                                (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 8;
+                            jumpaddr |= (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 8;
                             track.cur_note_addr += 1;
-                            jumpaddr |=
-                                (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 16;
+                            jumpaddr |= (emu.mem_read::<{ ARM7 }, u8>(track.cur_note_addr) as u32) << 16;
                             track.cur_note_addr += 1;
                             if cond && track.loop_level < 3 {
                                 track.loop_addr[track.loop_level as usize] = track.cur_note_addr;
@@ -1750,10 +1585,7 @@ impl SoundNitro {
                         if paramtype == 2 {
                             paramtype = 1;
                         }
-                        let mut param = (((self
-                            .read_note_op_param(track_id, seq_id, paramtype, emu)
-                            << 16) as i32)
-                            >> 16) as i16;
+                        let mut param = (((self.read_note_op_param(track_id, seq_id, paramtype, emu) << 16) as i32) >> 16) as i16;
                         let paramaddr = self.get_note_param_addr(seq_id, idx);
                         if cond && paramaddr != 0 {
                             match note_op {
@@ -1777,15 +1609,9 @@ impl SoundNitro {
                                 0xB5 => {
                                     let val = emu.mem_read::<{ ARM7 }, u16>(paramaddr) as i16;
                                     if param >= 0 {
-                                        emu.mem_write::<{ ARM7 }, _>(
-                                            paramaddr,
-                                            (val << param) as u16,
-                                        );
+                                        emu.mem_write::<{ ARM7 }, _>(paramaddr, (val << param) as u16);
                                     } else {
-                                        emu.mem_write::<{ ARM7 }, _>(
-                                            paramaddr,
-                                            (val >> -param) as u16,
-                                        );
+                                        emu.mem_write::<{ ARM7 }, _>(paramaddr, (val >> -param) as u16);
                                     }
                                 }
                                 0xB6 => {
@@ -1873,8 +1699,7 @@ impl SoundNitro {
                                     self.unlink_track_channels(track_id);
                                 }
                                 0xC9 => {
-                                    self.tracks[track_id].track_unk14 =
-                                        param as i8 + self.tracks[track_id].transpose;
+                                    self.tracks[track_id].track_unk14 = param as i8 + self.tracks[track_id].transpose;
                                     self.tracks[track_id].status_flags |= 1 << 5;
                                 }
                                 0xCA => self.tracks[track_id].modulation_depth = param,
@@ -1893,8 +1718,7 @@ impl SoundNitro {
                                 0xD4 => {
                                     let track = &mut self.tracks[track_id];
                                     if track.loop_level < 3 {
-                                        track.loop_addr[track.loop_level as usize] =
-                                            track.cur_note_addr;
+                                        track.loop_addr[track.loop_level as usize] = track.cur_note_addr;
                                         track.loop_count[track.loop_level as usize] = param;
                                         track.loop_level += 1;
                                     }
@@ -1933,8 +1757,7 @@ impl SoundNitro {
                                                 track.loop_level -= 1;
                                             } else {
                                                 track.loop_count[level as usize] = cnt;
-                                                track.cur_note_addr =
-                                                    track.loop_addr[level as usize]
+                                                track.cur_note_addr = track.loop_addr[level as usize]
                                             }
                                         } else {
                                             track.loop_count[level as usize] = 0;
@@ -2120,9 +1943,8 @@ impl SoundNitro {
         let mut modfactor = 0;
         if chan.modulation_depth != 0 && chan.modulation_count1 >= chan.modulation_delay {
             const MODULATION_TABLE: [i8; 33] = [
-                0x00, 0x06, 0x0C, 0x13, 0x19, 0x1F, 0x25, 0x2B, 0x31, 0x36, 0x3C, 0x41, 0x47, 0x4C,
-                0x51, 0x55, 0x5A, 0x5E, 0x62, 0x66, 0x6A, 0x6D, 0x70, 0x73, 0x75, 0x78, 0x7A, 0x7B,
-                0x7D, 0x7E, 0x7E, 0x7F, 0x00,
+                0x00, 0x06, 0x0C, 0x13, 0x19, 0x1F, 0x25, 0x2B, 0x31, 0x36, 0x3C, 0x41, 0x47, 0x4C, 0x51, 0x55, 0x5A, 0x5E, 0x62, 0x66, 0x6A, 0x6D, 0x70, 0x73, 0x75, 0x78, 0x7A, 0x7B, 0x7D, 0x7E,
+                0x7E, 0x7F, 0x00,
             ];
 
             let index = (chan.modulation_count2 >> 8) as usize;
@@ -2155,8 +1977,7 @@ impl SoundNitro {
             if chan.modulation_count1 < chan.modulation_delay {
                 chan.modulation_count1 += 1;
             } else {
-                let mut cnt =
-                    (chan.modulation_count2 as u32 + ((chan.modulation_speed as u32) << 6)) >> 8;
+                let mut cnt = (chan.modulation_count2 as u32 + ((chan.modulation_speed as u32) << 6)) >> 8;
                 while cnt >= 128 {
                     cnt -= 128;
                 }
@@ -2241,8 +2062,7 @@ impl SoundNitro {
             }
 
             let mut vol = BASE_VOLUME_TABLE[(self.channels[i].vol_base2 & 0x7F) as usize] as i32;
-            let mut freq =
-                (self.channels[i].freq_base2 as i32 - self.channels[i].freq_base1 as i32) << 6;
+            let mut freq = (self.channels[i].freq_base2 as i32 - self.channels[i].freq_base1 as i32) << 6;
             let mut pan = 0;
 
             vol += self.channel_volume_ramp(i, update_ramps);
@@ -2295,9 +2115,7 @@ impl SoundNitro {
             pan += 64;
             let pan = min(max(pan, 0), 127) as u8;
 
-            if finalvol
-                != (self.channels[i].volume as u16 | (self.channels[i].volume_div as u16) << 8)
-            {
+            if finalvol != (self.channels[i].volume as u16 | (self.channels[i].volume_div as u16) << 8) {
                 self.channels[i].volume = finalvol as u8;
                 self.channels[i].volume_div = (finalvol >> 8) as u8;
                 self.channels[i].status_flags |= 1 << 6;
@@ -2370,9 +2188,6 @@ impl SoundNitro {
     }
 
     pub fn on_alarm_event(id: u8, emu: &mut Emu) {
-        get_arm7_hle_mut!(emu)
-            .sound
-            .nitro
-            .on_alarm(id as usize, emu);
+        get_arm7_hle_mut!(emu).sound.nitro.on_alarm(id as usize, emu);
     }
 }

@@ -8,9 +8,7 @@ pub struct Bios<const SIZE: usize> {
 
 impl<const SIZE: usize> Bios<SIZE> {
     pub fn new() -> Self {
-        let mut instance = Bios {
-            mem: HeapMemU8::new(),
-        };
+        let mut instance = Bios { mem: HeapMemU8::new() };
         instance.mem[3] = 0xEC; // Indicator for emit unknown to finish interrupt cpu
         instance
     }

@@ -25,10 +25,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R0, Reg::R3));
 
         opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R2));
-        opcodes.push(AluImm::mov16_al(
-            Reg::R4,
-            self.jit_buf.insts_cycle_counts[buf_index],
-        ));
+        opcodes.push(AluImm::mov16_al(Reg::R4, self.jit_buf.insts_cycle_counts[buf_index]));
 
         if op == Op::Bl {
             opcodes.extend(AluImm::mov32(Reg::R0, pc + 4));
@@ -63,10 +60,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
 
         opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R2));
-        opcodes.push(AluImm::mov16_al(
-            Reg::R5,
-            self.jit_buf.insts_cycle_counts[buf_index],
-        ));
+        opcodes.push(AluImm::mov16_al(Reg::R5, self.jit_buf.insts_cycle_counts[buf_index]));
 
         if inst_info.op == Op::BlxReg {
             opcodes.extend(AluImm::mov32(Reg::R3, pc + 4));
@@ -103,10 +97,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R0, Reg::R3));
 
         opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R2));
-        opcodes.push(AluImm::mov16_al(
-            Reg::R3,
-            self.jit_buf.insts_cycle_counts[buf_index],
-        ));
+        opcodes.push(AluImm::mov16_al(Reg::R3, self.jit_buf.insts_cycle_counts[buf_index]));
 
         opcodes.extend(AluImm::mov32(Reg::R0, pc + 4));
         opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::LR, Reg::R0, Reg::R5));

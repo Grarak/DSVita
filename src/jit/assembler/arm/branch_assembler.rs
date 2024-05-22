@@ -34,20 +34,10 @@ pub struct Bx {
 
 impl Bx {
     pub fn bx(op0: Reg, cond: Cond) -> u32 {
-        u32::from(Bx::new(
-            u4::new(op0 as u8),
-            u4::new(0b1),
-            u20::new(0b00010010111111111111),
-            u4::new(cond as u8),
-        ))
+        u32::from(Bx::new(u4::new(op0 as u8), u4::new(0b1), u20::new(0b00010010111111111111), u4::new(cond as u8)))
     }
 
     pub fn blx(op0: Reg, cond: Cond) -> u32 {
-        u32::from(Bx::new(
-            u4::new(op0 as u8),
-            u4::new(0b11),
-            u20::new(0b00010010111111111111),
-            u4::new(cond as u8),
-        ))
+        u32::from(Bx::new(u4::new(op0 as u8), u4::new(0b11), u20::new(0b00010010111111111111), u4::new(cond as u8)))
     }
 }

@@ -1,10 +1,7 @@
 use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
 use crate::emu::input;
 use crate::presenter::menu::Menu;
-use crate::presenter::{
-    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT,
-    PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN,
-};
+use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN};
 use crate::utils::BuildNoHasher;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
@@ -27,19 +24,12 @@ unsafe impl Send for PresenterAudio {}
 
 impl PresenterAudio {
     fn new(audio_queue: AudioQueue<i16>) -> Self {
-        PresenterAudio {
-            audio_queue: Rc::new(audio_queue),
-        }
+        PresenterAudio { audio_queue: Rc::new(audio_queue) }
     }
 
     pub fn play(&self, buffer: &[u32; PRESENTER_AUDIO_BUF_SIZE]) {
         self.audio_queue.clear();
-        let raw = unsafe {
-            slice::from_raw_parts(
-                buffer.as_slice().as_ptr() as *const i16,
-                PRESENTER_AUDIO_BUF_SIZE * 2,
-            )
-        };
+        let raw = unsafe { slice::from_raw_parts(buffer.as_slice().as_ptr() as *const i16, PRESENTER_AUDIO_BUF_SIZE * 2) };
         self.audio_queue.queue_audio(raw).unwrap();
     }
 }
@@ -89,32 +79,15 @@ impl Presenter {
             .unwrap();
         audio_queue.resume();
 
-        let window = sdl_video
-            .window("DSPSV", PRESENTER_SCREEN_WIDTH, PRESENTER_SCREEN_HEIGHT)
-            .build()
-            .unwrap();
-        let mut canvas = window
-            .into_canvas()
-            .software()
-            .target_texture()
-            .build()
-            .unwrap();
+        let window = sdl_video.window("DSPSV", PRESENTER_SCREEN_WIDTH, PRESENTER_SCREEN_HEIGHT).build().unwrap();
+        let mut canvas = window.into_canvas().software().target_texture().build().unwrap();
         let texture_creator = canvas.texture_creator();
-        let texture_creator_ref =
-            unsafe { ptr::addr_of!(texture_creator).as_ref().unwrap_unchecked() };
+        let texture_creator_ref = unsafe { ptr::addr_of!(texture_creator).as_ref().unwrap_unchecked() };
         let texture_top = texture_creator_ref
-            .create_texture_streaming(
-                PixelFormatEnum::ABGR8888,
-                DISPLAY_WIDTH as u32,
-                DISPLAY_HEIGHT as u32,
-            )
+            .create_texture_streaming(PixelFormatEnum::ABGR8888, DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32)
             .unwrap();
         let texture_bottom = texture_creator_ref
-            .create_texture_streaming(
-                PixelFormatEnum::ABGR8888,
-                DISPLAY_WIDTH as u32,
-                DISPLAY_HEIGHT as u32,
-            )
+            .create_texture_streaming(PixelFormatEnum::ABGR8888, DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32)
             .unwrap();
         canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
         canvas.clear();
@@ -148,26 +121,17 @@ impl Presenter {
 
         for event in self.event_pump.poll_iter() {
             match event {
-                Event::KeyDown {
-                    keycode: Some(code),
-                    ..
-                } => {
+                Event::KeyDown { keycode: Some(code), .. } => {
                     if let Some(code) = self.key_code_mapping.get(&code) {
                         self.keymap &= !(1 << *code as u8);
                     }
                 }
-                Event::KeyUp {
-                    keycode: Some(code),
-                    ..
-                } => {
+                Event::KeyUp { keycode: Some(code), .. } => {
                     if let Some(code) = self.key_code_mapping.get(&code) {
                         self.keymap |= 1 << *code as u8;
                     }
                 }
-                Event::MouseButtonUp {
-                    mouse_btn: MouseButton::Left,
-                    ..
-                } => {
+                Event::MouseButtonUp { mouse_btn: MouseButton::Left, .. } => {
                     self.mouse_pressed = false;
                     self.keymap |= 1 << 16;
                 }
@@ -187,10 +151,7 @@ impl Presenter {
                 }
                 Event::MouseMotion { which, x, y, .. } => {
                     if let Some(mouse_id) = self.mouse_id {
-                        if self.mouse_pressed
-                            && mouse_id == which
-                            && PRESENTER_SUB_BOTTOM_SCREEN.is_within(x as _, y as _)
-                        {
+                        if self.mouse_pressed && mouse_id == which && PRESENTER_SUB_BOTTOM_SCREEN.is_within(x as _, y as _) {
                             sample_touch_points(x, y);
                         }
                     }
@@ -199,28 +160,16 @@ impl Presenter {
                 _ => {}
             }
         }
-        PresentEvent::Inputs {
-            keymap: self.keymap,
-            touch,
-        }
+        PresentEvent::Inputs { keymap: self.keymap, touch }
     }
 
     pub fn present_menu(&mut self, _: &Menu) {}
 
-    pub fn present_textures(
-        &mut self,
-        top: &[u32; DISPLAY_PIXEL_COUNT],
-        bottom: &[u32; DISPLAY_PIXEL_COUNT],
-        fps: u16,
-    ) {
+    pub fn present_textures(&mut self, top: &[u32; DISPLAY_PIXEL_COUNT], bottom: &[u32; DISPLAY_PIXEL_COUNT], fps: u16) {
         let top_aligned: &[u8; DISPLAY_PIXEL_COUNT * 4] = unsafe { mem::transmute(top) };
         let bottom_aligned: &[u8; DISPLAY_PIXEL_COUNT * 4] = unsafe { mem::transmute(bottom) };
-        self.texture_top
-            .update(None, top_aligned, DISPLAY_WIDTH * 4)
-            .unwrap();
-        self.texture_bottom
-            .update(None, bottom_aligned, DISPLAY_WIDTH * 4)
-            .unwrap();
+        self.texture_top.update(None, top_aligned, DISPLAY_WIDTH * 4).unwrap();
+        self.texture_bottom.update(None, bottom_aligned, DISPLAY_WIDTH * 4).unwrap();
 
         self.canvas.clear();
         self.canvas
@@ -249,10 +198,7 @@ impl Presenter {
             .unwrap();
         self.canvas.present();
 
-        self.canvas
-            .window_mut()
-            .set_title(&format!("DSPSV - Internal fps {}", fps))
-            .unwrap();
+        self.canvas.window_mut().set_title(&format!("DSPSV - Internal fps {}", fps)).unwrap();
     }
 
     pub fn get_presenter_audio(&self) -> PresenterAudio {

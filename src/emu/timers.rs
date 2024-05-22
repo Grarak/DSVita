@@ -63,16 +63,10 @@ impl Timers {
     }
 
     pub fn set_cnt_l<const CHANNEL_NUM: usize>(&mut self, mask: u16, value: u16) {
-        self.channels[CHANNEL_NUM].cnt_l =
-            (self.channels[CHANNEL_NUM].cnt_l & !mask) | (value & mask);
+        self.channels[CHANNEL_NUM].cnt_l = (self.channels[CHANNEL_NUM].cnt_l & !mask) | (value & mask);
     }
 
-    pub fn set_cnt_h<const CHANNEL_NUM: usize>(
-        &mut self,
-        mut mask: u16,
-        value: u16,
-        emu: &mut Emu,
-    ) {
+    pub fn set_cnt_h<const CHANNEL_NUM: usize>(&mut self, mut mask: u16, value: u16, emu: &mut Emu) {
         let channel = &mut self.channels[CHANNEL_NUM];
         let current_cnt = TimerCntH::from(channel.cnt_h);
 
@@ -100,8 +94,7 @@ impl Timers {
         }
 
         if update && bool::from(cnt.start()) && !cnt.is_count_up(CHANNEL_NUM) {
-            let remaining_cycles =
-                (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
+            let remaining_cycles = (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
             channel.scheduled_cycle = get_cm_mut!(emu).schedule(
                 remaining_cycles,
                 match self.cpu_type {
@@ -121,8 +114,7 @@ impl Timers {
             }
             channel.current_value = channel.cnt_l;
             if !cnt.is_count_up(channel_num) {
-                let remaining_cycles =
-                    (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
+                let remaining_cycles = (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
                 channel.scheduled_cycle = get_cm_mut!(emu).schedule(
                     remaining_cycles,
                     match CPU {
@@ -133,10 +125,7 @@ impl Timers {
             }
 
             if bool::from(cnt.irq_enable()) {
-                get_cpu_regs_mut!(emu, CPU).send_interrupt(
-                    InterruptFlag::from(InterruptFlag::Timer0Overflow as u8 + channel_num as u8),
-                    get_cm_mut!(emu),
-                );
+                get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::from(InterruptFlag::Timer0Overflow as u8 + channel_num as u8), get_cm_mut!(emu));
             }
         }
         if channel_num < 3 {

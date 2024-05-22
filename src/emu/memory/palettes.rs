@@ -8,23 +8,14 @@ pub struct Palettes {
 
 impl Palettes {
     pub fn new() -> Self {
-        Palettes {
-            mem: HeapMemU8::new(),
-        }
+        Palettes { mem: HeapMemU8::new() }
     }
 
     pub fn read<T: Convert>(&self, addr_offset: u32) -> T {
-        utils::read_from_mem(
-            self.mem.as_slice(),
-            addr_offset & (regions::STANDARD_PALETTES_SIZE - 1),
-        )
+        utils::read_from_mem(self.mem.as_slice(), addr_offset & (regions::STANDARD_PALETTES_SIZE - 1))
     }
 
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T) {
-        utils::write_to_mem(
-            self.mem.as_mut_slice(),
-            addr_offset & (regions::STANDARD_PALETTES_SIZE - 1),
-            value,
-        );
+        utils::write_to_mem(self.mem.as_mut_slice(), addr_offset & (regions::STANDARD_PALETTES_SIZE - 1), value);
     }
 }

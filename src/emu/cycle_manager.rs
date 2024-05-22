@@ -63,12 +63,8 @@ impl CycleManager {
                 EventType::DmaArm9(channel) => Dma::on_event::<{ ARM9 }>(channel, emu),
                 EventType::DmaArm7(channel) => Dma::on_event::<{ ARM7 }>(channel, emu),
                 EventType::SpuSample => Spu::on_sample_event(emu),
-                EventType::TimerArm9(channel) => {
-                    Timers::on_overflow_event::<{ ARM9 }>(cycles, channel, emu)
-                }
-                EventType::TimerArm7(channel) => {
-                    Timers::on_overflow_event::<{ ARM7 }>(cycles, channel, emu)
-                }
+                EventType::TimerArm9(channel) => Timers::on_overflow_event::<{ ARM9 }>(cycles, channel, emu),
+                EventType::TimerArm7(channel) => Timers::on_overflow_event::<{ ARM7 }>(cycles, channel, emu),
             }
         }
     }
@@ -76,11 +72,7 @@ impl CycleManager {
     pub fn schedule(&mut self, in_cycles: u32, event_type: EventType) -> u64 {
         debug_assert_ne!(in_cycles, 0);
         let event_cycle = self.cycle_count + in_cycles as u64;
-        let index = self
-            .events
-            .iter()
-            .position(|(cycles, _)| *cycles > event_cycle)
-            .unwrap_or(self.events.len());
+        let index = self.events.iter().position(|(cycles, _)| *cycles > event_cycle).unwrap_or(self.events.len());
         self.events.insert(index, (event_cycle, event_type));
         event_cycle
     }

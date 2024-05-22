@@ -233,7 +233,9 @@ mod transfer_delegations {
 
     macro_rules! generate_op_half {
         ($name:ident, $write:expr) => {
-            generate_variations!($name, $write,
+            generate_variations!(
+                $name,
+                $write,
                 [ofim, imm_h, mem_transfer_imm],
                 [ofip, imm_h, mem_transfer_imm],
                 [prim, imm_h, mem_transfer_imm],
@@ -252,7 +254,9 @@ mod transfer_delegations {
 
     macro_rules! generate_op_full {
         ($name:ident, $write:expr) => {
-            generate_variations!($name, $write,
+            generate_variations!(
+                $name,
+                $write,
                 [ofim, imm, mem_transfer_imm],
                 [ofip, imm, mem_transfer_imm],
                 [prim, imm, mem_transfer_imm],
@@ -309,14 +313,7 @@ mod unknown_delegations {
 
     #[inline]
     pub fn unk_arm(opcode: u32, op: Op) -> InstInfo {
-        InstInfo::new(
-            opcode,
-            op,
-            Operands::new_empty(),
-            reg_reserve!(),
-            reg_reserve!(),
-            1,
-        )
+        InstInfo::new(opcode, op, Operands::new_empty(), reg_reserve!(), reg_reserve!(), 1)
     }
 }
 

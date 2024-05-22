@@ -2,62 +2,38 @@ use crate::emu::emu::{get_mmu, get_regs};
 use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Bfc};
 use crate::jit::assembler::arm::branch_assembler::B;
-use crate::jit::assembler::arm::transfer_assembler::{
-    LdrStrImm, LdrStrReg, LdrStrRegSBHD, Mrs, Msr,
-};
+use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrReg, LdrStrRegSBHD, Mrs, Msr};
 use crate::jit::emitter::emit::RegPushPopHandler;
 use crate::jit::inst_info::{Operand, Shift, ShiftValue};
-use crate::jit::inst_mem_handler::{
-    inst_mem_handler, inst_mem_handler_multiple, inst_mem_handler_swp,
-};
+use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple, inst_mem_handler_swp};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, Op, ShiftType};
 use std::ptr;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
-    fn get_inst_mem_handler_func<const THUMB: bool, const WRITE: bool, const MMU: bool>(
-        op: Op,
-        amount: MemoryAmount,
-    ) -> *const () {
+    fn get_inst_mem_handler_func<const THUMB: bool, const WRITE: bool, const MMU: bool>(op: Op, amount: MemoryAmount) -> *const () {
         match amount {
             MemoryAmount::Byte => {
                 if op.mem_transfer_single_signed() {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, true, MMU>
-                        as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, true, MMU> as *const _
                 } else {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, false, MMU>
-                        as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, false, MMU> as *const _
                 }
             }
             MemoryAmount::Half => {
                 if op.mem_transfer_single_signed() {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, true, MMU>
-                        as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, true, MMU> as *const _
                 } else {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, false, MMU>
-                        as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, false, MMU> as *const _
                 }
             }
-            MemoryAmount::Word => {
-                inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Word }, false, MMU>
-                    as *const _
-            }
-            MemoryAmount::Double => {
-                inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Double }, false, MMU>
-                    as *const _
-            }
+            MemoryAmount::Word => inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Word }, false, MMU> as *const _,
+            MemoryAmount::Double => inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Double }, false, MMU> as *const _,
         }
     }
 
-    pub fn emit_single_transfer<const THUMB: bool, const WRITE: bool>(
-        &mut self,
-        buf_index: usize,
-        pc: u32,
-        pre: bool,
-        write_back: bool,
-        amount: MemoryAmount,
-    ) {
+    pub fn emit_single_transfer<const THUMB: bool, const WRITE: bool>(&mut self, buf_index: usize, pc: u32, pre: bool, write_back: bool, amount: MemoryAmount) {
         if !WRITE && amount != MemoryAmount::Double {
             let func = match (write_back, pre) {
                 (false, false) => Self::emit_single_read_transfer::<THUMB, false, false>,
@@ -81,20 +57,19 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
             let mut reg_reserve = RegReserve::gp() - inst_info.src_regs - inst_info.out_regs;
 
-            let handle_emulated =
-                |reg: Reg, reg_reserve: &mut RegReserve, opcodes: &mut Vec<u32>| {
-                    if reg.is_emulated() || reg == Reg::SP {
-                        let tmp_reg = reg_reserve.pop().unwrap();
-                        if reg == Reg::PC {
-                            opcodes.extend(AluImm::mov32(tmp_reg, pc + if THUMB { 4 } else { 8 }));
-                        } else {
-                            opcodes.extend(get_regs!(asm.emu, CPU).emit_get_reg(tmp_reg, reg));
-                        }
-                        tmp_reg
+            let handle_emulated = |reg: Reg, reg_reserve: &mut RegReserve, opcodes: &mut Vec<u32>| {
+                if reg.is_emulated() || reg == Reg::SP {
+                    let tmp_reg = reg_reserve.pop().unwrap();
+                    if reg == Reg::PC {
+                        opcodes.extend(AluImm::mov32(tmp_reg, pc + if THUMB { 4 } else { 8 }));
                     } else {
-                        reg
+                        opcodes.extend(get_regs!(asm.emu, CPU).emit_get_reg(tmp_reg, reg));
                     }
-                };
+                    tmp_reg
+                } else {
+                    reg
+                }
+            };
 
             let op1 = handle_emulated(*og_op1, &mut reg_reserve, opcodes);
             let (op2, op2_shift) = match op2 {
@@ -103,15 +78,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     match shift {
                         None => (Some(reg), None),
                         Some(shift) => {
-                            let mut handle_shift =
-                                |shift_type: ShiftType, value: ShiftValue| match value {
-                                    ShiftValue::Reg(shift_reg) => {
-                                        let reg =
-                                            handle_emulated(shift_reg, &mut reg_reserve, opcodes);
-                                        (Operand::reg(reg), shift_type)
-                                    }
-                                    ShiftValue::Imm(imm) => (Operand::imm(imm as u32), shift_type),
-                                };
+                            let mut handle_shift = |shift_type: ShiftType, value: ShiftValue| match value {
+                                ShiftValue::Reg(shift_reg) => {
+                                    let reg = handle_emulated(shift_reg, &mut reg_reserve, opcodes);
+                                    (Operand::reg(reg), shift_type)
+                                }
+                                ShiftValue::Imm(imm) => (Operand::imm(imm as u32), shift_type),
+                            };
                             (
                                 Some(reg),
                                 Some(match shift {
@@ -146,23 +119,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                         }
                         Operand::Imm(imm) => {
                             opcodes.push(if inst_info.op.mem_transfer_single_sub() {
-                                AluShiftImm::sub(
-                                    addr_reg,
-                                    op1,
-                                    op2,
-                                    shift_type,
-                                    imm as u8,
-                                    Cond::AL,
-                                )
+                                AluShiftImm::sub(addr_reg, op1, op2, shift_type, imm as u8, Cond::AL)
                             } else {
-                                AluShiftImm::add(
-                                    addr_reg,
-                                    op1,
-                                    op2,
-                                    shift_type,
-                                    imm as u8,
-                                    Cond::AL,
-                                )
+                                AluShiftImm::add(addr_reg, op1, op2, shift_type, imm as u8, Cond::AL)
                             });
                         }
                         Operand::None => {
@@ -188,10 +147,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             } else if op1 != Reg::R0 {
                 opcodes.push(AluShiftImm::mov_al(Reg::R0, op1));
             }
-            opcodes.extend(AluImm::mov32(
-                Reg::R1,
-                get_regs!(asm.emu, CPU).get_reg(op0) as *const _ as _,
-            ));
+            opcodes.extend(AluImm::mov32(Reg::R1, get_regs!(asm.emu, CPU).get_reg(op0) as *const _ as _));
             if WRITE && op0 == Reg::PC {
                 opcodes.extend(AluImm::mov32(Reg::R3, pc + if THUMB { 4 } else { 12 }));
                 opcodes.push(LdrStrImm::str_al(Reg::R3, Reg::R1));
@@ -202,24 +158,14 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
         };
 
-        let func_addr = Self::get_inst_mem_handler_func::<THUMB, WRITE, true>(
-            self.jit_buf.instructions[buf_index].op,
-            amount,
-        );
+        let func_addr = Self::get_inst_mem_handler_func::<THUMB, WRITE, true>(self.jit_buf.instructions[buf_index].op, amount);
 
-        self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
-            after_host_restore,
-            &[None, None, Some(pc), Some(jit_asm_addr)],
-            func_addr,
-        ));
+        self.jit_buf
+            .emit_opcodes
+            .extend(self.emit_call_host_func(after_host_restore, &[None, None, Some(pc), Some(jit_asm_addr)], func_addr));
     }
 
-    pub fn emit_single_read_transfer<const THUMB: bool, const WRITE_BACK: bool, const PRE: bool>(
-        &mut self,
-        buf_index: usize,
-        pc: u32,
-        amount: MemoryAmount,
-    ) {
+    pub fn emit_single_read_transfer<const THUMB: bool, const WRITE_BACK: bool, const PRE: bool>(&mut self, buf_index: usize, pc: u32, amount: MemoryAmount) {
         let jit_asm_addr = self as *mut _ as _;
         let inst_info = &self.jit_buf.instructions[buf_index];
         let mut opcodes = Vec::new();
@@ -258,14 +204,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 match shift {
                     None => (Some(reg), None),
                     Some(shift) => {
-                        let mut handle_shift =
-                            |shift_type: ShiftType, value: ShiftValue| match value {
-                                ShiftValue::Reg(shift_reg) => {
-                                    let reg = handle_emulated(shift_reg, true);
-                                    (Operand::reg(reg), shift_type)
-                                }
-                                ShiftValue::Imm(imm) => (Operand::imm(imm as u32), shift_type),
-                            };
+                        let mut handle_shift = |shift_type: ShiftType, value: ShiftValue| match value {
+                            ShiftValue::Reg(shift_reg) => {
+                                let reg = handle_emulated(shift_reg, true);
+                                (Operand::reg(reg), shift_type)
+                            }
+                            ShiftValue::Imm(imm) => (Operand::imm(imm as u32), shift_type),
+                        };
                         (
                             Some(reg),
                             Some(match shift {
@@ -301,23 +246,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     }
                     Operand::Imm(imm) => {
                         opcodes.push(if inst_info.op.mem_transfer_single_sub() {
-                            AluShiftImm::sub(
-                                calculated_addr,
-                                op1,
-                                op2,
-                                shift_type,
-                                imm as u8,
-                                Cond::AL,
-                            )
+                            AluShiftImm::sub(calculated_addr, op1, op2, shift_type, imm as u8, Cond::AL)
                         } else {
-                            AluShiftImm::add(
-                                calculated_addr,
-                                op1,
-                                op2,
-                                shift_type,
-                                imm as u8,
-                                Cond::AL,
-                            )
+                            AluShiftImm::add(calculated_addr, op1, op2, shift_type, imm as u8, Cond::AL)
                         });
                     }
                     Operand::None => {
@@ -353,28 +284,12 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
 
         // mmu_ptr = &mmu_map (*u32)
-        opcodes.extend(AluImm::mov32(
-            mmu_ptr_reg,
-            get_mmu!(self.emu, CPU).get_mmu_ptr() as _,
-        ));
+        opcodes.extend(AluImm::mov32(mmu_ptr_reg, get_mmu!(self.emu, CPU).get_mmu_ptr() as _));
         // physical_addr = addr >> 12 (u32)
-        opcodes.push(AluShiftImm::mov(
-            physical_addr_reg,
-            addr_reg,
-            ShiftType::Lsr,
-            12,
-            Cond::AL,
-        ));
+        opcodes.push(AluShiftImm::mov(physical_addr_reg, addr_reg, ShiftType::Lsr, 12, Cond::AL));
         let base_ptr_reg = mmu_ptr_reg;
         // base_ptr = *(mmu_ptr + physical_addr_reg)
-        opcodes.push(LdrStrReg::ldr(
-            base_ptr_reg,
-            mmu_ptr_reg,
-            physical_addr_reg,
-            2,
-            ShiftType::Lsl,
-            Cond::AL,
-        ));
+        opcodes.push(LdrStrReg::ldr(base_ptr_reg, mmu_ptr_reg, physical_addr_reg, 2, ShiftType::Lsl, Cond::AL));
         // Save current cpsr cond flags
         opcodes.push(Mrs::cpsr(physical_addr_reg, Cond::AL));
         // Check if mmu block is mapped
@@ -394,8 +309,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 slow_read_opcodes.push(op);
             }
 
-            let func_addr =
-                Self::get_inst_mem_handler_func::<THUMB, false, false>(inst_info.op, amount);
+            let func_addr = Self::get_inst_mem_handler_func::<THUMB, false, false>(inst_info.op, amount);
             slow_read_opcodes.extend(self.emit_call_host_func(
                 |asm, opcodes| {
                     if PRE {
@@ -406,20 +320,14 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                         }
 
                         if WRITE_BACK && op0 != *og_op1 {
-                            opcodes.extend(get_regs!(asm.emu, CPU).emit_set_reg(
-                                *og_op1,
-                                Reg::R0,
-                                Reg::R1,
-                            ));
+                            opcodes.extend(get_regs!(asm.emu, CPU).emit_set_reg(*og_op1, Reg::R0, Reg::R1));
                         }
                     } else {
                         if og_op1.is_emulated() || *og_op1 == Reg::SP {
                             if *og_op1 == Reg::PC {
-                                opcodes
-                                    .extend(AluImm::mov32(Reg::R0, pc + if THUMB { 4 } else { 8 }));
+                                opcodes.extend(AluImm::mov32(Reg::R0, pc + if THUMB { 4 } else { 8 }));
                             } else {
-                                opcodes
-                                    .extend(get_regs!(asm.emu, CPU).emit_get_reg(Reg::R0, *og_op1));
+                                opcodes.extend(get_regs!(asm.emu, CPU).emit_get_reg(Reg::R0, *og_op1));
                             }
                         } else if *og_op1 != Reg::R0 {
                             opcodes.push(AluShiftImm::mov_al(Reg::R0, *og_op1));
@@ -432,20 +340,11 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                                 opcodes.push(LdrStrImm::ldr_al(Reg::R1, Reg::R1));
                             }
 
-                            opcodes.extend(get_regs!(asm.emu, CPU).emit_set_reg(
-                                *og_op1,
-                                Reg::R1,
-                                Reg::R2,
-                            ));
+                            opcodes.extend(get_regs!(asm.emu, CPU).emit_set_reg(*og_op1, Reg::R1, Reg::R2));
                         }
                     }
                 },
-                &[
-                    None,
-                    Some(get_regs!(self.emu, CPU).get_reg(op0) as *const _ as _),
-                    Some(pc),
-                    Some(jit_asm_addr),
-                ],
+                &[None, Some(get_regs!(self.emu, CPU).get_reg(op0) as *const _ as _), Some(pc), Some(jit_asm_addr)],
                 func_addr,
             ));
         }
@@ -458,9 +357,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             // physical_addr = addr & (1 << 12) - 1
             mmu_read_opcodes.push(AluShiftImm::mov_al(physical_addr_reg, addr_reg));
             mmu_read_opcodes.push(Bfc::create(physical_addr_reg, 12, 20, Cond::AL));
-            let rd = if op0.is_emulated()
-                || (WRITE_BACK && op0 == *og_op1 && amount == MemoryAmount::Word)
-            {
+            let rd = if op0.is_emulated() || (WRITE_BACK && op0 == *og_op1 && amount == MemoryAmount::Word) {
                 base_ptr_reg
             } else {
                 op0
@@ -489,39 +386,19 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             };
             mmu_read_opcodes.push(ldr_op_fun(rd, base_ptr_reg, physical_addr_reg));
             if amount == MemoryAmount::Word {
-                mmu_read_opcodes.push(AluShiftImm::mov(
-                    physical_addr_reg,
-                    addr_reg,
-                    ShiftType::Lsl,
-                    3,
-                    Cond::AL,
-                ));
-                mmu_read_opcodes.push(AluReg::mov(
-                    rd,
-                    rd,
-                    ShiftType::Ror,
-                    physical_addr_reg,
-                    Cond::AL,
-                ));
+                mmu_read_opcodes.push(AluShiftImm::mov(physical_addr_reg, addr_reg, ShiftType::Lsl, 3, Cond::AL));
+                mmu_read_opcodes.push(AluReg::mov(rd, rd, ShiftType::Ror, physical_addr_reg, Cond::AL));
             }
 
             if op0.is_emulated() {
-                mmu_read_opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(
-                    op0,
-                    rd,
-                    physical_addr_reg,
-                ));
+                mmu_read_opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(op0, rd, physical_addr_reg));
             } else if WRITE_BACK && op0 == *og_op1 && amount == MemoryAmount::Word {
                 mmu_read_opcodes.push(AluShiftImm::mov_al(op0, rd));
             }
 
             if WRITE_BACK && op0 != *og_op1 {
                 if og_op1.is_emulated() {
-                    mmu_read_opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(
-                        *og_op1,
-                        calculated_addr,
-                        physical_addr_reg,
-                    ))
+                    mmu_read_opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(*og_op1, calculated_addr, physical_addr_reg))
                 } else {
                     mmu_read_opcodes.push(AluShiftImm::mov_al(*og_op1, calculated_addr));
                 }
@@ -533,13 +410,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
 
         self.jit_buf.emit_opcodes.extend(opcodes);
-        self.jit_buf
-            .emit_opcodes
-            .push(B::b(mmu_read_opcodes.len() as i32, Cond::EQ));
+        self.jit_buf.emit_opcodes.push(B::b(mmu_read_opcodes.len() as i32, Cond::EQ));
         self.jit_buf.emit_opcodes.extend(mmu_read_opcodes);
-        self.jit_buf
-            .emit_opcodes
-            .push(B::b((slow_read_opcodes.len() - 1) as i32, Cond::AL));
+        self.jit_buf.emit_opcodes.push(B::b((slow_read_opcodes.len() - 1) as i32, Cond::AL));
         self.jit_buf.emit_opcodes.extend(slow_read_opcodes);
     }
 
@@ -564,15 +437,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
 
-        #[rustfmt::skip]
-        let func_addr = match (
-            inst_info.op.mem_is_write(),
-            inst_info.op.mem_transfer_user(),
-            pre,
-            write_back,
-            decrement,
-            has_pc,
-        ) {
+        let func_addr = match (inst_info.op.mem_is_write(), inst_info.op.mem_transfer_user(), pre, write_back, decrement, has_pc) {
             (false, false, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, false, false> as _,
             (true, false, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, false, false> as _,
             (false, true, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, false, false> as _,
@@ -653,24 +518,12 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
     pub fn emit_str(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
-        self.emit_single_transfer::<false, true>(
-            buf_index,
-            pc,
-            op.mem_transfer_pre(),
-            op.mem_transfer_write_back(),
-            MemoryAmount::from(op),
-        );
+        self.emit_single_transfer::<false, true>(buf_index, pc, op.mem_transfer_pre(), op.mem_transfer_write_back(), MemoryAmount::from(op));
     }
 
     pub fn emit_ldr(&mut self, buf_index: usize, pc: u32) {
         let op = self.jit_buf.instructions[buf_index].op;
-        self.emit_single_transfer::<false, false>(
-            buf_index,
-            pc,
-            op.mem_transfer_pre(),
-            op.mem_transfer_write_back(),
-            MemoryAmount::from(op),
-        );
+        self.emit_single_transfer::<false, false>(buf_index, pc, op.mem_transfer_pre(), op.mem_transfer_write_back(), MemoryAmount::from(op));
     }
 
     pub fn emit_swp(&mut self, buf_index: usize, pc: u32) {
@@ -689,10 +542,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             inst_mem_handler_swp::<CPU, { MemoryAmount::Word }> as *const ()
         };
 
-        self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
-            |_, _| {},
-            &[Some(reg_arg), Some(pc), Some(jit_asm_addr)],
-            func_addr,
-        ));
+        self.jit_buf
+            .emit_opcodes
+            .extend(self.emit_call_host_func(|_, _| {}, &[Some(reg_arg), Some(pc), Some(jit_asm_addr)], func_addr));
     }
 }

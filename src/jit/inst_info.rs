@@ -1,6 +1,4 @@
-use crate::jit::assembler::arm::alu_assembler::{
-    AluImm, AluReg, AluShiftImm, Clz, MulReg, QAddSub,
-};
+use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Clz, MulReg, QAddSub};
 use crate::jit::inst_info_thumb::InstInfoThumb;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
@@ -18,14 +16,7 @@ pub struct InstInfo {
 }
 
 impl InstInfo {
-    pub fn new(
-        opcode: u32,
-        op: Op,
-        operands: Operands,
-        src_regs: RegReserve,
-        out_regs: RegReserve,
-        cycle: u8,
-    ) -> Self {
+    pub fn new(opcode: u32, op: Op, operands: Operands, src_regs: RegReserve, out_regs: RegReserve, cycle: u8) -> Self {
         InstInfo {
             opcode,
             op,
@@ -142,21 +133,7 @@ impl InstInfo {
                 }
                 u32::from(opcode)
             }
-            Op::Mul
-            | Op::Muls
-            | Op::Mla
-            | Op::Mlas
-            | Op::Smulbb
-            | Op::Smulwb
-            | Op::Smlabb
-            | Op::Smlatb
-            | Op::Smlawb
-            | Op::Smlawt
-            | Op::Smlabt
-            | Op::Smlaltt
-            | Op::Smultt
-            | Op::Smulwt
-            | Op::Smulbt => {
+            Op::Mul | Op::Muls | Op::Mla | Op::Mlas | Op::Smulbb | Op::Smulwb | Op::Smlabb | Op::Smlatb | Op::Smlawb | Op::Smlawt | Op::Smlabt | Op::Smlaltt | Op::Smultt | Op::Smulwt | Op::Smulbt => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();
@@ -170,13 +147,7 @@ impl InstInfo {
                 }
                 u32::from(opcode)
             }
-            Op::Smull
-            | Op::Smulls
-            | Op::Smlal
-            | Op::Smlals
-            | Op::Umull
-            | Op::Umulls
-            | Op::Umlal => {
+            Op::Smull | Op::Smulls | Op::Smlal | Op::Smlals | Op::Umull | Op::Umulls | Op::Umlal => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();
@@ -235,10 +206,7 @@ pub struct Operands {
 
 impl Operands {
     pub fn new_empty() -> Self {
-        Operands {
-            values: [Operand::None; 4],
-            num: 0,
-        }
+        Operands { values: [Operand::None; 4], num: 0 }
     }
 
     pub fn new_1(operand: Operand) -> Self {
@@ -262,12 +230,7 @@ impl Operands {
         }
     }
 
-    pub fn new_4(
-        operand1: Operand,
-        operand2: Operand,
-        operand3: Operand,
-        operand4: Operand,
-    ) -> Self {
+    pub fn new_4(operand1: Operand, operand2: Operand, operand3: Operand, operand4: Operand) -> Self {
         Operands {
             values: [operand1, operand2, operand3, operand4],
             num: 4,

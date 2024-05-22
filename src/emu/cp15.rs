@@ -103,17 +103,9 @@ impl Cp15 {
         self.control = (self.control & (!CONTROL_RW_BITS_MASK)) | (value & CONTROL_RW_BITS_MASK);
         let control_reg = Cp15ControlReg::from(self.control);
 
-        self.exception_addr = if bool::from(control_reg.exception_vectors()) {
-            0xFFFF0000
-        } else {
-            0x00000000
-        };
-        self.dtcm_state = TcmState::from(
-            u8::from(control_reg.dtcm_enable()) + u8::from(control_reg.dtcm_load_mode()),
-        );
-        self.itcm_state = TcmState::from(
-            u8::from(control_reg.itcm_enable()) + u8::from(control_reg.itcm_load_mode()),
-        );
+        self.exception_addr = if bool::from(control_reg.exception_vectors()) { 0xFFFF0000 } else { 0x00000000 };
+        self.dtcm_state = TcmState::from(u8::from(control_reg.dtcm_enable()) + u8::from(control_reg.dtcm_load_mode()));
+        self.itcm_state = TcmState::from(u8::from(control_reg.itcm_enable()) + u8::from(control_reg.itcm_load_mode()));
 
         get_mmu!(emu, ARM9).update_itcm(emu);
         get_mmu!(emu, ARM9).update_dtcm(emu);
@@ -128,12 +120,7 @@ impl Cp15 {
 
         get_mmu!(emu, ARM9).update_dtcm(emu);
 
-        debug_println!(
-            "{:?} Set dtcm to addr {:x} with size {:x}",
-            ARM9,
-            self.dtcm_addr,
-            self.dtcm_size
-        );
+        debug_println!("{:?} Set dtcm to addr {:x} with size {:x}", ARM9, self.dtcm_addr, self.dtcm_size);
     }
 
     fn set_itcm(&mut self, value: u32, emu: &Emu) {

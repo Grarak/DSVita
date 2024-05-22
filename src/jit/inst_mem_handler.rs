@@ -15,17 +15,7 @@ mod handler {
     use std::intrinsics::{likely, unlikely};
 
     #[inline(never)]
-    pub fn handle_request<
-        const CPU: CpuType,
-        const WRITE: bool,
-        const AMOUNT: MemoryAmount,
-        const SIGNED: bool,
-        const MMU: bool,
-    >(
-        op0: &mut u32,
-        addr: u32,
-        emu: &mut Emu,
-    ) {
+    pub fn handle_request<const CPU: CpuType, const WRITE: bool, const AMOUNT: MemoryAmount, const SIGNED: bool, const MMU: bool>(op0: &mut u32, addr: u32, emu: &mut Emu) {
         if WRITE {
             match AMOUNT {
                 MemoryAmount::Byte => {
@@ -39,8 +29,7 @@ mod handler {
                 }
                 MemoryAmount::Double => {
                     emu.mem_write::<CPU, _>(addr, *op0);
-                    let next_reg =
-                        unsafe { (op0 as *mut u32).offset(1).as_ref().unwrap_unchecked() };
+                    let next_reg = unsafe { (op0 as *mut u32).offset(1).as_ref().unwrap_unchecked() };
                     emu.mem_write::<CPU, _>(addr + 4, *next_reg);
                 }
             }
@@ -48,16 +37,14 @@ mod handler {
             match AMOUNT {
                 MemoryAmount::Byte => {
                     if SIGNED {
-                        *op0 = emu.mem_read_with_options::<CPU, true, MMU, u8>(addr) as i8 as i32
-                            as u32;
+                        *op0 = emu.mem_read_with_options::<CPU, true, MMU, u8>(addr) as i8 as i32 as u32;
                     } else {
                         *op0 = emu.mem_read_with_options::<CPU, true, MMU, u8>(addr) as u32;
                     }
                 }
                 MemoryAmount::Half => {
                     if SIGNED {
-                        *op0 = emu.mem_read_with_options::<CPU, true, MMU, u16>(addr) as i16 as i32
-                            as u32;
+                        *op0 = emu.mem_read_with_options::<CPU, true, MMU, u16>(addr) as i16 as i32 as u32;
                     } else {
                         *op0 = emu.mem_read_with_options::<CPU, true, MMU, u16>(addr) as u32;
                     }
@@ -69,8 +56,7 @@ mod handler {
                 }
                 MemoryAmount::Double => {
                     *op0 = emu.mem_read_with_options::<CPU, true, MMU, u32>(addr);
-                    let next_reg =
-                        unsafe { (op0 as *mut u32).offset(1).as_mut().unwrap_unchecked() };
+                    let next_reg = unsafe { (op0 as *mut u32).offset(1).as_mut().unwrap_unchecked() };
                     *next_reg = emu.mem_read_with_options::<CPU, true, MMU, u32>(addr + 4);
                 }
             }
@@ -78,26 +64,13 @@ mod handler {
     }
 
     #[inline(never)]
-    pub fn handle_multiple_request<
-        const CPU: CpuType,
-        const THUMB: bool,
-        const WRITE: bool,
-        const USER: bool,
-        const PRE: bool,
-        const WRITE_BACK: bool,
-        const DECREMENT: bool,
-    >(
+    pub fn handle_multiple_request<const CPU: CpuType, const THUMB: bool, const WRITE: bool, const USER: bool, const PRE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(
         pc: u32,
         rlist: u16,
         op0: u8,
         emu: &mut Emu,
     ) {
-        debug_println!(
-            "handle multiple request at {:x} thumb: {} write: {}",
-            pc,
-            THUMB,
-            WRITE
-        );
+        debug_println!("handle multiple request at {:x} thumb: {} write: {}", pc, THUMB, WRITE);
 
         let rlist = RegReserve::from(rlist as u32);
         let op0 = Reg::from(op0);
@@ -125,11 +98,7 @@ mod handler {
         };
         let mut addr = start_addr;
 
-        if WRITE_BACK
-            && (!WRITE
-                || (CPU == CpuType::ARM7
-                    && unlikely((rlist.0 & ((1 << (op0 as u8 + 1)) - 1)) > (1 << op0 as u8))))
-        {
+        if WRITE_BACK && (!WRITE || (CPU == CpuType::ARM7 && unlikely((rlist.0 & ((1 << (op0 as u8 + 1)) - 1)) > (1 << op0 as u8)))) {
             if DECREMENT {
                 *get_regs_mut!(emu, CPU).get_reg_mut(op0) = addr;
             } else {
@@ -162,14 +131,7 @@ mod handler {
             }
         }
 
-        if WRITE_BACK
-            && (WRITE
-                || (CPU == CpuType::ARM9
-                    && unlikely(
-                        (rlist.0 & !((1 << (op0 as u8 + 1)) - 1)) != 0
-                            || (rlist.0 == (1 << op0 as u8)),
-                    )))
-        {
+        if WRITE_BACK && (WRITE || (CPU == CpuType::ARM9 && unlikely((rlist.0 & !((1 << (op0 as u8 + 1)) - 1)) != 0 || (rlist.0 == (1 << op0 as u8))))) {
             *get_regs_mut!(emu, CPU).get_reg_mut(op0) = if DECREMENT { start_addr } else { addr }
         }
 
@@ -179,10 +141,7 @@ mod handler {
     }
 
     #[inline(never)]
-    pub fn handle_swp_request<const CPU: CpuType, const AMOUNT: MemoryAmount>(
-        regs: u32,
-        emu: &mut Emu,
-    ) {
+    pub fn handle_swp_request<const CPU: CpuType, const AMOUNT: MemoryAmount>(regs: u32, emu: &mut Emu) {
         let op0 = Reg::from((regs & 0xFF) as u8);
         let op1 = Reg::from(((regs >> 8) & 0xFF) as u8);
         let op2 = Reg::from(((regs >> 16) & 0xFF) as u8);
@@ -222,25 +181,14 @@ macro_rules! imm_breakout {
 }
 pub(super) use imm_breakout;
 
-pub unsafe extern "C" fn inst_mem_handler<
-    const CPU: CpuType,
-    const THUMB: bool,
-    const WRITE: bool,
-    const AMOUNT: MemoryAmount,
-    const SIGNED: bool,
-    const MMU: bool,
->(
+pub unsafe extern "C" fn inst_mem_handler<const CPU: CpuType, const THUMB: bool, const WRITE: bool, const AMOUNT: MemoryAmount, const SIGNED: bool, const MMU: bool>(
     addr: u32,
     op0: *mut u32,
     pc: u32,
     asm: *mut JitAsm<CPU>,
 ) {
     let asm = asm.as_mut().unwrap_unchecked();
-    handle_request::<CPU, WRITE, AMOUNT, SIGNED, MMU>(
-        op0.as_mut().unwrap_unchecked(),
-        addr,
-        asm.emu,
-    );
+    handle_request::<CPU, WRITE, AMOUNT, SIGNED, MMU>(op0.as_mut().unwrap_unchecked(), addr, asm.emu);
     if WRITE && unlikely(get_mem!(asm.emu).breakout_imm) {
         imm_breakout!(asm, pc, THUMB);
     }
@@ -262,12 +210,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     asm: *mut JitAsm<CPU>,
 ) {
     let asm = asm.as_mut().unwrap_unchecked();
-    handle_multiple_request::<CPU, THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(
-        pc,
-        (op0_rlist & 0xFFFF) as u16,
-        (op0_rlist >> 16) as u8,
-        asm.emu,
-    );
+    handle_multiple_request::<CPU, THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(pc, (op0_rlist & 0xFFFF) as u16, (op0_rlist >> 16) as u8, asm.emu);
     if !WRITE && HAS_PC {
         if DEBUG_LOG_BRANCH_OUT {
             asm.runtime_data.branch_out_pc = pc;
@@ -290,11 +233,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     }
 }
 
-pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: MemoryAmount>(
-    regs: u32,
-    pc: u32,
-    asm: *mut JitAsm<CPU>,
-) {
+pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: MemoryAmount>(regs: u32, pc: u32, asm: *mut JitAsm<CPU>) {
     let asm = asm.as_mut().unwrap_unchecked();
     handle_swp_request::<CPU, AMOUNT>(regs, asm.emu);
     if unlikely(get_mem!(asm.emu).breakout_imm) {

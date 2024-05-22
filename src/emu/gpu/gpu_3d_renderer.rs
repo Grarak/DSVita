@@ -24,9 +24,7 @@ pub struct Gpu3dRenderer {
 
 impl Gpu3dRenderer {
     pub fn new() -> Self {
-        Gpu3dRenderer {
-            disp_cnt: Disp3DCnt::from(0),
-        }
+        Gpu3dRenderer { disp_cnt: Disp3DCnt::from(0) }
     }
 
     pub fn get_disp_3d_cnt(&self) -> u16 {

@@ -4,9 +4,7 @@ pub struct Gpu3D {
 
 impl Gpu3D {
     pub fn new() -> Self {
-        Gpu3D {
-            gx_stat: 0x04000000,
-        }
+        Gpu3D { gx_stat: 0x04000000 }
     }
 
     pub fn get_clip_mtx_result(&self, index: usize) -> u32 {

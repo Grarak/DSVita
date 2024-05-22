@@ -1,5 +1,5 @@
 use crate::emu::div_sqrt::DivSqrt;
-use crate::emu::emu::{get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, get_mem_mut, Emu, get_cm_mut};
+use crate::emu::emu::{get_cm_mut, get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, get_mem_mut, Emu};
 use crate::emu::memory::dma::Dma;
 use crate::emu::timers::Timers;
 use crate::emu::CpuType::ARM9;
@@ -164,12 +164,7 @@ impl IoArm9 {
             });
             index += 1;
         }
-        T::from(u32::from_le_bytes([
-            bytes_window[3],
-            bytes_window[4],
-            bytes_window[5],
-            bytes_window[6],
-        ]))
+        T::from(u32::from_le_bytes([bytes_window[3], bytes_window[4], bytes_window[5], bytes_window[6]]))
     }
 
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, emu: &mut Emu) {
@@ -453,12 +448,7 @@ impl IoArm9 {
                 io16(0x106C) => common.gpu.gpu_2d_b.set_master_bright(mask, value),
                 _ => {
                     if index == 3 {
-                        debug_println!(
-                            "{:?} unknown io port write at {:x} with value {:x}",
-                            ARM9,
-                            addr_offset,
-                            value.into()
-                        );
+                        debug_println!("{:?} unknown io port write at {:x} with value {:x}", ARM9, addr_offset, value.into());
                     }
                 }
             });

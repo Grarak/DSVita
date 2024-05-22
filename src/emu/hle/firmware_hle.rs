@@ -32,9 +32,7 @@ impl FirmwareHle {
                 Arm7Hle::send_ipc_fifo(0x4, 0x0300A100, 0, emu);
             }
             2 => {
-                let addr = (((self.data[0] as u32) & 0xFF) << 24)
-                    | ((self.data[1] as u32) << 8)
-                    | (((self.data[2] as u32) >> 8) & 0xFF);
+                let addr = (((self.data[0] as u32) & 0xFF) << 24) | ((self.data[1] as u32) << 8) | (((self.data[2] as u32) >> 8) & 0xFF);
                 if (0x02000000..0x02800000).contains(&addr) {
                     Arm7Hle::send_ipc_fifo(0x4, 0x0300A200, 0, emu);
                 } else {

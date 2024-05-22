@@ -10,11 +10,7 @@ pub(super) struct CartHle {
 
 impl CartHle {
     pub(super) fn new() -> Self {
-        CartHle {
-            cmd: 0,
-            data_pos: 0,
-            buffer: 0,
-        }
+        CartHle { cmd: 0, data_pos: 0, buffer: 0 }
     }
 
     pub(super) fn ipc_recv(&mut self, data: u32, emu: &mut Emu) {

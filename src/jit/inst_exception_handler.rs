@@ -5,12 +5,7 @@ use crate::emu::{exception_handler, CpuType};
 use crate::jit::inst_mem_handler::imm_breakout;
 use crate::jit::jit_asm::JitAsm;
 
-pub unsafe extern "C" fn exception_handler<const CPU: CpuType, const THUMB: bool>(
-    asm: *mut JitAsm<CPU>,
-    opcode: u32,
-    vector: ExceptionVector,
-    pc: u32,
-) {
+pub unsafe extern "C" fn exception_handler<const CPU: CpuType, const THUMB: bool>(asm: *mut JitAsm<CPU>, opcode: u32, vector: ExceptionVector, pc: u32) {
     exception_handler::handle::<CPU, THUMB>((*asm).emu, opcode, vector);
     if get_cpu_regs!((*asm).emu, CPU).is_halted() {
         let asm = asm.as_mut().unwrap_unchecked();

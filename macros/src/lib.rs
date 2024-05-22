@@ -7,10 +7,7 @@ use syn::__private::quote::{format_ident, quote_spanned};
 use syn::__private::ToTokens;
 use syn::parse::{Parse, ParseStream};
 use syn::token::DotDotEq;
-use syn::{
-    parse_macro_input, parse_quote_spanned, Arm, Block, Expr, ExprBlock, ExprLit, ExprMatch,
-    ExprRange, Lit, LitInt, Pat, RangeLimits, Stmt,
-};
+use syn::{parse_macro_input, parse_quote_spanned, Arm, Block, Expr, ExprBlock, ExprLit, ExprMatch, ExprRange, Lit, LitInt, Pat, RangeLimits, Stmt};
 
 fn write_block(base: u32, size: usize, span: Span) -> Block {
     if size == 1 {
@@ -129,11 +126,7 @@ fn traverse_match<const WRITE: bool>(expr: &mut ExprMatch) {
                     assert_eq!(tuple_struct.elems.len(), 1);
                     if let Pat::Lit(lit) = tuple_struct.elems.first().unwrap() {
                         if let Lit::Int(lit) = &lit.lit {
-                            return Some((
-                                u32::from_str_radix(lit.to_string().trim_start_matches("0x"), 16)
-                                    .unwrap(),
-                                lit.span(),
-                            ));
+                            return Some((u32::from_str_radix(lit.to_string().trim_start_matches("0x"), 16).unwrap(), lit.span()));
                         }
                     }
                     None
@@ -151,15 +144,10 @@ fn traverse_match<const WRITE: bool>(expr: &mut ExprMatch) {
                                 attrs: Vec::new(),
                                 lit: Lit::Int(LitInt::new(&addr.to_string(), span.into())),
                             }))),
-                            limits: RangeLimits::Closed(DotDotEq {
-                                spans: [span.into(); 3],
-                            }),
+                            limits: RangeLimits::Closed(DotDotEq { spans: [span.into(); 3] }),
                             end: Some(Box::new(Expr::Lit(ExprLit {
                                 attrs: Vec::new(),
-                                lit: Lit::Int(LitInt::new(
-                                    &(addr + length - 1).to_string(),
-                                    span.into(),
-                                )),
+                                lit: Lit::Int(LitInt::new(&(addr + length - 1).to_string(), span.into())),
                             }))),
                         })
                     };

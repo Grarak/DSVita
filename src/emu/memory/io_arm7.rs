@@ -172,12 +172,7 @@ impl IoArm7 {
             });
             index += 1;
         }
-        T::from(u32::from_le_bytes([
-            bytes_window[3],
-            bytes_window[4],
-            bytes_window[5],
-            bytes_window[6],
-        ]))
+        T::from(u32::from_le_bytes([bytes_window[3], bytes_window[4], bytes_window[5], bytes_window[6]]))
     }
 
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, emu: &mut Emu) {
@@ -382,12 +377,7 @@ impl IoArm7 {
                 io16(0x80021C) => todo!(),
                 _ => {
                     if index == 3 {
-                        debug_println!(
-                            "{:?} unknown io port write at {:x} with value {:x}",
-                            ARM7,
-                            addr_offset,
-                            value.into()
-                        );
+                        debug_println!("{:?} unknown io port write at {:x} with value {:x}", ARM7, addr_offset, value.into());
                     }
                 }
             });
