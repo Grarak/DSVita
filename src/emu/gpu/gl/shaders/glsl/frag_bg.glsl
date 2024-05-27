@@ -39,9 +39,7 @@ vec3 normRgb5(int color) {
     return vec3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-vec3 drawText(int x, int y) {
-    int bgCnt = Cnts[3];
-
+vec3 drawText(int x, int y, int bgCnt) {
     int screenAddr = ((DispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
     int charAddr = ((DispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
 
@@ -94,5 +92,9 @@ vec3 drawText(int x, int y) {
 }
 
 void main() {
-    color = vec4(drawText(int(screenPos.x) + 1, int(screenPos.y)), 1.0f);;
+    int bgCnt = Cnts[3];
+    int priority = bgCnt & 3;
+
+    gl_FragDepth = float(priority + 1) / 5.0;
+    color = vec4(drawText(int(screenPos.x) + 1, int(screenPos.y), bgCnt), 1.0f);
 }

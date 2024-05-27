@@ -135,7 +135,7 @@ pub unsafe fn create_fb_depth(width: u32, height: u32) -> GLuint {
     let mut buf = 0;
     gl::GenRenderbuffers(1, ptr::addr_of_mut!(buf));
     gl::BindRenderbuffer(gl::RENDERBUFFER, buf);
-    gl::RenderbufferStorage(gl::RENDERBUFFER, gl::DEPTH_COMPONENT, width as _, height as _);
+    gl::RenderbufferStorage(gl::RENDERBUFFER, gl::DEPTH_COMPONENT16, width as _, height as _);
     gl::BindRenderbuffer(gl::RENDERBUFFER, 0);
     buf
 }

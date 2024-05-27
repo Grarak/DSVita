@@ -207,8 +207,6 @@ struct Gpu2dShared {
 impl Gpu2dShared {
     fn new() -> Self {
         unsafe {
-            gl::Enable(gl::DEPTH_TEST);
-
             let (obj_program, obj_vertices_buf, obj_vao) = {
                 let vert_shader = create_shader(VERT_OBJ_SHADER_SRC, gl::VERTEX_SHADER).unwrap();
                 let frag_shader = create_shader(FRAG_OBJ_SHADER_SRC, gl::FRAGMENT_SHADER).unwrap();
@@ -395,7 +393,7 @@ impl Gpu2dShared {
             gl::ActiveTexture(TEXTURE1);
             gl::BindTexture(gl::TEXTURE_2D, self.pal_tex);
 
-            // draw_scanlines!(Self::draw_bg);
+            draw_scanlines!(Self::draw_bg);
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
 
@@ -493,11 +491,10 @@ impl Fbo {
             gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::RENDERBUFFER, depth);
 
             let status = gl::CheckFramebufferStatus(gl::FRAMEBUFFER);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
             if status != gl::FRAMEBUFFER_COMPLETE {
-                gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
                 Err(StrErr::new(format!("Failed to create fbo: {status}")))
             } else {
-                gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
                 Ok(Fbo { color, depth, fbo })
             }
         }
@@ -519,6 +516,11 @@ pub struct Gpu2dRenderer {
 
 impl Gpu2dRenderer {
     pub fn new() -> Self {
+        unsafe {
+            gl::Enable(gl::DEPTH_TEST);
+            gl::DepthFunc(gl::LESS);
+        }
+
         let shared = Gpu2dShared::new();
         let fb_a = Fbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32).unwrap();
         let fb_b = Fbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32).unwrap();

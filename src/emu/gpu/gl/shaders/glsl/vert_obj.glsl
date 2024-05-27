@@ -43,7 +43,7 @@ void main() {
         case 0x9: oamWidth =  8.0; oamHeight = 32.0; break;
         case 0xA: oamWidth = 16.0; oamHeight = 32.0; break;
         case 0xB: oamWidth = 32.0; oamHeight = 64.0; break;
-        default: oamWidth = 0.0; oamHeight = 0.0; break;
+        default : oamWidth = 0.0; oamHeight = 0.0; break;
     }
 
     if (oamX >= 256) {
@@ -57,5 +57,7 @@ void main() {
     float x = float(oamX) + oamWidth * position.x;
     float y = float(oamY) + oamHeight * position.y;
     screenPos = vec2(x, y);
-    gl_Position = vec4(x / 255.0 * 2.0 - 1.0, 1.0 - y / 191.0 * 2.0, 0.0, 1.0);
+
+    int priority = (attrib2 >> 10) & 3;
+    gl_Position = vec4(x / 255.0 * 2.0 - 1.0, 1.0 - y / 191.0 * 2.0, float(priority) / 5.0, 1.0);
 }

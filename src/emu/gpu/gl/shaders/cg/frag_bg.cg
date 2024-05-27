@@ -22,9 +22,7 @@ float4 readPal(short index) {
     return tex2D(palTex, float2(float(index) / 511.0, 1.0));
 }
 
-float3 drawText(short x, short y) {
-    short bgCnt = bgUbo.cnts[3];
-
+float3 drawText(short x, short y, short bgCnt) {
     int screenAddr = ((bgUbo.dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
     int charAddr = ((bgUbo.dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
 
@@ -78,7 +76,12 @@ float3 drawText(short x, short y) {
 
 void main(
     float2 screenPos : TEXCOORD0,
+    out float depth : DEPTH,
     out float4 color : COLOR
 ) {
-    color = float4(drawText(short(screenPos.x) + 1, short(screenPos.y)), 1.0f);
+    short bgCnt = bgUbo.cnts[3];
+    int priority = bgCnt & 3;
+
+    depth = float(priority + 1) / 5.0;
+    color = float4(drawText(short(screenPos.x) + 1, short(screenPos.y), bgCnt), 1.0f);
 }
