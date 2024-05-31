@@ -1,6 +1,56 @@
+uniform sampler2D oamTex : TEXUNIT0;
+uniform sampler2D objTex : TEXUNIT1;
+uniform sampler2D palTex : TEXUNIT2;
+
+int readOam8(int addr) {
+    float x = float(addr >> 2) / 255.0f;
+    return int(tex2D(oamTex, float2(x, 1.0))[addr & 3] * 255.0f);
+}
+
+int readOam16(int addr) {
+    return readOam8(addr) | (readOam8(addr + 1) << 8);
+}
+
+int readObj8(int addr) {
+    float x = float((addr >> 2) & 0x1FF) / 511.0f;
+    float y = float((addr >> 2) >> 9) / 127.0f;
+    return int(tex2D(objTex, float2(x, y))[addr & 3] * 255.0);
+}
+
+int readObj16(int addr) {
+    return readObj8(addr) | (readObj8(addr + 1) << 8);
+}
+
+float4 readPal(short index) {
+    return tex2D(palTex, float2(float(index) / 511.0, 1.0));
+}
+
 void main(
-    float2 screenPos : TEXCOORD0,
+    float2 objPos : TEXCOORD0,
+    int oamIndex : TEXCOORD1,
+    int objBound : TEXCOORD2,
+    int mapWidth : TEXCOORD3,
     out float4 color : COLOR
 ) {
-    color = float4(screenPos.x / 255.0, screenPos.y / 191.0, 0.0, 1.0);
+    int attrib2 = readOam16(oamIndex * 8 + 4);
+    int tileIndex = attrib2 & 0x3FF;
+    int tileAddr = tileIndex * objBound;
+
+    int palBank = (attrib2 >> 12) & 0xF;
+    int palBase = 0x100 + palBank * 16;
+
+    int objY = int(objPos.y);
+    int objX = int(objPos.x);
+
+    tileAddr += ((objY & 7) + (objY >> 3) * mapWidth) * 4;
+    tileAddr += (objX >> 3) * 32 + ((objX & 7) >> 1);
+
+    int palIndex = readObj8(tileAddr);
+    palIndex >>= 4 * (objX & 1);
+    palIndex &= 0xF;
+    if (palIndex == 0) {
+        discard;
+    }
+
+    color = readPal(palBase + palIndex);
 }

@@ -1,7 +1,7 @@
 use crate::emu::gpu::gl::gpu_2d_renderer::GpuMemBuf;
 use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
 use crate::emu::memory::vram;
-use crate::emu::memory::vram::{Vram, OBJ_A_OFFSET, OBJ_B_OFFSET};
+use crate::emu::memory::vram::Vram;
 use crate::emu::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::utils;

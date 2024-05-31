@@ -10,11 +10,12 @@ use crate::emu::memory::{regions, vram};
 use crate::presenter::{Presenter, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_TOP_SCREEN};
 use crate::utils;
 use crate::utils::{HeapMemU32, HeapMemU8, StrErr};
-use gl::types::GLuint;
-use gl::{TEXTURE0, TEXTURE1};
+use gl::types::{GLint, GLuint};
+use gl::{TEXTURE0, TEXTURE1, TEXTURE2};
 use std::ops::Deref;
 use std::sync::{Condvar, Mutex};
-use std::{mem, ptr};
+use std::time::Duration;
+use std::{mem, ptr, thread};
 
 #[derive(Default)]
 pub struct GpuMemBuf {
@@ -192,22 +193,46 @@ const fn generate_oam_indices() -> [u8; 128 * 4] {
 
 const OAM_INDICES: [u8; 128 * 4] = generate_oam_indices();
 
+struct Gpu2dTextures {
+    oam: GLuint,
+    obj: GLuint,
+    obj_width: u32,
+    obj_height: u32,
+    bg: GLuint,
+    bg_width: u32,
+    bg_height: u32,
+    pal: GLuint,
+}
+
+impl Gpu2dTextures {
+    fn new(oam: GLuint, obj: GLuint, obj_width: u32, obj_height: u32, bg: GLuint, bg_width: u32, bg_height: u32, pal: GLuint) -> Self {
+        Gpu2dTextures {
+            oam,
+            obj,
+            obj_width,
+            obj_height,
+            bg,
+            bg_width,
+            bg_height,
+            pal,
+        }
+    }
+}
+
 struct Gpu2dShared {
     obj_program: GLuint,
     bg_program: GLuint,
-    oam_tex: GLuint,
-    bg_tex: GLuint,
-    pal_tex: GLuint,
     bg_ubo: GLuint,
     obj_vertices_buf: GLuint,
     obj_vao: GLuint,
     oam_indices: Vec<[u16; 6]>,
+    obj_disp_cnt_loc: GLint,
 }
 
 impl Gpu2dShared {
     fn new() -> Self {
         unsafe {
-            let (obj_program, obj_vertices_buf, obj_vao) = {
+            let (obj_program, obj_vertices_buf, obj_vao, obj_disp_cnt_loc) = {
                 let vert_shader = create_shader(VERT_OBJ_SHADER_SRC, gl::VERTEX_SHADER).unwrap();
                 let frag_shader = create_shader(FRAG_OBJ_SHADER_SRC, gl::FRAGMENT_SHADER).unwrap();
                 let program = create_program(&[vert_shader, frag_shader]).unwrap();
@@ -245,9 +270,14 @@ impl Gpu2dShared {
                 gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
                 gl::BindAttribLocation(program, 1, "oamIndex\0".as_ptr() as _);
 
+                gl::Uniform1i(gl::GetUniformLocation(program, "objTex\0".as_ptr() as _), 1);
+                gl::Uniform1i(gl::GetUniformLocation(program, "palTex\0".as_ptr() as _), 2);
+
+                let disp_cnt_loc = gl::GetUniformLocation(program, "dispCnt\0".as_ptr() as _);
+
                 gl::UseProgram(0);
 
-                (program, vertices_buf, vao)
+                (program, vertices_buf, vao, disp_cnt_loc)
             };
 
             let bg_program = {
@@ -265,23 +295,17 @@ impl Gpu2dShared {
                 program
             };
 
-            let oam_tex = create_mem_texture1d(regions::OAM_SIZE / 2);
-            let bg_tex = create_mem_texture2d(1024, 512);
-            let pal_tex = create_pal_texture(regions::STANDARD_PALETTES_SIZE / 2);
-
             let mut bg_ubo = 0;
             gl::GenBuffers(1, ptr::addr_of_mut!(bg_ubo));
 
             Gpu2dShared {
                 obj_program,
                 bg_program,
-                oam_tex,
-                bg_tex,
-                pal_tex,
                 bg_ubo,
                 obj_vertices_buf,
                 obj_vao,
                 oam_indices: Vec::new(),
+                obj_disp_cnt_loc,
             }
         }
     }
@@ -301,6 +325,8 @@ impl Gpu2dShared {
         if self.oam_indices.is_empty() {
             return;
         }
+
+        gl::Uniform1i(self.obj_disp_cnt_loc, u32::from(disp_cnt) as _);
 
         gl::DrawElements(gl::TRIANGLES, (6 * self.oam_indices.len()) as _, gl::UNSIGNED_SHORT, self.oam_indices.as_ptr() as _);
         gl::Flush();
@@ -343,7 +369,7 @@ impl Gpu2dShared {
         gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
     }
 
-    unsafe fn draw(&mut self, regs: &GpuRegs, mem_buf: &GpuMemBuf) {
+    unsafe fn draw(&mut self, regs: &GpuRegs, texs: &Gpu2dTextures, mem_buf: &GpuMemBuf) {
         let backdrop = utils::read_from_mem::<u16>(mem_buf.pal_a.deref(), 0);
         let (r, g, b, _) = Self::rgb5_to_float8(backdrop);
         gl::ClearColor(r, g, b, 1f32);
@@ -361,13 +387,16 @@ impl Gpu2dShared {
             }};
         }
 
-        gl::BindTexture(gl::TEXTURE_2D, self.oam_tex);
+        gl::BindTexture(gl::TEXTURE_2D, texs.oam);
         sub_mem_texture1d(regions::OAM_SIZE / 2, mem_buf.oam_a.deref());
 
-        gl::BindTexture(gl::TEXTURE_2D, self.bg_tex);
-        sub_mem_texture2d(1024, 512, mem_buf.bg_a.deref());
+        gl::BindTexture(gl::TEXTURE_2D, texs.obj);
+        sub_mem_texture2d(texs.obj_width, texs.obj_height, mem_buf.obj_a.deref());
 
-        gl::BindTexture(gl::TEXTURE_2D, self.pal_tex);
+        gl::BindTexture(gl::TEXTURE_2D, texs.bg);
+        sub_mem_texture2d(texs.bg_width, texs.bg_height, mem_buf.bg_a.deref());
+
+        gl::BindTexture(gl::TEXTURE_2D, texs.pal);
         sub_pal_texture(regions::STANDARD_PALETTES_SIZE / 2, mem_buf.pal_a.deref());
 
         gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -378,7 +407,14 @@ impl Gpu2dShared {
             gl::BindVertexArray(self.obj_vao);
 
             gl::ActiveTexture(TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, self.oam_tex);
+            gl::BindTexture(gl::TEXTURE_2D, texs.oam);
+
+            gl::ActiveTexture(TEXTURE1);
+            gl::BindTexture(gl::TEXTURE_2D, texs.obj);
+
+            gl::ActiveTexture(TEXTURE2);
+            gl::BindTexture(gl::TEXTURE_2D, texs.pal);
+
             draw_scanlines!(Self::draw_objects);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -387,13 +423,15 @@ impl Gpu2dShared {
 
         {
             gl::UseProgram(self.bg_program);
+
             gl::ActiveTexture(TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, self.bg_tex);
+            gl::BindTexture(gl::TEXTURE_2D, texs.bg);
 
             gl::ActiveTexture(TEXTURE1);
-            gl::BindTexture(gl::TEXTURE_2D, self.pal_tex);
+            gl::BindTexture(gl::TEXTURE_2D, texs.pal);
 
             draw_scanlines!(Self::draw_bg);
+
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
 
@@ -508,6 +546,8 @@ pub struct Gpu2dRenderer {
     mem_buf_swap: GpuMemBuf,
     drawing: Mutex<bool>,
     drawing_condvar: Condvar,
+    tex_a: Gpu2dTextures,
+    tex_b: Gpu2dTextures,
     shared: Gpu2dShared,
     fb_a: Fbo,
     fb_b: Fbo,
@@ -519,23 +559,35 @@ impl Gpu2dRenderer {
         unsafe {
             gl::Enable(gl::DEPTH_TEST);
             gl::DepthFunc(gl::LESS);
-        }
 
-        let shared = Gpu2dShared::new();
-        let fb_a = Fbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32).unwrap();
-        let fb_b = Fbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32).unwrap();
+            let oam_tex_a = create_mem_texture1d(regions::OAM_SIZE / 2);
+            let obj_tex_a = create_mem_texture2d(1024, 256);
+            let bg_tex_a = create_mem_texture2d(1024, 512);
+            let pal_tex_a = create_pal_texture(regions::STANDARD_PALETTES_SIZE / 2);
 
-        Gpu2dRenderer {
-            regs_a: [GpuRegs::default(), GpuRegs::default()],
-            regs_b: [GpuRegs::default(), GpuRegs::default()],
-            mem_buf: GpuMemBuf::default(),
-            mem_buf_swap: GpuMemBuf::default(),
-            drawing: Mutex::new(false),
-            drawing_condvar: Condvar::new(),
-            shared,
-            fb_a,
-            fb_b,
-            read_buf: HeapMemU32::new(),
+            let oam_tex_b = create_mem_texture1d(regions::OAM_SIZE / 2);
+            let obj_tex_b = create_mem_texture2d(1024, 128);
+            let bg_tex_b = create_mem_texture2d(1024, 128);
+            let pal_tex_b = create_pal_texture(regions::STANDARD_PALETTES_SIZE / 2);
+
+            let shared = Gpu2dShared::new();
+            let fb_a = Fbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32).unwrap();
+            let fb_b = Fbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32).unwrap();
+
+            Gpu2dRenderer {
+                regs_a: [GpuRegs::default(), GpuRegs::default()],
+                regs_b: [GpuRegs::default(), GpuRegs::default()],
+                mem_buf: GpuMemBuf::default(),
+                mem_buf_swap: GpuMemBuf::default(),
+                drawing: Mutex::new(false),
+                drawing_condvar: Condvar::new(),
+                tex_a: Gpu2dTextures::new(oam_tex_a, obj_tex_a, 1024, 256, bg_tex_a, 1024, 512, pal_tex_a),
+                tex_b: Gpu2dTextures::new(oam_tex_b, obj_tex_b, 1024, 128, bg_tex_b, 1024, 128, pal_tex_b),
+                shared,
+                fb_a,
+                fb_b,
+                read_buf: HeapMemU32::new(),
+            }
         }
     }
 
@@ -562,6 +614,7 @@ impl Gpu2dRenderer {
     pub fn start_drawing(&mut self) {
         let mut drawing = self.drawing.lock().unwrap();
         // let mut drawing = self.drawing_condvar.wait_while(drawing, |drawing| *drawing).unwrap();
+        // thread::sleep(Duration::from_millis(16));
 
         if !*drawing {
             self.mem_buf.bg_a.copy_from_slice(self.mem_buf_swap.bg_a.deref());
@@ -602,7 +655,7 @@ impl Gpu2dRenderer {
         gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
         gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
 
-        self.shared.draw(&self.regs_a[0], &self.mem_buf);
+        self.shared.draw(&self.regs_a[0], &self.tex_a, &self.mem_buf);
 
         // gl::ReadPixels(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, gl::RGBA, gl::UNSIGNED_BYTE, self.read_buf.as_mut_ptr() as _);
 

@@ -5,8 +5,12 @@ in float oamIndex;
 
 uniform sampler2D oamTex;
 
-out vec2 screenPos;
-flat out ivec2 oamXY;
+out vec2 objPos;
+flat out int oOamIndex;
+flat out int objBound;
+flat out int mapWidth;
+
+uniform int dispCnt;
 
 int readOam8(int addr) {
     float x = float(addr >> 2) / 255.0f;
@@ -17,6 +21,11 @@ int readOam16(int addr) {
     return readOam8(addr) | (readOam8(addr + 1) << 8);
 }
 
+const vec2 SizeLookup[12] = vec2[12](
+    vec2(8.0, 8.0), vec2(16.0, 16.0), vec2(32.0, 32.0), vec2(64.0, 64.0), vec2(16.0, 8.0), vec2(32.0, 8.0),
+    vec2(32.0, 16.0), vec2(64.0, 32.0), vec2(8.0, 16.0), vec2(8.0, 32.0), vec2(16.0, 32.0), vec2(32.0, 64.0)
+);
+
 void main() {
     int attrib0 = readOam16(int(oamIndex) * 8);
     int attrib1 = readOam16(int(oamIndex) * 8 + 2);
@@ -25,26 +34,12 @@ void main() {
     int oamX = attrib1 & 0x1FF;
     int oamY = attrib0 & 0xFF;
 
-    int shape = (attrib0 >> 12);
-    int size = (attrib1 >> 14);
+    int shape = (attrib0 >> 12) & 0xC;
+    int size = (attrib1 >> 14) & 0x3;
 
-    float oamWidth;
-    float oamHeight;
-    switch (shape | size) {
-        case 0x0: oamWidth =  8.0; oamHeight =  8.0; break;
-        case 0x1: oamWidth = 16.0; oamHeight = 16.0; break;
-        case 0x2: oamWidth = 32.0; oamHeight = 32.0; break;
-        case 0x3: oamWidth = 64.0; oamHeight = 64.0; break;
-        case 0x4: oamWidth = 16.0; oamHeight =  8.0; break;
-        case 0x5: oamWidth = 32.0; oamHeight =  8.0; break;
-        case 0x6: oamWidth = 32.0; oamHeight = 16.0; break;
-        case 0x7: oamWidth = 64.0; oamHeight = 32.0; break;
-        case 0x8: oamWidth =  8.0; oamHeight = 16.0; break;
-        case 0x9: oamWidth =  8.0; oamHeight = 32.0; break;
-        case 0xA: oamWidth = 16.0; oamHeight = 32.0; break;
-        case 0xB: oamWidth = 32.0; oamHeight = 64.0; break;
-        default : oamWidth = 0.0; oamHeight = 0.0; break;
-    }
+    vec2 oamDims = SizeLookup[shape | size];
+    float oamWidth = oamDims.x;
+    float oamHeight = oamDims.y;
 
     if (oamX >= 256) {
         oamX -= 512;
@@ -54,10 +49,30 @@ void main() {
         oamY -= 256;
     }
 
+    bool is1dMap = (dispCnt & (1 << 4)) != 0;
+    objBound = 32 << (int(is1dMap) * ((dispCnt >> 20) & 0x3));
+
+    bool isVFlip = (attrib1 & (1 << 13)) != 0;
+    bool isHFlip = (attrib1 & (1 << 12)) != 0;
+
+    vec2 pos = position.xy;
+    if (isVFlip) {
+        pos.y -= 1.0;
+        pos.y = abs(pos.y);
+    }
+
+    if (isHFlip) {
+        pos.x -= 1.0;
+        pos.x = abs(pos.x);
+    }
+
+    objPos = vec2((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y);
+    oOamIndex = int(oamIndex);
+    mapWidth = is1dMap ? int(oamWidth) : 256;
+
     float x = float(oamX) + oamWidth * position.x;
     float y = float(oamY) + oamHeight * position.y;
-    screenPos = vec2(x, y);
 
     int priority = (attrib2 >> 10) & 3;
-    gl_Position = vec4(x / 255.0 * 2.0 - 1.0, 1.0 - y / 191.0 * 2.0, float(priority) / 5.0, 1.0);
+    gl_Position = vec4(x / 256.0 * 2.0 - 1.0, 1.0 - y / 192.0 * 2.0, float(priority) / 5.0, 1.0);
 }

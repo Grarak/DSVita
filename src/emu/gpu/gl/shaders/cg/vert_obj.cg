@@ -1,5 +1,7 @@
 uniform sampler2D oamTex : TEXUNIT0;
 
+uniform int dispCnt;
+
 int readOam8(int addr) {
     float x = float(addr >> 2) / 255.0f;
     return int(tex2D(oamTex, float2(x, 1.0))[addr & 3] * 255.0f);
@@ -17,12 +19,12 @@ static const float2 SizeLookup[12] = {
 void main(
     float2 position,
     float oamIndex,
-    float2 out screenPos : TEXCOORD0,
+    float2 out objPos : TEXCOORD0,
+    int out oOamIndex : TEXCOORD1,
+    int out objBound : TEXCOORD2,
+    int out mapWidth : TEXCOORD3,
     float4 out gl_Position : POSITION
 ) {
-    float test = 1.0;
-    int test2 = floatToRawIntBits(test);
-
     int attrib0 = readOam16(int(oamIndex) * 8);
     int attrib1 = readOam16(int(oamIndex) * 8 + 2);
     int attrib2 = readOam16(int(oamIndex) * 8 + 4);
@@ -30,8 +32,8 @@ void main(
     int oamX = attrib1 & 0x1FF;
     int oamY = attrib0 & 0xFF;
 
-    int shape = (attrib0 >> 12);
-    int size = (attrib1 >> 14);
+    int shape = (attrib0 >> 12) & 0xC;
+    int size = (attrib1 >> 14) & 0x3;
 
     float2 oamDims = SizeLookup[shape | size];
     float oamWidth = oamDims.x;
@@ -45,10 +47,30 @@ void main(
         oamY -= 256;
     }
 
+    bool is1dMap = (dispCnt & (1 << 4)) != 0;
+    objBound = 32 << (int(is1dMap) * ((dispCnt >> 20) & 0x3));
+
+    bool isVFlip = (attrib1 & (1 << 13)) != 0;
+    bool isHFlip = (attrib1 & (1 << 12)) != 0;
+
+    float2 pos = position;
+    if (isVFlip) {
+        pos.y -= 1.0;
+        pos.y = abs(pos.y);
+    }
+
+    if (isHFlip) {
+        pos.x -= 1.0;
+        pos.x = abs(pos.x);
+    }
+
+    objPos = float2((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y);
+    oOamIndex = int(oamIndex);
+    mapWidth = is1dMap ? int(oamWidth) : 256;
+
     float x = float(oamX) + oamWidth * position.x;
     float y = float(oamY) + oamHeight * position.y;
-    screenPos = float2(x, y);
 
     int priority = (attrib2 >> 10) & 3;
-    gl_Position = float4(x / 255.0 * 2.0 - 1.0, 1.0 - y / 191.0 * 2.0, float(priority) / 5.0, 1.0);
+    gl_Position = float4(x / 256.0 * 2.0 - 1.0, 1.0 - y / 192.0 * 2.0, float(priority) / 5.0, 1.0);
 }

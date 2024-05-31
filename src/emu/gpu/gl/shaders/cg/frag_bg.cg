@@ -55,8 +55,8 @@ float3 drawText(short x, short y, short bgCnt) {
         yInBlock = 7 - yInBlock;
     }
 
-    bool is8bit = (bgCnt & (1 << 7)) != 0;
-    if (is8bit) {
+    bool is8bpp = (bgCnt & (1 << 7)) != 0;
+    if (is8bpp) {
         charAddr += ((screenEntry & 0x3FF) << 6) + (yInBlock << 3);
         charAddr += xInBlock;
     } else {
@@ -65,7 +65,7 @@ float3 drawText(short x, short y, short bgCnt) {
     }
 
     int colorIndex = readBg8(charAddr);
-    if (!is8bit) {
+    if (!is8bpp) {
         colorIndex >>= 4 * (xInBlock & 1);
         colorIndex &= 0xF;
         colorIndex += (screenEntry & 0xF000) >> 8;

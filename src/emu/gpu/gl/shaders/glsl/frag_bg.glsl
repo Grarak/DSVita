@@ -68,8 +68,8 @@ vec3 drawText(int x, int y, int bgCnt) {
     xInBlock = abs(isHFlip * 7 - xInBlock);
     yInBlock = abs(isVFlip * 7 - yInBlock);
 
-    bool is8bit = (bgCnt & (1 << 7)) != 0;
-    if (is8bit) {
+    bool is8bpp = (bgCnt & (1 << 7)) != 0;
+    if (is8bpp) {
         charAddr += ((screenEntry & 0x3FF) << 6) + (yInBlock << 3);
         charAddr += xInBlock;
     } else {
@@ -78,9 +78,8 @@ vec3 drawText(int x, int y, int bgCnt) {
     }
 
     int colorIndex = readBg8(charAddr);
-    //    return vec3(uvec3(colorIndex & 0xFF, (colorIndex >> 8) & 0xFF, (colorIndex >> 16) & 0xFF)) / 255.0;
     int palAddr = colorIndex;
-    if (!is8bit) {
+    if (!is8bpp) {
         palAddr >>= 4 * (xInBlock & 1);
         palAddr &= 0xF;
         palAddr += (screenEntry & 0xF000) >> 8;
