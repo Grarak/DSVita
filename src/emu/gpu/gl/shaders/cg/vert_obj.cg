@@ -2,6 +2,13 @@ uniform sampler2D oamTex : TEXUNIT0;
 
 uniform int dispCnt;
 
+float2 out objPos : TEXCOORD0;
+int out oOamIndex : TEXCOORD1;
+int out objBound : TEXCOORD2;
+int out mapWidth : TEXCOORD3;
+
+float4 out gl_Position : POSITION;
+
 int readOam8(int addr) {
     float x = float(addr >> 2) / 255.0f;
     return int(tex2D(oamTex, float2(x, 1.0))[addr & 3] * 255.0f);
@@ -16,15 +23,7 @@ static const float2 SizeLookup[12] = {
     float2(32.0, 16.0), float2(64.0, 32.0), float2(8.0, 16.0), float2(8.0, 32.0), float2(16.0, 32.0), float2(32.0, 64.0),
 };
 
-void main(
-    float2 position,
-    float oamIndex,
-    float2 out objPos : TEXCOORD0,
-    int out oOamIndex : TEXCOORD1,
-    int out objBound : TEXCOORD2,
-    int out mapWidth : TEXCOORD3,
-    float4 out gl_Position : POSITION
-) {
+void main(float2 position, float oamIndex) {
     int attrib0 = readOam16(int(oamIndex) * 8);
     int attrib1 = readOam16(int(oamIndex) * 8 + 2);
     int attrib2 = readOam16(int(oamIndex) * 8 + 4);

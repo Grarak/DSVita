@@ -4,6 +4,7 @@ precision highp float;
 precision highp int;
 
 layout(location = 0) out vec4 color;
+
 in vec2 objPos;
 flat in int oOamIndex;
 flat in int objBound;

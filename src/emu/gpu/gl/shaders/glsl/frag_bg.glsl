@@ -4,17 +4,13 @@ precision highp float;
 precision highp int;
 
 layout(location = 0) out vec4 color;
-in vec2 screenPos;
+in vec3 screenPos;
+
+uniform int dispCnt;
+uniform int bgCnts[4];
 
 uniform sampler2D bgTex;
 uniform sampler2D palTex;
-
-uniform BgUbo {
-    int DispCnt;
-    int Cnts[4];
-    int HOfs[4];
-    int VOfs[4];
-};
 
 int readBg8(int addr) {
     float x = float((addr >> 2) & 0x1FF) / 511.0;
@@ -39,18 +35,20 @@ vec3 normRgb5(int color) {
     return vec3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-vec3 drawText(int x, int y, int bgCnt) {
-    int screenAddr = ((DispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
-    int charAddr = ((DispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
+vec4 drawText(int x, int y, int bgNum) {
+    int bgCnt = bgCnts[bgNum];
 
-    x += HOfs[3];
-    x &= 0x1FF;
-    y += VOfs[3];
-    y &= 0x1FF;
+    int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
+    int charAddr = ((dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
 
-    bool is512Width = (bgCnt & (1 << 14)) != 0;
-    if (x > 255 && is512Width) {
+    // 512 Width
+    if (x > 255 && (bgCnt & (1 << 14)) != 0) {
         screenAddr += 0x800;
+    }
+
+    // 512 Height
+    if (y > 255 && (bgCnt & (1 << 15)) != 0) {
+        screenAddr += (bgCnt & (1 << 14)) != 0 ? 0x1000 : 0x800;
     }
 
     int xBlock = x & 0xF8;
@@ -68,32 +66,33 @@ vec3 drawText(int x, int y, int bgCnt) {
     xInBlock = abs(isHFlip * 7 - xInBlock);
     yInBlock = abs(isVFlip * 7 - yInBlock);
 
+    int palBaseAddr;
     bool is8bpp = (bgCnt & (1 << 7)) != 0;
     if (is8bpp) {
         charAddr += ((screenEntry & 0x3FF) << 6) + (yInBlock << 3);
         charAddr += xInBlock;
+        palBaseAddr = 0;
     } else {
         charAddr += ((screenEntry & 0x3FF) << 5) + (yInBlock << 2);
         charAddr += xInBlock >> 1;
+        palBaseAddr = (screenEntry & 0xF000) >> 8;
     }
 
-    int colorIndex = readBg8(charAddr);
-    int palAddr = colorIndex;
+    int palAddr = readBg8(charAddr);
     if (!is8bpp) {
         palAddr >>= 4 * (xInBlock & 1);
         palAddr &= 0xF;
-        palAddr += (screenEntry & 0xF000) >> 8;
     }
+    if (palAddr == 0) {
+        discard;
+    }
+    palAddr += palBaseAddr;
     palAddr <<= 1;
 
     int color = readPal16(palAddr);
-    return normRgb5(color);
+    return vec4(normRgb5(color), 1.0);
 }
 
 void main() {
-    int bgCnt = Cnts[3];
-    int priority = bgCnt & 3;
-
-    gl_FragDepth = float(priority + 1) / 5.0;
-    color = vec4(drawText(int(screenPos.x) + 1, int(screenPos.y), bgCnt), 1.0f);
+    color = drawText(int(screenPos.x), int(screenPos.y), int(screenPos.z));
 }

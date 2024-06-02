@@ -2,6 +2,11 @@ uniform sampler2D oamTex : TEXUNIT0;
 uniform sampler2D objTex : TEXUNIT1;
 uniform sampler2D palTex : TEXUNIT2;
 
+float2 in objPos : TEXCOORD0;
+int in oamIndex : TEXCOORD1;
+int in objBound : TEXCOORD2;
+int in mapWidth : TEXCOORD3;
+
 int readOam8(int addr) {
     float x = float(addr >> 2) / 255.0f;
     return int(tex2D(oamTex, float2(x, 1.0))[addr & 3] * 255.0f);
@@ -25,13 +30,7 @@ float4 readPal(short index) {
     return tex2D(palTex, float2(float(index) / 511.0, 1.0));
 }
 
-void main(
-    float2 objPos : TEXCOORD0,
-    int oamIndex : TEXCOORD1,
-    int objBound : TEXCOORD2,
-    int mapWidth : TEXCOORD3,
-    out float4 color : COLOR
-) {
+void main(out float4 color : COLOR) {
     int attrib2 = readOam16(oamIndex * 8 + 4);
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * objBound;

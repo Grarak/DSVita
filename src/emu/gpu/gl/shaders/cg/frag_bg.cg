@@ -1,12 +1,10 @@
+float3 in screenPos : TEXCOORD0;
+
+uniform int dispCnt;
+uniform int bgCnts[4];
+
 uniform sampler2D bgTex : TEXUNIT0;
 uniform sampler2D palTex : TEXUNIT1;
-
-uniform BgUbo {
-    int dispCnt;
-    int cnts[4];
-    int hOfs[4];
-    int vOfs[4];
-} bgUbo : BUFFER[0];
 
 int readBg8(int addr) {
     float x = float((addr >> 2) & 0x1FF) / 511.0f;
@@ -22,18 +20,20 @@ float4 readPal(short index) {
     return tex2D(palTex, float2(float(index) / 511.0, 1.0));
 }
 
-float3 drawText(short x, short y, short bgCnt) {
-    int screenAddr = ((bgUbo.dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
-    int charAddr = ((bgUbo.dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
+float4 drawText(short x, short y, short bgNum) {
+    int bgCnt = bgCnts[bgNum];
 
-    x += bgUbo.hOfs[3];
-    x &= 0x1FF;
-    y += bgUbo.vOfs[3];
-    y &= 0x1FF;
+    int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
+    int charAddr = ((dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
 
-    bool is512Width = (bgCnt & (1 << 14)) != 0;
-    if (x > 255 && is512Width) {
+    // 512 Width
+    if (x > 255 && (bgCnt & (1 << 14)) != 0) {
         screenAddr += 0x800;
+    }
+
+    // 512 Height
+    if (y > 255 && (bgCnt & (1 << 15)) != 0) {
+        screenAddr += (bgCnt & (1 << 14)) != 0 ? 0x1000 : 0x800;
     }
 
     int xBlock = x & 0xF8;
@@ -56,32 +56,30 @@ float3 drawText(short x, short y, short bgCnt) {
     }
 
     bool is8bpp = (bgCnt & (1 << 7)) != 0;
+    int palBaseIndex;
     if (is8bpp) {
         charAddr += ((screenEntry & 0x3FF) << 6) + (yInBlock << 3);
         charAddr += xInBlock;
+        palBaseIndex = 0;
     } else {
         charAddr += ((screenEntry & 0x3FF) << 5) + (yInBlock << 2);
         charAddr += xInBlock >> 1;
+        palBaseIndex = (screenEntry & 0xF000) >> 8;
     }
 
-    int colorIndex = readBg8(charAddr);
+    int palIndex = readBg8(charAddr);
     if (!is8bpp) {
-        colorIndex >>= 4 * (xInBlock & 1);
-        colorIndex &= 0xF;
-        colorIndex += (screenEntry & 0xF000) >> 8;
+        palIndex >>= 4 * (xInBlock & 1);
+        palIndex &= 0xF;
     }
+    if (palIndex == 0) {
+        discard;
+    }
+    palIndex += palBaseIndex;
 
-    return readPal(colorIndex).rgb;
+    return float4(readPal(palIndex).rgb, 1.0);
 }
 
-void main(
-    float2 screenPos : TEXCOORD0,
-    out float depth : DEPTH,
-    out float4 color : COLOR
-) {
-    short bgCnt = bgUbo.cnts[3];
-    int priority = bgCnt & 3;
-
-    depth = float(priority + 1) / 5.0;
-    color = float4(drawText(short(screenPos.x) + 1, short(screenPos.y), bgCnt), 1.0f);
+void main(out float4 color : COLOR) {
+    color = drawText(short(screenPos.x), short(screenPos.y), short(screenPos.z));
 }

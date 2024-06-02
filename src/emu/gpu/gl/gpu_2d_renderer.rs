@@ -83,14 +83,6 @@ struct GpuRegs {
     current_batch_count_index: usize,
 }
 
-#[repr(C)]
-struct BgUbo {
-    disp_cnt: u32,
-    cnts: [u32; 4],
-    h_ofs: [u32; 4],
-    v_ofs: [u32; 4],
-}
-
 impl Default for GpuRegs {
     fn default() -> Self {
         unsafe { mem::zeroed() }
@@ -103,7 +95,7 @@ impl GpuRegs {
         let updated = updated || {
             let mut updated = false;
             for i in 0..4 {
-                if self.bg_cnts[i * DISPLAY_HEIGHT + self.current_batch_count_index] != u16::from(inner.bg_cnt[i]) as u32 {
+                if self.bg_cnts[self.current_batch_count_index * 4 + i] != u16::from(inner.bg_cnt[i]) as u32 {
                     updated = true;
                     break;
                 }
@@ -127,7 +119,7 @@ impl GpuRegs {
             // );
             self.disp_cnts[line as usize] = u32::from(inner.disp_cnt);
             for i in 0..4 {
-                self.bg_cnts[i * DISPLAY_HEIGHT + line as usize] = u16::from(inner.bg_cnt[i]) as u32;
+                self.bg_cnts[line as usize * 4 + i] = u16::from(inner.bg_cnt[i]) as u32;
             }
             self.current_batch_count_index = line as usize;
         } else {
@@ -221,18 +213,21 @@ impl Gpu2dTextures {
 
 struct Gpu2dShared {
     obj_program: GLuint,
-    bg_program: GLuint,
-    bg_ubo: GLuint,
-    obj_vertices_buf: GLuint,
     obj_vao: GLuint,
     oam_indices: Vec<[u16; 6]>,
     obj_disp_cnt_loc: GLint,
+    bg_program: GLuint,
+    bg_disp_cnt_loc: GLint,
+    bg_cnts_loc: GLint,
+    bg_h_ofs_loc: GLint,
+    bg_v_ofs_loc: GLint,
+    bg_vertices_buf: Vec<[f32; 6 * 3]>,
 }
 
 impl Gpu2dShared {
     fn new() -> Self {
         unsafe {
-            let (obj_program, obj_vertices_buf, obj_vao, obj_disp_cnt_loc) = {
+            let (obj_program, obj_vao, obj_disp_cnt_loc) = {
                 let vert_shader = create_shader(VERT_OBJ_SHADER_SRC, gl::VERTEX_SHADER).unwrap();
                 let frag_shader = create_shader(FRAG_OBJ_SHADER_SRC, gl::FRAGMENT_SHADER).unwrap();
                 let program = create_program(&[vert_shader, frag_shader]).unwrap();
@@ -277,10 +272,10 @@ impl Gpu2dShared {
 
                 gl::UseProgram(0);
 
-                (program, vertices_buf, vao, disp_cnt_loc)
+                (program, vao, disp_cnt_loc)
             };
 
-            let bg_program = {
+            let (bg_program, bg_disp_cnt_loc, bg_cnts_loc, bg_h_ofs_loc, bg_v_ofs_loc) = {
                 let vert_shader = create_shader(VERT_BG_SHADER_SRC, gl::VERTEX_SHADER).unwrap();
                 let frag_shader = create_shader(FRAG_BG_SHADER_SRC, gl::FRAGMENT_SHADER).unwrap();
                 let program = create_program(&[vert_shader, frag_shader]).unwrap();
@@ -288,24 +283,33 @@ impl Gpu2dShared {
                 gl::DeleteShader(frag_shader);
 
                 gl::UseProgram(program);
+
+                gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
+
+                let disp_cnt_loc = gl::GetUniformLocation(program, "dispCnt\0".as_ptr() as _);
+                let bg_cnts_loc = gl::GetUniformLocation(program, "bgCnts\0".as_ptr() as _);
+                let bg_h_ofs_loc = gl::GetUniformLocation(program, "hOfs\0".as_ptr() as _);
+                let bg_v_ofs_loc = gl::GetUniformLocation(program, "vOfs\0".as_ptr() as _);
+
                 gl::Uniform1i(gl::GetUniformLocation(program, "bgTex\0".as_ptr() as _), 0);
                 gl::Uniform1i(gl::GetUniformLocation(program, "palTex\0".as_ptr() as _), 1);
+
                 gl::UseProgram(0);
 
-                program
+                (program, disp_cnt_loc, bg_cnts_loc, bg_h_ofs_loc, bg_v_ofs_loc)
             };
-
-            let mut bg_ubo = 0;
-            gl::GenBuffers(1, ptr::addr_of_mut!(bg_ubo));
 
             Gpu2dShared {
                 obj_program,
-                bg_program,
-                bg_ubo,
-                obj_vertices_buf,
                 obj_vao,
                 oam_indices: Vec::new(),
                 obj_disp_cnt_loc,
+                bg_program,
+                bg_disp_cnt_loc,
+                bg_cnts_loc,
+                bg_h_ofs_loc,
+                bg_v_ofs_loc,
+                bg_vertices_buf: Vec::new(),
             }
         }
     }
@@ -332,39 +336,68 @@ impl Gpu2dShared {
         gl::Flush();
     }
 
-    unsafe fn draw_bg(&self, regs: &GpuRegs, mem_buf: &GpuMemBuf, from_line: u8, to_line: u8) {
-        let vertices = [
-            // top left
-            -1f32,
-            from_line as f32,
-            // top right
-            1f32,
-            from_line as f32,
-            // bottom right
-            1f32,
-            to_line as f32,
-            // bottom left
-            -1f32,
-            to_line as f32,
-        ];
-        let bg_ubo = BgUbo {
-            disp_cnt: regs.disp_cnts[from_line as usize],
-            cnts: [
-                regs.bg_cnts[from_line as usize],
-                regs.bg_cnts[DISPLAY_HEIGHT + from_line as usize],
-                regs.bg_cnts[2 * DISPLAY_HEIGHT + from_line as usize],
-                regs.bg_cnts[3 * DISPLAY_HEIGHT + from_line as usize],
-            ],
-            h_ofs: regs.bg_h_ofs,
-            v_ofs: regs.bg_v_ofs,
-        };
-        gl::BindBuffer(gl::UNIFORM_BUFFER, self.bg_ubo);
-        gl::BufferData(gl::UNIFORM_BUFFER, mem::size_of::<BgUbo>() as _, ptr::addr_of!(bg_ubo) as _, gl::DYNAMIC_DRAW);
-        gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, self.bg_ubo);
+    unsafe fn draw_bg(&mut self, regs: &GpuRegs, mem_buf: &GpuMemBuf, from_line: u8, to_line: u8) {
+        let disp_cnt = regs.disp_cnts[from_line as usize];
+        self.bg_vertices_buf.clear();
+
+        let disp_cnt = DispCnt::from(disp_cnt);
+        if disp_cnt.screen_display_bg3() {
+            #[rustfmt::skip]
+            self.bg_vertices_buf.push([
+                -1f32, from_line as f32, 3f32,
+                1f32, from_line as f32, 3f32,
+                1f32, to_line as f32, 3f32,
+                -1f32, from_line as f32, 3f32,
+                1f32, to_line as f32, 3f32,
+                -1f32, to_line as f32, 3f32,
+            ])
+        }
+        if disp_cnt.screen_display_bg2() {
+            #[rustfmt::skip]
+            self.bg_vertices_buf.push([
+                -1f32, from_line as f32, 2f32,
+                1f32, from_line as f32, 2f32,
+                1f32, to_line as f32, 2f32,
+                -1f32, from_line as f32, 2f32,
+                1f32, to_line as f32, 2f32,
+                -1f32, to_line as f32, 2f32,
+            ])
+        }
+        if disp_cnt.screen_display_bg1() {
+            #[rustfmt::skip]
+            self.bg_vertices_buf.push([
+                -1f32, from_line as f32, 1f32,
+                1f32, from_line as f32, 1f32,
+                1f32, to_line as f32, 1f32,
+                -1f32, from_line as f32, 1f32,
+                1f32, to_line as f32, 1f32,
+                -1f32, to_line as f32, 1f32,
+            ])
+        }
+        if disp_cnt.screen_display_bg0() {
+            #[rustfmt::skip]
+            self.bg_vertices_buf.push([
+                -1f32, from_line as f32, 0f32,
+                1f32, from_line as f32, 0f32,
+                1f32, to_line as f32, 0f32,
+                -1f32, from_line as f32, 0f32,
+                1f32, to_line as f32, 0f32,
+                -1f32, to_line as f32, 0f32,
+            ])
+        }
+
+        if self.bg_vertices_buf.is_empty() {
+            return;
+        }
+
+        gl::Uniform1i(self.bg_disp_cnt_loc, u32::from(disp_cnt) as _);
+        gl::Uniform1iv(self.bg_cnts_loc, 4, regs.bg_cnts[from_line as usize * 4..].as_ptr() as _);
+        gl::Uniform1iv(self.bg_h_ofs_loc, 4, regs.bg_h_ofs.as_ptr() as _);
+        gl::Uniform1iv(self.bg_v_ofs_loc, 4, regs.bg_v_ofs.as_ptr() as _);
 
         gl::EnableVertexAttribArray(0);
-        gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 0, vertices.as_ptr() as _);
-        gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+        gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, 0, self.bg_vertices_buf.as_ptr() as _);
+        gl::DrawArrays(gl::TRIANGLES, 0, (self.bg_vertices_buf.len() * 6) as _);
 
         gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
     }
@@ -682,14 +715,7 @@ impl Gpu2dRenderer {
 
         presenter.gl_swap_window();
 
-        // println!(
-        //     "{:x} {:x} {:x} {:x} {:x}",
-        //     self.read_buf[0],
-        //     self.read_buf[1],
-        //     utils::read_from_mem::<u16>(self.mem_buf.oam_a.deref(), 0),
-        //     utils::read_from_mem::<u16>(self.mem_buf.oam_a.deref(), 2),
-        //     utils::read_from_mem::<u16>(self.mem_buf.oam_a.deref(), 4),
-        // );
+        // println!("{:x} {:x}", self.read_buf[0], self.read_buf[1],);
 
         {
             let mut drawing = self.drawing.lock().unwrap();
