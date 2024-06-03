@@ -221,8 +221,8 @@ impl Gpu {
         match gpu.v_count {
             192 => {
                 if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
-                    unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.on_frame(&gpu.gpu_2d_a.inner, &gpu.gpu_2d_b.inner, get_mem_mut!(emu));
-                    unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.start_drawing();
+                    // unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.on_frame(get_mem_mut!(emu));
+                    unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.start_drawing(get_mem_mut!(emu));
                 }
 
                 for i in 0..2 {
@@ -244,7 +244,10 @@ impl Gpu {
                 gpu.v_count = 0;
                 gpu.gpu_2d_a.reload_registers();
                 gpu.gpu_2d_b.reload_registers();
-                unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.reload_registers();
+                
+                let gpu_2d_renderer = unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() };
+                // gpu_2d_renderer.wait_for_drawing();
+                gpu_2d_renderer.reload_registers();
 
                 if gpu.arm7_hle {
                     Arm7Hle::on_frame(emu);

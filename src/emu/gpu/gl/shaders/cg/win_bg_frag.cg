@@ -1,0 +1,64 @@
+float3 in screenPos : TEXCOORD0;
+
+uniform int dispCnt;
+
+uniform WinBgUbo {
+    int winH[192 * 2];
+    int winV[192 * 2];
+    int winIn[192];
+    int winOut[192];
+} WinBgUbo : BUFFER[0];
+
+static float4 oColor;
+
+bool checkBounds(short x, short y, short winNum) {
+    bool winEnabled = (dispCnt & (1 << (13 + winNum))) != 0;
+    if (!winEnabled) {
+        return false;
+    }
+
+    int h = WinBgUbo.winH[winNum * 192 + y];
+    int v = WinBgUbo.winV[winNum * 192 + y];
+
+    int winX1 = (h >> 8) & 0xFF;
+    int winX2 = h & 0xFF;
+
+    int winY1 = (v >> 8) & 0xFF;
+    int winY2 = v & 0xFF;
+
+    if (winX1 <= winX2) {
+        if (x < winX1 || x > winX2) {
+            return false;
+        }
+    } else {
+        if (x >= winX2 && x < winX1) {
+            return false;
+        }
+    }
+
+    if (winY1 <= winY2) {
+        if (y < winY1 || y > winY2) {
+            return false;
+        }
+    } else {
+        if (y >= winY2 && y < winY1) {
+            return false;
+        }
+    }
+
+    int enabled = (WinBgUbo.winIn[y] >> (winNum * 8)) & 0xFF;
+    oColor = float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+    return true;
+}
+
+void main(out float4 color : COLOR) {
+    short x = short(screenPos.x);
+    short y = short(screenPos.y);
+
+    if (!checkBounds(x, y, 0) && !checkBounds(x, y, 1)) {
+        int enabled = WinBgUbo.winOut[y] & 0xFF;
+        oColor = float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+    }
+
+    color = oColor;
+}

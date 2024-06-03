@@ -9,8 +9,14 @@ in vec3 screenPos;
 uniform int dispCnt;
 uniform int bgCnts[4];
 
+uniform BgUbo {
+    int bgHOfs[192 * 4];
+    int bgVOfs[192 * 4];
+};
+
 uniform sampler2D bgTex;
 uniform sampler2D palTex;
+uniform sampler2D winTex;
 
 int readBg8(int addr) {
     float x = float((addr >> 2) & 0x1FF) / 511.0;
@@ -31,6 +37,10 @@ int readPal16(int addr) {
     return readPal8(addr) | (readPal8(addr + 1) << 8);
 }
 
+int readWin(int x, int y) {
+    return int(texture(winTex, vec2(float(x) / 255.0, float(y) / 192.0)).x * 255.0);
+}
+
 vec3 normRgb5(int color) {
     return vec3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
@@ -40,6 +50,11 @@ vec4 drawText(int x, int y, int bgNum) {
 
     int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
     int charAddr = ((dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
+
+    x += bgHOfs[bgNum * 192 + y];
+    x &= 0x1FF;
+    y += bgVOfs[bgNum * 192 + y];
+    y &= 0x1FF;
 
     // 512 Width
     if (x > 255 && (bgCnt & (1 << 14)) != 0) {
@@ -94,5 +109,14 @@ vec4 drawText(int x, int y, int bgNum) {
 }
 
 void main() {
-    color = drawText(int(screenPos.x), int(screenPos.y), int(screenPos.z));
+    int x = int(screenPos.x);
+    int y = int(screenPos.y);
+    int bgNum = int(screenPos.z);
+
+    int winEnabled = readWin(x, y);
+    if ((winEnabled & (1 << bgNum)) == 0) {
+        discard;
+    }
+
+    color = drawText(x, y, bgNum);
 }

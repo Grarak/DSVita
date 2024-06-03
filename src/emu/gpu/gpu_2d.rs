@@ -15,7 +15,7 @@ use std::{mem, ptr};
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
-pub(super) struct DispCnt {
+pub struct DispCnt {
     pub bg_mode: u3,
     pub bg0_3d: u1,
     pub tile_obj_mapping: bool,
@@ -48,7 +48,7 @@ impl Default for DispCnt {
 }
 
 impl DispCnt {
-    fn is_any_window_enabled(&self) -> bool {
+    pub fn is_any_window_enabled(&self) -> bool {
         self.window0_display_flag() || self.window1_display_flag() || self.obj_window_display_flag()
     }
 }
@@ -70,7 +70,7 @@ impl From<u8> for DisplayMode {
 
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
-pub(super) struct BgCnt {
+pub struct BgCnt {
     pub priority: u2,
     pub char_base_block: u2,
     pub not_used: u2,
@@ -141,12 +141,14 @@ pub struct Gpu2DInner {
     bg_y: [i32; 2],
     bld_cnt: BldCnt,
     bld_alpha: u16,
+    pub win_h: [u16; 2],
+    pub win_v: [u16; 2],
     win_x1: [u8; 2],
     win_x2: [u8; 2],
     win_y1: [u8; 2],
     win_y2: [u8; 2],
-    win_in: u16,
-    win_out: u16,
+    pub win_in: u16,
+    pub win_out: u16,
     pub mosaic: u16,
     disp_stat: u16,
     pow_cnt1: u16,
@@ -202,7 +204,7 @@ impl Gpu2DLayers {
 }
 
 pub struct Gpu2D<const ENGINE: Gpu2DEngine> {
-    pub(super) inner: Gpu2DInner,
+    pub inner: Gpu2DInner,
     layers: Gpu2DLayers,
     pub framebuffer: HeapMemU32<{ DISPLAY_PIXEL_COUNT }>,
 }
@@ -384,6 +386,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
     }
 
     pub fn set_win_h(&mut self, win: usize, mask: u16, value: u16) {
+        self.inner.win_h[win] = (self.inner.win_h[win] & !mask) | (value & mask);
+
         if (mask & 0x00FF) != 0 {
             self.inner.win_x2[win] = value as u8
         }
@@ -398,6 +402,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
     }
 
     pub fn set_win_v(&mut self, win: usize, mask: u16, value: u16) {
+        self.inner.win_v[win] = (self.inner.win_v[win] & !mask) | (value & mask);
+
         if (mask & 0x00FF) != 0 {
             self.inner.win_y2[win] = value as u8
         }

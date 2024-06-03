@@ -3,8 +3,14 @@ float3 in screenPos : TEXCOORD0;
 uniform int dispCnt;
 uniform int bgCnts[4];
 
+uniform BgUbo {
+    int bgHOfs[192 * 4];
+    int bgVOfs[192 * 4];
+} BgUbo : BUFFER[0];
+
 uniform sampler2D bgTex : TEXUNIT0;
 uniform sampler2D palTex : TEXUNIT1;
+uniform sampler2D winTex : TEXUNIT2;
 
 int readBg8(int addr) {
     float x = float((addr >> 2) & 0x1FF) / 511.0f;
@@ -20,11 +26,20 @@ float4 readPal(short index) {
     return tex2D(palTex, float2(float(index) / 511.0, 1.0));
 }
 
+int readWin(short x, short y) {
+    return int(tex2D(winTex, float2(float(x) / 255.0, float(y) / 191.0)).x * 255.0);
+}
+
 float4 drawText(short x, short y, short bgNum) {
     int bgCnt = bgCnts[bgNum];
 
     int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
     int charAddr = ((dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
+
+    x += BgUbo.bgHOfs[bgNum * 192 + y];
+    x &= 0x1FF;
+    y += BgUbo.bgVOfs[bgNum * 192 + y];
+    y &= 0x1FF;
 
     // 512 Width
     if (x > 255 && (bgCnt & (1 << 14)) != 0) {
@@ -81,5 +96,14 @@ float4 drawText(short x, short y, short bgNum) {
 }
 
 void main(out float4 color : COLOR) {
-    color = drawText(short(screenPos.x), short(screenPos.y), short(screenPos.z));
+    short x = short(screenPos.x);
+    short y = short(screenPos.y);
+    short bgNum = short(screenPos.z);
+
+    int winEnabled = readWin(x, y);
+    if ((winEnabled & (1 << bgNum)) == 0) {
+        discard;
+    }
+
+    color = drawText(x, y, bgNum);
 }
