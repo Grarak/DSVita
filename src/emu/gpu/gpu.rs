@@ -115,16 +115,16 @@ struct DispStat {
 }
 
 #[bitsize(16)]
-#[derive(FromBits)]
-struct PowCnt1 {
-    enable: u1,
+#[derive(Copy, Clone, FromBits)]
+pub struct PowCnt1 {
+    pub enable: bool,
     gpu_2d_a_enable: u1,
     rendering_3d_enable: u1,
     geometry_3d_enable: u1,
     not_used: u5,
     gpu_2d_b_enable: u1,
     not_used1: u5,
-    display_swap: u1,
+    pub display_swap: bool,
 }
 
 pub struct Gpu {
@@ -222,7 +222,7 @@ impl Gpu {
             192 => {
                 if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
                     // unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.on_frame(get_mem_mut!(emu));
-                    unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.start_drawing(get_mem_mut!(emu));
+                    unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.start_drawing(get_mem_mut!(emu), PowCnt1::from(gpu.pow_cnt1));
                 }
 
                 for i in 0..2 {
@@ -244,7 +244,7 @@ impl Gpu {
                 gpu.v_count = 0;
                 gpu.gpu_2d_a.reload_registers();
                 gpu.gpu_2d_b.reload_registers();
-                
+
                 let gpu_2d_renderer = unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() };
                 // gpu_2d_renderer.wait_for_drawing();
                 gpu_2d_renderer.reload_registers();

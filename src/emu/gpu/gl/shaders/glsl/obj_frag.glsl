@@ -25,7 +25,7 @@ int readOam16(int addr) {
 
 int readObj8(int addr) {
     float x = float((addr >> 2) & 0x1FF) / 511.0;
-    float y = float((addr >> 2) >> 9) / 127.0;
+    float y = float((addr >> 2) >> 9) / (OBJ_TEX_HEIGHT - 1.0);
     return int(texture(objTex, vec2(x, y))[addr & 3] * 255.0);
 }
 

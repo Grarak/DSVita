@@ -20,7 +20,7 @@ uniform sampler2D winTex;
 
 int readBg8(int addr) {
     float x = float((addr >> 2) & 0x1FF) / 511.0;
-    float y = float((addr >> 2) >> 9) / 255.0;
+    float y = float((addr >> 2) >> 9) / (BG_TEX_HEIGHT - 1.0);
     return int(texture(bgTex, vec2(x, y))[addr & 3] * 255.0);
 }
 

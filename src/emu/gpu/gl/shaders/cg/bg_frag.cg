@@ -14,7 +14,7 @@ uniform sampler2D winTex : TEXUNIT2;
 
 int readBg8(int addr) {
     float x = float((addr >> 2) & 0x1FF) / 511.0f;
-    float y = float((addr >> 2) >> 9) / 255.0f;
+    float y = float((addr >> 2) >> 9) / (BG_TEX_HEIGHT - 1.0);
     return int(tex2D(bgTex, float2(x, y))[addr & 3] * 255.0f);
 }
 

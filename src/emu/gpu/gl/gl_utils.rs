@@ -2,7 +2,7 @@ use crate::utils::StrErr;
 use gl::types::{GLenum, GLuint};
 use std::ptr;
 
-pub unsafe fn create_shader(shader_src: &[u8], typ: GLenum) -> Result<GLuint, StrErr> {
+pub unsafe fn create_shader(shader_src: &str, typ: GLenum) -> Result<GLuint, StrErr> {
     let shader = gl::CreateShader(typ);
     if shader == 0 {
         return Err(StrErr::new("Failed to create shader"));
@@ -102,19 +102,19 @@ pub unsafe fn create_pal_texture(size: u32) -> GLuint {
     }
 }
 
-pub unsafe fn sub_mem_texture1d(size: u32, data: &[u8]) {
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, (size / 4) as _, 1, gl::RGBA, gl::UNSIGNED_BYTE, data.as_ptr() as _);
+pub unsafe fn sub_mem_texture1d(size: u32, data: *const u8) {
+    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, (size / 4) as _, 1, gl::RGBA, gl::UNSIGNED_BYTE, data as _);
 }
 
-pub unsafe fn sub_mem_texture2d(width: u32, height: u32, data: &[u8]) {
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, (width / 2) as _, (height / 2) as _, gl::RGBA, gl::UNSIGNED_BYTE, data.as_ptr() as _);
+pub unsafe fn sub_mem_texture2d(width: u32, height: u32, data: *const u8) {
+    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, (width / 2) as _, (height / 2) as _, gl::RGBA, gl::UNSIGNED_BYTE, data as _);
 }
 
-pub unsafe fn sub_pal_texture(size: u32, data: &[u8]) {
+pub unsafe fn sub_pal_texture(size: u32, data: *const u8) {
     if cfg!(target_os = "linux") {
         sub_mem_texture1d(size, data)
     } else {
-        gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, (size / 2) as _, 1, gl::RGBA, gl::UNSIGNED_SHORT_1_5_5_5_REV, data.as_ptr() as _);
+        gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, (size / 2) as _, 1, gl::RGBA, gl::UNSIGNED_SHORT_1_5_5_5_REV, data as _);
     }
 }
 
