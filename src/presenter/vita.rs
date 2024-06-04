@@ -75,9 +75,9 @@ pub struct Presenter {
 impl Presenter {
     pub fn new() -> Self {
         unsafe {
-            // vglSetupRuntimeShaderCompiler(SharkOpt::Default, 0, 0, 0);
-            vglInitExtended(0x800000, 960, 544, 0x1000000 * 2, SCE_GXM_MULTISAMPLE_NONE);
-            // vglInit(0x800000);
+            vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe, 1, 1, 1);
+            // vglInitExtended(0x800000, 960, 544, 0x1000000 * 2, SCE_GXM_MULTISAMPLE_NONE);
+            vglInit(0x800000);
             gl::load_with(|name| {
                 let name = CString::new(name).unwrap();
                 vglGetProcAddress(name.as_ptr())

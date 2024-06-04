@@ -3,19 +3,15 @@ uniform sampler2D oamTex : TEXUNIT0;
 uniform int dispCnt;
 
 float2 out objPos : TEXCOORD0;
-int out oOamIndex : TEXCOORD1;
-int out objBound : TEXCOORD2;
-int out mapWidth : TEXCOORD3;
+short3 out objProps : TEXCOORD1;
 
 float4 out gl_Position : POSITION;
 
-int readOam8(int addr) {
+short readOam16Aligned(short addr) {
     float x = float(addr >> 2) / 255.0f;
-    return int(tex2D(oamTex, float2(x, 1.0))[addr & 3] * 255.0f);
-}
-
-int readOam16(int addr) {
-    return readOam8(addr) | (readOam8(addr + 1) << 8);
+    float4 value = tex2D(oamTex, float2(x, 1.0));
+    short entry = addr & 2;
+    return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
 }
 
 static const float2 SizeLookup[12] = {
@@ -24,9 +20,11 @@ static const float2 SizeLookup[12] = {
 };
 
 void main(float2 position, float oamIndex) {
-    int attrib0 = readOam16(int(oamIndex) * 8);
-    int attrib1 = readOam16(int(oamIndex) * 8 + 2);
-    int attrib2 = readOam16(int(oamIndex) * 8 + 4);
+    short index = short(oamIndex);
+
+    short attrib0 = readOam16Aligned(index * 8);
+    short attrib1 = readOam16Aligned(index * 8 + 2);
+    short attrib2 = readOam16Aligned(index * 8 + 4);
 
     int oamX = attrib1 & 0x1FF;
     int oamY = attrib0 & 0xFF;
@@ -47,7 +45,6 @@ void main(float2 position, float oamIndex) {
     }
 
     bool is1dMap = (dispCnt & (1 << 4)) != 0;
-    objBound = 32 << (int(is1dMap) * ((dispCnt >> 20) & 0x3));
 
     bool isVFlip = (attrib1 & (1 << 13)) != 0;
     bool isHFlip = (attrib1 & (1 << 12)) != 0;
@@ -64,8 +61,10 @@ void main(float2 position, float oamIndex) {
     }
 
     objPos = float2((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y);
-    oOamIndex = int(oamIndex);
-    mapWidth = is1dMap ? int(oamWidth) : 256;
+
+    short objBound = 32 << (short(is1dMap) * ((dispCnt >> 20) & 0x3));
+    short mapWidth = is1dMap ? short(oamWidth) : 256;
+    objProps = short3(index, objBound, mapWidth);
 
     float x = float(oamX) + oamWidth * position.x;
     float y = float(oamY) + oamHeight * position.y;

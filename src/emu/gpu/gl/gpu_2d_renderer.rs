@@ -328,7 +328,9 @@ impl Gpu2dProgram {
     fn new<const ENGINE: Gpu2DEngine>() -> Self {
         unsafe {
             let (win_bg_program, win_bg_disp_cnt_loc, win_bg_ubo) = {
+                println!("Compile win vert");
                 let vert_shader = create_shader(WIN_BG_VERT_SHADER_SRC, gl::VERTEX_SHADER).unwrap();
+                println!("Compile win frag");
                 let frag_shader = create_shader(WIN_BG_FRAG_SHADER_SRC, gl::FRAGMENT_SHADER).unwrap();
                 let program = create_program(&[vert_shader, frag_shader]).unwrap();
                 gl::DeleteShader(vert_shader);
@@ -364,7 +366,9 @@ impl Gpu2dProgram {
                     ),
                 );
 
+                println!("Compile obj vert");
                 let vert_shader = create_shader(OBJ_VERT_SHADER_SRC, gl::VERTEX_SHADER).unwrap();
+                println!("Compile obj frag");
                 let frag_shader = create_shader(&frag_shader_src, gl::FRAGMENT_SHADER).unwrap();
                 let program = create_program(&[vert_shader, frag_shader]).unwrap();
                 gl::DeleteShader(vert_shader);
@@ -423,7 +427,9 @@ impl Gpu2dProgram {
                     ),
                 );
 
+                println!("Compile bg vert");
                 let vert_shader = create_shader(BG_VERT_SHADER_SRC, gl::VERTEX_SHADER).unwrap();
+                println!("Compile bg frag");
                 let frag_shader = create_shader(&frag_shader_src, gl::FRAGMENT_SHADER).unwrap();
                 let program = create_program(&[vert_shader, frag_shader]).unwrap();
                 gl::DeleteShader(vert_shader);

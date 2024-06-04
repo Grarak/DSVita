@@ -3,27 +3,21 @@ uniform sampler2D objTex : TEXUNIT1;
 uniform sampler2D palTex : TEXUNIT2;
 
 float2 in objPos : TEXCOORD0;
-int in oamIndex : TEXCOORD1;
-int in objBound : TEXCOORD2;
-int in mapWidth : TEXCOORD3;
+short3 in objProps : TEXCOORD1;
 
-int readOam8(int addr) {
+short readOam16Aligned(short addr) {
     float x = float(addr >> 2) / 255.0f;
-    return int(tex2D(oamTex, float2(x, 1.0))[addr & 3] * 255.0f);
+    float4 value = tex2D(oamTex, float2(x, 1.0));
+    short entry = addr & 2;
+    return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
 }
 
-int readOam16(int addr) {
-    return readOam8(addr) | (readOam8(addr + 1) << 8);
-}
-
-int readObj8(int addr) {
-    float x = float((addr >> 2) & 0x1FF) / 511.0f;
-    float y = float((addr >> 2) >> 9) / (OBJ_TEX_HEIGHT - 1.0);
+short readObj8(int addr) {
+    short addrX = (addr >> 2) & 0x1FF;
+    short addrY = addr >> 11;
+    float x = float(addrX) / 511.0f;
+    float y = float(addrY) / (OBJ_TEX_HEIGHT - 1.0);
     return int(tex2D(objTex, float2(x, y))[addr & 3] * 255.0);
-}
-
-int readObj16(int addr) {
-    return readObj8(addr) | (readObj8(addr + 1) << 8);
 }
 
 float4 readPal(short index) {
@@ -31,7 +25,11 @@ float4 readPal(short index) {
 }
 
 void main(out float4 color : COLOR) {
-    int attrib2 = readOam16(oamIndex * 8 + 4);
+    short oamIndex = objProps.x;
+    short objBound = objProps.y;
+    short mapWidth = objProps.z;
+
+    short attrib2 = readOam16Aligned(oamIndex * 8 + 4);
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * objBound;
 
@@ -44,7 +42,7 @@ void main(out float4 color : COLOR) {
     tileAddr += ((objY & 7) + (objY >> 3) * mapWidth) * 4;
     tileAddr += (objX >> 3) * 32 + ((objX & 7) >> 1);
 
-    int palIndex = readObj8(tileAddr);
+    short palIndex = readObj8(tileAddr);
     palIndex >>= 4 * (objX & 1);
     palIndex &= 0xF;
     if (palIndex == 0) {

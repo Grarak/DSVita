@@ -1,4 +1,5 @@
 float3 in screenPos : TEXCOORD0;
+float2 in screenPosF : TEXCOORD1;
 
 uniform int dispCnt;
 uniform int bgCnts[4];
@@ -12,22 +13,30 @@ uniform sampler2D bgTex : TEXUNIT0;
 uniform sampler2D palTex : TEXUNIT1;
 uniform sampler2D winTex : TEXUNIT2;
 
-int readBg8(int addr) {
-    float x = float((addr >> 2) & 0x1FF) / 511.0f;
-    float y = float((addr >> 2) >> 9) / (BG_TEX_HEIGHT - 1.0);
-    return int(tex2D(bgTex, float2(x, y))[addr & 3] * 255.0f);
+short readBg8(int addr) {
+    short addrX = (addr >> 2) & 0x1FF;
+    short addrY = addr >> 11;
+    float x = float(addrX) / 511.0f;
+    float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
+    return short(tex2D(bgTex, float2(x, y))[addr & 3] * 255.0);
 }
 
-int readBg16(int addr) {
-    return readBg8(addr) | (readBg8(addr + 1) << 8);
+short readBg16Aligned(int addr) {
+    short addrX = (addr >> 2) & 0x1FF;
+    short addrY = addr >> 11;
+    float x = float(addrX) / 511.0f;
+    float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
+    float4 value = tex2D(bgTex, float2(x, y));
+    short entry = addr & 2;
+    return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
 }
 
 float4 readPal(short index) {
     return tex2D(palTex, float2(float(index) / 511.0, 1.0));
 }
 
-int readWin(short x, short y) {
-    return int(tex2D(winTex, float2(float(x) / 255.0, float(y) / 191.0)).x * 255.0);
+short readWin(short x, short y) {
+    return short(tex2D(winTex, float2(float(x) / 255.0, float(y) / 191.0)).x * 255.0);
 }
 
 float4 drawText(short x, short y, short bgNum) {
@@ -51,14 +60,14 @@ float4 drawText(short x, short y, short bgNum) {
         screenAddr += (bgCnt & (1 << 14)) != 0 ? 0x1000 : 0x800;
     }
 
-    int xBlock = x & 0xF8;
-    int xInBlock = x & 7;
-    int yBlock = y & 0xF8;
-    int yInBlock = y & 7;
+    short xBlock = x & 0xF8;
+    short xInBlock = x & 7;
+    short yBlock = y & 0xF8;
+    short yInBlock = y & 7;
 
     screenAddr += yBlock << 3;
     screenAddr += xBlock >> 2;
-    int screenEntry = readBg16(screenAddr);
+    int screenEntry = readBg16Aligned(screenAddr);
 
     bool isHFlip = (screenEntry >> 10) & 1;
     bool isVFlip = (screenEntry >> 11) & 1;
@@ -71,7 +80,7 @@ float4 drawText(short x, short y, short bgNum) {
     }
 
     bool is8bpp = (bgCnt & (1 << 7)) != 0;
-    int palBaseIndex;
+    short palBaseIndex;
     if (is8bpp) {
         charAddr += ((screenEntry & 0x3FF) << 6) + (yInBlock << 3);
         charAddr += xInBlock;
@@ -82,7 +91,7 @@ float4 drawText(short x, short y, short bgNum) {
         palBaseIndex = (screenEntry & 0xF000) >> 8;
     }
 
-    int palIndex = readBg8(charAddr);
+    short palIndex = readBg8(charAddr);
     if (!is8bpp) {
         palIndex >>= 4 * (xInBlock & 1);
         palIndex &= 0xF;
@@ -100,7 +109,7 @@ void main(out float4 color : COLOR) {
     short y = short(screenPos.y);
     short bgNum = short(screenPos.z);
 
-    int winEnabled = readWin(x, y);
+    short winEnabled = short(tex2D(winTex, screenPosF).x * 255.0);
     if ((winEnabled & (1 << bgNum)) == 0) {
         discard;
     }
