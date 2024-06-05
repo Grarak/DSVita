@@ -17,7 +17,7 @@ use crate::emu::CpuType::ARM9;
 use crate::jit::jit_memory::JitMemory;
 use crate::logging::debug_println;
 use crate::utils::Convert;
-use std::intrinsics::likely;
+use std::intrinsics::{likely, unlikely};
 use std::mem;
 use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
@@ -103,7 +103,7 @@ impl Memory {
 
         if CPU == ARM9 && TCM {
             let cp15 = get_cp15!(emu, ARM9);
-            if aligned_addr >= cp15.dtcm_addr && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size && cp15.dtcm_state == TcmState::RW {
+            if unlikely(aligned_addr >= cp15.dtcm_addr && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size && cp15.dtcm_state == TcmState::RW) {
                 let ret: T = self.tcm.read_dtcm(aligned_addr - cp15.dtcm_addr);
                 debug_println!("{:?} dtcm read at {:x} with value {:x}", CPU, aligned_addr, ret.into());
                 return ret;
@@ -181,7 +181,7 @@ impl Memory {
 
         if CPU == ARM9 && TCM {
             let cp15 = get_cp15!(emu, ARM9);
-            if aligned_addr >= cp15.dtcm_addr && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size && cp15.dtcm_state != TcmState::Disabled {
+            if unlikely(aligned_addr >= cp15.dtcm_addr && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size && cp15.dtcm_state != TcmState::Disabled) {
                 self.tcm.write_dtcm(aligned_addr - cp15.dtcm_addr, value);
                 debug_println!("{:?} dtcm write at {:x} with value {:x}", CPU, aligned_addr, value.into(),);
                 return;

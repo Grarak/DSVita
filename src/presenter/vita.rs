@@ -83,6 +83,8 @@ impl Presenter {
                 vglGetProcAddress(name.as_ptr())
             });
 
+            sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START);
+
             Presenter {
                 presenter_audio: PresenterAudio::new(),
                 keymap: 0xFFFFFFFF,
