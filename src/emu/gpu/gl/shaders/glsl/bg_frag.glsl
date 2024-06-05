@@ -5,6 +5,7 @@ precision highp int;
 
 layout(location = 0) out vec4 color;
 in vec3 screenPos;
+in vec2 screenPosF;
 
 uniform int dispCnt;
 uniform int bgCnts[4];
@@ -24,21 +25,21 @@ int readBg8(int addr) {
     return int(texture(bgTex, vec2(x, y))[addr & 3] * 255.0);
 }
 
-int readBg16(int addr) {
-    return readBg8(addr) | (readBg8(addr + 1) << 8);
+int readBg16Aligned(int addr) {
+    int addrX = (addr >> 2) & 0x1FF;
+    int addrY = addr >> 11;
+    float x = float(addrX) / 511.0f;
+    float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
+    vec4 value = texture(bgTex, vec2(x, y));
+    int entry = addr & 2;
+    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
 }
 
-int readPal8(int addr) {
+int readPal16Aligned(int addr) {
     float x = float(addr >> 2) / 255.0;
-    return int(texture(palTex, vec2(x, 1.0))[addr & 3] * 255.0);
-}
-
-int readPal16(int addr) {
-    return readPal8(addr) | (readPal8(addr + 1) << 8);
-}
-
-int readWin(int x, int y) {
-    return int(texture(winTex, vec2(float(x) / 255.0, float(y) / 192.0)).x * 255.0);
+    vec4 value = texture(palTex, vec2(x, 1.0));
+    int entry = addr & 2;
+    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
 }
 
 vec3 normRgb5(int color) {
@@ -73,7 +74,7 @@ vec4 drawText(int x, int y, int bgNum) {
 
     screenAddr += yBlock << 3;
     screenAddr += xBlock >> 2;
-    int screenEntry = readBg16(screenAddr);
+    int screenEntry = readBg16Aligned(screenAddr);
 
     int isHFlip = (screenEntry >> 10) & 1;
     int isVFlip = (screenEntry >> 11) & 1;
@@ -104,7 +105,7 @@ vec4 drawText(int x, int y, int bgNum) {
     palAddr += palBaseAddr;
     palAddr <<= 1;
 
-    int color = readPal16(palAddr);
+    int color = readPal16Aligned(palAddr);
     return vec4(normRgb5(color), 1.0);
 }
 
@@ -113,7 +114,7 @@ void main() {
     int y = int(screenPos.y);
     int bgNum = int(screenPos.z);
 
-    int winEnabled = readWin(x, y);
+    int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
     if ((winEnabled & (1 << bgNum)) == 0) {
         discard;
     }

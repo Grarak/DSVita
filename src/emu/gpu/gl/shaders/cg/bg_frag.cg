@@ -35,10 +35,6 @@ float4 readPal(short index) {
     return tex2D(palTex, float2(float(index) / 511.0, 1.0));
 }
 
-short readWin(short x, short y) {
-    return short(tex2D(winTex, float2(float(x) / 255.0, float(y) / 191.0)).x * 255.0);
-}
-
 float4 drawText(short x, short y, short bgNum) {
     int bgCnt = bgCnts[bgNum];
 

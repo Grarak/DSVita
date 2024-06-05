@@ -6,40 +6,32 @@ precision highp int;
 layout(location = 0) out vec4 color;
 
 in vec2 objPos;
-flat in int oOamIndex;
-flat in int objBound;
-flat in int mapWidth;
+flat in ivec3 objProps;
 
 uniform sampler2D oamTex;
 uniform sampler2D objTex;
 uniform sampler2D palTex;
 
-int readOam8(int addr) {
+int readOam16Aligned(int addr) {
     float x = float(addr >> 2) / 255.0f;
-    return int(texture(oamTex, vec2(x, 1.0))[addr & 3] * 255.0f);
-}
-
-int readOam16(int addr) {
-    return readOam8(addr) | (readOam8(addr + 1) << 8);
+    vec4 value = texture(oamTex, vec2(x, 1.0));
+    int entry = addr & 2;
+    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
 }
 
 int readObj8(int addr) {
-    float x = float((addr >> 2) & 0x1FF) / 511.0;
-    float y = float((addr >> 2) >> 9) / (OBJ_TEX_HEIGHT - 1.0);
+    int addrX = (addr >> 2) & 0x1FF;
+    int addrY = addr >> 11;
+    float x = float(addrX) / 511.0;
+    float y = float(addrY) / (OBJ_TEX_HEIGHT - 1.0);
     return int(texture(objTex, vec2(x, y))[addr & 3] * 255.0);
 }
 
-int readObj16(int addr) {
-    return readObj8(addr) | (readObj8(addr + 1) << 8);
-}
-
-int readPal8(int addr) {
+int readPal16Aligned(int addr) {
     float x = float(addr >> 2) / 255.0;
-    return int(texture(palTex, vec2(x, 1.0))[addr & 3] * 255.0);
-}
-
-int readPal16(int addr) {
-    return readPal8(addr) | (readPal8(addr + 1) << 8);
+    vec4 value = texture(palTex, vec2(x, 1.0));
+    int entry = addr & 2;
+    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
 }
 
 vec3 normRgb5(int color) {
@@ -47,7 +39,11 @@ vec3 normRgb5(int color) {
 }
 
 void main() {
-    int attrib2 = readOam16(oOamIndex * 8 + 4);
+    int oamIndex = objProps.x;
+    int objBound = objProps.y;
+    int mapWidth = objProps.z;
+
+    int attrib2 = readOam16Aligned(oamIndex * 8 + 4);
 
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * int(objBound);
@@ -68,6 +64,6 @@ void main() {
         discard;
     }
 
-    int palColor = readPal16(palBaseAddr + palIndex * 2);
+    int palColor = readPal16Aligned(palBaseAddr + palIndex * 2);
     color = vec4(normRgb5(palColor), 1.0);
 }
