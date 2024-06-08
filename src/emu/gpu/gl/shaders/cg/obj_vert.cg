@@ -1,9 +1,7 @@
 uniform sampler2D oamTex : TEXUNIT0;
 
+float3 out objPos : TEXCOORD0;
 uniform int dispCnt;
-
-float2 out objPos : TEXCOORD0;
-short3 out objProps : TEXCOORD1;
 
 float4 out gl_Position : POSITION;
 
@@ -26,8 +24,8 @@ void main(float2 position, float oamIndex) {
     short attrib1 = readOam16Aligned(index * 8 + 2);
     short attrib2 = readOam16Aligned(index * 8 + 4);
 
-    int oamX = attrib1 & 0x1FF;
-    int oamY = attrib0 & 0xFF;
+    short oamX = short(attrib1 & 0x1FF);
+    short oamY = short(attrib0 & 0xFF);
 
     int shape = (attrib0 >> 12) & 0xC;
     int size = (attrib1 >> 14) & 0x3;
@@ -44,8 +42,6 @@ void main(float2 position, float oamIndex) {
         oamY -= 256;
     }
 
-    bool is1dMap = (dispCnt & (1 << 4)) != 0;
-
     bool isVFlip = (attrib1 & (1 << 13)) != 0;
     bool isHFlip = (attrib1 & (1 << 12)) != 0;
 
@@ -60,11 +56,7 @@ void main(float2 position, float oamIndex) {
         pos.x = abs(pos.x);
     }
 
-    objPos = float2((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y);
-
-    short objBound = 32 << (short(is1dMap) * ((dispCnt >> 20) & 0x3));
-    short mapWidth = is1dMap ? short(oamWidth) : 256;
-    objProps = short3(index, objBound, mapWidth);
+    objPos = float3((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y, oamIndex);
 
     float x = float(oamX) + oamWidth * position.x;
     float y = float(oamY) + oamHeight * position.y;

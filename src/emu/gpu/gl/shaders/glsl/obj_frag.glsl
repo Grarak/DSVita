@@ -5,8 +5,12 @@ precision highp int;
 
 layout(location = 0) out vec4 color;
 
-in vec2 objPos;
-flat in ivec3 objProps;
+in vec3 objPos;
+
+uniform ObjUbo {
+    int mapWidths[128];
+    int objBounds[128];
+};
 
 uniform sampler2D oamTex;
 uniform sampler2D objTex;
@@ -39,14 +43,14 @@ vec3 normRgb5(int color) {
 }
 
 void main() {
-    int oamIndex = objProps.x;
-    int objBound = objProps.y;
-    int mapWidth = objProps.z;
+    int oamIndex = int(objPos.z);
+    int mapWidth = int(mapWidths[oamIndex]);
+    int objBound = int(objBounds[oamIndex]);
 
     int attrib2 = readOam16Aligned(oamIndex * 8 + 4);
 
     int tileIndex = attrib2 & 0x3FF;
-    int tileAddr = tileIndex * int(objBound);
+    int tileAddr = tileIndex * objBound;
 
     int palBank = (attrib2 >> 12) & 0xF;
     int palBaseAddr = 0x200 + palBank * 32;
@@ -54,7 +58,7 @@ void main() {
     int objY = int(objPos.y);
     int objX = int(objPos.x);
 
-    tileAddr += ((objY & 7) + (objY >> 3) * int(mapWidth)) * 4;
+    tileAddr += ((objY & 7) + (objY >> 3) * mapWidth) * 4;
     tileAddr += (objX >> 3) * 32 + (objX & 7) / 2;
 
     int palIndex = readObj8(tileAddr);

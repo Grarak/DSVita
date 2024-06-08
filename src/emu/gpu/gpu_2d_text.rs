@@ -14,7 +14,7 @@ struct TextBgScreen {
 
 impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
     pub(super) fn draw_text<const BG: usize>(&mut self, line: u8, mem: &GpuMemBuf) {
-        if BG == 0 && bool::from(self.inner.disp_cnt.bg0_3d()) {
+        if BG == 0 && self.inner.disp_cnt.bg0_3d() {
             // TODO 3d
             return;
         }

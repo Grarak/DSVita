@@ -310,6 +310,9 @@ pub const OBJ_A_SIZE: u32 = 256 * 1024;
 pub const BG_B_SIZE: u32 = 128 * 1024;
 pub const OBJ_B_SIZE: u32 = 128 * 1024;
 
+pub const BG_EXT_PAL_SIZE: u32 = 32 * 1024;
+pub const OBJ_EXT_PAL_SIZE: u32 = 8 * 1024;
+
 pub const LCDC_OFFSET: u32 = 0x800000;
 pub const BG_A_OFFSET: u32 = 0x000000;
 pub const OBJ_A_OFFSET: u32 = 0x400000;
@@ -325,16 +328,16 @@ pub struct Vram {
 
     bg_a: OverlapMapping<{ BG_A_SIZE as usize }, { 16 * 1024 }>,
     obj_a: OverlapMapping<{ 256 * 1024 }, { 16 * 1024 }>,
-    bg_ext_palette_a: [VramMap<{ 8 * 1024 }>; 4],
-    obj_ext_palette_a: VramMap<{ 8 * 1024 }>,
+    bg_ext_palette_a: [VramMap<{ BG_EXT_PAL_SIZE as usize / 4 }>; 4],
+    obj_ext_palette_a: VramMap<{ OBJ_EXT_PAL_SIZE as usize }>,
 
     tex_rear_plane_img: [VramMap<{ 128 * 1024 }>; 4],
     tex_palette: [VramMap<{ 16 * 1024 }>; 6],
 
     bg_b: OverlapMapping<{ BG_B_SIZE as usize }, { 16 * 1024 }>,
     obj_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }>,
-    bg_ext_palette_b: [VramMap<{ 8 * 1024 }>; 4],
-    obj_ext_palette_b: VramMap<{ 8 * 1024 }>,
+    bg_ext_palette_b: [VramMap<{ BG_EXT_PAL_SIZE as usize / 4 }>; 4],
+    obj_ext_palette_b: VramMap<{ OBJ_EXT_PAL_SIZE as usize }>,
 
     arm7: OverlapMapping<{ 128 * 2 * 1024 }, { 128 * 1024 }>,
 }
@@ -717,7 +720,7 @@ impl Vram {
         self.obj_a.read_all(0, buf)
     }
 
-    pub fn read_all_bg_a_ext_palette(&mut self, buf: &mut [u8; 32 * 1024]) {
+    pub fn read_all_bg_a_ext_palette(&mut self, buf: &mut [u8; BG_EXT_PAL_SIZE as usize]) {
         for i in 0..self.bg_ext_palette_a.len() {
             let map = &mut self.bg_ext_palette_a[i];
             if map.dirty {
@@ -732,7 +735,7 @@ impl Vram {
         }
     }
 
-    pub fn read_all_obj_a_ext_palette(&mut self, buf: &mut [u8; 8 * 1024]) {
+    pub fn read_all_obj_a_ext_palette(&mut self, buf: &mut [u8; OBJ_EXT_PAL_SIZE as usize]) {
         if self.obj_ext_palette_a.dirty {
             if !self.obj_ext_palette_a.ptr.is_null() {
                 buf.copy_from_slice(&self.obj_ext_palette_a);
@@ -751,7 +754,7 @@ impl Vram {
         self.obj_b.read_all(0, buf)
     }
 
-    pub fn read_all_bg_b_ext_palette(&mut self, buf: &mut [u8; 32 * 1024]) {
+    pub fn read_all_bg_b_ext_palette(&mut self, buf: &mut [u8; BG_EXT_PAL_SIZE as usize]) {
         for i in 0..self.bg_ext_palette_b.len() {
             let map = &mut self.bg_ext_palette_b[i];
             if map.dirty {
@@ -766,7 +769,7 @@ impl Vram {
         }
     }
 
-    pub fn read_all_obj_b_ext_palette(&mut self, buf: &mut [u8; 8 * 1024]) {
+    pub fn read_all_obj_b_ext_palette(&mut self, buf: &mut [u8; OBJ_EXT_PAL_SIZE as usize]) {
         if self.obj_ext_palette_b.dirty {
             if !self.obj_ext_palette_b.ptr.is_null() {
                 buf.copy_from_slice(&self.obj_ext_palette_b);

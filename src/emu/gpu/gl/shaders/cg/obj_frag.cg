@@ -2,8 +2,12 @@ uniform sampler2D oamTex : TEXUNIT0;
 uniform sampler2D objTex : TEXUNIT1;
 uniform sampler2D palTex : TEXUNIT2;
 
-float2 in objPos : TEXCOORD0;
-short3 in objProps : TEXCOORD1;
+float3 in objPos : TEXCOORD0;
+
+uniform ObjUbo {
+    int mapWidths[128];
+    int objBounds[128];
+} ObjUbo : BUFFER[0];
 
 short readOam16Aligned(short addr) {
     float x = float(addr >> 2) / 255.0f;
@@ -25,9 +29,9 @@ float4 readPal(short index) {
 }
 
 void main(out float4 color : COLOR) {
-    short oamIndex = objProps.x;
-    short objBound = objProps.y;
-    short mapWidth = objProps.z;
+    short oamIndex = short(objPos.z);
+    short mapWidth = short(ObjUbo.mapWidths[oamIndex]);
+    short objBound = short(ObjUbo.objBounds[oamIndex]);
 
     short attrib2 = readOam16Aligned(oamIndex * 8 + 4);
     int tileIndex = attrib2 & 0x3FF;
@@ -36,11 +40,11 @@ void main(out float4 color : COLOR) {
     int palBank = (attrib2 >> 12) & 0xF;
     int palBase = 0x100 + palBank * 16;
 
-    int objY = int(objPos.y);
-    int objX = int(objPos.x);
+    short objY = short(objPos.y);
+    short objX = short(objPos.x);
 
     tileAddr += ((objY & 7) + (objY >> 3) * mapWidth) * 4;
-    tileAddr += (objX >> 3) * 32 + ((objX & 7) >> 1);
+    tileAddr += (objX >> 3) * 32 + (objX & 7) / 2;
 
     short palIndex = readObj8(tileAddr);
     palIndex >>= 4 * (objX & 1);
@@ -49,5 +53,5 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
-    color = readPal(palBase + palIndex);
+    color = float4(readPal(palBase + palIndex).rgb, 1.0);
 }

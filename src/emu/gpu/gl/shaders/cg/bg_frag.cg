@@ -3,6 +3,7 @@ float2 in screenPosF : TEXCOORD1;
 
 uniform int dispCnt;
 uniform int bgCnts[4];
+uniform int bgModes[4];
 
 uniform BgUbo {
     int bgHOfs[192 * 4];
@@ -11,12 +12,13 @@ uniform BgUbo {
 
 uniform sampler2D bgTex : TEXUNIT0;
 uniform sampler2D palTex : TEXUNIT1;
-uniform sampler2D winTex : TEXUNIT2;
+uniform sampler2D extPalTex : TEXUNIT2;
+uniform sampler2D winTex : TEXUNIT3;
 
 short readBg8(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
     short addrY = addr >> 11;
-    float x = float(addrX) / 511.0f;
+    float x = float(addrX) / 511.0;
     float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
     return short(tex2D(bgTex, float2(x, y))[addr & 3] * 255.0);
 }
@@ -24,15 +26,23 @@ short readBg8(int addr) {
 short readBg16Aligned(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
     short addrY = addr >> 11;
-    float x = float(addrX) / 511.0f;
+    float x = float(addrX) / 511.0;
     float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
     float4 value = tex2D(bgTex, float2(x, y));
-    short entry = addr & 2;
+    short entry = short(addr & 2);
     return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
 }
 
 float4 readPal(short index) {
     return tex2D(palTex, float2(float(index) / 511.0, 1.0));
+}
+
+float4 readExtPal(short index) {
+    short indexX = index & 0x1FF;
+    short indexY = index >> 9;
+    float x = float(indexX) / 511.0;
+    float y = float(indexY) / 31.0;
+    return tex2D(extPalTex, float2(x, y));
 }
 
 float4 drawText(short x, short y, short bgNum) {
@@ -41,9 +51,9 @@ float4 drawText(short x, short y, short bgNum) {
     int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
     int charAddr = ((dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
 
-    x += BgUbo.bgHOfs[bgNum * 192 + y];
+    x += short(BgUbo.bgHOfs[bgNum * 192 + y]);
     x &= 0x1FF;
-    y += BgUbo.bgVOfs[bgNum * 192 + y];
+    y += short(BgUbo.bgVOfs[bgNum * 192 + y]);
     y &= 0x1FF;
 
     // 512 Width
@@ -76,28 +86,37 @@ float4 drawText(short x, short y, short bgNum) {
     }
 
     bool is8bpp = (bgCnt & (1 << 7)) != 0;
-    short palBaseIndex;
     if (is8bpp) {
         charAddr += ((screenEntry & 0x3FF) << 6) + (yInBlock << 3);
         charAddr += xInBlock;
-        palBaseIndex = 0;
+
+        short palIndex = readBg8(charAddr);
+        if (palIndex == 0) {
+            discard;
+        }
+
+        bool useExtPal = (dispCnt & (1 << 30)) != 0;
+        if (useExtPal) {
+            short slot = bgNum < 2 && (bgCnt & (1 << 13)) != 0 ? bgNum + 2 : bgNum;
+            palIndex += slot * 4096 + ((screenEntry & 0xF000) >> 4);
+            return float4(readExtPal(palIndex).rgb, 1.0);
+        } else {
+            return float4(readPal(palIndex).rgb, 1.0);
+        }
     } else {
         charAddr += ((screenEntry & 0x3FF) << 5) + (yInBlock << 2);
         charAddr += xInBlock >> 1;
-        palBaseIndex = (screenEntry & 0xF000) >> 8;
-    }
 
-    short palIndex = readBg8(charAddr);
-    if (!is8bpp) {
+        short palIndex = readBg8(charAddr);
         palIndex >>= 4 * (xInBlock & 1);
         palIndex &= 0xF;
-    }
-    if (palIndex == 0) {
-        discard;
-    }
-    palIndex += palBaseIndex;
+        if (palIndex == 0) {
+            discard;
+        }
 
-    return float4(readPal(palIndex).rgb, 1.0);
+        palIndex += (screenEntry & 0xF000) >> 8;
+        return float4(readPal(palIndex).rgb, 1.0);
+    }
 }
 
 void main(out float4 color : COLOR) {

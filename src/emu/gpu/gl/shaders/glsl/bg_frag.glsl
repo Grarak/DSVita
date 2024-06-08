@@ -9,6 +9,7 @@ in vec2 screenPosF;
 
 uniform int dispCnt;
 uniform int bgCnts[4];
+uniform int bgModes[4];
 
 uniform BgUbo {
     int bgHOfs[192 * 4];
@@ -17,6 +18,7 @@ uniform BgUbo {
 
 uniform sampler2D bgTex;
 uniform sampler2D palTex;
+uniform sampler2D extPalTex;
 uniform sampler2D winTex;
 
 int readBg8(int addr) {
@@ -28,7 +30,7 @@ int readBg8(int addr) {
 int readBg16Aligned(int addr) {
     int addrX = (addr >> 2) & 0x1FF;
     int addrY = addr >> 11;
-    float x = float(addrX) / 511.0f;
+    float x = float(addrX) / 511.0;
     float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
     vec4 value = texture(bgTex, vec2(x, y));
     int entry = addr & 2;
@@ -38,6 +40,16 @@ int readBg16Aligned(int addr) {
 int readPal16Aligned(int addr) {
     float x = float(addr >> 2) / 255.0;
     vec4 value = texture(palTex, vec2(x, 1.0));
+    int entry = addr & 2;
+    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
+}
+
+int readExtPal16Aligned(int addr) {
+    int addrX = (addr >> 2) & 0x1FF;
+    int addrY = addr >> 11;
+    float x = float(addrX) / 511.0;
+    float y = float(addrY) / 15.0;
+    vec4 value = texture(extPalTex, vec2(x, y));
     int entry = addr & 2;
     return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
 }
@@ -82,31 +94,43 @@ vec4 drawText(int x, int y, int bgNum) {
     xInBlock = abs(isHFlip * 7 - xInBlock);
     yInBlock = abs(isVFlip * 7 - yInBlock);
 
-    int palBaseAddr;
     bool is8bpp = (bgCnt & (1 << 7)) != 0;
     if (is8bpp) {
         charAddr += ((screenEntry & 0x3FF) << 6) + (yInBlock << 3);
         charAddr += xInBlock;
-        palBaseAddr = 0;
+
+        int palAddr = readBg8(charAddr);
+        if (palAddr == 0) {
+            discard;
+        }
+        palAddr <<= 1;
+
+        bool useExtPal = (dispCnt & (1 << 30)) != 0;
+        if (useExtPal) {
+            int slot = bgNum < 2 && (bgCnt & (1 << 13)) != 0 ? bgNum + 2 : bgNum;
+            palAddr += slot * 8192 + ((screenEntry & 0xF000) >> 3);
+            int color = readExtPal16Aligned(palAddr);
+            return vec4(normRgb5(color), 1.0);
+        } else {
+            int color = readPal16Aligned(palAddr);
+            return vec4(normRgb5(color), 1.0);
+        }
     } else {
         charAddr += ((screenEntry & 0x3FF) << 5) + (yInBlock << 2);
         charAddr += xInBlock >> 1;
-        palBaseAddr = (screenEntry & 0xF000) >> 8;
-    }
 
-    int palAddr = readBg8(charAddr);
-    if (!is8bpp) {
+        int palAddr = readBg8(charAddr);
         palAddr >>= 4 * (xInBlock & 1);
         palAddr &= 0xF;
-    }
-    if (palAddr == 0) {
-        discard;
-    }
-    palAddr += palBaseAddr;
-    palAddr <<= 1;
+        if (palAddr == 0) {
+            discard;
+        }
+        palAddr <<= 1;
+        palAddr += (screenEntry & 0xF000) >> 7;
 
-    int color = readPal16Aligned(palAddr);
-    return vec4(normRgb5(color), 1.0);
+        int color = readPal16Aligned(palAddr);
+        return vec4(normRgb5(color), 1.0);
+    }
 }
 
 void main() {
@@ -119,5 +143,12 @@ void main() {
         discard;
     }
 
-    color = drawText(x, y, bgNum);
+    int mode = bgModes[bgNum];
+    switch (mode) {
+        case 0:
+            color = drawText(x, y, bgNum);
+            break;
+        default:
+            discard;
+    }
 }

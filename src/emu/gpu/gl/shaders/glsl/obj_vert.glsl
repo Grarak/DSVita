@@ -5,8 +5,7 @@ in float oamIndex;
 
 uniform sampler2D oamTex;
 
-out vec2 objPos;
-flat out ivec3 objProps;
+out vec3 objPos;
 
 uniform int dispCnt;
 
@@ -63,11 +62,7 @@ void main() {
         pos.x = abs(pos.x);
     }
 
-    objPos = vec2((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y);
-
-    int objBound = 32 << (int(is1dMap) * ((dispCnt >> 20) & 0x3));
-    int mapWidth = is1dMap ? int(oamWidth) : 256;
-    objProps = ivec3(index, objBound, mapWidth);
+    objPos = vec3((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y, oamIndex);
 
     float x = float(oamX) + oamWidth * position.x;
     float y = float(oamY) + oamHeight * position.y;

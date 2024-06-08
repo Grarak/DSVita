@@ -17,8 +17,8 @@ use std::{mem, ptr};
 #[derive(Copy, Clone, FromBits)]
 pub struct DispCnt {
     pub bg_mode: u3,
-    pub bg0_3d: u1,
-    pub tile_obj_mapping: bool,
+    pub bg0_3d: bool,
+    pub tile_1d_obj_mapping: bool,
     pub bitmap_obj_2d: u1,
     pub bitmap_obj_mapping: u1,
     pub forced_blank: u1,
@@ -646,7 +646,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
     }
 
     fn draw_objects<const WINDOW: bool>(&mut self, line: u8, mem: &GpuMemBuf) {
-        let bound = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) {
+        let bound = if bool::from(self.inner.disp_cnt.tile_1d_obj_mapping()) {
             32u32 << u8::from(self.inner.disp_cnt.tile_obj_1d_boundary())
         } else {
             32u32
@@ -792,7 +792,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                 ];
 
                 if object[0] & (1 << 13) != 0 {
-                    let map_width = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) { width } else { DISPLAY_WIDTH as u32 / 2 };
+                    let map_width = if bool::from(self.inner.disp_cnt.tile_1d_obj_mapping()) { width } else { DISPLAY_WIDTH as u32 / 2 };
 
                     let palette_base_addr = if bool::from(self.inner.disp_cnt.obj_extended_palettes()) {
                         ((object[2] & 0xF000) >> 3) as u32
@@ -841,7 +841,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                         }
                     }
                 } else {
-                    let map_width = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) { width } else { DISPLAY_WIDTH as u32 };
+                    let map_width = if bool::from(self.inner.disp_cnt.tile_1d_obj_mapping()) { width } else { DISPLAY_WIDTH as u32 };
 
                     let palette_addr = 0x200 + (((object[2] as u32 & 0xF000) >> 12) << 5);
 
@@ -888,7 +888,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                     }
                 }
             } else if object[0] & (1 << 13) != 0 {
-                let map_width = if bool::from(self.inner.disp_cnt.tile_obj_mapping()) { width } else { DISPLAY_WIDTH as u32 / 2 };
+                let map_width = if bool::from(self.inner.disp_cnt.tile_1d_obj_mapping()) { width } else { DISPLAY_WIDTH as u32 / 2 };
                 let sprite_y = sprite_y as u32;
                 let tile_base_addr = tile_base_addr
                     + if object[1] & (1 << 13) != 0 {
@@ -933,7 +933,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
                     }
                 }
             } else {
-                let map_width = if self.inner.disp_cnt.tile_obj_mapping() { width } else { DISPLAY_WIDTH as u32 };
+                let map_width = if self.inner.disp_cnt.tile_1d_obj_mapping() { width } else { DISPLAY_WIDTH as u32 };
                 let sprite_y = sprite_y as u32;
                 let tile_base_addr = tile_base_addr
                     + if object[1] & (1 << 13) != 0 {
