@@ -6,6 +6,7 @@ precision highp int;
 layout(location = 0) out vec4 color;
 
 in vec3 objPos;
+flat in ivec2 objDims;
 
 uniform int dispCnt;
 uniform ObjUbo {
@@ -55,6 +56,15 @@ vec3 normRgb5(int color) {
 }
 
 void main() {
+    int objWidth = objDims.x;
+    int objHeight = objDims.y;
+    int objY = int(objPos.y);
+    int objX = int(objPos.x);
+
+    if (objX < 0 || objX >= objWidth || objY < 0 || objY >= objHeight) {
+        discard;
+    }
+
     int oamIndex = int(objPos.z);
 
     int attrib0 = readOam16Aligned(oamIndex * 8);
@@ -65,9 +75,6 @@ void main() {
 
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * objBound;
-
-    int objY = int(objPos.y);
-    int objX = int(objPos.x);
 
     bool is8bpp = (attrib0 & (1 << 13)) != 0;
     if (is8bpp) {

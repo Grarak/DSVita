@@ -6,6 +6,7 @@ in float oamIndex;
 uniform sampler2D oamTex;
 
 out vec3 objPos;
+flat out ivec2 objDims;
 
 uniform int dispCnt;
 
@@ -20,6 +21,20 @@ const vec2 SizeLookup[12] = vec2[12](
 vec2(8.0, 8.0), vec2(16.0, 16.0), vec2(32.0, 32.0), vec2(64.0, 64.0), vec2(16.0, 8.0), vec2(32.0, 8.0),
 vec2(32.0, 16.0), vec2(64.0, 32.0), vec2(8.0, 16.0), vec2(8.0, 32.0), vec2(16.0, 32.0), vec2(32.0, 64.0)
 );
+
+float fixedToFloat(int n) {
+    bool sign = (n & (1 << 15)) != 0;
+    if (sign) {
+        n -= 1;
+        n = ~n;
+        n &= 0xFFFF;
+        float f = float(n) / 256.0;
+        return f * -1.0;
+    } else {
+        float f = float(n) / 256.0;
+        return f;
+    }
+}
 
 void main() {
     int index = int(oamIndex);
@@ -37,6 +52,7 @@ void main() {
     vec2 oamDims = SizeLookup[shape | size];
     float oamWidth = oamDims.x;
     float oamHeight = oamDims.y;
+    objDims = ivec2(int(oamWidth), int(oamHeight));
 
     if (oamX >= 256) {
         oamX -= 512;
@@ -46,23 +62,44 @@ void main() {
         oamY -= 256;
     }
 
-    bool is1dMap = (dispCnt & (1 << 4)) != 0;
-
-    bool isVFlip = (attrib1 & (1 << 13)) != 0;
-    bool isHFlip = (attrib1 & (1 << 12)) != 0;
-
     vec2 pos = position.xy;
-    if (isVFlip) {
-        pos.y -= 1.0;
-        pos.y = abs(pos.y);
-    }
 
-    if (isHFlip) {
-        pos.x -= 1.0;
-        pos.x = abs(pos.x);
-    }
+    bool affine = (attrib0 & (1 << 8)) != 0;
+    if (affine) {
+        int affineIndex = (attrib1 >> 9) & 0x1F;
+        int affineOffset = affineIndex * 0x20;
+        int pa = readOam16Aligned(affineOffset + 6);
+        int pb = readOam16Aligned(affineOffset + 14);
+        int pc = readOam16Aligned(affineOffset + 22);
+        int pd = readOam16Aligned(affineOffset + 30);
+        mat2 m = mat2(fixedToFloat(pa), fixedToFloat(pb), fixedToFloat(pc), fixedToFloat(pd));
 
-    objPos = vec3((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y, oamIndex);
+        bool doubleAffine = (attrib0 & (1 << 9)) != 0;
+        if (doubleAffine) {
+            vec2 normPos = vec2(oamWidth * 2.0 * pos.x - oamWidth, oamHeight * 2.0 * pos.y - oamHeight) * m;
+            objPos = vec3(max(normPos.x + oamWidth / 2.0 - 0.5, -oamWidth / 2.0), max(normPos.y + oamHeight / 2.0 - 0.5, -oamHeight / 2.0), oamIndex);
+            oamWidth *= 2.0;
+            oamHeight *= 2.0;
+        } else {
+            vec2 normPos = vec2(oamWidth * pos.x - oamWidth / 2.0, oamHeight * pos.y - oamHeight / 2.0) * m;
+            objPos = vec3(max(normPos.x + oamWidth / 2.0 - 0.5, 0.0), max(normPos.y + oamHeight / 2.0 - 0.5, 0.0), oamIndex);
+        }
+    } else {
+        bool isVFlip = (attrib1 & (1 << 13)) != 0;
+        bool isHFlip = (attrib1 & (1 << 12)) != 0;
+
+        if (isVFlip) {
+            pos.y -= 1.0;
+            pos.y = abs(pos.y);
+        }
+
+        if (isHFlip) {
+            pos.x -= 1.0;
+            pos.x = abs(pos.x);
+        }
+
+        objPos = vec3((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y, oamIndex);
+    }
 
     float x = float(oamX) + oamWidth * position.x;
     float y = float(oamY) + oamHeight * position.y;

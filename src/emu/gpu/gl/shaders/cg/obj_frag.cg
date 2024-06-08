@@ -4,6 +4,7 @@ uniform sampler2D palTex : TEXUNIT2;
 uniform sampler2D extPalTex : TEXUNIT3;
 
 float3 in objPos : TEXCOORD0;
+float2 in objDims : TEXCOORD1;
 
 uniform int dispCnt;
 uniform ObjUbo {
@@ -39,6 +40,15 @@ float4 readExtPal(short index) {
 }
 
 void main(out float4 color : COLOR) {
+    short objWidth = short(objDims.x);
+    short objHeight = short(objDims.y);
+    short objY = short(objPos.y);
+    short objX = short(objPos.x);
+
+    if (objX < 0 || objX >= objWidth || objY < 0 || objY >= objHeight) {
+        discard;
+    }
+
     short oamIndex = short(objPos.z);
 
     short attrib0 = readOam16Aligned(oamIndex * 8);
@@ -49,9 +59,6 @@ void main(out float4 color : COLOR) {
 
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * objBound;
-
-    short objY = short(objPos.y);
-    short objX = short(objPos.x);
 
     bool is8bpp = (attrib0 & (1 << 13)) != 0;
     if (is8bpp) {

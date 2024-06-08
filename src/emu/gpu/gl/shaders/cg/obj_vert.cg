@@ -1,6 +1,7 @@
 uniform sampler2D oamTex : TEXUNIT0;
 
 float3 out objPos : TEXCOORD0;
+float2 out objDims : TEXCOORD1;
 uniform int dispCnt;
 
 float4 out gl_Position : POSITION;
@@ -33,6 +34,7 @@ void main(float2 position, float oamIndex) {
     float2 oamDims = SizeLookup[shape | size];
     float oamWidth = oamDims.x;
     float oamHeight = oamDims.y;
+    objDims = short2(oamWidth, oamHeight);
 
     if (oamX >= 256) {
         oamX -= 512;
@@ -42,21 +44,44 @@ void main(float2 position, float oamIndex) {
         oamY -= 256;
     }
 
-    bool isVFlip = (attrib1 & (1 << 13)) != 0;
-    bool isHFlip = (attrib1 & (1 << 12)) != 0;
-
     float2 pos = position;
-    if (isVFlip) {
-        pos.y -= 1.0;
-        pos.y = abs(pos.y);
-    }
 
-    if (isHFlip) {
-        pos.x -= 1.0;
-        pos.x = abs(pos.x);
-    }
+    bool affine = (attrib0 & (1 << 8)) != 0;
+    if (affine) {
+        short affineIndex = (attrib1 >> 9) & 0x1F;
+        short affineOffset = affineIndex * 0x20;
+        short pa = readOam16Aligned(affineOffset + 6);
+        short pb = readOam16Aligned(affineOffset + 14);
+        short pc = readOam16Aligned(affineOffset + 22);
+        short pd = readOam16Aligned(affineOffset + 30);
+        float2x2 m = float2x2(float(pa), float(pb), float(pc), float(pd)) / 256.0;
 
-    objPos = float3((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y, oamIndex);
+        bool doubleAffine = (attrib0 & (1 << 9)) != 0;
+        if (doubleAffine) {
+            float2 normPos = mul(m, float2(oamWidth * 2.0 * pos.x - oamWidth, oamHeight * 2.0 * pos.y - oamHeight));
+            objPos = float3(max(normPos.x + oamWidth / 2.0 - 0.5, -oamWidth / 2.0), max(normPos.y + oamHeight / 2.0 - 0.1, -oamHeight / 2.0), oamIndex);
+            oamWidth *= 2.0;
+            oamHeight *= 2.0;
+        } else {
+            float2 normPos = mul(m, float2(oamWidth * pos.x - oamWidth / 2.0, oamHeight * pos.y - oamHeight / 2.0));
+            objPos = float3(max(normPos.x + oamWidth / 2.0 - 0.5, 0.0), max(normPos.y + oamHeight / 2.0 - 0.5, 0.0), oamIndex);
+        }
+    } else {
+        bool isVFlip = (attrib1 & (1 << 13)) != 0;
+        bool isHFlip = (attrib1 & (1 << 12)) != 0;
+
+        if (isVFlip) {
+            pos.y -= 1.0;
+            pos.y = abs(pos.y);
+        }
+
+        if (isHFlip) {
+            pos.x -= 1.0;
+            pos.x = abs(pos.x);
+        }
+
+        objPos = float3((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y, oamIndex);
+    }
 
     float x = float(oamX) + oamWidth * position.x;
     float y = float(oamY) + oamHeight * position.y;
