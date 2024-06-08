@@ -102,6 +102,8 @@ impl Presenter {
 
     pub fn present_menu(&mut self, _: &Menu) {}
 
+    pub fn destroy_menu(&self) {}
+
     pub fn poll_event(&mut self) -> PresentEvent {
         let mut touch = None;
 

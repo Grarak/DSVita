@@ -56,6 +56,12 @@ impl<'a> MenuPresenter<'a> {
     }
 }
 
+impl<'a> Drop for MenuPresenter<'a> {
+    fn drop(&mut self) {
+        self.presenter.destroy_menu();
+    }
+}
+
 pub struct Menu<'a> {
     pub title: String,
     pub entries: Vec<Menu<'a>>,

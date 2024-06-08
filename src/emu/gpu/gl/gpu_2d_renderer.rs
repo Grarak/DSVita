@@ -661,12 +661,6 @@ impl Gpu2dProgram {
             return;
         }
 
-        for (i, mode) in bg_modes.iter().enumerate() {
-            if *mode != 0 {
-                todo!("bg {i} mode {mode}")
-            }
-        }
-
         gl::Uniform1i(self.bg_disp_cnt_loc, u32::from(disp_cnt) as _);
         gl::Uniform1iv(self.bg_cnts_loc, 4, regs.bg_cnts[from_line as usize * 4..].as_ptr() as _);
         gl::Uniform1iv(self.bg_modes_loc, 4, bg_modes.as_ptr() as _);

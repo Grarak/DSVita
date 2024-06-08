@@ -216,80 +216,57 @@ pub fn main() {
 
     #[cfg(target_os = "vita")]
     {
-        // use crate::presenter::menu::{Menu, MenuAction, MenuPresenter};
-        // use std::fs;
-        //
-        // let root_menu = Menu::new(
-        //     "DSPSV",
-        //     vec![
-        //         Menu::new("Settings", Vec::new(), |menu| {
-        //             menu.entries = settings_mut
-        //                 .borrow()
-        //                 .iter()
-        //                 .enumerate()
-        //                 .map(|(index, setting)| {
-        //                     let settings_clone = settings_mut.clone();
-        //                     Menu::new(
-        //                         format!("{} - {}", setting.title, setting.value),
-        //                         Vec::new(),
-        //                         move |_| {
-        //                             settings_clone.borrow_mut()[index].value.next();
-        //                             MenuAction::Refresh
-        //                         },
-        //                     )
-        //                 })
-        //                 .collect();
-        //             MenuAction::EnterSubMenu
-        //         }),
-        //         Menu::new("Select ROM", Vec::new(), |menu| {
-        //             match fs::read_dir("ux0:dspsv") {
-        //                 Ok(dirs) => {
-        //                     menu.entries = dirs
-        //                         .into_iter()
-        //                         .filter_map(|dir| {
-        //                             dir.ok().and_then(|dir| {
-        //                                 dir.file_type().ok().and_then(|file_type| {
-        //                                     if file_type.is_file() {
-        //                                         Some(dir)
-        //                                     } else {
-        //                                         None
-        //                                     }
-        //                                 })
-        //                             })
-        //                         })
-        //                         .map(|dir| {
-        //                             let file_path_clone = file_path.clone();
-        //                             Menu::new(dir.path().to_str().unwrap(), Vec::new(), move |_| {
-        //                                 *file_path_clone.borrow_mut() = dir.path();
-        //                                 MenuAction::Quit
-        //                             })
-        //                         })
-        //                         .collect();
-        //                     if menu.entries.is_empty() {
-        //                         menu.entries.push(Menu::new(
-        //                             "ux0:dspsv does not contain any files!",
-        //                             Vec::new(),
-        //                             |_| MenuAction::Refresh,
-        //                         ))
-        //                     }
-        //                 }
-        //                 Err(_) => {
-        //                     menu.entries.clear();
-        //                     menu.entries.push(Menu::new(
-        //                         "ux0:dspsv does not exist!",
-        //                         Vec::new(),
-        //                         |_| MenuAction::Refresh,
-        //                     ));
-        //                 }
-        //             }
-        //             MenuAction::EnterSubMenu
-        //         }),
-        //     ],
-        //     |_| MenuAction::EnterSubMenu,
-        // );
-        // let mut menu_presenter = MenuPresenter::new(&mut presenter, root_menu);
-        // menu_presenter.present();
-        *file_path.borrow_mut() = PathBuf::from("ux0:dspsv/pokemon_blue_rescue.nds");
+        use crate::presenter::menu::{Menu, MenuAction, MenuPresenter};
+        use std::fs;
+
+        let root_menu = Menu::new(
+            "DSPSV",
+            vec![
+                Menu::new("Settings", Vec::new(), |menu| {
+                    menu.entries = settings_mut
+                        .borrow()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, setting)| {
+                            let settings_clone = settings_mut.clone();
+                            Menu::new(format!("{} - {}", setting.title, setting.value), Vec::new(), move |_| {
+                                settings_clone.borrow_mut()[index].value.next();
+                                MenuAction::Refresh
+                            })
+                        })
+                        .collect();
+                    MenuAction::EnterSubMenu
+                }),
+                Menu::new("Select ROM", Vec::new(), |menu| {
+                    match fs::read_dir("ux0:dspsv") {
+                        Ok(dirs) => {
+                            menu.entries = dirs
+                                .into_iter()
+                                .filter_map(|dir| dir.ok().and_then(|dir| dir.file_type().ok().and_then(|file_type| if file_type.is_file() { Some(dir) } else { None })))
+                                .map(|dir| {
+                                    let file_path_clone = file_path.clone();
+                                    Menu::new(dir.path().to_str().unwrap(), Vec::new(), move |_| {
+                                        *file_path_clone.borrow_mut() = dir.path();
+                                        MenuAction::Quit
+                                    })
+                                })
+                                .collect();
+                            if menu.entries.is_empty() {
+                                menu.entries.push(Menu::new("ux0:dspsv does not contain any files!", Vec::new(), |_| MenuAction::Refresh))
+                            }
+                        }
+                        Err(_) => {
+                            menu.entries.clear();
+                            menu.entries.push(Menu::new("ux0:dspsv does not exist!", Vec::new(), |_| MenuAction::Refresh));
+                        }
+                    }
+                    MenuAction::EnterSubMenu
+                }),
+            ],
+            |_| MenuAction::EnterSubMenu,
+        );
+        let mut menu_presenter = MenuPresenter::new(&mut presenter, root_menu);
+        menu_presenter.present();
     }
 
     #[cfg(target_os = "linux")]
