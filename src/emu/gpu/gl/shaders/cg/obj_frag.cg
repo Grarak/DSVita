@@ -1,9 +1,11 @@
 uniform sampler2D oamTex : TEXUNIT0;
 uniform sampler2D objTex : TEXUNIT1;
 uniform sampler2D palTex : TEXUNIT2;
+uniform sampler2D extPalTex : TEXUNIT3;
 
 float3 in objPos : TEXCOORD0;
 
+uniform int dispCnt;
 uniform ObjUbo {
     int mapWidths[128];
     int objBounds[128];
@@ -28,30 +30,59 @@ float4 readPal(short index) {
     return tex2D(palTex, float2(float(index) / 511.0, 1.0));
 }
 
+float4 readExtPal(short index) {
+    short indexX = index & 0x1FF;
+    short indexY = index >> 9;
+    float x = float(indexX) / 511.0;
+    float y = float(indexY) / 7.0;
+    return tex2D(extPalTex, float2(x, y));
+}
+
 void main(out float4 color : COLOR) {
     short oamIndex = short(objPos.z);
+
+    short attrib0 = readOam16Aligned(oamIndex * 8);
+    short attrib2 = readOam16Aligned(oamIndex * 8 + 4);
+
     short mapWidth = short(ObjUbo.mapWidths[oamIndex]);
     short objBound = short(ObjUbo.objBounds[oamIndex]);
 
-    short attrib2 = readOam16Aligned(oamIndex * 8 + 4);
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * objBound;
-
-    int palBank = (attrib2 >> 12) & 0xF;
-    int palBase = 0x100 + palBank * 16;
 
     short objY = short(objPos.y);
     short objX = short(objPos.x);
 
-    tileAddr += ((objY & 7) + (objY >> 3) * mapWidth) * 4;
-    tileAddr += (objX >> 3) * 32 + (objX & 7) / 2;
+    bool is8bpp = (attrib0 & (1 << 13)) != 0;
+    if (is8bpp) {
+        tileAddr += ((objY & 7) + (objY >> 3) * mapWidth) * 8;
+        tileAddr += (objX >> 3) * 64 + (objX & 7);
 
-    short palIndex = readObj8(tileAddr);
-    palIndex >>= 4 * (objX & 1);
-    palIndex &= 0xF;
-    if (palIndex == 0) {
-        discard;
+        int palIndex = readObj8(tileAddr);
+        if (palIndex == 0) {
+            discard;
+        }
+
+        bool useExtPal = (dispCnt & (1 << 31)) != 0;
+        if (useExtPal) {
+            int palBaseIndex = (attrib2 & 0xF000) >> 4;
+            color = float4(readExtPal(palBaseIndex + palIndex).rgb, 1.0);
+        } else {
+            color = float4(readPal(0x100 + palIndex).rgb, 1.0);
+        }
+    } else {
+        tileAddr += ((objY & 7) + (objY >> 3) * mapWidth) * 4;
+        tileAddr += (objX >> 3) * 32 + (objX & 7) / 2;
+
+        short palIndex = readObj8(tileAddr);
+        palIndex >>= 4 * (objX & 1);
+        palIndex &= 0xF;
+        if (palIndex == 0) {
+            discard;
+        }
+
+        short palBank = (attrib2 >> 12) & 0xF;
+        short palBase = 0x100 + palBank * 16;
+        color = float4(readPal(palBase + palIndex).rgb, 1.0);
     }
-
-    color = float4(readPal(palBase + palIndex).rgb, 1.0);
 }

@@ -436,12 +436,13 @@ impl Gpu2dProgram {
                 gl::BindVertexArray(0);
                 gl::BindBuffer(gl::ARRAY_BUFFER, 0);
 
-                gl::Uniform1i(gl::GetUniformLocation(program, "oamTex\0".as_ptr() as _), 0);
                 gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
                 gl::BindAttribLocation(program, 1, "oamIndex\0".as_ptr() as _);
 
+                gl::Uniform1i(gl::GetUniformLocation(program, "oamTex\0".as_ptr() as _), 0);
                 gl::Uniform1i(gl::GetUniformLocation(program, "objTex\0".as_ptr() as _), 1);
                 gl::Uniform1i(gl::GetUniformLocation(program, "palTex\0".as_ptr() as _), 2);
+                gl::Uniform1i(gl::GetUniformLocation(program, "extPalTex\0".as_ptr() as _), 3);
 
                 let disp_cnt_loc = gl::GetUniformLocation(program, "dispCnt\0".as_ptr() as _);
 
@@ -753,6 +754,9 @@ impl Gpu2dProgram {
             gl::ActiveTexture(gl::TEXTURE2);
             gl::BindTexture(gl::TEXTURE_2D, texs.pal);
 
+            gl::ActiveTexture(gl::TEXTURE3);
+            gl::BindTexture(gl::TEXTURE_2D, texs.obj_ext_pal);
+
             draw_scanlines!(Self::draw_objects);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -833,18 +837,14 @@ impl Gpu2dProgram {
             }
 
             if obj_mode != OamObjMode::Normal {
-                todo!()
-            }
-
-            if attrib0.is_8bit() {
-                todo!()
+                todo!("{obj_mode:?}")
             }
 
             if disp_cnt.tile_1d_obj_mapping() {
                 self.obj_ubo_data.map_widths[i] = width as u32;
                 self.obj_ubo_data.obj_bounds[i] = 32 << u8::from(disp_cnt.tile_obj_1d_boundary());
             } else {
-                self.obj_ubo_data.map_widths[i] = 256;
+                self.obj_ubo_data.map_widths[i] = if attrib0.is_8bit() { 128 } else { 256 };
                 self.obj_ubo_data.obj_bounds[i] = 32;
             }
 

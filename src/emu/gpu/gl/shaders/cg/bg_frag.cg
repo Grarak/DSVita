@@ -129,5 +129,10 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
-    color = drawText(x, y, bgNum);
+    int mode = bgModes[bgNum];
+    if (mode == 0) {
+        color = drawText(x, y, bgNum);
+    } else {
+        discard;
+    }
 }
