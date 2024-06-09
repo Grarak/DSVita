@@ -33,7 +33,6 @@ pub enum SharkOpt {
 #[link(name = "SceShaccCgExt", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "mathneon", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "vitashark", kind = "static", modifiers = "+whole-archive")]
-#[link(name = "vitaGL", kind = "static")]
 extern "C" {
     pub fn vglInit(legacy_pool_size: c_int) -> GLboolean;
     pub fn vglGetProcAddress(name: *const c_char) -> *mut c_void;

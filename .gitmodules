@@ -1,0 +1,3 @@
+[submodule "vitaGL"]
+	path = vitaGL
+	url = https://github.com/Rinnegatamante/vitaGL.git
