@@ -8,8 +8,9 @@ edition = "2021"
 
 [package.metadata.vita]
 title_id = "DSPSV0000"
-title_name = "DSPSV"
+title_name = "DSVita"
 build_std = "std,panic_abort"
+assets = "./static"
 
 [dependencies]
 bilge = { git = "https://github.com/Grarak/bilge.git" }
