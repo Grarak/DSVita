@@ -95,9 +95,9 @@ impl FrameRateCounter {
         self.frame_counter += 1;
         let now = Instant::now();
         if likely(limit_frame) {
-            let diff = (now - self.last_frame).as_micros();
-            if unlikely(diff < 16666) {
-                thread::sleep(Duration::from_micros(16666 - diff as u64));
+            let diff = (now - self.last_frame).as_millis();
+            if unlikely(diff < 16) {
+                thread::sleep(Duration::from_millis(16 - diff as u64));
             }
             self.last_frame = Instant::now();
         }
