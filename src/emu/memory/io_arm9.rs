@@ -5,7 +5,7 @@ use crate::emu::timers::Timers;
 use crate::emu::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::utils::Convert;
-use dspsv_macros::{io_ports_read, io_ports_write};
+use dsvita_macros::{io_ports_read, io_ports_write};
 use std::mem;
 
 pub struct IoArm9 {

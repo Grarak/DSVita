@@ -7,7 +7,7 @@ use crate::emu::timers::Timers;
 use crate::emu::CpuType::ARM7;
 use crate::logging::debug_println;
 use crate::utils::Convert;
-use dspsv_macros::{io_ports_read, io_ports_write};
+use dsvita_macros::{io_ports_read, io_ports_write};
 use std::mem;
 use std::sync::atomic::AtomicU16;
 use std::sync::Arc;

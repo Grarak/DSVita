@@ -64,7 +64,7 @@ impl Presenter {
         gl_attr.set_context_profile(GLProfile::GLES);
         gl_attr.set_context_version(3, 0);
 
-        let window = sdl_video.window("DSPSV", PRESENTER_SCREEN_WIDTH, PRESENTER_SCREEN_HEIGHT).opengl().build().unwrap();
+        let window = sdl_video.window("DSVita", PRESENTER_SCREEN_WIDTH, PRESENTER_SCREEN_HEIGHT).opengl().build().unwrap();
 
         let gl_ctx = window.gl_create_context().unwrap();
         gl::load_with(|name| sdl_video.gl_get_proc_address(name) as *const _);

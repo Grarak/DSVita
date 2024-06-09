@@ -1,13 +1,13 @@
 workspace = { members = ["macros"] }
 [package]
-name = "dspsv"
+name = "dsvita"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [package.metadata.vita]
-title_id = "DSPSV0000"
+title_id = "DSVITA000"
 title_name = "DSVita"
 build_std = "std,panic_abort"
 assets = "./static"
@@ -17,7 +17,7 @@ bilge = { git = "https://github.com/Grarak/bilge.git" }
 chrono = "0.4.33"
 paste = "1.0.14"
 static_assertions = "1.1.0"
-dspsv_macros = { path = "macros" }
+dsvita_macros = { path = "macros" }
 gl = { git = "https://github.com/bjz/gl-rs" }
 
 [target.armv7-unknown-linux-gnueabihf.dependencies]

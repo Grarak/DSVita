@@ -220,7 +220,7 @@ pub fn main() {
         use std::fs;
 
         let root_menu = Menu::new(
-            "DSPSV",
+            "DSVita",
             vec![
                 Menu::new("Settings", Vec::new(), |menu| {
                     menu.entries = settings_mut
@@ -238,7 +238,7 @@ pub fn main() {
                     MenuAction::EnterSubMenu
                 }),
                 Menu::new("Select ROM", Vec::new(), |menu| {
-                    match fs::read_dir("ux0:dspsv") {
+                    match fs::read_dir("ux0:dsvita") {
                         Ok(dirs) => {
                             menu.entries = dirs
                                 .into_iter()
@@ -252,12 +252,12 @@ pub fn main() {
                                 })
                                 .collect();
                             if menu.entries.is_empty() {
-                                menu.entries.push(Menu::new("ux0:dspsv does not contain any files!", Vec::new(), |_| MenuAction::Refresh))
+                                menu.entries.push(Menu::new("ux0:dsvita does not contain any files!", Vec::new(), |_| MenuAction::Refresh))
                             }
                         }
                         Err(_) => {
                             menu.entries.clear();
-                            menu.entries.push(Menu::new("ux0:dspsv does not exist!", Vec::new(), |_| MenuAction::Refresh));
+                            menu.entries.push(Menu::new("ux0:dsvita does not exist!", Vec::new(), |_| MenuAction::Refresh));
                         }
                     }
                     MenuAction::EnterSubMenu

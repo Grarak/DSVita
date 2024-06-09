@@ -185,13 +185,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f"
 
 [[package]]
-name = "dspsv"
+name = "dsvita"
 version = "0.1.0"
 dependencies = [
  "bilge",
  "bindgen 0.69.4",
  "chrono",
- "dspsv_macros",
+ "dsvita_macros",
  "gl",
  "libc",
  "paste",
@@ -201,7 +201,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dspsv_macros"
+name = "dsvita_macros"
 version = "0.1.0"
 dependencies = [
  "syn",

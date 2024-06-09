@@ -211,7 +211,7 @@ impl Presenter {
             ImGui_SetNextWindowSize(ptr::addr_of!(size), ImGuiCond__ImGuiCond_Once as _);
 
             let mut open = true;
-            if ImGui_Begin("DSPSV\0".as_ptr() as _, ptr::addr_of_mut!(open), 0) {
+            if ImGui_Begin("DSVita\0".as_ptr() as _, ptr::addr_of_mut!(open), 0) {
                 ImGui_Text("Loading\0".as_ptr() as _);
                 ImGui_End();
             }

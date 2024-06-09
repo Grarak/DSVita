@@ -37,7 +37,7 @@ fn main() {
 
     let vita_gl_path = PathBuf::from("vitaGL");
     let vita_gl_lib_path = vita_gl_path.join("libvitaGL.a");
-    let vita_gl_lib_new_path = vita_gl_path.join("libvitaGL_dspsv.a");
+    let vita_gl_lib_new_path = vita_gl_path.join("libvitaGL_dsvita.a");
 
     Command::new("make")
         .current_dir("vitaGL")
@@ -55,5 +55,5 @@ fn main() {
 
     fs::rename(vita_gl_lib_path, vita_gl_lib_new_path).unwrap();
     println!("cargo:rustc-link-search=native={}", fs::canonicalize(vita_gl_path).unwrap().to_str().unwrap());
-    println!("cargo:rustc-link-lib=static=vitaGL_dspsv");
+    println!("cargo:rustc-link-lib=static=vitaGL_dsvita");
 }
