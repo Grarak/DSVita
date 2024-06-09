@@ -198,7 +198,12 @@ impl Gpu {
 
         if gpu.v_count < 192 {
             if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
-                unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut().on_scanline(&gpu.gpu_2d_a.inner, &gpu.gpu_2d_b.inner, gpu.v_count as u8) }
+                unsafe {
+                    gpu.gpu_2d_renderer
+                        .unwrap_unchecked()
+                        .as_mut()
+                        .on_scanline(&mut gpu.gpu_2d_a.inner, &mut gpu.gpu_2d_b.inner, gpu.v_count as u8)
+                }
             }
             io_dma!(emu, ARM9).trigger_all(DmaTransferMode::StartAtHBlank, get_cm_mut!(emu));
         }

@@ -3,12 +3,29 @@
 in vec4 position;
 out vec3 screenPos;
 out vec2 screenPosF;
+out vec2 affineDims;
 
 uniform int bgCnts[4];
+uniform int bgModes[4];
+
+const vec2 BitMapSizeLookup[4] = vec2[4](vec2(128.0, 128.0), vec2(256.0, 256.0), vec2(512.0, 256.0), vec2(512.0, 512.0));
 
 void main() {
     int bgNum = int(position.z);
     int bgCnt = bgCnts[bgNum];
+    int bgMode = bgModes[bgNum];
+
+    if (bgMode == 2) {
+        bool isBitMap = (bgCnt & (1 << 7)) != 0;
+        if (isBitMap) {
+            int size = (bgCnt >> 14) & 0x3;
+            affineDims = BitMapSizeLookup[size];
+        } else {
+            float size = 128.0 * float(1 << (bgCnt >> 14) & 0x3);
+            affineDims = vec2(size, size);
+        }
+    }
+
     int priority = bgCnt & 3;
 
     float normX = position.x * 0.5 + 0.5;

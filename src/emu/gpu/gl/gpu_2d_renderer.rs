@@ -14,10 +14,9 @@ use crate::utils::{HeapMemU32, HeapMemU8, StrErr};
 use gl::types::{GLint, GLuint};
 use static_assertions::const_assert;
 use std::hint::unreachable_unchecked;
-use std::ops::Deref;
+use std::intrinsics::unlikely;
 use std::sync::{Condvar, Mutex};
-use std::time::Duration;
-use std::{mem, ptr, slice, thread};
+use std::{mem, ptr, slice};
 
 #[derive(Default)]
 pub struct GpuMemBuf {
@@ -128,6 +127,12 @@ const_assert!(mem::size_of::<WinBgUbo>() < 16 * 1024);
 struct BgUbo {
     h_ofs: [u32; DISPLAY_HEIGHT * 4],
     v_ofs: [u32; DISPLAY_HEIGHT * 4],
+    x: [f32; DISPLAY_HEIGHT * 2],
+    y: [f32; DISPLAY_HEIGHT * 2],
+    pa: [f32; DISPLAY_HEIGHT * 2],
+    pb: [f32; DISPLAY_HEIGHT * 2],
+    pc: [f32; DISPLAY_HEIGHT * 2],
+    pd: [f32; DISPLAY_HEIGHT * 2],
 }
 
 const_assert!(mem::size_of::<BgUbo>() < 16 * 1024);
@@ -149,7 +154,7 @@ impl Default for GpuRegs {
 }
 
 impl GpuRegs {
-    fn on_scanline(&mut self, inner: &Gpu2DInner, line: u8) {
+    fn on_scanline(&mut self, inner: &mut Gpu2DInner, line: u8) {
         let updated = self.disp_cnts[self.current_batch_count_index] != u32::from(inner.disp_cnt);
         let updated = updated || {
             let mut updated = false;
@@ -196,6 +201,26 @@ impl GpuRegs {
             self.bg_ubo.h_ofs[i * DISPLAY_HEIGHT + line as usize] = inner.bg_h_ofs[i] as u32;
             self.bg_ubo.v_ofs[i * DISPLAY_HEIGHT + line as usize] = inner.bg_v_ofs[i] as u32;
         }
+        for i in 0..2 {
+            self.bg_ubo.x[i * DISPLAY_HEIGHT + line as usize] = inner.bg_x[i] as f32 / 256.0;
+            self.bg_ubo.y[i * DISPLAY_HEIGHT + line as usize] = inner.bg_y[i] as f32 / 256.0;
+            self.bg_ubo.pa[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pa[i] as f32 / 256.0;
+            self.bg_ubo.pc[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pc[i] as f32 / 256.0;
+
+            if unlikely(inner.bg_x_dirty || line == 0) {
+                self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize] = 0f32;
+            } else {
+                self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pb[i] as f32 / 256.0 + self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize - 1];
+            }
+
+            if unlikely(inner.bg_y_dirty || line == 0) {
+                self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize] = 0f32;
+            } else {
+                self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pd[i] as f32 / 256.0 + self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize - 1];
+            }
+        }
+        inner.bg_x_dirty = false;
+        inner.bg_y_dirty = false;
     }
 }
 
@@ -633,7 +658,7 @@ impl Gpu2dProgram {
                     self.bg_vertices_buf.push(bg1_vertices);
                     bg_modes[1] = $bg1mode;
                 }
-                if disp_cnt.screen_display_bg0() && !disp_cnt.bg0_3d() {
+                if disp_cnt.screen_display_bg0() && (!disp_cnt.bg0_3d()) {
                     self.bg_vertices_buf.push(bg0_vertices);
                     bg_modes[0] = $bg0mode;
                 }
@@ -659,6 +684,16 @@ impl Gpu2dProgram {
 
         if self.bg_vertices_buf.is_empty() {
             return;
+        }
+
+        for (bg, mode) in bg_modes.iter().enumerate() {
+            let bg_cnt = regs.bg_cnts[from_line as usize * 4 + bg];
+            if *mode == 1 {
+                panic!("bg {bg} mode {mode}");
+            }
+            if *mode == 2 && bg_cnt & (1 << 7) == 0 {
+                panic!("bg {bg} mode {mode} {}", bg_cnt & (1 << 7) == 0);
+            }
         }
 
         gl::Uniform1i(self.bg_disp_cnt_loc, u32::from(disp_cnt) as _);
@@ -912,7 +947,7 @@ impl Gpu2dRenderer {
         }
     }
 
-    pub fn on_scanline(&mut self, inner_a: &Gpu2DInner, inner_b: &Gpu2DInner, line: u8) {
+    pub fn on_scanline(&mut self, inner_a: &mut Gpu2DInner, inner_b: &mut Gpu2DInner, line: u8) {
         self.regs_a[1].on_scanline(inner_a, line);
         self.regs_b[1].on_scanline(inner_b, line);
     }

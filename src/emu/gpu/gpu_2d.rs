@@ -133,12 +133,14 @@ pub struct Gpu2DInner {
     pub bg_cnt: [BgCnt; 4],
     pub bg_h_ofs: [u16; 4],
     pub bg_v_ofs: [u16; 4],
-    bg_pa: [i16; 2],
-    bg_pb: [i16; 2],
-    bg_pc: [i16; 2],
-    bg_pd: [i16; 2],
-    bg_x: [i32; 2],
-    bg_y: [i32; 2],
+    pub bg_pa: [i16; 2],
+    pub bg_pb: [i16; 2],
+    pub bg_pc: [i16; 2],
+    pub bg_pd: [i16; 2],
+    pub bg_x: [i32; 2],
+    pub bg_y: [i32; 2],
+    pub bg_x_dirty: bool,
+    pub bg_y_dirty: bool,
     bld_cnt: BldCnt,
     bld_alpha: u16,
     pub win_h: [u16; 2],
@@ -370,6 +372,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         let bg_x = bg_x as i32;
         self.inner.internal.x[bg_num - 2] = bg_x;
         self.inner.bg_x[bg_num - 2] = bg_x;
+        self.inner.bg_x_dirty = true;
     }
 
     pub fn set_bg_y(&mut self, bg_num: usize, mut mask: u32, value: u32) {
@@ -383,6 +386,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         let bg_y = bg_y as i32;
         self.inner.internal.y[bg_num - 2] = bg_y;
         self.inner.bg_y[bg_num - 2] = bg_y;
+        self.inner.bg_y_dirty = true;
     }
 
     pub fn set_win_h(&mut self, win: usize, mask: u16, value: u16) {
@@ -1027,5 +1031,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         internal.y[0] = self.inner.bg_y[0];
         internal.x[1] = self.inner.bg_x[1];
         internal.y[1] = self.inner.bg_y[1];
+        self.inner.bg_x_dirty = true;
+        self.inner.bg_y_dirty = true;
     }
 }

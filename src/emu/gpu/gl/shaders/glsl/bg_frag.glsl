@@ -6,6 +6,7 @@ precision highp int;
 layout(location = 0) out vec4 color;
 in vec3 screenPos;
 in vec2 screenPosF;
+in vec2 affineDims;
 
 uniform int dispCnt;
 uniform int bgCnts[4];
@@ -14,6 +15,12 @@ uniform int bgModes[4];
 uniform BgUbo {
     int bgHOfs[192 * 4];
     int bgVOfs[192 * 4];
+    float bgX[192 * 2];
+    float bgY[192 * 2];
+    float bgPas[192 * 2];
+    float bgPbs[192 * 2];
+    float bgPcs[192 * 2];
+    float bgPds[192 * 2];
 };
 
 uniform sampler2D bgTex;
@@ -103,7 +110,7 @@ vec4 drawText(int x, int y, int bgNum) {
         if (palAddr == 0) {
             discard;
         }
-        palAddr <<= 1;
+        palAddr *= 2;
 
         bool useExtPal = (dispCnt & (1 << 30)) != 0;
         if (useExtPal) {
@@ -125,10 +132,55 @@ vec4 drawText(int x, int y, int bgNum) {
         if (palAddr == 0) {
             discard;
         }
-        palAddr <<= 1;
+        palAddr *= 2;
         palAddr += (screenEntry & 0xF000) >> 7;
 
         int color = readPal16Aligned(palAddr);
+        return vec4(normRgb5(color), 1.0);
+    }
+}
+
+vec4 drawBitmap(int x, int y, int bgNum) {
+    int width = int(affineDims.x);
+    int height = int(affineDims.y);
+
+    int index = (bgNum - 2) * 192 + y;
+    float bgX = bgX[index];
+    float bgY = bgY[index];
+    float bgPa = bgPas[index];
+    float bgPb = bgPbs[index];
+    float bgPc = bgPcs[index];
+    float bgPd = bgPds[index];
+
+    int bitmapX = int(bgX + bgPb + float(x) * bgPa);
+    int bitmapY = int(bgY + bgPd + float(x) * bgPc);
+
+    int bgCnt = bgCnts[bgNum];
+
+    bool wrap = (bgCnt & (1 << 13)) != 0;
+    if (wrap) {
+        bitmapX &= width - 1;
+        bitmapY &= height - 1;
+    } else if (bitmapX < 0 || bitmapX >= width || bitmapY < 0 || bitmapY >= height) {
+        discard;
+    }
+
+    int dataBase = (bgCnt << 6) & 0x7C000;
+    bool usePal = (bgCnt & (1 << 2)) == 0;
+    if (usePal) {
+        int palAddr = readBg8(dataBase + bitmapY * width + bitmapX);
+        if (palAddr == 0) {
+            discard;
+        }
+        palAddr *= 2;
+
+        int color = readPal16Aligned(palAddr);
+        return vec4(normRgb5(color), 1.0);
+    } else {
+        int color = readBg16Aligned(dataBase + (bitmapY * width + bitmapX) * 2);
+        if ((color & (1 << 15)) == 0) {
+            discard;
+        }
         return vec4(normRgb5(color), 1.0);
     }
 }
@@ -145,10 +197,20 @@ void main() {
 
     int mode = bgModes[bgNum];
     switch (mode) {
-        case 0:
+        case 0: {
             color = drawText(x, y, bgNum);
-            break;
-        default:
-            discard;
+        }
+        break;
+        case 2: {
+            int bgCnt = bgCnts[bgNum];
+            bool isBitmap = (bgCnt & (1 << 7)) != 0;
+            if (isBitmap) {
+                color = drawBitmap(x, y, bgNum);
+            } else {
+                discard;
+            }
+        }
+        break;
+        default : discard;
     }
 }

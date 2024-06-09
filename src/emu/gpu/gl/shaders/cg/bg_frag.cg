@@ -1,5 +1,6 @@
 float3 in screenPos : TEXCOORD0;
 float2 in screenPosF : TEXCOORD1;
+float2 in affineDims : TEXCOORD2;
 
 uniform int dispCnt;
 uniform int bgCnts[4];
@@ -8,6 +9,12 @@ uniform int bgModes[4];
 uniform BgUbo {
     int bgHOfs[192 * 4];
     int bgVOfs[192 * 4];
+    float bgX[192 * 2];
+    float bgY[192 * 2];
+    float bgPas[192 * 2];
+    float bgPbs[192 * 2];
+    float bgPcs[192 * 2];
+    float bgPds[192 * 2];
 } BgUbo : BUFFER[0];
 
 uniform sampler2D bgTex : TEXUNIT0;
@@ -43,6 +50,10 @@ float4 readExtPal(short index) {
     float x = float(indexX) / 511.0;
     float y = float(indexY) / 31.0;
     return tex2D(extPalTex, float2(x, y));
+}
+
+float3 normRgb5(short color) {
+    return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
 float4 drawText(short x, short y, short bgNum) {
@@ -119,6 +130,52 @@ float4 drawText(short x, short y, short bgNum) {
     }
 }
 
+float4 drawBitmap(short x, short y, short bgNum) {
+    short width = short(affineDims.x);
+    short height = short(affineDims.y);
+
+    short index = (bgNum - 2) * 192 + y;
+    float bgX = BgUbo.bgX[index];
+    float bgY = BgUbo.bgY[index];
+    float bgPa = BgUbo.bgPas[index];
+    float bgPb = BgUbo.bgPbs[index];
+    float bgPc = BgUbo.bgPcs[index];
+    float bgPd = BgUbo.bgPds[index];
+
+    float bitmapfX = bgX + bgPb + float(x) * bgPa;
+    float bitmapfY = bgY + bgPd + float(x) * bgPc;
+
+    int bitmapX = short(bitmapfX);
+    int bitmapY = short(bitmapfY);
+
+    int bgCnt = bgCnts[bgNum];
+
+    bool wrap = (bgCnt & (1 << 13)) != 0;
+    if (wrap) {
+        bitmapX &= width - 1;
+        bitmapY &= height - 1;
+    } else if (bitmapX < 0 || bitmapX >= width || bitmapY < 0 || bitmapY >= height) {
+        discard;
+    }
+
+    int dataBase = (bgCnt << 6) & 0x7C000;
+    bool usePal = (bgCnt & (1 << 2)) == 0;
+    if (usePal) {
+        int palIndex = readBg8(dataBase + bitmapY * width + bitmapX);
+        if (palIndex == 0) {
+            discard;
+        }
+
+        return float4(readPal(palIndex).rgb, 1.0);
+    } else {
+        short color = readBg16Aligned(dataBase + (bitmapY * width + bitmapX) * 2);
+        if ((color & (1 << 15)) == 0) {
+            discard;
+        }
+        return float4(normRgb5(color), 1.0);
+    }
+}
+
 void main(out float4 color : COLOR) {
     short x = short(screenPos.x);
     short y = short(screenPos.y);
@@ -132,6 +189,14 @@ void main(out float4 color : COLOR) {
     int mode = bgModes[bgNum];
     if (mode == 0) {
         color = drawText(x, y, bgNum);
+    } else if (mode == 2) {
+        int bgCnt = bgCnts[bgNum];
+        bool isBitmap = (bgCnt & (1 << 7)) != 0;
+        if (isBitmap) {
+            color = drawBitmap(x, y, bgNum);
+        } else {
+            discard;
+        }
     } else {
         discard;
     }
