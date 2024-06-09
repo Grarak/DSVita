@@ -551,7 +551,7 @@ impl Gpu2dProgram {
     unsafe fn draw_windows(&mut self, regs: &GpuRegs, _: &Gpu2dMem, from_line: u8, to_line: u8) {
         let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
         if disp_cnt.obj_window_display_flag() {
-            todo!()
+            // todo!()
         }
         if !disp_cnt.is_any_window_enabled() {
             return;

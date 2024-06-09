@@ -51,13 +51,13 @@ impl Setting {
 
 pub type Settings = [Setting; 3];
 
-pub const FRAMESKIP_SETTING: usize = 0;
+pub const FRAMELIMIT_SETTING: usize = 0;
 pub const AUDIO_SETTING: usize = 1;
 pub const ARM7_HLE_SETTINGS: usize = 2;
 pub const DEFAULT_SETTINGS: Settings = [
-    Setting::new("Frameskip", SettingValue::Bool(false)),
+    Setting::new("Framelimit", SettingValue::Bool(true)),
     Setting::new("Audio", SettingValue::Bool(true)),
-    Setting::new("Arm7 HLE", SettingValue::Bool(false)),
+    Setting::new("Arm7 HLE", SettingValue::Bool(true)),
 ];
 
 pub fn create_settings_mut() -> Settings {

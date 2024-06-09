@@ -22,7 +22,7 @@ use crate::emu::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
-use crate::settings::{create_settings_mut, Settings, ARM7_HLE_SETTINGS, AUDIO_SETTING, FRAMESKIP_SETTING};
+use crate::settings::{create_settings_mut, Settings, ARM7_HLE_SETTINGS, AUDIO_SETTING, FRAMELIMIT_SETTING};
 use crate::utils::{set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::{RefCell, UnsafeCell};
 use std::cmp::min;
@@ -145,7 +145,7 @@ fn run_cpu(
     }
 
     Gpu::initialize_schedule(get_cm_mut!(emu));
-    common.gpu.frame_skip = settings[FRAMESKIP_SETTING].value.as_bool().unwrap();
+    common.gpu.frame_limit = settings[FRAMELIMIT_SETTING].value.as_bool().unwrap();
     common.gpu.gpu_2d_renderer = Some(gpu_2d_renderer);
 
     if settings[AUDIO_SETTING].value.as_bool().unwrap() {

@@ -14,10 +14,12 @@ use crate::logging::debug_println;
 use crate::utils::HeapMemU32;
 use bilge::prelude::*;
 use std::collections::VecDeque;
+use std::intrinsics::{likely, unlikely};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub const DISPLAY_WIDTH: usize = 256;
 pub const DISPLAY_HEIGHT: usize = 192;
@@ -76,6 +78,7 @@ struct FrameRateCounter {
     frame_counter: u16,
     fps: Arc<AtomicU16>,
     last_update: Instant,
+    last_frame: Instant,
 }
 
 impl FrameRateCounter {
@@ -84,12 +87,20 @@ impl FrameRateCounter {
             frame_counter: 0,
             fps,
             last_update: Instant::now(),
+            last_frame: Instant::now(),
         }
     }
 
-    fn on_frame_ready(&mut self) {
+    fn on_frame_ready(&mut self, limit_frame: bool) {
         self.frame_counter += 1;
         let now = Instant::now();
+        if likely(limit_frame) {
+            let diff = (now - self.last_frame).as_micros();
+            if unlikely(diff < 16666) {
+                thread::sleep(Duration::from_micros(16666 - diff as u64));
+            }
+            self.last_frame = Instant::now();
+        }
         if (now - self.last_update).as_secs_f32() >= 1f32 {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
             // #[cfg(target_os = "linux")]
@@ -133,7 +144,7 @@ pub struct Gpu {
     disp_cap_cnt: u32,
     swapchain: Arc<Swapchain>,
     frame_rate_counter: FrameRateCounter,
-    pub frame_skip: bool,
+    pub frame_limit: bool,
     pub arm7_hle: bool,
     pub v_count: u16,
     pub gpu_2d_a: Gpu2D<{ A }>,
@@ -151,7 +162,7 @@ impl Gpu {
             disp_cap_cnt: 0,
             swapchain,
             frame_rate_counter: FrameRateCounter::new(fps),
-            frame_skip: false,
+            frame_limit: false,
             arm7_hle: false,
             v_count: 0,
             gpu_2d_a: Gpu2D::new(),
@@ -197,13 +208,11 @@ impl Gpu {
         let gpu = &mut get_common_mut!(emu).gpu;
 
         if gpu.v_count < 192 {
-            if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
-                unsafe {
-                    gpu.gpu_2d_renderer
-                        .unwrap_unchecked()
-                        .as_mut()
-                        .on_scanline(&mut gpu.gpu_2d_a.inner, &mut gpu.gpu_2d_b.inner, gpu.v_count as u8)
-                }
+            unsafe {
+                gpu.gpu_2d_renderer
+                    .unwrap_unchecked()
+                    .as_mut()
+                    .on_scanline(&mut gpu.gpu_2d_a.inner, &mut gpu.gpu_2d_b.inner, gpu.v_count as u8)
             }
             io_dma!(emu, ARM9).trigger_all(DmaTransferMode::StartAtHBlank, get_cm_mut!(emu));
         }
@@ -225,10 +234,8 @@ impl Gpu {
         gpu.v_count += 1;
         match gpu.v_count {
             192 => {
-                if !gpu.frame_skip || gpu.frame_rate_counter.frame_counter & 1 == 0 {
-                    // unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.on_frame(get_mem_mut!(emu));
-                    unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.start_drawing(get_mem_mut!(emu), PowCnt1::from(gpu.pow_cnt1));
-                }
+                // unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.on_frame(get_mem_mut!(emu));
+                unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() }.start_drawing(get_mem_mut!(emu), PowCnt1::from(gpu.pow_cnt1));
 
                 for i in 0..2 {
                     let disp_stat = &mut gpu.disp_stat[i];
@@ -243,7 +250,7 @@ impl Gpu {
                 for i in 0..2 {
                     gpu.disp_stat[i].set_v_blank_flag(u1::new(0));
                 }
-                gpu.frame_rate_counter.on_frame_ready();
+                gpu.frame_rate_counter.on_frame_ready(gpu.frame_limit);
             }
             263 => {
                 gpu.v_count = 0;
