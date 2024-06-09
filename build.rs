@@ -1,3 +1,4 @@
+use bindgen::Formatter;
 use std::path::PathBuf;
 use std::process::Command;
 use std::{env, fs};
@@ -18,7 +19,12 @@ fn main() {
     let bindings_file = out_path.join("imgui_bindings.rs");
 
     const IMGUI_HEADERS: [&str; 3] = ["imgui.h", "imgui_internal.h", "imgui_impl_vitagl.h"];
-    let mut bindings = bindgen::Builder::default().clang_args(["-I", vitasdk_include_path.to_str().unwrap()]).clang_args(["-x", "c++"]);
+    let mut bindings = bindgen::Builder::default()
+        .clang_args(["-I", vitasdk_include_path.to_str().unwrap()])
+        .clang_args(["-x", "c++"])
+        .clang_args(["-std=c++17"])
+        .clang_args(["-target", "armv7a-none-eabihf"])
+        .formatter(Formatter::None);
     for header in IMGUI_HEADERS {
         let header_path = vitasdk_include_path.join(header);
         println!("cargo:rerun-if-changed={header_path:?}");
