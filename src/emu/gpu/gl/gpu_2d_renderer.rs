@@ -6,7 +6,7 @@ use crate::emu::gpu::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::emu::gpu::gpu_2d::Gpu2DEngine::{A, B};
 use crate::emu::gpu::gpu_2d::{DispCnt, Gpu2DEngine, Gpu2DInner};
 use crate::emu::memory::mem::Memory;
-use crate::emu::memory::oam::{OamAttrib0, OamAttrib1, OamAttribs, OamGfxMode, OamObjMode};
+use crate::emu::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
 use crate::emu::memory::{regions, vram};
 use crate::presenter::{Presenter, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN};
 use crate::utils;
@@ -688,7 +688,7 @@ impl Gpu2dProgram {
 
         for (bg, mode) in bg_modes.iter().enumerate() {
             let bg_cnt = regs.bg_cnts[from_line as usize * 4 + bg];
-            if *mode == 1 {
+            if *mode == 1 || *mode == 3 {
                 panic!("bg {bg} mode {mode}");
             }
             if *mode == 2 && bg_cnt & (1 << 7) == 0 {
@@ -863,15 +863,24 @@ impl Gpu2dProgram {
                 _ => continue,
             };
 
-            if x + width < 0 || y + height < from_line as i32 || x >= DISPLAY_WIDTH as i32 || y >= to_line as i32 {
+            if obj_mode == OamObjMode::AffineDouble {
+                if x + width * 2 < 0 || y + height * 2 < from_line as i32 || x >= DISPLAY_WIDTH as i32 || y >= to_line as i32 {
+                    continue;
+                }
+            } else if x + width < 0 || y + height < from_line as i32 || x >= DISPLAY_WIDTH as i32 || y >= to_line as i32 {
                 continue;
             }
 
             if gfx_mode == OamGfxMode::Bitmap {
-                todo!()
-            }
-
-            if disp_cnt.tile_1d_obj_mapping() {
+                if disp_cnt.bitmap_obj_mapping() {
+                    self.obj_ubo_data.map_widths[i] = width as u32;
+                    self.obj_ubo_data.obj_bounds[i] = u16::from(OamAttrib2::from(oam.attr2).tile_index()) as u32 * if disp_cnt.bitmap_obj_1d_boundary() { 256 } else { 128 };
+                } else {
+                    self.obj_ubo_data.map_widths[i] = if disp_cnt.bitmap_obj_2d() { 256 } else { 128 };
+                    let x_mask = if disp_cnt.bitmap_obj_2d() { 0x1F } else { 0x0F };
+                    self.obj_ubo_data.obj_bounds[i] = (oam.attr2 & x_mask) as u32 * 0x10 + (oam.attr2 & 0x3FF & !x_mask) as u32 * 0x80;
+                }
+            } else if disp_cnt.tile_1d_obj_mapping() {
                 self.obj_ubo_data.map_widths[i] = width as u32;
                 self.obj_ubo_data.obj_bounds[i] = 32 << u8::from(disp_cnt.tile_obj_1d_boundary());
             } else {

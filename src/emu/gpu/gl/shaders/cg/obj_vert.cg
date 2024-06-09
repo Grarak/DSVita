@@ -58,13 +58,13 @@ void main(float2 position, float oamIndex) {
 
         bool doubleAffine = (attrib0 & (1 << 9)) != 0;
         if (doubleAffine) {
-            float2 normPos = mul(m, float2(oamWidth * 2.0 * pos.x - oamWidth, oamHeight * 2.0 * pos.y - oamHeight));
-            objPos = float3(max(normPos.x + oamWidth / 2.0 - 0.5, -oamWidth / 2.0), max(normPos.y + oamHeight / 2.0 - 0.1, -oamHeight / 2.0), oamIndex);
+            float2 normPos = mul(m, float2(max(oamWidth * 2.0 * pos.x - 0.9, 0.0) - oamWidth, max(oamHeight * 2.0 * pos.y - 0.9, 0.0) - oamHeight));
+            objPos = float3(normPos.x + oamWidth / 2.0, normPos.y + oamHeight / 2.0, oamIndex);
             oamWidth *= 2.0;
             oamHeight *= 2.0;
         } else {
-            float2 normPos = mul(m, float2(oamWidth * pos.x - oamWidth / 2.0, oamHeight * pos.y - oamHeight / 2.0));
-            objPos = float3(max(normPos.x + oamWidth / 2.0 - 0.5, 0.0), max(normPos.y + oamHeight / 2.0 - 0.5, 0.0), oamIndex);
+            float2 normPos = mul(m, float2(max(oamWidth * pos.x - 0.5, 0.0) - oamWidth / 2.0, max(oamHeight * pos.y - 0.5, 0.0) - oamHeight / 2.0));
+            objPos = float3(normPos.x + oamWidth / 2.0, normPos.y + oamHeight / 2.0, oamIndex);
         }
     } else {
         bool isVFlip = (attrib1 & (1 << 13)) != 0;

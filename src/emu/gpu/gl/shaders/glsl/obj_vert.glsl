@@ -76,13 +76,13 @@ void main() {
 
         bool doubleAffine = (attrib0 & (1 << 9)) != 0;
         if (doubleAffine) {
-            vec2 normPos = vec2(oamWidth * 2.0 * pos.x - oamWidth, oamHeight * 2.0 * pos.y - oamHeight) * m;
-            objPos = vec3(max(normPos.x + oamWidth / 2.0 - 0.5, -oamWidth / 2.0), max(normPos.y + oamHeight / 2.0 - 0.5, -oamHeight / 2.0), oamIndex);
+            vec2 normPos = vec2(max(oamWidth * 2.0 * pos.x - 0.9, 0.0) - oamWidth, max(oamHeight * 2.0 * pos.y - 0.9, 0.0) - oamHeight) * m;
+            objPos = vec3(normPos.x + oamWidth / 2.0, normPos.y + oamHeight / 2.0, oamIndex);
             oamWidth *= 2.0;
             oamHeight *= 2.0;
         } else {
-            vec2 normPos = vec2(oamWidth * pos.x - oamWidth / 2.0, oamHeight * pos.y - oamHeight / 2.0) * m;
-            objPos = vec3(max(normPos.x + oamWidth / 2.0 - 0.5, 0.0), max(normPos.y + oamHeight / 2.0 - 0.5, 0.0), oamIndex);
+            vec2 normPos = vec2(max(oamWidth * pos.x - 0.5, 0.0) - oamWidth / 2.0, max(oamHeight * pos.y - 0.5, 0.0) - oamHeight / 2.0) * m;
+            objPos = vec3(normPos.x + oamWidth / 2.0 - 0.5, normPos.y + oamHeight / 2.0, oamIndex);
         }
     } else {
         bool isVFlip = (attrib1 & (1 << 13)) != 0;

@@ -27,6 +27,16 @@ short readObj8(int addr) {
     return int(tex2D(objTex, float2(x, y))[addr & 3] * 255.0);
 }
 
+short readObj16Aligned(int addr) {
+    short addrX = (addr >> 2) & 0x1FF;
+    short addrY = addr >> 11;
+    float x = float(addrX) / 511.0f;
+    float y = float(addrY) / (OBJ_TEX_HEIGHT - 1.0);
+    float4 value = tex2D(objTex, float2(x, y));
+    short entry = addr & 2;
+    return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
+}
+
 float4 readPal(short index) {
     return tex2D(palTex, float2(float(index) / 511.0, 1.0));
 }
@@ -39,19 +49,11 @@ float4 readExtPal(short index) {
     return tex2D(extPalTex, float2(x, y));
 }
 
-void main(out float4 color : COLOR) {
-    short objWidth = short(objDims.x);
-    short objHeight = short(objDims.y);
-    short objY = short(objPos.y);
-    short objX = short(objPos.x);
+float3 normRgb5(short color) {
+    return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
+}
 
-    if (objX < 0 || objX >= objWidth || objY < 0 || objY >= objHeight) {
-        discard;
-    }
-
-    short oamIndex = short(objPos.z);
-
-    short attrib0 = readOam16Aligned(oamIndex * 8);
+float4 drawSprite(short objX, short objY, short attrib0, short oamIndex) {
     short attrib2 = readOam16Aligned(oamIndex * 8 + 4);
 
     short mapWidth = short(ObjUbo.mapWidths[oamIndex]);
@@ -73,9 +75,9 @@ void main(out float4 color : COLOR) {
         bool useExtPal = (dispCnt & (1 << 31)) != 0;
         if (useExtPal) {
             int palBaseIndex = (attrib2 & 0xF000) >> 4;
-            color = float4(readExtPal(palBaseIndex + palIndex).rgb, 1.0);
+            return float4(readExtPal(palBaseIndex + palIndex).rgb, 1.0);
         } else {
-            color = float4(readPal(0x100 + palIndex).rgb, 1.0);
+            return float4(readPal(0x100 + palIndex).rgb, 1.0);
         }
     } else {
         tileAddr += ((objY & 7) + (objY >> 3) * mapWidth) * 4;
@@ -90,6 +92,38 @@ void main(out float4 color : COLOR) {
 
         short palBank = (attrib2 >> 12) & 0xF;
         short palBase = 0x100 + palBank * 16;
-        color = float4(readPal(palBase + palIndex).rgb, 1.0);
+        return float4(readPal(palBase + palIndex).rgb, 1.0);
+    }
+}
+
+float4 drawBitmap(short objX, short objY, short oamIndex) {
+    int bitmapWidth = ObjUbo.mapWidths[oamIndex];
+    int dataBase = ObjUbo.objBounds[oamIndex];
+
+    int objColor = readObj16Aligned(dataBase + (objY * bitmapWidth + objX) * 2);
+    if ((objColor & (1 << 15)) == 0) {
+        discard;
+    }
+    return float4(normRgb5(objColor), 1.0);
+}
+
+void main(out float4 color : COLOR) {
+    short objWidth = short(objDims.x);
+    short objHeight = short(objDims.y);
+    short objY = short(objPos.y);
+    short objX = short(objPos.x);
+
+    if (objX < 0 || objX >= objWidth || objY < 0 || objY >= objHeight) {
+        discard;
+    }
+
+    short oamIndex = short(objPos.z);
+
+    short attrib0 = readOam16Aligned(oamIndex * 8);
+    bool isBitmap = (attrib0 & 0xC00) == 0xC00;
+    if (isBitmap) {
+        color = drawBitmap(objX, objY, oamIndex);
+    } else {
+        color = drawSprite(objX, objY, attrib0, oamIndex);
     }
 }
