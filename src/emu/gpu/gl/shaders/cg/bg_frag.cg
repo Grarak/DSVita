@@ -86,8 +86,8 @@ float4 drawText(short x, short y, short bgNum) {
     screenAddr += xBlock >> 2;
     int screenEntry = readBg16Aligned(screenAddr);
 
-    bool isHFlip = (screenEntry >> 10) & 1;
-    bool isVFlip = (screenEntry >> 11) & 1;
+    bool isHFlip = (screenEntry & (1 << 10)) != 0;
+    bool isVFlip = (screenEntry & (1 << 11)) != 0;
 
     if (isHFlip) {
         xInBlock = 7 - xInBlock;
@@ -130,10 +130,7 @@ float4 drawText(short x, short y, short bgNum) {
     }
 }
 
-float4 drawBitmap(short x, short y, short bgNum) {
-    short width = short(affineDims.x);
-    short height = short(affineDims.y);
-
+short2 calculateAffineCoords(short x, short y, short bgNum) {
     short index = (bgNum - 2) * 192 + y;
     float bgX = BgUbo.bgX[index];
     float bgY = BgUbo.bgY[index];
@@ -141,38 +138,95 @@ float4 drawBitmap(short x, short y, short bgNum) {
     float bgPb = BgUbo.bgPbs[index];
     float bgPc = BgUbo.bgPcs[index];
     float bgPd = BgUbo.bgPds[index];
+    return short2(short(bgX + bgPb + float(x) * bgPa), short(bgY + bgPd + float(x) * bgPc));
+}
 
-    float bitmapfX = bgX + bgPb + float(x) * bgPa;
-    float bitmapfY = bgY + bgPd + float(x) * bgPc;
+float4 drawBitmap(short x, short y, short bgNum) {
+    short width = short(affineDims.x);
+    short height = short(affineDims.y);
 
-    int bitmapX = short(bitmapfX);
-    int bitmapY = short(bitmapfY);
+    int2 coords = int2(calculateAffineCoords(x, y, bgNum));
 
     int bgCnt = bgCnts[bgNum];
 
     bool wrap = (bgCnt & (1 << 13)) != 0;
     if (wrap) {
-        bitmapX &= width - 1;
-        bitmapY &= height - 1;
-    } else if (bitmapX < 0 || bitmapX >= width || bitmapY < 0 || bitmapY >= height) {
+        coords.x &= width - 1;
+        coords.y &= height - 1;
+    } else if (coords.x < 0 || coords.x >= width || coords.y < 0 || coords.y >= height) {
         discard;
     }
 
     int dataBase = (bgCnt << 6) & 0x7C000;
     bool usePal = (bgCnt & (1 << 2)) == 0;
     if (usePal) {
-        int palIndex = readBg8(dataBase + bitmapY * width + bitmapX);
+        int palIndex = readBg8(dataBase + coords.y * width + coords.x);
         if (palIndex == 0) {
             discard;
         }
-
         return float4(readPal(palIndex).rgb, 1.0);
     } else {
-        short color = readBg16Aligned(dataBase + (bitmapY * width + bitmapX) * 2);
+        short color = readBg16Aligned(dataBase + (coords.y * width + coords.x) * 2);
         if ((color & (1 << 15)) == 0) {
             discard;
         }
         return float4(normRgb5(color), 1.0);
+    }
+}
+
+float4 drawAffine(int x, int y, int bgNum, bool extended) {
+    short size = short(affineDims.x);
+
+    int2 coords = int2(calculateAffineCoords(x, y, bgNum));
+
+    int bgCnt = bgCnts[bgNum];
+
+    bool wrap = (bgCnt & (1 << 13)) != 0;
+    if (wrap) {
+        coords.x &= size - 1;
+        coords.y &= size - 1;
+    } else if (coords.x < 0 || coords.x >= size || coords.y < 0 || coords.y >= size) {
+        discard;
+    }
+
+    int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
+    int charAddr = ((dispCnt >> 8) & 0x70000) + ((bgCnt << 12) & 0x3C000);
+
+    int xBlockNum = coords.x >> 3;
+    int xInBlock = coords.x & 7;
+    int yBlockNum = coords.y >> 3;
+    int yInBlock = coords.y & 7;
+
+    if (extended) {
+        screenAddr += (yBlockNum * (size >> 3) + xBlockNum) * 2;
+        int screenEntry = readBg16Aligned(screenAddr);
+
+        bool isHFlip = (screenEntry & (1 << 10)) != 0;
+        bool isVFlip = (screenEntry & (1 << 11)) != 0;
+
+        if (isHFlip) {
+            xInBlock = 7 - xInBlock;
+        }
+        if (isVFlip) {
+            yInBlock = 7 - yInBlock;
+        }
+
+        charAddr += (screenEntry & 0x3FF) * 64 + yInBlock * 8 + xInBlock;
+
+        int palIndex = readBg8(charAddr);
+        if (palIndex == 0) {
+            discard;
+        }
+
+        bool useExtPal = (dispCnt & (1 << 30)) != 0;
+        if (useExtPal) {
+            palIndex += bgNum * 4096 + ((screenEntry & 0xF000) >> 4);
+            return float4(readExtPal(palIndex).rgb, 1.0);
+        } else {
+            return float4(readPal(palIndex).rgb, 1.0);
+        }
+    } else {
+        discard;
     }
 }
 
@@ -195,7 +249,7 @@ void main(out float4 color : COLOR) {
         if (isBitmap) {
             color = drawBitmap(x, y, bgNum);
         } else {
-            discard;
+            color = drawAffine(x, y, bgNum, true);
         }
     } else {
         discard;

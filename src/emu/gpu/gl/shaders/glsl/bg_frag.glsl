@@ -69,7 +69,7 @@ vec4 drawText(int x, int y, int bgNum) {
     int bgCnt = bgCnts[bgNum];
 
     int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
-    int charAddr = ((dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
+    int charAddr = ((dispCnt >> 8) & 0x70000) + ((bgCnt << 12) & 0x3C000);
 
     x += bgHOfs[bgNum * 192 + y];
     x &= 0x1FF;
@@ -140,10 +140,7 @@ vec4 drawText(int x, int y, int bgNum) {
     }
 }
 
-vec4 drawBitmap(int x, int y, int bgNum) {
-    int width = int(affineDims.x);
-    int height = int(affineDims.y);
-
+ivec2 calculateAffineCoords(int x, int y, int bgNum) {
     int index = (bgNum - 2) * 192 + y;
     float bgX = bgX[index];
     float bgY = bgY[index];
@@ -151,24 +148,29 @@ vec4 drawBitmap(int x, int y, int bgNum) {
     float bgPb = bgPbs[index];
     float bgPc = bgPcs[index];
     float bgPd = bgPds[index];
+    return ivec2(int(bgX + bgPb + float(x) * bgPa), int(bgY + bgPd + float(x) * bgPc));
+}
 
-    int bitmapX = int(bgX + bgPb + float(x) * bgPa);
-    int bitmapY = int(bgY + bgPd + float(x) * bgPc);
+vec4 drawBitmap(int x, int y, int bgNum) {
+    int width = int(affineDims.x);
+    int height = int(affineDims.y);
+
+    ivec2 coords = calculateAffineCoords(x, y, bgNum);
 
     int bgCnt = bgCnts[bgNum];
 
     bool wrap = (bgCnt & (1 << 13)) != 0;
     if (wrap) {
-        bitmapX &= width - 1;
-        bitmapY &= height - 1;
-    } else if (bitmapX < 0 || bitmapX >= width || bitmapY < 0 || bitmapY >= height) {
+        coords.x &= width - 1;
+        coords.y &= height - 1;
+    } else if (coords.x < 0 || coords.x >= width || coords.y < 0 || coords.y >= height) {
         discard;
     }
 
     int dataBase = (bgCnt << 6) & 0x7C000;
     bool usePal = (bgCnt & (1 << 2)) == 0;
     if (usePal) {
-        int palAddr = readBg8(dataBase + bitmapY * width + bitmapX);
+        int palAddr = readBg8(dataBase + coords.y * width + coords.x);
         if (palAddr == 0) {
             discard;
         }
@@ -177,11 +179,66 @@ vec4 drawBitmap(int x, int y, int bgNum) {
         int color = readPal16Aligned(palAddr);
         return vec4(normRgb5(color), 1.0);
     } else {
-        int color = readBg16Aligned(dataBase + (bitmapY * width + bitmapX) * 2);
+        int color = readBg16Aligned(dataBase + (coords.y * width + coords.x) * 2);
         if ((color & (1 << 15)) == 0) {
             discard;
         }
         return vec4(normRgb5(color), 1.0);
+    }
+}
+
+vec4 drawAffine(int x, int y, int bgNum, bool extended) {
+    int size = int(affineDims.x);
+
+    ivec2 coords = calculateAffineCoords(x, y, bgNum);
+
+    int bgCnt = bgCnts[bgNum];
+
+    bool wrap = (bgCnt & (1 << 13)) != 0;
+    if (wrap) {
+        coords.x &= size - 1;
+        coords.y &= size - 1;
+    } else if (coords.x < 0 || coords.x >= size || coords.y < 0 || coords.y >= size) {
+        discard;
+    }
+
+    int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
+    int charAddr = ((dispCnt >> 8) & 0x70000) + ((bgCnt << 12) & 0x3C000);
+
+    int xBlockNum = coords.x >> 3;
+    int xInBlock = coords.x & 7;
+    int yBlockNum = coords.y >> 3;
+    int yInBlock = coords.y & 7;
+
+    if (extended) {
+        screenAddr += (yBlockNum * (size / 8) + xBlockNum) * 2;
+        int screenEntry = readBg16Aligned(screenAddr);
+
+        int isHFlip = (screenEntry >> 10) & 1;
+        int isVFlip = (screenEntry >> 11) & 1;
+
+        xInBlock = abs(isHFlip * 7 - xInBlock);
+        yInBlock = abs(isVFlip * 7 - yInBlock);
+
+        charAddr += (screenEntry & 0x3FF) * 64 + yInBlock * 8 + xInBlock;
+
+        int palAddr = readBg8(charAddr);
+        if (palAddr == 0) {
+            discard;
+        }
+        palAddr *= 2;
+
+        bool useExtPal = (dispCnt & (1 << 30)) != 0;
+        if (useExtPal) {
+            palAddr += bgNum * 8192 + ((screenEntry & 0xF000) >> 3);
+            int color = readExtPal16Aligned(palAddr);
+            return vec4(normRgb5(color), 1.0);
+        } else {
+            int color = readPal16Aligned(palAddr);
+            return vec4(normRgb5(color), 1.0);
+        }
+    } else {
+        discard;
     }
 }
 
@@ -199,18 +256,18 @@ void main() {
     switch (mode) {
         case 0: {
             color = drawText(x, y, bgNum);
+            break;
         }
-        break;
         case 2: {
             int bgCnt = bgCnts[bgNum];
             bool isBitmap = (bgCnt & (1 << 7)) != 0;
             if (isBitmap) {
                 color = drawBitmap(x, y, bgNum);
             } else {
-                discard;
+                color = drawAffine(x, y, bgNum, true);
             }
+            break;
         }
-        break;
         default : discard;
     }
 }

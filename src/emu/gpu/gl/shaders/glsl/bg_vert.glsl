@@ -21,7 +21,7 @@ void main() {
             int size = (bgCnt >> 14) & 0x3;
             affineDims = BitMapSizeLookup[size];
         } else {
-            float size = 128.0 * float(1 << (bgCnt >> 14) & 0x3);
+            float size = float(128 << ((bgCnt >> 14) & 0x3));
             affineDims = vec2(size, size);
         }
     }

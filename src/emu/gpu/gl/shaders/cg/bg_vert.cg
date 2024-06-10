@@ -19,7 +19,7 @@ void main(float3 position) {
             short size = (bgCnt >> 14) & 0x3;
             affineDims = BitMapSizeLookup[size];
         } else {
-            float size = 128.0 * float(1 << (bgCnt >> 14) & 0x3);
+            float size = float(short(128 << ((bgCnt >> 14) & 0x3)));
             affineDims = float2(size, size);
         }
     }

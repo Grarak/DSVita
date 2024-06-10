@@ -691,9 +691,6 @@ impl Gpu2dProgram {
             if *mode == 1 || *mode == 3 {
                 panic!("bg {bg} mode {mode}");
             }
-            if *mode == 2 && bg_cnt & (1 << 7) == 0 {
-                panic!("bg {bg} mode {mode} {}", bg_cnt & (1 << 7) == 0);
-            }
         }
 
         gl::Uniform1i(self.bg_disp_cnt_loc, u32::from(disp_cnt) as _);
