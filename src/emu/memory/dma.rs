@@ -1,6 +1,6 @@
 use crate::emu::cpu_regs::InterruptFlag;
 use crate::emu::cycle_manager::{CycleManager, EventType};
-use crate::emu::emu::{get_cm_mut, get_cpu_regs_mut, io_dma, io_dma_mut, Emu};
+use crate::emu::emu::{get_cm_mut, get_cpu_regs_mut, get_mem_mut, io_dma, io_dma_mut, Emu};
 use crate::emu::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
@@ -179,6 +179,8 @@ impl Dma {
                     channel.current_src,
                     channel.current_count
                 );
+
+                get_mem_mut!(emu).breakout_imm = true;
 
                 get_cm_mut!(emu).schedule(
                     1,

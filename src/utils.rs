@@ -32,26 +32,22 @@ impl Convert for u32 {
 }
 
 pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
-    let aligned: &[T] = unsafe { mem::transmute(&mem[addr as usize..]) };
-    aligned[0].clone()
+    unsafe { (mem.as_ptr().add(addr as usize) as *const T).read() }
 }
 
 pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> usize {
-    let aligned: &[T] = unsafe { mem::transmute(&mem[addr as usize..]) };
-    let read_amount = cmp::min(aligned.len(), slice.len());
-    slice[..read_amount].copy_from_slice(&aligned[..read_amount]);
+    let read_amount = cmp::min(mem.len() / mem::size_of::<T>(), slice.len());
+    unsafe { (mem.as_ptr().add(addr as usize) as *const T).copy_to(slice.as_mut_ptr(), read_amount) };
     read_amount
 }
 
 pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
-    let aligned: &mut [T] = unsafe { mem::transmute(&mut mem[addr as usize..]) };
-    aligned[0] = value;
+    unsafe { (mem.as_mut_ptr().add(addr as usize) as *mut T).write(value) }
 }
 
 pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) -> usize {
-    let aligned: &mut [T] = unsafe { mem::transmute(&mut mem[addr as usize..]) };
-    let write_amount = cmp::min(aligned.len(), slice.len());
-    aligned[..write_amount].copy_from_slice(&slice[..write_amount]);
+    let write_amount = cmp::min(mem.len() / mem::size_of::<T>(), slice.len());
+    unsafe { (mem.as_mut_ptr().add(addr as usize) as *mut T).copy_from(slice.as_ptr(), write_amount) };
     write_amount
 }
 

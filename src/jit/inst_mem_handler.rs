@@ -1,8 +1,10 @@
 use crate::emu::emu::{get_mem, get_regs_mut};
 use crate::emu::CpuType;
 use crate::emu::CpuType::ARM7;
+use crate::jit::jit_asm::JitAsm;
 use crate::jit::MemoryAmount;
 use crate::DEBUG_LOG_BRANCH_OUT;
+use handler::*;
 use std::intrinsics::unlikely;
 
 mod handler {
@@ -14,7 +16,6 @@ mod handler {
     use crate::logging::debug_println;
     use std::intrinsics::{likely, unlikely};
 
-    #[inline(never)]
     pub fn handle_request<const CPU: CpuType, const WRITE: bool, const AMOUNT: MemoryAmount, const SIGNED: bool, const MMU: bool>(op0: &mut u32, addr: u32, emu: &mut Emu) {
         if WRITE {
             match AMOUNT {
@@ -63,7 +64,6 @@ mod handler {
         }
     }
 
-    #[inline(never)]
     pub fn handle_multiple_request<const CPU: CpuType, const THUMB: bool, const WRITE: bool, const USER: bool, const PRE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(
         pc: u32,
         rlist: u16,
@@ -140,7 +140,6 @@ mod handler {
         }
     }
 
-    #[inline(never)]
     pub fn handle_swp_request<const CPU: CpuType, const AMOUNT: MemoryAmount>(regs: u32, emu: &mut Emu) {
         let op0 = Reg::from((regs & 0xFF) as u8);
         let op1 = Reg::from(((regs >> 8) & 0xFF) as u8);
@@ -158,8 +157,6 @@ mod handler {
         }
     }
 }
-use crate::jit::jit_asm::JitAsm;
-use handler::*;
 
 macro_rules! imm_breakout {
     ($asm:expr, $pc:expr, $thumb:expr) => {{
