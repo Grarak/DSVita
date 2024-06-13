@@ -2,7 +2,7 @@ use crate::emu::emu::get_regs;
 use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
-use crate::jit::jit_asm::JitAsm;
+use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::reg::Reg;
 use crate::jit::Op;
 use crate::DEBUG_LOG_BRANCH_OUT;
@@ -93,7 +93,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 opcodes.extend(&AluImm::mov32(Reg::R0, pc));
                 opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::LR));
             }
-            opcodes.push(LdrStrImmSBHD::strh_al(Reg::R3, Reg::LR, 4));
+            opcodes.push(LdrStrImmSBHD::strh_al(Reg::R3, Reg::LR, JitRuntimeData::get_total_cycles_offset()));
 
             Self::emit_host_bx(self.breakout_skip_save_regs_thumb_addr, opcodes);
         }

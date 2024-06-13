@@ -687,7 +687,6 @@ impl Gpu2dProgram {
         }
 
         for (bg, mode) in bg_modes.iter().enumerate() {
-            let bg_cnt = regs.bg_cnts[from_line as usize * 4 + bg];
             if *mode == 1 || *mode == 3 {
                 panic!("bg {bg} mode {mode}");
             }

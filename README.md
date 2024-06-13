@@ -27,7 +27,7 @@ This runs some games, however following things are missing:
 ## Credits
 
 - [NooDS](https://github.com/Hydr8gon/NooDS) was used as reference. A lot of code was taken from there.
-- [melonDS](https://github.com/melonDS-emu/melonDS) for ARM7 HLE implementation.
+- [melonDS](https://github.com/melonDS-emu/melonDS) for ARM7 HLE implementation and jit optimizations.
 - [DesmumePSPExperimental](https://github.com/Xiro28/DesmumePSPExperimental) for ARM7 HLE implementation.
 - [pokediamond](https://github.com/pret/pokediamond) for ARM7 HLE implementation.
 - [DSHBA](https://github.com/DenSinH/DSHBA) Copied some PPU hardware acceleration implementation (Thanks for xiro28 linking me the repo)

@@ -102,14 +102,22 @@ impl JitBuf {
 pub struct JitRuntimeData {
     pub branch_out_pc: u32,
     pub branch_out_total_cycles: u16,
+    pub idle_loop: bool,
 }
 
 impl JitRuntimeData {
-    fn new() -> JitRuntimeData {
-        JitRuntimeData {
+    fn new() -> Self {
+        let instance = JitRuntimeData {
             branch_out_pc: u32::MAX,
             branch_out_total_cycles: 0,
-        }
+            idle_loop: false,
+        };
+        let branch_out_pc_ptr = ptr::addr_of!(instance.branch_out_pc) as u32;
+        let branch_out_total_cycles_ptr = ptr::addr_of!(instance.branch_out_total_cycles) as u32;
+        let idle_loop_ptr = ptr::addr_of!(instance.idle_loop) as u32;
+        assert_eq!(branch_out_total_cycles_ptr - branch_out_pc_ptr, 4);
+        assert_eq!(idle_loop_ptr - branch_out_total_cycles_ptr, 2);
+        instance
     }
 
     pub fn get_branch_out_addr(&self) -> *const u32 {
@@ -118,6 +126,14 @@ impl JitRuntimeData {
 
     pub fn emit_get_branch_out_addr(&self, dest: Reg) -> Vec<u32> {
         AluImm::mov32(dest, self.get_branch_out_addr() as u32)
+    }
+
+    pub const fn get_total_cycles_offset() -> u8 {
+        4
+    }
+
+    pub const fn get_idle_loop_offset() -> u8 {
+        Self::get_total_cycles_offset() + 2
     }
 }
 
@@ -368,7 +384,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 opcodes.extend(&AluImm::mov32(Reg::R0, new_pc - if THUMB { 2 } else { 4 }));
                 opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::R1));
             }
-            opcodes.push(LdrStrImmSBHD::strh_al(Reg::R4, Reg::R1, 4));
+            opcodes.push(LdrStrImmSBHD::strh_al(Reg::R4, Reg::R1, JitRuntimeData::get_total_cycles_offset()));
 
             if THUMB {
                 opcodes.extend(&AluImm::mov32(Reg::R2, new_pc + 1));

@@ -5,7 +5,7 @@ use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
 use crate::jit::inst_cp15_handler::{cp15_read, cp15_write};
 use crate::jit::inst_cpu_regs_handler::cpu_regs_halt;
-use crate::jit::jit_asm::JitAsm;
+use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::reg::Reg;
 use crate::jit::Op;
 use crate::DEBUG_LOG_BRANCH_OUT;
@@ -25,7 +25,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             opcodes.extend(AluImm::mov32(Reg::R0, pc));
             opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::R1));
         }
-        opcodes.push(LdrStrImmSBHD::strh_al(Reg::R4, Reg::R1, 4));
+        opcodes.push(LdrStrImmSBHD::strh_al(Reg::R4, Reg::R1, JitRuntimeData::get_total_cycles_offset()));
 
         opcodes.extend(AluImm::mov32(Reg::R2, pc + 4));
         opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R2, Reg::R3));

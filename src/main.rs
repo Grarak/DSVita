@@ -178,7 +178,11 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     let cm = &mut get_common_mut!(emu).cycle_manager;
 
     loop {
-        let arm9_cycles = if likely(!cpu_regs_arm9.is_halted()) { (jit_asm_arm9.execute() + 1) >> 1 } else { 0 };
+        let arm9_cycles = if likely(!cpu_regs_arm9.is_halted() && !jit_asm_arm9.runtime_data.idle_loop) {
+            (jit_asm_arm9.execute() + 1) >> 1
+        } else {
+            0
+        };
 
         if ARM7_HLE {
             if unlikely(arm9_cycles == 0) {
@@ -187,7 +191,11 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
                 cm.add_cycle(arm9_cycles);
             }
         } else {
-            let arm7_cycles = if likely(!cpu_regs_arm7.is_halted()) { jit_asm_arm7.execute() } else { 0 };
+            let arm7_cycles = if likely(!cpu_regs_arm7.is_halted() && !jit_asm_arm7.runtime_data.idle_loop) {
+                jit_asm_arm7.execute()
+            } else {
+                0
+            };
 
             let cycles = min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);
             if unlikely(cycles == 0) {
@@ -197,7 +205,10 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
             }
         }
 
-        cm.check_events(jit_asm_arm9.emu);
+        if unlikely(cm.check_events(jit_asm_arm9.emu)) {
+            jit_asm_arm9.runtime_data.idle_loop = false;
+            jit_asm_arm7.runtime_data.idle_loop = false;
+        }
     }
 }
 

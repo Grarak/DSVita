@@ -44,12 +44,14 @@ impl CycleManager {
     }
 
     #[inline(always)]
-    pub fn check_events(&mut self, emu: &mut Emu) {
+    pub fn check_events(&mut self, emu: &mut Emu) -> bool {
         let cycle_count = self.cycle_count;
+        let mut event_triggered = false;
         while {
             let (cycles, _) = unsafe { self.events.front().unwrap_unchecked() };
             unlikely(*cycles <= cycle_count)
         } {
+            event_triggered = true;
             let (cycles, event) = unsafe { self.events.pop_front().unwrap_unchecked() };
             match event {
                 EventType::CpuInterruptArm9 => CpuRegs::on_interrupt_event::<{ ARM9 }>(emu),
@@ -67,6 +69,7 @@ impl CycleManager {
                 EventType::TimerArm7(channel) => Timers::on_overflow_event::<{ ARM7 }>(cycles, channel, emu),
             }
         }
+        event_triggered
     }
 
     pub fn schedule(&mut self, in_cycles: u32, event_type: EventType) -> u64 {

@@ -3,7 +3,7 @@ use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
-use crate::jit::jit_asm::JitAsm;
+use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op};
 use crate::DEBUG_LOG_BRANCH_OUT;
@@ -45,7 +45,18 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             opcodes.extend(AluImm::mov32(Reg::R8, pc));
             opcodes.push(LdrStrImm::str_al(Reg::R8, Reg::R9));
         }
-        opcodes.push(LdrStrImmSBHD::strh_al(Reg::R11, Reg::R9, 4));
+        opcodes.push(LdrStrImmSBHD::strh_al(Reg::R11, Reg::R9, JitRuntimeData::get_total_cycles_offset()));
+
+        if (cond as u8) < (Cond::AL as u8) && new_pc < pc {
+            let diff = (pc - new_pc) >> 1;
+            if diff as usize <= buf_index {
+                let jump_to_index = buf_index - diff as usize;
+                if Self::is_idle_loop(&self.jit_buf.instructions[jump_to_index..buf_index + 1]) {
+                    opcodes.push(AluImm::mov_al(Reg::R11, 1));
+                    opcodes.push(LdrStrImm::strb_offset_al(Reg::R11, Reg::R9, JitRuntimeData::get_idle_loop_offset() as u16));
+                }
+            }
+        }
 
         opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R10, Reg::R11));
 
@@ -86,7 +97,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             opcodes.extend(AluImm::mov32(Reg::R10, pc));
             opcodes.push(LdrStrImm::str_al(Reg::R10, Reg::R11));
         }
-        opcodes.push(LdrStrImmSBHD::strh_al(Reg::R9, Reg::R11, 4));
+        opcodes.push(LdrStrImmSBHD::strh_al(Reg::R9, Reg::R11, JitRuntimeData::get_total_cycles_offset()));
 
         if inst_info.op == Op::BlxOffT {
             opcodes.extend(AluImm::mov32(Reg::R9, *op0));
@@ -128,7 +139,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if DEBUG_LOG_BRANCH_OUT {
             opcodes.push(LdrStrImm::str_al(pc_tmp_reg, tmp_reg));
         }
-        opcodes.push(LdrStrImmSBHD::strh_al(tmp_reg2, tmp_reg, 4));
+        opcodes.push(LdrStrImmSBHD::strh_al(tmp_reg2, tmp_reg, JitRuntimeData::get_total_cycles_offset()));
 
         if op0.is_emulated() {
             let thread_regs = get_regs!(self.emu, CPU);

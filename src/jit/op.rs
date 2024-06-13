@@ -612,6 +612,36 @@ pub enum Op {
 }
 
 impl Op {
+    pub const fn is_branch(self) -> bool {
+        matches!(
+            self,
+            Op::Bx
+                | Op::BlxReg
+                | Op::B
+                | Op::Bl
+                | Op::Blx
+                | Op::BxRegT
+                | Op::BlxRegT
+                | Op::BT
+                | Op::BeqT
+                | Op::BneT
+                | Op::BcsT
+                | Op::BccT
+                | Op::BmiT
+                | Op::BplT
+                | Op::BvsT
+                | Op::BvcT
+                | Op::BhiT
+                | Op::BlsT
+                | Op::BgeT
+                | Op::BltT
+                | Op::BgtT
+                | Op::BleT
+                | Op::BlOffT
+                | Op::BlxOffT
+        )
+    }
+
     pub const fn is_single_mem_transfer(self) -> bool {
         matches!(
             self,

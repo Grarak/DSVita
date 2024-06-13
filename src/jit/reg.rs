@@ -266,6 +266,12 @@ impl ops::BitAndAssign<Reg> for RegReserve {
     }
 }
 
+impl ops::BitOrAssign for RegReserve {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
 impl From<u32> for RegReserve {
     fn from(value: u32) -> Self {
         RegReserve(value)
