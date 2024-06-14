@@ -6,7 +6,7 @@ use crate::jit::jit_asm::JitAsm;
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_swi<const THUMB: bool>(&mut self, buf_index: usize, pc: u32) {
         let jit_asm_addr = self as *mut _ as _;
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
 
         self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
             |_, _| {},

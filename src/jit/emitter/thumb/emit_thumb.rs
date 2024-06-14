@@ -9,7 +9,7 @@ use crate::DEBUG_LOG_BRANCH_OUT;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_thumb(&mut self, buf_index: usize, pc: u32) {
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
         let op = inst_info.op;
         let out_regs = inst_info.out_regs;
 

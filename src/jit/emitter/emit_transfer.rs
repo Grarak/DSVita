@@ -48,7 +48,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let jit_asm_addr = self as *mut _ as _;
 
         let after_host_restore = |asm: &Self, opcodes: &mut Vec<u32>| {
-            let inst_info = &asm.jit_buf.instructions[buf_index];
+            let inst_info = &asm.jit_buf.insts[buf_index];
 
             let operands = inst_info.operands();
             let op0 = *operands[0].as_reg_no_shift().unwrap();
@@ -158,7 +158,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
         };
 
-        let func_addr = Self::get_inst_mem_handler_func::<THUMB, WRITE, true>(self.jit_buf.instructions[buf_index].op, amount);
+        let func_addr = Self::get_inst_mem_handler_func::<THUMB, WRITE, true>(self.jit_buf.insts[buf_index].op, amount);
 
         self.jit_buf
             .emit_opcodes
@@ -167,7 +167,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
     pub fn emit_single_read_transfer<const THUMB: bool, const WRITE_BACK: bool, const PRE: bool>(&mut self, buf_index: usize, pc: u32, amount: MemoryAmount) {
         let jit_asm_addr = self as *mut _ as _;
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
         let mut opcodes = Vec::new();
 
         let operands = inst_info.operands();
@@ -418,7 +418,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
     pub fn emit_multiple_transfer<const THUMB: bool>(&mut self, buf_index: usize, pc: u32) {
         let jit_asm_addr = self as *mut _ as _;
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
 
         let mut rlist = RegReserve::from(inst_info.opcode & if THUMB { 0xFF } else { 0xFFFF });
         if inst_info.op == Op::PushLrT {
@@ -517,18 +517,18 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn emit_str(&mut self, buf_index: usize, pc: u32) {
-        let op = self.jit_buf.instructions[buf_index].op;
+        let op = self.jit_buf.insts[buf_index].op;
         self.emit_single_transfer::<false, true>(buf_index, pc, op.mem_transfer_pre(), op.mem_transfer_write_back(), MemoryAmount::from(op));
     }
 
     pub fn emit_ldr(&mut self, buf_index: usize, pc: u32) {
-        let op = self.jit_buf.instructions[buf_index].op;
+        let op = self.jit_buf.insts[buf_index].op;
         self.emit_single_transfer::<false, false>(buf_index, pc, op.mem_transfer_pre(), op.mem_transfer_write_back(), MemoryAmount::from(op));
     }
 
     pub fn emit_swp(&mut self, buf_index: usize, pc: u32) {
         let jit_asm_addr = self as *mut _ as _;
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
         let operands = inst_info.operands();
         let op0 = *operands[0].as_reg_no_shift().unwrap();
         let op1 = *operands[1].as_reg_no_shift().unwrap();

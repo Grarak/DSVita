@@ -11,11 +11,11 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_msr(&mut self, buf_index: usize, _: u32) {
         let regs_addr = get_regs_mut!(self.emu, CPU) as *mut _ as _;
         let cm_addr = get_cm_mut!(self.emu) as *mut _ as _;
-        let op = self.jit_buf.instructions[buf_index].op;
+        let op = self.jit_buf.insts[buf_index].op;
 
         self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
             |asm, opcodes| {
-                let inst_info = &asm.jit_buf.instructions[buf_index];
+                let inst_info = &asm.jit_buf.insts[buf_index];
 
                 match &inst_info.operands()[0] {
                     Operand::Reg { reg, .. } => {
@@ -42,7 +42,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn emit_mrs(&mut self, buf_index: usize, _: u32) {
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
 
         let opcodes = &mut self.jit_buf.emit_opcodes;
 

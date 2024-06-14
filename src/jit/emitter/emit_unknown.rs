@@ -8,7 +8,7 @@ use crate::DEBUG_LOG_BRANCH_OUT;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_unknown(&mut self, buf_index: usize, pc: u32) {
-        let opcode = self.jit_buf.instructions[buf_index].opcode;
+        let opcode = self.jit_buf.insts[buf_index].opcode;
         if opcode == 0xEC000000 {
             let opcodes = &mut self.jit_buf.emit_opcodes;
             opcodes.extend(&self.restore_host_opcodes);

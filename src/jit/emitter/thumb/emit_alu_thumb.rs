@@ -8,7 +8,7 @@ use crate::jit::{Cond, Op, ShiftType};
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_alu_common_thumb(&mut self, buf_index: usize, pc: u32) {
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
 
         let operands = inst_info.operands();
         let op0 = *operands[0].as_reg_no_shift().unwrap();
@@ -81,7 +81,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn emit_add_sp_imm_thumb(&mut self, buf_index: usize, _: u32) {
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
 
         let imm = *inst_info.operands()[1].as_imm().unwrap();
         let sub = inst_info.opcode & (1 << 7) != 0;
@@ -96,7 +96,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn emit_add_h_thumb(&mut self, buf_index: usize, pc: u32) {
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
 
         let operands = inst_info.operands();
         let og_op0 = operands[0].as_reg_no_shift().unwrap();
@@ -140,7 +140,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn emit_cmp_h_thumb(&mut self, buf_index: usize, pc: u32) {
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
 
         let operands = inst_info.operands();
         let mut op1 = *operands[0].as_reg_no_shift().unwrap();
@@ -178,7 +178,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn emit_movh_thumb(&mut self, buf_index: usize, pc: u32) {
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
 
         let operands = inst_info.operands();
         let op0 = operands[0].as_reg_no_shift().unwrap();

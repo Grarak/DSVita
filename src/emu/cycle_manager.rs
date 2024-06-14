@@ -10,6 +10,7 @@ use crate::emu::CpuType::{ARM7, ARM9};
 use std::collections::VecDeque;
 use std::intrinsics::unlikely;
 
+#[derive(Debug)]
 pub enum EventType {
     CpuInterruptArm9,
     CpuInterruptArm7,
@@ -39,8 +40,8 @@ impl CycleManager {
         }
     }
 
-    pub fn add_cycle(&mut self, cycles_to_add: u16) {
-        self.cycle_count += cycles_to_add as u64;
+    pub fn next_event_in_cycles(&self) -> u16 {
+        ((unsafe { self.events.front().unwrap_unchecked().0 }) - self.cycle_count) as u16
     }
 
     #[inline(always)]

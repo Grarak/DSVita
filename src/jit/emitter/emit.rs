@@ -12,7 +12,7 @@ use crate::DEBUG_LOG_BRANCH_OUT;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit(&mut self, buf_index: usize, pc: u32) {
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
         let op = inst_info.op;
         let cond = inst_info.cond;
         let out_regs = inst_info.out_regs;
@@ -136,7 +136,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn handle_emulated_regs(&mut self, buf_index: usize, pc: u32) {
-        let og_inst_info = &self.jit_buf.instructions[buf_index].clone();
+        let og_inst_info = &self.jit_buf.insts[buf_index].clone();
         let mut inst_info = og_inst_info.clone();
 
         let opcodes = &mut self.jit_buf.emit_opcodes;

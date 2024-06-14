@@ -2,10 +2,12 @@ use crate::emu::emu::{get_jit, get_jit_mut, get_mem_mut, get_regs, get_regs_mut,
 use crate::emu::thread_regs::ThreadRegs;
 use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
+use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, Msr};
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
+use crate::jit::emitter::emit_branch::LOCAL_BRANCH_INDICATOR;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_memory::{JitInsertArgs, JIT_BLOCK_SIZE};
 use crate::jit::reg::Reg;
@@ -72,29 +74,32 @@ impl HostRegs {
 }
 
 pub struct JitBuf {
-    pub instructions: Vec<InstInfo>,
+    pub insts: Vec<InstInfo>,
     pub emit_opcodes: Vec<u32>,
     pub block_opcodes: Vec<u32>,
     pub jit_addr_offsets: Vec<u16>,
     pub insts_cycle_counts: Vec<u16>,
+    pub local_branches: Vec<(u32, u32)>,
 }
 
 impl JitBuf {
     fn new() -> Self {
         JitBuf {
-            instructions: Vec::new(),
+            insts: Vec::new(),
             emit_opcodes: Vec::new(),
             block_opcodes: Vec::new(),
             jit_addr_offsets: Vec::new(),
             insts_cycle_counts: Vec::new(),
+            local_branches: Vec::new(),
         }
     }
 
     fn clear_all(&mut self) {
-        self.instructions.clear();
+        self.insts.clear();
         self.block_opcodes.clear();
         self.jit_addr_offsets.clear();
         self.insts_cycle_counts.clear();
+        self.local_branches.clear();
     }
 }
 
@@ -102,6 +107,9 @@ impl JitBuf {
 pub struct JitRuntimeData {
     pub branch_out_pc: u32,
     pub branch_out_total_cycles: u16,
+    pub pre_cycle_count_sum: u16,
+    pub accumulated_cycles: u16,
+    pub next_event_in_cycles: u16,
     pub idle_loop: bool,
 }
 
@@ -110,13 +118,16 @@ impl JitRuntimeData {
         let instance = JitRuntimeData {
             branch_out_pc: u32::MAX,
             branch_out_total_cycles: 0,
+            pre_cycle_count_sum: 0,
+            accumulated_cycles: 0,
+            next_event_in_cycles: 0,
             idle_loop: false,
         };
         let branch_out_pc_ptr = ptr::addr_of!(instance.branch_out_pc) as u32;
         let branch_out_total_cycles_ptr = ptr::addr_of!(instance.branch_out_total_cycles) as u32;
         let idle_loop_ptr = ptr::addr_of!(instance.idle_loop) as u32;
         assert_eq!(branch_out_total_cycles_ptr - branch_out_pc_ptr, 4);
-        assert_eq!(idle_loop_ptr - branch_out_total_cycles_ptr, 2);
+        assert_eq!(idle_loop_ptr - branch_out_total_cycles_ptr, 8);
         instance
     }
 
@@ -133,7 +144,7 @@ impl JitRuntimeData {
     }
 
     pub const fn get_idle_loop_offset() -> u8 {
-        Self::get_total_cycles_offset() + 2
+        Self::get_total_cycles_offset() + 8
     }
 }
 
@@ -152,7 +163,6 @@ pub struct JitAsm<'a, const CPU: CpuType> {
     pub restore_guest_opcodes: Vec<u32>,
     pub restore_host_thumb_opcodes: Vec<u32>,
     pub restore_guest_thumb_opcodes: Vec<u32>,
-    pub restore_host_no_save_opcodes: Vec<u32>,
     debug_regs: DebugRegs,
 }
 
@@ -201,8 +211,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 opcodes
             };
 
-            let restore_host_no_save_opcodes = host_regs.emit_restore_sp();
-
             JitAsm {
                 emu,
                 jit_buf: JitBuf::new(),
@@ -218,7 +226,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 restore_guest_opcodes,
                 restore_host_thumb_opcodes,
                 restore_guest_thumb_opcodes,
-                restore_host_no_save_opcodes,
                 debug_regs: DebugRegs::default(),
             }
         };
@@ -320,7 +327,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 } else {
                     self.jit_buf.insts_cycle_counts.push(inst_info.cycle as u16);
                 }
-                self.jit_buf.instructions.push(inst_info);
+                self.jit_buf.insts.push(inst_info);
 
                 index += if THUMB { 2 } else { 4 };
                 if index == JIT_BLOCK_SIZE {
@@ -329,13 +336,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
         }
 
-        for i in 0..self.jit_buf.instructions.len() {
+        for i in 0..self.jit_buf.insts.len() {
             let pc = ((i as u32) << if THUMB { 1 } else { 2 }) + guest_pc_block_base;
             let opcodes_len = self.jit_buf.block_opcodes.len();
             assert!((opcodes_len << 2) <= u16::MAX as usize);
             self.jit_buf.jit_addr_offsets.push((opcodes_len << 2) as u16);
 
-            debug_println!("{:?} emitting {:?}", CPU, self.jit_buf.instructions[i]);
+            debug_println!("{:?} emitting {:?}", CPU, self.jit_buf.insts[i]);
 
             if THUMB {
                 self.emit_thumb(i, pc);
@@ -344,7 +351,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             };
 
             if DEBUG_LOG {
-                let inst_info = &self.jit_buf.instructions[i];
+                let inst_info = &self.jit_buf.insts[i];
 
                 let jit_asm_addr = self as *const _ as u32;
                 let opcodes = &mut self.jit_buf.emit_opcodes;
@@ -400,6 +407,19 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
         }
 
+        for (pc, pc_to_branch) in &self.jit_buf.local_branches {
+            let base_index = ((pc - guest_pc_block_base) >> if THUMB { 1 } else { 2 }) as usize;
+            let branch_to_index = ((pc_to_branch - guest_pc_block_base) >> if THUMB { 1 } else { 2 }) as usize;
+            let base_offset = (self.jit_buf.jit_addr_offsets[base_index] >> 2) as usize;
+            let branch_to_offset = (self.jit_buf.jit_addr_offsets[branch_to_index] >> 2) as usize;
+
+            let branch_inst_offset = self.jit_buf.block_opcodes[base_offset..].iter().position(|opcode| *opcode == LOCAL_BRANCH_INDICATOR).unwrap();
+
+            let offset = branch_to_offset as i32 - (base_offset as i32 + branch_inst_offset as i32);
+
+            self.jit_buf.block_opcodes[base_offset + branch_inst_offset] = B::b(offset - 2, Cond::AL);
+        }
+
         // TODO statically analyze generated insts
 
         get_jit_mut!(self.emu).insert_block::<CPU, THUMB>(
@@ -408,7 +428,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         );
 
         if DEBUG_LOG {
-            for (index, inst_info) in self.jit_buf.instructions.iter().enumerate() {
+            for (index, inst_info) in self.jit_buf.insts.iter().enumerate() {
                 let pc = ((index as u32) << if THUMB { 1 } else { 2 }) + guest_pc_block_base;
                 let (jit_addr, _) = get_jit!(self.emu).get_jit_start_addr::<CPU, THUMB>(pc).unwrap();
 
@@ -419,8 +439,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     #[inline(always)]
-    pub fn execute(&mut self) -> u16 {
+    pub fn execute(&mut self, next_event_in_cycles: u16) -> u16 {
         let entry = get_regs!(self.emu, CPU).pc;
+        self.runtime_data.next_event_in_cycles = next_event_in_cycles;
 
         let thumb = (entry & 1) == 1;
         debug_println!("{:?} Execute {:x} thumb {}", CPU, entry, thumb);
@@ -452,6 +473,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.runtime_data.branch_out_pc = u32::MAX;
             self.runtime_data.branch_out_total_cycles = 0;
         }
+        let (pre_cycle_count_sum, _) = get_jit!(self.emu).get_cycle_counts_unchecked::<THUMB>(guest_pc, jit_block_addr);
+        self.runtime_data.pre_cycle_count_sum = pre_cycle_count_sum;
+        self.runtime_data.accumulated_cycles = 0;
 
         get_mem_mut!(self.emu).current_mode_is_thumb = THUMB;
         get_mem_mut!(self.emu).current_jit_block_addr = jit_block_addr;
@@ -470,10 +494,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             correction
         };
 
-        let (pre_cycle_count_sum, _) = get_jit!(self.emu).get_cycle_counts_unchecked::<THUMB>(guest_pc, jit_block_addr);
-
         let executed_cycles = (self.runtime_data.branch_out_total_cycles
-            - pre_cycle_count_sum
+            - self.runtime_data.pre_cycle_count_sum + self.runtime_data.accumulated_cycles
             // + 2 for branching out
             + 2) as i16
             + cycle_correction;

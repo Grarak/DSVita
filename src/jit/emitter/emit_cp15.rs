@@ -42,7 +42,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let emu_addr = self.emu as *mut _ as _;
 
-        let inst_info = &self.jit_buf.instructions[buf_index];
+        let inst_info = &self.jit_buf.insts[buf_index];
 
         let rd = inst_info.operands()[0].as_reg_no_shift().unwrap();
         let cn = (inst_info.opcode >> 16) & 0xF;
