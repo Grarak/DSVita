@@ -227,6 +227,13 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
 // Must be pub for vita
 pub fn main() {
     set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core0);
+    #[cfg(target_os = "vita")]
+    unsafe {
+        vitasdk_sys::scePowerSetArmClockFrequency(444);
+        vitasdk_sys::scePowerSetGpuClockFrequency(222);
+        vitasdk_sys::scePowerSetBusClockFrequency(222);
+        vitasdk_sys::scePowerSetGpuXbarClockFrequency(166);
+    }
 
     if DEBUG_LOG {
         std::env::set_var("RUST_BACKTRACE", "full");

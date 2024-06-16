@@ -420,8 +420,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.jit_buf.block_opcodes[base_offset + branch_inst_offset] = B::b(offset - 2, Cond::AL);
         }
 
-        // TODO statically analyze generated insts
-
         get_jit_mut!(self.emu).insert_block::<CPU, THUMB>(
             &self.jit_buf.block_opcodes,
             JitInsertArgs::new(guest_pc_block_base, self.jit_buf.jit_addr_offsets.clone(), self.jit_buf.insts_cycle_counts.clone()),

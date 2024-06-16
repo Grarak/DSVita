@@ -42,6 +42,7 @@ vitasdk-sys = { version = "0.3.2", features = [
     "ScePgf_stub",
     "SceKernelDmacMgr_stub",
     "SceShaccCg_stub",
+    "ScePower_stub",
 ] }
 
 [profile.release]
