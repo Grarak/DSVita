@@ -13,8 +13,7 @@ uniform int bgCnts[4];
 uniform int bgModes[4];
 
 uniform BgUbo {
-    int bgHOfs[192 * 4];
-    int bgVOfs[192 * 4];
+    int bgOfs[192 * 4];
     float bgX[192 * 2];
     float bgY[192 * 2];
     float bgPas[192 * 2];
@@ -71,9 +70,10 @@ vec4 drawText(int x, int y, int bgNum) {
     int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
     int charAddr = ((dispCnt >> 8) & 0x70000) + ((bgCnt << 12) & 0x3C000);
 
-    x += bgHOfs[bgNum * 192 + y];
+    int of = bgOfs[bgNum * 192 + y];
+    x += of & 0xFFFF;
     x &= 0x1FF;
-    y += bgVOfs[bgNum * 192 + y];
+    y += of >> 16;
     y &= 0x1FF;
 
     // 512 Width

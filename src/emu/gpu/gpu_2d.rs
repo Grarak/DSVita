@@ -7,6 +7,7 @@ use crate::logging::debug_println;
 use crate::utils;
 use crate::utils::{HeapMemI8, HeapMemU32};
 use bilge::prelude::*;
+use std::cmp::min;
 use std::hint::unreachable_unchecked;
 use std::marker::ConstParamTy;
 use std::ops::Deref;
@@ -88,28 +89,22 @@ impl Default for BgCnt {
 }
 
 #[bitsize(16)]
-#[derive(Copy, Clone, FromBits)]
+#[derive(FromBits)]
 struct BldCnt {
-    bg0_1st_target_pixel: u1,
-    bg1_1st_target_pixel: u1,
-    bg2_1st_target_pixel: u1,
-    bg3_1st_target_pixel: u1,
-    obj_1st_target_pixel: u1,
-    bd_1st_target_pixel: u1,
+    bg0_1st_target_pixel: bool,
+    bg1_1st_target_pixel: bool,
+    bg2_1st_target_pixel: bool,
+    bg3_1st_target_pixel: bool,
+    obj_1st_target_pixel: bool,
+    bd_1st_target_pixel: bool,
     color_special_effect: u2,
-    bg0_2nc_target_pixel: u1,
-    bg1_2nc_target_pixel: u1,
-    bg2_2nc_target_pixel: u1,
-    bg3_2nc_target_pixel: u1,
-    obj_2nc_target_pixel: u1,
-    bd_2nc_target_pixel: u1,
+    bg0_2nc_target_pixel: bool,
+    bg1_2nc_target_pixel: bool,
+    bg2_2nc_target_pixel: bool,
+    bg3_2nc_target_pixel: bool,
+    obj_2nc_target_pixel: bool,
+    bd_2nc_target_pixel: bool,
     not_used: u2,
-}
-
-impl Default for BldCnt {
-    fn default() -> Self {
-        BldCnt::from(0)
-    }
 }
 
 #[derive(ConstParamTy, Debug, Eq, PartialEq)]
@@ -141,8 +136,9 @@ pub struct Gpu2DInner {
     pub bg_y: [i32; 2],
     pub bg_x_dirty: bool,
     pub bg_y_dirty: bool,
-    bld_cnt: BldCnt,
-    bld_alpha: u16,
+    pub bld_cnt: u16,
+    pub bld_alpha: u16,
+    pub bld_y: u8,
     pub win_h: [u16; 2],
     pub win_v: [u16; 2],
     win_x1: [u8; 2],
@@ -311,7 +307,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
     }
 
     pub fn get_bld_cnt(&self) -> u16 {
-        self.inner.bld_cnt.into()
+        self.inner.bld_cnt
     }
 
     pub fn get_bld_alpha(&self) -> u16 {
@@ -437,12 +433,17 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
 
     pub fn set_bld_cnt(&mut self, mut mask: u16, value: u16) {
         mask &= 0x3FFF;
-        self.inner.bld_cnt = ((u16::from(self.inner.bld_cnt) & !mask) | (value & mask)).into();
+        self.inner.bld_cnt = (self.inner.bld_cnt & !mask) | (value & mask);
     }
 
-    pub fn set_bld_alpha(&mut self, mask: u16, value: u16) {}
+    pub fn set_bld_alpha(&mut self, mut mask: u16, value: u16) {
+        mask &= 0x1F1F;
+        self.inner.bld_alpha = (self.inner.bld_alpha & !mask) | (value & mask);
+    }
 
-    pub fn set_bld_y(&mut self, value: u8) {}
+    pub fn set_bld_y(&mut self, value: u8) {
+        self.inner.bld_y = min(value & 0x1F, 16);
+    }
 
     pub fn set_master_bright(&mut self, mask: u16, value: u16) {}
 
@@ -500,7 +501,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         let blend_bits_a = self.layers.get_blend_bits_mut::<{ Gpu2DLayer::A }>();
         let blend_bits_b = self.layers.get_blend_bits_mut::<{ Gpu2DLayer::B }>();
 
-        let bld_mode = u8::from(self.inner.bld_cnt.color_special_effect());
+        let bld_mode = u8::from(BldCnt::from(self.inner.bld_cnt).color_special_effect());
         let bld_cnt_raw = u16::from(self.inner.bld_cnt);
 
         for i in 0..DISPLAY_WIDTH {
