@@ -49,6 +49,9 @@ fn main() {
             ("SHADER_COMPILER_SPEEDHACK", "1"),
             ("SAMPLERS_SPEEDHACK", "1"),
             ("MATH_SPEEDHACK", "1"),
+            // ("HAVE_SHARK_LOG", "1"),
+            // ("LOG_ERRORS", "1"),
+            // ("HAVE_RAZOR", "1"),
         ])
         .status()
         .unwrap();

@@ -3,6 +3,7 @@ use crate::emu::input;
 use crate::presenter::menu::Menu;
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
 use crate::utils::BuildNoHasher;
+use gl::types::GLuint;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::mouse::MouseButton;
@@ -167,4 +168,8 @@ impl Presenter {
     }
 
     pub fn wait_vsync(&self) {}
+
+    pub fn gl_create_depth_tex() -> GLuint {
+        0
+    }
 }

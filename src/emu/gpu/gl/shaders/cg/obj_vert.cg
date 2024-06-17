@@ -1,10 +1,11 @@
-uniform sampler2D oamTex : TEXUNIT0;
-
+float4 out gl_Position : POSITION;
 float3 out objPos : TEXCOORD0;
 float2 out objDims : TEXCOORD1;
-uniform int dispCnt;
+float2 out screenPosF : TEXCOORD2;
 
-float4 out gl_Position : POSITION;
+uniform sampler2D oamTex : TEXUNIT0;
+
+uniform int dispCnt;
 
 short readOam16Aligned(short addr) {
     float x = float(addr >> 2) / 255.0f;
@@ -86,6 +87,8 @@ void main(float2 position, float oamIndex) {
     float x = float(oamX) + oamWidth * position.x;
     float y = float(oamY) + oamHeight * position.y;
 
-    int priority = (attrib2 >> 10) & 3;
-    gl_Position = float4(x / 256.0 * 2.0 - 1.0, 1.0 - y / 192.0 * 2.0, float(priority) / 5.0, 1.0);
+    screenPosF = float2(x / 256.0, y / 192.0);
+
+    short priority = short((attrib2 >> 10) & 3);
+    gl_Position = float4(screenPosF.x * 2.0 - 1.0, 1.0 - screenPosF.y * 2.0, float(priority) / 4.0, 1.0);
 }

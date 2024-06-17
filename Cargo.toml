@@ -22,7 +22,7 @@ gl = { git = "https://github.com/bjz/gl-rs" }
 
 [target.armv7-unknown-linux-gnueabihf.dependencies]
 libc = "0.2.153"
-sdl2 = "0.36.0"
+sdl2 = "0.37.0"
 
 [build-dependencies]
 bindgen = "0.69.4"
@@ -43,6 +43,7 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceKernelDmacMgr_stub",
     "SceShaccCg_stub",
     "ScePower_stub",
+#    "SceRazorCapture_stub",
 ] }
 
 [profile.release]

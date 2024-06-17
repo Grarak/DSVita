@@ -258,7 +258,7 @@ impl Gpu {
                 gpu.gpu_2d_b.reload_registers();
 
                 let gpu_2d_renderer = unsafe { gpu.gpu_2d_renderer.unwrap_unchecked().as_mut() };
-                // gpu_2d_renderer.wait_for_drawing();
+                // gpu_2d_renderer.wait_for_swap();
                 gpu_2d_renderer.reload_registers();
 
                 if gpu.arm7_hle {

@@ -8,7 +8,7 @@ use crate::presenter::platform::imgui::{
     ImGui_Text, ImVec2,
 };
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
-use gl::types::GLboolean;
+use gl::types::{GLboolean, GLenum, GLuint};
 use std::ffi::CString;
 use std::mem::MaybeUninit;
 use std::ptr;
@@ -34,11 +34,13 @@ pub enum SharkOpt {
 #[link(name = "mathneon", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "vitashark", kind = "static", modifiers = "+whole-archive")]
 extern "C" {
-    pub fn vglInit(legacy_pool_size: c_int) -> GLboolean;
     pub fn vglGetProcAddress(name: *const c_char) -> *mut c_void;
     pub fn vglSwapBuffers(has_commondialog: GLboolean);
     pub fn vglSetupRuntimeShaderCompiler(opt_level: c_uint, use_fastmath: c_int, use_fastprecision: c_int, use_fastint: c_int);
     pub fn vglInitExtended(legacy_pool_size: c_int, width: c_int, height: c_int, ram_threshold: c_int, msaa: SceGxmMultisampleMode) -> GLboolean;
+    pub fn vglGetTexDataPointer(target: GLenum) -> *mut c_void;
+    pub fn vglFree(addr: *mut c_void);
+    pub fn vglTexImageDepthBuffer(target: GLenum);
 }
 
 const KEY_CODE_MAPPING: [(SceCtrlButtons, Keycode); 12] = [
@@ -86,9 +88,9 @@ pub struct Presenter {
 impl Presenter {
     pub fn new() -> Self {
         unsafe {
-            vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe as _, 1, 1, 1);
-            // vglInitExtended(0x800000, 960, 544, 0x1000000, SCE_GXM_MULTISAMPLE_NONE);
-            vglInit(0x800000);
+            vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe as _, 1, 0, 1);
+            // Disable multisampling for depth texture
+            vglInitExtended(0, 960, 544, 4 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
             gl::load_with(|name| {
                 let name = CString::new(name).unwrap();
                 vglGetProcAddress(name.as_ptr())
@@ -245,5 +247,16 @@ impl Presenter {
 
     pub fn wait_vsync(&self) {
         unsafe { sceDisplayWaitVblankStart() };
+    }
+
+    pub unsafe fn gl_create_depth_tex() -> GLuint {
+        let mut tex = 0;
+        gl::GenTextures(1, ptr::addr_of_mut!(tex));
+        gl::BindTexture(gl::TEXTURE_2D, tex);
+        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, 1, 1, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
+        vglFree(vglGetTexDataPointer(gl::TEXTURE_2D));
+        vglTexImageDepthBuffer(gl::TEXTURE_2D);
+        gl::BindTexture(gl::TEXTURE_2D, 0);
+        tex
     }
 }

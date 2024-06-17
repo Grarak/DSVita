@@ -1,10 +1,12 @@
+float3 in objPos : TEXCOORD0;
+float2 in objDims : TEXCOORD1;
+float2 in screenPosF : TEXCOORD2;
+
 uniform sampler2D oamTex : TEXUNIT0;
 uniform sampler2D objTex : TEXUNIT1;
 uniform sampler2D palTex : TEXUNIT2;
 uniform sampler2D extPalTex : TEXUNIT3;
-
-float3 in objPos : TEXCOORD0;
-float2 in objDims : TEXCOORD1;
+uniform sampler2D winTex : TEXUNIT4;
 
 uniform int dispCnt;
 uniform ObjUbo {
@@ -54,10 +56,10 @@ float3 normRgb5(short color) {
 }
 
 float4 drawSprite(short objX, short objY, short attrib0, short oamIndex) {
-    short attrib2 = readOam16Aligned(oamIndex * 8 + 4);
-
     short mapWidth = short(ObjUbo.mapWidths[oamIndex]);
     short objBound = short(ObjUbo.objBounds[oamIndex]);
+
+    short attrib2 = readOam16Aligned(oamIndex * 8 + 4);
 
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * objBound;
@@ -117,13 +119,24 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
+    short winEnabled = short(tex2D(winTex, screenPosF).x * 255.0);
+    if ((winEnabled & (1 << 4)) == 0) {
+        discard;
+    }
+
     short oamIndex = short(objPos.z);
 
     short attrib0 = readOam16Aligned(oamIndex * 8);
+
     bool isBitmap = (attrib0 & 0xC00) == 0xC00;
     if (isBitmap) {
         color = drawBitmap(objX, objY, oamIndex);
     } else {
         color = drawSprite(objX, objY, attrib0, oamIndex);
+    }
+
+    bool semiTransparent = ((attrib0 >> 10) & 3) == 1;
+    if (semiTransparent) {
+        color.a = 0.0;
     }
 }

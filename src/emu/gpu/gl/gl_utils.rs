@@ -1,3 +1,4 @@
+use crate::presenter::Presenter;
 use crate::utils::StrErr;
 use gl::types::{GLenum, GLuint};
 use std::ptr;
@@ -166,11 +167,25 @@ pub unsafe fn create_fb_color(width: u32, height: u32) -> GLuint {
     tex
 }
 
-pub unsafe fn create_fb_depth(width: u32, height: u32) -> GLuint {
-    let mut buf = 0;
-    gl::GenRenderbuffers(1, ptr::addr_of_mut!(buf));
-    gl::BindRenderbuffer(gl::RENDERBUFFER, buf);
-    gl::RenderbufferStorage(gl::RENDERBUFFER, gl::DEPTH_COMPONENT16, width as _, height as _);
-    gl::BindRenderbuffer(gl::RENDERBUFFER, 0);
-    buf
+pub unsafe fn create_fb_depth_tex(fbo: GLuint, width: u32, height: u32) -> GLuint {
+    gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
+    if cfg!(target_os = "linux") {
+        let mut tex = 0;
+        gl::GenTextures(1, ptr::addr_of_mut!(tex));
+        gl::BindTexture(gl::TEXTURE_2D, tex);
+        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::DEPTH_COMPONENT32F as _, width as _, height as _, 0, gl::DEPTH_COMPONENT, gl::FLOAT, ptr::null());
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as _);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as _);
+        gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::TEXTURE_2D, tex, 0);
+        tex
+    } else {
+        let mut buf = 0;
+        gl::GenRenderbuffers(1, ptr::addr_of_mut!(buf));
+        gl::BindRenderbuffer(gl::RENDERBUFFER, buf);
+        gl::RenderbufferStorage(gl::RENDERBUFFER, gl::DEPTH_COMPONENT, width as _, height as _);
+        gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::RENDERBUFFER, buf);
+        Presenter::gl_create_depth_tex()
+    }
 }

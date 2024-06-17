@@ -1,0 +1,128 @@
+float2 in screenPos : TEXCOORD0;
+
+uniform sampler2D bg0Tex : TEXUNIT0;
+uniform sampler2D bg1Tex : TEXUNIT1;
+uniform sampler2D bg2Tex : TEXUNIT2;
+uniform sampler2D bg3Tex : TEXUNIT3;
+uniform sampler2D objTex : TEXUNIT4;
+uniform sampler2D objDepthTex : TEXUNIT5;
+uniform sampler2D winTex : TEXUNIT6;
+
+uniform ComposeUbo {
+    int bldCnts[192];
+    int bldAlphas[192];
+    int bldYs[192];
+} ComposeUbo : BUFFER[0];
+
+static short topNum = 5;
+static short bottomNum = 5;
+static float topPrio = 0.9;
+static float bottomPrio = 0.9;
+static float4 topColor = float4(0.0, 0.0, 0.0, 1.0);
+static float4 bottomColor = float4(0.0, 0.0, 0.0, 1.0);
+
+void sortObjPrio() {
+    float prio = tex2D<float>(objDepthTex, screenPos) * 2.0 - 1.0;
+    if (prio < topPrio) {
+        topNum = 4;
+        // Give obj a priority boost due to float imprecision
+        topPrio = prio - 0.1;
+        topColor = tex2D(objTex, screenPos);
+    }
+}
+
+void sortBgPrio(short num, sampler2D bgTex) {
+    float4 texColor = tex2D(bgTex, screenPos);
+    if (texColor.a < topPrio) {
+        bottomNum = topNum;
+        bottomPrio = topPrio;
+        bottomColor = topColor;
+
+        topNum = num;
+        topPrio = texColor.a;
+        topColor = texColor;
+    } else if (texColor.a < bottomPrio) {
+        bottomNum = num;
+        bottomPrio = texColor.a;
+        bottomColor = texColor;
+    }
+}
+
+float4 alphaBlend(int bldAlpha) {
+    short eva = short(bldAlpha & 0x1F);
+    short evb = short((bldAlpha >> 8) & 0x1F);
+    float evaF = min(float(eva) / 16.0, 1.0);
+    float evbF = min(float(evb) / 16.0, 1.0);
+    float3 blendedColor = topColor.rgb * evaF + bottomColor.rgb * evbF;
+    return float4(blendedColor.rgb, 1.0);
+}
+
+void main(out float4 color : COLOR) {
+    sortObjPrio();
+    sortBgPrio(0, bg0Tex);
+    sortBgPrio(1, bg1Tex);
+    sortBgPrio(2, bg2Tex);
+    sortBgPrio(3, bg3Tex);
+
+    if (topNum == 5) {
+        discard;
+    }
+
+    if (topNum == 4 && topColor.a == 0.0) {
+        // Semi transparent object
+        short y = short(screenPos.y * 191.0);
+        int bldCnt = ComposeUbo.bldCnts[y];
+        bool blendBottom = ((bldCnt >> 8) & (1 << bottomNum)) != 0;
+        if (blendBottom) {
+            color = alphaBlend(ComposeUbo.bldAlphas[y]);
+            return;
+        }
+
+        int bldMode = (bldCnt >> 6) & 3;
+        if (bldMode < 2) {
+            color = float4(topColor.rgb, 1.0);
+            return;
+        }
+    }
+
+    short winEnabled = short(tex2D(winTex, screenPos).x * 255.0);
+    if ((winEnabled & (1 << 5)) == 0) {
+        color = float4(topColor.rgb, 1.0);
+        return;
+    }
+
+    short y = short(screenPos.y * 191.0);
+
+    int bldCnt = ComposeUbo.bldCnts[y];
+    int bldMode = (bldCnt >> 6) & 3;
+
+    if (bldMode == 0) {
+        color = float4(topColor.rgb, 1.0);
+        return;
+    }
+
+    bool blendTop = (bldCnt & (1 << topNum)) != 0;
+    if (!blendTop) {
+        color = float4(topColor.rgb, 1.0);
+        return;
+    }
+
+    if (bldMode == 1) {
+        bool blendBottom = ((bldCnt >> 8) & (1 << bottomNum)) != 0;
+        if (!blendBottom) {
+            color = float4(topColor.rgb, 1.0);
+            return;
+        }
+        color = alphaBlend(ComposeUbo.bldAlphas[y]);
+    } else if (bldMode == 2) {
+        short bldY = short(ComposeUbo.bldYs[y]);
+        float bldYF = float(bldY) / 16.0;
+        float3 increaseColor = (1.0 - topColor.rgb) * bldYF;
+        color = float4((topColor.rgb + increaseColor), 1.0);
+    } else if (bldMode == 3) {
+        short bldY = short(ComposeUbo.bldYs[y]);
+        float bldYF = float(bldY) / 16.0;
+        float3 decreaseColor = topColor.rgb * bldYF;
+        color = float4((topColor.rgb - decreaseColor), 1.0);
+    }
+}

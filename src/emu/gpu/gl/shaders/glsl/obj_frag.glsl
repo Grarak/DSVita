@@ -7,6 +7,7 @@ layout(location = 0) out vec4 color;
 
 in vec3 objPos;
 flat in ivec2 objDims;
+in vec2 screenPosF;
 
 uniform int dispCnt;
 uniform ObjUbo {
@@ -18,6 +19,7 @@ uniform sampler2D oamTex;
 uniform sampler2D objTex;
 uniform sampler2D palTex;
 uniform sampler2D extPalTex;
+uniform sampler2D winTex;
 
 int readOam16Aligned(int addr) {
     float x = float(addr >> 2) / 255.0f;
@@ -66,10 +68,10 @@ vec3 normRgb5(int color) {
 }
 
 vec4 drawSprite(int objX, int objY, int attrib0, int oamIndex) {
-    int attrib2 = readOam16Aligned(oamIndex * 8 + 4);
-
     int mapWidth = mapWidths[oamIndex];
     int objBound = objBounds[oamIndex];
+
+    int attrib2 = readOam16Aligned(oamIndex * 8 + 4);
 
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * objBound;
@@ -132,13 +134,25 @@ void main() {
         discard;
     }
 
+    int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
+    if ((winEnabled & (1 << 4)) == 0) {
+        discard;
+    }
+
     int oamIndex = int(objPos.z);
 
     int attrib0 = readOam16Aligned(oamIndex * 8);
+
     bool isBitmap = (attrib0 & 0xC00) == 0xC00;
     if (isBitmap) {
         color = drawBitmap(objX, objY, oamIndex);
     } else {
         color = drawSprite(objX, objY, attrib0, oamIndex);
+    }
+
+    color.a = 0.1;
+    bool semiTransparent = ((attrib0 >> 10) & 3) == 1;
+    if (semiTransparent) {
+        color.a = 0.0;
     }
 }

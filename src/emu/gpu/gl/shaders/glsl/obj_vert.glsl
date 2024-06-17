@@ -7,6 +7,7 @@ uniform sampler2D oamTex;
 
 out vec3 objPos;
 flat out ivec2 objDims;
+out vec2 screenPosF;
 
 uniform int dispCnt;
 
@@ -104,6 +105,8 @@ void main() {
     float x = float(oamX) + oamWidth * position.x;
     float y = float(oamY) + oamHeight * position.y;
 
+    screenPosF = vec2(x / 256.0, y / 192.0);
+
     int priority = (attrib2 >> 10) & 3;
-    gl_Position = vec4(x / 256.0 * 2.0 - 1.0, 1.0 - y / 192.0 * 2.0, float(priority) / 5.0, 1.0);
+    gl_Position = vec4(screenPosF.x * 2.0 - 1.0, 1.0 - screenPosF.y * 2.0, float(priority) / 4.0, 1.0);
 }

@@ -3,8 +3,8 @@ float2 in screenPosF : TEXCOORD1;
 float2 in affineDims : TEXCOORD2;
 
 uniform int dispCnt;
-uniform int bgCnts[4];
-uniform int bgModes[4];
+uniform int bgCnt;
+uniform int bgMode;
 
 uniform BgUbo {
     int bgOfs[192 * 4];
@@ -56,8 +56,6 @@ float3 normRgb5(short color) {
 }
 
 float4 drawText(short x, short y, short bgNum) {
-    int bgCnt = bgCnts[bgNum];
-
     int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
     int charAddr = ((dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
 
@@ -147,8 +145,6 @@ float4 drawBitmap(short x, short y, short bgNum) {
 
     int2 coords = int2(calculateAffineCoords(x, y, bgNum));
 
-    int bgCnt = bgCnts[bgNum];
-
     bool wrap = (bgCnt & (1 << 13)) != 0;
     if (wrap) {
         coords.x &= width - 1;
@@ -178,8 +174,6 @@ float4 drawAffine(int x, int y, int bgNum, bool extended) {
     short size = short(affineDims.x);
 
     int2 coords = int2(calculateAffineCoords(x, y, bgNum));
-
-    int bgCnt = bgCnts[bgNum];
 
     bool wrap = (bgCnt & (1 << 13)) != 0;
     if (wrap) {
@@ -231,8 +225,6 @@ float4 drawAffine(int x, int y, int bgNum, bool extended) {
 }
 
 void main(out float4 color : COLOR) {
-    short x = short(screenPos.x);
-    short y = short(screenPos.y);
     short bgNum = short(screenPos.z);
 
     short winEnabled = short(tex2D(winTex, screenPosF).x * 255.0);
@@ -240,11 +232,12 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
-    int mode = bgModes[bgNum];
-    if (mode == 0) {
+    short x = short(screenPos.x);
+    short y = short(screenPos.y);
+
+    if (bgMode == 0) {
         color = drawText(x, y, bgNum);
-    } else if (mode == 2) {
-        int bgCnt = bgCnts[bgNum];
+    } else if (bgMode == 2) {
         bool isBitmap = (bgCnt & (1 << 7)) != 0;
         if (isBitmap) {
             color = drawBitmap(x, y, bgNum);
@@ -254,4 +247,7 @@ void main(out float4 color : COLOR) {
     } else {
         discard;
     }
+
+    short priority = short(bgCnt & 3);
+    color.a = float(priority) / 4.0;
 }

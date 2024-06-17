@@ -9,8 +9,8 @@ in vec2 screenPosF;
 in vec2 affineDims;
 
 uniform int dispCnt;
-uniform int bgCnts[4];
-uniform int bgModes[4];
+uniform int bgCnt;
+uniform int bgMode;
 
 uniform BgUbo {
     int bgOfs[192 * 4];
@@ -65,8 +65,6 @@ vec3 normRgb5(int color) {
 }
 
 vec4 drawText(int x, int y, int bgNum) {
-    int bgCnt = bgCnts[bgNum];
-
     int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
     int charAddr = ((dispCnt >> 8) & 0x70000) + ((bgCnt << 12) & 0x3C000);
 
@@ -157,8 +155,6 @@ vec4 drawBitmap(int x, int y, int bgNum) {
 
     ivec2 coords = calculateAffineCoords(x, y, bgNum);
 
-    int bgCnt = bgCnts[bgNum];
-
     bool wrap = (bgCnt & (1 << 13)) != 0;
     if (wrap) {
         coords.x &= width - 1;
@@ -191,8 +187,6 @@ vec4 drawAffine(int x, int y, int bgNum, bool extended) {
     int size = int(affineDims.x);
 
     ivec2 coords = calculateAffineCoords(x, y, bgNum);
-
-    int bgCnt = bgCnts[bgNum];
 
     bool wrap = (bgCnt & (1 << 13)) != 0;
     if (wrap) {
@@ -243,8 +237,6 @@ vec4 drawAffine(int x, int y, int bgNum, bool extended) {
 }
 
 void main() {
-    int x = int(screenPos.x);
-    int y = int(screenPos.y);
     int bgNum = int(screenPos.z);
 
     int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
@@ -252,14 +244,15 @@ void main() {
         discard;
     }
 
-    int mode = bgModes[bgNum];
-    switch (mode) {
+    int x = int(screenPos.x);
+    int y = int(screenPos.y);
+
+    switch (bgMode) {
         case 0: {
             color = drawText(x, y, bgNum);
             break;
         }
         case 2: {
-            int bgCnt = bgCnts[bgNum];
             bool isBitmap = (bgCnt & (1 << 7)) != 0;
             if (isBitmap) {
                 color = drawBitmap(x, y, bgNum);
@@ -270,4 +263,7 @@ void main() {
         }
         default : discard;
     }
+
+    int priority = bgCnt & 3;
+    color.a = float(priority) / 4.0;
 }
