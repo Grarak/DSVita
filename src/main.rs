@@ -177,49 +177,33 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
 
     let cm = &mut get_common_mut!(emu).cycle_manager;
 
-    let mut total_arm9_cycles = 0;
-    let mut total_arm7_cycles = 0;
-
     loop {
         let next_event_in_cycles = min(cm.next_event_in_cycles(), 32);
 
-        if ARM7_HLE {
-            let arm9_cycles = if likely(!cpu_regs_arm9.is_halted() && !jit_asm_arm9.runtime_data.idle_loop) {
-                (jit_asm_arm9.execute(next_event_in_cycles << 1) + 1) >> 1
-            } else {
-                0
-            };
+        let arm9_cycles = if likely(!cpu_regs_arm9.is_halted() && !jit_asm_arm9.runtime_data.idle_loop) {
+            (jit_asm_arm9.execute(next_event_in_cycles << 1) + 1) >> 1
+        } else {
+            0
+        };
 
+        if ARM7_HLE {
             if unlikely(cpu_regs_arm9.is_halted() || jit_asm_arm9.runtime_data.idle_loop) {
                 cm.jump_to_next_event();
             } else {
                 cm.cycle_count += arm9_cycles as u64;
             }
         } else {
-            while likely(!cpu_regs_arm9.is_halted() && !jit_asm_arm9.runtime_data.idle_loop) && cm.cycle_count >= total_arm9_cycles {
-                total_arm9_cycles = cm.cycle_count + ((jit_asm_arm9.execute(next_event_in_cycles << 1) + 1) >> 1) as u64;
-            }
+            let arm7_cycles = if likely(!cpu_regs_arm7.is_halted() && !jit_asm_arm7.runtime_data.idle_loop) {
+                jit_asm_arm7.execute(next_event_in_cycles)
+            } else {
+                0
+            };
 
-            while likely(!cpu_regs_arm7.is_halted() && !jit_asm_arm7.runtime_data.idle_loop) && cm.cycle_count >= total_arm7_cycles {
-                total_arm7_cycles = cm.cycle_count + jit_asm_arm7.execute(next_event_in_cycles) as u64;
-            }
-
-            if unlikely((cpu_regs_arm9.is_halted() || jit_asm_arm9.runtime_data.idle_loop) && (cpu_regs_arm7.is_halted() || jit_asm_arm7.runtime_data.idle_loop)) {
+            let cycles = min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);
+            if unlikely(cycles == 0) {
                 cm.jump_to_next_event();
             } else {
-                let arm9_cycles = if unlikely(cpu_regs_arm9.is_halted() || jit_asm_arm9.runtime_data.idle_loop) {
-                    u64::MAX
-                } else {
-                    total_arm9_cycles
-                };
-
-                let arm7_cycles = if unlikely(cpu_regs_arm7.is_halted() || jit_asm_arm7.runtime_data.idle_loop) {
-                    u64::MAX
-                } else {
-                    total_arm7_cycles
-                };
-
-                cm.cycle_count = min(arm9_cycles, arm7_cycles);
+                cm.cycle_count += cycles as u64;
             }
         }
 
