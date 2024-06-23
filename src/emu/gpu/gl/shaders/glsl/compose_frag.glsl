@@ -73,8 +73,8 @@ void main() {
     sortBgPrio(2, bg2Tex);
     sortBgPrio(3, bg3Tex);
 
-    if (topNum != 5) {
-        color = vec4(topColor.rgb, 1.0);
+    if (topNum == 5) {
+        discard;
     }
 
     if (topNum == 4 && topColor.a == 0.0) {
