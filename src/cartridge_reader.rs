@@ -105,6 +105,12 @@ impl CartridgeReader {
         let mut pages = self.content_pages.borrow_mut();
         match pages.get(&page_addr) {
             None => {
+                // exceeds 4MB
+                if pages.len() >= 1024 {
+                    println!("clear cartridge pages");
+                    pages.clear();
+                }
+
                 let mut buf = [0u8; PAGE_SIZE as usize];
                 self.file.read_at(&mut buf, page_addr as u64).unwrap();
                 let buf = Rc::new(buf);
