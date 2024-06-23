@@ -16,6 +16,9 @@ uniform ComposeUbo {
 
 static short topNum = 5;
 static short bottomNum = 5;
+// Priority of 1.0 indicates a discarded fragment
+// Due to float imprecision priority must be < 0.9
+// Lowest priority is 1.0 / 4.0
 static float topPrio = 0.9;
 static float bottomPrio = 0.9;
 static float4 topColor = float4(0.0, 0.0, 0.0, 1.0);

@@ -22,8 +22,11 @@ uniform ComposeUbo {
 
 int topNum = 5;
 int bottomNum = 5;
-float topPrio = 1.0;
-float bottomPrio = 1.0;
+// Priority of 1.0 indicates a discarded fragment
+// Due to float imprecision priority must be < 0.9
+// Lowest priority is 1.0 / 4.0
+float topPrio = 0.9;
+float bottomPrio = 0.9;
 vec4 topColor = vec4(0.0, 0.0, 0.0, 0.0);
 vec4 bottomColor = vec4(0.0, 0.0, 0.0, 0.0);
 
