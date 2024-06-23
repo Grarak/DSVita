@@ -120,7 +120,7 @@ impl Presenter {
         unsafe {
             let pressed = MaybeUninit::<SceCtrlData>::uninit();
             let mut pressed = pressed.assume_init();
-            sceCtrlPeekBufferPositive(0, ptr::addr_of_mut!(pressed), 1);
+            sceCtrlPeekBufferPositive(0, &mut pressed, 1);
 
             for (host_key, guest_key) in KEY_CODE_MAPPING {
                 if pressed.buttons & host_key != 0 {
@@ -132,7 +132,7 @@ impl Presenter {
 
             let touch_report = MaybeUninit::<SceTouchData>::uninit();
             let mut touch_report = touch_report.assume_init();
-            sceTouchPeek(SCE_TOUCH_PORT_FRONT, ptr::addr_of_mut!(touch_report), 1);
+            sceTouchPeek(SCE_TOUCH_PORT_FRONT, &mut touch_report, 1);
 
             if touch_report.reportNum > 0 {
                 let report = touch_report.report.first().unwrap();
@@ -160,29 +160,24 @@ impl Presenter {
 
             let pos = ImVec2 { x: 0f32, y: 0f32 };
             let pivot = ImVec2 { x: 0f32, y: 0f32 };
-            ImGui_SetNextWindowPos(ptr::addr_of!(pos), ImGuiCond__ImGuiCond_Once as _, ptr::addr_of!(pivot));
+            ImGui_SetNextWindowPos(&pos, ImGuiCond__ImGuiCond_Once as _, &pivot);
             let size = ImVec2 {
                 x: PRESENTER_SCREEN_WIDTH as f32,
                 y: PRESENTER_SCREEN_HEIGHT as f32,
             };
-            ImGui_SetNextWindowSize(ptr::addr_of!(size), ImGuiCond__ImGuiCond_Once as _);
+            ImGui_SetNextWindowSize(&size, ImGuiCond__ImGuiCond_Once as _);
 
             let mut open = true;
-            if ImGui_Begin(title.as_ptr() as _, ptr::addr_of_mut!(open), 0) {
+            if ImGui_Begin(title.as_ptr() as _, &mut open, 0) {
                 let size = ImVec2 {
                     x: 0f32,
                     y: PRESENTER_SCREEN_HEIGHT as f32,
                 };
-                if ImGui_ListBoxHeader(title.as_ptr() as _, ptr::addr_of!(size)) {
+                if ImGui_ListBoxHeader(title.as_ptr() as _, &size) {
                     for (i, entry) in menu.entries.iter().enumerate() {
                         let entry_name = CString::new(entry.title.as_str()).unwrap();
                         let size = ImVec2 { x: 0f32, y: 0f32 };
-                        ImGui_Selectable(
-                            entry_name.as_ptr() as _,
-                            i == menu.selected,
-                            ImGuiSelectableFlags__ImGuiSelectableFlags_SpanAllColumns as _,
-                            ptr::addr_of!(size),
-                        );
+                        ImGui_Selectable(entry_name.as_ptr() as _, i == menu.selected, ImGuiSelectableFlags__ImGuiSelectableFlags_SpanAllColumns as _, &size);
                     }
                     ImGui_ListBoxFooter();
                 }
@@ -205,15 +200,15 @@ impl Presenter {
 
             let pos = ImVec2 { x: 0f32, y: 0f32 };
             let pivot = ImVec2 { x: 0f32, y: 0f32 };
-            ImGui_SetNextWindowPos(ptr::addr_of!(pos), ImGuiCond__ImGuiCond_Once as _, ptr::addr_of!(pivot));
+            ImGui_SetNextWindowPos(&pos, ImGuiCond__ImGuiCond_Once as _, &pivot);
             let size = ImVec2 {
                 x: PRESENTER_SCREEN_WIDTH as f32,
                 y: PRESENTER_SCREEN_HEIGHT as f32,
             };
-            ImGui_SetNextWindowSize(ptr::addr_of!(size), ImGuiCond__ImGuiCond_Once as _);
+            ImGui_SetNextWindowSize(&size, ImGuiCond__ImGuiCond_Once as _);
 
             let mut open = true;
-            if ImGui_Begin("DSVita\0".as_ptr() as _, ptr::addr_of_mut!(open), 0) {
+            if ImGui_Begin("DSVita\0".as_ptr() as _, &mut open, 0) {
                 ImGui_Text("Loading\0".as_ptr() as _);
                 ImGui_End();
             }
@@ -251,7 +246,7 @@ impl Presenter {
 
     pub unsafe fn gl_create_depth_tex() -> GLuint {
         let mut tex = 0;
-        gl::GenTextures(1, ptr::addr_of_mut!(tex));
+        gl::GenTextures(1, &mut tex);
         gl::BindTexture(gl::TEXTURE_2D, tex);
         gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, 1, 1, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
         vglFree(vglGetTexDataPointer(gl::TEXTURE_2D));

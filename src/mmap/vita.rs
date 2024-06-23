@@ -25,7 +25,7 @@ impl Mmap {
                 c_name.as_c_str().as_ptr() as _,
                 vitasdk_sys::SCE_KERNEL_MEMBLOCK_TYPE_USER_RW,
                 utils::align_up(size, opts.alignment),
-                ptr::addr_of_mut!(opts),
+                &mut opts,
             )
         };
 
@@ -43,8 +43,8 @@ impl Mmap {
         if block_uid < vitasdk_sys::SCE_OK as i32 {
             Err(Error::from(ErrorKind::AddrNotAvailable))
         } else {
-            let mut base: *mut vitasdk_sys::c_void = ptr::null_mut();
-            let ret = unsafe { vitasdk_sys::sceKernelGetMemBlockBase(block_uid, ptr::addr_of_mut!(base)) };
+            let mut base = ptr::null_mut();
+            let ret = unsafe { vitasdk_sys::sceKernelGetMemBlockBase(block_uid, &mut base) };
 
             if ret < vitasdk_sys::SCE_OK as i32 {
                 Err(Error::from(ErrorKind::AddrNotAvailable))

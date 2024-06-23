@@ -8,11 +8,11 @@ uniform sampler2D objTex : TEXUNIT4;
 uniform sampler2D objDepthTex : TEXUNIT5;
 uniform sampler2D winTex : TEXUNIT6;
 
-uniform ComposeUbo {
+uniform BlendUbo {
     int bldCnts[192];
     int bldAlphas[192];
     int bldYs[192];
-} ComposeUbo : BUFFER[0];
+} BlendUbo : BUFFER[0];
 
 static short topNum = 5;
 static short bottomNum = 5;
@@ -74,10 +74,10 @@ void main(out float4 color : COLOR) {
     if (topNum == 4 && topColor.a == 0.0) {
         // Semi transparent object
         short y = short(screenPos.y * 191.0);
-        int bldCnt = ComposeUbo.bldCnts[y];
+        int bldCnt = BlendUbo.bldCnts[y];
         bool blendBottom = ((bldCnt >> 8) & (1 << bottomNum)) != 0;
         if (blendBottom) {
-            color = alphaBlend(ComposeUbo.bldAlphas[y]);
+            color = alphaBlend(BlendUbo.bldAlphas[y]);
             return;
         }
 
@@ -96,7 +96,7 @@ void main(out float4 color : COLOR) {
 
     short y = short(screenPos.y * 191.0);
 
-    int bldCnt = ComposeUbo.bldCnts[y];
+    int bldCnt = BlendUbo.bldCnts[y];
     int bldMode = (bldCnt >> 6) & 3;
 
     if (bldMode == 0) {
@@ -116,14 +116,14 @@ void main(out float4 color : COLOR) {
             color = float4(topColor.rgb, 1.0);
             return;
         }
-        color = alphaBlend(ComposeUbo.bldAlphas[y]);
+        color = alphaBlend(BlendUbo.bldAlphas[y]);
     } else if (bldMode == 2) {
-        short bldY = short(ComposeUbo.bldYs[y]);
+        short bldY = short(BlendUbo.bldYs[y]);
         float bldYF = float(bldY) / 16.0;
         float3 increaseColor = (1.0 - topColor.rgb) * bldYF;
         color = float4((topColor.rgb + increaseColor), 1.0);
     } else if (bldMode == 3) {
-        short bldY = short(ComposeUbo.bldYs[y]);
+        short bldY = short(BlendUbo.bldYs[y]);
         float bldYF = float(bldY) / 16.0;
         float3 decreaseColor = topColor.rgb * bldYF;
         color = float4((topColor.rgb - decreaseColor), 1.0);

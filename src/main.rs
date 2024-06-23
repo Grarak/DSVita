@@ -368,7 +368,7 @@ pub fn main() {
         }
         key_map.store(keymap, Ordering::Relaxed);
 
-        unsafe { gpu_2d_renderer.draw(&mut presenter) };
+        unsafe { gpu_2d_renderer.draw(&mut presenter, &fps) };
     }
 
     if let Some(audio_thread) = audio_thread {

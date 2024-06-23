@@ -6,7 +6,8 @@ use std::{env, fs};
 fn main() {
     let target = env::var("TARGET").unwrap();
     if target != "armv7-sony-vita-newlibeabihf" {
-        cc::Build::new().file("builtins/cache.c").compile("cache");
+        // Running IDE on anything other than linux will fail, so ignore compile error
+        let _ = cc::Build::new().file("builtins/cache.c").try_compile("cache").ok();
         return;
     }
 

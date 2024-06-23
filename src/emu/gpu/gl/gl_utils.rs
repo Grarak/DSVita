@@ -3,6 +3,21 @@ use crate::utils::StrErr;
 use gl::types::{GLenum, GLuint};
 use std::ptr;
 
+macro_rules! shader_source {
+    ($name:expr) => {{
+        #[cfg(target_os = "vita")]
+        {
+            include_str!(concat!("shaders/cg/", $name, ".cg"))
+        }
+        #[cfg(target_os = "linux")]
+        {
+            include_str!(concat!("shaders/glsl/", $name, ".glsl"))
+        }
+    }};
+}
+
+pub(super) use shader_source;
+
 pub unsafe fn create_shader(shader_src: &str, typ: GLenum) -> Result<GLuint, StrErr> {
     let shader = gl::CreateShader(typ);
     if shader == 0 {
@@ -14,11 +29,11 @@ pub unsafe fn create_shader(shader_src: &str, typ: GLenum) -> Result<GLuint, Str
     gl::ShaderSource(shader, 1, ptr::addr_of!(src_ptr) as _, ptr::addr_of!(src_len) as _);
     gl::CompileShader(shader);
     let mut compiled = 0;
-    gl::GetShaderiv(shader, gl::COMPILE_STATUS, ptr::addr_of_mut!(compiled));
+    gl::GetShaderiv(shader, gl::COMPILE_STATUS, &mut compiled);
 
     if compiled == 0 {
         let mut info_len = 0;
-        gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, ptr::addr_of_mut!(info_len));
+        gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut info_len);
 
         if info_len > 1 {
             let mut info = Vec::new();
@@ -42,10 +57,10 @@ pub unsafe fn create_program(shaders: &[GLuint]) -> Result<GLuint, StrErr> {
     gl::LinkProgram(program);
 
     let mut linked = 0;
-    gl::GetProgramiv(program, gl::LINK_STATUS, ptr::addr_of_mut!(linked));
+    gl::GetProgramiv(program, gl::LINK_STATUS, &mut linked);
     if linked == 0 {
         let mut info_len = 0;
-        gl::GetProgramiv(program, gl::INFO_LOG_LENGTH, ptr::addr_of_mut!(info_len));
+        gl::GetProgramiv(program, gl::INFO_LOG_LENGTH, &mut info_len);
         if info_len > 1 {
             let mut info = Vec::new();
             Vec::resize(&mut info, info_len as usize, 0u8);
@@ -62,7 +77,7 @@ pub unsafe fn create_program(shaders: &[GLuint]) -> Result<GLuint, StrErr> {
 
 pub unsafe fn create_mem_texture1d(size: u32) -> GLuint {
     let mut tex = 0;
-    gl::GenTextures(1, ptr::addr_of_mut!(tex));
+    gl::GenTextures(1, &mut tex);
     gl::BindTexture(gl::TEXTURE_2D, tex);
     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, (size / 4) as _, 1, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
@@ -75,7 +90,7 @@ pub unsafe fn create_mem_texture1d(size: u32) -> GLuint {
 
 pub unsafe fn create_mem_texture2d(width: u32, height: u32) -> GLuint {
     let mut tex = 0;
-    gl::GenTextures(1, ptr::addr_of_mut!(tex));
+    gl::GenTextures(1, &mut tex);
     gl::BindTexture(gl::TEXTURE_2D, tex);
     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, (width / 2) as _, (height / 2) as _, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
@@ -91,7 +106,7 @@ pub unsafe fn create_pal_texture1d(size: u32) -> GLuint {
         create_mem_texture1d(size)
     } else {
         let mut tex = 0;
-        gl::GenTextures(1, ptr::addr_of_mut!(tex));
+        gl::GenTextures(1, &mut tex);
         gl::BindTexture(gl::TEXTURE_2D, tex);
         gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, (size / 2) as _, 1, 0, gl::RGBA, gl::UNSIGNED_SHORT_1_5_5_5_REV, ptr::null());
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
@@ -108,7 +123,7 @@ pub unsafe fn create_pal_texture2d(width: u32, height: u32) -> GLuint {
         create_mem_texture2d(width, height)
     } else {
         let mut tex = 0;
-        gl::GenTextures(1, ptr::addr_of_mut!(tex));
+        gl::GenTextures(1, &mut tex);
         gl::BindTexture(gl::TEXTURE_2D, tex);
         gl::TexImage2D(
             gl::TEXTURE_2D,
@@ -156,7 +171,7 @@ pub unsafe fn sub_pal_texture2d(width: u32, height: u32, data: *const u8) {
 
 pub unsafe fn create_fb_color(width: u32, height: u32) -> GLuint {
     let mut tex = 0;
-    gl::GenTextures(1, ptr::addr_of_mut!(tex));
+    gl::GenTextures(1, &mut tex);
     gl::BindTexture(gl::TEXTURE_2D, tex);
     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, width as _, height as _, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
@@ -171,7 +186,7 @@ pub unsafe fn create_fb_depth_tex(fbo: GLuint, width: u32, height: u32) -> GLuin
     gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
     if cfg!(target_os = "linux") {
         let mut tex = 0;
-        gl::GenTextures(1, ptr::addr_of_mut!(tex));
+        gl::GenTextures(1, &mut tex);
         gl::BindTexture(gl::TEXTURE_2D, tex);
         gl::TexImage2D(gl::TEXTURE_2D, 0, gl::DEPTH_COMPONENT32F as _, width as _, height as _, 0, gl::DEPTH_COMPONENT, gl::FLOAT, ptr::null());
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
@@ -182,7 +197,7 @@ pub unsafe fn create_fb_depth_tex(fbo: GLuint, width: u32, height: u32) -> GLuin
         tex
     } else {
         let mut buf = 0;
-        gl::GenRenderbuffers(1, ptr::addr_of_mut!(buf));
+        gl::GenRenderbuffers(1, &mut buf);
         gl::BindRenderbuffer(gl::RENDERBUFFER, buf);
         gl::RenderbufferStorage(gl::RENDERBUFFER, gl::DEPTH_COMPONENT, width as _, height as _);
         gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::RENDERBUFFER, buf);

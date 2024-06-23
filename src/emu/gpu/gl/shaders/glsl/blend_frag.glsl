@@ -14,7 +14,7 @@ uniform sampler2D objTex;
 uniform sampler2D objDepthTex;
 uniform sampler2D winTex;
 
-uniform ComposeUbo {
+uniform BlendUbo {
     int bldCnts[192];
     int bldAlphas[192];
     int bldYs[192];
