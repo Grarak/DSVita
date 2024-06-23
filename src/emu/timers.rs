@@ -51,7 +51,7 @@ impl Timers {
         let channel = &mut self.channels[CHANNEL_NUM];
         let cnt = TimerCntH::from(channel.cnt_h);
         if bool::from(cnt.start()) && !cnt.is_count_up(CHANNEL_NUM) {
-            let current_cycle_count = cycle_manager.cycle_count;
+            let current_cycle_count = cycle_manager.get_cycles();
             let diff = channel.scheduled_cycle.wrapping_sub(current_cycle_count);
             channel.current_value = (TIME_OVERFLOW - (diff >> channel.current_shift) as u32) as u16;
         }

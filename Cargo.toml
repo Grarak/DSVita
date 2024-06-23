@@ -26,6 +26,7 @@ sdl2 = "0.37.0"
 
 [build-dependencies]
 bindgen = "0.69.4"
+cc = "1.0.100"
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]
 vitasdk-sys = { version = "0.3.2", features = [
@@ -43,7 +44,7 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceKernelDmacMgr_stub",
     "SceShaccCg_stub",
     "ScePower_stub",
-#    "SceRazorCapture_stub",
+    #    "SceRazorCapture_stub",
 ] }
 
 [profile.release]

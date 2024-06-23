@@ -7,7 +7,7 @@ use std::cell::UnsafeCell;
 use std::cmp::max;
 use std::ops::DerefMut;
 
-const MMU_BLOCK_SHIFT: u32 = 12;
+pub const MMU_BLOCK_SHIFT: u32 = 12;
 pub const MMU_BLOCK_SIZE: u32 = 1 << MMU_BLOCK_SHIFT;
 pub const MMU_SIZE: usize = ((1u64 << 32) / MMU_BLOCK_SIZE as u64) as usize;
 

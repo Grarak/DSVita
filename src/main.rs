@@ -190,7 +190,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
             if unlikely(cpu_regs_arm9.is_halted() || jit_asm_arm9.runtime_data.idle_loop) {
                 cm.jump_to_next_event();
             } else {
-                cm.cycle_count += arm9_cycles as u64;
+                cm.add_cycles(arm9_cycles);
             }
         } else {
             let arm7_cycles = if likely(!cpu_regs_arm7.is_halted() && !jit_asm_arm7.runtime_data.idle_loop) {
@@ -203,7 +203,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
             if unlikely(cycles == 0) {
                 cm.jump_to_next_event();
             } else {
-                cm.cycle_count += cycles as u64;
+                cm.add_cycles(cycles);
             }
         }
 

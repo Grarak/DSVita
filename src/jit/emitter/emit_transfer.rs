@@ -1,4 +1,5 @@
 use crate::emu::emu::{get_mmu, get_regs};
+use crate::emu::memory::mmu;
 use crate::emu::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Bfc};
 use crate::jit::assembler::arm::branch_assembler::B;
@@ -286,7 +287,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         // mmu_ptr = &mmu_map (*u32)
         opcodes.extend(AluImm::mov32(mmu_ptr_reg, get_mmu!(self.emu, CPU).get_mmu_ptr() as _));
         // physical_addr = addr >> 12 (u32)
-        opcodes.push(AluShiftImm::mov(physical_addr_reg, addr_reg, ShiftType::Lsr, 12, Cond::AL));
+        opcodes.push(AluShiftImm::mov(physical_addr_reg, addr_reg, ShiftType::Lsr, mmu::MMU_BLOCK_SHIFT as u8, Cond::AL));
         let base_ptr_reg = mmu_ptr_reg;
         // base_ptr = *(mmu_ptr + physical_addr_reg)
         opcodes.push(LdrStrReg::ldr(base_ptr_reg, mmu_ptr_reg, physical_addr_reg, 2, ShiftType::Lsl, Cond::AL));

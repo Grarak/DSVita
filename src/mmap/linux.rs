@@ -14,7 +14,7 @@ impl Mmap {
     }
 
     pub fn executable(_: &str, size: u32) -> io::Result<Self> {
-        Mmap::new(libc::PROT_READ | libc::PROT_EXEC, size)
+        Mmap::new(libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC, size)
     }
 
     fn new(prot: i32, size: u32) -> io::Result<Self> {

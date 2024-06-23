@@ -9,11 +9,6 @@ use std::intrinsics::likely;
 use std::{mem, ptr};
 
 const JIT_MEMORY_SIZE: u32 = 16 * 1024 * 1024;
-#[cfg(target_os = "linux")]
-const JIT_PAGE_SIZE: u32 = 4096;
-#[cfg(target_os = "vita")]
-const JIT_PAGE_SIZE: u32 = 16;
-
 const JIT_BLOCK_SIZE_SHIFT: u32 = 8;
 pub const JIT_BLOCK_SIZE: u32 = 1 << JIT_BLOCK_SIZE_SHIFT;
 
@@ -97,11 +92,17 @@ create_jit_blocks!(
     [arm7_bios, regions::ARM7_BIOS_SIZE]
 );
 
+#[cfg(target_os = "linux")]
+extern "C" {
+    fn built_in_clear_cache(start: *const u8, end: *const u8);
+}
+
 pub struct JitMemory {
     mem: Mmap,
     mem_common_offset: u32,
     mem_offset: u32,
     jit_blocks: Box<JitBlocks>,
+    page_size: u32,
 }
 
 impl JitMemory {
@@ -113,6 +114,16 @@ impl JitMemory {
             mem_common_offset: 0,
             mem_offset: 0,
             jit_blocks,
+            page_size: {
+                #[cfg(target_os = "linux")]
+                {
+                    unsafe { libc::sysconf(libc::_SC_PAGESIZE) as _ }
+                }
+                #[cfg(target_os = "vita")]
+                {
+                    16
+                }
+            },
         }
     }
 
@@ -131,13 +142,11 @@ impl JitMemory {
     }
 
     fn insert(&mut self, opcodes: &[u32]) -> (u32, u32) {
-        let aligned_size = utils::align_up((opcodes.len() << 2) as u32, JIT_PAGE_SIZE);
+        let aligned_size = utils::align_up((opcodes.len() << 2) as u32, self.page_size);
         let allocated_offset_addr = self.allocate_block(aligned_size);
 
-        self.set_rw(allocated_offset_addr, aligned_size);
         utils::write_to_mem_slice(&mut self.mem, allocated_offset_addr, opcodes);
         self.flush_cache(allocated_offset_addr, aligned_size);
-        self.set_rx(allocated_offset_addr, aligned_size);
 
         (allocated_offset_addr, aligned_size)
     }
@@ -316,16 +325,10 @@ impl JitMemory {
     pub fn close(&mut self) {}
 
     #[cfg(target_os = "linux")]
-    fn flush_cache(&mut self, _: u32, _: u32) {}
-
-    #[cfg(target_os = "linux")]
-    fn set_rw(&mut self, start_addr: u32, size: u32) {
-        unsafe { libc::mprotect((self.mem.as_ptr() as u32 + start_addr) as _, size as _, libc::PROT_READ | libc::PROT_WRITE) };
-    }
-
-    #[cfg(target_os = "linux")]
-    fn set_rx(&mut self, start_addr: u32, size: u32) {
-        unsafe { libc::mprotect((self.mem.as_ptr() as u32 + start_addr) as _, size as _, libc::PROT_READ | libc::PROT_EXEC) };
+    fn flush_cache(&mut self, start_addr: u32, size: u32) {
+        unsafe {
+            built_in_clear_cache((self.mem.as_ptr() as u32 + start_addr) as _, (self.mem.as_ptr() as u32 + start_addr + size) as _);
+        }
     }
 
     #[cfg(target_os = "vita")]
@@ -342,10 +345,4 @@ impl JitMemory {
     fn flush_cache(&mut self, start_addr: u32, size: u32) {
         unsafe { vitasdk_sys::sceKernelSyncVMDomain(self.mem.block_uid, (self.mem.as_ptr() as u32 + start_addr) as _, size) };
     }
-
-    #[cfg(target_os = "vita")]
-    fn set_rw(&mut self, _: u32, _: u32) {}
-
-    #[cfg(target_os = "vita")]
-    fn set_rx(&mut self, _r: u32, _: u32) {}
 }

@@ -28,7 +28,7 @@ pub enum EventType {
 }
 
 pub struct CycleManager {
-    pub cycle_count: u64,
+    cycle_count: u64,
     events: VecDeque<(u64, EventType)>,
 }
 
@@ -38,6 +38,14 @@ impl CycleManager {
             cycle_count: 0,
             events: VecDeque::new(),
         }
+    }
+
+    pub fn add_cycles(&mut self, cycle_count: u16) {
+        self.cycle_count += cycle_count as u64;
+    }
+
+    pub fn get_cycles(&self) -> u64 {
+        self.cycle_count
     }
 
     pub fn next_event_in_cycles(&self) -> u16 {
