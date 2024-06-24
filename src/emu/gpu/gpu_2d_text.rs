@@ -1,6 +1,6 @@
-use crate::emu::gpu::gl::gpu_2d_renderer::GpuMemBuf;
 use crate::emu::gpu::gpu::DISPLAY_WIDTH;
 use crate::emu::gpu::gpu_2d::{Gpu2D, Gpu2DEngine};
+use crate::emu::gpu::gpu_2d_mem_buf::Gpu2dMemBuf;
 use bilge::prelude::*;
 
 #[bitsize(16)]
@@ -13,7 +13,7 @@ struct TextBgScreen {
 }
 
 impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
-    pub(super) fn draw_text<const BG: usize>(&mut self, line: u8, mem: &GpuMemBuf) {
+    pub(super) fn draw_text<const BG: usize>(&mut self, line: u8, mem: &Gpu2dMemBuf) {
         if BG == 0 && self.inner.disp_cnt.bg0_3d() {
             // TODO 3d
             return;
@@ -26,7 +26,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         }
     }
 
-    pub(super) fn draw_text_pixels<const BG: usize, const BIT8: bool>(&mut self, line: u8, mem: &GpuMemBuf) {
+    pub(super) fn draw_text_pixels<const BG: usize, const BIT8: bool>(&mut self, line: u8, mem: &Gpu2dMemBuf) {
         let disp_cnt = self.inner.disp_cnt;
         let bg_cnt = self.inner.bg_cnt[BG];
 
@@ -40,20 +40,20 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
             screen_base_addr += if u8::from(bg_cnt.screen_size()) & 1 != 0 { 0x1000 } else { 0x800 };
         }
 
-        let read_palettes = if BIT8 && bool::from(disp_cnt.bg_extended_palettes()) {
+        let read_palettes = if BIT8 && disp_cnt.bg_extended_palettes() {
             if BG < 2 && bool::from(bg_cnt.ext_palette_slot_display_area_overflow()) {
                 if !Self::is_bg_ext_palette_mapped(BG + 2, mem) {
                     return;
                 }
-                |mem: &GpuMemBuf, addr: u32| Self::read_bg_ext_palette::<u16>(BG + 2, addr, mem)
+                |mem: &Gpu2dMemBuf, addr: u32| Self::read_bg_ext_palette::<u16>(BG + 2, addr, mem)
             } else {
                 if !Self::is_bg_ext_palette_mapped(BG, mem) {
                     return;
                 }
-                |mem: &GpuMemBuf, addr: u32| Self::read_bg_ext_palette::<u16>(BG, addr, mem)
+                |mem: &Gpu2dMemBuf, addr: u32| Self::read_bg_ext_palette::<u16>(BG, addr, mem)
             }
         } else {
-            |mem: &GpuMemBuf, addr: u32| Self::read_palettes(addr, mem)
+            |mem: &Gpu2dMemBuf, addr: u32| Self::read_palettes(addr, mem)
         };
 
         for i in (0..=DISPLAY_WIDTH as u32).step_by(8) {

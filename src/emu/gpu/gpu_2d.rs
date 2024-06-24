@@ -1,5 +1,5 @@
-use crate::emu::gpu::gl::gpu_2d_renderer::GpuMemBuf;
 use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_PIXEL_COUNT, DISPLAY_WIDTH};
+use crate::emu::gpu::gpu_2d_mem_buf::Gpu2dMemBuf;
 use crate::emu::memory::vram;
 use crate::emu::memory::vram::Vram;
 use crate::emu::CpuType::ARM9;
@@ -208,7 +208,7 @@ pub struct Gpu2D<const ENGINE: Gpu2DEngine> {
 }
 
 impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
-    pub(super) fn read_bg<T: utils::Convert>(addr: u32, mem: &GpuMemBuf) -> T {
+    pub(super) fn read_bg<T: utils::Convert>(addr: u32, mem: &Gpu2dMemBuf) -> T {
         utils::read_from_mem(
             match ENGINE {
                 Gpu2DEngine::A => mem.bg_a.as_slice(),
@@ -218,7 +218,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         )
     }
 
-    pub(super) fn read_obj<T: utils::Convert>(addr: u32, mem: &GpuMemBuf) -> T {
+    pub(super) fn read_obj<T: utils::Convert>(addr: u32, mem: &Gpu2dMemBuf) -> T {
         utils::read_from_mem(
             match ENGINE {
                 Gpu2DEngine::A => mem.obj_a.as_slice(),
@@ -228,7 +228,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         )
     }
 
-    pub(super) fn read_palettes<T: utils::Convert>(addr: u32, mem: &GpuMemBuf) -> T {
+    pub(super) fn read_palettes<T: utils::Convert>(addr: u32, mem: &Gpu2dMemBuf) -> T {
         utils::read_from_mem(
             match ENGINE {
                 Gpu2DEngine::A => mem.pal_a.deref(),
@@ -238,7 +238,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         )
     }
 
-    pub(super) fn read_oam<T: utils::Convert>(addr: u32, mem: &GpuMemBuf) -> T {
+    pub(super) fn read_oam<T: utils::Convert>(addr: u32, mem: &Gpu2dMemBuf) -> T {
         utils::read_from_mem(
             match ENGINE {
                 Gpu2DEngine::A => mem.oam_a.deref(),
@@ -248,7 +248,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         )
     }
 
-    pub(super) fn read_bg_ext_palette<T: utils::Convert>(slot: usize, addr: u32, mem: &GpuMemBuf) -> T {
+    pub(super) fn read_bg_ext_palette<T: utils::Convert>(slot: usize, addr: u32, mem: &Gpu2dMemBuf) -> T {
         utils::read_from_mem(
             &match ENGINE {
                 Gpu2DEngine::A => mem.bg_a_ext_palette.deref(),
@@ -258,7 +258,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         )
     }
 
-    pub(super) fn read_obj_ext_palette<T: utils::Convert>(addr: u32, mem: &GpuMemBuf) -> T {
+    pub(super) fn read_obj_ext_palette<T: utils::Convert>(addr: u32, mem: &Gpu2dMemBuf) -> T {
         utils::read_from_mem(
             match ENGINE {
                 Gpu2DEngine::A => mem.obj_a_ext_palette.deref(),
@@ -268,14 +268,14 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         )
     }
 
-    pub(super) fn is_bg_ext_palette_mapped(slot: usize, mem: &GpuMemBuf) -> bool {
+    pub(super) fn is_bg_ext_palette_mapped(slot: usize, mem: &Gpu2dMemBuf) -> bool {
         match ENGINE {
             Gpu2DEngine::A => mem.bg_a_ext_palette_mapped[slot],
             Gpu2DEngine::B => mem.bg_b_ext_palette_mapped[slot],
         }
     }
 
-    pub(super) fn is_obj_ext_palette_mapped(mem: &GpuMemBuf) -> bool {
+    pub(super) fn is_obj_ext_palette_mapped(mem: &Gpu2dMemBuf) -> bool {
         match ENGINE {
             Gpu2DEngine::A => mem.obj_a_ext_palette_mapped,
             Gpu2DEngine::B => mem.obj_b_ext_palette_mapped,
@@ -447,7 +447,7 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
 
     pub fn set_master_bright(&mut self, mask: u16, value: u16) {}
 
-    pub fn draw_scanline(&mut self, line: u8, mem: &GpuMemBuf, vram: &Vram) {
+    pub fn draw_scanline(&mut self, line: u8, mem: &Gpu2dMemBuf, vram: &Vram) {
         let backdrop = Self::read_palettes::<u16>(0, mem);
         let backdrop = backdrop & !(1 << 15);
         self.layers.pixels.fill(backdrop as u32);
@@ -567,11 +567,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         true
     }
 
-    fn draw_affine<const BG: usize>(&mut self, line: u8, mem: &GpuMemBuf) {
+    fn draw_affine<const BG: usize>(&mut self, line: u8, mem: &Gpu2dMemBuf) {
         todo!()
     }
 
-    fn draw_extended<const BG: usize>(&mut self, line: u8, mem: &GpuMemBuf) {
+    fn draw_extended<const BG: usize>(&mut self, line: u8, mem: &Gpu2dMemBuf) {
         let mut rot_scale_x = self.inner.internal.x[BG - 2] - self.inner.bg_pa[BG - 2] as i32;
         let mut rot_scale_y = self.inner.internal.y[BG - 2] - self.inner.bg_pc[BG - 2] as i32;
 
@@ -646,11 +646,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
         self.inner.internal.y[BG - 2] += self.inner.bg_pd[BG - 2] as i32;
     }
 
-    fn draw_large<const BG: usize>(&self, line: u8, mem: &GpuMemBuf) {
+    fn draw_large<const BG: usize>(&self, line: u8, mem: &Gpu2dMemBuf) {
         todo!()
     }
 
-    fn draw_objects<const WINDOW: bool>(&mut self, line: u8, mem: &GpuMemBuf) {
+    fn draw_objects<const WINDOW: bool>(&mut self, line: u8, mem: &Gpu2dMemBuf) {
         let bound = if bool::from(self.inner.disp_cnt.tile_1d_obj_mapping()) {
             32u32 << u8::from(self.inner.disp_cnt.tile_obj_1d_boundary())
         } else {
@@ -661,9 +661,9 @@ impl<const ENGINE: Gpu2DEngine> Gpu2D<ENGINE> {
             if !Self::is_obj_ext_palette_mapped(mem) {
                 return;
             }
-            |mem: &GpuMemBuf, addr: u32| Self::read_obj_ext_palette::<u16>(addr, mem)
+            |mem: &Gpu2dMemBuf, addr: u32| Self::read_obj_ext_palette::<u16>(addr, mem)
         } else {
-            |mem: &GpuMemBuf, addr: u32| Self::read_palettes::<u16>(addr, mem)
+            |mem: &Gpu2dMemBuf, addr: u32| Self::read_palettes::<u16>(addr, mem)
         };
 
         for i in 0..128 {

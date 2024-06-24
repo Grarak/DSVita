@@ -6,12 +6,13 @@ use crate::emu::gpu::gl::gl_utils::{
 use crate::emu::gpu::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::emu::gpu::gpu_2d::Gpu2DEngine::{A, B};
 use crate::emu::gpu::gpu_2d::{DispCnt, Gpu2DEngine, Gpu2DInner};
+use crate::emu::gpu::gpu_2d_mem_buf::Gpu2dMemBuf;
 use crate::emu::memory::mem::Memory;
 use crate::emu::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
-use crate::emu::memory::{regions, vram};
+use crate::emu::memory::regions;
 use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN};
 use crate::utils;
-use crate::utils::{HeapMemU8, StrErr};
+use crate::utils::StrErr;
 use gl::types::{GLint, GLuint};
 use static_assertions::const_assert;
 use std::hint::unreachable_unchecked;
@@ -20,62 +21,6 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 use std::{mem, ptr, slice};
-
-#[derive(Default)]
-pub struct GpuMemBuf {
-    pub bg_a: HeapMemU8<{ vram::BG_A_SIZE as usize }>,
-    pub obj_a: HeapMemU8<{ vram::OBJ_A_SIZE as usize }>,
-    pub bg_a_ext_palette: HeapMemU8<{ vram::BG_EXT_PAL_SIZE as usize }>,
-    pub obj_a_ext_palette: HeapMemU8<{ vram::OBJ_EXT_PAL_SIZE as usize }>,
-    pub bg_a_ext_palette_mapped: [bool; 4],
-    pub obj_a_ext_palette_mapped: bool,
-
-    pub bg_b: HeapMemU8<{ vram::BG_B_SIZE as usize }>,
-    pub obj_b: HeapMemU8<{ vram::OBJ_B_SIZE as usize }>,
-    pub bg_b_ext_palette: HeapMemU8<{ vram::BG_EXT_PAL_SIZE as usize }>,
-    pub obj_b_ext_palette: HeapMemU8<{ vram::OBJ_EXT_PAL_SIZE as usize }>,
-    pub bg_b_ext_palette_mapped: [bool; 4],
-    pub obj_b_ext_palette_mapped: bool,
-
-    pub pal_a: HeapMemU8<{ regions::STANDARD_PALETTES_SIZE as usize / 2 }>,
-    pub pal_b: HeapMemU8<{ regions::STANDARD_PALETTES_SIZE as usize / 2 }>,
-    pub oam_a: HeapMemU8<{ regions::OAM_SIZE as usize / 2 }>,
-    pub oam_b: HeapMemU8<{ regions::OAM_SIZE as usize / 2 }>,
-}
-
-impl GpuMemBuf {
-    fn read(&mut self, mem: &mut Memory) {
-        mem.vram.read_all_bg_a(&mut self.bg_a);
-        mem.vram.read_all_obj_a(&mut self.obj_a);
-        mem.vram.read_all_bg_a_ext_palette(&mut self.bg_a_ext_palette);
-        mem.vram.read_all_obj_a_ext_palette(&mut self.obj_a_ext_palette);
-        for slot in 0..4 {
-            self.bg_a_ext_palette_mapped[slot] = mem.vram.is_bg_ext_palette_mapped::<{ A }>(slot);
-        }
-        self.obj_a_ext_palette_mapped = mem.vram.is_obj_ext_palette_mapped::<{ A }>();
-
-        mem.vram.read_bg_b(&mut self.bg_b);
-        mem.vram.read_all_obj_b(&mut self.obj_b);
-        mem.vram.read_all_bg_b_ext_palette(&mut self.bg_b_ext_palette);
-        mem.vram.read_all_obj_b_ext_palette(&mut self.obj_b_ext_palette);
-        for slot in 0..4 {
-            self.bg_b_ext_palette_mapped[slot] = mem.vram.is_bg_ext_palette_mapped::<{ B }>(slot);
-        }
-        self.obj_b_ext_palette_mapped = mem.vram.is_obj_ext_palette_mapped::<{ B }>();
-
-        if mem.palettes.dirty {
-            mem.palettes.dirty = false;
-            self.pal_a.copy_from_slice(&mem.palettes.mem[..mem.palettes.mem.len() / 2]);
-            self.pal_b.copy_from_slice(&mem.palettes.mem[mem.palettes.mem.len() / 2..]);
-        }
-
-        if mem.oam.dirty {
-            mem.oam.dirty = false;
-            self.oam_a.copy_from_slice(&mem.oam.mem[..mem.oam.mem.len() / 2]);
-            self.oam_b.copy_from_slice(&mem.oam.mem[mem.oam.mem.len() / 2..]);
-        }
-    }
-}
 
 struct Gpu2dMem {
     bg_ptr: *const u8,
@@ -87,7 +32,7 @@ struct Gpu2dMem {
 }
 
 impl Gpu2dMem {
-    fn new<const ENGINE: Gpu2DEngine>(buf: &GpuMemBuf) -> Self {
+    fn new<const ENGINE: Gpu2DEngine>(buf: &Gpu2dMemBuf) -> Self {
         match ENGINE {
             A => Gpu2dMem {
                 bg_ptr: buf.bg_a.as_ptr(),
@@ -171,19 +116,6 @@ impl GpuRegs {
         };
 
         if updated {
-            // println!(
-            //     "{line} {:x} {:x} {:x} {:x} {:x} {:x} {:x} {:x} {:x} {:x}",
-            //     self.disp_cnts[self.current_batch_count_index],
-            //     u32::from(inner.disp_cnt),
-            //     self.bg_cnts[self.current_batch_count_index],
-            //     u16::from(inner.bg_cnt[0]),
-            //     self.bg_cnts[DISPLAY_HEIGHT + self.current_batch_count_index],
-            //     u16::from(inner.bg_cnt[1]),
-            //     self.bg_cnts[2 * DISPLAY_HEIGHT + self.current_batch_count_index],
-            //     u16::from(inner.bg_cnt[2]),
-            //     self.bg_cnts[3 * DISPLAY_HEIGHT + self.current_batch_count_index],
-            //     u16::from(inner.bg_cnt[3]),
-            // );
             self.disp_cnts[line as usize] = u32::from(inner.disp_cnt);
             for i in 0..4 {
                 self.bg_cnts[line as usize * 4 + i] = u16::from(inner.bg_cnt[i]) as u32;
@@ -972,7 +904,7 @@ impl Gpu2dProgram {
 pub struct Gpu2dRenderer {
     regs_a: [GpuRegs; 2],
     regs_b: [GpuRegs; 2],
-    mem_buf: GpuMemBuf,
+    mem_buf: Gpu2dMemBuf,
     drawing: Mutex<bool>,
     drawing_condvar: Condvar,
     tex_a: Gpu2dTextures,
@@ -1000,7 +932,7 @@ impl Gpu2dRenderer {
         let instance = Gpu2dRenderer {
             regs_a: [GpuRegs::default(), GpuRegs::default()],
             regs_b: [GpuRegs::default(), GpuRegs::default()],
-            mem_buf: GpuMemBuf::default(),
+            mem_buf: Gpu2dMemBuf::default(),
             drawing: Mutex::new(false),
             drawing_condvar: Condvar::new(),
             tex_a: Gpu2dTextures::new(1024, OBJ_A_TEX_HEIGHT, 1024, BG_A_TEX_HEIGHT),
