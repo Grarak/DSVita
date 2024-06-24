@@ -736,14 +736,8 @@ impl Gpu2dProgram {
         gl::BindTexture(gl::TEXTURE_2D, texs.obj);
         sub_mem_texture2d(texs.obj_width, texs.obj_height, mem.obj_ptr);
 
-        gl::BindTexture(gl::TEXTURE_2D, texs.bg);
-        sub_mem_texture2d(texs.bg_width, texs.bg_height, mem.bg_ptr);
-
         gl::BindTexture(gl::TEXTURE_2D, texs.pal);
         sub_pal_texture1d(regions::STANDARD_PALETTES_SIZE / 2, mem.pal_ptr);
-
-        gl::BindTexture(gl::TEXTURE_2D, texs.bg_ext_pal);
-        sub_pal_texture2d(1024, 32, mem.bg_ext_pal_ptr);
 
         gl::BindTexture(gl::TEXTURE_2D, texs.obj_ext_pal);
         sub_pal_texture2d(1024, 8, mem.obj_ext_pal_ptr);
@@ -786,6 +780,12 @@ impl Gpu2dProgram {
             gl::BindVertexArray(0);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
         }
+
+        gl::BindTexture(gl::TEXTURE_2D, texs.bg);
+        sub_mem_texture2d(texs.bg_width, texs.bg_height, mem.bg_ptr);
+
+        gl::BindTexture(gl::TEXTURE_2D, texs.bg_ext_pal);
+        sub_pal_texture2d(1024, 32, mem.bg_ext_pal_ptr);
 
         {
             gl::UseProgram(self.bg_program);
