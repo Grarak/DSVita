@@ -1,5 +1,5 @@
-use crate::emu::memory::regions;
-use crate::emu::CpuType;
+use crate::core::memory::regions;
+use crate::core::CpuType;
 use crate::logging::debug_println;
 use crate::mmap::Mmap;
 use crate::utils::HeapMem;

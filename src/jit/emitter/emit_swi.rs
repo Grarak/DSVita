@@ -1,5 +1,5 @@
-use crate::emu::exception_handler::ExceptionVector;
-use crate::emu::CpuType;
+use crate::core::exception_handler::ExceptionVector;
+use crate::core::CpuType;
 use crate::jit::inst_exception_handler::exception_handler;
 use crate::jit::jit_asm::JitAsm;
 

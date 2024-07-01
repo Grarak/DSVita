@@ -1,4 +1,4 @@
-use crate::emu::CpuType;
+use crate::core::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
 use crate::jit::inst_exception_handler::bios_uninterrupt;

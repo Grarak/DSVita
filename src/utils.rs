@@ -76,7 +76,6 @@ impl Display for StrErr {
 impl Error for StrErr {}
 
 pub type HeapMemU8<const SIZE: usize> = HeapMem<u8, SIZE>;
-pub type HeapMemI8<const SIZE: usize> = HeapMem<i8, SIZE>;
 pub type HeapMemU32<const SIZE: usize> = HeapMem<u32, SIZE>;
 
 pub struct HeapMem<T: Sized, const SIZE: usize>(Box<[T; SIZE]>);
@@ -203,4 +202,18 @@ pub fn set_thread_prio_affinity(thread_priority: ThreadPriority, thread_affinity
             } as _,
         );
     }
+}
+
+pub fn rgb5_to_rgb6(color: u32) -> u32 {
+    let r = (color & 0x1F) << 1;
+    let g = ((color >> 5) & 0x1F) << 1;
+    let b = ((color >> 10) & 0x1F) << 1;
+    (color & 0xFFFC0000) | (b << 12) | (g << 6) | r
+}
+
+pub fn rgb6_to_rgb8(color: u32) -> u32 {
+    let r = (color & 0x3F) * 255 / 63;
+    let g = ((color >> 6) & 0x3F) * 255 / 63;
+    let b = ((color >> 12) & 0x3F) * 255 / 63;
+    (0xFFu32 << 24) | (b << 16) | (g << 8) | r
 }

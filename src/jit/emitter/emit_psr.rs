@@ -1,5 +1,5 @@
-use crate::emu::emu::{get_cm_mut, get_regs, get_regs_mut};
-use crate::emu::CpuType;
+use crate::core::emu::{get_cm_mut, get_regs, get_regs_mut};
+use crate::core::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::inst_info::Operand;
 use crate::jit::inst_threag_regs_handler::{register_set_cpsr_checked, register_set_spsr_checked};

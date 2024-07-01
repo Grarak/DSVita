@@ -1,5 +1,5 @@
-use crate::emu::emu::{get_cm_mut, get_regs, get_regs_mut};
-use crate::emu::CpuType;
+use crate::core::emu::{get_cm_mut, get_regs, get_regs_mut};
+use crate::core::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::{Bx, B};
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, LdrStrImmSBHD, Mrs};

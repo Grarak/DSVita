@@ -1,7 +1,7 @@
-use crate::emu::emu::{get_cpu_regs, Emu};
-use crate::emu::exception_handler::ExceptionVector;
-use crate::emu::hle::bios;
-use crate::emu::{exception_handler, CpuType};
+use crate::core::emu::{get_cpu_regs, Emu};
+use crate::core::exception_handler::ExceptionVector;
+use crate::core::hle::bios;
+use crate::core::{exception_handler, CpuType};
 use crate::jit::inst_mem_handler::imm_breakout;
 use crate::jit::jit_asm::JitAsm;
 

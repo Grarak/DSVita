@@ -50,3 +50,4 @@ vitasdk-sys = { version = "0.3.2", features = [
 
 [profile.release]
 panic = "abort"
+lto = "fat"

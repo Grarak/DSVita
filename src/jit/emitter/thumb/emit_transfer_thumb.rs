@@ -1,4 +1,4 @@
-use crate::emu::CpuType;
+use crate::core::CpuType;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::MemoryAmount;
 

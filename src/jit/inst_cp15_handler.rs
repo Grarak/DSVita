@@ -1,5 +1,5 @@
-use crate::emu::cp15::Cp15;
-use crate::emu::emu::Emu;
+use crate::core::cp15::Cp15;
+use crate::core::emu::Emu;
 
 pub unsafe extern "C" fn cp15_write(context: *mut Cp15, reg: u32, value: u32, emu: *const Emu) {
     (*context).write(reg, value, &*emu)

@@ -1,6 +1,6 @@
-use crate::emu::emu::{get_mmu, get_regs};
-use crate::emu::memory::mmu;
-use crate::emu::CpuType;
+use crate::core::emu::{get_mmu, get_regs};
+use crate::core::memory::mmu;
+use crate::core::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Bfc};
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrReg, LdrStrRegSBHD, Mrs, Msr};

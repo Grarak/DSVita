@@ -1,6 +1,6 @@
-use crate::emu::emu::{get_mem, get_regs_mut};
-use crate::emu::CpuType;
-use crate::emu::CpuType::ARM7;
+use crate::core::emu::{get_mem, get_regs_mut};
+use crate::core::CpuType;
+use crate::core::CpuType::ARM7;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::MemoryAmount;
 use crate::DEBUG_LOG_BRANCH_OUT;
@@ -8,9 +8,9 @@ use handler::*;
 use std::intrinsics::unlikely;
 
 mod handler {
-    use crate::emu::emu::{get_regs, get_regs_mut, Emu};
-    use crate::emu::thread_regs::ThreadRegs;
-    use crate::emu::CpuType;
+    use crate::core::emu::{get_regs, get_regs_mut, Emu};
+    use crate::core::thread_regs::ThreadRegs;
+    use crate::core::CpuType;
     use crate::jit::reg::{Reg, RegReserve};
     use crate::jit::MemoryAmount;
     use crate::logging::debug_println;
@@ -163,11 +163,11 @@ macro_rules! imm_breakout {
         if crate::DEBUG_LOG_BRANCH_OUT {
             $asm.runtime_data.branch_out_pc = $pc;
         }
-        let (pre_cycles_sum, inst_cycle_count) = crate::emu::emu::get_jit!($asm.emu)
-            .get_cycle_counts_unchecked::<$thumb>($pc, crate::emu::emu::get_mem!($asm.emu).current_jit_block_addr);
+        let (pre_cycles_sum, inst_cycle_count) = crate::core::emu::get_jit!($asm.emu)
+            .get_cycle_counts_unchecked::<$thumb>($pc, crate::core::emu::get_mem!($asm.emu).current_jit_block_addr);
         $asm.runtime_data.branch_out_total_cycles = pre_cycles_sum + inst_cycle_count as u16;
-        crate::emu::emu::get_regs_mut!($asm.emu, CPU).pc = $pc + if $thumb { 3 } else { 4 };
-        crate::emu::emu::get_mem_mut!($asm.emu).breakout_imm = false;
+        crate::core::emu::get_regs_mut!($asm.emu, CPU).pc = $pc + if $thumb { 3 } else { 4 };
+        crate::core::emu::get_mem_mut!($asm.emu).breakout_imm = false;
         if $thumb {
             std::arch::asm!("bx {}", in(reg) $asm.breakout_skip_save_regs_thumb_addr);
         } else {

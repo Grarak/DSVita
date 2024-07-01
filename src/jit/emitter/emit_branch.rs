@@ -1,6 +1,6 @@
-use crate::emu::emu::get_regs;
-use crate::emu::CpuType;
-use crate::emu::CpuType::ARM9;
+use crate::core::emu::get_regs;
+use crate::core::CpuType;
+use crate::core::CpuType::ARM9;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
 use crate::jit::inst_branch_handler::inst_branch_label;

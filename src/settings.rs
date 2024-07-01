@@ -55,9 +55,9 @@ pub const FRAMELIMIT_SETTING: usize = 0;
 pub const AUDIO_SETTING: usize = 1;
 pub const ARM7_HLE_SETTINGS: usize = 2;
 pub const DEFAULT_SETTINGS: Settings = [
-    Setting::new("Framelimit", SettingValue::Bool(true)),
+    Setting::new("Framelimit", SettingValue::Bool(false)),
     Setting::new("Audio", SettingValue::Bool(true)),
-    Setting::new("Arm7 HLE", SettingValue::Bool(true)),
+    Setting::new("Arm7 HLE", SettingValue::Bool(false)),
 ];
 
 pub fn create_settings_mut() -> Settings {

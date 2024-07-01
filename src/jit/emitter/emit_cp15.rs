@@ -1,6 +1,6 @@
-use crate::emu::emu::{get_cp15, get_cp15_mut, get_cpu_regs_mut, get_regs, get_regs_mut};
-use crate::emu::CpuType;
-use crate::emu::CpuType::ARM9;
+use crate::core::emu::{get_cp15, get_cp15_mut, get_cpu_regs_mut, get_regs, get_regs_mut};
+use crate::core::CpuType;
+use crate::core::CpuType::ARM9;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
 use crate::jit::inst_cp15_handler::{cp15_read, cp15_write};

@@ -1,5 +1,5 @@
-use crate::emu::emu::{get_regs, get_regs_mut};
-use crate::emu::CpuType;
+use crate::core::emu::{get_regs, get_regs_mut};
+use crate::core::CpuType;
 use crate::jit::jit_asm::JitAsm;
 use crate::DEBUG_LOG_BRANCH_OUT;
 use std::arch::asm;

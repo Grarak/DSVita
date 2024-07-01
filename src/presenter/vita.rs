@@ -1,5 +1,5 @@
-use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use crate::emu::input::Keycode;
+use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::input::Keycode;
 use crate::presenter::menu::Menu;
 use crate::presenter::platform::imgui::{
     ImGuiCond__ImGuiCond_Once, ImGuiContext, ImGuiSelectableFlags__ImGuiSelectableFlags_SpanAllColumns, ImGui_Begin, ImGui_CreateContext, ImGui_DestroyContext, ImGui_End, ImGui_GetDrawData,

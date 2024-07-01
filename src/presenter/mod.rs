@@ -1,5 +1,5 @@
 pub use self::platform::*;
-use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 
 #[cfg(target_os = "linux")]
 #[path = "linux.rs"]

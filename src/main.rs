@@ -11,14 +11,12 @@
 #![feature(seek_stream_len)]
 #![feature(stmt_expr_attributes)]
 
-extern crate core;
-
 use crate::cartridge_reader::CartridgeReader;
-use crate::emu::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, Emu};
-use crate::emu::gpu::gl::gpu_2d_renderer::Gpu2dRenderer;
-use crate::emu::gpu::gpu::{Gpu, Swapchain};
-use crate::emu::spu::{SoundSampler, Spu};
-use crate::emu::{spi, CpuType};
+use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, Emu};
+use crate::core::graphics::gpu::{Gpu, Swapchain};
+use crate::core::graphics::gpu_renderer::GpuRenderer;
+use crate::core::spu::{SoundSampler, Spu};
+use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
@@ -37,9 +35,10 @@ use std::{mem, thread};
 use CpuType::{ARM7, ARM9};
 
 mod cartridge_reader;
-mod emu;
+mod core;
 mod jit;
 mod logging;
+mod math;
 mod mmap;
 mod presenter;
 mod settings;
@@ -56,7 +55,7 @@ fn run_cpu(
     touch_points: Arc<AtomicU16>,
     sound_sampler: Arc<SoundSampler>,
     settings: Arc<Settings>,
-    gpu_2d_renderer: NonNull<Gpu2dRenderer>,
+    gpu_renderer: NonNull<GpuRenderer>,
 ) {
     let arm9_ram_addr = cartridge_reader.header.arm9_values.ram_address;
     let arm9_entry_addr = cartridge_reader.header.arm9_values.entry_address;
@@ -146,7 +145,7 @@ fn run_cpu(
 
     Gpu::initialize_schedule(get_cm_mut!(emu));
     common.gpu.frame_limit = settings[FRAMELIMIT_SETTING].value.as_bool().unwrap();
-    common.gpu.gpu_2d_renderer = Some(gpu_2d_renderer);
+    common.gpu.gpu_renderer = Some(gpu_renderer);
 
     if settings[AUDIO_SETTING].value.as_bool().unwrap() {
         Spu::initialize_schedule(get_cm_mut!(emu));
@@ -176,6 +175,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     let cpu_regs_arm7 = get_cpu_regs!(emu, ARM7);
 
     let cm = &mut get_common_mut!(emu).cycle_manager;
+    let gpu_3d_regs = &mut get_common_mut!(emu).gpu.gpu_3d_regs;
 
     loop {
         let next_event_in_cycles = min(cm.next_event_in_cycles(), 32);
@@ -207,10 +207,14 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
             }
         }
 
-        if unlikely(cm.check_events(jit_asm_arm9.emu)) {
+        if unlikely(cm.check_events(emu)) {
             jit_asm_arm9.runtime_data.idle_loop = false;
-            jit_asm_arm7.runtime_data.idle_loop = false;
+            if !ARM7_HLE {
+                jit_asm_arm7.runtime_data.idle_loop = false;
+            }
         }
+
+        gpu_3d_regs.run_cmds(cm.get_cycles(), emu);
     }
 }
 
@@ -341,8 +345,8 @@ pub fn main() {
         None
     };
 
-    let gpu_2d_renderer = UnsafeCell::new(Gpu2dRenderer::new());
-    let gpu_2d_renderer_ptr = gpu_2d_renderer.get() as u32;
+    let gpu_renderer = UnsafeCell::new(GpuRenderer::new());
+    let gpu_renderer_ptr = gpu_renderer.get() as u32;
 
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
@@ -356,19 +360,19 @@ pub fn main() {
                 touch_points_clone,
                 sound_sampler_clone,
                 settings,
-                NonNull::new(gpu_2d_renderer_ptr as *mut Gpu2dRenderer).unwrap(),
+                NonNull::new(gpu_renderer_ptr as *mut GpuRenderer).unwrap(),
             );
         })
         .unwrap();
 
-    let gpu_2d_renderer = unsafe { gpu_2d_renderer.get().as_mut().unwrap() };
+    let gpu_renderer = unsafe { gpu_renderer.get().as_mut().unwrap() };
     while let PresentEvent::Inputs { keymap, touch } = presenter.poll_event() {
         if let Some((x, y)) = touch {
             touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
         }
         key_map.store(keymap, Ordering::Relaxed);
 
-        unsafe { gpu_2d_renderer.draw(&mut presenter, &fps) };
+        gpu_renderer.render_loop(&mut presenter, &fps);
     }
 
     if let Some(audio_thread) = audio_thread {

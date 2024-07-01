@@ -1,5 +1,5 @@
-use crate::emu::gpu::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use crate::emu::input;
+use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::input;
 use crate::presenter::menu::Menu;
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
 use crate::utils::BuildNoHasher;
