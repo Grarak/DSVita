@@ -85,11 +85,7 @@ impl GpuRenderer {
 
         let render_time_start = Instant::now();
 
-        unsafe {
-            self.renderer_2d.render(&self.common);
-
-            presenter.gl_swap_window();
-        }
+        unsafe { self.renderer_2d.render(&self.common) }
 
         let render_time_end = Instant::now();
         let render_time_diff = render_time_end - render_time_start;
@@ -105,6 +101,8 @@ impl GpuRenderer {
             let fps = fps.load(Ordering::Relaxed);
             let per = fps * 100 / 60;
             self.gl_glyph.draw(format!("Render time: {}ms\nFPS: {fps} ({per}%)", self.average_render_time));
+
+            presenter.gl_swap_window();
         }
 
         {
