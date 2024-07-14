@@ -170,19 +170,14 @@ impl Entry {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 #[repr(u8)]
 enum PolygonMode {
+    #[default]
     Modulation = 0,
     Decal = 1,
     Toon = 2,
     Shadow = 3,
-}
-
-impl Default for PolygonMode {
-    fn default() -> Self {
-        PolygonMode::Modulation
-    }
 }
 
 impl From<u8> for PolygonMode {
@@ -192,9 +187,10 @@ impl From<u8> for PolygonMode {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
 #[repr(u8)]
 enum TextureFormat {
+    #[default]
     None = 0,
     A3I5Translucent = 1,
     Color4Palette = 2,
@@ -205,12 +201,6 @@ enum TextureFormat {
     Direct = 7,
 }
 
-impl Default for TextureFormat {
-    fn default() -> Self {
-        TextureFormat::None
-    }
-}
-
 impl From<u8> for TextureFormat {
     fn from(value: u8) -> Self {
         debug_assert!(value <= TextureFormat::Direct as u8);
@@ -218,19 +208,14 @@ impl From<u8> for TextureFormat {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
 #[repr(u8)]
 enum TextureCoordTransMode {
+    #[default]
     None = 0,
     TexCoord = 1,
     Normal = 2,
     Vertex = 3,
-}
-
-impl Default for TextureCoordTransMode {
-    fn default() -> Self {
-        TextureCoordTransMode::None
-    }
 }
 
 impl From<u8> for TextureCoordTransMode {
@@ -270,15 +255,16 @@ struct Polygon {
     flip_s: bool,
     flip_t: bool,
     texture_fmt: TextureFormat,
-    tranparent0: bool,
+    transparent0: bool,
 
     w_buffer: bool,
     w_shift: i32,
 }
 
-#[derive(Eq, PartialEq, Copy, Clone)]
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
 #[repr(u8)]
 enum PolygonType {
+    #[default]
     SeparateTriangles = 0,
     SeparateQuadliterals = 1,
     TriangleStrips = 2,
@@ -296,12 +282,6 @@ impl PolygonType {
     }
 }
 
-impl Default for PolygonType {
-    fn default() -> Self {
-        PolygonType::SeparateTriangles
-    }
-}
-
 impl From<u8> for PolygonType {
     fn from(value: u8) -> Self {
         debug_assert!(value <= PolygonType::QuadliteralStrips as u8);
@@ -309,18 +289,14 @@ impl From<u8> for PolygonType {
     }
 }
 
+#[derive(Default)]
 #[repr(u8)]
 enum MtxMode {
+    #[default]
     Projection = 0,
     ModelView = 1,
     ModelViewVec = 2,
     Texture,
-}
-
-impl Default for MtxMode {
-    fn default() -> Self {
-        MtxMode::Projection
-    }
 }
 
 impl From<u8> for MtxMode {
