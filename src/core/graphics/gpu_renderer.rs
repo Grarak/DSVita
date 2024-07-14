@@ -66,15 +66,19 @@ impl GpuRenderer {
     pub fn on_scanline_finish(&mut self, mem: &mut Memory, pow_cnt1: PowCnt1) {
         let mut rendering = self.rendering.lock().unwrap();
 
-        self.common.pow_cnt1 = pow_cnt1;
-        self.renderer_2d.on_scanline_finish();
-
         if !*rendering {
+            self.common.pow_cnt1 = pow_cnt1;
+            self.renderer_2d.on_scanline_finish();
+
             self.common.mem_buf.read(mem);
 
             *rendering = true;
             self.rendering_condvar.notify_one();
         }
+    }
+
+    pub fn reload_registers(&mut self) {
+        self.renderer_2d.reload_registers();
     }
 
     pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>) {

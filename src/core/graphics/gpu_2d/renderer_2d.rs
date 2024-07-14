@@ -942,8 +942,13 @@ impl Gpu2DRenderer {
     }
 
     pub fn on_scanline_finish(&mut self) {
-        self.regs_a[0] = mem::take(&mut self.regs_a[1]);
-        self.regs_b[0] = mem::take(&mut self.regs_b[1]);
+        self.regs_a[0] = self.regs_a[1].clone();
+        self.regs_b[0] = self.regs_b[1].clone();
+    }
+
+    pub fn reload_registers(&mut self) {
+        self.regs_a[1] = Gpu2DRenderRegs::default();
+        self.regs_b[1] = Gpu2DRenderRegs::default();
     }
 
     pub unsafe fn render(&mut self, common: &GpuRendererCommon) {

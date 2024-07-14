@@ -204,6 +204,7 @@ impl Gpu {
             }
             263 => {
                 gpu.v_count = 0;
+                unsafe { gpu.gpu_renderer.unwrap_unchecked().as_mut() }.reload_registers();
 
                 if gpu.arm7_hle {
                     Arm7Hle::on_frame(emu);
