@@ -10,61 +10,16 @@ use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
-use crate::utils::{rgb6_to_rgb8, HeapMemU32};
 use bilge::prelude::*;
-use std::collections::VecDeque;
 use std::intrinsics::{likely, unlikely};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 pub const DISPLAY_WIDTH: usize = 256;
 pub const DISPLAY_HEIGHT: usize = 192;
-pub const DISPLAY_PIXEL_COUNT: usize = DISPLAY_WIDTH * DISPLAY_HEIGHT;
-
-pub struct Swapchain {
-    queue: Mutex<VecDeque<HeapMemU32<{ DISPLAY_PIXEL_COUNT * 2 }>>>,
-    cond_var: Condvar,
-}
-
-impl Swapchain {
-    pub fn new() -> Self {
-        Swapchain {
-            queue: Mutex::new(VecDeque::new()),
-            cond_var: Condvar::new(),
-        }
-    }
-
-    fn push(&self, fb_0: &[u32; DISPLAY_PIXEL_COUNT], fb_1: &[u32; DISPLAY_PIXEL_COUNT]) {
-        let mut queue = self.queue.lock().unwrap();
-        if queue.len() == 2 {
-            queue.swap(0, 1);
-            let fb = queue.back_mut().unwrap();
-            fb[0..DISPLAY_PIXEL_COUNT].copy_from_slice(fb_0);
-            fb[DISPLAY_PIXEL_COUNT..DISPLAY_PIXEL_COUNT * 2].copy_from_slice(fb_1);
-        } else {
-            let mut fb = HeapMemU32::new();
-            fb[0..DISPLAY_PIXEL_COUNT].copy_from_slice(fb_0);
-            fb[DISPLAY_PIXEL_COUNT..DISPLAY_PIXEL_COUNT * 2].copy_from_slice(fb_1);
-            queue.push_back(fb);
-            self.cond_var.notify_one();
-        }
-    }
-
-    pub fn consume(&self) -> HeapMemU32<{ DISPLAY_PIXEL_COUNT * 2 }> {
-        let mut fb = {
-            let queue = self.queue.lock().unwrap();
-            let mut queue = self.cond_var.wait_while(queue, |queue| queue.is_empty()).unwrap();
-            queue.pop_front().unwrap()
-        };
-        fb.iter_mut().for_each(|value| {
-            *value = rgb6_to_rgb8(*value);
-        });
-        fb
-    }
-}
 
 struct FrameRateCounter {
     frame_counter: u16,
@@ -134,7 +89,6 @@ pub struct Gpu {
     disp_stat: [DispStat; 2],
     pub pow_cnt1: u16,
     pub disp_cap_cnt: u32,
-    swapchain: Arc<Swapchain>,
     frame_rate_counter: FrameRateCounter,
     pub frame_limit: bool,
     pub arm7_hle: bool,
@@ -146,12 +100,11 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    pub fn new(swapchain: Arc<Swapchain>, fps: Arc<AtomicU16>) -> Gpu {
+    pub fn new(fps: Arc<AtomicU16>) -> Gpu {
         Gpu {
             disp_stat: [DispStat::from(0); 2],
             pow_cnt1: 0,
             disp_cap_cnt: 0,
-            swapchain,
             frame_rate_counter: FrameRateCounter::new(fps),
             frame_limit: false,
             arm7_hle: false,
@@ -251,8 +204,6 @@ impl Gpu {
             }
             263 => {
                 gpu.v_count = 0;
-                let gpu_renderer = unsafe { gpu.gpu_renderer.unwrap_unchecked().as_mut() };
-                gpu_renderer.reload_registers();
 
                 if gpu.arm7_hle {
                     Arm7Hle::on_frame(emu);

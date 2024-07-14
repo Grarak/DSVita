@@ -1,4 +1,5 @@
 #![allow(incomplete_features)]
+#![allow(internal_features)]
 #![feature(adt_const_params)]
 #![feature(allocator_api)]
 #![feature(arm_target_feature)]
@@ -13,7 +14,7 @@
 
 use crate::cartridge_reader::CartridgeReader;
 use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, Emu};
-use crate::core::graphics::gpu::{Gpu, Swapchain};
+use crate::core::graphics::gpu::Gpu;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::spu::{SoundSampler, Spu};
 use crate::core::{spi, CpuType};
@@ -49,7 +50,6 @@ pub const DEBUG_LOG_BRANCH_OUT: bool = DEBUG_LOG;
 
 fn run_cpu(
     cartridge_reader: CartridgeReader,
-    swapchain: Arc<Swapchain>,
     fps: Arc<AtomicU16>,
     key_map: Arc<AtomicU32>,
     touch_points: Arc<AtomicU16>,
@@ -62,7 +62,7 @@ fn run_cpu(
     let arm7_ram_addr = cartridge_reader.header.arm7_values.ram_address;
     let arm7_entry_addr = cartridge_reader.header.arm7_values.entry_address;
 
-    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_reader, swapchain, fps, key_map, touch_points, sound_sampler));
+    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_reader, fps, key_map, touch_points, sound_sampler));
     let emu = emu_unsafe.get_mut();
     let common = get_common_mut!(emu);
     let mem = get_mem_mut!(emu);
@@ -307,8 +307,6 @@ pub fn main() {
     let cartridge_reader = CartridgeReader::from_file(file_path.borrow().to_str().unwrap()).unwrap();
     drop(file_path);
 
-    let swapchain = Arc::new(Swapchain::new());
-    let swapchain_clone = swapchain.clone();
     let fps = Arc::new(AtomicU16::new(0));
     let fps_clone = fps.clone();
 
@@ -354,7 +352,6 @@ pub fn main() {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
             run_cpu(
                 cartridge_reader,
-                swapchain_clone,
                 fps_clone,
                 key_map_clone,
                 touch_points_clone,

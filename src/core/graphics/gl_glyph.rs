@@ -1,8 +1,8 @@
+use crate::core::graphics::gl_utils::{create_program, create_shader, shader_source};
 use gl::types::GLuint;
 use glyph_brush::ab_glyph::FontRef;
 use glyph_brush::{BrushAction, BrushError, Extra, GlyphBrush, GlyphBrushBuilder, Section, Text};
 use std::ptr;
-use crate::core::graphics::gl_utils::{create_program, create_shader, shader_source};
 
 pub struct GlGlyph {
     glyph_brush: GlyphBrush<[f32; 4 * 4], Extra, FontRef<'static>>,
@@ -119,9 +119,9 @@ impl GlGlyph {
 
             match glyph_action {
                 Ok(_) => break,
-                Err(BrushError::TextureTooSmall { suggested, .. }) => {
+                Err(BrushError::TextureTooSmall { /*suggested,*/ .. }) => {
                     todo!();
-                    self.glyph_brush.resize_texture(suggested.0, suggested.1);
+                    // self.glyph_brush.resize_texture(suggested.0, suggested.1);
                 }
             }
         }

@@ -12,10 +12,13 @@ use syn::{parse_macro_input, parse_quote_spanned, Arm, Block, Expr, ExprBlock, E
 fn write_block(base: u32, size: usize, span: Span) -> Block {
     if size == 1 {
         parse_quote_spanned! {span.into()=>{
-            let value = bytes_window[index];
-            addr_offset_tmp += 1;
-            #[allow(unused_braces)]
-            { block_placeholder() }
+            #[allow(unused_assignments, unused_variables)]
+            {
+                let value = bytes_window[index];
+                addr_offset_tmp += 1;
+                #[allow(unused_braces)]
+                { block_placeholder() }
+            }
         }}
     } else {
         let type_str = format_ident!("u{}", size << 3);
@@ -31,7 +34,7 @@ fn write_block(base: u32, size: usize, span: Span) -> Block {
             )
         };
         parse_quote_spanned! {span.into()=>{
-            #[allow(unused_variables)]
+            #[allow(unused_assignments, unused_variables)]
             {
                 let offset = addr_offset_tmp - #base;
                 let index_start = index - offset as usize;
@@ -51,7 +54,7 @@ fn read_block(base: u32, size: usize, span: Span) -> Block {
     let type_str = format_ident!("u{}", size << 3);
     if size == 1 {
         parse_quote_spanned! {span.into()=>{
-            #[allow(unreachable_code)]
+            #[allow(unreachable_code, unused_variables)]
             {
                 let ret: #type_str = { block_placeholder() };
                 bytes_window[index] = ret;
@@ -60,7 +63,7 @@ fn read_block(base: u32, size: usize, span: Span) -> Block {
         }}
     } else {
         parse_quote_spanned! {span.into()=>{
-            #[allow(unreachable_code)]
+            #[allow(unreachable_code, unused_variables)]
             {
                 let ret: #type_str = { block_placeholder() };
                 let bytes = ret.to_le_bytes();

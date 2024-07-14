@@ -131,8 +131,6 @@ pub struct Gpu2DRegisters<const ENGINE: Gpu2DEngine> {
     pub win_in: u16,
     pub win_out: u16,
     pub mosaic: u16,
-    disp_stat: u16,
-    pow_cnt1: u16,
     internal: Gpu2DRegistersInner,
 }
 

@@ -1031,13 +1031,13 @@ impl Gpu3DRegisters {
                 }
             }
         }
-        
-        self.vertices.outs.copy_from_slice(self.vertices.ins.as_slice());
+
+        mem::swap(&mut self.vertices.ins, &mut self.vertices.outs);
         self.vertices.count_out = self.vertices.count_in;
         self.vertices.count_in = 0;
         self.vertex_count = 0;
 
-        self.polygons.outs.copy_from_slice(self.polygons.ins.as_slice());
+        mem::swap(&mut self.polygons.ins, &mut self.polygons.outs);
         self.polygons.count_out = self.polygons.count_in;
         self.polygons.count_in = 0;
     }
