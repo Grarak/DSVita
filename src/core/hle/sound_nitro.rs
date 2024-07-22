@@ -6,7 +6,7 @@ use crate::core::spu::{MainSoundCnt, SoundCapCnt, SoundChannelFormat, SoundCnt, 
 use crate::core::CpuType::ARM7;
 use bilge::prelude::*;
 use std::array;
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::collections::VecDeque;
 
 #[derive(Default)]
@@ -512,7 +512,7 @@ impl SoundNitro {
             panbase = ((panbase * track.track_unk01 as i32) + 64) >> 7;
         }
         panbase += track.track_unk09 as i32;
-        let panbase = min(max(panbase, -0x80), 0x7F);
+        let panbase = panbase.clamp(-0x80, 0x7F);
 
         let mut chan_id = track.chan_list;
         while let Some(id) = chan_id {
@@ -1496,7 +1496,7 @@ impl SoundNitro {
                     continue;
                 }
 
-                let tune = min(max(tune, 0), 127) as u8;
+                let tune = tune.clamp(0, 127) as u8;
 
                 if self.tracks[track_id].status_flags & (1 << 2) == 0 && process {
                     self.track_key_on(track_id, seq_id, tune, speed, if len <= 0 { -1 } else { len }, emu);
@@ -1992,7 +1992,7 @@ impl SoundNitro {
     }
 
     fn calc_volume(vol: i32) -> u16 {
-        let vol = min(max(vol, -723), 0);
+        let vol = vol.clamp(-723, 0);
 
         let ret = VOLUME_TABLE[(vol + 723) as usize];
 
@@ -2036,7 +2036,7 @@ impl SoundNitro {
             return 0xFFFF;
         }
 
-        min(max(pitch, 0x10), 0xFFFF) as u16
+        pitch.clamp(0x10, 0xFFFF) as u16
     }
 
     fn update_channels(&mut self, update_ramps: bool, emu: &mut Emu) {
@@ -2113,7 +2113,7 @@ impl SoundNitro {
             }
 
             pan += 64;
-            let pan = min(max(pan, 0), 127) as u8;
+            let pan = pan.clamp(0, 127) as u8;
 
             if finalvol != (self.channels[i].volume as u16 | (self.channels[i].volume_div as u16) << 8) {
                 self.channels[i].volume = finalvol as u8;

@@ -180,8 +180,16 @@ impl Gpu {
 
         gpu.v_count += 1;
         match gpu.v_count {
+            // 3d starts 48 cycles earlier for rendering
+            143 => unsafe { gpu.gpu_renderer.unwrap_unchecked().as_mut().renderer_3d.finish_scanline(&gpu.gpu_3d_regs) },
             192 => {
-                unsafe { gpu.gpu_renderer.unwrap_unchecked().as_mut() }.on_scanline_finish(get_mem_mut!(emu), PowCnt1::from(gpu.pow_cnt1));
+                let pow_cnt1 = PowCnt1::from(gpu.pow_cnt1);
+                gpu.get_renderer_mut().on_scanline_finish(get_mem_mut!(emu), pow_cnt1);
+
+                if gpu.gpu_3d_regs.flushed {
+                    gpu.gpu_3d_regs.swap_buffers();
+                    gpu.get_renderer_mut().renderer_3d.invalidate();
+                }
 
                 for i in 0..2 {
                     let disp_stat = &mut gpu.disp_stat[i];
@@ -190,10 +198,6 @@ impl Gpu {
                         get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdVBlank, get_cm_mut!(emu));
                         io_dma!(emu, CpuType::from(i as u8)).trigger_all(DmaTransferMode::StartAtVBlank, get_cm_mut!(emu));
                     }
-                }
-
-                if gpu.gpu_3d_regs.flushed {
-                    gpu.gpu_3d_regs.swap_buffers();
                 }
             }
             262 => {
@@ -204,7 +208,7 @@ impl Gpu {
             }
             263 => {
                 gpu.v_count = 0;
-                unsafe { gpu.gpu_renderer.unwrap_unchecked().as_mut() }.reload_registers();
+                gpu.get_renderer_mut().reload_registers();
 
                 if gpu.arm7_hle {
                     Arm7Hle::on_frame(emu);

@@ -26,10 +26,11 @@ uniform sampler2D bgTex;
 uniform sampler2D palTex;
 uniform sampler2D extPalTex;
 uniform sampler2D winTex;
+uniform sampler2D display3dTex;
 
 int readBg8(int addr) {
     float x = float((addr >> 2) & 0x1FF) / 511.0;
-    float y = float((addr >> 2) >> 9) / (BG_TEX_HEIGHT - 1.0);
+    float y = float(addr >> 11) / (BG_TEX_HEIGHT - 1.0);
     return int(texture(bgTex, vec2(x, y))[addr & 3] * 255.0);
 }
 
@@ -258,6 +259,13 @@ void main() {
                 color = drawBitmap(x, y, bgNum);
             } else {
                 color = drawAffine(x, y, bgNum, true);
+            }
+            break;
+        }
+        case 4: {
+            color = texture(display3dTex, vec2(screenPosF.x, 1.0 - screenPosF.y));
+            if (color.a == 0.0) {
+                discard;
             }
             break;
         }

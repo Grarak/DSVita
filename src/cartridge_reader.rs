@@ -68,7 +68,7 @@ pub struct CartridgeHeader {
 
 const PAGE_SIZE: u32 = 4096;
 
-const HEADER_SIZE: usize = mem::size_of::<CartridgeHeader>();
+const HEADER_SIZE: usize = size_of::<CartridgeHeader>();
 pub const HEADER_IN_RAM_SIZE: usize = 0x170;
 const_assert_eq!(HEADER_SIZE, HEADER_IN_RAM_SIZE + 0x90);
 

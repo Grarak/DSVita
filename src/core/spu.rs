@@ -336,7 +336,7 @@ impl Spu {
         }
 
         channel.adpcm_index += ADPCM_INDEX_TABLE[(adpcm_data & 0x7) as usize] as i32;
-        channel.adpcm_index = min(max(channel.adpcm_index, 0), 88);
+        channel.adpcm_index = channel.adpcm_index.clamp(0, 88);
 
         channel.adpcm_toggle = !channel.adpcm_toggle;
         if !channel.adpcm_toggle {
@@ -345,7 +345,7 @@ impl Spu {
     }
 
     fn next_sample_psg(&mut self, channel_num: usize) {
-        if channel_num >= 8 && channel_num <= 13 {
+        if (8..=13).contains(&channel_num) {
             self.duty_cycles[channel_num - 8] = (self.duty_cycles[channel_num - 8] + 1) % 8;
         } else if channel_num >= 14 {
             self.noise_values[channel_num - 14] &= !(1 << 15);
@@ -511,8 +511,8 @@ impl Spu {
         let sample_left = (sample_left >> 6) + spu.sound_bias as i64;
         let sample_right = (sample_right >> 6) + spu.sound_bias as i64;
 
-        let sample_left = min(max(sample_left, 0), 0x3FF);
-        let sample_right = min(max(sample_right, 0), 0x3FF);
+        let sample_left = sample_left.clamp(0, 0x3FF);
+        let sample_right = sample_right.clamp(0, 0x3FF);
 
         let sample_left = (sample_left - 0x200) << 5;
         let sample_right = (sample_right - 0x200) << 5;

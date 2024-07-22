@@ -204,3 +204,33 @@ pub unsafe fn create_fb_depth_tex(fbo: GLuint, width: u32, height: u32) -> GLuin
         Presenter::gl_create_depth_tex()
     }
 }
+
+pub struct GpuFbo {
+    pub color: GLuint,
+    pub depth: Option<GLuint>,
+    pub fbo: GLuint,
+}
+
+impl GpuFbo {
+    pub fn new(width: u32, height: u32, depth: bool) -> Result<Self, StrErr> {
+        unsafe {
+            let color = create_fb_color(width, height);
+
+            let mut fbo = 0;
+            gl::GenFramebuffers(1, &mut fbo);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
+            gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color, 0);
+
+            let depth = if depth { Some(create_fb_depth_tex(fbo, width, height)) } else { None };
+
+            let status = gl::CheckFramebufferStatus(gl::FRAMEBUFFER);
+            gl::BindRenderbuffer(gl::RENDERBUFFER, 0);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            if status != gl::FRAMEBUFFER_COMPLETE {
+                Err(StrErr::new(format!("Failed to create fbo: {status}")))
+            } else {
+                Ok(GpuFbo { color, depth, fbo })
+            }
+        }
+    }
+}

@@ -314,11 +314,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             slow_read_opcodes.extend(self.emit_call_host_func(
                 |asm, opcodes| {
                     if PRE {
-                        unsafe {
-                            let tmp_ptr = ptr::addr_of_mut!(CALCULATED_ADDR_TMP) as u32;
-                            opcodes.extend(AluImm::mov32(Reg::R0, tmp_ptr));
-                            opcodes.push(LdrStrImm::ldr_al(Reg::R0, Reg::R0));
-                        }
+                        let tmp_ptr = unsafe { ptr::addr_of_mut!(CALCULATED_ADDR_TMP) as u32 };
+                        opcodes.extend(AluImm::mov32(Reg::R0, tmp_ptr));
+                        opcodes.push(LdrStrImm::ldr_al(Reg::R0, Reg::R0));
 
                         if WRITE_BACK && op0 != *og_op1 {
                             opcodes.extend(get_regs!(asm.emu, CPU).emit_set_reg(*og_op1, Reg::R0, Reg::R1));
@@ -335,11 +333,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                         }
 
                         if WRITE_BACK && op0 != *og_op1 {
-                            unsafe {
-                                let tmp_ptr = ptr::addr_of_mut!(CALCULATED_ADDR_TMP) as u32;
-                                opcodes.extend(AluImm::mov32(Reg::R1, tmp_ptr));
-                                opcodes.push(LdrStrImm::ldr_al(Reg::R1, Reg::R1));
-                            }
+                            let tmp_ptr = unsafe { ptr::addr_of_mut!(CALCULATED_ADDR_TMP) as u32 };
+                            opcodes.extend(AluImm::mov32(Reg::R1, tmp_ptr));
+                            opcodes.push(LdrStrImm::ldr_al(Reg::R1, Reg::R1));
 
                             opcodes.extend(get_regs!(asm.emu, CPU).emit_set_reg(*og_op1, Reg::R1, Reg::R2));
                         }

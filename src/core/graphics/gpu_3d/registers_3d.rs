@@ -6,7 +6,6 @@ use crate::core::CpuType::ARM9;
 use crate::math::{Matrix, Vectori16, Vectori32, Vectoru16};
 use crate::utils::{rgb5_to_rgb6, HeapMem};
 use bilge::prelude::*;
-use std::cmp::{max, min};
 use std::collections::VecDeque;
 use std::hint::unreachable_unchecked;
 use std::mem;
@@ -55,15 +54,15 @@ impl Default for Viewport {
 
 #[bitsize(32)]
 #[derive(Copy, Clone, Default, FromBits)]
-struct TexImageParam {
-    vram_offset: u16,
-    repeat_s: bool,
-    repeat_t: bool,
-    flip_s: bool,
-    flip_t: bool,
-    size_s_shift: u3,
-    size_t_shift: u3,
-    format: u3,
+pub struct TexImageParam {
+    pub vram_offset: u16,
+    pub repeat_s: bool,
+    pub repeat_t: bool,
+    pub flip_s: bool,
+    pub flip_t: bool,
+    pub size_s_shift: u3,
+    pub size_t_shift: u3,
+    pub format: u3,
     color_0_transparent: bool,
     coord_trans_mode: u2,
 }
@@ -187,9 +186,9 @@ impl From<u8> for PolygonMode {
     }
 }
 
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
-enum TextureFormat {
+pub enum TextureFormat {
     #[default]
     None = 0,
     A3I5Translucent = 1,
@@ -226,16 +225,76 @@ impl From<u8> for TextureCoordTransMode {
 }
 
 #[derive(Copy, Clone, Default)]
-struct Vertex {
-    coords: Vectori32<4>,
-    tex_coords: Vectori16<2>,
-    color: u32,
+pub struct Vertex {
+    pub coords: Vectori32<4>,
+    pub tex_coords: Vectori16<2>,
+    pub color: u32,
+}
+
+fn intersect(v1: &Vertex, v2: &Vertex, val1: i32, val2: i32) -> Vertex {
+    let d1 = val1 as i64 + v1.coords[3] as i64;
+    let d2 = val2 as i64 + v2.coords[3] as i64;
+    if d2 == d1 {
+        return *v1;
+    }
+
+    let mut vertex = Vertex::default();
+    for i in 0..4 {
+        vertex.coords[i] = v1.coords[i] + ((v2.coords[i] - v1.coords[i]) as i64 * -d1 / (d2 - d1)) as i32;
+    }
+    vertex
+}
+
+fn clip_polygon(unclipped: &[Vertex; 4], clipped: &mut [Vertex; 10], size: &mut usize) -> bool {
+    let mut clip = false;
+
+    let mut vertices = [Vertex::default(); 10];
+    vertices[..4].copy_from_slice(unclipped);
+
+    for i in 0..6 {
+        let old_size = *size;
+        *size = 0;
+
+        for j in 0..old_size {
+            let current = &vertices[j];
+            let previous = &vertices[(j - 1 + old_size) % old_size];
+
+            let (current_val, previous_val) = match i {
+                0 => (current.coords[0], previous.coords[0]),
+                1 => (-current.coords[0], -previous.coords[0]),
+                2 => (current.coords[1], previous.coords[1]),
+                3 => (-current.coords[1], -previous.coords[1]),
+                4 => (current.coords[2], previous.coords[2]),
+                5 => (-current.coords[2], -previous.coords[2]),
+                _ => unsafe { unreachable_unchecked() },
+            };
+
+            if current_val >= -current.coords[3] {
+                if previous_val < -previous.coords[3] {
+                    clipped[*size] = intersect(current, previous, current_val, previous_val);
+                    *size += 1;
+                    clip = true;
+                }
+
+                clipped[*size] = *current;
+                *size += 1;
+            } else if previous_val >= -previous.coords[3] {
+                clipped[*size] = intersect(current, previous, current_val, previous_val);
+                *size += 1;
+                clip = true;
+            }
+        }
+
+        vertices[..*size].copy_from_slice(&clipped[..*size]);
+    }
+
+    clip
 }
 
 #[derive(Copy, Clone, Default)]
-struct Polygon {
-    size: u8,
-    vertices_index: usize,
+pub struct Polygon {
+    pub size: usize,
+    pub vertices_index: usize,
     crossed: bool,
     clockwise: bool,
 
@@ -246,22 +305,15 @@ struct Polygon {
     alpha: u8,
     id: u8,
 
-    texture_addr: u32,
-    palette_addr: u32,
-    size_s: i32,
-    size_t: i32,
-    repeat_s: bool,
-    repeat_t: bool,
-    flip_s: bool,
-    flip_t: bool,
-    texture_fmt: TextureFormat,
+    pub tex_image_param: TexImageParam,
+    pub palette_addr: u16,
     transparent0: bool,
 
-    w_buffer: bool,
-    w_shift: i32,
+    pub w_buffer: bool,
+    pub w_shift: i32,
 }
 
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
 enum PolygonType {
     #[default]
@@ -320,20 +372,20 @@ struct Matrices {
 }
 
 #[derive(Default)]
-struct Vertices {
+pub struct Vertices {
     ins: HeapMem<Vertex, 6144>,
-    outs: HeapMem<Vertex, 6144>,
+    pub outs: HeapMem<Vertex, 6144>,
     count_in: usize,
-    count_out: usize,
+    pub count_out: usize,
     process_count: usize,
 }
 
 #[derive(Default)]
-struct Polygons {
+pub struct Polygons {
     ins: HeapMem<Polygon, 2048>,
-    outs: HeapMem<Polygon, 2048>,
+    pub outs: HeapMem<Polygon, 2048>,
     count_in: usize,
-    count_out: usize,
+    pub count_out: usize,
 }
 
 #[derive(Default)]
@@ -352,8 +404,8 @@ pub struct Gpu3DRegisters {
     clip_dirty: bool,
 
     matrices: Matrices,
-    vertices: Vertices,
-    polygons: Polygons,
+    pub vertices: Vertices,
+    pub polygons: Polygons,
 
     saved_vertex: Vertex,
     saved_polygon: Polygon,
@@ -475,6 +527,7 @@ impl Gpu3DRegisters {
                 0x1A => self.exe_mtx_mult33(params.try_into().unwrap()),
                 0x1B => self.exe_mtx_scale(params.try_into().unwrap()),
                 0x1C => self.exe_mtx_trans(params.try_into().unwrap()),
+                0x20 => self.exe_color(entry.param),
                 0x21 => self.exe_normal(entry.param),
                 0x22 => self.exe_tex_coord(entry.param),
                 0x23 => self.exe_vtx16(params.try_into().unwrap()),
@@ -496,13 +549,13 @@ impl Gpu3DRegisters {
                 0x50 => self.exe_swap_buffers(entry.param),
                 0x60 => self.exe_viewport(entry.param),
                 0x70 => {
-                    todo!()
+                    // todo!()
                 }
                 0x71 => {
-                    todo!()
+                    // todo!()
                 }
                 0x72 => {
-                    todo!()
+                    // todo!()
                 }
                 _ => {
                     todo!("{:x}", entry.cmd);
@@ -729,6 +782,10 @@ impl Gpu3DRegisters {
         self.mtx_mult(mtx);
     }
 
+    fn exe_color(&mut self, param: u32) {
+        self.saved_vertex.color = rgb5_to_rgb6(param);
+    }
+
     fn exe_normal(&mut self, param: u32) {
         let normal_vector_param = NormalVector::from(param);
         let mut normal_vector = Vectori32::<3>::default();
@@ -760,10 +817,10 @@ impl Gpu3DRegisters {
             }
 
             let diffuse_level = -(self.light_vectors[i] * normal_vector);
-            let diffuse_level = min(max(diffuse_level, 0), 1 << 12) as u32;
+            let diffuse_level = diffuse_level.clamp(0, 1 << 12) as u32;
 
             let shininess_level = -(self.half_vectors[i] * normal_vector);
-            let shininess_level = min(max(shininess_level, 0), 1 << 12) as u32;
+            let shininess_level = shininess_level.clamp(0, 1 << 12) as u32;
             let mut shininess_level = (shininess_level * shininess_level) >> 12;
 
             if self.shininess_enabled {
@@ -786,9 +843,9 @@ impl Gpu3DRegisters {
             g += (((self.ambient_color >> 6) & 0x3F) * ((self.light_colors[i] >> 6) & 0x3F)) >> 6;
             b += (((self.ambient_color >> 12) & 0x3F) * ((self.light_colors[i] >> 12) & 0x3F)) >> 6;
 
-            let r = min(max(r, 0), 0x3F);
-            let g = min(max(g, 0), 0x3F);
-            let b = min(max(b, 0), 0x3F);
+            let r = r.clamp(0, 0x3F);
+            let g = g.clamp(0, 0x3F);
+            let b = b.clamp(0, 0x3F);
 
             self.saved_vertex.color = (b << 12) | (g << 6) | r;
         }
@@ -866,20 +923,12 @@ impl Gpu3DRegisters {
         let Self {
             saved_polygon, texture_coord_mode, ..
         } = self;
-        let tex_image_param = TexImageParam::from(param);
-        saved_polygon.texture_addr = (tex_image_param.vram_offset() as u32) << 3;
-        saved_polygon.size_s = 8 << u8::from(tex_image_param.size_s_shift());
-        saved_polygon.size_t = 8 << u8::from(tex_image_param.size_t_shift());
-        saved_polygon.repeat_s = tex_image_param.repeat_s();
-        saved_polygon.repeat_t = tex_image_param.repeat_t();
-        saved_polygon.flip_s = tex_image_param.flip_s();
-        saved_polygon.flip_t = tex_image_param.flip_t();
-        saved_polygon.texture_fmt = TextureFormat::from(u8::from(tex_image_param.format()));
-        *texture_coord_mode = TextureCoordTransMode::from(u8::from(tex_image_param.coord_trans_mode()));
+        saved_polygon.tex_image_param = TexImageParam::from(param);
+        *texture_coord_mode = TextureCoordTransMode::from(u8::from(saved_polygon.tex_image_param.coord_trans_mode()));
     }
 
     fn exe_pltt_base(&mut self, param: u32) {
-        self.saved_polygon.palette_addr = param & 0x1FFF;
+        self.saved_polygon.palette_addr = (param & 0x1FFF) as u16;
     }
 
     fn exe_dif_amb(&mut self, param: u32) {
@@ -972,9 +1021,9 @@ impl Gpu3DRegisters {
         for i in vertices.process_count..vertices.count_in {
             let coords = &mut vertices.ins[i].coords;
             if coords[3] != 0 {
-                coords[0] = (((coords[0] as i64 + coords[3] as i64) * w as i64 / (coords[3] as i64 * 2) + x as i64) as i32) & 0x1FF;
-                coords[1] = (((-coords[1] as i64 + coords[3] as i64) * h as i64 / (coords[3] as i64 * 2) + y as i64) as i32) & 0xFF;
-                coords[2] = (((((coords[2] as i64) << 14) / coords[3] as i64) + 0x3FFF) << 9) as i32;
+                coords[0] = ((coords[0] as i64 + coords[3] as i64) * w as i64 / (coords[3] as i64 * 2) + x as i64) as i32;
+                coords[1] = ((-coords[1] as i64 + coords[3] as i64) * h as i64 / (coords[3] as i64 * 2) + y as i64) as i32;
+                coords[2] = (((coords[2] as i64) << 12) / coords[3] as i64) as i32;
             }
         }
 
@@ -986,27 +1035,6 @@ impl Gpu3DRegisters {
         self.flushed = false;
         self.process_vertices();
         self.vertices.process_count = 0;
-
-        for i in 0..self.polygons.count_in {
-            let polygon = &mut self.polygons.ins[i];
-            let mut value = self.vertices.ins[polygon.vertices_index].coords[3] as u32;
-            for j in 1..polygon.size {
-                let w = self.vertices.ins[polygon.vertices_index + j as usize].coords[3] as u32;
-                if w > value {
-                    value = w;
-                }
-            }
-
-            while (value >> polygon.w_shift) > 0xFFFF {
-                polygon.w_shift += 4;
-            }
-
-            if polygon.w_shift == 0 && value != 0 {
-                while (value << -(polygon.w_shift - 4)) <= 0xFFFF {
-                    polygon.w_shift -= 4;
-                }
-            }
-        }
 
         mem::swap(&mut self.vertices.ins, &mut self.vertices.outs);
         self.vertices.count_out = self.vertices.count_in;
@@ -1064,15 +1092,16 @@ impl Gpu3DRegisters {
             return;
         }
 
-        let size = self.polygon_type.vertex_count();
+        let size = self.polygon_type.vertex_count() as usize;
         self.saved_polygon.size = size;
-        self.saved_polygon.vertices_index = self.vertices.count_in - size as usize;
+        self.saved_polygon.vertices_index = self.vertices.count_in - size;
 
         let mut unclipped = [Vertex::default(); 4];
-        unclipped[..size as usize].copy_from_slice(&self.vertices.ins[self.saved_polygon.vertices_index..self.saved_polygon.vertices_index + size as usize]);
+        unclipped[..size].copy_from_slice(&self.vertices.ins[self.saved_polygon.vertices_index..self.saved_polygon.vertices_index + size]);
 
         if self.polygon_type == PolygonType::QuadliteralStrips {
             unclipped.swap(2, 3);
+            self.vertices.ins.swap(self.saved_polygon.vertices_index + 2, self.saved_polygon.vertices_index + 3);
         }
 
         let x1 = (unclipped[1].coords[0] - unclipped[0].coords[0]) as i64;
@@ -1092,20 +1121,114 @@ impl Gpu3DRegisters {
             wc >>= 4;
         }
 
-        let dot = xc * unclipped[0].coords[0] as i64 + yc * unclipped[0].coords[1] as i64 + wc * unclipped[0].coords[3] as i64;
+        let mut dot = xc * unclipped[0].coords[0] as i64 + yc * unclipped[0].coords[1] as i64 + wc * unclipped[0].coords[3] as i64;
 
         self.saved_polygon.clockwise = dot < 0;
 
         if self.polygon_type == PolygonType::TriangleStrips {
-            // if self.clockwise {
-            //     dot = -dot;
-            // }
+            if self.clockwise {
+                dot = -dot;
+            }
             self.clockwise = !self.clockwise;
         }
 
+        let mut clipped = [Vertex::default(); 10];
+        let cull = (!self.render_front && dot > 0) || (!self.render_back && dot < 0);
+        let mut clipped_size = self.saved_polygon.size;
+        let clip = if cull { false } else { clip_polygon(&unclipped, &mut clipped, &mut clipped_size) };
+
+        if cull || clipped_size == 0 {
+            match self.polygon_type {
+                PolygonType::SeparateTriangles | PolygonType::SeparateQuadliterals => {
+                    self.vertices.count_in -= size;
+                }
+                PolygonType::TriangleStrips => {
+                    if self.vertex_count == 3 {
+                        self.vertices.ins[self.vertices.count_in - 3] = self.vertices.ins[self.vertices.count_in - 2];
+                        self.vertices.ins[self.vertices.count_in - 2] = self.vertices.ins[self.vertices.count_in - 1];
+                        self.vertices.count_in -= 1;
+                        self.vertex_count -= 1;
+                    } else if self.vertices.count_in < 6144 {
+                        self.vertices.ins[self.vertices.count_in] = self.vertices.ins[self.vertices.count_in - 1];
+                        self.vertices.ins[self.vertices.count_in - 1] = self.vertices.ins[self.vertices.count_in - 2];
+                        self.vertices.count_in += 1;
+                        self.vertex_count = 2;
+                    }
+                }
+                PolygonType::QuadliteralStrips => {
+                    if self.vertex_count == 4 {
+                        self.vertices.ins[self.vertices.count_in - 4] = self.vertices.ins[self.vertices.count_in - 2];
+                        self.vertices.ins[self.vertices.count_in - 3] = self.vertices.ins[self.vertices.count_in - 1];
+                        self.vertices.count_in -= 2;
+                        self.vertex_count -= 2;
+                    } else {
+                        self.vertex_count = 2;
+                    }
+                }
+            }
+            return;
+        }
+
+        // if clip {
+        //     match self.polygon_type {
+        //         PolygonType::SeparateTriangles | PolygonType::SeparateQuadliterals => {
+        //             self.vertices.count_in -= size;
+        //
+        //             for i in 0..self.saved_polygon.size {
+        //                 if self.vertices.count_in >= 6144 {
+        //                     return;
+        //                 }
+        //                 self.vertices.ins[self.vertices.count_in] = clipped[i];
+        //                 self.vertices.count_in += 1;
+        //             }
+        //         }
+        //         PolygonType::TriangleStrips => {
+        //             self.vertices.count_in -= if self.vertex_count == 3 { 3 } else { 1 };
+        //             self.saved_polygon.vertices_index = self.vertices.count_in;
+        //
+        //             for i in 0..self.saved_polygon.size {
+        //                 if self.vertices.count_in >= 6144 {
+        //                     return;
+        //                 }
+        //                 self.vertices.ins[self.vertices.count_in] = clipped[i];
+        //                 self.vertices.count_in += 1;
+        //             }
+        //
+        //             for i in 0..2 {
+        //                 if self.vertices.count_in >= 6144 {
+        //                     return;
+        //                 }
+        //                 self.vertices.ins[self.vertices.count_in] = clipped[i];
+        //                 self.vertices.count_in += 1;
+        //             }
+        //             self.vertex_count = 2;
+        //         }
+        //         PolygonType::QuadliteralStrips => {
+        //             self.vertices.count_in -= if self.vertex_count == 4 { 4 } else { 2 };
+        //             self.saved_polygon.vertices_index = self.vertices.count_in;
+        //
+        //             for i in 0..self.saved_polygon.size {
+        //                 if self.vertices.count_in >= 6144 {
+        //                     return;
+        //                 }
+        //                 self.vertices.ins[self.vertices.count_in] = clipped[i];
+        //                 self.vertices.count_in += 1;
+        //             }
+        //
+        //             for i in 0..2 {
+        //                 if self.vertices.count_in >= 6144 {
+        //                     return;
+        //                 }
+        //                 self.vertices.ins[self.vertices.count_in] = clipped[3 - i];
+        //                 self.vertices.count_in += 1;
+        //             }
+        //             self.vertex_count = 2;
+        //         }
+        //     }
+        // }
+
         self.polygons.ins[self.polygons.count_in] = self.saved_polygon;
-        // self.polygons.get_in_mut(0).crossed = self.polygon_type == PolygonType::QuadliteralStrips && !clip;
-        self.polygons.ins[self.polygons.count_in].palette_addr <<= 4 - (self.saved_polygon.texture_fmt == TextureFormat::Color4Palette) as u8;
+        self.polygons.ins[self.polygons.count_in].crossed = self.polygon_type == PolygonType::QuadliteralStrips && !clip;
 
         self.polygons.count_in += 1;
     }
@@ -1140,12 +1263,16 @@ impl Gpu3DRegisters {
         }
     }
 
-    pub fn get_clip_mtx_result(&self, index: usize) -> u32 {
-        0
+    pub fn get_clip_mtx_result(&mut self, index: usize) -> u32 {
+        if self.clip_dirty {
+            self.matrices.clip = self.matrices.model * self.matrices.proj;
+            self.clip_dirty = false;
+        }
+        self.matrices.clip[index] as u32
     }
 
     pub fn get_vec_mtx_result(&self, index: usize) -> u32 {
-        0
+        self.matrices.vec[(index / 3) * 4 + index % 3] as u32
     }
 
     pub fn get_gx_stat(&self) -> u32 {

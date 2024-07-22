@@ -1,0 +1,11 @@
+float4 out gl_Position : POSITION;
+float3 out oColor : TEXCOORD0;
+float2 out oTexCoords : TEXCOORD1;
+float out oPolygonIndex : TEXCOORD2;
+
+void main(float4 position, float3 color, float2 texCoords) {
+    oColor = color;
+    oTexCoords = texCoords;
+    oPolygonIndex = position.w;
+    gl_Position = float4(position.xyz, 1.0);
+}

@@ -1,9 +1,9 @@
+use std::cmp;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{BuildHasher, Hasher};
 use std::ops::{Deref, DerefMut};
-use std::{cmp, mem};
 
 pub const fn align_up(n: u32, align: u32) -> u32 {
     (n + align - 1) & !(align - 1)
@@ -36,7 +36,7 @@ pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
 }
 
 pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> usize {
-    let read_amount = cmp::min(mem.len() / mem::size_of::<T>(), slice.len());
+    let read_amount = cmp::min(mem.len() / size_of::<T>(), slice.len());
     unsafe { (mem.as_ptr().add(addr as usize) as *const T).copy_to(slice.as_mut_ptr(), read_amount) };
     read_amount
 }
@@ -46,7 +46,7 @@ pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
 }
 
 pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) -> usize {
-    let write_amount = cmp::min(mem.len() / mem::size_of::<T>(), slice.len());
+    let write_amount = cmp::min(mem.len() / size_of::<T>(), slice.len());
     unsafe { (mem.as_mut_ptr().add(addr as usize) as *mut T).copy_from(slice.as_ptr(), write_amount) };
     write_amount
 }
@@ -216,4 +216,18 @@ pub fn rgb6_to_rgb8(color: u32) -> u32 {
     let g = ((color >> 6) & 0x3F) * 255 / 63;
     let b = ((color >> 12) & 0x3F) * 255 / 63;
     (0xFFu32 << 24) | (b << 16) | (g << 8) | r
+}
+
+pub fn rgb5_to_float8(color: u16) -> (f32, f32, f32) {
+    let r = (color & 0x1F) as f32;
+    let g = ((color >> 5) & 0x1F) as f32;
+    let b = ((color >> 10) & 0x1F) as f32;
+    (r / 31f32, g / 31f32, b / 31f32)
+}
+
+pub fn rgb6_to_float8(color: u32) -> (f32, f32, f32) {
+    let r = (color & 0x3F) as f32;
+    let g = ((color >> 6) & 0x3F) as f32;
+    let b = ((color >> 12) & 0x3F) as f32;
+    (r / 63f32, g / 63f32, b / 63f32)
 }

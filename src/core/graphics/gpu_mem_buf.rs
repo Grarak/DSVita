@@ -18,10 +18,13 @@ pub struct GpuMemBuf {
     pub pal_b: HeapMemU8<{ regions::STANDARD_PALETTES_SIZE as usize / 2 }>,
     pub oam_a: HeapMemU8<{ regions::OAM_SIZE as usize / 2 }>,
     pub oam_b: HeapMemU8<{ regions::OAM_SIZE as usize / 2 }>,
+
+    pub tex_rear_plane_image: HeapMemU8<{ vram::TEX_REAR_PLANE_IMAGE_SIZE as usize }>,
+    pub tex_pal: HeapMemU8<{ vram::TEX_PAL_SIZE as usize }>,
 }
 
 impl GpuMemBuf {
-    pub fn read(&mut self, mem: &mut Memory) {
+    pub fn read_2d(&mut self, mem: &mut Memory) {
         mem.vram.read_all_bg_a(&mut self.bg_a);
         mem.vram.read_all_obj_a(&mut self.obj_a);
         mem.vram.read_all_bg_a_ext_palette(&mut self.bg_a_ext_palette);
@@ -43,5 +46,10 @@ impl GpuMemBuf {
             self.oam_a.copy_from_slice(&mem.oam.mem[..mem.oam.mem.len() / 2]);
             self.oam_b.copy_from_slice(&mem.oam.mem[mem.oam.mem.len() / 2..]);
         }
+    }
+
+    pub fn read_3d(&mut self, mem: &mut Memory) {
+        mem.vram.read_all_tex_rear_plane_img(&mut self.tex_rear_plane_image);
+        mem.vram.read_all_tex_palette(&mut self.tex_pal);
     }
 }

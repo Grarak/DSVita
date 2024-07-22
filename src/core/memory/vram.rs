@@ -312,6 +312,9 @@ pub const OBJ_B_SIZE: u32 = 128 * 1024;
 pub const BG_EXT_PAL_SIZE: u32 = 32 * 1024;
 pub const OBJ_EXT_PAL_SIZE: u32 = 8 * 1024;
 
+pub const TEX_REAR_PLANE_IMAGE_SIZE: u32 = 4 * 128 * 1024;
+pub const TEX_PAL_SIZE: u32 = 6 * 16 * 1024;
+
 pub const LCDC_OFFSET: u32 = 0x800000;
 pub const BG_A_OFFSET: u32 = 0x000000;
 pub const OBJ_A_OFFSET: u32 = 0x400000;
@@ -776,6 +779,36 @@ impl Vram {
                 buf.fill(0);
             }
             self.obj_ext_palette_b.dirty = false;
+        }
+    }
+
+    pub fn read_all_tex_rear_plane_img(&mut self, buf: &mut [u8; TEX_REAR_PLANE_IMAGE_SIZE as usize]) {
+        for i in 0..self.tex_rear_plane_img.len() {
+            let map = &mut self.tex_rear_plane_img[i];
+            if map.dirty {
+                let buf = &mut buf[i << 17..(i << 17) + 128 * 1024];
+                if !map.ptr.is_null() {
+                    buf.copy_from_slice(map);
+                } else {
+                    buf.fill(0);
+                }
+                map.dirty = false;
+            }
+        }
+    }
+
+    pub fn read_all_tex_palette(&mut self, buf: &mut [u8; TEX_PAL_SIZE as usize]) {
+        for i in 0..self.tex_palette.len() {
+            let map = &mut self.tex_palette[i];
+            if map.dirty {
+                let buf = &mut buf[i << 14..(i << 14) + 16 * 1024];
+                if !map.ptr.is_null() {
+                    buf.copy_from_slice(map);
+                } else {
+                    buf.fill(0);
+                }
+                map.dirty = false;
+            }
         }
     }
 }

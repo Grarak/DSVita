@@ -1,7 +1,6 @@
 use crate::logging::debug_println;
 use crate::utils;
 use bilge::prelude::*;
-use std::cmp::{max, min};
 use std::mem;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
@@ -231,9 +230,9 @@ impl Spi {
 
         let points = self.touch_points.load(Ordering::Relaxed);
         let x = points & 0xFF;
-        let x = min(max(x, 1), 254) as i32;
+        let x = x.clamp(1, 254) as i32;
         let y = points >> 8;
-        let y = min(max(y, 1), 190) as i32;
+        let y = y.clamp(1, 190) as i32;
 
         let touch_x = (x - SCR_X1 + 1) * (ADC_X2 - ADC_X1) / (SCR_X2 - SCR_X1) + ADC_X1;
         let touch_y = (y - SCR_Y1 + 1) * (ADC_Y2 - ADC_Y1) / (SCR_Y2 - SCR_Y1) + ADC_Y1;
