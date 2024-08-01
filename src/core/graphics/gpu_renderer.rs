@@ -73,7 +73,7 @@ impl GpuRenderer {
             self.common.pow_cnt1 = pow_cnt1;
             self.renderer_2d.on_scanline_finish();
 
-            self.common.mem_buf.read_2d(mem);
+            self.common.mem_buf.read_2d(mem, self.renderer_2d.has_vram_display[0]);
             if self.renderer_3d.dirty {
                 self.renderer_3d.dirty = false;
                 self.rendering_3d = true;
@@ -146,16 +146,6 @@ impl GpuRenderer {
             }
         }
 
-        let render_time_end = Instant::now();
-        let render_time_diff = render_time_end - render_time_start;
-        self.render_time_sum += render_time_diff.as_millis() as u32;
-        self.render_time_measure_count += 1;
-        if unlikely(self.render_time_measure_count == 30) {
-            self.render_time_measure_count = 0;
-            self.average_render_time = (self.render_time_sum / 30) as u16;
-            self.render_time_sum = 0;
-        }
-
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
             gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
@@ -165,6 +155,16 @@ impl GpuRenderer {
             self.gl_glyph.draw(format!("Render time: {}ms\nFPS: {fps} ({per}%)", self.average_render_time));
 
             presenter.gl_swap_window();
+        }
+
+        let render_time_end = Instant::now();
+        let render_time_diff = render_time_end - render_time_start;
+        self.render_time_sum += render_time_diff.as_millis() as u32;
+        self.render_time_measure_count += 1;
+        if unlikely(self.render_time_measure_count == 30) {
+            self.render_time_measure_count = 0;
+            self.average_render_time = (self.render_time_sum / 30) as u16;
+            self.render_time_sum = 0;
         }
 
         {

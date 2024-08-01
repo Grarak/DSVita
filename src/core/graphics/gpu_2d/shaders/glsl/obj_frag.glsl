@@ -57,7 +57,7 @@ int readExtPal16Aligned(int addr) {
     int addrX = (addr >> 2) & 0x1FF;
     int addrY = addr >> 11;
     float x = float(addrX) / 511.0;
-    float y = float(addrY) / 7.0;
+    float y = float(addrY) / 3.0;
     vec4 value = texture(extPalTex, vec2(x, y));
     int entry = addr & 2;
     return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);

@@ -1,0 +1,21 @@
+float3 in screenPos : TEXCOORD0;
+
+uniform sampler2D lcdcPalTex : TEXUNIT0;
+
+uniform int dispCnt;
+
+float4 readLcdcPal(int index) {
+    short indexX = index & 0x1FF;
+    short indexY = index >> 9;
+    float x = float(indexX) / 511.0;
+    float y = float(indexY) / 655.0;
+    return tex2D(lcdcPalTex, float2(x, y));
+}
+
+void main(out float4 color : COLOR) {
+    short x = short(screenPos.x);
+    short y = short(screenPos.y);
+
+    int addr = ((dispCnt >> 18) & 0x3) * 0x10000 + int(y) * 256 + int(x);
+    color = float4(readLcdcPal(addr).rgb, 0.0);
+}

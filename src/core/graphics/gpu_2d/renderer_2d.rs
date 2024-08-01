@@ -19,6 +19,7 @@ use std::intrinsics::unlikely;
 use std::{mem, ptr, slice};
 
 pub struct Gpu2DMem {
+    lcdc_ptr: *const u8,
     bg_ptr: *const u8,
     obj_ptr: *const u8,
     pal_ptr: *const u8,
@@ -31,6 +32,7 @@ impl Gpu2DMem {
     fn new<const ENGINE: Gpu2DEngine>(buf: &GpuMemBuf) -> Self {
         match ENGINE {
             A => Gpu2DMem {
+                lcdc_ptr: buf.lcdc.as_ptr(),
                 bg_ptr: buf.bg_a.as_ptr(),
                 obj_ptr: buf.obj_a.as_ptr(),
                 pal_ptr: buf.pal_a.as_ptr(),
@@ -39,6 +41,7 @@ impl Gpu2DMem {
                 obj_ext_pal_ptr: buf.obj_a_ext_palette.as_ptr(),
             },
             B => Gpu2DMem {
+                lcdc_ptr: ptr::null(),
                 bg_ptr: buf.bg_b.as_ptr(),
                 obj_ptr: buf.obj_b.as_ptr(),
                 pal_ptr: buf.pal_b.as_ptr(),
@@ -360,6 +363,59 @@ enum BgMode {
     Display3d = 4,
 }
 
+struct Gpu2DVramDisplayProgram {
+    disp_cnt_loc: GLint,
+    program: GLuint,
+}
+
+impl Gpu2DVramDisplayProgram {
+    fn new() -> Self {
+        unsafe {
+            println!("Compile vram display vert");
+            let vert_shader = create_shader(&shader_source!("vram_display_vert"), gl::VERTEX_SHADER).unwrap();
+
+            println!("Compile vram display frag");
+            let frag_shader = create_shader(&shader_source!("vram_display_frag"), gl::FRAGMENT_SHADER).unwrap();
+
+            let program = create_program(&[vert_shader, frag_shader]).unwrap();
+            gl::DeleteShader(vert_shader);
+            gl::DeleteShader(frag_shader);
+
+            gl::UseProgram(program);
+
+            gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
+
+            let disp_cnt_loc = gl::GetUniformLocation(program, "dispCnt\0".as_ptr() as _);
+
+            gl::Uniform1i(gl::GetUniformLocation(program, "lcdcPalTex\0".as_ptr() as _), 0);
+
+            gl::UseProgram(0);
+
+            Gpu2DVramDisplayProgram { disp_cnt_loc, program }
+        }
+    }
+
+    unsafe fn draw(&self, regs: &Gpu2DRenderRegs, from_line: u8, to_line: u8) {
+        let disp_cnt = regs.disp_cnts[from_line as usize];
+
+        println!("draw vram display from {from_line} to {to_line}");
+
+        #[rustfmt::skip]
+        let vertices = [
+            -1f32, from_line as f32,
+            1f32, from_line as f32,
+            1f32, to_line as f32,
+            -1f32, to_line as f32,
+        ];
+
+        gl::Uniform1i(self.disp_cnt_loc, disp_cnt as _);
+
+        gl::EnableVertexAttribArray(0);
+        gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 0, vertices.as_ptr() as _);
+        gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+    }
+}
+
 struct Gpu2DProgram {
     obj_program: GLuint,
     obj_vao: GLuint,
@@ -502,7 +558,7 @@ impl Gpu2DProgram {
         }
     }
 
-    unsafe fn draw_windows(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, from_line: u8, to_line: u8) {
+    unsafe fn draw_windows(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, from_line: u8, to_line: u8) {
         let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
         if disp_cnt.obj_window_display_flag() {
             // todo!()
@@ -551,7 +607,7 @@ impl Gpu2DProgram {
         gl::DrawElements(gl::TRIANGLES, (6 * self.obj_oam_indices.len()) as _, gl::UNSIGNED_SHORT, self.obj_oam_indices.as_ptr() as _);
     }
 
-    unsafe fn draw_bg(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, from_line: u8, to_line: u8) {
+    unsafe fn draw_bg(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, from_line: u8, to_line: u8) {
         let disp_cnt = regs.disp_cnts[from_line as usize];
 
         gl::Uniform1i(self.bg_disp_cnt_loc, disp_cnt as _);
@@ -662,16 +718,34 @@ impl Gpu2DProgram {
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
     }
 
-    unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, fb_tex_3d: GLuint) {
+    unsafe fn draw<const HAS_VRAM_DISPLAY: bool>(
+        &mut self,
+        common: &Gpu2DCommon,
+        regs: &Gpu2DRenderRegs,
+        texs: &Gpu2DTextures,
+        mem: Gpu2DMem,
+        fb_tex_3d: GLuint,
+        lcdc_pal: GLuint,
+        vram_display_program: &Gpu2DVramDisplayProgram,
+    ) {
         macro_rules! draw_scanlines {
-            ($draw_fn:expr) => {{
+            ($draw_fn:expr, $draw_vram_display:expr) => {{
                 let mut line = 0;
                 while line < DISPLAY_HEIGHT {
                     let batch_count = regs.batch_counts[line];
                     let from_line = line as u8;
                     let to_line = line as u8 + batch_count as u8 + 1;
-                    $draw_fn(from_line, to_line);
                     line = to_line as usize;
+                    if HAS_VRAM_DISPLAY {
+                        let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
+                        if u8::from(disp_cnt.display_mode()) == 2 {
+                            if $draw_vram_display {
+                                $draw_fn(from_line, to_line);
+                            }
+                            continue;
+                        }
+                    }
+                    $draw_fn(from_line, to_line);
                 }
             }};
         }
@@ -688,8 +762,8 @@ impl Gpu2DProgram {
             gl::BufferData(gl::UNIFORM_BUFFER, mem::size_of::<WinBgUbo>() as _, ptr::addr_of!(regs.win_bg_ubo) as _, gl::DYNAMIC_DRAW);
             gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, common.win_bg_ubo);
 
-            let mut draw_windows = |from_line, to_line| self.draw_windows(common, regs, from_line, to_line);
-            draw_scanlines!(draw_windows);
+            let draw_windows = |from_line, to_line| self.draw_windows(common, regs, from_line, to_line);
+            draw_scanlines!(draw_windows, false);
 
             gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
             gl::UseProgram(0);
@@ -739,7 +813,7 @@ impl Gpu2DProgram {
             gl::DepthFunc(gl::LESS);
 
             let mut draw_objects = |from_line, to_line| self.draw_objects(regs, &mem, from_line, to_line);
-            draw_scanlines!(draw_objects);
+            draw_scanlines!(draw_objects, false);
 
             gl::Disable(gl::DEPTH_TEST);
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -778,10 +852,32 @@ impl Gpu2DProgram {
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             }
 
-            let mut draw_bg = |from_line, to_line| self.draw_bg(common, regs, from_line, to_line);
-            draw_scanlines!(draw_bg);
+            let draw_bg = |from_line, to_line| self.draw_bg(common, regs, from_line, to_line);
+            draw_scanlines!(draw_bg, false);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
+        }
+
+        if HAS_VRAM_DISPLAY {
+            gl::BindTexture(gl::TEXTURE_2D, lcdc_pal);
+            sub_pal_texture2d(1024, 656, mem.lcdc_ptr);
+
+            gl::UseProgram(vram_display_program.program);
+
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, lcdc_pal);
+
+            // Use any of the bg fbos to draw the vram into
+            // At this point all other fbo won't contain any pixels for blending
+            gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[0].fbo);
+            gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+
+            let draw_vram_display = |from_line, to_line| vram_display_program.draw(regs, from_line, to_line);
+            draw_scanlines!(draw_vram_display, true);
+
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            gl::UseProgram(0);
         }
 
         self.blend_fbos(common, regs, &mem);
@@ -865,6 +961,9 @@ impl Gpu2DProgram {
 pub struct Gpu2DRenderer {
     regs_a: [Gpu2DRenderRegs; 2],
     regs_b: [Gpu2DRenderRegs; 2],
+    pub has_vram_display: [bool; 2],
+    lcdc_pal: GLuint,
+    vram_display_program: Gpu2DVramDisplayProgram,
     tex_a: Gpu2DTextures,
     tex_b: Gpu2DTextures,
     pub common: Gpu2DCommon,
@@ -885,6 +984,9 @@ impl Gpu2DRenderer {
         let instance = Gpu2DRenderer {
             regs_a: [Gpu2DRenderRegs::default(), Gpu2DRenderRegs::default()],
             regs_b: [Gpu2DRenderRegs::default(), Gpu2DRenderRegs::default()],
+            has_vram_display: [false; 2],
+            lcdc_pal: unsafe { create_pal_texture2d(1024, 656) },
+            vram_display_program: Gpu2DVramDisplayProgram::new(),
             tex_a: Gpu2DTextures::new(1024, OBJ_A_TEX_HEIGHT, 1024, BG_A_TEX_HEIGHT),
             tex_b: Gpu2DTextures::new(1024, OBJ_B_TEX_HEIGHT, 1024, BG_B_TEX_HEIGHT),
             common: Gpu2DCommon::new(),
@@ -903,22 +1005,51 @@ impl Gpu2DRenderer {
     pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters<{ A }>, inner_b: &mut Gpu2DRegisters<{ B }>, line: u8) {
         self.regs_a[1].on_scanline(inner_a, line);
         self.regs_b[1].on_scanline(inner_b, line);
+        if u8::from(DispCnt::from(self.regs_a[1].disp_cnts[line as usize]).display_mode()) == 2 {
+            self.has_vram_display[1] = true;
+        }
     }
 
     pub fn on_scanline_finish(&mut self) {
         self.regs_a[0] = self.regs_a[1].clone();
         self.regs_b[0] = self.regs_b[1].clone();
+        self.has_vram_display[0] = self.has_vram_display[1];
     }
 
     pub fn reload_registers(&mut self) {
         self.regs_a[1] = Gpu2DRenderRegs::default();
         self.regs_b[1] = Gpu2DRenderRegs::default();
+        self.has_vram_display[1] = false;
     }
 
     pub unsafe fn render<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon, fb_tex_3d: GLuint) {
         match ENGINE {
-            A => self.program_a.draw(&self.common, &self.regs_a[0], &self.tex_a, Gpu2DMem::new::<{ A }>(&common.mem_buf), fb_tex_3d),
-            B => self.program_b.draw(&self.common, &self.regs_b[0], &self.tex_b, Gpu2DMem::new::<{ B }>(&common.mem_buf), fb_tex_3d),
+            A => {
+                if self.has_vram_display[0] {
+                    self.program_a.draw::<true>(
+                        &self.common,
+                        &self.regs_a[0],
+                        &self.tex_a,
+                        Gpu2DMem::new::<{ A }>(&common.mem_buf),
+                        fb_tex_3d,
+                        self.lcdc_pal,
+                        &self.vram_display_program,
+                    );
+                } else {
+                    self.program_a.draw::<false>(
+                        &self.common,
+                        &self.regs_a[0],
+                        &self.tex_a,
+                        Gpu2DMem::new::<{ A }>(&common.mem_buf),
+                        fb_tex_3d,
+                        0,
+                        &self.vram_display_program,
+                    );
+                }
+            }
+            B => self
+                .program_b
+                .draw::<false>(&self.common, &self.regs_b[0], &self.tex_b, Gpu2DMem::new::<{ B }>(&common.mem_buf), 0, 0, &self.vram_display_program),
         }
     }
 }

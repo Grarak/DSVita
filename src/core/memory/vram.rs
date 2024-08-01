@@ -714,6 +714,10 @@ impl Vram {
         };
     }
 
+    pub fn read_all_lcdc(&mut self, buf: &mut [u8; TOTAL_SIZE]) {
+        self.lcdc.read_all(0, buf)
+    }
+
     pub fn read_all_bg_a(&mut self, buf: &mut [u8; BG_A_SIZE as usize]) {
         self.bg_a.read_all(0, buf)
     }

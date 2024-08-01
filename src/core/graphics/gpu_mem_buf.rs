@@ -4,6 +4,8 @@ use crate::utils::HeapMemU8;
 
 #[derive(Default)]
 pub struct GpuMemBuf {
+    pub lcdc: HeapMemU8<{ vram::TOTAL_SIZE }>,
+
     pub bg_a: HeapMemU8<{ vram::BG_A_SIZE as usize }>,
     pub obj_a: HeapMemU8<{ vram::OBJ_A_SIZE as usize }>,
     pub bg_a_ext_palette: HeapMemU8<{ vram::BG_EXT_PAL_SIZE as usize }>,
@@ -24,7 +26,11 @@ pub struct GpuMemBuf {
 }
 
 impl GpuMemBuf {
-    pub fn read_2d(&mut self, mem: &mut Memory) {
+    pub fn read_2d(&mut self, mem: &mut Memory, read_lcdc: bool) {
+        if read_lcdc {
+            mem.vram.read_all_lcdc(&mut self.lcdc);
+        }
+
         mem.vram.read_all_bg_a(&mut self.bg_a);
         mem.vram.read_all_obj_a(&mut self.obj_a);
         mem.vram.read_all_bg_a_ext_palette(&mut self.bg_a_ext_palette);
