@@ -1,0 +1,67 @@
+float3 in screenPos : TEXCOORD0;
+float2 in screenPosF : TEXCOORD1;
+float2 in affineDims : TEXCOORD2;
+
+uniform int dispCnt;
+uniform int bgCnt;
+
+uniform sampler2D bgTex : TEXUNIT0;
+uniform sampler2D palTex : TEXUNIT1;
+uniform sampler2D extPalTex : TEXUNIT2;
+uniform sampler2D winTex : TEXUNIT3;
+uniform sampler2D display3dTex : TEXUNIT4;
+
+uniform BgUbo {
+    int bgOfs[192 * 4];
+    float bgX[192 * 2];
+    float bgY[192 * 2];
+    float bgPas[192 * 2];
+    float bgPbs[192 * 2];
+    float bgPcs[192 * 2];
+    float bgPds[192 * 2];
+} BgUbo : BUFFER[0];
+
+short readBg8(int addr) {
+    short addrX = (addr >> 2) & 0x1FF;
+    short addrY = addr >> 11;
+    float x = float(addrX) / 511.0;
+    float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
+    return short(tex2D(bgTex, float2(x, y))[addr & 3] * 255.0);
+}
+
+short readBg16Aligned(int addr) {
+    short addrX = (addr >> 2) & 0x1FF;
+    short addrY = addr >> 11;
+    float x = float(addrX) / 511.0;
+    float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
+    float4 value = tex2D(bgTex, float2(x, y));
+    short entry = short(addr & 2);
+    return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
+}
+
+float4 readPal(short index) {
+    return tex2D(palTex, float2(float(index) / 511.0, 1.0));
+}
+
+float4 readExtPal(short index) {
+    short indexX = index & 0x1FF;
+    short indexY = index >> 9;
+    float x = float(indexX) / 511.0;
+    float y = float(indexY) / 31.0;
+    return tex2D(extPalTex, float2(x, y));
+}
+
+float3 normRgb5(short color) {
+    return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
+}
+
+short2 calculateAffineCoords(short x, short y, short bgNum) {
+    short index = (bgNum - 2) * 192 + y;
+    float bgX = BgUbo.bgX[index];
+    float bgY = BgUbo.bgY[index];
+    float bgPa = BgUbo.bgPas[index];
+    float bgPb = BgUbo.bgPbs[index];
+    float bgPc = BgUbo.bgPcs[index];
+    float bgPd = BgUbo.bgPds[index];
+    return short2(short(bgX + bgPb + float(x) * bgPa), short(bgY + bgPd + float(x) * bgPc));
+}

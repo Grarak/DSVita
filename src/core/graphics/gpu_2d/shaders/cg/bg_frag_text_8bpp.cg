@@ -1,0 +1,73 @@
+float4 drawText(short x, short y, short bgNum) {
+    int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
+    int charAddr = ((dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
+
+    int of = BgUbo.bgOfs[bgNum * 192 + y];
+    x += short(of & 0xFFFF);
+    x &= 0x1FF;
+    y += short(of >> 16);
+    y &= 0x1FF;
+
+    // 512 Width
+    if (x > 255 && (bgCnt & (1 << 14)) != 0) {
+        screenAddr += 0x800;
+    }
+
+    // 512 Height
+    if (y > 255 && (bgCnt & (1 << 15)) != 0) {
+        screenAddr += (bgCnt & (1 << 14)) != 0 ? 0x1000 : 0x800;
+    }
+
+    short xBlock = x & 0xF8;
+    short xInBlock = x & 7;
+    short yBlock = y & 0xF8;
+    short yInBlock = y & 7;
+
+    screenAddr += yBlock << 3;
+    screenAddr += xBlock >> 2;
+    int screenEntry = readBg16Aligned(screenAddr);
+
+    bool isHFlip = (screenEntry & (1 << 10)) != 0;
+    bool isVFlip = (screenEntry & (1 << 11)) != 0;
+
+    if (isHFlip) {
+        xInBlock = 7 - xInBlock;
+    }
+    if (isVFlip) {
+        yInBlock = 7 - yInBlock;
+    }
+
+    charAddr += ((screenEntry & 0x3FF) << 6) + (yInBlock << 3);
+    charAddr += xInBlock;
+
+    short palIndex = readBg8(charAddr);
+    if (palIndex == 0) {
+        discard;
+    }
+
+    bool useExtPal = (dispCnt & (1 << 30)) != 0;
+    if (useExtPal) {
+        short slot = bgNum < 2 && (bgCnt & (1 << 13)) != 0 ? bgNum + 2 : bgNum;
+        palIndex += slot * 4096 + ((screenEntry & 0xF000) >> 4);
+        return float4(readExtPal(palIndex).rgb, 1.0);
+    } else {
+        return float4(readPal(palIndex).rgb, 1.0);
+    }
+}
+
+void main(out float4 color : COLOR) {
+    short bgNum = short(screenPos.z);
+
+    short winEnabled = short(tex2D(winTex, screenPosF).x * 255.0);
+    if ((winEnabled & (1 << bgNum)) == 0) {
+        discard;
+    }
+
+    short x = short(screenPos.x);
+    short y = short(screenPos.y);
+
+    color = drawText(x, y, bgNum);
+
+    short priority = short(bgCnt & 3);
+    color.a = float(priority) / 4.0;
+}

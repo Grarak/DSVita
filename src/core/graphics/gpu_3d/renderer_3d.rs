@@ -56,10 +56,8 @@ pub struct Gpu3DGl {
 impl Default for Gpu3DGl {
     fn default() -> Self {
         unsafe {
-            println!("Compile 3d render vert");
-            let vert_shader = create_shader(shader_source!("render_vert"), gl::VERTEX_SHADER).unwrap();
-            println!("Compile 3d render frag");
-            let frag_shader = create_shader(shader_source!("render_frag"), gl::FRAGMENT_SHADER).unwrap();
+            let vert_shader = create_shader("render 3d", shader_source!("render_vert"), gl::VERTEX_SHADER).unwrap();
+            let frag_shader = create_shader("render 3d", shader_source!("render_frag"), gl::FRAGMENT_SHADER).unwrap();
             let program = create_program(&[vert_shader, frag_shader]).unwrap();
             gl::DeleteShader(vert_shader);
             gl::DeleteShader(frag_shader);

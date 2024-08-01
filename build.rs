@@ -49,7 +49,6 @@ fn main() {
             ("NO_TEX_COMBINER", "1"),
             ("NO_DEBUG", "1"),
             ("SHADER_COMPILER_SPEEDHACK", "1"),
-            ("SAMPLERS_SPEEDHACK", "1"),
             ("MATH_SPEEDHACK", "1"),
             // ("HAVE_SHARK_LOG", "1"),
             // ("LOG_ERRORS", "1"),

@@ -1,0 +1,47 @@
+float4 drawBitmap(short x, short y, short bgNum) {
+    short width = short(affineDims.x);
+    short height = short(affineDims.y);
+
+    int2 coords = int2(calculateAffineCoords(x, y, bgNum));
+
+    bool wrap = (bgCnt & (1 << 13)) != 0;
+    if (wrap) {
+        coords.x &= width - 1;
+        coords.y &= height - 1;
+    } else if (coords.x < 0 || coords.x >= width || coords.y < 0 || coords.y >= height) {
+        discard;
+    }
+
+    int dataBase = (bgCnt << 6) & 0x7C000;
+    bool usePal = (bgCnt & (1 << 2)) == 0;
+    if (usePal) {
+        int palIndex = readBg8(dataBase + coords.y * width + coords.x);
+        if (palIndex == 0) {
+            discard;
+        }
+        return float4(readPal(palIndex).rgb, 1.0);
+    } else {
+        short color = readBg16Aligned(dataBase + (coords.y * width + coords.x) * 2);
+        if ((color & (1 << 15)) == 0) {
+            discard;
+        }
+        return float4(normRgb5(color), 1.0);
+    }
+}
+
+void main(out float4 color : COLOR) {
+    short bgNum = short(screenPos.z);
+
+    short winEnabled = short(tex2D(winTex, screenPosF).x * 255.0);
+    if ((winEnabled & (1 << bgNum)) == 0) {
+        discard;
+    }
+
+    short x = short(screenPos.x);
+    short y = short(screenPos.y);
+
+    color = drawBitmap(x, y, bgNum);
+
+    short priority = short(bgCnt & 3);
+    color.a = float(priority) / 4.0;
+}

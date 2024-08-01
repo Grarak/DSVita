@@ -3,10 +3,14 @@ float3 out screenPos : TEXCOORD0;
 float2 out screenPosF : TEXCOORD1;
 float2 out affineDims : TEXCOORD2;
 
+uniform int bgCnt;
+
 void main(float3 position) {
+    float size = float(short(128 << ((bgCnt >> 14) & 0x3)));
+    affineDims = float2(size, size);
+
     float normX = position.x * 0.5 + 0.5;
     screenPos = float3(max(normX * 256.0 - 0.1, 0.0), max(position.y - 0.1, 0.0), position.z);
     screenPosF = float2(normX, position.y / 192.0);
-    affineDims = float2(0.0, 0.0);
     gl_Position = float4(position.x, 1.0 - screenPosF.y * 2.0, 0.0, 1.0);
 }

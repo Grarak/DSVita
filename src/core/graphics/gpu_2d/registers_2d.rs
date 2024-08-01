@@ -51,7 +51,7 @@ pub struct BgCnt {
     pub char_base_block: u2,
     pub not_used: u2,
     pub mosaic: u1,
-    pub color_palettes: u1,
+    pub color_256_palettes: bool,
     pub screen_base_block: u5,
     pub ext_palette_slot_display_area_overflow: u1,
     pub screen_size: u2,

@@ -42,10 +42,8 @@ impl GlGlyph {
         };
 
         let text_program = unsafe {
-            println!("Compile text vert");
-            let vert_shader = create_shader(shader_source!("text_vert"), gl::VERTEX_SHADER).unwrap();
-            println!("Compile text frag");
-            let frag_shader = create_shader(shader_source!("text_frag"), gl::FRAGMENT_SHADER).unwrap();
+            let vert_shader = create_shader("text", shader_source!("text_vert"), gl::VERTEX_SHADER).unwrap();
+            let frag_shader = create_shader("text", shader_source!("text_frag"), gl::FRAGMENT_SHADER).unwrap();
             let program = create_program(&[vert_shader, frag_shader]).unwrap();
             gl::DeleteShader(vert_shader);
             gl::DeleteShader(frag_shader);
