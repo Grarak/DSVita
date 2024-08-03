@@ -90,7 +90,7 @@ impl Presenter {
         unsafe {
             vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe as _, 1, 0, 1);
             // Disable multisampling for depth texture
-            vglInitExtended(0, 960, 544, 12 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
+            vglInitExtended(0, 960, 544, 16 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
             gl::load_with(|name| {
                 let name = CString::new(name).unwrap();
                 vglGetProcAddress(name.as_ptr())

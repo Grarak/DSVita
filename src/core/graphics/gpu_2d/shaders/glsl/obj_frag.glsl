@@ -150,7 +150,6 @@ void main() {
         color = drawSprite(objX, objY, attrib0, oamIndex);
     }
 
-    color.a = 0.1;
     bool semiTransparent = ((attrib0 >> 10) & 3) == 1;
     if (semiTransparent) {
         color.a = 0.0;

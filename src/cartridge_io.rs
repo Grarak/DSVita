@@ -1,11 +1,16 @@
+use crate::logging::debug_println;
 use crate::utils::NoHashMap;
 use static_assertions::const_assert_eq;
 use std::cell::RefCell;
 use std::cmp::min;
 use std::fs::File;
+use std::hint::unreachable_unchecked;
 use std::io::{Read, Seek};
+use std::ops::{Deref, DerefMut};
 use std::os::unix::fs::FileExt;
 use std::rc::Rc;
+use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use std::{io, mem};
 
 #[repr(C, packed)]
@@ -25,7 +30,7 @@ pub struct ArmOverlay {
 #[repr(C, packed)]
 pub struct CartridgeHeader {
     pub game_title: [u8; 12],
-    game_code: [u8; 4],
+    pub game_code: [u8; 4],
     marker_code: [u8; 2],
     unit_code: u8,
     encryption_seed_select: u8,
@@ -72,32 +77,62 @@ const HEADER_SIZE: usize = size_of::<CartridgeHeader>();
 pub const HEADER_IN_RAM_SIZE: usize = 0x170;
 const_assert_eq!(HEADER_SIZE, HEADER_IN_RAM_SIZE + 0x90);
 
-pub struct CartridgeReader {
+const SAVE_SIZES: [u32; 9] = [0x000200, 0x002000, 0x008000, 0x010000, 0x020000, 0x040000, 0x080000, 0x100000, 0x800000];
+
+pub struct CartridgeIo {
     file: File,
     pub file_size: u32,
     pub header: CartridgeHeader,
     content_pages: RefCell<NoHashMap<Rc<[u8; PAGE_SIZE as usize]>>>,
+    save_file_path: String,
+    save_file: Option<File>,
+    pub save_file_size: u32,
+    save_buf: RwLock<(Vec<u8>, bool)>,
 }
 
-unsafe impl Send for CartridgeReader {}
+unsafe impl Send for CartridgeIo {}
 
-impl CartridgeReader {
-    pub fn new(mut file: File) -> io::Result<Self> {
+impl CartridgeIo {
+    fn new(mut file: File, save_file_path: String, mut save_file: Option<File>) -> io::Result<Self> {
         let mut raw_header = [0u8; HEADER_SIZE];
         file.read_exact(&mut raw_header)?;
         let file_size = file.stream_len().unwrap() as u32;
+        let mut save_buf = Vec::new();
+        let mut save_file_size = match &mut save_file {
+            None => 0,
+            Some(file) => {
+                let save_file_size = file.stream_len().unwrap();
+                save_buf.resize(save_file_size as usize, 0u8);
+                match file.read_at(&mut save_buf, 0) {
+                    Ok(_) => save_file_size as u32,
+                    Err(_) => {
+                        save_buf.clear();
+                        0
+                    }
+                }
+            }
+        };
+        if !SAVE_SIZES.contains(&save_file_size) {
+            save_file_size = 0;
+        }
         let header: CartridgeHeader = unsafe { mem::transmute(raw_header) };
-        Ok(CartridgeReader {
+        Ok(CartridgeIo {
             file,
             file_size,
             header,
             content_pages: RefCell::new(NoHashMap::default()),
+            save_file_path,
+            save_file,
+            save_file_size,
+            save_buf: RwLock::new((save_buf, false)),
         })
     }
 
-    pub fn from_file(file_path: &str) -> io::Result<Self> {
+    pub fn from_file(file_path: &str, save_file: impl Into<String>) -> io::Result<Self> {
         let file = File::open(file_path)?;
-        Self::new(file)
+        let save_file_path = save_file.into();
+        let save_file = File::open(&save_file_path).ok();
+        Self::new(file, save_file_path, save_file)
     }
 
     fn get_page(&self, page_addr: u32) -> Rc<[u8; PAGE_SIZE as usize]> {
@@ -107,7 +142,7 @@ impl CartridgeReader {
             None => {
                 // exceeds 4MB
                 if pages.len() >= 1024 {
-                    println!("clear cartridge pages");
+                    debug_println!("clear cartridge pages");
                     pages.clear();
                 }
 
@@ -167,6 +202,57 @@ impl CartridgeReader {
         let mut boot_code = vec![0u8; self.header.arm7_values.size as usize];
         self.read_slice(self.header.arm7_values.rom_offset, &mut boot_code);
         boot_code
+    }
+
+    pub fn resize_save_file(&mut self, new_size: u32) {
+        let mut lock = self.save_buf.write().unwrap();
+        let (save_buf, _) = lock.deref_mut();
+        save_buf.resize(new_size as usize, 0xFF);
+        self.save_file_size = new_size;
+    }
+
+    pub fn read_save_buf(&self, addr: u32) -> u8 {
+        let lock = self.save_buf.read().unwrap();
+        let (save_buf, _) = lock.deref();
+        save_buf[addr as usize]
+    }
+
+    pub fn write_save_buf(&self, addr: u32, value: u8) {
+        let mut lock = self.save_buf.write().unwrap();
+        let (save_buf, dirty) = lock.deref_mut();
+        save_buf[addr as usize] = value;
+        *dirty = true;
+    }
+
+    pub fn write_save_buf_slice(&self, addr: u32, buf: &[u8]) {
+        let mut lock = self.save_buf.write().unwrap();
+        let (save_buf, dirty) = lock.deref_mut();
+        let write_len = min(buf.len(), save_buf.len());
+        save_buf[addr as usize..addr as usize + write_len].copy_from_slice(&buf[..write_len]);
+        *dirty = true;
+    }
+
+    pub fn flush_save_buf(&mut self, last_save_time: &Arc<RwLock<Option<Instant>>>) {
+        let mut lock = self.save_buf.write().unwrap();
+        let (save_buf, dirty) = lock.deref_mut();
+        if *dirty {
+            let file = match &self.save_file {
+                None => {
+                    match File::create_new(&self.save_file_path) {
+                        Ok(file) => self.save_file = Some(file),
+                        Err(_) => return,
+                    }
+                    match &self.save_file {
+                        None => unsafe { unreachable_unchecked() },
+                        Some(file) => file,
+                    }
+                }
+                Some(file) => file,
+            };
+            let _ = file.write_at(save_buf, 0);
+            *last_save_time.write().unwrap() = Some(Instant::now());
+            *dirty = false;
+        }
     }
 }
 

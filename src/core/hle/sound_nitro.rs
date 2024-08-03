@@ -6,7 +6,7 @@ use crate::core::spu::{MainSoundCnt, SoundCapCnt, SoundChannelFormat, SoundCnt, 
 use crate::core::CpuType::ARM7;
 use bilge::prelude::*;
 use std::array;
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::collections::VecDeque;
 
 #[derive(Default)]
@@ -410,7 +410,7 @@ impl SoundNitro {
             self.channels[chan_id].attack_rate = 255 - rate;
         } else {
             const RATE_TBL: [u8; 19] = [0x00, 0x01, 0x05, 0x0E, 0x1A, 0x26, 0x33, 0x3F, 0x49, 0x54, 0x5C, 0x64, 0x6D, 0x74, 0x7B, 0x7F, 0x84, 0x89, 0x8F];
-            self.channels[chan_id].attack_rate = RATE_TBL[127 - rate as usize];
+            self.channels[chan_id].attack_rate = RATE_TBL[127 - rate.clamp(109, 127) as usize];
         }
     }
 
@@ -499,7 +499,9 @@ impl SoundNitro {
     fn release_track(&mut self, track_id: usize, seq_id: usize, flag: bool) {
         let seq = &self.sequences[seq_id];
         let track = &self.tracks[track_id];
-        let volbase3 = BASE_VOLUME_TABLE[seq.volume] as i32 + BASE_VOLUME_TABLE[track.volume] as i32 + BASE_VOLUME_TABLE[track.expression] as i32;
+        let volbase3 = BASE_VOLUME_TABLE[min(seq.volume, BASE_VOLUME_TABLE.len() - 1)] as i32
+            + BASE_VOLUME_TABLE[min(track.volume, BASE_VOLUME_TABLE.len() - 1)] as i32
+            + BASE_VOLUME_TABLE[min(track.expression, BASE_VOLUME_TABLE.len() - 1)] as i32;
         let volbase3 = max(volbase3, -0x8000);
 
         let volbase1 = track.track_unk0a as i32 + seq.seq_unk06 as i32;

@@ -321,6 +321,8 @@ pub const OBJ_A_OFFSET: u32 = 0x400000;
 pub const BG_B_OFFSET: u32 = 0x200000;
 pub const OBJ_B_OFFSET: u32 = 0x600000;
 
+pub const ARM7_SIZE: u32 = 128 * 1024;
+
 pub struct Vram {
     pub stat: u8,
     pub cnt: [u8; BANK_SIZE],
@@ -341,7 +343,7 @@ pub struct Vram {
     bg_ext_palette_b: [VramMap<{ BG_EXT_PAL_SIZE as usize / 4 }>; 4],
     obj_ext_palette_b: VramMap<{ OBJ_EXT_PAL_SIZE as usize }>,
 
-    arm7: OverlapMapping<{ 128 * 2 * 1024 }, { 128 * 1024 }>,
+    arm7: OverlapMapping<{ 128 * 2 * 1024 }, { ARM7_SIZE as usize }>,
 }
 
 impl Vram {

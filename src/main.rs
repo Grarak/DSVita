@@ -12,7 +12,7 @@
 #![feature(seek_stream_len)]
 #![feature(stmt_expr_attributes)]
 
-use crate::cartridge_reader::CartridgeReader;
+use crate::cartridge_io::CartridgeIo;
 use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, Emu};
 use crate::core::graphics::gpu::Gpu;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
@@ -31,11 +31,12 @@ use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
-use std::sync::Arc;
-use std::{mem, thread};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+use std::{fs, mem, thread};
 use CpuType::{ARM7, ARM9};
 
-mod cartridge_reader;
+mod cartridge_io;
 mod core;
 mod jit;
 mod logging;
@@ -49,26 +50,28 @@ pub const DEBUG_LOG: bool = cfg!(debug_assertions);
 pub const DEBUG_LOG_BRANCH_OUT: bool = DEBUG_LOG;
 
 fn run_cpu(
-    cartridge_reader: CartridgeReader,
+    cartridge_io: CartridgeIo,
     fps: Arc<AtomicU16>,
     key_map: Arc<AtomicU32>,
     touch_points: Arc<AtomicU16>,
     sound_sampler: Arc<SoundSampler>,
     settings: Arc<Settings>,
     gpu_renderer: NonNull<GpuRenderer>,
+    last_save_time: Arc<RwLock<Option<Instant>>>,
 ) {
-    let arm9_ram_addr = cartridge_reader.header.arm9_values.ram_address;
-    let arm9_entry_addr = cartridge_reader.header.arm9_values.entry_address;
-    let arm7_ram_addr = cartridge_reader.header.arm7_values.ram_address;
-    let arm7_entry_addr = cartridge_reader.header.arm7_values.entry_address;
+    let arm9_ram_addr = cartridge_io.header.arm9_values.ram_address;
+    let arm9_entry_addr = cartridge_io.header.arm9_values.entry_address;
+    let arm7_ram_addr = cartridge_io.header.arm7_values.ram_address;
+    let arm7_entry_addr = cartridge_io.header.arm7_values.entry_address;
 
-    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_reader, fps, key_map, touch_points, sound_sampler));
+    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_io, fps, key_map, touch_points, sound_sampler));
+    let emu_ptr = emu_unsafe.get() as u32;
     let emu = emu_unsafe.get_mut();
     let common = get_common_mut!(emu);
     let mem = get_mem_mut!(emu);
 
     {
-        let cartridge_header: &[u8; cartridge_reader::HEADER_IN_RAM_SIZE] = unsafe { mem::transmute(&common.cartridge.reader.header) };
+        let cartridge_header: &[u8; cartridge_io::HEADER_IN_RAM_SIZE] = unsafe { mem::transmute(&common.cartridge.io.header) };
         mem.main.write_slice(0x7FFE00, cartridge_header);
 
         mem.main.write(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
@@ -129,8 +132,8 @@ fn run_cpu(
     }
 
     {
-        let arm9_code = common.cartridge.reader.read_arm9_code();
-        let arm7_code = common.cartridge.reader.read_arm7_code();
+        let arm9_code = common.cartridge.io.read_arm9_code();
+        let arm7_code = common.cartridge.io.read_arm7_code();
 
         debug_println!("write ARM9 code at {:x}", arm9_ram_addr);
         for (i, value) in arm9_code.iter().enumerate() {
@@ -151,6 +154,20 @@ fn run_cpu(
         Spu::initialize_schedule(get_cm_mut!(emu));
     }
 
+    let save_thread = thread::Builder::new()
+        .name("save".to_owned())
+        .spawn(move || {
+            set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core1);
+            let last_save_time = last_save_time;
+            let emu = unsafe { (emu_ptr as *mut Emu).as_mut().unwrap_unchecked() };
+            let common = get_common_mut!(emu);
+            loop {
+                common.cartridge.io.flush_save_buf(&last_save_time);
+                thread::sleep(Duration::from_secs(3));
+            }
+        })
+        .unwrap();
+
     if settings[ARM7_HLE_SETTINGS].value.as_bool().unwrap() {
         common.ipc.use_hle();
         common.gpu.arm7_hle = true;
@@ -158,6 +175,8 @@ fn run_cpu(
     } else {
         execute_jit::<false>(&mut emu_unsafe);
     }
+
+    save_thread.join().unwrap();
 }
 
 #[inline(never)]
@@ -320,7 +339,17 @@ pub fn actual_main() {
         }
     }
 
-    let cartridge_reader = CartridgeReader::from_file(file_path.borrow().to_str().unwrap()).unwrap();
+    let cartridge_reader = {
+        let file_path = file_path.borrow();
+        let file_path_str = file_path.to_str().unwrap();
+        let dir = file_path.parent().unwrap();
+        let saves_dir = if cfg!(target_os = "linux") { dir.to_path_buf() } else { dir.join("saves") };
+        if !saves_dir.exists() {
+            fs::create_dir_all(saves_dir.clone()).unwrap();
+        }
+        let save_file = saves_dir.join(file_path.file_name().unwrap().to_str().unwrap().to_string() + ".sav");
+        CartridgeIo::from_file(file_path_str, save_file.to_str().unwrap()).unwrap()
+    };
     drop(file_path);
 
     let fps = Arc::new(AtomicU16::new(0));
@@ -362,6 +391,9 @@ pub fn actual_main() {
     let gpu_renderer = UnsafeCell::new(GpuRenderer::new());
     let gpu_renderer_ptr = gpu_renderer.get() as u32;
 
+    let last_save_time = Arc::new(RwLock::new(None));
+    let last_save_time_clone = last_save_time.clone();
+
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
         .spawn(move || {
@@ -374,6 +406,7 @@ pub fn actual_main() {
                 sound_sampler_clone,
                 settings,
                 NonNull::new(gpu_renderer_ptr as *mut GpuRenderer).unwrap(),
+                last_save_time_clone,
             );
         })
         .unwrap();
@@ -385,7 +418,7 @@ pub fn actual_main() {
         }
         key_map.store(keymap, Ordering::Relaxed);
 
-        gpu_renderer.render_loop(&mut presenter, &fps);
+        gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time);
     }
 
     if let Some(audio_thread) = audio_thread {

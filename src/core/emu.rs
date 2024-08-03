@@ -206,7 +206,7 @@ macro_rules! get_arm7_hle_mut {
 }
 pub(crate) use get_arm7_hle_mut;
 
-use crate::cartridge_reader::CartridgeReader;
+use crate::cartridge_io::CartridgeIo;
 use crate::core::cpu::{CpuArm7, CpuArm9};
 use crate::core::cycle_manager::CycleManager;
 use crate::core::graphics::gpu::Gpu;
@@ -246,10 +246,10 @@ pub struct Common {
 }
 
 impl Common {
-    fn new(cartridge_reader: CartridgeReader, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>) -> Self {
+    fn new(cartridge_io: CartridgeIo, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>) -> Self {
         Common {
             ipc: Ipc::new(),
-            cartridge: Cartridge::new(cartridge_reader),
+            cartridge: Cartridge::new(cartridge_io),
             gpu: Gpu::new(fps),
             cycle_manager: CycleManager::new(),
             cpus: Cpus::new(),
@@ -265,9 +265,9 @@ pub struct Emu {
 }
 
 impl Emu {
-    pub fn new(cartridge_reader: CartridgeReader, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
+    pub fn new(cartridge_io: CartridgeIo, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
         Emu {
-            common: UnsafeCell::new(Common::new(cartridge_reader, fps, key_map)),
+            common: UnsafeCell::new(Common::new(cartridge_io, fps, key_map)),
             mem: UnsafeCell::new(Memory::new(touch_points, sound_sampler)),
             arm7_hle: UnsafeCell::new(Arm7Hle::new()),
         }

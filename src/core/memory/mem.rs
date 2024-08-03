@@ -18,7 +18,6 @@ use crate::jit::jit_memory::JitMemory;
 use crate::logging::debug_println;
 use crate::utils::Convert;
 use std::intrinsics::{likely, unlikely};
-use std::mem;
 use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 use CpuType::ARM7;
@@ -87,7 +86,7 @@ impl Memory {
 
     pub fn read_with_options<const CPU: CpuType, const TCM: bool, const MMU: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu) -> T {
         debug_println!("{:?} memory read at {:x}", CPU, addr);
-        let aligned_addr = addr & !(mem::size_of::<T>() as u32 - 1);
+        let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
 
         let addr_base = aligned_addr & 0xFF000000;
         let addr_offset = aligned_addr - addr_base;
@@ -174,7 +173,7 @@ impl Memory {
 
     fn write_internal<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, value: T, emu: &mut Emu) {
         debug_println!("{:?} memory write at {:x} with value {:x}", CPU, addr, value.into());
-        let aligned_addr = addr & !(mem::size_of::<T>() as u32 - 1);
+        let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
 
         let addr_base = aligned_addr & 0xFF000000;
         let addr_offset = aligned_addr - addr_base;
@@ -189,7 +188,7 @@ impl Memory {
         }
 
         let mut invalidate_jit = || {
-            let (block_addr, block_addr_thumb) = self.jit.invalidate_block::<CPU>(aligned_addr, mem::size_of::<T>() as u32);
+            let (block_addr, block_addr_thumb) = self.jit.invalidate_block::<CPU>(aligned_addr, size_of::<T>() as u32);
             self.breakout_imm = if self.current_mode_is_thumb {
                 block_addr_thumb == self.current_jit_block_addr
             } else {

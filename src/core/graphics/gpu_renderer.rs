@@ -10,7 +10,7 @@ use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRES
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Instant;
 
 pub struct GpuRendererCommon {
@@ -89,7 +89,7 @@ impl GpuRenderer {
         self.renderer_2d.reload_registers();
     }
 
-    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>) {
+    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<RwLock<Option<Instant>>>) {
         {
             let rendering = self.rendering.lock().unwrap();
             let _drawing = self.rendering_condvar.wait_while(rendering, |rendering| !*rendering).unwrap();
@@ -152,13 +152,25 @@ impl GpuRenderer {
 
             let fps = fps.load(Ordering::Relaxed);
             let per = fps * 100 / 60;
-            self.gl_glyph.draw(format!("Render time: {}ms\nFPS: {fps} ({per}%)", self.average_render_time));
+
+            let last_time_saved = *last_save_time.read().unwrap();
+            let info_text = match last_time_saved {
+                None => "",
+                Some(last_time_saved) => {
+                    if Instant::now().duration_since(last_time_saved).as_secs() < 3 {
+                        "Written to save file"
+                    } else {
+                        ""
+                    }
+                }
+            };
+
+            self.gl_glyph.draw(format!("Render time: {}ms\nFPS: {fps} ({per}%)\n{info_text}", self.average_render_time));
 
             presenter.gl_swap_window();
         }
 
-        let render_time_end = Instant::now();
-        let render_time_diff = render_time_end - render_time_start;
+        let render_time_diff = Instant::now().duration_since(render_time_start);
         self.render_time_sum += render_time_diff.as_millis() as u32;
         self.render_time_measure_count += 1;
         if unlikely(self.render_time_measure_count == 30) {

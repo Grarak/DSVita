@@ -8,7 +8,6 @@ use crate::core::CpuType::ARM7;
 use crate::logging::debug_println;
 use crate::utils::Convert;
 use dsvita_macros::{io_ports_read, io_ports_write};
-use std::mem;
 use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 
@@ -42,7 +41,7 @@ impl IoArm7 {
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
         let common = get_common_mut!(emu);
-        while (index - 3) < mem::size_of::<T>() {
+        while (index - 3) < size_of::<T>() {
             io_ports_read!(match addr_offset + (index - 3) as u32 {
                 io16(0x4) => common.gpu.get_disp_stat::<{ ARM7 }>(),
                 io16(0x6) => common.gpu.v_count,
@@ -177,7 +176,7 @@ impl IoArm7 {
 
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, emu: &mut Emu) {
         let bytes = value.into().to_le_bytes();
-        let bytes = &bytes[..mem::size_of::<T>()];
+        let bytes = &bytes[..size_of::<T>()];
         /*
          * Use moving windows to handle reads and writes
          * |0|0|0|  x  |   x   |   x   |   x   |0|0|0|
@@ -185,13 +184,13 @@ impl IoArm7 {
          */
         let mut bytes_window = [0u8; 10];
         let mut mask_window = [0u8; 10];
-        bytes_window[3..3 + mem::size_of::<T>()].copy_from_slice(bytes);
-        mask_window[3..3 + mem::size_of::<T>()].fill(0xFF);
+        bytes_window[3..3 + size_of::<T>()].copy_from_slice(bytes);
+        mask_window[3..3 + size_of::<T>()].fill(0xFF);
 
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
         let common = get_common_mut!(emu);
-        while (index - 3) < mem::size_of::<T>() {
+        while (index - 3) < size_of::<T>() {
             io_ports_write!(match addr_offset + (index - 3) as u32 {
                 io16(0x4) => common.gpu.set_disp_stat::<{ ARM7 }>(mask, value),
                 io32(0xB0) => self.dma.set_sad::<0>(mask, value),

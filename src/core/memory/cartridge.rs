@@ -1,4 +1,4 @@
-use crate::cartridge_reader::CartridgeReader;
+use crate::cartridge_io::CartridgeIo;
 use crate::core::cpu_regs::InterruptFlag;
 use crate::core::cycle_manager::EventType;
 use crate::core::emu::{get_cm_mut, get_common_mut, get_cpu_regs_mut, io_dma, Emu};
@@ -12,12 +12,18 @@ use bilge::prelude::*;
 struct AuxSpiCnt {
     baudrate: u2,
     not_used: u4,
-    hold_chipselect: u1,
+    hold_chipselect: bool,
     busy: u1,
     not_used2: u5,
     nds_slot_mode: u1,
     transfer_ready_irq: u1,
     nds_slot_enable: u1,
+}
+
+impl Default for AuxSpiCnt {
+    fn default() -> Self {
+        AuxSpiCnt::from(0)
+    }
 }
 
 #[bitsize(32)]
@@ -38,6 +44,12 @@ pub struct RomCtrl {
     block_start_status: u1,
 }
 
+impl Default for RomCtrl {
+    fn default() -> Self {
+        RomCtrl::from(0)
+    }
+}
+
 #[derive(Debug)]
 enum CmdMode {
     Header,
@@ -47,44 +59,35 @@ enum CmdMode {
     None,
 }
 
+#[derive(Default)]
 struct CartridgeInner {
+    block_size: u16,
+    word_cycles: u8,
+    read_count: u16,
+    encrypted: bool,
+
+    aux_command: u8,
+    aux_address: u32,
+    aux_write_count: i32,
+
     aux_spi_cnt: AuxSpiCnt,
     aux_spi_data: u8,
-    bus_cmd_out: u64,
     rom_ctrl: RomCtrl,
-    word_cycles: u8,
-    block_size: u16,
-    encrypted: bool,
-    read_count: u16,
-}
-
-impl CartridgeInner {
-    fn new() -> Self {
-        CartridgeInner {
-            aux_spi_cnt: AuxSpiCnt::from(0),
-            aux_spi_data: 0,
-            bus_cmd_out: 0,
-            rom_ctrl: RomCtrl::from(0),
-            word_cycles: 0,
-            block_size: 0,
-            encrypted: false,
-            read_count: 0,
-        }
-    }
+    bus_cmd_out: u64,
 }
 
 pub struct Cartridge {
-    pub reader: CartridgeReader,
+    pub io: CartridgeIo,
     cmd_mode: CmdMode,
     inner: [CartridgeInner; 2],
     read_buf: Vec<u8>,
 }
 
 impl Cartridge {
-    pub fn new(cartridge: CartridgeReader) -> Self {
+    pub fn new(cartridge_io: CartridgeIo) -> Self {
         Cartridge {
-            reader: cartridge,
-            inner: [CartridgeInner::new(), CartridgeInner::new()],
+            io: cartridge_io,
+            inner: [CartridgeInner::default(), CartridgeInner::default()],
             cmd_mode: CmdMode::None,
             read_buf: Vec::new(),
         }
@@ -155,7 +158,157 @@ impl Cartridge {
         self.inner[CPU].aux_spi_cnt = ((u16::from(self.inner[CPU].aux_spi_cnt) & !mask) | (value & mask)).into();
     }
 
-    pub fn set_aux_spi_data<const CPU: CpuType>(&self, value: u8) {}
+    pub fn set_aux_spi_data<const CPU: CpuType>(&mut self, value: u8) {
+        let inner = &mut self.inner[CPU];
+
+        if inner.aux_write_count == 0 {
+            if value == 0 {
+                return;
+            }
+            inner.aux_command = value;
+            inner.aux_address = 0;
+            inner.aux_spi_data = 0;
+        } else {
+            if self.io.save_file_size == 0 {
+                match inner.aux_command {
+                    0x0B => {
+                        self.io.resize_save_file(0x200);
+                        debug_println!("Detected EEPROM 0.5KB save type");
+                    }
+                    0x02 => {
+                        self.io.resize_save_file(0x10000);
+                        debug_println!("Detected EEPROM 64KB save type");
+                    }
+                    0x0A => {
+                        self.io.resize_save_file(0x80000);
+                        debug_println!("Detected FLASH 512KB save type");
+                    }
+                    _ => {
+                        if !inner.aux_spi_cnt.hold_chipselect() {
+                            inner.aux_write_count = 0;
+                            return;
+                        }
+                    }
+                }
+            }
+
+            let save_size = self.io.save_file_size;
+            match save_size {
+                0x200 => match inner.aux_command {
+                    0x03 => {
+                        if inner.aux_write_count < 2 {
+                            inner.aux_address = value as u32;
+                            inner.aux_spi_data = 0;
+                        } else {
+                            inner.aux_spi_data = if inner.aux_address < 0x200 { self.io.read_save_buf(inner.aux_address) } else { 0 };
+                            inner.aux_address += 1;
+                        }
+                    }
+                    0x0B => {
+                        if inner.aux_write_count < 2 {
+                            inner.aux_address = 0x100 + value as u32;
+                            inner.aux_spi_data = 0;
+                        } else {
+                            inner.aux_spi_data = if inner.aux_address < 0x200 { self.io.read_save_buf(inner.aux_address) } else { 0 };
+                            inner.aux_address += 1;
+                        }
+                    }
+                    0x02 => {
+                        if inner.aux_write_count < 2 {
+                            inner.aux_address = value as u32;
+                            inner.aux_spi_data = 0;
+                        } else {
+                            if inner.aux_address < 0x200 {
+                                self.io.write_save_buf(inner.aux_address, value);
+                            }
+                            inner.aux_address += 1;
+                            inner.aux_spi_data = 0;
+                        }
+                    }
+                    0x0A => {
+                        if inner.aux_write_count < 2 {
+                            inner.aux_address = 0x100 + value as u32;
+                            inner.aux_spi_data = 0;
+                        } else {
+                            if inner.aux_address < 0x200 {
+                                self.io.write_save_buf(inner.aux_address, value);
+                            }
+                            inner.aux_address += 1;
+                            inner.aux_spi_data = 0;
+                        }
+                    }
+                    _ => {
+                        debug_println!("Unknown EEPROM 0.5KB command {:x}", inner.aux_command);
+                        inner.aux_spi_data = 0;
+                    }
+                },
+                0x2000 | 0x8000 | 0x10000 | 0x20000 => match inner.aux_command {
+                    0x03 => {
+                        if inner.aux_write_count < if save_size == 0x20000 { 4 } else { 3 } {
+                            inner.aux_address |= (value as u32) << ((if save_size == 0x20000 { 3 } else { 2 } - inner.aux_write_count) * 8);
+                            inner.aux_spi_data = 0;
+                        } else {
+                            inner.aux_spi_data = if inner.aux_address < save_size as u32 { self.io.read_save_buf(inner.aux_address) } else { 0 };
+                            inner.aux_address += 1;
+                        }
+                    }
+                    0x02 => {
+                        if inner.aux_write_count < if save_size == 0x20000 { 4 } else { 3 } {
+                            inner.aux_address |= (value as u32) << ((if save_size == 0x20000 { 3 } else { 2 } - inner.aux_write_count) * 8);
+                            inner.aux_spi_data = 0;
+                        } else {
+                            if inner.aux_address < save_size as u32 {
+                                self.io.write_save_buf(inner.aux_address, value);
+                            }
+                            inner.aux_address += 1;
+                            inner.aux_spi_data = 0;
+                        }
+                    }
+                    _ => {
+                        debug_println!("Unknown EEPROM/FRAM command {:x}", inner.aux_command);
+                        inner.aux_spi_data = 0;
+                    }
+                },
+                0x40000 | 0x80000 | 0x100000 | 0x800000 => match inner.aux_command {
+                    0x03 => {
+                        if inner.aux_write_count < 4 {
+                            inner.aux_address |= (value as u32) << ((3 - inner.aux_write_count) * 8);
+                            inner.aux_spi_data = 0;
+                        } else {
+                            inner.aux_spi_data = if inner.aux_address < save_size as u32 { self.io.read_save_buf(inner.aux_address) } else { 0 };
+                            inner.aux_address += 1;
+                        }
+                    }
+                    0x0A => {
+                        if inner.aux_write_count < 4 {
+                            inner.aux_address |= (value as u32) << ((3 - inner.aux_write_count) * 8);
+                            inner.aux_spi_data = 0;
+                        } else {
+                            if inner.aux_address < save_size as u32 {
+                                self.io.write_save_buf(inner.aux_address, value);
+                            }
+                            inner.aux_address += 1;
+                            inner.aux_spi_data = 0;
+                        }
+                    }
+                    0x08 => inner.aux_spi_data = if self.io.header.game_code[0] == b'I' { 0xAA } else { 0 },
+                    _ => {
+                        debug_println!("Unknown FLASH command {:x}", inner.aux_command);
+                        inner.aux_spi_data = 0;
+                    }
+                },
+                _ => {
+                    debug_println!("Unknown api size {:x}", self.io.save_file_size)
+                }
+            }
+        }
+
+        if inner.aux_spi_cnt.hold_chipselect() {
+            inner.aux_write_count += 1;
+        } else {
+            inner.aux_write_count = 0;
+        }
+    }
 
     pub fn set_bus_cmd_out_l<const CPU: CpuType>(&mut self, mask: u32, value: u32) {
         self.inner[CPU].bus_cmd_out = (self.inner[CPU].bus_cmd_out & !(mask as u64)) | (value & mask) as u64;
@@ -197,7 +350,7 @@ impl Cartridge {
         if cmd == 0 {
             self.cmd_mode = CmdMode::Header;
             self.read_buf.resize(inner.block_size as usize, 0);
-            self.reader.read_slice(0, &mut self.read_buf);
+            self.io.read_slice(0, &mut self.read_buf);
         } else if cmd == 0x9000000000000000 || (cmd >> 60) == 0x1 || cmd == 0xB800000000000000 {
             self.cmd_mode = CmdMode::Chip;
         } else if (cmd >> 56) == 0x3C {
@@ -209,12 +362,12 @@ impl Cartridge {
             inner.encrypted = false;
         } else if (cmd >> 56) == 0xB7 {
             self.cmd_mode = CmdMode::Data;
-            let mut read_addr = (((cmd >> 24) & 0xFFFFFFFF) as u32) % self.reader.file_size;
+            let mut read_addr = (((cmd >> 24) & 0xFFFFFFFF) as u32) % self.io.file_size;
             if read_addr < 0x8000 {
                 read_addr = 0x8000 + (read_addr & 0x1FF);
             }
             self.read_buf.resize(inner.block_size as usize, 0);
-            self.reader.read_slice(read_addr, &mut self.read_buf);
+            self.io.read_slice(read_addr, &mut self.read_buf);
         } else if cmd != 0x9F00000000000000 {
             debug_println!("Unknown rom transfer command {:x}", cmd);
         }

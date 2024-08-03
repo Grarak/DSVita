@@ -1,4 +1,4 @@
-use crate::core::memory::regions;
+use crate::core::memory::{regions, vram};
 use crate::core::CpuType;
 use crate::logging::debug_println;
 use crate::mmap::Mmap;
@@ -89,6 +89,7 @@ create_jit_blocks!(
     [arm9_bios, regions::ARM9_BIOS_SIZE],
     [main_arm7, regions::MAIN_MEMORY_SIZE],
     [wram, (regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE)],
+    [vram, vram::ARM7_SIZE],
     [arm7_bios, regions::ARM7_BIOS_SIZE]
 );
 
@@ -205,6 +206,7 @@ impl JitMemory {
                 regions::ARM7_BIOS_OFFSET => insert!(arm7_bios),
                 regions::MAIN_MEMORY_OFFSET => insert!(main_arm7),
                 regions::SHARED_WRAM_OFFSET => insert!(wram),
+                regions::VRAM_OFFSET => insert!(vram),
                 _ => todo!("{:x}", insert_args.guest_start_pc),
             },
         }
@@ -263,6 +265,7 @@ impl JitMemory {
                 regions::ARM7_BIOS_OFFSET => get_addr!(arm7_bios),
                 regions::MAIN_MEMORY_OFFSET => get_addr!(main_arm7),
                 regions::SHARED_WRAM_OFFSET => get_addr!(wram),
+                regions::VRAM_OFFSET => get_addr!(vram),
                 _ => todo!("{:x} {:x}", guest_pc, guest_pc & 0xFF000000),
             },
         }
@@ -312,6 +315,9 @@ impl JitMemory {
                 }
                 regions::SHARED_WRAM_OFFSET => {
                     invalidate!(self.jit_blocks.wram, self.jit_blocks.wram_thumb)
+                }
+                regions::VRAM_OFFSET => {
+                    invalidate!(self.jit_blocks.vram, self.jit_blocks.vram_thumb)
                 }
                 _ => (0, 0),
             },

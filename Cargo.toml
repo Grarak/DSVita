@@ -14,8 +14,8 @@ assets = "./static"
 
 [dependencies]
 bilge = { git = "https://github.com/Grarak/bilge.git" }
-chrono = "0.4.33"
-paste = "1.0.14"
+chrono = "0.4.38"
+paste = "1.0.15"
 static_assertions = "1.1.0"
 dsvita_macros = { path = "macros" }
 gl = { git = "https://github.com/bjz/gl-rs" }

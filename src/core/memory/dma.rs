@@ -228,7 +228,7 @@ impl Dma {
         let dest_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.dest_addr_ctrl()));
         let src_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.src_addr_ctrl()));
 
-        let step_size = mem::size_of::<T>() as u32;
+        let step_size = size_of::<T>() as u32;
         for _ in 0..count {
             debug_println!("{:?} dma transfer {:?} from {:x} to {:x}", CPU, mode, src_addr, dest_addr);
 

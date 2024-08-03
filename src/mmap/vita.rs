@@ -16,7 +16,7 @@ impl Mmap {
         let c_name = CString::new(name).unwrap();
 
         let mut opts: vitasdk_sys::SceKernelAllocMemBlockOpt = unsafe { mem::zeroed() };
-        opts.size = mem::size_of::<vitasdk_sys::SceKernelAllocMemBlockOpt>() as _;
+        opts.size = size_of::<vitasdk_sys::SceKernelAllocMemBlockOpt>() as _;
         opts.attr = vitasdk_sys::SCE_KERNEL_MEMORY_ACCESS_R;
         opts.alignment = 4 * 1024;
 

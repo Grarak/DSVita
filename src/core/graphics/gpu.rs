@@ -42,13 +42,13 @@ impl FrameRateCounter {
         self.frame_counter += 1;
         let now = Instant::now();
         if likely(limit_frame) {
-            let diff = (now - self.last_frame).as_millis();
+            let diff = now.duration_since(self.last_frame).as_millis();
             if unlikely(diff < 16) {
                 thread::sleep(Duration::from_millis(16 - diff as u64));
             }
             self.last_frame = Instant::now();
         }
-        if (now - self.last_update).as_secs_f32() >= 1f32 {
+        if now.duration_since(self.last_update).as_millis() >= 1000 {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
             // #[cfg(target_os = "linux")]
             eprintln!("{}", self.frame_counter);

@@ -6,7 +6,6 @@ use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::utils::Convert;
 use dsvita_macros::{io_ports_read, io_ports_write};
-use std::mem;
 
 pub struct IoArm9 {
     div_sqrt: DivSqrt,
@@ -34,7 +33,7 @@ impl IoArm9 {
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;
         let common = get_common_mut!(emu);
-        while (index - 3) < mem::size_of::<T>() {
+        while (index - 3) < size_of::<T>() {
             io_ports_read!(match addr_offset + (index - 3) as u32 {
                 io32(0x0) => common.gpu.gpu_2d_regs_a.get_disp_cnt(),
                 io16(0x4) => common.gpu.get_disp_stat::<{ ARM9 }>(),
@@ -169,7 +168,7 @@ impl IoArm9 {
 
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, emu: &mut Emu) {
         let bytes = value.into().to_le_bytes();
-        let bytes = &bytes[..mem::size_of::<T>()];
+        let bytes = &bytes[..size_of::<T>()];
         /*
          * Use moving windows to handle reads and writes
          * |0|0|0|  x  |   x   |   x   |   x   |0|0|0|
@@ -177,8 +176,8 @@ impl IoArm9 {
          */
         let mut bytes_window = [0u8; 10];
         let mut mask_window = [0u8; 10];
-        bytes_window[3..3 + mem::size_of::<T>()].copy_from_slice(bytes);
-        mask_window[3..3 + mem::size_of::<T>()].fill(0xFF);
+        bytes_window[3..3 + size_of::<T>()].copy_from_slice(bytes);
+        mask_window[3..3 + size_of::<T>()].fill(0xFF);
 
         let mut addr_offset_tmp = addr_offset;
         let mut index = 3usize;

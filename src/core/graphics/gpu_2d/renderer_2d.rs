@@ -833,7 +833,7 @@ impl Gpu2DProgram {
             gl::UseProgram(common.win_bg_program);
 
             gl::BindBuffer(gl::UNIFORM_BUFFER, common.win_bg_ubo);
-            gl::BufferData(gl::UNIFORM_BUFFER, mem::size_of::<WinBgUbo>() as _, ptr::addr_of!(regs.win_bg_ubo) as _, gl::DYNAMIC_DRAW);
+            gl::BufferData(gl::UNIFORM_BUFFER, size_of::<WinBgUbo>() as _, ptr::addr_of!(regs.win_bg_ubo) as _, gl::DYNAMIC_DRAW);
             gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, common.win_bg_ubo);
 
             let draw_windows = |from_line, to_line| self.draw_windows(common, regs, from_line, to_line);
@@ -943,7 +943,7 @@ impl Gpu2DProgram {
     }
 
     fn assemble_oam<const OBJ_WINDOW: bool>(&mut self, mem: &Gpu2DMem, from_line: u8, to_line: u8, disp_cnt: DispCnt) {
-        const OAM_COUNT: usize = regions::OAM_SIZE as usize / 2 / mem::size_of::<OamAttribs>();
+        const OAM_COUNT: usize = regions::OAM_SIZE as usize / 2 / size_of::<OamAttribs>();
         let oams = unsafe { slice::from_raw_parts(mem.oam_ptr as *const OamAttribs, OAM_COUNT) };
 
         self.obj_oam_indices.clear();
@@ -1040,7 +1040,7 @@ impl Gpu2DRenderer {
                 regs_a: [Gpu2DRenderRegs::default(), Gpu2DRenderRegs::default()],
                 regs_b: [Gpu2DRenderRegs::default(), Gpu2DRenderRegs::default()],
                 has_vram_display: [false; 2],
-                lcdc_pal: unsafe { create_pal_texture2d(1024, 656) },
+                lcdc_pal: create_pal_texture2d(1024, 656),
                 vram_display_program: Gpu2DVramDisplayProgram::new(),
                 tex_a: Gpu2DTextures::new(1024, OBJ_A_TEX_HEIGHT, 1024, BG_A_TEX_HEIGHT),
                 tex_b: Gpu2DTextures::new(1024, OBJ_B_TEX_HEIGHT, 1024, BG_B_TEX_HEIGHT),
