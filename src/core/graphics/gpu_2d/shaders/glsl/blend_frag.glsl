@@ -78,6 +78,7 @@ void main() {
     }
 
     if (topNum == 4 && topColor.a == 0.0) {
+        color = vec4(topColor.rgb, 1.0);
         // Semi transparent object
         int y = int(screenPos.y * 191.0);
         int bldCnt = bldCnts[y];
@@ -96,7 +97,8 @@ void main() {
 
     int winEnabled = int(texture(winTex, screenPos).x * 255.0);
     if ((winEnabled & (1 << 5)) == 0) {
-        discard;
+        color = vec4(topColor.rgb, 1.0);
+        return;
     }
 
     int y = int(screenPos.y * 191.0);
@@ -115,22 +117,29 @@ void main() {
         return;
     }
 
-    if (bldMode == 1) {
-        bool blendBottom = ((bldCnt >> 8) & (1 << bottomNum)) != 0;
-        if (!blendBottom) {
-            color = vec4(topColor.rgb, 1.0);
-            return;
+    switch (bldMode) {
+        case 1: {
+            bool blendBottom = ((bldCnt >> 8) & (1 << bottomNum)) != 0;
+            if (!blendBottom) {
+                color = vec4(topColor.rgb, 1.0);
+                return;
+            }
+            color = alphaBlend(bldAlphas[y]);
+            break;
         }
-        color = alphaBlend(bldAlphas[y]);
-    } else if (bldMode == 2) {
-        int bldY = bldYs[y];
-        float bldYF = float(bldY) / 16.0;
-        vec3 increaseColor = (1.0 - topColor.rgb) * bldYF;
-        color = vec4((topColor.rgb + increaseColor), 1.0);
-    } else if (bldMode == 3) {
-        int bldY = bldYs[y];
-        float bldYF = float(bldY) / 16.0;
-        vec3 decreaseColor = topColor.rgb * bldYF;
-        color = vec4((topColor.rgb - decreaseColor), 1.0);
+        case 2: {
+            int bldY = bldYs[y];
+            float bldYF = float(bldY) / 16.0;
+            vec3 increaseColor = (1.0 - topColor.rgb) * bldYF;
+            color = vec4((topColor.rgb + increaseColor), 1.0);
+            break;
+        }
+        case 3: {
+            int bldY = bldYs[y];
+            float bldYF = float(bldY) / 16.0;
+            vec3 decreaseColor = topColor.rgb * bldYF;
+            color = vec4((topColor.rgb - decreaseColor), 1.0);
+            break;
+        }
     }
 }

@@ -531,7 +531,7 @@ impl Vram {
                     }
                     4 => {
                         let vram_map = VramMap::<BANK_E_SIZE>::new(self.banks.get_e());
-                        for i in 0..3 {
+                        for i in 0..4 {
                             self.bg_ext_palette_a[i] = vram_map.extract_section(i);
                         }
                     }
