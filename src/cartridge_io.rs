@@ -10,8 +10,8 @@ use std::ops::{Deref, DerefMut};
 use std::os::unix::fs::FileExt;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
-use std::{io, mem};
+use std::time::{Duration, Instant};
+use std::{io, mem, thread};
 
 #[repr(C, packed)]
 pub struct ArmValues {
@@ -239,7 +239,12 @@ impl CartridgeIo {
             let file = match &self.save_file {
                 None => {
                     match File::create_new(&self.save_file_path) {
-                        Ok(file) => self.save_file = Some(file),
+                        Ok(file) => {
+                            self.save_file = Some(file);
+                            // On vita we have to add some delay between creation and writing to file
+                            // Otherwise it gets stuck for some reason
+                            thread::sleep(Duration::from_millis(10))
+                        }
                         Err(_) => return,
                     }
                     match &self.save_file {

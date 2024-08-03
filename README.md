@@ -8,14 +8,10 @@ Experimental NDS Emulator for ARM32/PSVita
 
 This runs some games, however following things are missing:
 
-- No 3D
-  - Some games rely on 3D states (such as Pokemon Diamond), they will get stuck at titlescreen
-- No saves
-- Incomplete 2D rendering
-  - No alpha blending
-  - Will crash on unimplemented draw modes
+- 3D rendering is very broken
+- 2D rendering is almost complete
 - ARM7 HLE will not work with most games
-  - Disable it if certain games don't boot further
+  - Disable it if certain games don't boot further, get struck, crash or have any issues
 
 ## Installation/Setup
 

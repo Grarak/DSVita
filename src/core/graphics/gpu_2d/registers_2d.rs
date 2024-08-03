@@ -131,6 +131,7 @@ pub struct Gpu2DRegisters<const ENGINE: Gpu2DEngine> {
     pub win_in: u16,
     pub win_out: u16,
     pub mosaic: u16,
+    pub master_bright: u16,
     internal: Gpu2DRegistersInner,
 }
 
@@ -269,5 +270,8 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DRegisters<ENGINE> {
         self.bld_y = min(value & 0x1F, 16);
     }
 
-    pub fn set_master_bright(&mut self, mask: u16, value: u16) {}
+    pub fn set_master_bright(&mut self, mut mask: u16, value: u16) {
+        mask &= 0xC01F;
+        self.master_bright = (self.master_bright & !mask) | (value & mask);
+    }
 }

@@ -48,7 +48,7 @@ impl IoArm9 {
                 io16(0x52) => common.gpu.gpu_2d_regs_a.bld_alpha,
                 io16(0x60) => common.gpu.get_renderer().renderer_3d.get_disp_3d_cnt(),
                 io32(0x64) => common.gpu.disp_cap_cnt,
-                io16(0x6C) => todo!(),
+                io16(0x6C) => common.gpu.gpu_2d_regs_a.master_bright,
                 io32(0xB0) => self.dma.get_sad::<0>(),
                 io32(0xB4) => self.dma.get_dad::<0>(),
                 io32(0xB8) => self.dma.get_cnt::<0>(),
@@ -150,7 +150,7 @@ impl IoArm9 {
                 io16(0x104A) => common.gpu.gpu_2d_regs_b.win_out,
                 io16(0x1050) => common.gpu.gpu_2d_regs_b.bld_cnt,
                 io16(0x1052) => common.gpu.gpu_2d_regs_b.bld_alpha,
-                io16(0x106C) => todo!(),
+                io16(0x106C) => common.gpu.gpu_2d_regs_b.master_bright,
                 io32(0x100000) => common.ipc.fifo_recv::<{ ARM9 }>(emu),
                 io32(0x100010) => common.cartridge.get_rom_data_in::<{ ARM9 }>(emu),
                 _ => {

@@ -67,10 +67,11 @@ const fn get_firmware() -> [u8; FIRMWARE_SIZE] {
         firmware[addr + 0x04] = 25; // Birthday day
         firmware[addr + 0x06] = b'D'; // Nickname, char 1
         firmware[addr + 0x08] = b'S'; // Nickname, char 2
-        firmware[addr + 0x0A] = b'P'; // Nickname, char 3
-        firmware[addr + 0x0C] = b'S'; // Nickname, char 4
-        firmware[addr + 0x0E] = b'V'; // Nickname, char 5
-        firmware[addr + 0x1A] = 5; // Nickname length
+        firmware[addr + 0x0A] = b'V'; // Nickname, char 3
+        firmware[addr + 0x0C] = b'I'; // Nickname, char 4
+        firmware[addr + 0x0E] = b'T'; // Nickname, char 5
+        firmware[addr + 0x10] = b'A'; // Nickname, char 6
+        firmware[addr + 0x1A] = 6; // Nickname length
 
         // Set the touch calibration data
         firmware[addr + 0x5E] = 0xF0; // ADC X2, byte 1
