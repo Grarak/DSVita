@@ -628,13 +628,13 @@ impl Gpu3DRegisters {
                 }
             }
             MtxMode::ModelView | MtxMode::ModelViewVec => {
-                let ptr = u8::from(self.gx_stat.pos_vec_mtx_stack_lvl()) as i8 - (((param << 2) as i8) >> 2);
+                let ptr = (u8::from(self.gx_stat.pos_vec_mtx_stack_lvl()) as i8 - (((param << 2) as i8) >> 2)) as u8;
                 if ptr >= 30 {
                     self.gx_stat.set_mtx_stack_overflow_underflow_err(true);
                 }
 
                 if ptr < 31 {
-                    self.gx_stat.set_pos_vec_mtx_stack_lvl(u5::new(ptr as u8));
+                    self.gx_stat.set_pos_vec_mtx_stack_lvl(u5::new(ptr));
                     self.matrices.model = self.matrices.model_stack[ptr as usize];
                     self.matrices.vec = self.matrices.vec_stack[ptr as usize];
                     self.clip_dirty = true;

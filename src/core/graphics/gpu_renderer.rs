@@ -158,7 +158,7 @@ impl GpuRenderer {
                 None => "",
                 Some(last_time_saved) => {
                     if Instant::now().duration_since(last_time_saved).as_secs() < 3 {
-                        "Written to save file"
+                        "Writing to save file"
                     } else {
                         ""
                     }

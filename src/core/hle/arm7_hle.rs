@@ -86,13 +86,13 @@ impl Arm7Hle {
             0x9 => {
                 // Mic
                 if !flag {
-                    todo!()
+                    // todo!()
                 }
             }
             0xA => {
                 // Wifi
                 if !flag {
-                    todo!()
+                    // todo!()
                 }
             }
             0xB => {
@@ -102,7 +102,7 @@ impl Arm7Hle {
             }
             0xC => {
                 if data == 0x1000 {
-                    todo!()
+                    Self::send_ipc_fifo(0xC, 0x1000, 0, emu);
                 }
             }
             0xD => {
@@ -113,7 +113,7 @@ impl Arm7Hle {
             }
             0xF => {
                 if data == 0x10000 {
-                    todo!()
+                    Self::send_ipc_fifo(0xF, 0x10000, 0, emu);
                 }
             }
             _ => {

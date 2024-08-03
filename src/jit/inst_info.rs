@@ -144,10 +144,12 @@ impl InstInfo {
             | Op::Smlawb
             | Op::Smlawt
             | Op::Smlabt
+            | Op::Smlatt
             | Op::Smlaltt
             | Op::Smultt
             | Op::Smulwt
             | Op::Smulbt
+            | Op::Smultb
             | Op::Smlalbb
             | Op::Smlaltb => {
                 let mut opcode = MulReg::from(self.opcode);
