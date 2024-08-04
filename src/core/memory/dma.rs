@@ -1,10 +1,11 @@
 use crate::core::cpu_regs::InterruptFlag;
 use crate::core::cycle_manager::{CycleManager, EventType};
-use crate::core::emu::{get_cm_mut, get_cpu_regs_mut, get_mem_mut, io_dma, io_dma_mut, Emu};
+use crate::core::emu::{get_cm_mut, get_common, get_cpu_regs_mut, get_mem_mut, io_dma, io_dma_mut, Emu};
 use crate::core::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
 use bilge::prelude::*;
+use std::cmp::min;
 use std::mem;
 use CpuType::{ARM7, ARM9};
 
@@ -16,12 +17,12 @@ enum DmaAddrCtrl {
     Increment = 0,
     Decrement = 1,
     Fixed = 2,
-    ReloadProhibited = 3,
+    IncrementReload = 3,
 }
 
 impl From<u8> for DmaAddrCtrl {
     fn from(value: u8) -> Self {
-        debug_assert!(value <= DmaAddrCtrl::ReloadProhibited as u8);
+        debug_assert!(value <= DmaAddrCtrl::IncrementReload as u8);
         unsafe { mem::transmute(value) }
     }
 }
@@ -36,7 +37,7 @@ struct DmaCntArm9 {
     transfer_type: u1,
     transfer_mode: u3,
     irq_at_end: bool,
-    enable: u1,
+    enable: bool,
 }
 
 #[bitsize(32)]
@@ -143,7 +144,7 @@ impl Dma {
 
     pub fn set_cnt<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32, emu: &mut Emu) {
         let channel = &mut self.channels[CHANNEL_NUM];
-        let was_enabled = bool::from(DmaCntArm9::from(channel.cnt).enable());
+        let was_enabled = DmaCntArm9::from(channel.cnt).enable();
 
         mask &= match self.cpu_type {
             ARM9 => 0xFFFFFFFF,
@@ -160,12 +161,29 @@ impl Dma {
 
         let transfer_type = DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, CHANNEL_NUM);
 
-        if transfer_type == DmaTransferMode::GeometryCmdFifo {
-            todo!()
+        let dma_cnt = DmaCntArm9::from(channel.cnt);
+        if transfer_type == DmaTransferMode::GeometryCmdFifo && dma_cnt.enable() && get_common!(emu).gpu.gpu_3d_regs.gx_stat.cmd_fifo_less_half_full() {
+            debug_println!(
+                "{:?} dma schedule imm {:x} {:x} {:x} {:x}",
+                self.cpu_type,
+                channel.cnt,
+                channel.current_dest,
+                channel.current_src,
+                channel.current_count
+            );
+
+            get_mem_mut!(emu).breakout_imm = true;
+
+            get_cm_mut!(emu).schedule(
+                1,
+                match self.cpu_type {
+                    ARM9 => EventType::DmaArm9(CHANNEL_NUM as u8),
+                    ARM7 => EventType::DmaArm7(CHANNEL_NUM as u8),
+                },
+            );
         }
 
-        let dma_cnt = DmaCntArm9::from(channel.cnt);
-        if !was_enabled && bool::from(dma_cnt.enable()) {
+        if !was_enabled && dma_cnt.enable() {
             channel.current_src = channel.sad;
             channel.current_dest = channel.dad;
             channel.current_count = u32::from(dma_cnt.word_count());
@@ -229,6 +247,7 @@ impl Dma {
         let src_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.src_addr_ctrl()));
 
         let step_size = size_of::<T>() as u32;
+        let count = if mode == DmaTransferMode::GeometryCmdFifo { min(112, count) } else { count };
         for _ in 0..count {
             debug_println!("{:?} dma transfer {:?} from {:x} to {:x}", CPU, mode, src_addr, dest_addr);
 
@@ -242,13 +261,9 @@ impl Dma {
             }
 
             match dest_addr_ctrl {
-                DmaAddrCtrl::Increment | DmaAddrCtrl::ReloadProhibited => *dest_addr += step_size,
+                DmaAddrCtrl::Increment | DmaAddrCtrl::IncrementReload => *dest_addr += step_size,
                 DmaAddrCtrl::Decrement => *dest_addr -= step_size,
                 DmaAddrCtrl::Fixed => {}
-            }
-
-            if mode == DmaTransferMode::GeometryCmdFifo {
-                todo!()
             }
         }
     }
@@ -278,19 +293,35 @@ impl Dma {
             channel.current_src = src;
         }
 
-        if mode == DmaTransferMode::GeometryCmdFifo {
-            todo!()
+        if mode == DmaTransferMode::GeometryCmdFifo && count > 112 {
+            io_dma_mut!(emu, CPU).channels[channel_num].current_count -= 112;
+            if get_common!(emu).gpu.gpu_3d_regs.gx_stat.cmd_fifo_less_half_full() {
+                get_cm_mut!(emu).schedule(
+                    1,
+                    match CPU {
+                        ARM9 => EventType::DmaArm9(channel_num as u8),
+                        ARM7 => EventType::DmaArm7(channel_num as u8),
+                    },
+                );
+            }
+            return;
         }
 
         if cnt.repeat() && mode != DmaTransferMode::StartImm {
             let channel = &mut io_dma_mut!(emu, CPU).channels[channel_num];
             channel.current_count = u32::from(DmaCntArm9::from(channel.cnt).word_count());
-            if DmaAddrCtrl::from(u8::from(cnt.dest_addr_ctrl())) == DmaAddrCtrl::ReloadProhibited {
+            if DmaAddrCtrl::from(u8::from(cnt.dest_addr_ctrl())) == DmaAddrCtrl::IncrementReload {
                 channel.current_dest = channel.dad;
             }
 
-            if mode == DmaTransferMode::GeometryCmdFifo {
-                todo!()
+            if mode == DmaTransferMode::GeometryCmdFifo && get_common!(emu).gpu.gpu_3d_regs.gx_stat.cmd_fifo_less_half_full() {
+                get_cm_mut!(emu).schedule(
+                    1,
+                    match CPU {
+                        ARM9 => EventType::DmaArm9(channel_num as u8),
+                        ARM7 => EventType::DmaArm7(channel_num as u8),
+                    },
+                );
             }
         } else {
             io_dma_mut!(emu, CPU).channels[channel_num].cnt &= !(1 << 31);

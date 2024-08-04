@@ -12,7 +12,7 @@ use std::mem;
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
-struct GxStat {
+pub struct GxStat {
     box_pos_vec_test_busy: bool,
     box_test_result: u1,
     not_used: u6,
@@ -21,7 +21,7 @@ struct GxStat {
     mtx_stack_busy: bool,
     mtx_stack_overflow_underflow_err: bool,
     num_entries_cmd_fifo: u9,
-    cmd_fifo_less_half_full: bool,
+    pub cmd_fifo_less_half_full: bool,
     cmd_fifo_empty: bool,
     geometry_busy: bool,
     not_used2: u2,
@@ -435,7 +435,7 @@ pub struct Gpu3DRegisters {
     viewport: Vectoru16<4>,
     viewport_next: Vectoru16<4>,
 
-    gx_stat: GxStat,
+    pub gx_stat: GxStat,
     gx_fifo: u32,
     pos_result: [i32; 4],
     vec_result: [i16; 3],
