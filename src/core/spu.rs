@@ -16,41 +16,25 @@ const SAMPLE_RATE: usize = 32768;
 const SAMPLE_BUFFER_SIZE: usize = SAMPLE_RATE * PRESENTER_AUDIO_BUF_SIZE / PRESENTER_AUDIO_SAMPLE_RATE;
 
 pub struct SoundSampler {
-    samples: Mutex<VecDeque<HeapMemU32<{ SAMPLE_BUFFER_SIZE }>>>,
+    samples: Mutex<Vec<u32>>,
     cond_var: Condvar,
 }
 
 impl SoundSampler {
     pub fn new() -> SoundSampler {
         SoundSampler {
-            samples: Mutex::new(VecDeque::new()),
+            samples: Mutex::new(Vec::new()),
             cond_var: Condvar::new(),
         }
     }
 
-    fn push(&self, samples: &[u32]) {
-        let mut queue = self.samples.lock().unwrap();
-        if queue.len() == 2 {
-            queue.swap(0, 1);
-            let s = queue.back_mut().unwrap();
-            s.copy_from_slice(samples);
-        } else {
-            let mut s = HeapMemU32::new();
-            s.copy_from_slice(samples);
-            queue.push_back(s);
-            self.cond_var.notify_one();
-        }
+    fn push(&self, sample: u32) {
+        let mut buf = self.samples.lock().unwrap();
+        buf.push(sample);
     }
 
-    pub fn consume(&self, ret: &mut [u32; PRESENTER_AUDIO_BUF_SIZE]) {
-        let samples = {
-            let samples = self.samples.lock().unwrap();
-            let mut samples = self.cond_var.wait_while(samples, |samples| samples.is_empty()).unwrap();
-            samples.pop_front().unwrap()
-        };
-        for i in 0..PRESENTER_AUDIO_BUF_SIZE {
-            ret[i] = samples[i * SAMPLE_BUFFER_SIZE / PRESENTER_AUDIO_BUF_SIZE];
-        }
+    pub fn consume(&self, ret: &mut Vec<u32>) {
+        
     }
 }
 

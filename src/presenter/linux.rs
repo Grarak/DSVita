@@ -4,35 +4,60 @@ use crate::presenter::menu::Menu;
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
 use crate::utils::BuildNoHasher;
 use gl::types::GLuint;
-use sdl2::audio::{AudioQueue, AudioSpecDesired};
+use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::mouse::MouseButton;
 use sdl2::video::{GLContext, GLProfile, Window};
 use sdl2::{keyboard, EventPump};
 use std::collections::HashMap;
+use std::ops::Deref;
+use std::ptr::NonNull;
 use std::rc::Rc;
 use std::slice;
+use std::sync::{Condvar, Mutex};
 
 #[derive(Clone)]
 pub struct PresenterAudio {
-    audio_queue: Rc<AudioQueue<i16>>,
+    buf: Rc<Mutex<Option<NonNull<u32>>>>,
+    condvar: Rc<Condvar>,
 }
 
 unsafe impl Send for PresenterAudio {}
 
+impl AudioCallback for PresenterAudio {
+    type Channel = i16;
+
+    fn callback(&mut self, callback_buf: &mut [Self::Channel]) {
+        let mut buf_lock = self.buf.lock().unwrap();
+        match buf_lock.deref() {
+            None => callback_buf.fill(0),
+            Some(buf) => {
+                let buf = unsafe { slice::from_raw_parts(buf.as_ptr() as *const i16, PRESENTER_AUDIO_BUF_SIZE * 2) };
+                callback_buf.copy_from_slice(buf);
+                *buf_lock = None;
+                self.condvar.notify_one();
+            }
+        }
+    }
+}
+
 impl PresenterAudio {
-    fn new(audio_queue: AudioQueue<i16>) -> Self {
-        PresenterAudio { audio_queue: Rc::new(audio_queue) }
+    fn new() -> Self {
+        PresenterAudio {
+            buf: Rc::new(Mutex::new(None)),
+            condvar: Rc::new(Condvar::new()),
+        }
     }
 
     pub fn play(&self, buffer: &[u32; PRESENTER_AUDIO_BUF_SIZE]) {
-        self.audio_queue.clear();
-        let raw = unsafe { slice::from_raw_parts(buffer.as_slice().as_ptr() as *const i16, PRESENTER_AUDIO_BUF_SIZE * 2) };
-        self.audio_queue.queue_audio(raw).unwrap();
+        let mut buf_lock = self.buf.lock().unwrap();
+        *buf_lock = Some(unsafe { NonNull::new_unchecked(buffer.as_ptr() as _) });
+        let _guard = self.condvar.wait_while(buf_lock, |buf| buf.is_some()).unwrap();
     }
 }
 
 pub struct Presenter {
+    audio_playback: AudioDevice<PresenterAudio>,
     presenter_audio: PresenterAudio,
     window: Window,
     _gl_ctx: GLContext,
@@ -49,17 +74,19 @@ impl Presenter {
         let sdl = sdl2::init().unwrap();
         let sdl_video = sdl.video().unwrap();
         let sdl_audio = sdl.audio().unwrap();
-        let audio_queue = sdl_audio
-            .open_queue(
+        let presenter_audio = PresenterAudio::new();
+        let audio_playback = sdl_audio
+            .open_playback(
                 None,
                 &AudioSpecDesired {
                     freq: Some(PRESENTER_AUDIO_SAMPLE_RATE as i32),
                     channels: Some(2),
                     samples: Some(PRESENTER_AUDIO_BUF_SIZE as u16),
                 },
+                |_| presenter_audio.clone(),
             )
             .unwrap();
-        audio_queue.resume();
+        audio_playback.resume();
 
         let gl_attr = sdl_video.gl_attr();
         gl_attr.set_context_profile(GLProfile::GLES);
@@ -90,7 +117,8 @@ impl Presenter {
         key_code_mapping.insert(keyboard::Keycode::Num9, input::Keycode::TriggerR);
 
         Presenter {
-            presenter_audio: PresenterAudio::new(audio_queue),
+            audio_playback,
+            presenter_audio,
             window,
             _gl_ctx: gl_ctx,
             key_code_mapping,
