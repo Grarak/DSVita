@@ -75,7 +75,9 @@ impl Default for Gpu3DGl {
             gl::GenBuffers(1, &mut polygon_ubo);
             gl::BindBuffer(gl::UNIFORM_BUFFER, polygon_ubo);
 
-            gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "PolygonUbo\0".as_ptr() as _), 0);
+            if cfg!(target_os = "linux") {
+                gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "PolygonUbo\0".as_ptr() as _), 0);
+            }
 
             let mut vertices_buf = 0;
             gl::GenBuffers(1, &mut vertices_buf);

@@ -50,6 +50,7 @@ fn main() {
             ("NO_DEBUG", "1"),
             ("SHADER_COMPILER_SPEEDHACK", "1"),
             ("MATH_SPEEDHACK", "1"),
+            ("HAVE_SHADER_CACHE", "1"),
             // ("HAVE_SHARK_LOG", "1"),
             // ("LOG_ERRORS", "1"),
             // ("HAVE_RAZOR", "1"),

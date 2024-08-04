@@ -287,7 +287,9 @@ impl Gpu2DCommon {
                 gl::GenBuffers(1, &mut ubo);
                 gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
 
-                gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "WinBgUbo\0".as_ptr() as _), 0);
+                if cfg!(target_os = "linux") {
+                    gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "WinBgUbo\0".as_ptr() as _), 0);
+                }
 
                 gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
                 gl::UseProgram(0);
@@ -320,7 +322,9 @@ impl Gpu2DCommon {
                 gl::GenBuffers(1, &mut ubo);
                 gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
 
-                gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "BlendUbo\0".as_ptr() as _), 0);
+                if cfg!(target_os = "linux") {
+                    gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "BlendUbo\0".as_ptr() as _), 0);
+                }
 
                 gl::UseProgram(0);
 
@@ -491,7 +495,9 @@ impl Gpu2DProgram {
                 gl::GenBuffers(1, &mut ubo);
                 gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
 
-                gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "ObjUbo\0".as_ptr() as _), 0);
+                if cfg!(target_os = "linux") {
+                    gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "ObjUbo\0".as_ptr() as _), 0);
+                }
 
                 gl::UseProgram(0);
 
@@ -545,7 +551,7 @@ impl Gpu2DProgram {
                     gl::Uniform1i(gl::GetUniformLocation(program, "winTex\0".as_ptr() as _), 3);
                     gl::Uniform1i(gl::GetUniformLocation(program, "display3dTex\0".as_ptr() as _), 4);
 
-                    if has_ubo {
+                    if cfg!(target_os = "linux") && has_ubo {
                         gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "BgUbo\0".as_ptr() as _), 0);
                     }
 
