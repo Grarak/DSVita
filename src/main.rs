@@ -45,6 +45,7 @@ mod mmap;
 mod presenter;
 mod settings;
 mod utils;
+mod cartridge_metadata;
 
 pub const DEBUG_LOG: bool = cfg!(debug_assertions);
 pub const DEBUG_LOG_BRANCH_OUT: bool = DEBUG_LOG;

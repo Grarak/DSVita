@@ -1,4 +1,4 @@
-use crate::core::emu::{get_common_mut, Emu};
+use crate::core::emu::{get_common, get_common_mut, Emu};
 use crate::core::hle::arm7_hle::Arm7Hle;
 use crate::core::CpuType::ARM7;
 use crate::logging::debug_println;
@@ -29,9 +29,11 @@ impl CartHle {
                 }
             }
             2 => {
-                let save_param = emu.mem_read::<{ ARM7 }, u32>(self.buffer + 0x4);
-                let save_size_shift = (save_param >> 8) & 0xFF;
-                get_common_mut!(emu).cartridge.io.resize_save_file(1 << save_size_shift);
+                if get_common!(emu).cartridge.io.save_file_size == 0 {
+                    let save_param = emu.mem_read::<{ ARM7 }, u32>(self.buffer + 0x4);
+                    let save_size_shift = (save_param >> 8) & 0xFF;
+                    get_common_mut!(emu).cartridge.io.resize_save_file(1 << save_size_shift);
+                }
                 Arm7Hle::send_ipc_fifo(0xB, 0x1, 1, emu);
                 self.data_pos = 0;
                 return;

@@ -1,3 +1,4 @@
+use crate::cartridge_metadata::get_cartridge_metadata;
 use crate::logging::debug_println;
 use crate::utils::NoHashMap;
 use static_assertions::const_assert_eq;
@@ -98,6 +99,11 @@ impl CartridgeIo {
         file.read_exact(&mut raw_header)?;
         let file_size = file.stream_len().unwrap() as u32;
         let mut save_buf = Vec::new();
+
+        let header: CartridgeHeader = unsafe { mem::transmute(raw_header) };
+
+        let game_code = u32::from_le_bytes(header.game_code);
+
         let mut save_file_size = match &mut save_file {
             None => 0,
             Some(file) => {
@@ -112,10 +118,18 @@ impl CartridgeIo {
                 }
             }
         };
+
+        if save_file_size == 0 {
+            if let Some(metadata) = get_cartridge_metadata(game_code) {
+                save_buf.resize(metadata.save_size as usize, 0xFF);
+                save_file_size = metadata.save_size;
+            }
+        }
+
         if !SAVE_SIZES.contains(&save_file_size) {
             save_file_size = 0;
         }
-        let header: CartridgeHeader = unsafe { mem::transmute(raw_header) };
+
         Ok(CartridgeIo {
             file,
             file_size,
@@ -255,6 +269,7 @@ impl CartridgeIo {
                 Some(file) => file,
             };
             let _ = file.write_at(save_buf, 0);
+            eprintln!("writting to save file");
             *last_save_time.write().unwrap() = Some(Instant::now());
             *dirty = false;
         }

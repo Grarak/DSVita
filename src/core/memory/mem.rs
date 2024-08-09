@@ -219,14 +219,21 @@ impl Memory {
             }
             regions::SHARED_WRAM_OFFSET => {
                 self.wram.write::<CPU, _>(addr_offset, value);
-                invalidate_jit();
+                if CPU == ARM7 {
+                    invalidate_jit();
+                }
             }
             regions::IO_PORTS_OFFSET => match CPU {
                 ARM9 => self.io_arm9.write(addr_offset, value, emu),
                 ARM7 => self.io_arm7.write(addr_offset, value, emu),
             },
             regions::STANDARD_PALETTES_OFFSET => self.palettes.write(addr_offset, value),
-            regions::VRAM_OFFSET => self.vram.write::<CPU, _>(addr_offset, value),
+            regions::VRAM_OFFSET => {
+                self.vram.write::<CPU, _>(addr_offset, value);
+                if CPU == ARM7 {
+                    invalidate_jit();
+                }
+            }
             regions::OAM_OFFSET => self.oam.write(addr_offset, value),
             regions::GBA_ROM_OFFSET => {}
             _ => {

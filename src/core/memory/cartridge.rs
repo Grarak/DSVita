@@ -68,7 +68,8 @@ struct CartridgeInner {
 
     aux_command: u8,
     aux_address: u32,
-    aux_write_count: i32,
+    aux_write_count: u32,
+    aux_spi_hold: bool,
 
     aux_spi_cnt: AuxSpiCnt,
     aux_spi_data: u8,
@@ -162,12 +163,14 @@ impl Cartridge {
         let inner = &mut self.inner[CPU];
 
         if inner.aux_write_count == 0 {
-            if value == 0 {
-                return;
+            match value {
+                0x4 | 0x6 => inner.aux_spi_data = 0,
+                _ => {
+                    inner.aux_command = value;
+                    inner.aux_address = 0;
+                    inner.aux_spi_data = 0xFF;
+                }
             }
-            inner.aux_command = value;
-            inner.aux_address = 0;
-            inner.aux_spi_data = 0;
         } else {
             if self.io.save_file_size == 0 {
                 match inner.aux_command {
@@ -183,63 +186,38 @@ impl Cartridge {
                         self.io.resize_save_file(0x80000);
                         debug_println!("Detected FLASH 512KB save type");
                     }
-                    _ => {
-                        if !inner.aux_spi_cnt.hold_chipselect() {
-                            inner.aux_write_count = 0;
-                            return;
-                        }
-                    }
+                    _ => {}
                 }
             }
 
             let save_size = self.io.save_file_size;
             match save_size {
                 0x200 => match inner.aux_command {
-                    0x03 => {
+                    0x03 | 0x0B => {
                         if inner.aux_write_count < 2 {
                             inner.aux_address = value as u32;
                             inner.aux_spi_data = 0;
                         } else {
-                            inner.aux_spi_data = if inner.aux_address < 0x200 { self.io.read_save_buf(inner.aux_address) } else { 0 };
+                            let addr_offset = if inner.aux_command == 0x0B { 0x100 } else { 0 };
+                            inner.aux_spi_data = self.io.read_save_buf((inner.aux_address + addr_offset) & (save_size - 1));
                             inner.aux_address += 1;
                         }
                     }
-                    0x0B => {
-                        if inner.aux_write_count < 2 {
-                            inner.aux_address = 0x100 + value as u32;
-                            inner.aux_spi_data = 0;
-                        } else {
-                            inner.aux_spi_data = if inner.aux_address < 0x200 { self.io.read_save_buf(inner.aux_address) } else { 0 };
-                            inner.aux_address += 1;
-                        }
-                    }
-                    0x02 => {
+                    0x02 | 0x0A => {
                         if inner.aux_write_count < 2 {
                             inner.aux_address = value as u32;
                             inner.aux_spi_data = 0;
                         } else {
-                            if inner.aux_address < 0x200 {
-                                self.io.write_save_buf(inner.aux_address, value);
-                            }
+                            let addr_offset = if inner.aux_command == 0x0A { 0x100 } else { 0 };
+                            self.io.write_save_buf((inner.aux_address + addr_offset) & (save_size - 1), value);
                             inner.aux_address += 1;
                             inner.aux_spi_data = 0;
                         }
                     }
-                    0x0A => {
-                        if inner.aux_write_count < 2 {
-                            inner.aux_address = 0x100 + value as u32;
-                            inner.aux_spi_data = 0;
-                        } else {
-                            if inner.aux_address < 0x200 {
-                                self.io.write_save_buf(inner.aux_address, value);
-                            }
-                            inner.aux_address += 1;
-                            inner.aux_spi_data = 0;
-                        }
-                    }
+                    0x01 | 0x05 => inner.aux_spi_data = 0,
                     _ => {
                         debug_println!("Unknown EEPROM 0.5KB command {:x}", inner.aux_command);
-                        inner.aux_spi_data = 0;
+                        inner.aux_spi_data = 0xFF;
                     }
                 },
                 0x2000 | 0x8000 | 0x10000 | 0x20000 => match inner.aux_command {
@@ -248,7 +226,7 @@ impl Cartridge {
                             inner.aux_address |= (value as u32) << ((if save_size == 0x20000 { 3 } else { 2 } - inner.aux_write_count) * 8);
                             inner.aux_spi_data = 0;
                         } else {
-                            inner.aux_spi_data = if inner.aux_address < save_size as u32 { self.io.read_save_buf(inner.aux_address) } else { 0 };
+                            inner.aux_spi_data = if inner.aux_address < save_size { self.io.read_save_buf(inner.aux_address) } else { 0 };
                             inner.aux_address += 1;
                         }
                     }
@@ -257,7 +235,7 @@ impl Cartridge {
                             inner.aux_address |= (value as u32) << ((if save_size == 0x20000 { 3 } else { 2 } - inner.aux_write_count) * 8);
                             inner.aux_spi_data = 0;
                         } else {
-                            if inner.aux_address < save_size as u32 {
+                            if inner.aux_address < save_size {
                                 self.io.write_save_buf(inner.aux_address, value);
                             }
                             inner.aux_address += 1;
@@ -275,7 +253,7 @@ impl Cartridge {
                             inner.aux_address |= (value as u32) << ((3 - inner.aux_write_count) * 8);
                             inner.aux_spi_data = 0;
                         } else {
-                            inner.aux_spi_data = if inner.aux_address < save_size as u32 { self.io.read_save_buf(inner.aux_address) } else { 0 };
+                            inner.aux_spi_data = if inner.aux_address < save_size { self.io.read_save_buf(inner.aux_address) } else { 0 };
                             inner.aux_address += 1;
                         }
                     }
@@ -284,7 +262,7 @@ impl Cartridge {
                             inner.aux_address |= (value as u32) << ((3 - inner.aux_write_count) * 8);
                             inner.aux_spi_data = 0;
                         } else {
-                            if inner.aux_address < save_size as u32 {
+                            if inner.aux_address < save_size {
                                 self.io.write_save_buf(inner.aux_address, value);
                             }
                             inner.aux_address += 1;
