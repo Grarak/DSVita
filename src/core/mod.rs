@@ -20,6 +20,7 @@ pub mod spi;
 pub mod spu;
 pub mod thread_regs;
 pub mod timers;
+mod wifi;
 
 #[derive(ConstParamTy, Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]

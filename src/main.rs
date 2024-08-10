@@ -31,12 +31,13 @@ use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{fs, mem, thread};
 use CpuType::{ARM7, ARM9};
 
 mod cartridge_io;
+mod cartridge_metadata;
 mod core;
 mod jit;
 mod logging;
@@ -45,7 +46,6 @@ mod mmap;
 mod presenter;
 mod settings;
 mod utils;
-mod cartridge_metadata;
 
 pub const DEBUG_LOG: bool = cfg!(debug_assertions);
 pub const DEBUG_LOG_BRANCH_OUT: bool = DEBUG_LOG;
@@ -58,7 +58,7 @@ fn run_cpu(
     sound_sampler: Arc<SoundSampler>,
     settings: Arc<Settings>,
     gpu_renderer: NonNull<GpuRenderer>,
-    last_save_time: Arc<RwLock<Option<Instant>>>,
+    last_save_time: Arc<Mutex<Option<(Instant, bool)>>>,
 ) {
     let arm9_ram_addr = cartridge_io.header.arm9_values.ram_address;
     let arm9_entry_addr = cartridge_io.header.arm9_values.entry_address;
@@ -392,7 +392,7 @@ pub fn actual_main() {
     let gpu_renderer = UnsafeCell::new(GpuRenderer::new());
     let gpu_renderer_ptr = gpu_renderer.get() as u32;
 
-    let last_save_time = Arc::new(RwLock::new(None));
+    let last_save_time = Arc::new(Mutex::new(None));
     let last_save_time_clone = last_save_time.clone();
 
     let cpu_thread = thread::Builder::new()

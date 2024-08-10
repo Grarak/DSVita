@@ -33,7 +33,7 @@ const fn get_firmware() -> [u8; FIRMWARE_SIZE] {
     firmware[0x38] = 0xBF; // MAC address, byte 3
     firmware[0x39] = 0x12; // MAC address, byte 4
     firmware[0x3A] = 0x34; // MAC address, byte 5
-    firmware[0x3B] = 0x56; // MAC address, byte 6
+    firmware[0x3B] = 0x0; // MAC address, byte 6
     firmware[0x3C] = 0xFE; // Enabled channels, byte 1
     firmware[0x3D] = 0x3F; // Enabled channels, byte 2
 
@@ -118,13 +118,13 @@ impl From<u8> for SpiDevice {
 struct SpiCnt {
     baudrate: u2,
     not_used: u5,
-    busy_flag: u1,
+    busy_flag: bool,
     device_select: u2,
     transfer_size: u1,
-    chip_select_hold: u1,
+    chip_select_hold: bool,
     not_used1: u2,
-    interrupt_request: u1,
-    spi_bus_enable: u1,
+    interrupt_request: bool,
+    spi_bus_enable: bool,
 }
 
 pub struct Spi {
@@ -155,7 +155,8 @@ impl Spi {
 
     pub fn set_data(&mut self, value: u8) {
         let cnt = SpiCnt::from(self.cnt);
-        if !bool::from(cnt.spi_bus_enable()) {
+        if !cnt.spi_bus_enable() {
+            self.data = 0;
             return;
         }
 
@@ -177,6 +178,7 @@ impl Spi {
                         }
                     } else {
                         debug_println!("Unknown spi {:?} command {:x}", device, self.cmd);
+                        self.data = 0;
                     }
                 }
                 SpiDevice::Touchscreen => {
@@ -208,13 +210,13 @@ impl Spi {
             }
         }
 
-        if bool::from(cnt.chip_select_hold()) {
+        if cnt.chip_select_hold() {
             self.write_count += 1;
         } else {
             self.write_count = 0;
         }
 
-        if bool::from(cnt.interrupt_request()) {
+        if cnt.interrupt_request() {
             todo!()
         }
     }

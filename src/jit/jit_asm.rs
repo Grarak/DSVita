@@ -498,7 +498,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             + 2) as i16
             + cycle_correction;
 
-        if DEBUG_LOG_BRANCH_OUT {
+        if DEBUG_LOG && DEBUG_LOG_BRANCH_OUT {
             println!("{:?} reading opcode of breakout at {:x}", CPU, self.runtime_data.branch_out_pc);
             let inst_info = if THUMB {
                 let opcode = self.emu.mem_read::<CPU, _>(self.runtime_data.branch_out_pc);

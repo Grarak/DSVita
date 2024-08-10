@@ -10,6 +10,7 @@ use crate::core::memory::palettes::Palettes;
 use crate::core::memory::regions;
 use crate::core::memory::tcm::Tcm;
 use crate::core::memory::vram::Vram;
+use crate::core::memory::wifi::Wifi;
 use crate::core::memory::wram::Wram;
 use crate::core::spu::SoundSampler;
 use crate::core::CpuType;
@@ -28,6 +29,7 @@ pub struct Memory {
     pub wram: Wram,
     pub io_arm7: IoArm7,
     pub io_arm9: IoArm9,
+    pub wifi: Wifi,
     pub palettes: Palettes,
     pub vram: Vram,
     pub oam: Oam,
@@ -58,6 +60,7 @@ impl Memory {
             wram: Wram::new(),
             io_arm7: IoArm7::new(touch_points, sound_sampler),
             io_arm9: IoArm9::new(),
+            wifi: Wifi::new(),
             palettes: Palettes::new(),
             vram: Vram::new(),
             oam: Oam::new(),
@@ -135,7 +138,18 @@ impl Memory {
             regions::SHARED_WRAM_OFFSET => self.wram.read::<CPU, _>(addr_offset),
             regions::IO_PORTS_OFFSET => match CPU {
                 ARM9 => self.io_arm9.read(addr_offset, emu),
-                ARM7 => self.io_arm7.read(addr_offset, emu),
+                ARM7 => {
+                    if unlikely(addr_offset >= 0x800000) {
+                        let addr_offset = addr_offset & !0x8000;
+                        if unlikely(addr_offset >= 0x804000 && addr_offset < 0x806000) {
+                            self.wifi.read(addr_offset)
+                        } else {
+                            self.io_arm7.read(addr_offset, emu)
+                        }
+                    } else {
+                        self.io_arm7.read(addr_offset, emu)
+                    }
+                }
             },
             regions::STANDARD_PALETTES_OFFSET => self.palettes.read(addr_offset),
             regions::VRAM_OFFSET => self.vram.read::<CPU, _>(addr_offset),
@@ -225,7 +239,18 @@ impl Memory {
             }
             regions::IO_PORTS_OFFSET => match CPU {
                 ARM9 => self.io_arm9.write(addr_offset, value, emu),
-                ARM7 => self.io_arm7.write(addr_offset, value, emu),
+                ARM7 => {
+                    if unlikely(addr_offset >= 0x800000) {
+                        let addr_offset = addr_offset & !0x8000;
+                        if unlikely(addr_offset >= 0x804000 && addr_offset < 0x806000) {
+                            self.wifi.write(addr_offset, value);
+                        } else {
+                            self.io_arm7.write(addr_offset, value, emu);
+                        }
+                    } else {
+                        self.io_arm7.write(addr_offset, value, emu);
+                    }
+                }
             },
             regions::STANDARD_PALETTES_OFFSET => self.palettes.write(addr_offset, value),
             regions::VRAM_OFFSET => {

@@ -5,6 +5,7 @@ use crate::core::CpuType::{ARM7, ARM9};
 use crate::utils::HeapMemU32;
 use std::cell::UnsafeCell;
 use std::cmp::max;
+use std::intrinsics::unlikely;
 use std::ops::DerefMut;
 
 pub const MMU_BLOCK_SHIFT: u32 = 12;
@@ -160,6 +161,14 @@ impl MmuArm7Inner {
                 }
                 regions::MAIN_MEMORY_OFFSET => *read_ptr = get_mem!(emu).main.get_ptr(addr) as u32,
                 regions::SHARED_WRAM_OFFSET => *read_ptr = get_mem!(emu).wram.get_ptr::<{ ARM7 }>(addr) as u32,
+                regions::IO_PORTS_OFFSET => {
+                    if unlikely(addr >= regions::WIFI_IO_OFFSET) {
+                        let addr = addr & !0x8000;
+                        if unlikely(addr >= 0x4804000 && addr < 0x4806000) {
+                            *read_ptr = get_mem!(emu).wifi.get_ptr(addr) as u32;
+                        }
+                    }
+                }
                 // regions::VRAM_OFFSET => *read_ptr = emu.mem.vram.get_ptr::<{ ARM7 }>(addr) as u32,
                 _ => {}
             }

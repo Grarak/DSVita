@@ -10,7 +10,7 @@ use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRES
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 pub struct GpuRendererCommon {
@@ -89,7 +89,7 @@ impl GpuRenderer {
         self.renderer_2d.reload_registers();
     }
 
-    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<RwLock<Option<Instant>>>) {
+    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>) {
         {
             let rendering = self.rendering.lock().unwrap();
             let _drawing = self.rendering_condvar.wait_while(rendering, |rendering| !*rendering).unwrap();
@@ -153,12 +153,16 @@ impl GpuRenderer {
             let fps = fps.load(Ordering::Relaxed);
             let per = fps * 100 / 60;
 
-            let last_time_saved = *last_save_time.read().unwrap();
+            let last_time_saved = *last_save_time.lock().unwrap();
             let info_text = match last_time_saved {
                 None => "",
-                Some(last_time_saved) => {
+                Some((last_time_saved, success)) => {
                     if Instant::now().duration_since(last_time_saved).as_secs() < 3 {
-                        "Writing to save file"
+                        if success {
+                            "Written to save file"
+                        } else {
+                            "Failed to save"
+                        }
                     } else {
                         ""
                     }

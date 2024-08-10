@@ -154,9 +154,7 @@ impl IoArm9 {
                 io32(0x100000) => common.ipc.fifo_recv::<{ ARM9 }>(emu),
                 io32(0x100010) => common.cartridge.get_rom_data_in::<{ ARM9 }>(emu),
                 _ => {
-                    if index == 3 {
-                        debug_println!("{:?} unknown io port read at {:x}", ARM9, addr_offset);
-                    }
+                    debug_println!("{:?} unknown io port read at {:x}", ARM9, addr_offset + (index - 3) as u32);
 
                     bytes_window[index] = 0;
                 }
@@ -446,9 +444,7 @@ impl IoArm9 {
                 io8(0x1054) => common.gpu.gpu_2d_regs_b.set_bld_y(value),
                 io16(0x106C) => common.gpu.gpu_2d_regs_b.set_master_bright(mask, value),
                 _ => {
-                    if index == 3 {
-                        debug_println!("{:?} unknown io port write at {:x} with value {:x}", ARM9, addr_offset, value.into());
-                    }
+                    debug_println!("{:?} unknown io port write at {:x} with value {:x}", ARM9, addr_offset + (index - 3) as u32, value.into());
                 }
             });
             index += 1;

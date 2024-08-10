@@ -27,7 +27,7 @@ pub struct IpcSyncCnt {
 pub struct IpcFifoCnt {
     pub send_empty_status: u1,
     pub send_full_status: u1,
-    pub send_empty_irq: u1,
+    pub send_empty_irq: bool,
     pub send_clear: u1,
     not_used: u4,
     pub recv_empty: u1,
@@ -212,7 +212,7 @@ impl Ipc {
             self.fifo[!CPU].cnt.set_recv_empty(u1::new(1));
             self.fifo[!CPU].cnt.set_recv_full(u1::new(0));
 
-            if bool::from(self.fifo[CPU].cnt.send_empty_irq()) {
+            if self.fifo[CPU].cnt.send_empty_irq() {
                 todo!()
             }
         }

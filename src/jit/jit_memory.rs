@@ -7,6 +7,7 @@ use crate::{utils, DEBUG_LOG};
 use paste::paste;
 use std::intrinsics::likely;
 use std::{mem, ptr};
+use CpuType::{ARM7, ARM9};
 
 const JIT_MEMORY_SIZE: u32 = 16 * 1024 * 1024;
 const JIT_BLOCK_SIZE_SHIFT: u32 = 8;
@@ -88,8 +89,8 @@ create_jit_blocks!(
     [main_arm9, regions::MAIN_MEMORY_SIZE],
     [arm9_bios, regions::ARM9_BIOS_SIZE],
     [main_arm7, regions::MAIN_MEMORY_SIZE],
-    [wram, (regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE)],
-    [vram, vram::ARM7_SIZE],
+    [wram, regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE],
+    [vram_arm7, vram::ARM7_SIZE],
     [arm7_bios, regions::ARM7_BIOS_SIZE]
 );
 
@@ -194,7 +195,7 @@ impl JitMemory {
             };
         }
         match CPU {
-            CpuType::ARM9 => match insert_args.guest_start_pc & 0xFF000000 {
+            ARM9 => match insert_args.guest_start_pc & 0xFF000000 {
                 regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => {
                     insert!(itcm)
                 }
@@ -202,11 +203,11 @@ impl JitMemory {
                 0xFF000000 => insert!(arm9_bios),
                 _ => todo!("{:x}", insert_args.guest_start_pc),
             },
-            CpuType::ARM7 => match insert_args.guest_start_pc & 0xFF000000 {
+            ARM7 => match insert_args.guest_start_pc & 0xFF000000 {
                 regions::ARM7_BIOS_OFFSET => insert!(arm7_bios),
                 regions::MAIN_MEMORY_OFFSET => insert!(main_arm7),
                 regions::SHARED_WRAM_OFFSET => insert!(wram),
-                regions::VRAM_OFFSET => insert!(vram),
+                regions::VRAM_OFFSET => insert!(vram_arm7),
                 _ => todo!("{:x}", insert_args.guest_start_pc),
             },
         }
@@ -251,7 +252,7 @@ impl JitMemory {
             };
         }
         match CPU {
-            CpuType::ARM9 => match guest_pc & 0xFF000000 {
+            ARM9 => match guest_pc & 0xFF000000 {
                 regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => {
                     get_addr!(itcm)
                 }
@@ -261,11 +262,11 @@ impl JitMemory {
                 0xFF000000 => get_addr!(arm9_bios),
                 _ => todo!("{:x} {:x}", guest_pc, guest_pc & 0xFF000000),
             },
-            CpuType::ARM7 => match guest_pc & 0xFF000000 {
+            ARM7 => match guest_pc & 0xFF000000 {
                 regions::ARM7_BIOS_OFFSET => get_addr!(arm7_bios),
                 regions::MAIN_MEMORY_OFFSET => get_addr!(main_arm7),
                 regions::SHARED_WRAM_OFFSET => get_addr!(wram),
-                regions::VRAM_OFFSET => get_addr!(vram),
+                regions::VRAM_OFFSET => get_addr!(vram_arm7),
                 _ => todo!("{:x} {:x}", guest_pc, guest_pc & 0xFF000000),
             },
         }
@@ -298,27 +299,21 @@ impl JitMemory {
             }};
         }
         match CPU {
-            CpuType::ARM9 => match addr & 0xFF000000 {
-                regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => {
-                    invalidate!(self.jit_blocks.itcm, self.jit_blocks.itcm_thumb)
-                }
+            ARM9 => match addr & 0xFF000000 {
+                regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => invalidate!(self.jit_blocks.itcm, self.jit_blocks.itcm_thumb),
                 regions::MAIN_MEMORY_OFFSET => {
                     invalidate!(self.jit_blocks.main_arm7, self.jit_blocks.main_arm7_thumb);
                     invalidate!(self.jit_blocks.main_arm9, self.jit_blocks.main_arm9_thumb)
                 }
                 _ => (0, 0),
             },
-            CpuType::ARM7 => match addr & 0xFF000000 {
+            ARM7 => match addr & 0xFF000000 {
                 regions::MAIN_MEMORY_OFFSET => {
                     invalidate!(self.jit_blocks.main_arm9, self.jit_blocks.main_arm9_thumb);
                     invalidate!(self.jit_blocks.main_arm7, self.jit_blocks.main_arm7_thumb)
                 }
-                regions::SHARED_WRAM_OFFSET => {
-                    invalidate!(self.jit_blocks.wram, self.jit_blocks.wram_thumb)
-                }
-                regions::VRAM_OFFSET => {
-                    invalidate!(self.jit_blocks.vram, self.jit_blocks.vram_thumb)
-                }
+                regions::SHARED_WRAM_OFFSET => invalidate!(self.jit_blocks.wram, self.jit_blocks.wram_thumb),
+                regions::VRAM_OFFSET => invalidate!(self.jit_blocks.vram_arm7, self.jit_blocks.vram_arm7_thumb),
                 _ => (0, 0),
             },
         }
