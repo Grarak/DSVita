@@ -79,7 +79,7 @@ pub const DEFAULT_SETTINGS: Settings = [
     Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true)),
     Setting::new(
         "Arm7 HLE",
-        "Disabling arm7 emulation, increases performance\na lot, however at the cost of lower compatibility",
+        "Enabling Arm7 HLE increases performance by a\nlot, however at the cost of lower compatibility.\nDisable this if the game gets stuck, doesn't boot\nor crashes",
         SettingValue::Bool(false),
     ),
 ];
