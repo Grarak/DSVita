@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "dsvita"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bilge",
  "bindgen 0.69.4",
