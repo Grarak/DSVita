@@ -1,7 +1,8 @@
+use crate::cartridge_io::CartridgeIo;
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::input;
-use crate::presenter::menu::Menu;
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
+use crate::settings::{Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
 use gl::types::GLuint;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
@@ -10,6 +11,7 @@ use sdl2::mouse::MouseButton;
 use sdl2::video::{GLContext, GLProfile, Window};
 use sdl2::{keyboard, EventPump};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::slice;
 
@@ -101,9 +103,20 @@ impl Presenter {
         }
     }
 
-    pub fn present_menu(&mut self, _: &Menu) {}
+    pub fn present_ui(&self) -> (CartridgeIo, Settings) {
+        let args: Vec<String> = std::env::args().collect();
+        if args.len() == 2 {
+            let file_path = PathBuf::from(&args[1]);
+            let file_name = file_path.file_name().unwrap().to_str().unwrap();
+            let save_path = file_path.parent().unwrap().join(format!("{file_name}.sav"));
+            (CartridgeIo::new(file_path, save_path).unwrap(), DEFAULT_SETTINGS.clone())
+        } else {
+            eprintln!("Usage {} <path_to_nds>", args[0]);
+            std::process::exit(1);
+        }
+    }
 
-    pub fn destroy_menu(&self) {}
+    pub fn destroy_ui(&self) {}
 
     pub fn poll_event(&mut self) -> PresentEvent {
         let mut touch = None;

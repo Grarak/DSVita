@@ -26,7 +26,7 @@ fn main() {
         .clang_args(["-x", "c++"])
         .clang_args(["-std=c++17"])
         .clang_args(["-target", "armv7a-none-eabihf"])
-        .formatter(Formatter::None);
+        .formatter(Formatter::Prettyplease);
     for header in IMGUI_HEADERS {
         let header_path = vitasdk_include_path.join(header);
         println!("cargo:rerun-if-changed={header_path:?}");

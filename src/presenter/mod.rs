@@ -5,7 +5,6 @@ use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 #[path = "linux.rs"]
 mod platform;
 
-pub mod menu;
 #[cfg(target_os = "vita")]
 #[path = "vita.rs"]
 mod platform;

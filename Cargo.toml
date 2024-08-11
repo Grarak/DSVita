@@ -20,6 +20,7 @@ static_assertions = "1.1.0"
 dsvita_macros = { path = "macros" }
 gl = { git = "https://github.com/bjz/gl-rs" }
 glyph_brush = "0.7.9"
+rust-ini = "0.21.1"
 
 [target.armv7-unknown-linux-gnueabihf.dependencies]
 libc = "0.2.153"
@@ -46,7 +47,7 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceKernelDmacMgr_stub",
     "SceShaccCg_stub",
     "ScePower_stub",
-#    "SceRazorCapture_stub",
+    #    "SceRazorCapture_stub",
 ] }
 
 [profile.release]

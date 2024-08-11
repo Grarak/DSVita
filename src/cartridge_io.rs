@@ -1,13 +1,15 @@
 use crate::cartridge_metadata::get_cartridge_metadata;
 use crate::logging::debug_println;
-use crate::utils::NoHashMap;
+use crate::utils;
+use crate::utils::{rgb5_to_rgb8, NoHashMap};
 use static_assertions::const_assert_eq;
 use std::cell::RefCell;
 use std::cmp::min;
 use std::fs::File;
-use std::io::{Read, Seek};
+use std::io::{ErrorKind, Read, Seek};
 use std::ops::{Deref, DerefMut};
 use std::os::unix::fs::FileExt;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -29,7 +31,7 @@ pub struct ArmOverlay {
 
 #[repr(C, packed)]
 pub struct CartridgeHeader {
-    pub game_title: [u8; 12],
+    game_title: [u8; 12],
     pub game_code: [u8; 4],
     marker_code: [u8; 2],
     unit_code: u8,
@@ -50,7 +52,7 @@ pub struct CartridgeHeader {
     arm7_overlay: ArmOverlay,
     port_setting_normal_commands: u32,
     port_setting_key1_commands: u32,
-    icon_title_offset: u32,
+    pub icon_title_offset: u32,
     secure_area_checksum: u16,
     secure_area_delay: u16,
     arm9_auto_load_list_hook_ram_address: u32,
@@ -81,10 +83,11 @@ const SAVE_SIZES: [u32; 9] = [0x000200, 0x002000, 0x008000, 0x010000, 0x020000, 
 
 pub struct CartridgeIo {
     file: File,
+    pub file_name: String,
     pub file_size: u32,
     pub header: CartridgeHeader,
     content_pages: RefCell<NoHashMap<Rc<[u8; PAGE_SIZE as usize]>>>,
-    save_file_path: String,
+    save_file_path: PathBuf,
     pub save_file_size: u32,
     save_buf: Mutex<(Vec<u8>, bool)>,
 }
@@ -92,15 +95,14 @@ pub struct CartridgeIo {
 unsafe impl Send for CartridgeIo {}
 
 impl CartridgeIo {
-    fn new(mut file: File, save_file_path: String) -> io::Result<Self> {
+    pub fn new(file_path: PathBuf, save_file_path: PathBuf) -> io::Result<Self> {
         let mut raw_header = [0u8; HEADER_SIZE];
+        let mut file = File::open(&file_path)?;
         file.read_exact(&mut raw_header)?;
         let file_size = file.stream_len().unwrap() as u32;
         let mut save_buf = Vec::new();
 
         let header: CartridgeHeader = unsafe { mem::transmute(raw_header) };
-
-        let game_code = u32::from_le_bytes(header.game_code);
 
         let mut save_file_size = File::open(&save_file_path).map_or(0, |mut file| {
             let save_file_size = file.stream_len().unwrap();
@@ -114,6 +116,7 @@ impl CartridgeIo {
             }
         });
 
+        let game_code = u32::from_le_bytes(header.game_code);
         if let Some(metadata) = get_cartridge_metadata(game_code) {
             save_buf.resize(metadata.save_size as usize, 0xFF);
             save_file_size = metadata.save_size;
@@ -125,6 +128,7 @@ impl CartridgeIo {
 
         Ok(CartridgeIo {
             file,
+            file_name: file_path.file_name().unwrap().to_str().unwrap().to_string(),
             file_size,
             header,
             content_pages: RefCell::new(NoHashMap::default()),
@@ -134,12 +138,7 @@ impl CartridgeIo {
         })
     }
 
-    pub fn from_file(file_path: &str, save_file: impl Into<String>) -> io::Result<Self> {
-        let file = File::open(file_path)?;
-        Self::new(file, save_file.into())
-    }
-
-    fn get_page(&self, page_addr: u32) -> Rc<[u8; PAGE_SIZE as usize]> {
+    fn get_page(&self, page_addr: u32) -> io::Result<Rc<[u8; PAGE_SIZE as usize]>> {
         debug_assert_eq!(page_addr & (PAGE_SIZE - 1), 0);
         let mut pages = self.content_pages.borrow_mut();
         match pages.get(&page_addr) {
@@ -151,23 +150,26 @@ impl CartridgeIo {
                 }
 
                 let mut buf = [0u8; PAGE_SIZE as usize];
-                self.file.read_at(&mut buf, page_addr as u64).unwrap();
+                self.file.read_at(&mut buf, page_addr as u64)?;
                 let buf = Rc::new(buf);
                 pages.insert(page_addr, buf.clone());
-                buf
+                Ok(buf)
             }
-            Some(page) => page.clone(),
+            Some(page) => Ok(page.clone()),
         }
     }
 
-    pub fn read_slice(&self, offset: u32, slice: &mut [u8]) {
+    pub fn read_slice(&self, offset: u32, slice: &mut [u8]) -> io::Result<()> {
         let mut remaining = slice.len();
         while remaining > 0 {
             let slice_start = slice.len() - remaining;
 
             let page_addr = (offset + slice_start as u32) & !(PAGE_SIZE - 1);
             let page_offset = offset + slice_start as u32 - page_addr;
-            let page = self.get_page(page_addr);
+            let page = match self.get_page(page_addr) {
+                Ok(page) => page,
+                Err(err) => return Err(err),
+            };
             let page_slice = &page.as_slice()[page_offset as usize..];
 
             let read_amount = min(remaining, page_slice.len());
@@ -175,11 +177,12 @@ impl CartridgeIo {
             slice[slice_start..slice_end].copy_from_slice(&page_slice[..read_amount]);
             remaining -= read_amount;
         }
+        Ok(())
     }
 
     pub fn read_arm9_code(&self) -> Vec<u8> {
         let mut boot_code = vec![0u8; self.header.arm9_values.size as usize];
-        self.read_slice(self.header.arm9_values.rom_offset, &mut boot_code);
+        self.read_slice(self.header.arm9_values.rom_offset, &mut boot_code).unwrap();
 
         // if (0x4000..0x8000).contains(&(self.header.arm9_values.rom_offset as i32)) {
         //     let (_, boot_code_aligned, _) = unsafe { boot_code.align_to_mut::<u32>() };
@@ -204,7 +207,7 @@ impl CartridgeIo {
 
     pub fn read_arm7_code(&self) -> Vec<u8> {
         let mut boot_code = vec![0u8; self.header.arm7_values.size as usize];
-        self.read_slice(self.header.arm7_values.rom_offset, &mut boot_code);
+        self.read_slice(self.header.arm7_values.rom_offset, &mut boot_code).unwrap();
         boot_code
     }
 
@@ -243,6 +246,66 @@ impl CartridgeIo {
             let success = File::create(&self.save_file_path).is_ok_and(|file| file.write_at(save_buf, 0).is_ok());
             *last_save_time.lock().unwrap() = Some((Instant::now(), success));
             *dirty = false;
+        }
+    }
+
+    pub fn read_icon(&self) -> io::Result<[u32; 32 * 32]> {
+        let mut icon = [0u32; 32 * 32];
+
+        let offset = self.header.icon_title_offset;
+        if offset == 0 {
+            return Err(io::Error::from(ErrorKind::InvalidData));
+        }
+
+        let mut data = [0u8; 0x200];
+        self.read_slice(offset + 0x20, &mut data)?;
+
+        let mut palette = [0u8; 0x20];
+        self.read_slice(offset + 0x20 + data.len() as u32, &mut palette)?;
+
+        let mut tiles = [0u32; 32 * 32];
+        for i in 0..icon.len() {
+            let pal_index = (data[i / 2] >> ((i & 1) * 4)) & 0xF;
+            if pal_index == 0 {
+                tiles[i] = 0xFFFFFFFF;
+            } else {
+                let color = utils::read_from_mem::<u16>(&palette, pal_index as u32 * 2);
+                tiles[i] = rgb5_to_rgb8(color);
+            }
+        }
+
+        for i in 0..4 {
+            for j in 0..8 {
+                for k in 0..4 {
+                    let icon_start = 256 * i + 32 * j + 8 * k;
+                    let tiles_start = 256 * i + 8 * j + 64 * k;
+                    icon[icon_start..icon_start + 8].copy_from_slice(&tiles[tiles_start..tiles_start + 8])
+                }
+            }
+        }
+
+        Ok(icon)
+    }
+
+    pub fn read_title(&self) -> io::Result<String> {
+        let offset = self.header.icon_title_offset;
+        if offset == 0 {
+            return Err(io::Error::from(ErrorKind::InvalidData));
+        }
+
+        let mut title = [0u8; 0x100];
+        self.read_slice(offset + 0x340, &mut title)?;
+
+        let (_, title, _) = unsafe { title.align_to() };
+        let nul_pos = title.iter().position(|b| *b == 0);
+        let end = match nul_pos {
+            None => title.len(),
+            Some(pos) => pos,
+        };
+
+        match String::from_utf16(&title[..end]) {
+            Ok(title) => Ok(title),
+            Err(_) => Err(io::Error::from(ErrorKind::InvalidData)),
         }
     }
 }

@@ -211,6 +211,13 @@ pub fn rgb5_to_rgb6(color: u32) -> u32 {
     (color & 0xFFFC0000) | (b << 12) | (g << 6) | r
 }
 
+pub fn rgb5_to_rgb8(color: u16) -> u32 {
+    let r = (color & 0x1F) as u32 * 255 / 31;
+    let g = ((color >> 5) & 0x1F) as u32 * 255 / 31;
+    let b = ((color >> 10) & 0x1F) as u32 * 255 / 31;
+    (0xFFu32 << 24) | (b << 16) | (g << 8) | r
+}
+
 pub fn rgb6_to_rgb8(color: u32) -> u32 {
     let r = (color & 0x3F) * 255 / 63;
     let g = ((color >> 6) & 0x3F) * 255 / 63;

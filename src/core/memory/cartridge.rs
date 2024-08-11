@@ -328,7 +328,7 @@ impl Cartridge {
         if cmd == 0 {
             self.cmd_mode = CmdMode::Header;
             self.read_buf.resize(inner.block_size as usize, 0);
-            self.io.read_slice(0, &mut self.read_buf);
+            self.io.read_slice(0, &mut self.read_buf).unwrap();
         } else if cmd == 0x9000000000000000 || (cmd >> 60) == 0x1 || cmd == 0xB800000000000000 {
             self.cmd_mode = CmdMode::Chip;
         } else if (cmd >> 56) == 0x3C {
@@ -345,7 +345,7 @@ impl Cartridge {
                 read_addr = 0x8000 + (read_addr & 0x1FF);
             }
             self.read_buf.resize(inner.block_size as usize, 0);
-            self.io.read_slice(read_addr, &mut self.read_buf);
+            self.io.read_slice(read_addr, &mut self.read_buf).unwrap();
         } else if cmd != 0x9F00000000000000 {
             debug_println!("Unknown rom transfer command {:x}", cmd);
         }

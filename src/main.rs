@@ -21,19 +21,17 @@ use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
-use crate::settings::{create_settings_mut, Settings, ARM7_HLE_SETTINGS, AUDIO_SETTING, FRAMELIMIT_SETTING};
+use crate::settings::{Settings, ARM7_HLE_SETTINGS, AUDIO_SETTING, FRAMELIMIT_SETTING};
 use crate::utils::{set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
 use std::ops::{Deref, DerefMut};
-use std::path::PathBuf;
 use std::ptr::NonNull;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::{fs, mem, thread};
+use std::{mem, thread};
 use CpuType::{ARM7, ARM9};
 
 mod cartridge_io;
@@ -257,101 +255,14 @@ pub fn main() {
 // Must be pub for vita
 pub fn actual_main() {
     set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core0);
-    #[cfg(target_os = "vita")]
-    unsafe {
-        vitasdk_sys::scePowerSetArmClockFrequency(444);
-        vitasdk_sys::scePowerSetGpuClockFrequency(222);
-        vitasdk_sys::scePowerSetBusClockFrequency(222);
-        vitasdk_sys::scePowerSetGpuXbarClockFrequency(166);
-    }
 
     if DEBUG_LOG {
         std::env::set_var("RUST_BACKTRACE", "full");
     }
 
-    let settings_mut = Rc::new(RefCell::new(create_settings_mut()));
-    let file_path = Rc::new(RefCell::new(PathBuf::new()));
-
     let mut presenter = Presenter::new();
-
-    #[cfg(target_os = "vita")]
-    {
-        use crate::presenter::menu::{Menu, MenuAction, MenuPresenter};
-        use std::fs;
-
-        let root_menu = Menu::new(
-            "DSVita",
-            vec![
-                Menu::new("Settings", Vec::new(), |menu| {
-                    menu.entries = settings_mut
-                        .borrow()
-                        .iter()
-                        .enumerate()
-                        .map(|(index, setting)| {
-                            let settings_clone = settings_mut.clone();
-                            Menu::new(format!("{} - {}", setting.title, setting.value), Vec::new(), move |_| {
-                                settings_clone.borrow_mut()[index].value.next();
-                                MenuAction::Refresh
-                            })
-                        })
-                        .collect();
-                    MenuAction::EnterSubMenu
-                }),
-                Menu::new("Select ROM", Vec::new(), |menu| {
-                    match fs::read_dir("ux0:dsvita") {
-                        Ok(dirs) => {
-                            menu.entries = dirs
-                                .into_iter()
-                                .filter_map(|dir| dir.ok().and_then(|dir| dir.file_type().ok().and_then(|file_type| if file_type.is_file() { Some(dir) } else { None })))
-                                .map(|dir| {
-                                    let file_path_clone = file_path.clone();
-                                    Menu::new(dir.path().to_str().unwrap(), Vec::new(), move |_| {
-                                        *file_path_clone.borrow_mut() = dir.path();
-                                        MenuAction::Quit
-                                    })
-                                })
-                                .collect();
-                            if menu.entries.is_empty() {
-                                menu.entries.push(Menu::new("ux0:dsvita does not contain any files!", Vec::new(), |_| MenuAction::Refresh))
-                            }
-                        }
-                        Err(_) => {
-                            menu.entries.clear();
-                            menu.entries.push(Menu::new("ux0:dsvita does not exist!", Vec::new(), |_| MenuAction::Refresh));
-                        }
-                    }
-                    MenuAction::EnterSubMenu
-                }),
-            ],
-            |_| MenuAction::EnterSubMenu,
-        );
-        let mut menu_presenter = MenuPresenter::new(&mut presenter, root_menu);
-        menu_presenter.present();
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let args: Vec<String> = std::env::args().collect();
-        if args.len() == 2 {
-            *file_path.borrow_mut() = args[1].clone().into()
-        } else {
-            eprintln!("Usage {} <path_to_nds>", args[0]);
-            std::process::exit(1);
-        }
-    }
-
-    let cartridge_reader = {
-        let file_path = file_path.borrow();
-        let file_path_str = file_path.to_str().unwrap();
-        let dir = file_path.parent().unwrap();
-        let saves_dir = if cfg!(target_os = "linux") { dir.to_path_buf() } else { dir.join("saves") };
-        if !saves_dir.exists() {
-            fs::create_dir_all(saves_dir.clone()).unwrap();
-        }
-        let save_file = saves_dir.join(file_path.file_name().unwrap().to_str().unwrap().to_string() + ".sav");
-        CartridgeIo::from_file(file_path_str, save_file.to_str().unwrap()).unwrap()
-    };
-    drop(file_path);
+    let (cartridge_io, settings) = presenter.present_ui();
+    presenter.destroy_ui();
 
     let fps = Arc::new(AtomicU16::new(0));
     let fps_clone = fps.clone();
@@ -365,8 +276,7 @@ pub fn actual_main() {
     let sound_sampler = Arc::new(SoundSampler::new());
     let sound_sampler_clone = sound_sampler.clone();
 
-    let settings = Arc::new(settings_mut.borrow().clone());
-    drop(settings_mut);
+    let settings = Arc::new(settings);
 
     let audio_enabled = settings[AUDIO_SETTING].value.as_bool().unwrap();
 
@@ -400,7 +310,7 @@ pub fn actual_main() {
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
             run_cpu(
-                cartridge_reader,
+                cartridge_io,
                 fps_clone,
                 key_map_clone,
                 touch_points_clone,
