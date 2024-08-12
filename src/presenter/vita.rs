@@ -195,7 +195,17 @@ impl Presenter {
                         let path = entry.path();
                         let name = path.file_name().unwrap().to_str().unwrap();
                         if name.ends_with(".nds") {
-                            let save_file = PathBuf::from(SAVES_PATH).join(format!("{name}.nds"));
+                            // I mistyped the save file extension in 0.3.0
+                            // Add migration step
+                            let old_save_file = PathBuf::from(SAVES_PATH).join(format!("{name}.nds"));
+                            let save_file = PathBuf::from(SAVES_PATH).join(format!("{name}.sav"));
+                            if old_save_file.exists() {
+                                if save_file.exists() {
+                                    let _ = fs::remove_file(old_save_file);
+                                } else {
+                                    let _ = fs::rename(old_save_file, &save_file);
+                                }
+                            }
                             CartridgeIo::new(path, save_file).ok()
                         } else {
                             None
