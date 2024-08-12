@@ -14,7 +14,7 @@ use crate::presenter::platform::imgui::{
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
 use crate::settings::{Settings, SettingsConfig};
 use gl::types::{GLboolean, GLenum, GLuint};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::{fs, mem, ptr};
@@ -186,6 +186,23 @@ impl Presenter {
             let _ = fs::create_dir(ROM_PATH);
             let _ = fs::create_dir(SAVES_PATH);
             let _ = fs::create_dir(SETTINGS_PATH);
+
+            let mut params = [0u8; 1024];
+            if sceAppMgrGetAppParam(params.as_mut_ptr() as _) == 0 {
+                if let Ok(params) = CStr::from_bytes_until_nul(&params) {
+                    if let Ok(params) = params.to_str() {
+                        if params.contains("psgm:play") {
+                            if let Some(pos) = params.find("&param=") {
+                                let path = PathBuf::from(&params[pos + 7..]);
+                                let name = path.file_name().unwrap().to_str().unwrap();
+                                let save_file = PathBuf::from(SAVES_PATH).join(format!("{name}.sav"));
+                                let settings_file = PathBuf::from(SETTINGS_PATH).join(format!("{name}.ini"));
+                                return (CartridgeIo::new(path, save_file).unwrap(), SettingsConfig::new(settings_file).settings);
+                            }
+                        }
+                    }
+                }
+            }
 
             let mut cartridges: Vec<CartridgeIo> = match fs::read_dir(ROM_PATH) {
                 Ok(rom_dir) => rom_dir
