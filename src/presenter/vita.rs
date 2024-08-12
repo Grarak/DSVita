@@ -25,9 +25,9 @@ mod imgui {
     include!(concat!(env!("OUT_DIR"), "/imgui_bindings.rs"));
 }
 
-const ROM_PATH: &str = "ux0:dsvita";
-const SAVES_PATH: &str = "ux0:dsvita/saves";
-const SETTINGS_PATH: &str = "ux0:dsvita/settings";
+const ROM_PATH: &str = "ux0:data/dsvita";
+const SAVES_PATH: &str = "ux0:data/dsvita/saves";
+const SETTINGS_PATH: &str = "ux0:data/dsvita/settings";
 
 #[repr(u8)]
 pub enum SharkOpt {
@@ -100,7 +100,7 @@ impl Presenter {
             scePowerSetGpuClockFrequency(222);
             scePowerSetBusClockFrequency(222);
             scePowerSetGpuXbarClockFrequency(166);
-            
+
             vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe as _, 1, 0, 1);
             // Disable multisampling for depth texture
             vglInitExtended(0, 960, 544, 24 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
@@ -183,9 +183,9 @@ impl Presenter {
 
     pub fn present_ui(&self) -> (CartridgeIo, Settings) {
         unsafe {
-            fs::create_dir_all(ROM_PATH).unwrap();
-            fs::create_dir_all(SAVES_PATH).unwrap();
-            fs::create_dir_all(SETTINGS_PATH).unwrap();
+            let _ = fs::create_dir(ROM_PATH);
+            let _ = fs::create_dir(SAVES_PATH);
+            let _ = fs::create_dir(SETTINGS_PATH);
 
             let mut cartridges: Vec<CartridgeIo> = match fs::read_dir(ROM_PATH) {
                 Ok(rom_dir) => rom_dir

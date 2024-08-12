@@ -18,7 +18,7 @@ This runs some games, however following things are missing:
 - Grab the latest vpk from [releases](https://github.com/Grarak/DSVita/releases)
 - Install `libshacccg.suprx`, follow this [guide](https://cimmerian.gitbook.io/vita-troubleshooting-guide/shader-compiler/extract-libshacccg.suprx)
 - It's recommend overclock your vita to 500MHz
-- Create the folder ux0:dsvita and put your roms there
+- Create the folder ux0:data/dsvita and put your roms there
 
 ## Credits
 
