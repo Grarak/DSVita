@@ -8,37 +8,47 @@ pub struct LdrStrImm {
     pub imm_offset: u12,
     pub rd: u4,
     pub rn: u4,
-    pub load_store: u1,
-    pub t_w: u1,
-    pub byte_word: u1,
-    pub up_down: u1,
-    pub pre_post: u1,
-    pub imm: u1,
+    pub read: bool,
+    pub write_back: bool,
+    pub is_byte: bool,
+    pub add_to_base: bool,
+    pub pre: bool,
+    pub reg_offset: bool,
     pub id: u2,
     pub cond: u4,
 }
 
 impl LdrStrImm {
     #[inline]
-    pub fn ldr(rd: Reg, rn: Reg, imm_offset: u16, t_w: bool, byte: bool, add: bool, pre: bool, cond: Cond) -> u32 {
+    pub fn generic(rd: Reg, rn: Reg, imm_offset: u16, read: bool, write_back: bool, byte: bool, add: bool, pre: bool, cond: Cond) -> u32 {
         u32::from(LdrStrImm::new(
             u12::new(imm_offset),
             u4::new(rd as u8),
             u4::new(rn as u8),
-            u1::new(1),
-            u1::new(t_w as u8),
-            u1::new(byte as u8),
-            u1::new(add as u8),
-            u1::new(pre as u8),
-            u1::new(0),
+            read,
+            write_back,
+            byte,
+            add,
+            pre,
+            false,
             u2::new(1),
             u4::new(cond as u8),
         ))
     }
 
     #[inline]
+    pub fn ldr(rd: Reg, rn: Reg, imm_offset: u16, write_back: bool, byte: bool, add: bool, pre: bool, cond: Cond) -> u32 {
+        Self::generic(rd, rn, imm_offset, true, write_back, byte, add, pre, cond)
+    }
+
+    #[inline]
     pub fn ldr_offset_al(op0: Reg, op1: Reg, offset: u16) -> u32 {
         Self::ldr(op0, op1, offset, false, false, true, true, Cond::AL)
+    }
+
+    #[inline]
+    pub fn ldrb_offset_al(op0: Reg, op1: Reg, offset: u16) -> u32 {
+        Self::ldr(op0, op1, offset, false, true, true, true, Cond::AL)
     }
 
     #[inline]
@@ -52,20 +62,8 @@ impl LdrStrImm {
     }
 
     #[inline]
-    pub fn str(imm_offset: u16, rd: Reg, rn: Reg, t_w: bool, byte: bool, add: bool, pre: bool, cond: Cond) -> u32 {
-        u32::from(LdrStrImm::new(
-            u12::new(imm_offset),
-            u4::new(rd as u8),
-            u4::new(rn as u8),
-            u1::new(0),
-            u1::new(t_w as u8),
-            u1::new(byte as u8),
-            u1::new(add as u8),
-            u1::new(pre as u8),
-            u1::new(0),
-            u2::new(1),
-            u4::new(cond as u8),
-        ))
+    pub fn str(imm_offset: u16, rd: Reg, rn: Reg, write_back: bool, byte: bool, add: bool, pre: bool, cond: Cond) -> u32 {
+        Self::generic(rd, rn, imm_offset, false, write_back, byte, add, pre, cond)
     }
 
     #[inline]
@@ -93,19 +91,19 @@ pub struct LdrStrReg {
     pub shift_amount: u5,
     pub rd: u4,
     pub rn: u4,
-    pub load_store: u1,
-    pub t_w: u1,
-    pub byte_word: u1,
-    pub up_down: u1,
-    pub pre_post: u1,
-    pub imm: u1,
+    pub read: bool,
+    pub write_back: bool,
+    pub is_byte: bool,
+    pub add_to_base: bool,
+    pub pre: bool,
+    pub reg_offset: bool,
     id2: u2,
     pub cond: u4,
 }
 
 impl LdrStrReg {
     #[inline]
-    pub fn ldrb(op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, cond: Cond) -> u32 {
+    pub fn generic(op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, read: bool, write_back: bool, byte: bool, add: bool, pre: bool, cond: Cond) -> u32 {
         u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(0),
@@ -113,45 +111,35 @@ impl LdrStrReg {
             u5::new(shift_amount),
             u4::new(op0 as u8),
             u4::new(op1 as u8),
-            u1::new(1),
-            u1::new(0),
-            u1::new(1),
-            u1::new(1),
-            u1::new(1),
-            u1::new(1),
+            read,
+            write_back,
+            byte,
+            add,
+            pre,
+            true,
             u2::new(0b01),
             u4::new(cond as u8),
         ))
+    }
+
+    #[inline]
+    pub fn ldrb(op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, write_back: bool, add: bool, pre: bool, cond: Cond) -> u32 {
+        Self::generic(op0, op1, op2, shift_amount, shift_type, true, write_back, true, add, pre, cond)
     }
 
     #[inline]
     pub fn ldrb_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::ldrb(op0, op1, op2, 0, ShiftType::Lsl, Cond::AL)
+        Self::ldrb(op0, op1, op2, 0, ShiftType::Lsl, false, true, true, Cond::AL)
     }
 
     #[inline]
-    pub fn ldr(op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, cond: Cond) -> u32 {
-        u32::from(Self::new(
-            u4::new(op2 as u8),
-            u1::new(0),
-            u2::new(shift_type as u8),
-            u5::new(shift_amount),
-            u4::new(op0 as u8),
-            u4::new(op1 as u8),
-            u1::new(1),
-            u1::new(0),
-            u1::new(0),
-            u1::new(1),
-            u1::new(1),
-            u1::new(1),
-            u2::new(0b01),
-            u4::new(cond as u8),
-        ))
+    pub fn ldr(op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, write_back: bool, add: bool, pre: bool, cond: Cond) -> u32 {
+        Self::generic(op0, op1, op2, shift_amount, shift_type, true, write_back, false, add, pre, cond)
     }
 
     #[inline]
     pub fn ldr_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::ldr(op0, op1, op2, 0, ShiftType::Lsl, Cond::AL)
+        Self::ldr(op0, op1, op2, 0, ShiftType::Lsl, false, true, true, Cond::AL)
     }
 }
 

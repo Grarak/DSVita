@@ -290,7 +290,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         opcodes.push(AluShiftImm::mov(physical_addr_reg, addr_reg, ShiftType::Lsr, mmu::MMU_BLOCK_SHIFT as u8, Cond::AL));
         let base_ptr_reg = mmu_ptr_reg;
         // base_ptr = *(mmu_ptr + physical_addr_reg)
-        opcodes.push(LdrStrReg::ldr(base_ptr_reg, mmu_ptr_reg, physical_addr_reg, 2, ShiftType::Lsl, Cond::AL));
+        opcodes.push(LdrStrReg::ldr(base_ptr_reg, mmu_ptr_reg, physical_addr_reg, 2, ShiftType::Lsl, false, true, true, Cond::AL));
         // Save current cpsr cond flags
         opcodes.push(Mrs::cpsr(physical_addr_reg, Cond::AL));
         // Check if mmu block is mapped
