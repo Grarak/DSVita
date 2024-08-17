@@ -1,5 +1,5 @@
 use crate::jit::reg::{Reg, RegReserve};
-use crate::jit::{Cond, ShiftType};
+use crate::jit::{Cond, MemoryAmount, ShiftType};
 use bilge::prelude::*;
 
 #[bitsize(32)]
@@ -152,33 +152,67 @@ pub struct LdrStrRegSBHD {
     id2: u5,
     pub rd: u4,
     pub rn: u4,
-    pub load_store: u1,
-    pub write_back: u1,
-    pub imm: u1,
-    pub up_down: u1,
-    pub pre_post: u1,
+    pub read: bool,
+    pub write_back: bool,
+    pub imm: bool,
+    pub add_to_base: bool,
+    pub pre: bool,
     id3: u3,
     pub cond: u4,
 }
 
 impl LdrStrRegSBHD {
     #[inline]
-    pub fn ldrsb(op0: Reg, op1: Reg, op2: Reg, cond: Cond) -> u32 {
+    pub fn generic(op0: Reg, op1: Reg, op2: Reg, signed: bool, amount: MemoryAmount, mut read: bool, write_back: bool, add: bool, pre: bool, cond: Cond) -> u32 {
+        let opcode = match amount {
+            MemoryAmount::Byte => match (signed, read) {
+                (true, true) => 2,
+                _ => {
+                    panic!("invalid combination signed: {signed} amount: {amount:?}")
+                }
+            },
+            MemoryAmount::Half => match (signed, read) {
+                (false, false) => 1,
+                (false, true) => 1,
+                (true, true) => 3,
+                _ => {
+                    panic!("invalid combination signed: {signed} amount: {amount:?}")
+                }
+            },
+            MemoryAmount::Word => {
+                panic!("invalid combination signed: {signed} amount: {amount:?}")
+            }
+            MemoryAmount::Double => match (signed, read) {
+                (false, false) => 3,
+                (false, true) => {
+                    read = false;
+                    2
+                }
+                _ => {
+                    panic!("invalid combination signed: {signed} amount: {amount:?}")
+                }
+            },
+        };
         u32::from(Self::new(
             u4::new(op2 as u8),
             u1::new(1),
-            u2::new(2),
+            u2::new(opcode),
             u5::new(1),
             u4::new(op0 as u8),
             u4::new(op1 as u8),
-            u1::new(1),
-            u1::new(0),
-            u1::new(0),
-            u1::new(1),
-            u1::new(1),
+            read,
+            write_back,
+            false,
+            add,
+            pre,
             u3::new(0),
             u4::new(cond as u8),
         ))
+    }
+
+    #[inline]
+    pub fn ldrsb(op0: Reg, op1: Reg, op2: Reg, cond: Cond) -> u32 {
+        Self::generic(op0, op1, op2, true, MemoryAmount::Byte, true, false, true, true, cond)
     }
 
     #[inline]
@@ -188,21 +222,7 @@ impl LdrStrRegSBHD {
 
     #[inline]
     pub fn ldrh(op0: Reg, op1: Reg, op2: Reg, cond: Cond) -> u32 {
-        u32::from(Self::new(
-            u4::new(op2 as u8),
-            u1::new(1),
-            u2::new(1),
-            u5::new(1),
-            u4::new(op0 as u8),
-            u4::new(op1 as u8),
-            u1::new(1),
-            u1::new(0),
-            u1::new(0),
-            u1::new(1),
-            u1::new(1),
-            u3::new(0),
-            u4::new(cond as u8),
-        ))
+        Self::generic(op0, op1, op2, false, MemoryAmount::Half, true, false, true, true, cond)
     }
 
     #[inline]
@@ -212,21 +232,7 @@ impl LdrStrRegSBHD {
 
     #[inline]
     pub fn ldrsh(op0: Reg, op1: Reg, op2: Reg, cond: Cond) -> u32 {
-        u32::from(Self::new(
-            u4::new(op2 as u8),
-            u1::new(1),
-            u2::new(3),
-            u5::new(1),
-            u4::new(op0 as u8),
-            u4::new(op1 as u8),
-            u1::new(1),
-            u1::new(0),
-            u1::new(0),
-            u1::new(1),
-            u1::new(1),
-            u3::new(0),
-            u4::new(cond as u8),
-        ))
+        Self::generic(op0, op1, op2, true, MemoryAmount::Half, true, false, true, true, cond)
     }
 
     #[inline]
@@ -236,21 +242,7 @@ impl LdrStrRegSBHD {
 
     #[inline]
     pub fn ldrd(op0: Reg, op1: Reg, op2: Reg, cond: Cond) -> u32 {
-        u32::from(Self::new(
-            u4::new(op2 as u8),
-            u1::new(1),
-            u2::new(2),
-            u5::new(1),
-            u4::new(op0 as u8),
-            u4::new(op1 as u8),
-            u1::new(0),
-            u1::new(0),
-            u1::new(0),
-            u1::new(1),
-            u1::new(1),
-            u3::new(0),
-            u4::new(cond as u8),
-        ))
+        Self::generic(op0, op1, op2, false, MemoryAmount::Double, true, false, true, true, cond)
     }
 
     #[inline]
@@ -269,34 +261,28 @@ pub struct LdrStrImmSBHD {
     pub imm_upper: u4,
     pub rd: u4,
     pub rn: u4,
-    pub load_store: u1,
-    pub write_back: u1,
-    pub imm: u1,
-    pub up_down: u1,
-    pub pre_post: u1,
+    pub read: bool,
+    pub write_back: bool,
+    pub imm: bool,
+    pub add_to_base: bool,
+    pub pre: bool,
     id3: u3,
     pub cond: u4,
 }
 
 impl LdrStrImmSBHD {
     #[inline]
+    pub fn generic(op0: Reg, op1: Reg, op2: u8, signed: bool, amount: MemoryAmount, read: bool, write_back: bool, add: bool, pre: bool, cond: Cond) -> u32 {
+        let mut opcode = Self::from(LdrStrRegSBHD::generic(op0, op1, Reg::R0, signed, amount, read, write_back, add, pre, cond));
+        opcode.set_imm_lower(u4::new(op2 & 0xF));
+        opcode.set_imm_upper(u4::new(op2 >> 4));
+        opcode.set_imm(true);
+        u32::from(opcode)
+    }
+
+    #[inline]
     pub fn strh(op0: Reg, op1: Reg, op2: u8, cond: Cond) -> u32 {
-        u32::from(Self::new(
-            u4::new(op2 & 0xF),
-            u1::new(1),
-            u2::new(1),
-            u1::new(1),
-            u4::new(op2 >> 4),
-            u4::new(op0 as u8),
-            u4::new(op1 as u8),
-            u1::new(0),
-            u1::new(0),
-            u1::new(1),
-            u1::new(1),
-            u1::new(1),
-            u3::new(0),
-            u4::new(cond as u8),
-        ))
+        Self::generic(op0, op1, op2, false, MemoryAmount::Half, false, false, true, true, cond)
     }
 
     #[inline]

@@ -5,6 +5,7 @@ use std::{mem, ops};
 pub mod assembler;
 pub mod disassembler;
 mod emitter;
+mod inst_branch_handler;
 mod inst_cp15_handler;
 mod inst_cpu_regs_handler;
 mod inst_exception_handler;
@@ -16,7 +17,6 @@ pub mod jit_asm;
 pub mod jit_memory;
 pub mod op;
 pub mod reg;
-mod inst_branch_handler;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -80,7 +80,7 @@ pub enum ShiftType {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, ConstParamTy, PartialEq, Eq)]
+#[derive(Copy, Clone, ConstParamTy, Debug, PartialEq, Eq)]
 pub enum MemoryAmount {
     Byte,
     Half,
