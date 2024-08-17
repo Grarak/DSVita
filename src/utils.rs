@@ -1,5 +1,5 @@
 use std::cmp;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{BuildHasher, Hasher};
@@ -145,8 +145,16 @@ impl Hasher for NoHasher {
         unreachable!()
     }
 
+    fn write_u16(&mut self, i: u16) {
+        self.state = i as u32;
+    }
+
     fn write_u32(&mut self, i: u32) {
         self.state = i;
+    }
+
+    fn write_usize(&mut self, i: usize) {
+        self.state = i as u32;
     }
 
     fn write_i32(&mut self, i: i32) {
@@ -164,7 +172,8 @@ impl BuildHasher for BuildNoHasher {
     }
 }
 
-pub type NoHashMap<V> = HashMap<u32, V, BuildNoHasher>;
+pub type NoHashMap<T, V> = HashMap<T, V, BuildNoHasher>;
+pub type NoHashSet<T> = HashSet<T, BuildNoHasher>;
 
 pub enum ThreadPriority {
     Low,

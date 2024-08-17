@@ -71,7 +71,7 @@ impl ops::Not for Cond {
 }
 
 #[repr(u8)]
-#[derive(ConstParamTy, PartialEq, Eq)]
+#[derive(Copy, Clone, ConstParamTy, Debug, PartialEq, Eq)]
 pub enum ShiftType {
     Lsl = 0,
     Lsr = 1,

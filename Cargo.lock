@@ -109,16 +109,14 @@ dependencies = [
 
 [[package]]
 name = "bindgen"
-version = "0.69.4"
+version = "0.70.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a00dc851838a2120612785d195287475a3ac45514741da670b735818822129a0"
+checksum = "e0127a1da21afb5adaae26910922c3f7afd3d329ba1a1b98a0884cab4907a251"
 dependencies = [
  "bitflags 2.4.1",
  "cexpr",
  "clang-sys",
  "itertools",
- "lazy_static",
- "lazycell",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -127,7 +125,6 @@ dependencies = [
  "rustc-hash 1.1.0",
  "shlex",
  "syn",
- "which",
 ]
 
 [[package]]
@@ -280,7 +277,7 @@ name = "dsvita"
 version = "0.3.1"
 dependencies = [
  "bilge",
- "bindgen 0.69.4",
+ "bindgen 0.70.0",
  "cc",
  "chrono",
  "dsvita_macros",

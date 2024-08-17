@@ -27,7 +27,7 @@ libc = "0.2.153"
 sdl2 = "0.37.0"
 
 [build-dependencies]
-bindgen = "0.69.4"
+bindgen = "0.70.0"
 cc = "1.0.100"
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]

@@ -166,6 +166,10 @@ impl ThreadRegs {
         opcodes
     }
 
+    pub fn get_reg_start_addr(&self) -> &u32 {
+        self.get_reg(Reg::R0)
+    }
+
     pub fn get_reg(&self, reg: Reg) -> &u32 {
         debug_assert_ne!(reg, Reg::None);
         let base_ptr = ptr::addr_of!(self.gp_regs[0]);

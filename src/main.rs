@@ -3,6 +3,7 @@
 #![feature(adt_const_params)]
 #![feature(allocator_api)]
 #![feature(arm_target_feature)]
+#![feature(const_mut_refs)]
 #![feature(const_trait_impl)]
 #![feature(core_intrinsics)]
 #![feature(generic_const_exprs)]

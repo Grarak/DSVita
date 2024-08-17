@@ -86,7 +86,7 @@ pub struct CartridgeIo {
     pub file_name: String,
     pub file_size: u32,
     pub header: CartridgeHeader,
-    content_pages: RefCell<NoHashMap<Rc<[u8; PAGE_SIZE as usize]>>>,
+    content_pages: RefCell<NoHashMap<u32, Rc<[u8; PAGE_SIZE as usize]>>>,
     save_file_path: PathBuf,
     pub save_file_size: u32,
     save_buf: Mutex<(Vec<u8>, bool)>,

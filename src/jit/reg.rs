@@ -71,7 +71,7 @@ macro_rules! reg_reserve {
             #[allow(unused_mut)]
             let mut reg_reserve = crate::jit::reg::RegReserve::new();
             $(
-                reg_reserve += ($reg);
+                reg_reserve.reserve($reg);
             )*
             reg_reserve
         }
@@ -81,11 +81,11 @@ macro_rules! reg_reserve {
 pub(crate) use reg_reserve;
 
 impl RegReserve {
-    pub fn new() -> Self {
-        RegReserve::default()
+    pub const fn new() -> Self {
+        RegReserve(0)
     }
 
-    pub fn gp() -> Self {
+    pub const fn gp() -> Self {
         RegReserve(GP_REGS_BITMASK)
     }
 
@@ -95,6 +95,10 @@ impl RegReserve {
 
     pub fn caller_saved_gp() -> Self {
         reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12)
+    }
+
+    pub const fn reserve(&mut self, reg: Reg) {
+        self.0 |= 1 << (reg as u8);
     }
 
     pub fn is_reserved(&self, reg: Reg) -> bool {
@@ -111,7 +115,7 @@ impl RegReserve {
         None
     }
 
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         u32::count_ones(self.0) as _
     }
 
@@ -157,6 +161,10 @@ impl RegReserve {
             }
         }
         None
+    }
+
+    pub fn clear(&mut self) {
+        self.0 = 0;
     }
 }
 

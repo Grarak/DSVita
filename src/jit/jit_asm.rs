@@ -5,6 +5,7 @@ use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, Msr};
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
+use crate::jit::assembler::BlockAsmBuf;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::emitter::emit_branch::LOCAL_BRANCH_INDICATOR;
@@ -163,6 +164,7 @@ pub struct JitAsm<'a, const CPU: CpuType> {
     pub restore_guest_opcodes: Vec<u32>,
     pub restore_host_thumb_opcodes: Vec<u32>,
     pub restore_guest_thumb_opcodes: Vec<u32>,
+    pub block_asm_buf: BlockAsmBuf,
     debug_regs: DebugRegs,
 }
 
@@ -226,6 +228,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 restore_guest_opcodes,
                 restore_host_thumb_opcodes,
                 restore_guest_thumb_opcodes,
+                block_asm_buf: BlockAsmBuf::new(),
                 debug_regs: DebugRegs::default(),
             }
         };
