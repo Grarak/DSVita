@@ -1,6 +1,7 @@
 use crate::core::cp15::TcmState;
 use crate::core::emu::{get_cp15, Emu};
 use crate::core::memory::bios::{BiosArm7, BiosArm9};
+use crate::core::memory::contiguous_mem::ContiguousMem;
 use crate::core::memory::io_arm7::IoArm7;
 use crate::core::memory::io_arm9::IoArm9;
 use crate::core::memory::main::Main;
@@ -36,9 +37,11 @@ pub struct Memory {
     pub jit: JitMemory,
     pub bios_arm9: BiosArm9,
     pub bios_arm7: BiosArm7,
-    pub current_mode_is_thumb: bool,
-    pub current_jit_block_addr: u32, // Check if the jit block we are currently executing gets written to
+    pub current_cpu: CpuType,
+    pub current_host_block_addr: u32, // Check if the jit block we are currently executing gets written to
+    pub current_jit_block_addr: u32,
     pub breakout_imm: bool,
+    pub host_addrs_to_protect: Vec<u32>,
     pub mmu_arm9: MmuArm9,
     pub mmu_arm7: MmuArm7,
 }
@@ -53,23 +56,25 @@ macro_rules! get_mem_mmu {
 }
 
 impl Memory {
-    pub fn new(touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
+    pub fn new(contiguous_mem: &mut ContiguousMem, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
         Memory {
-            tcm: Tcm::new(),
-            main: Main::new(),
-            wram: Wram::new(),
+            tcm: Tcm::new(contiguous_mem),
+            main: Main::new(contiguous_mem),
+            wram: Wram::new(contiguous_mem),
             io_arm7: IoArm7::new(touch_points, sound_sampler),
             io_arm9: IoArm9::new(),
             wifi: Wifi::new(),
             palettes: Palettes::new(),
-            vram: Vram::new(),
+            vram: Vram::new(contiguous_mem),
             oam: Oam::new(),
             jit: JitMemory::new(),
             bios_arm9: BiosArm9::new(),
             bios_arm7: BiosArm7::new(),
-            current_mode_is_thumb: false,
+            current_cpu: ARM9,
+            current_host_block_addr: 0,
             current_jit_block_addr: 0,
             breakout_imm: false,
+            host_addrs_to_protect: Vec::new(),
             mmu_arm9: MmuArm9::new(),
             mmu_arm7: MmuArm7::new(),
         }
@@ -201,15 +206,6 @@ impl Memory {
             }
         }
 
-        let mut invalidate_jit = || {
-            let (block_addr, block_addr_thumb) = self.jit.invalidate_block::<CPU>(aligned_addr, size_of::<T>() as u32);
-            self.breakout_imm = if self.current_mode_is_thumb {
-                block_addr_thumb == self.current_jit_block_addr
-            } else {
-                block_addr == self.current_jit_block_addr
-            }
-        };
-
         match addr_base {
             regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => match CPU {
                 ARM9 => {
@@ -218,7 +214,6 @@ impl Memory {
                         if aligned_addr < cp15.itcm_size && cp15.itcm_state != TcmState::Disabled {
                             self.tcm.write_itcm(aligned_addr, value);
                             debug_println!("{:?} itcm write at {:x} with value {:x}", CPU, aligned_addr, value.into(),);
-                            invalidate_jit();
                         }
                     }
                 }
@@ -227,16 +222,8 @@ impl Memory {
                     // todo!("{:x} {:x}", aligned_addr, addr_base)
                 }
             },
-            regions::MAIN_MEMORY_OFFSET => {
-                self.main.write(addr_offset, value);
-                invalidate_jit();
-            }
-            regions::SHARED_WRAM_OFFSET => {
-                self.wram.write::<CPU, _>(addr_offset, value);
-                if CPU == ARM7 {
-                    invalidate_jit();
-                }
-            }
+            regions::MAIN_MEMORY_OFFSET => self.main.write(addr_offset, value),
+            regions::SHARED_WRAM_OFFSET => self.wram.write::<CPU, _>(addr_offset, value),
             regions::IO_PORTS_OFFSET => match CPU {
                 ARM9 => self.io_arm9.write(addr_offset, value, emu),
                 ARM7 => {
@@ -253,12 +240,7 @@ impl Memory {
                 }
             },
             regions::STANDARD_PALETTES_OFFSET => self.palettes.write(addr_offset, value),
-            regions::VRAM_OFFSET => {
-                self.vram.write::<CPU, _>(addr_offset, value);
-                if CPU == ARM7 {
-                    invalidate_jit();
-                }
-            }
+            regions::VRAM_OFFSET => self.vram.write::<CPU, _>(addr_offset, value),
             regions::OAM_OFFSET => self.oam.write(addr_offset, value),
             regions::GBA_ROM_OFFSET => {}
             _ => {

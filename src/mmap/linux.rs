@@ -1,6 +1,7 @@
+use std::alloc::{AllocError, Allocator, Layout};
 use std::io::{Error, ErrorKind};
 use std::ops::{Deref, DerefMut};
-use std::ptr::null_mut;
+use std::ptr::{null_mut, NonNull};
 use std::{io, slice};
 
 pub struct Mmap {
@@ -68,5 +69,22 @@ impl AsRef<[u8]> for Mmap {
 impl AsMut<[u8]> for Mmap {
     fn as_mut(&mut self) -> &mut [u8] {
         self.deref_mut()
+    }
+}
+
+pub struct MmapAllocator;
+
+unsafe impl Allocator for MmapAllocator {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        let ret = unsafe { libc::mmap(null_mut(), layout.size(), libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0) };
+        if ret == libc::MAP_FAILED {
+            Err(AllocError)
+        } else {
+            Ok(unsafe { NonNull::from(slice::from_raw_parts_mut(ret as *mut u8, layout.size())) })
+        }
+    }
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        unsafe { libc::munmap(ptr.as_ptr() as _, layout.size() as _) };
     }
 }

@@ -1,4 +1,4 @@
-use crate::core::emu::{get_jit, get_jit_mut, get_mem_mut, get_regs, get_regs_mut, Emu};
+use crate::core::emu::{get_jit, get_jit_mut, get_mem, get_mem_mut, get_regs, get_regs_mut, Emu};
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
@@ -426,12 +426,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         get_jit_mut!(self.emu).insert_block::<CPU, THUMB>(
             &self.jit_buf.block_opcodes,
             JitInsertArgs::new(guest_pc_block_base, self.jit_buf.jit_addr_offsets.clone(), self.jit_buf.insts_cycle_counts.clone()),
+            get_mem!(self.emu),
         );
 
         if DEBUG_LOG {
             for (index, inst_info) in self.jit_buf.insts.iter().enumerate() {
                 let pc = ((index as u32) << if THUMB { 1 } else { 2 }) + guest_pc_block_base;
-                let (jit_addr, _) = get_jit!(self.emu).get_jit_start_addr::<CPU, THUMB>(pc).unwrap();
+                let (jit_addr, _, _) = get_jit!(self.emu).get_jit_start_addr::<CPU, THUMB>(pc, get_mem!(self.emu)).unwrap();
 
                 println!("{:?} Mapping {:#010x} to {:#010x} {:?}", CPU, pc, jit_addr, inst_info);
             }
@@ -457,14 +458,14 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     fn execute_internal<const THUMB: bool>(&mut self, guest_pc: u32) -> u16 {
         get_regs_mut!(self.emu, CPU).set_thumb(THUMB);
 
-        let (jit_addr, jit_block_addr) = {
-            let jit_info = get_jit!(self.emu).get_jit_start_addr::<CPU, THUMB>(guest_pc);
+        let (jit_addr, jit_block_addr, host_mem_addr) = {
+            let jit_info = get_jit!(self.emu).get_jit_start_addr::<CPU, THUMB>(guest_pc, get_mem!(self.emu));
             if likely(jit_info.is_some()) {
                 unsafe { jit_info.unwrap_unchecked() }
             } else {
                 let guest_pc_block_base = guest_pc & !(JIT_BLOCK_SIZE - 1);
                 self.emit_code_block::<THUMB>(guest_pc_block_base);
-                get_jit!(self.emu).get_jit_start_addr::<CPU, THUMB>(guest_pc).unwrap()
+                get_jit!(self.emu).get_jit_start_addr::<CPU, THUMB>(guest_pc, get_mem!(self.emu)).unwrap()
             }
         };
 
@@ -478,14 +479,20 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         self.runtime_data.pre_cycle_count_sum = pre_cycle_count_sum;
         self.runtime_data.accumulated_cycles = 0;
 
-        get_mem_mut!(self.emu).current_mode_is_thumb = THUMB;
+        get_mem_mut!(self.emu).current_cpu = CPU;
+        get_mem_mut!(self.emu).current_host_block_addr = host_mem_addr;
         get_mem_mut!(self.emu).current_jit_block_addr = jit_block_addr;
+        get_mem_mut!(self.emu).host_addrs_to_protect.clear();
 
         unsafe { enter_jit(jit_addr, self.host_regs.get_sp_addr(), if THUMB { self.breakin_thumb_addr } else { self.breakin_addr }) };
 
         if DEBUG_LOG {
             assert_ne!(self.runtime_data.branch_out_pc, u32::MAX);
             assert_ne!(self.runtime_data.branch_out_total_cycles, 0);
+        }
+
+        for host_addr in &get_mem_mut!(self.emu).host_addrs_to_protect {
+            unsafe { libc::mprotect(*host_addr as _, get_jit!(self.emu).page_size as _, libc::PROT_READ) };
         }
 
         let cycle_correction = {

@@ -1,10 +1,11 @@
 use crate::core::emu::{get_jit_mut, get_mmu, Emu};
+use crate::core::memory::contiguous_mem::ContiguousMem;
 use crate::core::memory::regions;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM7;
 use crate::jit::jit_memory::JIT_BLOCK_SIZE;
 use crate::utils;
-use crate::utils::{Convert, HeapMemU8};
+use crate::utils::Convert;
 use std::hint::unreachable_unchecked;
 use std::ops::{Deref, DerefMut};
 use std::{ptr, slice};
@@ -103,19 +104,19 @@ impl AsMut<[u8]> for SharedWramMapMut {
 }
 
 pub struct Wram {
-    wram_arm7: HeapMemU8<{ regions::ARM7_WRAM_SIZE as usize }>,
+    wram_arm7: *const u8,
     pub cnt: u8,
-    shared_mem: HeapMemU8<{ regions::SHARED_WRAM_SIZE as usize }>,
+    shared_mem: *const u8,
     arm9_map: SharedWramMap,
     arm7_map: SharedWramMap,
 }
 
 impl Wram {
-    pub fn new() -> Self {
+    pub fn new(contiguous_mem: &mut ContiguousMem) -> Self {
         let mut instance = Wram {
-            wram_arm7: HeapMemU8::new(),
+            wram_arm7: contiguous_mem.get_arm7_wram_ptr(),
             cnt: 0,
-            shared_mem: HeapMemU8::new(),
+            shared_mem: contiguous_mem.get_shared_wram_ptr(),
             arm9_map: SharedWramMap::default(),
             arm7_map: SharedWramMap::default(),
         };
@@ -128,20 +129,20 @@ impl Wram {
 
         match self.cnt {
             0 => {
-                self.arm9_map = SharedWramMap::new(self.shared_mem.as_ptr(), SHARED_LEN);
-                self.arm7_map = SharedWramMap::new(self.wram_arm7.as_ptr(), self.wram_arm7.len());
+                self.arm9_map = SharedWramMap::new(self.shared_mem, SHARED_LEN);
+                self.arm7_map = SharedWramMap::new(self.wram_arm7, regions::ARM7_WRAM_SIZE as usize);
             }
             1 => {
-                self.arm9_map = SharedWramMap::new(self.shared_mem[SHARED_LEN / 2..].as_mut_ptr(), SHARED_LEN / 2);
-                self.arm7_map = SharedWramMap::new(self.shared_mem.as_mut_ptr(), SHARED_LEN / 2);
+                self.arm9_map = SharedWramMap::new(unsafe { self.shared_mem.add(SHARED_LEN / 2) }, SHARED_LEN / 2);
+                self.arm7_map = SharedWramMap::new(self.shared_mem, SHARED_LEN / 2);
             }
             2 => {
-                self.arm9_map = SharedWramMap::new(self.shared_mem.as_mut_ptr(), SHARED_LEN / 2);
-                self.arm7_map = SharedWramMap::new(self.shared_mem[SHARED_LEN / 2..].as_mut_ptr(), SHARED_LEN / 2);
+                self.arm9_map = SharedWramMap::new(self.shared_mem, SHARED_LEN / 2);
+                self.arm7_map = SharedWramMap::new(unsafe { self.shared_mem.add(SHARED_LEN / 2) }, SHARED_LEN / 2);
             }
             3 => {
                 self.arm9_map = SharedWramMap::default();
-                self.arm7_map = SharedWramMap::new(self.shared_mem.as_ptr(), SHARED_LEN);
+                self.arm7_map = SharedWramMap::new(self.shared_mem, SHARED_LEN);
             }
             _ => {
                 unsafe { unreachable_unchecked() };
@@ -154,7 +155,7 @@ impl Wram {
         self.init_maps();
 
         for addr in (regions::SHARED_WRAM_OFFSET..regions::IO_PORTS_OFFSET).step_by(JIT_BLOCK_SIZE as usize) {
-            get_jit_mut!(emu).invalidate_block::<{ ARM7 }>(addr, JIT_BLOCK_SIZE);
+            get_jit_mut!(emu).invalidate_block::<{ ARM7 }>(self.get_ptr::<{ ARM7 }>(addr) as _, addr);
         }
 
         get_mmu!(emu, ARM9).update_wram(emu);
@@ -195,7 +196,7 @@ impl Wram {
                 }
                 ARM7 => {
                     if addr & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
-                        self.wram_arm7.as_ptr().add(addr as usize & (self.wram_arm7.len() - 1))
+                        self.wram_arm7.add(addr as usize & (regions::ARM7_WRAM_SIZE as usize - 1))
                     } else {
                         self.arm7_map.as_ptr().add(addr as usize & (self.arm7_map.len() - 1))
                     }
@@ -209,7 +210,7 @@ impl Wram {
             ARM9 => self.read_arm9(addr_offset),
             ARM7 => {
                 if addr_offset & regions::ARM7_WRAM_OFFSET != 0 {
-                    utils::read_from_mem(self.wram_arm7.as_slice(), addr_offset & (regions::ARM7_WRAM_SIZE - 1))
+                    utils::read_from_mem_ptr(self.wram_arm7, addr_offset & (regions::ARM7_WRAM_SIZE - 1))
                 } else {
                     self.read_arm7(addr_offset)
                 }
@@ -222,7 +223,7 @@ impl Wram {
             ARM9 => self.write_arm9(addr_offset, value),
             ARM7 => {
                 if self.cnt == 0 || addr_offset & regions::ARM7_WRAM_OFFSET != 0 {
-                    utils::write_to_mem(self.wram_arm7.as_mut_slice(), addr_offset & (regions::ARM7_WRAM_SIZE - 1), value)
+                    utils::write_to_mem_ptr(self.wram_arm7, addr_offset & (regions::ARM7_WRAM_SIZE - 1), value)
                 } else {
                     self.write_arm7(addr_offset, value)
                 }

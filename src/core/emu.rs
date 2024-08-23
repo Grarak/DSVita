@@ -12,6 +12,13 @@ macro_rules! get_common_mut {
 }
 pub(crate) use get_common_mut;
 
+macro_rules! get_contiguous_mem {
+    ($emu:expr) => {{
+        unsafe { $emu.contiguous_mem.get().as_ref().unwrap_unchecked() }
+    }};
+}
+pub(crate) use get_contiguous_mem;
+
 macro_rules! get_mem {
     ($emu:expr) => {{
         unsafe { $emu.mem.get().as_ref().unwrap_unchecked() }
@@ -214,6 +221,7 @@ use crate::core::hle::arm7_hle::Arm7Hle;
 use crate::core::input::Input;
 use crate::core::ipc::Ipc;
 use crate::core::memory::cartridge::Cartridge;
+use crate::core::memory::contiguous_mem::ContiguousMem;
 use crate::core::memory::mem::Memory;
 use crate::core::spu::SoundSampler;
 use crate::core::CpuType;
@@ -260,15 +268,19 @@ impl Common {
 
 pub struct Emu {
     pub common: UnsafeCell<Common>,
+    pub contiguous_mem: UnsafeCell<ContiguousMem>,
     pub mem: UnsafeCell<Memory>,
     pub arm7_hle: UnsafeCell<Arm7Hle>,
 }
 
 impl Emu {
     pub fn new(cartridge_io: CartridgeIo, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
+        let mut contiguous_mem = UnsafeCell::new(ContiguousMem::new());
+        let mem = UnsafeCell::new(Memory::new(contiguous_mem.get_mut(), touch_points, sound_sampler));
         Emu {
             common: UnsafeCell::new(Common::new(cartridge_io, fps, key_map)),
-            mem: UnsafeCell::new(Memory::new(touch_points, sound_sampler)),
+            contiguous_mem,
+            mem,
             arm7_hle: UnsafeCell::new(Arm7Hle::new()),
         }
     }

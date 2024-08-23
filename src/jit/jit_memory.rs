@@ -1,3 +1,5 @@
+use crate::core::emu::{get_contiguous_mem, get_jit, get_jit_mut, get_mem_mut, Emu};
+use crate::core::memory::mem::Memory;
 use crate::core::memory::{regions, vram};
 use crate::core::CpuType;
 use crate::logging::debug_println;
@@ -99,16 +101,58 @@ extern "C" {
     fn built_in_clear_cache(start: *const u8, end: *const u8);
 }
 
+static mut NEXT_SEGV_HANDLER: *mut libc::sigaction = ptr::null_mut();
+pub static mut EMU_PTR: *mut Emu = ptr::null_mut();
+
+unsafe extern "C" fn sigsegv_handler(sig: i32, si: *mut libc::siginfo_t, segfault_ctx: *mut libc::c_void) {
+    let addr = (*si).si_addr();
+
+    let emu = EMU_PTR.as_mut().unwrap_unchecked();
+    let host_addr_aligned = utils::align_down(addr as _, JIT_BLOCK_SIZE);
+    let guest_addr = get_contiguous_mem!(emu).host_to_guest(addr as u32);
+    let mem = get_mem_mut!(emu);
+    let prot_lifted = match mem.current_cpu {
+        ARM9 => get_jit_mut!(emu).invalidate_block::<{ ARM9 }>(addr as _, guest_addr),
+        ARM7 => get_jit_mut!(emu).invalidate_block::<{ ARM7 }>(addr as _, guest_addr),
+    };
+
+    // println!("sigsegv {:x} {:x} {guest_addr:x}", addr as u32, utils::align_down(addr as _, get_jit!(emu).page_size));
+
+    mem.breakout_imm = host_addr_aligned == utils::align_down(mem.current_host_block_addr, JIT_BLOCK_SIZE);
+    if !prot_lifted {
+        let host_page_addr_aligned = utils::align_down(addr as _, get_jit!(emu).page_size);
+        libc::mprotect(host_page_addr_aligned as _, get_jit!(emu).page_size as _, libc::PROT_READ | libc::PROT_WRITE);
+        mem.host_addrs_to_protect.push(host_page_addr_aligned);
+    }
+
+    // if !NEXT_SEGV_HANDLER.is_null() {
+    //     let next = (*NEXT_SEGV_HANDLER).sa_sigaction as *const extern "C" fn(sig: i32, si: *mut libc::siginfo_t, segfault_ctx: *mut libc::c_void);
+    //     (*next)(sig, si, segfault_ctx);
+    // } else {
+    //     std::process::exit(1);
+    // }
+}
+
 pub struct JitMemory {
     mem: Mmap,
     mem_common_offset: u32,
     mem_offset: u32,
     jit_blocks: Box<JitBlocks>,
-    page_size: u32,
+    pub page_size: u32,
 }
 
 impl JitMemory {
     pub fn new() -> Self {
+        unsafe {
+            let mut sa = mem::zeroed::<libc::sigaction>();
+            sa.sa_flags = libc::SA_SIGINFO;
+            libc::sigemptyset(&mut sa.sa_mask);
+            sa.sa_sigaction = sigsegv_handler as *const () as _;
+            if libc::sigaction(libc::SIGSEGV, &sa, NEXT_SEGV_HANDLER) == -1 {
+                panic!()
+            }
+        }
+
         let mut jit_blocks = unsafe { Box::<JitBlocks>::new_zeroed().assume_init() };
         jit_blocks.init();
         JitMemory {
@@ -162,7 +206,7 @@ impl JitMemory {
         allocated_offset_addr + self.mem.as_ptr() as u32
     }
 
-    pub fn insert_block<const CPU: CpuType, const THUMB: bool>(&mut self, opcodes: &[u32], insert_args: JitInsertArgs) {
+    pub fn insert_block<const CPU: CpuType, const THUMB: bool>(&mut self, opcodes: &[u32], insert_args: JitInsertArgs, mem: &Memory) {
         assert_eq!(insert_args.guest_insts_cycle_counts.len() as u32, JIT_BLOCK_SIZE / if THUMB { 2 } else { 4 });
         let (allocated_offset_addr, aligned_size) = self.insert(opcodes);
 
@@ -194,20 +238,36 @@ impl JitMemory {
                 }
             };
         }
+
+        let protect_region = |host_ptr: *const u8| unsafe { libc::mprotect(utils::align_down(host_ptr as _, self.page_size) as _, JIT_BLOCK_SIZE as _, libc::PROT_READ) };
+
         match CPU {
             ARM9 => match insert_args.guest_start_pc & 0xFF000000 {
                 regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => {
-                    insert!(itcm)
+                    insert!(itcm);
+                    protect_region(mem.tcm.get_itcm_ptr(insert_args.guest_start_pc));
                 }
-                regions::MAIN_MEMORY_OFFSET => insert!(main_arm9),
+                regions::MAIN_MEMORY_OFFSET => {
+                    insert!(main_arm9);
+                    protect_region(mem.main.get_ptr(insert_args.guest_start_pc));
+                }
                 0xFF000000 => insert!(arm9_bios),
                 _ => todo!("{:x}", insert_args.guest_start_pc),
             },
             ARM7 => match insert_args.guest_start_pc & 0xFF000000 {
                 regions::ARM7_BIOS_OFFSET => insert!(arm7_bios),
-                regions::MAIN_MEMORY_OFFSET => insert!(main_arm7),
-                regions::SHARED_WRAM_OFFSET => insert!(wram),
-                regions::VRAM_OFFSET => insert!(vram_arm7),
+                regions::MAIN_MEMORY_OFFSET => {
+                    insert!(main_arm7);
+                    protect_region(mem.main.get_ptr(insert_args.guest_start_pc));
+                }
+                regions::SHARED_WRAM_OFFSET => {
+                    insert!(wram);
+                    protect_region(mem.wram.get_ptr::<{ ARM7 }>(insert_args.guest_start_pc));
+                }
+                regions::VRAM_OFFSET => {
+                    insert!(vram_arm7);
+                    protect_region(mem.vram.get_ptr::<{ ARM7 }>(insert_args.guest_start_pc));
+                }
                 _ => todo!("{:x}", insert_args.guest_start_pc),
             },
         }
@@ -226,27 +286,27 @@ impl JitMemory {
     }
 
     #[inline(always)]
-    pub fn get_jit_start_addr<const CPU: CpuType, const THUMB: bool>(&self, guest_pc: u32) -> Option<(u32, u32)> {
+    pub fn get_jit_start_addr<const CPU: CpuType, const THUMB: bool>(&self, guest_pc: u32, mem: &Memory) -> Option<(u32, u32, u32)> {
         macro_rules! get_addr_block {
-            ($blocks:expr) => {{
+            ($blocks:expr, $host_addr:expr) => {{
                 let addr_entry = (guest_pc >> JIT_BLOCK_SIZE_SHIFT) as usize;
                 let addr_entry = addr_entry % $blocks.len();
                 let block = &$blocks[addr_entry];
                 if likely(block.jit_addr != 0) {
                     let inst_offset = (guest_pc & (JIT_BLOCK_SIZE - 1)) >> if THUMB { 1 } else { 2 };
-                    Some((block.jit_addr + block.offsets[inst_offset as usize] as u32, block as *const _ as u32))
+                    Some((block.jit_addr + block.offsets[inst_offset as usize] as u32, block as *const _ as u32, $host_addr as u32))
                 } else {
                     None
                 }
             }};
         }
         macro_rules! get_addr {
-            ($block_name:ident) => {
+            ($block_name:ident, $host_addr:expr) => {
                 paste! {
                     if THUMB {
-                        get_addr_block!(self.jit_blocks.[<$block_name _ thumb>])
+                        get_addr_block!(self.jit_blocks.[<$block_name _ thumb>], $host_addr)
                     } else {
-                        get_addr_block!(self.jit_blocks.$block_name)
+                        get_addr_block!(self.jit_blocks.$block_name, $host_addr)
                     }
                 }
             };
@@ -254,19 +314,19 @@ impl JitMemory {
         match CPU {
             ARM9 => match guest_pc & 0xFF000000 {
                 regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => {
-                    get_addr!(itcm)
+                    get_addr!(itcm, mem.tcm.get_itcm_ptr(guest_pc))
                 }
                 regions::MAIN_MEMORY_OFFSET => {
-                    get_addr!(main_arm9)
+                    get_addr!(main_arm9, mem.main.get_ptr(guest_pc))
                 }
-                0xFF000000 => get_addr!(arm9_bios),
+                0xFF000000 => get_addr!(arm9_bios, 0),
                 _ => todo!("{:x} {:x}", guest_pc, guest_pc & 0xFF000000),
             },
             ARM7 => match guest_pc & 0xFF000000 {
-                regions::ARM7_BIOS_OFFSET => get_addr!(arm7_bios),
-                regions::MAIN_MEMORY_OFFSET => get_addr!(main_arm7),
-                regions::SHARED_WRAM_OFFSET => get_addr!(wram),
-                regions::VRAM_OFFSET => get_addr!(vram_arm7),
+                regions::ARM7_BIOS_OFFSET => get_addr!(arm7_bios, 0),
+                regions::MAIN_MEMORY_OFFSET => get_addr!(main_arm7, mem.main.get_ptr(guest_pc)),
+                regions::SHARED_WRAM_OFFSET => get_addr!(wram, mem.wram.get_ptr::<{ ARM7 }>(guest_pc)),
+                regions::VRAM_OFFSET => get_addr!(vram_arm7, mem.vram.get_ptr::<{ ARM7 }>(guest_pc)),
                 _ => todo!("{:x} {:x}", guest_pc, guest_pc & 0xFF000000),
             },
         }
@@ -286,35 +346,47 @@ impl JitMemory {
         }
     }
 
-    pub fn invalidate_block<const CPU: CpuType>(&mut self, addr: u32, size: u32) -> (u32, u32) {
+    pub fn invalidate_block<const CPU: CpuType>(&mut self, host_addr: u32, guest_addr: u32) -> bool {
         macro_rules! invalidate {
             ($blocks:expr, $blocks_thumb:expr) => {{
-                let addr_entry = (addr >> JIT_BLOCK_SIZE_SHIFT) as usize % $blocks.len();
-                let addr_entry_end = ((addr + size - 1) >> JIT_BLOCK_SIZE_SHIFT) as usize % $blocks.len();
+                let addr_entry = (guest_addr >> JIT_BLOCK_SIZE_SHIFT) as usize % $blocks.len();
                 $blocks[addr_entry].jit_addr = 0;
-                $blocks[addr_entry_end].jit_addr = 0;
                 $blocks_thumb[addr_entry].jit_addr = 0;
-                $blocks_thumb[addr_entry_end].jit_addr = 0;
-                (ptr::addr_of!($blocks[addr_entry]) as u32, ptr::addr_of!($blocks_thumb[addr_entry]) as u32)
+
+                let block_addr_start = utils::align_down(guest_addr, self.page_size);
+                let start_addr_entry = (block_addr_start >> JIT_BLOCK_SIZE_SHIFT) as usize % $blocks.len();
+                let mut addr_sum = 0;
+                for i in 0..(self.page_size >> JIT_BLOCK_SIZE_SHIFT) {
+                    addr_sum |= $blocks[start_addr_entry + i as usize].jit_addr;
+                    addr_sum |= $blocks_thumb[start_addr_entry + i as usize].jit_addr;
+                }
+
+                if addr_sum == 0 {
+                    unsafe { libc::mprotect(utils::align_down(host_addr, self.page_size) as _, self.page_size as _, libc::PROT_READ | libc::PROT_WRITE) };
+                    true
+                } else {
+                    false
+                }
             }};
         }
+
         match CPU {
-            ARM9 => match addr & 0xFF000000 {
+            ARM9 => match guest_addr & 0xFF000000 {
                 regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => invalidate!(self.jit_blocks.itcm, self.jit_blocks.itcm_thumb),
                 regions::MAIN_MEMORY_OFFSET => {
                     invalidate!(self.jit_blocks.main_arm7, self.jit_blocks.main_arm7_thumb);
                     invalidate!(self.jit_blocks.main_arm9, self.jit_blocks.main_arm9_thumb)
                 }
-                _ => (0, 0),
+                _ => true,
             },
-            ARM7 => match addr & 0xFF000000 {
+            ARM7 => match guest_addr & 0xFF000000 {
                 regions::MAIN_MEMORY_OFFSET => {
                     invalidate!(self.jit_blocks.main_arm9, self.jit_blocks.main_arm9_thumb);
                     invalidate!(self.jit_blocks.main_arm7, self.jit_blocks.main_arm7_thumb)
                 }
                 regions::SHARED_WRAM_OFFSET => invalidate!(self.jit_blocks.wram, self.jit_blocks.wram_thumb),
                 regions::VRAM_OFFSET => invalidate!(self.jit_blocks.vram_arm7, self.jit_blocks.vram_arm7_thumb),
-                _ => (0, 0),
+                _ => true,
             },
         }
     }

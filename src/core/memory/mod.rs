@@ -1,5 +1,6 @@
 mod bios;
 pub mod cartridge;
+pub mod contiguous_mem;
 pub mod dma;
 pub mod io_arm7;
 pub mod io_arm9;

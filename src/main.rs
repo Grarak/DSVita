@@ -34,6 +34,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{mem, thread};
 use CpuType::{ARM7, ARM9};
+use crate::jit::jit_memory;
 
 mod cartridge_io;
 mod cartridge_metadata;
@@ -65,6 +66,7 @@ fn run_cpu(
     let arm7_entry_addr = cartridge_io.header.arm7_values.entry_address;
 
     let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_io, fps, key_map, touch_points, sound_sampler));
+    unsafe { jit_memory::EMU_PTR = emu_unsafe.get() };
     let emu_ptr = emu_unsafe.get() as u32;
     let emu = emu_unsafe.get_mut();
     let common = get_common_mut!(emu);
@@ -237,6 +239,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     }
 }
 
+// Must be pub for vita
 pub fn main() {
     // For some reason setting the stack size with the global variable doesn't work
     // #[used]
@@ -253,8 +256,7 @@ pub fn main() {
         .unwrap();
 }
 
-// Must be pub for vita
-pub fn actual_main() {
+fn actual_main() {
     set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core0);
 
     if DEBUG_LOG {

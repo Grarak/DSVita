@@ -1,3 +1,4 @@
+use std::alloc::{Allocator, Global};
 use std::cmp;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -7,6 +8,10 @@ use std::ops::{Deref, DerefMut};
 
 pub const fn align_up(n: u32, align: u32) -> u32 {
     (n + align - 1) & !(align - 1)
+}
+
+pub const fn align_down(n: u32, align: u32) -> u32 {
+    n & !(align - 1)
 }
 
 pub trait Convert: Copy + Into<u32> {
@@ -35,6 +40,10 @@ pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
     unsafe { (mem.as_ptr().add(addr as usize) as *const T).read() }
 }
 
+pub fn read_from_mem_ptr<T: Clone>(mem: *const u8, addr: u32) -> T {
+    unsafe { (mem.add(addr as usize) as *const T).read() }
+}
+
 pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> usize {
     let read_amount = cmp::min(mem.len() / size_of::<T>(), slice.len());
     unsafe { (mem.as_ptr().add(addr as usize) as *const T).copy_to(slice.as_mut_ptr(), read_amount) };
@@ -45,9 +54,19 @@ pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
     unsafe { (mem.as_mut_ptr().add(addr as usize) as *mut T).write(value) }
 }
 
+pub fn write_to_mem_ptr<T>(mem: *const u8, addr: u32, value: T) {
+    unsafe { (mem.add(addr as usize) as *mut T).write(value) }
+}
+
 pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) -> usize {
     let write_amount = cmp::min(mem.len() / size_of::<T>(), slice.len());
     unsafe { (mem.as_mut_ptr().add(addr as usize) as *mut T).copy_from(slice.as_ptr(), write_amount) };
+    write_amount
+}
+
+pub fn write_to_mem_slice_ptr<T: Copy>(mem: *const u8, mem_len: usize, addr: u32, slice: &[T]) -> usize {
+    let write_amount = cmp::min((mem_len - addr as usize) / size_of::<T>(), slice.len());
+    unsafe { (mem.add(addr as usize) as *mut T).copy_from(slice.as_ptr(), write_amount) };
     write_amount
 }
 
@@ -75,10 +94,10 @@ impl Display for StrErr {
 
 impl Error for StrErr {}
 
-pub type HeapMemU8<const SIZE: usize> = HeapMem<u8, SIZE>;
+pub type HeapMemU8<const SIZE: usize, A: Allocator = Global> = HeapMem<u8, SIZE, A>;
 pub type HeapMemU32<const SIZE: usize> = HeapMem<u32, SIZE>;
 
-pub struct HeapMem<T: Sized, const SIZE: usize>(Box<[T; SIZE]>);
+pub struct HeapMem<T: Sized, const SIZE: usize, A: Allocator = Global>(Box<[T; SIZE], A>);
 
 impl<T: Sized + Default, const SIZE: usize> HeapMem<T, SIZE> {
     pub fn new() -> Self {
@@ -86,7 +105,15 @@ impl<T: Sized + Default, const SIZE: usize> HeapMem<T, SIZE> {
     }
 }
 
-impl<T: Sized, const SIZE: usize> Deref for HeapMem<T, SIZE> {
+impl<T: Sized + Default, const SIZE: usize, A: Allocator> HeapMem<T, SIZE, A> {
+    pub fn new_with_allocator(allocator: A) -> Self {
+        let mut mem: Box<[T; SIZE], A> = unsafe { Box::new_zeroed_in(allocator).assume_init() };
+        mem.fill_with(|| T::default());
+        HeapMem(mem)
+    }
+}
+
+impl<T: Sized, const SIZE: usize, A: Allocator> Deref for HeapMem<T, SIZE, A> {
     type Target = [T; SIZE];
 
     fn deref(&self) -> &Self::Target {
@@ -94,7 +121,7 @@ impl<T: Sized, const SIZE: usize> Deref for HeapMem<T, SIZE> {
     }
 }
 
-impl<T: Sized, const SIZE: usize> DerefMut for HeapMem<T, SIZE> {
+impl<T: Sized, const SIZE: usize, A: Allocator> DerefMut for HeapMem<T, SIZE, A> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.0.deref_mut()
     }

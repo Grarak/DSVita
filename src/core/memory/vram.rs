@@ -1,5 +1,9 @@
+use crate::core::emu::{get_jit_mut, Emu};
+use crate::core::memory::contiguous_mem::ContiguousMem;
+use crate::core::memory::regions;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
+use crate::jit::jit_memory::JIT_BLOCK_SIZE;
 use crate::logging::debug_println;
 use crate::utils;
 use crate::utils::HeapMemU8;
@@ -271,7 +275,7 @@ const BANK_I_SIZE: usize = 16 * 1024;
 pub const TOTAL_SIZE: usize = BANK_A_SIZE + BANK_B_SIZE + BANK_C_SIZE + BANK_D_SIZE + BANK_E_SIZE + BANK_F_SIZE + BANK_G_SIZE + BANK_H_SIZE + BANK_I_SIZE;
 const_assert_eq!(TOTAL_SIZE, 656 * 1024);
 
-struct VramBanks(HeapMemU8<TOTAL_SIZE>);
+struct VramBanks(*const u8);
 
 macro_rules! create_vram_bank {
     ($name:ident, $offset:expr, $size:expr) => {
@@ -279,7 +283,7 @@ macro_rules! create_vram_bank {
             fn [<get _ $name>](&self) -> &[u8; $size] {
                 const_assert!($offset + $size <= TOTAL_SIZE);
                 unsafe {
-                    (self.0[$offset..$offset + $size].as_ptr() as *const [u8; $size])
+                    (self.0.add($offset) as *const [u8; $size])
                         .as_ref()
                         .unwrap_unchecked()
                 }
@@ -289,8 +293,8 @@ macro_rules! create_vram_bank {
 }
 
 impl VramBanks {
-    fn new() -> Self {
-        VramBanks(HeapMemU8::new())
+    fn new(contiguous_mem: &mut ContiguousMem) -> Self {
+        VramBanks(contiguous_mem.get_vram_ptr())
     }
 
     create_vram_bank!(a, 0, BANK_A_SIZE);
@@ -347,11 +351,11 @@ pub struct Vram {
 }
 
 impl Vram {
-    pub fn new() -> Self {
+    pub fn new(contiguous_mem: &mut ContiguousMem) -> Self {
         Vram {
             stat: 0,
             cnt: [0u8; BANK_SIZE],
-            banks: VramBanks::new(),
+            banks: VramBanks::new(contiguous_mem),
 
             lcdc: OverlapMapping::new(),
 
@@ -372,7 +376,7 @@ impl Vram {
         }
     }
 
-    pub fn set_cnt(&mut self, bank: usize, value: u8) {
+    pub fn set_cnt(&mut self, bank: usize, value: u8, emu: &mut Emu) {
         const MASKS: [u8; 9] = [0x9B, 0x9B, 0x9F, 0x9F, 0x87, 0x9F, 0x9F, 0x83, 0x83];
         let value = value & MASKS[bank];
         if self.cnt[bank] == value {
@@ -663,6 +667,10 @@ impl Vram {
                     _ => unsafe { unreachable_unchecked() },
                 }
             }
+        }
+
+        for addr in (regions::VRAM_OFFSET..regions::VRAM_OFFSET + 0x20000 * 2).step_by(JIT_BLOCK_SIZE as usize) {
+            get_jit_mut!(emu).invalidate_block::<{ ARM7 }>(self.get_ptr::<{ ARM7 }>(addr) as _, addr);
         }
     }
 
