@@ -530,26 +530,26 @@ fn debug_inst_info<const CPU: CpuType>(debug_regs: Option<&DebugRegs>, regs: &Th
     match debug_regs {
         Some(debug_regs) => {
             for reg in RegReserve::gp_thumb() {
-                output += &format!("{:?}: {:x}, ", reg, debug_regs.gp[reg as usize]);
+                output += &format!("{:x}, ", debug_regs.gp[reg as usize]);
             }
             for reg in (!RegReserve::gp_thumb()).get_gp_regs() {
-                output += &format!("{:?}: {:x}, ", reg, if regs.is_thumb() { *regs.get_reg(reg) } else { debug_regs.gp[reg as usize] });
+                output += &format!("{:x}, ", if regs.is_thumb() { *regs.get_reg(reg) } else { debug_regs.gp[reg as usize] });
             }
-            output += &format!("{:?}: {:x}, ", Reg::SP, debug_regs.sp);
+            output += &format!("{:x}, ", debug_regs.sp);
             for reg in reg_reserve!(Reg::LR, Reg::PC, Reg::CPSR, Reg::SPSR) {
                 let value = if reg != Reg::PC { *regs.get_reg(reg) } else { pc };
-                output += &format!("{:?}: {:x}, ", reg, value);
+                output += &format!("{:x}, ", value);
             }
         }
         None => {
             for reg in reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR, Reg::SPSR) + RegReserve::gp() {
                 let value = if reg != Reg::PC { *regs.get_reg(reg) } else { pc };
-                output += &format!("{:?}: {:x}, ", reg, value);
+                output += &format!("{:x}, ", value);
             }
         }
     }
 
-    println!("{:?} {}{}", CPU, output, append);
+    print!("{:?} {}\n", CPU, output);
 }
 
 unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(asm: *mut JitAsm<CPU>, pc: u32, opcode: u32) {
