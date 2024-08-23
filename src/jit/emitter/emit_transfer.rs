@@ -77,13 +77,16 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             block_asm.bic(post_addr_reg, post_addr_reg, 0x3);
         }
 
-        let addr_reg = block_asm.new_reg();
+        let addr_reg = if pre {
+            post_addr_reg
+        } else {
+            let reg = block_asm.new_reg();
+            block_asm.mov(reg, op1);
+            reg
+        };
 
         if write_back && (WRITE || op0 != op1) {
-            block_asm.mov(addr_reg, if pre { post_addr_reg } else { op1.into() });
             block_asm.mov(op1, post_addr_reg);
-        } else {
-            block_asm.mov(addr_reg, if pre { post_addr_reg } else { op1.into() });
         }
 
         block_asm.save_context();
@@ -134,7 +137,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             block_asm.bic(post_addr_reg, post_addr_reg, 0x3);
         }
 
-        let addr_reg = if PRE { post_addr_reg } else { op1.into() };
+        let addr_reg = if PRE {
+            post_addr_reg
+        } else {
+            let reg = block_asm.new_reg();
+            block_asm.mov(reg, op1);
+            reg
+        };
 
         let mmu_ptr_reg = block_asm.new_reg();
         let mmu_index_reg = block_asm.new_reg();
@@ -184,7 +193,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             if WRITE_BACK && op0 != op1 {
                 block_asm.mov(op1, post_addr_reg);
             }
-
             block_asm.mov(Reg::CPSR, backup_cpsr);
             block_asm.save_context();
 
