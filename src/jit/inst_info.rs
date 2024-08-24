@@ -204,6 +204,10 @@ impl InstInfo {
     pub fn is_branch(&self) -> bool {
         self.out_regs.is_reserved(Reg::PC) || self.op.is_branch()
     }
+
+    pub fn is_uncond_branch(&self) -> bool {
+        self.cond == Cond::AL && (self.out_regs.is_reserved(Reg::PC) || self.op.is_uncond_branch())
+    }
 }
 
 impl From<InstInfoThumb> for InstInfo {

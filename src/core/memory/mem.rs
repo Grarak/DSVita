@@ -36,7 +36,6 @@ pub struct Memory {
     pub jit: JitMemory,
     pub bios_arm9: BiosArm9,
     pub bios_arm7: BiosArm7,
-    pub current_mode_is_thumb: bool,
     pub current_jit_block_addr: u32, // Check if the jit block we are currently executing gets written to
     pub breakout_imm: bool,
     pub mmu_arm9: MmuArm9,
@@ -67,7 +66,6 @@ impl Memory {
             jit: JitMemory::new(),
             bios_arm9: BiosArm9::new(),
             bios_arm7: BiosArm7::new(),
-            current_mode_is_thumb: false,
             current_jit_block_addr: 0,
             breakout_imm: false,
             mmu_arm9: MmuArm9::new(),
@@ -201,14 +199,7 @@ impl Memory {
             }
         }
 
-        let mut invalidate_jit = || {
-            let (block_addr, block_addr_thumb) = self.jit.invalidate_block::<CPU>(aligned_addr, size_of::<T>() as u32);
-            self.breakout_imm = if self.current_mode_is_thumb {
-                block_addr_thumb == self.current_jit_block_addr
-            } else {
-                block_addr == self.current_jit_block_addr
-            }
-        };
+        let mut invalidate_jit = || self.breakout_imm = self.jit.invalidate_block::<CPU>(aligned_addr, size_of::<T>(), self.current_jit_block_addr);
 
         match addr_base {
             regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => match CPU {

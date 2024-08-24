@@ -80,6 +80,13 @@ pub type HeapMemU32<const SIZE: usize> = HeapMem<u32, SIZE>;
 
 pub struct HeapMem<T: Sized, const SIZE: usize>(Box<[T; SIZE]>);
 
+impl<T: Sized, const SIZE: usize> HeapMem<T, SIZE> {
+    pub unsafe fn zeroed() -> Self {
+        let mem: Box<[T; SIZE]> = Box::new_zeroed().assume_init();
+        HeapMem(mem)
+    }
+}
+
 impl<T: Sized + Default, const SIZE: usize> HeapMem<T, SIZE> {
     pub fn new() -> Self {
         HeapMem::default()

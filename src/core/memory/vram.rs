@@ -1,3 +1,4 @@
+use crate::core::emu::{get_jit_mut, Emu};
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
@@ -372,7 +373,7 @@ impl Vram {
         }
     }
 
-    pub fn set_cnt(&mut self, bank: usize, value: u8) {
+    pub fn set_cnt(&mut self, bank: usize, value: u8, emu: &mut Emu) {
         const MASKS: [u8; 9] = [0x9B, 0x9B, 0x9F, 0x9F, 0x87, 0x9F, 0x9F, 0x83, 0x83];
         let value = value & MASKS[bank];
         if self.cnt[bank] == value {
@@ -664,6 +665,8 @@ impl Vram {
                 }
             }
         }
+
+        get_jit_mut!(emu).invalidate_vram();
     }
 
     pub fn get_ptr<const CPU: CpuType>(&self, addr: u32) -> *const u8 {

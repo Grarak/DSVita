@@ -174,7 +174,7 @@ impl Debug for BlockShift {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct BlockOperandShift {
+pub struct BlockOperandShift {
     pub operand: BlockOperand,
     pub shift: BlockShift,
 }

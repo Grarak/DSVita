@@ -2,7 +2,6 @@ use crate::core::emu::{get_jit_mut, get_mmu, Emu};
 use crate::core::memory::regions;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM7;
-use crate::jit::jit_memory::JIT_BLOCK_SIZE;
 use crate::utils;
 use crate::utils::{Convert, HeapMemU8};
 use std::hint::unreachable_unchecked;
@@ -153,9 +152,7 @@ impl Wram {
         self.cnt = value & 0x3;
         self.init_maps();
 
-        for addr in (regions::SHARED_WRAM_OFFSET..regions::IO_PORTS_OFFSET).step_by(JIT_BLOCK_SIZE as usize) {
-            get_jit_mut!(emu).invalidate_block::<{ ARM7 }>(addr, JIT_BLOCK_SIZE);
-        }
+        get_jit_mut!(emu).invalidate_wram();
 
         get_mmu!(emu, ARM9).update_wram(emu);
         get_mmu!(emu, ARM7).update_wram(emu);
