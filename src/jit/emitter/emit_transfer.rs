@@ -150,10 +150,15 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let mmu_page_addr = block_asm.new_reg();
         let backup_cpsr = block_asm.new_reg();
 
+        // mmu_ptr_reg = (*u32) &mmu_map
         block_asm.mov(mmu_ptr_reg, get_mmu!(self.emu, CPU).get_mmu_ptr() as u32);
+        // mmu_index_reg = addr_reg >> 12
         block_asm.mov(mmu_index_reg, (BlockOperand::from(addr_reg), ShiftType::Lsr, mmu::MMU_BLOCK_SHIFT.into()));
+        // mmu_page_addr = *(mmu_ptr_reg + mmu_index_reg)
         block_asm.transfer_read(mmu_page_addr, mmu_ptr_reg, (BlockOperand::from(mmu_index_reg), ShiftType::Lsl, 2.into()), false, MemoryAmount::Word);
+        // Save current cpsr cond flags
         block_asm.mrs_cpsr(backup_cpsr);
+        // Check if mmu block is mapped
         block_asm.cmp(mmu_page_addr, 0);
 
         let slow_read_label = block_asm.new_label();
@@ -161,6 +166,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         block_asm.branch(slow_read_label, Cond::EQ);
 
+        // if mmu_page_addr != nullptr
         {
             let physical_addr = block_asm.new_reg();
             block_asm.msr_cpsr(backup_cpsr);
@@ -187,6 +193,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         block_asm.label(slow_read_label);
 
+        // if mmu_page_addr == nullptr
         {
             let func_addr = Self::get_inst_mem_handler_func::<THUMB, false, false>(op, amount);
 
