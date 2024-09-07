@@ -257,7 +257,7 @@ fn clip_polygon(unclipped: &[Vertex; 4], clipped: &mut [Vertex; 10], size: &mut 
 
         for j in 0..old_size {
             let current = &vertices[j];
-            let previous = &vertices[(j - 1 + old_size) % old_size];
+            let previous = &vertices[(j.wrapping_sub(1).wrapping_add(old_size)) % old_size];
 
             let (current_val, previous_val) = match i {
                 0 => (current.coords[0], previous.coords[0]),
