@@ -67,9 +67,11 @@ impl<K: Ord, V> SimpleTreeMap<K, V> {
         self.0.remove(index)
     }
 
-    pub fn remove(&mut self, key: &K) {
+    pub fn remove(&mut self, key: &K) -> Option<(K, V)> {
         if let Some((index, _)) = self.get(key) {
-            self.remove_at(index);
+            Some(self.remove_at(index))
+        } else {
+            None
         }
     }
 

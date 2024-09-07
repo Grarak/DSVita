@@ -9,7 +9,7 @@
 #![feature(generic_const_exprs)]
 #![feature(isqrt)]
 #![feature(naked_functions)]
-#![feature(new_uninit)]
+#![feature(new_zeroed_alloc)]
 #![feature(seek_stream_len)]
 #![feature(stmt_expr_attributes)]
 

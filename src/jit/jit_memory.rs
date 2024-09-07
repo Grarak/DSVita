@@ -9,7 +9,6 @@ use paste::paste;
 use std::cmp::Ordering;
 use std::intrinsics::{likely, unlikely};
 use std::ops::{Deref, DerefMut};
-use std::pin::Pin;
 use std::ptr;
 use CpuType::{ARM7, ARM9};
 
@@ -130,10 +129,13 @@ pub struct JitMemory {
     mem: Mmap,
     mem_common_offset: u32,
     mem_offset: u32,
-    jit_blocks: SimpleTreeMap<u32, Pin<Box<JitBlock>>>,
-    jit_blocks_thumb: SimpleTreeMap<u32, Pin<Box<JitBlock>>>,
+    jit_blocks: SimpleTreeMap<u32, Box<JitBlock>>,
+    jit_blocks_thumb: SimpleTreeMap<u32, Box<JitBlock>>,
     jit_lookups: JitLookups,
     page_size: u32,
+    // temporary invalidated jit block, only some when a running jit block becomes invalidated
+    // we still need to access cycle data after imm breakout
+    invalidated_block: Box<JitBlock>,
 }
 
 impl JitMemory {
@@ -155,6 +157,7 @@ impl JitMemory {
                     16
                 }
             },
+            invalidated_block: Box::new(JitBlock::default()),
         }
     }
 
@@ -212,7 +215,7 @@ impl JitMemory {
                 }
 
                 let jit_blocks = if THUMB { &mut self.jit_blocks_thumb } else { &mut self.jit_blocks };
-                let index = jit_blocks.insert(jit_block.guest_pc, Box::pin(jit_block));
+                let index = jit_blocks.insert(jit_block.guest_pc, Box::new(jit_block));
                 let jit_block_ptr = jit_blocks[index].1.deref() as *const _;
 
                 let lookup_entry = (insert_args.guest_pc >> if THUMB { 1 } else { 2 }) as usize;
@@ -320,26 +323,26 @@ impl JitMemory {
     pub fn invalidate_block<const CPU: CpuType>(&mut self, guest_addr: u32, size: usize, current_jit_block: u32) -> bool {
         let mut should_breakout = false;
 
-        let mut invalidate = |jit_lookup: &mut [JitLookup], jit_blocks: &mut SimpleTreeMap<u32, Pin<Box<JitBlock>>>, addr_shift: u8| {
+        let mut invalidate = |jit_lookup: &mut [JitLookup], jit_blocks: &mut SimpleTreeMap<u32, Box<JitBlock>>, addr_shift: u8| {
             let mut invalidated_size = 0;
             while invalidated_size <= size {
                 let lookup_entry = (guest_addr >> addr_shift) as usize + invalidated_size;
                 let lookup_entry = lookup_entry % jit_lookup.len();
                 let jit_block_ptr = jit_lookup[lookup_entry].jit_block;
                 if unlikely(!jit_block_ptr.is_null()) {
-                    if unlikely(jit_block_ptr as u32 == current_jit_block) {
-                        should_breakout = true;
-                    }
-
                     let jit_block = unsafe { jit_block_ptr.as_ref().unwrap_unchecked() };
 
                     let start_lookup_entry = (jit_block.guest_pc >> addr_shift) as usize;
                     let start_lookup_entry = start_lookup_entry % jit_lookup.len();
                     jit_lookup[start_lookup_entry..start_lookup_entry + jit_block.cycles.len()].fill(JitLookup::default());
 
-                    invalidated_size += jit_block.cycles.len();
+                    invalidated_size += jit_block.cycles.len() << addr_shift;
 
-                    jit_blocks.remove(&jit_block.guest_pc);
+                    let removed_block = jit_blocks.remove(&jit_block.guest_pc).unwrap();
+                    if unlikely(jit_block_ptr as u32 == current_jit_block) {
+                        should_breakout = true;
+                        self.invalidated_block = removed_block.1;
+                    }
                 } else {
                     invalidated_size += 1;
                 }
