@@ -23,14 +23,14 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
     debug_println!("{:?} interrupt", CPU);
 
     let mut cpsr = Cpsr::from(get_regs!(emu, CPU).cpsr);
-    cpsr.set_irq_disable(u1::new(1));
-    cpsr.set_thumb(u1::new(0));
+    cpsr.set_irq_disable(true);
+    cpsr.set_thumb(false);
     cpsr.set_mode(u5::new(0x12));
     get_regs_mut!(emu, CPU).set_cpsr::<true>(u32::from(cpsr), get_cm_mut!(emu));
 
     let is_thumb = (get_regs!(emu, CPU).pc & 1) == 1;
     let mut spsr = Cpsr::from(get_regs!(emu, CPU).spsr);
-    spsr.set_thumb(u1::from(is_thumb));
+    spsr.set_thumb(is_thumb);
     get_regs_mut!(emu, CPU).spsr = u32::from(spsr);
 
     get_regs_mut!(emu, CPU).sp -= 4;

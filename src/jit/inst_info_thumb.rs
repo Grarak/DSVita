@@ -2,7 +2,7 @@ use crate::jit::inst_info::Operands;
 use crate::jit::reg::RegReserve;
 use crate::jit::Op;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct InstInfoThumb {
     pub opcode: u16,
     pub op: Op,

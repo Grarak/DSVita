@@ -493,7 +493,7 @@ pub struct MulReg {
     pub rs: u4,
     pub rn: u4,
     pub rd: u4,
-    pub set: u1,
+    pub set: bool,
     pub op: u4,
     pub id: u3,
     pub cond: u4,
@@ -501,23 +501,18 @@ pub struct MulReg {
 
 impl MulReg {
     #[inline]
-    pub fn muls(op0: Reg, op1: Reg, op2: Reg, cond: Cond) -> u32 {
+    pub fn mul(op0: Reg, op1: Reg, op2: Reg, set_cond: bool, cond: Cond) -> u32 {
         u32::from(Self::new(
             u4::new(op2 as u8),
             u4::new(0b1001),
             u4::new(op1 as u8),
             u4::new(0),
             u4::new(op0 as u8),
-            u1::new(1),
+            set_cond,
             u4::new(0b0),
             u3::new(0b000),
             u4::new(cond as u8),
         ))
-    }
-
-    #[inline]
-    pub fn muls_al(op0: Reg, op1: Reg, op2: Reg) -> u32 {
-        Self::muls(op0, op1, op2, Cond::AL)
     }
 }
 

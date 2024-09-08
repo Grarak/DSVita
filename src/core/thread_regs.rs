@@ -14,15 +14,15 @@ use std::ptr;
 #[derive(FromBits)]
 pub struct Cpsr {
     pub mode: u5,
-    pub thumb: u1,
-    pub fiq_disable: u1,
-    pub irq_disable: u1,
+    pub thumb: bool,
+    pub fiq_disable: bool,
+    pub irq_disable: bool,
     pub reserved: u19,
-    pub q: u1,
-    pub v: u1,
-    pub c: u1,
-    pub z: u1,
-    pub n: u1,
+    pub q: bool,
+    pub v: bool,
+    pub c: bool,
+    pub z: bool,
+    pub n: bool,
 }
 
 #[derive(Default)]
@@ -245,6 +245,19 @@ impl ThreadRegs {
         }
     }
 
+    pub fn restore_thumb_mode(&mut self) {
+        self.pc &= !1;
+        self.pc |= Cpsr::from(self.cpsr).thumb() as u32;
+    }
+
+    pub fn force_pc_arm_mode(&mut self) {
+        self.pc &= !1;
+    }
+
+    pub fn force_pc_thumb_mode(&mut self) {
+        self.pc |= 1;
+    }
+
     pub fn set_cpsr<const SAVE: bool>(&mut self, value: u32, cycle_manager: &mut CycleManager) {
         let current_cpsr = Cpsr::from(self.cpsr);
         let new_cpsr = Cpsr::from(value);
@@ -354,7 +367,7 @@ impl ThreadRegs {
 
     pub fn set_thumb(&mut self, enable: bool) {
         let mut cpsr = Cpsr::from(self.cpsr);
-        cpsr.set_thumb(u1::new(enable as u8));
+        cpsr.set_thumb(enable);
         self.cpsr = u32::from(cpsr);
     }
 

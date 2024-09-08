@@ -1,10 +1,13 @@
 use crate::core::thread_regs::ThreadRegs;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::block_inst::BlockInst;
+use crate::jit::assembler::block_reg_set::BLOCK_REG_SET_ARRAY_SIZE;
 use crate::jit::inst_info::{Shift, ShiftValue};
 use crate::jit::reg::Reg;
 use crate::jit::ShiftType;
+use crate::utils::NoHashMap;
 use std::fmt::{Debug, Formatter};
+use std::hash::{Hash, Hasher};
 
 pub mod arm;
 mod basic_block;
@@ -13,18 +16,23 @@ mod block_inst;
 mod block_reg_allocator;
 mod block_reg_set;
 
-pub const ANY_REG_LIMIT: u8 = 64 - Reg::SPSR as u8 * 2;
+pub const ANY_REG_LIMIT: u16 = BLOCK_REG_SET_ARRAY_SIZE as u16 * 32 - Reg::None as u16;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum BlockReg {
-    Any(u8),
-    Guest(Reg),
+    Any(u16),
     Fixed(Reg),
 }
 
-impl Into<BlockReg> for Reg {
-    fn into(self) -> BlockReg {
-        BlockReg::Guest(self)
+impl Hash for BlockReg {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u16(self.get_id())
+    }
+}
+
+impl From<Reg> for BlockReg {
+    fn from(value: Reg) -> Self {
+        BlockReg::Any(value as u16)
     }
 }
 
@@ -40,6 +48,13 @@ impl TryFrom<BlockOperand> for BlockReg {
 }
 
 impl BlockReg {
+    pub const fn get_id(self) -> u16 {
+        match self {
+            BlockReg::Any(id) => id + Reg::None as u16,
+            BlockReg::Fixed(reg) => reg as u16,
+        }
+    }
+
     pub fn try_as_fixed(self) -> Option<Reg> {
         match self {
             BlockReg::Fixed(reg) => Some(reg),
@@ -49,6 +64,17 @@ impl BlockReg {
 
     pub fn as_fixed(self) -> Reg {
         self.try_as_fixed().unwrap()
+    }
+
+    pub fn try_as_any(self) -> Option<u16> {
+        match self {
+            BlockReg::Any(reg) => Some(reg),
+            _ => None,
+        }
+    }
+
+    pub fn as_any(self) -> u16 {
+        self.try_as_any().unwrap()
     }
 }
 
@@ -77,15 +103,15 @@ impl From<BlockReg> for BlockOperand {
     }
 }
 
-impl Into<BlockOperand> for u32 {
-    fn into(self) -> BlockOperand {
-        BlockOperand::Imm(self)
+impl From<u32> for BlockOperand {
+    fn from(value: u32) -> Self {
+        BlockOperand::Imm(value)
     }
 }
 
-impl Into<BlockOperand> for Reg {
-    fn into(self) -> BlockOperand {
-        BlockOperand::Reg(self.into())
+impl From<Reg> for BlockOperand {
+    fn from(value: Reg) -> Self {
+        BlockOperand::Reg(value.into())
     }
 }
 
@@ -115,6 +141,17 @@ impl BlockOperand {
 
     pub fn as_reg(&self) -> BlockReg {
         self.try_as_reg().unwrap()
+    }
+
+    pub fn try_as_imm(&self) -> Option<u32> {
+        match self {
+            BlockOperand::Reg(_) => None,
+            BlockOperand::Imm(imm) => Some(*imm),
+        }
+    }
+
+    pub fn as_imm(&self) -> u32 {
+        self.try_as_imm().unwrap()
     }
 }
 
@@ -293,11 +330,17 @@ pub struct BlockLabel(u16);
 
 pub struct BlockAsmBuf {
     pub insts: Vec<BlockInst>,
+    pub guest_branches_mapping: NoHashMap<u32, BlockLabel>,
+    pub reg_range_indicies: NoHashMap<BlockReg, (usize, usize)>,
 }
 
 impl BlockAsmBuf {
     pub fn new() -> Self {
-        BlockAsmBuf { insts: Vec::new() }
+        BlockAsmBuf {
+            insts: Vec::new(),
+            guest_branches_mapping: NoHashMap::default(),
+            reg_range_indicies: NoHashMap::default(),
+        }
     }
 
     pub fn new_asm(&mut self, thread_regs: &ThreadRegs) -> BlockAsm {

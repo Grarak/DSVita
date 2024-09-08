@@ -242,12 +242,12 @@ pub fn main() {
     // For some reason setting the stack size with the global variable doesn't work
     // #[used]
     // #[export_name = "sceUserMainThreadStackSize"]
-    // pub static SCE_USER_MAIN_THREAD_STACK_SIZE: u32 = 1024 * 1024;
+    // pub static SCE_USER_MAIN_THREAD_STACK_SIZE: u32 = 4 * 1024 * 1024;
     // Instead just create a new thread with stack size set
     set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core1);
     thread::Builder::new()
         .name("actual_main".to_string())
-        .stack_size(1024 * 1024)
+        .stack_size(4 * 1024 * 1024) // We reserve 2MB for jit registers
         .spawn(actual_main)
         .unwrap()
         .join()

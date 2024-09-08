@@ -1,82 +1,48 @@
-use crate::core::emu::{get_cp15, get_cp15_mut, get_cpu_regs_mut, get_regs, get_regs_mut};
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
-use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
+use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::BlockReg;
 use crate::jit::inst_cp15_handler::{cp15_read, cp15_write};
 use crate::jit::inst_cpu_regs_handler::cpu_regs_halt;
-use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
+use crate::jit::jit_asm::JitAsm;
+use crate::jit::op::Op;
 use crate::jit::reg::Reg;
-use crate::jit::Op;
-use crate::DEBUG_LOG_BRANCH_OUT;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
-    pub fn emit_halt(&mut self, buf_index: usize, pc: u32) {
-        let cpu_regs_addr = get_cpu_regs_mut!(self.emu, CPU) as *mut _ as _;
+    pub fn emit_halt(&mut self, block_asm: &mut BlockAsm) {
+        block_asm.mov(Reg::PC, self.jit_buf.current_pc + 4);
+        block_asm.save_context();
+        block_asm.call2(cpu_regs_halt::<CPU> as _, self as *mut _ as u32, 0);
 
-        let mut opcodes = Vec::new();
-
-        opcodes.extend(self.emit_call_host_func(|_, _| {}, &[Some(cpu_regs_addr), Some(0)], cpu_regs_halt::<CPU> as *const ()));
-
-        opcodes.extend(self.runtime_data.emit_get_branch_out_addr(Reg::R1));
-        opcodes.push(AluImm::mov16_al(Reg::R4, self.jit_buf.insts_cycle_counts[buf_index]));
-
-        if DEBUG_LOG_BRANCH_OUT {
-            opcodes.extend(AluImm::mov32(Reg::R0, pc));
-            opcodes.push(LdrStrImm::str_al(Reg::R0, Reg::R1));
-        }
-        opcodes.push(LdrStrImmSBHD::strh_al(Reg::R4, Reg::R1, JitRuntimeData::get_total_cycles_offset()));
-
-        opcodes.extend(AluImm::mov32(Reg::R2, pc + 4));
-        opcodes.extend(get_regs!(self.emu, CPU).emit_set_reg(Reg::PC, Reg::R2, Reg::R3));
-
-        Self::emit_host_bx(self.breakout_skip_save_regs_addr, &mut opcodes);
-
-        self.jit_buf.emit_opcodes.extend(opcodes);
+        self.emit_branch_out_metadata(block_asm);
+        block_asm.breakout();
     }
 
-    pub fn emit_cp15(&mut self, buf_index: usize, pc: u32) {
+    pub fn emit_cp15(&mut self, block_asm: &mut BlockAsm) {
         if CPU != ARM9 {
             return;
         }
 
-        let emu_addr = self.emu as *mut _ as _;
-
-        let inst_info = &self.jit_buf.insts[buf_index];
-
-        let rd = inst_info.operands()[0].as_reg_no_shift().unwrap();
+        let inst_info = self.jit_buf.current_inst();
+        let rd = *inst_info.operands()[0].as_reg_no_shift().unwrap();
         let cn = (inst_info.opcode >> 16) & 0xF;
         let cm = inst_info.opcode & 0xF;
         let cp = (inst_info.opcode >> 5) & 0x7;
 
         let cp15_reg = (cn << 16) | (cm << 8) | cp;
-
         if cp15_reg == 0x070004 || cp15_reg == 0x070802 {
-            self.emit_halt(buf_index, pc);
+            self.emit_halt(block_asm);
         } else {
-            let (args, addr) = match inst_info.op {
-                Op::Mcr => ([Some(get_cp15_mut!(self.emu, CPU) as *mut _ as _), Some(cp15_reg), None, Some(emu_addr)], cp15_write as _),
+            block_asm.save_reg(Reg::CPSR);
+            match inst_info.op {
+                Op::Mcr => block_asm.call3(cp15_write as _, self as *mut _ as u32, cp15_reg, rd),
                 Op::Mrc => {
-                    let reg_addr = get_regs_mut!(self.emu, CPU).get_reg_mut(*rd) as *mut _ as u32;
-                    ([Some(get_cp15!(self.emu, CPU) as *const _ as _), Some(cp15_reg), Some(reg_addr), None], cp15_read as _)
+                    block_asm.call2(cp15_read as _, self as *mut _ as u32, cp15_reg);
+                    block_asm.mov(rd, BlockReg::Fixed(Reg::R0));
                 }
-                _ => {
-                    unreachable!()
-                }
-            };
-
-            let op = inst_info.op;
-            let rd = *rd;
-
-            self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
-                |_, opcodes| {
-                    if op == Op::Mcr && rd != Reg::R2 {
-                        opcodes.push(AluShiftImm::mov_al(Reg::R2, rd));
-                    }
-                },
-                &args,
-                addr,
-            ));
+                _ => unreachable!(),
+            }
+            block_asm.restore_reg(Reg::CPSR);
         }
     }
 }

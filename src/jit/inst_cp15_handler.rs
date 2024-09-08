@@ -1,10 +1,11 @@
-use crate::core::cp15::Cp15;
-use crate::core::emu::Emu;
+use crate::core::emu::{get_cp15, get_cp15_mut};
+use crate::core::CpuType::ARM9;
+use crate::jit::jit_asm::JitAsm;
 
-pub unsafe extern "C" fn cp15_write(context: *mut Cp15, reg: u32, value: u32, emu: *const Emu) {
-    (*context).write(reg, value, &*emu)
+pub unsafe extern "C" fn cp15_write(asm: *mut JitAsm<{ ARM9 }>, reg: u32, value: u32) {
+    get_cp15_mut!((*asm).emu, ARM9).write(reg, value, (*asm).emu);
 }
 
-pub unsafe extern "C" fn cp15_read(context: *const Cp15, reg: u32, value: *mut u32) {
-    (*context).read(reg, value.as_mut().unwrap())
+pub unsafe extern "C" fn cp15_read(asm: *mut JitAsm<{ ARM9 }>, reg: u32) -> u32 {
+    get_cp15!((*asm).emu, ARM9).read(reg)
 }

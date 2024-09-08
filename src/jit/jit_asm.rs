@@ -1,107 +1,49 @@
 use crate::core::emu::{get_jit, get_jit_mut, get_mem_mut, get_regs, get_regs_mut, Emu};
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
-use crate::jit::assembler::arm::branch_assembler::B;
-use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
-use crate::jit::assembler::arm::transfer_assembler::{LdmStm, Msr};
 use crate::jit::assembler::BlockAsmBuf;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
-use crate::jit::emitter::emit_branch::LOCAL_BRANCH_INDICATOR;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_memory::JitInsertArgs;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
-use crate::jit::Cond;
 use crate::logging::debug_println;
 use crate::{DEBUG_LOG, DEBUG_LOG_BRANCH_OUT};
 use std::arch::asm;
+use std::cell::UnsafeCell;
 use std::intrinsics::likely;
 use std::ptr;
 
-#[derive(Default)]
-struct DebugRegs {
-    gp: [u32; 13],
-    sp: u32,
-}
-
-impl DebugRegs {
-    fn emit_save_regs(&self) -> Vec<u32> {
-        let last_gp_reg_addr = ptr::addr_of!(self.gp[self.gp.len() - 1]) as u32;
-        let mut opcodes = Vec::new();
-        opcodes.extend(AluImm::mov32(Reg::LR, last_gp_reg_addr));
-        opcodes.extend([LdrStrImm::str_offset_al(Reg::SP, Reg::LR, 4), LdmStm::push_post(RegReserve::gp(), Reg::LR, Cond::AL)]);
-        opcodes
-    }
-
-    fn emit_restore_regs(&self, thread_regs: &ThreadRegs) -> Vec<u32> {
-        let gp_reg_addr = ptr::addr_of!(self.gp[0]) as u32;
-        let cpsr_addr = thread_regs.get_reg(Reg::CPSR) as *const _ as u32;
-        let mut opcodes = Vec::new();
-
-        opcodes.extend(AluImm::mov32(Reg::SP, cpsr_addr));
-        opcodes.push(LdrStrImm::ldr_al(Reg::R0, Reg::SP));
-        opcodes.push(Msr::cpsr_flags(Reg::R0, Cond::AL));
-
-        opcodes.extend(AluImm::mov32(Reg::SP, gp_reg_addr));
-        opcodes.extend([LdmStm::pop_post_al(RegReserve::gp()), LdrStrImm::ldr_al(Reg::SP, Reg::SP)]);
-        opcodes
-    }
-}
-
-#[derive(Default)]
-#[repr(C)]
-pub struct HostRegs {
-    sp: u32,
-    lr: u32,
-}
-
-impl HostRegs {
-    fn get_sp_addr(&self) -> u32 {
-        ptr::addr_of!(self.sp) as _
-    }
-
-    fn get_lr_addr(&self) -> u32 {
-        ptr::addr_of!(self.lr) as _
-    }
-
-    fn emit_restore_sp(&self) -> Vec<u32> {
-        let mut opcodes = Vec::new();
-        opcodes.extend(AluImm::mov32(Reg::LR, self.get_sp_addr()));
-        opcodes.push(LdrStrImm::ldr_al(Reg::SP, Reg::LR));
-        opcodes
-    }
-}
-
 pub struct JitBuf {
     pub insts: Vec<InstInfo>,
-    pub emit_opcodes: Vec<u32>,
-    pub block_opcodes: Vec<u32>,
-    pub jit_addr_offsets: Vec<u16>,
     pub insts_cycle_counts: Vec<u16>,
-    pub local_branches: Vec<(u32, u32)>,
+    pub current_index: usize,
+    pub current_pc: u32,
 }
 
 impl JitBuf {
     fn new() -> Self {
         JitBuf {
             insts: Vec::new(),
-            emit_opcodes: Vec::new(),
-            block_opcodes: Vec::new(),
-            jit_addr_offsets: Vec::new(),
             insts_cycle_counts: Vec::new(),
-            local_branches: Vec::new(),
+            current_index: 0,
+            current_pc: 0,
         }
     }
 
     fn clear_all(&mut self) {
         self.insts.clear();
-        self.block_opcodes.clear();
-        self.jit_addr_offsets.clear();
         self.insts_cycle_counts.clear();
-        self.local_branches.clear();
+    }
+
+    pub fn current_inst(&self) -> &InstInfo {
+        &self.insts[self.current_index]
+    }
+
+    pub fn current_inst_mut(&mut self) -> &mut InstInfo {
+        &mut self.insts[self.current_index]
     }
 }
 
@@ -133,12 +75,8 @@ impl JitRuntimeData {
         instance
     }
 
-    pub fn get_branch_out_addr(&self) -> *const u32 {
+    pub fn get_branch_out_pc_addr(&self) -> *const u32 {
         ptr::addr_of!(self.branch_out_pc)
-    }
-
-    pub fn emit_get_branch_out_addr(&self, dest: Reg) -> Vec<u32> {
-        AluImm::mov32(dest, self.get_branch_out_addr() as u32)
     }
 
     pub const fn get_total_cycles_offset() -> u8 {
@@ -153,159 +91,21 @@ impl JitRuntimeData {
 pub struct JitAsm<'a, const CPU: CpuType> {
     pub emu: &'a mut Emu,
     pub jit_buf: JitBuf,
-    pub host_regs: Box<HostRegs>,
     pub runtime_data: JitRuntimeData,
-    pub breakin_addr: u32,
-    pub breakout_addr: u32,
-    pub breakout_skip_save_regs_addr: u32,
-    pub breakin_thumb_addr: u32,
-    pub breakout_thumb_addr: u32,
-    pub breakout_skip_save_regs_thumb_addr: u32,
-    pub restore_host_opcodes: Vec<u32>,
-    pub restore_guest_opcodes: Vec<u32>,
-    pub restore_host_thumb_opcodes: Vec<u32>,
-    pub restore_guest_thumb_opcodes: Vec<u32>,
-    pub block_asm_buf: BlockAsmBuf,
-    debug_regs: DebugRegs,
+    pub block_asm_buf: UnsafeCell<BlockAsmBuf>,
+    pub host_sp: u32,
 }
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     #[inline(never)]
     pub fn new(emu: &'a mut Emu) -> Self {
-        let mut instance = {
-            let host_regs = Box::<HostRegs>::default();
-
-            let restore_host_opcodes = {
-                let mut opcodes = Vec::new();
-                // Save guest
-                opcodes.extend(&get_regs!(emu, CPU).save_regs_opcodes);
-                // Restore host sp
-                opcodes.extend(host_regs.emit_restore_sp());
-                opcodes.shrink_to_fit();
-                opcodes
-            };
-
-            let restore_guest_opcodes = {
-                let mut opcodes = Vec::new();
-                // Restore guest
-                opcodes.push(AluShiftImm::mov_al(Reg::LR, Reg::SP));
-                opcodes.extend(&get_regs!(emu, CPU).restore_regs_opcodes);
-                opcodes.shrink_to_fit();
-                opcodes
-            };
-
-            let restore_host_thumb_opcodes = {
-                let mut opcodes = Vec::new();
-                // Save guest
-                opcodes.extend(&get_regs!(emu, CPU).save_regs_thumb_opcodes);
-
-                // Restore host sp
-                opcodes.extend(host_regs.emit_restore_sp());
-                opcodes.shrink_to_fit();
-                opcodes
-            };
-
-            let restore_guest_thumb_opcodes = {
-                let mut opcodes = Vec::new();
-                // Restore guest
-                opcodes.push(AluShiftImm::mov_al(Reg::LR, Reg::SP));
-                opcodes.extend(&get_regs!(emu, CPU).restore_regs_thumb_opcodes);
-                opcodes.shrink_to_fit();
-                opcodes
-            };
-
-            JitAsm {
-                emu,
-                jit_buf: JitBuf::new(),
-                host_regs,
-                runtime_data: JitRuntimeData::new(),
-                breakin_addr: 0,
-                breakout_addr: 0,
-                breakout_skip_save_regs_addr: 0,
-                breakin_thumb_addr: 0,
-                breakout_thumb_addr: 0,
-                breakout_skip_save_regs_thumb_addr: 0,
-                restore_host_opcodes,
-                restore_guest_opcodes,
-                restore_host_thumb_opcodes,
-                restore_guest_thumb_opcodes,
-                block_asm_buf: BlockAsmBuf::new(),
-                debug_regs: DebugRegs::default(),
-            }
-        };
-
-        get_jit_mut!(instance.emu).open();
-        {
-            let jit_opcodes = &mut instance.jit_buf.emit_opcodes;
-            {
-                // Common function to enter guest (breakin)
-                // Save lr to return to this function
-                jit_opcodes.extend(&AluImm::mov32(Reg::R1, instance.host_regs.get_lr_addr()));
-                jit_opcodes.extend(&[
-                    LdrStrImm::str(4, Reg::R0, Reg::SP, false, false, false, true, Cond::AL), // Save actual function entry
-                    LdrStrImm::str_al(Reg::LR, Reg::R1),                                      // Save host lr
-                    AluShiftImm::mov_al(Reg::LR, Reg::SP),                                    // Keep host sp in lr
-                ]);
-                // Restore guest
-                let guest_restore_index = jit_opcodes.len();
-                jit_opcodes.extend(&get_regs!(instance.emu, CPU).restore_regs_opcodes);
-
-                jit_opcodes.push(LdrStrImm::ldr_sub_offset_al(Reg::PC, Reg::LR, 4));
-
-                instance.breakin_addr = get_jit_mut!(instance.emu).insert_common(jit_opcodes);
-
-                let restore_regs_thumb_opcodes = &get_regs!(instance.emu, CPU).restore_regs_thumb_opcodes;
-                jit_opcodes[guest_restore_index..guest_restore_index + restore_regs_thumb_opcodes.len()].copy_from_slice(restore_regs_thumb_opcodes);
-                instance.breakin_thumb_addr = get_jit_mut!(instance.emu).insert_common(jit_opcodes);
-
-                jit_opcodes.clear();
-            }
-
-            {
-                // Common function to exit guest (breakout)
-                // Save guest
-                jit_opcodes.extend(&get_regs!(instance.emu, CPU).save_regs_opcodes);
-
-                // Some emits already save regs themselves, add skip addr
-                let jit_skip_save_regs_offset = jit_opcodes.len() as u32;
-
-                let host_sp_addr = instance.host_regs.get_sp_addr();
-                jit_opcodes.extend(&AluImm::mov32(Reg::R0, host_sp_addr));
-                jit_opcodes.extend(&[
-                    LdrStrImm::ldr_al(Reg::SP, Reg::R0),           // Restore host SP
-                    LdrStrImm::ldr_offset_al(Reg::PC, Reg::R0, 4), // Restore host LR and write to PC
-                ]);
-
-                instance.breakout_addr = get_jit_mut!(instance.emu).insert_common(jit_opcodes);
-                instance.breakout_skip_save_regs_addr = instance.breakout_addr + (jit_skip_save_regs_offset << 2);
-
-                jit_opcodes.clear();
-            }
-
-            {
-                // Common thumb function to exit guest (breakout)
-                // Save guest
-                jit_opcodes.extend(&get_regs!(instance.emu, CPU).save_regs_thumb_opcodes);
-
-                // Some emits already save regs themselves, add skip addr
-                let jit_skip_save_regs_offset = jit_opcodes.len() as u32;
-
-                let host_sp_addr = instance.host_regs.get_sp_addr();
-                jit_opcodes.extend(&AluImm::mov32(Reg::R0, host_sp_addr));
-                jit_opcodes.extend(&[
-                    LdrStrImm::ldr_al(Reg::SP, Reg::R0),           // Restore host SP
-                    LdrStrImm::ldr_offset_al(Reg::PC, Reg::R0, 4), // Restore host LR and write to PC
-                ]);
-
-                instance.breakout_thumb_addr = get_jit_mut!(instance.emu).insert_common(jit_opcodes);
-                instance.breakout_skip_save_regs_thumb_addr = instance.breakout_thumb_addr + (jit_skip_save_regs_offset << 2);
-
-                jit_opcodes.clear();
-            }
+        JitAsm {
+            emu,
+            jit_buf: JitBuf::new(),
+            runtime_data: JitRuntimeData::new(),
+            block_asm_buf: UnsafeCell::new(BlockAsmBuf::new()),
+            host_sp: 0,
         }
-        get_jit_mut!(instance.emu).close();
-
-        instance
     }
 
     #[inline(never)]
@@ -326,13 +126,14 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 };
 
                 if let Some(last) = self.jit_buf.insts_cycle_counts.last() {
-                    assert!(u16::MAX - last >= inst_info.cycle as u16);
+                    assert!(u16::MAX - last >= inst_info.cycle as u16, "{CPU:?} {guest_pc:x} {inst_info:?}");
                     self.jit_buf.insts_cycle_counts.push(last + inst_info.cycle as u16);
                 } else {
                     self.jit_buf.insts_cycle_counts.push(inst_info.cycle as u16);
-                    assert!(self.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize)
+                    assert!(self.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{CPU:?} {guest_pc:x} {inst_info:?}")
                 }
 
+                // let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && inst_info.is_uncond_branch();
                 let is_uncond_branch = inst_info.is_uncond_branch();
                 let is_unknown = inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb;
 
@@ -345,54 +146,41 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
         }
 
+        // unsafe { BLOCK_LOG = guest_pc == 0x2380000 };
+
+        let thread_regs = get_regs!(self.emu, CPU);
+        let mut block_asm = unsafe { (*self.block_asm_buf.get()).new_asm(thread_regs) };
+        block_asm.restore_reg(Reg::CPSR);
+
         for i in 0..self.jit_buf.insts.len() {
-            let pc = ((i as u32) << if THUMB { 1 } else { 2 }) + guest_pc;
-            let opcodes_len = self.jit_buf.block_opcodes.len();
-            self.jit_buf.jit_addr_offsets.push((opcodes_len << 2) as u16);
+            self.jit_buf.current_index = i;
+            self.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
+            debug_println!("{CPU:?} emitting {:?}", self.jit_buf.current_inst());
+
+            // if self.jit_buf.current_pc == 0x38022ec {
+            //     block_asm.bkpt(1);
+            // }
 
             if THUMB {
-                self.emit_thumb(i, pc);
+                self.emit_thumb(&mut block_asm);
             } else {
-                self.emit(i, pc);
-            };
-
-            if DEBUG_LOG {
-                let inst_info = &self.jit_buf.insts[i];
-
-                let jit_asm_addr = self as *const _ as u32;
-                let opcodes = &mut self.jit_buf.emit_opcodes;
-
-                opcodes.extend(self.debug_regs.emit_save_regs());
-                opcodes.extend(self.host_regs.emit_restore_sp());
-
-                opcodes.extend(AluImm::mov32(Reg::R0, jit_asm_addr));
-                opcodes.extend(AluImm::mov32(Reg::R1, pc));
-                opcodes.extend(AluImm::mov32(Reg::R2, inst_info.opcode));
-
-                Self::emit_host_blx(debug_after_exec_op::<CPU> as *const () as _, opcodes);
-
-                opcodes.push(AluShiftImm::mov_al(Reg::LR, Reg::SP));
-                opcodes.extend(self.debug_regs.emit_restore_regs(get_regs!(self.emu, CPU)));
+                self.emit(&mut block_asm);
             }
 
-            self.jit_buf.block_opcodes.extend(&self.jit_buf.emit_opcodes);
-            self.jit_buf.emit_opcodes.clear();
+            if DEBUG_LOG {
+                block_asm.save_context();
+                block_asm.call3(debug_after_exec_op::<CPU> as _, self as *mut _ as u32, self.jit_buf.current_pc, self.jit_buf.current_inst().opcode);
+                block_asm.restore_reg(Reg::CPSR);
+            }
         }
 
-        for (pc, pc_to_branch) in &self.jit_buf.local_branches {
-            let base_index = ((pc - guest_pc) >> if THUMB { 1 } else { 2 }) as usize;
-            let branch_to_index = ((pc_to_branch - guest_pc) >> if THUMB { 1 } else { 2 }) as usize;
-            let base_offset = (self.jit_buf.jit_addr_offsets[base_index] >> 2) as usize;
-            let branch_to_offset = (self.jit_buf.jit_addr_offsets[branch_to_index] >> 2) as usize;
-
-            let branch_inst_offset = self.jit_buf.block_opcodes[base_offset..].iter().position(|opcode| *opcode == LOCAL_BRANCH_INDICATOR).unwrap();
-
-            let offset = branch_to_offset as i32 - (base_offset as i32 + branch_inst_offset as i32);
-
-            self.jit_buf.block_opcodes[base_offset + branch_inst_offset] = B::b(offset - 2, Cond::AL);
-        }
-
-        get_jit_mut!(self.emu).insert_block::<CPU, THUMB>(&self.jit_buf.block_opcodes, JitInsertArgs::new(guest_pc, self.jit_buf.insts_cycle_counts.clone()));
+        let opcodes = block_asm.finalize::<THUMB>(guest_pc);
+        // if unsafe { BLOCK_LOG } {
+        //     for opcode in &opcodes {
+        //         println!("0x{opcode:x},")
+        //     }
+        // }
+        get_jit_mut!(self.emu).insert_block::<CPU, THUMB>(&opcodes, JitInsertArgs::new(guest_pc, self.jit_buf.insts_cycle_counts.clone()));
 
         if DEBUG_LOG {
             let (jit_addr, _) = get_jit!(self.emu).get_jit_start_addr::<CPU, THUMB>(guest_pc).unwrap();
@@ -441,12 +229,14 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         get_mem_mut!(self.emu).current_jit_block_addr = jit_block_addr;
 
-        unsafe { enter_jit(jit_addr, self.host_regs.get_sp_addr(), if THUMB { self.breakin_thumb_addr } else { self.breakin_addr }) };
+        unsafe { enter_jit(jit_addr, ptr::addr_of_mut!(self.host_sp) as u32) };
 
         if DEBUG_LOG {
             assert_ne!(self.runtime_data.branch_out_pc, u32::MAX);
             assert_ne!(self.runtime_data.branch_out_total_cycles, 0);
         }
+
+        get_mem_mut!(self.emu).current_jit_block_addr = 0;
 
         let cycle_correction = {
             let regs = get_regs_mut!(self.emu, CPU);
@@ -472,7 +262,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 let (op, func) = lookup_opcode(opcode);
                 func(opcode, *op)
             };
-            debug_inst_info::<CPU>(None, get_regs!(self.emu, CPU), self.runtime_data.branch_out_pc, &format!("breakout\n\t{:?} {:?}", CPU, inst_info));
+            debug_inst_info::<CPU>(get_regs!(self.emu, CPU), self.runtime_data.branch_out_pc, &format!("breakout\n\t{:?} {:?}", CPU, inst_info));
         }
 
         executed_cycles as u16
@@ -480,33 +270,23 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 }
 
 #[naked]
-unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_addr: u32, breakin_addr: u32) {
-    asm!("push {{r4-r11,lr}}", "str sp, [r1]", "blx r2", "pop {{r4-r11,pc}}", options(noreturn));
+unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_ptr: u32) {
+    #[rustfmt::skip]
+    asm!(
+        "push {{r4-r11,lr}}",
+        "str sp, [r1]",
+        "blx r0",
+        "pop {{r4-r11,pc}}",
+        options(noreturn)
+    );
 }
 
-fn debug_inst_info<const CPU: CpuType>(debug_regs: Option<&DebugRegs>, regs: &ThreadRegs, pc: u32, append: &str) {
+fn debug_inst_info<const CPU: CpuType>(regs: &ThreadRegs, pc: u32, append: &str) {
     let mut output = "Executed ".to_owned();
 
-    match debug_regs {
-        Some(debug_regs) => {
-            for reg in RegReserve::gp_thumb() {
-                output += &format!("{:?}: {:x}, ", reg, debug_regs.gp[reg as usize]);
-            }
-            for reg in (!RegReserve::gp_thumb()).get_gp_regs() {
-                output += &format!("{:?}: {:x}, ", reg, if regs.is_thumb() { *regs.get_reg(reg) } else { debug_regs.gp[reg as usize] });
-            }
-            output += &format!("{:?}: {:x}, ", Reg::SP, debug_regs.sp);
-            for reg in reg_reserve!(Reg::LR, Reg::PC, Reg::CPSR, Reg::SPSR) {
-                let value = if reg != Reg::PC { *regs.get_reg(reg) } else { pc };
-                output += &format!("{:?}: {:x}, ", reg, value);
-            }
-        }
-        None => {
-            for reg in reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR, Reg::SPSR) + RegReserve::gp() {
-                let value = if reg != Reg::PC { *regs.get_reg(reg) } else { pc };
-                output += &format!("{:?}: {:x}, ", reg, value);
-            }
-        }
+    for reg in reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR, Reg::SPSR) + RegReserve::gp() {
+        let value = if reg != Reg::PC { *regs.get_reg(reg) } else { pc };
+        output += &format!("{:?}: {:x}, ", reg, value);
     }
 
     println!("{:?} {}{}", CPU, output, append);
@@ -524,5 +304,5 @@ unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(asm: *mut JitAsm<CP
         }
     };
 
-    debug_inst_info::<CPU>(Some(&asm.debug_regs), get_regs!(asm.emu, CPU), pc, &format!("\n\t{:?} {:?}", CPU, inst_info));
+    debug_inst_info::<CPU>(get_regs!(asm.emu, CPU), pc, &format!("\n\t{:?} {:?}", CPU, inst_info));
 }

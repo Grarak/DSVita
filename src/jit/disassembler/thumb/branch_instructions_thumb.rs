@@ -7,13 +7,13 @@ mod branch_thumb_ops {
     #[inline]
     pub fn bx_reg_t(opcode: u16, op: Op) -> InstInfoThumb {
         let op0 = Reg::from(((opcode >> 3) & 0xF) as u8);
-        InstInfoThumb::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), reg_reserve!(), 1)
+        InstInfoThumb::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), reg_reserve!(Reg::CPSR), 1)
     }
 
     #[inline]
     pub fn blx_reg_t(opcode: u16, op: Op) -> InstInfoThumb {
         let op0 = Reg::from(((opcode >> 3) & 0xF) as u8);
-        InstInfoThumb::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), reg_reserve!(), 1)
+        InstInfoThumb::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), reg_reserve!(Reg::CPSR), 1)
     }
 
     #[inline]
@@ -113,7 +113,7 @@ mod branch_thumb_ops {
     #[inline]
     pub fn blx_off_t(opcode: u16, op: Op) -> InstInfoThumb {
         let op0 = (opcode & 0x7FF) << 1; // * 2 (in steps of 2)
-        InstInfoThumb::new(opcode, op, Operands::new_1(Operand::imm(op0 as u32)), reg_reserve!(), reg_reserve!(Reg::LR), 1)
+        InstInfoThumb::new(opcode, op, Operands::new_1(Operand::imm(op0 as u32)), reg_reserve!(), reg_reserve!(Reg::LR, Reg::CPSR), 1)
     }
 
     #[inline]

@@ -3,8 +3,9 @@ use crate::jit::inst_info_thumb::InstInfoThumb;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
 use bilge::prelude::*;
+use std::fmt::{Debug, Formatter};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct InstInfo {
     pub opcode: u32,
     pub op: Op,
@@ -41,7 +42,7 @@ impl InstInfo {
         self.opcode = (self.opcode & !(0xF << 28)) | ((cond as u32) << 28);
     }
 
-    pub fn assemble(self) -> u32 {
+    pub fn assemble(&self) -> u32 {
         let operands = self.operands();
         match self.op {
             op if op.is_alu3_imm() || op.is_alu2_op0_imm() => {
@@ -151,7 +152,8 @@ impl InstInfo {
             | Op::Smulbt
             | Op::Smultb
             | Op::Smlalbb
-            | Op::Smlaltb => {
+            | Op::Smlaltb
+            | Op::Smlalbt => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();
@@ -165,7 +167,7 @@ impl InstInfo {
                 }
                 u32::from(opcode)
             }
-            Op::Smull | Op::Smulls | Op::Smlal | Op::Smlals | Op::Umull | Op::Umulls | Op::Umlal => {
+            Op::Smull | Op::Smulls | Op::Smlal | Op::Smlals | Op::Umull | Op::Umulls | Op::Umlal | Op::Umlals => {
                 let mut opcode = MulReg::from(self.opcode);
                 let reg0 = *operands[0].as_reg_no_shift().unwrap();
                 let reg1 = *operands[1].as_reg_no_shift().unwrap();
@@ -210,6 +212,16 @@ impl InstInfo {
     }
 }
 
+impl Debug for InstInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "InstInfo {{ {:x}, {:?}, {:?} {:?}, src: {:?}, out: {:?}, cycles: {} }}",
+            self.opcode, self.cond, self.op, self.operands, self.src_regs, self.out_regs, self.cycle
+        )
+    }
+}
+
 impl From<InstInfoThumb> for InstInfo {
     fn from(value: InstInfoThumb) -> Self {
         InstInfo {
@@ -224,7 +236,7 @@ impl From<InstInfoThumb> for InstInfo {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct Operands {
     values: [Operand; 4],
     num: u8,
@@ -264,7 +276,17 @@ impl Operands {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+impl Debug for Operands {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut debug_list = f.debug_list();
+        for i in 0..self.num {
+            debug_list.entry(&self.values[i as usize]);
+        }
+        debug_list.finish()
+    }
+}
+
+#[derive(Copy, Clone)]
 pub enum Operand {
     Reg { reg: Reg, shift: Option<Shift> },
     Imm(u32),
@@ -327,6 +349,19 @@ impl Operand {
         match self {
             Operand::Imm(imm) => Some(imm),
             _ => None,
+        }
+    }
+}
+
+impl Debug for Operand {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Operand::Reg { reg, shift } => match shift {
+                None => write!(f, "Reg({reg:?})"),
+                Some(shift) => write!(f, "Reg {{ {reg:?} {shift:?} }}"),
+            },
+            Operand::Imm(imm) => write!(f, "Imm({imm:x})"),
+            Operand::None => write!(f, "None"),
         }
     }
 }

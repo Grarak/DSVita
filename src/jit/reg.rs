@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Formatter};
 use std::{iter, mem, ops};
 
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq, PartialOrd)]
 #[repr(u8)]
 pub enum Reg {
     R0 = 0,
@@ -22,14 +22,12 @@ pub enum Reg {
     PC = 15,
     CPSR = 16,
     SPSR = 17,
+    #[default]
     None = 18,
 }
 
 const GP_REGS_BITMASK: u32 = 0x1FFF;
 const GP_THUMB_REGS_BITMASK: u32 = 0xFF;
-const EMULATED_REGS_BITMASK: u32 = (1 << Reg::LR as u8) | (1 << Reg::PC as u8);
-pub const FIRST_EMULATED_REG: Reg = Reg::LR;
-pub const EMULATED_REGS_COUNT: usize = u32::count_ones(EMULATED_REGS_BITMASK) as usize;
 
 impl From<u8> for Reg {
     fn from(value: u8) -> Self {
@@ -39,14 +37,6 @@ impl From<u8> for Reg {
 }
 
 impl Reg {
-    pub const fn is_emulated(self) -> bool {
-        (EMULATED_REGS_BITMASK & (1 << self as u8)) != 0
-    }
-
-    pub fn is_high_gp_reg(self) -> bool {
-        !self.is_emulated() && !RegReserve::gp_thumb().is_reserved(self) && self != Reg::SP
-    }
-
     pub const fn is_call_preserved(self) -> bool {
         (self as u8 >= Reg::R4 as u8 && self as u8 <= Reg::R11 as u8) || self as u8 == Reg::SP as u8
     }
@@ -119,14 +109,6 @@ impl RegReserve {
         u32::count_ones(self.0) as _
     }
 
-    pub fn emulated_regs_count(&self) -> u8 {
-        u32::count_ones(self.0 & EMULATED_REGS_BITMASK) as _
-    }
-
-    pub fn get_emulated_regs(&self) -> RegReserve {
-        RegReserve(self.0 & EMULATED_REGS_BITMASK)
-    }
-
     pub fn get_gp_regs(&self) -> RegReserve {
         RegReserve(self.0 & GP_REGS_BITMASK)
     }
@@ -145,17 +127,6 @@ impl RegReserve {
         for i in Reg::R0 as u8..Reg::SPSR as u8 {
             let reg = Reg::from(i);
             if self.is_reserved(reg) {
-                self.0 &= !(1 << i);
-                return Some(reg);
-            }
-        }
-        None
-    }
-
-    pub fn pop_call_reserved(&mut self) -> Option<Reg> {
-        for i in Reg::R0 as u8..Reg::SPSR as u8 {
-            let reg = Reg::from(i);
-            if reg.is_call_preserved() && self.is_reserved(reg) {
                 self.0 &= !(1 << i);
                 return Some(reg);
             }
@@ -288,17 +259,14 @@ impl From<u32> for RegReserve {
 
 impl Debug for RegReserve {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut str = "".to_owned();
-        for i in Reg::R0 as u8..Reg::SPSR as u8 {
+        let mut debug_set = f.debug_set();
+        for i in Reg::R0 as u8..Reg::None as u8 {
             let reg = Reg::from(i);
             if self.is_reserved(reg) {
-                str += &format!("{:?}, ", reg);
+                debug_set.entry(&reg);
             }
         }
-        let mut chars = str.chars();
-        chars.next_back();
-        chars.next_back();
-        f.write_str(chars.as_str())
+        debug_set.finish()
     }
 }
 

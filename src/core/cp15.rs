@@ -145,10 +145,10 @@ impl Cp15 {
         }
     }
 
-    pub fn read(&self, reg: u32, value: &mut u32) {
+    pub fn read(&self, reg: u32) -> u32 {
         debug_println!("Reading from cp15 reg {:x}", reg);
 
-        *value = match reg {
+        match reg {
             0x000000 => 0x41059461, // Main ID
             0x000001 => 0x0F0D2112, // Cache type
             0x010000 => self.control,

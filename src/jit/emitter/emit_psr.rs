@@ -1,59 +1,56 @@
-use crate::core::emu::{get_cm_mut, get_regs, get_regs_mut};
 use crate::core::CpuType;
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
+use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::{BlockOperand, BlockReg};
 use crate::jit::inst_info::Operand;
 use crate::jit::inst_threag_regs_handler::{register_set_cpsr_checked, register_set_spsr_checked};
 use crate::jit::jit_asm::JitAsm;
+use crate::jit::op::Op;
 use crate::jit::reg::Reg;
-use crate::jit::Op;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
-    pub fn emit_msr(&mut self, buf_index: usize, _: u32) {
-        let regs_addr = get_regs_mut!(self.emu, CPU) as *mut _ as _;
-        let cm_addr = get_cm_mut!(self.emu) as *mut _ as _;
-        let op = self.jit_buf.insts[buf_index].op;
+    pub fn emit_msr(&mut self, block_asm: &mut BlockAsm) {
+        let jit_asm_addr = self as *mut _ as u32;
+        let inst_info = self.jit_buf.current_inst();
 
-        self.jit_buf.emit_opcodes.extend(self.emit_call_host_func(
-            |asm, opcodes| {
-                let inst_info = &asm.jit_buf.insts[buf_index];
+        let flags = (inst_info.opcode >> 16) & 0xF;
 
-                match &inst_info.operands()[0] {
-                    Operand::Reg { reg, .. } => {
-                        if *reg != Reg::R2 {
-                            opcodes.push(AluShiftImm::mov_al(Reg::R2, *reg));
-                        }
-                    }
-                    Operand::Imm(imm) => {
-                        opcodes.extend(AluImm::mov32(Reg::R2, *imm));
-                    }
-                    _ => unreachable!(),
-                }
+        let func = match inst_info.op {
+            Op::MsrRc | Op::MsrIc => register_set_cpsr_checked::<CPU> as _,
+            Op::MsrRs | Op::MsrIs => register_set_spsr_checked::<CPU> as _,
+            _ => unreachable!(),
+        };
 
-                let flags = (inst_info.opcode >> 16) & 0xF;
-                opcodes.push(AluImm::mov_al(Reg::R3, flags as u8));
-            },
-            &[Some(regs_addr), Some(cm_addr), None, None],
-            match op {
-                Op::MsrRc | Op::MsrIc => register_set_cpsr_checked as _,
-                Op::MsrRs | Op::MsrIs => register_set_spsr_checked as _,
+        block_asm.save_context();
+        block_asm.call3(
+            func,
+            jit_asm_addr,
+            match inst_info.operands()[0] {
+                Operand::Reg { reg, shift: None } => BlockOperand::from(reg),
+                Operand::Imm(imm) => BlockOperand::from(imm),
                 _ => unreachable!(),
             },
-        ));
+            flags,
+        );
+        block_asm.msr_cpsr(BlockReg::Fixed(Reg::R0));
+        block_asm.restore_reg(Reg::R8);
+        block_asm.restore_reg(Reg::R9);
+        block_asm.restore_reg(Reg::R10);
+        block_asm.restore_reg(Reg::R11);
+        block_asm.restore_reg(Reg::R12);
+        block_asm.restore_reg(Reg::SP);
+        block_asm.restore_reg(Reg::LR);
     }
 
-    pub fn emit_mrs(&mut self, buf_index: usize, _: u32) {
-        let inst_info = &self.jit_buf.insts[buf_index];
-
-        let opcodes = &mut self.jit_buf.emit_opcodes;
-
-        let op0 = inst_info.operands()[0].as_reg_no_shift().unwrap();
-        opcodes.extend(get_regs!(self.emu, CPU).emit_get_reg(
+    pub fn emit_mrs(&mut self, block_asm: &mut BlockAsm) {
+        let op = self.jit_buf.current_inst().op;
+        let op0 = self.jit_buf.current_inst().operands()[0].as_reg_no_shift().unwrap();
+        block_asm.mov(
             *op0,
-            match inst_info.op {
+            match op {
                 Op::MrsRc => Reg::CPSR,
                 Op::MrsRs => Reg::SPSR,
                 _ => todo!(),
             },
-        ));
+        );
     }
 }

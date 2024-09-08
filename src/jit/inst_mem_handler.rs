@@ -5,6 +5,8 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::MemoryAmount;
 use crate::DEBUG_LOG_BRANCH_OUT;
 use handler::*;
+use std::arch::asm;
+use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 
 mod handler {
@@ -163,31 +165,29 @@ macro_rules! imm_breakout {
         if crate::DEBUG_LOG_BRANCH_OUT {
             $asm.runtime_data.branch_out_pc = $pc;
         }
-        let (pre_cycles_sum, inst_cycle_count) = crate::core::emu::get_jit!($asm.emu)
-            .get_cycle_counts_unchecked::<$thumb>($pc, crate::core::emu::get_mem!($asm.emu).current_jit_block_addr);
+        let (pre_cycles_sum, inst_cycle_count) = crate::core::emu::get_jit!($asm.emu).get_cycle_counts_unchecked::<$thumb>($pc, crate::core::emu::get_mem!($asm.emu).current_jit_block_addr);
         $asm.runtime_data.branch_out_total_cycles = pre_cycles_sum + inst_cycle_count as u16;
         crate::core::emu::get_regs_mut!($asm.emu, CPU).pc = $pc + if $thumb { 3 } else { 4 };
         crate::core::emu::get_mem_mut!($asm.emu).breakout_imm = false;
-        if $thumb {
-            std::arch::asm!("bx {}", in(reg) $asm.breakout_skip_save_regs_thumb_addr);
-        } else {
-            std::arch::asm!("bx {}", in(reg) $asm.breakout_skip_save_regs_addr);
-        }
+        std::arch::asm!(
+            "mov sp, {}",
+            "pop {{pc}}",
+            in(reg) $asm.host_sp - 4
+        );
         std::hint::unreachable_unchecked();
     }};
 }
 pub(super) use imm_breakout;
 
 pub unsafe extern "C" fn inst_mem_handler<const CPU: CpuType, const THUMB: bool, const WRITE: bool, const AMOUNT: MemoryAmount, const SIGNED: bool, const MMU: bool>(
+    asm: *mut JitAsm<CPU>,
     addr: u32,
     op0: *mut u32,
     pc: u32,
-    asm: *mut JitAsm<CPU>,
 ) {
-    let asm = asm.as_mut().unwrap_unchecked();
-    handle_request::<CPU, WRITE, AMOUNT, SIGNED, MMU>(op0.as_mut().unwrap_unchecked(), addr, asm.emu);
-    if WRITE && unlikely(get_mem!(asm.emu).breakout_imm) {
-        imm_breakout!(asm, pc, THUMB);
+    handle_request::<CPU, WRITE, AMOUNT, SIGNED, MMU>(op0.as_mut().unwrap_unchecked(), addr, (*asm).emu);
+    if WRITE && unlikely(get_mem!((*asm).emu).breakout_imm) {
+        imm_breakout!((*asm), pc, THUMB);
     }
 }
 
@@ -201,39 +201,38 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     const DECREMENT: bool,
     const HAS_PC: bool,
 >(
-    pc: u32,
-    op0_rlist: u32,
-    total_cycles: u16,
     asm: *mut JitAsm<CPU>,
+    op0_rlist: u32,
+    pc: u32,
+    total_cycles: u16,
 ) {
-    let asm = asm.as_mut().unwrap_unchecked();
-    handle_multiple_request::<CPU, THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(pc, (op0_rlist & 0xFFFF) as u16, (op0_rlist >> 16) as u8, asm.emu);
+    handle_multiple_request::<CPU, THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(pc, (op0_rlist & 0xFFFF) as u16, (op0_rlist >> 16) as u8, (*asm).emu);
     if !WRITE && HAS_PC {
         if DEBUG_LOG_BRANCH_OUT {
-            asm.runtime_data.branch_out_pc = pc;
+            (*asm).runtime_data.branch_out_pc = pc;
         }
-        asm.runtime_data.branch_out_total_cycles = total_cycles;
-        if THUMB {
-            if CPU == ARM7 {
-                get_regs_mut!(asm.emu, CPU).pc |= 1;
+        (*asm).runtime_data.branch_out_total_cycles = total_cycles;
+        if CPU == ARM7 {
+            if THUMB {
+                get_regs_mut!((*asm).emu, CPU).pc |= 1;
+            } else {
+                get_regs_mut!((*asm).emu, CPU).pc &= !1;
             }
-            std::arch::asm!("bx {}", in(reg) asm.breakout_skip_save_regs_thumb_addr);
-        } else {
-            if CPU == ARM7 {
-                get_regs_mut!(asm.emu, CPU).pc &= !1;
-            }
-            std::arch::asm!("bx {}", in(reg) asm.breakout_skip_save_regs_addr);
         }
-        std::hint::unreachable_unchecked();
-    } else if WRITE && unlikely(get_mem!(asm.emu).breakout_imm) {
-        imm_breakout!(asm, pc, THUMB);
+        asm!(
+            "mov sp, {}",
+            "pop {{pc}}",
+            in(reg) (*asm).host_sp - 4
+        );
+        unreachable_unchecked();
+    } else if WRITE && unlikely(get_mem!((*asm).emu).breakout_imm) {
+        imm_breakout!((*asm), pc, THUMB);
     }
 }
 
-pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: MemoryAmount>(regs: u32, pc: u32, asm: *mut JitAsm<CPU>) {
-    let asm = asm.as_mut().unwrap_unchecked();
-    handle_swp_request::<CPU, AMOUNT>(regs, asm.emu);
-    if unlikely(get_mem!(asm.emu).breakout_imm) {
-        imm_breakout!(asm, pc, false);
+pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: MemoryAmount>(asm: *mut JitAsm<CPU>, regs: u32, pc: u32) {
+    handle_swp_request::<CPU, AMOUNT>(regs, (*asm).emu);
+    if unlikely(get_mem!((*asm).emu).breakout_imm) {
+        imm_breakout!((*asm), pc, false);
     }
 }
