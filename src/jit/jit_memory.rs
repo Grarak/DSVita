@@ -323,60 +323,62 @@ impl JitMemory {
     pub fn invalidate_block<const CPU: CpuType>(&mut self, guest_addr: u32, size: usize, current_jit_block: u32) -> bool {
         let mut should_breakout = false;
 
-        let mut invalidate = |jit_lookup: &mut [JitLookup], jit_blocks: &mut SimpleTreeMap<u32, Box<JitBlock>>, addr_shift: u8| {
-            let mut invalidated_size = 0;
-            while invalidated_size <= size {
-                let lookup_entry = (guest_addr >> addr_shift) as usize + invalidated_size;
-                let lookup_entry = lookup_entry % jit_lookup.len();
-                let jit_block_ptr = jit_lookup[lookup_entry].jit_block;
-                if unlikely(!jit_block_ptr.is_null()) {
-                    let jit_block = unsafe { jit_block_ptr.as_ref().unwrap_unchecked() };
+        macro_rules! invalidate {
+            ($lookups:expr, $blocks:expr, $addr_shift:expr) => {{
+                let mut invalidated_size = 0;
+                while invalidated_size <= size {
+                    let lookup_entry = (guest_addr >> $addr_shift) as usize + invalidated_size;
+                    let lookup_entry = lookup_entry % $lookups.len();
+                    let jit_block_ptr = $lookups[lookup_entry].jit_block;
+                    if unlikely(!jit_block_ptr.is_null()) {
+                        let jit_block = unsafe { jit_block_ptr.as_ref().unwrap_unchecked() };
 
-                    let start_lookup_entry = (jit_block.guest_pc >> addr_shift) as usize;
-                    let start_lookup_entry = start_lookup_entry % jit_lookup.len();
-                    jit_lookup[start_lookup_entry..start_lookup_entry + jit_block.cycles.len()].fill(JitLookup::default());
+                        let start_lookup_entry = (jit_block.guest_pc >> $addr_shift) as usize;
+                        let start_lookup_entry = start_lookup_entry % $lookups.len();
+                        $lookups[start_lookup_entry..start_lookup_entry + jit_block.cycles.len()].fill(JitLookup::default());
 
-                    invalidated_size += jit_block.cycles.len() << addr_shift;
+                        invalidated_size += jit_block.cycles.len() << $addr_shift;
 
-                    let removed_block = jit_blocks.remove(&jit_block.guest_pc).unwrap();
-                    if unlikely(jit_block_ptr as u32 == current_jit_block) {
-                        should_breakout = true;
-                        self.invalidated_block = removed_block.1;
+                        let removed_block = $blocks.remove(&jit_block.guest_pc).unwrap();
+                        if unlikely(jit_block_ptr as u32 == current_jit_block) {
+                            should_breakout = true;
+                            self.invalidated_block = removed_block.1;
+                        }
+                    } else {
+                        invalidated_size += 1;
                     }
-                } else {
-                    invalidated_size += 1;
                 }
-            }
-        };
+            }};
+        }
 
         match CPU {
             ARM9 => match guest_addr & 0xFF000000 {
                 regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => {
-                    invalidate(self.jit_lookups.itcm.deref_mut(), &mut self.jit_blocks, 2);
-                    invalidate(self.jit_lookups.itcm_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
+                    invalidate!(self.jit_lookups.itcm, &mut self.jit_blocks, 2);
+                    invalidate!(self.jit_lookups.itcm_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
                 }
                 regions::MAIN_MEMORY_OFFSET => {
-                    invalidate(self.jit_lookups.main_arm7.deref_mut(), &mut self.jit_blocks, 2);
-                    invalidate(self.jit_lookups.main_arm7_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
-                    invalidate(self.jit_lookups.main_arm9.deref_mut(), &mut self.jit_blocks, 2);
-                    invalidate(self.jit_lookups.main_arm9_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
+                    invalidate!(self.jit_lookups.main_arm7.deref_mut(), &mut self.jit_blocks, 2);
+                    invalidate!(self.jit_lookups.main_arm7_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
+                    invalidate!(self.jit_lookups.main_arm9.deref_mut(), &mut self.jit_blocks, 2);
+                    invalidate!(self.jit_lookups.main_arm9_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
                 }
                 _ => {}
             },
             ARM7 => match guest_addr & 0xFF000000 {
                 regions::MAIN_MEMORY_OFFSET => {
-                    invalidate(self.jit_lookups.main_arm7.deref_mut(), &mut self.jit_blocks, 2);
-                    invalidate(self.jit_lookups.main_arm7_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
-                    invalidate(self.jit_lookups.main_arm9.deref_mut(), &mut self.jit_blocks, 2);
-                    invalidate(self.jit_lookups.main_arm9_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
+                    invalidate!(self.jit_lookups.main_arm7.deref_mut(), &mut self.jit_blocks, 2);
+                    invalidate!(self.jit_lookups.main_arm7_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
+                    invalidate!(self.jit_lookups.main_arm9.deref_mut(), &mut self.jit_blocks, 2);
+                    invalidate!(self.jit_lookups.main_arm9_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
                 }
                 regions::SHARED_WRAM_OFFSET => {
-                    invalidate(self.jit_lookups.wram.deref_mut(), &mut self.jit_blocks, 2);
-                    invalidate(self.jit_lookups.wram_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
+                    invalidate!(self.jit_lookups.wram.deref_mut(), &mut self.jit_blocks, 2);
+                    invalidate!(self.jit_lookups.wram_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
                 }
                 regions::VRAM_OFFSET => {
-                    invalidate(self.jit_lookups.vram_arm7.deref_mut(), &mut self.jit_blocks, 2);
-                    invalidate(self.jit_lookups.vram_arm7_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
+                    invalidate!(self.jit_lookups.vram_arm7.deref_mut(), &mut self.jit_blocks, 2);
+                    invalidate!(self.jit_lookups.vram_arm7_thumb.deref_mut(), &mut self.jit_blocks_thumb, 1);
                 }
                 _ => {}
             },
