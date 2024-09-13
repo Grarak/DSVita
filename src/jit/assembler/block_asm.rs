@@ -363,8 +363,6 @@ impl<'a> BlockAsm<'a> {
                 args[3].map(|_| BlockReg::Fixed(Reg::R3)),
             ],
         });
-
-        // self.free_reg(func_reg);
     }
 
     pub fn bkpt(&mut self, id: u16) {
@@ -446,11 +444,9 @@ impl<'a> BlockAsm<'a> {
 
     // Convert guest pc with labels into labels
     fn resolve_labels(&mut self) {
-        let mut replace_labels_mapping = NoHashMap::<u16, (BlockLabel, Option<GuestPcInfo>)>::default();
-
-        let mut i = 0;
+        let mut previous_label_index = 0;
         let mut previous_label: Option<(BlockLabel, Option<GuestPcInfo>)> = None;
-        while i < self.buf.insts.len() {
+        for i in 0..self.buf.insts.len() {
             if let BlockInst::GuestPc(pc) = &self.buf.insts[i] {
                 if let Some(guest_label) = self.buf.guest_branches_mapping.get(pc) {
                     self.buf.insts[i] = BlockInst::Label {
@@ -463,17 +459,17 @@ impl<'a> BlockAsm<'a> {
             if let BlockInst::Label { label, guest_pc } = self.buf.insts[i] {
                 if let Some((p_label, p_guest_pc)) = previous_label {
                     let replace_guest_pc = p_guest_pc.or_else(|| guest_pc);
-                    replace_labels_mapping.insert(label.0, (p_label, replace_guest_pc));
                     previous_label = Some((p_label, replace_guest_pc));
-                    self.buf.insts.remove(i);
-                    continue;
+                    if let BlockInst::Label { guest_pc, .. } = &mut self.buf.insts[previous_label_index] {
+                        *guest_pc = replace_guest_pc;
+                    }
                 } else {
+                    previous_label_index = i;
                     previous_label = Some((label, guest_pc));
                 }
             } else {
                 previous_label = None
             }
-            i += 1;
         }
     }
 
@@ -622,30 +618,6 @@ impl<'a> BlockAsm<'a> {
         //         println!("{basic_block:?}");
         //     }
         // }
-
-        // Extend reg live ranges over all blocks for reg allocation
-        self.buf.reg_range_indicies.clear();
-        for (i, basic_block) in basic_blocks.iter().enumerate() {
-            for reg in basic_block.get_required_inputs().iter() {
-                let indices = self.buf.reg_range_indicies.get_mut(&reg);
-                match indices {
-                    None => {
-                        self.buf.reg_range_indicies.insert(reg, (i, 0));
-                    }
-                    Some((_, end)) => *end = i,
-                }
-            }
-        }
-        for (reg, (start, end)) in &self.buf.reg_range_indicies {
-            for i in *start..*end {
-                for range in &mut basic_blocks[i].regs_live_ranges {
-                    *range += *reg;
-                }
-            }
-        }
-        for basic_block in &mut basic_blocks {
-            basic_block.extend_reg_live_ranges(&mut self);
-        }
 
         // Try to collapse cond blocks into cond opcodes
         for i in 1..basic_blocks.len() {

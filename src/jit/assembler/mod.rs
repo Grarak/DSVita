@@ -331,7 +331,6 @@ pub struct BlockLabel(u16);
 pub struct BlockAsmBuf {
     pub insts: Vec<BlockInst>,
     pub guest_branches_mapping: NoHashMap<u32, BlockLabel>,
-    pub reg_range_indicies: NoHashMap<BlockReg, (usize, usize)>,
 }
 
 impl BlockAsmBuf {
@@ -339,7 +338,6 @@ impl BlockAsmBuf {
         BlockAsmBuf {
             insts: Vec::new(),
             guest_branches_mapping: NoHashMap::default(),
-            reg_range_indicies: NoHashMap::default(),
         }
     }
 

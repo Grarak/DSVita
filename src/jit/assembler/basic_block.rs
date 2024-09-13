@@ -223,26 +223,6 @@ impl BasicBlock {
         *self.used_regs.last_mut().unwrap() += required_outputs;
     }
 
-    pub fn extend_reg_live_ranges(&mut self, asm: &mut BlockAsm) {
-        asm.buf.reg_range_indicies.clear();
-        for (i, range) in self.regs_live_ranges.iter().enumerate() {
-            for reg in range.iter() {
-                let indices = asm.buf.reg_range_indicies.get_mut(&reg);
-                match indices {
-                    None => {
-                        asm.buf.reg_range_indicies.insert(reg, (i, 0));
-                    }
-                    Some((_, end)) => *end = i,
-                }
-            }
-        }
-        for (reg, (start, end)) in &asm.buf.reg_range_indicies {
-            for i in (*start + 1)..*end {
-                self.regs_live_ranges[i] += *reg;
-            }
-        }
-    }
-
     pub fn get_required_inputs(&self) -> &BlockRegSet {
         self.regs_live_ranges.first().unwrap()
     }
