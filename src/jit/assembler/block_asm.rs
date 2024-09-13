@@ -2,6 +2,7 @@ use crate::core::thread_regs::ThreadRegs;
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::basic_block::BasicBlock;
 use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp, GuestInstInfo, GuestPcInfo};
+use crate::jit::assembler::block_inst_list::BlockInstList;
 use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
 use crate::jit::assembler::block_reg_set::{block_reg_set, BlockRegSet};
 use crate::jit::assembler::{BlockAsmBuf, BlockInst, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, ANY_REG_LIMIT};
@@ -38,6 +39,7 @@ macro_rules! alu2_op0 {
 
 pub struct BlockAsm<'a> {
     pub buf: &'a mut BlockAsmBuf,
+    insts_link: BlockInstList,
     any_reg_count: u16,
     freed_any_regs: NoHashSet<u16>,
     label_count: u16,
@@ -64,6 +66,7 @@ impl<'a> BlockAsm<'a> {
         let tmp_func_call_reg = BlockReg::Any(Reg::SPSR as u16 + 6);
         let mut instance = BlockAsm {
             buf,
+            insts_link: BlockInstList::new(),
             // First couple any regs are reserved for guest mapping
             any_reg_count: Reg::SPSR as u16 + 7,
             freed_any_regs: NoHashSet::default(),
@@ -433,8 +436,8 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
-    fn resolve_io_in_basic_blocks(basic_block_to_resolve: usize, basic_blocks: &mut [BasicBlock]) {
-        basic_blocks[basic_block_to_resolve].init_resolve_io();
+    fn resolve_io_in_basic_blocks(&self, basic_block_to_resolve: usize, basic_blocks: &mut [BasicBlock]) {
+        basic_blocks[basic_block_to_resolve].init_resolve_io(self);
         let required_inputs = *basic_blocks[basic_block_to_resolve].get_required_inputs();
         for enter_block in basic_blocks[basic_block_to_resolve].enter_blocks.clone() {
             basic_blocks[enter_block].add_required_outputs(required_inputs);
@@ -444,9 +447,11 @@ impl<'a> BlockAsm<'a> {
 
     // Convert guest pc with labels into labels
     fn resolve_labels(&mut self) {
-        let mut previous_label_index = 0;
         let mut previous_label: Option<(BlockLabel, Option<GuestPcInfo>)> = None;
-        for i in 0..self.buf.insts.len() {
+
+        let mut current_node = self.insts_link.root;
+        while !current_node.is_null() {
+            let i = BlockInstList::deref(current_node).value;
             if let BlockInst::GuestPc(pc) = &self.buf.insts[i] {
                 if let Some(guest_label) = self.buf.guest_branches_mapping.get(pc) {
                     self.buf.insts[i] = BlockInst::Label {
@@ -460,20 +465,32 @@ impl<'a> BlockAsm<'a> {
                 if let Some((p_label, p_guest_pc)) = previous_label {
                     let replace_guest_pc = p_guest_pc.or_else(|| guest_pc);
                     previous_label = Some((p_label, replace_guest_pc));
-                    if let BlockInst::Label { guest_pc, .. } = &mut self.buf.insts[previous_label_index] {
+                    let previous_node = BlockInstList::deref(current_node).previous;
+                    let previous_i = BlockInstList::deref(previous_node).value;
+                    if let BlockInst::Label { guest_pc, .. } = &mut self.buf.insts[previous_i] {
                         *guest_pc = replace_guest_pc;
                     }
+                    self.insts_link.remove_entry(current_node);
+                    todo!("removed {:?}", self.buf.insts[i]);
                 } else {
-                    previous_label_index = i;
                     previous_label = Some((label, guest_pc));
                 }
             } else {
                 previous_label = None
             }
+
+            current_node = BlockInstList::deref(current_node).next;
         }
     }
 
     fn assemble_basic_blocks<const THUMB: bool>(&mut self, block_start_pc: u32) -> Vec<BasicBlock> {
+        for i in 0..=self.block_start {
+            self.insts_link.insert_end(i);
+        }
+        let mut block_start_entry = self.insts_link.end;
+        for i in self.block_start + 1..self.buf.insts.len() {
+            self.insts_link.insert_end(i);
+        }
         self.resolve_labels();
 
         let mut basic_blocks = Vec::new();
@@ -482,23 +499,27 @@ impl<'a> BlockAsm<'a> {
         let mut basic_block_start = self.block_start;
         let mut basic_block_label_mapping = NoHashMap::<u16, usize>::default();
         let mut last_label = None::<BlockLabel>;
-        for i in self.block_start..self.buf.insts.len() {
-            let inst = unsafe { self.buf.insts.get_unchecked(i) };
-            match inst {
+
+        let mut current_node = block_start_entry;
+        while !current_node.is_null() {
+            let i = BlockInstList::deref(current_node).value;
+            match self.buf.insts[i] {
                 BlockInst::Label { label, .. } => {
                     if basic_block_start < i {
-                        basic_blocks.push(BasicBlock::new(basic_block_start, i - 1));
+                        basic_blocks.push(BasicBlock::new(self, block_start_entry, BlockInstList::deref(current_node).previous));
                         basic_block_start = i;
+                        block_start_entry = current_node;
                         if let Some(last_label) = last_label {
                             basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
                         }
                     }
-                    last_label = Some(*label);
+                    last_label = Some(label);
                 }
                 BlockInst::Branch { .. } => {
                     if basic_block_start <= i {
-                        basic_blocks.push(BasicBlock::new(basic_block_start, i));
+                        basic_blocks.push(BasicBlock::new(self, block_start_entry, current_node));
                         basic_block_start = i + 1;
+                        block_start_entry = BlockInstList::deref(current_node).next;
                         if let Some(last_label) = last_label {
                             basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
                         }
@@ -507,10 +528,12 @@ impl<'a> BlockAsm<'a> {
                 }
                 _ => {}
             }
+
+            current_node = BlockInstList::deref(current_node).next;
         }
 
         if basic_block_start < self.buf.insts.len() {
-            basic_blocks.push(BasicBlock::new(basic_block_start, self.buf.insts.len() - 1));
+            basic_blocks.push(BasicBlock::new(self, block_start_entry, self.insts_link.end));
             if let Some(last_label) = last_label {
                 basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
             }
@@ -519,7 +542,7 @@ impl<'a> BlockAsm<'a> {
         let basic_blocks_len = basic_blocks.len();
         // Link blocks
         for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
-            if let BlockInst::Branch { label, cond, block_index, .. } = &mut self.buf.insts[basic_block.end_asm_inst] {
+            if let BlockInst::Branch { label, cond, block_index, .. } = &mut self.buf.insts[BlockInstList::deref(basic_block.block_entry_end).value] {
                 let labelled_block_index = basic_block_label_mapping.get(&label.0).unwrap();
                 basic_block.exit_blocks.insert(*labelled_block_index);
                 *block_index = *labelled_block_index;
@@ -548,12 +571,16 @@ impl<'a> BlockAsm<'a> {
 
         // First block should contain initialization instructions
         let first_basic_block = basic_blocks.first_mut().unwrap();
-        first_basic_block.insts.extend_from_slice(&self.buf.insts[..self.block_start]);
+        for i in 0..self.block_start {
+            first_basic_block.insts_link.insert_end(i);
+        }
+        let first_basic_block_start = first_basic_block.insts_link.end;
 
         for basic_block in &mut basic_blocks {
             let mut basic_block_start_pc = block_start_pc;
-            for i in (0..=basic_block.start_asm_inst).rev() {
-                match &self.buf.insts[i] {
+            let mut current_node = basic_block.block_entry_start;
+            while !current_node.is_null() {
+                match &self.buf.insts[BlockInstList::deref(current_node).value] {
                     BlockInst::Label { guest_pc, .. } => {
                         if let Some(pc) = guest_pc {
                             basic_block_start_pc = pc.0;
@@ -566,6 +593,8 @@ impl<'a> BlockAsm<'a> {
                     }
                     _ => {}
                 }
+
+                current_node = BlockInstList::deref(current_node).previous;
             }
             basic_block.init_insts::<THUMB>(self, basic_block_start_pc);
         }
@@ -574,7 +603,7 @@ impl<'a> BlockAsm<'a> {
         while processed_blocks.len() != basic_blocks.len() {
             for i in (0..basic_blocks.len()).rev() {
                 if basic_blocks[i].exit_blocks.len() == basic_blocks[i].exit_blocks_io_resolved.len() && processed_blocks.insert(i) {
-                    Self::resolve_io_in_basic_blocks(i, &mut basic_blocks);
+                    self.resolve_io_in_basic_blocks(i, &mut basic_blocks);
                 }
             }
         }
@@ -582,11 +611,11 @@ impl<'a> BlockAsm<'a> {
         // Initialize all guest regs used in block
         let first_basic_block = basic_blocks.first_mut().unwrap();
         let mut loaded_guest_regs = BlockRegSet::new();
-        let mut load_guest_regs_insts = Vec::new();
+        let load_guest_regs_insts_start = self.buf.insts.len();
         let mut used_guest_regs = Vec::new();
         for guest_reg in first_basic_block.get_required_inputs().get_guests() {
             loaded_guest_regs += BlockReg::from(guest_reg);
-            load_guest_regs_insts.push(BlockInst::Transfer {
+            self.buf.insts.push(BlockInst::Transfer {
                 op: BlockTransferOp::Read,
                 operands: [guest_reg.into(), self.thread_regs_addr_reg.into(), (guest_reg as u32 * 4).into()],
                 signed: false,
@@ -596,11 +625,14 @@ impl<'a> BlockAsm<'a> {
             used_guest_regs.push(block_reg_set!(Some(BlockReg::from(guest_reg)), Some(self.thread_regs_addr_reg)));
         }
 
-        let regs_live_extensions = vec![first_basic_block.regs_live_ranges[self.block_start]; load_guest_regs_insts.len()];
+        for i in load_guest_regs_insts_start..load_guest_regs_insts_start + used_guest_regs.len() {
+            first_basic_block.insts_link.insert_entry_end(first_basic_block_start, i);
+        }
+
+        let regs_live_extensions = vec![first_basic_block.regs_live_ranges[self.block_start]; used_guest_regs.len()];
         first_basic_block.regs_live_ranges.splice(self.block_start..self.block_start, regs_live_extensions);
         first_basic_block.used_regs.splice(self.block_start..self.block_start, used_guest_regs);
 
-        first_basic_block.insts.splice(self.block_start..self.block_start, load_guest_regs_insts);
         for i in 0..self.block_start {
             first_basic_block.regs_live_ranges[i] -= loaded_guest_regs;
         }
@@ -621,8 +653,9 @@ impl<'a> BlockAsm<'a> {
 
         // Try to collapse cond blocks into cond opcodes
         for i in 1..basic_blocks.len() {
-            if basic_blocks[i].insts.len() == 1 && basic_blocks[i].enter_blocks.len() == 1 && *basic_blocks[i].enter_blocks.iter().next().unwrap() == i - 1 {
-                let override_cond = if let BlockInst::Branch { cond, block_index, skip, .. } = basic_blocks[i - 1].insts.last_mut().unwrap() {
+            if basic_blocks[i].insts_link.len() == 1 && basic_blocks[i].enter_blocks.len() == 1 && *basic_blocks[i].enter_blocks.iter().next().unwrap() == i - 1 {
+                let previous_entry_last = BlockInstList::deref(basic_blocks[i - 1].insts_link.end).value;
+                let override_cond = if let BlockInst::Branch { cond, block_index, skip, .. } = &mut self.buf.insts[previous_entry_last] {
                     if *block_index == i + 1 {
                         *skip = true;
                         !*cond
@@ -648,7 +681,7 @@ impl<'a> BlockAsm<'a> {
         let mut opcodes_offset = Vec::with_capacity(basic_blocks.len());
         for basic_block in basic_blocks {
             opcodes_offset.push(opcodes.len());
-            opcodes.extend(basic_block.emit_opcodes(&mut reg_allocator, &mut branch_placeholders, opcodes.len()));
+            opcodes.extend(basic_block.emit_opcodes(&mut self, &mut reg_allocator, &mut branch_placeholders, opcodes.len()));
         }
 
         for branch_placeholder in branch_placeholders {

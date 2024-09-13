@@ -15,6 +15,7 @@ pub mod block_asm;
 mod block_inst;
 mod block_reg_allocator;
 mod block_reg_set;
+mod block_inst_list;
 
 pub const ANY_REG_LIMIT: u16 = BLOCK_REG_SET_ARRAY_SIZE as u16 * 32 - Reg::None as u16;
 
