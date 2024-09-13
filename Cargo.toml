@@ -23,6 +23,7 @@ glyph_brush = "0.7.9"
 rust-ini = "0.21.1"
 
 [target.armv7-unknown-linux-gnueabihf.dependencies]
+clap = { version = "4.5.17", features = ["cargo"] }
 libc = "0.2.153"
 sdl2 = "0.37.0"
 

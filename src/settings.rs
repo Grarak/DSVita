@@ -73,7 +73,7 @@ pub type Settings = [Setting; 3];
 
 pub const FRAMELIMIT_SETTING: usize = 0;
 pub const AUDIO_SETTING: usize = 1;
-pub const ARM7_HLE_SETTINGS: usize = 2;
+pub const ARM7_HLE_SETTING: usize = 2;
 pub const DEFAULT_SETTINGS: Settings = [
     Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true)),
     Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true)),

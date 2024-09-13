@@ -22,7 +22,7 @@ use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
-use crate::settings::{Settings, ARM7_HLE_SETTINGS, AUDIO_SETTING, FRAMELIMIT_SETTING};
+use crate::settings::{Settings, ARM7_HLE_SETTING, AUDIO_SETTING, FRAMELIMIT_SETTING};
 use crate::utils::{set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
@@ -169,7 +169,7 @@ fn run_cpu(
         })
         .unwrap();
 
-    if settings[ARM7_HLE_SETTINGS].value.as_bool().unwrap() {
+    if settings[ARM7_HLE_SETTING].value.as_bool().unwrap() {
         common.ipc.use_hle();
         common.gpu.arm7_hle = true;
         execute_jit::<true>(&mut emu_unsafe);
