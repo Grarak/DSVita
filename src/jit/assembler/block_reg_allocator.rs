@@ -1,3 +1,4 @@
+// use crate::jit::assembler::block_asm::BLOCK_LOG;
 use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockInst, BlockTransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockReg, ANY_REG_LIMIT};
@@ -108,7 +109,7 @@ impl BlockRegAllocator {
 
         if will_expire {
             for scratch_reg in SCRATCH_REGS {
-                if !fixed_regs_used.is_reserved(scratch_reg) && !self.allocated_real_regs.is_reserved(scratch_reg) {
+                if !fixed_regs_used.is_reserved(scratch_reg) && !self.allocated_real_regs.is_reserved(scratch_reg) && !live_ranges[1].get_fixed().is_reserved(scratch_reg) {
                     self.allocated_real_regs += scratch_reg;
                     self.set_stored_mapping(any_reg, scratch_reg);
                     // if unsafe { BLOCK_LOG } {
@@ -273,7 +274,7 @@ impl BlockRegAllocator {
         //             assert_eq!(self.stored_mapping_reverse[*stored_mapping as usize], Some(any_reg as u16));
         //         }
         //     }
-        //
+
         //     for (i, reg) in self.stored_mapping_reverse.iter().enumerate() {
         //         if let Some(reg) = reg {
         //             assert_eq!(self.stored_mapping[*reg as usize], Reg::from(i as u8), "{reg:?}");
@@ -317,7 +318,7 @@ impl BlockRegAllocator {
         //         assert_eq!(self.stored_mapping_reverse[*stored_mapping as usize], Some(any_reg as u16), "{stored_mapping:?}");
         //     }
         // }
-        //
+
         // for (i, reg) in self.stored_mapping_reverse.iter().enumerate() {
         //     if let Some(reg) = reg {
         //         assert_eq!(self.stored_mapping[*reg as usize], Reg::from(i as u8), "{reg:?}");

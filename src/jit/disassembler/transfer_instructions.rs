@@ -40,8 +40,18 @@ mod transfer_ops {
             opcode,
             op,
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::imm(operand2)),
-            reg_reserve!(op1),
-            if write_back { reg_reserve!(op0, op1) } else { reg_reserve!(op0) },
+            if WRITE { reg_reserve!(op0, op1) } else { reg_reserve!(op1) },
+            if WRITE {
+                if write_back {
+                    reg_reserve!(op1)
+                } else {
+                    reg_reserve!()
+                }
+            } else if write_back {
+                reg_reserve!(op0, op1)
+            } else {
+                reg_reserve!(op0)
+            },
             if WRITE { 2 } else { 3 },
         )
     }
@@ -55,8 +65,18 @@ mod transfer_ops {
             opcode,
             op,
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(operand2)),
-            reg_reserve!(op1, operand2),
-            if write_back { reg_reserve!(op0, op1) } else { reg_reserve!(op0) },
+            if WRITE { reg_reserve!(op0, op1, operand2) } else { reg_reserve!(op1, operand2) },
+            if WRITE {
+                if write_back {
+                    reg_reserve!(op1)
+                } else {
+                    reg_reserve!()
+                }
+            } else if write_back {
+                reg_reserve!(op0, op1)
+            } else {
+                reg_reserve!(op0)
+            },
             if WRITE { 2 } else { 3 },
         )
     }
@@ -70,8 +90,18 @@ mod transfer_ops {
             opcode,
             op,
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg_imm_shift(operand2.0, SHIFT_TYPE, operand2.1)),
-            reg_reserve!(op1, operand2.0),
-            if write_back { reg_reserve!(op0, op1) } else { reg_reserve!(op0) },
+            if WRITE { reg_reserve!(op0, op1, operand2.0) } else { reg_reserve!(op1, operand2.0) },
+            if WRITE {
+                if write_back {
+                    reg_reserve!(op1)
+                } else {
+                    reg_reserve!()
+                }
+            } else if write_back {
+                reg_reserve!(op0, op1)
+            } else {
+                reg_reserve!(op0)
+            },
             if WRITE { 2 } else { 3 },
         )
     }

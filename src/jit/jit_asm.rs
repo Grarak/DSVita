@@ -1,6 +1,7 @@
 use crate::core::emu::{get_jit, get_jit_mut, get_mem_mut, get_regs, get_regs_mut, Emu};
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
+// use crate::jit::assembler::block_asm::BLOCK_LOG;
 use crate::jit::assembler::BlockAsmBuf;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
@@ -146,7 +147,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
         }
 
-        // unsafe { BLOCK_LOG = guest_pc == 0x2380000 };
+        // unsafe { BLOCK_LOG = guest_pc == 0x2009f9c };
 
         let thread_regs = get_regs!(self.emu, CPU);
         let mut block_asm = unsafe { (*self.block_asm_buf.get()).new_asm(thread_regs) };
@@ -157,8 +158,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
             debug_println!("{CPU:?} emitting {:?}", self.jit_buf.current_inst());
 
-            // if self.jit_buf.current_pc == 0x38022ec {
-            //     block_asm.bkpt(1);
+            // if self.jit_buf.current_pc == 0x2009f9c {
+            // if guest_pc == 0x2009f9c {
+            //     block_asm.bkpt(i as u16);
+            // }
             // }
 
             if THUMB {

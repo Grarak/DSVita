@@ -10,6 +10,8 @@ use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount};
 use crate::utils::{NoHashMap, NoHashSet};
 
+// pub static mut BLOCK_LOG: bool = false;
+
 macro_rules! alu3 {
     ($name:ident, $inst:ident, $set_cond:ident, $thumb_pc_aligned:expr) => {
         pub fn $name(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
@@ -614,6 +616,12 @@ impl<'a> BlockAsm<'a> {
         let mut basic_blocks = self.assemble_basic_blocks::<THUMB>(block_start_pc);
 
         assert!(basic_blocks.last().unwrap().exit_blocks.is_empty());
+
+        // if unsafe { BLOCK_LOG } {
+        //     for basic_block in &basic_blocks {
+        //         println!("{basic_block:?}");
+        //     }
+        // }
 
         // Extend reg live ranges over all blocks for reg allocation
         self.buf.reg_range_indicies.clear();

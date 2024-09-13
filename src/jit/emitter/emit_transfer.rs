@@ -1,9 +1,10 @@
 use crate::core::emu::get_regs;
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
+// use crate::jit::assembler::block_asm::BLOCK_LOG;
 use crate::jit::inst_info::Operand;
 use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple, inst_mem_handler_swp};
-use crate::jit::jit_asm::JitAsm;
+use crate::jit::jit_asm::{JitAsm};
 use crate::jit::op::Op;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::MemoryAmount;
@@ -77,8 +78,25 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         block_asm.save_context();
 
         let op0_addr = get_regs!(self.emu, CPU).get_reg(op0) as *const _ as u32;
+        let op0_addr_reg = block_asm.new_reg();
+        block_asm.mov(op0_addr_reg, op0_addr);
+
+        if WRITE && !THUMB && op0 == Reg::PC {
+            // When op0 is PC, it's read as PC+12
+            // Don't need to restore it, since breakouts only happen when PC was written to
+            let tmp_pc_reg = block_asm.new_reg();
+            block_asm.mov(tmp_pc_reg, self.jit_buf.current_pc + 12);
+            block_asm.transfer_write(tmp_pc_reg, op0_addr_reg, 0, false, MemoryAmount::Word);
+
+            block_asm.free_reg(tmp_pc_reg);
+
+            if write_back && op1 == Reg::PC {
+                todo!();
+            }
+        }
+
         let func_addr = Self::get_inst_mem_handler_func::<THUMB, WRITE, true>(op, amount);
-        block_asm.call4(func_addr, jit_asm_addr, addr_reg, op0_addr, self.jit_buf.current_pc);
+        block_asm.call4(func_addr, jit_asm_addr, addr_reg, op0_addr_reg, self.jit_buf.current_pc);
 
         if !WRITE {
             block_asm.restore_reg(op0);
@@ -88,6 +106,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
         block_asm.restore_reg(Reg::CPSR);
 
+        block_asm.free_reg(op0_addr_reg);
         block_asm.free_reg(addr_reg);
         block_asm.free_reg(post_addr_reg);
     }
