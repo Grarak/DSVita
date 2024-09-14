@@ -1,9 +1,8 @@
 use crate::core::emu::{get_mem, get_regs_mut};
 use crate::core::CpuType;
 use crate::core::CpuType::ARM7;
-use crate::jit::jit_asm::JitAsm;
 use crate::jit::MemoryAmount;
-use crate::DEBUG_LOG_BRANCH_OUT;
+use crate::{get_jit_asm_ptr, DEBUG_LOG_BRANCH_OUT};
 use handler::*;
 use std::arch::asm;
 use std::hint::unreachable_unchecked;
@@ -180,11 +179,11 @@ macro_rules! imm_breakout {
 pub(super) use imm_breakout;
 
 pub unsafe extern "C" fn inst_mem_handler<const CPU: CpuType, const THUMB: bool, const WRITE: bool, const AMOUNT: MemoryAmount, const SIGNED: bool, const MMU: bool>(
-    asm: *mut JitAsm<CPU>,
     addr: u32,
     op0: *mut u32,
     pc: u32,
 ) {
+    let asm = get_jit_asm_ptr::<CPU>();
     handle_request::<CPU, WRITE, AMOUNT, SIGNED, MMU>(op0.as_mut().unwrap_unchecked(), addr, (*asm).emu);
     if WRITE && unlikely(get_mem!((*asm).emu).breakout_imm) {
         imm_breakout!((*asm), pc, THUMB);
@@ -201,11 +200,11 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     const DECREMENT: bool,
     const HAS_PC: bool,
 >(
-    asm: *mut JitAsm<CPU>,
     op0_rlist: u32,
     pc: u32,
     total_cycles: u16,
 ) {
+    let asm = get_jit_asm_ptr::<CPU>();
     handle_multiple_request::<CPU, THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(pc, (op0_rlist & 0xFFFF) as u16, (op0_rlist >> 16) as u8, (*asm).emu);
     if !WRITE && HAS_PC {
         if DEBUG_LOG_BRANCH_OUT {
@@ -230,7 +229,8 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     }
 }
 
-pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: MemoryAmount>(asm: *mut JitAsm<CPU>, regs: u32, pc: u32) {
+pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: MemoryAmount>(regs: u32, pc: u32) {
+    let asm = get_jit_asm_ptr::<CPU>();
     handle_swp_request::<CPU, AMOUNT>(regs, (*asm).emu);
     if unlikely(get_mem!((*asm).emu).breakout_imm) {
         imm_breakout!((*asm), pc, false);

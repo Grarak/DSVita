@@ -48,10 +48,6 @@ impl CycleManager {
         self.cycle_count
     }
 
-    pub fn next_event_in_cycles(&self) -> u16 {
-        ((unsafe { self.events.front().unwrap_unchecked().0 }) - self.cycle_count) as u16
-    }
-
     #[inline(always)]
     pub fn check_events(&mut self, emu: &mut Emu) -> bool {
         let cycle_count = self.cycle_count;

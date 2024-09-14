@@ -5,7 +5,7 @@ use std::ops::{Add, AddAssign, BitAnd, BitXor, BitXorAssign, Not, Sub, SubAssign
 
 pub const BLOCK_REG_SET_ARRAY_SIZE: usize = 4;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
 pub struct BlockRegSet([u32; BLOCK_REG_SET_ARRAY_SIZE]);
 
 macro_rules! block_reg_set {

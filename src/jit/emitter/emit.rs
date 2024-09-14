@@ -16,7 +16,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let cond = self.jit_buf.current_inst().cond;
 
         block_asm.start_cond_block(cond);
-        match self.jit_buf.current_inst().op {
+        match op {
             Op::B | Op::Bl => self.emit_branch_label(block_asm),
             Op::Bx | Op::BlxReg => self.emit_branch_reg(block_asm),
             Op::Blx => self.emit_blx_label(block_asm),
@@ -44,17 +44,17 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
             let restore_spsr = self.jit_buf.current_inst().out_regs.is_reserved(Reg::CPSR) && op.is_arm_alu();
             if restore_spsr {
-                block_asm.call1(register_restore_spsr::<CPU> as _, self as *mut _ as u32);
+                block_asm.call(register_restore_spsr::<CPU> as *const ());
             }
 
             if CPU == ARM7 || !op.is_single_mem_transfer() {
                 if restore_spsr {
-                    block_asm.call1(restore_thumb_after_restore_spsr::<CPU> as _, self as *mut _ as u32);
+                    block_asm.call(restore_thumb_after_restore_spsr::<CPU> as *const ());
                 } else {
-                    block_asm.call1(set_pc_arm_mode::<CPU> as _, self as *mut _ as u32)
+                    block_asm.call(set_pc_arm_mode::<CPU> as *const ())
                 }
             } else if restore_spsr {
-                block_asm.call1(restore_thumb_after_restore_spsr::<CPU> as _, self as *mut _ as u32);
+                block_asm.call(restore_thumb_after_restore_spsr::<CPU> as *const ());
             }
 
             self.emit_branch_out_metadata(block_asm);
@@ -65,8 +65,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     fn _emit_branch_out_metadata(&mut self, block_asm: &mut BlockAsm, set_idle_loop: bool) {
-        let branch_out_pc_addr_reg = block_asm.new_reg();
-        block_asm.mov(branch_out_pc_addr_reg, self.runtime_data.get_branch_out_pc_addr() as u32);
+        let runtime_data_addr_reg = block_asm.new_reg();
+        block_asm.mov(runtime_data_addr_reg, self.runtime_data.get_addr() as u32);
 
         let total_cycles_reg = block_asm.new_reg();
         block_asm.mov(total_cycles_reg, self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32);
@@ -74,21 +74,21 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if DEBUG_LOG_BRANCH_OUT {
             let pc_reg = block_asm.new_reg();
             block_asm.mov(pc_reg, self.jit_buf.current_pc);
-            block_asm.transfer_write(pc_reg, branch_out_pc_addr_reg, 0, false, MemoryAmount::Word);
+            block_asm.transfer_write(pc_reg, runtime_data_addr_reg, JitRuntimeData::get_out_pc_offset() as u32, false, MemoryAmount::Word);
 
             block_asm.free_reg(pc_reg);
         }
-        block_asm.transfer_write(total_cycles_reg, branch_out_pc_addr_reg, JitRuntimeData::get_total_cycles_offset() as u32, false, MemoryAmount::Word);
+        block_asm.transfer_write(total_cycles_reg, runtime_data_addr_reg, JitRuntimeData::get_out_total_cycles_offset() as u32, false, MemoryAmount::Word);
         if set_idle_loop {
             let idle_loop_reg = block_asm.new_reg();
             block_asm.mov(idle_loop_reg, 1);
-            block_asm.transfer_write(idle_loop_reg, branch_out_pc_addr_reg, JitRuntimeData::get_idle_loop_offset() as u32, false, MemoryAmount::Byte);
+            block_asm.transfer_write(idle_loop_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_offset() as u32, false, MemoryAmount::Byte);
 
             block_asm.free_reg(idle_loop_reg);
         }
 
-        block_asm.free_reg(branch_out_pc_addr_reg);
         block_asm.free_reg(total_cycles_reg);
+        block_asm.free_reg(runtime_data_addr_reg);
     }
 
     pub fn emit_branch_out_metadata(&mut self, block_asm: &mut BlockAsm) {

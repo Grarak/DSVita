@@ -163,11 +163,15 @@ impl BlockInstList {
     }
 
     pub fn deref(entry: *mut BlockInstListEntry) -> &'static mut BlockInstListEntry {
-        unsafe { entry.as_mut().unwrap_unchecked() }
+        unsafe { entry.as_mut().unwrap() }
     }
 
     pub fn len(&self) -> usize {
         self.size
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

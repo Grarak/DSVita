@@ -52,20 +52,18 @@ impl<'a> iter::Sum<&'a Reg> for RegReserve {
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
 pub struct RegReserve(pub u32);
 
 macro_rules! reg_reserve {
-    ($($reg:expr),*) => {
-        {
-            #[allow(unused_mut)]
-            let mut reg_reserve = crate::jit::reg::RegReserve::new();
-            $(
-                reg_reserve.reserve($reg);
-            )*
-            reg_reserve
-        }
-    };
+    ($($reg:expr),*) => {{
+        #[allow(unused_mut)]
+        let mut reg_reserve = crate::jit::reg::RegReserve::new();
+        $(
+            reg_reserve.reserve($reg);
+        )*
+        reg_reserve
+    }};
 }
 
 pub(crate) use reg_reserve;
@@ -107,6 +105,10 @@ impl RegReserve {
 
     pub const fn len(&self) -> usize {
         u32::count_ones(self.0) as _
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn get_gp_regs(&self) -> RegReserve {

@@ -4,7 +4,7 @@ use crate::jit::assembler::block_asm::BlockAsm;
 // use crate::jit::assembler::block_asm::BLOCK_LOG;
 use crate::jit::inst_info::Operand;
 use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple, inst_mem_handler_swp};
-use crate::jit::jit_asm::{JitAsm};
+use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::MemoryAmount;
@@ -32,8 +32,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn emit_single_transfer<const THUMB: bool, const WRITE: bool>(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount) {
-        let jit_asm_addr = self as *mut _ as u32;
-
         let (op, op0, op1, op2) = {
             let inst_info = self.jit_buf.current_inst();
             let operands = inst_info.operands();
@@ -96,7 +94,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
 
         let func_addr = Self::get_inst_mem_handler_func::<THUMB, WRITE, true>(op, amount);
-        block_asm.call4(func_addr, jit_asm_addr, addr_reg, op0_addr_reg, self.jit_buf.current_pc);
+        block_asm.call3(func_addr, addr_reg, op0_addr_reg, self.jit_buf.current_pc);
 
         if !WRITE {
             block_asm.restore_reg(op0);
@@ -122,7 +120,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn emit_multiple_transfer<const THUMB: bool>(&mut self, block_asm: &mut BlockAsm) {
-        let jit_asm_addr = self as *mut _ as u32;
         let inst_info = self.jit_buf.current_inst();
 
         let mut rlist = RegReserve::from(inst_info.opcode & if THUMB { 0xFF } else { 0xFFFF });
@@ -142,7 +139,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
 
-        let func_addr = match (inst_info.op.mem_is_write(), inst_info.op.mem_transfer_user(), pre, write_back, decrement, has_pc) {
+        let func_addr: *const () = match (inst_info.op.mem_is_write(), inst_info.op.mem_transfer_user(), pre, write_back, decrement, has_pc) {
             (false, false, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, false, false> as _,
             (true, false, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, false, false> as _,
             (false, true, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, false, false> as _,
@@ -210,9 +207,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         };
 
         block_asm.save_context();
-        block_asm.call4(
+        block_asm.call3(
             func_addr,
-            jit_asm_addr,
             rlist.0 | ((op0 as u32) << 16),
             self.jit_buf.current_pc,
             self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32,
@@ -233,7 +229,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn emit_swp(&mut self, block_asm: &mut BlockAsm) {
-        let jit_asm_addr = self as *mut _ as u32;
         let inst_info = self.jit_buf.current_inst();
         let operands = inst_info.operands();
         let op0 = *operands[0].as_reg_no_shift().unwrap();
@@ -249,7 +244,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         };
 
         block_asm.save_context();
-        block_asm.call3(func_addr, jit_asm_addr, reg_arg, self.jit_buf.current_pc);
+        block_asm.call2(func_addr, reg_arg, self.jit_buf.current_pc);
         block_asm.restore_reg(op0);
         block_asm.restore_reg(Reg::CPSR);
     }

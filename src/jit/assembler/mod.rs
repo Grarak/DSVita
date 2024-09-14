@@ -116,6 +116,12 @@ impl From<Reg> for BlockOperand {
     }
 }
 
+impl From<*const ()> for BlockOperand {
+    fn from(value: *const ()) -> Self {
+        (value as u32).into()
+    }
+}
+
 impl Into<BlockOperand> for ShiftValue {
     fn into(self) -> BlockOperand {
         match self {

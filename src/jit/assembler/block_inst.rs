@@ -115,9 +115,7 @@ impl BlockInst {
             },
             BlockInst::Bfc { operand, .. } => (block_reg_set!(Some(*operand)), block_reg_set!(Some(*operand))),
 
-            BlockInst::SaveContext { .. } => {
-                unreachable!()
-            }
+            BlockInst::SaveContext { .. } => (block_reg_set!(), block_reg_set!()),
             BlockInst::SaveReg {
                 guest_reg,
                 reg_mapped,

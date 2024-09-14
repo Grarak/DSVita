@@ -8,9 +8,8 @@ use crate::jit::reg::Reg;
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_swi<const THUMB: bool>(&mut self, block_asm: &mut BlockAsm) {
         block_asm.save_context();
-        block_asm.call4(
-            exception_handler::<CPU, THUMB> as _,
-            self as *mut _ as u32,
+        block_asm.call3(
+            exception_handler::<CPU, THUMB> as *const (),
             self.jit_buf.current_inst().opcode,
             ExceptionVector::SoftwareInterrupt as u32,
             self.jit_buf.current_pc,

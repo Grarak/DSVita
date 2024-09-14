@@ -1,5 +1,4 @@
 use crate::jit::assembler::block_asm::BlockAsm;
-// use crate::jit::assembler::block_asm::BLOCK_LOG;
 use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp};
 use crate::jit::assembler::block_inst_list::{BlockInstList, BlockInstListEntry};
 use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
@@ -16,17 +15,17 @@ pub struct BasicBlock {
     pub block_entry_start: *mut BlockInstListEntry,
     pub block_entry_end: *mut BlockInstListEntry,
 
+    pub io_resolved: bool,
     pub regs_live_ranges: Vec<BlockRegSet>,
     pub used_regs: Vec<BlockRegSet>,
 
     pub enter_blocks: NoHashSet<usize>,
     pub exit_blocks: NoHashSet<usize>,
 
-    pub enter_blocks_guest_resolved: NoHashSet<usize>,
-    pub guest_regs_dirty: RegReserve,
+    pub guest_regs_resolved: bool,
+    pub input_guest_regs_dirty: RegReserve,
+    pub output_guest_regs_dirty: RegReserve,
     needs_guest_pc: bool,
-
-    pub exit_blocks_io_resolved: NoHashSet<usize>,
 
     pub insts_link: BlockInstList,
 
@@ -41,17 +40,17 @@ impl BasicBlock {
             block_entry_start,
             block_entry_end,
 
+            io_resolved: false,
             regs_live_ranges: Vec::new(),
             used_regs: Vec::new(),
 
             enter_blocks: NoHashSet::default(),
             exit_blocks: NoHashSet::with_capacity_and_hasher(2, BuildNoHasher),
 
-            enter_blocks_guest_resolved: NoHashSet::default(),
-            guest_regs_dirty: RegReserve::new(),
+            guest_regs_resolved: false,
+            input_guest_regs_dirty: RegReserve::new(),
+            output_guest_regs_dirty: RegReserve::new(),
             needs_guest_pc: false,
-
-            exit_blocks_io_resolved: NoHashSet::with_capacity_and_hasher(2, BuildNoHasher),
 
             insts_link: BlockInstList::new(),
 
@@ -60,20 +59,21 @@ impl BasicBlock {
     }
 
     pub fn init_resolve_guest_regs(&mut self, asm: &mut BlockAsm) {
+        self.output_guest_regs_dirty = self.input_guest_regs_dirty;
         let mut current_node = self.block_entry_start;
         loop {
             let inst = &mut asm.buf.insts[BlockInstList::deref(current_node).value];
             match inst {
                 BlockInst::SaveContext { regs_to_save, .. } => {
-                    *regs_to_save += self.guest_regs_dirty;
-                    self.guest_regs_dirty.clear();
+                    *regs_to_save += self.output_guest_regs_dirty;
+                    self.output_guest_regs_dirty.clear();
                 }
                 BlockInst::SaveReg { guest_reg, .. } | BlockInst::RestoreReg { guest_reg, .. } => {
-                    self.guest_regs_dirty -= *guest_reg;
+                    self.output_guest_regs_dirty -= *guest_reg;
                 }
                 _ => {
                     let (inputs, outputs) = inst.get_io();
-                    self.guest_regs_dirty += outputs.get_guests();
+                    self.output_guest_regs_dirty += outputs.get_guests();
                     self.needs_guest_pc |= inputs.contains(Reg::PC.into());
                 }
             }
@@ -81,7 +81,6 @@ impl BasicBlock {
             if current_node == self.block_entry_end {
                 break;
             }
-
             current_node = BlockInstList::deref(current_node).next;
         }
     }
@@ -271,11 +270,20 @@ impl BasicBlock {
         *self.used_regs.last_mut().unwrap() += required_outputs;
     }
 
+    pub fn set_required_outputs(&mut self, required_outputs: BlockRegSet) {
+        *self.regs_live_ranges.last_mut().unwrap() = required_outputs;
+        *self.used_regs.last_mut().unwrap() = required_outputs;
+    }
+
     pub fn get_required_inputs(&self) -> &BlockRegSet {
         self.regs_live_ranges.first().unwrap()
     }
 
-    pub fn emit_opcodes(mut self, asm: &mut BlockAsm, reg_allocator: &mut BlockRegAllocator, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize) -> Vec<u32> {
+    pub fn get_required_outputs(&self) -> &BlockRegSet {
+        self.regs_live_ranges.last().unwrap()
+    }
+
+    pub fn allocate_regs(&mut self, asm: &mut BlockAsm, reg_allocator: &mut BlockRegAllocator) {
         let mut i = 0;
         let mut current_node = self.insts_link.root;
         while !current_node.is_null() {
@@ -291,39 +299,28 @@ impl BasicBlock {
             current_node = BlockInstList::deref(current_node).next;
         }
 
-        reg_allocator.ensure_global_regs_mapping(*self.regs_live_ranges.last().unwrap());
-        // Make sure to restore mapping before a branch
-        let end_entry = self.insts_link.end;
-        if let BlockInst::Branch { .. } = asm.buf.insts[BlockInstList::deref(end_entry).value] {
-            for i in asm.buf.insts.len()..asm.buf.insts.len() + reg_allocator.pre_allocate_insts.len() {
-                self.insts_link.insert_entry_begin(end_entry, i);
-            }
-        } else {
-            for i in asm.buf.insts.len()..asm.buf.insts.len() + reg_allocator.pre_allocate_insts.len() {
-                self.insts_link.insert_end(i);
-            }
-        }
-        asm.buf.insts.extend_from_slice(&reg_allocator.pre_allocate_insts);
+        if !self.exit_blocks.is_empty() {
+            reg_allocator.ensure_global_mappings(*self.get_required_outputs());
 
+            let end_entry = self.insts_link.end;
+            // Make sure to restore mapping before a branch
+            if let BlockInst::Branch { .. } = asm.buf.insts[BlockInstList::deref(end_entry).value] {
+                for i in asm.buf.insts.len()..asm.buf.insts.len() + reg_allocator.pre_allocate_insts.len() {
+                    self.insts_link.insert_entry_begin(end_entry, i);
+                }
+            } else {
+                for i in asm.buf.insts.len()..asm.buf.insts.len() + reg_allocator.pre_allocate_insts.len() {
+                    self.insts_link.insert_end(i);
+                }
+            }
+            asm.buf.insts.extend_from_slice(&reg_allocator.pre_allocate_insts);
+        }
+    }
+
+    pub fn emit_opcodes(self, asm: &mut BlockAsm, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize) -> Vec<u32> {
         let mut opcodes = Vec::new();
         let mut inst_opcodes = Vec::new();
         for entry in self.insts_link.iter() {
-            // match &inst {
-            //     BlockInst::Label { guest_pc, .. } => {
-            //         if let Some(pc) = guest_pc {
-            //             if unsafe { BLOCK_LOG } {
-            //                 println!("(0x{:x}, 0x{pc:?}),", opcodes_offset + opcodes.len());
-            //             }
-            //         }
-            //     }
-            //     BlockInst::GuestPc(pc) => {
-            //         if unsafe { BLOCK_LOG } {
-            //             println!("(0x{:x}, 0x{pc:?}),", opcodes_offset + opcodes.len());
-            //         }
-            //     }
-            //     _ => {}
-            // }
-
             let inst = &mut asm.buf.insts[entry.value];
             inst_opcodes.clear();
             inst.emit_opcode(&mut inst_opcodes, opcodes.len(), branch_placeholders, opcodes_offset);
@@ -341,14 +338,30 @@ impl BasicBlock {
 
 impl Debug for BasicBlock {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "BasicBlock: inputs: {:?} enter blocks: {:?}", self.regs_live_ranges.first(), self.enter_blocks)?;
-        for (i, entry) in self.insts_link.iter().enumerate() {
-            let inst = unsafe { &self.block_asm_buf_ptr.as_ref().unwrap().insts[entry.value] };
-            writeln!(f, "\t{inst:?}")?;
-            let (inputs, outputs) = inst.get_io();
-            writeln!(f, "\t\tinputs: {inputs:?}, outputs: {outputs:?}")?;
-            writeln!(f, "\t\tlive range: {:?}", self.regs_live_ranges[i])?;
+        if self.insts_link.is_empty() {
+            writeln!(f, "BasicBlock: uninitialized enter blocks: {:?}", self.enter_blocks)?;
+            let mut current_node = self.block_entry_start;
+            loop {
+                let inst = unsafe { &self.block_asm_buf_ptr.as_ref().unwrap().insts[BlockInstList::deref(current_node).value] };
+                writeln!(f, "\t{inst:?}")?;
+                let (inputs, outputs) = inst.get_io();
+                writeln!(f, "\t\tinputs: {inputs:?}, outputs: {outputs:?}")?;
+                if current_node == self.block_entry_end {
+                    break;
+                }
+                current_node = BlockInstList::deref(current_node).next;
+            }
+            write!(f, "BasicBlock end exit blocks: {:?}", self.exit_blocks)
+        } else {
+            writeln!(f, "BasicBlock: inputs: {:?} enter blocks: {:?}", self.regs_live_ranges.first().unwrap(), self.enter_blocks)?;
+            for (i, entry) in self.insts_link.iter().enumerate() {
+                let inst = unsafe { &self.block_asm_buf_ptr.as_ref().unwrap().insts[entry.value] };
+                writeln!(f, "\t{inst:?}")?;
+                let (inputs, outputs) = inst.get_io();
+                writeln!(f, "\t\tinputs: {inputs:?}, outputs: {outputs:?}")?;
+                writeln!(f, "\t\tlive range: {:?}", self.regs_live_ranges[i])?;
+            }
+            write!(f, "BasicBlock end: outputs: {:?} exit blocks: {:?}", self.regs_live_ranges.last().unwrap(), self.exit_blocks)
         }
-        write!(f, "BasicBlock end: outputs: {:?} exit blocks: {:?}", self.regs_live_ranges.last(), self.exit_blocks)
     }
 }

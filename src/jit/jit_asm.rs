@@ -1,7 +1,6 @@
 use crate::core::emu::{get_jit, get_jit_mut, get_mem_mut, get_regs, get_regs_mut, Emu};
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
-// use crate::jit::assembler::block_asm::BLOCK_LOG;
 use crate::jit::assembler::BlockAsmBuf;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
@@ -11,7 +10,7 @@ use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::debug_println;
-use crate::{DEBUG_LOG, DEBUG_LOG_BRANCH_OUT};
+use crate::{get_jit_asm_ptr, DEBUG_LOG, DEBUG_LOG_BRANCH_OUT};
 use std::arch::asm;
 use std::cell::UnsafeCell;
 use std::intrinsics::likely;
@@ -54,7 +53,6 @@ pub struct JitRuntimeData {
     pub branch_out_total_cycles: u16,
     pub pre_cycle_count_sum: u16,
     pub accumulated_cycles: u16,
-    pub next_event_in_cycles: u16,
     pub idle_loop: bool,
 }
 
@@ -65,27 +63,42 @@ impl JitRuntimeData {
             branch_out_total_cycles: 0,
             pre_cycle_count_sum: 0,
             accumulated_cycles: 0,
-            next_event_in_cycles: 0,
             idle_loop: false,
         };
-        let branch_out_pc_ptr = ptr::addr_of!(instance.branch_out_pc) as u32;
-        let branch_out_total_cycles_ptr = ptr::addr_of!(instance.branch_out_total_cycles) as u32;
-        let idle_loop_ptr = ptr::addr_of!(instance.idle_loop) as u32;
-        assert_eq!(branch_out_total_cycles_ptr - branch_out_pc_ptr, 4);
-        assert_eq!(idle_loop_ptr - branch_out_total_cycles_ptr, 8);
+        let branch_out_pc_ptr = ptr::addr_of!(instance.branch_out_pc) as usize;
+        let branch_out_total_cycles_ptr = ptr::addr_of!(instance.branch_out_total_cycles) as usize;
+        let pre_cycle_count_sum_ptr = ptr::addr_of!(instance.pre_cycle_count_sum) as usize;
+        let accumulated_cycles_ptr = ptr::addr_of!(instance.accumulated_cycles) as usize;
+        let idle_loop_ptr = ptr::addr_of!(instance.idle_loop) as usize;
+        assert_eq!(branch_out_total_cycles_ptr - branch_out_pc_ptr, Self::get_out_total_cycles_offset() as usize);
+        assert_eq!(pre_cycle_count_sum_ptr - branch_out_pc_ptr, Self::get_pre_cycle_count_sum_offset() as usize);
+        assert_eq!(accumulated_cycles_ptr - branch_out_pc_ptr, Self::get_accumulated_cycles_offset() as usize);
+        assert_eq!(idle_loop_ptr - branch_out_pc_ptr, Self::get_idle_loop_offset() as usize);
         instance
     }
 
-    pub fn get_branch_out_pc_addr(&self) -> *const u32 {
+    pub fn get_addr(&self) -> *const u32 {
         ptr::addr_of!(self.branch_out_pc)
     }
 
-    pub const fn get_total_cycles_offset() -> u8 {
-        4
+    pub const fn get_out_pc_offset() -> u8 {
+        0
+    }
+
+    pub const fn get_out_total_cycles_offset() -> u8 {
+        Self::get_out_pc_offset() + 4
+    }
+
+    pub const fn get_pre_cycle_count_sum_offset() -> u8 {
+        Self::get_out_total_cycles_offset() + 2
+    }
+
+    pub const fn get_accumulated_cycles_offset() -> u8 {
+        Self::get_pre_cycle_count_sum_offset() + 2
     }
 
     pub const fn get_idle_loop_offset() -> u8 {
-        Self::get_total_cycles_offset() + 8
+        Self::get_accumulated_cycles_offset() + 2
     }
 }
 
@@ -116,12 +129,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             loop {
                 let inst_info = if THUMB {
                     let opcode = self.emu.mem_read::<CPU, u16>(guest_pc + index);
-                    debug_println!("{:?} disassemble thumb {:x} {}", CPU, opcode, opcode);
                     let (op, func) = lookup_thumb_opcode(opcode);
                     InstInfo::from(func(opcode, *op))
                 } else {
                     let opcode = self.emu.mem_read::<CPU, u32>(guest_pc + index);
-                    debug_println!("{:?} disassemble {:x} {}", CPU, opcode, opcode);
                     let (op, func) = lookup_opcode(opcode);
                     func(opcode, *op)
                 };
@@ -147,22 +158,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
         }
 
-        // unsafe { BLOCK_LOG = guest_pc == 0x2009f9c };
-
         let thread_regs = get_regs!(self.emu, CPU);
         let mut block_asm = unsafe { (*self.block_asm_buf.get()).new_asm(thread_regs) };
-        block_asm.restore_reg(Reg::CPSR);
 
         for i in 0..self.jit_buf.insts.len() {
             self.jit_buf.current_index = i;
             self.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
-            debug_println!("{CPU:?} emitting {:?}", self.jit_buf.current_inst());
-
-            // if self.jit_buf.current_pc == 0x2009f9c {
-            // if guest_pc == 0x2009f9c {
-            //     block_asm.bkpt(i as u16);
-            // }
-            // }
+            debug_println!("{CPU:?} emitting {:?} at pc: {:x}", self.jit_buf.current_inst(), self.jit_buf.current_pc);
 
             if THUMB {
                 self.emit_thumb(&mut block_asm);
@@ -172,17 +174,12 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
             if DEBUG_LOG {
                 block_asm.save_context();
-                block_asm.call3(debug_after_exec_op::<CPU> as _, self as *mut _ as u32, self.jit_buf.current_pc, self.jit_buf.current_inst().opcode);
+                block_asm.call2(debug_after_exec_op::<CPU> as *const (), self.jit_buf.current_pc, self.jit_buf.current_inst().opcode);
                 block_asm.restore_reg(Reg::CPSR);
             }
         }
 
         let opcodes = block_asm.finalize::<THUMB>(guest_pc);
-        // if unsafe { BLOCK_LOG } {
-        //     for opcode in &opcodes {
-        //         println!("0x{opcode:x},")
-        //     }
-        // }
         get_jit_mut!(self.emu).insert_block::<CPU, THUMB>(&opcodes, JitInsertArgs::new(guest_pc, self.jit_buf.insts_cycle_counts.clone()));
 
         if DEBUG_LOG {
@@ -193,9 +190,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     #[inline(always)]
-    pub fn execute(&mut self, next_event_in_cycles: u16) -> u16 {
+    pub fn execute(&mut self) -> u16 {
         let entry = get_regs!(self.emu, CPU).pc;
-        self.runtime_data.next_event_in_cycles = next_event_in_cycles;
 
         let thumb = (entry & 1) == 1;
         debug_println!("{:?} Execute {:x} thumb {}", CPU, entry, thumb);
@@ -232,7 +228,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         get_mem_mut!(self.emu).current_jit_block_addr = jit_block_addr;
 
-        unsafe { enter_jit(jit_addr, ptr::addr_of_mut!(self.host_sp) as u32) };
+        unsafe { enter_jit(jit_addr, ptr::addr_of_mut!(self.host_sp) as u32, get_regs!(self.emu, CPU).cpsr) };
 
         if DEBUG_LOG {
             assert_ne!(self.runtime_data.branch_out_pc, u32::MAX);
@@ -255,7 +251,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             + cycle_correction;
 
         if DEBUG_LOG && DEBUG_LOG_BRANCH_OUT {
-            println!("{:?} reading opcode of breakout at {:x}", CPU, self.runtime_data.branch_out_pc);
+            println!("{:?} reading opcode of breakout at {:x} executed cycles {executed_cycles}", CPU, self.runtime_data.branch_out_pc);
             let inst_info = if THUMB {
                 let opcode = self.emu.mem_read::<CPU, _>(self.runtime_data.branch_out_pc);
                 let (op, func) = lookup_thumb_opcode(opcode);
@@ -273,11 +269,12 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 }
 
 #[naked]
-unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_ptr: u32) {
+unsafe extern "C" fn enter_jit(jit_entry: u32, host_sp_ptr: u32, guest_cpsr: u32) {
     #[rustfmt::skip]
     asm!(
         "push {{r4-r11,lr}}",
         "str sp, [r1]",
+        "msr cpsr, r2",
         "blx r0",
         "pop {{r4-r11,pc}}",
         options(noreturn)
@@ -295,10 +292,10 @@ fn debug_inst_info<const CPU: CpuType>(regs: &ThreadRegs, pc: u32, append: &str)
     println!("{:?} {}{}", CPU, output, append);
 }
 
-unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(asm: *mut JitAsm<CPU>, pc: u32, opcode: u32) {
-    let asm = asm.as_mut().unwrap_unchecked();
+unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(pc: u32, opcode: u32) {
+    let asm = get_jit_asm_ptr::<CPU>();
     let inst_info = {
-        if get_regs!(asm.emu, CPU).is_thumb() {
+        if get_regs!((*asm).emu, CPU).is_thumb() {
             let (op, func) = lookup_thumb_opcode(opcode as u16);
             InstInfo::from(func(opcode as u16, *op))
         } else {
@@ -307,5 +304,5 @@ unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(asm: *mut JitAsm<CP
         }
     };
 
-    debug_inst_info::<CPU>(get_regs!(asm.emu, CPU), pc, &format!("\n\t{:?} {:?}", CPU, inst_info));
+    debug_inst_info::<CPU>(get_regs!((*asm).emu, CPU), pc, &format!("\n\t{:?} {:?}", CPU, inst_info));
 }

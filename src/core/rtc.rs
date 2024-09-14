@@ -145,16 +145,6 @@ impl Rtc {
         let min = local_now.minute() as u8;
         let sec = local_now.second() as u8;
 
-        // let year = 2000 as u32 % 100;
-        // let month = 1 as u8;
-        // let day = 1 as u8;
-        // let (hour, is_pm) = {
-        //     let hour = 11;
-        //     ((if self.cnt & 0x2 == 0 { hour % 12 } else { hour }) as u8, hour >= 12)
-        // };
-        // let min = 0 as u8;
-        // let sec = 0 as u8;
-
         self.date_time[0] = (((year / 10) << 4) | (year % 10)) as u8;
         self.date_time[1] = ((month / 10) << 4) | (month % 10);
         self.date_time[2] = ((day / 10) << 4) | (day % 10);

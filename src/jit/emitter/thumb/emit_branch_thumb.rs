@@ -1,6 +1,5 @@
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::emitter::emit_branch::JitBranchInfo;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
@@ -33,17 +32,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         };
 
         block_asm.start_cond_block(cond);
-
-        block_asm.mov(Reg::PC, target_pc | 1);
-        block_asm.save_context();
-
-        if let JitBranchInfo::Idle = Self::analyze_branch_label::<true>(&self.jit_buf.insts, self.jit_buf.current_index, cond, self.jit_buf.current_pc, target_pc) {
-            self.emit_branch_out_metadata_with_idle_loop(block_asm);
-        } else {
-            self.emit_branch_out_metadata(block_asm);
-        }
-        block_asm.breakout();
-
+        self.emit_branch_label_common::<true>(block_asm, target_pc, cond);
         block_asm.end_cond_block();
     }
 

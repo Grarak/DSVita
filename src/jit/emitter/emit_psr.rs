@@ -9,21 +9,19 @@ use crate::jit::reg::Reg;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_msr(&mut self, block_asm: &mut BlockAsm) {
-        let jit_asm_addr = self as *mut _ as u32;
         let inst_info = self.jit_buf.current_inst();
 
         let flags = (inst_info.opcode >> 16) & 0xF;
 
         let func = match inst_info.op {
-            Op::MsrRc | Op::MsrIc => register_set_cpsr_checked::<CPU> as _,
-            Op::MsrRs | Op::MsrIs => register_set_spsr_checked::<CPU> as _,
+            Op::MsrRc | Op::MsrIc => register_set_cpsr_checked::<CPU> as *const (),
+            Op::MsrRs | Op::MsrIs => register_set_spsr_checked::<CPU> as *const (),
             _ => unreachable!(),
         };
 
         block_asm.save_context();
-        block_asm.call3(
+        block_asm.call2(
             func,
-            jit_asm_addr,
             match inst_info.operands()[0] {
                 Operand::Reg { reg, shift: None } => BlockOperand::from(reg),
                 Operand::Imm(imm) => BlockOperand::from(imm),

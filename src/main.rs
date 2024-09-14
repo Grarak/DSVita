@@ -32,7 +32,7 @@ use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::{mem, thread};
+use std::{mem, ptr, thread};
 use CpuType::{ARM7, ARM9};
 
 mod cartridge_io;
@@ -180,10 +180,25 @@ fn run_cpu(
     save_thread.join().unwrap();
 }
 
+pub static mut JIT_ASM_ARM9_PTR: *mut JitAsm<{ ARM9 }> = ptr::null_mut();
+pub static mut JIT_ASM_ARM7_PTR: *mut JitAsm<{ ARM7 }> = ptr::null_mut();
+
+pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a, CPU> {
+    match CPU {
+        ARM9 => JIT_ASM_ARM9_PTR as usize as _,
+        ARM7 => JIT_ASM_ARM7_PTR as usize as _,
+    }
+}
+
 #[inline(never)]
 fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     let mut jit_asm_arm9 = JitAsm::<{ ARM9 }>::new(unsafe { emu.get().as_mut().unwrap() });
     let mut jit_asm_arm7 = JitAsm::<{ ARM7 }>::new(unsafe { emu.get().as_mut().unwrap() });
+
+    unsafe {
+        JIT_ASM_ARM9_PTR = &mut jit_asm_arm9;
+        JIT_ASM_ARM7_PTR = &mut jit_asm_arm7;
+    }
 
     let emu = emu.get_mut();
     get_jit_mut!(emu).open();
@@ -198,10 +213,8 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     let gpu_3d_regs = &mut get_common_mut!(emu).gpu.gpu_3d_regs;
 
     loop {
-        let next_event_in_cycles = min(cm.next_event_in_cycles(), 32);
-
         let arm9_cycles = if likely(!cpu_regs_arm9.is_halted() && !jit_asm_arm9.runtime_data.idle_loop) {
-            (jit_asm_arm9.execute(next_event_in_cycles << 1) + 1) >> 1
+            (jit_asm_arm9.execute() + 1) >> 1
         } else {
             0
         };
@@ -214,7 +227,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
             }
         } else {
             let arm7_cycles = if likely(!cpu_regs_arm7.is_halted() && !jit_asm_arm7.runtime_data.idle_loop) {
-                jit_asm_arm7.execute(next_event_in_cycles)
+                jit_asm_arm7.execute()
             } else {
                 0
             };

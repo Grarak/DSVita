@@ -70,7 +70,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if self.jit_buf.current_inst().out_regs.is_reserved(Reg::PC) && !op.is_multiple_mem_transfer() {
             block_asm.save_context();
 
-            block_asm.call1(set_pc_thumb_mode::<CPU> as _, self as *mut _ as u32);
+            block_asm.call(set_pc_thumb_mode::<CPU> as *const ());
 
             self.emit_branch_out_metadata(block_asm);
             block_asm.breakout();
