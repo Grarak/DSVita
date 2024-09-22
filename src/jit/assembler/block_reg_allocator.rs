@@ -9,7 +9,7 @@ pub const ALLOCATION_REGS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg::R6, 
 const SCRATCH_REGS: RegReserve = reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12);
 
 pub struct BlockRegAllocator {
-    global_mapping: NoHashMap<u16, Reg>,
+    pub global_mapping: NoHashMap<u16, Reg>,
     stored_mapping: HeapMem<Reg, { ANY_REG_LIMIT as usize }>, // mappings to real registers
     stored_mapping_reverse: [Option<u16>; Reg::SP as usize],
     spilled: NoHashSet<u16>, // regs that are spilled
@@ -17,9 +17,9 @@ pub struct BlockRegAllocator {
 }
 
 impl BlockRegAllocator {
-    pub fn new(global_mapping: NoHashMap<u16, Reg>) -> Self {
+    pub fn new() -> Self {
         BlockRegAllocator {
-            global_mapping,
+            global_mapping: NoHashMap::default(),
             stored_mapping: HeapMem::new(),
             stored_mapping_reverse: [None; Reg::SP as usize],
             spilled: NoHashSet::default(),

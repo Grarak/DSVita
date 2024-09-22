@@ -8,14 +8,15 @@ use crate::jit::ShiftType;
 use crate::utils::NoHashMap;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
+use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
 
 pub mod arm;
 mod basic_block;
 pub mod block_asm;
 mod block_inst;
+mod block_inst_list;
 mod block_reg_allocator;
 mod block_reg_set;
-mod block_inst_list;
 
 pub const ANY_REG_LIMIT: u16 = BLOCK_REG_SET_ARRAY_SIZE as u16 * 32 - Reg::None as u16;
 
@@ -172,6 +173,13 @@ impl BlockShift {
     pub fn new(shift_type: ShiftType, value: impl Into<BlockOperand>) -> Self {
         BlockShift { shift_type, value: value.into() }
     }
+
+    pub fn is_none(&self) -> bool {
+        match self.value {
+            BlockOperand::Reg(_) => false,
+            BlockOperand::Imm(imm) => imm == 0,
+        }
+    }
 }
 
 impl Default for BlockShift {
@@ -202,25 +210,28 @@ impl Into<BlockShift> for Option<Shift> {
 
 impl Debug for BlockShift {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.value {
-            BlockOperand::Reg(reg) => {
-                write!(f, "{:?} {reg:?}", self.shift_type)
-            }
-            BlockOperand::Imm(imm) => {
-                if imm == 0 {
-                    write!(f, "None")
-                } else {
-                    write!(f, "{:?} {imm}", self.shift_type)
-                }
-            }
+        if self.is_none() {
+            write!(f, "None")
+        } else {
+            write!(f, "{:?} {:?}", self.shift_type, self.value)
         }
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct BlockOperandShift {
     pub operand: BlockOperand,
     pub shift: BlockShift,
+}
+
+impl Debug for BlockOperandShift {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.shift.is_none() {
+            write!(f, "{:?}", self.operand)
+        } else {
+            write!(f, "{:?} {:?}", self.operand, self.shift)
+        }
+    }
 }
 
 impl From<BlockReg> for BlockOperandShift {
@@ -338,6 +349,7 @@ pub struct BlockLabel(u16);
 pub struct BlockAsmBuf {
     pub insts: Vec<BlockInst>,
     pub guest_branches_mapping: NoHashMap<u32, BlockLabel>,
+    pub reg_allocator: BlockRegAllocator,
 }
 
 impl BlockAsmBuf {
@@ -345,6 +357,7 @@ impl BlockAsmBuf {
         BlockAsmBuf {
             insts: Vec::new(),
             guest_branches_mapping: NoHashMap::default(),
+            reg_allocator: BlockRegAllocator::new()
         }
     }
 

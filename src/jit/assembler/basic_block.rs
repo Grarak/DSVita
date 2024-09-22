@@ -1,7 +1,6 @@
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp};
 use crate::jit::assembler::block_inst_list::{BlockInstList, BlockInstListEntry};
-use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
 use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockAsmBuf, BlockInst};
 use crate::jit::reg::{Reg, RegReserve};
@@ -106,10 +105,10 @@ impl BasicBlock {
             match &mut asm.buf.insts[i] {
                 BlockInst::Label { guest_pc, .. } => {
                     if let Some(pc) = guest_pc {
-                        last_pc = pc.0;
+                        last_pc = *pc;
                     }
                 }
-                BlockInst::GuestPc(pc) => last_pc = pc.0,
+                BlockInst::GuestPc(pc) => last_pc = *pc,
                 _ => match asm.buf.insts[i] {
                     BlockInst::SaveContext {
                         thread_regs_addr_reg,
@@ -265,6 +264,31 @@ impl BasicBlock {
         }
     }
 
+    pub fn remove_dead_code(&mut self, asm: &BlockAsm) {
+        let mut current_node = self.insts_link.root;
+        let mut i = 0;
+        while !current_node.is_null() {
+            let inst_i = BlockInstList::deref(current_node).value;
+            let inst = &asm.buf.insts[inst_i];
+            if let BlockInst::RestoreReg { guest_reg, .. } = inst {
+                if *guest_reg != Reg::CPSR {
+                    let (_, outputs) = inst.get_io();
+                    if (self.regs_live_ranges[i + 1] - outputs) == self.regs_live_ranges[i + 1] {
+                        let next_node = BlockInstList::deref(current_node).next;
+                        self.insts_link.remove_entry(current_node);
+                        current_node = next_node;
+                        self.regs_live_ranges.remove(i);
+                        self.used_regs.remove(i);
+                        continue;
+                    }
+                }
+            }
+
+            i += 1;
+            current_node = BlockInstList::deref(current_node).next;
+        }
+    }
+
     pub fn add_required_outputs(&mut self, required_outputs: BlockRegSet) {
         *self.regs_live_ranges.last_mut().unwrap() += required_outputs;
         *self.used_regs.last_mut().unwrap() += required_outputs;
@@ -283,37 +307,37 @@ impl BasicBlock {
         self.regs_live_ranges.last().unwrap()
     }
 
-    pub fn allocate_regs(&mut self, asm: &mut BlockAsm, reg_allocator: &mut BlockRegAllocator) {
+    pub fn allocate_regs(&mut self, asm: &mut BlockAsm) {
         let mut i = 0;
         let mut current_node = self.insts_link.root;
         while !current_node.is_null() {
             let inst_i = BlockInstList::deref(current_node).value;
-            reg_allocator.inst_allocate(&mut asm.buf.insts[inst_i], &self.regs_live_ranges[i..], &self.used_regs[i..]);
-            if !reg_allocator.pre_allocate_insts.is_empty() {
-                for i in asm.buf.insts.len()..asm.buf.insts.len() + reg_allocator.pre_allocate_insts.len() {
+            asm.buf.reg_allocator.inst_allocate(&mut asm.buf.insts[inst_i], &self.regs_live_ranges[i..], &self.used_regs[i..]);
+            if !asm.buf.reg_allocator.pre_allocate_insts.is_empty() {
+                for i in asm.buf.insts.len()..asm.buf.insts.len() + asm.buf.reg_allocator.pre_allocate_insts.len() {
                     self.insts_link.insert_entry_begin(current_node, i);
                 }
-                asm.buf.insts.extend_from_slice(&reg_allocator.pre_allocate_insts);
+                asm.buf.insts.extend_from_slice(&asm.buf.reg_allocator.pre_allocate_insts);
             }
             i += 1;
             current_node = BlockInstList::deref(current_node).next;
         }
 
         if !self.exit_blocks.is_empty() {
-            reg_allocator.ensure_global_mappings(*self.get_required_outputs());
+            asm.buf.reg_allocator.ensure_global_mappings(*self.get_required_outputs());
 
             let end_entry = self.insts_link.end;
             // Make sure to restore mapping before a branch
             if let BlockInst::Branch { .. } = asm.buf.insts[BlockInstList::deref(end_entry).value] {
-                for i in asm.buf.insts.len()..asm.buf.insts.len() + reg_allocator.pre_allocate_insts.len() {
+                for i in asm.buf.insts.len()..asm.buf.insts.len() + asm.buf.reg_allocator.pre_allocate_insts.len() {
                     self.insts_link.insert_entry_begin(end_entry, i);
                 }
             } else {
-                for i in asm.buf.insts.len()..asm.buf.insts.len() + reg_allocator.pre_allocate_insts.len() {
+                for i in asm.buf.insts.len()..asm.buf.insts.len() + asm.buf.reg_allocator.pre_allocate_insts.len() {
                     self.insts_link.insert_end(i);
                 }
             }
-            asm.buf.insts.extend_from_slice(&reg_allocator.pre_allocate_insts);
+            asm.buf.insts.extend_from_slice(&asm.buf.reg_allocator.pre_allocate_insts);
         }
     }
 

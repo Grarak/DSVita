@@ -32,11 +32,21 @@ pub enum BlockAluOp {
     Mvn = 15,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum BlockAluSetCond {
     None,
     Host,
     HostGuest,
+}
+
+impl Debug for BlockAluSetCond {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlockAluSetCond::None => write!(f, ""),
+            BlockAluSetCond::Host => write!(f, "s"),
+            BlockAluSetCond::HostGuest => write!(f, "s_guest"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -613,30 +623,7 @@ impl DerefMut for GuestInstInfo {
     }
 }
 
-#[derive(Copy, Clone)]
-pub struct GuestPcInfo(pub u32);
-
-impl Debug for GuestPcInfo {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:x}", self.0)
-    }
-}
-
-impl Deref for GuestPcInfo {
-    type Target = u32;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for GuestPcInfo {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum BlockInst {
     Alu3 {
         op: BlockAluOp,
@@ -688,7 +675,7 @@ pub enum BlockInst {
 
     Label {
         label: BlockLabel,
-        guest_pc: Option<GuestPcInfo>,
+        guest_pc: Option<u32>,
     },
     Branch {
         label: BlockLabel,
@@ -721,9 +708,81 @@ pub enum BlockInst {
     },
     Bkpt(u16),
 
-    GuestPc(GuestPcInfo),
+    GuestPc(u32),
     GenericGuestInst {
         inst: GuestInstInfo,
         regs_mapping: [BlockReg; Reg::None as usize],
     },
+}
+
+impl Debug for BlockInst {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let write_alu = |op, operands: &[BlockOperandShift], set_cond, thumb_pc_aligned, f: &mut Formatter<'_>| write!(f, "{op:?}{set_cond:?} {operands:?}, align pc: {thumb_pc_aligned}");
+        match self {
+            BlockInst::Alu3 {
+                op,
+                operands,
+                set_cond,
+                thumb_pc_aligned,
+            } => write_alu(op, operands, set_cond, thumb_pc_aligned, f),
+            BlockInst::Alu2Op1 {
+                op,
+                operands,
+                set_cond,
+                thumb_pc_aligned,
+            } => write_alu(op, operands, set_cond, thumb_pc_aligned, f),
+            BlockInst::Alu2Op0 {
+                op,
+                operands,
+                set_cond,
+                thumb_pc_aligned,
+            } => write_alu(op, operands, set_cond, thumb_pc_aligned, f),
+            BlockInst::Transfer {
+                op,
+                operands,
+                signed,
+                amount,
+                add_to_base,
+            } => {
+                let signed = if *signed { "S" } else { "U" };
+                let amount = match amount {
+                    MemoryAmount::Byte => "8",
+                    MemoryAmount::Half => "16",
+                    MemoryAmount::Word => "32",
+                    MemoryAmount::Double => "64",
+                };
+                let add_to_base = if *add_to_base { "+" } else { "-" };
+                write!(f, "{op:?}{signed}{amount} {:?} [{:?}, {:?}], {add_to_base}base", operands[0], operands[1], operands[2])
+            }
+            BlockInst::TransferMultiple {
+                op,
+                operand,
+                regs,
+                write_back,
+                pre,
+                add_to_base,
+            } => {
+                let add_to_base = if *add_to_base { "+" } else { "-" };
+                write!(f, "{op:?}M {operand:?} {regs:?}, write back: {write_back}, pre {pre}, {add_to_base}base")
+            }
+            BlockInst::SystemReg { op, operand } => write!(f, "{op:?} {operand:?}"),
+            BlockInst::Bfc { operand, lsb, width } => write!(f, "Bfc {operand:?}, {lsb}, {width}"),
+            BlockInst::Mul { operands, set_cond, thumb_pc_aligned } => write!(f, "Mul{set_cond:?} {operands:?}, align pc: {thumb_pc_aligned}"),
+            BlockInst::Label { label, guest_pc } => {
+                let guest_pc = match guest_pc {
+                    None => "",
+                    Some(pc) => &format!("{pc:x}"),
+                };
+                write!(f, "label {label:?} {guest_pc}:")
+            }
+            BlockInst::Branch { label, cond, block_index, skip } => write!(f, "B{cond:?} {label:?}, block index: {block_index}, skip: {skip}"),
+            BlockInst::SaveContext { regs_to_save, .. } => write!(f, "Save {regs_to_save:?}"),
+            BlockInst::SaveReg { guest_reg, reg_mapped, .. } => write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}"),
+            BlockInst::RestoreReg { guest_reg, reg_mapped, .. } => write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}"),
+            BlockInst::Call { func_reg, args } => write!(f, "Call {func_reg:?} {args:?}"),
+            BlockInst::Bkpt(id) => write!(f, "Bkpt {id}"),
+            BlockInst::GuestPc(pc) => write!(f, "GuestPc {pc:x}"),
+            BlockInst::GenericGuestInst { inst, .. } => write!(f, "{inst:?}"),
+        }
+    }
 }

@@ -1,14 +1,13 @@
 use crate::core::thread_regs::ThreadRegs;
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::basic_block::BasicBlock;
-use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp, GuestInstInfo, GuestPcInfo};
+use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp, GuestInstInfo};
 use crate::jit::assembler::block_inst_list::BlockInstList;
-use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
 use crate::jit::assembler::block_reg_set::{block_reg_set, BlockRegSet};
 use crate::jit::assembler::{block_reg_allocator, BlockAsmBuf, BlockInst, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, ANY_REG_LIMIT};
 use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
-use crate::jit::{Cond, MemoryAmount};
+use crate::jit::{Cond, MemoryAmount, ShiftType};
 use crate::utils::{NoHashMap, NoHashSet};
 
 macro_rules! alu3 {
@@ -170,11 +169,21 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
-    fn add_op3(&mut self, op: BlockAluOp, op0: BlockReg, op1: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
+    fn check_alu_imm_limit(&mut self, op2: &mut BlockOperandShift) {
         if op2.operand.needs_reg_for_imm(0xFF) {
-            self.mov(self.tmp_operand_imm_reg, op2.operand);
-            op2 = self.tmp_operand_imm_reg.into();
+            let imm = op2.operand.as_imm();
+            let lsb_zeros = imm.trailing_zeros() & !0x1;
+            if (imm >> lsb_zeros) & !0xFF == 0 {
+                *op2 = (imm >> lsb_zeros, ShiftType::Ror, (32 - lsb_zeros) >> 1).into();
+            } else {
+                self.mov(self.tmp_operand_imm_reg, op2.operand);
+                *op2 = self.tmp_operand_imm_reg.into();
+            }
         }
+    }
+
+    fn add_op3(&mut self, op: BlockAluOp, op0: BlockReg, op1: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
+        self.check_alu_imm_limit(&mut op2);
         self.check_imm_shift_limit(&mut op2);
         self.insert_inst(BlockInst::Alu3 {
             op,
@@ -185,10 +194,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     fn add_op2_op1(&mut self, op: BlockAluOp, op1: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
-        if op2.operand.needs_reg_for_imm(0xFF) {
-            self.mov(self.tmp_operand_imm_reg, op2.operand);
-            op2 = self.tmp_operand_imm_reg.into();
-        }
+        self.check_alu_imm_limit(&mut op2);
         self.check_imm_shift_limit(&mut op2);
         self.insert_inst(BlockInst::Alu2Op1 {
             op,
@@ -199,9 +205,8 @@ impl<'a> BlockAsm<'a> {
     }
 
     fn add_op2_op0(&mut self, op: BlockAluOp, op0: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
-        if op != BlockAluOp::Mov && op2.operand.needs_reg_for_imm(0xFF) {
-            self.mov(self.tmp_operand_imm_reg, op2.operand);
-            op2 = self.tmp_operand_imm_reg.into();
+        if op != BlockAluOp::Mov {
+            self.check_alu_imm_limit(&mut op2);
         }
         self.check_imm_shift_limit(&mut op2);
         self.insert_inst(BlockInst::Alu2Op0 {
@@ -394,7 +399,7 @@ impl<'a> BlockAsm<'a> {
     pub fn find_guest_pc_inst_index(&self, guest_pc_to_find: u32) -> Option<usize> {
         for (i, inst) in self.buf.insts.iter().enumerate().rev() {
             if let BlockInst::GuestPc(guest_pc) = inst {
-                if guest_pc.0 == guest_pc_to_find {
+                if *guest_pc == guest_pc_to_find {
                     return Some(i);
                 }
             }
@@ -403,7 +408,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn guest_pc(&mut self, pc: u32) {
-        self.insert_inst(BlockInst::GuestPc(GuestPcInfo(pc)));
+        self.insert_inst(BlockInst::GuestPc(pc));
     }
 
     pub fn guest_branch(&mut self, cond: Cond, target_pc: u32) {
@@ -465,7 +470,7 @@ impl<'a> BlockAsm<'a> {
 
     // Convert guest pc with labels into labels
     fn resolve_labels(&mut self, label_aliases: &mut NoHashMap<u16, u16>) {
-        let mut previous_label: Option<(BlockLabel, Option<GuestPcInfo>)> = None;
+        let mut previous_label: Option<(BlockLabel, Option<u32>)> = None;
 
         let mut current_node = self.insts_link.root;
         while !current_node.is_null() {
@@ -675,12 +680,12 @@ impl<'a> BlockAsm<'a> {
                 match &self.buf.insts[BlockInstList::deref(current_node).value] {
                     BlockInst::Label { guest_pc, .. } => {
                         if let Some(pc) = guest_pc {
-                            basic_block_start_pc = pc.0;
+                            basic_block_start_pc = *pc;
                             break;
                         }
                     }
                     BlockInst::GuestPc(pc) => {
-                        basic_block_start_pc = pc.0;
+                        basic_block_start_pc = *pc;
                         break;
                     }
                     _ => {}
@@ -695,6 +700,10 @@ impl<'a> BlockAsm<'a> {
             if basic_blocks[i].exit_blocks.is_empty() {
                 self.resolve_io(&mut basic_blocks, BlockRegSet::new(), &[i]);
             }
+        }
+
+        for basic_block in &mut basic_blocks {
+            basic_block.remove_dead_code(self);
         }
 
         let mut df_already_processed = NoHashSet::default();
@@ -773,7 +782,7 @@ impl<'a> BlockAsm<'a> {
         let (mut basic_blocks, basic_blocks_order) = self.assemble_basic_blocks::<THUMB>(block_start_pc);
         let mut reg_intervals = Self::assemble_intervals(&basic_blocks, &basic_blocks_order);
 
-        let mut global_regs_mapping = NoHashMap::default();
+        self.buf.reg_allocator.global_mapping.clear();
         let mut free_regs = block_reg_allocator::ALLOCATION_REGS;
         while !free_regs.is_empty() {
             let mut longest_interval = 0;
@@ -786,20 +795,19 @@ impl<'a> BlockAsm<'a> {
                 }
             }
             reg_intervals.remove(&longest_interval_reg);
-            global_regs_mapping.insert(longest_interval_reg, free_regs.pop().unwrap());
-        }
-        for (reg, _) in reg_intervals {
-            global_regs_mapping.insert(reg, Reg::None);
+            self.buf.reg_allocator.global_mapping.insert(longest_interval_reg, free_regs.pop().unwrap());
         }
 
-        let mut reg_allocator = BlockRegAllocator::new(global_regs_mapping);
+        for (reg, _) in reg_intervals {
+            self.buf.reg_allocator.global_mapping.insert(reg, Reg::None);
+        }
 
         for basic_block in &mut basic_blocks {
             if !basic_block.guest_regs_resolved {
                 continue;
             }
-            reg_allocator.init_inputs(*basic_block.get_required_inputs());
-            basic_block.allocate_regs(&mut self, &mut reg_allocator);
+            self.buf.reg_allocator.init_inputs(*basic_block.get_required_inputs());
+            basic_block.allocate_regs(&mut self);
         }
 
         // Try to collapse cond blocks into cond opcodes
