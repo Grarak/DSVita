@@ -33,7 +33,7 @@ impl BlockRegSet {
 
     pub const fn new_fixed(reg_reserve: RegReserve) -> Self {
         let mut set = BlockRegSet::new();
-        set.0[0] = (reg_reserve.0 & ((1 << Reg::None as u8) - 1)) << Reg::None as u8;
+        set.0[0] = reg_reserve.0 & ((1 << Reg::None as u8) - 1);
         set
     }
 

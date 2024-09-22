@@ -586,6 +586,7 @@ impl BlockInst {
                     }
                 }
 
+                inst_info.set_cond(Cond::AL);
                 opcodes.push(inst_info.assemble());
             }
 
@@ -687,7 +688,6 @@ pub enum BlockInst {
     SaveContext {
         thread_regs_addr_reg: BlockReg,
         tmp_guest_cpsr_reg: BlockReg,
-        regs_to_save: RegReserve,
     },
     SaveReg {
         guest_reg: Reg,
@@ -776,7 +776,7 @@ impl Debug for BlockInst {
                 write!(f, "label {label:?} {guest_pc}:")
             }
             BlockInst::Branch { label, cond, block_index, skip } => write!(f, "B{cond:?} {label:?}, block index: {block_index}, skip: {skip}"),
-            BlockInst::SaveContext { regs_to_save, .. } => write!(f, "Save {regs_to_save:?}"),
+            BlockInst::SaveContext { .. } => write!(f, "SaveContext"),
             BlockInst::SaveReg { guest_reg, reg_mapped, .. } => write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}"),
             BlockInst::RestoreReg { guest_reg, reg_mapped, .. } => write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}"),
             BlockInst::Call { func_reg, args } => write!(f, "Call {func_reg:?} {args:?}"),

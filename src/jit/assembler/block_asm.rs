@@ -3,12 +3,14 @@ use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::basic_block::BasicBlock;
 use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp, GuestInstInfo};
 use crate::jit::assembler::block_inst_list::BlockInstList;
-use crate::jit::assembler::block_reg_set::{block_reg_set, BlockRegSet};
+use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{block_reg_allocator, BlockAsmBuf, BlockInst, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, ANY_REG_LIMIT};
 use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
 use crate::utils::{NoHashMap, NoHashSet};
+
+pub static mut BLOCK_LOG: bool = false;
 
 macro_rules! alu3 {
     ($name:ident, $inst:ident, $set_cond:ident, $thumb_pc_aligned:expr) => {
@@ -317,7 +319,6 @@ impl<'a> BlockAsm<'a> {
         self.insert_inst(BlockInst::SaveContext {
             thread_regs_addr_reg: self.thread_regs_addr_reg,
             tmp_guest_cpsr_reg: self.tmp_guest_cpsr_reg,
-            regs_to_save: RegReserve::new(),
         });
     }
 
@@ -507,21 +508,6 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
-    fn resolve_guest_regs(&mut self, basic_blocks: &mut [BasicBlock], input_guest_regs_dirty: RegReserve, block_indices: &[usize]) {
-        for i in block_indices {
-            let basic_block = &mut basic_blocks[*i];
-            let sum_guest_regs_dirty = basic_block.input_guest_regs_dirty + input_guest_regs_dirty;
-            if sum_guest_regs_dirty != basic_block.input_guest_regs_dirty || !basic_block.guest_regs_resolved {
-                basic_block.guest_regs_resolved = true;
-                basic_block.input_guest_regs_dirty = sum_guest_regs_dirty;
-                basic_block.init_resolve_guest_regs(self);
-                let exit_blocks = basic_block.exit_blocks.clone().into_iter().collect::<Vec<usize>>();
-                let output_guest_regs_dirty = basic_block.output_guest_regs_dirty;
-                self.resolve_guest_regs(basic_blocks, output_guest_regs_dirty, &exit_blocks);
-            }
-        }
-    }
-
     fn resolve_io(&self, basic_blocks: &mut [BasicBlock], required_outputs: BlockRegSet, block_indices: &[usize]) {
         for i in block_indices {
             let basic_block = &mut basic_blocks[*i];
@@ -560,7 +546,7 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
-    fn assemble_basic_blocks<const THUMB: bool>(&mut self, block_start_pc: u32) -> (Vec<BasicBlock>, Vec<usize>) {
+    fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> (Vec<BasicBlock>, Vec<usize>) {
         for i in 0..self.buf.insts.len() {
             self.insts_link.insert_end(i);
         }
@@ -671,8 +657,6 @@ impl<'a> BlockAsm<'a> {
             }
         }
 
-        self.resolve_guest_regs(&mut basic_blocks, RegReserve::new(), &[0]);
-
         for basic_block in &mut basic_blocks {
             let mut basic_block_start_pc = block_start_pc;
             let mut current_node = basic_block.block_entry_start;
@@ -693,7 +677,7 @@ impl<'a> BlockAsm<'a> {
 
                 current_node = BlockInstList::deref(current_node).previous;
             }
-            basic_block.init_insts::<THUMB>(self, basic_block_start_pc);
+            basic_block.init_insts(self, basic_block_start_pc, thumb);
         }
 
         for i in (0..basic_blocks_len).rev() {
@@ -711,45 +695,6 @@ impl<'a> BlockAsm<'a> {
         let mut df_ordering_start = 0;
         let mut df_ordering_end = basic_blocks_len - 1;
         Self::resolve_df_ordering(&mut df_already_processed, &mut basic_blocks, 0, &mut df_ordering, &mut df_ordering_start, &mut df_ordering_end);
-
-        // Initialize all guest regs used in block
-        let first_basic_block = basic_blocks.first_mut().unwrap();
-        let mut loaded_guest_regs = BlockRegSet::new();
-        let load_guest_regs_insts_start = self.buf.insts.len();
-        let mut used_guest_regs = Vec::new();
-        for guest_reg in first_basic_block.get_required_inputs().get_guests() {
-            loaded_guest_regs += BlockReg::from(guest_reg);
-            self.insert_inst(BlockInst::Transfer {
-                op: BlockTransferOp::Read,
-                operands: [guest_reg.into(), self.thread_regs_addr_reg.into(), (guest_reg as u32 * 4).into()],
-                signed: false,
-                amount: MemoryAmount::Word,
-                add_to_base: true,
-            });
-            used_guest_regs.push(block_reg_set!(Some(BlockReg::from(guest_reg)), Some(self.thread_regs_addr_reg)));
-        }
-
-        let mut initialization_end_node = first_basic_block.insts_link.root;
-        while !initialization_end_node.is_null() && BlockInstList::deref(initialization_end_node).value != self.block_start {
-            initialization_end_node = BlockInstList::deref(initialization_end_node).next;
-        }
-
-        for i in load_guest_regs_insts_start..load_guest_regs_insts_start + used_guest_regs.len() {
-            if initialization_end_node.is_null() {
-                first_basic_block.insts_link.insert_end(i);
-            } else {
-                first_basic_block.insts_link.insert_entry_begin(initialization_end_node, i);
-            }
-        }
-
-        first_basic_block.regs_live_ranges[self.block_start] += self.thread_regs_addr_reg;
-        let regs_live_extensions = vec![first_basic_block.regs_live_ranges[self.block_start]; used_guest_regs.len()];
-        first_basic_block.regs_live_ranges.splice(self.block_start..self.block_start, regs_live_extensions);
-        first_basic_block.used_regs.splice(self.block_start..self.block_start, used_guest_regs);
-
-        for i in 0..self.block_start {
-            first_basic_block.regs_live_ranges[i] -= loaded_guest_regs;
-        }
 
         (basic_blocks, df_ordering)
     }
@@ -778,8 +723,25 @@ impl<'a> BlockAsm<'a> {
         intervals
     }
 
-    pub fn finalize<const THUMB: bool>(mut self, block_start_pc: u32) -> Vec<u32> {
-        let (mut basic_blocks, basic_blocks_order) = self.assemble_basic_blocks::<THUMB>(block_start_pc);
+    pub fn finalize(mut self, block_start_pc: u32, thumb: bool) -> Vec<u32> {
+        let (mut basic_blocks, basic_blocks_order) = self.assemble_basic_blocks(block_start_pc, thumb);
+
+        if unsafe { BLOCK_LOG } {
+            for (i, basic_block) in basic_blocks.iter().enumerate() {
+                println!("{i}[{i} {:x}]", basic_block.start_pc);
+            }
+
+            for (i, basic_block) in basic_blocks.iter().enumerate() {
+                for &exit_i in &basic_block.exit_blocks {
+                    println!("{i} --> {exit_i}");
+                }
+            }
+
+            for (i, basic_block) in basic_blocks.iter().enumerate() {
+                println!("{i}: {basic_block:?}");
+            }
+        }
+
         let mut reg_intervals = Self::assemble_intervals(&basic_blocks, &basic_blocks_order);
 
         self.buf.reg_allocator.global_mapping.clear();
@@ -802,38 +764,19 @@ impl<'a> BlockAsm<'a> {
             self.buf.reg_allocator.global_mapping.insert(reg, Reg::None);
         }
 
-        for basic_block in &mut basic_blocks {
-            if !basic_block.guest_regs_resolved {
+        for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
+            if i != 0 && basic_block.enter_blocks.is_empty() {
                 continue;
             }
             self.buf.reg_allocator.init_inputs(*basic_block.get_required_inputs());
             basic_block.allocate_regs(&mut self);
         }
 
-        // Try to collapse cond blocks into cond opcodes
-        for i in 1..basic_blocks.len() {
-            if basic_blocks[i].insts_link.len() == 1 && basic_blocks[i].enter_blocks.len() == 1 && *basic_blocks[i].enter_blocks.iter().next().unwrap() == i - 1 {
-                let previous_entry_last = BlockInstList::deref(basic_blocks[i - 1].insts_link.end).value;
-                let override_cond = if let BlockInst::Branch { cond, block_index, skip, .. } = &mut self.buf.insts[previous_entry_last] {
-                    if *block_index == i + 1 {
-                        *skip = true;
-                        !*cond
-                    } else {
-                        Cond::AL
-                    }
-                } else {
-                    Cond::AL
-                };
-                // override_cond != AL when a block can be collapsed
-                basic_blocks[i].cond_block = override_cond;
-            }
-        }
-
         let mut opcodes = Vec::new();
         let mut branch_placeholders = Vec::new();
         let mut opcodes_offset = Vec::with_capacity(basic_blocks.len());
-        for basic_block in basic_blocks {
-            if !basic_block.guest_regs_resolved {
+        for (i, basic_block) in basic_blocks.iter().enumerate() {
+            if i != 0 && basic_block.enter_blocks.is_empty() {
                 continue;
             }
             opcodes_offset.push(opcodes.len());

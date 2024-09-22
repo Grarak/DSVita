@@ -1,6 +1,7 @@
 use crate::core::emu::{get_jit, get_jit_mut, get_mem_mut, get_regs, get_regs_mut, Emu};
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
+use crate::jit::assembler::block_asm::BLOCK_LOG;
 use crate::jit::assembler::BlockAsmBuf;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
@@ -145,7 +146,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     assert!(self.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{CPU:?} {guest_pc:x} {inst_info:?}")
                 }
 
-                // let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && inst_info.is_uncond_branch();
+                // let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && inst_info.is_uncond_branch() && !inst_info.op.is_labelled_branch();
                 let is_uncond_branch = inst_info.is_uncond_branch();
                 let is_unknown = inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb;
 
@@ -157,6 +158,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 }
             }
         }
+
+        // unsafe { BLOCK_LOG = guest_pc == 0x238015c };
 
         let thread_regs = get_regs!(self.emu, CPU);
         let mut block_asm = unsafe { (*self.block_asm_buf.get()).new_asm(thread_regs) };
@@ -172,14 +175,20 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 self.emit(&mut block_asm);
             }
 
-            if DEBUG_LOG {
-                block_asm.save_context();
-                block_asm.call2(debug_after_exec_op::<CPU> as *const (), self.jit_buf.current_pc, self.jit_buf.current_inst().opcode);
-                block_asm.restore_reg(Reg::CPSR);
-            }
+            // if DEBUG_LOG {
+            //     block_asm.save_context();
+            //     block_asm.call2(debug_after_exec_op::<CPU> as *const (), self.jit_buf.current_pc, self.jit_buf.current_inst().opcode);
+            //     block_asm.restore_reg(Reg::CPSR);
+            // }
         }
 
-        let opcodes = block_asm.finalize::<THUMB>(guest_pc);
+        let opcodes = block_asm.finalize(guest_pc, THUMB);
+        if unsafe { BLOCK_LOG } {
+            for &opcode in &opcodes {
+                println!("0x{opcode:x},");
+            }
+            todo!();
+        }
         get_jit_mut!(self.emu).insert_block::<CPU, THUMB>(&opcodes, JitInsertArgs::new(guest_pc, self.jit_buf.insts_cycle_counts.clone()));
 
         if DEBUG_LOG {
