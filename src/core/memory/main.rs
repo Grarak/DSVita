@@ -25,6 +25,6 @@ impl Main {
     }
 
     pub fn write_slice<T: Convert>(&mut self, addr_offset: u32, slice: &[T]) {
-        utils::write_to_mem_slice(self.main.deref_mut(), addr_offset & (regions::MAIN_MEMORY_SIZE - 1), slice);
+        utils::write_to_mem_slice(self.main.deref_mut(), (addr_offset & (regions::MAIN_MEMORY_SIZE - 1)) as usize, slice);
     }
 }

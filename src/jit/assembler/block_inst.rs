@@ -3,7 +3,7 @@ use crate::jit::assembler::arm::branch_assembler::Bx;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, LdrStrImmSBHD, LdrStrReg, LdrStrRegSBHD, Mrs, Msr};
 use crate::jit::assembler::arm::Bkpt;
 use crate::jit::assembler::block_reg_set::{block_reg_set, BlockRegSet};
-use crate::jit::assembler::{BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift};
+use crate::jit::assembler::{block_reg_allocator, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift};
 use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
@@ -194,6 +194,16 @@ impl BlockInst {
                 }
                 (inputs, outputs)
             }
+
+            BlockInst::Prologue => (
+                block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(Reg::LR))),
+                block_reg_set!(Some(BlockReg::Fixed(Reg::SP))),
+            ),
+            BlockInst::Epilogue => (
+                block_reg_set!(Some(BlockReg::Fixed(Reg::SP))),
+                block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(Reg::PC))),
+            ),
+
             BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) => (block_reg_set!(), block_reg_set!()),
         }
     }
@@ -261,7 +271,7 @@ impl BlockInst {
                     Self::replace_reg(&mut regs_mapping[reg as usize], old, new);
                 }
             }
-            BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) => {}
+            BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue => {}
         }
     }
 
@@ -315,7 +325,7 @@ impl BlockInst {
                     Self::replace_reg(&mut regs_mapping[reg as usize], old, new);
                 }
             }
-            BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) => {}
+            BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue => {}
         }
     }
 
@@ -355,7 +365,7 @@ impl BlockInst {
                     Self::replace_reg(reg_mapping, old, new);
                 }
             }
-            BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) => {}
+            BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue => {}
         }
     }
 
@@ -381,7 +391,7 @@ impl BlockInst {
         opcodes.push(LdrStrImm::str_offset_al(guest_reg, thread_regs_addr_reg, Reg::CPSR as u16 * 4));
     }
 
-    pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize) {
+    pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize, used_host_regs: RegReserve) {
         let alu_reg = |op: BlockAluOp, op0: BlockReg, op1: BlockReg, op2: BlockReg, shift: BlockShift, set_cond: bool| match shift.value {
             BlockOperand::Reg(shift_reg) => AluReg::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_reg.as_fixed(), set_cond, Cond::AL),
             BlockOperand::Imm(shift_imm) => {
@@ -590,6 +600,11 @@ impl BlockInst {
                 opcodes.push(inst_info.assemble());
             }
 
+            // BlockInst::Prologue => opcodes.push(LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL)),
+            // BlockInst::Epilogue => opcodes.push(LdmStm::generic(Reg::SP, used_host_regs + Reg::PC, true, true, true, false, Cond::AL)),
+            BlockInst::Prologue => opcodes.push(LdmStm::generic(Reg::SP, block_reg_allocator::ALLOCATION_REGS + Reg::LR, false, true, false, true, Cond::AL)),
+            BlockInst::Epilogue => opcodes.push(LdmStm::generic(Reg::SP, block_reg_allocator::ALLOCATION_REGS + Reg::PC, true, true, true, false, Cond::AL)),
+
             BlockInst::Label { .. } | BlockInst::GuestPc(_) => {}
         }
     }
@@ -713,6 +728,9 @@ pub enum BlockInst {
         inst: GuestInstInfo,
         regs_mapping: [BlockReg; Reg::None as usize],
     },
+
+    Prologue,
+    Epilogue,
 }
 
 impl Debug for BlockInst {
@@ -783,6 +801,8 @@ impl Debug for BlockInst {
             BlockInst::Bkpt(id) => write!(f, "Bkpt {id}"),
             BlockInst::GuestPc(pc) => write!(f, "GuestPc {pc:x}"),
             BlockInst::GenericGuestInst { inst, .. } => write!(f, "{inst:?}"),
+            BlockInst::Prologue => write!(f, "Prologue"),
+            BlockInst::Epilogue => write!(f, "Epilogue"),
         }
     }
 }

@@ -10,7 +10,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             block_asm.save_context();
             block_asm.call(bios_uninterrupt::<CPU> as *const ());
             self.emit_branch_out_metadata(block_asm);
-            block_asm.breakout();
+            block_asm.epilogue();
         }
     }
 }

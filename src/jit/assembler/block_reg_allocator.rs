@@ -13,6 +13,7 @@ pub struct BlockRegAllocator {
     stored_mapping: HeapMem<Reg, { ANY_REG_LIMIT as usize }>, // mappings to real registers
     stored_mapping_reverse: [Option<u16>; Reg::SP as usize],
     spilled: NoHashSet<u16>, // regs that are spilled
+    pub dirty_regs: RegReserve,
     pub pre_allocate_insts: Vec<BlockInst>,
 }
 
@@ -23,6 +24,7 @@ impl BlockRegAllocator {
             stored_mapping: HeapMem::new(),
             stored_mapping_reverse: [None; Reg::SP as usize],
             spilled: NoHashSet::default(),
+            dirty_regs: RegReserve::new(),
             pre_allocate_insts: Vec::new(),
         }
     }
@@ -44,6 +46,7 @@ impl BlockRegAllocator {
     }
 
     fn gen_pre_handle_spilled_inst(&mut self, any_reg: u16, mapping: Reg, op: BlockTransferOp) {
+        self.dirty_regs += mapping;
         self.pre_allocate_insts.push(BlockInst::Transfer {
             op,
             operands: [BlockReg::Fixed(mapping).into(), BlockReg::Fixed(Reg::SP).into(), (any_reg as u32 * 4).into()],
@@ -54,6 +57,7 @@ impl BlockRegAllocator {
     }
 
     fn gen_pre_move_reg(&mut self, dst: Reg, src: Reg) {
+        self.dirty_regs += dst;
         self.pre_allocate_insts.push(BlockInst::Alu2Op0 {
             op: BlockAluOp::Mov,
             operands: [BlockReg::Fixed(dst).into(), BlockReg::Fixed(src).into()],
@@ -252,11 +256,13 @@ impl BlockRegAllocator {
 
         for fixed_reg_output in outputs.get_fixed().get_gp_regs() {
             self.remove_fixed_reg(fixed_reg_output, live_ranges);
+            self.dirty_regs += fixed_reg_output;
         }
 
         for any_output_reg in outputs.iter_any() {
             let reg = self.get_output_reg(any_output_reg, live_ranges, used_regs);
             inst.replace_output_regs(BlockReg::Any(any_output_reg), BlockReg::Fixed(reg));
+            self.dirty_regs += reg;
         }
     }
 

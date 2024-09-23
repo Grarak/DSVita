@@ -6,7 +6,7 @@ use crate::jit::assembler::block_inst_list::BlockInstList;
 use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{block_reg_allocator, BlockAsmBuf, BlockInst, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, ANY_REG_LIMIT};
 use crate::jit::inst_info::InstInfo;
-use crate::jit::reg::{reg_reserve, Reg, RegReserve};
+use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
 use crate::utils::{NoHashMap, NoHashSet};
 
@@ -55,7 +55,7 @@ pub struct BlockAsm<'a> {
 }
 
 impl<'a> BlockAsm<'a> {
-    pub fn new(thread_regs: &ThreadRegs, buf: &'a mut BlockAsmBuf) -> Self {
+    pub fn new(thread_regs: &ThreadRegs, host_sp_addr: usize, buf: &'a mut BlockAsmBuf) -> Self {
         buf.insts.clear();
         buf.guest_branches_mapping.clear();
         let thread_regs_addr_reg = BlockReg::Any(Reg::SPSR as u16 + 1);
@@ -82,9 +82,18 @@ impl<'a> BlockAsm<'a> {
             block_start: 0,
             inst_insert_index: None,
         };
-        instance.transfer_push(BlockReg::Fixed(Reg::SP), reg_reserve!(Reg::LR));
+
+        instance.buf.insts.push(BlockInst::Prologue);
+
+        let host_sp_addr_reg = thread_regs_addr_reg;
+        instance.mov(host_sp_addr_reg, host_sp_addr as u32);
+        instance.transfer_write(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0, false, MemoryAmount::Word);
+
         instance.sub(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4); // Reserve for spilled registers
+
         instance.mov(thread_regs_addr_reg, thread_regs.get_reg_start_addr() as *const _ as u32);
+        instance.restore_reg(Reg::CPSR);
+
         instance.block_start = instance.buf.insts.len();
         instance
     }
@@ -340,9 +349,9 @@ impl<'a> BlockAsm<'a> {
         });
     }
 
-    pub fn breakout(&mut self) {
-        self.add(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4); // Remove reserve for spilled registers
-        self.transfer_pop(BlockReg::Fixed(Reg::SP), reg_reserve!(Reg::PC));
+    pub fn epilogue(&mut self) {
+        self.add(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4);
+        self.buf.insts.push(BlockInst::Epilogue);
     }
 
     pub fn call(&mut self, func: impl Into<BlockOperand>) {
@@ -586,23 +595,13 @@ impl<'a> BlockAsm<'a> {
                     }
                     last_label = None;
                 }
-                // Breakout command
-                BlockInst::TransferMultiple {
-                    op: BlockTransferOp::Read,
-                    operand: BlockReg::Fixed(Reg::SP),
-                    regs,
-                    write_back: true,
-                    pre: false,
-                    add_to_base: true,
-                } => {
-                    if *regs == reg_reserve!(Reg::PC) {
-                        basic_blocks.push(BasicBlock::new(self, basic_block_start, current_node));
-                        basic_block_start = BlockInstList::deref(current_node).next;
-                        if let Some(last_label) = last_label {
-                            basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
-                        }
-                        last_label = None;
+                BlockInst::Epilogue => {
+                    basic_blocks.push(BasicBlock::new(self, basic_block_start, current_node));
+                    basic_block_start = BlockInstList::deref(current_node).next;
+                    if let Some(last_label) = last_label {
+                        basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
                     }
+                    last_label = None;
                 }
                 _ => {}
             }
@@ -631,15 +630,8 @@ impl<'a> BlockAsm<'a> {
                     }
                 }
                 // Don't add exit when last command in basic block is a breakout
-                BlockInst::TransferMultiple {
-                    op: BlockTransferOp::Read,
-                    operand: BlockReg::Fixed(Reg::SP),
-                    regs,
-                    write_back: true,
-                    pre: false,
-                    add_to_base: true,
-                } => {
-                    if *regs != reg_reserve!(Reg::PC) && i + 1 < basic_blocks_len {
+                BlockInst::Epilogue => {
+                    if i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.insert(i + 1);
                     }
                 }
@@ -764,13 +756,18 @@ impl<'a> BlockAsm<'a> {
             self.buf.reg_allocator.global_mapping.insert(reg, Reg::None);
         }
 
+        let mut used_host_regs = RegReserve::new();
+
         for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
             if i != 0 && basic_block.enter_blocks.is_empty() {
                 continue;
             }
             self.buf.reg_allocator.init_inputs(*basic_block.get_required_inputs());
             basic_block.allocate_regs(&mut self);
+            used_host_regs += self.buf.reg_allocator.dirty_regs;
         }
+
+        used_host_regs &= block_reg_allocator::ALLOCATION_REGS;
 
         let mut opcodes = Vec::new();
         let mut branch_placeholders = Vec::new();
@@ -780,7 +777,7 @@ impl<'a> BlockAsm<'a> {
                 continue;
             }
             opcodes_offset.push(opcodes.len());
-            opcodes.extend(basic_block.emit_opcodes(&mut self, &mut branch_placeholders, opcodes.len()));
+            opcodes.extend(basic_block.emit_opcodes(&mut self, &mut branch_placeholders, opcodes.len(), used_host_regs));
         }
 
         for branch_placeholder in branch_placeholders {

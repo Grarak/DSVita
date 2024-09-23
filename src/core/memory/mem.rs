@@ -1,5 +1,5 @@
 use crate::core::cp15::TcmState;
-use crate::core::emu::{get_cp15, Emu};
+use crate::core::emu::{get_cp15, get_regs, Emu};
 use crate::core::memory::bios::{BiosArm7, BiosArm9};
 use crate::core::memory::io_arm7::IoArm7;
 use crate::core::memory::io_arm9::IoArm9;
@@ -15,7 +15,7 @@ use crate::core::memory::wram::Wram;
 use crate::core::spu::SoundSampler;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
-use crate::jit::jit_memory::JitMemory;
+use crate::jit::jit_memory::{JitMemory, JitRegion};
 use crate::logging::debug_println;
 use crate::utils::Convert;
 use std::intrinsics::{likely, unlikely};
@@ -36,7 +36,6 @@ pub struct Memory {
     pub jit: JitMemory,
     pub bios_arm9: BiosArm9,
     pub bios_arm7: BiosArm7,
-    pub current_jit_block_addr: u32, // Check if the jit block we are currently executing gets written to
     pub breakout_imm: bool,
     pub mmu_arm9: MmuArm9,
     pub mmu_arm7: MmuArm7,
@@ -66,7 +65,6 @@ impl Memory {
             jit: JitMemory::new(),
             bios_arm9: BiosArm9::new(),
             bios_arm7: BiosArm7::new(),
-            current_jit_block_addr: 0,
             breakout_imm: false,
             mmu_arm9: MmuArm9::new(),
             mmu_arm7: MmuArm7::new(),
@@ -199,8 +197,6 @@ impl Memory {
             }
         }
 
-        let mut invalidate_jit = || self.breakout_imm = self.jit.invalidate_block::<CPU>(aligned_addr, size_of::<T>(), self.current_jit_block_addr);
-
         match addr_base {
             regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => match CPU {
                 ARM9 => {
@@ -209,7 +205,7 @@ impl Memory {
                         if aligned_addr < cp15.itcm_size && cp15.itcm_state != TcmState::Disabled {
                             self.tcm.write_itcm(aligned_addr, value);
                             debug_println!("{:?} itcm write at {:x} with value {:x}", CPU, aligned_addr, value.into(),);
-                            invalidate_jit();
+                            self.breakout_imm = self.jit.invalidate_block::<{ JitRegion::Itcm }>(aligned_addr, size_of::<T>(), get_regs!(emu, CPU).pc);
                         }
                     }
                 }
@@ -220,12 +216,12 @@ impl Memory {
             },
             regions::MAIN_MEMORY_OFFSET => {
                 self.main.write(addr_offset, value);
-                invalidate_jit();
+                self.breakout_imm = self.jit.invalidate_block::<{ JitRegion::Main }>(aligned_addr, size_of::<T>(), get_regs!(emu, CPU).pc);
             }
             regions::SHARED_WRAM_OFFSET => {
                 self.wram.write::<CPU, _>(addr_offset, value);
                 if CPU == ARM7 {
-                    invalidate_jit();
+                    self.breakout_imm = self.jit.invalidate_block::<{ JitRegion::Wram }>(aligned_addr, size_of::<T>(), get_regs!(emu, CPU).pc);
                 }
             }
             regions::IO_PORTS_OFFSET => match CPU {
@@ -247,7 +243,7 @@ impl Memory {
             regions::VRAM_OFFSET => {
                 self.vram.write::<CPU, _>(addr_offset, value);
                 if CPU == ARM7 {
-                    invalidate_jit();
+                    self.breakout_imm = self.jit.invalidate_block::<{ JitRegion::VramArm7 }>(aligned_addr, size_of::<T>(), get_regs!(emu, CPU).pc);
                 }
             }
             regions::OAM_OFFSET => self.oam.write(addr_offset, value),

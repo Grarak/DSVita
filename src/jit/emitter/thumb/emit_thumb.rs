@@ -73,7 +73,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             block_asm.call(set_pc_thumb_mode::<CPU> as *const ());
 
             self.emit_branch_out_metadata(block_asm);
-            block_asm.breakout();
+            block_asm.epilogue();
         }
     }
 }

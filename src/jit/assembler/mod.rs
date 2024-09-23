@@ -361,7 +361,7 @@ impl BlockAsmBuf {
         }
     }
 
-    pub fn new_asm(&mut self, thread_regs: &ThreadRegs) -> BlockAsm {
-        BlockAsm::new(thread_regs, self)
+    pub fn new_asm(&mut self, thread_regs: &ThreadRegs, host_sp_addr: usize) -> BlockAsm {
+        BlockAsm::new(thread_regs, host_sp_addr, self)
     }
 }

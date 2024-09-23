@@ -5,7 +5,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::hash::{BuildHasher, Hasher};
 use std::ops::{Deref, DerefMut};
 
-pub const fn align_up(n: u32, align: u32) -> u32 {
+pub const fn align_up(n: usize, align: usize) -> usize {
     (n + align - 1) & !(align - 1)
 }
 
@@ -45,9 +45,9 @@ pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
     unsafe { (mem.as_mut_ptr().add(addr as usize) as *mut T).write(value) }
 }
 
-pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: u32, slice: &[T]) -> usize {
+pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: usize, slice: &[T]) -> usize {
     let write_amount = cmp::min(mem.len() / size_of::<T>(), slice.len());
-    unsafe { (mem.as_mut_ptr().add(addr as usize) as *mut T).copy_from(slice.as_ptr(), write_amount) };
+    unsafe { (mem.as_mut_ptr().add(addr) as *mut T).copy_from(slice.as_ptr(), write_amount) };
     write_amount
 }
 

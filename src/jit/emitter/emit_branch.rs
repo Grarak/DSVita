@@ -102,7 +102,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
             commit_target_pc(block_asm);
             self.emit_branch_out_metadata(block_asm);
-            block_asm.breakout();
+            block_asm.epilogue();
 
             block_asm.free_reg(backed_up_cpsr_reg);
             return;
@@ -113,7 +113,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             JitBranchInfo::Idle => self.emit_branch_out_metadata_with_idle_loop(block_asm),
             JitBranchInfo::Local(_) | JitBranchInfo::None => self.emit_branch_out_metadata(block_asm),
         }
-        block_asm.breakout();
+        block_asm.epilogue();
     }
 
     pub fn emit_branch_reg(&mut self, block_asm: &mut BlockAsm) {
@@ -126,7 +126,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         block_asm.mov(Reg::PC, branch_to);
         block_asm.save_context();
         self.emit_branch_out_metadata(block_asm);
-        block_asm.breakout();
+        block_asm.epilogue();
     }
 
     pub fn emit_blx_label(&mut self, block_asm: &mut BlockAsm) {
@@ -141,6 +141,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         block_asm.mov(Reg::PC, target_pc | 1);
         block_asm.save_context();
         self.emit_branch_out_metadata(block_asm);
-        block_asm.breakout();
+        block_asm.epilogue();
     }
 }

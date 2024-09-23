@@ -8,12 +8,12 @@ use std::{mem, ptr};
 pub struct Mmap {
     pub block_uid: vitasdk_sys::SceUID,
     ptr: *mut vitasdk_sys::c_void,
-    size: u32,
+    size: usize,
 }
 
 impl Mmap {
-    pub fn rw(name: &str, size: u32) -> io::Result<Self> {
-        let c_name = CString::new(name).unwrap();
+    pub fn rw(name: &str, size: usize) -> io::Result<Self> {
+        let c_name = CString::new(name)?;
 
         let mut opts: vitasdk_sys::SceKernelAllocMemBlockOpt = unsafe { mem::zeroed() };
         opts.size = size_of::<vitasdk_sys::SceKernelAllocMemBlockOpt>() as _;
@@ -24,7 +24,7 @@ impl Mmap {
             vitasdk_sys::sceKernelAllocMemBlock(
                 c_name.as_c_str().as_ptr() as _,
                 vitasdk_sys::SCE_KERNEL_MEMBLOCK_TYPE_USER_RW,
-                utils::align_up(size, opts.alignment),
+                utils::align_up(size, opts.alignment as usize) as u32,
                 &mut opts,
             )
         };
@@ -32,14 +32,14 @@ impl Mmap {
         Mmap::new(block_uid, size)
     }
 
-    pub fn executable(name: &str, size: u32) -> io::Result<Self> {
-        let c_name = CString::new(name).unwrap();
+    pub fn executable(name: &str, size: usize) -> io::Result<Self> {
+        let c_name = CString::new(name)?;
 
-        let block_uid = unsafe { vitasdk_sys::sceKernelAllocMemBlockForVM(c_name.as_c_str().as_ptr(), size) };
+        let block_uid = unsafe { vitasdk_sys::sceKernelAllocMemBlockForVM(c_name.as_c_str().as_ptr(), size as u32) };
         Mmap::new(block_uid, size)
     }
 
-    fn new(block_uid: vitasdk_sys::SceUID, size: u32) -> io::Result<Self> {
+    fn new(block_uid: vitasdk_sys::SceUID, size: usize) -> io::Result<Self> {
         if block_uid < vitasdk_sys::SCE_OK as i32 {
             Err(Error::from(ErrorKind::AddrNotAvailable))
         } else {

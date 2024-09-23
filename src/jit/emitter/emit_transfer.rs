@@ -94,7 +94,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
 
         let func_addr = Self::get_inst_mem_handler_func::<THUMB, WRITE, true>(op, amount);
-        block_asm.call3(func_addr, addr_reg, op0_addr_reg, self.jit_buf.current_pc);
+        block_asm.call4(
+            func_addr,
+            addr_reg,
+            op0_addr_reg,
+            self.jit_buf.current_pc,
+            self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32,
+        );
 
         if !WRITE {
             block_asm.restore_reg(op0);
@@ -244,7 +250,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         };
 
         block_asm.save_context();
-        block_asm.call2(func_addr, reg_arg, self.jit_buf.current_pc);
+        block_asm.call3(func_addr, reg_arg, self.jit_buf.current_pc, self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32);
         block_asm.restore_reg(op0);
         block_asm.restore_reg(Reg::CPSR);
     }

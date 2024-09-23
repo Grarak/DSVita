@@ -15,7 +15,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         block_asm.call(cpu_regs_halt::<CPU> as *const ());
 
         self.emit_branch_out_metadata(block_asm);
-        block_asm.breakout();
+        block_asm.epilogue();
     }
 
     pub fn emit_cp15(&mut self, block_asm: &mut BlockAsm) {

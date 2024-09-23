@@ -44,7 +44,6 @@ mod math;
 mod mmap;
 mod presenter;
 mod settings;
-mod simple_tree_map;
 mod utils;
 
 pub const DEBUG_LOG: bool = cfg!(debug_assertions);

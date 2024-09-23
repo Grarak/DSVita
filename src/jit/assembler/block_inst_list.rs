@@ -12,9 +12,11 @@ impl BlockInstListEntry {
     fn alloc(value: usize) -> *mut Self {
         unsafe {
             let entry = System.alloc(Layout::new::<BlockInstListEntry>()) as *mut BlockInstListEntry;
-            (*entry).previous = ptr::null_mut();
-            (*entry).value = value;
-            (*entry).next = ptr::null_mut();
+            entry.write(BlockInstListEntry {
+                value,
+                previous: ptr::null_mut(),
+                next: ptr::null_mut(),
+            });
             entry
         }
     }

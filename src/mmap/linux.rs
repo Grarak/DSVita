@@ -5,19 +5,19 @@ use std::{io, slice};
 
 pub struct Mmap {
     ptr: *mut libc::c_void,
-    size: u32,
+    size: usize,
 }
 
 impl Mmap {
-    pub fn rw(_: &str, size: u32) -> io::Result<Self> {
+    pub fn rw(_: &str, size: usize) -> io::Result<Self> {
         Mmap::new(libc::PROT_READ | libc::PROT_WRITE, size)
     }
 
-    pub fn executable(_: &str, size: u32) -> io::Result<Self> {
+    pub fn executable(_: &str, size: usize) -> io::Result<Self> {
         Mmap::new(libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC, size)
     }
 
-    fn new(prot: i32, size: u32) -> io::Result<Self> {
+    fn new(prot: i32, size: usize) -> io::Result<Self> {
         let ptr = unsafe { libc::mmap(null_mut(), size as _, prot, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
         if ptr != libc::MAP_FAILED {
             Ok(Mmap { ptr, size })
