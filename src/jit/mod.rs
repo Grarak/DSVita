@@ -16,7 +16,6 @@ pub mod jit_asm;
 pub mod jit_memory;
 pub mod op;
 pub mod reg;
-mod inst_branch_handler;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]

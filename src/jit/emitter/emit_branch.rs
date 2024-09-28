@@ -1,8 +1,6 @@
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::BlockReg;
-use crate::jit::inst_branch_handler::branch_label_flush_cycles;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
@@ -79,30 +77,29 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             block_asm.save_context();
         };
 
-        let branch_info = Self::analyze_branch_label::<THUMB>(&self.jit_buf.insts, self.jit_buf.current_index, self.jit_buf.current_inst().cond, self.jit_buf.current_pc, target_pc);
+        let branch_info = Self::analyze_branch_label::<THUMB>(&self.jit_buf.insts, self.jit_buf.current_index, cond, self.jit_buf.current_pc, target_pc);
 
         if let JitBranchInfo::Local(target_index) = branch_info {
-            let current_total_cycles = self.jit_buf.insts_cycle_counts[self.jit_buf.current_index];
             let target_pre_cycle_count_sum = if target_index == 0 { 0 } else { self.jit_buf.insts_cycle_counts[target_index] };
 
             let backed_up_cpsr_reg = block_asm.new_reg();
             block_asm.mrs_cpsr(backed_up_cpsr_reg);
 
-            block_asm.call2(branch_label_flush_cycles::<CPU> as *const (), current_total_cycles as u32, target_pre_cycle_count_sum as u32);
-            block_asm.cmp(BlockReg::Fixed(Reg::R0), 1);
+            self.emit_flush_cycles(
+                block_asm,
+                target_pre_cycle_count_sum,
+                |_, block_asm| {
+                    block_asm.msr_cpsr(backed_up_cpsr_reg);
+                    block_asm.guest_branch(Cond::AL, target_pc);
+                },
+                |asm, block_asm| {
+                    block_asm.msr_cpsr(backed_up_cpsr_reg);
 
-            let breakout_label = block_asm.new_label();
-            block_asm.branch(breakout_label, Cond::EQ);
-
-            block_asm.msr_cpsr(backed_up_cpsr_reg);
-            block_asm.guest_branch(Cond::AL, target_pc);
-
-            block_asm.label(breakout_label);
-            block_asm.msr_cpsr(backed_up_cpsr_reg);
-
-            commit_target_pc(block_asm);
-            self.emit_branch_out_metadata(block_asm);
-            block_asm.epilogue();
+                    commit_target_pc(block_asm);
+                    asm.emit_branch_out_metadata(block_asm);
+                    block_asm.epilogue();
+                },
+            );
 
             block_asm.free_reg(backed_up_cpsr_reg);
             return;

@@ -5,7 +5,7 @@ use crate::jit::inst_threag_regs_handler::{register_restore_spsr, restore_thumb_
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
-use crate::jit::MemoryAmount;
+use crate::jit::{Cond, MemoryAmount};
 use crate::DEBUG_LOG_BRANCH_OUT;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
@@ -97,5 +97,73 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
     pub fn emit_branch_out_metadata_with_idle_loop(&mut self, block_asm: &mut BlockAsm) {
         self._emit_branch_out_metadata(block_asm, true)
+    }
+
+    pub fn emit_flush_cycles<ContinueFn: Fn(&mut Self, &mut BlockAsm), BreakoutFn: Fn(&mut Self, &mut BlockAsm)>(
+        &mut self,
+        block_asm: &mut BlockAsm,
+        target_pre_cycle_count_sum: u16,
+        continue_fn: ContinueFn,
+        breakout_fn: BreakoutFn,
+    ) {
+        let runtime_data_addr_reg = block_asm.new_reg();
+        block_asm.mov(runtime_data_addr_reg, self.runtime_data.get_addr() as u32);
+
+        let accumulated_cycles_reg = block_asm.new_reg();
+        block_asm.transfer_read(
+            accumulated_cycles_reg,
+            runtime_data_addr_reg,
+            JitRuntimeData::get_accumulated_cycles_offset() as u32,
+            false,
+            MemoryAmount::Half,
+        );
+
+        let pre_cycle_count_sum_reg = block_asm.new_reg();
+        block_asm.transfer_read(
+            pre_cycle_count_sum_reg,
+            runtime_data_addr_reg,
+            JitRuntimeData::get_pre_cycle_count_sum_offset() as u32,
+            false,
+            MemoryAmount::Half,
+        );
+
+        let total_cycles_reg = block_asm.new_reg();
+        // +2 for branching
+        block_asm.add(total_cycles_reg, accumulated_cycles_reg, self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32 + 2);
+        block_asm.sub(total_cycles_reg, total_cycles_reg, pre_cycle_count_sum_reg);
+
+        const MAX_LOOP_CYCLE_COUNT: u32 = 200;
+        block_asm.cmp(total_cycles_reg, MAX_LOOP_CYCLE_COUNT - 1);
+
+        let breakout_label = block_asm.new_label();
+        block_asm.branch(breakout_label, Cond::HI);
+
+        block_asm.transfer_write(
+            total_cycles_reg,
+            runtime_data_addr_reg,
+            JitRuntimeData::get_accumulated_cycles_offset() as u32,
+            false,
+            MemoryAmount::Half,
+        );
+
+        let target_pre_cycle_count_sum_reg = block_asm.new_reg();
+        block_asm.mov(target_pre_cycle_count_sum_reg, target_pre_cycle_count_sum as u32);
+        block_asm.transfer_write(
+            target_pre_cycle_count_sum_reg,
+            runtime_data_addr_reg,
+            JitRuntimeData::get_pre_cycle_count_sum_offset() as u32,
+            false,
+            MemoryAmount::Half,
+        );
+        continue_fn(self, block_asm);
+
+        block_asm.label(breakout_label);
+        breakout_fn(self, block_asm);
+
+        block_asm.free_reg(target_pre_cycle_count_sum_reg);
+        block_asm.free_reg(total_cycles_reg);
+        block_asm.free_reg(pre_cycle_count_sum_reg);
+        block_asm.free_reg(accumulated_cycles_reg);
+        block_asm.free_reg(runtime_data_addr_reg);
     }
 }
