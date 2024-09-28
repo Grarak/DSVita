@@ -361,7 +361,7 @@ impl Presenter {
                     ImGui_Dummy(&vec);
 
                     let settings_config = &mut settings_configs[i];
-                    for (i, setting) in settings_config.settings.iter_mut().enumerate() {
+                    for (i, setting) in settings_config.settings.get_all_mut().iter_mut().enumerate() {
                         let title = CString::new(setting.title).unwrap();
                         ImGui_Text(title.as_ptr() as _);
                         ImGui_SameLine(0f32, -1f32);

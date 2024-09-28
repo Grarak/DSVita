@@ -2,7 +2,7 @@ use crate::cartridge_io::CartridgeIo;
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::input;
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
-use crate::settings::{SettingValue, Settings, ARM7_HLE_SETTING, AUDIO_SETTING, DEFAULT_SETTINGS, FRAMELIMIT_SETTING};
+use crate::settings::{SettingValue, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
 use clap::{arg, command, value_parser, ArgAction};
 use gl::types::GLuint;
@@ -113,9 +113,9 @@ impl Presenter {
             .get_matches();
 
         let mut settings = DEFAULT_SETTINGS.clone();
-        settings[FRAMELIMIT_SETTING].value = SettingValue::Bool(matches.get_flag("framelimit"));
-        settings[AUDIO_SETTING].value = SettingValue::Bool(matches.get_flag("audio"));
-        settings[ARM7_HLE_SETTING].value = SettingValue::Bool(matches.get_flag("hle"));
+        settings.setting_framelimit_mut().value = SettingValue::Bool(matches.get_flag("framelimit"));
+        settings.setting_audio_mut().value = SettingValue::Bool(matches.get_flag("audio"));
+        settings.setting_arm7_hle_mut().value = SettingValue::Bool(matches.get_flag("hle"));
 
         let file_path = PathBuf::from(matches.get_one::<String>("nds_rom").unwrap());
         let file_name = file_path.file_name().unwrap().to_str().unwrap();

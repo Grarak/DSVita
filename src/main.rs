@@ -14,7 +14,7 @@
 #![feature(stmt_expr_attributes)]
 
 use crate::cartridge_io::CartridgeIo;
-use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, Emu};
+use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, get_spu_mut, Emu};
 use crate::core::graphics::gpu::Gpu;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::spu::{SoundSampler, Spu};
@@ -22,7 +22,7 @@ use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
-use crate::settings::{Settings, ARM7_HLE_SETTING, AUDIO_SETTING, FRAMELIMIT_SETTING};
+use crate::settings::Settings;
 use crate::utils::{set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
@@ -55,7 +55,7 @@ fn run_cpu(
     key_map: Arc<AtomicU32>,
     touch_points: Arc<AtomicU16>,
     sound_sampler: Arc<SoundSampler>,
-    settings: Arc<Settings>,
+    settings: Settings,
     gpu_renderer: NonNull<GpuRenderer>,
     last_save_time: Arc<Mutex<Option<(Instant, bool)>>>,
 ) {
@@ -64,7 +64,7 @@ fn run_cpu(
     let arm7_ram_addr = cartridge_io.header.arm7_values.ram_address;
     let arm7_entry_addr = cartridge_io.header.arm7_values.entry_address;
 
-    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_io, fps, key_map, touch_points, sound_sampler));
+    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_io, fps, key_map, touch_points, sound_sampler, settings));
     let emu_ptr = emu_unsafe.get() as u32;
     let emu = emu_unsafe.get_mut();
     let common = get_common_mut!(emu);
@@ -147,12 +147,11 @@ fn run_cpu(
     }
 
     Gpu::initialize_schedule(get_cm_mut!(emu));
-    common.gpu.frame_limit = settings[FRAMELIMIT_SETTING].value.as_bool().unwrap();
+    common.gpu.frame_limit = emu.settings.framelimit();
     common.gpu.gpu_renderer = Some(gpu_renderer);
 
-    if settings[AUDIO_SETTING].value.as_bool().unwrap() {
-        Spu::initialize_schedule(get_cm_mut!(emu));
-    }
+    get_spu_mut!(emu).audio_enabled = emu.settings.audio();
+    Spu::initialize_schedule(get_cm_mut!(emu));
 
     let save_thread = thread::Builder::new()
         .name("save".to_owned())
@@ -168,7 +167,7 @@ fn run_cpu(
         })
         .unwrap();
 
-    if settings[ARM7_HLE_SETTING].value.as_bool().unwrap() {
+    if emu.settings.arm7_hle() {
         common.ipc.use_hle();
         common.gpu.arm7_hle = true;
         execute_jit::<true>(&mut emu_unsafe);
@@ -290,12 +289,8 @@ pub fn actual_main() {
     let sound_sampler = Arc::new(SoundSampler::new());
     let sound_sampler_clone = sound_sampler.clone();
 
-    let settings = Arc::new(settings);
-
-    let audio_enabled = settings[AUDIO_SETTING].value.as_bool().unwrap();
-
     let presenter_audio = presenter.get_presenter_audio();
-    let audio_thread = if audio_enabled {
+    let audio_thread = if settings.audio() {
         Some(
             thread::Builder::new()
                 .name("audio".to_owned())

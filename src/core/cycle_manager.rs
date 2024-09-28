@@ -80,7 +80,14 @@ impl CycleManager {
     pub fn schedule(&mut self, in_cycles: u32, event_type: EventType) -> u64 {
         debug_assert_ne!(in_cycles, 0);
         let event_cycle = self.cycle_count + in_cycles as u64;
-        let index = self.events.iter().position(|(cycles, _)| *cycles > event_cycle).unwrap_or(self.events.len());
+        let mut index = self.events.len();
+        for i in 0..self.events.len() {
+            let (cycles, _) = unsafe { self.events.get(i).unwrap_unchecked() };
+            if *cycles > event_cycle {
+                index = i;
+                break;
+            }
+        }
         self.events.insert(index, (event_cycle, event_type));
         event_cycle
     }

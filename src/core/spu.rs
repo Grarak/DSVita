@@ -158,6 +158,7 @@ pub struct SoundCapCnt {
 }
 
 pub struct Spu {
+    pub audio_enabled: bool,
     pub channels: [SpuChannel; CHANNEL_COUNT],
     main_sound_cnt: MainSoundCnt,
     sound_bias: u16,
@@ -170,6 +171,7 @@ pub struct Spu {
 impl Spu {
     pub fn new(sound_sampler: Arc<SoundSampler>) -> Self {
         Spu {
+            audio_enabled: false,
             channels: [SpuChannel::default(); CHANNEL_COUNT],
             main_sound_cnt: MainSoundCnt::from(0),
             sound_bias: 0,
@@ -373,6 +375,14 @@ impl Spu {
             ($emu:expr, $channel:expr) => {{
                 &mut get_spu_mut!($emu).channels[$channel]
             }};
+        }
+
+        if unlikely(!get_spu!(emu).audio_enabled) {
+            for i in 0..CHANNEL_COUNT {
+                get_channel_mut!(emu, i).cnt.set_start_status(u1::new(0));
+            }
+            get_cm_mut!(emu).schedule(512 * 10, EventType::SpuSample);
+            return;
         }
 
         for i in 0..CHANNEL_COUNT {

@@ -69,20 +69,52 @@ impl Setting {
     }
 }
 
-pub type Settings = [Setting; 3];
+#[derive(Clone)]
+pub struct Settings {
+    values: [Setting; 3],
+}
 
-pub const FRAMELIMIT_SETTING: usize = 0;
-pub const AUDIO_SETTING: usize = 1;
-pub const ARM7_HLE_SETTING: usize = 2;
-pub const DEFAULT_SETTINGS: Settings = [
-    Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true)),
-    Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true)),
-    Setting::new(
-        "Arm7 HLE",
-        "Enabling Arm7 HLE increases performance by a\nlot, however at the cost of lower compatibility.\nDisable this if the game gets stuck, doesn't boot\nor crashes",
-        SettingValue::Bool(false),
-    ),
-];
+impl Settings {
+    pub fn framelimit(&self) -> bool {
+        self.values[0].value.as_bool().unwrap()
+    }
+
+    pub fn audio(&self) -> bool {
+        self.values[1].value.as_bool().unwrap()
+    }
+
+    pub fn arm7_hle(&self) -> bool {
+        self.values[2].value.as_bool().unwrap()
+    }
+
+    pub fn setting_framelimit_mut(&mut self) -> &mut Setting {
+        &mut self.values[0]
+    }
+
+    pub fn setting_audio_mut(&mut self) -> &mut Setting {
+        &mut self.values[1]
+    }
+
+    pub fn setting_arm7_hle_mut(&mut self) -> &mut Setting {
+        &mut self.values[2]
+    }
+
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 3] {
+        &mut self.values
+    }
+}
+
+pub const DEFAULT_SETTINGS: Settings = Settings {
+    values: [
+        Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true)),
+        Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true)),
+        Setting::new(
+            "Arm7 HLE",
+            "Enabling Arm7 HLE increases performance by a\nlot, however at the cost of lower compatibility.\nDisable this if the game gets stuck, doesn't boot\nor crashes",
+            SettingValue::Bool(false),
+        ),
+    ],
+};
 
 pub struct SettingsConfig {
     pub settings: Settings,
@@ -96,7 +128,7 @@ impl SettingsConfig {
 
         if let Ok(ini) = Ini::load_from_file(&path) {
             if let Some(section) = ini.section(None::<String>) {
-                for setting in &mut settings {
+                for setting in settings.get_all_mut() {
                     if let Some(value) = section.get(setting.title) {
                         setting.value.parse_str(value);
                     }
@@ -115,7 +147,7 @@ impl SettingsConfig {
         if self.dirty {
             let mut ini = Ini::new();
             let mut section = ini.with_section(None::<String>);
-            for setting in &self.settings {
+            for setting in self.settings.get_all_mut() {
                 section.set(setting.title, setting.value.to_string());
             }
             ini.write_to_file(&self.settings_file_path).unwrap();
