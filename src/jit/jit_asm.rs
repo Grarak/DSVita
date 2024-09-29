@@ -6,7 +6,6 @@ use crate::jit::assembler::BlockAsmBuf;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_info::InstInfo;
-use crate::jit::jit_memory::JitInsertArgs;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
@@ -101,11 +100,20 @@ impl JitRuntimeData {
     }
 }
 
-pub extern "C" fn emit_code_block<const CPU: CpuType, const THUMB: bool>() {
+pub extern "C" fn emit_code_block<const CPU: CpuType>() {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
 
     let guest_pc = get_regs!(asm.emu, CPU).pc;
-    let guest_pc = if THUMB { guest_pc & !1 } else { guest_pc & !3 };
+    let thumb = (guest_pc & 1) == 1;
+    if thumb {
+        emit_code_block_internal::<CPU, true>(guest_pc & !1)
+    } else {
+        emit_code_block_internal::<CPU, false>(guest_pc & !3)
+    }
+}
+
+fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(guest_pc: u32) {
+    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
 
     {
         let mut index = 0;
@@ -170,7 +178,7 @@ pub extern "C" fn emit_code_block<const CPU: CpuType, const THUMB: bool>() {
             println!("0x{opcode:x},");
         }
     }
-    let insert_entry = get_jit_mut!(asm.emu).insert_block::<CPU, THUMB>(&opcodes, JitInsertArgs::new(guest_pc, asm.jit_buf.insts_cycle_counts.clone()));
+    let insert_entry = get_jit_mut!(asm.emu).insert_block::<CPU>(&opcodes, guest_pc);
     let jit_entry: extern "C" fn() = unsafe { mem::transmute(insert_entry) };
 
     if DEBUG_LOG {
@@ -182,12 +190,17 @@ pub extern "C" fn emit_code_block<const CPU: CpuType, const THUMB: bool>() {
 }
 
 #[inline]
-fn execute_internal<const CPU: CpuType, const THUMB: bool>(guest_pc: u32) -> u16 {
+fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
 
-    get_regs_mut!(asm.emu, CPU).set_thumb(THUMB);
+    let thumb = (guest_pc & 1) == 1;
+    debug_println!("{:?} Execute {:x} thumb {}", CPU, guest_pc, thumb);
 
-    let jit_entry: extern "C" fn() = unsafe { mem::transmute(get_jit!(asm.emu).get_jit_start_addr::<CPU, THUMB>(guest_pc)) };
+    get_regs_mut!(asm.emu, CPU).set_thumb(thumb);
+
+    let guest_pc = if thumb { guest_pc & !1 } else { guest_pc & !3 };
+    let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(guest_pc);
+    let jit_entry: extern "C" fn() = unsafe { mem::transmute(jit_entry) };
 
     debug_println!("{CPU:?} Enter jit addr {:x}", jit_entry as usize);
 
@@ -214,7 +227,7 @@ fn execute_internal<const CPU: CpuType, const THUMB: bool>(guest_pc: u32) -> u16
 
     if DEBUG_LOG && DEBUG_LOG_BRANCH_OUT {
         println!("{:?} reading opcode of breakout at {:x} executed cycles {executed_cycles}", CPU, asm.runtime_data.branch_out_pc);
-        let inst_info = if THUMB {
+        let inst_info = if thumb {
             let opcode = asm.emu.mem_read::<CPU, _>(asm.runtime_data.branch_out_pc);
             let (op, func) = lookup_thumb_opcode(opcode);
             InstInfo::from(func(opcode, *op))
@@ -252,14 +265,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     #[inline(always)]
     pub fn execute(&mut self) -> u16 {
         let entry = get_regs!(self.emu, CPU).pc;
-
-        let thumb = (entry & 1) == 1;
-        debug_println!("{:?} Execute {:x} thumb {}", CPU, entry, thumb);
-        if thumb {
-            execute_internal::<CPU, true>(entry & !1)
-        } else {
-            execute_internal::<CPU, false>(entry & !3)
-        }
+        execute_internal::<CPU>(entry)
     }
 }
 
