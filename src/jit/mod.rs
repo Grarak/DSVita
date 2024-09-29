@@ -16,6 +16,7 @@ pub mod jit_asm;
 pub mod jit_memory;
 pub mod op;
 pub mod reg;
+mod jit_memory_map;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]

@@ -1,6 +1,7 @@
 use crate::core::memory::{regions, vram};
 use crate::core::CpuType;
 use crate::jit::jit_asm::emit_code_block;
+use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::logging::debug_println;
 use crate::mmap::Mmap;
 use crate::utils::{HeapMem, HeapMemU32};
@@ -10,7 +11,7 @@ use paste::paste;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::intrinsics::unlikely;
 use std::marker::ConstParamTy;
-use std::ptr;
+use std::{mem, ptr};
 use CpuType::{ARM7, ARM9};
 
 const JIT_MEMORY_SIZE: usize = 16 * 1024 * 1024;
@@ -31,7 +32,7 @@ struct JitCycle {
     inst_cycle_count: u8,
 }
 
-struct JitBlock {
+pub struct JitBlock {
     guest_pc: u32,
     jit_addr: *const extern "C" fn(),
     cycles: Vec<JitCycle>,
@@ -60,14 +61,16 @@ impl JitBlock {
 
 unsafe impl Sync for JitBlock {}
 
-#[derive(Clone)]
-struct JitBlockPtr(*const JitBlock);
+#[derive(Copy, Clone)]
+pub struct JitBlockPtr(*const JitBlock);
 
 impl Default for JitBlockPtr {
     fn default() -> Self {
         JitBlockPtr(ptr::null())
     }
 }
+
+unsafe impl Sync for JitBlockPtr {}
 
 #[cfg(target_os = "linux")]
 lazy_static! {
@@ -116,10 +119,10 @@ impl JitInsertArgs {
 macro_rules! create_jit_blocks {
     ($([$block_name:ident, $size:expr, $default_block:expr, $default_block_thumb:expr]),+) => {
         paste! {
-            struct JitLookups {
+            pub struct JitLookups {
                 $(
-                    $block_name: HeapMem<JitBlockPtr, { $size as usize / 4 }>,
-                    [<$block_name _ thumb>]: HeapMem<JitBlockPtr, { $size as usize / 2 }>,
+                    pub $block_name: HeapMem<JitBlockPtr, { $size as usize / 4 }>,
+                    pub [<$block_name _ thumb>]: HeapMem<JitBlockPtr, { $size as usize / 2 }>,
                 )*
             }
 
@@ -178,22 +181,28 @@ pub struct JitMemory {
     jit_blocks_used: Vec<*mut JitBlock>,
     jit_blocks_free: Vec<*mut JitBlock>,
     jit_live_ranges: JitLiveRanges,
+    jit_memory_map: JitMemoryMap,
 }
 
 impl JitMemory {
     pub fn new() -> Self {
+        let jit_lookups = JitLookups::new();
+        let jit_memory_map = JitMemoryMap::new(&jit_lookups);
         JitMemory {
             mem: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
             mem_offset: 0,
-            jit_lookups: JitLookups::new(),
+            jit_lookups,
             jit_blocks_used: Vec::new(),
             jit_blocks_free: Vec::new(),
             jit_live_ranges: JitLiveRanges::default(),
+            jit_memory_map,
         }
     }
 
     fn allocate_block(&mut self, required_size: usize) -> usize {
         if self.mem_offset + required_size >= JIT_MEMORY_SIZE {
+            debug_println!("Jit memory full, reset");
+
             self.mem_offset = 0;
 
             self.jit_lookups.reset();
@@ -306,41 +315,8 @@ impl JitMemory {
         jit_addr
     }
 
-    #[inline(always)]
     pub fn get_jit_start_addr<const CPU: CpuType, const THUMB: bool>(&self, guest_pc: u32) -> *const extern "C" fn() {
-        macro_rules! get_addr_block {
-            ($lookup:expr) => {{
-                let lookup_entry = (guest_pc >> if THUMB { 1 } else { 2 }) as usize;
-                let lookup_entry = lookup_entry % $lookup.len();
-                unsafe { (*$lookup[lookup_entry].0).jit_addr }
-            }};
-        }
-        macro_rules! get_addr {
-            ($block_name:ident) => {
-                paste! {
-                    if THUMB {
-                        get_addr_block!(self.jit_lookups.[<$block_name _ thumb>])
-                    } else {
-                        get_addr_block!(self.jit_lookups.$block_name)
-                    }
-                }
-            };
-        }
-        match CPU {
-            ARM9 => match guest_pc & 0xFF000000 {
-                regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => get_addr!(itcm),
-                regions::MAIN_MEMORY_OFFSET => get_addr!(main_arm9),
-                0xFF000000 => get_addr!(arm9_bios),
-                region => todo!("{:x} {:x}", guest_pc, region),
-            },
-            ARM7 => match guest_pc & 0xFF000000 {
-                regions::ARM7_BIOS_OFFSET => get_addr!(arm7_bios),
-                regions::MAIN_MEMORY_OFFSET => get_addr!(main_arm7),
-                regions::SHARED_WRAM_OFFSET => get_addr!(wram),
-                regions::VRAM_OFFSET => get_addr!(vram_arm7),
-                region => todo!("{:x} {:x}", guest_pc, region),
-            },
-        }
+        unsafe { (*self.jit_memory_map.get_jit_block::<CPU, THUMB>(guest_pc)).jit_addr }
     }
 
     pub fn invalidate_block<const REGION: JitRegion>(&mut self, guest_addr: u32, size: usize, guest_pc: u32) -> bool {

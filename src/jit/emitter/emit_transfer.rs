@@ -241,7 +241,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let op1 = *operands[1].as_reg_no_shift().unwrap();
         let op2 = *operands[2].as_reg_no_shift().unwrap();
 
-        let reg_arg = ((op2 as u32) << 16) | ((op1 as u32) << 8) | (op0 as u32);
+        let op0_total_cycles = (op0 as u32) << 16 | (self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32);
 
         let func_addr = if inst_info.op == Op::Swpb {
             inst_mem_handler_swp::<CPU, { MemoryAmount::Byte }> as *const ()
@@ -250,7 +250,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         };
 
         block_asm.save_context();
-        block_asm.call3(func_addr, reg_arg, self.jit_buf.current_pc, self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32);
+        block_asm.call4(func_addr, op1, op2, self.jit_buf.current_pc, op0_total_cycles);
         block_asm.restore_reg(op0);
         block_asm.restore_reg(Reg::CPSR);
     }

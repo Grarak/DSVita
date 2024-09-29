@@ -141,7 +141,7 @@ pub extern "C" fn emit_code_block<const CPU: CpuType, const THUMB: bool>() {
         }
     }
 
-    // unsafe { BLOCK_LOG = guest_pc == 0x2004a76 };
+    // unsafe { BLOCK_LOG = true };
 
     let thread_regs = get_regs!(asm.emu, CPU);
     let mut block_asm = unsafe { (*asm.block_asm_buf.get()).new_asm(thread_regs, ptr::addr_of_mut!(asm.host_sp) as _) };
@@ -170,7 +170,8 @@ pub extern "C" fn emit_code_block<const CPU: CpuType, const THUMB: bool>() {
             println!("0x{opcode:x},");
         }
     }
-    let jit_entry: extern "C" fn() = unsafe { mem::transmute(get_jit_mut!(asm.emu).insert_block::<CPU, THUMB>(&opcodes, JitInsertArgs::new(guest_pc, asm.jit_buf.insts_cycle_counts.clone()))) };
+    let insert_entry = get_jit_mut!(asm.emu).insert_block::<CPU, THUMB>(&opcodes, JitInsertArgs::new(guest_pc, asm.jit_buf.insts_cycle_counts.clone()));
+    let jit_entry: extern "C" fn() = unsafe { mem::transmute(insert_entry) };
 
     if DEBUG_LOG {
         println!("{CPU:?} Mapping {guest_pc:#010x} to {:#010x}", jit_entry as *const fn() as usize);

@@ -141,14 +141,7 @@ mod handler {
         }
     }
 
-    pub fn handle_swp_request<const CPU: CpuType, const AMOUNT: MemoryAmount>(regs: u32, emu: &mut Emu) {
-        let op0 = Reg::from((regs & 0xFF) as u8);
-        let op1 = Reg::from(((regs >> 8) & 0xFF) as u8);
-        let op2 = Reg::from(((regs >> 16) & 0xFF) as u8);
-
-        let value = *get_regs!(emu, CPU).get_reg(op1);
-        let addr = *get_regs!(emu, CPU).get_reg(op2);
-
+    pub fn handle_swp_request<const CPU: CpuType, const AMOUNT: MemoryAmount>(op0: Reg, value: u32, addr: u32, emu: &mut Emu) {
         if AMOUNT == MemoryAmount::Byte {
             *get_regs_mut!(emu, CPU).get_reg_mut(op0) = emu.mem_read::<CPU, u8>(addr) as u32;
             emu.mem_write::<CPU, _>(addr, (value & 0xFF) as u8);
@@ -176,6 +169,7 @@ macro_rules! imm_breakout {
         std::hint::unreachable_unchecked();
     }};
 }
+use crate::jit::reg::Reg;
 use crate::logging::debug_println;
 pub(super) use imm_breakout;
 
@@ -232,10 +226,10 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
     }
 }
 
-pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: MemoryAmount>(regs: u32, pc: u32, total_cycles: u16) {
+pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: MemoryAmount>(value: u32, addr: u32, pc: u32, op0_total_cycles: u32) {
     let asm = get_jit_asm_ptr::<CPU>();
-    handle_swp_request::<CPU, AMOUNT>(regs, (*asm).emu);
+    handle_swp_request::<CPU, AMOUNT>(Reg::from((op0_total_cycles >> 16) as u8), value, addr, (*asm).emu);
     if unlikely(get_mem!((*asm).emu).breakout_imm) {
-        imm_breakout!((*asm), pc, false, total_cycles);
+        imm_breakout!((*asm), pc, false, op0_total_cycles as u16);
     }
 }
