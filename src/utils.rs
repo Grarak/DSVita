@@ -188,14 +188,17 @@ pub enum ThreadPriority {
     High,
 }
 
+#[repr(u8)]
 pub enum ThreadAffinity {
-    Core0,
-    Core1,
-    Core2,
+    Core0 = 0,
+    Core1 = 1,
+    Core2 = 2,
 }
 
 #[cfg(target_os = "linux")]
-pub fn set_thread_prio_affinity(_: ThreadPriority, _: ThreadAffinity) {}
+pub fn set_thread_prio_affinity(_: ThreadPriority, affinity: ThreadAffinity) {
+    affinity::set_thread_affinity(&[affinity as usize]).unwrap();
+}
 
 #[cfg(target_os = "vita")]
 pub fn set_thread_prio_affinity(thread_priority: ThreadPriority, thread_affinity: ThreadAffinity) {
