@@ -1,5 +1,5 @@
 use crate::core::cp15::TcmState;
-use crate::core::emu::{get_cp15, get_regs, Emu};
+use crate::core::emu::{get_cp15, Emu};
 use crate::core::memory::bios::{BiosArm7, BiosArm9};
 use crate::core::memory::io_arm7::IoArm7;
 use crate::core::memory::io_arm9::IoArm9;
@@ -205,7 +205,7 @@ impl Memory {
                         if aligned_addr < cp15.itcm_size && cp15.itcm_state != TcmState::Disabled {
                             self.tcm.write_itcm(aligned_addr, value);
                             debug_println!("{:?} itcm write at {:x} with value {:x}", CPU, aligned_addr, value.into(),);
-                            self.breakout_imm = self.jit.invalidate_block::<{ JitRegion::Itcm }>(aligned_addr, size_of::<T>(), get_regs!(emu, CPU).pc);
+                            self.jit.invalidate_block::<{ JitRegion::Itcm }>(aligned_addr, size_of::<T>());
                         }
                     }
                 }
@@ -216,12 +216,12 @@ impl Memory {
             },
             regions::MAIN_MEMORY_OFFSET => {
                 self.main.write(addr_offset, value);
-                self.breakout_imm = self.jit.invalidate_block::<{ JitRegion::Main }>(aligned_addr, size_of::<T>(), get_regs!(emu, CPU).pc);
+                self.jit.invalidate_block::<{ JitRegion::Main }>(aligned_addr, size_of::<T>());
             }
             regions::SHARED_WRAM_OFFSET => {
                 self.wram.write::<CPU, _>(addr_offset, value);
                 if CPU == ARM7 {
-                    self.breakout_imm = self.jit.invalidate_block::<{ JitRegion::Wram }>(aligned_addr, size_of::<T>(), get_regs!(emu, CPU).pc);
+                    self.jit.invalidate_block::<{ JitRegion::Wram }>(aligned_addr, size_of::<T>());
                 }
             }
             regions::IO_PORTS_OFFSET => match CPU {
@@ -243,7 +243,7 @@ impl Memory {
             regions::VRAM_OFFSET => {
                 self.vram.write::<CPU, _>(addr_offset, value);
                 if CPU == ARM7 {
-                    self.breakout_imm = self.jit.invalidate_block::<{ JitRegion::VramArm7 }>(aligned_addr, size_of::<T>(), get_regs!(emu, CPU).pc);
+                    self.jit.invalidate_block::<{ JitRegion::VramArm7 }>(aligned_addr, size_of::<T>());
                 }
             }
             regions::OAM_OFFSET => self.oam.write(addr_offset, value),

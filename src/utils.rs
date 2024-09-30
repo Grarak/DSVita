@@ -188,6 +188,7 @@ pub enum ThreadPriority {
     High,
 }
 
+#[derive(Copy, Clone)]
 #[repr(u8)]
 pub enum ThreadAffinity {
     Core0 = 0,
@@ -197,7 +198,9 @@ pub enum ThreadAffinity {
 
 #[cfg(target_os = "linux")]
 pub fn set_thread_prio_affinity(_: ThreadPriority, affinity: ThreadAffinity) {
-    affinity::set_thread_affinity(&[affinity as usize]).unwrap();
+    if (affinity as usize) < affinity::get_core_num() {
+        affinity::set_thread_affinity(&[affinity as usize]).unwrap();
+    }
 }
 
 #[cfg(target_os = "vita")]

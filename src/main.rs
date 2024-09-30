@@ -10,6 +10,7 @@
 #![feature(isqrt)]
 #![feature(naked_functions)]
 #![feature(new_zeroed_alloc)]
+#![feature(ptr_as_ref_unchecked)]
 #![feature(seek_stream_len)]
 #![feature(stmt_expr_attributes)]
 
@@ -255,7 +256,9 @@ pub fn main() {
     // #[export_name = "sceUserMainThreadStackSize"]
     // pub static SCE_USER_MAIN_THREAD_STACK_SIZE: u32 = 4 * 1024 * 1024;
     // Instead just create a new thread with stack size set
-    set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core1);
+    if cfg!(target_os = "vita") {
+        set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core0);
+    }
     thread::Builder::new()
         .name("actual_main".to_string())
         .stack_size(4 * 1024 * 1024) // We reserve 2MB for jit registers
@@ -267,7 +270,9 @@ pub fn main() {
 
 // Must be pub for vita
 pub fn actual_main() {
-    set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core0);
+    if cfg!(target_os = "vita") {
+        set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core1);
+    }
 
     if DEBUG_LOG {
         std::env::set_var("RUST_BACKTRACE", "full");
@@ -295,7 +300,7 @@ pub fn actual_main() {
             thread::Builder::new()
                 .name("audio".to_owned())
                 .spawn(move || {
-                    set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core1);
+                    set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
                     let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_BUF_SIZE }>::new();
                     loop {
                         sound_sampler.consume(audio_buffer.deref_mut());

@@ -10,11 +10,11 @@ use lazy_static::lazy_static;
 use paste::paste;
 use std::intrinsics::unlikely;
 use std::marker::ConstParamTy;
-use std::ptr;
+use std::{ptr, slice};
 use CpuType::{ARM7, ARM9};
 
 const JIT_MEMORY_SIZE: usize = 16 * 1024 * 1024;
-const JIT_LIVE_RANGE_PAGE_SIZE_SHIFT: u32 = 8;
+pub const JIT_LIVE_RANGE_PAGE_SIZE_SHIFT: u32 = 8;
 const JIT_LIVE_RANGE_PAGE_SIZE: u32 = 1 << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
 
 #[derive(ConstParamTy, Eq, PartialEq)]
@@ -93,13 +93,13 @@ create_jit_blocks!(
 );
 
 #[derive(Default)]
-struct JitLiveRanges {
-    itcm: HeapMemU32<{ (regions::INSTRUCTION_TCM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
-    main: HeapMemU32<{ (regions::MAIN_MEMORY_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
-    wram: HeapMemU32<{ ((regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE) / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
-    vram_arm7: HeapMemU32<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
-    arm9_bios: HeapMemU32<{ (regions::ARM9_BIOS_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
-    arm7_bios: HeapMemU32<{ (regions::ARM7_BIOS_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
+pub struct JitLiveRanges {
+    pub itcm: HeapMemU32<{ (regions::INSTRUCTION_TCM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
+    pub main: HeapMemU32<{ (regions::MAIN_MEMORY_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
+    pub wram: HeapMemU32<{ ((regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE) / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
+    pub vram_arm7: HeapMemU32<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
+    pub arm9_bios: HeapMemU32<{ (regions::ARM9_BIOS_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
+    pub arm7_bios: HeapMemU32<{ (regions::ARM7_BIOS_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
 }
 
 #[cfg(target_os = "linux")]
@@ -118,12 +118,13 @@ pub struct JitMemory {
 impl JitMemory {
     pub fn new() -> Self {
         let jit_entries = JitEntries::new();
-        let jit_memory_map = JitMemoryMap::new(&jit_entries);
+        let jit_live_ranges = JitLiveRanges::default();
+        let jit_memory_map = JitMemoryMap::new(&jit_entries, &jit_live_ranges);
         JitMemory {
             mem: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
             mem_offset: 0,
             jit_entries,
-            jit_live_ranges: JitLiveRanges::default(),
+            jit_live_ranges,
             jit_memory_map,
         }
     }
@@ -172,12 +173,14 @@ impl JitMemory {
                 let entries_index = (guest_pc >> 1) as usize;
                 let entries_index = entries_index % $entries.len();
                 $entries[entries_index] = JitEntry(jit_entry_addr);
+                assert_eq!(ptr::addr_of!($entries[entries_index]), self.jit_memory_map.get_jit_entry::<CPU>(guest_pc));
 
                 // >> 5 for u32 (each bit represents a page)
                 let live_ranges_index = ((guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) >> 5) as usize;
                 let live_ranges_index = live_ranges_index % $live_ranges.len();
                 let live_ranges_bit = (guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 31;
                 $live_ranges[live_ranges_index] |= 1 << live_ranges_bit;
+                assert_eq!(ptr::addr_of!($live_ranges[live_ranges_index]), self.jit_memory_map.get_live_range::<CPU>(guest_pc));
 
                 jit_entry_addr
             }};
@@ -220,35 +223,23 @@ impl JitMemory {
         unsafe { (*self.jit_memory_map.get_jit_entry::<CPU>(guest_pc)).0 }
     }
 
-    pub fn invalidate_block<const REGION: JitRegion>(&mut self, guest_addr: u32, size: usize, guest_pc: u32) -> bool {
-        let mut should_breakout = false;
-
+    pub fn invalidate_block<const REGION: JitRegion>(&mut self, guest_addr: u32, size: usize) {
         macro_rules! invalidate {
-            ($guest_addr:expr, $live_range:ident, [$(($entries:ident, $default_entry:expr)),+]) => {{
-                let live_ranges_index = (($guest_addr >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) >> 5) as usize;
-                let live_ranges_index = live_ranges_index % self.jit_live_ranges.$live_range.len();
+            ($guest_addr:expr, $live_range:ident, $cpu:expr, [$(($cpu_entry:expr, $entries:ident)),+]) => {{
+                let live_range = unsafe { self.jit_memory_map.get_live_range::<{ $cpu }>($guest_addr).as_mut_unchecked() };
                 let live_ranges_bit = ($guest_addr >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 31;
-
-                if unlikely(self.jit_live_ranges.$live_range[live_ranges_index] & (1 << live_ranges_bit) != 0) {
-                    self.jit_live_ranges.$live_range[live_ranges_index] &= !(1 << live_ranges_bit);
-
-                    let guest_pc_index = ((guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) >> 5) as usize;
-                    let guest_pc_index = guest_pc_index % self.jit_live_ranges.$live_range.len();
-                    let guest_pc_bit = (guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 31;
-
-                    should_breakout |= live_ranges_index == guest_pc_index && live_ranges_bit == guest_pc_bit;
+                if unlikely(*live_range & (1 << live_ranges_bit) != 0) {
+                    *live_range &= !(1 << live_ranges_bit);
 
                     let guest_addr_start = $guest_addr & !(JIT_LIVE_RANGE_PAGE_SIZE - 1);
-                    let guest_addr_end = guest_addr_start + JIT_LIVE_RANGE_PAGE_SIZE;
-
                     $(
-                        {
-                            let entries_index_start = (guest_addr_start >> 1) as usize;
-                            let entries_index_start = entries_index_start % self.jit_entries.$entries.len();
-                            let entries_index_end = (guest_addr_end >> 1) as usize;
-                            let entries_index_end = entries_index_end % self.jit_entries.$entries.len();
-                            self.jit_entries.$entries[entries_index_start..entries_index_end].fill($default_entry);
-                        }
+                        let jit_entry_start = self.jit_memory_map.get_jit_entry::<{ $cpu_entry }>(guest_addr_start);
+                        unsafe { slice::from_raw_parts_mut(jit_entry_start, JIT_LIVE_RANGE_PAGE_SIZE as usize).fill(
+                            match $cpu_entry {
+                                ARM9 => DEFAULT_JIT_ENTRY_ARM9,
+                                ARM7 => DEFAULT_JIT_ENTRY_ARM7,
+                            }
+                        ) }
                     )*
                 }
             }};
@@ -256,24 +247,22 @@ impl JitMemory {
 
         match REGION {
             JitRegion::Itcm => {
-                invalidate!(guest_addr, itcm, [(itcm, DEFAULT_JIT_ENTRY_ARM9)]);
-                invalidate!(guest_addr + size as u32 - 1, itcm, [(itcm, DEFAULT_JIT_ENTRY_ARM9)]);
+                invalidate!(guest_addr, itcm, ARM9, [(ARM9, itcm)]);
+                invalidate!(guest_addr + size as u32 - 1, itcm, ARM9, [(ARM9, itcm)]);
             }
             JitRegion::Main => {
-                invalidate!(guest_addr, main, [(main_arm9, DEFAULT_JIT_ENTRY_ARM9), (main_arm7, DEFAULT_JIT_ENTRY_ARM7)]);
-                invalidate!(guest_addr + size as u32 - 1, main, [(main_arm9, DEFAULT_JIT_ENTRY_ARM9), (main_arm7, DEFAULT_JIT_ENTRY_ARM7)]);
+                invalidate!(guest_addr, main, ARM9, [(ARM9, main_arm9), (ARM7, main_arm7)]);
+                invalidate!(guest_addr + size as u32 - 1, main, ARM9, [(ARM9, main_arm9), (ARM7, main_arm7)]);
             }
             JitRegion::Wram => {
-                invalidate!(guest_addr, wram, [(wram, DEFAULT_JIT_ENTRY_ARM7)]);
-                invalidate!(guest_addr + size as u32 - 1, wram, [(wram, DEFAULT_JIT_ENTRY_ARM7)]);
+                invalidate!(guest_addr, wram, ARM7, [(ARM7, wram)]);
+                invalidate!(guest_addr + size as u32 - 1, wram, ARM7, [(ARM7, wram)]);
             }
             JitRegion::VramArm7 => {
-                invalidate!(guest_addr, vram_arm7, [(vram_arm7, DEFAULT_JIT_ENTRY_ARM7)]);
-                invalidate!(guest_addr + size as u32 - 1, vram_arm7, [(vram_arm7, DEFAULT_JIT_ENTRY_ARM7)]);
+                invalidate!(guest_addr, vram_arm7, ARM7, [(ARM7, vram_arm7)]);
+                invalidate!(guest_addr + size as u32 - 1, vram_arm7, ARM7, [(ARM7, vram_arm7)]);
             }
         }
-
-        should_breakout
     }
 
     pub fn invalidate_wram(&mut self) {
