@@ -32,7 +32,7 @@ struct JitCycle {
 }
 
 #[derive(Copy, Clone)]
-pub struct JitEntry(*const extern "C" fn(bool));
+pub struct JitEntry(pub *const extern "C" fn(bool));
 
 impl Default for JitEntry {
     fn default() -> Self {
@@ -112,7 +112,7 @@ pub struct JitMemory {
     mem_offset: usize,
     jit_entries: JitEntries,
     jit_live_ranges: JitLiveRanges,
-    jit_memory_map: JitMemoryMap,
+    pub jit_memory_map: JitMemoryMap,
 }
 
 impl JitMemory {
@@ -154,7 +154,7 @@ impl JitMemory {
     }
 
     fn insert(&mut self, opcodes: &[u32]) -> (usize, usize) {
-        let aligned_size = utils::align_up(opcodes.len() * size_of::<u32>(), *PAGE_SIZE);
+        let aligned_size = utils::align_up(size_of_val(opcodes), *PAGE_SIZE);
         let allocated_offset_addr = self.allocate_block(aligned_size);
 
         utils::write_to_mem_slice(&mut self.mem, allocated_offset_addr, opcodes);

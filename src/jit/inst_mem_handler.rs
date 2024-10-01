@@ -161,9 +161,10 @@ macro_rules! imm_breakout {
         $asm.runtime_data.branch_out_total_cycles = $total_cycles;
         crate::core::emu::get_regs_mut!($asm.emu, CPU).pc = $pc + if $thumb { 3 } else { 4 };
         crate::core::emu::get_mem_mut!($asm.emu).breakout_imm = false;
+        // r4-r12,pc since we need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions
         std::arch::asm!(
             "mov sp, {}",
-            "pop {{r4-r11,pc}}",
+            "pop {{r4-r12,pc}}",
             in(reg) $asm.runtime_data.host_sp
         );
         std::hint::unreachable_unchecked();
@@ -215,9 +216,10 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
                 get_regs_mut!((*asm).emu, CPU).pc &= !1;
             }
         }
+        // r4-r12,pc since we need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions
         asm!(
             "mov sp, {}",
-            "pop {{r4-r11,pc}}",
+            "pop {{r4-r12,pc}}",
             in(reg) (*asm).runtime_data.host_sp
         );
         unreachable_unchecked();

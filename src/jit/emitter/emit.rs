@@ -1,6 +1,7 @@
 use crate::core::CpuType;
 use crate::core::CpuType::ARM7;
 use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::{BlockLabel, BlockReg};
 use crate::jit::inst_threag_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::op::Op;
@@ -18,7 +19,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         block_asm.start_cond_block(cond);
         match op {
             Op::B | Op::Bl => self.emit_branch_label(block_asm),
-            Op::Bx | Op::BlxReg => self.emit_branch_reg(block_asm),
+            Op::Bx => self.emit_bx(block_asm),
+            Op::BlxReg => self.emit_blx(block_asm),
             Op::Blx => self.emit_blx_label(block_asm),
             Op::Mcr | Op::Mrc => self.emit_cp15(block_asm),
             Op::MsrRc | Op::MsrIc | Op::MsrRs | Op::MsrIs => self.emit_msr(block_asm),
@@ -99,7 +101,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         self._emit_branch_out_metadata(block_asm, true)
     }
 
-    pub fn emit_flush_cycles<ContinueFn: Fn(&mut Self, &mut BlockAsm), BreakoutFn: Fn(&mut Self, &mut BlockAsm)>(
+    pub fn emit_flush_cycles<ContinueFn: Fn(&mut Self, &mut BlockAsm, BlockLabel, BlockReg), BreakoutFn: Fn(&mut Self, &mut BlockAsm)>(
         &mut self,
         block_asm: &mut BlockAsm,
         target_pre_cycle_count_sum: u16,
@@ -155,7 +157,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             false,
             MemoryAmount::Half,
         );
-        continue_fn(self, block_asm);
+        continue_fn(self, block_asm, breakout_label, runtime_data_addr_reg);
 
         block_asm.label(breakout_label);
         breakout_fn(self, block_asm);

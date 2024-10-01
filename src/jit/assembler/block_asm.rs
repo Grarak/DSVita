@@ -96,7 +96,7 @@ impl<'a> BlockAsm<'a> {
 
         instance.buf.insts.push(BlockInst::Prologue);
 
-        // First argument is write_to_host_sp: bool
+        // First argument is store_host_sp: bool
         instance.cmp(BlockReg::Fixed(Reg::R0), 0);
         instance.start_cond_block(Cond::NE);
         let host_sp_addr_reg = thread_regs_addr_reg;
@@ -160,14 +160,17 @@ impl<'a> BlockAsm<'a> {
         BlockLabel(id)
     }
 
+    alu3!(and, And, None, false);
     alu3!(sub, Sub, None, false);
     alu3!(add, Add, None, false);
     alu3!(bic, Bic, None, false);
     alu3!(orr, Orr, None, false);
 
     alu2_op1!(cmp, Cmp, Host, false);
+    alu2_op1!(tst, Tst, Host, false);
 
     alu2_op0!(mov, Mov, None, false);
+    alu2_op0!(mvn, Mvn, None, false);
 
     alu3!(ands_guest_thumb_pc_aligned, And, HostGuest, true);
     alu3!(eors_guest_thumb_pc_aligned, Eor, HostGuest, true);
@@ -513,7 +516,7 @@ impl<'a> BlockAsm<'a> {
 
             if let BlockInst::Label { label, guest_pc } = self.buf.insts[i] {
                 if let Some((p_label, p_guest_pc)) = previous_label {
-                    let replace_guest_pc = p_guest_pc.or_else(|| guest_pc);
+                    let replace_guest_pc = p_guest_pc.or(guest_pc);
                     previous_label = Some((p_label, replace_guest_pc));
                     let previous_node = BlockInstList::deref(current_node).previous;
                     let previous_i = BlockInstList::deref(previous_node).value;
@@ -549,11 +552,19 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
-    fn resolve_df_ordering(already_processed: &mut NoHashSet<usize>, basic_blocks: &mut [BasicBlock], block_i: usize, ordering: &mut [usize], ordering_start: &mut usize, ordering_end: &mut usize) {
+    fn resolve_df_ordering(
+        already_processed: &mut NoHashSet<usize>,
+        completed: &mut NoHashSet<usize>,
+        basic_blocks: &mut [BasicBlock],
+        block_i: usize,
+        ordering: &mut [usize],
+        ordering_start: &mut usize,
+        ordering_end: &mut usize,
+    ) {
         already_processed.insert(block_i);
         let mut cycle = false;
         for exit_i in &basic_blocks[block_i].exit_blocks {
-            if already_processed.contains(exit_i) {
+            if already_processed.contains(exit_i) && !completed.contains(exit_i) {
                 cycle = true;
                 break;
             }
@@ -567,9 +578,10 @@ impl<'a> BlockAsm<'a> {
         }
         for exit_i in basic_blocks[block_i].exit_blocks.clone() {
             if !already_processed.contains(&exit_i) {
-                Self::resolve_df_ordering(already_processed, basic_blocks, exit_i, ordering, ordering_start, ordering_end);
+                Self::resolve_df_ordering(already_processed, completed, basic_blocks, exit_i, ordering, ordering_start, ordering_end);
             }
         }
+        completed.insert(block_i);
     }
 
     fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> (Vec<BasicBlock>, Vec<usize>) {
@@ -671,11 +683,9 @@ impl<'a> BlockAsm<'a> {
             let mut current_node = basic_block.block_entry_start;
             while !current_node.is_null() {
                 match &self.buf.insts[BlockInstList::deref(current_node).value] {
-                    BlockInst::Label { guest_pc, .. } => {
-                        if let Some(pc) = guest_pc {
-                            basic_block_start_pc = *pc;
-                            break;
-                        }
+                    BlockInst::Label { guest_pc: Some(pc), .. } => {
+                        basic_block_start_pc = *pc;
+                        break;
                     }
                     BlockInst::GuestPc(pc) => {
                         basic_block_start_pc = *pc;
@@ -700,10 +710,19 @@ impl<'a> BlockAsm<'a> {
         }
 
         let mut df_already_processed = NoHashSet::default();
+        let mut df_completed = NoHashSet::default();
         let mut df_ordering = vec![0; basic_blocks_len];
         let mut df_ordering_start = 0;
         let mut df_ordering_end = basic_blocks_len - 1;
-        Self::resolve_df_ordering(&mut df_already_processed, &mut basic_blocks, 0, &mut df_ordering, &mut df_ordering_start, &mut df_ordering_end);
+        Self::resolve_df_ordering(
+            &mut df_already_processed,
+            &mut df_completed,
+            &mut basic_blocks,
+            0,
+            &mut df_ordering,
+            &mut df_ordering_start,
+            &mut df_ordering_end,
+        );
 
         (basic_blocks, df_ordering)
     }
@@ -724,6 +743,7 @@ impl<'a> BlockAsm<'a> {
                         break;
                     }
                 }
+                assert!(i < end_j);
                 intervals.insert(reg, (i, end_j));
             }
             processed_regs += outputs;
@@ -752,6 +772,11 @@ impl<'a> BlockAsm<'a> {
         }
 
         let mut reg_intervals = Self::assemble_intervals(&basic_blocks, &basic_blocks_order);
+
+        if unsafe { BLOCK_LOG } {
+            println!("reg intervals {reg_intervals:?} ");
+            println!("block ordering {basic_blocks_order:?}");
+        }
 
         self.buf.reg_allocator.global_mapping.clear();
         let mut free_regs = block_reg_allocator::ALLOCATION_REGS;
@@ -785,10 +810,10 @@ impl<'a> BlockAsm<'a> {
         let mut branch_placeholders = Vec::new();
         let mut opcodes_offset = Vec::with_capacity(basic_blocks.len());
         for (i, basic_block) in basic_blocks.iter().enumerate() {
+            opcodes_offset.push(opcodes.len());
             if i != 0 && basic_block.enter_blocks.is_empty() {
                 continue;
             }
-            opcodes_offset.push(opcodes.len());
             opcodes.extend(basic_block.emit_opcodes(&mut self, &mut branch_placeholders, opcodes.len()));
         }
 

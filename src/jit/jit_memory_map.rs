@@ -2,9 +2,10 @@ use crate::core::memory::regions;
 use crate::core::CpuType;
 use crate::jit::jit_memory::{JitEntries, JitEntry, JitLiveRanges, JIT_LIVE_RANGE_PAGE_SIZE_SHIFT};
 use crate::utils::HeapMemU32;
+use CpuType::{ARM7, ARM9};
 
-const BLOCK_SHIFT: usize = 13;
-const BLOCK_SIZE: usize = 1 << BLOCK_SHIFT;
+pub const BLOCK_SHIFT: usize = 13;
+pub const BLOCK_SIZE: usize = 1 << BLOCK_SHIFT;
 const SIZE: usize = (1 << 31) / BLOCK_SIZE;
 const LIVE_RANGES_SIZE: usize = 1 << (32 - JIT_LIVE_RANGE_PAGE_SIZE_SHIFT - 5);
 
@@ -91,15 +92,22 @@ impl JitMemoryMap {
             }};
         }
         match CPU {
-            CpuType::ARM9 => get_jit_entry!(self.map_arm9),
-            CpuType::ARM7 => get_jit_entry!(self.map_arm7),
+            ARM9 => get_jit_entry!(self.map_arm9),
+            ARM7 => get_jit_entry!(self.map_arm7),
         }
     }
 
     pub fn get_live_range<const CPU: CpuType>(&self, addr: u32) -> *mut u32 {
         match CPU {
-            CpuType::ARM9 => self.live_ranges_map_arm9[(addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 5)) as usize] as _,
-            CpuType::ARM7 => self.live_ranges_map_arm7[(addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 5)) as usize] as _,
+            ARM9 => self.live_ranges_map_arm9[(addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 5)) as usize] as _,
+            ARM7 => self.live_ranges_map_arm7[(addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 5)) as usize] as _,
+        }
+    }
+
+    pub fn get_map_ptr<const CPU: CpuType>(&self) -> *const JitEntry {
+        match CPU {
+            ARM9 => self.map_arm9.as_ptr() as _,
+            ARM7 => self.map_arm7.as_ptr() as _,
         }
     }
 }

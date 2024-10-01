@@ -1,11 +1,13 @@
+use crate::core::emu::get_jit;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::{BlockOperand, BlockReg};
 use crate::jit::inst_info::InstInfo;
-use crate::jit::jit_asm::JitAsm;
+use crate::jit::jit_asm::{JitAsm, JitRuntimeData, BLOCK_LINK_STACK_SIZE};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
-use crate::jit::Cond;
+use crate::jit::{jit_memory_map, Cond, MemoryAmount, ShiftType};
 
 pub enum JitBranchInfo {
     Idle,
@@ -80,7 +82,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let branch_info = Self::analyze_branch_label::<THUMB>(&self.jit_buf.insts, self.jit_buf.current_index, cond, self.jit_buf.current_pc, target_pc);
 
         if let JitBranchInfo::Local(target_index) = branch_info {
-            let target_pre_cycle_count_sum = if target_index == 0 { 0 } else { self.jit_buf.insts_cycle_counts[target_index] };
+            let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[target_index] - self.jit_buf.insts[target_index].cycle as u16;
 
             let backed_up_cpsr_reg = block_asm.new_reg();
             block_asm.mrs_cpsr(backed_up_cpsr_reg);
@@ -88,7 +90,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             self.emit_flush_cycles(
                 block_asm,
                 target_pre_cycle_count_sum,
-                |_, block_asm| {
+                |_, block_asm, _, _| {
                     block_asm.msr_cpsr(backed_up_cpsr_reg);
                     block_asm.guest_branch(Cond::AL, target_pc);
                 },
@@ -113,17 +115,103 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         block_asm.epilogue();
     }
 
-    pub fn emit_branch_reg(&mut self, block_asm: &mut BlockAsm) {
+    pub fn emit_bx(&mut self, block_asm: &mut BlockAsm) {
         let inst_info = self.jit_buf.current_inst();
         let branch_to = *inst_info.operands()[0].as_reg_no_shift().unwrap();
 
-        if inst_info.op == Op::BlxReg {
-            block_asm.mov(Reg::LR, self.jit_buf.current_pc + 4);
-        }
         block_asm.mov(Reg::PC, branch_to);
         block_asm.save_context();
         self.emit_branch_out_metadata(block_asm);
         block_asm.epilogue();
+    }
+
+    pub fn emit_blx(&mut self, block_asm: &mut BlockAsm) {
+        let inst_info = self.jit_buf.current_inst();
+        let target_pc_reg = *inst_info.operands()[0].as_reg_no_shift().unwrap();
+
+        block_asm.mov(Reg::LR, self.jit_buf.current_pc + 4);
+        self.emit_branch_reg_common(block_asm, target_pc_reg.into());
+    }
+
+    pub fn emit_branch_reg_common(&mut self, block_asm: &mut BlockAsm, target_pc_reg: BlockReg) {
+        block_asm.mov(Reg::PC, target_pc_reg);
+        block_asm.save_context();
+
+        self.emit_flush_cycles(
+            block_asm,
+            0,
+            |asm, block_asm, breakout_label, runtime_data_addr_reg| {
+                let block_link_ptr_reg = block_asm.new_reg();
+
+                block_asm.transfer_read(block_link_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_block_link_ptr_offset() as u32, false, MemoryAmount::Byte);
+
+                block_asm.cmp(block_link_ptr_reg, BLOCK_LINK_STACK_SIZE as u32);
+                block_asm.branch(breakout_label, Cond::EQ);
+
+                let block_link_stack_ptr_reg = block_asm.new_reg();
+                block_asm.add(block_link_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_block_link_stack_offset() as u32);
+                block_asm.add(block_link_stack_ptr_reg, block_link_stack_ptr_reg, (block_link_ptr_reg.into(), ShiftType::Lsl, BlockOperand::from(3)));
+                block_asm.transfer_write(Reg::LR, block_link_stack_ptr_reg, 0, false, MemoryAmount::Word);
+
+                let return_pre_cycle_count_sum_reg = block_asm.new_reg();
+                block_asm.mov(return_pre_cycle_count_sum_reg, asm.jit_buf.insts_cycle_counts[asm.jit_buf.current_index] as u32);
+                block_asm.transfer_write(return_pre_cycle_count_sum_reg, block_link_stack_ptr_reg, 4, false, MemoryAmount::Half);
+
+                block_asm.add(block_link_ptr_reg, block_link_ptr_reg, 1);
+                block_asm.transfer_write(block_link_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_block_link_ptr_offset() as u32, false, MemoryAmount::Byte);
+
+                block_asm.free_reg(return_pre_cycle_count_sum_reg);
+                block_asm.free_reg(block_link_stack_ptr_reg);
+                block_asm.free_reg(block_link_ptr_reg);
+
+                let target_addr_reg = block_asm.new_reg();
+                let pc_mask_reg = block_asm.new_reg();
+
+                // Align pc to !1 or !3
+                block_asm.mvn(pc_mask_reg, 1);
+                block_asm.tst(target_pc_reg, 1);
+                block_asm.start_cond_block(Cond::EQ);
+                block_asm.mvn(pc_mask_reg, 3);
+                block_asm.end_cond_block();
+
+                block_asm.and(target_addr_reg, target_pc_reg, pc_mask_reg);
+
+                let map_ptr = get_jit!(asm.emu).jit_memory_map.get_map_ptr::<CPU>();
+
+                let map_ptr_reg = block_asm.new_reg();
+                let map_index_reg = block_asm.new_reg();
+                let map_entry_base_ptr_reg = block_asm.new_reg();
+
+                block_asm.mov(map_ptr_reg, map_ptr as u32);
+                block_asm.mov(map_index_reg, (target_addr_reg.into(), ShiftType::Lsr, BlockOperand::from(jit_memory_map::BLOCK_SHIFT as u32 + 1)));
+                block_asm.transfer_read(
+                    map_entry_base_ptr_reg,
+                    map_ptr_reg,
+                    (map_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)),
+                    false,
+                    MemoryAmount::Word,
+                );
+                let block_size_mask_reg = map_index_reg;
+                block_asm.mov(block_size_mask_reg, (jit_memory_map::BLOCK_SIZE as u32 - 1) << 2);
+                block_asm.and(target_addr_reg, block_size_mask_reg, (target_addr_reg.into(), ShiftType::Lsl, BlockOperand::from(1)));
+
+                let entry_fn_reg = block_asm.new_reg();
+                block_asm.transfer_read(entry_fn_reg, map_entry_base_ptr_reg, target_addr_reg, false, MemoryAmount::Word);
+
+                block_asm.call1(entry_fn_reg, 0);
+
+                block_asm.free_reg(entry_fn_reg);
+                block_asm.free_reg(map_entry_base_ptr_reg);
+                block_asm.free_reg(map_index_reg);
+                block_asm.free_reg(map_ptr_reg);
+                block_asm.free_reg(pc_mask_reg);
+                block_asm.free_reg(target_addr_reg);
+            },
+            |asm, block_asm| {
+                asm.emit_branch_out_metadata(block_asm);
+                block_asm.epilogue();
+            },
+        );
     }
 
     pub fn emit_blx_label(&mut self, block_asm: &mut BlockAsm) {
@@ -134,10 +222,12 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let relative_pc = *self.jit_buf.current_inst().operands()[0].as_imm().unwrap() as i32 + 8;
         let target_pc = (self.jit_buf.current_pc as i32 + relative_pc) as u32;
 
+        let target_pc_reg = block_asm.new_reg();
+        block_asm.mov(target_pc_reg, target_pc | 1);
+
         block_asm.mov(Reg::LR, self.jit_buf.current_pc + 4);
-        block_asm.mov(Reg::PC, target_pc | 1);
-        block_asm.save_context();
-        self.emit_branch_out_metadata(block_asm);
-        block_asm.epilogue();
+        self.emit_branch_reg_common(block_asm, target_pc_reg);
+
+        block_asm.free_reg(target_pc_reg);
     }
 }

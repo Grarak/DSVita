@@ -11,7 +11,10 @@ use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, DEBUG_LOG, DEBUG_LOG_BRANCH_OUT};
+use static_assertions::const_assert_eq;
+use std::arch::asm;
 use std::cell::UnsafeCell;
+use std::hint::unreachable_unchecked;
 use std::{mem, ptr};
 
 pub struct JitBuf {
@@ -46,6 +49,17 @@ impl JitBuf {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct JitBlockLinkData {
+    pub desired_lr: u32,
+    pub return_pre_cycle_count_sum: u16,
+}
+
+const_assert_eq!(size_of::<JitBlockLinkData>(), 8);
+
+pub const BLOCK_LINK_STACK_SIZE: usize = 32;
+
+#[repr(C)]
 pub struct JitRuntimeData {
     pub branch_out_pc: u32,
     pub branch_out_total_cycles: u16,
@@ -53,6 +67,8 @@ pub struct JitRuntimeData {
     pub accumulated_cycles: u16,
     pub idle_loop: bool,
     pub host_sp: usize,
+    pub block_link_ptr: u8,
+    pub block_link_stack: [JitBlockLinkData; BLOCK_LINK_STACK_SIZE],
 }
 
 impl JitRuntimeData {
@@ -64,18 +80,29 @@ impl JitRuntimeData {
             accumulated_cycles: 0,
             idle_loop: false,
             host_sp: 0,
+            block_link_ptr: 0,
+            block_link_stack: [JitBlockLinkData::default(); BLOCK_LINK_STACK_SIZE],
         };
+
         let branch_out_pc_ptr = ptr::addr_of!(instance.branch_out_pc) as usize;
         let branch_out_total_cycles_ptr = ptr::addr_of!(instance.branch_out_total_cycles) as usize;
         let pre_cycle_count_sum_ptr = ptr::addr_of!(instance.pre_cycle_count_sum) as usize;
         let accumulated_cycles_ptr = ptr::addr_of!(instance.accumulated_cycles) as usize;
         let idle_loop_ptr = ptr::addr_of!(instance.idle_loop) as usize;
         let host_sp_ptr = ptr::addr_of!(instance.host_sp) as usize;
+        let block_link_ptr_ptr = ptr::addr_of!(instance.block_link_ptr) as usize;
+        let block_link_stack_ptr = ptr::addr_of!(instance.block_link_stack) as usize;
+
         assert_eq!(branch_out_total_cycles_ptr - branch_out_pc_ptr, Self::get_out_total_cycles_offset() as usize);
         assert_eq!(pre_cycle_count_sum_ptr - branch_out_pc_ptr, Self::get_pre_cycle_count_sum_offset() as usize);
         assert_eq!(accumulated_cycles_ptr - branch_out_pc_ptr, Self::get_accumulated_cycles_offset() as usize);
         assert_eq!(idle_loop_ptr - branch_out_pc_ptr, Self::get_idle_loop_offset() as usize);
         assert_eq!(host_sp_ptr - branch_out_pc_ptr, Self::get_host_sp_offset() as usize);
+        assert_eq!(block_link_ptr_ptr - branch_out_pc_ptr, Self::get_block_link_ptr_offset() as usize);
+        assert_eq!(block_link_stack_ptr - branch_out_pc_ptr, Self::get_block_link_stack_offset() as usize);
+
+        assert_eq!(size_of_val(&instance.block_link_stack), 32 * 8);
+
         instance
     }
 
@@ -106,21 +133,29 @@ impl JitRuntimeData {
     pub const fn get_host_sp_offset() -> u8 {
         Self::get_idle_loop_offset() + 2
     }
+
+    pub const fn get_block_link_ptr_offset() -> u8 {
+        Self::get_host_sp_offset() + 4
+    }
+
+    pub const fn get_block_link_stack_offset() -> u8 {
+        Self::get_block_link_ptr_offset() + 4
+    }
 }
 
-pub extern "C" fn emit_code_block<const CPU: CpuType>() {
+pub extern "C" fn emit_code_block<const CPU: CpuType>(store_host_sp: bool) {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
 
     let guest_pc = get_regs!(asm.emu, CPU).pc;
     let thumb = (guest_pc & 1) == 1;
     if thumb {
-        emit_code_block_internal::<CPU, true>(guest_pc & !1)
+        emit_code_block_internal::<CPU, true>(store_host_sp, guest_pc & !1)
     } else {
-        emit_code_block_internal::<CPU, false>(guest_pc & !3)
+        emit_code_block_internal::<CPU, false>(store_host_sp, guest_pc & !3)
     }
 }
 
-fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(guest_pc: u32) {
+fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(store_host_sp: bool, guest_pc: u32) {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
 
     {
@@ -144,57 +179,65 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(guest_pc: u32
                 assert!(asm.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{CPU:?} {guest_pc:x} {inst_info:?}")
             }
 
-            // let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && inst_info.is_uncond_branch() && !inst_info.op.is_labelled_branch();
-            let is_uncond_branch = inst_info.is_uncond_branch();
+            let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && inst_info.is_uncond_branch() && !inst_info.op.is_labelled_branch();
+            // let is_uncond_branch = inst_info.is_uncond_branch();
             let is_unknown = inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb;
 
             asm.jit_buf.insts.push(inst_info);
 
             index += if THUMB { 2 } else { 4 };
-            if is_uncond_branch || is_unknown {
+            if is_unreturnable_branch || is_unknown {
                 break;
             }
         }
     }
 
-    // unsafe { BLOCK_LOG = true };
+    let jit_entry = {
+        // unsafe { BLOCK_LOG = guest_pc == 0x20cc1b4 };
 
-    let guest_regs_ptr = get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr();
-    let mut block_asm = unsafe { (*asm.block_asm_buf.get()).new_asm(guest_regs_ptr, ptr::addr_of_mut!((*asm).runtime_data.host_sp)) };
+        let guest_regs_ptr = get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr();
+        let mut block_asm = unsafe { (*asm.block_asm_buf.get()).new_asm(guest_regs_ptr, ptr::addr_of_mut!((*asm).runtime_data.host_sp)) };
 
-    for i in 0..asm.jit_buf.insts.len() {
-        asm.jit_buf.current_index = i;
-        asm.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
-        debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
+        for i in 0..asm.jit_buf.insts.len() {
+            asm.jit_buf.current_index = i;
+            asm.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
+            debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
-        if THUMB {
-            asm.emit_thumb(&mut block_asm);
-        } else {
-            asm.emit(&mut block_asm);
+            // if asm.jit_buf.current_pc == 0x20026f8 {
+            //     block_asm.bkpt(1);
+            // }
+
+            if THUMB {
+                asm.emit_thumb(&mut block_asm);
+            } else {
+                asm.emit(&mut block_asm);
+            }
+
+            // if DEBUG_LOG {
+            //     block_asm.save_context();
+            //     block_asm.call2(debug_after_exec_op::<CPU> as *const (), asm.jit_buf.current_pc, asm.jit_buf.current_inst().opcode);
+            //     block_asm.restore_reg(Reg::CPSR);
+            // }
         }
 
-        // if DEBUG_LOG {
-        //     block_asm.save_context();
-        //     block_asm.call2(debug_after_exec_op::<CPU> as *const (), self.jit_buf.current_pc, self.jit_buf.current_inst().opcode);
-        //     block_asm.restore_reg(Reg::CPSR);
-        // }
-    }
-
-    let opcodes = block_asm.finalize(guest_pc, THUMB);
-    if unsafe { BLOCK_LOG } {
-        for &opcode in &opcodes {
-            println!("0x{opcode:x},");
+        let opcodes = block_asm.finalize(guest_pc, THUMB);
+        if unsafe { BLOCK_LOG } {
+            for &opcode in &opcodes {
+                println!("0x{opcode:x},");
+            }
+            todo!()
         }
-    }
-    let insert_entry = get_jit_mut!(asm.emu).insert_block::<CPU>(&opcodes, guest_pc);
-    let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(insert_entry) };
+        let insert_entry = get_jit_mut!(asm.emu).insert_block::<CPU>(&opcodes, guest_pc);
+        let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(insert_entry) };
 
-    if DEBUG_LOG {
-        println!("{CPU:?} Mapping {guest_pc:#010x} to {:#010x}", jit_entry as *const fn() as usize);
-    }
-    asm.jit_buf.clear_all();
+        if DEBUG_LOG {
+            println!("{CPU:?} Mapping {guest_pc:#010x} to {:#010x}", jit_entry as *const fn() as usize);
+        }
+        asm.jit_buf.clear_all();
+        jit_entry
+    };
 
-    jit_entry(true);
+    jit_entry(store_host_sp);
 }
 
 #[inline]
@@ -204,21 +247,25 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
     let thumb = (guest_pc & 1) == 1;
     debug_println!("{:?} Execute {:x} thumb {}", CPU, guest_pc, thumb);
 
-    get_regs_mut!(asm.emu, CPU).set_thumb(thumb);
+    let jit_entry = {
+        get_regs_mut!(asm.emu, CPU).set_thumb(thumb);
 
-    let guest_pc = if thumb { guest_pc & !1 } else { guest_pc & !3 };
-    let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(guest_pc);
-    let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(jit_entry) };
+        let guest_pc = if thumb { guest_pc & !1 } else { guest_pc & !3 };
+        let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(guest_pc);
+        let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(jit_entry) };
 
-    debug_println!("{CPU:?} Enter jit addr {:x}", jit_entry as usize);
+        debug_println!("{CPU:?} Enter jit addr {:x}", jit_entry as usize);
 
-    if DEBUG_LOG {
-        asm.runtime_data.branch_out_pc = u32::MAX;
-        asm.runtime_data.branch_out_total_cycles = 0;
-    }
-    asm.runtime_data.pre_cycle_count_sum = 0;
-    asm.runtime_data.accumulated_cycles = 0;
-    get_regs_mut!(asm.emu, CPU).cycle_correction = 0;
+        if DEBUG_LOG {
+            asm.runtime_data.branch_out_pc = u32::MAX;
+            asm.runtime_data.branch_out_total_cycles = 0;
+        }
+        asm.runtime_data.pre_cycle_count_sum = 0;
+        asm.runtime_data.accumulated_cycles = 0;
+        asm.runtime_data.block_link_ptr = 0;
+        get_regs_mut!(asm.emu, CPU).cycle_correction = 0;
+        jit_entry
+    };
 
     jit_entry(true);
 

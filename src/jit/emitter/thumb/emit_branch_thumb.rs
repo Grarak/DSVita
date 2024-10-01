@@ -63,10 +63,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
         block_asm.mov(Reg::PC, target_pc_reg);
 
-        block_asm.save_context();
-        self.emit_branch_out_metadata(block_asm);
-        block_asm.epilogue();
-
+        self.emit_branch_reg_common(block_asm, target_pc_reg);
         block_asm.free_reg(target_pc_reg);
     }
 

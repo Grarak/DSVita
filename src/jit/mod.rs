@@ -14,9 +14,9 @@ mod inst_mem_handler;
 mod inst_threag_regs_handler;
 pub mod jit_asm;
 pub mod jit_memory;
+mod jit_memory_map;
 pub mod op;
 pub mod reg;
-mod jit_memory_map;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]

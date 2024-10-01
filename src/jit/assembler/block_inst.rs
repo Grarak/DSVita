@@ -600,8 +600,9 @@ impl BlockInst {
                 opcodes.push(inst_info.assemble());
             }
 
-            BlockInst::Prologue => opcodes.push(LdmStm::generic(Reg::SP, block_reg_allocator::ALLOCATION_REGS + Reg::LR, false, true, false, true, Cond::AL)),
-            BlockInst::Epilogue => opcodes.push(LdmStm::generic(Reg::SP, block_reg_allocator::ALLOCATION_REGS + Reg::PC, true, true, true, false, Cond::AL)),
+            // r4-r12,{lr|pc} since we need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions
+            BlockInst::Prologue => opcodes.push(LdmStm::generic(Reg::SP, block_reg_allocator::ALLOCATION_REGS + Reg::R12 + Reg::LR, false, true, false, true, Cond::AL)),
+            BlockInst::Epilogue => opcodes.push(LdmStm::generic(Reg::SP, block_reg_allocator::ALLOCATION_REGS + Reg::R12 + Reg::PC, true, true, true, false, Cond::AL)),
 
             BlockInst::Label { .. } | BlockInst::GuestPc(_) => {}
         }
