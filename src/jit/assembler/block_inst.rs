@@ -391,7 +391,7 @@ impl BlockInst {
         opcodes.push(LdrStrImm::str_offset_al(guest_reg, thread_regs_addr_reg, Reg::CPSR as u16 * 4));
     }
 
-    pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize, used_host_regs: RegReserve) {
+    pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize) {
         let alu_reg = |op: BlockAluOp, op0: BlockReg, op1: BlockReg, op2: BlockReg, shift: BlockShift, set_cond: bool| match shift.value {
             BlockOperand::Reg(shift_reg) => AluReg::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_reg.as_fixed(), set_cond, Cond::AL),
             BlockOperand::Imm(shift_imm) => {
@@ -600,8 +600,6 @@ impl BlockInst {
                 opcodes.push(inst_info.assemble());
             }
 
-            // BlockInst::Prologue => opcodes.push(LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL)),
-            // BlockInst::Epilogue => opcodes.push(LdmStm::generic(Reg::SP, used_host_regs + Reg::PC, true, true, true, false, Cond::AL)),
             BlockInst::Prologue => opcodes.push(LdmStm::generic(Reg::SP, block_reg_allocator::ALLOCATION_REGS + Reg::LR, false, true, false, true, Cond::AL)),
             BlockInst::Epilogue => opcodes.push(LdmStm::generic(Reg::SP, block_reg_allocator::ALLOCATION_REGS + Reg::PC, true, true, true, false, Cond::AL)),
 

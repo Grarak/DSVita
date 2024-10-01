@@ -376,7 +376,7 @@ impl BasicBlock {
         }
     }
 
-    pub fn emit_opcodes(&self, asm: &mut BlockAsm, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize, used_host_regs: RegReserve) -> Vec<u32> {
+    pub fn emit_opcodes(&self, asm: &mut BlockAsm, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize) -> Vec<u32> {
         let mut opcodes = Vec::new();
         let mut inst_opcodes = Vec::new();
         for entry in self.insts_link.iter() {
@@ -397,7 +397,7 @@ impl BasicBlock {
             }
 
             inst_opcodes.clear();
-            inst.emit_opcode(&mut inst_opcodes, opcodes.len(), branch_placeholders, opcodes_offset, used_host_regs);
+            inst.emit_opcode(&mut inst_opcodes, opcodes.len(), branch_placeholders, opcodes_offset);
             opcodes.extend(&inst_opcodes);
         }
         opcodes

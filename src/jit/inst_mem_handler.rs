@@ -164,7 +164,7 @@ macro_rules! imm_breakout {
         std::arch::asm!(
             "mov sp, {}",
             "pop {{r4-r11,pc}}",
-            in(reg) $asm.host_sp
+            in(reg) $asm.runtime_data.host_sp
         );
         std::hint::unreachable_unchecked();
     }};
@@ -218,7 +218,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<
         asm!(
             "mov sp, {}",
             "pop {{r4-r11,pc}}",
-            in(reg) (*asm).host_sp
+            in(reg) (*asm).runtime_data.host_sp
         );
         unreachable_unchecked();
     } else if WRITE && unlikely(get_mem!((*asm).emu).breakout_imm) {

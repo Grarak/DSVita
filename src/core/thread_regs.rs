@@ -166,8 +166,8 @@ impl ThreadRegs {
         opcodes
     }
 
-    pub fn get_reg_start_addr(&self) -> &u32 {
-        self.get_reg(Reg::R0)
+    pub fn get_reg_mut_ptr(&mut self) -> *mut u32 {
+        self.gp_regs.as_mut_ptr()
     }
 
     pub fn get_reg(&self, reg: Reg) -> &u32 {

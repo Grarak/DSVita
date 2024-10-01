@@ -52,6 +52,7 @@ pub struct JitRuntimeData {
     pub pre_cycle_count_sum: u16,
     pub accumulated_cycles: u16,
     pub idle_loop: bool,
+    pub host_sp: usize,
 }
 
 impl JitRuntimeData {
@@ -62,16 +63,19 @@ impl JitRuntimeData {
             pre_cycle_count_sum: 0,
             accumulated_cycles: 0,
             idle_loop: false,
+            host_sp: 0,
         };
         let branch_out_pc_ptr = ptr::addr_of!(instance.branch_out_pc) as usize;
         let branch_out_total_cycles_ptr = ptr::addr_of!(instance.branch_out_total_cycles) as usize;
         let pre_cycle_count_sum_ptr = ptr::addr_of!(instance.pre_cycle_count_sum) as usize;
         let accumulated_cycles_ptr = ptr::addr_of!(instance.accumulated_cycles) as usize;
         let idle_loop_ptr = ptr::addr_of!(instance.idle_loop) as usize;
+        let host_sp_ptr = ptr::addr_of!(instance.host_sp) as usize;
         assert_eq!(branch_out_total_cycles_ptr - branch_out_pc_ptr, Self::get_out_total_cycles_offset() as usize);
         assert_eq!(pre_cycle_count_sum_ptr - branch_out_pc_ptr, Self::get_pre_cycle_count_sum_offset() as usize);
         assert_eq!(accumulated_cycles_ptr - branch_out_pc_ptr, Self::get_accumulated_cycles_offset() as usize);
         assert_eq!(idle_loop_ptr - branch_out_pc_ptr, Self::get_idle_loop_offset() as usize);
+        assert_eq!(host_sp_ptr - branch_out_pc_ptr, Self::get_host_sp_offset() as usize);
         instance
     }
 
@@ -97,6 +101,10 @@ impl JitRuntimeData {
 
     pub const fn get_idle_loop_offset() -> u8 {
         Self::get_accumulated_cycles_offset() + 2
+    }
+
+    pub const fn get_host_sp_offset() -> u8 {
+        Self::get_idle_loop_offset() + 2
     }
 }
 
@@ -151,8 +159,8 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(guest_pc: u32
 
     // unsafe { BLOCK_LOG = true };
 
-    let thread_regs = get_regs!(asm.emu, CPU);
-    let mut block_asm = unsafe { (*asm.block_asm_buf.get()).new_asm(thread_regs, ptr::addr_of_mut!(asm.host_sp) as _) };
+    let guest_regs_ptr = get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr();
+    let mut block_asm = unsafe { (*asm.block_asm_buf.get()).new_asm(guest_regs_ptr, ptr::addr_of_mut!((*asm).runtime_data.host_sp)) };
 
     for i in 0..asm.jit_buf.insts.len() {
         asm.jit_buf.current_index = i;
@@ -179,14 +187,14 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(guest_pc: u32
         }
     }
     let insert_entry = get_jit_mut!(asm.emu).insert_block::<CPU>(&opcodes, guest_pc);
-    let jit_entry: extern "C" fn() = unsafe { mem::transmute(insert_entry) };
+    let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(insert_entry) };
 
     if DEBUG_LOG {
         println!("{CPU:?} Mapping {guest_pc:#010x} to {:#010x}", jit_entry as *const fn() as usize);
     }
     asm.jit_buf.clear_all();
 
-    jit_entry();
+    jit_entry(true);
 }
 
 #[inline]
@@ -200,7 +208,7 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
 
     let guest_pc = if thumb { guest_pc & !1 } else { guest_pc & !3 };
     let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(guest_pc);
-    let jit_entry: extern "C" fn() = unsafe { mem::transmute(jit_entry) };
+    let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(jit_entry) };
 
     debug_println!("{CPU:?} Enter jit addr {:x}", jit_entry as usize);
 
@@ -212,7 +220,7 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
     asm.runtime_data.accumulated_cycles = 0;
     get_regs_mut!(asm.emu, CPU).cycle_correction = 0;
 
-    jit_entry();
+    jit_entry(true);
 
     if DEBUG_LOG {
         assert_ne!(asm.runtime_data.branch_out_pc, u32::MAX);
@@ -247,7 +255,6 @@ pub struct JitAsm<'a, const CPU: CpuType> {
     pub jit_buf: JitBuf,
     pub runtime_data: JitRuntimeData,
     pub block_asm_buf: UnsafeCell<BlockAsmBuf>,
-    pub host_sp: u32,
 }
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
@@ -258,7 +265,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             jit_buf: JitBuf::new(),
             runtime_data: JitRuntimeData::new(),
             block_asm_buf: UnsafeCell::new(BlockAsmBuf::new()),
-            host_sp: 0,
         }
     }
 

@@ -32,7 +32,7 @@ struct JitCycle {
 }
 
 #[derive(Copy, Clone)]
-pub struct JitEntry(*const extern "C" fn());
+pub struct JitEntry(*const extern "C" fn(bool));
 
 impl Default for JitEntry {
     fn default() -> Self {
@@ -163,12 +163,12 @@ impl JitMemory {
         (allocated_offset_addr, aligned_size)
     }
 
-    pub fn insert_block<const CPU: CpuType>(&mut self, opcodes: &[u32], guest_pc: u32) -> *const extern "C" fn() {
+    pub fn insert_block<const CPU: CpuType>(&mut self, opcodes: &[u32], guest_pc: u32) -> *const extern "C" fn(bool) {
         let (allocated_offset_addr, aligned_size) = self.insert(opcodes);
 
         macro_rules! insert {
             ($entries:expr, $live_ranges:expr) => {{
-                let jit_entry_addr = (allocated_offset_addr + self.mem.as_ptr() as usize) as *const extern "C" fn();
+                let jit_entry_addr = (allocated_offset_addr + self.mem.as_ptr() as usize) as *const extern "C" fn(bool);
 
                 let entries_index = (guest_pc >> 1) as usize;
                 let entries_index = entries_index % $entries.len();
@@ -219,7 +219,7 @@ impl JitMemory {
         jit_addr
     }
 
-    pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> *const extern "C" fn() {
+    pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> *const extern "C" fn(bool) {
         unsafe { (*self.jit_memory_map.get_jit_entry::<CPU>(guest_pc)).0 }
     }
 

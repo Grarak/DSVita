@@ -1,4 +1,3 @@
-use crate::core::thread_regs::ThreadRegs;
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::basic_block::BasicBlock;
 use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp, GuestInstInfo};
@@ -38,24 +37,30 @@ macro_rules! alu2_op0 {
 
 pub struct BlockAsm<'a> {
     pub buf: &'a mut BlockAsmBuf,
+
     insts_link: BlockInstList,
+
     any_reg_count: u16,
     freed_any_regs: NoHashSet<u16>,
     label_count: u16,
     used_labels: NoHashSet<u16>,
+
     pub thread_regs_addr_reg: BlockReg,
     pub tmp_guest_cpsr_reg: BlockReg,
     pub tmp_adjusted_pc_reg: BlockReg,
     tmp_operand_imm_reg: BlockReg,
     tmp_shift_imm_reg: BlockReg,
     tmp_func_call_reg: BlockReg,
+
     cond_block_end_label: Option<BlockLabel>,
+
+    host_sp_ptr: *mut usize,
     block_start: usize,
     inst_insert_index: Option<usize>,
 }
 
 impl<'a> BlockAsm<'a> {
-    pub fn new(thread_regs: &ThreadRegs, host_sp_addr: usize, buf: &'a mut BlockAsmBuf) -> Self {
+    pub fn new(guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize, buf: &'a mut BlockAsmBuf) -> Self {
         buf.insts.clear();
         buf.guest_branches_mapping.clear();
         let thread_regs_addr_reg = BlockReg::Any(Reg::SPSR as u16 + 1);
@@ -66,32 +71,42 @@ impl<'a> BlockAsm<'a> {
         let tmp_func_call_reg = BlockReg::Any(Reg::SPSR as u16 + 6);
         let mut instance = BlockAsm {
             buf,
+
             insts_link: BlockInstList::new(),
+
             // First couple any regs are reserved for guest mapping
             any_reg_count: Reg::SPSR as u16 + 7,
             freed_any_regs: NoHashSet::default(),
             label_count: 0,
             used_labels: NoHashSet::default(),
+
             thread_regs_addr_reg,
             tmp_guest_cpsr_reg,
             tmp_adjusted_pc_reg,
             tmp_operand_imm_reg,
             tmp_shift_imm_reg,
             tmp_func_call_reg,
+
             cond_block_end_label: None,
+
+            host_sp_ptr,
             block_start: 0,
             inst_insert_index: None,
         };
 
         instance.buf.insts.push(BlockInst::Prologue);
 
+        // First argument is write_to_host_sp: bool
+        instance.cmp(BlockReg::Fixed(Reg::R0), 0);
+        instance.start_cond_block(Cond::NE);
         let host_sp_addr_reg = thread_regs_addr_reg;
-        instance.mov(host_sp_addr_reg, host_sp_addr as u32);
+        instance.mov(host_sp_addr_reg, host_sp_ptr as u32);
         instance.transfer_write(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0, false, MemoryAmount::Word);
+        instance.end_cond_block();
 
         instance.sub(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4); // Reserve for spilled registers
 
-        instance.mov(thread_regs_addr_reg, thread_regs.get_reg_start_addr() as *const _ as u32);
+        instance.mov(thread_regs_addr_reg, guest_regs_ptr as u32);
         instance.restore_reg(Reg::CPSR);
 
         instance.block_start = instance.buf.insts.len();
@@ -350,7 +365,9 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn epilogue(&mut self) {
-        self.add(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4);
+        let host_sp_addr_reg = self.thread_regs_addr_reg;
+        self.mov(host_sp_addr_reg, self.host_sp_ptr as u32);
+        self.transfer_read(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0, false, MemoryAmount::Word);
         self.buf.insts.push(BlockInst::Epilogue);
     }
 
@@ -756,18 +773,13 @@ impl<'a> BlockAsm<'a> {
             self.buf.reg_allocator.global_mapping.insert(reg, Reg::None);
         }
 
-        let mut used_host_regs = RegReserve::new();
-
         for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
             if i != 0 && basic_block.enter_blocks.is_empty() {
                 continue;
             }
             self.buf.reg_allocator.init_inputs(*basic_block.get_required_inputs());
             basic_block.allocate_regs(&mut self);
-            used_host_regs += self.buf.reg_allocator.dirty_regs;
         }
-
-        used_host_regs &= block_reg_allocator::ALLOCATION_REGS;
 
         let mut opcodes = Vec::new();
         let mut branch_placeholders = Vec::new();
@@ -777,7 +789,7 @@ impl<'a> BlockAsm<'a> {
                 continue;
             }
             opcodes_offset.push(opcodes.len());
-            opcodes.extend(basic_block.emit_opcodes(&mut self, &mut branch_placeholders, opcodes.len(), used_host_regs));
+            opcodes.extend(basic_block.emit_opcodes(&mut self, &mut branch_placeholders, opcodes.len()));
         }
 
         for branch_placeholder in branch_placeholders {

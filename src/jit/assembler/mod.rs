@@ -1,6 +1,6 @@
-use crate::core::thread_regs::ThreadRegs;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::block_inst::BlockInst;
+use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
 use crate::jit::assembler::block_reg_set::BLOCK_REG_SET_ARRAY_SIZE;
 use crate::jit::inst_info::{Shift, ShiftValue};
 use crate::jit::reg::Reg;
@@ -8,7 +8,6 @@ use crate::jit::ShiftType;
 use crate::utils::NoHashMap;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
-use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
 
 pub mod arm;
 mod basic_block;
@@ -357,11 +356,11 @@ impl BlockAsmBuf {
         BlockAsmBuf {
             insts: Vec::new(),
             guest_branches_mapping: NoHashMap::default(),
-            reg_allocator: BlockRegAllocator::new()
+            reg_allocator: BlockRegAllocator::new(),
         }
     }
 
-    pub fn new_asm(&mut self, thread_regs: &ThreadRegs, host_sp_addr: usize) -> BlockAsm {
-        BlockAsm::new(thread_regs, host_sp_addr, self)
+    pub fn new_asm(&mut self, guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize) -> BlockAsm {
+        BlockAsm::new(guest_regs_ptr, host_sp_ptr, self)
     }
 }
