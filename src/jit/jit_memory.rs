@@ -109,7 +109,8 @@ extern "C" {
 
 pub struct JitMemory {
     mem: Mmap,
-    mem_offset: usize,
+    mem_start: usize,
+    mem_end: usize,
     jit_entries: JitEntries,
     jit_live_ranges: JitLiveRanges,
     pub jit_memory_map: JitMemoryMap,
@@ -122,18 +123,21 @@ impl JitMemory {
         let jit_memory_map = JitMemoryMap::new(&jit_entries, &jit_live_ranges);
         JitMemory {
             mem: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
-            mem_offset: 0,
+            mem_start: 0,
+            mem_end: JIT_MEMORY_SIZE,
             jit_entries,
             jit_live_ranges,
             jit_memory_map,
         }
     }
 
-    fn allocate_block(&mut self, required_size: usize) -> usize {
-        if self.mem_offset + required_size >= JIT_MEMORY_SIZE {
-            debug_println!("Jit memory full, reset");
+    fn allocate_block(&mut self, required_size: usize, insert_at_end: bool) -> usize {
+        let free_size = self.mem_end - self.mem_start;
+        if free_size < required_size {
+            println!("Jit memory full, reset");
 
-            self.mem_offset = 0;
+            self.mem_start = 0;
+            self.mem_end = JIT_MEMORY_SIZE;
 
             self.jit_entries.reset();
             self.jit_live_ranges.itcm.fill(0);
@@ -142,20 +146,21 @@ impl JitMemory {
             self.jit_live_ranges.vram_arm7.fill(0);
             self.jit_live_ranges.arm7_bios.fill(0);
             self.jit_live_ranges.arm9_bios.fill(0);
+        }
 
-            let addr = self.mem_offset;
-            self.mem_offset += required_size;
-            addr
+        if insert_at_end {
+            self.mem_end -= required_size;
+            self.mem_end
         } else {
-            let addr = self.mem_offset;
-            self.mem_offset += required_size;
+            let addr = self.mem_start;
+            self.mem_start += required_size;
             addr
         }
     }
 
-    fn insert(&mut self, opcodes: &[u32]) -> (usize, usize) {
+    fn insert(&mut self, opcodes: &[u32], insert_at_end: bool) -> (usize, usize) {
         let aligned_size = utils::align_up(size_of_val(opcodes), *PAGE_SIZE);
-        let allocated_offset_addr = self.allocate_block(aligned_size);
+        let allocated_offset_addr = self.allocate_block(aligned_size, insert_at_end);
 
         utils::write_to_mem_slice(&mut self.mem, allocated_offset_addr, opcodes);
         self.flush_cache(allocated_offset_addr, aligned_size);
@@ -164,10 +169,10 @@ impl JitMemory {
     }
 
     pub fn insert_block<const CPU: CpuType>(&mut self, opcodes: &[u32], guest_pc: u32) -> *const extern "C" fn(bool) {
-        let (allocated_offset_addr, aligned_size) = self.insert(opcodes);
-
         macro_rules! insert {
-            ($entries:expr, $live_ranges:expr) => {{
+            ($entries:expr, $live_ranges:expr, $insert_at_end:expr) => {{
+                let (allocated_offset_addr, aligned_size) = self.insert(opcodes, $insert_at_end);
+
                 let jit_entry_addr = (allocated_offset_addr + self.mem.as_ptr() as usize) as *const extern "C" fn(bool);
 
                 let entries_index = (guest_pc >> 1) as usize;
@@ -182,6 +187,19 @@ impl JitMemory {
                 $live_ranges[live_ranges_index] |= 1 << live_ranges_bit;
                 assert_eq!(ptr::addr_of!($live_ranges[live_ranges_index]), self.jit_memory_map.get_live_range::<CPU>(guest_pc));
 
+                if DEBUG_LOG {
+                    let free_size = JIT_MEMORY_SIZE - self.mem_end + self.mem_start;
+                    let per = (free_size * 100) as f32 / JIT_MEMORY_SIZE as f32;
+                    debug_println!(
+                        "Insert new jit ({:x}) block with size {} at {:x}, {}% allocated with guest pc {:x}",
+                        self.mem.as_ptr() as u32,
+                        aligned_size,
+                        allocated_offset_addr,
+                        per,
+                        guest_pc
+                    );
+                }
+
                 jit_entry_addr
             }};
         }
@@ -189,32 +207,20 @@ impl JitMemory {
         let jit_addr = match CPU {
             ARM9 => match guest_pc & 0xFF000000 {
                 regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => {
-                    insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm)
+                    insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm, true)
                 }
-                regions::MAIN_MEMORY_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main),
-                0xFF000000 => insert!(self.jit_entries.arm9_bios, self.jit_live_ranges.arm9_bios),
+                regions::MAIN_MEMORY_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main, false),
+                0xFF000000 => insert!(self.jit_entries.arm9_bios, self.jit_live_ranges.arm9_bios, true),
                 _ => todo!("{:x}", guest_pc),
             },
             ARM7 => match guest_pc & 0xFF000000 {
-                regions::ARM7_BIOS_OFFSET => insert!(self.jit_entries.arm7_bios, self.jit_live_ranges.arm7_bios),
-                regions::MAIN_MEMORY_OFFSET => insert!(self.jit_entries.main_arm7, self.jit_live_ranges.main),
-                regions::SHARED_WRAM_OFFSET => insert!(self.jit_entries.wram, self.jit_live_ranges.wram),
-                regions::VRAM_OFFSET => insert!(self.jit_entries.vram_arm7, self.jit_live_ranges.vram_arm7),
+                regions::ARM7_BIOS_OFFSET => insert!(self.jit_entries.arm7_bios, self.jit_live_ranges.arm7_bios, true),
+                regions::MAIN_MEMORY_OFFSET => insert!(self.jit_entries.main_arm7, self.jit_live_ranges.main, true),
+                regions::SHARED_WRAM_OFFSET => insert!(self.jit_entries.wram, self.jit_live_ranges.wram, false),
+                regions::VRAM_OFFSET => insert!(self.jit_entries.vram_arm7, self.jit_live_ranges.vram_arm7, false),
                 _ => todo!("{:x}", guest_pc),
             },
         };
-
-        if DEBUG_LOG {
-            let per = (self.mem_offset * 100) as f32 / JIT_MEMORY_SIZE as f32;
-            debug_println!(
-                "Insert new jit ({:x}) block with size {} at {:x}, {}% allocated with guest pc {:x}",
-                self.mem.as_ptr() as u32,
-                aligned_size,
-                allocated_offset_addr,
-                per,
-                guest_pc
-            );
-        }
 
         jit_addr
     }
