@@ -1,11 +1,9 @@
-use crate::core::emu::{get_mem, get_regs_mut};
+use crate::core::emu::get_mem;
 use crate::core::CpuType;
-use crate::core::CpuType::ARM7;
+use crate::get_jit_asm_ptr;
+use crate::jit::reg::Reg;
 use crate::jit::MemoryAmount;
-use crate::{get_jit_asm_ptr, DEBUG_LOG_BRANCH_OUT};
 use handler::*;
-use std::arch::asm;
-use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 
 mod handler {
@@ -170,8 +168,6 @@ macro_rules! imm_breakout {
         std::hint::unreachable_unchecked();
     }};
 }
-use crate::jit::reg::Reg;
-use crate::logging::debug_println;
 pub(super) use imm_breakout;
 
 pub unsafe extern "C" fn inst_mem_handler<const CPU: CpuType, const THUMB: bool, const WRITE: bool, const AMOUNT: MemoryAmount, const SIGNED: bool, const MMU: bool>(
@@ -187,43 +183,14 @@ pub unsafe extern "C" fn inst_mem_handler<const CPU: CpuType, const THUMB: bool,
     }
 }
 
-pub unsafe extern "C" fn inst_mem_handler_multiple<
-    const CPU: CpuType,
-    const THUMB: bool,
-    const WRITE: bool,
-    const USER: bool,
-    const PRE: bool,
-    const WRITE_BACK: bool,
-    const DECREMENT: bool,
-    const HAS_PC: bool,
->(
+pub unsafe extern "C" fn inst_mem_handler_multiple<const CPU: CpuType, const THUMB: bool, const WRITE: bool, const USER: bool, const PRE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(
     op0_rlist: u32,
     pc: u32,
     total_cycles: u16,
 ) {
     let asm = get_jit_asm_ptr::<CPU>();
     handle_multiple_request::<CPU, THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(pc, (op0_rlist & 0xFFFF) as u16, (op0_rlist >> 16) as u8, (*asm).emu);
-    if !WRITE && HAS_PC {
-        debug_println!("{CPU:?} mem handle multiple read load pc, breakout");
-        if DEBUG_LOG_BRANCH_OUT {
-            (*asm).runtime_data.branch_out_pc = pc;
-        }
-        (*asm).runtime_data.branch_out_total_cycles = total_cycles;
-        if CPU == ARM7 {
-            if THUMB {
-                get_regs_mut!((*asm).emu, CPU).pc |= 1;
-            } else {
-                get_regs_mut!((*asm).emu, CPU).pc &= !1;
-            }
-        }
-        // r4-r12,pc since we need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions
-        asm!(
-            "mov sp, {}",
-            "pop {{r4-r12,pc}}",
-            in(reg) (*asm).runtime_data.host_sp
-        );
-        unreachable_unchecked();
-    } else if WRITE && unlikely(get_mem!((*asm).emu).breakout_imm) {
+    if WRITE && unlikely(get_mem!((*asm).emu).breakout_imm) {
         imm_breakout!((*asm), pc, THUMB, total_cycles);
     }
 }

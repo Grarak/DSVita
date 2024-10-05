@@ -8,7 +8,6 @@ use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
 use crate::utils::{NoHashMap, NoHashSet};
-use std::collections::VecDeque;
 
 pub static mut BLOCK_LOG: bool = false;
 

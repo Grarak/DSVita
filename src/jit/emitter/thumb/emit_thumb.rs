@@ -1,4 +1,5 @@
 use crate::core::CpuType;
+use crate::core::CpuType::ARM7;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::inst_threag_regs_handler::set_pc_thumb_mode;
 use crate::jit::jit_asm::JitAsm;
@@ -67,10 +68,12 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
         }
 
-        if self.jit_buf.current_inst().out_regs.is_reserved(Reg::PC) && !op.is_multiple_mem_transfer() {
+        if self.jit_buf.current_inst().out_regs.is_reserved(Reg::PC) {
             block_asm.save_context();
 
-            block_asm.call(set_pc_thumb_mode::<CPU> as *const ());
+            if CPU == ARM7 || !op.is_multiple_mem_transfer() {
+                block_asm.call(set_pc_thumb_mode::<CPU> as *const ());
+            }
 
             self.emit_branch_out_metadata(block_asm);
             block_asm.epilogue();

@@ -1,7 +1,7 @@
 use crate::core::CpuType;
 use crate::core::CpuType::ARM7;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::{BlockLabel, BlockReg};
+use crate::jit::assembler::BlockReg;
 use crate::jit::inst_threag_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::op::Op;
@@ -42,7 +42,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
         }
 
-        if self.jit_buf.current_inst().out_regs.is_reserved(Reg::PC) && !op.is_multiple_mem_transfer() {
+        if self.jit_buf.current_inst().out_regs.is_reserved(Reg::PC) {
             block_asm.save_context();
 
             let restore_spsr = self.jit_buf.current_inst().out_regs.is_reserved(Reg::CPSR) && op.is_arm_alu();
@@ -50,7 +50,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 block_asm.call(register_restore_spsr::<CPU> as *const ());
             }
 
-            if CPU == ARM7 || !op.is_single_mem_transfer() {
+            if CPU == ARM7 || (!op.is_single_mem_transfer() && !op.is_multiple_mem_transfer()) {
                 if restore_spsr {
                     block_asm.call(restore_thumb_after_restore_spsr::<CPU> as *const ());
                 } else {
