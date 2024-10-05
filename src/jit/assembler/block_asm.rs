@@ -318,6 +318,14 @@ impl<'a> BlockAsm<'a> {
         self.insert_inst(BlockInst::Bfc { operand: operand.into(), lsb, width })
     }
 
+    pub fn bfi(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, lsb: u8, width: u8) {
+        self.insert_inst(BlockInst::Bfi {
+            operands: [op0.into(), op1.into()],
+            lsb,
+            width,
+        })
+    }
+
     pub fn muls_guest_thumb_pc_aligned(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
         self.insert_inst(BlockInst::Mul {
             operands: [op0.into().into(), op1.into().into(), op2.into()],

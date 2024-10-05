@@ -365,10 +365,8 @@ impl ThreadRegs {
         self.cpu.check_for_interrupt(cycle_manager);
     }
 
-    pub fn set_thumb(&mut self, enable: bool) {
-        let mut cpsr = Cpsr::from(self.cpsr);
-        cpsr.set_thumb(enable);
-        self.cpsr = u32::from(cpsr);
+    pub fn set_thumb(&mut self, thumb: bool) {
+        self.cpsr = (self.cpsr & !(1 << 5)) | ((thumb as u32) << 5);
     }
 
     pub fn is_thumb(&self) -> bool {

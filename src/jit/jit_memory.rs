@@ -8,7 +8,6 @@ use crate::utils::{HeapMem, HeapMemU32};
 use crate::{utils, DEBUG_LOG};
 use lazy_static::lazy_static;
 use paste::paste;
-use std::hint::assert_unchecked;
 use std::intrinsics::unlikely;
 use std::marker::ConstParamTy;
 use std::{ptr, slice};
@@ -225,11 +224,7 @@ impl JitMemory {
     }
 
     pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> *const extern "C" fn(bool) {
-        let ptr = self.jit_memory_map.get_jit_entry::<CPU>(guest_pc);
-        unsafe {
-            assert_unchecked(!ptr.is_null());
-            (*ptr).0
-        }
+        unsafe { (*self.jit_memory_map.get_jit_entry::<CPU>(guest_pc)).0 }
     }
 
     pub fn invalidate_block<const REGION: JitRegion>(&mut self, guest_addr: u32, size: usize) {

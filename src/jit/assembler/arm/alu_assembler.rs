@@ -563,6 +563,33 @@ impl Bfc {
     }
 }
 
+#[bitsize(32)]
+#[derive(FromBits)]
+pub struct Bfi {
+    rn: u4,
+    id: u3,
+    lsb: u5,
+    rd: u4,
+    msb: u5,
+    id2: u7,
+    cond: u4,
+}
+
+impl Bfi {
+    #[inline]
+    pub fn create(rd: Reg, rn: Reg, lsb: u8, width: u8, cond: Cond) -> u32 {
+        u32::from(Bfi::new(
+            u4::new(rn as u8),
+            u3::new(0b001),
+            u5::new(lsb),
+            u4::new(rd as u8),
+            u5::new(lsb + width - 1),
+            u7::new(0b0111110),
+            u4::new(cond as u8),
+        ))
+    }
+}
+
 // TODO Add const asserts once const features has been added back to rust
 // https://github.com/rust-lang/rust/issues/110395
 //const_assert_eq!(lookup_opcode(Self::add(0, 0, 0, 0)).0 as u8, And as u8);

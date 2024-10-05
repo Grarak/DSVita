@@ -184,17 +184,27 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     asm.emit_return_stack_write(block_asm, runtime_data_addr_reg);
                 }
 
+                let cpsr_reg = block_asm.new_reg();
+                let addr_mask_reg = block_asm.new_reg();
+
+                // Set thumb bit
+                block_asm.transfer_read(cpsr_reg, block_asm.thread_regs_addr_reg, Reg::CPSR as u32 * 4, false, MemoryAmount::Word);
+                block_asm.bfi(cpsr_reg, target_pc_reg, 5, 1);
+                block_asm.transfer_write(cpsr_reg, block_asm.thread_regs_addr_reg, Reg::CPSR as u32 * 4, false, MemoryAmount::Word);
+
+                block_asm.free_reg(cpsr_reg);
+
                 let target_addr_reg = block_asm.new_reg();
-                let pc_mask_reg = block_asm.new_reg();
 
                 // Align pc to !1 or !3
-                block_asm.mvn(pc_mask_reg, 1);
-                block_asm.tst(target_pc_reg, 1);
-                block_asm.start_cond_block(Cond::EQ);
-                block_asm.mvn(pc_mask_reg, 3);
-                block_asm.end_cond_block();
+                // let thumb = (target_pc & 1) == 1;
+                // let addr_mask = !(1 | ((!thumb as u32) << 1));
+                // let target_addr = target_pc & addr_mask;
+                block_asm.mvn(addr_mask_reg, 3);
+                block_asm.orr(addr_mask_reg, addr_mask_reg, (target_pc_reg.into(), ShiftType::Lsl, BlockOperand::from(1)));
+                block_asm.and(target_addr_reg, target_pc_reg, addr_mask_reg);
 
-                block_asm.and(target_addr_reg, target_pc_reg, pc_mask_reg);
+                block_asm.free_reg(addr_mask_reg);
 
                 let map_ptr = get_jit!(asm.emu).jit_memory_map.get_map_ptr::<CPU>();
 
@@ -228,7 +238,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 block_asm.free_reg(map_entry_base_ptr_reg);
                 block_asm.free_reg(map_index_reg);
                 block_asm.free_reg(map_ptr_reg);
-                block_asm.free_reg(pc_mask_reg);
                 block_asm.free_reg(target_addr_reg);
             },
             |asm, block_asm| {

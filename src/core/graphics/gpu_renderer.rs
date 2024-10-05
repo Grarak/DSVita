@@ -150,7 +150,7 @@ impl GpuRenderer {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
             gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
 
-            let fps = fps.load(Ordering::Relaxed);
+            let fps = fps.load(Ordering::Relaxed) as u32;
             let per = fps * 100 / 60;
 
             let last_time_saved = *last_save_time.lock().unwrap();

@@ -238,7 +238,6 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(store_host_sp
     jit_entry(store_host_sp);
 }
 
-#[inline]
 fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
 
@@ -248,7 +247,8 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
     let jit_entry = {
         get_regs_mut!(asm.emu, CPU).set_thumb(thumb);
 
-        let guest_pc = if thumb { guest_pc & !1 } else { guest_pc & !3 };
+        let guest_pc_mask = !(1 | ((!thumb as u32) << 1));
+        let guest_pc = guest_pc & guest_pc_mask;
         let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(guest_pc);
         let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(jit_entry) };
 
@@ -313,7 +313,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
     }
 
-    #[inline(always)]
     pub fn execute(&mut self) -> u16 {
         let entry = get_regs!(self.emu, CPU).pc;
         execute_internal::<CPU>(entry)
