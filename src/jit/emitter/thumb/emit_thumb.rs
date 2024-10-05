@@ -49,9 +49,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             Op::BT | Op::BeqT | Op::BneT | Op::BcsT | Op::BccT | Op::BmiT | Op::BplT | Op::BvsT | Op::BvcT | Op::BhiT | Op::BlsT | Op::BgeT | Op::BltT | Op::BgtT | Op::BleT => {
                 self.emit_b_thumb(block_asm)
             }
-            Op::BlSetupT => self.emit_bl_setup_thumb(block_asm),
+            Op::BlSetupT => self.emit_bl_setup_thumb(),
             Op::BlOffT | Op::BlxOffT => self.emit_bl_thumb(block_asm),
-            Op::BxRegT | Op::BlxRegT => self.emit_bx_thumb(block_asm),
+            Op::BxRegT => self.emit_bx_thumb(block_asm),
+            Op::BlxRegT => self.emit_blx_thumb(block_asm),
 
             Op::SwiT => self.emit_swi::<true>(block_asm),
             Op::UnkThumb => {}

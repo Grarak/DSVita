@@ -41,6 +41,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn analyze_branch_label<const THUMB: bool>(insts: &[InstInfo], branch_index: usize, cond: Cond, pc: u32, target_pc: u32) -> JitBranchInfo {
+        let target_pc = target_pc & !1;
         if (THUMB || insts[branch_index].op != Op::Bl) && (cond as u8) < (Cond::AL as u8) && target_pc < pc {
             let diff = (pc - target_pc) >> if THUMB { 1 } else { 2 };
             if diff as usize <= branch_index {
@@ -87,14 +88,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                         if has_lr_return {
                             asm.emit_return_stack_write(block_asm, runtime_data_addr_reg);
                         }
-
                         block_asm.msr_cpsr(backed_up_cpsr_reg);
-                        block_asm.guest_branch(Cond::AL, target_pc);
+                        block_asm.guest_branch(Cond::AL, target_pc & !1);
                     },
                     |asm, block_asm| {
                         block_asm.msr_cpsr(backed_up_cpsr_reg);
 
-                        block_asm.mov(Reg::PC, target_pc | THUMB as u32);
+                        block_asm.mov(Reg::PC, target_pc);
                         block_asm.save_context();
                         asm.emit_branch_out_metadata(block_asm);
                         block_asm.epilogue();
@@ -104,14 +104,14 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 block_asm.free_reg(backed_up_cpsr_reg);
             }
             JitBranchInfo::Idle => {
-                block_asm.mov(Reg::PC, target_pc | THUMB as u32);
+                block_asm.mov(Reg::PC, target_pc);
                 block_asm.save_context();
                 self.emit_branch_out_metadata_with_idle_loop(block_asm);
                 block_asm.epilogue();
             }
             JitBranchInfo::None => {
                 let target_pc_reg = block_asm.new_reg();
-                block_asm.mov(target_pc_reg, target_pc | THUMB as u32);
+                block_asm.mov(target_pc_reg, target_pc);
                 self.emit_branch_reg_common(block_asm, target_pc_reg, has_lr_return);
                 block_asm.free_reg(target_pc_reg);
             }

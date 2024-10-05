@@ -177,7 +177,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(store_host_sp
                 assert!(asm.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{CPU:?} {guest_pc:x} {inst_info:?}")
             }
 
-            let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && inst_info.is_uncond_branch() && !inst_info.op.is_labelled_branch();
+            let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && inst_info.is_uncond_branch();
             // let is_uncond_branch = inst_info.is_uncond_branch();
             let is_unknown = inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb;
 

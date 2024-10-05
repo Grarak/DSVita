@@ -32,38 +32,35 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         };
 
         block_asm.start_cond_block(cond);
-        self.emit_branch_label_common::<true>(block_asm, target_pc, cond, false);
+        self.emit_branch_label_common::<true>(block_asm, target_pc | 1, cond, false);
         block_asm.end_cond_block();
     }
 
-    pub fn emit_bl_setup_thumb(&mut self, block_asm: &mut BlockAsm) {
-        let inst_info = self.jit_buf.current_inst();
-
-        let op0 = *inst_info.operands()[0].as_imm().unwrap() as i32;
-        let lr = (self.jit_buf.current_pc as i32 + 4 + op0) as u32;
-
-        block_asm.mov(Reg::LR, lr);
+    pub fn emit_bl_setup_thumb(&mut self) {
+        let next_inst_info = &self.jit_buf.insts[self.jit_buf.current_index + 1];
+        assert!(next_inst_info.op == Op::BlOffT || next_inst_info.op == Op::BlxOffT)
     }
 
     pub fn emit_bl_thumb(&mut self, block_asm: &mut BlockAsm) {
+        let previous_inst_info = &self.jit_buf.insts[self.jit_buf.current_index - 1];
+        assert_eq!(previous_inst_info.op, Op::BlSetupT);
+
+        let relative_pc = *previous_inst_info.operands()[0].as_imm().unwrap() as i32 + 4;
+        let mut target_pc = (self.jit_buf.current_pc as i32 - 2 + relative_pc) as u32;
+
         let inst_info = self.jit_buf.current_inst();
-
         let op0 = *inst_info.operands()[0].as_imm().unwrap();
-        let lr = self.jit_buf.current_pc + 2;
 
-        let target_pc_reg = block_asm.new_reg();
-        block_asm.add(target_pc_reg, Reg::LR, op0);
-
-        block_asm.mov(Reg::LR, lr | 1);
+        target_pc += op0;
 
         if inst_info.op == Op::BlxOffT {
-            block_asm.bic(target_pc_reg, target_pc_reg, 0x1);
+            target_pc &= !1;
         } else {
-            block_asm.orr(target_pc_reg, target_pc_reg, 0x1);
+            target_pc |= 1;
         }
 
-        self.emit_branch_reg_common(block_asm, target_pc_reg, true);
-        block_asm.free_reg(target_pc_reg);
+        block_asm.mov(Reg::LR, (self.jit_buf.current_pc + 2) | 1);
+        self.emit_branch_label_common::<true>(block_asm, target_pc, Cond::AL, true);
     }
 
     pub fn emit_bx_thumb(&mut self, block_asm: &mut BlockAsm) {
@@ -71,12 +68,18 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
         let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
 
-        if inst_info.op == Op::BlxRegT {
-            block_asm.mov(Reg::LR, self.jit_buf.current_pc + 3);
-        }
         block_asm.mov(Reg::PC, op0);
         block_asm.save_context();
         self.emit_branch_out_metadata(block_asm);
         block_asm.epilogue();
+    }
+
+    pub fn emit_blx_thumb(&mut self, block_asm: &mut BlockAsm) {
+        let inst_info = self.jit_buf.current_inst();
+
+        let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
+
+        block_asm.mov(Reg::LR, self.jit_buf.current_pc + 3);
+        self.emit_branch_reg_common(block_asm, op0.into(), true);
     }
 }
