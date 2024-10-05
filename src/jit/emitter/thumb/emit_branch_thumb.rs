@@ -32,7 +32,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         };
 
         block_asm.start_cond_block(cond);
-        self.emit_branch_label_common::<true>(block_asm, target_pc, cond);
+        self.emit_branch_label_common::<true>(block_asm, target_pc, cond, false);
         block_asm.end_cond_block();
     }
 
@@ -61,9 +61,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         } else {
             block_asm.orr(target_pc_reg, target_pc_reg, 0x1);
         }
-        block_asm.mov(Reg::PC, target_pc_reg);
 
-        self.emit_branch_reg_common(block_asm, target_pc_reg);
+        self.emit_branch_reg_common(block_asm, target_pc_reg, true);
         block_asm.free_reg(target_pc_reg);
     }
 

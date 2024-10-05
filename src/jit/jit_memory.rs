@@ -8,6 +8,7 @@ use crate::utils::{HeapMem, HeapMemU32};
 use crate::{utils, DEBUG_LOG};
 use lazy_static::lazy_static;
 use paste::paste;
+use std::hint::assert_unchecked;
 use std::intrinsics::unlikely;
 use std::marker::ConstParamTy;
 use std::{ptr, slice};
@@ -134,8 +135,6 @@ impl JitMemory {
     fn allocate_block(&mut self, required_size: usize, insert_at_end: bool) -> usize {
         let free_size = self.mem_end - self.mem_start;
         if free_size < required_size {
-            println!("Jit memory full, reset");
-
             self.mem_start = 0;
             self.mem_end = JIT_MEMORY_SIZE;
 
@@ -226,7 +225,11 @@ impl JitMemory {
     }
 
     pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> *const extern "C" fn(bool) {
-        unsafe { (*self.jit_memory_map.get_jit_entry::<CPU>(guest_pc)).0 }
+        let ptr = self.jit_memory_map.get_jit_entry::<CPU>(guest_pc);
+        unsafe {
+            assert_unchecked(!ptr.is_null());
+            (*ptr).0
+        }
     }
 
     pub fn invalidate_block<const REGION: JitRegion>(&mut self, guest_addr: u32, size: usize) {

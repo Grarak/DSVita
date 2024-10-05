@@ -8,6 +8,7 @@ use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
 use crate::utils::{NoHashMap, NoHashSet};
+use std::collections::VecDeque;
 
 pub static mut BLOCK_LOG: bool = false;
 
@@ -52,7 +53,7 @@ pub struct BlockAsm<'a> {
     tmp_shift_imm_reg: BlockReg,
     tmp_func_call_reg: BlockReg,
 
-    cond_block_end_label: Option<BlockLabel>,
+    cond_block_end_label_stack: Vec<BlockLabel>,
 
     host_sp_ptr: *mut usize,
     block_start: usize,
@@ -87,7 +88,7 @@ impl<'a> BlockAsm<'a> {
             tmp_shift_imm_reg,
             tmp_func_call_reg,
 
-            cond_block_end_label: None,
+            cond_block_end_label_stack: Vec::new(),
 
             host_sp_ptr,
             block_start: 0,
@@ -375,23 +376,43 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn call(&mut self, func: impl Into<BlockOperand>) {
-        self.call_internal(func, None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>)
+        self.call_internal(func, None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, true)
     }
 
     pub fn call1(&mut self, func: impl Into<BlockOperand>, arg0: impl Into<BlockOperand>) {
-        self.call_internal(func, Some(arg0.into()), None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>)
+        self.call_internal(func, Some(arg0.into()), None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, true)
     }
 
     pub fn call2(&mut self, func: impl Into<BlockOperand>, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>) {
-        self.call_internal(func, Some(arg0.into()), Some(arg1.into()), None::<BlockOperand>, None::<BlockOperand>)
+        self.call_internal(func, Some(arg0.into()), Some(arg1.into()), None::<BlockOperand>, None::<BlockOperand>, true)
     }
 
     pub fn call3(&mut self, func: impl Into<BlockOperand>, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>, arg2: impl Into<BlockOperand>) {
-        self.call_internal(func, Some(arg0.into()), Some(arg1.into()), Some(arg2.into()), None::<BlockOperand>)
+        self.call_internal(func, Some(arg0.into()), Some(arg1.into()), Some(arg2.into()), None::<BlockOperand>, true)
     }
 
     pub fn call4(&mut self, func: impl Into<BlockOperand>, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>, arg2: impl Into<BlockOperand>, arg3: impl Into<BlockOperand>) {
-        self.call_internal(func, Some(arg0.into()), Some(arg1.into()), Some(arg2.into()), Some(arg3.into()))
+        self.call_internal(func, Some(arg0.into()), Some(arg1.into()), Some(arg2.into()), Some(arg3.into()), true)
+    }
+
+    pub fn call_no_return(&mut self, func: impl Into<BlockOperand>) {
+        self.call_internal(func, None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, false)
+    }
+
+    pub fn call1_no_return(&mut self, func: impl Into<BlockOperand>, arg0: impl Into<BlockOperand>) {
+        self.call_internal(func, Some(arg0.into()), None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, false)
+    }
+
+    pub fn call2_no_return(&mut self, func: impl Into<BlockOperand>, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>) {
+        self.call_internal(func, Some(arg0.into()), Some(arg1.into()), None::<BlockOperand>, None::<BlockOperand>, false)
+    }
+
+    pub fn call3_no_return(&mut self, func: impl Into<BlockOperand>, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>, arg2: impl Into<BlockOperand>) {
+        self.call_internal(func, Some(arg0.into()), Some(arg1.into()), Some(arg2.into()), None::<BlockOperand>, false)
+    }
+
+    pub fn call4_no_return(&mut self, func: impl Into<BlockOperand>, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>, arg2: impl Into<BlockOperand>, arg3: impl Into<BlockOperand>) {
+        self.call_internal(func, Some(arg0.into()), Some(arg1.into()), Some(arg2.into()), Some(arg3.into()), false)
     }
 
     fn call_internal(
@@ -401,6 +422,7 @@ impl<'a> BlockAsm<'a> {
         arg1: Option<impl Into<BlockOperand>>,
         arg2: Option<impl Into<BlockOperand>>,
         arg3: Option<impl Into<BlockOperand>>,
+        has_return: bool,
     ) {
         let mut args = [arg0.map(|arg| arg.into()), arg1.map(|arg| arg.into()), arg2.map(|arg| arg.into()), arg3.map(|arg| arg.into())];
         for (i, arg) in args.iter_mut().enumerate() {
@@ -419,6 +441,7 @@ impl<'a> BlockAsm<'a> {
                 args[2].map(|_| BlockReg::Fixed(Reg::R2)),
                 args[3].map(|_| BlockReg::Fixed(Reg::R3)),
             ],
+            has_return,
         });
     }
 
@@ -488,12 +511,12 @@ impl<'a> BlockAsm<'a> {
         if cond != Cond::AL {
             let label = self.new_label();
             self.branch(label, !cond);
-            self.cond_block_end_label = Some(label);
+            self.cond_block_end_label_stack.push(label);
         }
     }
 
     pub fn end_cond_block(&mut self) {
-        if let Some(label) = self.cond_block_end_label.take() {
+        if let Some(label) = self.cond_block_end_label_stack.pop() {
             self.label(label);
         }
     }
@@ -624,7 +647,7 @@ impl<'a> BlockAsm<'a> {
                     }
                     last_label = None;
                 }
-                BlockInst::Epilogue => {
+                BlockInst::Call { has_return: false, .. } | BlockInst::Epilogue => {
                     basic_blocks.push(BasicBlock::new(self, basic_block_start, current_node));
                     basic_block_start = BlockInstList::deref(current_node).next;
                     if let Some(last_label) = last_label {
@@ -659,7 +682,7 @@ impl<'a> BlockAsm<'a> {
                     }
                 }
                 // Don't add exit when last command in basic block is a breakout
-                BlockInst::Epilogue => {
+                BlockInst::Call { has_return: false, .. } | BlockInst::Epilogue => {
                     if i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.insert(i + 1);
                     }

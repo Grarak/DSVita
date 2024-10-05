@@ -163,7 +163,7 @@ impl BlockInst {
                 (block_reg_set!(Some(*thread_regs_addr_reg)), outputs)
             }
 
-            BlockInst::Call { func_reg, args } => {
+            BlockInst::Call { func_reg, args, .. } => {
                 let mut inputs = BlockRegSet::new();
                 inputs += *func_reg;
                 for arg in args {
@@ -565,7 +565,11 @@ impl BlockInst {
                 _ => opcodes.push(LdrStrImm::ldr_offset_al(reg_mapped.as_fixed(), thread_regs_addr_reg.as_fixed(), *guest_reg as u16 * 4)),
             },
 
-            BlockInst::Call { func_reg, .. } => opcodes.push(Bx::blx(func_reg.as_fixed(), Cond::AL)),
+            BlockInst::Call { func_reg, has_return, .. } => opcodes.push(if *has_return {
+                Bx::blx(func_reg.as_fixed(), Cond::AL)
+            } else {
+                Bx::bx(func_reg.as_fixed(), Cond::AL)
+            }),
             BlockInst::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
 
             BlockInst::GenericGuestInst { inst, regs_mapping } => {
@@ -719,6 +723,7 @@ pub enum BlockInst {
     Call {
         func_reg: BlockReg,
         args: [Option<BlockReg>; 4],
+        has_return: bool,
     },
     Bkpt(u16),
 
@@ -796,7 +801,13 @@ impl Debug for BlockInst {
             BlockInst::SaveContext { .. } => write!(f, "SaveContext"),
             BlockInst::SaveReg { guest_reg, reg_mapped, .. } => write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}"),
             BlockInst::RestoreReg { guest_reg, reg_mapped, .. } => write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}"),
-            BlockInst::Call { func_reg, args } => write!(f, "Call {func_reg:?} {args:?}"),
+            BlockInst::Call { func_reg, args, has_return } => {
+                if *has_return {
+                    write!(f, "Blx {func_reg:?} {args:?}")
+                } else {
+                    write!(f, "Bx {func_reg:?} {args:?}")
+                }
+            }
             BlockInst::Bkpt(id) => write!(f, "Bkpt {id}"),
             BlockInst::GuestPc(pc) => write!(f, "GuestPc {pc:x}"),
             BlockInst::GenericGuestInst { inst, .. } => write!(f, "{inst:?}"),

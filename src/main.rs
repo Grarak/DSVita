@@ -27,6 +27,7 @@ use crate::settings::Settings;
 use crate::utils::{set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
+use std::hint::assert_unchecked;
 use std::intrinsics::{likely, unlikely};
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
@@ -183,10 +184,12 @@ pub static mut JIT_ASM_ARM9_PTR: *mut JitAsm<{ ARM9 }> = ptr::null_mut();
 pub static mut JIT_ASM_ARM7_PTR: *mut JitAsm<{ ARM7 }> = ptr::null_mut();
 
 pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a, CPU> {
-    match CPU {
-        ARM9 => JIT_ASM_ARM9_PTR as usize as _,
-        ARM7 => JIT_ASM_ARM7_PTR as usize as _,
-    }
+    let ptr = match CPU {
+        ARM9 => JIT_ASM_ARM9_PTR as usize,
+        ARM7 => JIT_ASM_ARM7_PTR as usize,
+    } as *mut JitAsm<'a, CPU>;
+    assert_unchecked(!ptr.is_null());
+    ptr
 }
 
 #[inline(never)]

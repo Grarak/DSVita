@@ -12,9 +12,7 @@ use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, DEBUG_LOG, DEBUG_LOG_BRANCH_OUT};
 use static_assertions::const_assert_eq;
-use std::arch::asm;
 use std::cell::UnsafeCell;
-use std::hint::unreachable_unchecked;
 use std::{mem, ptr};
 
 pub struct JitBuf {
@@ -57,7 +55,7 @@ pub struct JitBlockLinkData {
 
 const_assert_eq!(size_of::<JitBlockLinkData>(), 8);
 
-pub const BLOCK_LINK_STACK_SIZE: usize = 32;
+pub const RETURN_STACK_SIZE: usize = 32;
 
 #[repr(C)]
 pub struct JitRuntimeData {
@@ -67,8 +65,8 @@ pub struct JitRuntimeData {
     pub accumulated_cycles: u16,
     pub idle_loop: bool,
     pub host_sp: usize,
-    pub block_link_ptr: u8,
-    pub block_link_stack: [JitBlockLinkData; BLOCK_LINK_STACK_SIZE],
+    pub return_stack_ptr: u8,
+    pub return_stack: [JitBlockLinkData; RETURN_STACK_SIZE],
 }
 
 impl JitRuntimeData {
@@ -80,8 +78,8 @@ impl JitRuntimeData {
             accumulated_cycles: 0,
             idle_loop: false,
             host_sp: 0,
-            block_link_ptr: 0,
-            block_link_stack: [JitBlockLinkData::default(); BLOCK_LINK_STACK_SIZE],
+            return_stack_ptr: 0,
+            return_stack: [JitBlockLinkData::default(); RETURN_STACK_SIZE],
         };
 
         let branch_out_pc_ptr = ptr::addr_of!(instance.branch_out_pc) as usize;
@@ -90,18 +88,18 @@ impl JitRuntimeData {
         let accumulated_cycles_ptr = ptr::addr_of!(instance.accumulated_cycles) as usize;
         let idle_loop_ptr = ptr::addr_of!(instance.idle_loop) as usize;
         let host_sp_ptr = ptr::addr_of!(instance.host_sp) as usize;
-        let block_link_ptr_ptr = ptr::addr_of!(instance.block_link_ptr) as usize;
-        let block_link_stack_ptr = ptr::addr_of!(instance.block_link_stack) as usize;
+        let return_stack_ptr_ptr = ptr::addr_of!(instance.return_stack_ptr) as usize;
+        let return_stack_ptr = ptr::addr_of!(instance.return_stack) as usize;
 
         assert_eq!(branch_out_total_cycles_ptr - branch_out_pc_ptr, Self::get_out_total_cycles_offset() as usize);
         assert_eq!(pre_cycle_count_sum_ptr - branch_out_pc_ptr, Self::get_pre_cycle_count_sum_offset() as usize);
         assert_eq!(accumulated_cycles_ptr - branch_out_pc_ptr, Self::get_accumulated_cycles_offset() as usize);
         assert_eq!(idle_loop_ptr - branch_out_pc_ptr, Self::get_idle_loop_offset() as usize);
         assert_eq!(host_sp_ptr - branch_out_pc_ptr, Self::get_host_sp_offset() as usize);
-        assert_eq!(block_link_ptr_ptr - branch_out_pc_ptr, Self::get_block_link_ptr_offset() as usize);
-        assert_eq!(block_link_stack_ptr - branch_out_pc_ptr, Self::get_block_link_stack_offset() as usize);
+        assert_eq!(return_stack_ptr_ptr - branch_out_pc_ptr, Self::get_return_stack_ptr_offset() as usize);
+        assert_eq!(return_stack_ptr - branch_out_pc_ptr, Self::get_return_stack_offset() as usize);
 
-        assert_eq!(size_of_val(&instance.block_link_stack), 32 * 8);
+        assert_eq!(size_of_val(&instance.return_stack), 32 * 8);
 
         instance
     }
@@ -134,12 +132,12 @@ impl JitRuntimeData {
         Self::get_idle_loop_offset() + 2
     }
 
-    pub const fn get_block_link_ptr_offset() -> u8 {
+    pub const fn get_return_stack_ptr_offset() -> u8 {
         Self::get_host_sp_offset() + 4
     }
 
-    pub const fn get_block_link_stack_offset() -> u8 {
-        Self::get_block_link_ptr_offset() + 4
+    pub const fn get_return_stack_offset() -> u8 {
+        Self::get_return_stack_ptr_offset() + 4
     }
 }
 
@@ -193,7 +191,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(store_host_sp
     }
 
     let jit_entry = {
-        // unsafe { BLOCK_LOG = guest_pc == 0x20cc1b4 };
+        // unsafe { BLOCK_LOG = guest_pc == 0x2000800 };
 
         let guest_regs_ptr = get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr();
         let mut block_asm = unsafe { (*asm.block_asm_buf.get()).new_asm(guest_regs_ptr, ptr::addr_of_mut!((*asm).runtime_data.host_sp)) };
@@ -262,7 +260,7 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
         }
         asm.runtime_data.pre_cycle_count_sum = 0;
         asm.runtime_data.accumulated_cycles = 0;
-        asm.runtime_data.block_link_ptr = 0;
+        asm.runtime_data.return_stack_ptr = 0;
         get_regs_mut!(asm.emu, CPU).cycle_correction = 0;
         jit_entry
     };

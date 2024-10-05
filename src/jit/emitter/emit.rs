@@ -8,6 +8,7 @@ use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::{Cond, MemoryAmount};
 use crate::DEBUG_LOG_BRANCH_OUT;
+use CpuType::ARM9;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit(&mut self, block_asm: &mut BlockAsm) {
@@ -101,7 +102,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         self._emit_branch_out_metadata(block_asm, true)
     }
 
-    pub fn emit_flush_cycles<ContinueFn: Fn(&mut Self, &mut BlockAsm, BlockLabel, BlockReg), BreakoutFn: Fn(&mut Self, &mut BlockAsm)>(
+    pub fn emit_flush_cycles<ContinueFn: Fn(&mut Self, &mut BlockAsm, BlockReg), BreakoutFn: Fn(&mut Self, &mut BlockAsm)>(
         &mut self,
         block_asm: &mut BlockAsm,
         target_pre_cycle_count_sum: u16,
@@ -134,8 +135,14 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         block_asm.add(total_cycles_reg, accumulated_cycles_reg, self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32 + 2);
         block_asm.sub(total_cycles_reg, total_cycles_reg, pre_cycle_count_sum_reg);
 
-        const MAX_LOOP_CYCLE_COUNT: u32 = 200;
-        block_asm.cmp(total_cycles_reg, MAX_LOOP_CYCLE_COUNT - 1);
+        const MAX_LOOP_CYCLE_COUNT: u32 = 256;
+        block_asm.cmp(
+            total_cycles_reg,
+            match CPU {
+                ARM9 => MAX_LOOP_CYCLE_COUNT * 2,
+                ARM7 => MAX_LOOP_CYCLE_COUNT,
+            } - 1,
+        );
 
         let breakout_label = block_asm.new_label();
         block_asm.branch(breakout_label, Cond::HI);
@@ -157,7 +164,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             false,
             MemoryAmount::Half,
         );
-        continue_fn(self, block_asm, breakout_label, runtime_data_addr_reg);
+        continue_fn(self, block_asm, runtime_data_addr_reg);
 
         block_asm.label(breakout_label);
         breakout_fn(self, block_asm);

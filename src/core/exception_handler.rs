@@ -16,7 +16,6 @@ mod handler {
     use crate::core::hle::bios;
     use crate::core::CpuType;
 
-    #[inline(never)]
     pub fn handle<const CPU: CpuType, const THUMB: bool>(emu: &mut Emu, opcode: u32, vector: ExceptionVector) {
         if CPU == CpuType::ARM7 || get_cp15!(emu, CPU).exception_addr != 0 {
             match vector {
