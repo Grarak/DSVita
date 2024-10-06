@@ -164,7 +164,7 @@ impl BlockInst {
                 (block_reg_set!(Some(*thread_regs_addr_reg)), outputs)
             }
 
-            BlockInst::Call { func_reg, args, .. } => {
+            BlockInst::Call { func_reg, args, has_return } => {
                 let mut inputs = BlockRegSet::new();
                 inputs += *func_reg;
                 for arg in args {
@@ -180,7 +180,8 @@ impl BlockInst {
                         Some(BlockReg::Fixed(Reg::R2)),
                         Some(BlockReg::Fixed(Reg::R3)),
                         Some(BlockReg::Fixed(Reg::R12)),
-                        Some(BlockReg::Fixed(Reg::CPSR))
+                        Some(BlockReg::Fixed(Reg::CPSR)),
+                        if *has_return { Some(BlockReg::Fixed(Reg::LR)) } else { None }
                     ),
                 )
             }

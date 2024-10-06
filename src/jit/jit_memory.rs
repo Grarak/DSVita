@@ -131,9 +131,14 @@ impl JitMemory {
         }
     }
 
-    fn allocate_block(&mut self, required_size: usize, insert_at_end: bool) -> usize {
+    fn allocate_block(&mut self, required_size: usize, insert_at_end: bool) -> (usize, bool) {
+        let mut flushed = false;
         let free_size = self.mem_end - self.mem_start;
         if free_size < required_size {
+            debug_println!("Jit memory reset");
+
+            flushed = true;
+
             self.mem_start = 0;
             self.mem_end = JIT_MEMORY_SIZE;
 
@@ -148,28 +153,28 @@ impl JitMemory {
 
         if insert_at_end {
             self.mem_end -= required_size;
-            self.mem_end
+            (self.mem_end, flushed)
         } else {
             let addr = self.mem_start;
             self.mem_start += required_size;
-            addr
+            (addr, flushed)
         }
     }
 
-    fn insert(&mut self, opcodes: &[u32], insert_at_end: bool) -> (usize, usize) {
+    fn insert(&mut self, opcodes: &[u32], insert_at_end: bool) -> (usize, usize, bool) {
         let aligned_size = utils::align_up(size_of_val(opcodes), *PAGE_SIZE);
-        let allocated_offset_addr = self.allocate_block(aligned_size, insert_at_end);
+        let (allocated_offset_addr, flushed) = self.allocate_block(aligned_size, insert_at_end);
 
         utils::write_to_mem_slice(&mut self.mem, allocated_offset_addr, opcodes);
         self.flush_cache(allocated_offset_addr, aligned_size);
 
-        (allocated_offset_addr, aligned_size)
+        (allocated_offset_addr, aligned_size, flushed)
     }
 
-    pub fn insert_block<const CPU: CpuType>(&mut self, opcodes: &[u32], guest_pc: u32) -> *const extern "C" fn(bool) {
+    pub fn insert_block<const CPU: CpuType>(&mut self, opcodes: &[u32], guest_pc: u32) -> (*const extern "C" fn(bool), bool) {
         macro_rules! insert {
             ($entries:expr, $live_ranges:expr, $insert_at_end:expr) => {{
-                let (allocated_offset_addr, aligned_size) = self.insert(opcodes, $insert_at_end);
+                let (allocated_offset_addr, aligned_size, flushed) = self.insert(opcodes, $insert_at_end);
 
                 let jit_entry_addr = (allocated_offset_addr + self.mem.as_ptr() as usize) as *const extern "C" fn(bool);
 
@@ -198,7 +203,7 @@ impl JitMemory {
                     );
                 }
 
-                jit_entry_addr
+                (jit_entry_addr, flushed)
             }};
         }
 
@@ -236,6 +241,7 @@ impl JitMemory {
                     *live_range &= !(1 << live_ranges_bit);
 
                     let guest_addr_start = $guest_addr & !(JIT_LIVE_RANGE_PAGE_SIZE - 1);
+                    debug_println!("Invalidating jit {guest_addr_start:x} - {:x}", guest_addr_start + JIT_LIVE_RANGE_PAGE_SIZE);
                     $(
                         let jit_entry_start = self.jit_memory_map.get_jit_entry::<{ $cpu_entry }>(guest_addr_start);
                         unsafe { slice::from_raw_parts_mut(jit_entry_start, JIT_LIVE_RANGE_PAGE_SIZE as usize).fill(

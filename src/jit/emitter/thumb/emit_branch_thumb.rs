@@ -32,7 +32,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         };
 
         block_asm.start_cond_block(cond);
-        self.emit_branch_label_common::<true>(block_asm, target_pc | 1, cond, false);
+        self.emit_branch_label_common::<true>(block_asm, target_pc | 1, cond);
         block_asm.end_cond_block();
     }
 
@@ -57,18 +57,25 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
 
         block_asm.mov(Reg::LR, (self.jit_buf.current_pc + 2) | 1);
-        self.emit_branch_label_common::<true>(block_asm, target_pc, Cond::AL, true);
+        let target_pc_reg = block_asm.new_reg();
+        block_asm.mov(target_pc_reg, target_pc);
+        self.emit_branch_reg_common(block_asm, target_pc_reg, true);
+        block_asm.free_reg(target_pc_reg);
     }
 
     pub fn emit_bx_thumb(&mut self, block_asm: &mut BlockAsm) {
         let inst_info = self.jit_buf.current_inst();
+        let target_pc_reg = *inst_info.operands()[0].as_reg_no_shift().unwrap();
 
-        let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
-
-        block_asm.mov(Reg::PC, op0);
+        block_asm.mov(Reg::PC, target_pc_reg);
         block_asm.save_context();
-        self.emit_branch_out_metadata(block_asm);
-        block_asm.epilogue();
+
+        if target_pc_reg == Reg::LR {
+            self.emit_branch_return_stack_common(block_asm, target_pc_reg.into());
+        } else {
+            self.emit_branch_out_metadata(block_asm);
+            block_asm.epilogue();
+        }
     }
 
     pub fn emit_blx_thumb(&mut self, block_asm: &mut BlockAsm) {

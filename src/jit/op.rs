@@ -2115,6 +2115,32 @@ impl Op {
                 | Op::MvnsRrr
         )
     }
+
+    pub const fn is_mov(self) -> bool {
+        matches!(
+            self,
+            Op::MovAri
+                | Op::MovArr
+                | Op::MovImm
+                | Op::MovLli
+                | Op::MovLlr
+                | Op::MovLri
+                | Op::MovLrr
+                | Op::MovRri
+                | Op::MovRrr
+                | Op::MovsAri
+                | Op::MovsArr
+                | Op::MovsImm
+                | Op::MovsLli
+                | Op::MovsLlr
+                | Op::MovsLri
+                | Op::MovsLrr
+                | Op::MovsRri
+                | Op::MovsRrr
+                | Op::MovHT
+                | Op::MovImm8T
+        )
+    }
 }
 
 impl From<u16> for Op {

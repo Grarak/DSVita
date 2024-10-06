@@ -249,18 +249,23 @@ impl<'a> BlockAsm<'a> {
     pub fn load_u8(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
         self.transfer_read(op0, op1, op2, false, MemoryAmount::Byte)
     }
+
     pub fn store_u8(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
         self.transfer_write(op0, op1, op2, false, MemoryAmount::Byte)
     }
+
     pub fn load_u16(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
         self.transfer_read(op0, op1, op2, false, MemoryAmount::Half)
     }
+
     pub fn store_u16(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
         self.transfer_write(op0, op1, op2, false, MemoryAmount::Half)
     }
+
     pub fn load_u32(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
         self.transfer_read(op0, op1, op2, false, MemoryAmount::Word)
     }
+
     pub fn store_u32(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
         self.transfer_write(op0, op1, op2, false, MemoryAmount::Word)
     }
@@ -398,6 +403,11 @@ impl<'a> BlockAsm<'a> {
         let host_sp_addr_reg = self.thread_regs_addr_reg;
         self.mov(host_sp_addr_reg, self.host_sp_ptr as u32);
         self.load_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
+        self.buf.insts.push(BlockInst::Epilogue);
+    }
+
+    pub fn epilogue_previous_block(&mut self) {
+        self.add(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4);
         self.buf.insts.push(BlockInst::Epilogue);
     }
 

@@ -500,7 +500,6 @@ impl Gpu3DRegisters {
             let mut param_count = FIFO_PARAM_COUNTS[entry.cmd as usize];
             if param_count > 1 {
                 if param_count as usize > self.cmd_fifo.len() {
-                    refresh_state(self);
                     break;
                 }
 
@@ -567,9 +566,9 @@ impl Gpu3DRegisters {
             if self.cmd_pipe_size as usize > self.cmd_fifo.len() {
                 self.cmd_pipe_size = self.cmd_fifo.len() as u8;
             }
-
-            refresh_state(self);
         }
+
+        refresh_state(self);
 
         if !self.is_cmd_fifo_full() {
             get_cpu_regs_mut!(emu, ARM9).unhalt(1);

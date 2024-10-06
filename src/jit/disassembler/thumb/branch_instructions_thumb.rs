@@ -13,7 +13,7 @@ mod branch_thumb_ops {
     #[inline]
     pub fn blx_reg_t(opcode: u16, op: Op) -> InstInfoThumb {
         let op0 = Reg::from(((opcode >> 3) & 0xF) as u8);
-        InstInfoThumb::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), reg_reserve!(Reg::CPSR), 1)
+        InstInfoThumb::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), reg_reserve!(Reg::LR, Reg::CPSR), 1)
     }
 
     #[inline]
