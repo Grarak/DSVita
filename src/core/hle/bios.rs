@@ -54,7 +54,7 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
     }
 }
 
-pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
+pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) -> bool {
     debug_println!("{:?} uninterrupt", CPU);
 
     if get_cpu_regs!(emu, CPU).bios_wait_flags != 0 {
@@ -68,12 +68,11 @@ pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
     get_regs_mut!(emu, CPU).pc = get_regs!(emu, CPU).lr - 4;
 
     let spsr = get_regs!(emu, CPU).spsr;
-    if bool::from(Cpsr::from(spsr).thumb()) {
-        get_regs_mut!(emu, CPU).pc |= 1;
-    } else {
-        get_regs_mut!(emu, CPU).pc &= !1;
-    }
+
+    get_regs_mut!(emu, CPU).pc = (get_regs_mut!(emu, CPU).pc & !1) | Cpsr::from(spsr).thumb() as u32;
     get_regs_mut!(emu, CPU).set_cpsr::<false>(spsr, get_cm_mut!(emu));
+
+    !get_cpu_regs!(emu, CPU).is_halted()
 }
 
 pub fn bit_unpack<const CPU: CpuType>(emu: &mut Emu) {

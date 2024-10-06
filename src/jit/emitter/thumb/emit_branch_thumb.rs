@@ -73,8 +73,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if target_pc_reg == Reg::LR {
             self.emit_branch_return_stack_common(block_asm, target_pc_reg.into());
         } else {
-            self.emit_branch_out_metadata(block_asm);
-            block_asm.epilogue();
+            self.emit_branch_reg_common(block_asm, target_pc_reg.into(), false);
         }
     }
 

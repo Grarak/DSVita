@@ -135,8 +135,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         if target_pc_reg == Reg::LR {
             self.emit_branch_return_stack_common(block_asm, target_pc_reg.into());
         } else {
-            self.emit_branch_out_metadata(block_asm);
-            block_asm.epilogue();
+            self.emit_branch_reg_common(block_asm, target_pc_reg.into(), false);
         }
     }
 
@@ -147,8 +146,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             false,
             |asm, block_asm, runtime_data_addr_reg, breakout_label| {
                 let return_stack_ptr_reg = block_asm.new_reg();
-
-                // block_asm.bkpt(1);
 
                 block_asm.load_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
                 block_asm.cmp(return_stack_ptr_reg, 0);
@@ -168,8 +165,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 Self::emit_align_guest_pc(block_asm, target_pc_reg, aligned_target_pc_reg);
                 block_asm.orr(aligned_target_pc_reg, aligned_target_pc_reg, thumb_bit_mask_reg);
 
+                let no_return_label = block_asm.new_label();
                 block_asm.cmp(desired_lr_reg, aligned_target_pc_reg);
-                block_asm.branch(breakout_label, Cond::NE);
+                block_asm.branch(no_return_label, Cond::NE);
 
                 block_asm.store_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
 
@@ -181,11 +179,16 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
                 block_asm.epilogue_previous_block();
 
-                block_asm.free_reg(thumb_bit_mask_reg);
+                block_asm.label(no_return_label);
+                block_asm.mov(return_stack_ptr_reg, 0);
+                block_asm.store_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
+                asm.emit_call_jit_addr(block_asm, aligned_target_pc_reg);
+
                 block_asm.free_reg(aligned_target_pc_reg);
                 block_asm.free_reg(desired_lr_reg);
                 block_asm.free_reg(return_stack_reg);
                 block_asm.free_reg(return_stack_ptr_reg);
+                block_asm.free_reg(thumb_bit_mask_reg);
             },
             |asm, block_asm| {
                 asm.emit_branch_out_metadata(block_asm);
@@ -244,50 +247,55 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     asm.emit_return_stack_write_desired_lr(block_asm, runtime_data_addr_reg);
                 }
 
-                Self::emit_set_cpsr_thumb_bit(block_asm, target_pc_reg);
-
                 if DEBUG_LOG {
-                    // block_asm.call2(Self::debug_branch_reg as *const (), asm.jit_buf.current_pc, target_pc_reg);
+                    block_asm.call2(Self::debug_branch_reg as *const (), asm.jit_buf.current_pc, target_pc_reg);
                 }
 
-                let aligned_target_reg = block_asm.new_reg();
-                Self::emit_align_guest_pc(block_asm, target_pc_reg, aligned_target_reg);
+                asm.emit_call_jit_addr(block_asm, target_pc_reg);
 
-                let map_ptr = get_jit!(asm.emu).jit_memory_map.get_map_ptr::<CPU>();
-
-                let map_ptr_reg = block_asm.new_reg();
-                let map_index_reg = block_asm.new_reg();
-                let map_entry_base_ptr_reg = block_asm.new_reg();
-
-                block_asm.mov(map_ptr_reg, map_ptr as u32);
-                block_asm.mov(map_index_reg, (aligned_target_reg.into(), ShiftType::Lsr, BlockOperand::from(jit_memory_map::BLOCK_SHIFT as u32 + 1)));
-                block_asm.load_u32(map_entry_base_ptr_reg, map_ptr_reg, (map_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)));
-                let block_size_mask_reg = map_index_reg;
-                block_asm.mov(block_size_mask_reg, (jit_memory_map::BLOCK_SIZE as u32 - 1) << 2);
-                block_asm.and(aligned_target_reg, block_size_mask_reg, (aligned_target_reg.into(), ShiftType::Lsl, BlockOperand::from(1)));
-
-                let entry_fn_reg = block_asm.new_reg();
-                block_asm.load_u32(entry_fn_reg, map_entry_base_ptr_reg, aligned_target_reg);
-
-                block_asm.call1(entry_fn_reg, 0);
                 if has_lr_return {
                     asm.emit_return_write_pre_cycle_count_sum(block_asm, runtime_data_addr_reg);
                     block_asm.restore_reg(Reg::CPSR);
                 } else {
                     block_asm.epilogue_previous_block();
                 }
-
-                block_asm.free_reg(entry_fn_reg);
-                block_asm.free_reg(map_entry_base_ptr_reg);
-                block_asm.free_reg(map_index_reg);
-                block_asm.free_reg(map_ptr_reg);
-                block_asm.free_reg(aligned_target_reg);
             },
             |asm, block_asm| {
                 asm.emit_branch_out_metadata_no_count_cycles(block_asm);
                 block_asm.epilogue();
             },
         );
+    }
+
+    fn emit_call_jit_addr(&mut self, block_asm: &mut BlockAsm, target_pc_reg: BlockReg) {
+        Self::emit_set_cpsr_thumb_bit(block_asm, target_pc_reg);
+
+        let aligned_target_reg = block_asm.new_reg();
+        Self::emit_align_guest_pc(block_asm, target_pc_reg, aligned_target_reg);
+
+        let map_ptr = get_jit!(self.emu).jit_memory_map.get_map_ptr::<CPU>();
+
+        let map_ptr_reg = block_asm.new_reg();
+        let map_index_reg = block_asm.new_reg();
+        let map_entry_base_ptr_reg = block_asm.new_reg();
+
+        block_asm.mov(map_ptr_reg, map_ptr as u32);
+        block_asm.mov(map_index_reg, (aligned_target_reg.into(), ShiftType::Lsr, BlockOperand::from(jit_memory_map::BLOCK_SHIFT as u32 + 1)));
+        block_asm.load_u32(map_entry_base_ptr_reg, map_ptr_reg, (map_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)));
+        let block_size_mask_reg = map_index_reg;
+        block_asm.mov(block_size_mask_reg, (jit_memory_map::BLOCK_SIZE as u32 - 1) << 2);
+        block_asm.and(aligned_target_reg, block_size_mask_reg, (aligned_target_reg.into(), ShiftType::Lsl, BlockOperand::from(1)));
+
+        let entry_fn_reg = block_asm.new_reg();
+        block_asm.load_u32(entry_fn_reg, map_entry_base_ptr_reg, aligned_target_reg);
+
+        block_asm.call1(entry_fn_reg, 0);
+
+        block_asm.free_reg(entry_fn_reg);
+        block_asm.free_reg(map_entry_base_ptr_reg);
+        block_asm.free_reg(map_index_reg);
+        block_asm.free_reg(map_ptr_reg);
+        block_asm.free_reg(aligned_target_reg);
     }
 
     pub fn emit_blx_label(&mut self, block_asm: &mut BlockAsm) {
