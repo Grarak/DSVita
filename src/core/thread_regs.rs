@@ -66,7 +66,6 @@ pub struct ThreadRegs {
     pub restore_regs_thumb_opcodes: Vec<u32>,
     pub save_regs_thumb_opcodes: Vec<u32>,
     pub cpu: CpuRegs,
-    pub cycle_correction: i16,
 }
 
 impl ThreadRegs {
@@ -90,7 +89,6 @@ impl ThreadRegs {
             restore_regs_thumb_opcodes: Vec::new(),
             save_regs_thumb_opcodes: Vec::new(),
             cpu: CpuRegs::new(cpu_type),
-            cycle_correction: 0,
         });
 
         {

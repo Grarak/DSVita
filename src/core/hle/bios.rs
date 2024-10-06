@@ -5,7 +5,7 @@ use crate::core::thread_regs::Cpsr;
 use crate::core::CpuType;
 use crate::jit::reg::Reg;
 use crate::logging::debug_println;
-use crate::utils;
+use crate::{get_jit_asm_ptr, utils};
 use bilge::prelude::*;
 use std::cmp::min;
 use CpuType::{ARM7, ARM9};
@@ -260,7 +260,8 @@ pub fn v_blank_intr_wait<const CPU: CpuType>(emu: &mut Emu) {
 pub fn wait_by_loop<const CPU: CpuType>(emu: &mut Emu) {
     let regs = get_regs_mut!(emu, CPU);
     let delay = *regs.get_reg(Reg::R0);
-    regs.cycle_correction += (delay as i16) << 2;
+    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
+    asm.runtime_data.accumulated_cycles += (delay as u16) << 2;
     *regs.get_reg_mut(Reg::R0) = 0;
 }
 

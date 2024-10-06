@@ -101,7 +101,7 @@ impl<'a> BlockAsm<'a> {
         instance.start_cond_block(Cond::NE);
         let host_sp_addr_reg = thread_regs_addr_reg;
         instance.mov(host_sp_addr_reg, host_sp_ptr as u32);
-        instance.transfer_write(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0, false, MemoryAmount::Word);
+        instance.store_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
         instance.end_cond_block();
 
         instance.sub(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4); // Reserve for spilled registers
@@ -246,6 +246,25 @@ impl<'a> BlockAsm<'a> {
         })
     }
 
+    pub fn load_u8(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
+        self.transfer_read(op0, op1, op2, false, MemoryAmount::Byte)
+    }
+    pub fn store_u8(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
+        self.transfer_write(op0, op1, op2, false, MemoryAmount::Byte)
+    }
+    pub fn load_u16(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
+        self.transfer_read(op0, op1, op2, false, MemoryAmount::Half)
+    }
+    pub fn store_u16(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
+        self.transfer_write(op0, op1, op2, false, MemoryAmount::Half)
+    }
+    pub fn load_u32(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
+        self.transfer_read(op0, op1, op2, false, MemoryAmount::Word)
+    }
+    pub fn store_u32(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
+        self.transfer_write(op0, op1, op2, false, MemoryAmount::Word)
+    }
+
     pub fn transfer_read(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
         self.transfer(BlockTransferOp::Read, op0, op1, op2, signed, amount)
     }
@@ -378,7 +397,7 @@ impl<'a> BlockAsm<'a> {
     pub fn epilogue(&mut self) {
         let host_sp_addr_reg = self.thread_regs_addr_reg;
         self.mov(host_sp_addr_reg, self.host_sp_ptr as u32);
-        self.transfer_read(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0, false, MemoryAmount::Word);
+        self.load_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
         self.buf.insts.push(BlockInst::Epilogue);
     }
 

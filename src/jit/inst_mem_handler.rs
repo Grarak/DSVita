@@ -156,7 +156,7 @@ macro_rules! imm_breakout {
         if crate::DEBUG_LOG_BRANCH_OUT {
             $asm.runtime_data.branch_out_pc = $pc;
         }
-        $asm.runtime_data.branch_out_total_cycles = $total_cycles;
+        $asm.runtime_data.accumulated_cycles += $total_cycles - $asm.runtime_data.pre_cycle_count_sum;
         crate::core::emu::get_regs_mut!($asm.emu, CPU).pc = $pc + if $thumb { 3 } else { 4 };
         crate::core::emu::get_mem_mut!($asm.emu).breakout_imm = false;
         // r4-r12,pc since we need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions

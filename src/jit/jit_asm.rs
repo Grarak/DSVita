@@ -60,7 +60,6 @@ pub const RETURN_STACK_SIZE: usize = 32;
 #[repr(C)]
 pub struct JitRuntimeData {
     pub branch_out_pc: u32,
-    pub branch_out_total_cycles: u16,
     pub pre_cycle_count_sum: u16,
     pub accumulated_cycles: u16,
     pub idle_loop: bool,
@@ -73,7 +72,6 @@ impl JitRuntimeData {
     fn new() -> Self {
         let instance = JitRuntimeData {
             branch_out_pc: u32::MAX,
-            branch_out_total_cycles: 0,
             pre_cycle_count_sum: 0,
             accumulated_cycles: 0,
             idle_loop: false,
@@ -81,26 +79,7 @@ impl JitRuntimeData {
             return_stack_ptr: 0,
             return_stack: [JitBlockLinkData::default(); RETURN_STACK_SIZE],
         };
-
-        let branch_out_pc_ptr = ptr::addr_of!(instance.branch_out_pc) as usize;
-        let branch_out_total_cycles_ptr = ptr::addr_of!(instance.branch_out_total_cycles) as usize;
-        let pre_cycle_count_sum_ptr = ptr::addr_of!(instance.pre_cycle_count_sum) as usize;
-        let accumulated_cycles_ptr = ptr::addr_of!(instance.accumulated_cycles) as usize;
-        let idle_loop_ptr = ptr::addr_of!(instance.idle_loop) as usize;
-        let host_sp_ptr = ptr::addr_of!(instance.host_sp) as usize;
-        let return_stack_ptr_ptr = ptr::addr_of!(instance.return_stack_ptr) as usize;
-        let return_stack_ptr = ptr::addr_of!(instance.return_stack) as usize;
-
-        assert_eq!(branch_out_total_cycles_ptr - branch_out_pc_ptr, Self::get_out_total_cycles_offset() as usize);
-        assert_eq!(pre_cycle_count_sum_ptr - branch_out_pc_ptr, Self::get_pre_cycle_count_sum_offset() as usize);
-        assert_eq!(accumulated_cycles_ptr - branch_out_pc_ptr, Self::get_accumulated_cycles_offset() as usize);
-        assert_eq!(idle_loop_ptr - branch_out_pc_ptr, Self::get_idle_loop_offset() as usize);
-        assert_eq!(host_sp_ptr - branch_out_pc_ptr, Self::get_host_sp_offset() as usize);
-        assert_eq!(return_stack_ptr_ptr - branch_out_pc_ptr, Self::get_return_stack_ptr_offset() as usize);
-        assert_eq!(return_stack_ptr - branch_out_pc_ptr, Self::get_return_stack_offset() as usize);
-
         assert_eq!(size_of_val(&instance.return_stack), 32 * 8);
-
         instance
     }
 
@@ -109,35 +88,31 @@ impl JitRuntimeData {
     }
 
     pub const fn get_out_pc_offset() -> u8 {
-        0
-    }
-
-    pub const fn get_out_total_cycles_offset() -> u8 {
-        Self::get_out_pc_offset() + 4
+        mem::offset_of!(JitRuntimeData, branch_out_pc) as u8
     }
 
     pub const fn get_pre_cycle_count_sum_offset() -> u8 {
-        Self::get_out_total_cycles_offset() + 2
+        mem::offset_of!(JitRuntimeData, pre_cycle_count_sum) as u8
     }
 
     pub const fn get_accumulated_cycles_offset() -> u8 {
-        Self::get_pre_cycle_count_sum_offset() + 2
+        mem::offset_of!(JitRuntimeData, accumulated_cycles) as u8
     }
 
     pub const fn get_idle_loop_offset() -> u8 {
-        Self::get_accumulated_cycles_offset() + 2
+        mem::offset_of!(JitRuntimeData, idle_loop) as u8
     }
 
     pub const fn get_host_sp_offset() -> u8 {
-        Self::get_idle_loop_offset() + 2
+        mem::offset_of!(JitRuntimeData, host_sp) as u8
     }
 
     pub const fn get_return_stack_ptr_offset() -> u8 {
-        Self::get_host_sp_offset() + 4
+        mem::offset_of!(JitRuntimeData, return_stack_ptr) as u8
     }
 
     pub const fn get_return_stack_offset() -> u8 {
-        Self::get_return_stack_ptr_offset() + 4
+        mem::offset_of!(JitRuntimeData, return_stack) as u8
     }
 }
 
@@ -201,21 +176,17 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(store_host_sp
             asm.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
             debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
-            // if asm.jit_buf.current_pc == 0x20026f8 {
-            //     block_asm.bkpt(1);
-            // }
-
             if THUMB {
                 asm.emit_thumb(&mut block_asm);
             } else {
                 asm.emit(&mut block_asm);
             }
 
-            // if DEBUG_LOG {
-            //     block_asm.save_context();
-            //     block_asm.call2(debug_after_exec_op::<CPU> as *const (), asm.jit_buf.current_pc, asm.jit_buf.current_inst().opcode);
-            //     block_asm.restore_reg(Reg::CPSR);
-            // }
+            if DEBUG_LOG {
+                block_asm.save_context();
+                block_asm.call2(debug_after_exec_op::<CPU> as *const (), asm.jit_buf.current_pc, asm.jit_buf.current_inst().opcode);
+                block_asm.restore_reg(Reg::CPSR);
+            }
         }
 
         let opcodes = block_asm.finalize(guest_pc, THUMB);
@@ -256,12 +227,10 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
 
         if DEBUG_LOG {
             asm.runtime_data.branch_out_pc = u32::MAX;
-            asm.runtime_data.branch_out_total_cycles = 0;
         }
         asm.runtime_data.pre_cycle_count_sum = 0;
         asm.runtime_data.accumulated_cycles = 0;
         asm.runtime_data.return_stack_ptr = 0;
-        get_regs_mut!(asm.emu, CPU).cycle_correction = 0;
         jit_entry
     };
 
@@ -269,17 +238,13 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
 
     if DEBUG_LOG {
         assert_ne!(asm.runtime_data.branch_out_pc, u32::MAX);
-        assert_ne!(asm.runtime_data.branch_out_total_cycles, 0);
     }
 
-    let executed_cycles = (asm.runtime_data.branch_out_total_cycles
-        - asm.runtime_data.pre_cycle_count_sum + asm.runtime_data.accumulated_cycles
-        // + 2 for branching out
-        + 2) as i16
-        + get_regs_mut!(asm.emu, CPU).cycle_correction;
-
     if DEBUG_LOG && DEBUG_LOG_BRANCH_OUT {
-        println!("{:?} reading opcode of breakout at {:x} executed cycles {executed_cycles}", CPU, asm.runtime_data.branch_out_pc);
+        println!(
+            "{:?} reading opcode of breakout at {:x} executed cycles {}",
+            CPU, asm.runtime_data.branch_out_pc, asm.runtime_data.accumulated_cycles
+        );
         let inst_info = if thumb {
             let opcode = asm.emu.mem_read::<CPU, _>(asm.runtime_data.branch_out_pc);
             let (op, func) = lookup_thumb_opcode(opcode);
@@ -292,7 +257,7 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
         debug_inst_info::<CPU>(get_regs!(asm.emu, CPU), asm.runtime_data.branch_out_pc, &format!("breakout\n\t{:?} {:?}", CPU, inst_info));
     }
 
-    executed_cycles as u16
+    asm.runtime_data.accumulated_cycles
 }
 
 pub struct JitAsm<'a, const CPU: CpuType> {

@@ -7,7 +7,8 @@ use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData, RETURN_STACK_SIZE};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
-use crate::jit::{jit_memory_map, Cond, MemoryAmount, ShiftType};
+use crate::jit::{jit_memory_map, Cond, ShiftType};
+use crate::DEBUG_LOG;
 
 pub enum JitBranchInfo {
     Idle,
@@ -88,6 +89,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                         if has_lr_return {
                             asm.emit_return_stack_write(block_asm, runtime_data_addr_reg);
                         }
+                        if DEBUG_LOG {
+                            block_asm.call2(Self::debug_branch_label as *const (), asm.jit_buf.current_pc, target_pc);
+                        }
                         block_asm.msr_cpsr(backed_up_cpsr_reg);
                         block_asm.guest_branch(Cond::AL, target_pc & !1);
                     },
@@ -96,7 +100,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
                         block_asm.mov(Reg::PC, target_pc);
                         block_asm.save_context();
-                        asm.emit_branch_out_metadata(block_asm);
+                        asm.emit_branch_out_metadata_no_count_cycles(block_asm);
                         block_asm.epilogue();
                     },
                 );
@@ -140,32 +144,20 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     fn emit_return_stack_write(&mut self, block_asm: &mut BlockAsm, runtime_data_addr_reg: BlockReg) {
         let return_stack_ptr_reg = block_asm.new_reg();
 
-        block_asm.transfer_read(
-            return_stack_ptr_reg,
-            runtime_data_addr_reg,
-            JitRuntimeData::get_return_stack_ptr_offset() as u32,
-            false,
-            MemoryAmount::Byte,
-        );
+        block_asm.load_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
         block_asm.and(return_stack_ptr_reg, return_stack_ptr_reg, RETURN_STACK_SIZE as u32 - 1);
 
         let return_stack_reg = block_asm.new_reg();
         block_asm.add(return_stack_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_offset() as u32);
         block_asm.add(return_stack_reg, return_stack_reg, (return_stack_ptr_reg.into(), ShiftType::Lsl, BlockOperand::from(3)));
-        block_asm.transfer_write(Reg::LR, return_stack_reg, 0, false, MemoryAmount::Word);
+        block_asm.store_u32(Reg::LR, return_stack_reg, 0);
 
         let return_pre_cycle_count_sum_reg = block_asm.new_reg();
         block_asm.mov(return_pre_cycle_count_sum_reg, self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32);
-        block_asm.transfer_write(return_pre_cycle_count_sum_reg, return_stack_reg, 4, false, MemoryAmount::Half);
+        block_asm.store_u16(return_pre_cycle_count_sum_reg, return_stack_reg, 4);
 
         block_asm.add(return_stack_ptr_reg, return_stack_ptr_reg, 1);
-        block_asm.transfer_write(
-            return_stack_ptr_reg,
-            runtime_data_addr_reg,
-            JitRuntimeData::get_return_stack_ptr_offset() as u32,
-            false,
-            MemoryAmount::Byte,
-        );
+        block_asm.store_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
 
         block_asm.free_reg(return_pre_cycle_count_sum_reg);
         block_asm.free_reg(return_stack_reg);
@@ -188,11 +180,15 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 let addr_mask_reg = block_asm.new_reg();
 
                 // Set thumb bit
-                block_asm.transfer_read(cpsr_reg, block_asm.thread_regs_addr_reg, Reg::CPSR as u32 * 4, false, MemoryAmount::Word);
+                block_asm.load_u32(cpsr_reg, block_asm.thread_regs_addr_reg, Reg::CPSR as u32 * 4);
                 block_asm.bfi(cpsr_reg, target_pc_reg, 5, 1);
-                block_asm.transfer_write(cpsr_reg, block_asm.thread_regs_addr_reg, Reg::CPSR as u32 * 4, false, MemoryAmount::Word);
+                block_asm.store_u32(cpsr_reg, block_asm.thread_regs_addr_reg, Reg::CPSR as u32 * 4);
 
                 block_asm.free_reg(cpsr_reg);
+
+                if DEBUG_LOG {
+                    block_asm.call2(Self::debug_branch_reg as *const (), asm.jit_buf.current_pc, target_pc_reg);
+                }
 
                 let target_addr_reg = block_asm.new_reg();
 
@@ -214,19 +210,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
                 block_asm.mov(map_ptr_reg, map_ptr as u32);
                 block_asm.mov(map_index_reg, (target_addr_reg.into(), ShiftType::Lsr, BlockOperand::from(jit_memory_map::BLOCK_SHIFT as u32 + 1)));
-                block_asm.transfer_read(
-                    map_entry_base_ptr_reg,
-                    map_ptr_reg,
-                    (map_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)),
-                    false,
-                    MemoryAmount::Word,
-                );
+                block_asm.load_u32(map_entry_base_ptr_reg, map_ptr_reg, (map_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)));
                 let block_size_mask_reg = map_index_reg;
                 block_asm.mov(block_size_mask_reg, (jit_memory_map::BLOCK_SIZE as u32 - 1) << 2);
                 block_asm.and(target_addr_reg, block_size_mask_reg, (target_addr_reg.into(), ShiftType::Lsl, BlockOperand::from(1)));
 
                 let entry_fn_reg = block_asm.new_reg();
-                block_asm.transfer_read(entry_fn_reg, map_entry_base_ptr_reg, target_addr_reg, false, MemoryAmount::Word);
+                block_asm.load_u32(entry_fn_reg, map_entry_base_ptr_reg, target_addr_reg);
 
                 if has_lr_return {
                     block_asm.call1(entry_fn_reg, 0);
@@ -241,7 +231,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 block_asm.free_reg(target_addr_reg);
             },
             |asm, block_asm| {
-                asm.emit_branch_out_metadata(block_asm);
+                asm.emit_branch_out_metadata_no_count_cycles(block_asm);
                 block_asm.epilogue();
             },
         );
@@ -262,5 +252,13 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         self.emit_branch_reg_common(block_asm, target_pc_reg, true);
 
         block_asm.free_reg(target_pc_reg);
+    }
+
+    extern "C" fn debug_branch_label(current_pc: u32, target_pc: u32) {
+        println!("{CPU:?} branch label from {current_pc:x} to {target_pc:x}")
+    }
+
+    extern "C" fn debug_branch_reg(current_pc: u32, target_pc: u32) {
+        println!("{CPU:?} branch reg from {current_pc:x} to {target_pc:x}")
     }
 }

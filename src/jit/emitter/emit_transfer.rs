@@ -84,7 +84,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             // Don't need to restore it, since breakouts only happen when PC was written to
             let tmp_pc_reg = block_asm.new_reg();
             block_asm.mov(tmp_pc_reg, self.jit_buf.current_pc + 12);
-            block_asm.transfer_write(tmp_pc_reg, op0_addr_reg, 0, false, MemoryAmount::Word);
+            block_asm.store_u32(tmp_pc_reg, op0_addr_reg, 0);
 
             block_asm.free_reg(tmp_pc_reg);
 
