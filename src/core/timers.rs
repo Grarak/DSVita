@@ -125,7 +125,7 @@ impl Timers {
             }
 
             if bool::from(cnt.irq_enable()) {
-                get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::from(InterruptFlag::Timer0Overflow as u8 + channel_num as u8), get_cm_mut!(emu));
+                get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::from(InterruptFlag::Timer0Overflow as u8 + channel_num as u8), emu);
             }
         }
         if channel_num < 3 {

@@ -5,7 +5,7 @@ use crate::jit::inst_exception_handler::exception_handler;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 
-impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
+impl<const CPU: CpuType> JitAsm<'_, CPU> {
     pub fn emit_swi<const THUMB: bool>(&mut self, block_asm: &mut BlockAsm) {
         block_asm.save_context();
         block_asm.call4(

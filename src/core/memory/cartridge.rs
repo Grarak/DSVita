@@ -117,7 +117,7 @@ impl Cartridge {
         if inner.read_count == inner.block_size {
             inner.rom_ctrl.set_block_start_status(u1::new(0));
             if bool::from(inner.aux_spi_cnt.transfer_ready_irq()) {
-                get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm_mut!(emu));
+                get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, emu);
             }
         } else {
             get_cm_mut!(emu).schedule(
@@ -354,7 +354,7 @@ impl Cartridge {
             inner.rom_ctrl.set_data_word_status(u1::new(0));
             inner.rom_ctrl.set_block_start_status(u1::new(0));
             if bool::from(inner.aux_spi_cnt.transfer_ready_irq()) {
-                get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, get_cm_mut!(emu));
+                get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, emu);
             }
         } else {
             get_cm_mut!(emu).schedule(

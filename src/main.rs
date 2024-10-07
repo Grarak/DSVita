@@ -3,7 +3,6 @@
 #![feature(adt_const_params)]
 #![feature(allocator_api)]
 #![feature(arm_target_feature)]
-#![feature(const_mut_refs)]
 #![feature(const_trait_impl)]
 #![feature(core_intrinsics)]
 #![feature(generic_const_exprs)]
@@ -113,7 +112,7 @@ fn run_cpu(
         regs.svc.sp = 0x3003FC0;
         regs.user.lr = arm9_entry_addr;
         regs.pc = arm9_entry_addr;
-        regs.set_cpsr::<false>(0x000000DF, get_cm_mut!(emu));
+        regs.set_cpsr::<false>(0x000000DF, emu);
     }
 
     {
@@ -130,7 +129,7 @@ fn run_cpu(
         regs.user.sp = 0x380FFC0;
         regs.user.lr = arm7_entry_addr;
         regs.pc = arm7_entry_addr;
-        regs.set_cpsr::<false>(0x000000DF, get_cm_mut!(emu));
+        regs.set_cpsr::<false>(0x000000DF, emu);
     }
 
     {

@@ -1,5 +1,5 @@
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::emu::{get_cm_mut, get_cpu_regs_mut, Emu};
+use crate::core::emu::{get_cpu_regs_mut, Emu};
 use crate::core::CpuType::ARM7;
 use crate::utils::HeapMemU8;
 use bilge::prelude::*;
@@ -132,7 +132,7 @@ impl Wifi {
 
     pub fn set_w_ie(&mut self, mut mask: u16, value: u16, emu: &mut Emu) {
         if self.w_ie & self.w_irf == 0 && value & mask & self.w_irf != 0 {
-            get_cpu_regs_mut!(emu, ARM7).send_interrupt(InterruptFlag::Wifi, get_cm_mut!(emu));
+            get_cpu_regs_mut!(emu, ARM7).send_interrupt(InterruptFlag::Wifi, emu);
         }
 
         mask &= 0xFBFF;
@@ -370,7 +370,7 @@ impl Wifi {
 
     pub fn set_w_irf_set(&mut self, mut mask: u16, value: u16, emu: &mut Emu) {
         if self.w_ie & self.w_irf == 0 && self.w_ie & value & mask != 0 {
-            get_cpu_regs_mut!(emu, ARM7).send_interrupt(InterruptFlag::Wifi, get_cm_mut!(emu));
+            get_cpu_regs_mut!(emu, ARM7).send_interrupt(InterruptFlag::Wifi, emu);
         }
 
         mask &= 0xFBFF;

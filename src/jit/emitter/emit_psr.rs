@@ -7,7 +7,7 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 
-impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
+impl<const CPU: CpuType> JitAsm<'_, CPU> {
     pub fn emit_msr(&mut self, block_asm: &mut BlockAsm) {
         let inst_info = self.jit_buf.current_inst();
 

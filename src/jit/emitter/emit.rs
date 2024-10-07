@@ -28,7 +28,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             Op::MrsRc | Op::MrsRs => self.emit_mrs(block_asm),
             Op::Swi => self.emit_swi::<false>(block_asm),
             Op::Swpb | Op::Swp => self.emit_swp(block_asm),
-            Op::UnkArm => self.emit_unknown(block_asm),
+            Op::UnkArm => todo!(),
             op if op.is_single_mem_transfer() => {
                 if op.mem_is_write() {
                     self.emit_single_write(block_asm)

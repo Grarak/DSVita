@@ -1,4 +1,5 @@
-use crate::core::emu::{get_jit, get_jit_mut, get_regs, get_regs_mut, Emu};
+use crate::core::emu::{get_cpu_regs, get_jit, get_jit_mut, get_regs, get_regs_mut, Emu};
+use crate::core::hle::bios;
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BLOCK_LOG;
@@ -11,6 +12,7 @@ use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, DEBUG_LOG, DEBUG_LOG_BRANCH_OUT};
+use std::arch::asm;
 use std::cell::UnsafeCell;
 use std::intrinsics::unlikely;
 use std::{mem, ptr};
@@ -104,6 +106,33 @@ impl JitRuntimeData {
 
     pub const fn get_return_stack_offset() -> u8 {
         mem::offset_of!(JitRuntimeData, return_stack) as u8
+    }
+}
+
+pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) {
+    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
+    bios::uninterrupt::<CPU>(asm.emu);
+    asm.runtime_data.return_stack_ptr = 0;
+    asm.runtime_data.accumulated_cycles += 3;
+    if unlikely(get_cpu_regs!(asm.emu, CPU).is_halted()) {
+        if DEBUG_LOG_BRANCH_OUT {
+            asm.runtime_data.branch_out_pc = get_regs!(asm.emu, CPU).pc;
+        }
+        if !store_host_sp {
+            // r4-r12,pc since we need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions
+            unsafe {
+                asm!(
+                "mov sp, {}",
+                "pop {{r4-r12,pc}}",
+                in(reg) asm.runtime_data.host_sp
+                );
+                std::hint::unreachable_unchecked();
+            }
+        }
+    } else {
+        let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(get_regs!(asm.emu, CPU).pc);
+        let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(jit_entry) };
+        jit_entry(store_host_sp);
     }
 }
 

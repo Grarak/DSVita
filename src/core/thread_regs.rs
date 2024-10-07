@@ -1,5 +1,5 @@
 use crate::core::cpu_regs::CpuRegs;
-use crate::core::cycle_manager::CycleManager;
+use crate::core::emu::Emu;
 use crate::core::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Msr};
@@ -208,10 +208,10 @@ impl ThreadRegs {
         }
     }
 
-    pub fn set_cpsr_with_flags(&mut self, value: u32, flags: u8, cycle_manager: &mut CycleManager) {
+    pub fn set_cpsr_with_flags(&mut self, value: u32, flags: u8, emu: &mut Emu) {
         if flags & 1 == 1 {
             let mask = if u8::from(Cpsr::from(self.cpsr).mode()) == 0x10 { 0xE0 } else { 0xFF };
-            self.set_cpsr::<false>((self.cpsr & !mask) | (value & mask), cycle_manager);
+            self.set_cpsr::<false>((self.cpsr & !mask) | (value & mask), emu);
         }
 
         for i in 1..4 {
@@ -237,9 +237,9 @@ impl ThreadRegs {
         }
     }
 
-    pub fn restore_spsr(&mut self, cycle_manager: &mut CycleManager) {
+    pub fn restore_spsr(&mut self, emu: &mut Emu) {
         if !self.is_user {
-            self.set_cpsr::<false>(self.spsr, cycle_manager);
+            self.set_cpsr::<false>(self.spsr, emu);
         }
     }
 
@@ -256,7 +256,7 @@ impl ThreadRegs {
         self.pc |= 1;
     }
 
-    pub fn set_cpsr<const SAVE: bool>(&mut self, value: u32, cycle_manager: &mut CycleManager) {
+    pub fn set_cpsr<const SAVE: bool>(&mut self, value: u32, emu: &mut Emu) {
         let current_cpsr = Cpsr::from(self.cpsr);
         let new_cpsr = Cpsr::from(value);
 
@@ -359,8 +359,7 @@ impl ThreadRegs {
             self.spsr = self.cpsr;
         }
         self.cpsr = value;
-        self.cpu.set_cpsr_irq_enabled(!bool::from(new_cpsr.irq_disable()));
-        self.cpu.check_for_interrupt(cycle_manager);
+        self.cpu.check_for_interrupt(emu);
     }
 
     pub fn set_thumb(&mut self, thumb: bool) {

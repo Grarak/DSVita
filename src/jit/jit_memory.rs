@@ -1,6 +1,6 @@
 use crate::core::memory::{regions, vram};
 use crate::core::CpuType;
-use crate::jit::jit_asm::emit_code_block;
+use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt};
 use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::logging::debug_println;
 use crate::mmap::Mmap;
@@ -25,12 +25,6 @@ pub enum JitRegion {
     VramArm7,
 }
 
-#[derive(Clone, Default)]
-struct JitCycle {
-    pre_cycle_sum: u16,
-    inst_cycle_count: u8,
-}
-
 #[derive(Copy, Clone)]
 pub struct JitEntry(pub *const extern "C" fn(bool));
 
@@ -51,6 +45,9 @@ lazy_static! {
 
 const DEFAULT_JIT_ENTRY_ARM9: JitEntry = JitEntry(emit_code_block::<{ ARM9 }> as _);
 const DEFAULT_JIT_ENTRY_ARM7: JitEntry = JitEntry(emit_code_block::<{ ARM7 }> as _);
+
+pub const BIOS_UNINTERRUPT_ENTRY_ARM9: JitEntry = JitEntry(hle_bios_uninterrupt::<{ ARM9 }> as _);
+pub const BIOS_UNINTERRUPT_ENTRY_ARM7: JitEntry = JitEntry(hle_bios_uninterrupt::<{ ARM7 }> as _);
 
 macro_rules! create_jit_blocks {
     ($([$block_name:ident, $size:expr, $default_block:expr]),+) => {
@@ -85,11 +82,9 @@ macro_rules! create_jit_blocks {
 create_jit_blocks!(
     [itcm, regions::INSTRUCTION_TCM_SIZE, DEFAULT_JIT_ENTRY_ARM9],
     [main_arm9, regions::MAIN_MEMORY_SIZE, DEFAULT_JIT_ENTRY_ARM9],
-    [arm9_bios, regions::ARM9_BIOS_SIZE, DEFAULT_JIT_ENTRY_ARM9],
     [main_arm7, regions::MAIN_MEMORY_SIZE, DEFAULT_JIT_ENTRY_ARM7],
     [wram, regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE, DEFAULT_JIT_ENTRY_ARM7],
-    [vram_arm7, vram::ARM7_SIZE, DEFAULT_JIT_ENTRY_ARM7],
-    [arm7_bios, regions::ARM7_BIOS_SIZE, DEFAULT_JIT_ENTRY_ARM7]
+    [vram_arm7, vram::ARM7_SIZE, DEFAULT_JIT_ENTRY_ARM7]
 );
 
 #[derive(Default)]
@@ -98,8 +93,6 @@ pub struct JitLiveRanges {
     pub main: HeapMemU32<{ (regions::MAIN_MEMORY_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
     pub wram: HeapMemU32<{ ((regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE) / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
     pub vram_arm7: HeapMemU32<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
-    pub arm9_bios: HeapMemU32<{ (regions::ARM9_BIOS_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
-    pub arm7_bios: HeapMemU32<{ (regions::ARM7_BIOS_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
 }
 
 #[cfg(target_os = "linux")]
@@ -147,8 +140,6 @@ impl JitMemory {
             self.jit_live_ranges.main.fill(0);
             self.jit_live_ranges.wram.fill(0);
             self.jit_live_ranges.vram_arm7.fill(0);
-            self.jit_live_ranges.arm7_bios.fill(0);
-            self.jit_live_ranges.arm9_bios.fill(0);
         }
 
         if insert_at_end {
@@ -213,11 +204,9 @@ impl JitMemory {
                     insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm, true)
                 }
                 regions::MAIN_MEMORY_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main, false),
-                0xFF000000 => insert!(self.jit_entries.arm9_bios, self.jit_live_ranges.arm9_bios, true),
                 _ => todo!("{:x}", guest_pc),
             },
             ARM7 => match guest_pc & 0xFF000000 {
-                regions::ARM7_BIOS_OFFSET => insert!(self.jit_entries.arm7_bios, self.jit_live_ranges.arm7_bios, true),
                 regions::MAIN_MEMORY_OFFSET => insert!(self.jit_entries.main_arm7, self.jit_live_ranges.main, true),
                 regions::SHARED_WRAM_OFFSET => insert!(self.jit_entries.wram, self.jit_live_ranges.wram, false),
                 regions::VRAM_OFFSET => insert!(self.jit_entries.vram_arm7, self.jit_live_ranges.vram_arm7, false),

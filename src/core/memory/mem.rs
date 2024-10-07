@@ -1,6 +1,5 @@
 use crate::core::cp15::TcmState;
 use crate::core::emu::{get_cp15, Emu};
-use crate::core::memory::bios::{BiosArm7, BiosArm9};
 use crate::core::memory::io_arm7::IoArm7;
 use crate::core::memory::io_arm9::IoArm9;
 use crate::core::memory::main::Main;
@@ -34,8 +33,6 @@ pub struct Memory {
     pub vram: Vram,
     pub oam: Oam,
     pub jit: JitMemory,
-    pub bios_arm9: BiosArm9,
-    pub bios_arm7: BiosArm7,
     pub breakout_imm: bool,
     pub mmu_arm9: MmuArm9,
     pub mmu_arm7: MmuArm7,
@@ -63,8 +60,6 @@ impl Memory {
             vram: Vram::new(),
             oam: Oam::new(),
             jit: JitMemory::new(),
-            bios_arm9: BiosArm9::new(),
-            bios_arm7: BiosArm7::new(),
             breakout_imm: false,
             mmu_arm9: MmuArm9::new(),
             mmu_arm7: MmuArm7::new(),
@@ -124,9 +119,9 @@ impl Memory {
                 // Bios of arm7 has same offset as itcm on arm9
                 ARM7 => {
                     if aligned_addr < regions::ARM7_BIOS_SIZE {
-                        self.bios_arm7.read(aligned_addr)
+                        T::from(0)
                     } else {
-                        todo!("{:x} {:x}", aligned_addr, addr_base)
+                        unreachable!()
                     }
                 }
             },
@@ -154,18 +149,14 @@ impl Memory {
             0xFF000000 => match CPU {
                 ARM9 => {
                     if (aligned_addr & 0xFFFF8000) == regions::ARM9_BIOS_OFFSET {
-                        self.bios_arm9.read(aligned_addr)
+                        T::from(0)
                     } else {
-                        todo!("{:x} {:x}", aligned_addr, addr_base)
+                        unreachable!()
                     }
                 }
-                ARM7 => {
-                    todo!("{:x} {:x}", aligned_addr, addr_base)
-                }
+                ARM7 => unreachable!(),
             },
-            _ => {
-                todo!("{:?} {:x} {:x}", CPU, aligned_addr, addr_base)
-            }
+            _ => unreachable!(),
         };
 
         debug_println!("{:?} memory read at {:x} with value {:x}", CPU, addr, ret.into());
@@ -248,9 +239,7 @@ impl Memory {
             }
             regions::OAM_OFFSET => self.oam.write(addr_offset, value),
             regions::GBA_ROM_OFFSET => {}
-            _ => {
-                todo!("{:x} {:x}", aligned_addr, addr_base)
-            }
+            _ => unreachable!(),
         };
     }
 }

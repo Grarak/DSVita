@@ -1,4 +1,4 @@
-use crate::core::emu::{get_cm, get_cm_mut, get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, Emu};
+use crate::core::emu::{get_cm, get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, Emu};
 use crate::core::memory::dma::Dma;
 use crate::core::rtc::Rtc;
 use crate::core::spi::Spi;
@@ -240,8 +240,8 @@ impl IoArm7 {
                 io32(0x1AC) => common.cartridge.set_bus_cmd_out_h::<{ ARM7 }>(mask, value),
                 io16(0x1C0) => self.spi.set_cnt(mask, value),
                 io8(0x1C2) => self.spi.set_data(value),
-                io8(0x208) => get_cpu_regs_mut!(emu, ARM7).set_ime(value, get_cm_mut!(emu)),
-                io32(0x210) => get_cpu_regs_mut!(emu, ARM7).set_ie(mask, value, get_cm_mut!(emu)),
+                io8(0x208) => get_cpu_regs_mut!(emu, ARM7).set_ime(value, emu),
+                io32(0x210) => get_cpu_regs_mut!(emu, ARM7).set_ie(mask, value, emu),
                 io32(0x214) => get_cpu_regs_mut!(emu, ARM7).set_irf(mask, value),
                 io8(0x300) => get_cpu_regs_mut!(emu, ARM7).set_post_flg(value),
                 io8(0x301) => todo!(),

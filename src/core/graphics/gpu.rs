@@ -168,7 +168,7 @@ impl Gpu {
             let disp_stat = &mut gpu.disp_stat[i];
             disp_stat.set_h_blank_flag(u1::new(1));
             if disp_stat.h_blank_irq_enable() {
-                get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdHBlank, get_cm_mut!(emu));
+                get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdHBlank, emu);
             }
         }
 
@@ -195,7 +195,7 @@ impl Gpu {
                     let disp_stat = &mut gpu.disp_stat[i];
                     disp_stat.set_v_blank_flag(u1::new(1));
                     if disp_stat.v_blank_irq_enable() {
-                        get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdVBlank, get_cm_mut!(emu));
+                        get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdVBlank, emu);
                         io_dma!(emu, CpuType::from(i as u8)).trigger_all(DmaTransferMode::StartAtVBlank, get_cm_mut!(emu));
                     }
                 }
@@ -223,7 +223,7 @@ impl Gpu {
             if gpu.v_count == v_match {
                 gpu.disp_stat[i].set_v_counter_flag(u1::new(1));
                 if gpu.disp_stat[i].v_counter_irq_enable() {
-                    get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdVCounterMatch, get_cm_mut!(emu));
+                    get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdVCounterMatch, emu);
                 }
             } else {
                 gpu.disp_stat[i].set_v_counter_flag(u1::new(0));

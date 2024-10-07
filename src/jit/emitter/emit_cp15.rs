@@ -8,7 +8,7 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 
-impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
+impl<const CPU: CpuType> JitAsm<'_, CPU> {
     pub fn emit_halt(&mut self, block_asm: &mut BlockAsm) {
         block_asm.mov(Reg::PC, self.jit_buf.current_pc + 4);
         block_asm.save_context();

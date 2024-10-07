@@ -1,6 +1,6 @@
 use crate::core::memory::regions;
 use crate::core::CpuType;
-use crate::jit::jit_memory::{JitEntries, JitEntry, JitLiveRanges, JIT_LIVE_RANGE_PAGE_SIZE_SHIFT};
+use crate::jit::jit_memory::{JitEntries, JitEntry, JitLiveRanges, BIOS_UNINTERRUPT_ENTRY_ARM7, BIOS_UNINTERRUPT_ENTRY_ARM9, JIT_LIVE_RANGE_PAGE_SIZE_SHIFT};
 use crate::utils::HeapMemU32;
 use CpuType::{ARM7, ARM9};
 
@@ -8,6 +8,9 @@ pub const BLOCK_SHIFT: usize = 13;
 pub const BLOCK_SIZE: usize = 1 << BLOCK_SHIFT;
 const SIZE: usize = (1 << 31) / BLOCK_SIZE;
 const LIVE_RANGES_SIZE: usize = 1 << (32 - JIT_LIVE_RANGE_PAGE_SIZE_SHIFT - 5);
+
+const BIOS_UNINTERRUPT_ENTRIES_ARM9: [JitEntry; BLOCK_SIZE] = [BIOS_UNINTERRUPT_ENTRY_ARM9; BLOCK_SIZE];
+const BIOS_UNINTERRUPT_ENTRIES_ARM7: [JitEntry; BLOCK_SIZE] = [BIOS_UNINTERRUPT_ENTRY_ARM7; BLOCK_SIZE];
 
 pub struct JitMemoryMap {
     map_arm9: HeapMemU32<SIZE>,
@@ -39,7 +42,7 @@ impl JitMemoryMap {
             match (addr as u32) & 0xFF000000 {
                 0 => {
                     *arm9_ptr = get_ptr!(entries.itcm);
-                    *arm7_ptr = get_ptr!(entries.arm7_bios);
+                    *arm7_ptr = BIOS_UNINTERRUPT_ENTRIES_ARM7.as_ptr() as u32;
                 }
                 regions::INSTRUCTION_TCM_MIRROR_OFFSET => *arm9_ptr = get_ptr!(entries.itcm),
                 regions::MAIN_MEMORY_OFFSET => {
@@ -48,7 +51,7 @@ impl JitMemoryMap {
                 }
                 regions::SHARED_WRAM_OFFSET => *arm7_ptr = get_ptr!(entries.wram),
                 regions::VRAM_OFFSET => *arm7_ptr = get_ptr!(entries.vram_arm7),
-                0xFF000000 => *arm9_ptr = get_ptr!(entries.arm9_bios),
+                0xFF000000 => *arm9_ptr = BIOS_UNINTERRUPT_ENTRIES_ARM9.as_ptr() as u32,
                 _ => {}
             }
         }
@@ -67,7 +70,6 @@ impl JitMemoryMap {
             match (addr as u32) & 0xFF000000 {
                 0 => {
                     *arm9_ptr = get_ptr!(live_ranges.itcm);
-                    *arm7_ptr = get_ptr!(live_ranges.arm7_bios);
                 }
                 regions::INSTRUCTION_TCM_MIRROR_OFFSET => *arm9_ptr = get_ptr!(live_ranges.itcm),
                 regions::MAIN_MEMORY_OFFSET => {
@@ -76,7 +78,6 @@ impl JitMemoryMap {
                 }
                 regions::SHARED_WRAM_OFFSET => *arm7_ptr = get_ptr!(live_ranges.wram),
                 regions::VRAM_OFFSET => *arm7_ptr = get_ptr!(live_ranges.vram_arm7),
-                0xFF000000 => *arm9_ptr = get_ptr!(live_ranges.arm9_bios),
                 _ => {}
             }
         }

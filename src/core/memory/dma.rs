@@ -328,7 +328,7 @@ impl Dma {
         }
 
         if cnt.irq_at_end() {
-            get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::from(InterruptFlag::Dma0 as u8 + channel_num as u8), get_cm_mut!(emu));
+            get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::from(InterruptFlag::Dma0 as u8 + channel_num as u8), emu);
         }
     }
 }

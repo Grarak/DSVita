@@ -1,5 +1,5 @@
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::emu::{get_cm_mut, get_cp15, get_cpu_regs, get_cpu_regs_mut, get_regs, get_regs_mut, Emu};
+use crate::core::emu::{get_cp15, get_cpu_regs, get_cpu_regs_mut, get_regs, get_regs_mut, Emu};
 use crate::core::hle::bios_lookup_table::{ARM7_SWI_LOOKUP_TABLE, ARM9_SWI_LOOKUP_TABLE};
 use crate::core::thread_regs::Cpsr;
 use crate::core::CpuType;
@@ -20,13 +20,13 @@ pub fn swi<const CPU: CpuType>(comment: u8, emu: &mut Emu) {
 }
 
 pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
-    debug_println!("{:?} interrupt", CPU);
+    debug_println!("{CPU:?} interrupt");
 
     let mut cpsr = Cpsr::from(get_regs!(emu, CPU).cpsr);
     cpsr.set_irq_disable(true);
     cpsr.set_thumb(false);
     cpsr.set_mode(u5::new(0x12));
-    get_regs_mut!(emu, CPU).set_cpsr::<true>(u32::from(cpsr), get_cm_mut!(emu));
+    get_regs_mut!(emu, CPU).set_cpsr::<true>(u32::from(cpsr), emu);
 
     let is_thumb = (get_regs!(emu, CPU).pc & 1) == 1;
     let mut spsr = Cpsr::from(get_regs!(emu, CPU).spsr);
@@ -34,7 +34,6 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
     get_regs_mut!(emu, CPU).spsr = u32::from(spsr);
 
     get_regs_mut!(emu, CPU).sp -= 4;
-
     emu.mem_write::<CPU, _>(get_regs!(emu, CPU).sp, get_regs!(emu, CPU).pc + 4);
     for reg in [Reg::R12, Reg::R3, Reg::R2, Reg::R1, Reg::R0] {
         get_regs_mut!(emu, CPU).sp -= 4;
@@ -54,8 +53,8 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
     }
 }
 
-pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) -> bool {
-    debug_println!("{:?} uninterrupt", CPU);
+pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
+    debug_println!("{CPU:?} uninterrupt");
 
     if get_cpu_regs!(emu, CPU).bios_wait_flags != 0 {
         check_wait_flags::<CPU>(emu);
@@ -70,9 +69,7 @@ pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) -> bool {
     let spsr = get_regs!(emu, CPU).spsr;
 
     get_regs_mut!(emu, CPU).pc = (get_regs_mut!(emu, CPU).pc & !1) | Cpsr::from(spsr).thumb() as u32;
-    get_regs_mut!(emu, CPU).set_cpsr::<false>(spsr, get_cm_mut!(emu));
-
-    !get_cpu_regs!(emu, CPU).is_halted()
+    get_regs_mut!(emu, CPU).set_cpsr::<false>(spsr, emu);
 }
 
 pub fn bit_unpack<const CPU: CpuType>(emu: &mut Emu) {
@@ -135,7 +132,7 @@ pub fn divide<const CPU: CpuType>(emu: &mut Emu) {
     let quotient = dividend / divisor;
     *regs.get_reg_mut(Reg::R0) = quotient as u32;
     *regs.get_reg_mut(Reg::R1) = (dividend % divisor) as u32;
-    *regs.get_reg_mut(Reg::R3) = quotient.abs() as u32;
+    *regs.get_reg_mut(Reg::R3) = quotient.unsigned_abs();
 }
 
 pub fn get_crc16<const CPU: CpuType>(emu: &mut Emu) {

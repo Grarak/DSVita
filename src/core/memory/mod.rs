@@ -1,4 +1,3 @@
-mod bios;
 pub mod cartridge;
 pub mod dma;
 pub mod io_arm7;

@@ -468,7 +468,7 @@ impl Gpu3DRegisters {
         self.last_total_cycles = total_cycles;
         let mut executed_cycles = 0;
 
-        let refresh_state = |gpu_3d: &mut Self| {
+        let mut refresh_state = |gpu_3d: &mut Self| {
             gpu_3d.gx_stat.set_num_entries_cmd_fifo(u9::new(gpu_3d.cmd_fifo.len() as u16 - gpu_3d.cmd_pipe_size as u16));
             gpu_3d.gx_stat.set_cmd_fifo_empty(gpu_3d.is_cmd_fifo_empty());
             gpu_3d.gx_stat.set_geometry_busy(!gpu_3d.cmd_fifo.is_empty());
@@ -482,12 +482,12 @@ impl Gpu3DRegisters {
                 0 | 3 => {}
                 1 => {
                     if gpu_3d.gx_stat.cmd_fifo_less_half_full() {
-                        get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::GeometryCmdFifo, get_cm_mut!(emu));
+                        get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::GeometryCmdFifo, emu);
                     }
                 }
                 2 => {
                     if gpu_3d.gx_stat.cmd_fifo_empty() {
-                        get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::GeometryCmdFifo, get_cm_mut!(emu));
+                        get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::GeometryCmdFifo, emu);
                     }
                 }
                 _ => unsafe { unreachable_unchecked() },

@@ -1,5 +1,5 @@
 use crate::core::div_sqrt::DivSqrt;
-use crate::core::emu::{get_cm, get_cm_mut, get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, get_mem_mut, Emu};
+use crate::core::emu::{get_cm, get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, get_mem_mut, Emu};
 use crate::core::memory::dma::Dma;
 use crate::core::timers::Timers;
 use crate::core::CpuType::ARM9;
@@ -254,8 +254,8 @@ impl IoArm9 {
                 io32(0x1A4) => common.cartridge.set_rom_ctrl::<{ ARM9 }>(mask, value, emu),
                 io32(0x1A8) => common.cartridge.set_bus_cmd_out_l::<{ ARM9 }>(mask, value),
                 io32(0x1AC) => common.cartridge.set_bus_cmd_out_h::<{ ARM9 }>(mask, value),
-                io8(0x208) => get_cpu_regs_mut!(emu, ARM9).set_ime(value, get_cm_mut!(emu)),
-                io32(0x210) => get_cpu_regs_mut!(emu, ARM9).set_ie(mask, value, get_cm_mut!(emu)),
+                io8(0x208) => get_cpu_regs_mut!(emu, ARM9).set_ime(value, emu),
+                io32(0x210) => get_cpu_regs_mut!(emu, ARM9).set_ie(mask, value, emu),
                 io32(0x214) => get_cpu_regs_mut!(emu, ARM9).set_irf(mask, value),
                 io8(0x240) => mem.vram.set_cnt(0, value, emu),
                 io8(0x241) => mem.vram.set_cnt(1, value, emu),

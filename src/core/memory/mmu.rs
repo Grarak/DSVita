@@ -48,11 +48,6 @@ impl MmuArm9Inner {
                 regions::MAIN_MEMORY_OFFSET => *read_ptr = get_mem!(emu).main.get_ptr(addr) as u32,
                 regions::SHARED_WRAM_OFFSET => *read_ptr = get_mem!(emu).wram.get_ptr::<{ ARM9 }>(addr) as u32,
                 // regions::VRAM_OFFSET => *read_ptr = emu.mem.vram.get_ptr::<{ ARM9 }>(addr) as u32,
-                0xFF000000 => {
-                    if addr & 0xFFFF8000 == regions::ARM9_BIOS_OFFSET {
-                        *read_ptr = get_mem!(emu).bios_arm9.get_ptr(addr) as u32
-                    }
-                }
                 _ => {}
             }
 
@@ -154,11 +149,6 @@ impl MmuArm7Inner {
             *read_ptr = 0;
 
             match addr & 0xFF000000 {
-                regions::ARM7_BIOS_OFFSET => {
-                    if addr < regions::ARM7_BIOS_SIZE {
-                        *read_ptr = get_mem!(emu).bios_arm7.get_ptr(addr) as u32
-                    }
-                }
                 regions::MAIN_MEMORY_OFFSET => *read_ptr = get_mem!(emu).main.get_ptr(addr) as u32,
                 regions::SHARED_WRAM_OFFSET => *read_ptr = get_mem!(emu).wram.get_ptr::<{ ARM7 }>(addr) as u32,
                 regions::IO_PORTS_OFFSET => {
