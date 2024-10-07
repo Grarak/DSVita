@@ -1,8 +1,9 @@
+use crate::core::emu::get_regs_mut;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM7;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockLabel, BlockReg};
-use crate::jit::inst_threag_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode};
+use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
@@ -47,17 +48,17 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
             let restore_spsr = self.jit_buf.current_inst().out_regs.is_reserved(Reg::CPSR) && op.is_arm_alu();
             if restore_spsr {
-                block_asm.call(register_restore_spsr::<CPU> as *const ());
+                block_asm.call2(register_restore_spsr as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32, self.emu as *mut _ as u32);
             }
 
             if CPU == ARM7 || (!op.is_single_mem_transfer() && !op.is_multiple_mem_transfer()) {
                 if restore_spsr {
-                    block_asm.call(restore_thumb_after_restore_spsr::<CPU> as *const ());
+                    block_asm.call1(restore_thumb_after_restore_spsr as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32);
                 } else {
-                    block_asm.call(set_pc_arm_mode::<CPU> as *const ())
+                    block_asm.call1(set_pc_arm_mode as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32);
                 }
             } else if restore_spsr {
-                block_asm.call(restore_thumb_after_restore_spsr::<CPU> as *const ());
+                block_asm.call1(restore_thumb_after_restore_spsr as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32);
             }
 
             if (op.is_mov() && self.jit_buf.current_inst().src_regs.is_reserved(Reg::LR) && !self.jit_buf.current_inst().out_regs.is_reserved(Reg::CPSR))

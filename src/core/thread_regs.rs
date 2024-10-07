@@ -1,10 +1,7 @@
 use crate::core::cpu_regs::CpuRegs;
 use crate::core::emu::Emu;
 use crate::core::CpuType;
-use crate::jit::assembler::arm::alu_assembler::AluImm;
-use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, Msr};
-use crate::jit::reg::{Reg, RegReserve};
-use crate::jit::Cond;
+use crate::jit::reg::Reg;
 use crate::logging::debug_println;
 use crate::DEBUG_LOG;
 use bilge::prelude::*;
@@ -61,16 +58,12 @@ pub struct ThreadRegs {
     pub abt: OtherModeRegs,
     pub irq: OtherModeRegs,
     pub und: OtherModeRegs,
-    pub restore_regs_opcodes: Vec<u32>,
-    pub save_regs_opcodes: Vec<u32>,
-    pub restore_regs_thumb_opcodes: Vec<u32>,
-    pub save_regs_thumb_opcodes: Vec<u32>,
     pub cpu: CpuRegs,
 }
 
 impl ThreadRegs {
-    pub fn new(cpu_type: CpuType) -> Box<Self> {
-        let mut instance = Box::new(ThreadRegs {
+    pub fn new(cpu_type: CpuType) -> Self {
+        ThreadRegs {
             gp_regs: [0u32; 13],
             sp: 0,
             lr: 0,
@@ -84,84 +77,8 @@ impl ThreadRegs {
             abt: OtherModeRegs::default(),
             irq: OtherModeRegs::default(),
             und: OtherModeRegs::default(),
-            restore_regs_opcodes: Vec::new(),
-            save_regs_opcodes: Vec::new(),
-            restore_regs_thumb_opcodes: Vec::new(),
-            save_regs_thumb_opcodes: Vec::new(),
             cpu: CpuRegs::new(cpu_type),
-        });
-
-        {
-            let gp_regs_addr = instance.gp_regs.as_ptr() as u32;
-            let last_regs_addr = ptr::addr_of!(instance.gp_regs[instance.gp_regs.len() - 1]) as u32;
-            let last_regs_thumb_addr = ptr::addr_of!(instance.gp_regs[7]) as u32;
-            let sp_addr = ptr::addr_of!(instance.sp) as u32;
-            let cpsr_addr = ptr::addr_of!(instance.cpsr) as u32;
-            assert_eq!(sp_addr - last_regs_addr, 4);
-
-            {
-                let restore_regs_opcodes = &mut instance.restore_regs_opcodes;
-                restore_regs_opcodes.extend(AluImm::mov32(Reg::SP, gp_regs_addr));
-                restore_regs_opcodes.extend([
-                    LdrStrImm::ldr_offset_al(Reg::R0, Reg::SP, (cpsr_addr - gp_regs_addr) as u16),
-                    Msr::cpsr_flags(Reg::R0, Cond::AL),
-                    LdmStm::pop_post_al(RegReserve::gp()),
-                    LdrStrImm::ldr_al(Reg::SP, Reg::SP),
-                ]);
-                restore_regs_opcodes.shrink_to_fit();
-            }
-
-            {
-                let save_regs_opcodes = &mut instance.save_regs_opcodes;
-                save_regs_opcodes.extend(AluImm::mov32(Reg::LR, sp_addr));
-                save_regs_opcodes.push(LdmStm::push_post(RegReserve::gp() + Reg::SP, Reg::LR, Cond::AL));
-                save_regs_opcodes.shrink_to_fit();
-            }
-
-            {
-                let restore_regs_thumb_opcodes = &mut instance.restore_regs_thumb_opcodes;
-                restore_regs_thumb_opcodes.extend(AluImm::mov32(Reg::SP, gp_regs_addr));
-                restore_regs_thumb_opcodes.extend([
-                    LdrStrImm::ldr_offset_al(Reg::R0, Reg::SP, (cpsr_addr - gp_regs_addr) as u16),
-                    Msr::cpsr_flags(Reg::R0, Cond::AL),
-                    LdmStm::pop_post_al(RegReserve::gp_thumb()),
-                    LdrStrImm::ldr_offset_al(Reg::SP, Reg::SP, (sp_addr - last_regs_thumb_addr - 4) as u16),
-                ]);
-                restore_regs_thumb_opcodes.shrink_to_fit();
-            }
-
-            {
-                let save_regs_thumb_opcodes = &mut instance.save_regs_thumb_opcodes;
-                save_regs_thumb_opcodes.extend(AluImm::mov32(Reg::LR, last_regs_thumb_addr));
-                save_regs_thumb_opcodes.extend([
-                    LdrStrImm::str_offset_al(Reg::SP, Reg::LR, (sp_addr - last_regs_thumb_addr) as u16),
-                    LdmStm::push_post(RegReserve::gp_thumb(), Reg::LR, Cond::AL),
-                ]);
-                save_regs_thumb_opcodes.shrink_to_fit();
-            }
         }
-
-        instance
-    }
-
-    pub fn emit_get_reg(&self, dest_reg: Reg, src_reg: Reg) -> Vec<u32> {
-        let reg_addr = self.get_reg(src_reg) as *const _ as u32;
-
-        let mut opcodes = Vec::new();
-        opcodes.extend(AluImm::mov32(dest_reg, reg_addr));
-        opcodes.push(LdrStrImm::ldr_al(dest_reg, dest_reg));
-        opcodes
-    }
-
-    pub fn emit_set_reg(&self, dest_reg: Reg, src_reg: Reg, tmp_reg: Reg) -> Vec<u32> {
-        debug_assert_ne!(src_reg, tmp_reg);
-
-        let reg_addr = self.get_reg(dest_reg) as *const _ as u32;
-
-        let mut opcodes = Vec::new();
-        opcodes.extend(AluImm::mov32(tmp_reg, reg_addr));
-        opcodes.push(LdrStrImm::str_al(src_reg, tmp_reg));
-        opcodes
     }
 
     pub fn get_reg_mut_ptr(&mut self) -> *mut u32 {

@@ -1,7 +1,8 @@
+use crate::core::emu::get_regs_mut;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM7;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::inst_threag_regs_handler::set_pc_thumb_mode;
+use crate::jit::inst_thread_regs_handler::set_pc_thumb_mode;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
@@ -73,7 +74,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             block_asm.save_context();
 
             if CPU == ARM7 || !op.is_multiple_mem_transfer() {
-                block_asm.call(set_pc_thumb_mode::<CPU> as *const ());
+                block_asm.call1(set_pc_thumb_mode as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32);
             }
 
             // R9 can be used as a substitution for SP for branch prediction

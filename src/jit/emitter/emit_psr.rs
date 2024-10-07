@@ -1,8 +1,9 @@
+use crate::core::emu::get_regs_mut;
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockOperand, BlockReg};
 use crate::jit::inst_info::Operand;
-use crate::jit::inst_threag_regs_handler::{register_set_cpsr_checked, register_set_spsr_checked};
+use crate::jit::inst_thread_regs_handler::{register_set_cpsr_checked, register_set_spsr_checked};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
@@ -14,13 +15,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let flags = (inst_info.opcode >> 16) & 0xF;
 
         let func = match inst_info.op {
-            Op::MsrRc | Op::MsrIc => register_set_cpsr_checked::<CPU> as *const (),
-            Op::MsrRs | Op::MsrIs => register_set_spsr_checked::<CPU> as *const (),
+            Op::MsrRc | Op::MsrIc => register_set_cpsr_checked as *const (),
+            Op::MsrRs | Op::MsrIs => register_set_spsr_checked as *const (),
             _ => unreachable!(),
         };
 
         block_asm.save_context();
-        block_asm.call2(
+        block_asm.call4(
             func,
             match inst_info.operands()[0] {
                 Operand::Reg { reg, shift: None } => BlockOperand::from(reg),
@@ -28,6 +29,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 _ => unreachable!(),
             },
             flags,
+            get_regs_mut!(self.emu, CPU) as *mut _ as u32,
+            self.emu as *mut _ as u32,
         );
         block_asm.msr_cpsr(BlockReg::Fixed(Reg::R0));
         block_asm.restore_reg(Reg::R8);

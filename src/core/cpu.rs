@@ -1,10 +1,9 @@
 use crate::core::cp15::Cp15;
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType::{ARM7, ARM9};
-use std::ops::DerefMut;
 
 pub struct CpuArm9 {
-    thread_regs: Box<ThreadRegs>,
+    thread_regs: ThreadRegs,
     cp15: Cp15,
 }
 
@@ -21,7 +20,7 @@ impl CpuArm9 {
     }
 
     pub fn regs_mut(&mut self) -> &mut ThreadRegs {
-        self.thread_regs.deref_mut()
+        &mut self.thread_regs
     }
 
     pub fn cp15(&self) -> &Cp15 {
@@ -34,7 +33,7 @@ impl CpuArm9 {
 }
 
 pub struct CpuArm7 {
-    thread_regs: Box<ThreadRegs>,
+    thread_regs: ThreadRegs,
 }
 
 impl CpuArm7 {
@@ -47,7 +46,7 @@ impl CpuArm7 {
     }
 
     pub fn regs_mut(&mut self) -> &mut ThreadRegs {
-        self.thread_regs.deref_mut()
+        &mut self.thread_regs
     }
 
     pub fn cp15(&self) -> &Cp15 {
