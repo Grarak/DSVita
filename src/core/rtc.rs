@@ -1,4 +1,5 @@
 use crate::logging::debug_println;
+use crate::IS_DEBUG;
 use bilge::prelude::*;
 use chrono::{Datelike, Timelike};
 
@@ -133,27 +134,23 @@ impl Rtc {
     }
 
     fn update_date_time(&mut self) {
-        let local_now = chrono::Local::now();
+        let (year, month, day, hour, is_pm, min, sec) = if IS_DEBUG {
+            (2000, 1, 1, 11, false, 0, 0)
+        } else {
+            let local_now = chrono::Local::now();
 
-        // let year = local_now.year() as u32 % 100;
-        // let month = local_now.month() as u8;
-        // let day = local_now.day() as u8;
-        // let (hour, is_pm) = {
-        //     let hour = local_now.hour();
-        //     ((if self.cnt & 0x2 == 0 { hour % 12 } else { hour }) as u8, hour >= 12)
-        // };
-        // let min = local_now.minute() as u8;
-        // let sec = local_now.second() as u8;
+            let year = local_now.year() as u32 % 100;
+            let month = local_now.month() as u8;
+            let day = local_now.day() as u8;
+            let (hour, is_pm) = {
+                let hour = local_now.hour();
+                ((if self.cnt & 0x2 == 0 { hour % 12 } else { hour }) as u8, hour >= 12)
+            };
+            let min = local_now.minute() as u8;
+            let sec = local_now.second() as u8;
 
-        let year = 2000 as u32 % 100;
-        let month = 1 as u8;
-        let day = 1 as u8;
-        let (hour, is_pm) = {
-            let hour = 11;
-            ((if self.cnt & 0x2 == 0 { hour % 12 } else { hour }) as u8, hour >= 12)
+            (year, month, day, hour, is_pm, min, sec)
         };
-        let min = 0 as u8;
-        let sec = 0 as u8;
 
         self.date_time[0] = (((year / 10) << 4) | (year % 10)) as u8;
         self.date_time[1] = ((month / 10) << 4) | (month % 10);

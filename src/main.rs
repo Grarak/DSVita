@@ -23,7 +23,7 @@ use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
 use crate::settings::Settings;
-use crate::utils::{set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
+use crate::utils::{const_str_equal, set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
@@ -46,8 +46,9 @@ mod presenter;
 mod settings;
 mod utils;
 
-pub const DEBUG_LOG: bool = cfg!(debug_assertions);
-pub const DEBUG_LOG_BRANCH_OUT: bool = DEBUG_LOG;
+const BUILD_PROFILE_NAME: &str = include_str!(concat!(env!("OUT_DIR"), "/build_profile_name"));
+pub const DEBUG_LOG: bool = const_str_equal(BUILD_PROFILE_NAME, "debug");
+pub const IS_DEBUG: bool = !const_str_equal(BUILD_PROFILE_NAME, "release");
 
 fn run_cpu(
     cartridge_io: CartridgeIo,

@@ -260,3 +260,21 @@ pub fn rgb6_to_float8(color: u32) -> (f32, f32, f32) {
     let b = ((color >> 12) & 0x3F) as f32;
     (r / 63f32, g / 63f32, b / 63f32)
 }
+
+pub const fn const_bytes_equal(lhs: &[u8], rhs: &[u8]) -> bool {
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < lhs.len() {
+        if lhs[i] != rhs[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+pub const fn const_str_equal(lhs: &str, rhs: &str) -> bool {
+    const_bytes_equal(lhs.as_bytes(), rhs.as_bytes())
+}

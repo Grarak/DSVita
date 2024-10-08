@@ -8,7 +8,7 @@ use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
-use crate::DEBUG_LOG_BRANCH_OUT;
+use crate::IS_DEBUG;
 use CpuType::ARM9;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
@@ -29,7 +29,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             Op::MrsRc | Op::MrsRs => self.emit_mrs(block_asm),
             Op::Swi => self.emit_swi::<false>(block_asm),
             Op::Swpb | Op::Swp => self.emit_swp(block_asm),
-            Op::UnkArm => todo!(),
+            Op::UnkArm => unreachable!(),
             op if op.is_single_mem_transfer() => {
                 if op.mem_is_write() {
                     self.emit_single_write(block_asm)
@@ -103,7 +103,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let runtime_data_addr_reg = block_asm.new_reg();
         block_asm.mov(runtime_data_addr_reg, self.runtime_data.get_addr() as u32);
 
-        if DEBUG_LOG_BRANCH_OUT {
+        if IS_DEBUG {
             let pc_reg = block_asm.new_reg();
             block_asm.mov(pc_reg, self.jit_buf.current_pc);
             block_asm.store_u32(pc_reg, runtime_data_addr_reg, JitRuntimeData::get_out_pc_offset() as u32);

@@ -11,9 +11,10 @@ use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::debug_println;
-use crate::{get_jit_asm_ptr, DEBUG_LOG, DEBUG_LOG_BRANCH_OUT};
+use crate::{get_jit_asm_ptr, DEBUG_LOG, IS_DEBUG};
 use std::arch::asm;
 use std::cell::UnsafeCell;
+use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 use std::{mem, ptr};
 
@@ -111,22 +112,22 @@ impl JitRuntimeData {
 
 pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
-    bios::uninterrupt::<CPU>(asm.emu);
+    if IS_DEBUG {
+        asm.runtime_data.branch_out_pc = get_regs!(asm.emu, CPU).pc;
+    }
     asm.runtime_data.return_stack_ptr = 0;
     asm.runtime_data.accumulated_cycles += 3;
+    bios::uninterrupt::<CPU>(asm.emu);
     if unlikely(get_cpu_regs!(asm.emu, CPU).is_halted()) {
-        if DEBUG_LOG_BRANCH_OUT {
-            asm.runtime_data.branch_out_pc = get_regs!(asm.emu, CPU).pc;
-        }
         if !store_host_sp {
             // r4-r12,pc since we need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions
             unsafe {
                 asm!(
-                "mov sp, {}",
-                "pop {{r4-r12,pc}}",
-                in(reg) asm.runtime_data.host_sp
+                    "mov sp, {}",
+                    "pop {{r4-r12,pc}}",
+                    in(reg) asm.runtime_data.host_sp
                 );
-                std::hint::unreachable_unchecked();
+                unreachable_unchecked();
             }
         }
     } else {
@@ -154,36 +155,37 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(store_host_sp
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
 
     {
-        let mut index = 0;
+        let mut pc_offset = 0;
         loop {
             let inst_info = if THUMB {
-                let opcode = asm.emu.mem_read::<CPU, u16>(guest_pc + index);
+                let opcode = asm.emu.mem_read::<CPU, u16>(guest_pc + pc_offset);
                 let (op, func) = lookup_thumb_opcode(opcode);
                 InstInfo::from(func(opcode, *op))
             } else {
-                let opcode = asm.emu.mem_read::<CPU, u32>(guest_pc + index);
+                let opcode = asm.emu.mem_read::<CPU, u32>(guest_pc + pc_offset);
                 let (op, func) = lookup_opcode(opcode);
                 func(opcode, *op)
             };
 
+            if inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb {
+                break;
+            }
+
             if let Some(last) = asm.jit_buf.insts_cycle_counts.last() {
-                assert!(u16::MAX - last >= inst_info.cycle as u16, "{CPU:?} {guest_pc:x} {inst_info:?}");
+                debug_assert!(u16::MAX - last >= inst_info.cycle as u16, "{CPU:?} {guest_pc:x} {inst_info:?}");
                 asm.jit_buf.insts_cycle_counts.push(last + inst_info.cycle as u16);
             } else {
                 asm.jit_buf.insts_cycle_counts.push(inst_info.cycle as u16);
-                assert!(asm.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{CPU:?} {guest_pc:x} {inst_info:?}")
+                debug_assert!(asm.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{CPU:?} {guest_pc:x} {inst_info:?}")
             }
 
             let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && inst_info.is_uncond_branch();
-            // let is_uncond_branch = inst_info.is_uncond_branch();
-            let is_unknown = inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb;
-
             asm.jit_buf.insts.push(inst_info);
 
-            index += if THUMB { 2 } else { 4 };
-            if is_unreturnable_branch || is_unknown {
+            if is_unreturnable_branch {
                 break;
             }
+            pc_offset += if THUMB { 2 } else { 4 };
         }
     }
 
@@ -198,7 +200,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(store_host_sp
             block_asm.restore_reg(Reg::CPSR);
         }
 
-        // if guest_pc == 0x20b2688 {
+        // if guest_pc == 0x2001b5e {
         //     block_asm.bkpt(2);
         // }
 
@@ -207,7 +209,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(store_host_sp
             asm.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
             debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
-            // if asm.jit_buf.current_pc == 0x20216e2 {
+            // if asm.jit_buf.current_pc == 0x2001b5c {
             //     block_asm.bkpt(1);
             // }
 
@@ -217,11 +219,11 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(store_host_sp
                 asm.emit(&mut block_asm);
             }
 
-            // if DEBUG_LOG {
-            //     block_asm.save_context();
-            //     block_asm.call2(debug_after_exec_op::<CPU> as *const (), asm.jit_buf.current_pc, asm.jit_buf.current_inst().opcode);
-            //     block_asm.restore_reg(Reg::CPSR);
-            // }
+            if DEBUG_LOG {
+                block_asm.save_context();
+                block_asm.call2(debug_after_exec_op::<CPU> as *const (), asm.jit_buf.current_pc, asm.jit_buf.current_inst().opcode);
+                block_asm.restore_reg(Reg::CPSR);
+            }
         }
 
         let opcodes = block_asm.finalize(guest_pc, THUMB);
@@ -263,7 +265,7 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
 
         debug_println!("{CPU:?} Enter jit addr {:x}", jit_entry as usize);
 
-        if DEBUG_LOG {
+        if IS_DEBUG {
             asm.runtime_data.branch_out_pc = u32::MAX;
         }
         asm.runtime_data.pre_cycle_count_sum = 0;
@@ -274,11 +276,9 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
 
     jit_entry(true);
 
-    if DEBUG_LOG {
-        assert_ne!(asm.runtime_data.branch_out_pc, u32::MAX);
-    }
+    debug_assert_ne!(asm.runtime_data.branch_out_pc, u32::MAX);
 
-    if DEBUG_LOG && DEBUG_LOG_BRANCH_OUT {
+    if DEBUG_LOG {
         println!(
             "{:?} reading opcode of breakout at {:x} executed cycles {}",
             CPU, asm.runtime_data.branch_out_pc, asm.runtime_data.accumulated_cycles

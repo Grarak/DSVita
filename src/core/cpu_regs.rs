@@ -48,13 +48,14 @@ struct InterruptFlags(u32);
 
 impl Debug for InterruptFlags {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut flags = f.debug_set();
+        let mut debug_set = f.debug_set();
         for i in 0..=InterruptFlag::Wifi as u8 {
             if self.0 & (1 << i) != 0 {
-                flags.entry(&InterruptFlag::from(i));
+                let flag = InterruptFlag::from(i);
+                debug_set.entry(&flag);
             }
         }
-        flags.finish()
+        debug_set.finish()
     }
 }
 
@@ -112,7 +113,7 @@ impl CpuRegs {
     }
 
     pub fn set_irf(&mut self, mask: u32, value: u32) {
-        debug_println!("{:?} set irf {:?}", self.cpu_type, InterruptFlags(value & mask));
+        // debug_println!("{:?} set irf {:?}", self.cpu_type, InterruptFlags(value & mask));
         self.irf &= !(value & mask);
     }
 

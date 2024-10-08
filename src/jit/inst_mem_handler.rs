@@ -153,7 +153,7 @@ mod handler {
 macro_rules! imm_breakout {
     ($asm:expr, $pc:expr, $thumb:expr, $total_cycles:expr) => {{
         crate::logging::debug_println!("immediate breakout");
-        if crate::DEBUG_LOG_BRANCH_OUT {
+        if crate::IS_DEBUG {
             $asm.runtime_data.branch_out_pc = $pc;
         }
         $asm.runtime_data.accumulated_cycles += $total_cycles - $asm.runtime_data.pre_cycle_count_sum;

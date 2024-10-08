@@ -1,9 +1,17 @@
 use bindgen::Formatter;
+use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::{env, fs};
 
 fn main() {
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    let build_profile_name = out_path.to_str().unwrap().split(std::path::MAIN_SEPARATOR).nth_back(3).unwrap();
+    let build_profile_name_file = out_path.join("build_profile_name");
+    File::create(build_profile_name_file).unwrap().write_all(build_profile_name.as_bytes()).unwrap();
+
     let target = env::var("TARGET").unwrap();
     if target != "armv7-sony-vita-newlibeabihf" {
         // Running IDE on anything other than linux will fail, so ignore compile error
@@ -17,7 +25,6 @@ fn main() {
     let vitasdk_include_path = vitasdk_path.join("arm-vita-eabi").join("include");
     let vitasdk_lib_path = vitasdk_path.join("arm-vita-eabi").join("lib");
 
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     let bindings_file = out_path.join("imgui_bindings.rs");
 
     const IMGUI_HEADERS: [&str; 3] = ["imgui.h", "imgui_internal.h", "imgui_impl_vitagl.h"];

@@ -56,7 +56,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             Op::BlxRegT => self.emit_blx_thumb(block_asm),
 
             Op::SwiT => self.emit_swi::<true>(block_asm),
-            Op::UnkThumb => {}
+            Op::UnkThumb => unreachable!(),
             op if op.is_single_mem_transfer() => {
                 if op.mem_is_write() {
                     self.emit_str_thumb(block_asm)
