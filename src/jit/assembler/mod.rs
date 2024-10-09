@@ -360,7 +360,7 @@ impl BlockAsmBuf {
         }
     }
 
-    pub fn new_asm(&mut self, guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize) -> BlockAsm {
-        BlockAsm::new(guest_regs_ptr, host_sp_ptr, self)
+    pub fn new_asm(&mut self, is_common_fun: bool, guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize) -> BlockAsm {
+        BlockAsm::new(is_common_fun, guest_regs_ptr, host_sp_ptr, self)
     }
 }

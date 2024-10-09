@@ -22,6 +22,7 @@ pub struct Cpsr {
     pub n: bool,
 }
 
+#[repr(C)]
 #[derive(Default)]
 pub struct UserRegs {
     pub gp_regs: [u32; 5],
@@ -29,6 +30,7 @@ pub struct UserRegs {
     pub lr: u32,
 }
 
+#[repr(C)]
 #[derive(Default)]
 pub struct FiqRegs {
     pub gp_regs: [u32; 5],
@@ -37,6 +39,7 @@ pub struct FiqRegs {
     pub spsr: u32,
 }
 
+#[repr(C)]
 #[derive(Default)]
 pub struct OtherModeRegs {
     pub sp: u32,
@@ -44,6 +47,7 @@ pub struct OtherModeRegs {
     pub spsr: u32,
 }
 
+#[repr(C, align(64))]
 pub struct ThreadRegs {
     pub gp_regs: [u32; 13],
     pub sp: u32,
@@ -51,7 +55,6 @@ pub struct ThreadRegs {
     pub pc: u32,
     pub cpsr: u32,
     pub spsr: u32,
-    is_user: bool,
     pub user: UserRegs,
     pub fiq: FiqRegs,
     pub svc: OtherModeRegs,
@@ -59,6 +62,7 @@ pub struct ThreadRegs {
     pub irq: OtherModeRegs,
     pub und: OtherModeRegs,
     pub cpu: CpuRegs,
+    is_user: bool,
 }
 
 impl ThreadRegs {

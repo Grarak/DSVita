@@ -1,13 +1,18 @@
+use crate::bitset::Bitset;
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::basic_block::BasicBlock;
 use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp, GuestInstInfo};
 use crate::jit::assembler::block_inst_list::BlockInstList;
+use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
 use crate::jit::assembler::block_reg_set::BlockRegSet;
-use crate::jit::assembler::{block_reg_allocator, BlockAsmBuf, BlockInst, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, ANY_REG_LIMIT};
+use crate::jit::assembler::{BlockAsmBuf, BlockInst, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, ANY_REG_LIMIT};
 use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
 use crate::utils::{NoHashMap, NoHashSet};
+use crate::IS_DEBUG;
+use std::intrinsics::unlikely;
+use std::slice;
 
 pub static mut BLOCK_LOG: bool = false;
 
@@ -54,15 +59,17 @@ pub struct BlockAsm<'a> {
 
     cond_block_end_label_stack: Vec<BlockLabel>,
 
+    is_common_fun: bool,
     host_sp_ptr: *mut usize,
     block_start: usize,
     inst_insert_index: Option<usize>,
 }
 
 impl<'a> BlockAsm<'a> {
-    pub fn new(guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize, buf: &'a mut BlockAsmBuf) -> Self {
+    pub fn new(is_common_fun: bool, guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize, buf: &'a mut BlockAsmBuf) -> Self {
         buf.insts.clear();
         buf.guest_branches_mapping.clear();
+
         let thread_regs_addr_reg = BlockReg::Any(Reg::SPSR as u16 + 1);
         let tmp_guest_cpsr_reg = BlockReg::Any(Reg::SPSR as u16 + 2);
         let tmp_adjusted_pc_reg = BlockReg::Any(Reg::SPSR as u16 + 3);
@@ -89,6 +96,7 @@ impl<'a> BlockAsm<'a> {
 
             cond_block_end_label_stack: Vec::new(),
 
+            is_common_fun,
             host_sp_ptr,
             block_start: 0,
             inst_insert_index: None,
@@ -97,17 +105,21 @@ impl<'a> BlockAsm<'a> {
         instance.buf.insts.push(BlockInst::Prologue);
 
         // First argument is store_host_sp: bool
-        instance.cmp(BlockReg::Fixed(Reg::R0), 0);
-        instance.start_cond_block(Cond::NE);
-        let host_sp_addr_reg = thread_regs_addr_reg;
-        instance.mov(host_sp_addr_reg, host_sp_ptr as u32);
-        instance.store_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
-        instance.end_cond_block();
+        if !is_common_fun {
+            instance.cmp(BlockReg::Fixed(Reg::R0), 0);
+            instance.start_cond_block(Cond::NE);
+            let host_sp_addr_reg = thread_regs_addr_reg;
+            instance.mov(host_sp_addr_reg, host_sp_ptr as u32);
+            instance.store_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
+            instance.end_cond_block();
+        }
 
         instance.sub(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4); // Reserve for spilled registers
 
-        instance.mov(thread_regs_addr_reg, guest_regs_ptr as u32);
-        instance.restore_reg(Reg::CPSR);
+        if !is_common_fun {
+            instance.mov(thread_regs_addr_reg, guest_regs_ptr as u32);
+            instance.restore_reg(Reg::CPSR);
+        }
 
         instance.block_start = instance.buf.insts.len();
         instance
@@ -143,7 +155,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn new_reg_no_reserve(&mut self) -> BlockReg {
-        assert!(self.any_reg_count < ANY_REG_LIMIT);
+        debug_assert!(self.any_reg_count < ANY_REG_LIMIT);
         let id = self.any_reg_count;
         self.any_reg_count += 1;
         BlockReg::Any(id)
@@ -154,7 +166,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn new_label(&mut self) -> BlockLabel {
-        assert!(self.label_count < u16::MAX);
+        debug_assert!(self.label_count < u16::MAX);
         let id = self.label_count;
         self.label_count += 1;
         BlockLabel(id)
@@ -247,35 +259,27 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn load_u8(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer_read(op0, op1, op2, false, MemoryAmount::Byte)
+        self.transfer(BlockTransferOp::Read, op0, op1, op2, false, MemoryAmount::Byte)
     }
 
     pub fn store_u8(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer_write(op0, op1, op2, false, MemoryAmount::Byte)
+        self.transfer(BlockTransferOp::Write, op0, op1, op2, false, MemoryAmount::Byte)
     }
 
     pub fn load_u16(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer_read(op0, op1, op2, false, MemoryAmount::Half)
+        self.transfer(BlockTransferOp::Read, op0, op1, op2, false, MemoryAmount::Half)
     }
 
     pub fn store_u16(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer_write(op0, op1, op2, false, MemoryAmount::Half)
+        self.transfer(BlockTransferOp::Write, op0, op1, op2, false, MemoryAmount::Half)
     }
 
     pub fn load_u32(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer_read(op0, op1, op2, false, MemoryAmount::Word)
+        self.transfer(BlockTransferOp::Read, op0, op1, op2, false, MemoryAmount::Word)
     }
 
     pub fn store_u32(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer_write(op0, op1, op2, false, MemoryAmount::Word)
-    }
-
-    pub fn transfer_read(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
-        self.transfer(BlockTransferOp::Read, op0, op1, op2, signed, amount)
-    }
-
-    pub fn transfer_write(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
-        self.transfer(BlockTransferOp::Write, op0, op1, op2, signed, amount)
+        self.transfer(BlockTransferOp::Write, op0, op1, op2, false, MemoryAmount::Word)
     }
 
     fn transfer(&mut self, op: BlockTransferOp, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
@@ -403,12 +407,12 @@ impl<'a> BlockAsm<'a> {
         let host_sp_addr_reg = self.thread_regs_addr_reg;
         self.mov(host_sp_addr_reg, self.host_sp_ptr as u32);
         self.load_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
-        self.buf.insts.push(BlockInst::Epilogue);
+        self.buf.insts.push(BlockInst::Epilogue { restore_all_regs: true });
     }
 
     pub fn epilogue_previous_block(&mut self) {
         self.add(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4);
-        self.buf.insts.push(BlockInst::Epilogue);
+        self.buf.insts.push(BlockInst::Epilogue { restore_all_regs: false });
     }
 
     pub fn call(&mut self, func: impl Into<BlockOperand>) {
@@ -604,25 +608,25 @@ impl<'a> BlockAsm<'a> {
                 basic_block.io_resolved = true;
                 basic_block.set_required_outputs(sum_required_outputs);
                 basic_block.init_resolve_io(self);
-                let enter_blocks = basic_block.enter_blocks.clone().into_iter().collect::<Vec<usize>>();
+                let enter_blocks = unsafe { slice::from_raw_parts(basic_block.enter_blocks.as_ptr(), basic_block.enter_blocks.len()) };
                 let required_inputs = *basic_block.get_required_inputs();
-                self.resolve_io(basic_blocks, required_inputs, &enter_blocks);
+                self.resolve_io(basic_blocks, required_inputs, enter_blocks);
             }
         }
     }
 
     fn resolve_df_ordering(
-        already_processed: &mut NoHashSet<usize>,
-        completed: &mut NoHashSet<usize>,
+        already_processed: &mut Bitset<{ 1024 / 32 }>,
+        completed: &mut Bitset<{ 1024 / 32 }>,
         basic_blocks: &mut [BasicBlock],
         block_i: usize,
         ordering: &mut [usize],
         ordering_start: &mut usize,
         ordering_end: &mut usize,
     ) {
-        already_processed.insert(block_i);
+        *already_processed += block_i;
         let mut cycle = false;
-        for exit_i in &basic_blocks[block_i].exit_blocks {
+        for &exit_i in &basic_blocks[block_i].exit_blocks {
             if already_processed.contains(exit_i) && !completed.contains(exit_i) {
                 cycle = true;
                 break;
@@ -635,12 +639,13 @@ impl<'a> BlockAsm<'a> {
             ordering[*ordering_start] = block_i;
             *ordering_start += 1;
         }
-        for exit_i in basic_blocks[block_i].exit_blocks.clone() {
-            if !already_processed.contains(&exit_i) {
+        for i in 0..basic_blocks[block_i].exit_blocks.len() {
+            let exit_i = basic_blocks[block_i].exit_blocks[i];
+            if !already_processed.contains(exit_i) {
                 Self::resolve_df_ordering(already_processed, completed, basic_blocks, exit_i, ordering, ordering_start, ordering_end);
             }
         }
-        completed.insert(block_i);
+        *completed += block_i;
     }
 
     fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> (Vec<BasicBlock>, Vec<usize>) {
@@ -683,7 +688,7 @@ impl<'a> BlockAsm<'a> {
                     }
                     last_label = None;
                 }
-                BlockInst::Call { has_return: false, .. } | BlockInst::Epilogue => {
+                BlockInst::Call { has_return: false, .. } | BlockInst::Epilogue { .. } => {
                     basic_blocks.push(BasicBlock::new(self, basic_block_start, current_node));
                     basic_block_start = BlockInstList::deref(current_node).next;
                     if let Some(last_label) = last_label {
@@ -711,29 +716,34 @@ impl<'a> BlockAsm<'a> {
             match &mut self.buf.insts[last_inst_index] {
                 BlockInst::Branch { label, cond, block_index, .. } => {
                     let labelled_block_index = basic_block_label_mapping.get(&label.0).unwrap();
-                    basic_block.exit_blocks.insert(*labelled_block_index);
+                    basic_block.exit_blocks.push(*labelled_block_index);
                     *block_index = *labelled_block_index;
                     if *cond != Cond::AL && i + 1 < basic_blocks_len {
-                        basic_block.exit_blocks.insert(i + 1);
+                        basic_block.exit_blocks.push(i + 1);
                     }
                 }
                 // Don't add exit when last command in basic block is a breakout
-                BlockInst::Call { has_return: false, .. } | BlockInst::Epilogue => {
+                BlockInst::Call { has_return: false, .. } | BlockInst::Epilogue { .. } => {
                     if i + 1 < basic_blocks_len {
-                        basic_block.exit_blocks.insert(i + 1);
+                        basic_block.exit_blocks.push(i + 1);
                     }
                 }
                 _ => {
                     if i + 1 < basic_blocks_len {
-                        basic_block.exit_blocks.insert(i + 1);
+                        basic_block.exit_blocks.push(i + 1);
                     }
                 }
             }
         }
 
         for i in 0..basic_blocks.len() {
-            for exit_block in basic_blocks[i].exit_blocks.clone() {
-                basic_blocks[exit_block].enter_blocks.insert(i);
+            let exit_blocks = &basic_blocks[i].exit_blocks;
+            debug_assert!(exit_blocks.len() <= 1 || (exit_blocks.len() == 2 && exit_blocks[0] != exit_blocks[1]));
+            for j in 0..exit_blocks.len() {
+                let exit_block = basic_blocks[i].exit_blocks[j];
+                if !basic_blocks[exit_block].enter_blocks.contains(&i) {
+                    basic_blocks[exit_block].enter_blocks.push(i);
+                }
             }
         }
 
@@ -768,8 +778,8 @@ impl<'a> BlockAsm<'a> {
             basic_block.remove_dead_code(self);
         }
 
-        let mut df_already_processed = NoHashSet::default();
-        let mut df_completed = NoHashSet::default();
+        let mut df_already_processed = Bitset::<{ 1024 / 32 }>::new();
+        let mut df_completed = Bitset::<{ 1024 / 32 }>::new();
         let mut df_ordering = vec![0; basic_blocks_len];
         let mut df_ordering_start = 0;
         let mut df_ordering_end = basic_blocks_len - 1;
@@ -802,7 +812,7 @@ impl<'a> BlockAsm<'a> {
                         break;
                     }
                 }
-                assert!(i < end_j);
+                debug_assert!(i < end_j);
                 intervals.insert(reg, (i, end_j));
             }
             processed_regs += outputs;
@@ -814,7 +824,7 @@ impl<'a> BlockAsm<'a> {
     pub fn finalize(mut self, block_start_pc: u32, thumb: bool) -> Vec<u32> {
         let (mut basic_blocks, basic_blocks_order) = self.assemble_basic_blocks(block_start_pc, thumb);
 
-        if unsafe { BLOCK_LOG } {
+        if IS_DEBUG && unsafe { BLOCK_LOG } {
             for (i, basic_block) in basic_blocks.iter().enumerate() {
                 println!("{i}[{i} {:x}]", basic_block.start_pc);
             }
@@ -832,13 +842,14 @@ impl<'a> BlockAsm<'a> {
 
         let mut reg_intervals = Self::assemble_intervals(&basic_blocks, &basic_blocks_order);
 
-        if unsafe { BLOCK_LOG } {
+        if IS_DEBUG && unsafe { BLOCK_LOG } {
             println!("reg intervals {reg_intervals:?} ");
             println!("block ordering {basic_blocks_order:?}");
         }
 
+        self.buf.reg_allocator.dirty_regs.clear();
         self.buf.reg_allocator.global_mapping.clear();
-        let mut free_regs = block_reg_allocator::ALLOCATION_REGS;
+        let mut free_regs = ALLOCATION_REGS;
         while !free_regs.is_empty() {
             let mut longest_interval = 0;
             let mut longest_interval_reg = 0;
@@ -858,11 +869,22 @@ impl<'a> BlockAsm<'a> {
         }
 
         for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
-            if i != 0 && basic_block.enter_blocks.is_empty() {
+            if unlikely(i != 0 && basic_block.enter_blocks.is_empty()) {
                 continue;
             }
             self.buf.reg_allocator.init_inputs(*basic_block.get_required_inputs());
             basic_block.allocate_regs(&mut self);
+        }
+
+        // Used to determine what regs to push and pop for prologue and epilogue
+        let mut used_host_regs = if unlikely(self.is_common_fun) {
+            self.buf.reg_allocator.dirty_regs & ALLOCATION_REGS
+        } else {
+            ALLOCATION_REGS
+        };
+        // We need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions, epilogue adds Reg::LR
+        if used_host_regs.len() & 1 == 0 {
+            used_host_regs += Reg::R12;
         }
 
         let mut opcodes = Vec::new();
@@ -870,10 +892,10 @@ impl<'a> BlockAsm<'a> {
         let mut opcodes_offset = Vec::with_capacity(basic_blocks.len());
         for (i, basic_block) in basic_blocks.iter().enumerate() {
             opcodes_offset.push(opcodes.len());
-            if i != 0 && basic_block.enter_blocks.is_empty() {
+            if unlikely(i != 0 && basic_block.enter_blocks.is_empty()) {
                 continue;
             }
-            opcodes.extend(basic_block.emit_opcodes(&mut self, &mut branch_placeholders, opcodes.len()));
+            opcodes.extend(basic_block.emit_opcodes(&mut self, &mut branch_placeholders, opcodes.len(), used_host_regs));
         }
 
         for branch_placeholder in branch_placeholders {

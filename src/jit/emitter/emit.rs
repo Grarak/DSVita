@@ -9,6 +9,7 @@ use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
 use crate::IS_DEBUG;
+use std::ptr;
 use CpuType::ARM9;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
@@ -93,7 +94,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         );
         block_asm.sub(result_accumulated_cycles_reg, result_accumulated_cycles_reg, pre_cycle_count_sum_reg);
 
-        block_asm.store_u32(result_accumulated_cycles_reg, runtime_data_addr_reg, JitRuntimeData::get_accumulated_cycles_offset() as u32);
+        block_asm.store_u16(result_accumulated_cycles_reg, runtime_data_addr_reg, JitRuntimeData::get_accumulated_cycles_offset() as u32);
 
         block_asm.free_reg(accumulated_cycles_reg);
         block_asm.free_reg(pre_cycle_count_sum_reg);
@@ -101,7 +102,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
     fn _emit_branch_out_metadata(&mut self, block_asm: &mut BlockAsm, count_cycles: bool, set_idle_loop: bool) {
         let runtime_data_addr_reg = block_asm.new_reg();
-        block_asm.mov(runtime_data_addr_reg, self.runtime_data.get_addr() as u32);
+        if IS_DEBUG || count_cycles || set_idle_loop {
+            block_asm.mov(runtime_data_addr_reg, ptr::addr_of_mut!(self.runtime_data) as u32);
+        }
 
         if IS_DEBUG {
             let pc_reg = block_asm.new_reg();
@@ -141,18 +144,18 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn emit_flush_cycles<ContinueFn: Fn(&mut Self, &mut BlockAsm, BlockReg, BlockLabel), BreakoutFn: Fn(&mut Self, &mut BlockAsm)>(
         &mut self,
         block_asm: &mut BlockAsm,
-        target_pre_cycle_count_sum: Option<u16>,
+        target_pre_cycle_count_sum: u16,
         add_continue_label: bool,
         continue_fn: ContinueFn,
         breakout_fn: BreakoutFn,
     ) {
         let runtime_data_addr_reg = block_asm.new_reg();
-        block_asm.mov(runtime_data_addr_reg, self.runtime_data.get_addr() as u32);
+        block_asm.mov(runtime_data_addr_reg, ptr::addr_of_mut!(self.runtime_data) as u32);
 
         let result_accumulated_cycles_reg = block_asm.new_reg();
         self.emit_count_cycles(block_asm, runtime_data_addr_reg, result_accumulated_cycles_reg);
 
-        const MAX_LOOP_CYCLE_COUNT: u32 = 127;
+        const MAX_LOOP_CYCLE_COUNT: u32 = 255;
         block_asm.cmp(
             result_accumulated_cycles_reg,
             match CPU {
@@ -165,12 +168,11 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let breakout_label = block_asm.new_label();
         block_asm.branch(breakout_label, Cond::HS);
 
-        if let Some(target_pre_cycle_count_sum) = target_pre_cycle_count_sum {
-            let target_pre_cycle_count_sum_reg = block_asm.new_reg();
-            block_asm.mov(target_pre_cycle_count_sum_reg, target_pre_cycle_count_sum as u32);
-            block_asm.store_u16(target_pre_cycle_count_sum_reg, runtime_data_addr_reg, JitRuntimeData::get_pre_cycle_count_sum_offset() as u32);
-            block_asm.free_reg(target_pre_cycle_count_sum_reg);
-        }
+        let target_pre_cycle_count_sum_reg = block_asm.new_reg();
+        block_asm.mov(target_pre_cycle_count_sum_reg, target_pre_cycle_count_sum as u32);
+        block_asm.store_u16(target_pre_cycle_count_sum_reg, runtime_data_addr_reg, JitRuntimeData::get_pre_cycle_count_sum_offset() as u32);
+        block_asm.free_reg(target_pre_cycle_count_sum_reg);
+
         continue_fn(self, block_asm, runtime_data_addr_reg, breakout_label);
         if add_continue_label {
             block_asm.branch(continue_label.unwrap(), Cond::AL);

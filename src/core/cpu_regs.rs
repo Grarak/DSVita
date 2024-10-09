@@ -59,14 +59,15 @@ impl Debug for InterruptFlags {
     }
 }
 
+#[repr(C)]
 pub struct CpuRegs {
-    cpu_type: CpuType,
-    pub ime: u8,
     pub ie: u32,
     pub irf: u32,
+    pub ime: u8,
     pub post_flg: u8,
     pub halt_cnt: u8,
     halt: u8,
+    cpu_type: CpuType,
     pub bios_wait_flags: u32,
 }
 

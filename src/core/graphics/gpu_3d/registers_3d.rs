@@ -560,7 +560,7 @@ impl Gpu3DRegisters {
                     todo!("{:x}", entry.cmd);
                 }
             }
-            executed_cycles += 2;
+            executed_cycles += 4;
 
             self.cmd_pipe_size = 4 - ((self.cmd_pipe_size + param_count) & 1);
             if self.cmd_pipe_size as usize > self.cmd_fifo.len() {

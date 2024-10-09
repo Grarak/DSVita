@@ -1,12 +1,13 @@
+use crate::bitset::Bitset;
 use crate::jit::assembler::{BlockReg, ANY_REG_LIMIT};
 use crate::jit::reg::{Reg, RegReserve};
 use std::fmt::{Debug, Formatter};
 use std::ops::{Add, AddAssign, BitAnd, BitXor, BitXorAssign, Not, Sub, SubAssign};
 
-pub const BLOCK_REG_SET_ARRAY_SIZE: usize = 4;
+pub const BLOCK_REG_SET_ARRAY_SIZE: usize = 2;
 
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
-pub struct BlockRegSet([u32; BLOCK_REG_SET_ARRAY_SIZE]);
+pub struct BlockRegSet(Bitset<BLOCK_REG_SET_ARRAY_SIZE>);
 
 macro_rules! block_reg_set {
     ($($reg:expr),*) => {
@@ -28,70 +29,43 @@ pub(crate) use block_reg_set;
 
 impl BlockRegSet {
     pub const fn new() -> Self {
-        BlockRegSet([0; BLOCK_REG_SET_ARRAY_SIZE])
+        BlockRegSet(Bitset::new())
     }
 
     pub const fn new_fixed(reg_reserve: RegReserve) -> Self {
         let mut set = BlockRegSet::new();
-        set.0[0] = reg_reserve.0 & ((1 << Reg::None as u8) - 1);
+        set.0 .0[0] = reg_reserve.0 & ((1 << Reg::None as u8) - 1);
         set
     }
 
-    fn _add(&mut self, reg: BlockReg) {
-        let id = reg.get_id();
-        let array_index = (id >> 5) as usize;
-        let pos_index = (id & 31) as usize;
-        self.0[array_index] |= 1 << pos_index;
-    }
-
-    fn _sub(&mut self, reg: BlockReg) {
-        let id = reg.get_id();
-        let array_index = (id >> 5) as usize;
-        let pos_index = (id & 31) as usize;
-        self.0[array_index] &= !(1 << pos_index);
-    }
-
     pub fn contains(&self, reg: BlockReg) -> bool {
-        let id = reg.get_id();
-        let array_index = (id >> 5) as usize;
-        let pos_index = (id & 31) as usize;
-        self.0[array_index] & (1 << pos_index) != 0
+        self.0.contains(reg.get_id())
     }
 
     pub fn get_guests(&self) -> RegReserve {
-        let guest_regs = (self.0[0] >> Reg::None as u8) & ((1 << Reg::None as u8) - 1);
+        let guest_regs = (self.0 .0[0] >> Reg::None as u8) & ((1 << Reg::None as u8) - 1);
         let spilled_over_count = Reg::None as u8 * 2 - 32;
-        let guest_regs = guest_regs | ((self.0[1] & ((1 << spilled_over_count) - 1)) << (Reg::None as u8 - spilled_over_count));
+        let guest_regs = guest_regs | ((self.0 .0[1] & ((1 << spilled_over_count) - 1)) << (Reg::None as u8 - spilled_over_count));
         RegReserve::from(guest_regs)
     }
 
     pub fn get_fixed(&self) -> RegReserve {
-        RegReserve::from(self.0[0] & ((1 << Reg::None as u8) - 1))
-    }
-
-    pub const fn len(&self) -> usize {
-        let mut sum = 0;
-        let mut i = 0;
-        while i < self.0.len() {
-            sum += self.0[i].count_ones();
-            i += 1;
-        }
-        sum as usize
+        RegReserve::from(self.0 .0[0] & ((1 << Reg::None as u8) - 1))
     }
 
     pub const fn len_any(&self) -> usize {
         let mut sum = 0;
         let mut i = 0;
-        while i < self.0.len() {
-            sum += self.0[i].count_ones();
+        while i < self.0 .0.len() {
+            sum += self.0 .0[i].count_ones();
             i += 1;
         }
         const FIXED_REGS_OVERFLOW: u8 = Reg::None as u8;
-        (sum - (self.0[0] & ((1 << FIXED_REGS_OVERFLOW) - 1)).count_ones()) as usize
+        (sum - (self.0 .0[0] & ((1 << FIXED_REGS_OVERFLOW) - 1)).count_ones()) as usize
     }
 
     pub const fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.0.len() == 0
     }
 
     pub fn iter_fixed(&self) -> BlockRegFixedSetIter {
@@ -112,7 +86,7 @@ impl BlockRegSet {
             block_reg_set: self,
             current: 0,
             found: 0,
-            len: self.len(),
+            len: self.0.len(),
         }
     }
 }
@@ -121,14 +95,14 @@ impl Add<BlockReg> for BlockRegSet {
     type Output = BlockRegSet;
 
     fn add(mut self, rhs: BlockReg) -> Self::Output {
-        self._add(rhs);
+        self.0 += rhs.get_id();
         self
     }
 }
 
 impl AddAssign<BlockReg> for BlockRegSet {
     fn add_assign(&mut self, rhs: BlockReg) {
-        self._add(rhs)
+        self.0 += rhs.get_id();
     }
 }
 
@@ -136,14 +110,14 @@ impl Sub<BlockReg> for BlockRegSet {
     type Output = BlockRegSet;
 
     fn sub(mut self, rhs: BlockReg) -> Self::Output {
-        self._sub(rhs);
+        self.0 -= rhs.get_id();
         self
     }
 }
 
 impl SubAssign<BlockReg> for BlockRegSet {
     fn sub_assign(&mut self, rhs: BlockReg) {
-        self._sub(rhs);
+        self.0 -= rhs.get_id()
     }
 }
 
@@ -151,18 +125,14 @@ impl Add<BlockRegSet> for BlockRegSet {
     type Output = BlockRegSet;
 
     fn add(mut self, rhs: BlockRegSet) -> Self::Output {
-        for i in 0..self.0.len() {
-            self.0[i] |= rhs.0[i];
-        }
+        self.0 += rhs.0;
         self
     }
 }
 
 impl AddAssign<BlockRegSet> for BlockRegSet {
     fn add_assign(&mut self, rhs: BlockRegSet) {
-        for i in 0..self.0.len() {
-            self.0[i] |= rhs.0[i];
-        }
+        self.0 += rhs.0;
     }
 }
 
@@ -170,18 +140,14 @@ impl Sub<BlockRegSet> for BlockRegSet {
     type Output = BlockRegSet;
 
     fn sub(mut self, rhs: BlockRegSet) -> Self::Output {
-        for i in 0..self.0.len() {
-            self.0[i] &= !rhs.0[i];
-        }
+        self.0 -= rhs.0;
         self
     }
 }
 
 impl SubAssign<BlockRegSet> for BlockRegSet {
     fn sub_assign(&mut self, rhs: BlockRegSet) {
-        for i in 0..self.0.len() {
-            self.0[i] &= !rhs.0[i];
-        }
+        self.0 -= rhs.0;
     }
 }
 
@@ -189,55 +155,44 @@ impl Sub<RegReserve> for BlockRegSet {
     type Output = BlockRegSet;
 
     fn sub(mut self, rhs: RegReserve) -> Self::Output {
-        self.0[0] &= !rhs.0;
+        self.0 .0[0] &= !rhs.0;
         self
     }
 }
 
 impl SubAssign<RegReserve> for BlockRegSet {
     fn sub_assign(&mut self, rhs: RegReserve) {
-        self.0[0] &= !rhs.0;
+        self.0 .0[0] &= !rhs.0;
     }
 }
 
 impl BitAnd<BlockRegSet> for BlockRegSet {
     type Output = BlockRegSet;
 
-    fn bitand(mut self, rhs: BlockRegSet) -> Self::Output {
-        for i in 0..self.0.len() {
-            self.0[i] &= rhs.0[i];
-        }
-        self
+    fn bitand(self, rhs: BlockRegSet) -> Self::Output {
+        BlockRegSet(self.0 & rhs.0)
     }
 }
 
 impl BitXor<BlockRegSet> for BlockRegSet {
     type Output = BlockRegSet;
 
-    fn bitxor(mut self, rhs: BlockRegSet) -> Self::Output {
-        for i in 0..self.0.len() {
-            self.0[i] ^= rhs.0[i];
-        }
-        self
+    fn bitxor(self, rhs: BlockRegSet) -> Self::Output {
+        BlockRegSet(self.0 ^ rhs.0)
     }
 }
 
 impl BitXorAssign for BlockRegSet {
     fn bitxor_assign(&mut self, rhs: Self) {
-        for i in 0..self.0.len() {
-            self.0[i] ^= rhs.0[i];
-        }
+        self.0 ^= rhs.0
     }
 }
 
 impl Not for BlockRegSet {
     type Output = BlockRegSet;
 
-    fn not(mut self) -> Self::Output {
-        for i in 0..self.0.len() {
-            self.0[i] = !self.0[i];
-        }
-        self
+    fn not(self) -> Self::Output {
+        BlockRegSet(!self.0)
     }
 }
 

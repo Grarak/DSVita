@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 use std::{mem, ptr, thread};
 use CpuType::{ARM7, ARM9};
 
+mod bitset;
 mod cartridge_io;
 mod cartridge_metadata;
 mod core;
@@ -194,13 +195,16 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     let mut jit_asm_arm9 = JitAsm::<{ ARM9 }>::new(unsafe { emu.get().as_mut().unwrap() });
     let mut jit_asm_arm7 = JitAsm::<{ ARM7 }>::new(unsafe { emu.get().as_mut().unwrap() });
 
+    let emu = emu.get_mut();
+    get_jit_mut!(emu).open();
+
+    jit_asm_arm9.init_common_funs();
+    jit_asm_arm7.init_common_funs();
+
     unsafe {
         JIT_ASM_ARM9_PTR = &mut jit_asm_arm9;
         JIT_ASM_ARM7_PTR = &mut jit_asm_arm7;
     }
-
-    let emu = emu.get_mut();
-    get_jit_mut!(emu).open();
 
     get_mmu!(jit_asm_arm9.emu, ARM9).update_all(emu);
     get_mmu!(jit_asm_arm7.emu, ARM7).update_all(emu);

@@ -5,7 +5,7 @@ use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockAsmBuf, BlockInst};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{MemoryAmount, ShiftType};
-use crate::utils::{BuildNoHasher, NoHashSet};
+use crate::IS_DEBUG;
 use std::fmt::{Debug, Formatter};
 
 pub struct BasicBlock {
@@ -18,8 +18,8 @@ pub struct BasicBlock {
     pub regs_live_ranges: Vec<BlockRegSet>,
     pub used_regs: Vec<BlockRegSet>,
 
-    pub enter_blocks: NoHashSet<usize>,
-    pub exit_blocks: NoHashSet<usize>,
+    pub enter_blocks: Vec<usize>,
+    pub exit_blocks: Vec<usize>,
 
     pub insts_link: BlockInstList,
 
@@ -38,8 +38,8 @@ impl BasicBlock {
             regs_live_ranges: Vec::new(),
             used_regs: Vec::new(),
 
-            enter_blocks: NoHashSet::default(),
-            exit_blocks: NoHashSet::with_capacity_and_hasher(2, BuildNoHasher),
+            enter_blocks: Vec::new(),
+            exit_blocks: Vec::with_capacity(2),
 
             insts_link: BlockInstList::new(),
 
@@ -63,11 +63,7 @@ impl BasicBlock {
             let mut add_inst = true;
             let mut guest_regs_outputs = RegReserve::new();
             match &mut asm.buf.insts[i] {
-                BlockInst::Label { guest_pc, .. } => {
-                    if let Some(pc) = guest_pc {
-                        last_pc = *pc;
-                    }
-                }
+                BlockInst::Label { guest_pc: Some(pc), .. } => last_pc = *pc,
                 BlockInst::GuestPc(pc) => last_pc = *pc,
                 _ => match asm.buf.insts[i] {
                     BlockInst::SaveContext {
@@ -130,6 +126,7 @@ impl BasicBlock {
                                 Reg::PC => {
                                     if !pc_initialized {
                                         pc_initialized = true;
+                                        last_pc_reg = Reg::PC.into();
                                         self.insts_link.insert_end(asm.buf.insts.len());
                                         asm.buf.insts.push(BlockInst::Alu2Op0 {
                                             op: BlockAluOp::Mov,
@@ -240,6 +237,10 @@ impl BasicBlock {
                                 }
                                 _ => {}
                             }
+                        }
+
+                        if outputs.contains(Reg::PC.into()) {
+                            pc_initialized = false;
                         }
 
                         guest_regs_outputs = outputs.get_guests();
@@ -376,13 +377,13 @@ impl BasicBlock {
         }
     }
 
-    pub fn emit_opcodes(&self, asm: &mut BlockAsm, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize) -> Vec<u32> {
+    pub fn emit_opcodes(&self, asm: &mut BlockAsm, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize, used_host_regs: RegReserve) -> Vec<u32> {
         let mut opcodes = Vec::new();
         let mut inst_opcodes = Vec::new();
         for entry in self.insts_link.iter() {
             let inst = &mut asm.buf.insts[entry.value];
 
-            if unsafe { BLOCK_LOG } {
+            if IS_DEBUG && unsafe { BLOCK_LOG } {
                 match inst {
                     BlockInst::GuestPc(pc) => {
                         println!("(0x{:x}, 0x{pc:x}),", opcodes.len() + opcodes_offset);
@@ -397,7 +398,7 @@ impl BasicBlock {
             }
 
             inst_opcodes.clear();
-            inst.emit_opcode(&mut inst_opcodes, opcodes.len(), branch_placeholders, opcodes_offset);
+            inst.emit_opcode(&mut inst_opcodes, opcodes.len(), branch_placeholders, opcodes_offset, used_host_regs);
             opcodes.extend(&inst_opcodes);
         }
         opcodes
