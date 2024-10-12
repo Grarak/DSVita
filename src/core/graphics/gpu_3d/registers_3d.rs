@@ -14,7 +14,7 @@ use std::mem;
 #[derive(Copy, Clone, FromBits)]
 pub struct GxStat {
     box_pos_vec_test_busy: bool,
-    box_test_result: u1,
+    box_test_result: bool,
     not_used: u6,
     pos_vec_mtx_stack_lvl: u5,
     proj_mtx_stack_lvl: u1,
@@ -231,24 +231,24 @@ pub struct Vertex {
     pub color: u32,
 }
 
-fn intersect(v1: &Vertex, v2: &Vertex, val1: i32, val2: i32) -> Vertex {
-    let d1 = val1 as i64 + v1.coords[3] as i64;
-    let d2 = val2 as i64 + v2.coords[3] as i64;
+fn intersect(v1: &Vectori32<4>, v2: &Vectori32<4>, val1: i32, val2: i32) -> Vectori32<4> {
+    let d1 = val1 as i64 + v1[3] as i64;
+    let d2 = val2 as i64 + v2[3] as i64;
     if d2 == d1 {
         return *v1;
     }
 
-    let mut vertex = Vertex::default();
+    let mut vertex = Vectori32::default();
     for i in 0..4 {
-        vertex.coords[i] = v1.coords[i] + ((v2.coords[i] - v1.coords[i]) as i64 * -d1 / (d2 - d1)) as i32;
+        vertex[i] = v1[i] + ((v2[i] - v1[i]) as i64 * -d1 / (d2 - d1)) as i32;
     }
     vertex
 }
 
-fn clip_polygon(unclipped: &[Vertex; 4], clipped: &mut [Vertex; 10], size: &mut usize) -> bool {
+fn clip_polygon(unclipped: &[Vectori32<4>; 4], clipped: &mut [Vectori32<4>; 10], size: &mut usize) -> bool {
     let mut clip = false;
 
-    let mut vertices = [Vertex::default(); 10];
+    let mut vertices = [Vectori32::<4>::default(); 10];
     vertices[..4].copy_from_slice(unclipped);
 
     for i in 0..6 {
@@ -260,17 +260,17 @@ fn clip_polygon(unclipped: &[Vertex; 4], clipped: &mut [Vertex; 10], size: &mut 
             let previous = &vertices[(j.wrapping_sub(1).wrapping_add(old_size)) % old_size];
 
             let (current_val, previous_val) = match i {
-                0 => (current.coords[0], previous.coords[0]),
-                1 => (-current.coords[0], -previous.coords[0]),
-                2 => (current.coords[1], previous.coords[1]),
-                3 => (-current.coords[1], -previous.coords[1]),
-                4 => (current.coords[2], previous.coords[2]),
-                5 => (-current.coords[2], -previous.coords[2]),
+                0 => (current[0], previous[0]),
+                1 => (-current[0], -previous[0]),
+                2 => (current[1], previous[1]),
+                3 => (-current[1], -previous[1]),
+                4 => (current[2], previous[2]),
+                5 => (-current[2], -previous[2]),
                 _ => unsafe { unreachable_unchecked() },
             };
 
-            if current_val >= -current.coords[3] {
-                if previous_val < -previous.coords[3] {
+            if current_val >= -current[3] {
+                if previous_val < -previous[3] {
                     clipped[*size] = intersect(current, previous, current_val, previous_val);
                     *size += 1;
                     clip = true;
@@ -278,7 +278,7 @@ fn clip_polygon(unclipped: &[Vertex; 4], clipped: &mut [Vertex; 10], size: &mut 
 
                 clipped[*size] = *current;
                 *size += 1;
-            } else if previous_val >= -previous.coords[3] {
+            } else if previous_val >= -previous[3] {
                 clipped[*size] = intersect(current, previous, current_val, previous_val);
                 *size += 1;
                 clip = true;
@@ -392,8 +392,8 @@ pub struct Polygons {
 pub struct Gpu3DRegisters {
     cmd_fifo: VecDeque<Entry>,
     cmd_pipe_size: u8,
-    mtx_queue: u32,
     test_queue: u32,
+    mtx_queue: u32,
 
     cmd_fifo_param_count: u32,
 
@@ -437,8 +437,8 @@ pub struct Gpu3DRegisters {
 
     pub gx_stat: GxStat,
     gx_fifo: u32,
-    pos_result: [i32; 4],
-    vec_result: [i16; 3],
+    pos_result: Vectori32<4>,
+    vec_result: Vectori16<3>,
 }
 
 impl Gpu3DRegisters {
@@ -547,18 +547,10 @@ impl Gpu3DRegisters {
                 0x41 => {}
                 0x50 => self.exe_swap_buffers(entry.param),
                 0x60 => self.exe_viewport(entry.param),
-                0x70 => {
-                    // todo!()
-                }
-                0x71 => {
-                    // todo!()
-                }
-                0x72 => {
-                    // todo!()
-                }
-                _ => {
-                    todo!("{:x}", entry.cmd);
-                }
+                0x70 => self.exe_box_test(unsafe { params.try_into().unwrap_unchecked() }),
+                0x71 => self.exe_pos_test(unsafe { params.try_into().unwrap_unchecked() }),
+                0x72 => self.exe_vec_test(entry.param),
+                _ => unreachable!(),
             }
             executed_cycles += 4;
 
@@ -1013,6 +1005,101 @@ impl Gpu3DRegisters {
         self.viewport_next[3] = (191 - viewport.y1() as u16) - self.viewport_next[1] + 1;
     }
 
+    fn exe_box_test(&mut self, params: [u32; 3]) {
+        let mut box_test_coords = [
+            params[0] as i16,
+            (params[0] >> 16) as i16,
+            params[1] as i16,
+            (params[1] >> 16) as i16,
+            params[2] as i16,
+            (params[2] >> 16) as i16,
+        ];
+
+        box_test_coords[3] += box_test_coords[0];
+        box_test_coords[4] += box_test_coords[1];
+        box_test_coords[5] += box_test_coords[2];
+
+        const INDICES: [u8; 8 * 3] = [0, 1, 2, 3, 1, 2, 0, 4, 2, 0, 1, 5, 3, 4, 2, 3, 1, 5, 0, 4, 5, 3, 4, 5];
+
+        if self.clip_dirty {
+            self.matrices.clip = self.matrices.model * self.matrices.proj;
+            self.clip_dirty = false;
+        }
+
+        let mut vertices = [Vectori32::<4>::default(); 8];
+        for i in 0..8 {
+            vertices[i][0] = box_test_coords[INDICES[i * 3 + 0] as usize] as i32;
+            vertices[i][1] = box_test_coords[INDICES[i * 3 + 1] as usize] as i32;
+            vertices[i][2] = box_test_coords[INDICES[i * 3 + 2] as usize] as i32;
+            vertices[i][3] = 1 << 12;
+            vertices[i] *= self.matrices.clip;
+        }
+
+        let faces = [
+            [vertices[0], vertices[1], vertices[4], vertices[2]],
+            [vertices[3], vertices[5], vertices[7], vertices[6]],
+            [vertices[3], vertices[5], vertices[1], vertices[0]],
+            [vertices[6], vertices[7], vertices[4], vertices[2]],
+            [vertices[0], vertices[3], vertices[6], vertices[2]],
+            [vertices[1], vertices[5], vertices[7], vertices[4]],
+        ];
+
+        self.test_queue -= params.len() as u32;
+        if self.test_queue == 0 {
+            self.gx_stat.set_box_pos_vec_test_busy(false);
+        }
+
+        for i in 0..6 {
+            let mut size = 4;
+            let mut clipped = [Vectori32::<4>::default(); 10];
+
+            clip_polygon(&faces[i], &mut clipped, &mut size);
+
+            if size > 0 {
+                self.gx_stat.set_box_test_result(true);
+                return;
+            }
+        }
+
+        self.gx_stat.set_box_test_result(false);
+    }
+
+    fn exe_pos_test(&mut self, params: [u32; 2]) {
+        self.saved_vertex.coords[0] = params[0] as i16 as i32;
+        self.saved_vertex.coords[1] = (params[0] >> 16) as i16 as i32;
+        self.saved_vertex.coords[2] = (params[1]) as i16 as i32;
+        self.saved_vertex.coords[3] = 1 << 12;
+
+        if self.clip_dirty {
+            self.matrices.clip = self.matrices.model * self.matrices.proj;
+            self.clip_dirty = false;
+        }
+
+        self.pos_result = self.saved_vertex.coords * self.matrices.clip;
+
+        self.test_queue -= params.len() as u32;
+        if self.test_queue == 0 {
+            self.gx_stat.set_box_pos_vec_test_busy(false);
+        }
+    }
+
+    fn exe_vec_test(&mut self, param: u32) {
+        let mut vector = Vectori32::<3>::default();
+        vector[0] = (((param & 0x000003FF) << 6) as i16 as i32) >> 3;
+        vector[1] = (((param & 0x000FFC00) >> 4) as i16 as i32) >> 3;
+        vector[2] = (((param & 0x3FF00000) >> 14) as i16 as i32) >> 3;
+
+        vector *= self.matrices.vec;
+        self.vec_result[0] = ((vector[0] << 3) as i16) >> 3;
+        self.vec_result[1] = ((vector[1] << 3) as i16) >> 3;
+        self.vec_result[2] = ((vector[2] << 3) as i16) >> 3;
+
+        self.test_queue -= 1;
+        if self.test_queue == 0 {
+            self.gx_stat.set_box_pos_vec_test_busy(false);
+        }
+    }
+
     fn process_vertices(&mut self) {
         let [x, y, w, h] = *self.viewport.as_ref();
         let Self { vertices, .. } = self;
@@ -1095,20 +1182,22 @@ impl Gpu3DRegisters {
         self.saved_polygon.size = size;
         self.saved_polygon.vertices_index = self.vertices.count_in - size;
 
-        let mut unclipped = [Vertex::default(); 4];
-        unclipped[..size].copy_from_slice(&self.vertices.ins[self.saved_polygon.vertices_index..self.saved_polygon.vertices_index + size]);
+        let mut unclipped = [Vectori32::<4>::default(); 4];
+        for i in 0..size {
+            unclipped[i] = self.vertices.ins[self.saved_polygon.vertices_index + i].coords;
+        }
 
         if self.polygon_type == PolygonType::QuadliteralStrips {
             unclipped.swap(2, 3);
             self.vertices.ins.swap(self.saved_polygon.vertices_index + 2, self.saved_polygon.vertices_index + 3);
         }
 
-        let x1 = (unclipped[1].coords[0] - unclipped[0].coords[0]) as i64;
-        let y1 = (unclipped[1].coords[1] - unclipped[0].coords[1]) as i64;
-        let w1 = (unclipped[1].coords[3] - unclipped[0].coords[3]) as i64;
-        let x2 = (unclipped[2].coords[0] - unclipped[0].coords[0]) as i64;
-        let y2 = (unclipped[2].coords[1] - unclipped[0].coords[1]) as i64;
-        let w2 = (unclipped[2].coords[3] - unclipped[0].coords[3]) as i64;
+        let x1 = (unclipped[1][0] - unclipped[0][0]) as i64;
+        let y1 = (unclipped[1][1] - unclipped[0][1]) as i64;
+        let w1 = (unclipped[1][3] - unclipped[0][3]) as i64;
+        let x2 = (unclipped[2][0] - unclipped[0][0]) as i64;
+        let y2 = (unclipped[2][1] - unclipped[0][1]) as i64;
+        let w2 = (unclipped[2][3] - unclipped[0][3]) as i64;
 
         let mut xc = y1 * w2 - w1 * y2;
         let mut yc = w1 * x2 - x1 * w2;
@@ -1120,7 +1209,7 @@ impl Gpu3DRegisters {
             wc >>= 4;
         }
 
-        let mut dot = xc * unclipped[0].coords[0] as i64 + yc * unclipped[0].coords[1] as i64 + wc * unclipped[0].coords[3] as i64;
+        let mut dot = xc * unclipped[0][0] as i64 + yc * unclipped[0][1] as i64 + wc * unclipped[0][3] as i64;
 
         self.saved_polygon.clockwise = dot < 0;
 
@@ -1131,7 +1220,7 @@ impl Gpu3DRegisters {
             self.clockwise = !self.clockwise;
         }
 
-        let mut clipped = [Vertex::default(); 10];
+        let mut clipped = [Vectori32::<4>::default(); 10];
         let cull = (!self.render_front && dot > 0) || (!self.render_back && dot < 0);
         let mut clipped_size = self.saved_polygon.size;
         let clip = if cull { false } else { clip_polygon(&unclipped, &mut clipped, &mut clipped_size) };
@@ -1257,6 +1346,7 @@ impl Gpu3DRegisters {
             }
             0x70 | 0x71 | 0x72 => {
                 self.test_queue += 1;
+                self.gx_stat.set_box_pos_vec_test_busy(true);
             }
             _ => {}
         }
@@ -1276,6 +1366,18 @@ impl Gpu3DRegisters {
 
     pub fn get_gx_stat(&self) -> u32 {
         u32::from(self.gx_stat)
+    }
+
+    pub fn get_ram_count(&self) -> u32 {
+        ((self.vertices.count_in as u32) << 16) | (self.polygons.count_in as u32)
+    }
+
+    pub fn get_pos_result(&self, index: usize) -> u32 {
+        self.pos_result[index] as u32
+    }
+
+    pub fn get_vec_result(&self, index: usize) -> u16 {
+        self.vec_result[index] as u16
     }
 
     pub fn set_gx_fifo(&mut self, mask: u32, value: u32, emu: &mut Emu) {
