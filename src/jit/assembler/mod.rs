@@ -1,5 +1,5 @@
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::block_inst::BlockInst;
+use crate::jit::assembler::block_inst::{BlockInst, BlockInstKind};
 use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
 use crate::jit::assembler::block_reg_set::BLOCK_REG_SET_ARRAY_SIZE;
 use crate::jit::inst_info::{Shift, ShiftValue};

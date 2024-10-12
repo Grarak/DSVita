@@ -72,10 +72,157 @@ pub struct BranchEncoding {
     pub cond: u4,
 }
 
+#[derive(Clone)]
+pub struct BlockInst {
+    pub cond: Cond,
+    pub kind: BlockInstKind,
+}
+
 impl BlockInst {
+    pub fn new(cond: Cond, kind: BlockInstKind) -> Self {
+        BlockInst { cond, kind }
+    }
+
+    pub fn new_al(kind: BlockInstKind) -> Self {
+        Self::new(Cond::AL, kind)
+    }
+
     pub fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        self.kind.get_io()
+    }
+
+    pub fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        self.kind.replace_input_regs(old, new);
+    }
+
+    pub fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        self.kind.replace_output_regs(old, new);
+    }
+
+    pub fn replace_regs(&mut self, old: BlockReg, new: BlockReg) {
+        self.kind.replace_regs(old, new);
+    }
+}
+
+impl From<BlockInstKind> for BlockInst {
+    fn from(value: BlockInstKind) -> Self {
+        BlockInst::new_al(value)
+    }
+}
+
+impl Debug for BlockInst {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} {:?}", self.cond, self.kind)
+    }
+}
+
+#[derive(Clone)]
+pub enum BlockInstKind {
+    Alu3 {
+        op: BlockAluOp,
+        operands: [BlockOperandShift; 3],
+        set_cond: BlockAluSetCond,
+        thumb_pc_aligned: bool,
+    },
+    Alu2Op1 {
+        op: BlockAluOp,
+        operands: [BlockOperandShift; 2],
+        set_cond: BlockAluSetCond,
+        thumb_pc_aligned: bool,
+    },
+    Alu2Op0 {
+        op: BlockAluOp,
+        operands: [BlockOperandShift; 2],
+        set_cond: BlockAluSetCond,
+        thumb_pc_aligned: bool,
+    },
+    Transfer {
+        op: BlockTransferOp,
+        operands: [BlockOperandShift; 3],
+        signed: bool,
+        amount: MemoryAmount,
+        add_to_base: bool,
+    },
+    TransferMultiple {
+        op: BlockTransferOp,
+        operand: BlockReg,
+        regs: RegReserve,
+        write_back: bool,
+        pre: bool,
+        add_to_base: bool,
+    },
+    SystemReg {
+        op: BlockSystemRegOp,
+        operand: BlockOperand,
+    },
+    Bfc {
+        operand: BlockReg,
+        lsb: u8,
+        width: u8,
+    },
+    Bfi {
+        operands: [BlockReg; 2],
+        lsb: u8,
+        width: u8,
+    },
+    Mul {
+        operands: [BlockOperandShift; 3],
+        set_cond: BlockAluSetCond,
+        thumb_pc_aligned: bool,
+    },
+
+    Label {
+        label: BlockLabel,
+        guest_pc: Option<u32>,
+    },
+    Branch {
+        label: BlockLabel,
+        block_index: usize,
+    },
+
+    SaveContext {
+        thread_regs_addr_reg: BlockReg,
+    },
+    SaveReg {
+        guest_reg: Reg,
+        reg_mapped: BlockReg,
+        thread_regs_addr_reg: BlockReg,
+    },
+    RestoreReg {
+        guest_reg: Reg,
+        reg_mapped: BlockReg,
+        thread_regs_addr_reg: BlockReg,
+        tmp_guest_cpsr_reg: BlockReg,
+    },
+
+    Call {
+        func_reg: BlockReg,
+        args: [Option<BlockReg>; 4],
+        has_return: bool,
+    },
+    CallCommon {
+        mem_offset: usize,
+        args: [Option<BlockReg>; 4],
+        has_return: bool,
+    },
+    Bkpt(u16),
+
+    GuestPc(u32),
+    GenericGuestInst {
+        inst: GuestInstInfo,
+        regs_mapping: [BlockReg; Reg::None as usize],
+    },
+
+    Prologue,
+    Epilogue {
+        restore_all_regs: bool,
+    },
+}
+
+impl BlockInstKind {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
         match self {
-            BlockInst::Alu3 { operands, set_cond, .. } | BlockInst::Mul { operands, set_cond, .. } => {
+            BlockInstKind::Alu3 { operands, set_cond, .. } | BlockInstKind::Mul { operands, set_cond, .. } => {
                 let mut outputs = BlockRegSet::new();
                 outputs += operands[0].as_reg();
                 match set_cond {
@@ -88,7 +235,7 @@ impl BlockInst {
                 }
                 (block_reg_set!(Some(operands[1].as_reg()), operands[2].try_as_reg(), operands[2].try_as_shift_reg()), outputs)
             }
-            BlockInst::Alu2Op1 { operands, set_cond, .. } => {
+            BlockInstKind::Alu2Op1 { operands, set_cond, .. } => {
                 let mut outputs = BlockRegSet::new();
                 match set_cond {
                     BlockAluSetCond::Host => outputs += BlockReg::Fixed(Reg::CPSR),
@@ -100,7 +247,7 @@ impl BlockInst {
                 }
                 (block_reg_set!(Some(operands[0].as_reg()), operands[1].try_as_reg(), operands[1].try_as_shift_reg()), outputs)
             }
-            BlockInst::Alu2Op0 { operands, set_cond, .. } => {
+            BlockInstKind::Alu2Op0 { operands, set_cond, .. } => {
                 let mut outputs = BlockRegSet::new();
                 outputs += operands[0].as_reg();
                 match set_cond {
@@ -113,7 +260,7 @@ impl BlockInst {
                 }
                 (block_reg_set!(operands[1].try_as_reg(), operands[1].try_as_shift_reg()), outputs)
             }
-            BlockInst::Transfer { op, operands, .. } => match op {
+            BlockInstKind::Transfer { op, operands, .. } => match op {
                 BlockTransferOp::Read => (
                     block_reg_set!(Some(operands[1].as_reg()), operands[2].try_as_reg(), operands[2].try_as_shift_reg()),
                     block_reg_set!(Some(operands[0].as_reg())),
@@ -123,22 +270,22 @@ impl BlockInst {
                     block_reg_set!(),
                 ),
             },
-            BlockInst::TransferMultiple { op, operand, regs, write_back, .. } => match op {
+            BlockInstKind::TransferMultiple { op, operand, regs, write_back, .. } => match op {
                 BlockTransferOp::Read => (
                     block_reg_set!(Some(*operand)),
                     if *write_back { BlockRegSet::new_fixed(*regs) + *operand } else { BlockRegSet::new_fixed(*regs) },
                 ),
                 BlockTransferOp::Write => (BlockRegSet::new_fixed(*regs) + *operand, if *write_back { block_reg_set!(Some(*operand)) } else { block_reg_set!() }),
             },
-            BlockInst::SystemReg { op, operand } => match op {
+            BlockInstKind::SystemReg { op, operand } => match op {
                 BlockSystemRegOp::Mrs => (block_reg_set!(), block_reg_set!(Some(operand.as_reg()))),
                 BlockSystemRegOp::Msr => (block_reg_set!(operand.try_as_reg()), block_reg_set!()),
             },
-            BlockInst::Bfc { operand, .. } => (block_reg_set!(Some(*operand)), block_reg_set!(Some(*operand))),
-            BlockInst::Bfi { operands, .. } => (block_reg_set!(Some(operands[0]), Some(operands[1])), block_reg_set!(Some(operands[0]))),
+            BlockInstKind::Bfc { operand, .. } => (block_reg_set!(Some(*operand)), block_reg_set!(Some(*operand))),
+            BlockInstKind::Bfi { operands, .. } => (block_reg_set!(Some(operands[0]), Some(operands[1])), block_reg_set!(Some(operands[0]))),
 
-            BlockInst::SaveContext { .. } => (block_reg_set!(), block_reg_set!()),
-            BlockInst::SaveReg {
+            BlockInstKind::SaveContext { .. } => (block_reg_set!(), block_reg_set!()),
+            BlockInstKind::SaveReg {
                 guest_reg,
                 reg_mapped,
                 thread_regs_addr_reg,
@@ -158,7 +305,7 @@ impl BlockInst {
                 }
                 (inputs, outputs)
             }
-            BlockInst::RestoreReg {
+            BlockInstKind::RestoreReg {
                 guest_reg,
                 reg_mapped,
                 thread_regs_addr_reg,
@@ -173,7 +320,7 @@ impl BlockInst {
                 (block_reg_set!(Some(*thread_regs_addr_reg)), outputs)
             }
 
-            BlockInst::Call { func_reg, args, has_return } => {
+            BlockInstKind::Call { func_reg, args, has_return } => {
                 let mut inputs = BlockRegSet::new();
                 inputs += *func_reg;
                 for arg in args {
@@ -194,7 +341,7 @@ impl BlockInst {
                     ),
                 )
             }
-            BlockInst::CallCommon { args, has_return, .. } => {
+            BlockInstKind::CallCommon { args, has_return, .. } => {
                 let mut inputs = BlockRegSet::new();
                 for arg in args {
                     if let Some(arg) = arg {
@@ -214,7 +361,7 @@ impl BlockInst {
                     ),
                 )
             }
-            BlockInst::GenericGuestInst { inst, regs_mapping } => {
+            BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
                 let mut inputs = BlockRegSet::new();
                 let mut outputs = BlockRegSet::new();
                 for reg in inst.src_regs {
@@ -226,16 +373,16 @@ impl BlockInst {
                 (inputs, outputs)
             }
 
-            BlockInst::Prologue => (
+            BlockInstKind::Prologue => (
                 block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(Reg::LR))),
                 block_reg_set!(Some(BlockReg::Fixed(Reg::SP))),
             ),
-            BlockInst::Epilogue { .. } => (
+            BlockInstKind::Epilogue { .. } => (
                 block_reg_set!(Some(BlockReg::Fixed(Reg::SP))),
                 block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(Reg::PC))),
             ),
 
-            BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) => (block_reg_set!(), block_reg_set!()),
+            BlockInstKind::Label { .. } | BlockInstKind::Branch { .. } | BlockInstKind::GuestPc(_) | BlockInstKind::Bkpt(_) => (block_reg_set!(), block_reg_set!()),
         }
     }
 
@@ -259,36 +406,36 @@ impl BlockInst {
         }
     }
 
-    pub fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
         match self {
-            BlockInst::Alu3 { operands, .. } | BlockInst::Mul { operands, .. } => {
+            BlockInstKind::Alu3 { operands, .. } | BlockInstKind::Mul { operands, .. } => {
                 operands[1].replace_regs(old, new);
                 operands[2].replace_regs(old, new);
             }
-            BlockInst::Alu2Op1 { operands, .. } => Self::replace_shift_operands(operands, old, new),
-            BlockInst::Alu2Op0 { operands, .. } => operands[1].replace_regs(old, new),
-            BlockInst::Transfer { op, operands, .. } => {
+            BlockInstKind::Alu2Op1 { operands, .. } => Self::replace_shift_operands(operands, old, new),
+            BlockInstKind::Alu2Op0 { operands, .. } => operands[1].replace_regs(old, new),
+            BlockInstKind::Transfer { op, operands, .. } => {
                 if *op == BlockTransferOp::Write {
                     operands[0].replace_regs(old, new);
                 }
                 operands[1].replace_regs(old, new);
                 operands[2].replace_regs(old, new);
             }
-            BlockInst::TransferMultiple { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInst::SystemReg { op, operand } => {
+            BlockInstKind::TransferMultiple { operand, .. } => Self::replace_reg(operand, old, new),
+            BlockInstKind::SystemReg { op, operand } => {
                 if *op == BlockSystemRegOp::Msr {
                     Self::replace_operand(operand, old, new);
                 }
             }
-            BlockInst::Bfc { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInst::Bfi { operands, .. } => {
+            BlockInstKind::Bfc { operand, .. } => Self::replace_reg(operand, old, new),
+            BlockInstKind::Bfi { operands, .. } => {
                 Self::replace_reg(&mut operands[0], old, new);
                 Self::replace_reg(&mut operands[1], old, new);
             }
-            BlockInst::SaveContext { .. } => {
+            BlockInstKind::SaveContext { .. } => {
                 unreachable!()
             }
-            BlockInst::SaveReg {
+            BlockInstKind::SaveReg {
                 guest_reg,
                 reg_mapped,
                 thread_regs_addr_reg,
@@ -299,46 +446,52 @@ impl BlockInst {
                 }
                 Self::replace_reg(thread_regs_addr_reg, old, new);
             }
-            BlockInst::RestoreReg { thread_regs_addr_reg, .. } => Self::replace_reg(thread_regs_addr_reg, old, new),
-            BlockInst::Call { func_reg, .. } => Self::replace_reg(func_reg, old, new),
-            BlockInst::GenericGuestInst { inst, regs_mapping } => {
+            BlockInstKind::RestoreReg { thread_regs_addr_reg, .. } => Self::replace_reg(thread_regs_addr_reg, old, new),
+            BlockInstKind::Call { func_reg, .. } => Self::replace_reg(func_reg, old, new),
+            BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
                 for reg in inst.src_regs {
                     Self::replace_reg(&mut regs_mapping[reg as usize], old, new);
                 }
             }
-            BlockInst::CallCommon { .. } | BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue { .. } => {}
+            BlockInstKind::CallCommon { .. }
+            | BlockInstKind::Label { .. }
+            | BlockInstKind::Branch { .. }
+            | BlockInstKind::GuestPc(_)
+            | BlockInstKind::Bkpt(_)
+            | BlockInstKind::Prologue
+            | BlockInstKind::Epilogue { .. } => {}
         }
     }
 
-    pub fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
         match self {
-            BlockInst::Alu3 { operands, .. } | BlockInst::Mul { operands, .. } => operands[0].replace_regs(old, new),
-            BlockInst::Alu2Op1 { .. } => {}
-            BlockInst::Alu2Op0 { operands, .. } => operands[0].replace_regs(old, new),
-            BlockInst::Transfer { op, operands, .. } => {
+            BlockInstKind::Alu3 { operands, .. } | BlockInstKind::Mul { operands, .. } => operands[0].replace_regs(old, new),
+            BlockInstKind::Alu2Op1 { .. } => {}
+            BlockInstKind::Alu2Op0 { operands, .. } => operands[0].replace_regs(old, new),
+            BlockInstKind::Transfer { op, operands, .. } => {
                 if *op == BlockTransferOp::Read {
                     operands[0].replace_regs(old, new);
                 }
             }
-            BlockInst::TransferMultiple { operand, write_back, .. } => {
+            BlockInstKind::TransferMultiple { operand, write_back, .. } => {
                 if *write_back {
                     Self::replace_reg(operand, old, new);
                 }
             }
-            BlockInst::SystemReg { op, operand } => {
+            BlockInstKind::SystemReg { op, operand } => {
                 if *op == BlockSystemRegOp::Mrs {
                     Self::replace_operand(operand, old, new);
                 }
             }
-            BlockInst::Bfc { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInst::Bfi { operands, .. } => Self::replace_reg(&mut operands[0], old, new),
-            BlockInst::SaveContext { tmp_guest_cpsr_reg, .. } => Self::replace_reg(tmp_guest_cpsr_reg, old, new),
-            BlockInst::SaveReg { guest_reg, reg_mapped, .. } => {
+            BlockInstKind::Bfc { operand, .. } => Self::replace_reg(operand, old, new),
+            BlockInstKind::Bfi { operands, .. } => Self::replace_reg(&mut operands[0], old, new),
+            BlockInstKind::SaveContext { .. } => {}
+            BlockInstKind::SaveReg { guest_reg, reg_mapped, .. } => {
                 if *guest_reg == Reg::CPSR {
                     Self::replace_reg(reg_mapped, old, new);
                 }
             }
-            BlockInst::RestoreReg {
+            BlockInstKind::RestoreReg {
                 guest_reg,
                 reg_mapped,
                 tmp_guest_cpsr_reg,
@@ -349,38 +502,44 @@ impl BlockInst {
                     Self::replace_reg(tmp_guest_cpsr_reg, old, new);
                 }
             }
-            BlockInst::Call { .. } => {}
-            BlockInst::GenericGuestInst { inst, regs_mapping } => {
+            BlockInstKind::Call { .. } => {}
+            BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
                 for reg in inst.out_regs {
                     Self::replace_reg(&mut regs_mapping[reg as usize], old, new);
                 }
             }
-            BlockInst::CallCommon { .. } | BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue { .. } => {}
+            BlockInstKind::CallCommon { .. }
+            | BlockInstKind::Label { .. }
+            | BlockInstKind::Branch { .. }
+            | BlockInstKind::GuestPc(_)
+            | BlockInstKind::Bkpt(_)
+            | BlockInstKind::Prologue
+            | BlockInstKind::Epilogue { .. } => {}
         }
     }
 
-    pub fn replace_regs(&mut self, old: BlockReg, new: BlockReg) {
+    fn replace_regs(&mut self, old: BlockReg, new: BlockReg) {
         match self {
-            BlockInst::Alu3 { operands, .. } | BlockInst::Mul { operands, .. } => Self::replace_shift_operands(operands, old, new),
-            BlockInst::Alu2Op1 { operands, .. } => Self::replace_shift_operands(operands, old, new),
-            BlockInst::Alu2Op0 { operands, .. } => Self::replace_shift_operands(operands, old, new),
-            BlockInst::Transfer { operands, .. } => Self::replace_shift_operands(operands, old, new),
-            BlockInst::TransferMultiple { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInst::SystemReg { operand, .. } => Self::replace_operand(operand, old, new),
-            BlockInst::Bfc { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInst::Bfi { operands, .. } => {
+            BlockInstKind::Alu3 { operands, .. } | BlockInstKind::Mul { operands, .. } => Self::replace_shift_operands(operands, old, new),
+            BlockInstKind::Alu2Op1 { operands, .. } => Self::replace_shift_operands(operands, old, new),
+            BlockInstKind::Alu2Op0 { operands, .. } => Self::replace_shift_operands(operands, old, new),
+            BlockInstKind::Transfer { operands, .. } => Self::replace_shift_operands(operands, old, new),
+            BlockInstKind::TransferMultiple { operand, .. } => Self::replace_reg(operand, old, new),
+            BlockInstKind::SystemReg { operand, .. } => Self::replace_operand(operand, old, new),
+            BlockInstKind::Bfc { operand, .. } => Self::replace_reg(operand, old, new),
+            BlockInstKind::Bfi { operands, .. } => {
                 Self::replace_reg(&mut operands[0], old, new);
                 Self::replace_reg(&mut operands[1], old, new);
             }
 
-            BlockInst::SaveContext { .. } => {
+            BlockInstKind::SaveContext { .. } => {
                 unreachable!()
             }
-            BlockInst::SaveReg { reg_mapped, thread_regs_addr_reg, .. } => {
+            BlockInstKind::SaveReg { reg_mapped, thread_regs_addr_reg, .. } => {
                 Self::replace_reg(reg_mapped, old, new);
                 Self::replace_reg(thread_regs_addr_reg, old, new);
             }
-            BlockInst::RestoreReg {
+            BlockInstKind::RestoreReg {
                 reg_mapped,
                 thread_regs_addr_reg,
                 tmp_guest_cpsr_reg,
@@ -391,13 +550,19 @@ impl BlockInst {
                 Self::replace_reg(tmp_guest_cpsr_reg, old, new);
             }
 
-            BlockInst::Call { func_reg, .. } => Self::replace_reg(func_reg, old, new),
-            BlockInst::GenericGuestInst { regs_mapping, .. } => {
+            BlockInstKind::Call { func_reg, .. } => Self::replace_reg(func_reg, old, new),
+            BlockInstKind::GenericGuestInst { regs_mapping, .. } => {
                 for reg_mapping in regs_mapping {
                     Self::replace_reg(reg_mapping, old, new);
                 }
             }
-            BlockInst::CallCommon { .. } | BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue { .. } => {}
+            BlockInstKind::CallCommon { .. }
+            | BlockInstKind::Label { .. }
+            | BlockInstKind::Branch { .. }
+            | BlockInstKind::GuestPc(_)
+            | BlockInstKind::Bkpt(_)
+            | BlockInstKind::Prologue
+            | BlockInstKind::Epilogue { .. } => {}
         }
     }
 
@@ -425,18 +590,18 @@ impl BlockInst {
         };
 
         match self {
-            BlockInst::Alu3 { op, operands, set_cond, .. } => match operands[2].operand {
+            BlockInstKind::Alu3 { op, operands, set_cond, .. } => match operands[2].operand {
                 BlockOperand::Reg(reg) => opcodes.push(alu_reg(*op, operands[0].as_reg(), operands[1].as_reg(), reg, operands[2].shift, *set_cond != BlockAluSetCond::None)),
                 BlockOperand::Imm(imm) => opcodes.push(alu_imm(*op, operands[0].as_reg(), operands[1].as_reg(), imm, operands[2].shift, *set_cond != BlockAluSetCond::None)),
             },
-            BlockInst::Alu2Op1 { op, operands, set_cond, .. } => {
+            BlockInstKind::Alu2Op1 { op, operands, set_cond, .. } => {
                 assert_ne!(*set_cond, BlockAluSetCond::None);
                 match operands[1].operand {
                     BlockOperand::Reg(reg) => opcodes.push(alu_reg(*op, BlockReg::Fixed(Reg::R0), operands[0].as_reg(), reg, operands[1].shift, true)),
                     BlockOperand::Imm(imm) => opcodes.push(alu_imm(*op, BlockReg::Fixed(Reg::R0), operands[0].as_reg(), imm, operands[1].shift, true)),
                 }
             }
-            BlockInst::Alu2Op0 { op, operands, set_cond, .. } => match operands[1].operand {
+            BlockInstKind::Alu2Op0 { op, operands, set_cond, .. } => match operands[1].operand {
                 BlockOperand::Reg(reg) => opcodes.push(alu_reg(*op, operands[0].as_reg(), BlockReg::Fixed(Reg::R0), reg, operands[1].shift, *set_cond != BlockAluSetCond::None)),
                 BlockOperand::Imm(imm) => {
                     if *op == BlockAluOp::Mov && *set_cond == BlockAluSetCond::None {
@@ -446,7 +611,7 @@ impl BlockInst {
                     }
                 }
             },
-            BlockInst::Transfer {
+            BlockInstKind::Transfer {
                 op,
                 operands,
                 signed,
@@ -522,7 +687,7 @@ impl BlockInst {
                     )
                 }
             }),
-            BlockInst::TransferMultiple {
+            BlockInstKind::TransferMultiple {
                 op,
                 operand,
                 regs,
@@ -530,13 +695,13 @@ impl BlockInst {
                 pre,
                 add_to_base,
             } => opcodes.push(LdmStm::generic(operand.as_fixed(), *regs, *op == BlockTransferOp::Read, *write_back, *add_to_base, *pre, Cond::AL)),
-            BlockInst::SystemReg { op, operand } => match op {
+            BlockInstKind::SystemReg { op, operand } => match op {
                 BlockSystemRegOp::Mrs => opcodes.push(Mrs::cpsr(operand.as_reg().as_fixed(), Cond::AL)),
                 BlockSystemRegOp::Msr => opcodes.push(Msr::cpsr_flags(operand.as_reg().as_fixed(), Cond::AL)),
             },
-            BlockInst::Bfc { operand, lsb, width } => opcodes.push(Bfc::create(operand.as_fixed(), *lsb, *width, Cond::AL)),
-            BlockInst::Bfi { operands, lsb, width } => opcodes.push(Bfi::create(operands[0].as_fixed(), operands[1].as_fixed(), *lsb, *width, Cond::AL)),
-            BlockInst::Mul { operands, set_cond, .. } => match operands[2].operand {
+            BlockInstKind::Bfc { operand, lsb, width } => opcodes.push(Bfc::create(operand.as_fixed(), *lsb, *width, Cond::AL)),
+            BlockInstKind::Bfi { operands, lsb, width } => opcodes.push(Bfi::create(operands[0].as_fixed(), operands[1].as_fixed(), *lsb, *width, Cond::AL)),
+            BlockInstKind::Mul { operands, set_cond, .. } => match operands[2].operand {
                 BlockOperand::Reg(reg) => opcodes.push(MulReg::mul(
                     operands[0].as_reg().as_fixed(),
                     operands[1].as_reg().as_fixed(),
@@ -549,17 +714,17 @@ impl BlockInst {
                 }
             },
 
-            BlockInst::Branch { cond, block_index, .. } => {
-                // Encode label and cond as u32
+            BlockInstKind::Branch { block_index, .. } => {
+                // Encode label
                 // Branch offset can only be figured out later
-                opcodes.push(BranchEncoding::new(u26::new(*block_index as u32), false, false, u4::new(*cond as u8)).into());
+                opcodes.push(BranchEncoding::new(u26::new(*block_index as u32), false, false, u4::new(Cond::AL as u8)).into());
                 branch_placeholders.push(opcodes_offset + opcode_index);
             }
 
-            BlockInst::SaveContext { .. } => {
+            BlockInstKind::SaveContext { .. } => {
                 unreachable!()
             }
-            BlockInst::SaveReg {
+            BlockInstKind::SaveReg {
                 guest_reg,
                 reg_mapped,
                 thread_regs_addr_reg,
@@ -568,7 +733,7 @@ impl BlockInst {
                 Reg::CPSR => Self::save_guest_cpsr(opcodes, thread_regs_addr_reg.as_fixed(), reg_mapped.as_fixed()),
                 _ => opcodes.push(LdrStrImm::str_offset_al(reg_mapped.as_fixed(), thread_regs_addr_reg.as_fixed(), *guest_reg as u16 * 4)),
             },
-            BlockInst::RestoreReg {
+            BlockInstKind::RestoreReg {
                 guest_reg,
                 reg_mapped,
                 thread_regs_addr_reg,
@@ -581,20 +746,20 @@ impl BlockInst {
                 _ => opcodes.push(LdrStrImm::ldr_offset_al(reg_mapped.as_fixed(), thread_regs_addr_reg.as_fixed(), *guest_reg as u16 * 4)),
             },
 
-            BlockInst::Call { func_reg, has_return, .. } => opcodes.push(if *has_return {
+            BlockInstKind::Call { func_reg, has_return, .. } => opcodes.push(if *has_return {
                 Bx::blx(func_reg.as_fixed(), Cond::AL)
             } else {
                 Bx::bx(func_reg.as_fixed(), Cond::AL)
             }),
-            BlockInst::CallCommon { mem_offset, has_return, .. } => {
+            BlockInstKind::CallCommon { mem_offset, has_return, .. } => {
                 // Encode common offset
                 // Branch offset can only be figured out later
                 opcodes.push(BranchEncoding::new(u26::new(*mem_offset as u32), *has_return, true, u4::new(Cond::AL as u8)).into());
                 branch_placeholders.push(opcodes_offset + opcode_index);
             }
-            BlockInst::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
+            BlockInstKind::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
 
-            BlockInst::GenericGuestInst { inst, regs_mapping } => {
+            BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
                 let replace_reg = |reg: &mut Reg| {
                     *reg = regs_mapping[*reg as usize].as_fixed();
                 };
@@ -626,8 +791,8 @@ impl BlockInst {
                 opcodes.push(inst_info.assemble());
             }
 
-            BlockInst::Prologue => opcodes.push(LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL)),
-            BlockInst::Epilogue { restore_all_regs } => opcodes.push(LdmStm::generic(
+            BlockInstKind::Prologue => opcodes.push(LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL)),
+            BlockInstKind::Epilogue { restore_all_regs } => opcodes.push(LdmStm::generic(
                 Reg::SP,
                 if *restore_all_regs { ALLOCATION_REGS + Reg::R12 } else { used_host_regs } + Reg::PC,
                 true,
@@ -637,7 +802,7 @@ impl BlockInst {
                 Cond::AL,
             )),
 
-            BlockInst::Label { .. } | BlockInst::GuestPc(_) => {}
+            BlockInstKind::Label { .. } | BlockInstKind::GuestPc(_) => {}
         }
     }
 }
@@ -671,134 +836,29 @@ impl DerefMut for GuestInstInfo {
     }
 }
 
-#[derive(Clone)]
-pub enum BlockInst {
-    Alu3 {
-        op: BlockAluOp,
-        operands: [BlockOperandShift; 3],
-        set_cond: BlockAluSetCond,
-        thumb_pc_aligned: bool,
-    },
-    Alu2Op1 {
-        op: BlockAluOp,
-        operands: [BlockOperandShift; 2],
-        set_cond: BlockAluSetCond,
-        thumb_pc_aligned: bool,
-    },
-    Alu2Op0 {
-        op: BlockAluOp,
-        operands: [BlockOperandShift; 2],
-        set_cond: BlockAluSetCond,
-        thumb_pc_aligned: bool,
-    },
-    Transfer {
-        op: BlockTransferOp,
-        operands: [BlockOperandShift; 3],
-        signed: bool,
-        amount: MemoryAmount,
-        add_to_base: bool,
-    },
-    TransferMultiple {
-        op: BlockTransferOp,
-        operand: BlockReg,
-        regs: RegReserve,
-        write_back: bool,
-        pre: bool,
-        add_to_base: bool,
-    },
-    SystemReg {
-        op: BlockSystemRegOp,
-        operand: BlockOperand,
-    },
-    Bfc {
-        operand: BlockReg,
-        lsb: u8,
-        width: u8,
-    },
-    Bfi {
-        operands: [BlockReg; 2],
-        lsb: u8,
-        width: u8,
-    },
-    Mul {
-        operands: [BlockOperandShift; 3],
-        set_cond: BlockAluSetCond,
-        thumb_pc_aligned: bool,
-    },
-
-    Label {
-        label: BlockLabel,
-        guest_pc: Option<u32>,
-    },
-    Branch {
-        label: BlockLabel,
-        cond: Cond,
-        block_index: usize,
-    },
-
-    SaveContext {
-        thread_regs_addr_reg: BlockReg,
-        tmp_guest_cpsr_reg: BlockReg,
-    },
-    SaveReg {
-        guest_reg: Reg,
-        reg_mapped: BlockReg,
-        thread_regs_addr_reg: BlockReg,
-    },
-    RestoreReg {
-        guest_reg: Reg,
-        reg_mapped: BlockReg,
-        thread_regs_addr_reg: BlockReg,
-        tmp_guest_cpsr_reg: BlockReg,
-    },
-
-    Call {
-        func_reg: BlockReg,
-        args: [Option<BlockReg>; 4],
-        has_return: bool,
-    },
-    CallCommon {
-        mem_offset: usize,
-        args: [Option<BlockReg>; 4],
-        has_return: bool,
-    },
-    Bkpt(u16),
-
-    GuestPc(u32),
-    GenericGuestInst {
-        inst: GuestInstInfo,
-        regs_mapping: [BlockReg; Reg::None as usize],
-    },
-
-    Prologue,
-    Epilogue {
-        restore_all_regs: bool,
-    },
-}
-
-impl Debug for BlockInst {
+impl Debug for BlockInstKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let write_alu = |op, operands: &[BlockOperandShift], set_cond, thumb_pc_aligned, f: &mut Formatter<'_>| write!(f, "{op:?}{set_cond:?} {operands:?}, align pc: {thumb_pc_aligned}");
         match self {
-            BlockInst::Alu3 {
+            BlockInstKind::Alu3 {
                 op,
                 operands,
                 set_cond,
                 thumb_pc_aligned,
             } => write_alu(op, operands, set_cond, thumb_pc_aligned, f),
-            BlockInst::Alu2Op1 {
+            BlockInstKind::Alu2Op1 {
                 op,
                 operands,
                 set_cond,
                 thumb_pc_aligned,
             } => write_alu(op, operands, set_cond, thumb_pc_aligned, f),
-            BlockInst::Alu2Op0 {
+            BlockInstKind::Alu2Op0 {
                 op,
                 operands,
                 set_cond,
                 thumb_pc_aligned,
             } => write_alu(op, operands, set_cond, thumb_pc_aligned, f),
-            BlockInst::Transfer {
+            BlockInstKind::Transfer {
                 op,
                 operands,
                 signed,
@@ -815,7 +875,7 @@ impl Debug for BlockInst {
                 let add_to_base = if *add_to_base { "+" } else { "-" };
                 write!(f, "{op:?}{signed}{amount} {:?} [{:?}, {:?}], {add_to_base}base", operands[0], operands[1], operands[2])
             }
-            BlockInst::TransferMultiple {
+            BlockInstKind::TransferMultiple {
                 op,
                 operand,
                 regs,
@@ -826,40 +886,40 @@ impl Debug for BlockInst {
                 let add_to_base = if *add_to_base { "+" } else { "-" };
                 write!(f, "{op:?}M {operand:?} {regs:?}, write back: {write_back}, pre {pre}, {add_to_base}base")
             }
-            BlockInst::SystemReg { op, operand } => write!(f, "{op:?} {operand:?}"),
-            BlockInst::Bfc { operand, lsb, width } => write!(f, "Bfc {operand:?}, {lsb}, {width}"),
-            BlockInst::Bfi { operands, lsb, width } => write!(f, "Bfi {:?}, {:?}, {lsb}, {width}", operands[0], operands[1]),
-            BlockInst::Mul { operands, set_cond, thumb_pc_aligned } => write!(f, "Mul{set_cond:?} {operands:?}, align pc: {thumb_pc_aligned}"),
-            BlockInst::Label { label, guest_pc } => {
+            BlockInstKind::SystemReg { op, operand } => write!(f, "{op:?} {operand:?}"),
+            BlockInstKind::Bfc { operand, lsb, width } => write!(f, "Bfc {operand:?}, {lsb}, {width}"),
+            BlockInstKind::Bfi { operands, lsb, width } => write!(f, "Bfi {:?}, {:?}, {lsb}, {width}", operands[0], operands[1]),
+            BlockInstKind::Mul { operands, set_cond, thumb_pc_aligned } => write!(f, "Mul{set_cond:?} {operands:?}, align pc: {thumb_pc_aligned}"),
+            BlockInstKind::Label { label, guest_pc } => {
                 let guest_pc = match guest_pc {
                     None => "",
                     Some(pc) => &format!("{pc:x}"),
                 };
                 write!(f, "label {label:?} {guest_pc}:")
             }
-            BlockInst::Branch { label, cond, block_index } => write!(f, "B{cond:?} {label:?}, block index: {block_index}"),
-            BlockInst::SaveContext { .. } => write!(f, "SaveContext"),
-            BlockInst::SaveReg { guest_reg, reg_mapped, .. } => write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}"),
-            BlockInst::RestoreReg { guest_reg, reg_mapped, .. } => write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}"),
-            BlockInst::Call { func_reg, args, has_return } => {
+            BlockInstKind::Branch { label, block_index } => write!(f, "B {label:?}, block index: {block_index}"),
+            BlockInstKind::SaveContext { .. } => write!(f, "SaveContext"),
+            BlockInstKind::SaveReg { guest_reg, reg_mapped, .. } => write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}"),
+            BlockInstKind::RestoreReg { guest_reg, reg_mapped, .. } => write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}"),
+            BlockInstKind::Call { func_reg, args, has_return } => {
                 if *has_return {
                     write!(f, "Blx {func_reg:?} {args:?}")
                 } else {
                     write!(f, "Bx {func_reg:?} {args:?}")
                 }
             }
-            BlockInst::CallCommon { mem_offset, args, has_return } => {
+            BlockInstKind::CallCommon { mem_offset, args, has_return } => {
                 if *has_return {
                     write!(f, "Bl {mem_offset:x} {args:?}")
                 } else {
                     write!(f, "B {mem_offset:x} {args:?}")
                 }
             }
-            BlockInst::Bkpt(id) => write!(f, "Bkpt {id}"),
-            BlockInst::GuestPc(pc) => write!(f, "GuestPc {pc:x}"),
-            BlockInst::GenericGuestInst { inst, .. } => write!(f, "{inst:?}"),
-            BlockInst::Prologue => write!(f, "Prologue"),
-            BlockInst::Epilogue { restore_all_regs } => write!(f, "Epilogue restore all regs {restore_all_regs}"),
+            BlockInstKind::Bkpt(id) => write!(f, "Bkpt {id}"),
+            BlockInstKind::GuestPc(pc) => write!(f, "GuestPc {pc:x}"),
+            BlockInstKind::GenericGuestInst { inst, .. } => write!(f, "{inst:?}"),
+            BlockInstKind::Prologue => write!(f, "Prologue"),
+            BlockInstKind::Epilogue { restore_all_regs } => write!(f, "Epilogue restore all regs {restore_all_regs}"),
         }
     }
 }

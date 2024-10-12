@@ -1,11 +1,11 @@
 use crate::bitset::Bitset;
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::basic_block::BasicBlock;
-use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp, BranchEncoding, GuestInstInfo};
+use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockInst, BlockSystemRegOp, BlockTransferOp, BranchEncoding, GuestInstInfo};
 use crate::jit::assembler::block_inst_list::BlockInstList;
 use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
 use crate::jit::assembler::block_reg_set::BlockRegSet;
-use crate::jit::assembler::{BlockAsmBuf, BlockInst, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, ANY_REG_LIMIT};
+use crate::jit::assembler::{BlockAsmBuf, BlockInstKind, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, ANY_REG_LIMIT};
 use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
@@ -57,7 +57,7 @@ pub struct BlockAsm<'a> {
     tmp_shift_imm_reg: BlockReg,
     tmp_func_call_reg: BlockReg,
 
-    cond_block_end_label_stack: Vec<BlockLabel>,
+    cond_block_end_label_stack: Vec<(BlockLabel, Cond, usize)>,
 
     is_common_fun: bool,
     host_sp_ptr: *mut usize,
@@ -102,7 +102,7 @@ impl<'a> BlockAsm<'a> {
             inst_insert_index: None,
         };
 
-        instance.buf.insts.push(BlockInst::Prologue);
+        instance.insert_inst(BlockInstKind::Prologue);
 
         // First argument is store_host_sp: bool
         if !is_common_fun {
@@ -125,11 +125,11 @@ impl<'a> BlockAsm<'a> {
         instance
     }
 
-    fn insert_inst(&mut self, inst: BlockInst) {
+    fn insert_inst(&mut self, inst: impl Into<BlockInst>) {
         match self.inst_insert_index {
-            None => self.buf.insts.push(inst),
+            None => self.buf.insts.push(inst.into()),
             Some(index) => {
-                self.buf.insts.insert(index, inst);
+                self.buf.insts.insert(index, inst.into());
                 self.inst_insert_index = Some(index + 1);
             }
         }
@@ -226,7 +226,7 @@ impl<'a> BlockAsm<'a> {
     fn add_op3(&mut self, op: BlockAluOp, op0: BlockReg, op1: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
         self.check_alu_imm_limit(&mut op2);
         self.check_imm_shift_limit(&mut op2);
-        self.insert_inst(BlockInst::Alu3 {
+        self.insert_inst(BlockInstKind::Alu3 {
             op,
             operands: [op0.into(), op1.into(), op2],
             set_cond,
@@ -237,7 +237,7 @@ impl<'a> BlockAsm<'a> {
     fn add_op2_op1(&mut self, op: BlockAluOp, op1: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
         self.check_alu_imm_limit(&mut op2);
         self.check_imm_shift_limit(&mut op2);
-        self.insert_inst(BlockInst::Alu2Op1 {
+        self.insert_inst(BlockInstKind::Alu2Op1 {
             op,
             operands: [op1.into(), op2],
             set_cond,
@@ -250,7 +250,7 @@ impl<'a> BlockAsm<'a> {
             self.check_alu_imm_limit(&mut op2);
         }
         self.check_imm_shift_limit(&mut op2);
-        self.insert_inst(BlockInst::Alu2Op0 {
+        self.insert_inst(BlockInstKind::Alu2Op0 {
             op,
             operands: [op0.into(), op2],
             set_cond,
@@ -289,7 +289,7 @@ impl<'a> BlockAsm<'a> {
             op2 = self.tmp_operand_imm_reg.into();
         }
         self.check_imm_shift_limit(&mut op2);
-        self.insert_inst(BlockInst::Transfer {
+        self.insert_inst(BlockInstKind::Transfer {
             op,
             operands: [op0.into().into(), op1.into().into(), op2],
             signed,
@@ -307,7 +307,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn transfer_read_multiple(&mut self, operand: impl Into<BlockReg>, regs: RegReserve, write_back: bool, pre: bool, add_to_base: bool) {
-        self.insert_inst(BlockInst::TransferMultiple {
+        self.insert_inst(BlockInstKind::TransferMultiple {
             op: BlockTransferOp::Read,
             operand: operand.into(),
             regs,
@@ -318,7 +318,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn transfer_write_multiple(&mut self, operand: impl Into<BlockReg>, regs: RegReserve, write_back: bool, pre: bool, add_to_base: bool) {
-        self.insert_inst(BlockInst::TransferMultiple {
+        self.insert_inst(BlockInstKind::TransferMultiple {
             op: BlockTransferOp::Write,
             operand: operand.into(),
             regs,
@@ -329,25 +329,25 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn mrs_cpsr(&mut self, operand: impl Into<BlockReg>) {
-        self.insert_inst(BlockInst::SystemReg {
+        self.insert_inst(BlockInstKind::SystemReg {
             op: BlockSystemRegOp::Mrs,
             operand: operand.into().into(),
         })
     }
 
     pub fn msr_cpsr(&mut self, operand: impl Into<BlockOperand>) {
-        self.insert_inst(BlockInst::SystemReg {
+        self.insert_inst(BlockInstKind::SystemReg {
             op: BlockSystemRegOp::Msr,
             operand: operand.into(),
         })
     }
 
     pub fn bfc(&mut self, operand: impl Into<BlockReg>, lsb: u8, width: u8) {
-        self.insert_inst(BlockInst::Bfc { operand: operand.into(), lsb, width })
+        self.insert_inst(BlockInstKind::Bfc { operand: operand.into(), lsb, width })
     }
 
     pub fn bfi(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, lsb: u8, width: u8) {
-        self.insert_inst(BlockInst::Bfi {
+        self.insert_inst(BlockInstKind::Bfi {
             operands: [op0.into(), op1.into()],
             lsb,
             width,
@@ -355,7 +355,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn muls_guest_thumb_pc_aligned(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.insert_inst(BlockInst::Mul {
+        self.insert_inst(BlockInstKind::Mul {
             operands: [op0.into().into(), op1.into().into(), op2.into()],
             set_cond: BlockAluSetCond::HostGuest,
             thumb_pc_aligned: true,
@@ -366,22 +366,21 @@ impl<'a> BlockAsm<'a> {
         if !self.used_labels.insert(label.0) {
             panic!("{label:?} was already added");
         }
-        self.insert_inst(BlockInst::Label { label, guest_pc: None })
+        self.insert_inst(BlockInstKind::Label { label, guest_pc: None })
     }
 
     pub fn branch(&mut self, label: BlockLabel, cond: Cond) {
-        self.insert_inst(BlockInst::Branch { label, cond, block_index: 0 })
+        self.insert_inst(BlockInst::new(cond, BlockInstKind::Branch { label, block_index: 0 }))
     }
 
     pub fn save_context(&mut self) {
-        self.insert_inst(BlockInst::SaveContext {
+        self.insert_inst(BlockInstKind::SaveContext {
             thread_regs_addr_reg: self.thread_regs_addr_reg,
-            tmp_guest_cpsr_reg: self.tmp_guest_cpsr_reg,
         });
     }
 
     pub fn save_reg(&mut self, guest_reg: Reg) {
-        self.insert_inst(BlockInst::SaveReg {
+        self.insert_inst(BlockInstKind::SaveReg {
             guest_reg,
             reg_mapped: BlockReg::from(guest_reg),
             thread_regs_addr_reg: self.thread_regs_addr_reg,
@@ -389,7 +388,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn restore_reg(&mut self, guest_reg: Reg) {
-        self.insert_inst(BlockInst::RestoreReg {
+        self.insert_inst(BlockInstKind::RestoreReg {
             guest_reg,
             reg_mapped: BlockReg::from(guest_reg),
             thread_regs_addr_reg: self.thread_regs_addr_reg,
@@ -401,12 +400,12 @@ impl<'a> BlockAsm<'a> {
         let host_sp_addr_reg = self.thread_regs_addr_reg;
         self.mov(host_sp_addr_reg, self.host_sp_ptr as u32);
         self.load_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
-        self.buf.insts.push(BlockInst::Epilogue { restore_all_regs: true });
+        self.insert_inst(BlockInstKind::Epilogue { restore_all_regs: true });
     }
 
     pub fn epilogue_previous_block(&mut self) {
         self.add(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4);
-        self.buf.insts.push(BlockInst::Epilogue { restore_all_regs: false });
+        self.insert_inst(BlockInstKind::Epilogue { restore_all_regs: false });
     }
 
     pub fn call(&mut self, func: impl Into<BlockOperand>) {
@@ -478,7 +477,7 @@ impl<'a> BlockAsm<'a> {
     ) {
         let args = self.handle_call_args(arg0, arg1, arg2, arg3);
         self.mov(self.tmp_func_call_reg, func.into());
-        self.insert_inst(BlockInst::Call {
+        self.insert_inst(BlockInstKind::Call {
             func_reg: self.tmp_func_call_reg,
             args: [
                 args[0].map(|_| BlockReg::Fixed(Reg::R0)),
@@ -520,7 +519,7 @@ impl<'a> BlockAsm<'a> {
         has_return: bool,
     ) {
         let args = self.handle_call_args(arg0, arg1, arg2, arg3);
-        self.insert_inst(BlockInst::CallCommon {
+        self.insert_inst(BlockInstKind::CallCommon {
             mem_offset: offset,
             args: [
                 args[0].map(|_| BlockReg::Fixed(Reg::R0)),
@@ -533,12 +532,12 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn bkpt(&mut self, id: u16) {
-        self.insert_inst(BlockInst::Bkpt(id));
+        self.insert_inst(BlockInstKind::Bkpt(id));
     }
 
     pub fn find_guest_pc_inst_index(&self, guest_pc_to_find: u32) -> Option<usize> {
         for (i, inst) in self.buf.insts.iter().enumerate().rev() {
-            if let BlockInst::GuestPc(guest_pc) = inst {
+            if let BlockInstKind::GuestPc(guest_pc) = &inst.kind {
                 if *guest_pc == guest_pc_to_find {
                     return Some(i);
                 }
@@ -548,7 +547,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn guest_pc(&mut self, pc: u32) {
-        self.insert_inst(BlockInst::GuestPc(pc));
+        self.insert_inst(BlockInstKind::GuestPc(pc));
     }
 
     pub fn guest_branch(&mut self, cond: Cond, target_pc: u32) {
@@ -560,11 +559,11 @@ impl<'a> BlockAsm<'a> {
             }
             Some(label) => *label,
         };
-        self.insert_inst(BlockInst::Branch { label, cond, block_index: 0 });
+        self.insert_inst(BlockInst::new(cond, BlockInstKind::Branch { label, block_index: 0 }));
     }
 
     pub fn generic_guest_inst(&mut self, inst_info: &mut InstInfo) {
-        self.insert_inst(BlockInst::GenericGuestInst {
+        self.insert_inst(BlockInstKind::GenericGuestInst {
             inst: GuestInstInfo::new(inst_info),
             regs_mapping: [
                 BlockReg::from(Reg::R0),
@@ -593,13 +592,20 @@ impl<'a> BlockAsm<'a> {
         if cond != Cond::AL {
             let label = self.new_label();
             self.branch(label, !cond);
-            self.cond_block_end_label_stack.push(label);
+            self.cond_block_end_label_stack.push((label, cond, self.buf.insts.len()));
         }
     }
 
     pub fn end_cond_block(&mut self) {
-        if let Some(label) = self.cond_block_end_label_stack.pop() {
-            self.label(label);
+        if let Some((label, cond, start_index)) = self.cond_block_end_label_stack.pop() {
+            let cond_block_size = self.buf.insts.len() - start_index;
+            let (_, outputs) = self.buf.insts[start_index].get_io();
+            if cond_block_size == 1 && self.buf.insts[start_index].cond == Cond::AL && !outputs.contains(BlockReg::Fixed(Reg::CPSR)) && !outputs.contains(Reg::CPSR.into()) {
+                self.buf.insts[start_index].cond = cond;
+                self.buf.insts.remove(start_index - 1);
+            } else {
+                self.label(label);
+            }
         }
     }
 
@@ -610,29 +616,30 @@ impl<'a> BlockAsm<'a> {
         let mut current_node = self.insts_link.root;
         while !current_node.is_null() {
             let i = BlockInstList::deref(current_node).value;
-            if let BlockInst::GuestPc(pc) = &self.buf.insts[i] {
+            if let BlockInstKind::GuestPc(pc) = &self.buf.insts[i].kind {
                 if let Some(guest_label) = self.buf.guest_branches_mapping.get(pc) {
-                    self.buf.insts[i] = BlockInst::Label {
+                    self.buf.insts[i] = BlockInstKind::Label {
                         label: *guest_label,
                         guest_pc: Some(*pc),
-                    };
+                    }
+                    .into();
                 }
             }
 
-            if let BlockInst::Label { label, guest_pc } = self.buf.insts[i] {
+            if let BlockInstKind::Label { label, guest_pc } = &self.buf.insts[i].kind {
                 if let Some((p_label, p_guest_pc)) = previous_label {
-                    let replace_guest_pc = p_guest_pc.or(guest_pc);
+                    let replace_guest_pc = p_guest_pc.or(*guest_pc);
                     previous_label = Some((p_label, replace_guest_pc));
                     let previous_node = BlockInstList::deref(current_node).previous;
                     let previous_i = BlockInstList::deref(previous_node).value;
-                    if let BlockInst::Label { guest_pc, .. } = &mut self.buf.insts[previous_i] {
-                        *guest_pc = replace_guest_pc;
-                    }
                     self.insts_link.remove_entry(current_node);
                     label_aliases.insert(label.0, p_label.0);
                     current_node = previous_node;
+                    if let BlockInstKind::Label { guest_pc, .. } = &mut self.buf.insts[previous_i].kind {
+                        *guest_pc = replace_guest_pc;
+                    }
                 } else {
-                    previous_label = Some((label, guest_pc));
+                    previous_label = Some((*label, *guest_pc));
                 }
             } else {
                 previous_label = None
@@ -706,8 +713,8 @@ impl<'a> BlockAsm<'a> {
         while !current_node.is_null() {
             let i = BlockInstList::deref(current_node).value;
 
-            match &mut self.buf.insts[i] {
-                BlockInst::Label { label, .. } => {
+            match &mut self.buf.insts[i].kind {
+                BlockInstKind::Label { label, .. } => {
                     let label = *label;
                     // block_start_entry can be the same as current_node, when the previous iteration ended with a branch
                     if basic_block_start != current_node {
@@ -719,7 +726,7 @@ impl<'a> BlockAsm<'a> {
                     }
                     last_label = Some(label);
                 }
-                BlockInst::Branch { label, .. } => {
+                BlockInstKind::Branch { label, .. } => {
                     if let Some(alias) = label_aliases.get(&label.0) {
                         label.0 = *alias;
                     }
@@ -730,7 +737,7 @@ impl<'a> BlockAsm<'a> {
                     }
                     last_label = None;
                 }
-                BlockInst::Call { has_return: false, .. } | BlockInst::Epilogue { .. } => {
+                BlockInstKind::Call { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {
                     basic_blocks.push(BasicBlock::new(self, basic_block_start, current_node));
                     basic_block_start = BlockInstList::deref(current_node).next;
                     if let Some(last_label) = last_label {
@@ -755,17 +762,18 @@ impl<'a> BlockAsm<'a> {
         // Link blocks
         for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
             let last_inst_index = BlockInstList::deref(basic_block.block_entry_end).value;
-            match &mut self.buf.insts[last_inst_index] {
-                BlockInst::Branch { label, cond, block_index, .. } => {
+            let cond = self.buf.insts[last_inst_index].cond;
+            match &mut self.buf.insts[last_inst_index].kind {
+                BlockInstKind::Branch { label, block_index, .. } => {
                     let labelled_block_index = basic_block_label_mapping.get(&label.0).unwrap();
                     basic_block.exit_blocks.push(*labelled_block_index);
                     *block_index = *labelled_block_index;
-                    if *cond != Cond::AL && i + 1 < basic_blocks_len {
+                    if cond != Cond::AL && i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.push(i + 1);
                     }
                 }
                 // Don't add exit when last command in basic block is a breakout
-                BlockInst::Call { has_return: false, .. } | BlockInst::Epilogue { .. } => {
+                BlockInstKind::Call { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {
                     if i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.push(i + 1);
                     }
@@ -793,12 +801,12 @@ impl<'a> BlockAsm<'a> {
             let mut basic_block_start_pc = block_start_pc;
             let mut current_node = basic_block.block_entry_start;
             while !current_node.is_null() {
-                match &self.buf.insts[BlockInstList::deref(current_node).value] {
-                    BlockInst::Label { guest_pc: Some(pc), .. } => {
+                match &self.buf.insts[BlockInstList::deref(current_node).value].kind {
+                    BlockInstKind::Label { guest_pc: Some(pc), .. } => {
                         basic_block_start_pc = *pc;
                         break;
                     }
-                    BlockInst::GuestPc(pc) => {
+                    BlockInstKind::GuestPc(pc) => {
                         basic_block_start_pc = *pc;
                         break;
                     }

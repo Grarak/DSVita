@@ -1,4 +1,4 @@
-use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockInst, BlockTransferOp};
+use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockInst, BlockInstKind, BlockTransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockReg, ANY_REG_LIMIT};
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
@@ -47,23 +47,29 @@ impl BlockRegAllocator {
 
     fn gen_pre_handle_spilled_inst(&mut self, any_reg: u16, mapping: Reg, op: BlockTransferOp) {
         self.dirty_regs += mapping;
-        self.pre_allocate_insts.push(BlockInst::Transfer {
-            op,
-            operands: [BlockReg::Fixed(mapping).into(), BlockReg::Fixed(Reg::SP).into(), (any_reg as u32 * 4).into()],
-            signed: false,
-            amount: MemoryAmount::Word,
-            add_to_base: true,
-        });
+        self.pre_allocate_insts.push(
+            BlockInstKind::Transfer {
+                op,
+                operands: [BlockReg::Fixed(mapping).into(), BlockReg::Fixed(Reg::SP).into(), (any_reg as u32 * 4).into()],
+                signed: false,
+                amount: MemoryAmount::Word,
+                add_to_base: true,
+            }
+            .into(),
+        );
     }
 
     fn gen_pre_move_reg(&mut self, dst: Reg, src: Reg) {
         self.dirty_regs += dst;
-        self.pre_allocate_insts.push(BlockInst::Alu2Op0 {
-            op: BlockAluOp::Mov,
-            operands: [BlockReg::Fixed(dst).into(), BlockReg::Fixed(src).into()],
-            set_cond: BlockAluSetCond::None,
-            thumb_pc_aligned: false,
-        });
+        self.pre_allocate_insts.push(
+            BlockInstKind::Alu2Op0 {
+                op: BlockAluOp::Mov,
+                operands: [BlockReg::Fixed(dst).into(), BlockReg::Fixed(src).into()],
+                set_cond: BlockAluSetCond::None,
+                thumb_pc_aligned: false,
+            }
+            .into(),
+        );
     }
 
     fn set_stored_mapping(&mut self, any_reg: u16, reg: Reg) {
