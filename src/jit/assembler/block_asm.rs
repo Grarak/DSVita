@@ -385,7 +385,6 @@ impl<'a> BlockAsm<'a> {
             guest_reg,
             reg_mapped: BlockReg::from(guest_reg),
             thread_regs_addr_reg: self.thread_regs_addr_reg,
-            tmp_guest_cpsr_reg: self.tmp_guest_cpsr_reg,
         });
     }
 

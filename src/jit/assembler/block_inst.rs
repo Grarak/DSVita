@@ -142,7 +142,6 @@ impl BlockInst {
                 guest_reg,
                 reg_mapped,
                 thread_regs_addr_reg,
-                tmp_guest_cpsr_reg,
             } => {
                 let mut inputs = BlockRegSet::new();
                 let mut outputs = BlockRegSet::new();
@@ -151,7 +150,6 @@ impl BlockInst {
                         inputs += BlockReg::Fixed(Reg::CPSR);
                         inputs += *thread_regs_addr_reg;
                         outputs += *reg_mapped;
-                        outputs += *tmp_guest_cpsr_reg;
                     }
                     _ => {
                         inputs += *reg_mapped;
@@ -335,16 +333,10 @@ impl BlockInst {
             BlockInst::Bfc { operand, .. } => Self::replace_reg(operand, old, new),
             BlockInst::Bfi { operands, .. } => Self::replace_reg(&mut operands[0], old, new),
             BlockInst::SaveContext { tmp_guest_cpsr_reg, .. } => Self::replace_reg(tmp_guest_cpsr_reg, old, new),
-            BlockInst::SaveReg {
-                guest_reg,
-                reg_mapped,
-                tmp_guest_cpsr_reg,
-                ..
-            } => {
+            BlockInst::SaveReg { guest_reg, reg_mapped, .. } => {
                 if *guest_reg == Reg::CPSR {
                     Self::replace_reg(reg_mapped, old, new);
                 }
-                Self::replace_reg(tmp_guest_cpsr_reg, old, new)
             }
             BlockInst::RestoreReg {
                 guest_reg,
@@ -384,13 +376,11 @@ impl BlockInst {
             BlockInst::SaveContext { .. } => {
                 unreachable!()
             }
-            BlockInst::SaveReg {
-                reg_mapped,
-                thread_regs_addr_reg,
-                tmp_guest_cpsr_reg,
-                ..
+            BlockInst::SaveReg { reg_mapped, thread_regs_addr_reg, .. } => {
+                Self::replace_reg(reg_mapped, old, new);
+                Self::replace_reg(thread_regs_addr_reg, old, new);
             }
-            | BlockInst::RestoreReg {
+            BlockInst::RestoreReg {
                 reg_mapped,
                 thread_regs_addr_reg,
                 tmp_guest_cpsr_reg,
@@ -411,26 +401,11 @@ impl BlockInst {
         }
     }
 
-    fn save_guest_cpsr(opcodes: &mut Vec<u32>, thread_regs_addr_reg: Reg, host_reg: Reg, guest_reg: Reg) {
+    fn save_guest_cpsr(opcodes: &mut Vec<u32>, thread_regs_addr_reg: Reg, host_reg: Reg) {
         opcodes.push(Mrs::cpsr(host_reg, Cond::AL));
-        opcodes.push(LdrStrImm::ldr_offset_al(guest_reg, thread_regs_addr_reg, Reg::CPSR as u16 * 4));
         // Only copy the cond flags from host cpsr
-        opcodes.push(AluImm::and(
-            host_reg,
-            host_reg,
-            0xF8,
-            4, // 8 Bytes, steps of 2
-            Cond::AL,
-        ));
-        opcodes.push(AluImm::bic(
-            guest_reg,
-            guest_reg,
-            0xF8,
-            4, // 8 Bytes, steps of 2
-            Cond::AL,
-        ));
-        opcodes.push(AluShiftImm::orr_al(guest_reg, host_reg, guest_reg));
-        opcodes.push(LdrStrImm::str_offset_al(guest_reg, thread_regs_addr_reg, Reg::CPSR as u16 * 4));
+        opcodes.push(AluShiftImm::mov(host_reg, host_reg, ShiftType::Lsr, 16, Cond::AL));
+        opcodes.push(LdrStrImmSBHD::strh(host_reg, thread_regs_addr_reg, Reg::CPSR as u8 * 4 + 2, Cond::AL));
     }
 
     pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize, used_host_regs: RegReserve) {
@@ -588,9 +563,9 @@ impl BlockInst {
                 guest_reg,
                 reg_mapped,
                 thread_regs_addr_reg,
-                tmp_guest_cpsr_reg,
+                ..
             } => match guest_reg {
-                Reg::CPSR => Self::save_guest_cpsr(opcodes, thread_regs_addr_reg.as_fixed(), reg_mapped.as_fixed(), tmp_guest_cpsr_reg.as_fixed()),
+                Reg::CPSR => Self::save_guest_cpsr(opcodes, thread_regs_addr_reg.as_fixed(), reg_mapped.as_fixed()),
                 _ => opcodes.push(LdrStrImm::str_offset_al(reg_mapped.as_fixed(), thread_regs_addr_reg.as_fixed(), *guest_reg as u16 * 4)),
             },
             BlockInst::RestoreReg {
@@ -769,7 +744,6 @@ pub enum BlockInst {
         guest_reg: Reg,
         reg_mapped: BlockReg,
         thread_regs_addr_reg: BlockReg,
-        tmp_guest_cpsr_reg: BlockReg,
     },
     RestoreReg {
         guest_reg: Reg,

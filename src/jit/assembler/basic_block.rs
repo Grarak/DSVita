@@ -79,25 +79,18 @@ impl BasicBlock {
                                     guest_reg,
                                     reg_mapped: if guest_reg == Reg::PC { last_pc_reg } else { guest_reg.into() },
                                     thread_regs_addr_reg,
-                                    tmp_guest_cpsr_reg,
                                 });
                             }
                         }
                         last_guest_regs_outputs.fill(None);
                         add_inst = false;
                     }
-                    BlockInst::SaveReg {
-                        guest_reg,
-                        thread_regs_addr_reg,
-                        tmp_guest_cpsr_reg,
-                        ..
-                    } => {
+                    BlockInst::SaveReg { guest_reg, thread_regs_addr_reg, .. } => {
                         if guest_reg == Reg::PC {
                             asm.buf.insts[i] = BlockInst::SaveReg {
                                 guest_reg: Reg::PC,
                                 reg_mapped: last_pc_reg,
                                 thread_regs_addr_reg,
-                                tmp_guest_cpsr_reg,
                             }
                         }
                         last_guest_regs_outputs[guest_reg as usize] = None;
@@ -185,14 +178,16 @@ impl BasicBlock {
                                         op: BlockSystemRegOp::Mrs,
                                         operand: Reg::CPSR.into(),
                                     });
+
                                     self.insts_link.insert_end(asm.buf.insts.len());
                                     asm.buf.insts.push(BlockInst::Transfer {
                                         op: BlockTransferOp::Read,
                                         operands: [asm.tmp_guest_cpsr_reg.into(), asm.thread_regs_addr_reg.into(), (Reg::CPSR as u32 * 4).into()],
                                         signed: false,
-                                        amount: MemoryAmount::Word,
+                                        amount: MemoryAmount::Half,
                                         add_to_base: true,
                                     });
+
                                     self.insts_link.insert_end(asm.buf.insts.len());
                                     asm.buf.insts.push(BlockInst::Alu3 {
                                         op: BlockAluOp::And,
@@ -200,13 +195,7 @@ impl BasicBlock {
                                         set_cond: BlockAluSetCond::None,
                                         thumb_pc_aligned: false,
                                     });
-                                    self.insts_link.insert_end(asm.buf.insts.len());
-                                    asm.buf.insts.push(BlockInst::Alu3 {
-                                        op: BlockAluOp::Bic,
-                                        operands: [asm.tmp_guest_cpsr_reg.into(), asm.tmp_guest_cpsr_reg.into(), (0xF8, ShiftType::Ror, 4).into()],
-                                        set_cond: BlockAluSetCond::None,
-                                        thumb_pc_aligned: false,
-                                    });
+
                                     self.insts_link.insert_end(asm.buf.insts.len());
                                     asm.buf.insts.push(BlockInst::Alu3 {
                                         op: BlockAluOp::Orr,
@@ -279,7 +268,6 @@ impl BasicBlock {
                     guest_reg,
                     reg_mapped: guest_reg.into(),
                     thread_regs_addr_reg: asm.thread_regs_addr_reg,
-                    tmp_guest_cpsr_reg: asm.tmp_guest_cpsr_reg,
                 });
             }
         }
