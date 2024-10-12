@@ -143,6 +143,19 @@ impl JitMemory {
         (addr, flushed)
     }
 
+    pub fn get_start_entry(&self) -> usize {
+        self.mem.as_ptr() as _
+    }
+
+    pub fn get_next_entry(&self, opcodes_len: usize) -> usize {
+        let aligned_size = utils::align_up(opcodes_len << 2, *PAGE_SIZE);
+        if self.mem_start + aligned_size > JIT_MEMORY_SIZE {
+            self.mem_common_end
+        } else {
+            self.mem_start
+        }
+    }
+
     pub fn insert_common_fun_block(&mut self, opcodes: &[u32]) -> *const extern "C" fn() {
         let aligned_size = utils::align_up(size_of_val(opcodes), *PAGE_SIZE);
         let mem_start = self.mem_start;

@@ -349,6 +349,9 @@ pub struct BlockAsmBuf {
     pub insts: Vec<BlockInst>,
     pub guest_branches_mapping: NoHashMap<u32, BlockLabel>,
     pub reg_allocator: BlockRegAllocator,
+    pub block_opcode_offsets: Vec<usize>,
+    pub opcodes: Vec<u32>,
+    pub branch_placeholders: Vec<usize>,
 }
 
 impl BlockAsmBuf {
@@ -357,6 +360,9 @@ impl BlockAsmBuf {
             insts: Vec::new(),
             guest_branches_mapping: NoHashMap::default(),
             reg_allocator: BlockRegAllocator::new(),
+            block_opcode_offsets: Vec::new(),
+            opcodes: Vec::new(),
+            branch_placeholders: Vec::new(),
         }
     }
 

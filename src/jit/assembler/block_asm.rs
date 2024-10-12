@@ -1,7 +1,7 @@
 use crate::bitset::Bitset;
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::basic_block::BasicBlock;
-use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp, GuestInstInfo};
+use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp, BranchEncoding, GuestInstInfo};
 use crate::jit::assembler::block_inst_list::BlockInstList;
 use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
 use crate::jit::assembler::block_reg_set::BlockRegSet;
@@ -370,12 +370,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn branch(&mut self, label: BlockLabel, cond: Cond) {
-        self.insert_inst(BlockInst::Branch {
-            label,
-            cond,
-            block_index: 0,
-            skip: false,
-        })
+        self.insert_inst(BlockInst::Branch { label, cond, block_index: 0 })
     }
 
     pub fn save_context(&mut self) {
@@ -455,6 +450,24 @@ impl<'a> BlockAsm<'a> {
         self.call_internal(func, Some(arg0.into()), Some(arg1.into()), Some(arg2.into()), Some(arg3.into()), false)
     }
 
+    fn handle_call_args(
+        &mut self,
+        arg0: Option<impl Into<BlockOperand>>,
+        arg1: Option<impl Into<BlockOperand>>,
+        arg2: Option<impl Into<BlockOperand>>,
+        arg3: Option<impl Into<BlockOperand>>,
+    ) -> [Option<BlockOperand>; 4] {
+        let mut args = [arg0.map(|arg| arg.into()), arg1.map(|arg| arg.into()), arg2.map(|arg| arg.into()), arg3.map(|arg| arg.into())];
+        for (i, arg) in args.iter_mut().enumerate() {
+            if let Some(arg) = arg {
+                let reg = BlockReg::Fixed(Reg::from(i as u8));
+                self.mov(reg, *arg);
+                *arg = reg.into();
+            }
+        }
+        args
+    }
+
     fn call_internal(
         &mut self,
         func: impl Into<BlockOperand>,
@@ -464,17 +477,52 @@ impl<'a> BlockAsm<'a> {
         arg3: Option<impl Into<BlockOperand>>,
         has_return: bool,
     ) {
-        let mut args = [arg0.map(|arg| arg.into()), arg1.map(|arg| arg.into()), arg2.map(|arg| arg.into()), arg3.map(|arg| arg.into())];
-        for (i, arg) in args.iter_mut().enumerate() {
-            if let Some(arg) = arg {
-                let reg = BlockReg::Fixed(Reg::from(i as u8));
-                self.mov(reg, *arg);
-                *arg = reg.into();
-            }
-        }
+        let args = self.handle_call_args(arg0, arg1, arg2, arg3);
         self.mov(self.tmp_func_call_reg, func.into());
         self.insert_inst(BlockInst::Call {
             func_reg: self.tmp_func_call_reg,
+            args: [
+                args[0].map(|_| BlockReg::Fixed(Reg::R0)),
+                args[1].map(|_| BlockReg::Fixed(Reg::R1)),
+                args[2].map(|_| BlockReg::Fixed(Reg::R2)),
+                args[3].map(|_| BlockReg::Fixed(Reg::R3)),
+            ],
+            has_return,
+        });
+    }
+
+    pub fn call_common(&mut self, offset: usize) {
+        self.call_common_internal(offset, None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, true)
+    }
+
+    pub fn call1_common(&mut self, offset: usize, arg0: impl Into<BlockOperand>) {
+        self.call_common_internal(offset, Some(arg0.into()), None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, true)
+    }
+
+    pub fn call2_common(&mut self, offset: usize, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>) {
+        self.call_common_internal(offset, Some(arg0.into()), Some(arg1.into()), None::<BlockOperand>, None::<BlockOperand>, true)
+    }
+
+    pub fn call3_common(&mut self, offset: usize, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>, arg2: impl Into<BlockOperand>) {
+        self.call_common_internal(offset, Some(arg0.into()), Some(arg1.into()), Some(arg2.into()), None::<BlockOperand>, true)
+    }
+
+    pub fn call4_common(&mut self, offset: usize, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>, arg2: impl Into<BlockOperand>, arg3: impl Into<BlockOperand>) {
+        self.call_common_internal(offset, Some(arg0.into()), Some(arg1.into()), Some(arg2.into()), Some(arg3.into()), true)
+    }
+
+    fn call_common_internal(
+        &mut self,
+        offset: usize,
+        arg0: Option<impl Into<BlockOperand>>,
+        arg1: Option<impl Into<BlockOperand>>,
+        arg2: Option<impl Into<BlockOperand>>,
+        arg3: Option<impl Into<BlockOperand>>,
+        has_return: bool,
+    ) {
+        let args = self.handle_call_args(arg0, arg1, arg2, arg3);
+        self.insert_inst(BlockInst::CallCommon {
+            mem_offset: offset,
             args: [
                 args[0].map(|_| BlockReg::Fixed(Reg::R0)),
                 args[1].map(|_| BlockReg::Fixed(Reg::R1)),
@@ -513,12 +561,7 @@ impl<'a> BlockAsm<'a> {
             }
             Some(label) => *label,
         };
-        self.insert_inst(BlockInst::Branch {
-            label,
-            cond,
-            block_index: 0,
-            skip: false,
-        });
+        self.insert_inst(BlockInst::Branch { label, cond, block_index: 0 });
     }
 
     pub fn generic_guest_inst(&mut self, inst_info: &mut InstInfo) {
@@ -821,7 +864,7 @@ impl<'a> BlockAsm<'a> {
         intervals
     }
 
-    pub fn finalize(mut self, block_start_pc: u32, thumb: bool) -> Vec<u32> {
+    pub fn emit_opcodes(&mut self, block_start_pc: u32, thumb: bool) -> usize {
         let (mut basic_blocks, basic_blocks_order) = self.assemble_basic_blocks(block_start_pc, thumb);
 
         if IS_DEBUG && unsafe { BLOCK_LOG } {
@@ -873,7 +916,7 @@ impl<'a> BlockAsm<'a> {
                 continue;
             }
             self.buf.reg_allocator.init_inputs(*basic_block.get_required_inputs());
-            basic_block.allocate_regs(&mut self);
+            basic_block.allocate_regs(self);
         }
 
         // Used to determine what regs to push and pop for prologue and epilogue
@@ -887,26 +930,38 @@ impl<'a> BlockAsm<'a> {
             used_host_regs += Reg::R12;
         }
 
-        let mut opcodes = Vec::new();
-        let mut branch_placeholders = Vec::new();
-        let mut opcodes_offset = Vec::with_capacity(basic_blocks.len());
+        self.buf.opcodes.clear();
+        self.buf.block_opcode_offsets.clear();
+        self.buf.branch_placeholders.clear();
+
         for (i, basic_block) in basic_blocks.iter().enumerate() {
-            opcodes_offset.push(opcodes.len());
+            let opcodes_len = self.buf.opcodes.len();
+            self.buf.block_opcode_offsets.push(opcodes_len);
             if unlikely(i != 0 && basic_block.enter_blocks.is_empty()) {
                 continue;
             }
-            opcodes.extend(basic_block.emit_opcodes(&mut self, &mut branch_placeholders, opcodes.len(), used_host_regs));
+            let opcodes = basic_block.emit_opcodes(self, opcodes_len, used_host_regs);
+            self.buf.opcodes.extend(opcodes);
         }
 
-        for branch_placeholder in branch_placeholders {
-            let opcode = opcodes[branch_placeholder];
-            let cond = Cond::from((opcode >> 28) as u8);
-            let block_index = opcode & 0xFFFFFFF;
-            let branch_to = opcodes_offset[block_index as usize];
-            let diff = branch_to as i32 - branch_placeholder as i32;
-            opcodes[branch_placeholder] = B::b(diff - 2, cond);
+        self.buf.opcodes.len()
+    }
+
+    pub fn finalize(&mut self, jit_mem_offset: usize) -> &Vec<u32> {
+        for &branch_placeholder in &self.buf.branch_placeholders {
+            let encoding = BranchEncoding::from(self.buf.opcodes[branch_placeholder]);
+            let diff = if encoding.is_call_common() {
+                let opcode_index = (jit_mem_offset >> 2) + branch_placeholder;
+                let branch_to = u32::from(encoding.index()) >> 2;
+                branch_to as i32 - opcode_index as i32
+            } else {
+                let block_index = u32::from(encoding.index());
+                let branch_to = self.buf.block_opcode_offsets[block_index as usize];
+                branch_to as i32 - branch_placeholder as i32
+            };
+            self.buf.opcodes[branch_placeholder] = if encoding.has_return() { B::bl } else { B::b }(diff - 2, Cond::from(u8::from(encoding.cond())));
         }
 
-        opcodes
+        &self.buf.opcodes
     }
 }

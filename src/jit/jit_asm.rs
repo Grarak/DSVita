@@ -186,7 +186,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
     }
 
     let jit_entry = {
-        // unsafe { BLOCK_LOG = guest_pc == 0x3800b10 };
+        // unsafe { BLOCK_LOG = guest_pc == 0x2000800 };
 
         let mut block_asm = asm.new_block_asm(false);
 
@@ -221,14 +221,16 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
             }
         }
 
-        let opcodes = block_asm.finalize(guest_pc, THUMB);
+        let opcodes_len = block_asm.emit_opcodes(guest_pc, THUMB);
+        let next_jit_entry = get_jit!(asm.emu).get_next_entry(opcodes_len);
+        let opcodes = block_asm.finalize(next_jit_entry);
         if IS_DEBUG && unsafe { BLOCK_LOG } {
-            for &opcode in &opcodes {
+            for &opcode in opcodes {
                 println!("0x{opcode:x},");
             }
             todo!()
         }
-        let (insert_entry, flushed) = get_jit_mut!(asm.emu).insert_block::<CPU>(&opcodes, guest_pc);
+        let (insert_entry, flushed) = get_jit_mut!(asm.emu).insert_block::<CPU>(opcodes, guest_pc);
         if unlikely(flushed) {
             asm.runtime_data.return_stack_ptr = 0;
         }

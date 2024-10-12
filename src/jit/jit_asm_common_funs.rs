@@ -10,15 +10,15 @@ use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
 
 pub struct JitAsmCommonFuns<const CPU: CpuType> {
-    branch_return_stack: *const extern "C" fn(),
-    branch_reg: *const extern "C" fn(),
+    branch_return_stack: usize,
+    branch_reg: usize,
 }
 
 impl<const CPU: CpuType> Default for JitAsmCommonFuns<CPU> {
     fn default() -> Self {
         JitAsmCommonFuns {
-            branch_return_stack: ptr::null(),
-            branch_reg: ptr::null(),
+            branch_return_stack: 0,
+            branch_reg: 0,
         }
     }
 }
@@ -28,8 +28,9 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         let mut create_function = |fun: fn(&mut BlockAsm, &mut JitAsm<CPU>)| {
             let mut block_asm = asm.new_block_asm(true);
             fun(&mut block_asm, asm);
-            let opcodes = block_asm.finalize(0, false);
-            get_jit_mut!(asm.emu).insert_common_fun_block(&opcodes)
+            block_asm.emit_opcodes(0, false);
+            let opcodes = block_asm.finalize(0);
+            get_jit_mut!(asm.emu).insert_common_fun_block(opcodes) as usize - get_jit!(asm.emu).get_start_entry()
         };
         JitAsmCommonFuns {
             branch_return_stack: create_function(Self::emit_branch_return_stack),
@@ -326,17 +327,17 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
 
     pub fn emit_call_branch_return_stack(&self, block_asm: &mut BlockAsm, total_cycles: u16, target_pc_reg: BlockReg, current_pc: u32) {
         if IS_DEBUG {
-            block_asm.call3(self.branch_return_stack as u32, total_cycles as u32, target_pc_reg, current_pc);
+            block_asm.call3_common(self.branch_return_stack, total_cycles as u32, target_pc_reg, current_pc);
         } else {
-            block_asm.call2(self.branch_return_stack as u32, total_cycles as u32, target_pc_reg);
+            block_asm.call2_common(self.branch_return_stack, total_cycles as u32, target_pc_reg);
         }
     }
 
     pub fn emit_call_branch_reg(&self, block_asm: &mut BlockAsm, total_cycles: u16, lr_reg: BlockReg, target_pc_reg: BlockReg, current_pc: u32) {
         if IS_DEBUG {
-            block_asm.call4(self.branch_reg as u32, total_cycles as u32, lr_reg, target_pc_reg, current_pc);
+            block_asm.call4_common(self.branch_reg, total_cycles as u32, lr_reg, target_pc_reg, current_pc);
         } else {
-            block_asm.call3(self.branch_reg as u32, total_cycles as u32, lr_reg, target_pc_reg);
+            block_asm.call3_common(self.branch_reg, total_cycles as u32, lr_reg, target_pc_reg);
         }
     }
 

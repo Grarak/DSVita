@@ -8,6 +8,7 @@ use crate::jit::assembler::{BlockLabel, BlockOperand, BlockOperandShift, BlockRe
 use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
+use bilge::prelude::*;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
@@ -60,6 +61,15 @@ pub enum BlockTransferOp {
 pub enum BlockSystemRegOp {
     Mrs,
     Msr,
+}
+
+#[bitsize(32)]
+#[derive(FromBits)]
+pub struct BranchEncoding {
+    pub index: u26,
+    pub has_return: bool,
+    pub is_call_common: bool,
+    pub cond: u4,
 }
 
 impl BlockInst {
@@ -186,6 +196,26 @@ impl BlockInst {
                     ),
                 )
             }
+            BlockInst::CallCommon { args, has_return, .. } => {
+                let mut inputs = BlockRegSet::new();
+                for arg in args {
+                    if let Some(arg) = arg {
+                        inputs += *arg;
+                    }
+                }
+                (
+                    inputs,
+                    block_reg_set!(
+                        Some(BlockReg::Fixed(Reg::R0)),
+                        Some(BlockReg::Fixed(Reg::R1)),
+                        Some(BlockReg::Fixed(Reg::R2)),
+                        Some(BlockReg::Fixed(Reg::R3)),
+                        Some(BlockReg::Fixed(Reg::R12)),
+                        Some(BlockReg::Fixed(Reg::CPSR)),
+                        if *has_return { Some(BlockReg::Fixed(Reg::LR)) } else { None }
+                    ),
+                )
+            }
             BlockInst::GenericGuestInst { inst, regs_mapping } => {
                 let mut inputs = BlockRegSet::new();
                 let mut outputs = BlockRegSet::new();
@@ -278,7 +308,7 @@ impl BlockInst {
                     Self::replace_reg(&mut regs_mapping[reg as usize], old, new);
                 }
             }
-            BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue { .. } => {}
+            BlockInst::CallCommon { .. } | BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue { .. } => {}
         }
     }
 
@@ -333,7 +363,7 @@ impl BlockInst {
                     Self::replace_reg(&mut regs_mapping[reg as usize], old, new);
                 }
             }
-            BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue { .. } => {}
+            BlockInst::CallCommon { .. } | BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue { .. } => {}
         }
     }
 
@@ -377,7 +407,7 @@ impl BlockInst {
                     Self::replace_reg(reg_mapping, old, new);
                 }
             }
-            BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue { .. } => {}
+            BlockInst::CallCommon { .. } | BlockInst::Label { .. } | BlockInst::Branch { .. } | BlockInst::GuestPc(_) | BlockInst::Bkpt(_) | BlockInst::Prologue | BlockInst::Epilogue { .. } => {}
         }
     }
 
@@ -544,13 +574,11 @@ impl BlockInst {
                 }
             },
 
-            BlockInst::Branch { cond, block_index, skip, .. } => {
-                if !*skip {
-                    // Encode label and cond as u32
-                    // Branch offset can only be figured out later
-                    opcodes.push(((*cond as u32) << 28) | (*block_index as u32));
-                    branch_placeholders.push(opcodes_offset + opcode_index);
-                }
+            BlockInst::Branch { cond, block_index, .. } => {
+                // Encode label and cond as u32
+                // Branch offset can only be figured out later
+                opcodes.push(BranchEncoding::new(u26::new(*block_index as u32), false, false, u4::new(*cond as u8)).into());
+                branch_placeholders.push(opcodes_offset + opcode_index);
             }
 
             BlockInst::SaveContext { .. } => {
@@ -583,6 +611,12 @@ impl BlockInst {
             } else {
                 Bx::bx(func_reg.as_fixed(), Cond::AL)
             }),
+            BlockInst::CallCommon { mem_offset, has_return, .. } => {
+                // Encode common offset
+                // Branch offset can only be figured out later
+                opcodes.push(BranchEncoding::new(u26::new(*mem_offset as u32), *has_return, true, u4::new(Cond::AL as u8)).into());
+                branch_placeholders.push(opcodes_offset + opcode_index);
+            }
             BlockInst::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
 
             BlockInst::GenericGuestInst { inst, regs_mapping } => {
@@ -725,7 +759,6 @@ pub enum BlockInst {
         label: BlockLabel,
         cond: Cond,
         block_index: usize,
-        skip: bool,
     },
 
     SaveContext {
@@ -747,6 +780,11 @@ pub enum BlockInst {
 
     Call {
         func_reg: BlockReg,
+        args: [Option<BlockReg>; 4],
+        has_return: bool,
+    },
+    CallCommon {
+        mem_offset: usize,
         args: [Option<BlockReg>; 4],
         has_return: bool,
     },
@@ -825,7 +863,7 @@ impl Debug for BlockInst {
                 };
                 write!(f, "label {label:?} {guest_pc}:")
             }
-            BlockInst::Branch { label, cond, block_index, skip } => write!(f, "B{cond:?} {label:?}, block index: {block_index}, skip: {skip}"),
+            BlockInst::Branch { label, cond, block_index } => write!(f, "B{cond:?} {label:?}, block index: {block_index}"),
             BlockInst::SaveContext { .. } => write!(f, "SaveContext"),
             BlockInst::SaveReg { guest_reg, reg_mapped, .. } => write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}"),
             BlockInst::RestoreReg { guest_reg, reg_mapped, .. } => write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}"),
@@ -834,6 +872,13 @@ impl Debug for BlockInst {
                     write!(f, "Blx {func_reg:?} {args:?}")
                 } else {
                     write!(f, "Bx {func_reg:?} {args:?}")
+                }
+            }
+            BlockInst::CallCommon { mem_offset, args, has_return } => {
+                if *has_return {
+                    write!(f, "Bl {mem_offset:x} {args:?}")
+                } else {
+                    write!(f, "B {mem_offset:x} {args:?}")
                 }
             }
             BlockInst::Bkpt(id) => write!(f, "Bkpt {id}"),
