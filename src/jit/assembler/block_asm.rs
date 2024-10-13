@@ -664,6 +664,17 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
+    fn resolve_actual_block_count(already_processed: &mut NoHashSet<usize>, basic_blocks: &mut [BasicBlock], block_i: usize, count: &mut usize) {
+        *count += 1;
+        already_processed.insert(block_i);
+        for i in 0..basic_blocks[block_i].exit_blocks.len() {
+            let exit_i = basic_blocks[block_i].exit_blocks[i];
+            if !already_processed.contains(&exit_i) {
+                Self::resolve_actual_block_count(already_processed, basic_blocks, exit_i, count);
+            }
+        }
+    }
+
     fn resolve_df_ordering(
         already_processed: &mut Bitset<{ 1024 / 32 }>,
         completed: &mut Bitset<{ 1024 / 32 }>,
@@ -697,7 +708,7 @@ impl<'a> BlockAsm<'a> {
         *completed += block_i;
     }
 
-    fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> (Vec<BasicBlock>, Vec<usize>) {
+    fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> (Vec<BasicBlock>, Vec<usize>, NoHashSet<usize>) {
         for i in 0..self.buf.insts.len() {
             self.insts_link.insert_end(i);
         }
@@ -737,7 +748,7 @@ impl<'a> BlockAsm<'a> {
                     }
                     last_label = None;
                 }
-                BlockInstKind::Call { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {
+                BlockInstKind::Call { has_return: false, .. } | BlockInstKind::CallCommon { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {
                     basic_blocks.push(BasicBlock::new(self, basic_block_start, current_node));
                     basic_block_start = BlockInstList::deref(current_node).next;
                     if let Some(last_label) = last_label {
@@ -773,16 +784,13 @@ impl<'a> BlockAsm<'a> {
                     }
                 }
                 // Don't add exit when last command in basic block is a breakout
-                BlockInstKind::Call { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {
-                    if i + 1 < basic_blocks_len {
+                BlockInstKind::Call { has_return: false, .. } | BlockInstKind::CallCommon { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {
+                    if cond != Cond::AL && i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.push(i + 1);
                     }
                 }
-                _ => {
-                    if i + 1 < basic_blocks_len {
-                        basic_block.exit_blocks.push(i + 1);
-                    }
-                }
+                _ if i + 1 < basic_blocks_len => basic_block.exit_blocks.push(i + 1),
+                _ => {}
             }
         }
 
@@ -828,11 +836,15 @@ impl<'a> BlockAsm<'a> {
             basic_block.remove_dead_code(self);
         }
 
+        let mut reachable_blocks = NoHashSet::default();
+        let mut actual_block_count = 0;
+        Self::resolve_actual_block_count(&mut reachable_blocks, &mut basic_blocks, 0, &mut actual_block_count);
+
         let mut df_already_processed = Bitset::<{ 1024 / 32 }>::new();
         let mut df_completed = Bitset::<{ 1024 / 32 }>::new();
-        let mut df_ordering = vec![0; basic_blocks_len];
+        let mut df_ordering = vec![0; actual_block_count];
         let mut df_ordering_start = 0;
-        let mut df_ordering_end = basic_blocks_len - 1;
+        let mut df_ordering_end = actual_block_count - 1;
         Self::resolve_df_ordering(
             &mut df_already_processed,
             &mut df_completed,
@@ -843,7 +855,7 @@ impl<'a> BlockAsm<'a> {
             &mut df_ordering_end,
         );
 
-        (basic_blocks, df_ordering)
+        (basic_blocks, df_ordering, reachable_blocks)
     }
 
     fn assemble_intervals(basic_blocks: &[BasicBlock], ordering: &[usize]) -> NoHashMap<u16, (usize, usize)> {
@@ -872,7 +884,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn emit_opcodes(&mut self, block_start_pc: u32, thumb: bool) -> usize {
-        let (mut basic_blocks, basic_blocks_order) = self.assemble_basic_blocks(block_start_pc, thumb);
+        let (mut basic_blocks, basic_blocks_order, reachable_blocks) = self.assemble_basic_blocks(block_start_pc, thumb);
 
         if IS_DEBUG && unsafe { BLOCK_LOG } {
             for (i, basic_block) in basic_blocks.iter().enumerate() {
@@ -919,7 +931,7 @@ impl<'a> BlockAsm<'a> {
         }
 
         for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
-            if unlikely(i != 0 && basic_block.enter_blocks.is_empty()) {
+            if unlikely(i != 0 && !reachable_blocks.contains(&i)) {
                 continue;
             }
             self.buf.reg_allocator.init_inputs(*basic_block.get_required_inputs());
@@ -944,7 +956,7 @@ impl<'a> BlockAsm<'a> {
         for (i, basic_block) in basic_blocks.iter().enumerate() {
             let opcodes_len = self.buf.opcodes.len();
             self.buf.block_opcode_offsets.push(opcodes_len);
-            if unlikely(i != 0 && basic_block.enter_blocks.is_empty()) {
+            if unlikely(i != 0 && !reachable_blocks.contains(&i)) {
                 continue;
             }
             let opcodes = basic_block.emit_opcodes(self, opcodes_len, used_host_regs);

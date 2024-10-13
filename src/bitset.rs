@@ -42,6 +42,10 @@ impl<const SIZE: usize> Bitset<SIZE> {
     pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    pub const fn clear(&mut self) {
+        self.0 = [0; SIZE];
+    }
 }
 
 impl<const SIZE: usize> Default for Bitset<SIZE> {
