@@ -45,7 +45,7 @@ impl MmuArm9Inner {
             *read_ptr = 0;
 
             match addr & 0xFF000000 {
-                regions::MAIN_MEMORY_OFFSET => *read_ptr = get_mem!(emu).main.get_ptr(addr) as u32,
+                regions::MAIN_OFFSET => *read_ptr = get_mem!(emu).main.get_ptr(addr) as u32,
                 regions::SHARED_WRAM_OFFSET => *read_ptr = get_mem!(emu).wram.get_ptr::<{ ARM9 }>(addr) as u32,
                 // regions::VRAM_OFFSET => *read_ptr = emu.mem.vram.get_ptr::<{ ARM9 }>(addr) as u32,
                 _ => {}
@@ -92,7 +92,7 @@ impl Mmu for MmuArm9 {
 
     fn update_itcm(&self, emu: &Emu) {
         let inner = unsafe { self.inner.get().as_mut().unwrap_unchecked() };
-        inner.update(regions::INSTRUCTION_TCM_OFFSET, max(inner.current_itcm_size, get_cp15!(emu, ARM9).itcm_size), emu);
+        inner.update(regions::ITCM_OFFSET, max(inner.current_itcm_size, get_cp15!(emu, ARM9).itcm_size), emu);
     }
 
     fn update_dtcm(&self, emu: &Emu) {
@@ -149,7 +149,7 @@ impl MmuArm7Inner {
             *read_ptr = 0;
 
             match addr & 0xFF000000 {
-                regions::MAIN_MEMORY_OFFSET => *read_ptr = get_mem!(emu).main.get_ptr(addr) as u32,
+                regions::MAIN_OFFSET => *read_ptr = get_mem!(emu).main.get_ptr(addr) as u32,
                 regions::SHARED_WRAM_OFFSET => *read_ptr = get_mem!(emu).wram.get_ptr::<{ ARM7 }>(addr) as u32,
                 regions::IO_PORTS_OFFSET => {
                     if unlikely(addr >= regions::WIFI_IO_OFFSET) {

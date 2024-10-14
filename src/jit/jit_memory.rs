@@ -80,17 +80,17 @@ macro_rules! create_jit_blocks {
 }
 
 create_jit_blocks!(
-    [itcm, regions::INSTRUCTION_TCM_SIZE, DEFAULT_JIT_ENTRY_ARM9],
-    [main_arm9, regions::MAIN_MEMORY_SIZE, DEFAULT_JIT_ENTRY_ARM9],
-    [main_arm7, regions::MAIN_MEMORY_SIZE, DEFAULT_JIT_ENTRY_ARM7],
+    [itcm, regions::ITCM_SIZE, DEFAULT_JIT_ENTRY_ARM9],
+    [main_arm9, regions::MAIN_SIZE, DEFAULT_JIT_ENTRY_ARM9],
+    [main_arm7, regions::MAIN_SIZE, DEFAULT_JIT_ENTRY_ARM7],
     [wram, regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE, DEFAULT_JIT_ENTRY_ARM7],
     [vram_arm7, vram::ARM7_SIZE, DEFAULT_JIT_ENTRY_ARM7]
 );
 
 #[derive(Default)]
 pub struct JitLiveRanges {
-    pub itcm: HeapMemU32<{ (regions::INSTRUCTION_TCM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
-    pub main: HeapMemU32<{ (regions::MAIN_MEMORY_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
+    pub itcm: HeapMemU32<{ (regions::ITCM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
+    pub main: HeapMemU32<{ (regions::MAIN_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
     pub wram: HeapMemU32<{ ((regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE) / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
     pub vram_arm7: HeapMemU32<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
 }
@@ -214,12 +214,12 @@ impl JitMemory {
 
         let jit_addr = match CPU {
             ARM9 => match guest_pc & 0xFF000000 {
-                regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm),
-                regions::MAIN_MEMORY_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main),
+                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm),
+                regions::MAIN_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main),
                 _ => todo!("{:x}", guest_pc),
             },
             ARM7 => match guest_pc & 0xFF000000 {
-                regions::MAIN_MEMORY_OFFSET => insert!(self.jit_entries.main_arm7, self.jit_live_ranges.main),
+                regions::MAIN_OFFSET => insert!(self.jit_entries.main_arm7, self.jit_live_ranges.main),
                 regions::SHARED_WRAM_OFFSET => insert!(self.jit_entries.wram, self.jit_live_ranges.wram),
                 regions::VRAM_OFFSET => insert!(self.jit_entries.vram_arm7, self.jit_live_ranges.vram_arm7),
                 _ => todo!("{:x}", guest_pc),

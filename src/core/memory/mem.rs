@@ -8,6 +8,7 @@ use crate::core::memory::oam::Oam;
 use crate::core::memory::palettes::Palettes;
 use crate::core::memory::regions;
 use crate::core::memory::tcm::Tcm;
+use crate::core::memory::vmem::{VmemArm7, VmemArm9};
 use crate::core::memory::vram::Vram;
 use crate::core::memory::wifi::Wifi;
 use crate::core::memory::wram::Wram;
@@ -16,26 +17,24 @@ use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::jit::jit_memory::{JitMemory, JitRegion};
 use crate::logging::debug_println;
+use crate::mmap::ShmMem;
 use crate::utils::Convert;
-use std::intrinsics::{likely, unlikely};
+use std::intrinsics::{unlikely};
 use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 use CpuType::ARM7;
 
 pub struct Memory {
-    pub tcm: Tcm,
-    pub main: Main,
     pub wram: Wram,
     pub io_arm7: IoArm7,
     pub io_arm9: IoArm9,
-    pub wifi: Wifi,
     pub palettes: Palettes,
     pub vram: Vram,
     pub oam: Oam,
     pub jit: JitMemory,
     pub breakout_imm: bool,
-    pub mmu_arm9: MmuArm9,
-    pub mmu_arm7: MmuArm7,
+    pub vmem_arm9: VmemArm9,
+    pub vmem_arm7: VmemArm7,
 }
 
 macro_rules! get_mem_mmu {
@@ -48,51 +47,35 @@ macro_rules! get_mem_mmu {
 }
 
 impl Memory {
-    pub fn new(touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
+    pub fn new(shm_mem: &ShmMem, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
         Memory {
-            tcm: Tcm::new(),
-            main: Main::new(),
             wram: Wram::new(),
             io_arm7: IoArm7::new(touch_points, sound_sampler),
             io_arm9: IoArm9::new(),
-            wifi: Wifi::new(),
             palettes: Palettes::new(),
             vram: Vram::new(),
             oam: Oam::new(),
             jit: JitMemory::new(),
             breakout_imm: false,
-            mmu_arm9: MmuArm9::new(),
-            mmu_arm7: MmuArm7::new(),
+            vmem_arm9: VmemArm9::new(shm_mem),
+            vmem_arm7: VmemArm7::new(shm_mem),
         }
     }
 
     pub fn read<const CPU: CpuType, T: Convert>(&mut self, addr: u32, emu: &mut Emu) -> T {
-        self.read_with_options::<CPU, true, true, T>(addr, emu)
-    }
-
-    pub fn read_no_mmu<const CPU: CpuType, T: Convert>(&mut self, addr: u32, emu: &mut Emu) -> T {
-        self.read_with_options::<CPU, true, false, T>(addr, emu)
+        self.read_with_options::<CPU, true, T>(addr, emu)
     }
 
     pub fn read_no_tcm<const CPU: CpuType, T: Convert>(&mut self, addr: u32, emu: &mut Emu) -> T {
-        self.read_with_options::<CPU, false, true, T>(addr, emu)
+        self.read_with_options::<CPU, false, T>(addr, emu)
     }
 
-    pub fn read_with_options<const CPU: CpuType, const TCM: bool, const MMU: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu) -> T {
+    pub fn read_with_options<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu) -> T {
         debug_println!("{:?} memory read at {:x}", CPU, addr);
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
 
         let addr_base = aligned_addr & 0xFF000000;
         let addr_offset = aligned_addr - addr_base;
-
-        if MMU && (CPU == ARM7 || TCM) {
-            let base_ptr = get_mem_mmu!(self, CPU).get_base_ptr(aligned_addr);
-            if likely(!base_ptr.is_null()) {
-                let ret = unsafe { (base_ptr.add((aligned_addr & (MMU_BLOCK_SIZE - 1)) as usize) as *const T).read() };
-                debug_println!("{:?} mmu read at {:x} with value {:x}", CPU, aligned_addr, ret.into());
-                return ret;
-            }
-        }
 
         if CPU == ARM9 && TCM {
             let cp15 = get_cp15!(emu, ARM9);
@@ -104,7 +87,7 @@ impl Memory {
         }
 
         let ret = match addr_base {
-            regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => match CPU {
+            regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => match CPU {
                 ARM9 => {
                     let mut ret = T::from(0);
                     if TCM {
@@ -125,7 +108,7 @@ impl Memory {
                     }
                 }
             },
-            regions::MAIN_MEMORY_OFFSET => self.main.read(addr_offset),
+            regions::MAIN_OFFSET => self.main.read(addr_offset),
             regions::SHARED_WRAM_OFFSET => self.wram.read::<CPU, _>(addr_offset),
             regions::IO_PORTS_OFFSET => match CPU {
                 ARM9 => self.io_arm9.read(addr_offset, emu),
@@ -189,7 +172,7 @@ impl Memory {
         }
 
         match addr_base {
-            regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => match CPU {
+            regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => match CPU {
                 ARM9 => {
                     if TCM {
                         let cp15 = get_cp15!(emu, ARM9);
@@ -205,7 +188,7 @@ impl Memory {
                     // todo!("{:x} {:x}", aligned_addr, addr_base)
                 }
             },
-            regions::MAIN_MEMORY_OFFSET => {
+            regions::MAIN_OFFSET => {
                 self.main.write(addr_offset, value);
                 self.jit.invalidate_block::<{ JitRegion::Main }>(aligned_addr, size_of::<T>());
             }

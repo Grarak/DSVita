@@ -32,6 +32,7 @@ affinity = "0.1.2"
 [build-dependencies]
 bindgen = "0.70.0"
 cc = "1.0.100"
+cmake = "0.1"
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]
 vitasdk-sys = { version = "0.3.2", features = [

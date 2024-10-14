@@ -217,6 +217,7 @@ use crate::core::memory::cartridge::Cartridge;
 use crate::core::memory::mem::Memory;
 use crate::core::spu::SoundSampler;
 use crate::core::CpuType;
+use crate::mmap::ShmMem;
 use crate::settings::Settings;
 use crate::utils::Convert;
 use std::cell::UnsafeCell;
@@ -267,10 +268,10 @@ pub struct Emu {
 }
 
 impl Emu {
-    pub fn new(cartridge_io: CartridgeIo, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>, settings: Settings) -> Self {
+    pub fn new(cartridge_io: CartridgeIo, shm_mem: &ShmMem, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>, settings: Settings) -> Self {
         Emu {
             common: UnsafeCell::new(Common::new(cartridge_io, fps, key_map)),
-            mem: UnsafeCell::new(Memory::new(touch_points, sound_sampler)),
+            mem: UnsafeCell::new(Memory::new(shm_mem, touch_points, sound_sampler)),
             arm7_hle: UnsafeCell::new(Arm7Hle::new()),
             settings,
         }

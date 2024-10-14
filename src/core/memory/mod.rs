@@ -12,3 +12,4 @@ pub mod tcm;
 pub mod vram;
 mod wifi;
 pub mod wram;
+mod vmem;
