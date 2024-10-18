@@ -284,8 +284,8 @@ impl Emu {
         unsafe { (*self.mem.get()).read_no_tcm::<CPU, T>(addr, self) }
     }
 
-    pub fn mem_read_with_options<const CPU: CpuType, const TCM: bool, const MMU: bool, T: Convert>(&mut self, addr: u32) -> T {
-        unsafe { (*self.mem.get()).read_with_options::<CPU, TCM, MMU, T>(addr, self) }
+    pub fn mem_read_with_options<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32) -> T {
+        unsafe { (*self.mem.get()).read_with_options::<CPU, TCM, T>(addr, self) }
     }
 
     pub fn mem_write<const CPU: CpuType, T: Convert>(&mut self, addr: u32, value: T) {
