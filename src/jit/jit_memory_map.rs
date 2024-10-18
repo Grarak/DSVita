@@ -44,8 +44,8 @@ impl JitMemoryMap {
                     *arm9_ptr = get_ptr!(entries.itcm);
                     *arm7_ptr = BIOS_UNINTERRUPT_ENTRIES_ARM7.as_ptr() as u32;
                 }
-                regions::INSTRUCTION_TCM_MIRROR_OFFSET => *arm9_ptr = get_ptr!(entries.itcm),
-                regions::MAIN_MEMORY_OFFSET => {
+                regions::ITCM_OFFSET2 => *arm9_ptr = get_ptr!(entries.itcm),
+                regions::MAIN_OFFSET => {
                     *arm9_ptr = get_ptr!(entries.main_arm9);
                     *arm7_ptr = get_ptr!(entries.main_arm7);
                 }
@@ -71,8 +71,8 @@ impl JitMemoryMap {
                 0 => {
                     *arm9_ptr = get_ptr!(live_ranges.itcm);
                 }
-                regions::INSTRUCTION_TCM_MIRROR_OFFSET => *arm9_ptr = get_ptr!(live_ranges.itcm),
-                regions::MAIN_MEMORY_OFFSET => {
+                regions::ITCM_OFFSET2 => *arm9_ptr = get_ptr!(live_ranges.itcm),
+                regions::MAIN_OFFSET => {
                     *arm9_ptr = get_ptr!(live_ranges.main);
                     *arm7_ptr = get_ptr!(live_ranges.main);
                 }

@@ -1,5 +1,6 @@
 use crate::cartridge_metadata::get_cartridge_metadata;
 use crate::logging::debug_println;
+use crate::mmap::PAGE_SIZE;
 use crate::utils;
 use crate::utils::{rgb5_to_rgb8, NoHashMap};
 use static_assertions::const_assert_eq;
@@ -73,8 +74,6 @@ pub struct CartridgeHeader {
     reserved5: [u8; 0x90],
 }
 
-const PAGE_SIZE: u32 = 4096;
-
 const HEADER_SIZE: usize = size_of::<CartridgeHeader>();
 pub const HEADER_IN_RAM_SIZE: usize = 0x170;
 const_assert_eq!(HEADER_SIZE, HEADER_IN_RAM_SIZE + 0x90);
@@ -86,7 +85,7 @@ pub struct CartridgeIo {
     pub file_name: String,
     pub file_size: u32,
     pub header: CartridgeHeader,
-    content_pages: RefCell<NoHashMap<u32, Rc<[u8; PAGE_SIZE as usize]>>>,
+    content_pages: RefCell<NoHashMap<u32, Rc<[u8; PAGE_SIZE]>>>,
     save_file_path: PathBuf,
     pub save_file_size: u32,
     save_buf: Mutex<(Vec<u8>, bool)>,
@@ -138,8 +137,8 @@ impl CartridgeIo {
         })
     }
 
-    fn get_page(&self, page_addr: u32) -> io::Result<Rc<[u8; PAGE_SIZE as usize]>> {
-        debug_assert_eq!(page_addr & (PAGE_SIZE - 1), 0);
+    fn get_page(&self, page_addr: u32) -> io::Result<Rc<[u8; PAGE_SIZE]>> {
+        debug_assert_eq!(page_addr & (PAGE_SIZE as u32 - 1), 0);
         let mut pages = self.content_pages.borrow_mut();
         match pages.get(&page_addr) {
             None => {
@@ -149,7 +148,7 @@ impl CartridgeIo {
                     pages.clear();
                 }
 
-                let mut buf = [0u8; PAGE_SIZE as usize];
+                let mut buf = [0u8; PAGE_SIZE];
                 self.file.read_at(&mut buf, page_addr as u64)?;
                 let buf = Rc::new(buf);
                 pages.insert(page_addr, buf.clone());
@@ -164,7 +163,7 @@ impl CartridgeIo {
         while remaining > 0 {
             let slice_start = slice.len() - remaining;
 
-            let page_addr = (offset + slice_start as u32) & !(PAGE_SIZE - 1);
+            let page_addr = (offset + slice_start as u32) & !(PAGE_SIZE as u32 - 1);
             let page_offset = offset + slice_start as u32 - page_addr;
             let page = match self.get_page(page_addr) {
                 Ok(page) => page,

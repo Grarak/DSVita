@@ -10,24 +10,24 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::MemoryAmount;
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
-    fn get_inst_mem_handler_func<const THUMB: bool, const WRITE: bool, const MMU: bool>(op: Op, amount: MemoryAmount) -> *const () {
+    fn get_inst_mem_handler_func<const THUMB: bool, const WRITE: bool>(op: Op, amount: MemoryAmount) -> *const () {
         match amount {
             MemoryAmount::Byte => {
                 if op.mem_transfer_single_signed() {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, true, MMU> as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, true> as *const _
                 } else {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, false, MMU> as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, false> as *const _
                 }
             }
             MemoryAmount::Half => {
                 if op.mem_transfer_single_signed() {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, true, MMU> as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, true> as *const _
                 } else {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, false, MMU> as *const _
+                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, false> as *const _
                 }
             }
-            MemoryAmount::Word => inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Word }, false, MMU> as *const _,
-            MemoryAmount::Double => inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Double }, false, MMU> as *const _,
+            MemoryAmount::Word => inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Word }, false> as *const _,
+            MemoryAmount::Double => inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Double }, false> as *const _,
         }
     }
 
@@ -93,7 +93,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             }
         }
 
-        let func_addr = Self::get_inst_mem_handler_func::<THUMB, WRITE, true>(op, amount);
+        let func_addr = Self::get_inst_mem_handler_func::<THUMB, WRITE>(op, amount);
         block_asm.call4(
             func_addr,
             addr_reg,

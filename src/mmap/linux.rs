@@ -1,33 +1,31 @@
+use crate::mmap::{MemRegion, VirtualMemMap};
+use libc::*;
+use std::ffi::CString;
 use std::io::{Error, ErrorKind};
 use std::ops::{Deref, DerefMut};
-use std::ptr::null_mut;
-use std::{io, slice};
+use std::{io, ptr, slice};
 
 pub struct Mmap {
-    ptr: *mut libc::c_void,
+    ptr: *mut u8,
     size: usize,
 }
 
 impl Mmap {
-    pub fn rw(_: &str, size: usize) -> io::Result<Self> {
-        Mmap::new(libc::PROT_READ | libc::PROT_WRITE, size)
-    }
-
-    pub fn executable(_: &str, size: usize) -> io::Result<Self> {
-        Mmap::new(libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC, size)
+    pub fn executable(_: impl AsRef<str>, size: usize) -> io::Result<Self> {
+        Mmap::new(PROT_READ | PROT_WRITE | PROT_EXEC, size)
     }
 
     fn new(prot: i32, size: usize) -> io::Result<Self> {
-        let ptr = unsafe { libc::mmap(null_mut(), size as _, prot, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
-        if ptr != libc::MAP_FAILED {
-            Ok(Mmap { ptr, size })
+        let ptr = unsafe { mmap(ptr::null_mut(), size as _, prot, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
+        if ptr != MAP_FAILED {
+            Ok(Mmap { ptr: ptr as _, size })
         } else {
             Err(Error::from(ErrorKind::AddrNotAvailable))
         }
     }
 
     pub fn as_mut_ptr(&mut self) -> *mut u8 {
-        self.ptr as _
+        self.ptr
     }
 
     pub fn as_ptr(&self) -> *const u8 {
@@ -41,7 +39,7 @@ impl Mmap {
 
 impl Drop for Mmap {
     fn drop(&mut self) {
-        unsafe { libc::munmap(self.ptr, self.size as _) };
+        unsafe { munmap(self.ptr as _, self.size as _) };
     }
 }
 
@@ -66,6 +64,163 @@ impl AsRef<[u8]> for Mmap {
 }
 
 impl AsMut<[u8]> for Mmap {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.deref_mut()
+    }
+}
+
+pub struct Shm(i32);
+
+impl Shm {
+    pub fn new(name: impl AsRef<str>, size: usize) -> io::Result<Self> {
+        let name = CString::new(name.as_ref())?;
+        let fd = unsafe { memfd_create(name.as_ptr() as _, MFD_CLOEXEC) };
+        if fd >= 0 {
+            if unsafe { ftruncate(fd, size as _) == 0 } {
+                Ok(Shm(fd))
+            } else {
+                unsafe { close(fd) };
+                Err(Error::from(ErrorKind::AddrNotAvailable))
+            }
+        } else {
+            Err(Error::from(ErrorKind::AddrNotAvailable))
+        }
+    }
+}
+
+impl Drop for Shm {
+    fn drop(&mut self) {
+        unsafe { close(self.0) };
+    }
+}
+
+pub struct VirtualMem {
+    ptr: *mut u8,
+    size: usize,
+}
+
+impl VirtualMem {
+    pub fn new(virtual_size: usize) -> io::Result<Self> {
+        let ptr = unsafe { mmap(ptr::null_mut(), virtual_size as _, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0) };
+        if ptr == MAP_FAILED {
+            Err(Error::from(ErrorKind::AddrNotAvailable))
+        } else {
+            Ok(VirtualMem { ptr: ptr as _, size: virtual_size })
+        }
+    }
+
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr as _
+    }
+
+    pub fn len(&self) -> usize {
+        self.size as _
+    }
+
+    pub fn create_region_map(&mut self, shm_mem: &Shm, mem_region: &MemRegion) -> io::Result<VirtualMemMap> {
+        let prot = if mem_region.allow_write { PROT_READ | PROT_WRITE } else { PROT_READ };
+        for addr_offset in (mem_region.start..mem_region.end).step_by(mem_region.size) {
+            if unsafe { mmap(self.ptr.add(addr_offset) as _, mem_region.size, prot, MAP_SHARED | MAP_FIXED, shm_mem.0, mem_region.shm_offset as _) } == MAP_FAILED {
+                return Err(Error::from(ErrorKind::AddrNotAvailable));
+            }
+        }
+        Ok(VirtualMemMap::new(unsafe { self.ptr.add(mem_region.start) as _ }, mem_region.region_size()))
+    }
+
+    pub fn destroy_region_map(&mut self, mem_region: &MemRegion) {
+        for addr_offset in (mem_region.start..mem_region.end).step_by(mem_region.size) {
+            unsafe { munmap(self.ptr.add(addr_offset as _) as _, mem_region.size as _) };
+        }
+    }
+
+    pub fn create_page_map(&mut self, shm_mem: &Shm, shm_start: usize, shm_offset: usize, shm_size: usize, addr: usize, page_size: usize, allow_write: bool) -> io::Result<VirtualMemMap> {
+        debug_assert_eq!(addr & (page_size - 1), 0);
+        let prot = if allow_write { PROT_READ | PROT_WRITE } else { PROT_READ };
+        let shm_offset = shm_start + (shm_offset & (shm_size - 1));
+        if unsafe { mmap(self.ptr.add(addr) as _, page_size, prot, MAP_SHARED | MAP_FIXED, shm_mem.0, shm_offset as _) } == MAP_FAILED {
+            Err(Error::from(ErrorKind::AddrNotAvailable))
+        } else {
+            Ok(VirtualMemMap::new(unsafe { self.ptr.add(addr) as _ }, page_size))
+        }
+    }
+
+    pub fn create_map(&mut self, shm_mem: &Shm, shm_offset: usize, addr: usize, size: usize, read: bool, write: bool, exe: bool) -> io::Result<VirtualMemMap> {
+        let mut prot = PROT_NONE;
+        if read {
+            prot |= PROT_READ;
+        }
+        if write {
+            prot |= PROT_WRITE;
+        }
+        if exe {
+            prot |= PROT_EXEC;
+        }
+
+        if unsafe { mmap(self.ptr.add(addr) as _, size, prot, MAP_SHARED | MAP_FIXED, shm_mem.0, shm_offset as _) } == MAP_FAILED {
+            Err(Error::from(ErrorKind::AddrNotAvailable))
+        } else {
+            Ok(VirtualMemMap::new(unsafe { self.ptr.add(addr) as _ }, size))
+        }
+    }
+
+    pub fn destroy_map(&mut self, start: usize, size: usize) -> i32 {
+        unsafe { munmap(self.ptr.add(start) as _, size as _) }
+    }
+}
+
+pub unsafe fn set_protection(start: *mut u8, size: usize, read: bool, write: bool, exe: bool) {
+    let mut prot = PROT_NONE;
+    if read {
+        prot |= PROT_READ;
+    }
+    if write {
+        prot |= PROT_WRITE;
+    }
+    if exe {
+        prot |= PROT_EXEC;
+    }
+    mprotect(start as _, size as _, prot);
+}
+
+extern "C" {
+    fn built_in_clear_cache(start: *const u8, end: *const u8);
+}
+
+pub unsafe fn flush_icache(start: *const u8, size: usize) {
+    built_in_clear_cache(start, start.add(size));
+}
+
+impl Drop for VirtualMem {
+    fn drop(&mut self) {
+        unsafe { munmap(self.ptr as _, self.size) };
+    }
+}
+
+impl Deref for VirtualMem {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { slice::from_raw_parts(self.as_ptr(), self.len()) }
+    }
+}
+
+impl DerefMut for VirtualMem {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
+    }
+}
+
+impl AsRef<[u8]> for VirtualMem {
+    fn as_ref(&self) -> &[u8] {
+        self.deref()
+    }
+}
+
+impl AsMut<[u8]> for VirtualMem {
     fn as_mut(&mut self) -> &mut [u8] {
         self.deref_mut()
     }
