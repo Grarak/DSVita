@@ -14,9 +14,11 @@
 #![feature(stmt_expr_attributes)]
 
 use crate::cartridge_io::CartridgeIo;
-use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, get_spu_mut, Emu};
+use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_mem_mut, get_mmu, get_regs_mut, get_spu_mut, Emu};
 use crate::core::graphics::gpu::Gpu;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
+use crate::core::memory::mmu::Mmu;
+use crate::core::memory::regions;
 use crate::core::spu::{SoundSampler, Spu};
 use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
@@ -72,30 +74,44 @@ fn run_cpu(
     let common = get_common_mut!(emu);
     let mem = get_mem_mut!(emu);
 
-    {
-        let cartridge_header: &[u8; cartridge_io::HEADER_IN_RAM_SIZE] = unsafe { mem::transmute(&common.cartridge.io.header) };
-        mem.main.write_slice(0x7FFE00, cartridge_header);
-
-        mem.main.write(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
-        mem.main.write(0x27FF880, 0x0007u16); // Message from ARM9 to ARM7
-        mem.main.write(0x27FF884, 0x0006u16); // ARM7 boot task
-        mem.main.write(0x27FFC10, 0x5835u16); // Copy of ARM7 BIOS CRC
-        mem.main.write(0x27FFC40, 0x0001u16); // Boot indicator
-
-        mem.main.write(0x27FF800, 0x00001FC2u32); // Chip ID 1
-        mem.main.write(0x27FF804, 0x00001FC2u32); // Chip ID 2
-        mem.main.write(0x27FFC00, 0x00001FC2u32); // Copy of chip ID 1
-        mem.main.write(0x27FFC04, 0x00001FC2u32); // Copy of chip ID 2
-
-        // User settings
-        mem.main.write_slice(0x27FFC80, &spi::SPI_FIRMWARE[spi::USER_SETTINGS_1_ADDR..spi::USER_SETTINGS_1_ADDR + 0x70]);
-    }
+    debug_println!("Initialize mmu");
+    get_mmu!(emu, ARM9).update_all(emu);
+    get_mmu!(emu, ARM7).update_all(emu);
 
     {
         let cp15 = get_cp15_mut!(emu, ARM9);
         cp15.write(0x010000, 0x0005707D, emu); // control
         cp15.write(0x090100, 0x0300000A, emu); // dtcm addr/size
         cp15.write(0x090101, 0x00000020, emu); // itcm size
+    }
+
+    {
+        debug_println!("Copying cartridge header to main");
+        let cartridge_header: &[u8; cartridge_io::HEADER_IN_RAM_SIZE] = unsafe { mem::transmute(&common.cartridge.io.header) };
+        unsafe { mem.mmu_arm9.get_base_ptr().add(0x27FFE00).copy_from(cartridge_header.as_ptr(), cartridge_header.len()) };
+
+        emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
+        emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FF880, 0x0007u16); // Message from ARM9 to ARM7
+        emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FF884, 0x0006u16); // ARM7 boot task
+        emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FFC10, 0x5835u16); // Copy of ARM7 BIOS CRC
+        emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FFC40, 0x0001u16); // Boot indicator
+
+        emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FF800, 0x00001FC2u32); // Chip ID 1
+        emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FF804, 0x00001FC2u32); // Chip ID 2
+        emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FFC00, 0x00001FC2u32); // Copy of chip ID 1
+        emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FFC04, 0x00001FC2u32); // Copy of chip ID 2
+
+        // User settings
+        let user_settings = &spi::SPI_FIRMWARE[spi::USER_SETTINGS_1_ADDR..spi::USER_SETTINGS_1_ADDR + 0x70];
+        unsafe { mem.mmu_arm9.get_base_ptr().add(0x27FFC80).copy_from(user_settings.as_ptr(), user_settings.len()) };
+    }
+
+    unsafe {
+        // Empty GBA ROM
+        let gba_rom_ptr = mem.mmu_arm9.get_base_ptr().add(regions::GBA_ROM_OFFSET as usize);
+        mmap::set_protection(gba_rom_ptr, regions::GBA_ROM_REGION.size, true, true, false);
+        gba_rom_ptr.write_bytes(0xFF, regions::GBA_ROM_REGION.size);
+        mmap::set_protection(gba_rom_ptr, regions::GBA_ROM_REGION.size, true, false, false);
     }
 
     {
@@ -195,7 +211,6 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     let mut jit_asm_arm7 = JitAsm::<{ ARM7 }>::new(unsafe { emu.get().as_mut().unwrap() });
 
     let emu = emu.get_mut();
-    get_jit_mut!(emu).open();
 
     jit_asm_arm9.init_common_funs();
     jit_asm_arm7.init_common_funs();
@@ -204,9 +219,6 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
         JIT_ASM_ARM9_PTR = &mut jit_asm_arm9;
         JIT_ASM_ARM7_PTR = &mut jit_asm_arm7;
     }
-
-    get_mmu!(jit_asm_arm9.emu, ARM9).update_all(emu);
-    get_mmu!(jit_asm_arm7.emu, ARM7).update_all(emu);
 
     let cpu_regs_arm9 = get_cpu_regs!(emu, ARM9);
     let cpu_regs_arm7 = get_cpu_regs!(emu, ARM7);

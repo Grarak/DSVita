@@ -3,17 +3,16 @@ use crate::core::CpuType;
 use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt};
 use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::logging::debug_println;
-use crate::mmap::Mmap;
+use crate::mmap::{flush_icache, Mmap, PAGE_SIZE};
 use crate::utils;
 use crate::utils::{HeapMem, HeapMemU8};
-use lazy_static::lazy_static;
 use paste::paste;
 use std::intrinsics::unlikely;
 use std::marker::ConstParamTy;
 use std::{ptr, slice};
 use CpuType::{ARM7, ARM9};
 
-const JIT_MEMORY_SIZE: usize = 16 * 1024 * 1024;
+const JIT_MEMORY_SIZE: usize = 24 * 1024 * 1024;
 pub const JIT_LIVE_RANGE_PAGE_SIZE_SHIFT: u32 = 8;
 const JIT_LIVE_RANGE_PAGE_SIZE: u32 = 1 << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
 
@@ -32,15 +31,6 @@ impl Default for JitEntry {
     fn default() -> Self {
         JitEntry(ptr::null())
     }
-}
-
-#[cfg(target_os = "linux")]
-lazy_static! {
-    static ref PAGE_SIZE: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as _ };
-}
-#[cfg(target_os = "vita")]
-lazy_static! {
-    static ref PAGE_SIZE: usize = 16;
 }
 
 const DEFAULT_JIT_ENTRY_ARM9: JitEntry = JitEntry(emit_code_block::<{ ARM9 }> as _);
@@ -80,24 +70,19 @@ macro_rules! create_jit_blocks {
 }
 
 create_jit_blocks!(
-    [itcm, regions::INSTRUCTION_TCM_SIZE, DEFAULT_JIT_ENTRY_ARM9],
-    [main_arm9, regions::MAIN_MEMORY_SIZE, DEFAULT_JIT_ENTRY_ARM9],
-    [main_arm7, regions::MAIN_MEMORY_SIZE, DEFAULT_JIT_ENTRY_ARM7],
+    [itcm, regions::ITCM_SIZE, DEFAULT_JIT_ENTRY_ARM9],
+    [main_arm9, regions::MAIN_SIZE, DEFAULT_JIT_ENTRY_ARM9],
+    [main_arm7, regions::MAIN_SIZE, DEFAULT_JIT_ENTRY_ARM7],
     [wram, regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE, DEFAULT_JIT_ENTRY_ARM7],
     [vram_arm7, vram::ARM7_SIZE, DEFAULT_JIT_ENTRY_ARM7]
 );
 
 #[derive(Default)]
 pub struct JitLiveRanges {
-    pub itcm: HeapMemU8<{ (regions::INSTRUCTION_TCM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
-    pub main: HeapMemU8<{ (regions::MAIN_MEMORY_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
+    pub itcm: HeapMemU8<{ (regions::ITCM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
+    pub main: HeapMemU8<{ (regions::MAIN_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
     pub wram: HeapMemU8<{ ((regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE) / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
     pub vram_arm7: HeapMemU8<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
-}
-
-#[cfg(target_os = "linux")]
-extern "C" {
-    fn built_in_clear_cache(start: *const u8, end: *const u8);
 }
 
 pub struct JitMemory {
@@ -115,7 +100,7 @@ impl JitMemory {
         let jit_live_ranges = JitLiveRanges::default();
         let jit_memory_map = JitMemoryMap::new(&jit_entries, &jit_live_ranges);
         JitMemory {
-            mem: Mmap::executable("code", JIT_MEMORY_SIZE).unwrap(),
+            mem: Mmap::executable("jit", JIT_MEMORY_SIZE).unwrap(),
             mem_common_end: 0,
             mem_start: 0,
             jit_entries,
@@ -144,11 +129,11 @@ impl JitMemory {
     }
 
     pub fn get_start_entry(&self) -> usize {
-        self.mem.as_ptr() as _
+        unsafe { self.mem.as_ptr() as _ }
     }
 
     pub fn get_next_entry(&self, opcodes_len: usize) -> usize {
-        let aligned_size = utils::align_up(opcodes_len << 2, *PAGE_SIZE);
+        let aligned_size = utils::align_up(opcodes_len << 2, PAGE_SIZE);
         if self.mem_start + aligned_size > JIT_MEMORY_SIZE {
             self.mem_common_end
         } else {
@@ -157,11 +142,11 @@ impl JitMemory {
     }
 
     pub fn insert_common_fun_block(&mut self, opcodes: &[u32]) -> *const extern "C" fn() {
-        let aligned_size = utils::align_up(size_of_val(opcodes), *PAGE_SIZE);
+        let aligned_size = utils::align_up(size_of_val(opcodes), PAGE_SIZE);
         let mem_start = self.mem_start;
 
         utils::write_to_mem_slice(&mut self.mem, mem_start, opcodes);
-        self.flush_cache(mem_start, aligned_size);
+        unsafe { flush_icache(self.mem.as_ptr().add(mem_start), aligned_size) };
 
         self.mem_start += aligned_size;
         self.mem_common_end = self.mem_start;
@@ -170,11 +155,11 @@ impl JitMemory {
     }
 
     fn insert(&mut self, opcodes: &[u32]) -> (usize, usize, bool) {
-        let aligned_size = utils::align_up(size_of_val(opcodes), *PAGE_SIZE);
+        let aligned_size = utils::align_up(size_of_val(opcodes), PAGE_SIZE);
         let (allocated_offset_addr, flushed) = self.allocate_block(aligned_size);
 
         utils::write_to_mem_slice(&mut self.mem, allocated_offset_addr, opcodes);
-        self.flush_cache(allocated_offset_addr, aligned_size);
+        unsafe { flush_icache(self.mem.as_ptr().add(allocated_offset_addr), aligned_size) };
 
         (allocated_offset_addr, aligned_size, flushed)
     }
@@ -201,7 +186,7 @@ impl JitMemory {
                 let per = (self.mem_start * 100) as f32 / JIT_MEMORY_SIZE as f32;
                 debug_println!(
                     "Insert new jit ({:x}) block with size {} at {:x}, {}% allocated with guest pc {:x}",
-                    self.mem.as_ptr() as u32,
+                    self.mem.as_ptr() as usize,
                     aligned_size,
                     allocated_offset_addr,
                     per,
@@ -214,12 +199,12 @@ impl JitMemory {
 
         match CPU {
             ARM9 => match guest_pc & 0xFF000000 {
-                regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm),
-                regions::MAIN_MEMORY_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main),
+                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm),
+                regions::MAIN_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main),
                 _ => todo!("{:x}", guest_pc),
             },
             ARM7 => match guest_pc & 0xFF000000 {
-                regions::MAIN_MEMORY_OFFSET => insert!(self.jit_entries.main_arm7, self.jit_live_ranges.main),
+                regions::MAIN_OFFSET => insert!(self.jit_entries.main_arm7, self.jit_live_ranges.main),
                 regions::SHARED_WRAM_OFFSET => insert!(self.jit_entries.wram, self.jit_live_ranges.wram),
                 regions::VRAM_OFFSET => insert!(self.jit_entries.vram_arm7, self.jit_live_ranges.vram_arm7),
                 _ => todo!("{:x}", guest_pc),
@@ -282,33 +267,5 @@ impl JitMemory {
     pub fn invalidate_vram(&mut self) {
         self.jit_entries.vram_arm7.fill(DEFAULT_JIT_ENTRY_ARM7);
         self.jit_live_ranges.vram_arm7.fill(0);
-    }
-
-    #[cfg(target_os = "linux")]
-    pub fn open(&mut self) {}
-
-    #[cfg(target_os = "linux")]
-    pub fn close(&mut self) {}
-
-    #[cfg(target_os = "linux")]
-    fn flush_cache(&mut self, start_addr: usize, size: usize) {
-        unsafe {
-            built_in_clear_cache((self.mem.as_ptr() as usize + start_addr) as _, (self.mem.as_ptr() as usize + start_addr + size) as _);
-        }
-    }
-
-    #[cfg(target_os = "vita")]
-    pub fn open(&mut self) {
-        unsafe { vitasdk_sys::sceKernelOpenVMDomain() };
-    }
-
-    #[cfg(target_os = "vita")]
-    pub fn close(&mut self) {
-        unsafe { vitasdk_sys::sceKernelCloseVMDomain() };
-    }
-
-    #[cfg(target_os = "vita")]
-    fn flush_cache(&mut self, start_addr: usize, size: usize) {
-        unsafe { vitasdk_sys::sceKernelSyncVMDomain(self.mem.block_uid, (self.mem.as_ptr() as usize + start_addr) as _, size as u32) };
     }
 }

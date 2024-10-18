@@ -8,7 +8,5 @@ pub mod mmu;
 pub mod oam;
 pub mod palettes;
 pub mod regions;
-pub mod tcm;
 pub mod vram;
-mod wifi;
 pub mod wram;

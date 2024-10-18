@@ -46,8 +46,8 @@ impl JitMemoryMap {
             let arm9_ptr = &mut instance.map_arm9[i];
 
             match (addr as u32) & 0x0F000000 {
-                regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => *arm9_ptr = get_ptr!(addr, entries.itcm),
-                regions::MAIN_MEMORY_OFFSET => *arm9_ptr = get_ptr!(addr, entries.main_arm9),
+                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => *arm9_ptr = get_ptr!(addr, entries.itcm),
+                regions::MAIN_OFFSET => *arm9_ptr = get_ptr!(addr, entries.main_arm9),
                 0x0F000000 => *arm9_ptr = BIOS_UNINTERRUPT_ENTRIES_ARM9.as_ptr() as u32,
                 _ => {}
             }
@@ -59,7 +59,7 @@ impl JitMemoryMap {
 
             match (addr as u32) & 0x0F000000 {
                 0 => *arm7_ptr = BIOS_UNINTERRUPT_ENTRIES_ARM7.as_ptr() as u32,
-                regions::MAIN_MEMORY_OFFSET => *arm7_ptr = get_ptr!(addr, entries.main_arm7),
+                regions::MAIN_OFFSET => *arm7_ptr = get_ptr!(addr, entries.main_arm7),
                 regions::SHARED_WRAM_OFFSET => *arm7_ptr = get_ptr!(addr, entries.wram),
                 regions::VRAM_OFFSET => *arm7_ptr = get_ptr!(addr, entries.vram_arm7),
                 _ => {}
@@ -77,8 +77,8 @@ impl JitMemoryMap {
             let arm9_ptr = &mut instance.live_ranges_map_arm9[i];
 
             match (addr as u32) & 0xFF000000 {
-                0 | regions::INSTRUCTION_TCM_MIRROR_OFFSET => *arm9_ptr = get_ptr!(i, live_ranges.itcm),
-                regions::MAIN_MEMORY_OFFSET => *arm9_ptr = get_ptr!(i, live_ranges.main),
+                0 | regions::ITCM_OFFSET2 => *arm9_ptr = get_ptr!(i, live_ranges.itcm),
+                regions::MAIN_OFFSET => *arm9_ptr = get_ptr!(i, live_ranges.main),
                 _ => {}
             }
         }
@@ -88,7 +88,7 @@ impl JitMemoryMap {
             let arm7_ptr = &mut instance.live_ranges_map_arm7[i];
 
             match (addr as u32) & 0xFF000000 {
-                regions::MAIN_MEMORY_OFFSET => *arm7_ptr = get_ptr!(i, live_ranges.main),
+                regions::MAIN_OFFSET => *arm7_ptr = get_ptr!(i, live_ranges.main),
                 regions::SHARED_WRAM_OFFSET => *arm7_ptr = get_ptr!(i, live_ranges.wram),
                 regions::VRAM_OFFSET => *arm7_ptr = get_ptr!(i, live_ranges.vram_arm7),
                 _ => {}
