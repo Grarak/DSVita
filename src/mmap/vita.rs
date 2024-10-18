@@ -1,52 +1,51 @@
+use crate::mmap::platform::kubridge::{
+    kuKernelAllocMemBlock, kuKernelCpuUnrestrictedMemcpy, kuKernelFlushCaches, kuKernelMemCommit, kuKernelMemDecommit, kuKernelMemProtect, kuKernelMemReserve, KuKernelMemCommitOpt,
+    KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE, KU_KERNEL_PROT_EXEC, KU_KERNEL_PROT_NONE, KU_KERNEL_PROT_READ, KU_KERNEL_PROT_WRITE,
+};
+use crate::mmap::{MemRegion, VirtualMemMap, PAGE_SIZE};
 use crate::utils;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
 use std::ops::{Deref, DerefMut};
 use std::{io, slice};
 use std::{mem, ptr};
+use vitasdk_sys::*;
+
+mod kubridge {
+    #![allow(warnings, unused)]
+    include!(concat!(env!("OUT_DIR"), "/kubridge_bindings.rs"));
+}
 
 pub struct Mmap {
-    pub block_uid: vitasdk_sys::SceUID,
-    ptr: *mut vitasdk_sys::c_void,
+    pub block_uid: SceUID,
+    ptr: *mut c_void,
     size: usize,
 }
 
 impl Mmap {
-    pub fn rw(name: &str, size: usize) -> io::Result<Self> {
-        let c_name = CString::new(name)?;
-
-        let mut opts: vitasdk_sys::SceKernelAllocMemBlockOpt = unsafe { mem::zeroed() };
-        opts.size = size_of::<vitasdk_sys::SceKernelAllocMemBlockOpt>() as _;
-        opts.attr = vitasdk_sys::SCE_KERNEL_MEMORY_ACCESS_R;
-        opts.alignment = 4 * 1024;
+    pub fn executable(name: impl AsRef<str>, size: usize) -> io::Result<Self> {
+        let c_name = CString::new(name.as_ref())?;
 
         let block_uid = unsafe {
-            vitasdk_sys::sceKernelAllocMemBlock(
-                c_name.as_c_str().as_ptr() as _,
-                vitasdk_sys::SCE_KERNEL_MEMBLOCK_TYPE_USER_RW,
-                utils::align_up(size, opts.alignment as usize) as u32,
-                &mut opts,
-            )
+            let mut opt = mem::zeroed::<kubridge::SceKernelAllocMemBlockKernelOpt>();
+            opt.size = size_of::<kubridge::SceKernelAllocMemBlockKernelOpt>() as _;
+            opt.attr = 0x1;
+            opt.field_C = 0x98000000;
+            kuKernelAllocMemBlock(c_name.as_ptr(), SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, size as u32, &mut opt)
         };
-
-        Mmap::new(block_uid, size)
+        let mmap = Mmap::new(block_uid, size)?;
+        unsafe { set_protection(mmap.as_ptr() as _, size, true, true, true) };
+        Ok(mmap)
     }
 
-    pub fn executable(name: &str, size: usize) -> io::Result<Self> {
-        let c_name = CString::new(name)?;
-
-        let block_uid = unsafe { vitasdk_sys::sceKernelAllocMemBlockForVM(c_name.as_c_str().as_ptr(), size as u32) };
-        Mmap::new(block_uid, size)
-    }
-
-    fn new(block_uid: vitasdk_sys::SceUID, size: usize) -> io::Result<Self> {
-        if block_uid < vitasdk_sys::SCE_OK as i32 {
+    fn new(block_uid: SceUID, size: usize) -> io::Result<Self> {
+        if block_uid < SCE_OK as i32 {
             Err(Error::from(ErrorKind::AddrNotAvailable))
         } else {
             let mut base = ptr::null_mut();
-            let ret = unsafe { vitasdk_sys::sceKernelGetMemBlockBase(block_uid, &mut base) };
+            let ret = unsafe { sceKernelGetMemBlockBase(block_uid, &mut base) };
 
-            if ret < vitasdk_sys::SCE_OK as i32 {
+            if ret < SCE_OK as i32 {
                 Err(Error::from(ErrorKind::AddrNotAvailable))
             } else {
                 Ok(Mmap { block_uid, ptr: base, size })
@@ -69,7 +68,7 @@ impl Mmap {
 
 impl Drop for Mmap {
     fn drop(&mut self) {
-        unsafe { vitasdk_sys::sceKernelFreeMemBlock(self.block_uid) };
+        unsafe { sceKernelFreeMemBlock(self.block_uid) };
     }
 }
 
@@ -94,6 +93,190 @@ impl AsRef<[u8]> for Mmap {
 }
 
 impl AsMut<[u8]> for Mmap {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.deref_mut()
+    }
+}
+
+pub struct Shm(SceUID);
+
+impl Shm {
+    pub fn new(name: impl AsRef<str>, size: usize) -> io::Result<Self> {
+        let c_name = CString::new(name.as_ref())?;
+
+        let block_uid = unsafe { sceKernelAllocMemBlock(c_name.as_ptr() as _, SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, utils::align_up(size, PAGE_SIZE) as u32, ptr::null_mut()) };
+
+        if block_uid < SCE_OK as i32 {
+            Err(Error::from(ErrorKind::AddrNotAvailable))
+        } else {
+            Ok(Shm(block_uid))
+        }
+    }
+}
+
+impl Drop for Shm {
+    fn drop(&mut self) {
+        unsafe { sceKernelFreeMemBlock(self.0) };
+    }
+}
+
+pub struct VirtualMem {
+    ptr: *mut u8,
+    vmem_block: SceUID,
+    size: usize,
+}
+
+impl VirtualMem {
+    pub fn new(virtual_size: usize) -> io::Result<Self> {
+        let mut ptr = ptr::null_mut();
+        let vmem_block = unsafe { kuKernelMemReserve(&mut ptr, virtual_size as _, SCE_KERNEL_MEMBLOCK_TYPE_USER_RW) };
+        if vmem_block >= 0 {
+            Ok(VirtualMem {
+                ptr: ptr as _,
+                vmem_block,
+                size: virtual_size,
+            })
+        } else {
+            Err(Error::from(ErrorKind::AddrNotAvailable))
+        }
+    }
+
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr as _
+    }
+
+    pub fn len(&self) -> usize {
+        self.size as _
+    }
+
+    pub fn create_region_map(&mut self, shm_mem: &Shm, mem_region: &MemRegion) -> io::Result<VirtualMemMap> {
+        let mut opt = unsafe { mem::zeroed::<KuKernelMemCommitOpt>() };
+        opt.size = size_of::<KuKernelMemCommitOpt>() as _;
+        opt.attr = KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE;
+        opt.baseBlock = shm_mem.0;
+        opt.baseOffset = mem_region.shm_offset as _;
+
+        let prot = if mem_region.allow_write {
+            KU_KERNEL_PROT_READ | KU_KERNEL_PROT_WRITE
+        } else {
+            KU_KERNEL_PROT_READ
+        };
+        for addr_offset in (mem_region.start..mem_region.end).step_by(mem_region.size) {
+            if unsafe { kuKernelMemCommit(self.ptr.add(addr_offset) as _, mem_region.size as _, prot, &mut opt) } != 0 {
+                return Err(Error::from(ErrorKind::AddrNotAvailable));
+            }
+        }
+        Ok(VirtualMemMap::new(unsafe { self.ptr.add(mem_region.start) as _ }, mem_region.region_size()))
+    }
+
+    pub fn destroy_region_map(&mut self, mem_region: &MemRegion) {
+        for addr_offset in (mem_region.start..mem_region.end).step_by(mem_region.size) {
+            unsafe { kuKernelMemDecommit(self.ptr.add(addr_offset as _) as _, mem_region.size as _) };
+        }
+    }
+
+    pub fn create_page_map(&mut self, shm_mem: &Shm, shm_start: usize, shm_offset: usize, shm_size: usize, addr: usize, page_size: usize, allow_write: bool) -> io::Result<VirtualMemMap> {
+        debug_assert_eq!(addr & (page_size - 1), 0);
+        let prot = if allow_write { KU_KERNEL_PROT_READ | KU_KERNEL_PROT_WRITE } else { KU_KERNEL_PROT_READ };
+
+        let shm_offset = shm_start + (shm_offset & (shm_size - 1));
+
+        let mut opt = unsafe { mem::zeroed::<KuKernelMemCommitOpt>() };
+        opt.size = size_of::<KuKernelMemCommitOpt>() as _;
+        opt.attr = KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE;
+        opt.baseBlock = shm_mem.0;
+        opt.baseOffset = shm_offset as _;
+
+        if unsafe { kuKernelMemCommit(self.ptr.add(addr) as _, page_size as _, prot, &mut opt) } != 0 {
+            Err(Error::from(ErrorKind::AddrNotAvailable))
+        } else {
+            Ok(VirtualMemMap::new(unsafe { self.ptr.add(addr) as _ }, page_size))
+        }
+    }
+
+    pub fn set_protection(&mut self, start: usize, size: usize, read: bool, write: bool, exe: bool) {
+        unsafe { set_protection(self.ptr.add(start), size, read, write, exe) }
+    }
+
+    pub fn create_map(&mut self, shm_mem: &Shm, shm_offset: usize, addr: usize, size: usize, read: bool, write: bool, exe: bool) -> io::Result<VirtualMemMap> {
+        let mut prot = KU_KERNEL_PROT_NONE;
+        if read {
+            prot |= KU_KERNEL_PROT_READ;
+        }
+        if write {
+            prot |= KU_KERNEL_PROT_WRITE;
+        }
+        if exe {
+            prot |= KU_KERNEL_PROT_EXEC;
+        }
+
+        let mut opt = unsafe { mem::zeroed::<KuKernelMemCommitOpt>() };
+        opt.size = size_of::<KuKernelMemCommitOpt>() as _;
+        opt.attr = KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE;
+        opt.baseBlock = shm_mem.0;
+        opt.baseOffset = shm_offset as _;
+
+        if unsafe { kuKernelMemCommit(self.ptr.add(addr) as _, size as _, prot, &mut opt) } != 0 {
+            Err(Error::from(ErrorKind::AddrNotAvailable))
+        } else {
+            Ok(VirtualMemMap::new(unsafe { self.ptr.add(addr) as _ }, size))
+        }
+    }
+
+    pub fn destroy_map(&mut self, start: usize, size: usize) -> i32 {
+        unsafe { kuKernelMemDecommit(self.ptr.add(start) as _, size as _) }
+    }
+}
+
+pub unsafe fn set_protection(start: *mut u8, size: usize, read: bool, write: bool, exe: bool) {
+    let mut prot = KU_KERNEL_PROT_NONE;
+    if read {
+        prot |= KU_KERNEL_PROT_READ;
+    }
+    if write {
+        prot |= KU_KERNEL_PROT_WRITE;
+    }
+    if exe {
+        prot |= KU_KERNEL_PROT_EXEC;
+    }
+    kuKernelMemProtect(start as _, size as _, prot);
+}
+
+pub unsafe fn flush_icache(start: *const u8, size: usize) {
+    kuKernelFlushCaches(start as _, size as _);
+}
+
+impl Drop for VirtualMem {
+    fn drop(&mut self) {
+        unsafe { sceKernelFreeMemBlock(self.vmem_block) };
+    }
+}
+
+impl Deref for VirtualMem {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { slice::from_raw_parts(self.as_ptr(), self.len()) }
+    }
+}
+
+impl DerefMut for VirtualMem {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
+    }
+}
+
+impl AsRef<[u8]> for VirtualMem {
+    fn as_ref(&self) -> &[u8] {
+        self.deref()
+    }
+}
+
+impl AsMut<[u8]> for VirtualMem {
     fn as_mut(&mut self) -> &mut [u8] {
         self.deref_mut()
     }
