@@ -197,7 +197,7 @@ impl JitMemory {
             }};
         }
 
-        let jit_addr = match CPU {
+        match CPU {
             ARM9 => match guest_pc & 0xFF000000 {
                 regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm),
                 regions::MAIN_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main),
@@ -209,9 +209,7 @@ impl JitMemory {
                 regions::VRAM_OFFSET => insert!(self.jit_entries.vram_arm7, self.jit_live_ranges.vram_arm7),
                 _ => todo!("{:x}", guest_pc),
             },
-        };
-
-        jit_addr
+        }
     }
 
     pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> *const extern "C" fn(bool) {

@@ -1,6 +1,6 @@
 use crate::mmap::platform::kubridge::{
-    kuKernelAllocMemBlock, kuKernelCpuUnrestrictedMemcpy, kuKernelFlushCaches, kuKernelMemCommit, kuKernelMemDecommit, kuKernelMemProtect, kuKernelMemReserve, KuKernelMemCommitOpt,
-    KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE, KU_KERNEL_PROT_EXEC, KU_KERNEL_PROT_NONE, KU_KERNEL_PROT_READ, KU_KERNEL_PROT_WRITE,
+    kuKernelAllocMemBlock, kuKernelFlushCaches, kuKernelMemCommit, kuKernelMemDecommit, kuKernelMemProtect, kuKernelMemReserve, KuKernelMemCommitOpt, KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE,
+    KU_KERNEL_PROT_EXEC, KU_KERNEL_PROT_NONE, KU_KERNEL_PROT_READ, KU_KERNEL_PROT_WRITE,
 };
 use crate::mmap::{MemRegion, VirtualMemMap, PAGE_SIZE};
 use crate::utils;
