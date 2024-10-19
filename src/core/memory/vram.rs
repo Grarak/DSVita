@@ -142,7 +142,7 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
     fn read<T: utils::Convert>(&self, index: u32) -> T {
         let mut ret = 0;
         for i in 0..self.count {
-            let map = &self.overlaps[i];
+            let map = unsafe { self.overlaps.get_unchecked(i) };
             debug_assert_ne!(map.ptr, ptr::null());
             ret |= utils::read_from_mem::<T>(map, index).into();
         }
@@ -155,10 +155,10 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
             buf.fill(0);
             let read_buf = unsafe { self.read_buf.get().as_mut().unwrap_unchecked() };
             for i in 0..self.count {
-                self.overlaps[i].dirty = false;
-                let map = self.overlaps[i];
+                let map = unsafe { self.overlaps.get_unchecked_mut(i) };
+                map.dirty = false;
                 if !map.ptr.is_null() {
-                    utils::read_from_mem_slice(&map, index, read_buf.deref_mut());
+                    utils::read_from_mem_slice(map, index, read_buf.deref_mut());
                     for i in 0..SIZE {
                         buf[i] |= read_buf[i];
                     }
@@ -169,8 +169,9 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
 
     fn write<T: utils::Convert>(&mut self, index: u32, value: T) {
         for i in 0..self.count {
-            self.overlaps[i].dirty = true;
-            let mut map = self.overlaps[i].as_mut();
+            let map = unsafe { self.overlaps.get_unchecked_mut(i) };
+            map.dirty = true;
+            let mut map = map.as_mut();
             debug_assert_ne!(map.ptr, ptr::null_mut());
             utils::write_to_mem(&mut map, index, value);
         }
@@ -685,7 +686,6 @@ impl Vram {
         }
     }
 
-    #[inline]
     pub fn read<const CPU: CpuType, T: utils::Convert>(&self, addr: u32) -> T {
         let base_addr = addr & 0xF00000;
         let addr_offset = (addr - base_addr) & 0xFFFFF;
@@ -696,13 +696,12 @@ impl Vram {
                 OBJ_A_OFFSET => self.obj_a.read(addr_offset),
                 BG_B_OFFSET => self.bg_b.read(addr_offset),
                 OBJ_B_OFFSET => self.obj_b.read(addr_offset),
-                _ => unreachable!(),
+                _ => unsafe { unreachable_unchecked() },
             },
             ARM7 => self.arm7.read(addr_offset),
         }
     }
 
-    #[inline]
     pub fn write<const CPU: CpuType, T: utils::Convert>(&mut self, addr: u32, value: T) {
         let base_addr = addr & 0xF00000;
         let addr_offset = (addr - base_addr) & 0xFFFFF;
@@ -713,7 +712,7 @@ impl Vram {
                 OBJ_A_OFFSET => self.obj_a.write(addr_offset, value),
                 BG_B_OFFSET => self.bg_b.write(addr_offset, value),
                 OBJ_B_OFFSET => self.obj_b.write(addr_offset, value),
-                _ => unreachable!(),
+                _ => unsafe { unreachable_unchecked() },
             },
             ARM7 => self.arm7.write(addr_offset, value),
         };
