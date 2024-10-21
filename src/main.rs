@@ -14,7 +14,7 @@
 #![feature(stmt_expr_attributes)]
 
 use crate::cartridge_io::CartridgeIo;
-use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_mem_mut, get_mmu, get_regs_mut, get_spu_mut, Emu};
+use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, get_spu_mut, Emu};
 use crate::core::graphics::gpu::Gpu;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::memory::mmu::Mmu;
@@ -23,6 +23,7 @@ use crate::core::spu::{SoundSampler, Spu};
 use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
+use crate::mmap::{register_abort_handler, MemRegion, Shm, VirtualMem, PAGE_SIZE};
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
 use crate::settings::Settings;
 use crate::utils::{const_str_equal, set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
@@ -106,13 +107,13 @@ fn run_cpu(
         unsafe { mem.mmu_arm9.get_base_ptr().add(0x27FFC80).copy_from(user_settings.as_ptr(), user_settings.len()) };
     }
 
-    unsafe {
-        // Empty GBA ROM
-        let gba_rom_ptr = mem.mmu_arm9.get_base_ptr().add(regions::GBA_ROM_OFFSET as usize);
-        mmap::set_protection(gba_rom_ptr, regions::GBA_ROM_REGION.size, true, true, false);
-        gba_rom_ptr.write_bytes(0xFF, regions::GBA_ROM_REGION.size);
-        mmap::set_protection(gba_rom_ptr, regions::GBA_ROM_REGION.size, true, false, false);
-    }
+    // unsafe {
+    //     // Empty GBA ROM
+    //     let gba_rom_ptr = mem.mmu_arm9.get_base_ptr().add(regions::GBA_ROM_OFFSET as usize);
+    //     mmap::set_protection(gba_rom_ptr, regions::GBA_ROM_REGION.size, true, true, false);
+    //     gba_rom_ptr.write_bytes(0xFF, regions::GBA_ROM_REGION.size);
+    //     mmap::set_protection(gba_rom_ptr, regions::GBA_ROM_REGION.size, true, false, false);
+    // }
 
     {
         // I/O Ports
@@ -198,6 +199,7 @@ fn run_cpu(
 
 pub static mut JIT_ASM_ARM9_PTR: *mut JitAsm<{ ARM9 }> = ptr::null_mut();
 pub static mut JIT_ASM_ARM7_PTR: *mut JitAsm<{ ARM7 }> = ptr::null_mut();
+pub static mut CURRENT_RUNNING_CPU: CpuType = ARM9;
 
 pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a, CPU> {
     match CPU {
@@ -206,8 +208,29 @@ pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a, CPU> 
     }
 }
 
+fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: usize) {
+    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
+    let mmu = get_mmu!(asm.emu, CPU);
+    let vmem_ptr = match CPU {
+        ARM9 => mmu.get_base_tcm_ptr(),
+        ARM7 => mmu.get_base_ptr(),
+    };
+    let guest_mem_addr = (mem_addr - vmem_ptr as usize) as u32;
+    println!("fault at {host_pc:x} {mem_addr:x} to guest {guest_mem_addr:x}");
+    panic!();
+}
+
+fn fault_handler(mem_addr: usize, host_pc: usize) {
+    match unsafe { CURRENT_RUNNING_CPU } {
+        ARM9 => process_fault::<{ ARM9 }>(mem_addr, host_pc),
+        ARM7 => process_fault::<{ ARM7 }>(mem_addr, host_pc),
+    }
+}
+
 #[inline(never)]
 fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
+    unsafe { register_abort_handler(fault_handler).unwrap() };
+
     let mut jit_asm_arm9 = JitAsm::<{ ARM9 }>::new(unsafe { emu.get().as_mut().unwrap() });
     let mut jit_asm_arm7 = JitAsm::<{ ARM7 }>::new(unsafe { emu.get().as_mut().unwrap() });
 
@@ -229,6 +252,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
 
     loop {
         let arm9_cycles = if likely(!cpu_regs_arm9.is_halted() && !jit_asm_arm9.runtime_data.idle_loop) {
+            unsafe { CURRENT_RUNNING_CPU = ARM9 };
             (jit_asm_arm9.execute() + 1) >> 1
         } else {
             0
@@ -242,6 +266,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
             }
         } else {
             let arm7_cycles = if likely(!cpu_regs_arm7.is_halted() && !jit_asm_arm7.runtime_data.idle_loop) {
+                unsafe { CURRENT_RUNNING_CPU = ARM7 };
                 jit_asm_arm7.execute()
             } else {
                 0
@@ -290,7 +315,7 @@ pub fn actual_main() {
         set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core1);
     }
 
-    if DEBUG_LOG {
+    if IS_DEBUG {
         std::env::set_var("RUST_BACKTRACE", "full");
     }
 

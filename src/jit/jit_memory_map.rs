@@ -7,7 +7,7 @@ use CpuType::{ARM7, ARM9};
 pub const BLOCK_SHIFT: usize = 13;
 pub const BLOCK_SIZE: usize = 1 << BLOCK_SHIFT;
 const SIZE: usize = (1 << 31) / BLOCK_SIZE;
-const LIVE_RANGES_SIZE: usize = 1 << (32 - JIT_LIVE_RANGE_PAGE_SIZE_SHIFT - 5);
+const LIVE_RANGES_SIZE: usize = 1 << (32 - JIT_LIVE_RANGE_PAGE_SIZE_SHIFT - 3);
 
 const BIOS_UNINTERRUPT_ENTRIES_ARM9: [JitEntry; BLOCK_SIZE] = [BIOS_UNINTERRUPT_ENTRY_ARM9; BLOCK_SIZE];
 const BIOS_UNINTERRUPT_ENTRIES_ARM7: [JitEntry; BLOCK_SIZE] = [BIOS_UNINTERRUPT_ENTRY_ARM7; BLOCK_SIZE];
@@ -49,7 +49,13 @@ impl JitMemoryMap {
                     *arm9_ptr = get_ptr!(entries.main_arm9);
                     *arm7_ptr = get_ptr!(entries.main_arm7);
                 }
-                regions::SHARED_WRAM_OFFSET => *arm7_ptr = get_ptr!(entries.wram),
+                regions::SHARED_WRAM_OFFSET => {
+                    if (addr as u32) & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
+                        *arm7_ptr = get_ptr!(entries.wram_arm7)
+                    } else {
+                        *arm7_ptr = get_ptr!(entries.shared_wram_arm7)
+                    }
+                }
                 regions::VRAM_OFFSET => *arm7_ptr = get_ptr!(entries.vram_arm7),
                 0xFF000000 => *arm9_ptr = BIOS_UNINTERRUPT_ENTRIES_ARM9.as_ptr() as u32,
                 _ => {}
@@ -57,7 +63,7 @@ impl JitMemoryMap {
         }
 
         for i in 0..LIVE_RANGES_SIZE {
-            let addr = i << (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 5);
+            let addr = i << (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3);
             let arm9_ptr = &mut instance.live_ranges_map_arm9[i];
             let arm7_ptr = &mut instance.live_ranges_map_arm7[i];
 
@@ -68,15 +74,19 @@ impl JitMemoryMap {
             }
 
             match (addr as u32) & 0xFF000000 {
-                0 => {
-                    *arm9_ptr = get_ptr!(live_ranges.itcm);
-                }
+                0 => *arm9_ptr = get_ptr!(live_ranges.itcm),
                 regions::ITCM_OFFSET2 => *arm9_ptr = get_ptr!(live_ranges.itcm),
                 regions::MAIN_OFFSET => {
                     *arm9_ptr = get_ptr!(live_ranges.main);
                     *arm7_ptr = get_ptr!(live_ranges.main);
                 }
-                regions::SHARED_WRAM_OFFSET => *arm7_ptr = get_ptr!(live_ranges.wram),
+                regions::SHARED_WRAM_OFFSET => {
+                    if (addr as u32) & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
+                        *arm7_ptr = get_ptr!(live_ranges.wram_arm7)
+                    } else {
+                        *arm7_ptr = get_ptr!(live_ranges.shared_wram_arm7)
+                    }
+                }
                 regions::VRAM_OFFSET => *arm7_ptr = get_ptr!(live_ranges.vram_arm7),
                 _ => {}
             }
@@ -100,8 +110,8 @@ impl JitMemoryMap {
 
     pub fn get_live_range<const CPU: CpuType>(&self, addr: u32) -> *mut u32 {
         match CPU {
-            ARM9 => self.live_ranges_map_arm9[(addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 5)) as usize] as _,
-            ARM7 => self.live_ranges_map_arm7[(addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 5)) as usize] as _,
+            ARM9 => self.live_ranges_map_arm9[(addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize] as _,
+            ARM7 => self.live_ranges_map_arm7[(addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize] as _,
         }
     }
 
