@@ -16,6 +16,7 @@ fn main() {
     if target != "armv7-sony-vita-newlibeabihf" {
         // Running IDE on anything other than linux will fail, so ignore compile error
         let _ = cc::Build::new().file("builtins/cache.c").try_compile("cache").ok();
+        return;
     }
 
     let num_jobs = env::var("NUM_JOBS").unwrap();

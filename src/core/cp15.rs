@@ -134,7 +134,7 @@ impl Cp15 {
         debug_println!("Set itcm with size {:x}", self.itcm_size);
     }
 
-    pub fn write(&mut self, reg: u32, value: u32, emu: &Emu) {
+    pub fn write(&mut self, reg: u32, value: u32, emu: &mut Emu) {
         debug_println!("Writing to cp15 reg {:x} {:x}", reg, value);
 
         match reg {

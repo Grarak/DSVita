@@ -77,6 +77,7 @@ impl Error for StrErr {}
 
 pub type HeapMemU8<const SIZE: usize> = HeapMem<u8, SIZE>;
 pub type HeapMemU32<const SIZE: usize> = HeapMem<u32, SIZE>;
+pub type HeapMemUsize<const SIZE: usize> = HeapMem<usize, SIZE>;
 
 pub struct HeapMem<T: Sized, const SIZE: usize>(Box<[T; SIZE]>);
 

@@ -230,7 +230,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
             }
             todo!()
         }
-        let (insert_entry, flushed) = get_jit_mut!(asm.emu).insert_block::<CPU>(opcodes, guest_pc);
+        let (insert_entry, flushed) = get_jit_mut!(asm.emu).insert_block::<CPU>(opcodes, guest_pc, asm.emu);
         if unlikely(flushed) {
             asm.runtime_data.return_stack_ptr = 0;
         }

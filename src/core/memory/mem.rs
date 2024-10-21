@@ -2,11 +2,12 @@ use crate::core::cp15::TcmState;
 use crate::core::emu::{get_cp15, Emu};
 use crate::core::memory::io_arm7::IoArm7;
 use crate::core::memory::io_arm9::IoArm9;
-use crate::core::memory::mmu::{MmuArm7, MmuArm9, MMU_PAGE_SHIFT};
+use crate::core::memory::mmu::{MmuArm7, MmuArm9, MMU_PAGE_SHIFT, MMU_PAGE_SIZE};
 use crate::core::memory::oam::Oam;
 use crate::core::memory::palettes::Palettes;
 use crate::core::memory::regions;
 use crate::core::memory::vram::Vram;
+use crate::core::memory::wifi::Wifi;
 use crate::core::memory::wram::Wram;
 use crate::core::spu::SoundSampler;
 use crate::core::CpuType;
@@ -15,6 +16,7 @@ use crate::jit::jit_memory::{JitMemory, JitRegion};
 use crate::logging::debug_println;
 use crate::mmap::Shm;
 use crate::utils::Convert;
+use crate::{utils, IS_DEBUG};
 use std::hint::unreachable_unchecked;
 use std::intrinsics::{likely, unlikely};
 use std::sync::atomic::AtomicU16;
@@ -26,6 +28,7 @@ pub struct Memory {
     pub wram: Wram,
     pub io_arm7: IoArm7,
     pub io_arm9: IoArm9,
+    pub wifi: Wifi,
     pub palettes: Palettes,
     pub vram: Vram,
     pub oam: Oam,
@@ -51,6 +54,7 @@ impl Memory {
             wram: Wram::new(),
             io_arm7: IoArm7::new(touch_points, sound_sampler),
             io_arm9: IoArm9::new(),
+            wifi: Wifi::new(),
             palettes: Palettes::new(),
             vram: Vram::new(),
             oam: Oam::new(),
@@ -74,18 +78,19 @@ impl Memory {
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
-        let (vmem, mmu) = {
+        let mmu = {
             let mmu = get_mem_mmu!(self, CPU);
             if CPU == ARM9 && TCM {
-                (mmu.get_base_tcm_ptr(), mmu.get_mmu_read_tcm())
+                mmu.get_mmu_read_tcm()
             } else {
-                (mmu.get_base_ptr(), mmu.get_mmu_read())
+                mmu.get_mmu_read()
             }
         };
 
-        let mapped = unsafe { *mmu.get_unchecked((aligned_addr as usize) >> MMU_PAGE_SHIFT) };
-        if likely(mapped) {
-            return unsafe { (vmem.add(aligned_addr as usize) as *const T).read() };
+        let shm_offset = unsafe { *mmu.get_unchecked((aligned_addr as usize) >> MMU_PAGE_SHIFT) };
+        if likely(shm_offset != 0) {
+            let offset = aligned_addr & (MMU_PAGE_SIZE as u32 - 1);
+            return utils::read_from_mem(&self.shm, shm_offset as u32 + offset);
         }
 
         let addr_base = aligned_addr & 0x0F000000;
@@ -99,7 +104,7 @@ impl Memory {
                     if unlikely(addr_offset >= 0x800000) {
                         let addr_offset = addr_offset & !0x8000;
                         if unlikely(addr_offset >= 0x804000 && addr_offset < 0x806000) {
-                            unsafe { (vmem.add(aligned_addr as usize) as *const T).read() }
+                            self.wifi.read(addr_offset)
                         } else {
                             self.io_arm7.read(addr_offset, emu)
                         }
@@ -111,7 +116,15 @@ impl Memory {
             regions::STANDARD_PALETTES_OFFSET => self.palettes.read(addr_offset),
             regions::VRAM_OFFSET => self.vram.read::<CPU, _>(addr_offset),
             regions::OAM_OFFSET => self.oam.read(addr_offset),
-            _ => unsafe { unreachable_unchecked() },
+            regions::GBA_ROM_OFFSET | regions::GBA_ROM_OFFSET2 | regions::GBA_RAM_OFFSET => T::from(0xFFFFFFFF),
+            0x0F000000 => T::from(0),
+            _ => {
+                if IS_DEBUG {
+                    unreachable!("{CPU:?} {aligned_addr:x}")
+                } else {
+                    unsafe { unreachable_unchecked() }
+                }
+            }
         };
 
         debug_println!("{:?} memory read at {:x} with value {:x}", CPU, addr, ret.into());
@@ -134,58 +147,43 @@ impl Memory {
         let addr_base = aligned_addr & 0x0F000000;
         let addr_offset = aligned_addr & !0xFF000000;
 
-        let vmem = {
+        let mmu = {
             let mmu = get_mem_mmu!(self, CPU);
             if CPU == ARM9 && TCM {
-                mmu.get_base_tcm_ptr()
+                mmu.get_mmu_write_tcm()
             } else {
-                mmu.get_base_ptr()
+                mmu.get_mmu_write()
             }
         };
 
-        if CPU == ARM9 && TCM {
-            let cp15 = get_cp15!(emu, ARM9);
-            if unlikely(aligned_addr >= cp15.dtcm_addr && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size && cp15.dtcm_state != TcmState::Disabled) {
-                unsafe { (vmem.add(aligned_addr as usize) as *mut T).write(value) }
-                debug_println!("{:?} dtcm write at {:x} with value {:x}", CPU, aligned_addr, value.into(),);
-                return;
+        let shm_offset = unsafe { *mmu.get_unchecked((aligned_addr as usize) >> MMU_PAGE_SHIFT) };
+        if likely(shm_offset != 0) {
+            let offset = aligned_addr & (MMU_PAGE_SIZE as u32 - 1);
+            utils::write_to_mem(&mut self.shm, shm_offset as u32 + offset, value);
+            match CPU {
+                ARM9 => match addr_base {
+                    regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => self.jit.invalidate_block::<{ JitRegion::Itcm }>(aligned_addr, size_of::<T>()),
+                    regions::MAIN_OFFSET => self.jit.invalidate_block::<{ JitRegion::Main }>(aligned_addr, size_of::<T>()),
+                    _ => {}
+                },
+                ARM7 => match addr_base {
+                    regions::MAIN_OFFSET => self.jit.invalidate_block::<{ JitRegion::Main }>(aligned_addr, size_of::<T>()),
+                    regions::SHARED_WRAM_OFFSET => self.jit.invalidate_block::<{ JitRegion::Wram }>(aligned_addr, size_of::<T>()),
+                    _ => {}
+                },
             }
+            return;
         }
 
         match addr_base {
-            regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => match CPU {
-                ARM9 => {
-                    if TCM {
-                        let cp15 = get_cp15!(emu, ARM9);
-                        if aligned_addr < cp15.itcm_size && cp15.itcm_state != TcmState::Disabled {
-                            unsafe { (vmem.add(aligned_addr as usize) as *mut T).write(value) }
-                            debug_println!("{:?} itcm write at {:x} with value {:x}", CPU, aligned_addr, value.into(),);
-                            self.jit.invalidate_block::<{ JitRegion::Itcm }>(aligned_addr, size_of::<T>());
-                        }
-                    }
-                }
-                // Bios of arm7 has same offset as itcm on arm9
-                ARM7 => {
-                    // todo!("{:x} {:x}", aligned_addr, addr_base)
-                }
-            },
-            regions::MAIN_OFFSET => {
-                unsafe { (vmem.add(aligned_addr as usize) as *mut T).write(value) };
-                self.jit.invalidate_block::<{ JitRegion::Main }>(aligned_addr, size_of::<T>());
-            }
-            regions::SHARED_WRAM_OFFSET => {
-                unsafe { (vmem.add(aligned_addr as usize) as *mut T).write(value) };
-                if CPU == ARM7 {
-                    self.jit.invalidate_block::<{ JitRegion::Wram }>(aligned_addr, size_of::<T>());
-                }
-            }
+            regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => {}
             regions::IO_PORTS_OFFSET => match CPU {
                 ARM9 => self.io_arm9.write(addr_offset, value, emu),
                 ARM7 => {
                     if unlikely(addr_offset >= 0x800000) {
                         let addr_offset = addr_offset & !0x8000;
                         if unlikely(addr_offset >= 0x804000 && addr_offset < 0x806000) {
-                            unsafe { (vmem.add(aligned_addr as usize) as *mut T).write(value) };
+                            self.wifi.write(addr_offset, value);
                         } else {
                             self.io_arm7.write(addr_offset, value, emu);
                         }
