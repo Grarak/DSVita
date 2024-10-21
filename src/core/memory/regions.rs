@@ -40,12 +40,13 @@ pub const ARM9_BIOS_SIZE: u32 = 32 * 1024;
 pub const ARM7_BIOS_OFFSET: u32 = 0x00000000;
 pub const ARM7_BIOS_SIZE: u32 = 16 * 1024;
 
-pub const TOTAL_MEM_SIZE: u32 = ITCM_SIZE + DTCM_SIZE + MAIN_SIZE + SHARED_WRAM_SIZE + ARM7_WRAM_SIZE + WIFI_RAM_SIZE
+pub const TOTAL_MEM_SIZE: u32 = 16 * 1024 /* Some padding for mmu */
+        + ITCM_SIZE + DTCM_SIZE + MAIN_SIZE + SHARED_WRAM_SIZE + ARM7_WRAM_SIZE + WIFI_RAM_SIZE
         + 16 * 1024 /* GBA ROM/RAM, filled with 0xFF */
         + 16 * 1024 /* Both BIOSES, filled with 0x0 */
 ;
 
-const P_ITCM_OFFSET: usize = 0;
+const P_ITCM_OFFSET: usize = 16 * 1024;
 const P_DTCM_OFFSET: usize = P_ITCM_OFFSET + ITCM_SIZE as usize;
 const P_MAIN_OFFSET: usize = P_DTCM_OFFSET + DTCM_SIZE as usize;
 const P_SHARED_WRAM_OFFSET: usize = P_MAIN_OFFSET + MAIN_SIZE as usize;
@@ -59,6 +60,7 @@ pub const ITCM_REGION: MemRegion = MemRegion::new(ITCM_OFFSET as usize, MAIN_OFF
 pub const DTCM_REGION: MemRegion = MemRegion::new(0, 0, DTCM_SIZE as usize, P_DTCM_OFFSET, true);
 pub const MAIN_REGION: MemRegion = MemRegion::new(MAIN_OFFSET as usize, SHARED_WRAM_OFFSET as usize, MAIN_SIZE as usize, P_MAIN_OFFSET, true);
 pub const SHARED_WRAM_REGION: MemRegion = MemRegion::new(0, 0, SHARED_WRAM_SIZE as usize, P_SHARED_WRAM_OFFSET, true);
+pub const SHARED_WRAM_ARM7_REGION: MemRegion = MemRegion::new(SHARED_WRAM_OFFSET as usize, ARM7_WRAM_OFFSET as usize, SHARED_WRAM_SIZE as usize, P_SHARED_WRAM_OFFSET, true);
 pub const ARM7_WRAM_REGION: MemRegion = MemRegion::new(ARM7_WRAM_OFFSET as usize, IO_PORTS_OFFSET as usize, ARM7_WRAM_SIZE as usize, P_ARM7_WRAM_OFFSET, true);
 pub const GBA_ROM_REGION: MemRegion = MemRegion::new(GBA_ROM_OFFSET as usize, GBA_RAM_OFFSET as usize, MMU_PAGE_SIZE, P_GBA_ROM_OFFSET, false);
 pub const GBA_RAM_REGION: MemRegion = MemRegion::new(GBA_RAM_OFFSET as usize, 0x0B000000, MMU_PAGE_SIZE, P_GBA_ROM_OFFSET, false);

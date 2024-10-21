@@ -60,7 +60,13 @@ impl JitMemoryMap {
             match (addr as u32) & 0x0F000000 {
                 0 => *arm7_ptr = BIOS_UNINTERRUPT_ENTRIES_ARM7.as_ptr() as u32,
                 regions::MAIN_OFFSET => *arm7_ptr = get_ptr!(addr, entries.main_arm7),
-                regions::SHARED_WRAM_OFFSET => *arm7_ptr = get_ptr!(addr, entries.wram),
+                regions::SHARED_WRAM_OFFSET => {
+                    if (addr as u32) & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
+                        *arm7_ptr = get_ptr!(addr, entries.wram_arm7)
+                    } else {
+                        *arm7_ptr = get_ptr!(addr, entries.shared_wram_arm7)
+                    }
+                }
                 regions::VRAM_OFFSET => *arm7_ptr = get_ptr!(addr, entries.vram_arm7),
                 _ => {}
             }
@@ -89,7 +95,13 @@ impl JitMemoryMap {
 
             match (addr as u32) & 0xFF000000 {
                 regions::MAIN_OFFSET => *arm7_ptr = get_ptr!(i, live_ranges.main),
-                regions::SHARED_WRAM_OFFSET => *arm7_ptr = get_ptr!(i, live_ranges.wram),
+                regions::SHARED_WRAM_OFFSET => {
+                    if (addr as u32) & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
+                        *arm7_ptr = get_ptr!(i, live_ranges.wram_arm7)
+                    } else {
+                        *arm7_ptr = get_ptr!(i, live_ranges.shared_wram_arm7)
+                    }
+                }
                 regions::VRAM_OFFSET => *arm7_ptr = get_ptr!(i, live_ranges.vram_arm7),
                 _ => {}
             }

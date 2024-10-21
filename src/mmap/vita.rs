@@ -1,6 +1,6 @@
 use crate::mmap::platform::kubridge::{
-    kuKernelAllocMemBlock, kuKernelFlushCaches, kuKernelMemCommit, kuKernelMemDecommit, kuKernelMemProtect, kuKernelMemReserve, KuKernelMemCommitOpt, KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE,
-    KU_KERNEL_PROT_EXEC, KU_KERNEL_PROT_NONE, KU_KERNEL_PROT_READ, KU_KERNEL_PROT_WRITE,
+    kuKernelAllocMemBlock, kuKernelFlushCaches, kuKernelMemCommit, kuKernelMemDecommit, kuKernelMemProtect, kuKernelMemReserve, kuKernelRegisterAbortHandler, KuKernelAbortContext,
+    KuKernelAbortHandler, KuKernelAbortHandlerOpt, KuKernelMemCommitOpt, KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE, KU_KERNEL_PROT_EXEC, KU_KERNEL_PROT_NONE, KU_KERNEL_PROT_READ, KU_KERNEL_PROT_WRITE,
 };
 use crate::mmap::{MemRegion, VirtualMemMap, PAGE_SIZE};
 use crate::utils;
@@ -46,6 +46,7 @@ impl Mmap {
             let ret = unsafe { sceKernelGetMemBlockBase(block_uid, &mut base) };
 
             if ret < SCE_OK as i32 {
+                unsafe { sceKernelFreeMemBlock(block_uid) };
                 Err(Error::from(ErrorKind::AddrNotAvailable))
             } else {
                 Ok(Mmap { block_uid, ptr: base, size })
@@ -98,7 +99,11 @@ impl AsMut<[u8]> for Mmap {
     }
 }
 
-pub struct Shm(SceUID);
+pub struct Shm {
+    block_uid: SceUID,
+    ptr: *mut u8,
+    size: usize,
+}
 
 impl Shm {
     pub fn new(name: impl AsRef<str>, size: usize) -> io::Result<Self> {
@@ -109,14 +114,59 @@ impl Shm {
         if block_uid < SCE_OK as i32 {
             Err(Error::from(ErrorKind::AddrNotAvailable))
         } else {
-            Ok(Shm(block_uid))
+            let mut ptr = ptr::null_mut();
+            let ret = unsafe { sceKernelGetMemBlockBase(block_uid, &mut ptr) };
+            if ret < SCE_OK as i32 {
+                unsafe { sceKernelFreeMemBlock(block_uid) };
+                Err(Error::from(ErrorKind::AddrNotAvailable))
+            } else {
+                Ok(Shm { block_uid, ptr: ptr as _, size })
+            }
         }
+    }
+
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr as _
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr as _
+    }
+
+    pub fn len(&self) -> usize {
+        self.size as _
     }
 }
 
 impl Drop for Shm {
     fn drop(&mut self) {
-        unsafe { sceKernelFreeMemBlock(self.0) };
+        unsafe { sceKernelFreeMemBlock(self.block_uid) };
+    }
+}
+
+impl Deref for Shm {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { slice::from_raw_parts(self.as_ptr(), self.len()) }
+    }
+}
+
+impl DerefMut for Shm {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
+    }
+}
+
+impl AsRef<[u8]> for Shm {
+    fn as_ref(&self) -> &[u8] {
+        self.deref()
+    }
+}
+
+impl AsMut<[u8]> for Shm {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.deref_mut()
     }
 }
 
@@ -157,7 +207,7 @@ impl VirtualMem {
         let mut opt = unsafe { mem::zeroed::<KuKernelMemCommitOpt>() };
         opt.size = size_of::<KuKernelMemCommitOpt>() as _;
         opt.attr = KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE;
-        opt.baseBlock = shm_mem.0;
+        opt.baseBlock = shm_mem.block_uid;
         opt.baseOffset = mem_region.shm_offset as _;
 
         let prot = if mem_region.allow_write {
@@ -188,7 +238,7 @@ impl VirtualMem {
         let mut opt = unsafe { mem::zeroed::<KuKernelMemCommitOpt>() };
         opt.size = size_of::<KuKernelMemCommitOpt>() as _;
         opt.attr = KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE;
-        opt.baseBlock = shm_mem.0;
+        opt.baseBlock = shm_mem.block_uid;
         opt.baseOffset = shm_offset as _;
 
         if unsafe { kuKernelMemCommit(self.ptr.add(addr) as _, page_size as _, prot, &mut opt) } != 0 {
@@ -217,7 +267,7 @@ impl VirtualMem {
         let mut opt = unsafe { mem::zeroed::<KuKernelMemCommitOpt>() };
         opt.size = size_of::<KuKernelMemCommitOpt>() as _;
         opt.attr = KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE;
-        opt.baseBlock = shm_mem.0;
+        opt.baseBlock = shm_mem.block_uid;
         opt.baseOffset = shm_offset as _;
 
         if unsafe { kuKernelMemCommit(self.ptr.add(addr) as _, size as _, prot, &mut opt) } != 0 {
@@ -229,6 +279,13 @@ impl VirtualMem {
 
     pub fn destroy_map(&mut self, start: usize, size: usize) -> i32 {
         unsafe { kuKernelMemDecommit(self.ptr.add(start) as _, size as _) }
+    }
+
+    pub fn set_region_protection(&mut self, start: usize, size: usize, mem_region: &MemRegion, read: bool, write: bool, exe: bool) {
+        let start = mem_region.start + start & (mem_region.size - 1);
+        for addr_offset in (start..mem_region.end).step_by(mem_region.size) {
+            unsafe { set_protection(self.ptr.add(addr_offset), size, read, write, exe) }
+        }
     }
 }
 
@@ -279,5 +336,34 @@ impl AsRef<[u8]> for VirtualMem {
 impl AsMut<[u8]> for VirtualMem {
     fn as_mut(&mut self) -> &mut [u8] {
         self.deref_mut()
+    }
+}
+
+static mut DELEGATE_FUN: *const fn(usize, &mut usize) -> bool = ptr::null();
+static mut NEXT_ABORT_HANDLER: KuKernelAbortHandler = None;
+
+unsafe extern "C" fn abort_handler(abort_context: *mut KuKernelAbortContext) {
+    let context = &mut (*abort_context);
+
+    let delegate_fun: fn(usize, &mut usize) -> bool = mem::transmute(DELEGATE_FUN);
+    let mut pc = context.pc as usize;
+    if delegate_fun(context.FAR as usize, &mut pc) {
+        context.pc = pc as _;
+        return;
+    }
+
+    if let Some(next_abort_handler) = NEXT_ABORT_HANDLER {
+        next_abort_handler(abort_context);
+    } else {
+        panic!()
+    }
+}
+
+pub unsafe fn register_abort_handler(delegate: fn(usize, &mut usize) -> bool) -> io::Result<()> {
+    DELEGATE_FUN = delegate as *const _;
+    if kuKernelRegisterAbortHandler(Some(abort_handler), ptr::addr_of_mut!(NEXT_ABORT_HANDLER), ptr::null_mut()) != 0 {
+        Err(Error::from(ErrorKind::Other))
+    } else {
+        Ok(())
     }
 }

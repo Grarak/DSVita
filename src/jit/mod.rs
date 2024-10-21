@@ -13,11 +13,11 @@ mod inst_info_thumb;
 mod inst_mem_handler;
 mod inst_thread_regs_handler;
 pub mod jit_asm;
+mod jit_asm_common_funs;
 pub mod jit_memory;
 mod jit_memory_map;
 pub mod op;
 pub mod reg;
-mod jit_asm_common_funs;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -87,6 +87,17 @@ pub enum MemoryAmount {
     Half,
     Word,
     Double,
+}
+
+impl MemoryAmount {
+    pub const fn size(self) -> u8 {
+        match self {
+            MemoryAmount::Byte => 1,
+            MemoryAmount::Half => 2,
+            MemoryAmount::Word => 4,
+            MemoryAmount::Double => 8,
+        }
+    }
 }
 
 impl From<Op> for MemoryAmount {

@@ -1,4 +1,3 @@
-use crate::bitset::Bitset;
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::basic_block::BasicBlock;
@@ -396,7 +395,25 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn branch(&mut self, label: BlockLabel, cond: Cond) {
-        self.insert_inst(BlockInst::new(cond, BlockInstKind::Branch { label, block_index: 0 }))
+        self.insert_inst(BlockInst::new(
+            cond,
+            BlockInstKind::Branch {
+                label,
+                block_index: 0,
+                fallthrough: false,
+            },
+        ))
+    }
+
+    pub fn branch_fallthrough(&mut self, label: BlockLabel, cond: Cond) {
+        self.insert_inst(BlockInst::new(
+            cond,
+            BlockInstKind::Branch {
+                label,
+                block_index: 0,
+                fallthrough: true,
+            },
+        ))
     }
 
     pub fn save_context(&mut self) {
@@ -562,6 +579,10 @@ impl<'a> BlockAsm<'a> {
         self.insert_inst(BlockInstKind::Bkpt(id));
     }
 
+    pub fn nop(&mut self) {
+        self.insert_inst(BlockInstKind::Nop);
+    }
+
     pub fn find_guest_pc_inst_index(&self, guest_pc_to_find: u32) -> Option<usize> {
         for (i, inst) in self.buf.insts.iter().enumerate().rev() {
             if let BlockInstKind::GuestPc(guest_pc) = &inst.kind {
@@ -586,7 +607,14 @@ impl<'a> BlockAsm<'a> {
             }
             Some(label) => *label,
         };
-        self.insert_inst(BlockInst::new(cond, BlockInstKind::Branch { label, block_index: 0 }));
+        self.insert_inst(BlockInst::new(
+            cond,
+            BlockInstKind::Branch {
+                label,
+                block_index: 0,
+                fallthrough: false,
+            },
+        ));
     }
 
     pub fn generic_guest_inst(&mut self, inst_info: &mut InstInfo) {
@@ -678,12 +706,12 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
-    fn resolve_guest_regs(&mut self, basic_blocks: &mut [BasicBlock], guest_regs_dirty: RegReserve, block_indices: &[usize], reachable_blocks: &mut Bitset<32>) {
+    fn resolve_guest_regs(&mut self, basic_blocks: &mut [BasicBlock], guest_regs_dirty: RegReserve, block_indices: &[usize], reachable_blocks: &mut NoHashSet<usize>) {
         for &i in block_indices {
             let basic_block = &mut basic_blocks[i];
             let sum_guest_regs_input_dirty = basic_block.guest_regs_input_dirty + guest_regs_dirty;
             if sum_guest_regs_input_dirty != basic_block.guest_regs_input_dirty || !basic_block.guest_regs_resolved {
-                *reachable_blocks += i;
+                reachable_blocks.insert(i);
                 basic_block.guest_regs_resolved = true;
                 basic_block.guest_regs_input_dirty = sum_guest_regs_input_dirty;
                 basic_block.init_guest_regs(self);
@@ -694,9 +722,9 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
-    fn resolve_io(&self, basic_blocks: &mut [BasicBlock], required_outputs: BlockRegSet, block_indices: &[usize], reachable_blocks: &Bitset<32>) {
+    fn resolve_io(&self, basic_blocks: &mut [BasicBlock], required_outputs: BlockRegSet, block_indices: &[usize], reachable_blocks: &NoHashSet<usize>) {
         for &i in block_indices {
-            if !reachable_blocks.contains(i) {
+            if !reachable_blocks.contains(&i) {
                 continue;
             }
 
@@ -724,7 +752,7 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
-    fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> (Vec<BasicBlock>, Bitset<32>) {
+    fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> (Vec<BasicBlock>, NoHashSet<usize>) {
         for i in 0..self.buf.insts.len() {
             self.insts_link.insert_end(i);
         }
@@ -791,11 +819,11 @@ impl<'a> BlockAsm<'a> {
             let last_inst_index = BlockInstList::deref(basic_block.block_entry_end).value;
             let cond = self.buf.insts[last_inst_index].cond;
             match &mut self.buf.insts[last_inst_index].kind {
-                BlockInstKind::Branch { label, block_index } => {
+                BlockInstKind::Branch { label, block_index, fallthrough } => {
                     let labelled_block_index = basic_block_label_mapping.get(&label.0).unwrap();
                     basic_block.exit_blocks.push(*labelled_block_index);
                     *block_index = *labelled_block_index;
-                    if cond != Cond::AL && i + 1 < basic_blocks_len {
+                    if (*fallthrough || cond != Cond::AL) && i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.push(i + 1);
                     }
                 }
@@ -821,11 +849,11 @@ impl<'a> BlockAsm<'a> {
             }
         }
 
-        let mut reachable_blocks = Bitset::new();
+        let mut reachable_blocks = NoHashSet::default();
         self.resolve_guest_regs(&mut basic_blocks, RegReserve::new(), &[0], &mut reachable_blocks);
 
         for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
-            if !reachable_blocks.contains(i) {
+            if !reachable_blocks.contains(&i) {
                 continue;
             }
 
@@ -850,7 +878,7 @@ impl<'a> BlockAsm<'a> {
         }
 
         for i in (0..basic_blocks_len).rev() {
-            if !reachable_blocks.contains(i) {
+            if !reachable_blocks.contains(&i) {
                 continue;
             }
 
@@ -860,7 +888,7 @@ impl<'a> BlockAsm<'a> {
         }
 
         for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
-            if !reachable_blocks.contains(i) {
+            if !reachable_blocks.contains(&i) {
                 continue;
             }
 
@@ -875,7 +903,7 @@ impl<'a> BlockAsm<'a> {
                 let mut inst_entry = ptr::null_mut();
 
                 'basic_blocks_loop: for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
-                    if !reachable_blocks.contains(i) {
+                    if !reachable_blocks.contains(&i) {
                         continue;
                     }
 
@@ -956,7 +984,7 @@ impl<'a> BlockAsm<'a> {
         self.buf.reg_allocator.global_mapping.clear();
         let mut input_regs = BlockRegSet::new();
         for (i, basic_block) in basic_blocks.iter().enumerate() {
-            if !reachable_blocks.contains(i) {
+            if !reachable_blocks.contains(&i) {
                 continue;
             }
 
@@ -981,7 +1009,7 @@ impl<'a> BlockAsm<'a> {
         }
 
         for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
-            if !reachable_blocks.contains(i) {
+            if !reachable_blocks.contains(&i) {
                 continue;
             }
 
@@ -1008,7 +1036,7 @@ impl<'a> BlockAsm<'a> {
             let opcodes_len = self.buf.opcodes.len();
             self.buf.block_opcode_offsets.push(opcodes_len);
 
-            if !reachable_blocks.contains(i) {
+            if !reachable_blocks.contains(&i) {
                 continue;
             }
 

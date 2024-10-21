@@ -84,3 +84,7 @@ impl AsMut<[u8]> for VirtualMemMap {
         self.deref_mut()
     }
 }
+
+struct HostContext {
+    pc: usize,
+}

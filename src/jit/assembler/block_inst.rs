@@ -200,6 +200,7 @@ pub enum BlockInstKind {
     Branch {
         label: BlockLabel,
         block_index: usize,
+        fallthrough: bool,
     },
 
     SaveContext {
@@ -229,6 +230,7 @@ pub enum BlockInstKind {
         has_return: bool,
     },
     Bkpt(u16),
+    Nop,
 
     GuestPc(u32),
     GenericGuestInst {
@@ -401,7 +403,7 @@ impl BlockInstKind {
                 block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(Reg::PC))),
             ),
 
-            BlockInstKind::Label { .. } | BlockInstKind::Branch { .. } | BlockInstKind::GuestPc(_) | BlockInstKind::Bkpt(_) => (block_reg_set!(), block_reg_set!()),
+            BlockInstKind::Label { .. } | BlockInstKind::Branch { .. } | BlockInstKind::GuestPc(_) | BlockInstKind::Bkpt(_) | BlockInstKind::Nop => (block_reg_set!(), block_reg_set!()),
         }
     }
 
@@ -478,6 +480,7 @@ impl BlockInstKind {
             | BlockInstKind::Branch { .. }
             | BlockInstKind::GuestPc(_)
             | BlockInstKind::Bkpt(_)
+            | BlockInstKind::Nop
             | BlockInstKind::Prologue
             | BlockInstKind::Epilogue { .. } => {}
         }
@@ -533,6 +536,7 @@ impl BlockInstKind {
             | BlockInstKind::Branch { .. }
             | BlockInstKind::GuestPc(_)
             | BlockInstKind::Bkpt(_)
+            | BlockInstKind::Nop
             | BlockInstKind::Prologue
             | BlockInstKind::Epilogue { .. } => {}
         }
@@ -736,6 +740,7 @@ impl BlockInstKind {
                 branch_placeholders.push(opcodes_offset + opcode_index);
             }
             BlockInstKind::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
+            BlockInstKind::Nop => opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0)),
 
             BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
                 let replace_reg = |reg: &mut Reg| {
@@ -873,7 +878,7 @@ impl Debug for BlockInstKind {
                 };
                 write!(f, "Label {label:?}{guest_pc}")
             }
-            BlockInstKind::Branch { label, block_index } => write!(f, "B {label:?}, block index: {block_index}"),
+            BlockInstKind::Branch { label, block_index, .. } => write!(f, "B {label:?}, block index: {block_index}"),
             BlockInstKind::SaveContext { .. } => write!(f, "SaveContext"),
             BlockInstKind::SaveReg { guest_reg, reg_mapped, .. } => write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}"),
             BlockInstKind::RestoreReg { guest_reg, reg_mapped, .. } => write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}"),
@@ -892,6 +897,7 @@ impl Debug for BlockInstKind {
                 }
             }
             BlockInstKind::Bkpt(id) => write!(f, "Bkpt {id}"),
+            BlockInstKind::Nop => write!(f, "Nop"),
             BlockInstKind::GuestPc(pc) => write!(f, "GuestPc {pc:x}"),
             BlockInstKind::GenericGuestInst { inst, .. } => write!(f, "{inst:?}"),
             BlockInstKind::Prologue => write!(f, "Prologue"),

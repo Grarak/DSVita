@@ -3,7 +3,7 @@ use libc::*;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
 use std::ops::{Deref, DerefMut};
-use std::{io, ptr, slice};
+use std::{io, mem, ptr, slice};
 
 pub struct Mmap {
     ptr: *mut u8,
@@ -69,7 +69,11 @@ impl AsMut<[u8]> for Mmap {
     }
 }
 
-pub struct Shm(i32);
+pub struct Shm {
+    fd: i32,
+    ptr: *mut u8,
+    size: usize,
+}
 
 impl Shm {
     pub fn new(name: impl AsRef<str>, size: usize) -> io::Result<Self> {
@@ -77,7 +81,13 @@ impl Shm {
         let fd = unsafe { memfd_create(name.as_ptr() as _, MFD_CLOEXEC) };
         if fd >= 0 {
             if unsafe { ftruncate(fd, size as _) == 0 } {
-                Ok(Shm(fd))
+                let ptr = unsafe { mmap(ptr::null_mut(), size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) };
+                if ptr == MAP_FAILED {
+                    unsafe { close(fd) };
+                    Err(Error::from(ErrorKind::AddrNotAvailable))
+                } else {
+                    Ok(Shm { fd, ptr: ptr as _, size })
+                }
             } else {
                 unsafe { close(fd) };
                 Err(Error::from(ErrorKind::AddrNotAvailable))
@@ -86,11 +96,52 @@ impl Shm {
             Err(Error::from(ErrorKind::AddrNotAvailable))
         }
     }
+
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr as _
+    }
+
+    pub fn len(&self) -> usize {
+        self.size as _
+    }
 }
 
 impl Drop for Shm {
     fn drop(&mut self) {
-        unsafe { close(self.0) };
+        unsafe {
+            munmap(self.ptr as _, self.size);
+            close(self.fd);
+        }
+    }
+}
+
+impl Deref for Shm {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { slice::from_raw_parts(self.as_ptr(), self.len()) }
+    }
+}
+
+impl DerefMut for Shm {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
+    }
+}
+
+impl AsRef<[u8]> for Shm {
+    fn as_ref(&self) -> &[u8] {
+        self.deref()
+    }
+}
+
+impl AsMut<[u8]> for Shm {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.deref_mut()
     }
 }
 
@@ -124,7 +175,7 @@ impl VirtualMem {
     pub fn create_region_map(&mut self, shm_mem: &Shm, mem_region: &MemRegion) -> io::Result<VirtualMemMap> {
         let prot = if mem_region.allow_write { PROT_READ | PROT_WRITE } else { PROT_READ };
         for addr_offset in (mem_region.start..mem_region.end).step_by(mem_region.size) {
-            if unsafe { mmap(self.ptr.add(addr_offset) as _, mem_region.size, prot, MAP_SHARED | MAP_FIXED, shm_mem.0, mem_region.shm_offset as _) } == MAP_FAILED {
+            if unsafe { mmap(self.ptr.add(addr_offset) as _, mem_region.size, prot, MAP_SHARED | MAP_FIXED, shm_mem.fd, mem_region.shm_offset as _) } == MAP_FAILED {
                 return Err(Error::from(ErrorKind::AddrNotAvailable));
             }
         }
@@ -137,18 +188,18 @@ impl VirtualMem {
         }
     }
 
-    pub fn create_page_map(&mut self, shm_mem: &Shm, shm_start: usize, shm_offset: usize, shm_size: usize, addr: usize, page_size: usize, allow_write: bool) -> io::Result<VirtualMemMap> {
+    pub fn create_page_map(&mut self, shm: &Shm, shm_start: usize, shm_offset: usize, shm_size: usize, addr: usize, page_size: usize, allow_write: bool) -> io::Result<VirtualMemMap> {
         debug_assert_eq!(addr & (page_size - 1), 0);
         let prot = if allow_write { PROT_READ | PROT_WRITE } else { PROT_READ };
         let shm_offset = shm_start + (shm_offset & (shm_size - 1));
-        if unsafe { mmap(self.ptr.add(addr) as _, page_size, prot, MAP_SHARED | MAP_FIXED, shm_mem.0, shm_offset as _) } == MAP_FAILED {
+        if unsafe { mmap(self.ptr.add(addr) as _, page_size, prot, MAP_SHARED | MAP_FIXED, shm.fd, shm_offset as _) } == MAP_FAILED {
             Err(Error::from(ErrorKind::AddrNotAvailable))
         } else {
             Ok(VirtualMemMap::new(unsafe { self.ptr.add(addr) as _ }, page_size))
         }
     }
 
-    pub fn create_map(&mut self, shm_mem: &Shm, shm_offset: usize, addr: usize, size: usize, read: bool, write: bool, exe: bool) -> io::Result<VirtualMemMap> {
+    pub fn create_map(&mut self, shm: &Shm, shm_offset: usize, addr: usize, size: usize, read: bool, write: bool, exe: bool) -> io::Result<VirtualMemMap> {
         let mut prot = PROT_NONE;
         if read {
             prot |= PROT_READ;
@@ -160,7 +211,7 @@ impl VirtualMem {
             prot |= PROT_EXEC;
         }
 
-        if unsafe { mmap(self.ptr.add(addr) as _, size, prot, MAP_SHARED | MAP_FIXED, shm_mem.0, shm_offset as _) } == MAP_FAILED {
+        if unsafe { mmap(self.ptr.add(addr) as _, size, prot, MAP_SHARED | MAP_FIXED, shm.fd, shm_offset as _) } == MAP_FAILED {
             Err(Error::from(ErrorKind::AddrNotAvailable))
         } else {
             Ok(VirtualMemMap::new(unsafe { self.ptr.add(addr) as _ }, size))
@@ -169,6 +220,13 @@ impl VirtualMem {
 
     pub fn destroy_map(&mut self, start: usize, size: usize) -> i32 {
         unsafe { munmap(self.ptr.add(start) as _, size as _) }
+    }
+
+    pub fn set_region_protection(&mut self, start: usize, size: usize, mem_region: &MemRegion, read: bool, write: bool, exe: bool) {
+        let start = mem_region.start + start & (mem_region.size - 1);
+        for addr_offset in (start..mem_region.end).step_by(mem_region.size) {
+            unsafe { set_protection(self.ptr.add(addr_offset), size, read, write, exe) }
+        }
     }
 }
 
@@ -223,5 +281,41 @@ impl AsRef<[u8]> for VirtualMem {
 impl AsMut<[u8]> for VirtualMem {
     fn as_mut(&mut self) -> &mut [u8] {
         self.deref_mut()
+    }
+}
+
+static mut DELEGATE_FUN: *const fn(usize, &mut usize) -> bool = ptr::null();
+static mut NEXT_SEGV_HANDLER: sigaction = unsafe { mem::zeroed::<sigaction>() };
+
+unsafe extern "C" fn sigsegv_handler(sig: i32, si: *mut siginfo_t, segfault_ctx: *mut c_void) {
+    let si_addr = (*si).si_addr();
+    let context = segfault_ctx as *mut ucontext_t;
+    let context = &mut (*context).uc_mcontext;
+
+    let delegate_fun: fn(usize, &mut usize) -> bool = mem::transmute(DELEGATE_FUN);
+    let mut pc = context.arm_pc as usize;
+    if delegate_fun(si_addr as usize, &mut pc) {
+        context.arm_pc = pc as _;
+        return;
+    }
+
+    if NEXT_SEGV_HANDLER.sa_sigaction != 0 {
+        let action: extern "C" fn(i32, *mut siginfo_t, *mut c_void) = mem::transmute(NEXT_SEGV_HANDLER.sa_sigaction);
+        action(sig, si, segfault_ctx);
+    } else {
+        panic!();
+    }
+}
+
+pub unsafe fn register_abort_handler(delegate: fn(usize, &mut usize) -> bool) -> io::Result<()> {
+    DELEGATE_FUN = delegate as *const _;
+    let mut sa = mem::zeroed::<sigaction>();
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&mut sa.sa_mask);
+    sa.sa_sigaction = sigsegv_handler as *const () as _;
+    if sigaction(SIGSEGV, &sa, ptr::addr_of_mut!(NEXT_SEGV_HANDLER)) != 0 {
+        Err(Error::from(ErrorKind::Other))
+    } else {
+        Ok(())
     }
 }

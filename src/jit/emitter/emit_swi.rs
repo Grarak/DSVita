@@ -17,9 +17,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         );
         block_asm.restore_reg(Reg::R0);
         block_asm.restore_reg(Reg::R1);
-        block_asm.restore_reg(Reg::R2);
         block_asm.restore_reg(Reg::R3);
-        block_asm.restore_reg(Reg::R12);
         block_asm.restore_reg(Reg::CPSR);
     }
 }
