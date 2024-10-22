@@ -11,12 +11,11 @@ use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
 use bilge::prelude::*;
-use std::intrinsics::{likely, unlikely};
+use std::intrinsics::unlikely;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub const DISPLAY_WIDTH: usize = 256;
 pub const DISPLAY_HEIGHT: usize = 192;
@@ -38,17 +37,10 @@ impl FrameRateCounter {
         }
     }
 
-    fn on_frame_ready(&mut self, limit_frame: bool) {
+    fn on_frame_ready(&mut self) {
         self.frame_counter += 1;
         let now = Instant::now();
-        if likely(limit_frame) {
-            let diff = now.duration_since(self.last_frame).as_millis();
-            if unlikely(diff < 16) {
-                thread::sleep(Duration::from_millis(16 - diff as u64));
-            }
-            self.last_frame = Instant::now();
-        }
-        if now.duration_since(self.last_update).as_millis() >= 1000 {
+        if unlikely(now.duration_since(self.last_update).as_millis() >= 1000) {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
             // #[cfg(target_os = "linux")]
             eprintln!("{}", self.frame_counter);
@@ -90,7 +82,6 @@ pub struct Gpu {
     pub pow_cnt1: u16,
     pub disp_cap_cnt: u32,
     frame_rate_counter: FrameRateCounter,
-    pub frame_limit: bool,
     pub arm7_hle: bool,
     pub v_count: u16,
     pub gpu_2d_regs_a: Gpu2DRegisters<{ A }>,
@@ -106,7 +97,6 @@ impl Gpu {
             pow_cnt1: 0,
             disp_cap_cnt: 0,
             frame_rate_counter: FrameRateCounter::new(fps),
-            frame_limit: false,
             arm7_hle: false,
             v_count: 0,
             gpu_2d_regs_a: Gpu2DRegisters::default(),
@@ -204,7 +194,7 @@ impl Gpu {
                 for i in 0..2 {
                     gpu.disp_stat[i].set_v_blank_flag(u1::new(0));
                 }
-                gpu.frame_rate_counter.on_frame_ready(gpu.frame_limit);
+                gpu.frame_rate_counter.on_frame_ready();
             }
             263 => {
                 gpu.v_count = 0;

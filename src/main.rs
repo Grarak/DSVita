@@ -149,7 +149,6 @@ fn run_cpu(
     }
 
     Gpu::initialize_schedule(get_cm_mut!(emu));
-    common.gpu.frame_limit = emu.settings.framelimit();
     common.gpu.gpu_renderer = Some(gpu_renderer);
 
     get_spu_mut!(emu).audio_enabled = emu.settings.audio();
@@ -295,27 +294,21 @@ pub fn actual_main() {
     let touch_points = Arc::new(AtomicU16::new(0));
     let touch_points_clone = touch_points.clone();
 
-    let sound_sampler = Arc::new(SoundSampler::new());
+    let sound_sampler = Arc::new(SoundSampler::new(settings.framelimit()));
     let sound_sampler_clone = sound_sampler.clone();
 
     let presenter_audio = presenter.get_presenter_audio();
-    let audio_thread = if settings.audio() {
-        Some(
-            thread::Builder::new()
-                .name("audio".to_owned())
-                .spawn(move || {
-                    set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
-                    let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_BUF_SIZE }>::new();
-                    loop {
-                        sound_sampler.consume(audio_buffer.deref_mut());
-                        presenter_audio.play(audio_buffer.deref());
-                    }
-                })
-                .unwrap(),
-        )
-    } else {
-        None
-    };
+    let audio_thread = thread::Builder::new()
+        .name("audio".to_owned())
+        .spawn(move || {
+            set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
+            let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_BUF_SIZE }>::new();
+            loop {
+                sound_sampler.consume(audio_buffer.deref_mut());
+                presenter_audio.play(audio_buffer.deref());
+            }
+        })
+        .unwrap();
 
     let gpu_renderer = UnsafeCell::new(GpuRenderer::new());
     let gpu_renderer_ptr = gpu_renderer.get() as u32;
@@ -350,8 +343,6 @@ pub fn actual_main() {
         gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time);
     }
 
-    if let Some(audio_thread) = audio_thread {
-        audio_thread.join().unwrap();
-    }
+    audio_thread.join().unwrap();
     cpu_thread.join().unwrap();
 }

@@ -76,7 +76,7 @@ impl PresenterAudio {
     fn new() -> Self {
         unsafe {
             PresenterAudio {
-                audio_port: sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN, PRESENTER_AUDIO_BUF_SIZE as _, PRESENTER_AUDIO_SAMPLE_RATE as _, SCE_AUDIO_OUT_MODE_STEREO),
+                audio_port: sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, PRESENTER_AUDIO_BUF_SIZE as _, PRESENTER_AUDIO_SAMPLE_RATE as _, SCE_AUDIO_OUT_MODE_STEREO),
             }
         }
     }

@@ -14,7 +14,7 @@ use sdl2::{keyboard, EventPump};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::slice;
+use std::{slice, thread};
 
 #[derive(Clone)]
 pub struct PresenterAudio {
@@ -29,9 +29,11 @@ impl PresenterAudio {
     }
 
     pub fn play(&self, buffer: &[u32; PRESENTER_AUDIO_BUF_SIZE]) {
-        self.audio_queue.clear();
         let raw = unsafe { slice::from_raw_parts(buffer.as_slice().as_ptr() as *const i16, PRESENTER_AUDIO_BUF_SIZE * 2) };
         self.audio_queue.queue_audio(raw).unwrap();
+        while self.audio_queue.size() != 0 {
+            thread::yield_now();
+        }
     }
 }
 
