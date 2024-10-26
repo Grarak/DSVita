@@ -186,7 +186,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
     }
 
     let jit_entry = {
-        // unsafe { BLOCK_LOG = guest_pc == 0x20027ac };
+        // unsafe { BLOCK_LOG = guest_pc == 0x3800f7c };
 
         let mut block_asm = asm.new_block_asm(false);
 
@@ -204,7 +204,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
             asm.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
             debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
-            // if asm.jit_buf.current_pc == 0x380215c {
+            // if asm.jit_buf.current_pc == 0x2000950 {
             //     block_asm.bkpt(1);
             // }
 

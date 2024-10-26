@@ -264,7 +264,7 @@ pub fn main() {
     }
     thread::Builder::new()
         .name("actual_main".to_string())
-        .stack_size(4 * 1024 * 1024) // We reserve 2MB for jit registers
+        .stack_size(4 * 1024 * 1024)
         .spawn(actual_main)
         .unwrap()
         .join()

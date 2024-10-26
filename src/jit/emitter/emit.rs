@@ -2,17 +2,15 @@ use crate::core::emu::get_regs_mut;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM7;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::{BlockLabel, BlockReg};
+use crate::jit::assembler::BlockReg;
 use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
-use crate::jit::Cond;
 use crate::IS_DEBUG;
 use std::ptr;
-use CpuType::ARM9;
 
-impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
+impl<const CPU: CpuType> JitAsm<'_, CPU> {
     pub fn emit(&mut self, block_asm: &mut BlockAsm) {
         block_asm.guest_pc(self.jit_buf.current_pc);
 
@@ -139,53 +137,5 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
     pub fn emit_branch_out_metadata_with_idle_loop(&mut self, block_asm: &mut BlockAsm) {
         self._emit_branch_out_metadata(block_asm, true, true)
-    }
-
-    pub fn emit_flush_cycles<ContinueFn: Fn(&mut Self, &mut BlockAsm, BlockReg, BlockLabel), BreakoutFn: Fn(&mut Self, &mut BlockAsm)>(
-        &mut self,
-        block_asm: &mut BlockAsm,
-        target_pre_cycle_count_sum: u16,
-        add_continue_label: bool,
-        continue_fn: ContinueFn,
-        breakout_fn: BreakoutFn,
-    ) {
-        let runtime_data_addr_reg = block_asm.new_reg();
-        block_asm.mov(runtime_data_addr_reg, ptr::addr_of_mut!(self.runtime_data) as u32);
-
-        let result_accumulated_cycles_reg = block_asm.new_reg();
-        self.emit_count_cycles(block_asm, runtime_data_addr_reg, result_accumulated_cycles_reg);
-
-        const MAX_LOOP_CYCLE_COUNT: u32 = 255;
-        block_asm.cmp(
-            result_accumulated_cycles_reg,
-            match CPU {
-                ARM9 => MAX_LOOP_CYCLE_COUNT * 2,
-                ARM7 => MAX_LOOP_CYCLE_COUNT,
-            },
-        );
-
-        let continue_label = if add_continue_label { Some(block_asm.new_label()) } else { None };
-        let breakout_label = block_asm.new_label();
-        block_asm.branch(breakout_label, Cond::HS);
-
-        let target_pre_cycle_count_sum_reg = block_asm.new_reg();
-        block_asm.mov(target_pre_cycle_count_sum_reg, target_pre_cycle_count_sum as u32);
-        block_asm.store_u16(target_pre_cycle_count_sum_reg, runtime_data_addr_reg, JitRuntimeData::get_pre_cycle_count_sum_offset() as u32);
-        block_asm.free_reg(target_pre_cycle_count_sum_reg);
-
-        continue_fn(self, block_asm, runtime_data_addr_reg, breakout_label);
-        if add_continue_label {
-            block_asm.branch(continue_label.unwrap(), Cond::AL);
-        }
-
-        block_asm.label(breakout_label);
-        breakout_fn(self, block_asm);
-
-        if add_continue_label {
-            block_asm.label(continue_label.unwrap());
-        }
-
-        block_asm.free_reg(result_accumulated_cycles_reg);
-        block_asm.free_reg(runtime_data_addr_reg);
     }
 }

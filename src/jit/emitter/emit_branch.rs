@@ -16,7 +16,7 @@ pub enum JitBranchInfo {
     None,
 }
 
-impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
+impl<const CPU: CpuType> JitAsm<'_, CPU> {
     // Taken from https://github.com/melonDS-emu/melonDS/blob/24c402af51fe9c0537582173fc48d1ad3daff459/src/ARMJIT.cpp#L352
     pub fn is_idle_loop(insts: &[InstInfo]) -> bool {
         let mut regs_written_to = RegReserve::new();
@@ -33,7 +33,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             let out_regs = inst.out_regs & !reg_reserve!(Reg::PC);
             regs_disallowed_to_write |= src_regs & !regs_written_to;
 
-            if (out_regs & regs_disallowed_to_write).len() != 0 {
+            if !(out_regs & regs_disallowed_to_write).is_empty() {
                 return false;
             }
             regs_written_to |= out_regs;

@@ -64,6 +64,16 @@ impl BlockRegSet {
         (sum - (self.0 .0[0] & ((1 << FIXED_REGS_OVERFLOW) - 1)).count_ones()) as usize
     }
 
+    pub const fn remove_guests(&mut self, reg_reserve: RegReserve) {
+        self.0 .0[0] &= !(reg_reserve.0 << Reg::None as u8);
+        let spilled_over_count = Reg::None as u8 * 2 - 32;
+        self.0 .0[1] &= !(reg_reserve.0 >> (Reg::None as u8 - spilled_over_count));
+    }
+
+    pub const fn clear(&mut self) {
+        self.0.clear();
+    }
+
     pub const fn is_empty(&self) -> bool {
         self.0.len() == 0
     }
@@ -242,7 +252,7 @@ pub struct BlockRegAnySetIter<'a> {
     len: usize,
 }
 
-impl<'a> Iterator for BlockRegAnySetIter<'a> {
+impl Iterator for BlockRegAnySetIter<'_> {
     type Item = u16;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -268,7 +278,7 @@ pub struct BlockRegSetIter<'a> {
     len: usize,
 }
 
-impl<'a> Iterator for BlockRegSetIter<'a> {
+impl Iterator for BlockRegSetIter<'_> {
     type Item = BlockReg;
 
     fn next(&mut self) -> Option<Self::Item> {

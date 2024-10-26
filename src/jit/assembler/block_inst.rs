@@ -74,17 +74,12 @@ pub struct BranchEncoding {
 
 #[derive(Clone)]
 pub struct BlockInst {
-    pub cond: Cond,
     pub kind: BlockInstKind,
 }
 
 impl BlockInst {
-    pub fn new(cond: Cond, kind: BlockInstKind) -> Self {
-        BlockInst { cond, kind }
-    }
-
-    pub fn new_al(kind: BlockInstKind) -> Self {
-        Self::new(Cond::AL, kind)
+    pub fn new(kind: BlockInstKind) -> Self {
+        BlockInst { kind }
     }
 
     pub fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
@@ -106,13 +101,13 @@ impl BlockInst {
 
 impl From<BlockInstKind> for BlockInst {
     fn from(value: BlockInstKind) -> Self {
-        BlockInst::new_al(value)
+        BlockInst::new(value)
     }
 }
 
 impl Debug for BlockInst {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} {:?}", self.cond, self.kind)
+        write!(f, "{:?}", self.kind)
     }
 }
 
@@ -178,9 +173,11 @@ pub enum BlockInstKind {
     Branch {
         label: BlockLabel,
         block_index: usize,
+        cond: Cond,
     },
 
     SaveContext {
+        guest_regs: RegReserve,
         thread_regs_addr_reg: BlockReg,
     },
     SaveReg {
@@ -714,10 +711,10 @@ impl BlockInstKind {
                 }
             },
 
-            BlockInstKind::Branch { block_index, .. } => {
+            BlockInstKind::Branch { block_index, cond, .. } => {
                 // Encode label
                 // Branch offset can only be figured out later
-                opcodes.push(BranchEncoding::new(u26::new(*block_index as u32), false, false, u4::new(Cond::AL as u8)).into());
+                opcodes.push(BranchEncoding::new(u26::new(*block_index as u32), false, false, u4::new(*cond as u8)).into());
                 branch_placeholders.push(opcodes_offset + opcode_index);
             }
 
@@ -771,19 +768,16 @@ impl BlockInstKind {
 
                 let inst_info = inst.deref_mut();
                 for operand in inst_info.operands_mut() {
-                    match operand {
-                        Operand::Reg { reg, shift } => {
-                            replace_reg(reg);
-                            if let Some(shift) = shift {
-                                match shift {
-                                    Shift::Lsl(v) => replace_shift(v),
-                                    Shift::Lsr(v) => replace_shift(v),
-                                    Shift::Asr(v) => replace_shift(v),
-                                    Shift::Ror(v) => replace_shift(v),
-                                }
+                    if let Operand::Reg { reg, shift } = operand {
+                        replace_reg(reg);
+                        if let Some(shift) = shift {
+                            match shift {
+                                Shift::Lsl(v) => replace_shift(v),
+                                Shift::Lsr(v) => replace_shift(v),
+                                Shift::Asr(v) => replace_shift(v),
+                                Shift::Ror(v) => replace_shift(v),
                             }
                         }
-                        _ => {}
                     }
                 }
 
@@ -893,11 +887,11 @@ impl Debug for BlockInstKind {
             BlockInstKind::Label { label, guest_pc } => {
                 let guest_pc = match guest_pc {
                     None => "",
-                    Some(pc) => &format!("{pc:x}"),
+                    Some(pc) => &format!(" {pc:x}"),
                 };
-                write!(f, "label {label:?} {guest_pc}:")
+                write!(f, "Label {label:?}{guest_pc}")
             }
-            BlockInstKind::Branch { label, block_index } => write!(f, "B {label:?}, block index: {block_index}"),
+            BlockInstKind::Branch { label, block_index, cond } => write!(f, "B{cond:?} {label:?}, block index: {block_index}"),
             BlockInstKind::SaveContext { .. } => write!(f, "SaveContext"),
             BlockInstKind::SaveReg { guest_reg, reg_mapped, .. } => write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}"),
             BlockInstKind::RestoreReg { guest_reg, reg_mapped, .. } => write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}"),
