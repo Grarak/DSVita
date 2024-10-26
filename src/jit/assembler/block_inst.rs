@@ -9,6 +9,7 @@ use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
 use bilge::prelude::*;
+use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
@@ -75,27 +76,34 @@ pub struct BranchEncoding {
 #[derive(Clone)]
 pub struct BlockInst {
     pub kind: BlockInstKind,
+    io_cache: RefCell<Option<(BlockRegSet, BlockRegSet)>>,
 }
 
 impl BlockInst {
     pub fn new(kind: BlockInstKind) -> Self {
-        BlockInst { kind }
+        BlockInst { kind, io_cache: RefCell::new(None) }
     }
 
     pub fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
-        self.kind.get_io()
+        let mut cached_io = self.io_cache.borrow_mut();
+        match *cached_io {
+            None => {
+                let io = self.kind.get_io();
+                *cached_io = Some(io);
+                io
+            }
+            Some(cache) => cache,
+        }
     }
 
     pub fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        *self.io_cache.borrow_mut() = None;
         self.kind.replace_input_regs(old, new);
     }
 
     pub fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        *self.io_cache.borrow_mut() = None;
         self.kind.replace_output_regs(old, new);
-    }
-
-    pub fn replace_regs(&mut self, old: BlockReg, new: BlockReg) {
-        self.kind.replace_regs(old, new);
     }
 }
 
@@ -503,54 +511,6 @@ impl BlockInstKind {
             BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
                 for reg in inst.out_regs {
                     Self::replace_reg(&mut regs_mapping[reg as usize], old, new);
-                }
-            }
-            BlockInstKind::CallCommon { .. }
-            | BlockInstKind::Label { .. }
-            | BlockInstKind::Branch { .. }
-            | BlockInstKind::GuestPc(_)
-            | BlockInstKind::Bkpt(_)
-            | BlockInstKind::Prologue
-            | BlockInstKind::Epilogue { .. } => {}
-        }
-    }
-
-    fn replace_regs(&mut self, old: BlockReg, new: BlockReg) {
-        match self {
-            BlockInstKind::Alu3 { operands, .. } | BlockInstKind::Mul { operands, .. } => Self::replace_shift_operands(operands, old, new),
-            BlockInstKind::Alu2Op1 { operands, .. } => Self::replace_shift_operands(operands, old, new),
-            BlockInstKind::Alu2Op0 { operands, .. } => Self::replace_shift_operands(operands, old, new),
-            BlockInstKind::Transfer { operands, .. } => Self::replace_shift_operands(operands, old, new),
-            BlockInstKind::TransferMultiple { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInstKind::SystemReg { operand, .. } => Self::replace_operand(operand, old, new),
-            BlockInstKind::Bfc { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInstKind::Bfi { operands, .. } => {
-                Self::replace_reg(&mut operands[0], old, new);
-                Self::replace_reg(&mut operands[1], old, new);
-            }
-
-            BlockInstKind::SaveContext { .. } => {
-                unreachable!()
-            }
-            BlockInstKind::SaveReg { reg_mapped, thread_regs_addr_reg, .. } => {
-                Self::replace_reg(reg_mapped, old, new);
-                Self::replace_reg(thread_regs_addr_reg, old, new);
-            }
-            BlockInstKind::RestoreReg {
-                reg_mapped,
-                thread_regs_addr_reg,
-                tmp_guest_cpsr_reg,
-                ..
-            } => {
-                Self::replace_reg(reg_mapped, old, new);
-                Self::replace_reg(thread_regs_addr_reg, old, new);
-                Self::replace_reg(tmp_guest_cpsr_reg, old, new);
-            }
-
-            BlockInstKind::Call { func_reg, .. } => Self::replace_reg(func_reg, old, new),
-            BlockInstKind::GenericGuestInst { regs_mapping, .. } => {
-                for reg_mapping in regs_mapping {
-                    Self::replace_reg(reg_mapping, old, new);
                 }
             }
             BlockInstKind::CallCommon { .. }

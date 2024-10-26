@@ -328,10 +328,8 @@ impl BasicBlock {
                     BlockInstKind::GuestPc(pc) => {
                         println!("(0x{:x}, 0x{pc:x}),", opcodes.len() + opcodes_offset);
                     }
-                    BlockInstKind::Label { guest_pc, .. } => {
-                        if let Some(pc) = guest_pc {
-                            println!("(0x{:x}, 0x{pc:x}),", opcodes.len() + opcodes_offset);
-                        }
+                    BlockInstKind::Label { guest_pc: Some(pc), .. } => {
+                        println!("(0x{:x}, 0x{pc:x}),", opcodes.len() + opcodes_offset);
                     }
                     _ => {}
                 }
