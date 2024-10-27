@@ -79,7 +79,7 @@ impl BlockReg {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum BlockOperand {
     Reg(BlockReg),
     Imm(u32),
@@ -162,7 +162,7 @@ impl BlockOperand {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct BlockShift {
     pub shift_type: ShiftType,
     pub value: BlockOperand,

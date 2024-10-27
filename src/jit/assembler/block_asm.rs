@@ -5,7 +5,7 @@ use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockInst, 
 use crate::jit::assembler::block_inst_list::BlockInstList;
 use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
 use crate::jit::assembler::block_reg_set::BlockRegSet;
-use crate::jit::assembler::{BlockAsmBuf, BlockInstKind, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, ANY_REG_LIMIT};
+use crate::jit::assembler::{BlockAsmBuf, BlockInstKind, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift, ANY_REG_LIMIT};
 use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
@@ -210,13 +210,14 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
-    fn check_alu_imm_limit(&mut self, op2: &mut BlockOperandShift) {
+    fn check_alu_imm_limit(&mut self, op2: &mut BlockOperandShift, emit_mov: bool) {
         if op2.operand.needs_reg_for_imm(0xFF) {
+            debug_assert_eq!(op2.shift, BlockShift::default());
             let imm = op2.operand.as_imm();
             let lsb_zeros = imm.trailing_zeros() & !0x1;
             if (imm >> lsb_zeros) & !0xFF == 0 {
                 *op2 = (imm >> lsb_zeros, ShiftType::Ror, (32 - lsb_zeros) >> 1).into();
-            } else {
+            } else if emit_mov {
                 self.mov(self.tmp_operand_imm_reg, op2.operand);
                 *op2 = self.tmp_operand_imm_reg.into();
             }
@@ -224,7 +225,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     fn add_op3(&mut self, op: BlockAluOp, op0: BlockReg, op1: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
-        self.check_alu_imm_limit(&mut op2);
+        self.check_alu_imm_limit(&mut op2, true);
         self.check_imm_shift_limit(&mut op2);
         self.insert_inst(BlockInstKind::Alu3 {
             op,
@@ -235,7 +236,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     fn add_op2_op1(&mut self, op: BlockAluOp, op1: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
-        self.check_alu_imm_limit(&mut op2);
+        self.check_alu_imm_limit(&mut op2, true);
         self.check_imm_shift_limit(&mut op2);
         self.insert_inst(BlockInstKind::Alu2Op1 {
             op,
@@ -246,9 +247,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     fn add_op2_op0(&mut self, op: BlockAluOp, op0: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
-        if op != BlockAluOp::Mov {
-            self.check_alu_imm_limit(&mut op2);
-        }
+        self.check_alu_imm_limit(&mut op2, op != BlockAluOp::Mov);
         self.check_imm_shift_limit(&mut op2);
         self.insert_inst(BlockInstKind::Alu2Op0 {
             op,

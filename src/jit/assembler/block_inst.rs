@@ -328,10 +328,8 @@ impl BlockInstKind {
             BlockInstKind::Call { func_reg, args, has_return } => {
                 let mut inputs = BlockRegSet::new();
                 inputs += *func_reg;
-                for arg in args {
-                    if let Some(arg) = arg {
-                        inputs += *arg;
-                    }
+                for &arg in args.iter().flatten() {
+                    inputs += arg;
                 }
                 (
                     inputs,
@@ -348,10 +346,8 @@ impl BlockInstKind {
             }
             BlockInstKind::CallCommon { args, has_return, .. } => {
                 let mut inputs = BlockRegSet::new();
-                for arg in args {
-                    if let Some(arg) = arg {
-                        inputs += *arg;
-                    }
+                for &arg in args.iter().flatten() {
+                    inputs += arg;
                 }
                 (
                     inputs,
@@ -559,9 +555,14 @@ impl BlockInstKind {
                 }
             }
             BlockInstKind::Alu2Op0 { op, operands, set_cond, .. } => match operands[1].operand {
-                BlockOperand::Reg(reg) => opcodes.push(alu_reg(*op, operands[0].as_reg(), BlockReg::Fixed(Reg::R0), reg, operands[1].shift, *set_cond != BlockAluSetCond::None)),
+                BlockOperand::Reg(reg) => {
+                    if *op == BlockAluOp::Mov && operands[0].as_reg() == reg && operands[1].shift == BlockShift::default() && *set_cond == BlockAluSetCond::None {
+                        return;
+                    }
+                    opcodes.push(alu_reg(*op, operands[0].as_reg(), BlockReg::Fixed(Reg::R0), reg, operands[1].shift, *set_cond != BlockAluSetCond::None))
+                }
                 BlockOperand::Imm(imm) => {
-                    if *op == BlockAluOp::Mov && *set_cond == BlockAluSetCond::None {
+                    if *op == BlockAluOp::Mov && operands[1].shift == BlockShift::default() && *set_cond == BlockAluSetCond::None {
                         opcodes.extend(AluImm::mov32(operands[0].as_reg().as_fixed(), imm))
                     } else {
                         opcodes.push(alu_imm(*op, operands[0].as_reg(), BlockReg::Fixed(Reg::R0), imm, operands[1].shift, *set_cond != BlockAluSetCond::None))

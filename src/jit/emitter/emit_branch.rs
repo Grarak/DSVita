@@ -122,6 +122,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             JitBranchInfo::Idle => {
                 block_asm.mov(Reg::PC, target_pc);
                 block_asm.save_context();
+                if DEBUG_LOG {
+                    block_asm.call2(Self::debug_idle_loop as *const (), self.jit_buf.current_pc, target_pc);
+                }
                 self.emit_branch_out_metadata_with_idle_loop(block_asm);
                 block_asm.epilogue();
             }
@@ -233,5 +236,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
     extern "C" fn debug_branch_reg(current_pc: u32, target_pc: u32) {
         println!("{CPU:?} branch reg from {current_pc:x} to {target_pc:x}")
+    }
+
+    extern "C" fn debug_idle_loop(current_pc: u32, target_pc: u32) {
+        println!("{CPU:?} detected idle loop {current_pc:x} to {target_pc:x}")
     }
 }
