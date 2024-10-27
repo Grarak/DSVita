@@ -1,4 +1,4 @@
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Bfc, Bfi, MulReg};
+use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Bfc, Bfi, MulReg, Ubfx};
 use crate::jit::assembler::arm::branch_assembler::Bx;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, LdrStrImmSBHD, LdrStrReg, LdrStrRegSBHD, Mrs, Msr};
 use crate::jit::assembler::arm::Bkpt;
@@ -168,6 +168,11 @@ pub enum BlockInstKind {
         lsb: u8,
         width: u8,
     },
+    Ubfx {
+        operands: [BlockReg; 2],
+        lsb: u8,
+        width: u8,
+    },
     Mul {
         operands: [BlockOperandShift; 3],
         set_cond: BlockAluSetCond,
@@ -287,7 +292,7 @@ impl BlockInstKind {
                 BlockSystemRegOp::Msr => (block_reg_set!(operand.try_as_reg()), block_reg_set!()),
             },
             BlockInstKind::Bfc { operand, .. } => (block_reg_set!(Some(*operand)), block_reg_set!(Some(*operand))),
-            BlockInstKind::Bfi { operands, .. } => (block_reg_set!(Some(operands[0]), Some(operands[1])), block_reg_set!(Some(operands[0]))),
+            BlockInstKind::Bfi { operands, .. } | BlockInstKind::Ubfx { operands, .. } => (block_reg_set!(Some(operands[0]), Some(operands[1])), block_reg_set!(Some(operands[0]))),
 
             BlockInstKind::SaveContext { .. } => (block_reg_set!(), block_reg_set!()),
             BlockInstKind::SaveReg {
@@ -433,6 +438,7 @@ impl BlockInstKind {
                 Self::replace_reg(&mut operands[0], old, new);
                 Self::replace_reg(&mut operands[1], old, new);
             }
+            BlockInstKind::Ubfx { operands, .. } => Self::replace_reg(&mut operands[1], old, new),
             BlockInstKind::SaveContext { .. } => {
                 unreachable!()
             }
@@ -485,7 +491,7 @@ impl BlockInstKind {
                 }
             }
             BlockInstKind::Bfc { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInstKind::Bfi { operands, .. } => Self::replace_reg(&mut operands[0], old, new),
+            BlockInstKind::Bfi { operands, .. } | BlockInstKind::Ubfx { operands, .. } => Self::replace_reg(&mut operands[0], old, new),
             BlockInstKind::SaveContext { .. } => {}
             BlockInstKind::SaveReg { guest_reg, reg_mapped, .. } => {
                 if *guest_reg == Reg::CPSR {
@@ -659,6 +665,7 @@ impl BlockInstKind {
             },
             BlockInstKind::Bfc { operand, lsb, width } => opcodes.push(Bfc::create(operand.as_fixed(), *lsb, *width, Cond::AL)),
             BlockInstKind::Bfi { operands, lsb, width } => opcodes.push(Bfi::create(operands[0].as_fixed(), operands[1].as_fixed(), *lsb, *width, Cond::AL)),
+            BlockInstKind::Ubfx { operands, lsb, width } => opcodes.push(Ubfx::create(operands[0].as_fixed(), operands[1].as_fixed(), *lsb, *width, Cond::AL)),
             BlockInstKind::Mul { operands, set_cond, .. } => match operands[2].operand {
                 BlockOperand::Reg(reg) => opcodes.push(MulReg::mul(
                     operands[0].as_reg().as_fixed(),
@@ -844,6 +851,7 @@ impl Debug for BlockInstKind {
             BlockInstKind::SystemReg { op, operand } => write!(f, "{op:?} {operand:?}"),
             BlockInstKind::Bfc { operand, lsb, width } => write!(f, "Bfc {operand:?}, {lsb}, {width}"),
             BlockInstKind::Bfi { operands, lsb, width } => write!(f, "Bfi {:?}, {:?}, {lsb}, {width}", operands[0], operands[1]),
+            BlockInstKind::Ubfx { operands, lsb, width } => write!(f, "Ubfx {:?}, {:?}, {lsb}, {width}", operands[0], operands[1]),
             BlockInstKind::Mul { operands, set_cond, thumb_pc_aligned } => write!(f, "Mul{set_cond:?} {operands:?}, align pc: {thumb_pc_aligned}"),
             BlockInstKind::Label { label, guest_pc } => {
                 let guest_pc = match guest_pc {

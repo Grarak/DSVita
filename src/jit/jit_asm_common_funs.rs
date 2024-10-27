@@ -51,7 +51,8 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         let map_entry_base_ptr_reg = block_asm.new_reg();
 
         block_asm.mov(map_ptr_reg, map_ptr as u32);
-        block_asm.mov(map_index_reg, (aligned_target_reg.into(), ShiftType::Lsr, BlockOperand::from(jit_memory_map::BLOCK_SHIFT as u32 + 1)));
+        const ADDR_SHIFT: u8 = jit_memory_map::BLOCK_SHIFT as u8 + 1;
+        block_asm.ubfx(map_index_reg, aligned_target_reg, ADDR_SHIFT, 28 - ADDR_SHIFT);
         block_asm.load_u32(map_entry_base_ptr_reg, map_ptr_reg, (map_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)));
         let block_size_mask_reg = map_index_reg;
         block_asm.mov(block_size_mask_reg, (jit_memory_map::BLOCK_SIZE as u32 - 1) << 2);

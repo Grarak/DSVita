@@ -350,7 +350,15 @@ impl<'a> BlockAsm<'a> {
             operands: [op0.into(), op1.into()],
             lsb,
             width,
-        })
+        });
+    }
+
+    pub fn ubfx(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, lsb: u8, width: u8) {
+        self.insert_inst(BlockInstKind::Ubfx {
+            operands: [op0.into(), op1.into()],
+            lsb,
+            width,
+        });
     }
 
     pub fn muls_guest_thumb_pc_aligned(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {

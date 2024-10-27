@@ -5,7 +5,7 @@ use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::logging::debug_println;
 use crate::mmap::Mmap;
 use crate::utils;
-use crate::utils::{HeapMem, HeapMemU32};
+use crate::utils::{HeapMem, HeapMemU8};
 use lazy_static::lazy_static;
 use paste::paste;
 use std::intrinsics::unlikely;
@@ -89,10 +89,10 @@ create_jit_blocks!(
 
 #[derive(Default)]
 pub struct JitLiveRanges {
-    pub itcm: HeapMemU32<{ (regions::INSTRUCTION_TCM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
-    pub main: HeapMemU32<{ (regions::MAIN_MEMORY_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
-    pub wram: HeapMemU32<{ ((regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE) / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
-    pub vram_arm7: HeapMemU32<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 32) as usize }>,
+    pub itcm: HeapMemU8<{ (regions::INSTRUCTION_TCM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
+    pub main: HeapMemU8<{ (regions::MAIN_MEMORY_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
+    pub wram: HeapMemU8<{ ((regions::SHARED_WRAM_SIZE + regions::ARM7_WRAM_SIZE) / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
+    pub vram_arm7: HeapMemU8<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
 }
 
 #[cfg(target_os = "linux")]
@@ -191,10 +191,10 @@ impl JitMemory {
                 $entries[entries_index] = JitEntry(jit_entry_addr);
                 assert_eq!(ptr::addr_of!($entries[entries_index]), self.jit_memory_map.get_jit_entry::<CPU>(guest_pc));
 
-                // >> 5 for u32 (each bit represents a page)
-                let live_ranges_index = ((guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) >> 5) as usize;
+                // >> 3 for u8 (each bit represents a page)
+                let live_ranges_index = ((guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) >> 3) as usize;
                 let live_ranges_index = live_ranges_index % $live_ranges.len();
-                let live_ranges_bit = (guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 31;
+                let live_ranges_bit = (guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
                 $live_ranges[live_ranges_index] |= 1 << live_ranges_bit;
                 assert_eq!(ptr::addr_of!($live_ranges[live_ranges_index]), self.jit_memory_map.get_live_range::<CPU>(guest_pc));
 
@@ -212,7 +212,7 @@ impl JitMemory {
             }};
         }
 
-        let jit_addr = match CPU {
+        match CPU {
             ARM9 => match guest_pc & 0xFF000000 {
                 regions::INSTRUCTION_TCM_OFFSET | regions::INSTRUCTION_TCM_MIRROR_OFFSET => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm),
                 regions::MAIN_MEMORY_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main),
@@ -224,9 +224,7 @@ impl JitMemory {
                 regions::VRAM_OFFSET => insert!(self.jit_entries.vram_arm7, self.jit_live_ranges.vram_arm7),
                 _ => todo!("{:x}", guest_pc),
             },
-        };
-
-        jit_addr
+        }
     }
 
     pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> *const extern "C" fn(bool) {
@@ -237,7 +235,7 @@ impl JitMemory {
         macro_rules! invalidate {
             ($guest_addr:expr, $live_range:ident, $cpu:expr, [$(($cpu_entry:expr, $entries:ident)),+]) => {{
                 let live_range = unsafe { self.jit_memory_map.get_live_range::<{ $cpu }>($guest_addr).as_mut_unchecked() };
-                let live_ranges_bit = ($guest_addr >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 31;
+                let live_ranges_bit = ($guest_addr >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
                 if unlikely(*live_range & (1 << live_ranges_bit) != 0) {
                     *live_range &= !(1 << live_ranges_bit);
 
