@@ -79,11 +79,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
             // R9 can be used as a substitution for SP for branch prediction
             if (op == Op::MovHT && self.jit_buf.current_inst().src_regs.is_reserved(Reg::LR))
-                || (op.is_multiple_mem_transfer()
-                    && match *self.jit_buf.current_inst().operands()[0].as_reg_no_shift().unwrap() {
-                        Reg::R9 | Reg::SP => true,
-                        _ => false,
-                    })
+                || (op.is_multiple_mem_transfer() && matches!(*self.jit_buf.current_inst().operands()[0].as_reg_no_shift().unwrap(), Reg::R9 | Reg::SP))
                 || (op.is_single_mem_transfer() && (self.jit_buf.current_inst().src_regs.is_reserved(Reg::R9) || self.jit_buf.current_inst().src_regs.is_reserved(Reg::SP)))
             {
                 let guest_pc_reg = block_asm.new_reg();

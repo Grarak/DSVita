@@ -138,10 +138,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let inst_info = self.jit_buf.current_inst();
         let target_pc_reg = *inst_info.operands()[0].as_reg_no_shift().unwrap();
 
-        block_asm.mov(Reg::PC, target_pc_reg);
-        block_asm.save_context();
-
         if target_pc_reg == Reg::LR {
+            block_asm.mov(Reg::PC, target_pc_reg);
+            block_asm.save_context();
             self.emit_branch_return_stack_common(block_asm, target_pc_reg.into());
         } else {
             self.emit_branch_reg_common(block_asm, target_pc_reg.into(), false);
