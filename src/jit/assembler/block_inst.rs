@@ -75,22 +75,36 @@ pub struct BranchEncoding {
 
 #[derive(Clone)]
 pub struct BlockInst {
+    pub cond: Cond,
     pub kind: BlockInstKind,
     io_cache: RefCell<Option<(BlockRegSet, BlockRegSet)>>,
 }
 
 impl BlockInst {
-    pub fn new(kind: BlockInstKind) -> Self {
-        BlockInst { kind, io_cache: RefCell::new(None) }
+    pub fn new(cond: Cond, kind: BlockInstKind) -> Self {
+        BlockInst {
+            cond,
+            kind,
+            io_cache: RefCell::new(None),
+        }
+    }
+
+    pub fn invalidate_io_cache(&self) {
+        *self.io_cache.borrow_mut() = None;
     }
 
     pub fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
         let mut cached_io = self.io_cache.borrow_mut();
         match *cached_io {
             None => {
-                let io = self.kind.get_io();
-                *cached_io = Some(io);
-                io
+                let (mut inputs, outputs) = self.kind.get_io();
+                if self.cond != Cond::AL {
+                    // For conditional insts initialize output guest regs as well
+                    // Otherwise arbitrary values for regs will be saved
+                    inputs.add_guests(outputs.get_guests());
+                }
+                *cached_io = Some((inputs, outputs));
+                (inputs, outputs)
             }
             Some(cache) => cache,
         }
@@ -109,13 +123,13 @@ impl BlockInst {
 
 impl From<BlockInstKind> for BlockInst {
     fn from(value: BlockInstKind) -> Self {
-        BlockInst::new(value)
+        BlockInst::new(Cond::AL, value)
     }
 }
 
 impl Debug for BlockInst {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.kind)
+        write!(f, "{:?} {:?}", self.cond, self.kind)
     }
 }
 
@@ -186,7 +200,6 @@ pub enum BlockInstKind {
     Branch {
         label: BlockLabel,
         block_index: usize,
-        cond: Cond,
     },
 
     SaveContext {
@@ -679,10 +692,10 @@ impl BlockInstKind {
                 }
             },
 
-            BlockInstKind::Branch { block_index, cond, .. } => {
+            BlockInstKind::Branch { block_index, .. } => {
                 // Encode label
                 // Branch offset can only be figured out later
-                opcodes.push(BranchEncoding::new(u26::new(*block_index as u32), false, false, u4::new(*cond as u8)).into());
+                opcodes.push(BranchEncoding::new(u26::new(*block_index as u32), false, false, u4::new(Cond::AL as u8)).into());
                 branch_placeholders.push(opcodes_offset + opcode_index);
             }
 
@@ -860,7 +873,7 @@ impl Debug for BlockInstKind {
                 };
                 write!(f, "Label {label:?}{guest_pc}")
             }
-            BlockInstKind::Branch { label, block_index, cond } => write!(f, "B{cond:?} {label:?}, block index: {block_index}"),
+            BlockInstKind::Branch { label, block_index } => write!(f, "B {label:?}, block index: {block_index}"),
             BlockInstKind::SaveContext { .. } => write!(f, "SaveContext"),
             BlockInstKind::SaveReg { guest_reg, reg_mapped, .. } => write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}"),
             BlockInstKind::RestoreReg { guest_reg, reg_mapped, .. } => write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}"),

@@ -56,7 +56,7 @@ pub struct BlockAsm<'a> {
     tmp_shift_imm_reg: BlockReg,
     tmp_func_call_reg: BlockReg,
 
-    cond_block_end_label_stack: Vec<BlockLabel>,
+    cond_block_end_label_stack: Vec<(BlockLabel, Cond, usize)>,
 
     guest_reg_init_offset: Option<usize>,
     is_common_fun: bool,
@@ -377,7 +377,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn branch(&mut self, label: BlockLabel, cond: Cond) {
-        self.insert_inst(BlockInstKind::Branch { label, block_index: 0, cond })
+        self.insert_inst(BlockInst::new(cond, BlockInstKind::Branch { label, block_index: 0 }))
     }
 
     pub fn save_context(&mut self) {
@@ -567,7 +567,7 @@ impl<'a> BlockAsm<'a> {
             }
             Some(label) => *label,
         };
-        self.insert_inst(BlockInstKind::Branch { label, block_index: 0, cond });
+        self.insert_inst(BlockInst::new(cond, BlockInstKind::Branch { label, block_index: 0 }));
     }
 
     pub fn generic_guest_inst(&mut self, inst_info: &mut InstInfo) {
@@ -600,13 +600,22 @@ impl<'a> BlockAsm<'a> {
         if cond != Cond::AL {
             let label = self.new_label();
             self.branch(label, !cond);
-            self.cond_block_end_label_stack.push(label);
+            self.cond_block_end_label_stack.push((label, cond, self.buf.insts.len()));
         }
     }
 
     pub fn end_cond_block(&mut self) {
-        if let Some(label) = self.cond_block_end_label_stack.pop() {
-            self.label(label);
+        if let Some((label, cond, start_index)) = self.cond_block_end_label_stack.pop() {
+            let cond_block_size = self.buf.insts.len() - start_index;
+            let (_, outputs) = self.buf.insts[start_index].get_io();
+            if cond_block_size == 1 && self.buf.insts[start_index].cond == Cond::AL && !outputs.contains(BlockReg::Fixed(Reg::CPSR)) && !outputs.contains(Reg::CPSR.into()) {
+                self.buf.insts[start_index].cond = cond;
+                self.buf.insts[start_index].invalidate_io_cache();
+                // Remove the branch
+                self.buf.insts.remove(start_index - 1);
+            } else {
+                self.label(label);
+            }
         }
     }
 
@@ -761,17 +770,22 @@ impl<'a> BlockAsm<'a> {
         // Link blocks
         for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
             let last_inst_index = BlockInstList::deref(basic_block.block_entry_end).value;
+            let cond = self.buf.insts[last_inst_index].cond;
             match &mut self.buf.insts[last_inst_index].kind {
-                BlockInstKind::Branch { label, block_index, cond } => {
+                BlockInstKind::Branch { label, block_index } => {
                     let labelled_block_index = basic_block_label_mapping.get(&label.0).unwrap();
                     basic_block.exit_blocks.push(*labelled_block_index);
                     *block_index = *labelled_block_index;
-                    if *cond != Cond::AL && i + 1 < basic_blocks_len {
+                    if cond != Cond::AL && i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.push(i + 1);
                     }
                 }
                 // Don't add exit when last command in basic block is a breakout
-                BlockInstKind::Call { has_return: false, .. } | BlockInstKind::CallCommon { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {}
+                BlockInstKind::Call { has_return: false, .. } | BlockInstKind::CallCommon { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {
+                    if cond != Cond::AL && i + 1 < basic_blocks_len {
+                        basic_block.exit_blocks.push(i + 1);
+                    }
+                }
                 _ if i + 1 < basic_blocks_len => basic_block.exit_blocks.push(i + 1),
                 _ => {}
             }

@@ -338,6 +338,9 @@ impl BasicBlock {
             inst_opcodes.clear();
             inst.kind
                 .emit_opcode(&mut inst_opcodes, opcodes.len(), &mut asm.buf.branch_placeholders, opcodes_offset, used_host_regs);
+            for opcode in &mut inst_opcodes {
+                *opcode = (*opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);
+            }
             opcodes.extend(&inst_opcodes);
         }
         opcodes
