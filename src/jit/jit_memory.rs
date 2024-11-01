@@ -355,10 +355,6 @@ impl JitMemory {
         }
 
         *host_pc = fast_mem_end + 4;
-
-        // let cache_begin = fast_mem_begin & !(PAGE_SIZE - 1);
-        // let size = utils::align_up(fast_mem_exit - cache_begin, PAGE_SIZE);
-        // unsafe { flush_icache(cache_begin as _, size) };
         unsafe { flush_icache(fast_mem_begin as _, fast_mem_exit - fast_mem_begin + 4) }
         true
     }

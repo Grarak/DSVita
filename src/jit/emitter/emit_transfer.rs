@@ -155,11 +155,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
 
         let fast_read_value_reg = block_asm.new_reg();
-        let fast_read_value2_reg = block_asm.new_reg();
         let fast_read_next_addr_reg = block_asm.new_reg();
         let fast_read_addr_masked_reg = block_asm.new_reg();
 
-        let fast_read_assign_label = block_asm.new_label();
         let slow_read_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
@@ -169,27 +167,29 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let base_ptr = mmu.get_base_tcm_ptr();
         let size = if amount == MemoryAmount::Double { MemoryAmount::Word.size() } else { amount.size() };
         block_asm.bic(fast_read_addr_masked_reg, addr_reg, 0xF0000000 | (size as u32 - 1));
+        let needs_ror = amount == MemoryAmount::Word || amount == MemoryAmount::Double;
         block_asm.transfer_read(
-            fast_read_value_reg,
+            if needs_ror { fast_read_value_reg } else { op0.into() },
             fast_read_addr_masked_reg,
             base_ptr as u32,
             op.mem_transfer_single_signed(),
             if amount == MemoryAmount::Double { MemoryAmount::Word } else { amount },
         );
-        if amount == MemoryAmount::Word || amount == MemoryAmount::Double {
+        if needs_ror {
             block_asm.mov(fast_read_addr_masked_reg, (addr_reg.into(), ShiftType::Lsl, BlockOperand::from(3)));
-            block_asm.mov(fast_read_value_reg, (fast_read_value_reg, ShiftType::Ror, fast_read_addr_masked_reg));
+            block_asm.mov(op0, (fast_read_value_reg, ShiftType::Ror, fast_read_addr_masked_reg));
         }
         if amount == MemoryAmount::Double {
+            let op0 = Reg::from(op0 as u8 + 1);
             block_asm.add(fast_read_next_addr_reg, addr_reg, 4);
             block_asm.bic(fast_read_addr_masked_reg, fast_read_next_addr_reg, 0xF0000000 | (size as u32 - 1));
-            block_asm.transfer_read(fast_read_value2_reg, fast_read_addr_masked_reg, base_ptr as u32, false, MemoryAmount::Word);
+            block_asm.transfer_read(fast_read_value_reg, fast_read_addr_masked_reg, base_ptr as u32, false, MemoryAmount::Word);
             block_asm.mov(fast_read_addr_masked_reg, (fast_read_next_addr_reg.into(), ShiftType::Lsl, BlockOperand::from(3)));
-            block_asm.mov(fast_read_value2_reg, (fast_read_value2_reg, ShiftType::Ror, fast_read_addr_masked_reg));
+            block_asm.mov(op0, (fast_read_value_reg, ShiftType::Ror, fast_read_addr_masked_reg));
         }
 
         block_asm.nop();
-        block_asm.branch_fallthrough(fast_read_assign_label, Cond::AL);
+        block_asm.branch_fallthrough(continue_label, Cond::AL);
 
         block_asm.label(slow_read_label);
         block_asm.save_context();
@@ -214,17 +214,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         block_asm.branch(continue_label, Cond::AL);
 
-        block_asm.label(fast_read_assign_label);
-        block_asm.mov(op0, fast_read_value_reg);
-        if amount == MemoryAmount::Double {
-            block_asm.mov(Reg::from(op0 as u8 + 1), fast_read_value2_reg);
-        }
-
         block_asm.label(continue_label);
 
         block_asm.free_reg(fast_read_addr_masked_reg);
         block_asm.free_reg(fast_read_next_addr_reg);
-        block_asm.free_reg(fast_read_value2_reg);
         block_asm.free_reg(fast_read_value_reg);
         block_asm.free_reg(op0_addr_reg);
         block_asm.free_reg(addr_reg);
