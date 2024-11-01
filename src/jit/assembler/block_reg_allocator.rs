@@ -1,3 +1,4 @@
+use crate::bitset::Bitset;
 use crate::jit::assembler::block_asm::BLOCK_LOG;
 use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockInst, BlockInstKind, BlockTransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
@@ -251,7 +252,7 @@ impl BlockRegAllocator {
         }
     }
 
-    fn relocate_guest_regs(&mut self, guest_regs: RegReserve, live_ranges: &[BlockRegSet], is_input: bool) {
+    fn relocate_guest_regs(&mut self, guest_regs: RegReserve, live_ranges: &[BlockRegSet], inputs: &BlockRegSet, used_regs: &[BlockRegSet], is_input: bool) {
         let mut relocatable_regs = RegReserve::new();
         for guest_reg in guest_regs {
             if self.stored_mapping[guest_reg as usize] != guest_reg
@@ -262,19 +263,23 @@ impl BlockRegAllocator {
             }
         }
 
+        let mut spilled_regs = Vec::new();
         for guest_reg in relocatable_regs {
             if let Some(currently_used_by) = self.stored_mapping_reverse[guest_reg as usize] {
                 self.spilled += BlockReg::Any(currently_used_by);
                 self.gen_pre_handle_spilled_inst(currently_used_by, guest_reg, BlockTransferOp::Write);
                 self.remove_stored_mapping(currently_used_by);
+                spilled_regs.push((BlockReg::Any(currently_used_by), guest_reg, self.pre_allocate_insts.len() - 1));
             }
         }
 
+        let mut dirty_regs = RegReserve::new();
         for guest_reg in relocatable_regs {
             let reg_mapped = self.stored_mapping[guest_reg as usize];
             if reg_mapped != Reg::None {
                 if is_input {
                     self.gen_pre_move_reg(guest_reg, reg_mapped);
+                    dirty_regs += guest_reg;
                 }
                 self.remove_stored_mapping(guest_reg as u16);
                 self.set_stored_mapping(guest_reg as u16, guest_reg);
@@ -287,8 +292,33 @@ impl BlockRegAllocator {
                 debug_assert!(self.spilled.contains(BlockReg::Any(guest_reg as u16)));
                 self.spilled -= BlockReg::Any(guest_reg as u16);
                 self.gen_pre_handle_spilled_inst(guest_reg as u16, guest_reg, BlockTransferOp::Read);
+                dirty_regs += guest_reg;
             }
             self.set_stored_mapping(guest_reg as u16, guest_reg);
+        }
+
+        let mut new_pre_allocate_insts_filter = Bitset::<1>::new();
+        for (spilled_reg, previous_mapping, pre_allocate_index) in spilled_regs {
+            if inputs.contains(spilled_reg) && !dirty_regs.is_reserved(previous_mapping) {
+                let reg = if live_ranges.last().unwrap().contains(spilled_reg) {
+                    self.allocate_reg(spilled_reg.as_any(), live_ranges, used_regs)
+                } else {
+                    self.allocate_local(spilled_reg.as_any(), live_ranges, used_regs)
+                };
+                self.spilled -= spilled_reg;
+                self.gen_pre_move_reg(reg, previous_mapping);
+                new_pre_allocate_insts_filter += pre_allocate_index;
+            }
+        }
+
+        if !new_pre_allocate_insts_filter.is_empty() {
+            let mut new_pre_allocate_insts = Vec::new();
+            for (i, inst) in self.pre_allocate_insts.iter().enumerate() {
+                if !new_pre_allocate_insts_filter.contains(i) {
+                    new_pre_allocate_insts.push(inst.clone());
+                }
+            }
+            self.pre_allocate_insts = new_pre_allocate_insts;
         }
     }
 
@@ -308,8 +338,8 @@ impl BlockRegAllocator {
             println!("inputs: {inputs:?}, outputs: {outputs:?}");
         }
 
-        self.relocate_guest_regs(inputs.get_guests().get_gp_regs(), live_ranges, true);
-        self.relocate_guest_regs(outputs.get_guests().get_gp_regs(), live_ranges, false);
+        self.relocate_guest_regs(inputs.get_guests().get_gp_regs(), live_ranges, &inputs, used_regs, true);
+        self.relocate_guest_regs(outputs.get_guests().get_gp_regs(), live_ranges, &inputs, used_regs, false);
 
         for any_input_reg in inputs.iter_any() {
             let reg = self.get_input_reg(any_input_reg, live_ranges, used_regs);

@@ -1,4 +1,5 @@
 use crate::bitset::Bitset;
+use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::basic_block::BasicBlock;
 use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockInst, BlockSystemRegOp, BlockTransferOp, BranchEncoding, GuestInstInfo};
@@ -214,6 +215,16 @@ impl<'a> BlockAsm<'a> {
         if op2.operand.needs_reg_for_imm(0xFF) {
             debug_assert_eq!(op2.shift, BlockShift::default());
             let imm = op2.operand.as_imm();
+
+            let msb_ones = (imm.leading_ones() + 0x1) & !0x1;
+            if msb_ones != 0 {
+                let ror_imm = (imm << msb_ones) | (imm >> (32 - msb_ones));
+                if ror_imm & !0xFF == 0 {
+                    *op2 = (ror_imm, ShiftType::Ror, msb_ones >> 1).into();
+                    return;
+                }
+            }
+
             let lsb_zeros = imm.trailing_zeros() & !0x1;
             if (imm >> lsb_zeros) & !0xFF == 0 {
                 *op2 = (imm >> lsb_zeros, ShiftType::Ror, (32 - lsb_zeros) >> 1).into();
@@ -258,30 +269,38 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn load_u8(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer(BlockTransferOp::Read, op0, op1, op2, false, MemoryAmount::Byte)
+        self.transfer_read(op0, op1, op2, false, MemoryAmount::Byte)
     }
 
     pub fn store_u8(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer(BlockTransferOp::Write, op0, op1, op2, false, MemoryAmount::Byte)
+        self.transfer_write(op0, op1, op2, false, MemoryAmount::Byte)
     }
 
     pub fn load_u16(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer(BlockTransferOp::Read, op0, op1, op2, false, MemoryAmount::Half)
+        self.transfer_read(op0, op1, op2, false, MemoryAmount::Half)
     }
 
     pub fn store_u16(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer(BlockTransferOp::Write, op0, op1, op2, false, MemoryAmount::Half)
+        self.transfer_write(op0, op1, op2, false, MemoryAmount::Half)
     }
 
     pub fn load_u32(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer(BlockTransferOp::Read, op0, op1, op2, false, MemoryAmount::Word)
+        self.transfer_read(op0, op1, op2, false, MemoryAmount::Word)
     }
 
     pub fn store_u32(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.transfer(BlockTransferOp::Write, op0, op1, op2, false, MemoryAmount::Word)
+        self.transfer_write(op0, op1, op2, false, MemoryAmount::Word)
     }
 
-    fn transfer(&mut self, op: BlockTransferOp, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
+    pub fn transfer_read(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
+        self.transfer(BlockTransferOp::Read, op0, op1, op2, signed, amount)
+    }
+
+    pub fn transfer_write(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
+        self.transfer(BlockTransferOp::Write, op0, op1, op2, signed, amount)
+    }
+
+    pub fn transfer(&mut self, op: BlockTransferOp, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
         let mut op2 = op2.into();
         if op2.operand.needs_reg_for_imm(0xFFF) {
             self.mov(self.tmp_operand_imm_reg, op2.operand);
@@ -1003,6 +1022,11 @@ impl<'a> BlockAsm<'a> {
     pub fn finalize(&mut self, jit_mem_offset: usize) -> &Vec<u32> {
         for &branch_placeholder in &self.buf.branch_placeholders {
             let encoding = BranchEncoding::from(self.buf.opcodes[branch_placeholder]);
+            if Cond::from(u8::from(encoding.cond())) == Cond::NV {
+                self.buf.opcodes[branch_placeholder] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
+                continue;
+            }
+
             let diff = if encoding.is_call_common() {
                 let opcode_index = (jit_mem_offset >> 2) + branch_placeholder;
                 let branch_to = u32::from(encoding.index()) >> 2;
