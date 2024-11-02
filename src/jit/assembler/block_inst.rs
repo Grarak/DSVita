@@ -168,6 +168,16 @@ pub enum BlockInstKind {
         pre: bool,
         add_to_base: bool,
     },
+    GuestTransferMultiple {
+        op: BlockTransferOp,
+        addr_reg: BlockReg,
+        addr_out_reg: BlockReg,
+        gp_regs: RegReserve,
+        fixed_regs: RegReserve,
+        write_back: bool,
+        pre: bool,
+        add_to_base: bool,
+    },
     SystemReg {
         op: BlockSystemRegOp,
         operand: BlockOperand,
@@ -301,6 +311,26 @@ impl BlockInstKind {
                     if *write_back { BlockRegSet::new_fixed(*regs) + *operand } else { BlockRegSet::new_fixed(*regs) },
                 ),
                 BlockTransferOp::Write => (BlockRegSet::new_fixed(*regs) + *operand, if *write_back { block_reg_set!(Some(*operand)) } else { block_reg_set!() }),
+            },
+            BlockInstKind::GuestTransferMultiple {
+                op,
+                addr_reg,
+                addr_out_reg,
+                gp_regs,
+                fixed_regs,
+                write_back,
+                ..
+            } => match op {
+                BlockTransferOp::Read => {
+                    let mut outputs = BlockRegSet::new_fixed(*fixed_regs);
+                    outputs.add_guests(*gp_regs);
+                    (block_reg_set!(Some(*addr_reg)), if *write_back { outputs + *addr_out_reg } else { outputs })
+                }
+                BlockTransferOp::Write => {
+                    let mut inputs = BlockRegSet::new_fixed(*fixed_regs);
+                    inputs.add_guests(*gp_regs);
+                    (inputs + *addr_reg, if *write_back { block_reg_set!(Some(*addr_out_reg)) } else { block_reg_set!() })
+                }
             },
             BlockInstKind::SystemReg { op, operand } => match op {
                 BlockSystemRegOp::Mrs => (block_reg_set!(), block_reg_set!(Some(operand.as_reg()))),
@@ -443,6 +473,7 @@ impl BlockInstKind {
                 operands[2].replace_regs(old, new);
             }
             BlockInstKind::TransferMultiple { operand, .. } => Self::replace_reg(operand, old, new),
+            BlockInstKind::GuestTransferMultiple { addr_reg, .. } => Self::replace_reg(addr_reg, old, new),
             BlockInstKind::SystemReg { op, operand } => {
                 if *op == BlockSystemRegOp::Msr {
                     Self::replace_operand(operand, old, new);
@@ -499,6 +530,11 @@ impl BlockInstKind {
             BlockInstKind::TransferMultiple { operand, write_back, .. } => {
                 if *write_back {
                     Self::replace_reg(operand, old, new);
+                }
+            }
+            BlockInstKind::GuestTransferMultiple { addr_out_reg, write_back, .. } => {
+                if *write_back {
+                    Self::replace_reg(addr_out_reg, old, new);
                 }
             }
             BlockInstKind::SystemReg { op, operand } => {
@@ -676,6 +712,29 @@ impl BlockInstKind {
                 pre,
                 add_to_base,
             } => opcodes.push(LdmStm::generic(operand.as_fixed(), *regs, *op == BlockTransferOp::Read, *write_back, *add_to_base, *pre, Cond::AL)),
+            BlockInstKind::GuestTransferMultiple {
+                op,
+                addr_reg,
+                addr_out_reg,
+                gp_regs,
+                fixed_regs,
+                write_back,
+                pre,
+                add_to_base,
+            } => {
+                if *write_back && *addr_reg != *addr_out_reg {
+                    opcodes.push(AluShiftImm::mov_al(addr_out_reg.as_fixed(), addr_reg.as_fixed()))
+                }
+                opcodes.push(LdmStm::generic(
+                    if *write_back { addr_out_reg.as_fixed() } else { addr_reg.as_fixed() },
+                    *gp_regs + *fixed_regs,
+                    *op == BlockTransferOp::Read,
+                    *write_back,
+                    *add_to_base,
+                    *pre,
+                    Cond::AL,
+                ))
+            }
             BlockInstKind::SystemReg { op, operand } => match op {
                 BlockSystemRegOp::Mrs => opcodes.push(Mrs::cpsr(operand.as_reg().as_fixed(), Cond::AL)),
                 BlockSystemRegOp::Msr => opcodes.push(Msr::cpsr_flags(operand.as_reg().as_fixed(), Cond::AL)),
@@ -865,6 +924,22 @@ impl Debug for BlockInstKind {
             } => {
                 let add_to_base = if *add_to_base { "+" } else { "-" };
                 write!(f, "{op:?}M {operand:?} {regs:?}, write back: {write_back}, pre {pre}, {add_to_base}base")
+            }
+            BlockInstKind::GuestTransferMultiple {
+                op,
+                addr_reg,
+                addr_out_reg,
+                gp_regs,
+                fixed_regs,
+                write_back,
+                pre,
+                add_to_base,
+            } => {
+                let add_to_base = if *add_to_base { "+" } else { "-" };
+                write!(
+                    f,
+                    "{op:?}M {addr_reg:?} -> {addr_out_reg:?} gp regs: {gp_regs:?}, fixed regs: {fixed_regs:?}, write back: {write_back}, pre {pre}, {add_to_base}base"
+                )
             }
             BlockInstKind::SystemReg { op, operand } => write!(f, "{op:?} {operand:?}"),
             BlockInstKind::Bfc { operand, lsb, width } => write!(f, "Bfc {operand:?}, {lsb}, {width}"),

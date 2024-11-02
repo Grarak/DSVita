@@ -210,6 +210,11 @@ fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize) -> bo
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
     let mmu = get_mmu!(asm.emu, CPU);
     let base_ptr = mmu.get_base_tcm_ptr();
+
+    if mem_addr < base_ptr as usize {
+        return false;
+    }
+
     let guest_mem_addr = (mem_addr - base_ptr as usize) as u32;
     debug_println!("fault at {host_pc:x} {mem_addr:x} to guest {guest_mem_addr:x}");
     get_jit_mut!(asm.emu).patch_slow_mem(host_pc)

@@ -139,6 +139,10 @@ impl RegReserve {
     pub fn clear(&mut self) {
         self.0 = 0;
     }
+
+    pub fn get_highest_reg(&self) -> Reg {
+        Reg::from(32 - self.0.leading_zeros() as u8 - 1)
+    }
 }
 
 impl ops::Add<RegReserve> for RegReserve {

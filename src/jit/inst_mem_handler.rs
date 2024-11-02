@@ -74,7 +74,7 @@ mod handler {
         let rlist = RegReserve::from(rlist as u32);
         let op0 = Reg::from(op0);
 
-        if unlikely(rlist.len() == 0) {
+        if unlikely(rlist.is_empty()) {
             if WRITE {
                 *get_regs_mut!(emu, CPU).get_reg_mut(op0) -= 0x40;
             } else {

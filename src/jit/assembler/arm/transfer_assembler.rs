@@ -308,6 +308,7 @@ pub struct LdmStm {
 impl LdmStm {
     #[inline]
     pub fn generic(op0: Reg, regs: RegReserve, read: bool, write_back: bool, add_to_base: bool, pre: bool, cond: Cond) -> u32 {
+        debug_assert!(!write_back || !regs.is_reserved(op0));
         u32::from(LdmStm::new(
             regs.0 as u16,
             u4::new(op0 as u8),
@@ -323,6 +324,7 @@ impl LdmStm {
 
     #[inline]
     pub fn push_post(regs: RegReserve, sp: Reg, cond: Cond) -> u32 {
+        debug_assert!(!regs.is_reserved(sp));
         u32::from(LdmStm::new(regs.0 as u16, u4::new(sp as u8), false, true, false, false, false, u3::new(0b100), u4::new(cond as u8)))
     }
 
@@ -333,11 +335,13 @@ impl LdmStm {
 
     #[inline]
     pub fn push_pre(regs: RegReserve, sp: Reg, cond: Cond) -> u32 {
+        debug_assert!(!regs.is_reserved(sp));
         u32::from(LdmStm::new(regs.0 as u16, u4::new(sp as u8), false, true, false, false, true, u3::new(0b100), u4::new(cond as u8)))
     }
 
     #[inline]
     pub fn pop_post(regs: RegReserve, sp: Reg, cond: Cond) -> u32 {
+        debug_assert!(!regs.is_reserved(sp));
         u32::from(LdmStm::new(regs.0 as u16, u4::new(sp as u8), true, true, false, true, false, u3::new(0b100), u4::new(cond as u8)))
     }
 
@@ -348,6 +352,7 @@ impl LdmStm {
 
     #[inline]
     pub fn pop_pre(regs: RegReserve, sp: Reg, cond: Cond) -> u32 {
+        debug_assert!(!regs.is_reserved(sp));
         u32::from(LdmStm::new(regs.0 as u16, u4::new(sp as u8), true, true, false, true, true, u3::new(0b100), u4::new(cond as u8)))
     }
 }

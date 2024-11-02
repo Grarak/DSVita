@@ -100,7 +100,7 @@ impl BlockRegAllocator {
 
     fn allocate_common(&mut self, any_reg: u16, live_ranges: &[BlockRegSet], used_regs: &[BlockRegSet]) -> Option<Reg> {
         for reg in ALLOCATION_REGS {
-            if self.stored_mapping_reverse[reg as usize].is_none() {
+            if self.stored_mapping_reverse[reg as usize].is_none() && !used_regs[0].contains(BlockReg::Fixed(reg)) && !live_ranges[1].contains(BlockReg::Fixed(reg)) {
                 self.set_stored_mapping(any_reg, reg);
                 return Some(reg);
             }
@@ -257,7 +257,7 @@ impl BlockRegAllocator {
         for guest_reg in guest_regs {
             if self.stored_mapping[guest_reg as usize] != guest_reg
                 // Check if reg is used as a fixed input for something else
-                && (!SCRATCH_REGS.is_reserved(guest_reg) || !live_ranges[1].contains(BlockReg::Fixed(guest_reg)))
+                && !live_ranges[1].contains(BlockReg::Fixed(guest_reg))
             {
                 relocatable_regs += guest_reg;
             }
@@ -266,10 +266,15 @@ impl BlockRegAllocator {
         let mut spilled_regs = Vec::new();
         for guest_reg in relocatable_regs {
             if let Some(currently_used_by) = self.stored_mapping_reverse[guest_reg as usize] {
-                self.spilled += BlockReg::Any(currently_used_by);
-                self.gen_pre_handle_spilled_inst(currently_used_by, guest_reg, BlockTransferOp::Write);
+                if DEBUG && unsafe { BLOCK_LOG } {
+                    println!("relocate guest spill {currently_used_by} for {guest_reg:?}");
+                }
+                if inputs.contains(BlockReg::Any(currently_used_by)) || live_ranges[1].contains(BlockReg::Any(currently_used_by)) {
+                    self.spilled += BlockReg::Any(currently_used_by);
+                    self.gen_pre_handle_spilled_inst(currently_used_by, guest_reg, BlockTransferOp::Write);
+                    spilled_regs.push((BlockReg::Any(currently_used_by), guest_reg, self.pre_allocate_insts.len() - 1));
+                }
                 self.remove_stored_mapping(currently_used_by);
-                spilled_regs.push((BlockReg::Any(currently_used_by), guest_reg, self.pre_allocate_insts.len() - 1));
             }
         }
 

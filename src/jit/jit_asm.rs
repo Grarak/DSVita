@@ -186,7 +186,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
     }
 
     let jit_entry = {
-        // unsafe { BLOCK_LOG = guest_pc == 0x20019ec };
+        // unsafe { BLOCK_LOG = guest_pc == 0x20018bc };
 
         let mut block_asm = asm.new_block_asm(false);
 
@@ -195,16 +195,12 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
             block_asm.restore_reg(Reg::CPSR);
         }
 
-        // if guest_pc == 0x2000a6c {
-        //     block_asm.bkpt(2);
-        // }
-
         for i in 0..asm.jit_buf.insts.len() {
             asm.jit_buf.current_index = i;
             asm.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
             debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
-            // if asm.jit_buf.current_pc == 0x20099d4 {
+            // if asm.jit_buf.current_pc == 0x20018cc {
             //     block_asm.bkpt(1);
             // }
 
@@ -237,7 +233,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
         let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {
-            println!("{CPU:?} Mapping {guest_pc:#010x} to {:#010x}", jit_entry as *const fn() as usize);
+            // println!("{CPU:?} Mapping {guest_pc:#010x} to {:#010x}", jit_entry as *const fn() as usize);
         }
         asm.jit_buf.clear_all();
         jit_entry
