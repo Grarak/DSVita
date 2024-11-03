@@ -241,22 +241,17 @@ impl BasicBlock {
         }
     }
 
-    pub fn remove_dead_code(&mut self, asm: &BlockAsm) {
+    pub fn remove_dead_code(&mut self, asm: &mut BlockAsm) {
         let mut current_node = self.insts_link.root;
         let mut i = 0;
         while !current_node.is_null() {
             let inst_i = BlockInstList::deref(current_node).value;
-            let inst = &asm.buf.insts[inst_i];
+            let inst = &mut asm.buf.insts[inst_i];
             if let BlockInstKind::RestoreReg { guest_reg, .. } = &inst.kind {
                 if *guest_reg != Reg::CPSR {
                     let (_, outputs) = inst.get_io();
                     if (self.regs_live_ranges[i + 1] - outputs) == self.regs_live_ranges[i + 1] {
-                        let next_node = BlockInstList::deref(current_node).next;
-                        self.insts_link.remove_entry(current_node);
-                        current_node = next_node;
-                        self.regs_live_ranges.remove(i);
-                        self.used_regs.remove(i);
-                        continue;
+                        inst.skip = true;
                     }
                 }
             }
@@ -289,12 +284,15 @@ impl BasicBlock {
         let mut current_node = self.insts_link.root;
         while !current_node.is_null() {
             let inst_i = BlockInstList::deref(current_node).value;
-            asm.buf.reg_allocator.inst_allocate(&mut asm.buf.insts[inst_i], &self.regs_live_ranges[i..], &self.used_regs[i..]);
-            if !asm.buf.reg_allocator.pre_allocate_insts.is_empty() {
-                for i in asm.buf.insts.len()..asm.buf.insts.len() + asm.buf.reg_allocator.pre_allocate_insts.len() {
-                    self.insts_link.insert_entry_begin(current_node, i);
+            let inst = &mut asm.buf.insts[inst_i];
+            if !inst.skip {
+                asm.buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..], &self.used_regs[i..]);
+                if !asm.buf.reg_allocator.pre_allocate_insts.is_empty() {
+                    for i in asm.buf.insts.len()..asm.buf.insts.len() + asm.buf.reg_allocator.pre_allocate_insts.len() {
+                        self.insts_link.insert_entry_begin(current_node, i);
+                    }
+                    asm.buf.insts.extend_from_slice(&asm.buf.reg_allocator.pre_allocate_insts);
                 }
-                asm.buf.insts.extend_from_slice(&asm.buf.reg_allocator.pre_allocate_insts);
             }
             i += 1;
             current_node = BlockInstList::deref(current_node).next;
@@ -323,6 +321,9 @@ impl BasicBlock {
         let mut inst_opcodes = Vec::new();
         for entry in self.insts_link.iter() {
             let inst = &mut asm.buf.insts[entry.value];
+            if inst.skip {
+                continue;
+            }
 
             if IS_DEBUG && unsafe { BLOCK_LOG } {
                 match &inst.kind {

@@ -12,7 +12,7 @@ use crate::jit::{Cond, MemoryAmount, ShiftType};
 use crate::utils::{NoHashMap, NoHashSet};
 use crate::IS_DEBUG;
 use std::intrinsics::unlikely;
-use std::{ptr, slice};
+use std::slice;
 
 pub static mut BLOCK_LOG: bool = false;
 
@@ -58,7 +58,6 @@ pub struct BlockAsm<'a> {
 
     cond_block_end_label_stack: Vec<(BlockLabel, Cond, usize)>,
 
-    guest_reg_init_offset: Option<usize>,
     is_common_fun: bool,
     host_sp_ptr: *mut usize,
     block_start: usize,
@@ -94,7 +93,6 @@ impl<'a> BlockAsm<'a> {
 
             cond_block_end_label_stack: Vec::new(),
 
-            guest_reg_init_offset: None,
             is_common_fun,
             host_sp_ptr,
             block_start: 0,
@@ -117,7 +115,9 @@ impl<'a> BlockAsm<'a> {
 
         if !is_common_fun {
             instance.mov(thread_regs_addr_reg, guest_regs_ptr as u32);
-            instance.guest_reg_init_offset = Some(instance.buf.insts.len() - 1);
+            for guest_reg in RegReserve::gp() + Reg::SP + Reg::LR {
+                instance.restore_reg(guest_reg);
+            }
             instance.restore_reg(Reg::CPSR);
         }
 
@@ -921,72 +921,14 @@ impl<'a> BlockAsm<'a> {
             basic_block.remove_dead_code(self);
         }
 
-        if let Some(guest_regs_init_offset) = self.guest_reg_init_offset {
-            let required_guest_regs = basic_blocks[0].get_required_inputs().get_guests();
-            if !required_guest_regs.is_empty() {
-                let mut basic_block_i = 0;
-                let mut inst_i = 0;
-                let mut inst_entry = ptr::null_mut();
-
-                'basic_blocks_loop: for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
-                    if !reachable_blocks.contains(&i) {
-                        continue;
-                    }
-
-                    for (j, entry) in basic_block.insts_link.iter().enumerate() {
-                        if entry.value == guest_regs_init_offset {
-                            basic_block_i = i;
-                            inst_i = j;
-                            inst_entry = entry as *const _ as *mut _;
-                            break 'basic_blocks_loop;
-                        }
-                    }
-                }
-
-                let basic_block = &mut basic_blocks[basic_block_i];
-                for i in 0..=inst_i {
-                    basic_block.regs_live_ranges[i].remove_guests(required_guest_regs);
-                }
-                let enter_blocks = unsafe { slice::from_raw_parts(basic_block.enter_blocks.as_ptr(), basic_block.enter_blocks.len()) };
-                Self::remove_guest_input_regs(&mut basic_blocks, required_guest_regs, enter_blocks);
-                let basic_block = &mut basic_blocks[basic_block_i];
-
-                let mut previous_guest_reg = None;
-                for (j, guest_reg) in required_guest_regs.into_iter().enumerate() {
-                    inst_entry = basic_block.insts_link.insert_entry_end(inst_entry, self.buf.insts.len());
-                    self.buf.insts.push(
-                        BlockInstKind::RestoreReg {
-                            guest_reg,
-                            reg_mapped: guest_reg.into(),
-                            thread_regs_addr_reg: self.thread_regs_addr_reg,
-                            tmp_guest_cpsr_reg: self.tmp_guest_cpsr_reg,
-                        }
-                        .into(),
-                    );
-                    let inst_index = inst_i + j + 1;
-
-                    let (inputs, outputs) = self.buf.insts.last().unwrap().get_io();
-                    basic_block.used_regs.insert(inst_index, inputs + outputs);
-
-                    let mut previous_regs_live_range = basic_block.regs_live_ranges[inst_index - 1];
-                    if let Some(previous_guest_reg) = previous_guest_reg {
-                        previous_regs_live_range += BlockReg::from(previous_guest_reg);
-                    }
-                    previous_regs_live_range += inputs;
-                    basic_block.regs_live_ranges.insert(inst_index, previous_regs_live_range);
-
-                    previous_guest_reg = Some(guest_reg);
-                }
-            }
-        }
-
         (basic_blocks, reachable_blocks)
     }
 
     pub fn emit_opcodes(&mut self, block_start_pc: u32, thumb: bool) -> usize {
         let (mut basic_blocks, reachable_blocks) = self.assemble_basic_blocks(block_start_pc, thumb);
 
-        if !basic_blocks[0].get_required_inputs().get_guests().is_empty() {
+        if IS_DEBUG && !basic_blocks[0].get_required_inputs().get_guests().is_empty() {
+            println!("inputs as requirement {:?}", basic_blocks[0].get_required_inputs().get_guests());
             unsafe { BLOCK_LOG = true };
         }
 
@@ -1090,7 +1032,11 @@ impl<'a> BlockAsm<'a> {
                 let branch_to = self.buf.block_opcode_offsets[block_index as usize];
                 branch_to as i32 - branch_placeholder as i32
             };
-            self.buf.opcodes[branch_placeholder] = if encoding.has_return() { B::bl } else { B::b }(diff - 2, Cond::from(u8::from(encoding.cond())));
+            if diff == 1 && !encoding.has_return() {
+                self.buf.opcodes[branch_placeholder] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
+            } else {
+                self.buf.opcodes[branch_placeholder] = if encoding.has_return() { B::bl } else { B::b }(diff - 2, Cond::from(u8::from(encoding.cond())));
+            }
         }
 
         &self.buf.opcodes

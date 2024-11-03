@@ -78,6 +78,7 @@ pub struct BlockInst {
     pub cond: Cond,
     pub kind: BlockInstKind,
     io_cache: RefCell<Option<(BlockRegSet, BlockRegSet)>>,
+    pub skip: bool,
 }
 
 impl BlockInst {
@@ -86,6 +87,7 @@ impl BlockInst {
             cond,
             kind,
             io_cache: RefCell::new(None),
+            skip: false,
         }
     }
 
@@ -129,7 +131,11 @@ impl From<BlockInstKind> for BlockInst {
 
 impl Debug for BlockInst {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} {:?}", self.cond, self.kind)
+        if self.skip {
+            write!(f, "SKIPPED: {:?} {:?}", self.cond, self.kind)
+        } else {
+            write!(f, "{:?} {:?}", self.cond, self.kind)
+        }
     }
 }
 

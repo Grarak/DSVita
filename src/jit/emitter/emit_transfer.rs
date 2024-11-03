@@ -216,8 +216,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
         block_asm.restore_reg(Reg::CPSR);
 
-        block_asm.branch(continue_label, Cond::AL);
-
         block_asm.label(continue_label);
 
         block_asm.free_reg(fast_read_addr_masked_reg);
