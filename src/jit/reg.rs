@@ -27,6 +27,7 @@ pub enum Reg {
 }
 
 const GP_REGS_BITMASK: u32 = 0x1FFF;
+const GP_LR_REGS_BITMASK: u32 = 0x5FFF;
 const GP_THUMB_REGS_BITMASK: u32 = 0xFF;
 
 impl From<u8> for Reg {
@@ -113,6 +114,10 @@ impl RegReserve {
 
     pub fn get_gp_regs(&self) -> RegReserve {
         RegReserve(self.0 & GP_REGS_BITMASK)
+    }
+
+    pub fn get_gp_lr_regs(&self) -> RegReserve {
+        RegReserve(self.0 & GP_LR_REGS_BITMASK)
     }
 
     pub fn peek(&self) -> Option<Reg> {

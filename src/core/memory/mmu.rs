@@ -94,7 +94,9 @@ impl MmuArm9Inner {
     }
 
     fn update_wram_no_tcm(&mut self, emu: &Emu) {
-        let shm = &get_mem!(emu).shm;
+        let mem = get_mem!(emu);
+        let shm = &mem.shm;
+        let wram = &mem.wram;
 
         for addr in (SHARED_WRAM_OFFSET..IO_PORTS_OFFSET).step_by(MMU_PAGE_SIZE) {
             self.vmem.destroy_map(addr as usize, MMU_PAGE_SIZE);
@@ -102,7 +104,7 @@ impl MmuArm9Inner {
             let mmu_read = &mut self.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
 
-            let shm_offset = get_mem!(emu).wram.get_shm_offset::<{ ARM9 }>(addr);
+            let shm_offset = wram.get_shm_offset::<{ ARM9 }>(addr);
             if shm_offset != usize::MAX {
                 self.vmem.create_map(shm, shm_offset, addr as usize, MMU_PAGE_SIZE, true, true, false).unwrap();
                 *mmu_read = shm_offset;
@@ -118,6 +120,7 @@ impl MmuArm9Inner {
     fn update_tcm(&mut self, start: u32, end: u32, emu: &Emu) {
         let shm = &get_mem!(emu).shm;
 
+        let cp15 = get_cp15!(emu, ARM9);
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
             self.vmem_tcm.destroy_map(addr as usize, MMU_PAGE_SIZE);
 
@@ -177,7 +180,6 @@ impl MmuArm9Inner {
                 _ => {}
             }
 
-            let cp15 = get_cp15!(emu, ARM9);
             if addr < cp15.itcm_size {
                 if cp15.itcm_state == TcmState::RW {
                     let addr_offset = (addr as usize) & (ITCM_REGION.size - 1);
@@ -198,7 +200,6 @@ impl MmuArm9Inner {
             }
         }
 
-        let cp15 = get_cp15!(emu, ARM9);
         self.current_itcm_size = cp15.itcm_size;
         self.current_dtcm_addr = cp15.dtcm_addr;
         self.current_dtcm_size = cp15.dtcm_size;

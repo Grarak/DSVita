@@ -292,22 +292,22 @@ impl Emu {
     }
 
     pub fn mem_read<const CPU: CpuType, T: Convert>(&mut self, addr: u32) -> T {
-        unsafe { get_mem_mut!(self).read::<CPU, T>(addr, self) }
+        get_mem_mut!(self).read::<CPU, T>(addr, self)
     }
 
     pub fn mem_read_no_tcm<const CPU: CpuType, T: Convert>(&mut self, addr: u32) -> T {
-        unsafe { get_mem_mut!(self).read_no_tcm::<CPU, T>(addr, self) }
+        get_mem_mut!(self).read_no_tcm::<CPU, T>(addr, self)
     }
 
     pub fn mem_read_with_options<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32) -> T {
-        unsafe { get_mem_mut!(self).read_with_options::<CPU, TCM, T>(addr, self) }
+        get_mem_mut!(self).read_with_options::<CPU, TCM, T>(addr, self)
     }
 
     pub fn mem_write<const CPU: CpuType, T: Convert>(&mut self, addr: u32, value: T) {
-        unsafe { get_mem_mut!(self).write::<CPU, T>(addr, value, self) };
+        get_mem_mut!(self).write::<CPU, T>(addr, value, self);
     }
 
     pub fn mem_write_no_tcm<const CPU: CpuType, T: Convert>(&mut self, addr: u32, value: T) {
-        unsafe { get_mem_mut!(self).write_no_tcm::<CPU, T>(addr, value, self) };
+        get_mem_mut!(self).write_no_tcm::<CPU, T>(addr, value, self);
     }
 }

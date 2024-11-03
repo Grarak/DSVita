@@ -191,7 +191,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
         let mut block_asm = asm.new_block_asm(false);
 
         if DEBUG_LOG {
-            block_asm.call1(debug_enter_block::<CPU> as *const (), guest_pc | (THUMB as u32));
+            block_asm.call2(debug_enter_block::<CPU> as *const (), asm as *mut _ as u32, guest_pc | (THUMB as u32));
             block_asm.restore_reg(Reg::CPSR);
         }
 
@@ -200,7 +200,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
             asm.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
             debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
-            // if asm.jit_buf.current_pc == 0x20018cc {
+            // if asm.jit_buf.current_pc == 0x20a7f9c {
             //     block_asm.bkpt(1);
             // }
 
@@ -354,6 +354,6 @@ unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(pc: u32, opcode: u3
     debug_inst_info::<CPU>(get_regs!((*asm).emu, CPU), pc, &format!("\n\t{:?} {:?}", CPU, inst_info));
 }
 
-extern "C" fn debug_enter_block<const CPU: CpuType>(pc: u32) {
-    println!("{CPU:?} execute {pc:x}")
+extern "C" fn debug_enter_block<const CPU: CpuType>(asm: *mut JitAsm<CPU>, pc: u32) {
+    println!("{CPU:?} execute {pc:x}");
 }

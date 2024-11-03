@@ -11,12 +11,12 @@ use std::hint::unreachable_unchecked;
 const DEBUG: bool = true;
 
 pub const ALLOCATION_REGS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11);
-const SCRATCH_REGS: RegReserve = reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12);
+const SCRATCH_REGS: RegReserve = reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR);
 
 pub struct BlockRegAllocator {
     pub global_mapping: NoHashMap<u16, Reg>,
     stored_mapping: HeapMem<Reg, { ANY_REG_LIMIT as usize }>, // mappings to real registers
-    stored_mapping_reverse: [Option<u16>; Reg::SP as usize],
+    stored_mapping_reverse: [Option<u16>; Reg::PC as usize],
     spilled: BlockRegSet,
     pub dirty_regs: RegReserve,
     pub pre_allocate_insts: Vec<BlockInst>,
@@ -27,7 +27,7 @@ impl BlockRegAllocator {
         BlockRegAllocator {
             global_mapping: NoHashMap::default(),
             stored_mapping: HeapMem::new(),
-            stored_mapping_reverse: [None; Reg::SP as usize],
+            stored_mapping_reverse: [None; Reg::PC as usize],
             spilled: BlockRegSet::new(),
             dirty_regs: RegReserve::new(),
             pre_allocate_insts: Vec::new(),
@@ -229,9 +229,18 @@ impl BlockRegAllocator {
     }
 
     fn remove_fixed_reg(&mut self, fixed_reg: Reg, live_ranges: &[BlockRegSet]) {
+        if DEBUG && unsafe { BLOCK_LOG } {
+            println!("Remove fixed reg {fixed_reg:?}");
+        }
         if let Some(any_reg) = self.stored_mapping_reverse[fixed_reg as usize] {
             self.remove_stored_mapping(any_reg);
+            if DEBUG && unsafe { BLOCK_LOG } {
+                println!("Remove stored mapping {any_reg}");
+            }
             if live_ranges[1].contains(BlockReg::Any(any_reg)) {
+                if DEBUG && unsafe { BLOCK_LOG } {
+                    println!("Spill any reg {any_reg}");
+                }
                 self.spilled += BlockReg::Any(any_reg);
                 self.gen_pre_handle_spilled_inst(any_reg, fixed_reg, BlockTransferOp::Write);
             }
@@ -351,7 +360,7 @@ impl BlockRegAllocator {
             inst.replace_input_regs(BlockReg::Any(any_input_reg), BlockReg::Fixed(reg));
         }
 
-        for fixed_reg_output in outputs.get_fixed().get_gp_regs() {
+        for fixed_reg_output in outputs.get_fixed().get_gp_lr_regs() {
             self.remove_fixed_reg(fixed_reg_output, live_ranges);
             self.dirty_regs += fixed_reg_output;
         }
