@@ -462,6 +462,10 @@ impl<'a> BlockAsm<'a> {
         });
     }
 
+    pub fn mark_reg_dirty(&mut self, guest_reg: Reg, dirty: bool) {
+        self.insert_inst(BlockInstKind::MarkRegDirty { guest_reg, dirty });
+    }
+
     pub fn epilogue(&mut self) {
         let host_sp_addr_reg = self.thread_regs_addr_reg;
         self.mov(host_sp_addr_reg, self.host_sp_ptr as u32);

@@ -257,6 +257,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let is_valid = !rlist.is_empty() && (!write_back || !rlist.is_reserved(op0));
 
         let slow_read_label = block_asm.new_label();
+        let fast_mem_mark_dirty_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
         if is_valid && !inst_info.op.mem_is_write() && !inst_info.op.mem_transfer_user() && rlist.len() < RegReserve::gp().len() - 2 {
@@ -288,33 +289,37 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 non_gp_regs_mappings.push((non_gp_regs.pop().unwrap(), fixed_reg));
             }
 
-            if non_gp_regs.is_empty() {
-                block_asm.branch(slow_read_label, Cond::NV);
+            debug_assert!(non_gp_regs.is_empty());
 
-                let base_reg = block_asm.new_reg();
-                let base_reg_out = block_asm.new_reg();
-                let mmu = get_mmu!(self.emu, CPU);
-                let base_ptr = mmu.get_base_tcm_ptr();
-                block_asm.bic(base_reg, op0, 0xF0000000);
-                block_asm.add(base_reg, base_reg, base_ptr as u32);
-                block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
+            block_asm.branch(slow_read_label, Cond::NV);
 
-                for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                    block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
-                }
+            let base_reg = block_asm.new_reg();
+            let base_reg_out = block_asm.new_reg();
+            let mmu = get_mmu!(self.emu, CPU);
+            let base_ptr = mmu.get_base_tcm_ptr();
+            block_asm.bic(base_reg, op0, 0xF0000000);
+            block_asm.add(base_reg, base_reg, base_ptr as u32);
+            block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
 
-                if write_back {
-                    block_asm.sub(base_reg_out, base_reg_out, base_ptr as u32);
-                    block_asm.mov(op0, (op0.into(), ShiftType::Lsr, BlockOperand::from(0xF0000000u32.trailing_zeros())));
-                    block_asm.bfi(base_reg_out, op0, 0xF0000000u32.trailing_zeros() as u8, 0xF0000000u32.leading_ones() as u8);
-                    block_asm.mov(op0, base_reg_out);
-                }
-
-                block_asm.branch_fallthrough(continue_label, Cond::AL);
-
-                block_asm.free_reg(base_reg_out);
-                block_asm.free_reg(base_reg);
+            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
             }
+
+            if write_back {
+                block_asm.sub(base_reg_out, base_reg_out, base_ptr as u32);
+                block_asm.mov(op0, (op0.into(), ShiftType::Lsr, BlockOperand::from(0xF0000000u32.trailing_zeros())));
+                block_asm.bfi(base_reg_out, op0, 0xF0000000u32.trailing_zeros() as u8, 0xF0000000u32.leading_ones() as u8);
+                block_asm.mov(op0, base_reg_out);
+            }
+
+            for guest_reg in rlist {
+                block_asm.mark_reg_dirty(guest_reg, false);
+            }
+
+            block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
+
+            block_asm.free_reg(base_reg_out);
+            block_asm.free_reg(base_reg);
         }
 
         if decrement {
@@ -375,6 +380,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.restore_reg(reg);
         }
         block_asm.restore_reg(Reg::CPSR);
+        block_asm.branch(continue_label, Cond::AL);
+
+        block_asm.label(fast_mem_mark_dirty_label);
+        for guest_reg in rlist {
+            block_asm.mark_reg_dirty(guest_reg, true);
+        }
 
         block_asm.label(continue_label);
     }

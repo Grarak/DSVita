@@ -228,6 +228,10 @@ pub enum BlockInstKind {
         thread_regs_addr_reg: BlockReg,
         tmp_guest_cpsr_reg: BlockReg,
     },
+    MarkRegDirty {
+        guest_reg: Reg,
+        dirty: bool,
+    },
 
     Call {
         func_reg: BlockReg,
@@ -374,6 +378,8 @@ impl BlockInstKind {
                 }
                 (block_reg_set!(Some(*thread_regs_addr_reg)), outputs)
             }
+            BlockInstKind::MarkRegDirty { guest_reg, dirty: true } => (block_reg_set!(Some(BlockReg::from(*guest_reg))), block_reg_set!(Some(BlockReg::from(*guest_reg)))),
+            BlockInstKind::MarkRegDirty { guest_reg, dirty: false } => (block_reg_set!(Some(BlockReg::from(*guest_reg))), block_reg_set!()),
 
             BlockInstKind::Call { func_reg, args, has_return } => {
                 let mut inputs = BlockRegSet::new();
@@ -509,6 +515,7 @@ impl BlockInstKind {
             BlockInstKind::CallCommon { .. }
             | BlockInstKind::Label { .. }
             | BlockInstKind::Branch { .. }
+            | BlockInstKind::MarkRegDirty { .. }
             | BlockInstKind::GuestPc(_)
             | BlockInstKind::Bkpt(_)
             | BlockInstKind::Nop
@@ -570,6 +577,7 @@ impl BlockInstKind {
             BlockInstKind::CallCommon { .. }
             | BlockInstKind::Label { .. }
             | BlockInstKind::Branch { .. }
+            | BlockInstKind::MarkRegDirty { .. }
             | BlockInstKind::GuestPc(_)
             | BlockInstKind::Bkpt(_)
             | BlockInstKind::Nop
@@ -841,7 +849,7 @@ impl BlockInstKind {
                 Cond::AL,
             )),
 
-            BlockInstKind::Label { .. } | BlockInstKind::GuestPc(_) => {}
+            BlockInstKind::Label { .. } | BlockInstKind::MarkRegDirty { .. } | BlockInstKind::GuestPc(_) => {}
         }
     }
 }
@@ -957,6 +965,13 @@ impl Debug for BlockInstKind {
             BlockInstKind::SaveContext { .. } => write!(f, "SaveContext"),
             BlockInstKind::SaveReg { guest_reg, reg_mapped, .. } => write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}"),
             BlockInstKind::RestoreReg { guest_reg, reg_mapped, .. } => write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}"),
+            BlockInstKind::MarkRegDirty { guest_reg, dirty } => {
+                if *dirty {
+                    write!(f, "Dirty {guest_reg:?}")
+                } else {
+                    write!(f, "Undirty {guest_reg:?}")
+                }
+            }
             BlockInstKind::Call { func_reg, args, has_return } => {
                 if *has_return {
                     write!(f, "Blx {func_reg:?} {args:?}")

@@ -67,9 +67,10 @@ impl BasicBlock {
                     *guest_regs = self.guest_regs_output_dirty;
                     self.guest_regs_output_dirty.clear();
                 }
-                BlockInstKind::SaveReg { guest_reg, .. } | BlockInstKind::RestoreReg { guest_reg, .. } => {
-                    self.guest_regs_output_dirty -= *guest_reg;
+                BlockInstKind::SaveReg { guest_reg, .. } | BlockInstKind::RestoreReg { guest_reg, .. } | BlockInstKind::MarkRegDirty { guest_reg, dirty: false } => {
+                    self.guest_regs_output_dirty -= *guest_reg
                 }
+                BlockInstKind::MarkRegDirty { guest_reg, dirty: true } => self.guest_regs_output_dirty += *guest_reg,
                 _ => {
                     let inst = &asm.buf.insts[i];
                     let (_, outputs) = inst.get_io();
@@ -113,7 +114,7 @@ impl BasicBlock {
                         }
                         add_inst = false;
                     }
-                    BlockInstKind::SaveReg { .. } => {}
+                    BlockInstKind::SaveReg { .. } | BlockInstKind::MarkRegDirty { .. } => {}
                     _ => {
                         let (inputs, _) = asm.buf.insts[i].get_io();
                         for guest_reg in inputs.get_guests() {
