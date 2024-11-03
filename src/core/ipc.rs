@@ -16,8 +16,8 @@ pub struct IpcSyncCnt {
     pub data_out: u4,
     // R/W
     not_used1: u1,
-    pub send_irq: u1,
-    pub enable_irq: u1,
+    pub send_irq: bool,
+    pub enable_irq: bool,
     // R/W
     not_used2: u1,
 }
@@ -25,17 +25,17 @@ pub struct IpcSyncCnt {
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
 pub struct IpcFifoCnt {
-    pub send_empty_status: u1,
-    pub send_full_status: u1,
+    pub send_empty_status: bool,
+    pub send_full_status: bool,
     pub send_empty_irq: bool,
-    pub send_clear: u1,
+    pub send_clear: bool,
     not_used: u4,
-    pub recv_empty: u1,
-    pub recv_full: u1,
-    pub recv_not_empty_irq: u1,
+    pub recv_empty: bool,
+    pub recv_full: bool,
+    pub recv_not_empty_irq: bool,
     not_used1: u3,
-    pub err: u1,
-    pub enable: u1,
+    pub err: bool,
+    pub enable: bool,
 }
 
 pub struct Fifo {
@@ -84,7 +84,7 @@ impl IpcInner for IpcLle {
         get_ipc_mut!(emu).sync_regs[cpu] = ((u16::from(get_ipc!(emu).sync_regs[cpu]) & !mask) | (value & mask)).into();
         get_ipc_mut!(emu).sync_regs[!cpu] = ((u16::from(get_ipc!(emu).sync_regs[!cpu]) & !((mask >> 8) & 0xF)) | (((value & mask) >> 8) & 0xF)).into();
 
-        if bool::from(IpcSyncCnt::from(value).send_irq()) && bool::from(get_ipc!(emu).sync_regs[!cpu].enable_irq()) {
+        if IpcSyncCnt::from(value).send_irq() && get_ipc!(emu).sync_regs[!cpu].enable_irq() {
             get_cpu_regs_mut!(emu, !cpu).send_interrupt(InterruptFlag::IpcSync, emu);
         }
     }
@@ -96,18 +96,18 @@ impl IpcInner for IpcLle {
                 get_ipc_mut!(emu).fifo[cpu].queue.push_back(value & mask);
 
                 if fifo_len == 0 {
-                    get_ipc_mut!(emu).fifo[cpu].cnt.set_send_empty_status(u1::new(0));
-                    get_ipc_mut!(emu).fifo[!cpu].cnt.set_recv_empty(u1::new(0));
+                    get_ipc_mut!(emu).fifo[cpu].cnt.set_send_empty_status(false);
+                    get_ipc_mut!(emu).fifo[!cpu].cnt.set_recv_empty(false);
 
-                    if bool::from(get_ipc!(emu).fifo[!cpu].cnt.recv_not_empty_irq()) {
+                    if get_ipc!(emu).fifo[!cpu].cnt.recv_not_empty_irq() {
                         get_cpu_regs_mut!(emu, !cpu).send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, emu);
                     }
                 } else if fifo_len == 15 {
-                    get_ipc_mut!(emu).fifo[cpu].cnt.set_send_full_status(u1::new(1));
-                    get_ipc_mut!(emu).fifo[!cpu].cnt.set_recv_full(u1::new(1));
+                    get_ipc_mut!(emu).fifo[cpu].cnt.set_send_full_status(true);
+                    get_ipc_mut!(emu).fifo[!cpu].cnt.set_recv_full(true);
                 }
             } else {
-                get_ipc_mut!(emu).fifo[cpu].cnt.set_err(u1::new(1));
+                get_ipc_mut!(emu).fifo[cpu].cnt.set_err(true);
             }
         }
     }
@@ -125,22 +125,22 @@ impl IpcInner for IpcHle {
     fn get_fifo_cnt(&self, _: CpuType, ipc: &Ipc) -> u16 {
         let mut cnt = ipc.fifo[ARM9].cnt;
 
-        cnt.set_send_empty_status(u1::new(0));
-        cnt.set_send_full_status(u1::new(0));
-        cnt.set_recv_empty(u1::new(0));
-        cnt.set_recv_full(u1::new(0));
+        cnt.set_send_empty_status(false);
+        cnt.set_send_full_status(false);
+        cnt.set_recv_empty(false);
+        cnt.set_recv_full(false);
 
         if ipc.fifo[ARM9].queue.is_empty() {
-            cnt.set_send_empty_status(u1::new(1));
+            cnt.set_send_empty_status(true);
         } else if ipc.fifo[ARM9].queue.len() == 16 {
-            cnt.set_send_full_status(u1::new(1));
+            cnt.set_send_full_status(true);
         }
 
-        cnt.set_send_empty_status(u1::new(1));
+        cnt.set_send_empty_status(true);
         if ipc.fifo[ARM7].queue.is_empty() {
-            cnt.set_recv_empty(u1::new(1));
+            cnt.set_recv_empty(true);
         } else if ipc.fifo[ARM7].queue.len() == 16 {
-            cnt.set_recv_full(u1::new(1));
+            cnt.set_recv_full(true);
         }
 
         cnt.into()
@@ -161,13 +161,13 @@ impl IpcInner for IpcHle {
                 get_ipc_mut!(emu).fifo[ARM9].queue.push_back(value & mask);
 
                 if fifo_len == 0 {
-                    get_ipc_mut!(emu).fifo[ARM9].cnt.set_send_empty_status(u1::new(0));
+                    get_ipc_mut!(emu).fifo[ARM9].cnt.set_send_empty_status(false);
                 } else if fifo_len == 15 {
-                    get_ipc_mut!(emu).fifo[ARM9].cnt.set_send_full_status(u1::new(1));
+                    get_ipc_mut!(emu).fifo[ARM9].cnt.set_send_full_status(true);
                 }
                 get_arm7_hle_mut!(emu).ipc_recv(emu);
             } else {
-                get_ipc_mut!(emu).fifo[ARM9].cnt.set_err(u1::new(1));
+                get_ipc_mut!(emu).fifo[ARM9].cnt.set_err(true);
             }
         }
     }
@@ -206,27 +206,27 @@ impl Ipc {
             self.fifo[CPU].queue.clear();
             self.fifo[CPU].last_received = 0;
 
-            self.fifo[CPU].cnt.set_send_empty_status(u1::new(1));
-            self.fifo[CPU].cnt.set_send_full_status(u1::new(0));
+            self.fifo[CPU].cnt.set_send_empty_status(true);
+            self.fifo[CPU].cnt.set_send_full_status(false);
 
-            self.fifo[!CPU].cnt.set_recv_empty(u1::new(1));
-            self.fifo[!CPU].cnt.set_recv_full(u1::new(0));
+            self.fifo[!CPU].cnt.set_recv_empty(true);
+            self.fifo[!CPU].cnt.set_recv_full(false);
 
             if self.fifo[CPU].cnt.send_empty_irq() {
                 todo!()
             }
         }
 
-        if bool::from(self.fifo[CPU].cnt.send_empty_status()) && !bool::from(self.fifo[CPU].cnt.send_empty_irq()) && bool::from(new_fifo.send_empty_irq()) {
+        if bool::from(self.fifo[CPU].cnt.send_empty_status()) && !self.fifo[CPU].cnt.send_empty_irq() && new_fifo.send_empty_irq() {
             get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::IpcSendFifoEmpty, emu);
         }
 
-        if !bool::from(self.fifo[CPU].cnt.recv_empty()) && !bool::from(self.fifo[CPU].cnt.recv_not_empty_irq()) && bool::from(new_fifo.recv_not_empty_irq()) {
+        if !bool::from(self.fifo[CPU].cnt.recv_empty()) && !self.fifo[CPU].cnt.recv_not_empty_irq() && new_fifo.recv_not_empty_irq() {
             get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, emu);
         }
 
         if bool::from(new_fifo.err()) {
-            self.fifo[CPU].cnt.set_err(u1::new(0));
+            self.fifo[CPU].cnt.set_err(false);
         }
 
         mask &= 0x8404;
@@ -242,23 +242,23 @@ impl Ipc {
         if other_fifo_len > 0 {
             self.fifo[CPU].last_received = *self.fifo[!CPU].queue.front().unwrap();
 
-            if bool::from(self.fifo[CPU].cnt.enable()) {
+            if self.fifo[CPU].cnt.enable() {
                 self.fifo[!CPU].queue.pop_front();
 
                 if other_fifo_len == 1 {
-                    self.fifo[CPU].cnt.set_recv_empty(u1::new(1));
-                    self.fifo[!CPU].cnt.set_send_empty_status(u1::new(1));
+                    self.fifo[CPU].cnt.set_recv_empty(true);
+                    self.fifo[!CPU].cnt.set_send_empty_status(true);
 
-                    if bool::from(self.fifo[!CPU].cnt.send_empty_irq()) {
+                    if self.fifo[!CPU].cnt.send_empty_irq() {
                         get_cpu_regs_mut!(emu, !CPU).send_interrupt(InterruptFlag::IpcSendFifoEmpty, emu);
                     }
                 } else if other_fifo_len == 16 {
-                    self.fifo[CPU].cnt.set_recv_full(u1::new(0));
-                    self.fifo[!CPU].cnt.set_send_full_status(u1::new(0));
+                    self.fifo[CPU].cnt.set_recv_full(false);
+                    self.fifo[!CPU].cnt.set_send_full_status(false);
                 }
             }
         } else {
-            self.fifo[CPU].cnt.set_err(u1::new(1));
+            self.fifo[CPU].cnt.set_err(true);
         }
 
         self.fifo[CPU].last_received

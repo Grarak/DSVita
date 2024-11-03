@@ -9,5 +9,5 @@ pub mod oam;
 pub mod palettes;
 pub mod regions;
 pub mod vram;
-pub mod wram;
 mod wifi;
+pub mod wram;

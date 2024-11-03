@@ -1,27 +1,39 @@
 macro_rules! get_common {
     ($emu:expr) => {{
-        unsafe { $emu.common.get().as_ref().unwrap_unchecked() }
+        unsafe {
+            std::arch::asm!("");
+            $emu.common.get().as_ref_unchecked()
+        }
     }};
 }
 pub(crate) use get_common;
 
 macro_rules! get_common_mut {
     ($emu:expr) => {{
-        unsafe { $emu.common.get().as_mut().unwrap_unchecked() }
+        unsafe {
+            std::arch::asm!("");
+            $emu.common.get().as_mut_unchecked()
+        }
     }};
 }
 pub(crate) use get_common_mut;
 
 macro_rules! get_mem {
     ($emu:expr) => {{
-        unsafe { $emu.mem.get().as_ref().unwrap_unchecked() }
+        unsafe {
+            std::arch::asm!("");
+            $emu.mem.get().as_ref_unchecked()
+        }
     }};
 }
 pub(crate) use get_mem;
 
 macro_rules! get_mem_mut {
     ($emu:expr) => {{
-        unsafe { $emu.mem.get().as_mut().unwrap_unchecked() }
+        unsafe {
+            std::arch::asm!("");
+            $emu.mem.get().as_mut_unchecked()
+        }
     }};
 }
 pub(crate) use get_mem_mut;
@@ -201,7 +213,10 @@ pub(crate) use get_ipc_mut;
 
 macro_rules! get_arm7_hle_mut {
     ($emu:expr) => {{
-        unsafe { $emu.arm7_hle.get().as_mut().unwrap_unchecked() }
+        unsafe {
+            std::arch::asm!("");
+            $emu.arm7_hle.get().as_mut_unchecked()
+        }
     }};
 }
 pub(crate) use get_arm7_hle_mut;
@@ -277,22 +292,22 @@ impl Emu {
     }
 
     pub fn mem_read<const CPU: CpuType, T: Convert>(&mut self, addr: u32) -> T {
-        unsafe { (*self.mem.get()).read::<CPU, T>(addr, self) }
+        unsafe { get_mem_mut!(self).read::<CPU, T>(addr, self) }
     }
 
     pub fn mem_read_no_tcm<const CPU: CpuType, T: Convert>(&mut self, addr: u32) -> T {
-        unsafe { (*self.mem.get()).read_no_tcm::<CPU, T>(addr, self) }
+        unsafe { get_mem_mut!(self).read_no_tcm::<CPU, T>(addr, self) }
     }
 
     pub fn mem_read_with_options<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32) -> T {
-        unsafe { (*self.mem.get()).read_with_options::<CPU, TCM, T>(addr, self) }
+        unsafe { get_mem_mut!(self).read_with_options::<CPU, TCM, T>(addr, self) }
     }
 
     pub fn mem_write<const CPU: CpuType, T: Convert>(&mut self, addr: u32, value: T) {
-        unsafe { (*self.mem.get()).write::<CPU, T>(addr, value, self) };
+        unsafe { get_mem_mut!(self).write::<CPU, T>(addr, value, self) };
     }
 
     pub fn mem_write_no_tcm<const CPU: CpuType, T: Convert>(&mut self, addr: u32, value: T) {
-        unsafe { (*self.mem.get()).write_no_tcm::<CPU, T>(addr, value, self) };
+        unsafe { get_mem_mut!(self).write_no_tcm::<CPU, T>(addr, value, self) };
     }
 }

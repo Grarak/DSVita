@@ -40,7 +40,7 @@ impl Arm7Hle {
 
         let fifo = &mut get_ipc_mut!(emu).fifo[ARM7];
         if fifo.queue.len() == 16 {
-            fifo.cnt.set_err(u1::new(1));
+            fifo.cnt.set_err(true);
         } else {
             fifo.queue.push_back(val);
             if fifo.queue.len() == 1 {
@@ -51,7 +51,7 @@ impl Arm7Hle {
 
     pub fn ipc_recv(&mut self, emu: &mut Emu) {
         let val = get_ipc_mut!(emu).fifo[ARM9].queue.pop_front().unwrap();
-        if get_ipc!(emu).fifo[ARM9].queue.is_empty() && bool::from(get_ipc!(emu).fifo[ARM9].cnt.send_empty_irq()) {
+        if get_ipc!(emu).fifo[ARM9].queue.is_empty() && get_ipc!(emu).fifo[ARM9].cnt.send_empty_irq() {
             get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::IpcSendFifoEmpty, emu);
         }
 
