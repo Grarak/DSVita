@@ -20,7 +20,6 @@ pub struct BasicBlock {
 
     pub io_resolved: bool,
     pub regs_live_ranges: Vec<BlockRegSet>,
-    pub used_regs: Vec<BlockRegSet>,
 
     pub enter_blocks: Vec<usize>,
     pub exit_blocks: Vec<usize>,
@@ -44,7 +43,6 @@ impl BasicBlock {
 
             io_resolved: false,
             regs_live_ranges: Vec::new(),
-            used_regs: Vec::new(),
 
             enter_blocks: Vec::new(),
             exit_blocks: Vec::with_capacity(2),
@@ -226,7 +224,6 @@ impl BasicBlock {
         }
 
         self.regs_live_ranges.resize(self.insts_link.len() + 1, BlockRegSet::new());
-        self.used_regs.resize(self.insts_link.len() + 1, BlockRegSet::new());
     }
 
     pub fn init_resolve_io(&mut self, asm: &BlockAsm) {
@@ -236,7 +233,6 @@ impl BasicBlock {
             let mut previous_ranges = self.regs_live_ranges[i + 1];
             previous_ranges -= outputs;
             self.regs_live_ranges[i] = previous_ranges + inputs;
-            self.used_regs[i] = inputs + outputs;
             i = i.wrapping_sub(1);
         }
     }
@@ -284,8 +280,6 @@ impl BasicBlock {
                 thumb_pc_aligned: false,
             }
             .into();
-            self.used_regs[end_i - 1] += thread_regs_addr_reg;
-            self.used_regs[end_i] += thread_regs_addr_reg;
             self.regs_live_ranges[end_i] += thread_regs_addr_reg;
         }
 
@@ -307,7 +301,6 @@ impl BasicBlock {
             add_to_base: true,
         }
         .into();
-        self.used_regs[end_i].add_guests(guest_regs);
     }
 
     pub fn consolidate_reg_io(&mut self, asm: &mut BlockAsm) {
@@ -370,12 +363,10 @@ impl BasicBlock {
 
     pub fn add_required_outputs(&mut self, required_outputs: BlockRegSet) {
         *self.regs_live_ranges.last_mut().unwrap() += required_outputs;
-        *self.used_regs.last_mut().unwrap() += required_outputs;
     }
 
     pub fn set_required_outputs(&mut self, required_outputs: BlockRegSet) {
         *self.regs_live_ranges.last_mut().unwrap() = required_outputs;
-        *self.used_regs.last_mut().unwrap() = required_outputs;
     }
 
     pub fn get_required_inputs(&self) -> &BlockRegSet {
@@ -393,7 +384,7 @@ impl BasicBlock {
             let inst_i = BlockInstList::deref(current_node).value;
             let inst = &mut asm.buf.insts[inst_i];
             if !inst.skip {
-                asm.buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..], &self.used_regs[i..]);
+                asm.buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..]);
                 if !asm.buf.reg_allocator.pre_allocate_insts.is_empty() {
                     for i in asm.buf.insts.len()..asm.buf.insts.len() + asm.buf.reg_allocator.pre_allocate_insts.len() {
                         self.insts_link.insert_entry_begin(current_node, i);

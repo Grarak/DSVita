@@ -11,6 +11,7 @@ use crate::jit::{Cond, MemoryAmount, ShiftType};
 use bilge::prelude::*;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
+use std::hint::unreachable_unchecked;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
@@ -603,15 +604,15 @@ impl BlockInstKind {
         let alu_reg = |op: BlockAluOp, op0: BlockReg, op1: BlockReg, op2: BlockReg, shift: BlockShift, set_cond: bool| match shift.value {
             BlockOperand::Reg(shift_reg) => AluReg::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_reg.as_fixed(), set_cond, Cond::AL),
             BlockOperand::Imm(shift_imm) => {
-                assert_eq!(shift_imm & !0x1F, 0);
+                debug_assert_eq!(shift_imm & !0x1F, 0);
                 AluShiftImm::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_imm as u8, set_cond, Cond::AL)
             }
         };
         let alu_imm = |op: BlockAluOp, op0: BlockReg, op1: BlockReg, op2: u32, shift: BlockShift, set_cond: bool| {
-            assert_eq!(op2 & !0xFF, 0);
+            debug_assert_eq!(op2 & !0xFF, 0);
             let shift_value = shift.value.as_imm();
-            assert_eq!(shift_value & !0xF, 0);
-            assert!(shift_value == 0 || shift.shift_type == ShiftType::Ror);
+            debug_assert_eq!(shift_value & !0xF, 0);
+            debug_assert!(shift_value == 0 || shift.shift_type == ShiftType::Ror);
             AluImm::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2 as u8, shift_value as u8, set_cond, Cond::AL)
         };
 
@@ -621,7 +622,7 @@ impl BlockInstKind {
                 BlockOperand::Imm(imm) => opcodes.push(alu_imm(*op, operands[0].as_reg(), operands[1].as_reg(), imm, operands[2].shift, *set_cond != BlockAluSetCond::None)),
             },
             BlockInstKind::Alu2Op1 { op, operands, set_cond, .. } => {
-                assert_ne!(*set_cond, BlockAluSetCond::None);
+                debug_assert_ne!(*set_cond, BlockAluSetCond::None);
                 match operands[1].operand {
                     BlockOperand::Reg(reg) => opcodes.push(alu_reg(*op, BlockReg::Fixed(Reg::R0), operands[0].as_reg(), reg, operands[1].shift, true)),
                     BlockOperand::Imm(imm) => opcodes.push(alu_imm(*op, BlockReg::Fixed(Reg::R0), operands[0].as_reg(), imm, operands[1].shift, true)),
@@ -653,18 +654,18 @@ impl BlockInstKind {
                     let func = match amount {
                         MemoryAmount::Byte => |op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
                             if signed {
-                                assert_eq!(shift_amount, 0);
+                                debug_assert_eq!(shift_amount, 0);
                                 LdrStrRegSBHD::generic(op0, op1, op2, true, MemoryAmount::Byte, read, false, add_to_base, true, cond)
                             } else {
                                 LdrStrReg::generic(op0, op1, op2, shift_amount, shift_type, read, false, true, add_to_base, true, cond)
                             }
                         },
                         MemoryAmount::Half => |op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, _: ShiftType, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
-                            assert_eq!(shift_amount, 0);
+                            debug_assert_eq!(shift_amount, 0);
                             LdrStrRegSBHD::generic(op0, op1, op2, signed, MemoryAmount::Half, read, false, add_to_base, true, cond)
                         },
                         MemoryAmount::Word => |op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
-                            assert!(!signed);
+                            debug_assert!(!signed);
                             LdrStrReg::generic(op0, op1, op2, shift_amount, shift_type, read, false, false, add_to_base, true, cond)
                         },
                         MemoryAmount::Double => {
@@ -672,7 +673,7 @@ impl BlockInstKind {
                         }
                     };
                     let shift = operands[2].as_shift_imm();
-                    assert_eq!(shift & !0x1F, 0);
+                    debug_assert_eq!(shift & !0x1F, 0);
                     func(
                         operands[0].as_reg().as_fixed(),
                         operands[1].as_reg().as_fixed(),
@@ -689,18 +690,18 @@ impl BlockInstKind {
                     let func = match amount {
                         MemoryAmount::Byte => |op0: Reg, op1: Reg, imm_offset: u16, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
                             if signed {
-                                assert_eq!(imm_offset & !0xFF, 0);
+                                debug_assert_eq!(imm_offset & !0xFF, 0);
                                 LdrStrImmSBHD::generic(op0, op1, imm_offset as u8, true, MemoryAmount::Byte, read, false, true, true, cond)
                             } else {
                                 LdrStrImm::generic(op0, op1, imm_offset, read, false, true, add_to_base, true, cond)
                             }
                         },
                         MemoryAmount::Half => |op0: Reg, op1: Reg, imm_offset: u16, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
-                            assert_eq!(imm_offset & !0xFF, 0);
+                            debug_assert_eq!(imm_offset & !0xFF, 0);
                             LdrStrImmSBHD::generic(op0, op1, imm_offset as u8, signed, MemoryAmount::Half, read, false, add_to_base, true, cond)
                         },
                         MemoryAmount::Word => |op0: Reg, op1: Reg, imm_offset: u16, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
-                            assert!(!signed);
+                            debug_assert!(!signed);
                             LdrStrImm::generic(op0, op1, imm_offset, read, false, false, add_to_base, true, cond)
                         },
                         MemoryAmount::Double => {
@@ -776,9 +777,7 @@ impl BlockInstKind {
                 branch_placeholders.push(opcodes_offset + opcode_index);
             }
 
-            BlockInstKind::SaveContext { .. } => {
-                unreachable!()
-            }
+            BlockInstKind::SaveContext { .. } => unsafe { unreachable_unchecked() },
             BlockInstKind::SaveReg {
                 guest_reg,
                 reg_mapped,
