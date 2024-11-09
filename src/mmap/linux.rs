@@ -77,8 +77,10 @@ pub struct Shm {
 
 impl Shm {
     pub fn new(name: impl AsRef<str>, size: usize) -> io::Result<Self> {
-        let name = CString::new(name.as_ref())?;
-        let fd = unsafe { memfd_create(name.as_ptr() as _, MFD_CLOEXEC) };
+        let name = format!("/dsvita_{}", name.as_ref());
+        let name = CString::new(name)?;
+        let fd = unsafe { shm_open(name.as_ptr(), O_CREAT | O_EXCL | O_RDWR, S_IREAD | S_IWRITE) };
+        unsafe { shm_unlink(name.as_ptr()) };
         if fd >= 0 {
             if unsafe { ftruncate(fd, size as _) == 0 } {
                 let ptr = unsafe { mmap(ptr::null_mut(), size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) };
