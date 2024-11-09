@@ -952,7 +952,7 @@ impl Debug for BlockInstKind {
                 let add_to_base = if *add_to_base { "+" } else { "-" };
                 write!(
                     f,
-                    "{op:?}M {addr_reg:?} -> {addr_out_reg:?} gp regs: {gp_regs:?}, fixed regs: {fixed_regs:?}, write back: {write_back}, pre {pre}, {add_to_base}base"
+                    "Guest{op:?}M {addr_reg:?} -> {addr_out_reg:?} gp regs: {gp_regs:?}, fixed regs: {fixed_regs:?}, write back: {write_back}, pre {pre}, {add_to_base}base"
                 )
             }
             BlockInstKind::SystemReg { op, operand } => write!(f, "{op:?} {operand:?}"),

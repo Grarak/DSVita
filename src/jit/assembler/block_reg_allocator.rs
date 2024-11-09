@@ -121,50 +121,46 @@ impl BlockRegAllocator {
         None
     }
 
-    fn allocate_and_spill(&mut self, any_reg: u16, used_regs: &[BlockRegSet], allowed_regs: RegReserve) -> Option<Reg> {
-        let mut greatest_distance = 0;
-        let mut greatest_distance_reg = 0;
+    fn allocate_and_spill(&mut self, any_reg: u16, live_ranges: &[BlockRegSet], used_regs: &[BlockRegSet], allowed_regs: RegReserve) -> Option<Reg> {
         for (i, mapped_reg) in self.stored_mapping_reverse.iter().enumerate() {
+            let reg = Reg::from(i as u8);
+
+            if mapped_reg.is_none() && allowed_regs.is_reserved(reg) && !live_ranges[1].contains(BlockReg::Fixed(reg)) && !used_regs[0].contains(BlockReg::Fixed(reg)) {
+                self.set_stored_mapping(any_reg, reg);
+                return Some(reg);
+            }
+        }
+
+        for (i, mapped_reg) in self.stored_mapping_reverse.iter().enumerate() {
+            let reg = Reg::from(i as u8);
+
             if let &Some(mapped_reg) = mapped_reg {
-                let reg = Reg::from(i as u8);
-                if allowed_regs.is_reserved(reg) && !used_regs[0].contains(BlockReg::Any(mapped_reg)) {
-                    for i in 1..used_regs.len() {
-                        if used_regs[i].contains(BlockReg::Any(mapped_reg)) || used_regs[i].contains(BlockReg::Fixed(reg)) {
-                            if i > greatest_distance {
-                                greatest_distance = i;
-                                greatest_distance_reg = mapped_reg;
-                            }
-                            break;
-                        }
-                    }
+                if allowed_regs.is_reserved(reg) && !used_regs[0].contains(BlockReg::Any(mapped_reg)) && !live_ranges[1].contains(BlockReg::Any(mapped_reg)) {
+                    self.swap_stored_mapping(any_reg, mapped_reg);
+                    return Some(reg);
                 }
             }
         }
 
-        if greatest_distance != 0 {
-            let reg = self.stored_mapping[greatest_distance_reg as usize];
-            self.spilled += BlockReg::Any(greatest_distance_reg);
-            self.gen_pre_handle_spilled_inst(greatest_distance_reg, reg, BlockTransferOp::Write);
-            self.swap_stored_mapping(any_reg, greatest_distance_reg);
-            return Some(reg);
+        for (i, mapped_reg) in self.stored_mapping_reverse.iter().enumerate() {
+            let reg = Reg::from(i as u8);
+
+            if let &Some(mapped_reg) = mapped_reg {
+                if allowed_regs.is_reserved(reg) && !used_regs[0].contains(BlockReg::Any(mapped_reg)) {
+                    self.spilled += BlockReg::Any(mapped_reg);
+                    self.gen_pre_handle_spilled_inst(mapped_reg, reg, BlockTransferOp::Write);
+                    self.swap_stored_mapping(any_reg, mapped_reg);
+                    return Some(reg);
+                }
+            }
         }
 
         None
     }
 
     fn allocate_local(&mut self, any_reg: u16, live_ranges: &[BlockRegSet], used_regs: &[BlockRegSet]) -> Reg {
-        let mut live_ranges_until_expiration = BlockRegSet::new();
-        let mut used_fixed_until_expiration = used_regs[0].get_fixed();
-        for i in 1..live_ranges.len() {
-            if !live_ranges[i].contains(BlockReg::Any(any_reg)) {
-                break;
-            }
-            live_ranges_until_expiration += live_ranges[i];
-            used_fixed_until_expiration += used_regs[i].get_fixed();
-        }
-
         for reg in SCRATCH_REGS {
-            if !used_fixed_until_expiration.is_reserved(reg) && self.stored_mapping_reverse[reg as usize].is_none() && !live_ranges[1].contains(BlockReg::Fixed(reg)) {
+            if self.stored_mapping_reverse[reg as usize].is_none() && !live_ranges[1].contains(BlockReg::Fixed(reg)) {
                 self.set_stored_mapping(any_reg, reg);
                 return reg;
             }
@@ -174,22 +170,7 @@ impl BlockRegAllocator {
             return reg;
         }
 
-        for (i, mapped_reg) in self.stored_mapping_reverse.iter().enumerate() {
-            if let &Some(mapped_reg) = mapped_reg {
-                let reg = Reg::from(i as u8);
-                if !used_regs[0].contains(BlockReg::Any(mapped_reg))
-                    && !live_ranges_until_expiration.contains(BlockReg::Any(mapped_reg))
-                    && !live_ranges_until_expiration.contains(BlockReg::Fixed(reg))
-                {
-                    self.spilled += BlockReg::Any(mapped_reg);
-                    self.gen_pre_handle_spilled_inst(mapped_reg, reg, BlockTransferOp::Write);
-                    self.swap_stored_mapping(any_reg, mapped_reg);
-                    return reg;
-                }
-            }
-        }
-
-        if let Some(reg) = self.allocate_and_spill(any_reg, used_regs, SCRATCH_REGS + ALLOCATION_REGS) {
+        if let Some(reg) = self.allocate_and_spill(any_reg, live_ranges, used_regs, SCRATCH_REGS + ALLOCATION_REGS) {
             return reg;
         }
 
@@ -201,7 +182,11 @@ impl BlockRegAllocator {
             return reg;
         }
 
-        if let Some(reg) = self.allocate_and_spill(any_reg, used_regs, ALLOCATION_REGS) {
+        if let Some(reg) = self.allocate_and_spill(any_reg, live_ranges, used_regs, ALLOCATION_REGS) {
+            return reg;
+        }
+
+        if let Some(reg) = self.allocate_and_spill(any_reg, live_ranges, used_regs, SCRATCH_REGS) {
             return reg;
         }
 
@@ -350,10 +335,16 @@ impl BlockRegAllocator {
 
         if DEBUG && unsafe { BLOCK_LOG } {
             println!("inputs: {inputs:?}, outputs: {outputs:?}");
+            println!("used regs {:?}", used_regs[0]);
         }
 
         self.relocate_guest_regs(inputs.get_guests().get_gp_regs(), live_ranges, &inputs, used_regs, true);
         self.relocate_guest_regs(outputs.get_guests().get_gp_regs(), live_ranges, &inputs, used_regs, false);
+
+        if DEBUG && unsafe { BLOCK_LOG } {
+            println!("pre mapping {:?}", self.stored_mapping_reverse);
+            println!("pre spilled {:?}", self.spilled);
+        }
 
         for any_input_reg in inputs.iter_any() {
             let reg = self.get_input_reg(any_input_reg, live_ranges, used_regs);
@@ -369,6 +360,11 @@ impl BlockRegAllocator {
             let reg = self.get_output_reg(any_output_reg, live_ranges, used_regs);
             inst.replace_output_regs(BlockReg::Any(any_output_reg), BlockReg::Fixed(reg));
             self.dirty_regs += reg;
+        }
+
+        if DEBUG && unsafe { BLOCK_LOG } {
+            println!("after mapping {:?}", self.stored_mapping_reverse);
+            println!("after spilled {:?}", self.spilled);
         }
     }
 
@@ -439,7 +435,7 @@ impl BlockRegAllocator {
                         self.spilled -= BlockReg::Any(output_reg);
                         self.gen_pre_handle_spilled_inst(output_reg, desired_reg_mapping, BlockTransferOp::Read);
                     } else {
-                        panic!("required output reg must already have a value");
+                        panic!("required output reg {output_reg:?} must already have a value");
                     }
                     self.set_stored_mapping(output_reg, desired_reg_mapping);
                 }

@@ -258,7 +258,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let fast_mem_mark_dirty_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
-        if is_valid && !inst_info.op.mem_is_write() && !inst_info.op.mem_transfer_user() && rlist.len() < RegReserve::gp().len() - 2 {
+        if is_valid && !inst_info.op.mem_is_write() && !inst_info.op.mem_transfer_user() && rlist.len() < (RegReserve::gp() + Reg::LR).len() - 2 {
             let mut gp_regs = rlist.get_gp_regs();
             let mut free_gp_regs = if gp_regs.is_empty() {
                 RegReserve::gp()

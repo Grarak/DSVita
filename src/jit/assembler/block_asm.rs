@@ -52,7 +52,7 @@ pub struct BlockAsm<'a> {
 
     pub thread_regs_addr_reg: BlockReg,
     pub tmp_guest_cpsr_reg: BlockReg,
-    tmp_operand_imm_reg: BlockReg,
+    pub tmp_operand_imm_reg: BlockReg,
     tmp_shift_imm_reg: BlockReg,
     tmp_func_call_reg: BlockReg,
 
@@ -919,6 +919,7 @@ impl<'a> BlockAsm<'a> {
             }
 
             basic_block.remove_dead_code(self);
+            basic_block.consolidate_reg_io(self);
         }
 
         (basic_blocks, reachable_blocks)
