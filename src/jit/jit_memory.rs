@@ -178,16 +178,14 @@ impl JitMemory {
         (allocated_offset_addr, aligned_size, flushed)
     }
 
-    pub fn insert_block<const CPU: CpuType>(&mut self, opcodes: &[u32], guest_pc: u32, emu: &mut Emu) -> (*const extern "C" fn(bool), bool) {
+    pub fn insert_block<const CPU: CpuType>(&mut self, opcodes: &[u32], guest_pc: u32, emu: &Emu) -> (*const extern "C" fn(bool), bool) {
         macro_rules! insert {
-            ($entries:expr, $live_ranges:expr, $region:expr) => {{
+            ($entries:expr, $live_ranges:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
                 let ret = insert!($entries, $live_ranges);
-                let mmu = get_mmu!(emu, CPU);
-                let vmem = match CPU {
-                    ARM9 => mmu.get_vmem_tcm(),
-                    ARM7 => mmu.get_vmem(),
-                };
-                // unsafe { (*vmem).set_region_protection((guest_pc as usize) & !(MMU_PAGE_SIZE - 1), MMU_PAGE_SIZE, &$region, true, false, false) };
+                $(
+                    let mmu = get_mmu!(emu, $cpu_entry);
+                    mmu.remove_write(guest_pc, &$region);
+                )*
                 ret
             }};
 
@@ -224,17 +222,17 @@ impl JitMemory {
 
         match CPU {
             ARM9 => match guest_pc & 0xFF000000 {
-                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm, regions::ITCM_REGION),
-                regions::MAIN_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main, regions::MAIN_REGION),
+                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm, regions::ITCM_REGION, [ARM9]),
+                regions::MAIN_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
                 _ => todo!("{:x}", guest_pc),
             },
             ARM7 => match guest_pc & 0xFF000000 {
-                regions::MAIN_OFFSET => insert!(self.jit_entries.main_arm7, self.jit_live_ranges.main, regions::MAIN_REGION),
+                regions::MAIN_OFFSET => insert!(self.jit_entries.main_arm7, self.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
                 regions::SHARED_WRAM_OFFSET => {
                     if guest_pc & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
-                        insert!(self.jit_entries.wram_arm7, self.jit_live_ranges.wram_arm7, regions::ARM7_WRAM_REGION)
+                        insert!(self.jit_entries.wram_arm7, self.jit_live_ranges.wram_arm7, regions::ARM7_WRAM_REGION, [ARM7])
                     } else {
-                        insert!(self.jit_entries.shared_wram_arm7, self.jit_live_ranges.shared_wram_arm7, regions::SHARED_WRAM_ARM7_REGION)
+                        insert!(self.jit_entries.shared_wram_arm7, self.jit_live_ranges.shared_wram_arm7, regions::SHARED_WRAM_ARM7_REGION, [ARM7])
                     }
                 }
                 regions::VRAM_OFFSET => insert!(self.jit_entries.vram_arm7, self.jit_live_ranges.vram_arm7),

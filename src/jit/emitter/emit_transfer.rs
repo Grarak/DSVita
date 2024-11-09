@@ -1,4 +1,5 @@
-use crate::core::emu::{get_mmu, get_regs};
+use crate::core::emu::{get_mem, get_mmu, get_regs};
+use crate::core::memory::mmu;
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockOperand, BlockReg};
@@ -77,6 +78,57 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov(op1, post_addr_reg);
         }
 
+        let cpsr_backup_reg = block_asm.new_reg();
+        block_asm.mrs_cpsr(cpsr_backup_reg);
+
+        let mmu_ptr = get_mmu!(self.emu, CPU).get_mmu_write_tcm().as_ptr();
+
+        let fast_write_addr_reg = block_asm.new_reg();
+        let fast_mmu_ptr_reg = block_asm.new_reg();
+        let fast_mmu_index_reg = block_asm.new_reg();
+        let fast_mmu_offset_reg = block_asm.new_reg();
+
+        let slow_read_label = block_asm.new_label();
+        let continue_label = block_asm.new_label();
+
+        let size = if amount == MemoryAmount::Double { MemoryAmount::Word.size() } else { amount.size() };
+        block_asm.bic(fast_write_addr_reg, addr_reg, 0xF0000000 | (size as u32 - 1));
+        block_asm.mov(fast_mmu_index_reg, (fast_write_addr_reg.into(), ShiftType::Lsr, BlockOperand::from(mmu::MMU_PAGE_SHIFT as u32)));
+        block_asm.mov(fast_mmu_ptr_reg, mmu_ptr as u32);
+        block_asm.transfer_read(
+            fast_mmu_offset_reg,
+            fast_mmu_ptr_reg,
+            (fast_mmu_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)),
+            false,
+            MemoryAmount::Word,
+        );
+
+        block_asm.cmp(fast_mmu_offset_reg, 0);
+        block_asm.branch(slow_read_label, Cond::EQ);
+
+        let shm_ptr = get_mem!(self.emu).shm.as_ptr();
+
+        block_asm.bfc(fast_write_addr_reg, mmu::MMU_PAGE_SHIFT as u8, 32 - mmu::MMU_PAGE_SHIFT as u8);
+        block_asm.add(fast_write_addr_reg, fast_mmu_offset_reg, fast_write_addr_reg);
+        block_asm.mov(fast_mmu_ptr_reg, shm_ptr as u32);
+        block_asm.transfer_write(
+            op0,
+            fast_mmu_ptr_reg,
+            fast_write_addr_reg,
+            op.mem_transfer_single_signed(),
+            if amount == MemoryAmount::Double { MemoryAmount::Word } else { amount },
+        );
+        if amount == MemoryAmount::Double {
+            block_asm.add(fast_write_addr_reg, fast_write_addr_reg, 4);
+            block_asm.transfer_write(Reg::from(op0 as u8 + 1), fast_mmu_ptr_reg, fast_write_addr_reg, op.mem_transfer_single_signed(), MemoryAmount::Word);
+        }
+
+        block_asm.msr_cpsr(cpsr_backup_reg);
+
+        block_asm.branch(continue_label, Cond::AL);
+
+        block_asm.label(slow_read_label);
+        block_asm.msr_cpsr(cpsr_backup_reg);
         block_asm.save_context();
 
         let op0_addr = get_regs!(self.emu, CPU).get_reg(op0) as *const _ as u32;
@@ -107,6 +159,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         );
         block_asm.restore_reg(Reg::CPSR);
 
+        block_asm.label(continue_label);
+
+        block_asm.free_reg(fast_mmu_offset_reg);
+        block_asm.free_reg(fast_mmu_index_reg);
+        block_asm.free_reg(fast_mmu_ptr_reg);
+        block_asm.free_reg(fast_write_addr_reg);
+        block_asm.free_reg(cpsr_backup_reg);
         block_asm.free_reg(op0_addr_reg);
         block_asm.free_reg(addr_reg);
         block_asm.free_reg(post_addr_reg);
@@ -258,7 +317,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let fast_mem_mark_dirty_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
-        if is_valid && !inst_info.op.mem_is_write() && !inst_info.op.mem_transfer_user() && rlist.len() < (RegReserve::gp() + Reg::LR).len() - 2 {
+        let cpsr_backup_reg = block_asm.new_reg();
+
+        let use_fast_mem = is_valid && !inst_info.op.mem_transfer_user() && rlist.len() < (RegReserve::gp() + Reg::LR).len() - 2;
+        if use_fast_mem {
             let mut gp_regs = rlist.get_gp_regs();
             let mut free_gp_regs = if gp_regs.is_empty() {
                 RegReserve::gp()
@@ -289,35 +351,80 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             debug_assert!(non_gp_regs.is_empty());
 
-            block_asm.branch(slow_read_label, Cond::NV);
+            if inst_info.op.mem_is_write() {
+                block_asm.mrs_cpsr(cpsr_backup_reg);
 
-            let base_reg = block_asm.new_reg();
-            let base_reg_out = block_asm.new_reg();
-            let mmu = get_mmu!(self.emu, CPU);
-            let base_ptr = mmu.get_base_tcm_ptr();
-            block_asm.bic(base_reg, op0, 0xF0000000);
-            block_asm.add(base_reg, base_reg, base_ptr as u32);
-            block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
+                let mmu_ptr = get_mmu!(self.emu, CPU).get_mmu_write_tcm().as_ptr();
 
-            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
+                let base_reg = block_asm.new_reg();
+                let base_reg_out = block_asm.new_reg();
+                let mmu_index_reg = block_asm.new_reg();
+                let mmu_ptr_reg = block_asm.new_reg();
+                let mmu_offset_reg = block_asm.new_reg();
+
+                block_asm.bic(base_reg, op0, 0xF0000000);
+                block_asm.mov(mmu_index_reg, (base_reg.into(), ShiftType::Lsr, BlockOperand::from(mmu::MMU_PAGE_SHIFT as u32)));
+                block_asm.mov(mmu_ptr_reg, mmu_ptr as u32);
+                block_asm.transfer_read(mmu_offset_reg, mmu_ptr_reg, (mmu_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)), false, MemoryAmount::Word);
+
+                block_asm.cmp(mmu_offset_reg, 0);
+                block_asm.branch(slow_read_label, Cond::EQ);
+
+                let shm_ptr = get_mem!(self.emu).shm.as_ptr();
+
+                block_asm.bfc(base_reg, mmu::MMU_PAGE_SHIFT as u8, 32 - mmu::MMU_PAGE_SHIFT as u8);
+                block_asm.add(base_reg, mmu_offset_reg, base_reg);
+                block_asm.add(base_reg, base_reg, shm_ptr as u32);
+
+                for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                    block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
+                }
+
+                block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
+
+                if write_back {
+                    block_asm.sub(base_reg, base_reg_out, base_reg);
+                    block_asm.add(op0, op0, base_reg);
+                }
+
+                block_asm.msr_cpsr(cpsr_backup_reg);
+
+                block_asm.branch(continue_label, Cond::AL);
+
+                block_asm.free_reg(mmu_offset_reg);
+                block_asm.free_reg(mmu_ptr_reg);
+                block_asm.free_reg(mmu_index_reg);
+                block_asm.free_reg(base_reg_out);
+                block_asm.free_reg(base_reg);
+            } else {
+                block_asm.branch(slow_read_label, Cond::NV);
+
+                let base_reg = block_asm.new_reg();
+                let base_reg_out = block_asm.new_reg();
+                let mmu = get_mmu!(self.emu, CPU);
+                let base_ptr = mmu.get_base_tcm_ptr();
+                block_asm.bic(base_reg, op0, 0xF0000000);
+                block_asm.add(base_reg, base_reg, base_ptr as u32);
+                block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
+
+                for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                    block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
+                }
+
+                if write_back {
+                    block_asm.sub(base_reg, base_reg_out, base_reg);
+                    block_asm.add(op0, base_reg, op0);
+                }
+
+                for guest_reg in rlist {
+                    block_asm.mark_reg_dirty(guest_reg, false);
+                }
+
+                block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
+
+                block_asm.free_reg(base_reg_out);
+                block_asm.free_reg(base_reg);
             }
-
-            if write_back {
-                block_asm.sub(base_reg_out, base_reg_out, base_ptr as u32);
-                block_asm.mov(op0, (op0.into(), ShiftType::Lsr, BlockOperand::from(0xF0000000u32.trailing_zeros())));
-                block_asm.bfi(base_reg_out, op0, 0xF0000000u32.trailing_zeros() as u8, 0xF0000000u32.leading_ones() as u8);
-                block_asm.mov(op0, base_reg_out);
-            }
-
-            for guest_reg in rlist {
-                block_asm.mark_reg_dirty(guest_reg, false);
-            }
-
-            block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
-
-            block_asm.free_reg(base_reg_out);
-            block_asm.free_reg(base_reg);
         }
 
         if decrement {
@@ -359,6 +466,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         };
 
         block_asm.label(slow_read_label);
+        if use_fast_mem && inst_info.op.mem_is_write() {
+            block_asm.msr_cpsr(cpsr_backup_reg);
+        }
         block_asm.save_context();
         block_asm.call3(
             func_addr,
@@ -386,6 +496,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
 
         block_asm.label(continue_label);
+
+        block_asm.free_reg(cpsr_backup_reg);
     }
 
     pub fn emit_swp(&mut self, block_asm: &mut BlockAsm) {

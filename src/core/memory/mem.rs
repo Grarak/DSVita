@@ -147,33 +147,21 @@ impl Memory {
         let addr_base = aligned_addr & 0x0F000000;
         let addr_offset = aligned_addr & !0xFF000000;
 
-        // let mmu = {
-        //     let mmu = get_mem_mmu!(self, CPU);
-        //     if CPU == ARM9 && TCM {
-        //         mmu.get_mmu_write_tcm()
-        //     } else {
-        //         mmu.get_mmu_write()
-        //     }
-        // };
-        //
-        // let shm_offset = unsafe { *mmu.get_unchecked((aligned_addr as usize) >> MMU_PAGE_SHIFT) };
-        // if likely(shm_offset != 0) {
-        //     let offset = aligned_addr & (MMU_PAGE_SIZE as u32 - 1);
-        //     utils::write_to_mem(&mut self.shm, shm_offset as u32 + offset, value);
-        //     match CPU {
-        //         ARM9 => match addr_base {
-        //             regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => self.jit.invalidate_block::<{ JitRegion::Itcm }>(aligned_addr, size_of::<T>()),
-        //             regions::MAIN_OFFSET => self.jit.invalidate_block::<{ JitRegion::Main }>(aligned_addr, size_of::<T>()),
-        //             _ => {}
-        //         },
-        //         ARM7 => match addr_base {
-        //             regions::MAIN_OFFSET => self.jit.invalidate_block::<{ JitRegion::Main }>(aligned_addr, size_of::<T>()),
-        //             regions::SHARED_WRAM_OFFSET => self.jit.invalidate_block::<{ JitRegion::Wram }>(aligned_addr, size_of::<T>()),
-        //             _ => {}
-        //         },
-        //     }
-        //     return;
-        // }
+        let mmu = {
+            let mmu = get_mem_mmu!(self, CPU);
+            if CPU == ARM9 && TCM {
+                mmu.get_mmu_write_tcm()
+            } else {
+                mmu.get_mmu_write()
+            }
+        };
+
+        let shm_offset = unsafe { *mmu.get_unchecked((aligned_addr as usize) >> MMU_PAGE_SHIFT) };
+        if shm_offset != 0 {
+            let offset = aligned_addr & (MMU_PAGE_SIZE as u32 - 1);
+            utils::write_to_mem(&mut self.shm, shm_offset as u32 + offset, value);
+            return;
+        }
 
         macro_rules! write_to_shm {
             ($shm_offset:expr, $addr_offset:expr, $size:expr) => {

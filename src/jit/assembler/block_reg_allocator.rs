@@ -160,7 +160,7 @@ impl BlockRegAllocator {
 
     fn allocate_local(&mut self, any_reg: u16, live_ranges: &[BlockRegSet], used_regs: &BlockRegSet) -> Reg {
         for reg in SCRATCH_REGS {
-            if self.stored_mapping_reverse[reg as usize].is_none() && !live_ranges[1].contains(BlockReg::Fixed(reg)) {
+            if self.stored_mapping_reverse[reg as usize].is_none() && !live_ranges[1].contains(BlockReg::Fixed(reg)) && !used_regs.contains(BlockReg::Fixed(reg)) {
                 self.set_stored_mapping(any_reg, reg);
                 return reg;
             }

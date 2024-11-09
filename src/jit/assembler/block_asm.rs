@@ -367,6 +367,28 @@ impl<'a> BlockAsm<'a> {
         })
     }
 
+    pub fn guest_transfer_write_multiple(
+        &mut self,
+        addr_reg: impl Into<BlockReg>,
+        addr_out_reg: impl Into<BlockReg>,
+        gp_regs: RegReserve,
+        fixed_regs: RegReserve,
+        write_back: bool,
+        pre: bool,
+        add_to_base: bool,
+    ) {
+        self.insert_inst(BlockInstKind::GuestTransferMultiple {
+            op: BlockTransferOp::Write,
+            addr_reg: addr_reg.into(),
+            addr_out_reg: addr_out_reg.into(),
+            gp_regs,
+            fixed_regs,
+            write_back,
+            pre,
+            add_to_base,
+        })
+    }
+
     pub fn mrs_cpsr(&mut self, operand: impl Into<BlockReg>) {
         self.insert_inst(BlockInstKind::SystemReg {
             op: BlockSystemRegOp::Mrs,
@@ -919,7 +941,7 @@ impl<'a> BlockAsm<'a> {
             }
 
             basic_block.remove_dead_code(self);
-            basic_block.consolidate_reg_io(self);
+            // basic_block.consolidate_reg_io(self);
         }
 
         (basic_blocks, reachable_blocks)

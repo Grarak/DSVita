@@ -3,7 +3,7 @@ use crate::core::emu::{get_cp15, get_mem, Emu};
 use crate::core::memory::regions;
 use crate::core::memory::regions::{DTCM_REGION, ITCM_REGION, V_MEM_ARM7_RANGE};
 use crate::core::CpuType::{ARM7, ARM9};
-use crate::mmap::VirtualMem;
+use crate::mmap::{MemRegion, VirtualMem};
 use crate::utils::HeapMemUsize;
 use regions::{IO_PORTS_OFFSET, MAIN_OFFSET, MAIN_REGION, SHARED_WRAM_OFFSET, V_MEM_ARM9_RANGE};
 use std::cell::UnsafeCell;
@@ -18,14 +18,28 @@ pub trait Mmu {
     fn update_itcm(&self, emu: &Emu);
     fn update_dtcm(&self, emu: &Emu);
     fn update_wram(&self, emu: &Emu);
+
     fn get_vmem(&self) -> *mut VirtualMem;
     fn get_vmem_tcm(&self) -> *mut VirtualMem;
+
     fn get_base_ptr(&self) -> *mut u8;
     fn get_base_tcm_ptr(&self) -> *mut u8;
+
     fn get_mmu_read(&self) -> &[usize];
     fn get_mmu_write(&self) -> &[usize];
+
     fn get_mmu_read_tcm(&self) -> &[usize];
     fn get_mmu_write_tcm(&self) -> &[usize];
+
+    fn remove_write(&self, addr: u32, region: &MemRegion);
+}
+
+fn remove_mmu_entry(addr: u32, region: &MemRegion, mmu: &mut [usize]) {
+    let base_offset = addr - region.start as u32;
+    let base_offset = base_offset & (region.size as u32 - 1);
+    for addr_offset in (region.start as u32 + base_offset..region.end as u32).step_by(region.size) {
+        mmu[(addr_offset >> MMU_PAGE_SHIFT) as usize] = 0;
+    }
 }
 
 struct MmuArm9Inner {
@@ -277,6 +291,15 @@ impl Mmu for MmuArm9 {
     fn get_mmu_write_tcm(&self) -> &[usize] {
         unsafe { (*self.inner.get()).mmu_write_tcm.as_ref() }
     }
+
+    fn remove_write(&self, addr: u32, region: &MemRegion) {
+        unsafe {
+            let mmu = (*self.inner.get()).mmu_write.as_mut();
+            remove_mmu_entry(addr, region, mmu);
+            let mmu = (*self.inner.get()).mmu_write_tcm.as_mut();
+            remove_mmu_entry(addr, region, mmu);
+        }
+    }
 }
 
 struct MmuArm7Inner {
@@ -421,6 +444,13 @@ impl Mmu for MmuArm7 {
     }
 
     fn get_mmu_write_tcm(&self) -> &[usize] {
-        unreachable!()
+        unsafe { (*self.inner.get()).mmu_write.as_ref() }
+    }
+
+    fn remove_write(&self, addr: u32, region: &MemRegion) {
+        unsafe {
+            let mmu = (*self.inner.get()).mmu_write.as_mut();
+            remove_mmu_entry(addr, region, mmu);
+        }
     }
 }
