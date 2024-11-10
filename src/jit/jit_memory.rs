@@ -94,6 +94,66 @@ pub struct JitLiveRanges {
     pub vram_arm7: HeapMemU8<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
 }
 
+#[cfg(target_os = "linux")]
+struct JitPerfMapRecord {
+    common_records: Vec<(usize, usize, String)>,
+    perf_map_path: std::path::PathBuf,
+    perf_map: std::fs::File,
+}
+
+#[cfg(target_os = "linux")]
+impl JitPerfMapRecord {
+    fn new() -> Self {
+        let perf_map_path = std::path::PathBuf::from(format!("/tmp/perf-{}.map", std::process::id()));
+        JitPerfMapRecord {
+            common_records: Vec::new(),
+            perf_map_path: perf_map_path.clone(),
+            perf_map: std::fs::File::create(perf_map_path).unwrap(),
+        }
+    }
+
+    fn record_common(&mut self, jit_start: usize, jit_size: usize, name: impl AsRef<str>) {
+        if crate::IS_DEBUG {
+            self.common_records.push((jit_start, jit_size, name.as_ref().to_string()));
+            use std::io::Write;
+            writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {}", name.as_ref()).unwrap();
+        }
+    }
+
+    fn record(&mut self, jit_start: usize, jit_size: usize, guest_pc: u32, cpu_type: CpuType) {
+        if crate::IS_DEBUG {
+            use std::io::Write;
+            writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {cpu_type:?}_{guest_pc:x}").unwrap();
+        }
+    }
+
+    fn reset(&mut self) {
+        if crate::IS_DEBUG {
+            self.perf_map = std::fs::File::create(&self.perf_map_path).unwrap();
+            for (jit_start, jit_size, name) in &self.common_records {
+                use std::io::Write;
+                writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {name}").unwrap();
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "vita")]
+struct JitPerfMapRecord;
+
+#[cfg(target_os = "vita")]
+impl JitPerfMapRecord {
+    fn new() -> Self {
+        JitPerfMapRecord
+    }
+
+    fn record_common(&mut self, jit_start: usize, jit_size: usize, name: impl AsRef<str>) {}
+
+    fn record(&mut self, jit_start: usize, jit_size: usize, guest_pc: u32, cpu_type: CpuType) {}
+
+    fn reset(&mut self) {}
+}
+
 pub struct JitMemory {
     mem: Mmap,
     mem_common_end: usize,
@@ -101,6 +161,7 @@ pub struct JitMemory {
     jit_entries: JitEntries,
     jit_live_ranges: JitLiveRanges,
     pub jit_memory_map: JitMemoryMap,
+    jit_perf_map_record: JitPerfMapRecord,
 }
 
 impl JitMemory {
@@ -115,11 +176,14 @@ impl JitMemory {
             jit_entries,
             jit_live_ranges,
             jit_memory_map,
+            jit_perf_map_record: JitPerfMapRecord::new(),
         }
     }
 
     fn reset_blocks(&mut self) {
         debug_println!("Jit memory reset");
+        self.jit_perf_map_record.reset();
+
         self.mem_start = self.mem_common_end;
 
         self.jit_entries.reset();
@@ -155,7 +219,7 @@ impl JitMemory {
         }
     }
 
-    pub fn insert_common_fun_block(&mut self, opcodes: &[u32]) -> *const extern "C" fn() {
+    pub fn insert_common_fun_block(&mut self, opcodes: &[u32], name: impl AsRef<str>) -> *const extern "C" fn() {
         let aligned_size = utils::align_up(size_of_val(opcodes), PAGE_SIZE);
         let mem_start = self.mem_start;
 
@@ -165,7 +229,9 @@ impl JitMemory {
         self.mem_start += aligned_size;
         self.mem_common_end = self.mem_start;
 
-        (mem_start + self.mem.as_ptr() as usize) as _
+        let jit_entry_addr = mem_start + self.mem.as_ptr() as usize;
+        self.jit_perf_map_record.record_common(jit_entry_addr, aligned_size, name);
+        jit_entry_addr as _
     }
 
     fn insert(&mut self, opcodes: &[u32]) -> (usize, usize, bool) {
@@ -215,6 +281,8 @@ impl JitMemory {
                     per,
                     guest_pc
                 );
+
+                self.jit_perf_map_record.record(jit_entry_addr as usize, aligned_size, guest_pc, CPU);
 
                 (jit_entry_addr, flushed)
             }};

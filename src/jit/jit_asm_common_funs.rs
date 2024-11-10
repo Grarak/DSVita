@@ -25,16 +25,16 @@ impl<const CPU: CpuType> Default for JitAsmCommonFuns<CPU> {
 
 impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
     pub fn new(asm: &mut JitAsm<CPU>) -> Self {
-        let mut create_function = |fun: fn(&mut BlockAsm, &mut JitAsm<CPU>)| {
+        let mut create_function = |fun: fn(&mut BlockAsm, &mut JitAsm<CPU>), name: &str| {
             let mut block_asm = asm.new_block_asm(true);
             fun(&mut block_asm, asm);
             block_asm.emit_opcodes(0, false);
             let opcodes = block_asm.finalize(0);
-            get_jit_mut!(asm.emu).insert_common_fun_block(opcodes) as usize - get_jit!(asm.emu).get_start_entry()
+            get_jit_mut!(asm.emu).insert_common_fun_block(opcodes, name) as usize - get_jit!(asm.emu).get_start_entry()
         };
         JitAsmCommonFuns {
-            branch_return_stack: create_function(Self::emit_branch_return_stack),
-            branch_reg: create_function(Self::emit_branch_reg),
+            branch_return_stack: create_function(Self::emit_branch_return_stack, &format!("{CPU:?}_branch_return_stack")),
+            branch_reg: create_function(Self::emit_branch_reg, &format!("{CPU:?}_branch_reg")),
         }
     }
 
