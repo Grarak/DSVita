@@ -5,6 +5,7 @@ use std::{mem, ops};
 pub mod assembler;
 pub mod disassembler;
 mod emitter;
+mod inst_branch_handler;
 mod inst_cp15_handler;
 mod inst_cpu_regs_handler;
 mod inst_exception_handler;

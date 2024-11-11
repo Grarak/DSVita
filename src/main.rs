@@ -358,6 +358,7 @@ pub fn actual_main() {
         .name("cpu".to_owned())
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
+            println!("Start cpu {:?}", thread::current().id());
             run_cpu(
                 cartridge_io,
                 fps_clone,

@@ -114,7 +114,7 @@ impl JitMemoryMap {
         let addr = (addr & 0x0FFFFFFF) >> 1;
         macro_rules! get_jit_entry {
             ($map:expr) => {{
-                unsafe { ($map[(addr >> BLOCK_SHIFT) as usize] as *mut JitEntry).add((addr as usize) & (BLOCK_SIZE - 1)) }
+                unsafe { ((*$map.get_unchecked((addr >> BLOCK_SHIFT) as usize)) as *mut JitEntry).add((addr as usize) & (BLOCK_SIZE - 1)) }
             }};
         }
         match CPU {
@@ -124,9 +124,14 @@ impl JitMemoryMap {
     }
 
     pub fn get_live_range<const CPU: CpuType>(&self, addr: u32) -> *mut u8 {
+        macro_rules! get_live_range {
+            ($map:expr) => {{
+                unsafe { (*$map.get_unchecked((addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize)) as _ }
+            }};
+        }
         match CPU {
-            ARM9 => self.live_ranges_map_arm9[(addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize] as _,
-            ARM7 => self.live_ranges_map_arm7[(addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize] as _,
+            ARM9 => get_live_range!(self.live_ranges_map_arm9),
+            ARM7 => get_live_range!(self.live_ranges_map_arm7),
         }
     }
 

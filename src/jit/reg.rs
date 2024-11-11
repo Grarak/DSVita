@@ -284,6 +284,7 @@ impl Debug for RegReserve {
 pub struct RegReserveIter {
     reserve: RegReserve,
     current: usize,
+    len: usize,
 }
 
 impl IntoIterator for RegReserve {
@@ -291,7 +292,11 @@ impl IntoIterator for RegReserve {
     type IntoIter = RegReserveIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        RegReserveIter { reserve: self, current: 0 }
+        RegReserveIter {
+            reserve: self,
+            current: 0,
+            len: self.len(),
+        }
     }
 }
 
@@ -307,5 +312,16 @@ impl Iterator for RegReserveIter {
             }
         }
         None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+
+    fn count(self) -> usize
+    where
+        Self: Sized,
+    {
+        self.len
     }
 }

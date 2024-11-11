@@ -5,7 +5,7 @@ use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockInst, 
 use crate::jit::assembler::block_inst_list::BlockInstList;
 use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
 use crate::jit::assembler::block_reg_set::BlockRegSet;
-use crate::jit::assembler::{BlockAsmBuf, BlockInstKind, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift, ANY_REG_LIMIT};
+use crate::jit::assembler::{block_inst_list, BlockAsmBuf, BlockInstKind, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift, ANY_REG_LIMIT};
 use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
@@ -43,7 +43,7 @@ macro_rules! alu2_op0 {
 pub struct BlockAsm<'a> {
     pub buf: &'a mut BlockAsmBuf,
 
-    pub insts_link: BlockInstList,
+    insts_link: BlockInstList,
 
     any_reg_count: u16,
     freed_any_regs: NoHashSet<u16>,
@@ -801,6 +801,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> (Vec<BasicBlock>, NoHashSet<usize>) {
+        unsafe { block_inst_list::reset_inst_list_entries() };
         for i in 0..self.buf.insts.len() {
             self.insts_link.insert_end(i);
         }
@@ -941,7 +942,7 @@ impl<'a> BlockAsm<'a> {
             }
 
             basic_block.remove_dead_code(self);
-            // basic_block.consolidate_reg_io(self);
+            basic_block.consolidate_reg_io(self);
         }
 
         (basic_blocks, reachable_blocks)
@@ -972,7 +973,7 @@ impl<'a> BlockAsm<'a> {
         }
 
         self.buf.reg_allocator.dirty_regs.clear();
-        self.buf.reg_allocator.global_mapping.clear();
+        self.buf.reg_allocator.global_mapping.fill(Reg::None);
         let mut input_regs = BlockRegSet::new();
         for (i, basic_block) in basic_blocks.iter().enumerate() {
             if !reachable_blocks.contains(&i) {
@@ -983,7 +984,7 @@ impl<'a> BlockAsm<'a> {
         }
         let gp_guest_regs = input_regs.get_guests().get_gp_regs();
         for guest_reg in gp_guest_regs {
-            self.buf.reg_allocator.global_mapping.insert(guest_reg as u16, guest_reg);
+            self.buf.reg_allocator.global_mapping[guest_reg as usize] = guest_reg;
         }
 
         let mut non_input_guest_regs = input_regs;
@@ -991,7 +992,7 @@ impl<'a> BlockAsm<'a> {
         let mut free_input_regs = (!input_regs.get_guests()).get_gp_regs();
         for reg in non_input_guest_regs.iter_any() {
             let free_input_reg = free_input_regs.pop().unwrap_or(Reg::None);
-            self.buf.reg_allocator.global_mapping.insert(reg, free_input_reg);
+            self.buf.reg_allocator.global_mapping[reg as usize] = free_input_reg;
         }
 
         if IS_DEBUG && unsafe { BLOCK_LOG } {

@@ -13,6 +13,7 @@ mod handler {
     use crate::jit::reg::{Reg, RegReserve};
     use crate::jit::MemoryAmount;
     use crate::logging::debug_println;
+    use std::hint::unreachable_unchecked;
     use std::intrinsics::{likely, unlikely};
 
     pub fn handle_request<const CPU: CpuType, const WRITE: bool, const AMOUNT: MemoryAmount, const SIGNED: bool>(op0: &mut u32, addr: u32, emu: &mut Emu) {
@@ -81,7 +82,7 @@ mod handler {
                 *get_regs_mut!(emu, CPU).get_reg_mut(op0) += 0x40;
             }
             if CPU == CpuType::ARM7 {
-                todo!()
+                unsafe { unreachable_unchecked() }
             }
             return;
         }
@@ -135,7 +136,7 @@ mod handler {
         }
 
         if USER && unlikely(rlist.is_reserved(Reg::PC)) {
-            todo!("restore spsr")
+            unsafe { unreachable_unchecked() }
         }
     }
 
@@ -159,13 +160,7 @@ macro_rules! imm_breakout {
         $asm.runtime_data.accumulated_cycles += $total_cycles - $asm.runtime_data.pre_cycle_count_sum;
         crate::core::emu::get_regs_mut!($asm.emu, CPU).pc = $pc + if $thumb { 3 } else { 4 };
         crate::core::emu::get_mem_mut!($asm.emu).breakout_imm = false;
-        // r4-r12,pc since we need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions
-        std::arch::asm!(
-            "mov sp, {}",
-            "pop {{r4-r12,pc}}",
-            in(reg) $asm.runtime_data.host_sp
-        );
-        std::hint::unreachable_unchecked();
+        crate::jit::jit_asm_common_funs::exit_guest_context!($asm);
     }};
 }
 pub(super) use imm_breakout;

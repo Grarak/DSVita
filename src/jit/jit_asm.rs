@@ -7,15 +7,13 @@ use crate::jit::assembler::BlockAsmBuf;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_info::InstInfo;
-use crate::jit::jit_asm_common_funs::JitAsmCommonFuns;
+use crate::jit::jit_asm_common_funs::{exit_guest_context, JitAsmCommonFuns};
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, DEBUG_LOG, IS_DEBUG};
-use std::arch::asm;
 use std::cell::UnsafeCell;
-use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 use std::{mem, ptr};
 
@@ -117,15 +115,7 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) 
     bios::uninterrupt::<CPU>(asm.emu);
     if unlikely(get_cpu_regs!(asm.emu, CPU).is_halted()) {
         if !store_host_sp {
-            // r4-r12,pc since we need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions
-            unsafe {
-                asm!(
-                    "mov sp, {}",
-                    "pop {{r4-r12,pc}}",
-                    in(reg) asm.runtime_data.host_sp
-                );
-                unreachable_unchecked();
-            }
+            unsafe { exit_guest_context!(asm) };
         }
     } else {
         let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(get_regs!(asm.emu, CPU).pc);

@@ -92,7 +92,6 @@ impl BlockRegSet {
         BlockRegAnySetIter {
             block_reg_set: self,
             current: 0,
-            found: 0,
             len: self.len_any(),
         }
     }
@@ -101,7 +100,6 @@ impl BlockRegSet {
         BlockRegSetIter {
             block_reg_set: self,
             current: 0,
-            found: 0,
             len: self.0.len(),
         }
     }
@@ -254,7 +252,6 @@ impl<'a> Iterator for BlockRegFixedSetIter<'a> {
 pub struct BlockRegAnySetIter<'a> {
     block_reg_set: &'a BlockRegSet,
     current: u16,
-    found: usize,
     len: usize,
 }
 
@@ -262,25 +259,30 @@ impl Iterator for BlockRegAnySetIter<'_> {
     type Item = u16;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.found == self.len {
-            None
-        } else {
-            for i in self.current..ANY_REG_LIMIT {
-                if self.block_reg_set.contains(BlockReg::Any(i)) {
-                    self.current = i + 1;
-                    self.found += 1;
-                    return Some(i);
-                }
+        for i in self.current..ANY_REG_LIMIT {
+            if self.block_reg_set.contains(BlockReg::Any(i)) {
+                self.current = i + 1;
+                return Some(i);
             }
-            None
         }
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+
+    fn count(self) -> usize
+    where
+        Self: Sized,
+    {
+        self.len
     }
 }
 
 pub struct BlockRegSetIter<'a> {
     block_reg_set: &'a BlockRegSet,
     current: u16,
-    found: usize,
     len: usize,
 }
 
@@ -288,32 +290,37 @@ impl Iterator for BlockRegSetIter<'_> {
     type Item = BlockReg;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.found == self.len {
-            None
-        } else {
-            const LAST_FIXED: u16 = BlockReg::Fixed(Reg::SPSR).get_id();
-            const LAST_ANY: u16 = BlockReg::Any(ANY_REG_LIMIT - 1).get_id();
+        const LAST_FIXED: u16 = BlockReg::Fixed(Reg::SPSR).get_id();
+        const LAST_ANY: u16 = BlockReg::Any(ANY_REG_LIMIT - 1).get_id();
 
-            for i in self.current..=LAST_FIXED {
-                let reg = BlockReg::Fixed(Reg::from(i as u8));
-                if self.block_reg_set.contains(reg) {
-                    self.current = i + 1;
-                    self.found += 1;
-                    return Some(reg);
-                }
+        for i in self.current..=LAST_FIXED {
+            let reg = BlockReg::Fixed(Reg::from(i as u8));
+            if self.block_reg_set.contains(reg) {
+                self.current = i + 1;
+                return Some(reg);
             }
-            if self.current <= LAST_FIXED {
-                self.current = LAST_FIXED + 1;
-            }
-            for i in self.current..=LAST_ANY {
-                let reg = BlockReg::Any(i - LAST_FIXED - 1);
-                if self.block_reg_set.contains(reg) {
-                    self.current = i + 1;
-                    self.found += 1;
-                    return Some(reg);
-                }
-            }
-            None
         }
+        if self.current <= LAST_FIXED {
+            self.current = LAST_FIXED + 1;
+        }
+        for i in self.current..=LAST_ANY {
+            let reg = BlockReg::Any(i - LAST_FIXED - 1);
+            if self.block_reg_set.contains(reg) {
+                self.current = i + 1;
+                return Some(reg);
+            }
+        }
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+
+    fn count(self) -> usize
+    where
+        Self: Sized,
+    {
+        self.len
     }
 }

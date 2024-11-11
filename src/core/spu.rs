@@ -79,13 +79,13 @@ pub struct SoundCnt {
     not_used: u1,
     pub volume_div: u2,
     not_used1: u5,
-    pub hold: u1,
+    pub hold: bool,
     pub panning: u7,
     not_used2: u1,
     pub wave_duty: u3,
     pub repeat_mode: u2,
     pub format: u2,
-    pub start_status: u1,
+    pub start_status: bool,
 }
 
 impl SoundCnt {
@@ -123,10 +123,10 @@ pub struct MainSoundCnt {
     not_used: u1,
     pub left_output_from: u2,
     pub right_output_from: u2,
-    pub output_ch1_to_mixer: u1,
-    pub output_ch3_to_mixer: u1,
+    pub output_ch1_to_mixer: bool,
+    pub output_ch3_to_mixer: bool,
     not_used2: u1,
-    pub master_enable: u1,
+    pub master_enable: bool,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -159,12 +159,12 @@ struct AdpcmHeader {
 #[bitsize(8)]
 #[derive(FromBits)]
 pub struct SoundCapCnt {
-    pub cnt_associated_channels: u1,
-    pub cap_src_select: u1,
-    pub cap_repeat: u1,
-    pub cap_format: u1,
+    pub cnt_associated_channels: bool,
+    pub cap_src_select: bool,
+    pub cap_repeat: bool,
+    pub cap_format: bool,
     not_used: u3,
-    pub cap_start_status: u1,
+    pub cap_start_status: bool,
 }
 
 pub struct Spu {
@@ -211,7 +211,7 @@ impl Spu {
     }
 
     pub fn set_cnt(&mut self, channel: usize, mut mask: u32, value: u32, emu: &mut Emu) {
-        let was_disabled = !bool::from(self.channels[channel].cnt.start_status());
+        let was_disabled = !self.channels[channel].cnt.start_status();
 
         mask &= 0xFF7F837F;
         self.channels[channel].cnt = ((u32::from(self.channels[channel].cnt) & !mask) | (value & mask)).into();
@@ -222,12 +222,12 @@ impl Spu {
         self.channels[channel].volume = volume;
 
         if was_disabled
-            && bool::from(self.channels[channel].cnt.start_status())
-            && bool::from(self.main_sound_cnt.master_enable())
+            && self.channels[channel].cnt.start_status()
+            && self.main_sound_cnt.master_enable()
             && (self.channels[channel].sad != 0 || self.channels[channel].cnt.get_format() == SoundChannelFormat::PsgNoise)
         {
             self.start_channel(channel, emu);
-        } else if !bool::from(self.channels[channel].cnt.start_status()) {
+        } else if !self.channels[channel].cnt.start_status() {
             self.channels[channel].active = false;
         }
     }
@@ -237,7 +237,7 @@ impl Spu {
         self.channels[channel].sad = (self.channels[channel].sad & !mask) | (value & mask);
 
         if self.channels[channel].cnt.get_format() != SoundChannelFormat::PsgNoise {
-            if self.channels[channel].sad != 0 && (bool::from(self.main_sound_cnt.master_enable()) && bool::from(self.channels[channel].cnt.start_status())) {
+            if self.channels[channel].sad != 0 && (self.main_sound_cnt.master_enable() && self.channels[channel].cnt.start_status()) {
                 self.start_channel(channel, emu);
             } else {
                 self.channels[channel].active = false;
@@ -259,7 +259,7 @@ impl Spu {
     }
 
     pub fn set_main_sound_cnt(&mut self, mut mask: u16, value: u16, emu: &mut Emu) {
-        let was_disabled = !bool::from(self.main_sound_cnt.master_enable());
+        let was_disabled = !self.main_sound_cnt.master_enable();
 
         mask &= 0xBF7F;
         self.main_sound_cnt = ((u16::from(self.main_sound_cnt) & !mask) | (value & mask)).into();
@@ -269,13 +269,13 @@ impl Spu {
         }
         self.master_volume = volume;
 
-        if was_disabled && bool::from(self.main_sound_cnt.master_enable()) {
+        if was_disabled && self.main_sound_cnt.master_enable() {
             for i in 0..CHANNEL_COUNT {
-                if bool::from(self.channels[i].cnt.start_status()) && (self.channels[i].sad != 0 || self.channels[i].cnt.get_format() == SoundChannelFormat::PsgNoise) {
+                if self.channels[i].cnt.start_status() && (self.channels[i].sad != 0 || self.channels[i].cnt.get_format() == SoundChannelFormat::PsgNoise) {
                     self.start_channel(i, emu);
                 }
             }
-        } else if !bool::from(self.main_sound_cnt.master_enable()) {
+        } else if !self.main_sound_cnt.master_enable() {
             for channel in &mut self.channels {
                 channel.active = false;
             }
@@ -401,7 +401,7 @@ impl Spu {
 
         if unlikely(!get_spu!(emu).audio_enabled) {
             for i in 0..CHANNEL_COUNT {
-                get_channel_mut!(emu, i).cnt.set_start_status(u1::new(0));
+                get_channel_mut!(emu, i).cnt.set_start_status(false);
             }
             let spu = get_spu_mut!(emu);
             spu.samples_buffer.push(0);
@@ -466,7 +466,7 @@ impl Spu {
                             channel.adpcm_toggle = false;
                         }
                     } else {
-                        channel.cnt.set_start_status(u1::new(0));
+                        channel.cnt.set_start_status(false);
                         channel.active = false;
                         break;
                     }
@@ -492,13 +492,13 @@ impl Spu {
             if i == 1 {
                 channels_left[0] = data_left;
                 channels_right[0] = data_right;
-                if bool::from(get_spu!(emu).main_sound_cnt.output_ch1_to_mixer()) {
+                if get_spu!(emu).main_sound_cnt.output_ch1_to_mixer() {
                     continue;
                 }
             } else if i == 3 {
                 channels_left[1] = data_left;
                 channels_right[1] = data_right;
-                if bool::from(get_spu!(emu).main_sound_cnt.output_ch3_to_mixer()) {
+                if get_spu!(emu).main_sound_cnt.output_ch3_to_mixer() {
                     continue;
                 }
             }

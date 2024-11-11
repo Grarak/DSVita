@@ -1387,13 +1387,13 @@ impl Gpu3DRegisters {
             self.queue_entry(Entry::new(self.gx_fifo as u8, value & mask), emu);
             self.cmd_fifo_param_count += 1;
 
-            if self.cmd_fifo_param_count == FIFO_PARAM_COUNTS[(self.gx_fifo & 0xFF) as usize] as u32 {
+            if self.cmd_fifo_param_count == unsafe { *FIFO_PARAM_COUNTS.get_unchecked((self.gx_fifo & 0xFF) as usize) } as u32 {
                 self.gx_fifo >>= 8;
                 self.cmd_fifo_param_count = 0;
             }
         }
 
-        while self.gx_fifo != 0 && FIFO_PARAM_COUNTS[(self.gx_fifo & 0xFF) as usize] == 0 {
+        while self.gx_fifo != 0 && unsafe { *FIFO_PARAM_COUNTS.get_unchecked((self.gx_fifo & 0xFF) as usize) } == 0 {
             self.queue_entry(Entry::new(self.gx_fifo as u8, value & mask), emu);
             self.gx_fifo >>= 8;
         }

@@ -5,7 +5,7 @@ use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockReg, ANY_REG_LIMIT};
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::MemoryAmount;
-use crate::utils::{HeapMem, NoHashMap};
+use crate::utils::HeapMem;
 use std::hint::unreachable_unchecked;
 
 const DEBUG: bool = true;
@@ -14,7 +14,7 @@ pub const ALLOCATION_REGS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg::R6, 
 const SCRATCH_REGS: RegReserve = reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR);
 
 pub struct BlockRegAllocator {
-    pub global_mapping: NoHashMap<u16, Reg>,
+    pub global_mapping: HeapMem<Reg, { ANY_REG_LIMIT as usize }>,
     stored_mapping: HeapMem<Reg, { ANY_REG_LIMIT as usize }>, // mappings to real registers
     stored_mapping_reverse: [Option<u16>; Reg::PC as usize],
     spilled: BlockRegSet,
@@ -25,7 +25,7 @@ pub struct BlockRegAllocator {
 impl BlockRegAllocator {
     pub fn new() -> Self {
         BlockRegAllocator {
-            global_mapping: NoHashMap::default(),
+            global_mapping: HeapMem::new(),
             stored_mapping: HeapMem::new(),
             stored_mapping_reverse: [None; Reg::PC as usize],
             spilled: BlockRegSet::new(),
@@ -39,11 +39,9 @@ impl BlockRegAllocator {
         self.stored_mapping_reverse.fill(None);
         self.spilled.clear();
         for any_input_reg in input_regs.iter_any() {
-            if let Some(&global_mapping) = self.global_mapping.get(&any_input_reg) {
-                match global_mapping {
-                    Reg::None => self.spilled += BlockReg::Any(any_input_reg),
-                    _ => self.set_stored_mapping(any_input_reg, global_mapping),
-                }
+            match self.global_mapping[any_input_reg as usize] {
+                Reg::None => self.spilled += BlockReg::Any(any_input_reg),
+                global_mapping => self.set_stored_mapping(any_input_reg, global_mapping),
             }
         }
     }
@@ -374,7 +372,7 @@ impl BlockRegAllocator {
         self.pre_allocate_insts.clear();
 
         for output_reg in output_regs.iter_any() {
-            match *self.global_mapping.get(&output_reg).unwrap() {
+            match self.global_mapping[output_reg as usize] {
                 Reg::None => {
                     let stored_mapping = self.stored_mapping[output_reg as usize];
                     if stored_mapping != Reg::None {
@@ -394,7 +392,7 @@ impl BlockRegAllocator {
                         // Some other any reg is using the desired reg
                         if output_regs.contains(BlockReg::Any(currently_used_by)) {
                             // other any reg is part of required output
-                            match self.global_mapping.get(&currently_used_by).unwrap() {
+                            match self.global_mapping[currently_used_by as usize] {
                                 Reg::None => {
                                     // other any reg is part of predetermined spilled
                                     self.remove_stored_mapping(currently_used_by);

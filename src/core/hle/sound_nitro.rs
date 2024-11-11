@@ -217,7 +217,7 @@ impl SoundNitro {
 
         let mut main_cnt = MainSoundCnt::from(0);
         main_cnt.set_master_volume(u7::new(0x7F));
-        main_cnt.set_master_enable(u1::new(1));
+        main_cnt.set_master_enable(true);
         get_spu_mut!(emu).set_main_sound_cnt(!0, u16::from(main_cnt), emu);
 
         get_cm_mut!(emu).schedule(174592, EventType::SoundCmdHle);
@@ -247,9 +247,9 @@ impl SoundNitro {
     fn stop_channel(chan_id: usize, hold: bool, emu: &mut Emu) {
         let spu = get_spu_mut!(emu);
         let mut cnt = SoundCnt::from(spu.get_cnt(chan_id));
-        cnt.set_start_status(u1::new(0));
+        cnt.set_start_status(false);
         if hold {
-            cnt.set_hold(u1::new(1));
+            cnt.set_hold(true);
         }
         spu.set_cnt(chan_id, !0, u32::from(cnt), emu);
     }
@@ -488,7 +488,7 @@ impl SoundNitro {
             if channel.status_flags & (1 << 3) != 0 {
                 let spu = get_spu_mut!(emu);
                 let mut cnt = SoundCnt::from(spu.get_cnt(i));
-                cnt.set_start_status(u1::new(1));
+                cnt.set_start_status(true);
                 spu.set_cnt(i, !0, u32::from(cnt), emu);
             }
 
@@ -803,21 +803,21 @@ impl SoundNitro {
 
                             let spu = get_spu_mut!(emu);
                             let mut cnt = SoundCnt::from(spu.get_cnt(i));
-                            cnt.set_start_status(u1::new(1));
+                            cnt.set_start_status(true);
                             spu.set_cnt(i, !0, u32::from(cnt), emu);
                         }
 
                         if mask_cap & 0x1 != 0 {
                             let spu = get_spu_mut!(emu);
                             let mut cap_cnt = SoundCapCnt::from(spu.get_snd_cap_cnt(0));
-                            cap_cnt.set_cap_start_status(u1::new(1));
+                            cap_cnt.set_cap_start_status(true);
                             spu.set_snd_cap_cnt(0, u8::from(cap_cnt));
                         }
 
                         if mask_cap & 0x2 != 0 {
                             let spu = get_spu_mut!(emu);
                             let mut cap_cnt = SoundCapCnt::from(spu.get_snd_cap_cnt(1));
-                            cap_cnt.set_cap_start_status(u1::new(1));
+                            cap_cnt.set_cap_start_status(true);
                             spu.set_snd_cap_cnt(1, u8::from(cap_cnt));
                         }
 
@@ -1008,11 +1008,11 @@ impl SoundNitro {
 
                         let spu = get_spu_mut!(emu);
                         let mut cnt = MainSoundCnt::from(spu.get_main_sound_cnt());
-                        cnt.set_master_enable(u1::new(1));
+                        cnt.set_master_enable(true);
                         cnt.set_left_output_from(u2::new((output_l & 0x3) as u8));
                         cnt.set_right_output_from(u2::new((output_r & 0x3) as u8));
-                        cnt.set_output_ch1_to_mixer(u1::new((mixch1 & 0x1) as u8));
-                        cnt.set_output_ch3_to_mixer(u1::new((mixch3 & 0x1) as u8));
+                        cnt.set_output_ch1_to_mixer((mixch1 & 0x1) != 0);
+                        cnt.set_output_ch3_to_mixer((mixch3 & 0x1) != 0);
                         spu.set_main_sound_cnt(!0, u16::from(cnt), emu);
                     }
                     0x1A => {}

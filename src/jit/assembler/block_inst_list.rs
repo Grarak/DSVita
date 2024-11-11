@@ -1,30 +1,29 @@
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::intrinsics::unlikely;
 use std::marker::PhantomData;
-use std::ptr;
+use std::{mem, ptr};
 
+static mut USABLE_ENTRIES: Vec<*mut BlockInstListEntry> = Vec::new();
+static mut USABLE_ENTRIES_INDEX: usize = 0;
+
+pub unsafe fn reset_inst_list_entries() {
+    USABLE_ENTRIES_INDEX = 0;
+}
+
+#[derive(Copy, Clone)]
 pub struct BlockInstListEntry {
     pub value: usize,
     pub previous: *mut BlockInstListEntry,
     pub next: *mut BlockInstListEntry,
 }
 
+impl Default for BlockInstListEntry {
+    fn default() -> Self {
+        unsafe { mem::zeroed() }
+    }
+}
+
 impl BlockInstListEntry {
-    fn alloc(value: usize) -> *mut Self {
-        unsafe {
-            let entry = System.alloc(Layout::new::<BlockInstListEntry>()) as *mut BlockInstListEntry;
-            entry.write(BlockInstListEntry {
-                value,
-                previous: ptr::null_mut(),
-                next: ptr::null_mut(),
-            });
-            entry
-        }
-    }
-
-    fn dealloc(entry: *mut Self) {
-        unsafe { System.dealloc(entry as _, Layout::new::<BlockInstListEntry>()) }
-    }
-
     fn insert_begin(&mut self, new_next: *mut BlockInstListEntry) {
         if !self.previous.is_null() {
             unsafe {
@@ -76,8 +75,24 @@ impl BlockInstList {
         }
     }
 
+    fn new_entry(&mut self, value: usize) -> *mut BlockInstListEntry {
+        unsafe {
+            if USABLE_ENTRIES_INDEX == USABLE_ENTRIES.len() {
+                let entry = System.alloc(Layout::new::<BlockInstListEntry>()) as *mut BlockInstListEntry;
+                entry.write(BlockInstListEntry::default());
+                USABLE_ENTRIES.push(entry);
+            }
+            let entry = USABLE_ENTRIES[USABLE_ENTRIES_INDEX];
+            (*entry).value = value;
+            (*entry).previous = ptr::null_mut();
+            (*entry).next = ptr::null_mut();
+            USABLE_ENTRIES_INDEX += 1;
+            entry
+        }
+    }
+
     pub fn insert_begin(&mut self, value: usize) -> *mut BlockInstListEntry {
-        let new_entry = BlockInstListEntry::alloc(value);
+        let new_entry = self.new_entry(value);
         self.size += 1;
         if self.root.is_null() && self.end.is_null() {
             self.root = new_entry;
@@ -94,7 +109,7 @@ impl BlockInstList {
     }
 
     pub fn insert_entry_begin(&mut self, entry: *mut BlockInstListEntry, value: usize) -> *mut BlockInstListEntry {
-        let new_entry = BlockInstListEntry::alloc(value);
+        let new_entry = self.new_entry(value);
         self.size += 1;
         unsafe { (*entry).insert_begin(new_entry) };
 
@@ -106,7 +121,8 @@ impl BlockInstList {
     }
 
     pub fn insert_entry_end(&mut self, entry: *mut BlockInstListEntry, value: usize) -> *mut BlockInstListEntry {
-        let new_entry = BlockInstListEntry::alloc(value);
+        let new_entry = self.new_entry(value);
+
         self.size += 1;
         unsafe { (*entry).insert_end(new_entry) };
 
@@ -118,7 +134,7 @@ impl BlockInstList {
     }
 
     pub fn insert_end(&mut self, value: usize) -> *mut BlockInstListEntry {
-        let new_entry = BlockInstListEntry::alloc(value);
+        let new_entry = self.new_entry(value);
         self.size += 1;
         if self.root.is_null() && self.end.is_null() {
             self.root = new_entry;
@@ -145,7 +161,6 @@ impl BlockInstList {
             }
             (*entry).remove();
         }
-        BlockInstListEntry::dealloc(entry);
     }
 
     pub fn iter(&self) -> BlockIntListIter {
@@ -177,20 +192,6 @@ impl BlockInstList {
     }
 }
 
-impl Drop for BlockInstList {
-    fn drop(&mut self) {
-        let mut current = self.root;
-        let mut freed_count = 0;
-        while !current.is_null() {
-            let next = unsafe { (*current).next };
-            BlockInstListEntry::dealloc(current);
-            current = next;
-            freed_count += 1;
-        }
-        assert_eq!(self.size, freed_count);
-    }
-}
-
 pub struct BlockIntListIter<'a> {
     entry: *mut BlockInstListEntry,
     size: usize,
@@ -201,13 +202,17 @@ impl<'a> Iterator for BlockIntListIter<'a> {
     type Item = &'a BlockInstListEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.entry.is_null() {
+        if unlikely(self.entry.is_null()) {
             None
         } else {
             let entry = unsafe { self.entry.as_ref() };
             self.entry = entry?.next;
             entry
         }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.size, Some(self.size))
     }
 
     fn count(self) -> usize
@@ -235,6 +240,10 @@ impl<'a> Iterator for BlockIntListRevIter<'a> {
             self.entry = entry?.previous;
             entry
         }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.size, Some(self.size))
     }
 
     fn count(self) -> usize

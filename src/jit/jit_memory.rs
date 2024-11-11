@@ -313,6 +313,7 @@ impl JitMemory {
         unsafe { (*self.jit_memory_map.get_jit_entry::<CPU>(guest_pc)).0 }
     }
 
+    #[inline(never)]
     pub fn invalidate_block<const REGION: JitRegion>(&mut self, guest_addr: u32, size: usize) {
         macro_rules! invalidate {
             ($guest_addr:expr, $cpu:expr, [$($cpu_entry:expr),+]) => {{

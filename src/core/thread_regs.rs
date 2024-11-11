@@ -129,6 +129,7 @@ impl ThreadRegs {
         }
     }
 
+    #[inline]
     pub fn set_cpsr_with_flags(&mut self, value: u32, flags: u8, emu: &mut Emu) {
         if flags & 1 == 1 {
             let mask = if u8::from(Cpsr::from(self.cpsr).mode()) == 0x10 { 0xE0 } else { 0xFF };
@@ -143,6 +144,7 @@ impl ThreadRegs {
         }
     }
 
+    #[inline]
     pub fn set_spsr_with_flags(&mut self, value: u32, flags: u8) {
         if DEBUG_LOG {
             let mode = u8::from(Cpsr::from(self.cpsr).mode());
@@ -158,6 +160,7 @@ impl ThreadRegs {
         }
     }
 
+    #[inline]
     pub fn restore_spsr(&mut self, emu: &mut Emu) {
         if !self.is_user {
             self.set_cpsr::<false>(self.spsr, emu);

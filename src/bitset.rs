@@ -12,21 +12,21 @@ impl<const SIZE: usize> Bitset<SIZE> {
         let bit = bit.into();
         let array_index = bit >> 5;
         let pos_index = bit & 31;
-        self.0[array_index] |= 1 << pos_index;
+        unsafe { *self.0.get_unchecked_mut(array_index) |= 1 << pos_index };
     }
 
     fn _sub(&mut self, bit: impl Into<usize>) {
         let bit = bit.into();
         let array_index = bit >> 5;
         let pos_index = bit & 31;
-        self.0[array_index] &= !(1 << pos_index);
+        unsafe { *self.0.get_unchecked_mut(array_index) &= !(1 << pos_index) };
     }
 
     pub fn contains(&self, bit: impl Into<usize>) -> bool {
         let bit = bit.into();
         let array_index = bit >> 5;
         let pos_index = bit & 31;
-        self.0[array_index] & (1 << pos_index) != 0
+        unsafe { *self.0.get_unchecked(array_index) & (1 << pos_index) != 0 }
     }
 
     pub const fn len(&self) -> usize {
