@@ -596,8 +596,8 @@ impl BlockInstKind {
     fn save_guest_cpsr(opcodes: &mut Vec<u32>, thread_regs_addr_reg: Reg, host_reg: Reg) {
         opcodes.push(Mrs::cpsr(host_reg, Cond::AL));
         // Only copy the cond flags from host cpsr
-        opcodes.push(AluShiftImm::mov(host_reg, host_reg, ShiftType::Lsr, 16, Cond::AL));
-        opcodes.push(LdrStrImmSBHD::strh(host_reg, thread_regs_addr_reg, Reg::CPSR as u8 * 4 + 2, Cond::AL));
+        opcodes.push(AluShiftImm::mov(host_reg, host_reg, ShiftType::Lsr, 24, Cond::AL));
+        opcodes.push(LdrStrImm::strb_offset_al(host_reg, thread_regs_addr_reg, Reg::CPSR as u16 * 4 + 3));
     }
 
     pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize, used_host_regs: RegReserve) {
