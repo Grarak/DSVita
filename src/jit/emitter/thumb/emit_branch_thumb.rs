@@ -80,8 +80,12 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         let inst_info = self.jit_buf.current_inst();
 
         let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
+        let target_pc_reg = block_asm.new_reg();
+        block_asm.mov(target_pc_reg, op0);
 
         block_asm.mov(Reg::LR, self.jit_buf.current_pc + 3);
-        self.emit_branch_reg_common(block_asm, op0.into(), true);
+        self.emit_branch_reg_common(block_asm, target_pc_reg, true);
+
+        block_asm.free_reg(target_pc_reg);
     }
 }

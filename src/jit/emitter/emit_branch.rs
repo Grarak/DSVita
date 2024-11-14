@@ -158,10 +158,15 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
     pub fn emit_blx(&mut self, block_asm: &mut BlockAsm) {
         let inst_info = self.jit_buf.current_inst();
-        let target_pc_reg = *inst_info.operands()[0].as_reg_no_shift().unwrap();
+        let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
+
+        let target_pc_reg = block_asm.new_reg();
+        block_asm.mov(target_pc_reg, op0);
 
         block_asm.mov(Reg::LR, self.jit_buf.current_pc + 4);
-        self.emit_branch_reg_common(block_asm, target_pc_reg.into(), true);
+        self.emit_branch_reg_common(block_asm, target_pc_reg, true);
+
+        block_asm.free_reg(target_pc_reg);
     }
 
     pub fn emit_branch_reg_common(&mut self, block_asm: &mut BlockAsm, target_pc_reg: BlockReg, has_lr_return: bool) {
