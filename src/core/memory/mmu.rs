@@ -200,17 +200,24 @@ impl MmuArm9Inner {
                     *mmu_read = ITCM_REGION.shm_offset + addr_offset;
                     *mmu_write = ITCM_REGION.shm_offset + addr_offset;
                     self.vmem_tcm
-                        .create_page_map(shm, ITCM_REGION.shm_offset, base_addr as usize, ITCM_REGION.size, addr as usize, MMU_PAGE_SIZE, ITCM_REGION.allow_write)
+                        .create_page_map(shm, ITCM_REGION.shm_offset, base_addr as usize, ITCM_REGION.size, addr as usize, MMU_PAGE_SIZE, true)
                         .unwrap();
                 }
-            } else if addr >= cp15.dtcm_addr && addr < cp15.dtcm_addr + cp15.dtcm_size && cp15.dtcm_state == TcmState::RW {
-                let addr_offset = (addr as usize) & (DTCM_REGION.size - 1);
-                *mmu_read = DTCM_REGION.shm_offset + addr_offset;
-                *mmu_write = DTCM_REGION.shm_offset + addr_offset;
-                self.vmem_tcm.destroy_map(base_addr as usize, MMU_PAGE_SIZE);
-                self.vmem_tcm
-                    .create_page_map(shm, DTCM_REGION.shm_offset, base_addr as usize, DTCM_REGION.size, addr as usize, MMU_PAGE_SIZE, DTCM_REGION.allow_write)
-                    .unwrap();
+            } else if addr >= cp15.dtcm_addr && addr < cp15.dtcm_addr + cp15.dtcm_size {
+                if cp15.dtcm_state == TcmState::RW {
+                    let base_addr = addr - cp15.dtcm_addr;
+                    let addr_offset = (base_addr as usize) & (DTCM_REGION.size - 1);
+                    *mmu_read = DTCM_REGION.shm_offset + addr_offset;
+                    *mmu_write = DTCM_REGION.shm_offset + addr_offset;
+                    self.vmem_tcm.destroy_map(addr as usize, MMU_PAGE_SIZE);
+                    self.vmem_tcm
+                        .create_page_map(shm, DTCM_REGION.shm_offset, addr_offset, DTCM_REGION.size, addr as usize, MMU_PAGE_SIZE, true)
+                        .unwrap();
+                } else if cp15.dtcm_state == TcmState::W {
+                    *mmu_read = 0;
+                    *mmu_write = 0;
+                    self.vmem_tcm.destroy_map(addr as usize, MMU_PAGE_SIZE);
+                }
             }
         }
 

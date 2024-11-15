@@ -96,8 +96,40 @@ impl Memory {
         let addr_base = aligned_addr & 0x0F000000;
         let addr_offset = aligned_addr & !0xFF000000;
 
+        if CPU == ARM9 && TCM {
+            let cp15 = get_cp15!(emu, ARM9);
+            if unlikely(aligned_addr >= cp15.dtcm_addr && aligned_addr < cp15.dtcm_addr + cp15.dtcm_size && cp15.dtcm_state == TcmState::RW) {
+                let addr = aligned_addr - cp15.dtcm_addr;
+                let ret: T = utils::read_from_mem(&self.shm, regions::DTCM_REGION.shm_offset as u32 + (addr & (regions::DTCM_SIZE - 1)));
+                debug_println!("{:?} dtcm read at {:x} with value {:x}", CPU, aligned_addr, ret.into());
+                return ret;
+            }
+        }
+
         let ret = match addr_base {
-            regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => T::from(0),
+            regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => match CPU {
+                ARM9 => {
+                    let mut ret = T::from(0);
+                    if TCM {
+                        let cp15 = get_cp15!(emu, ARM9);
+                        if aligned_addr < cp15.itcm_size && cp15.itcm_state == TcmState::RW {
+                            debug_println!("{:?} itcm read at {:x}", CPU, aligned_addr);
+                            ret = utils::read_from_mem(&self.shm, regions::ITCM_REGION.shm_offset as u32 + (aligned_addr & (regions::ITCM_SIZE - 1)));
+                        }
+                    }
+                    ret
+                }
+                // Bios of arm7 has same offset as itcm on arm9
+                ARM7 => {
+                    if aligned_addr < regions::ARM7_BIOS_SIZE {
+                        T::from(0)
+                    } else {
+                        unsafe { unreachable_unchecked() }
+                    }
+                }
+            },
+            regions::MAIN_OFFSET => utils::read_from_mem(&self.shm, regions::MAIN_REGION.shm_offset as u32 + (aligned_addr & (regions::MAIN_SIZE - 1))),
+            regions::SHARED_WRAM_OFFSET => utils::read_from_mem(&self.shm, self.wram.get_shm_offset::<CPU>(aligned_addr) as u32),
             regions::IO_PORTS_OFFSET => match CPU {
                 ARM9 => self.io_arm9.read(addr_offset, emu),
                 ARM7 => {
@@ -117,7 +149,10 @@ impl Memory {
             regions::VRAM_OFFSET => self.vram.read::<CPU, _>(addr_offset),
             regions::OAM_OFFSET => self.oam.read(addr_offset),
             regions::GBA_ROM_OFFSET | regions::GBA_ROM_OFFSET2 | regions::GBA_RAM_OFFSET => T::from(0xFFFFFFFF),
-            0x0F000000 => T::from(0),
+            0x0F000000 => match CPU {
+                ARM9 => T::from(0),
+                ARM7 => unsafe { unreachable_unchecked() },
+            },
             _ => {
                 if IS_DEBUG {
                     unreachable!("{CPU:?} {aligned_addr:x} tcm: {TCM}")
@@ -143,9 +178,7 @@ impl Memory {
     fn write_internal<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, value: T, emu: &mut Emu) {
         debug_println!("{:?} memory write at {:x} with value {:x}", CPU, addr, value.into());
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
-
-        let addr_base = aligned_addr & 0x0F000000;
-        let addr_offset = aligned_addr & !0xFF000000;
+        let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
         let mmu = {
             let mmu = get_mem_mmu!(self, CPU);
@@ -178,6 +211,9 @@ impl Memory {
                 return;
             }
         }
+
+        let addr_base = aligned_addr & 0x0F000000;
+        let addr_offset = aligned_addr & !0xFF000000;
 
         match addr_base {
             regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => match CPU {
