@@ -138,6 +138,62 @@ macro_rules! io_timers_mut {
 }
 pub(crate) use io_timers_mut;
 
+macro_rules! io_div_sqrt {
+    ($emu:expr) => {{
+        &crate::core::emu::get_mem!($emu).io_arm9.div_sqrt
+    }};
+}
+pub(crate) use io_div_sqrt;
+
+macro_rules! io_div_sqrt_mut {
+    ($emu:expr) => {{
+        &mut crate::core::emu::get_mem_mut!($emu).io_arm9.div_sqrt
+    }};
+}
+pub(crate) use io_div_sqrt_mut;
+
+macro_rules! io_spi {
+    ($emu:expr) => {{
+        &crate::core::emu::get_mem!($emu).io_arm7.spi
+    }};
+}
+pub(crate) use io_spi;
+
+macro_rules! io_spi_mut {
+    ($emu:expr) => {{
+        &mut crate::core::emu::get_mem_mut!($emu).io_arm7.spi
+    }};
+}
+pub(crate) use io_spi_mut;
+
+macro_rules! io_rtc {
+    ($emu:expr) => {{
+        &crate::core::emu::get_mem!($emu).io_arm7.rtc
+    }};
+}
+pub(crate) use io_rtc;
+
+macro_rules! io_rtc_mut {
+    ($emu:expr) => {{
+        &mut crate::core::emu::get_mem_mut!($emu).io_arm7.rtc
+    }};
+}
+pub(crate) use io_rtc_mut;
+
+macro_rules! io_wifi {
+    ($emu:expr) => {{
+        &crate::core::emu::get_mem!($emu).io_arm7.wifi
+    }};
+}
+pub(crate) use io_wifi;
+
+macro_rules! io_wifi_mut {
+    ($emu:expr) => {{
+        &mut crate::core::emu::get_mem_mut!($emu).io_arm7.wifi
+    }};
+}
+pub(crate) use io_wifi_mut;
+
 macro_rules! get_cm {
     ($emu:expr) => {
         &crate::core::emu::get_common!($emu).cycle_manager

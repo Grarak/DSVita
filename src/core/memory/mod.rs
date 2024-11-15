@@ -11,3 +11,5 @@ pub mod regions;
 pub mod vram;
 mod wifi;
 pub mod wram;
+mod io_arm9_lut;
+mod io_arm7_lut;

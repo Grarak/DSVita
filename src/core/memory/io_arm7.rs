@@ -1,24 +1,24 @@
-use crate::core::emu::{get_cm, get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, Emu};
+use crate::core::emu::Emu;
 use crate::core::memory::dma::Dma;
+use crate::core::memory::io_arm7_lut::{IoArm7ReadLut, IoArm7ReadLutUpper, IoArm7ReadLutWifi, IoArm7WriteLut, IoArm7WriteLutWifi};
 use crate::core::rtc::Rtc;
 use crate::core::spi::Spi;
 use crate::core::spu::{SoundSampler, Spu};
 use crate::core::timers::Timers;
-use crate::core::wifi::{PaketType, Wifi};
+use crate::core::wifi::Wifi;
 use crate::core::CpuType::ARM7;
-use crate::logging::debug_println;
 use crate::utils::Convert;
-use dsvita_macros::{io_ports_read, io_ports_write};
+use std::intrinsics::likely;
 use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 
 pub struct IoArm7 {
     pub spi: Spi,
-    rtc: Rtc,
+    pub rtc: Rtc,
     pub spu: Spu,
     pub dma: Dma,
     pub timers: Timers,
-    wifi: Wifi,
+    pub wifi: Wifi,
 }
 
 impl IoArm7 {
@@ -34,379 +34,22 @@ impl IoArm7 {
     }
 
     pub fn read<T: Convert>(&mut self, addr_offset: u32, emu: &mut Emu) -> T {
-        /*
-         * Use moving windows to handle reads and writes
-         * |0|0|0|  x  |   x   |   x   |   x   |0|0|0|
-         *         addr   + 1     + 2     + 3
-         */
-        let mut bytes_window = [0u8; 10];
-
-        let mut addr_offset_tmp = addr_offset;
-        let mut index = 3usize;
-        let common = get_common_mut!(emu);
-        while (index - 3) < size_of::<T>() {
-            io_ports_read!(match addr_offset + (index - 3) as u32 {
-                io16(0x4) => common.gpu.get_disp_stat::<{ ARM7 }>(),
-                io16(0x6) => common.gpu.v_count,
-                io32(0xB0) => self.dma.get_sad::<0>(),
-                io32(0xB4) => self.dma.get_dad::<0>(),
-                io32(0xB8) => self.dma.get_cnt::<0>(),
-                io32(0xBC) => self.dma.get_sad::<1>(),
-                io32(0xC0) => self.dma.get_dad::<1>(),
-                io32(0xC4) => self.dma.get_cnt::<1>(),
-                io32(0xC8) => self.dma.get_sad::<2>(),
-                io32(0xCC) => self.dma.get_dad::<2>(),
-                io32(0xD0) => self.dma.get_cnt::<2>(),
-                io32(0xD4) => self.dma.get_sad::<3>(),
-                io32(0xD8) => self.dma.get_dad::<3>(),
-                io32(0xDC) => self.dma.get_cnt::<3>(),
-                io16(0x100) => self.timers.get_cnt_l::<0>(get_cm!(emu)),
-                io16(0x102) => self.timers.get_cnt_h::<0>(),
-                io16(0x104) => self.timers.get_cnt_l::<1>(get_cm!(emu)),
-                io16(0x106) => self.timers.get_cnt_h::<1>(),
-                io16(0x108) => self.timers.get_cnt_l::<2>(get_cm!(emu)),
-                io16(0x10A) => self.timers.get_cnt_h::<2>(),
-                io16(0x10C) => self.timers.get_cnt_l::<3>(get_cm!(emu)),
-                io16(0x10E) => self.timers.get_cnt_h::<3>(),
-                io16(0x130) => common.input.get_key_input(),
-                io16(0x136) => common.input.get_ext_key_in(),
-                io8(0x138) => self.rtc.get_rtc(),
-                io16(0x180) => common.ipc.get_sync_reg::<{ ARM7 }>(),
-                io16(0x184) => common.ipc.get_fifo_cnt::<{ ARM7 }>(),
-                io16(0x1A0) => common.cartridge.get_aux_spi_cnt::<{ ARM7 }>(),
-                io8(0x1A2) => common.cartridge.get_aux_spi_data::<{ ARM7 }>(),
-                io32(0x1A4) => common.cartridge.get_rom_ctrl::<{ ARM7 }>(),
-                io16(0x1C0) => self.spi.cnt,
-                io8(0x1C2) => self.spi.data,
-                io8(0x208) => get_cpu_regs!(emu, ARM7).ime,
-                io32(0x210) => get_cpu_regs!(emu, ARM7).ie,
-                io32(0x214) => get_cpu_regs!(emu, ARM7).irf,
-                io8(0x240) => get_mem!(emu).vram.stat,
-                io8(0x241) => get_mem!(emu).wram.cnt,
-                io8(0x300) => get_cpu_regs!(emu, ARM7).post_flg,
-                io8(0x301) => get_cpu_regs!(emu, ARM7).halt_cnt,
-                io32(0x400) => self.spu.get_cnt(0),
-                io32(0x410) => self.spu.get_cnt(1),
-                io32(0x420) => self.spu.get_cnt(2),
-                io32(0x430) => self.spu.get_cnt(3),
-                io32(0x440) => self.spu.get_cnt(4),
-                io32(0x450) => self.spu.get_cnt(5),
-                io32(0x460) => self.spu.get_cnt(6),
-                io32(0x470) => self.spu.get_cnt(7),
-                io32(0x480) => self.spu.get_cnt(8),
-                io32(0x490) => self.spu.get_cnt(9),
-                io32(0x4A0) => self.spu.get_cnt(10),
-                io32(0x4B0) => self.spu.get_cnt(11),
-                io32(0x4C0) => self.spu.get_cnt(12),
-                io32(0x4D0) => self.spu.get_cnt(13),
-                io32(0x4E0) => self.spu.get_cnt(14),
-                io32(0x4F0) => self.spu.get_cnt(15),
-                io16(0x500) => self.spu.get_main_sound_cnt(),
-                io16(0x504) => todo!(),
-                io8(0x508) => self.spu.get_snd_cap_cnt(0),
-                io8(0x509) => self.spu.get_snd_cap_cnt(1),
-                io32(0x510) => todo!(),
-                io32(0x518) => todo!(),
-                io32(0x100000) => common.ipc.fifo_recv::<{ ARM7 }>(emu),
-                io32(0x100010) => todo!(),
-                io16(0x800006) => self.wifi.w_mode_wep,
-                io16(0x800008) => self.wifi.w_txstat_cnt,
-                io16(0x800010) => self.wifi.w_irf,
-                io16(0x800012) => self.wifi.w_ie,
-                io16(0x800018) => self.wifi.w_macaddr[0],
-                io16(0x80001A) => self.wifi.w_macaddr[1],
-                io16(0x80001C) => self.wifi.w_macaddr[2],
-                io16(0x800020) => self.wifi.w_bssid[0],
-                io16(0x800022) => self.wifi.w_bssid[1],
-                io16(0x800024) => self.wifi.w_bssid[2],
-                io16(0x80002A) => self.wifi.w_aid_full,
-                io16(0x800030) => self.wifi.w_rxcnt,
-                io16(0x80003C) => self.wifi.w_powerstate,
-                io16(0x800040) => self.wifi.w_powerforce,
-                io16(0x800050) => self.wifi.w_rxbuf_begin,
-                io16(0x800052) => self.wifi.w_rxbuf_end,
-                io16(0x800054) => self.wifi.w_rxbuf_wrcsr,
-                io16(0x800056) => self.wifi.w_rxbuf_wr_addr,
-                io16(0x800058) => self.wifi.w_rxbuf_rd_addr,
-                io16(0x80005A) => self.wifi.w_rxbuf_readcsr,
-                io16(0x80005C) => self.wifi.w_rxbuf_count,
-                io16(0x800060) => self.wifi.get_w_rxbuf_rd_data(emu),
-                io16(0x800062) => self.wifi.w_rxbuf_gap,
-                io16(0x800064) => self.wifi.w_rxbuf_gapdisp,
-                io16(0x800068) => self.wifi.w_txbuf_wr_addr,
-                io16(0x80006C) => self.wifi.w_txbuf_count,
-                io16(0x800074) => self.wifi.w_txbuf_gap,
-                io16(0x800076) => self.wifi.w_txbuf_gapdisp,
-                io16(0x800080) => self.wifi.get_w_txbuf_loc(PaketType::BeaconFrame),
-                io16(0x80008C) => self.wifi.w_beacon_int,
-                io16(0x800090) => self.wifi.get_w_txbuf_loc(PaketType::CmdFrame),
-                io16(0x800094) => self.wifi.w_txbuf_reply1,
-                io16(0x800098) => self.wifi.w_txbuf_reply2,
-                io16(0x8000A0) => self.wifi.get_w_txbuf_loc(PaketType::Loc1Frame),
-                io16(0x8000A4) => self.wifi.get_w_txbuf_loc(PaketType::Loc2Frame),
-                io16(0x8000A8) => self.wifi.get_w_txbuf_loc(PaketType::Loc3Frame),
-                io16(0x8000B0) => self.wifi.w_txreq_read,
-                io16(0x8000B8) => self.wifi.w_txstat,
-                io16(0x8000E8) => self.wifi.w_us_countcnt,
-                io16(0x8000EE) => self.wifi.w_cmd_countcnt,
-                io16(0x8000EA) => self.wifi.w_us_comparecnt,
-                io16(0x8000F0) => self.wifi.get_w_us_compare(0),
-                io16(0x8000F2) => self.wifi.get_w_us_compare(1),
-                io16(0x8000F4) => self.wifi.get_w_us_compare(2),
-                io16(0x8000F6) => self.wifi.get_w_us_compare(3),
-                io16(0x8000F8) => self.wifi.get_w_us_count(0),
-                io16(0x8000FA) => self.wifi.get_w_us_count(1),
-                io16(0x8000FC) => self.wifi.get_w_us_count(2),
-                io16(0x8000FE) => self.wifi.get_w_us_count(3),
-                io16(0x800110) => self.wifi.w_pre_beacon,
-                io16(0x800118) => self.wifi.w_cmd_count,
-                io16(0x80011C) => self.wifi.w_beacon_count,
-                io16(0x800120) => self.wifi.w_config[0],
-                io16(0x800122) => self.wifi.w_config[1],
-                io16(0x800124) => self.wifi.w_config[2],
-                io16(0x800128) => self.wifi.w_config[3],
-                io16(0x800130) => self.wifi.w_config[4],
-                io16(0x800132) => self.wifi.w_config[5],
-                io16(0x800134) => self.wifi.w_post_beacon,
-                io16(0x800140) => self.wifi.w_config[6],
-                io16(0x800142) => self.wifi.w_config[7],
-                io16(0x800144) => self.wifi.w_config[8],
-                io16(0x800146) => self.wifi.w_config[9],
-                io16(0x800148) => self.wifi.w_config[10],
-                io16(0x80014A) => self.wifi.w_config[11],
-                io16(0x80014C) => self.wifi.w_config[12],
-                io16(0x800150) => self.wifi.w_config[13],
-                io16(0x800154) => self.wifi.w_config[14],
-                io16(0x80015C) => self.wifi.w_bb_read,
-                io16(0x800210) => self.wifi.w_tx_seqno,
-                _ => {
-                    debug_println!("{:?} unknown io port read at {:x}", ARM7, addr_offset + (index - 3) as u32);
-
-                    bytes_window[index] = 0;
-                }
-            });
-            index += 1;
+        if likely(IoArm7ReadLut::is_in_range(addr_offset)) {
+            T::from(IoArm7ReadLut::read(addr_offset, size_of::<T>() as u8, emu))
+        } else if IoArm7ReadLutUpper::is_in_range(addr_offset) {
+            T::from(IoArm7ReadLutUpper::read(addr_offset, size_of::<T>() as u8, emu))
+        } else if IoArm7ReadLutWifi::is_in_range(addr_offset) {
+            T::from(IoArm7ReadLutWifi::read(addr_offset, size_of::<T>() as u8, emu))
+        } else {
+            T::from(0)
         }
-        T::from(u32::from_le_bytes([bytes_window[3], bytes_window[4], bytes_window[5], bytes_window[6]]))
     }
 
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, emu: &mut Emu) {
-        let bytes = value.into().to_le_bytes();
-        let bytes = &bytes[..size_of::<T>()];
-        /*
-         * Use moving windows to handle reads and writes
-         * |0|0|0|  x  |   x   |   x   |   x   |0|0|0|
-         *         addr   + 1     + 2     + 3
-         */
-        let mut bytes_window = [0u8; 10];
-        let mut mask_window = [0u8; 10];
-        bytes_window[3..3 + size_of::<T>()].copy_from_slice(bytes);
-        mask_window[3..3 + size_of::<T>()].fill(0xFF);
-
-        let mut addr_offset_tmp = addr_offset;
-        let mut index = 3usize;
-        let common = get_common_mut!(emu);
-        while (index - 3) < size_of::<T>() {
-            io_ports_write!(match addr_offset + (index - 3) as u32 {
-                io16(0x4) => common.gpu.set_disp_stat::<{ ARM7 }>(mask, value),
-                io32(0xB0) => self.dma.set_sad::<0>(mask, value),
-                io32(0xB4) => self.dma.set_dad::<0>(mask, value),
-                io32(0xB8) => self.dma.set_cnt::<0>(mask, value, emu),
-                io32(0xBC) => self.dma.set_sad::<1>(mask, value),
-                io32(0xC0) => self.dma.set_dad::<1>(mask, value),
-                io32(0xC4) => self.dma.set_cnt::<1>(mask, value, emu),
-                io32(0xC8) => self.dma.set_sad::<2>(mask, value),
-                io32(0xCC) => self.dma.set_dad::<2>(mask, value),
-                io32(0xD0) => self.dma.set_cnt::<2>(mask, value, emu),
-                io32(0xD4) => self.dma.set_sad::<3>(mask, value),
-                io32(0xD8) => self.dma.set_dad::<3>(mask, value),
-                io32(0xDC) => self.dma.set_cnt::<3>(mask, value, emu),
-                io16(0x100) => self.timers.set_cnt_l::<0>(mask, value),
-                io16(0x102) => self.timers.set_cnt_h::<0>(mask, value, emu),
-                io16(0x104) => self.timers.set_cnt_l::<1>(mask, value),
-                io16(0x106) => self.timers.set_cnt_h::<1>(mask, value, emu),
-                io16(0x108) => self.timers.set_cnt_l::<2>(mask, value),
-                io16(0x10A) => self.timers.set_cnt_h::<2>(mask, value, emu),
-                io16(0x10C) => self.timers.set_cnt_l::<3>(mask, value),
-                io16(0x10E) => self.timers.set_cnt_h::<3>(mask, value, emu),
-                io8(0x138) => self.rtc.set_rtc(value),
-                io16(0x180) => common.ipc.set_sync_reg::<{ ARM7 }>(mask, value, emu),
-                io16(0x184) => common.ipc.set_fifo_cnt::<{ ARM7 }>(mask, value, emu),
-                io32(0x188) => common.ipc.fifo_send::<{ ARM7 }>(mask, value, emu),
-                io16(0x1A0) => common.cartridge.set_aux_spi_cnt::<{ ARM7 }>(mask, value),
-                io8(0x1A2) => common.cartridge.set_aux_spi_data::<{ ARM7 }>(value),
-                io32(0x1A4) => common.cartridge.set_rom_ctrl::<{ ARM7 }>(mask, value, emu),
-                io32(0x1A8) => common.cartridge.set_bus_cmd_out_l::<{ ARM7 }>(mask, value),
-                io32(0x1AC) => common.cartridge.set_bus_cmd_out_h::<{ ARM7 }>(mask, value),
-                io16(0x1C0) => self.spi.set_cnt(mask, value),
-                io8(0x1C2) => self.spi.set_data(value),
-                io8(0x208) => get_cpu_regs_mut!(emu, ARM7).set_ime(value, emu),
-                io32(0x210) => get_cpu_regs_mut!(emu, ARM7).set_ie(mask, value, emu),
-                io32(0x214) => get_cpu_regs_mut!(emu, ARM7).set_irf(mask, value),
-                io8(0x300) => get_cpu_regs_mut!(emu, ARM7).set_post_flg(value),
-                io8(0x301) => todo!(),
-                io32(0x400) => self.spu.set_cnt(0, mask, value, emu),
-                io32(0x404) => self.spu.set_sad(0, mask, value, emu),
-                io16(0x408) => self.spu.set_tmr(0, mask, value),
-                io16(0x40A) => self.spu.set_pnt(0, mask, value),
-                io32(0x40C) => self.spu.set_len(0, mask, value),
-                io32(0x410) => self.spu.set_cnt(1, mask, value, emu),
-                io32(0x414) => self.spu.set_sad(1, mask, value, emu),
-                io16(0x418) => self.spu.set_tmr(1, mask, value),
-                io16(0x41A) => self.spu.set_pnt(1, mask, value),
-                io32(0x41C) => self.spu.set_len(1, mask, value),
-                io32(0x420) => self.spu.set_cnt(2, mask, value, emu),
-                io32(0x424) => self.spu.set_sad(2, mask, value, emu),
-                io16(0x428) => self.spu.set_tmr(2, mask, value),
-                io16(0x42A) => self.spu.set_pnt(2, mask, value),
-                io32(0x42C) => self.spu.set_len(2, mask, value),
-                io32(0x430) => self.spu.set_cnt(3, mask, value, emu),
-                io32(0x434) => self.spu.set_sad(3, mask, value, emu),
-                io16(0x438) => self.spu.set_tmr(3, mask, value),
-                io16(0x43A) => self.spu.set_pnt(3, mask, value),
-                io32(0x43C) => self.spu.set_len(3, mask, value),
-                io32(0x440) => self.spu.set_cnt(4, mask, value, emu),
-                io32(0x444) => self.spu.set_sad(4, mask, value, emu),
-                io16(0x448) => self.spu.set_tmr(4, mask, value),
-                io16(0x44A) => self.spu.set_pnt(4, mask, value),
-                io32(0x44C) => self.spu.set_len(4, mask, value),
-                io32(0x450) => self.spu.set_cnt(5, mask, value, emu),
-                io32(0x454) => self.spu.set_sad(5, mask, value, emu),
-                io16(0x458) => self.spu.set_tmr(5, mask, value),
-                io16(0x45A) => self.spu.set_pnt(5, mask, value),
-                io32(0x45C) => self.spu.set_len(5, mask, value),
-                io32(0x460) => self.spu.set_cnt(6, mask, value, emu),
-                io32(0x464) => self.spu.set_sad(6, mask, value, emu),
-                io16(0x468) => self.spu.set_tmr(6, mask, value),
-                io16(0x46A) => self.spu.set_pnt(6, mask, value),
-                io32(0x46C) => self.spu.set_len(6, mask, value),
-                io32(0x470) => self.spu.set_cnt(7, mask, value, emu),
-                io32(0x474) => self.spu.set_sad(7, mask, value, emu),
-                io16(0x478) => self.spu.set_tmr(7, mask, value),
-                io16(0x47A) => self.spu.set_pnt(7, mask, value),
-                io32(0x47C) => self.spu.set_len(7, mask, value),
-                io32(0x480) => self.spu.set_cnt(8, mask, value, emu),
-                io32(0x484) => self.spu.set_sad(8, mask, value, emu),
-                io16(0x488) => self.spu.set_tmr(8, mask, value),
-                io16(0x48A) => self.spu.set_pnt(8, mask, value),
-                io32(0x48C) => self.spu.set_len(8, mask, value),
-                io32(0x490) => self.spu.set_cnt(9, mask, value, emu),
-                io32(0x494) => self.spu.set_sad(9, mask, value, emu),
-                io16(0x498) => self.spu.set_tmr(9, mask, value),
-                io16(0x49A) => self.spu.set_pnt(9, mask, value),
-                io32(0x49C) => self.spu.set_len(9, mask, value),
-                io32(0x4A0) => self.spu.set_cnt(10, mask, value, emu),
-                io32(0x4A4) => self.spu.set_sad(10, mask, value, emu),
-                io16(0x4A8) => self.spu.set_tmr(10, mask, value),
-                io16(0x4AA) => self.spu.set_pnt(10, mask, value),
-                io32(0x4AC) => self.spu.set_len(10, mask, value),
-                io32(0x4B0) => self.spu.set_cnt(11, mask, value, emu),
-                io32(0x4B4) => self.spu.set_sad(11, mask, value, emu),
-                io16(0x4B8) => self.spu.set_tmr(11, mask, value),
-                io16(0x4BA) => self.spu.set_pnt(11, mask, value),
-                io32(0x4BC) => self.spu.set_len(11, mask, value),
-                io32(0x4C0) => self.spu.set_cnt(12, mask, value, emu),
-                io32(0x4C4) => self.spu.set_sad(12, mask, value, emu),
-                io16(0x4C8) => self.spu.set_tmr(12, mask, value),
-                io16(0x4CA) => self.spu.set_pnt(12, mask, value),
-                io32(0x4CC) => self.spu.set_len(12, mask, value),
-                io32(0x4D0) => self.spu.set_cnt(13, mask, value, emu),
-                io32(0x4D4) => self.spu.set_sad(13, mask, value, emu),
-                io16(0x4D8) => self.spu.set_tmr(13, mask, value),
-                io16(0x4DA) => self.spu.set_pnt(13, mask, value),
-                io32(0x4DC) => self.spu.set_len(13, mask, value),
-                io32(0x4E0) => self.spu.set_cnt(14, mask, value, emu),
-                io32(0x4E4) => self.spu.set_sad(14, mask, value, emu),
-                io16(0x4E8) => self.spu.set_tmr(14, mask, value),
-                io16(0x4EA) => self.spu.set_pnt(14, mask, value),
-                io32(0x4EC) => self.spu.set_len(14, mask, value),
-                io32(0x4F0) => self.spu.set_cnt(15, mask, value, emu),
-                io32(0x4F4) => self.spu.set_sad(15, mask, value, emu),
-                io16(0x4F8) => self.spu.set_tmr(15, mask, value),
-                io16(0x4FA) => self.spu.set_pnt(15, mask, value),
-                io32(0x4FC) => self.spu.set_len(15, mask, value),
-                io16(0x500) => self.spu.set_main_sound_cnt(mask, value, emu),
-                io16(0x504) => self.spu.set_sound_bias(mask, value),
-                io8(0x508) => self.spu.set_snd_cap_cnt(0, value),
-                io8(0x509) => self.spu.set_snd_cap_cnt(1, value),
-                io32(0x510) => self.spu.set_snd_cap_dad(0, mask, value),
-                io16(0x514) => self.spu.set_snd_cap_len(0, mask, value),
-                io32(0x518) => self.spu.set_snd_cap_dad(1, mask, value),
-                io16(0x51C) => self.spu.set_snd_cap_len(1, mask, value),
-                io16(0x800006) => self.wifi.set_w_mode_wep(mask, value),
-                io16(0x800008) => self.wifi.set_w_txstat_cnt(mask, value),
-                io16(0x800010) => self.wifi.set_w_irf(mask, value),
-                io16(0x800012) => self.wifi.set_w_ie(mask, value, emu),
-                io16(0x800018) => self.wifi.set_w_macaddr(0, mask, value),
-                io16(0x80001A) => self.wifi.set_w_macaddr(1, mask, value),
-                io16(0x80001C) => self.wifi.set_w_macaddr(2, mask, value),
-                io16(0x800020) => self.wifi.set_w_bssid(0, mask, value),
-                io16(0x800022) => self.wifi.set_w_bssid(1, mask, value),
-                io16(0x800024) => self.wifi.set_w_bssid(2, mask, value),
-                io16(0x80002A) => self.wifi.set_w_aid_full(mask, value),
-                io16(0x800030) => self.wifi.set_w_rxcnt(mask, value),
-                io16(0x80003C) => self.wifi.set_w_powerstate(mask, value),
-                io16(0x800040) => self.wifi.set_w_powerforce(mask, value),
-                io16(0x800050) => self.wifi.set_w_rxbuf_begin(mask, value),
-                io16(0x800052) => self.wifi.set_w_rxbuf_end(mask, value),
-                io16(0x800056) => self.wifi.set_w_rxbuf_wr_addr(mask, value),
-                io16(0x800058) => self.wifi.set_w_rxbuf_rd_addr(mask, value),
-                io16(0x80005A) => self.wifi.set_w_rxbuf_readcsr(mask, value),
-                io16(0x80005C) => self.wifi.set_w_rxbuf_count(mask, value),
-                io16(0x800062) => self.wifi.set_w_rxbuf_gap(mask, value),
-                io16(0x800064) => self.wifi.set_w_rxbuf_gapdisp(mask, value),
-                io16(0x800068) => self.wifi.set_w_txbuf_wr_addr(mask, value),
-                io16(0x80006C) => self.wifi.set_w_txbuf_count(mask, value),
-                io16(0x800070) => self.wifi.set_w_txbuf_wr_data(mask, value, emu),
-                io16(0x800074) => self.wifi.set_w_txbuf_gap(mask, value),
-                io16(0x800076) => self.wifi.set_w_txbuf_gapdisp(mask, value),
-                io16(0x800080) => self.wifi.set_w_txbuf_loc(PaketType::BeaconFrame, mask, value),
-                io16(0x80008C) => self.wifi.set_w_beacon_int(mask, value),
-                io16(0x800090) => self.wifi.set_w_txbuf_loc(PaketType::CmdFrame, mask, value),
-                io16(0x800094) => self.wifi.set_w_txbuf_reply1(mask, value),
-                io16(0x8000A0) => self.wifi.set_w_txbuf_loc(PaketType::Loc1Frame, mask, value),
-                io16(0x8000A4) => self.wifi.set_w_txbuf_loc(PaketType::Loc2Frame, mask, value),
-                io16(0x8000A8) => self.wifi.set_w_txbuf_loc(PaketType::Loc3Frame, mask, value),
-                io16(0x8000AC) => self.wifi.set_w_txreq_reset(mask, value),
-                io16(0x8000AE) => self.wifi.set_w_txreq_set(mask, value),
-                io16(0x8000E8) => self.wifi.set_w_us_countcnt(mask, value),
-                io16(0x8000EA) => self.wifi.set_w_us_comparecnt(mask, value),
-                io16(0x8000EE) => self.wifi.set_w_cmd_countcnt(mask, value),
-                io16(0x8000F0) => self.wifi.set_w_us_compare(0, mask, value),
-                io16(0x8000F2) => self.wifi.set_w_us_compare(1, mask, value),
-                io16(0x8000F4) => self.wifi.set_w_us_compare(2, mask, value),
-                io16(0x8000F6) => self.wifi.set_w_us_compare(3, mask, value),
-                io16(0x8000F8) => self.wifi.set_w_us_count(0, mask, value),
-                io16(0x8000FA) => self.wifi.set_w_us_count(1, mask, value),
-                io16(0x8000FC) => self.wifi.set_w_us_count(2, mask, value),
-                io16(0x8000FE) => self.wifi.set_w_us_count(3, mask, value),
-                io16(0x800110) => self.wifi.set_w_pre_beacon(mask, value),
-                io16(0x800118) => self.wifi.set_w_cmd_count(mask, value),
-                io16(0x80011C) => self.wifi.set_w_beacon_count(mask, value),
-                io16(0x800120) => self.wifi.set_w_config(0, mask, value),
-                io16(0x800122) => self.wifi.set_w_config(1, mask, value),
-                io16(0x800124) => self.wifi.set_w_config(2, mask, value),
-                io16(0x800128) => self.wifi.set_w_config(3, mask, value),
-                io16(0x800130) => self.wifi.set_w_config(4, mask, value),
-                io16(0x800132) => self.wifi.set_w_config(5, mask, value),
-                io16(0x800134) => self.wifi.set_w_post_beacon(mask, value),
-                io16(0x800140) => self.wifi.set_w_config(6, mask, value),
-                io16(0x800142) => self.wifi.set_w_config(7, mask, value),
-                io16(0x800144) => self.wifi.set_w_config(8, mask, value),
-                io16(0x800146) => self.wifi.set_w_config(9, mask, value),
-                io16(0x800148) => self.wifi.set_w_config(10, mask, value),
-                io16(0x80014A) => self.wifi.set_w_config(11, mask, value),
-                io16(0x80014C) => self.wifi.set_w_config(12, mask, value),
-                io16(0x800150) => self.wifi.set_w_config(13, mask, value),
-                io16(0x800154) => self.wifi.set_w_config(14, mask, value),
-                io16(0x800158) => self.wifi.set_w_bb_cnt(mask, value),
-                io16(0x80015A) => self.wifi.set_w_bb_write(mask, value),
-                io16(0x80021C) => self.wifi.set_w_irf_set(mask, value, emu),
-                _ => {
-                    debug_println!("{:?} unknown io port write at {:x} with value {:x}", ARM7, addr_offset + (index - 3) as u32, value.into());
-                }
-            });
-            index += 1;
+        if likely(IoArm7WriteLut::is_in_range(addr_offset)) {
+            IoArm7WriteLut::write(value.into(), addr_offset, size_of::<T>() as u8, emu);
+        } else if IoArm7WriteLutWifi::is_in_range(addr_offset) {
+            IoArm7WriteLutWifi::write(value.into(), addr_offset, size_of::<T>() as u8, emu);
         }
     }
 }

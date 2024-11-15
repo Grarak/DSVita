@@ -1,229 +1,373 @@
 #![feature(proc_macro_quote)]
-
 extern crate proc_macro;
-
-use proc_macro::{Span, TokenStream};
-use syn::__private::quote::{format_ident, quote_spanned};
+use core::panic;
+use proc_macro::TokenStream;
+use std::cmp;
+use std::collections::HashMap;
+use syn::__private::quote::{format_ident, quote};
 use syn::__private::ToTokens;
-use syn::parse::{Parse, ParseStream};
-use syn::token::DotDotEq;
-use syn::{parse_macro_input, parse_quote_spanned, Arm, Block, Expr, ExprBlock, ExprLit, ExprMatch, ExprRange, Lit, LitInt, Pat, RangeLimits, Stmt};
+use syn::punctuated::Punctuated;
+use syn::spanned::Spanned;
+use syn::{parse_macro_input, Expr, Lit, Pat};
 
-fn write_block(base: u32, size: usize, span: Span) -> Block {
-    if size == 1 {
-        parse_quote_spanned! {span.into()=>{
-            #[allow(unused_assignments, unused_variables)]
-            {
-                let value = bytes_window[index];
-                addr_offset_tmp += 1;
-                #[allow(unused_braces)]
-                { block_placeholder() }
+#[proc_macro]
+pub fn io_read(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item with Punctuated::<Expr, syn::Token![,]>::parse_terminated);
+    let name = input.first().unwrap().to_token_stream().to_string();
+    let io_ports = match input.last().unwrap() {
+        Expr::Array(array) => array,
+        _ => panic!(),
+    };
+
+    let mut min_addr = u32::MAX;
+    let mut max_addr = 0;
+    let mut exprs = HashMap::new();
+    let mut funcs = Vec::new();
+
+    for elem in &io_ports.elems {
+        let tuple = match elem {
+            Expr::Tuple(tuple) => tuple,
+            _ => panic!(),
+        };
+
+        let io_call = match &tuple.elems[0] {
+            Expr::Call(io_call) => io_call,
+            _ => panic!(),
+        };
+
+        let closure = match &tuple.elems[1] {
+            Expr::Closure(closure) => closure,
+            _ => panic!(),
+        };
+
+        let closure_arg = match closure.inputs.first().unwrap() {
+            Pat::Ident(ident) => ident,
+            _ => panic!(),
+        };
+
+        let io_call_path = match &io_call.func.as_ref() {
+            Expr::Path(path) => path,
+            _ => panic!(),
+        };
+
+        let io_call_lit = match &io_call.args[0] {
+            Expr::Lit(lit) => match &lit.lit {
+                Lit::Int(lit) => lit,
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+
+        let segment = io_call_path.path.segments.first().unwrap();
+
+        let size = match segment.ident.to_string().as_str() {
+            "io8" => 1u8,
+            "io16" => 2u8,
+            "io32" => 4u8,
+            _ => panic!(),
+        };
+
+        let addr_str = io_call_lit.to_string();
+        let addr = u32::from_str_radix(addr_str.trim_start_matches("0x"), 16).unwrap();
+        min_addr = cmp::min(min_addr, addr);
+        max_addr = cmp::max(max_addr, addr + size as u32);
+
+        let func_name = format_ident!("_read_{addr_str}");
+        let func_arg = format_ident!("emu", span = closure_arg.span());
+        let body = closure.body.as_ref();
+        let func = quote!(
+            #[allow(unreachable_code)]
+            fn #func_name(#func_arg: &mut crate::core::emu::Emu) -> u32 {
+                #body as u32
             }
-        }}
-    } else {
-        let type_str = format_ident!("u{}", size << 3);
-        let (le_bytes_arg, le_mask_arg) = if size == 2 {
-            (
-                quote_spanned!(span.into()=> [bytes_window[index_start], bytes_window[index_start + 1]]),
-                quote_spanned!(span.into()=> [mask_window[index_start], mask_window[index_start + 1]]),
+        );
+        exprs.insert(addr, (size, func_name));
+        funcs.push(func);
+    }
+
+    funcs.push(quote!(
+        fn _read_empty(_: &mut crate::core::emu::Emu) -> u32 {
+            0
+        }
+    ));
+
+    let mut lut_entries = Vec::new();
+
+    if min_addr > 0 {
+        min_addr -= cmp::min(3, min_addr);
+    }
+    max_addr += 3;
+
+    let mut i = min_addr;
+    while i < max_addr {
+        if let Some((size, func_name)) = exprs.get(&i) {
+            for j in 0..*size {
+                let remaining = *size - j;
+                let offset = j << 3;
+                lut_entries.push(quote!(
+                    (Self::#func_name, #remaining, #offset),
+                ));
+            }
+            i += *size as u32;
+        } else {
+            let mut j = i + 1;
+            while j < max_addr {
+                if exprs.get(&j).is_some() {
+                    break;
+                }
+                j += 1;
+            }
+            let size = j - i;
+            for k in 0..size {
+                let remaining = cmp::min(4, size - k) as u8;
+                lut_entries.push(quote!(
+                    (Self::_read_empty, #remaining, 0),
+                ));
+            }
+            i = j;
+        }
+    }
+
+    let size = (max_addr - min_addr) as usize;
+    assert_eq!(lut_entries.len(), size);
+
+    let lut_tokens = quote!(
+        const _LUT: [(fn(&mut crate::core::emu::Emu) -> u32, u8, u8); #size] = [
+            #(#lut_entries)*
+        ];
+    );
+
+    let name = format_ident!("{name}");
+    let tokens = quote!(
+        pub struct #name;
+
+        impl #name {
+            #(#funcs)*
+
+            #lut_tokens
+
+            const MIN_ADDR: u32 = #min_addr;
+            const MAX_ADDR: u32 = #max_addr;
+
+            pub fn is_in_range(addr: u32) -> bool {
+                (Self::MIN_ADDR..Self::MAX_ADDR).contains(&addr)
+            }
+
+            pub fn read(addr: u32, size: u8, emu: &mut crate::core::emu::Emu) -> u32 {
+                let addr = addr - Self::MIN_ADDR;
+                let mut ret = 0;
+                let mut read = 0;
+                while read < size {
+                    let (func, read_size, offset) = unsafe { Self::_LUT.get_unchecked(addr as usize + read as usize) };
+                    let value = func(emu) >> *offset;
+                    ret |= value << (read << 3);
+                    read += *read_size;
+                }
+                ret
+            }
+        }
+    );
+    tokens.into()
+}
+
+#[proc_macro]
+pub fn io_write(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item with Punctuated::<Expr, syn::Token![,]>::parse_terminated);
+    let name = input.first().unwrap().to_token_stream().to_string();
+    let io_ports = match input.last().unwrap() {
+        Expr::Array(array) => array,
+        _ => panic!(),
+    };
+
+    let mut min_addr = u32::MAX;
+    let mut max_addr = 0;
+    let mut exprs = HashMap::new();
+    let mut funcs = Vec::new();
+
+    for elem in &io_ports.elems {
+        let tuple = match elem {
+            Expr::Tuple(tuple) => tuple,
+            _ => panic!(),
+        };
+
+        let io_call = match &tuple.elems[0] {
+            Expr::Call(io_call) => io_call,
+            _ => panic!(),
+        };
+
+        let closure = match &tuple.elems[1] {
+            Expr::Closure(closure) => closure,
+            _ => panic!(),
+        };
+
+        let io_call_path = match &io_call.func.as_ref() {
+            Expr::Path(path) => path,
+            _ => panic!(),
+        };
+
+        let io_call_lit = match &io_call.args[0] {
+            Expr::Lit(lit) => match &lit.lit {
+                Lit::Int(lit) => lit,
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+
+        let segment = io_call_path.path.segments.first().unwrap();
+
+        let size = match segment.ident.to_string().as_str() {
+            "io8" => 1u8,
+            "io16" => 2u8,
+            "io32" => 4u8,
+            _ => panic!(),
+        };
+
+        let (closure_mask_arg, closure_value_arg, closure_emu_arg) = if size == 1 {
+            let closure_value_arg = match &closure.inputs[0] {
+                Pat::Ident(ident) => ident,
+                _ => panic!(),
+            };
+
+            let closure_emu_arg = match &closure.inputs[1] {
+                Pat::Ident(ident) => ident,
+                _ => panic!(),
+            };
+
+            (None, closure_value_arg, closure_emu_arg)
+        } else {
+            let closure_mask_arg = match &closure.inputs[0] {
+                Pat::Ident(ident) => ident,
+                _ => panic!(),
+            };
+
+            let closure_value_arg = match &closure.inputs[1] {
+                Pat::Ident(ident) => ident,
+                _ => panic!(),
+            };
+
+            let closure_emu_arg = match &closure.inputs[2] {
+                Pat::Ident(ident) => ident,
+                _ => panic!(),
+            };
+
+            (Some(closure_mask_arg), closure_value_arg, closure_emu_arg)
+        };
+
+        let addr_str = io_call_lit.to_string();
+        let addr = u32::from_str_radix(addr_str.trim_start_matches("0x"), 16).unwrap();
+        min_addr = cmp::min(min_addr, addr);
+        max_addr = cmp::max(max_addr, addr + size as u32);
+
+        let func_name = format_ident!("_write_{addr_str}");
+        let func_value_arg = format_ident!("value", span = closure_value_arg.span());
+        let func_emu_arg = format_ident!("emu", span = closure_emu_arg.span());
+        let body = closure.body.as_ref();
+        let u_type = format_ident!("u{}", size << 3);
+
+        let func = if size == 1 {
+            quote!(
+                #[allow(unreachable_code)]
+                fn #func_name(_: u32, value: u32, #func_emu_arg: &mut crate::core::emu::Emu) {
+                    let #func_value_arg = value as #u_type;
+                    #body
+                }
             )
         } else {
-            (
-                quote_spanned!(span.into()=> [bytes_window[index_start], bytes_window[index_start + 1], bytes_window[index_start + 2], bytes_window[index_start + 3]]),
-                quote_spanned!(span.into()=> [mask_window[index_start], mask_window[index_start + 1], mask_window[index_start + 2], mask_window[index_start + 3]]),
+            let func_mask_arg = format_ident!("mask", span = closure_mask_arg.unwrap().span());
+            quote!(
+                #[allow(unreachable_code)]
+                fn #func_name(mask: u32, value: u32, #func_emu_arg: &mut crate::core::emu::Emu) {
+                    let #func_mask_arg = mask as #u_type;
+                    let #func_value_arg = value as #u_type;
+                    #body
+                }
             )
         };
-        parse_quote_spanned! {span.into()=>{
-            #[allow(unused_assignments, unused_variables)]
-            {
-                let offset = addr_offset_tmp - #base;
-                let index_start = index - offset as usize;
-                let index_end = index_start + #size;
-                let value = #type_str::from_le_bytes(#le_bytes_arg);
-                let mask = #type_str::from_le_bytes(#le_mask_arg);
-                index = index_end - 1;
-                addr_offset_tmp = addr_offset + #size as u32;
-                #[allow(unused_braces)]
-                { block_placeholder() }
-            }
-        }}
+        exprs.insert(addr, (size, func_name));
+        funcs.push(func);
     }
-}
 
-fn read_block(base: u32, size: usize, span: Span) -> Block {
-    let type_str = format_ident!("u{}", size << 3);
-    if size == 1 {
-        parse_quote_spanned! {span.into()=>{
-            #[allow(unreachable_code, unused_variables)]
-            {
-                let ret: #type_str = { block_placeholder() };
-                bytes_window[index] = ret;
-                addr_offset_tmp += 1;
-            }
-        }}
-    } else {
-        parse_quote_spanned! {span.into()=>{
-            #[allow(unreachable_code, unused_variables)]
-            {
-                let ret: #type_str = { block_placeholder() };
-                let bytes = ret.to_le_bytes();
-                let bytes = bytes.as_slice();
-                let offset = addr_offset_tmp - #base;
-                let index_start = index - offset as usize;
-                let index_end = index_start + #size;
-                bytes_window[index_start..index_end].copy_from_slice(bytes);
-                index = index_end - 1;
-                addr_offset_tmp = addr_offset + #size as u32;
-            }
-        }}
+    funcs.push(quote!(
+        fn _write_empty(_: u32, _: u32, _: &mut crate::core::emu::Emu) {}
+    ));
+
+    let mut lut_entries = Vec::new();
+
+    if min_addr > 0 {
+        min_addr -= cmp::min(3, min_addr);
     }
-}
+    max_addr += 3;
 
-fn place_block(block: &mut Block, replacement: &Expr) {
-    for stmt in &mut block.stmts {
-        match stmt {
-            Stmt::Local(local) => {
-                if let Some(local_init) = &mut local.init {
-                    match local_init.expr.as_mut() {
-                        Expr::Array(array) => {
-                            for elem in &mut array.elems {
-                                if let Expr::Block(block) = elem {
-                                    place_block(&mut block.block, replacement)
-                                }
-                            }
-                        }
-                        Expr::Block(block) => {
-                            place_block(&mut block.block, replacement);
-                        }
-                        _ => {}
-                    }
-                }
+    let mut i = min_addr;
+    while i < max_addr {
+        if let Some((size, func_name)) = exprs.get(&i) {
+            for j in 0..*size {
+                let remaining = *size - j;
+                let offset = j << 3;
+                lut_entries.push(quote!(
+                    (Self::#func_name, #remaining, #offset),
+                ));
             }
-            Stmt::Expr(expr, _) => match expr {
-                Expr::Block(block) => {
-                    place_block(&mut block.block, replacement);
+            i += *size as u32;
+        } else {
+            let mut j = i + 1;
+            while j < max_addr {
+                if exprs.get(&j).is_some() {
+                    break;
                 }
-                Expr::Call(call) => {
-                    if let Expr::Path(path) = call.func.as_mut() {
-                        for segment in &path.path.segments {
-                            if segment.ident == "block_placeholder" {
-                                *expr = replacement.clone();
-                                break;
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
+                j += 1;
+            }
+            let size = j - i;
+            for k in 0..size {
+                let remaining = cmp::min(4, size - k) as u8;
+                lut_entries.push(quote!(
+                    (Self::_write_empty, #remaining, 0),
+                ));
+            }
+            i = j;
         }
     }
-}
 
-fn traverse_match<const WRITE: bool>(expr: &mut ExprMatch) {
-    for arm in &mut expr.arms {
-        if let Pat::TupleStruct(tuple_struct) = &mut arm.pat {
-            if tuple_struct.path.segments.len() == 1 {
-                let ident = &tuple_struct.path.segments.first().unwrap().ident;
-                let get_addr = || {
-                    assert_eq!(tuple_struct.elems.len(), 1);
-                    if let Pat::Lit(lit) = tuple_struct.elems.first().unwrap() {
-                        if let Lit::Int(lit) = &lit.lit {
-                            return Some((u32::from_str_radix(lit.to_string().trim_start_matches("0x"), 16).unwrap(), lit.span()));
-                        }
-                    }
-                    None
-                };
-                let replace = |arm: &mut Arm, addr: u32, length: u32, span: Span| {
-                    arm.pat = if length == 1 {
-                        Pat::Lit(ExprLit {
-                            attrs: Vec::new(),
-                            lit: Lit::Int(LitInt::new(&addr.to_string(), span.into())),
-                        })
-                    } else {
-                        Pat::Range(ExprRange {
-                            attrs: Vec::new(),
-                            start: Some(Box::new(Expr::Lit(ExprLit {
-                                attrs: Vec::new(),
-                                lit: Lit::Int(LitInt::new(&addr.to_string(), span.into())),
-                            }))),
-                            limits: RangeLimits::Closed(DotDotEq { spans: [span.into(); 3] }),
-                            end: Some(Box::new(Expr::Lit(ExprLit {
-                                attrs: Vec::new(),
-                                lit: Lit::Int(LitInt::new(&(addr + length - 1).to_string(), span.into())),
-                            }))),
-                        })
-                    };
+    let size = (max_addr - min_addr) as usize;
+    assert_eq!(lut_entries.len(), size);
 
-                    let mut new_block = if WRITE {
-                        write_block(addr, length as usize, span)
-                    } else {
-                        read_block(addr, length as usize, span)
-                    };
+    let lut_tokens = quote!(
+        const _LUT: [(fn(mask: u32, value: u32, &mut crate::core::emu::Emu), u8, u8); #size] = [
+            #(#lut_entries)*
+        ];
+    );
 
-                    place_block(&mut new_block, &arm.body);
+    let name = format_ident!("{name}");
+    let tokens = quote!(
+        pub struct #name;
 
-                    arm.body = Box::new(Expr::Block(ExprBlock {
-                        attrs: Vec::new(),
-                        label: None,
-                        block: new_block,
-                    }));
-                };
-                match ident.to_string().as_str() {
-                    "io8" => {
-                        if let Some((addr, span)) = get_addr() {
-                            replace(arm, addr, 1, span.unwrap());
-                        }
-                    }
-                    "io16" => {
-                        if let Some((addr, span)) = get_addr() {
-                            replace(arm, addr, 2, span.unwrap());
-                        }
-                    }
-                    "io32" => {
-                        if let Some((addr, span)) = get_addr() {
-                            replace(arm, addr, 4, span.unwrap());
-                        }
-                    }
-                    _ => {}
+        impl #name {
+            #(#funcs)*
+
+            #lut_tokens
+
+            const MIN_ADDR: u32 = #min_addr;
+            const MAX_ADDR: u32 = #max_addr;
+
+            pub fn is_in_range(addr: u32) -> bool {
+                (Self::MIN_ADDR..Self::MAX_ADDR).contains(&addr)
+            }
+
+            pub fn write(value: u32, addr: u32, size: u8, emu: &mut crate::core::emu::Emu) {
+                let addr = addr - Self::MIN_ADDR;
+                let mut written = 0;
+                let mask = 0xFFFFFFFF >> ((4 - size) << 3);
+                while written < size {
+                    let (func, write_size, offset) = unsafe { Self::_LUT.get_unchecked(addr as usize + written as usize) };
+                    let value = value >> (written << 3);
+                    let value = value << *offset;
+                    let mask = mask >> (written << 3);
+                    let mask = mask << *offset;
+                    func(mask, value, emu);
+                    written += *write_size;
                 }
             }
         }
-    }
-}
-
-struct IoPortsRead {
-    expr_match: ExprMatch,
-}
-
-struct IoPortsWrite {
-    expr_match: ExprMatch,
-}
-
-impl Parse for IoPortsRead {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut expr_match: ExprMatch = input.parse()?;
-        traverse_match::<false>(&mut expr_match);
-        Ok(IoPortsRead { expr_match })
-    }
-}
-
-impl Parse for IoPortsWrite {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut expr_match: ExprMatch = input.parse()?;
-        traverse_match::<true>(&mut expr_match);
-        Ok(IoPortsWrite { expr_match })
-    }
-}
-
-#[proc_macro]
-pub fn io_ports_read(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as IoPortsRead);
-    input.expr_match.to_token_stream().into()
-}
-
-#[proc_macro]
-pub fn io_ports_write(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as IoPortsWrite);
-    input.expr_match.to_token_stream().into()
+    );
+    tokens.into()
 }
