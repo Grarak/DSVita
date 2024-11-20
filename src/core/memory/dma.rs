@@ -6,13 +6,14 @@ use crate::logging::debug_println;
 use crate::utils;
 use bilge::prelude::*;
 use std::cmp::min;
-use std::mem;
+use std::hint::assert_unchecked;
+use std::{mem, slice};
 use CpuType::{ARM7, ARM9};
 
 const CHANNEL_COUNT: usize = 4;
 
 #[repr(u8)]
-#[derive(Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum DmaAddrCtrl {
     Increment = 0,
     Decrement = 1,
@@ -106,6 +107,7 @@ struct DmaChannel {
 pub struct Dma {
     cpu_type: CpuType,
     channels: [DmaChannel; CHANNEL_COUNT],
+    src_buf: Vec<u8>,
 }
 
 impl Dma {
@@ -113,6 +115,7 @@ impl Dma {
         Dma {
             cpu_type,
             channels: [DmaChannel::default(); CHANNEL_COUNT],
+            src_buf: Vec::new(),
         }
     }
 
@@ -221,7 +224,7 @@ impl Dma {
 
     pub fn trigger(&self, mode: DmaTransferMode, channels: u8, cycle_manager: &mut CycleManager) {
         for (index, channel) in self.channels.iter().enumerate() {
-            if channels & (1 << index) != 0 && bool::from(DmaCntArm9::from(channel.cnt).enable()) && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode {
+            if channels & (1 << index) != 0 && DmaCntArm9::from(channel.cnt).enable() && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode {
                 debug_println!(
                     "{:?} dma trigger {:?} {:x} {:x} {:x} {:x}",
                     self.cpu_type,
@@ -248,28 +251,60 @@ impl Dma {
 
         let step_size = size_of::<T>() as u32;
         let count = if mode == DmaTransferMode::GeometryCmdFifo { min(112, count) } else { count };
-        for _ in 0..count {
-            debug_println!("{:?} dma transfer {:?} from {:x} to {:x}", CPU, mode, src_addr, dest_addr);
+        debug_println!("{CPU:?} dma transfer {mode:?} from {src_addr:x} {src_addr_ctrl:?} to {dest_addr:x} {dest_addr_ctrl:?} with size {count}");
 
-            let src = emu.mem_read_no_tcm::<CPU, T>(*src_addr);
-            emu.mem_write_no_tcm::<CPU, T>(*dest_addr, src);
+        let dma = io_dma_mut!(emu, CPU);
+        let total_size = count << (step_size >> 1);
+        dma.src_buf.resize(total_size as usize, 0);
 
-            match src_addr_ctrl {
-                DmaAddrCtrl::Increment => *src_addr += step_size,
-                DmaAddrCtrl::Decrement => *src_addr -= step_size,
-                _ => {}
+        match (src_addr_ctrl, dest_addr_ctrl) {
+            (DmaAddrCtrl::Increment, DmaAddrCtrl::Fixed) => {
+                let mem = get_mem_mut!(emu);
+                let slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
+                mem.read_multiple_slice::<CPU, false, T>(*src_addr, emu, slice);
+                mem.write_fixed_slice::<CPU, false, T>(*dest_addr, emu, slice);
+                *src_addr += total_size;
             }
+            (DmaAddrCtrl::Increment, DmaAddrCtrl::Increment | DmaAddrCtrl::IncrementReload) => {
+                let mem = get_mem_mut!(emu);
+                let slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
+                mem.read_multiple_slice::<CPU, false, T>(*src_addr, emu, slice);
+                mem.write_multiple_slice::<CPU, false, T>(*dest_addr, emu, slice);
+                *src_addr += total_size;
+                *dest_addr += total_size;
+            }
+            (DmaAddrCtrl::Fixed, DmaAddrCtrl::Increment | DmaAddrCtrl::IncrementReload) => {
+                let mem = get_mem_mut!(emu);
+                let slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
+                mem.read_fixed_slice::<CPU, false, T>(*src_addr, emu, slice);
+                mem.write_multiple_slice::<CPU, false, T>(*dest_addr, emu, slice);
+                *dest_addr += total_size;
+            }
+            _ => {
+                // println!("{CPU:?} dma transfer {mode:?} from {src_addr:x} {src_addr_ctrl:?} to {dest_addr:x} {dest_addr_ctrl:?} with size {count}");
+                for _ in 0..count {
+                    let src = emu.mem_read_no_tcm::<CPU, T>(*src_addr);
+                    emu.mem_write_no_tcm::<CPU, T>(*dest_addr, src);
 
-            match dest_addr_ctrl {
-                DmaAddrCtrl::Increment | DmaAddrCtrl::IncrementReload => *dest_addr += step_size,
-                DmaAddrCtrl::Decrement => *dest_addr -= step_size,
-                DmaAddrCtrl::Fixed => {}
+                    match src_addr_ctrl {
+                        DmaAddrCtrl::Increment => *src_addr += step_size,
+                        DmaAddrCtrl::Decrement => *src_addr -= step_size,
+                        _ => {}
+                    }
+
+                    match dest_addr_ctrl {
+                        DmaAddrCtrl::Increment | DmaAddrCtrl::IncrementReload => *dest_addr += step_size,
+                        DmaAddrCtrl::Decrement => *dest_addr -= step_size,
+                        DmaAddrCtrl::Fixed => {}
+                    }
+                }
             }
         }
     }
 
     pub fn on_event<const CPU: CpuType>(channel_num: u8, emu: &mut Emu) {
         let channel_num = channel_num as usize;
+        unsafe { assert_unchecked(channel_num < CHANNEL_COUNT) };
         let (cnt, mode, mut dest, mut src, count) = {
             let channel = &io_dma!(emu, CPU).channels[channel_num];
             (

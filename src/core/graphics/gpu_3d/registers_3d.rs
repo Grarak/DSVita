@@ -3,11 +3,12 @@ use crate::core::emu::{get_cm_mut, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
+use crate::fixed_fifo::FixedFifo;
 use crate::math::{Matrix, Vectori16, Vectori32, Vectoru16};
 use crate::utils::{rgb5_to_rgb6, HeapMem};
 use bilge::prelude::*;
-use std::collections::VecDeque;
 use std::hint::unreachable_unchecked;
+use std::intrinsics::{unchecked_div, unlikely};
 use std::mem;
 
 #[bitsize(32)]
@@ -157,7 +158,7 @@ const FIFO_PARAM_COUNTS: [u8; 128] = [
     3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x70-0x7F
 ];
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 struct Entry {
     cmd: u8,
     param: u32,
@@ -240,7 +241,7 @@ fn intersect(v1: &Vectori32<4>, v2: &Vectori32<4>, val1: i32, val2: i32) -> Vect
 
     let mut vertex = Vectori32::default();
     for i in 0..4 {
-        vertex[i] = v1[i] + ((v2[i] - v1[i]) as i64 * -d1 / (d2 - d1)) as i32;
+        vertex[i] = v1[i] + unsafe { unchecked_div((v2[i] - v1[i]) as i64 * -d1, d2 - d1) } as i32;
     }
     vertex
 }
@@ -256,8 +257,8 @@ fn clip_polygon(unclipped: &[Vectori32<4>; 4], clipped: &mut [Vectori32<4>; 10],
         *size = 0;
 
         for j in 0..old_size {
-            let current = &vertices[j];
-            let previous = &vertices[(j.wrapping_sub(1).wrapping_add(old_size)) % old_size];
+            let current = unsafe { vertices.get_unchecked(j) };
+            let previous = unsafe { vertices.get_unchecked(if unlikely(j == 0) { old_size - 1 } else { j - 1 }) };
 
             let (current_val, previous_val) = match i {
                 0 => (current[0], previous[0]),
@@ -271,21 +272,21 @@ fn clip_polygon(unclipped: &[Vectori32<4>; 4], clipped: &mut [Vectori32<4>; 10],
 
             if current_val >= -current[3] {
                 if previous_val < -previous[3] {
-                    clipped[*size] = intersect(current, previous, current_val, previous_val);
+                    unsafe { *clipped.get_unchecked_mut(*size) = intersect(current, previous, current_val, previous_val) };
                     *size += 1;
                     clip = true;
                 }
 
-                clipped[*size] = *current;
+                unsafe { *clipped.get_unchecked_mut(*size) = *current };
                 *size += 1;
             } else if previous_val >= -previous[3] {
-                clipped[*size] = intersect(current, previous, current_val, previous_val);
+                unsafe { *clipped.get_unchecked_mut(*size) = intersect(current, previous, current_val, previous_val) };
                 *size += 1;
                 clip = true;
             }
         }
 
-        vertices[..*size].copy_from_slice(&clipped[..*size]);
+        unsafe { vertices.as_mut_ptr().copy_from(clipped.as_ptr(), *size) };
     }
 
     clip
@@ -390,7 +391,7 @@ pub struct Polygons {
 
 #[derive(Default)]
 pub struct Gpu3DRegisters {
-    cmd_fifo: VecDeque<Entry>,
+    cmd_fifo: FixedFifo<Entry, 512>,
     cmd_pipe_size: u8,
     test_queue: u32,
     mtx_queue: u32,
@@ -496,8 +497,8 @@ impl Gpu3DRegisters {
 
         while !self.cmd_fifo.is_empty() && executed_cycles < cycle_diff && !self.flushed {
             let mut params = Vec::new();
-            let entry = unsafe { *self.cmd_fifo.front().unwrap_unchecked() };
-            let mut param_count = FIFO_PARAM_COUNTS[entry.cmd as usize];
+            let entry = unsafe { *self.cmd_fifo.front_unchecked() };
+            let mut param_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(entry.cmd as usize) };
             if param_count > 1 {
                 if param_count as usize > self.cmd_fifo.len() {
                     break;
@@ -505,7 +506,8 @@ impl Gpu3DRegisters {
 
                 params.reserve(param_count as usize);
                 for _ in 0..param_count {
-                    params.push(unsafe { self.cmd_fifo.pop_front().unwrap_unchecked().param });
+                    params.push(unsafe { self.cmd_fifo.front_unchecked().param });
+                    self.cmd_fifo.pop_front();
                 }
             } else {
                 param_count = 1;
@@ -1322,8 +1324,8 @@ impl Gpu3DRegisters {
     }
 
     fn queue_entry(&mut self, entry: Entry, emu: &mut Emu) {
-        if self.cmd_fifo.is_empty() && !self.is_cmd_pipe_full() {
-            self.cmd_fifo.push_back(entry);
+        if !self.is_cmd_pipe_full() {
+            unsafe { self.cmd_fifo.push_back_unchecked(entry) };
             self.cmd_pipe_size += 1;
             self.gx_stat.set_geometry_busy(true);
         } else {
@@ -1332,7 +1334,7 @@ impl Gpu3DRegisters {
                 get_cpu_regs_mut!(emu, ARM9).halt(1);
             }
 
-            self.cmd_fifo.push_back(entry);
+            unsafe { self.cmd_fifo.push_back_unchecked(entry) };
             self.gx_stat.set_num_entries_cmd_fifo(u9::new(self.cmd_fifo.len() as u16 - self.cmd_pipe_size as u16));
             self.gx_stat.set_cmd_fifo_empty(false);
 
@@ -1387,13 +1389,13 @@ impl Gpu3DRegisters {
             self.queue_entry(Entry::new(self.gx_fifo as u8, value & mask), emu);
             self.cmd_fifo_param_count += 1;
 
-            if self.cmd_fifo_param_count == unsafe { *FIFO_PARAM_COUNTS.get_unchecked((self.gx_fifo & 0xFF) as usize) } as u32 {
+            if self.cmd_fifo_param_count == FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize] as u32 {
                 self.gx_fifo >>= 8;
                 self.cmd_fifo_param_count = 0;
             }
         }
 
-        while self.gx_fifo != 0 && unsafe { *FIFO_PARAM_COUNTS.get_unchecked((self.gx_fifo & 0xFF) as usize) } == 0 {
+        while self.gx_fifo != 0 && FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize] == 0 {
             self.queue_entry(Entry::new(self.gx_fifo as u8, value & mask), emu);
             self.gx_fifo >>= 8;
         }

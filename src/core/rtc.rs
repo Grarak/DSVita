@@ -123,7 +123,7 @@ impl Rtc {
             0 => {
                 if (self.write_count & 7 == 0) && value {
                     self.reset();
-                } else if ((1 << self.write_count & 7) & 0xE) != 0 {
+                } else if ((1 << (self.write_count & 7)) & 0xE) != 0 {
                     self.cnt = (self.cnt & !(1 << (self.write_count & 7))) | ((value as u8) << (self.write_count & 7));
                 }
             }

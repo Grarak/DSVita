@@ -1,6 +1,8 @@
-use crate::core::emu::{get_cm, get_common, get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, get_mem_mut, io_div_sqrt, io_div_sqrt_mut, io_dma, io_dma_mut, io_timers, io_timers_mut};
+use crate::core::emu::{get_cm, get_common, get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, get_mem_mut, io_div_sqrt, io_div_sqrt_mut, io_dma, io_dma_mut, io_timers, io_timers_mut, Emu};
 use crate::core::CpuType::ARM9;
+use crate::utils::Convert;
 use dsvita_macros::{io_read, io_write};
+use std::intrinsics::unlikely;
 
 io_read!(
     IoArm9ReadLut,
@@ -67,12 +69,12 @@ io_read!(
         (io32(0x294), |emu| io_div_sqrt!(emu).get_div_numer_h()),
         (io32(0x298), |emu| io_div_sqrt!(emu).get_div_denom_l()),
         (io32(0x29C), |emu| io_div_sqrt!(emu).get_div_denom_h()),
-        (io32(0x2A0), |emu| io_div_sqrt!(emu).get_div_result_l()),
-        (io32(0x2A4), |emu| io_div_sqrt!(emu).get_div_result_h()),
-        (io32(0x2A8), |emu| io_div_sqrt!(emu).get_divrem_result_l()),
-        (io32(0x2AC), |emu| io_div_sqrt!(emu).get_divrem_result_h()),
+        (io32(0x2A0), |emu| io_div_sqrt_mut!(emu).get_div_result_l()),
+        (io32(0x2A4), |emu| io_div_sqrt_mut!(emu).get_div_result_h()),
+        (io32(0x2A8), |emu| io_div_sqrt_mut!(emu).get_divrem_result_l()),
+        (io32(0x2AC), |emu| io_div_sqrt_mut!(emu).get_divrem_result_h()),
         (io16(0x2B0), |emu| io_div_sqrt!(emu).sqrt_cnt),
-        (io32(0x2B4), |emu| io_div_sqrt!(emu).sqrt_result),
+        (io32(0x2B4), |emu| io_div_sqrt_mut!(emu).get_sqrt_result()),
         (io32(0x2B8), |emu| io_div_sqrt!(emu).get_sqrt_param_l()),
         (io32(0x2BC), |emu| io_div_sqrt!(emu).get_sqrt_param_h()),
         (io8(0x300), |emu| get_cpu_regs!(emu, ARM9).post_flg),
@@ -397,3 +399,23 @@ io_write!(
         (io16(0x106C), |mask, value, emu| get_common_mut!(emu).gpu.gpu_2d_regs_b.set_master_bright(mask, value)),
     ]
 );
+
+impl IoArm9WriteLut {
+    pub fn write_fixed_slice<T: Convert>(addr: u32, slice: &[T], emu: &mut Emu) {
+        let lut_addr = addr - Self::MIN_ADDR;
+        let (func, write_size, offset) = unsafe { Self::_LUT.get_unchecked(lut_addr as usize) };
+
+        if unlikely(*write_size < size_of::<T>() as u8) {
+            for value in slice {
+                Self::write((*value).into(), addr, size_of::<T>() as u8, emu);
+            }
+        } else {
+            let mask = 0xFFFFFFFF >> ((4 - size_of::<T>()) << 3);
+            let mask = mask << *offset;
+            for value in slice {
+                let value = (*value).into() << *offset;
+                func(mask, value, emu)
+            }
+        }
+    }
+}

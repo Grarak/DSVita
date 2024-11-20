@@ -11,8 +11,8 @@ use crate::jit::reg::Reg;
 use crate::jit::Cond;
 use crate::logging::debug_println;
 use crate::mmap::{flush_icache, Mmap, PAGE_SIZE};
-use crate::utils;
 use crate::utils::{HeapMem, HeapMemU8};
+use crate::{utils, IS_DEBUG};
 use paste::paste;
 use std::intrinsics::unlikely;
 use std::marker::ConstParamTy;
@@ -94,6 +94,8 @@ pub struct JitLiveRanges {
     pub vram_arm7: HeapMemU8<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
 }
 
+const JIT_PERF_MAP_RECORD: bool = IS_DEBUG;
+
 #[cfg(target_os = "linux")]
 struct JitPerfMapRecord {
     common_records: Vec<(usize, usize, String)>,
@@ -113,7 +115,7 @@ impl JitPerfMapRecord {
     }
 
     fn record_common(&mut self, jit_start: usize, jit_size: usize, name: impl AsRef<str>) {
-        if crate::IS_DEBUG {
+        if JIT_PERF_MAP_RECORD {
             self.common_records.push((jit_start, jit_size, name.as_ref().to_string()));
             use std::io::Write;
             writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {}", name.as_ref()).unwrap();
@@ -121,14 +123,14 @@ impl JitPerfMapRecord {
     }
 
     fn record(&mut self, jit_start: usize, jit_size: usize, guest_pc: u32, cpu_type: CpuType) {
-        if crate::IS_DEBUG {
+        if JIT_PERF_MAP_RECORD {
             use std::io::Write;
             writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {cpu_type:?}_{guest_pc:x}").unwrap();
         }
     }
 
     fn reset(&mut self) {
-        if crate::IS_DEBUG {
+        if JIT_PERF_MAP_RECORD {
             self.perf_map = std::fs::File::create(&self.perf_map_path).unwrap();
             for (jit_start, jit_size, name) in &self.common_records {
                 use std::io::Write;
@@ -162,6 +164,7 @@ pub struct JitMemory {
     jit_live_ranges: JitLiveRanges,
     pub jit_memory_map: JitMemoryMap,
     jit_perf_map_record: JitPerfMapRecord,
+    pub arm7_hle: bool,
 }
 
 impl JitMemory {
@@ -177,6 +180,7 @@ impl JitMemory {
             jit_live_ranges,
             jit_memory_map,
             jit_perf_map_record: JitPerfMapRecord::new(),
+            arm7_hle: false,
         }
     }
 
@@ -354,13 +358,17 @@ impl JitMemory {
     }
 
     pub fn invalidate_wram(&mut self) {
-        self.jit_entries.shared_wram_arm7.fill(DEFAULT_JIT_ENTRY_ARM7);
-        self.jit_live_ranges.shared_wram_arm7.fill(0);
+        if !self.arm7_hle {
+            self.jit_entries.shared_wram_arm7.fill(DEFAULT_JIT_ENTRY_ARM7);
+            self.jit_live_ranges.shared_wram_arm7.fill(0);
+        }
     }
 
     pub fn invalidate_vram(&mut self) {
-        self.jit_entries.vram_arm7.fill(DEFAULT_JIT_ENTRY_ARM7);
-        self.jit_live_ranges.vram_arm7.fill(0);
+        if !self.arm7_hle {
+            self.jit_entries.vram_arm7.fill(DEFAULT_JIT_ENTRY_ARM7);
+            self.jit_live_ranges.vram_arm7.fill(0);
+        }
     }
 
     pub fn patch_slow_mem(&mut self, host_pc: &mut usize) -> bool {

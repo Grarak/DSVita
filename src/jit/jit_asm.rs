@@ -118,7 +118,12 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) 
             unsafe { exit_guest_context!(asm) };
         }
     } else {
-        let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(get_regs!(asm.emu, CPU).pc);
+        let regs = get_regs_mut!(asm.emu, CPU);
+        let thumb = regs.pc & 1 == 1;
+        get_regs_mut!(asm.emu, CPU).set_thumb(thumb);
+        let guest_pc_mask = !(1 | ((!thumb as u32) << 1));
+
+        let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(regs.pc & guest_pc_mask);
         let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(jit_entry) };
         jit_entry(store_host_sp);
     }

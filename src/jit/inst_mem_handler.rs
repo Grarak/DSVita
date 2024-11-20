@@ -7,7 +7,7 @@ use handler::*;
 use std::intrinsics::unlikely;
 
 mod handler {
-    use crate::core::emu::{get_regs, get_regs_mut, Emu};
+    use crate::core::emu::{get_mem_mut, get_regs_mut, Emu};
     use crate::core::thread_regs::ThreadRegs;
     use crate::core::CpuType;
     use crate::jit::reg::{Reg, RegReserve};
@@ -75,11 +75,13 @@ mod handler {
         let rlist = RegReserve::from(rlist as u32);
         let op0 = Reg::from(op0);
 
+        let regs = get_regs_mut!(emu, CPU);
+
         if unlikely(rlist.is_empty()) {
             if WRITE {
-                *get_regs_mut!(emu, CPU).get_reg_mut(op0) -= 0x40;
+                *regs.get_reg_mut(op0) -= 0x40;
             } else {
-                *get_regs_mut!(emu, CPU).get_reg_mut(op0) += 0x40;
+                *regs.get_reg_mut(op0) += 0x40;
             }
             if CPU == CpuType::ARM7 {
                 unsafe { unreachable_unchecked() }
@@ -88,21 +90,17 @@ mod handler {
         }
 
         if WRITE && unlikely(rlist.is_reserved(Reg::PC) || op0 == Reg::PC) {
-            *get_regs_mut!(emu, CPU).get_reg_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
+            *regs.get_reg_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
         }
 
-        let start_addr = if DECREMENT {
-            *get_regs!(emu, CPU).get_reg(op0) - ((rlist.len() as u32) << 2)
-        } else {
-            *get_regs!(emu, CPU).get_reg(op0)
-        };
-        let mut addr = start_addr;
+        let start_addr = if DECREMENT { *regs.get_reg(op0) - ((rlist.len() as u32) << 2) } else { *regs.get_reg(op0) };
+        let addr = start_addr;
 
         if WRITE_BACK && (!WRITE || (CPU == CpuType::ARM7 && unlikely((rlist.0 & ((1 << (op0 as u8 + 1)) - 1)) > (1 << op0 as u8)))) {
             if DECREMENT {
-                *get_regs_mut!(emu, CPU).get_reg_mut(op0) = addr;
+                *regs.get_reg_mut(op0) = addr;
             } else {
-                *get_regs_mut!(emu, CPU).get_reg_mut(op0) = addr + ((rlist.len() as u32) << 2);
+                *regs.get_reg_mut(op0) = addr + ((rlist.len() as u32) << 2);
             }
         }
 
@@ -112,27 +110,23 @@ mod handler {
             ThreadRegs::get_reg_mut
         };
 
-        for i in Reg::R0 as u8..Reg::CPSR as u8 {
-            let reg = Reg::from(i);
-            if unlikely(rlist.is_reserved(reg)) {
-                if PRE {
-                    addr += 4;
-                }
-                if WRITE {
-                    let value = *get_reg_fun(get_regs_mut!(emu, CPU), reg);
-                    emu.mem_write::<CPU, _>(addr, value);
-                } else {
-                    let value = emu.mem_read::<CPU, _>(addr);
-                    *get_reg_fun(get_regs_mut!(emu, CPU), reg) = value;
-                }
-                if !PRE {
-                    addr += 4;
-                }
-            }
+        let mem_addr = if PRE { addr + 4 } else { addr };
+
+        let mut rlist_iter = rlist.into_iter();
+        if WRITE {
+            get_mem_mut!(emu).write_multiple::<CPU, u32, _>(mem_addr, emu, rlist.len(), || {
+                let reg = unsafe { rlist_iter.next().unwrap_unchecked() };
+                *get_reg_fun(regs, reg)
+            });
+        } else {
+            get_mem_mut!(emu).read_multiple::<CPU, u32, _>(mem_addr, emu, rlist.len(), |value| {
+                let reg = unsafe { rlist_iter.next().unwrap_unchecked() };
+                *get_reg_fun(regs, reg) = value;
+            });
         }
 
         if WRITE_BACK && (WRITE || (CPU == CpuType::ARM9 && unlikely((rlist.0 & !((1 << (op0 as u8 + 1)) - 1)) != 0 || (rlist.0 == (1 << op0 as u8))))) {
-            *get_regs_mut!(emu, CPU).get_reg_mut(op0) = if DECREMENT { start_addr } else { addr }
+            *regs.get_reg_mut(op0) = if DECREMENT { start_addr } else { addr + (rlist.len() << 2) as u32 }
         }
 
         if USER && unlikely(rlist.is_reserved(Reg::PC)) {

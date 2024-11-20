@@ -1,4 +1,4 @@
-use crate::core::emu::{get_jit, get_jit_mut, get_regs_mut};
+use crate::core::emu::{get_jit, get_regs_mut};
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
@@ -6,10 +6,17 @@ use crate::jit::assembler::{BlockLabel, BlockOperand, BlockReg};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::reg::Reg;
 use crate::jit::{jit_memory_map, Cond, ShiftType};
-use crate::{DEBUG_LOG, IS_DEBUG};
+use crate::IS_DEBUG;
 use std::ptr;
 
-pub const MAX_LOOP_CYCLE_COUNT: u32 = 255;
+const MAX_LOOP_CYCLE_COUNT: u32 = 255;
+
+pub const fn get_max_loop_cycle_count<const CPU: CpuType>() -> u32 {
+    match CPU {
+        ARM9 => MAX_LOOP_CYCLE_COUNT * 2,
+        ARM7 => MAX_LOOP_CYCLE_COUNT,
+    }
+}
 
 macro_rules! exit_guest_context {
     ($asm:expr) => {{
@@ -23,31 +30,20 @@ macro_rules! exit_guest_context {
     }};
 }
 
-use crate::jit::inst_branch_handler::branch_reg;
+use crate::jit::inst_branch_handler::{branch_lr, branch_reg_with_lr_return};
 pub(crate) use exit_guest_context;
 
-pub struct JitAsmCommonFuns<const CPU: CpuType> {
-    branch_return_stack: usize,
-}
+pub struct JitAsmCommonFuns<const CPU: CpuType> {}
 
 impl<const CPU: CpuType> Default for JitAsmCommonFuns<CPU> {
     fn default() -> Self {
-        JitAsmCommonFuns { branch_return_stack: 0 }
+        JitAsmCommonFuns {}
     }
 }
 
 impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
     pub fn new(asm: &mut JitAsm<CPU>) -> Self {
-        let mut create_function = |fun: fn(&mut BlockAsm, &mut JitAsm<CPU>), name: &str| {
-            let mut block_asm = asm.new_block_asm(true);
-            fun(&mut block_asm, asm);
-            block_asm.emit_opcodes(0, false);
-            let opcodes = block_asm.finalize(0);
-            get_jit_mut!(asm.emu).insert_common_fun_block(opcodes, name) as usize - get_jit!(asm.emu).get_start_entry()
-        };
-        JitAsmCommonFuns {
-            branch_return_stack: create_function(Self::emit_branch_return_stack, &format!("{CPU:?}_branch_return_stack")),
-        }
+        JitAsmCommonFuns {}
     }
 
     pub fn emit_call_jit_addr(block_asm: &mut BlockAsm, asm: &mut JitAsm<CPU>, target_pc_reg: BlockReg, has_return: bool) {
@@ -172,112 +168,19 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         block_asm.free_reg(runtime_data_addr_reg);
     }
 
-    fn emit_branch_return_stack(block_asm: &mut BlockAsm, asm: &mut JitAsm<CPU>) {
-        // args: total_cycles, target_pc, current_pc
-
-        let total_cycles_reg = block_asm.new_reg();
-        block_asm.mov(total_cycles_reg, BlockReg::Fixed(Reg::R0));
-
-        let target_pc_reg = block_asm.new_reg();
-        block_asm.mov(target_pc_reg, BlockReg::Fixed(Reg::R1));
-
-        let current_pc_reg = block_asm.new_reg();
-        if IS_DEBUG {
-            block_asm.mov(current_pc_reg, BlockReg::Fixed(Reg::R2));
-        }
-
-        let target_pre_cycle_count_sum_reg = block_asm.new_reg();
-        block_asm.mov(target_pre_cycle_count_sum_reg, 0);
-
-        Self::emit_flush_cycles(
-            asm,
-            block_asm,
-            total_cycles_reg,
-            target_pre_cycle_count_sum_reg,
-            false,
-            |asm, block_asm, runtime_data_addr_reg, breakout_label| {
-                let aligned_target_pc_reg = block_asm.new_reg();
-                let thumb_bit_mask_reg = block_asm.new_reg();
-                block_asm.and(thumb_bit_mask_reg, target_pc_reg, 1);
-                Self::emit_align_guest_pc(block_asm, target_pc_reg, aligned_target_pc_reg);
-                block_asm.orr(aligned_target_pc_reg, aligned_target_pc_reg, thumb_bit_mask_reg);
-
-                let no_return_label = block_asm.new_label();
-                let return_stack_ptr_reg = block_asm.new_reg();
-
-                block_asm.load_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
-                block_asm.cmp(return_stack_ptr_reg, 0);
-                if DEBUG_LOG {
-                    block_asm.start_cond_block(Cond::EQ);
-                    block_asm.call2(Self::debug_return_stack_empty as *const (), current_pc_reg, aligned_target_pc_reg);
-                    block_asm.branch(no_return_label, Cond::AL);
-                    block_asm.end_cond_block();
-                } else {
-                    block_asm.branch(no_return_label, Cond::EQ);
-                }
-
-                block_asm.sub(return_stack_ptr_reg, return_stack_ptr_reg, 1);
-
-                let return_stack_reg = block_asm.new_reg();
-                block_asm.add(return_stack_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_offset() as u32);
-
-                let desired_lr_reg = block_asm.new_reg();
-                block_asm.load_u32(desired_lr_reg, return_stack_reg, (return_stack_ptr_reg.into(), ShiftType::Lsl, BlockOperand::from(2)));
-
-                let no_return_store_label = block_asm.new_label();
-                block_asm.cmp(desired_lr_reg, aligned_target_pc_reg);
-                block_asm.branch(no_return_store_label, Cond::NE);
-
-                block_asm.store_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
-
-                Self::emit_set_cpsr_thumb_bit(block_asm, asm, aligned_target_pc_reg);
-                if DEBUG_LOG {
-                    block_asm.call2(Self::debug_branch_lr as *const (), current_pc_reg, aligned_target_pc_reg);
-                }
-                block_asm.epilogue_previous_block();
-
-                block_asm.label(no_return_store_label);
-                if DEBUG_LOG {
-                    block_asm.call2(Self::debug_branch_lr_failed as *const (), current_pc_reg, aligned_target_pc_reg);
-                }
-                block_asm.mov(return_stack_ptr_reg, 0);
-                block_asm.store_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
-
-                block_asm.label(no_return_label);
-                Self::emit_call_jit_addr(block_asm, asm, aligned_target_pc_reg, false);
-
-                block_asm.free_reg(aligned_target_pc_reg);
-                block_asm.free_reg(desired_lr_reg);
-                block_asm.free_reg(return_stack_reg);
-                block_asm.free_reg(return_stack_ptr_reg);
-                block_asm.free_reg(thumb_bit_mask_reg);
-            },
-            |_, block_asm, runtime_data_addr_reg| {
-                if IS_DEBUG {
-                    block_asm.store_u32(current_pc_reg, runtime_data_addr_reg, JitRuntimeData::get_out_pc_offset() as u32);
-                }
-                block_asm.epilogue();
-            },
-        );
-
-        block_asm.free_reg(current_pc_reg);
-        block_asm.free_reg(target_pc_reg);
-        block_asm.free_reg(total_cycles_reg);
-    }
-
     pub fn emit_call_branch_return_stack(&self, block_asm: &mut BlockAsm, total_cycles: u16, target_pc_reg: BlockReg, current_pc: u32) {
         if IS_DEBUG {
-            block_asm.call3_common(self.branch_return_stack, total_cycles as u32, target_pc_reg, current_pc);
+            block_asm.call3(branch_lr::<CPU> as *const (), total_cycles as u32, target_pc_reg, current_pc);
         } else {
-            block_asm.call2_common(self.branch_return_stack, total_cycles as u32, target_pc_reg);
+            block_asm.call2(branch_lr::<CPU> as *const (), total_cycles as u32, target_pc_reg);
         }
     }
 
     pub fn emit_call_branch_reg(&self, block_asm: &mut BlockAsm, total_cycles: u16, lr_reg: BlockReg, target_pc_reg: BlockReg, current_pc: u32) {
         if IS_DEBUG {
-            block_asm.call4(branch_reg::<CPU> as *const (), total_cycles as u32, lr_reg, target_pc_reg, current_pc);
+            block_asm.call4(branch_reg_with_lr_return::<CPU> as *const (), total_cycles as u32, lr_reg, target_pc_reg, current_pc);
         } else {
-            block_asm.call3(branch_reg::<CPU> as *const (), total_cycles as u32, lr_reg, target_pc_reg);
+            block_asm.call3(branch_reg_with_lr_return::<CPU> as *const (), total_cycles as u32, lr_reg, target_pc_reg);
         }
     }
 
@@ -289,15 +192,15 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         println!("{CPU:?} branch reg from {current_pc:x} to {target_pc:x}")
     }
 
-    extern "C" fn debug_branch_lr(current_pc: u32, target_pc: u32) {
+    pub extern "C" fn debug_branch_lr(current_pc: u32, target_pc: u32) {
         println!("{CPU:?} branch lr from {current_pc:x} to {target_pc:x}")
     }
 
-    extern "C" fn debug_branch_lr_failed(current_pc: u32, target_pc: u32) {
+    pub extern "C" fn debug_branch_lr_failed(current_pc: u32, target_pc: u32) {
         println!("{CPU:?} failed to branch lr from {current_pc:x} to {target_pc:x}")
     }
 
-    extern "C" fn debug_return_stack_empty(current_pc: u32, target_pc: u32) {
+    pub extern "C" fn debug_return_stack_empty(current_pc: u32, target_pc: u32) {
         println!("{CPU:?} empty return stack {current_pc:x} to {target_pc:x}")
     }
 }

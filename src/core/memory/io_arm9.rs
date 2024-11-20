@@ -35,4 +35,8 @@ impl IoArm9 {
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, emu: &mut Emu) {
         IoArm9WriteLut::write(value.into(), addr_offset, size_of::<T>() as u8, emu);
     }
+
+    pub fn write_fixed_slice<T: Convert>(&mut self, addr_offset: u32, slice: &[T], emu: &mut Emu) {
+        IoArm9WriteLut::write_fixed_slice(addr_offset, slice, emu);
+    }
 }

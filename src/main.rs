@@ -41,6 +41,7 @@ mod bitset;
 mod cartridge_io;
 mod cartridge_metadata;
 mod core;
+mod fixed_fifo;
 mod jit;
 mod logging;
 mod math;
@@ -187,6 +188,7 @@ fn run_cpu(
     if emu.settings.arm7_hle() {
         common.ipc.use_hle();
         common.gpu.arm7_hle = true;
+        get_jit_mut!(emu).arm7_hle = true;
         execute_jit::<true>(&mut emu_unsafe);
     } else {
         execute_jit::<false>(&mut emu_unsafe);
