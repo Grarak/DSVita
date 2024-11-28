@@ -1,6 +1,7 @@
 use paste::paste;
+use std::arch::asm;
+use std::ops;
 use std::ops::{Index, IndexMut};
-use std::{mem, ops};
 
 #[derive(Copy, Clone)]
 pub struct Matrix([i32; 16]);
@@ -69,7 +70,7 @@ macro_rules! define_vector {
 
             impl<const SIZE: usize> Default for [<Vector $t>]<SIZE> {
                 fn default() -> Self {
-                    unsafe { mem::zeroed() }
+                    [<Vector $t>]([$t::default(); SIZE])
                 }
             }
 
@@ -99,17 +100,6 @@ macro_rules! define_vector {
                 }
             }
 
-            impl<const SIZE: usize> ops::Mul<$t> for [<Vector $t>]<SIZE> {
-                type Output = Self;
-
-                fn mul(mut self, rhs: $t) -> Self::Output {
-                    for i in 0..SIZE {
-                        self.0[i] *= rhs
-                    }
-                    self
-                }
-            }
-            
             impl From<[<Vector $t>]<3>> for [<Vector $t>]<4> {
                 fn from(value: [<Vector $t>]<3>) -> Self {
                     let mut ret = Self::default();
@@ -126,16 +116,46 @@ macro_rules! define_vector {
 define_vector!(u16);
 define_vector!(i16);
 define_vector!(i32);
+define_vector!(f32);
 
 impl ops::Mul<Matrix> for Vectori32<3> {
     type Output = Self;
 
     fn mul(self, rhs: Matrix) -> Self::Output {
-        let mut ret = Vectori32::default();
-        ret.0[0] = ((self.0[0] as i64 * rhs.0[0] as i64 + self.0[1] as i64 * rhs.0[4] as i64 + self.0[2] as i64 * rhs.0[8] as i64) >> 12) as i32;
-        ret.0[1] = ((self.0[0] as i64 * rhs.0[1] as i64 + self.0[1] as i64 * rhs.0[5] as i64 + self.0[2] as i64 * rhs.0[9] as i64) >> 12) as i32;
-        ret.0[2] = ((self.0[0] as i64 * rhs.0[2] as i64 + self.0[1] as i64 * rhs.0[6] as i64 + self.0[2] as i64 * rhs.0[10] as i64) >> 12) as i32;
-        ret
+        let mut v0: i32;
+        let mut v1: i32;
+        let mut v2: i32;
+        unsafe {
+            asm!(
+            "vmov.s32 d1, 0",
+            "vld1.s32 {{d0}}, [{v}]!",
+            "vld1.s32 {{d1[0]}}, [{v}]",
+            "vld1.s32 {{q1}}, [{m}]!",
+            "vld1.s32 {{q2}}, [{m}]!",
+            "vld1.s32 {{q3}}, [{m}]!",
+            "vld1.s32 {{q4}}, [{m}]",
+            "vmull.s32 q5, d2, d0[0]",
+            "vmull.s32 q6, d3, d0[0]",
+            "vmlal.s32 q5, d4, d0[1]",
+            "vmlal.s32 q6, d5, d0[1]",
+            "vmlal.s32 q5, d6, d1[0]",
+            "vmlal.s32 q6, d7, d1[0]",
+            "vmlal.s32 q5, d8, d1[1]",
+            "vmlal.s32 q6, d9, d1[1]",
+            "vshr.s64 q5, q5, 12",
+            "vshr.s64 q6, q6, 12",
+            "vmov.s32 {v0}, s20",
+            "vmov.s32 {v1}, s22",
+            "vmov.s32 {v2}, s24",
+            v = in(reg) self.0.as_ptr(),
+            m = in(reg) rhs.0.as_ptr(),
+            v0 = out(reg) v0,
+            v1 = out(reg) v1,
+            v2 = out(reg) v2,
+            options(pure, readonly, preserves_flags, nostack),
+            );
+        }
+        Vectori32([v0, v1, v2])
     }
 }
 
@@ -143,12 +163,41 @@ impl ops::Mul<Matrix> for Vectori32<4> {
     type Output = Self;
 
     fn mul(self, rhs: Matrix) -> Self::Output {
-        let mut ret = Vectori32::default();
-        ret[0] = ((self[0] as i64 * rhs[0] as i64 + self[1] as i64 * rhs[4] as i64 + self[2] as i64 * rhs[8] as i64 + self[3] as i64 * rhs[12] as i64) >> 12) as i32;
-        ret[1] = ((self[0] as i64 * rhs[1] as i64 + self[1] as i64 * rhs[5] as i64 + self[2] as i64 * rhs[9] as i64 + self[3] as i64 * rhs[13] as i64) >> 12) as i32;
-        ret[2] = ((self[0] as i64 * rhs[2] as i64 + self[1] as i64 * rhs[6] as i64 + self[2] as i64 * rhs[10] as i64 + self[3] as i64 * rhs[14] as i64) >> 12) as i32;
-        ret[3] = ((self[0] as i64 * rhs[3] as i64 + self[1] as i64 * rhs[7] as i64 + self[2] as i64 * rhs[11] as i64 + self[3] as i64 * rhs[15] as i64) >> 12) as i32;
-        ret
+        let mut v0: i32;
+        let mut v1: i32;
+        let mut v2: i32;
+        let mut v3: i32;
+        unsafe {
+            asm!(
+            "vld1.s32 {{q0}}, [{v}]",
+            "vld1.s32 {{q1}}, [{m}]!",
+            "vld1.s32 {{q2}}, [{m}]!",
+            "vld1.s32 {{q3}}, [{m}]!",
+            "vld1.s32 {{q4}}, [{m}]",
+            "vmull.s32 q5, d2, d0[0]",
+            "vmull.s32 q6, d3, d0[0]",
+            "vmlal.s32 q5, d4, d0[1]",
+            "vmlal.s32 q6, d5, d0[1]",
+            "vmlal.s32 q5, d6, d1[0]",
+            "vmlal.s32 q6, d7, d1[0]",
+            "vmlal.s32 q5, d8, d1[1]",
+            "vmlal.s32 q6, d9, d1[1]",
+            "vshr.s64 q5, q5, 12",
+            "vshr.s64 q6, q6, 12",
+            "vmov.s32 {v0}, s20",
+            "vmov.s32 {v1}, s22",
+            "vmov.s32 {v2}, s24",
+            "vmov.s32 {v3}, s26",
+            v = in(reg) self.0.as_ptr(),
+            m = in(reg) rhs.0.as_ptr(),
+            v0 = out(reg) v0,
+            v1 = out(reg) v1,
+            v2 = out(reg) v2,
+            v3 = out(reg) v3,
+            options(pure, readonly, preserves_flags, nostack),
+            );
+        }
+        Vectori32([v0, v1, v2, v3])
     }
 }
 
@@ -164,14 +213,40 @@ impl ops::MulAssign<Matrix> for Vectori32<4> {
     }
 }
 
-impl<const SIZE: usize> ops::Mul for Vectori32<SIZE> {
+impl ops::Mul for Vectori32<3> {
     type Output = i32;
 
     fn mul(self, rhs: Self) -> Self::Output {
+        /* Vectorization of
         let mut dot = 0;
-        for i in 0..SIZE {
-            dot += self[i] as i64 * rhs[i] as i64;
-        }
+        dot += self[0] as i64 * rhs[0] as i64;
+        dot += self[1] as i64 * rhs[1] as i64;
+        dot += self[2] as i64 * rhs[2] as i64;
         (dot >> 12) as i32
+         */
+
+        let v1 = self.0.as_ptr();
+        let v2 = rhs.0.as_ptr();
+        let mut dot: i32;
+        unsafe {
+            asm!(
+            "vmov.s32 d1, 0",
+            "vmov.s32 d3, 0",
+            "vld1.s32 {{d0}}, [{v1}]!",
+            "vld1.s32 {{d1[0]}}, [{v1}]",
+            "vld1.s32 {{d2}}, [{v2}]!",
+            "vld1.s32 {{d3[0]}}, [{v2}]",
+            "vmull.s32 q2, d0, d2",
+            "vmlal.s32 q2, d1, d3",
+            "vadd.s64 d4, d4, d5",
+            "vshr.s64 d4, d4, 12",
+            "vmov.s32 {dot}, d4[0]",
+            v1 = in(reg) v1,
+            v2 = in(reg) v2,
+            dot = out(reg) dot,
+            options(pure, readonly, preserves_flags, nostack),
+            );
+        }
+        dot
     }
 }
