@@ -4,12 +4,13 @@ use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
 use crate::fixed_fifo::FixedFifo;
-use crate::math::{Matrix, Vectori16, Vectori32, Vectoru16};
+use crate::math::{Matrix, Vectorf32, Vectori16, Vectori32, Vectoru16};
 use crate::utils::{rgb5_to_rgb6, HeapMem};
 use bilge::prelude::*;
 use std::hint::unreachable_unchecked;
-use std::intrinsics::{unchecked_div, unlikely};
+use std::intrinsics::unlikely;
 use std::mem;
+use std::mem::MaybeUninit;
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
@@ -232,25 +233,32 @@ pub struct Vertex {
     pub color: u32,
 }
 
-fn intersect(v1: &Vectori32<4>, v2: &Vectori32<4>, val1: i32, val2: i32) -> Vectori32<4> {
-    let d1 = val1 as i64 + v1[3] as i64;
-    let d2 = val2 as i64 + v2[3] as i64;
-    if d2 == d1 {
+fn intersect(v1: &Vectorf32<4>, v2: &Vectorf32<4>, val1: f32, val2: f32) -> Vectorf32<4> {
+    let d1 = val1 + v1[3];
+    let d2 = val2 + v2[3];
+    if (d2 - d1).abs() < f32::EPSILON {
         return *v1;
     }
 
-    let mut vertex = Vectori32::default();
-    for i in 0..4 {
-        vertex[i] = v1[i] + unsafe { unchecked_div((v2[i] - v1[i]) as i64 * -d1, d2 - d1) } as i32;
-    }
+    let mut vertex = Vectorf32::default();
+    let dist_inverse = -d1 / (d2 - d1);
+    vertex[0] = v1[0] + ((v2[0] - v1[0]) * dist_inverse);
+    vertex[1] = v1[1] + ((v2[1] - v1[1]) * dist_inverse);
+    vertex[2] = v1[2] + ((v2[2] - v1[2]) * dist_inverse);
+    vertex[3] = v1[3] + ((v2[3] - v1[3]) * dist_inverse);
     vertex
 }
 
-fn clip_polygon(unclipped: &[Vectori32<4>; 4], clipped: &mut [Vectori32<4>; 10], size: &mut usize) -> bool {
+fn clip_polygon(unclipped: &[Vectori32<4>; 4], clipped: &mut [Vectorf32<4>; 10], size: &mut usize) -> bool {
     let mut clip = false;
 
-    let mut vertices = [Vectori32::<4>::default(); 10];
-    vertices[..4].copy_from_slice(unclipped);
+    let mut vertices = [Vectorf32::<4>::default(); 10];
+    for i in 0..4 {
+        for j in 0..4 {
+            const NORMALIZE: f32 = 1f32 / 4096f32;
+            vertices[i][j] = unclipped[i][j] as f32 * NORMALIZE;
+        }
+    }
 
     for i in 0..6 {
         let old_size = *size;
@@ -496,7 +504,7 @@ impl Gpu3DRegisters {
         };
 
         while !self.cmd_fifo.is_empty() && executed_cycles < cycle_diff && !self.flushed {
-            let mut params = Vec::new();
+            let mut params: [u32; 32] = unsafe { MaybeUninit::uninit().assume_init() };
             let entry = unsafe { *self.cmd_fifo.front_unchecked() };
             let mut param_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(entry.cmd as usize) };
             if param_count > 1 {
@@ -504,9 +512,8 @@ impl Gpu3DRegisters {
                     break;
                 }
 
-                params.reserve(param_count as usize);
-                for _ in 0..param_count {
-                    params.push(unsafe { self.cmd_fifo.front_unchecked().param });
+                for i in 0..param_count {
+                    unsafe { *params.get_unchecked_mut(i as usize) = self.cmd_fifo.front_unchecked().param };
                     self.cmd_fifo.pop_front();
                 }
             } else {
@@ -521,17 +528,17 @@ impl Gpu3DRegisters {
                 0x13 => self.exe_mtx_store(entry.param),
                 0x14 => self.exe_mtx_restore(entry.param),
                 0x15 => self.exe_mtx_identity(),
-                0x16 => self.exe_mtx_load44(unsafe { params.try_into().unwrap_unchecked() }),
-                0x17 => self.exe_mtx_load43(unsafe { params.try_into().unwrap_unchecked() }),
-                0x18 => self.exe_mtx_mult44(unsafe { params.try_into().unwrap_unchecked() }),
-                0x19 => self.exe_mtx_mult43(unsafe { params.try_into().unwrap_unchecked() }),
-                0x1A => self.exe_mtx_mult33(unsafe { params.try_into().unwrap_unchecked() }),
-                0x1B => self.exe_mtx_scale(unsafe { params.try_into().unwrap_unchecked() }),
-                0x1C => self.exe_mtx_trans(unsafe { params.try_into().unwrap_unchecked() }),
+                0x16 => self.exe_mtx_load44(unsafe { mem::transmute(&params) }),
+                0x17 => self.exe_mtx_load43(unsafe { mem::transmute(&params) }),
+                0x18 => self.exe_mtx_mult44(unsafe { mem::transmute(&params) }),
+                0x19 => self.exe_mtx_mult43(unsafe { mem::transmute(&params) }),
+                0x1A => self.exe_mtx_mult33(unsafe { mem::transmute(&params) }),
+                0x1B => self.exe_mtx_scale(unsafe { mem::transmute(&params) }),
+                0x1C => self.exe_mtx_trans(unsafe { mem::transmute(&params) }),
                 0x20 => self.exe_color(entry.param),
                 0x21 => self.exe_normal(entry.param),
                 0x22 => self.exe_tex_coord(entry.param),
-                0x23 => self.exe_vtx16(unsafe { params.try_into().unwrap_unchecked() }),
+                0x23 => self.exe_vtx16(unsafe { mem::transmute(&params) }),
                 0x24 => self.exe_vtx10(entry.param),
                 0x25 => self.exe_vtx_x_y(entry.param),
                 0x26 => self.exe_vtx_x_z(entry.param),
@@ -549,10 +556,10 @@ impl Gpu3DRegisters {
                 0x41 => {}
                 0x50 => self.exe_swap_buffers(entry.param),
                 0x60 => self.exe_viewport(entry.param),
-                0x70 => self.exe_box_test(unsafe { params.try_into().unwrap_unchecked() }),
-                0x71 => self.exe_pos_test(unsafe { params.try_into().unwrap_unchecked() }),
+                0x70 => self.exe_box_test(unsafe { mem::transmute(&params) }),
+                0x71 => self.exe_pos_test(unsafe { mem::transmute(&params) }),
                 0x72 => self.exe_vec_test(entry.param),
-                _ => unreachable!(),
+                _ => unsafe { unreachable_unchecked() },
             }
             executed_cycles += 4;
 
@@ -580,6 +587,7 @@ impl Gpu3DRegisters {
         }
     }
 
+    #[inline(never)]
     fn exe_mtx_push(&mut self) {
         match self.mtx_mode {
             MtxMode::Projection => {
@@ -609,6 +617,7 @@ impl Gpu3DRegisters {
         self.decrease_mtx_queue();
     }
 
+    #[inline(never)]
     fn exe_mtx_pop(&mut self, param: u32) {
         match self.mtx_mode {
             MtxMode::Projection => {
@@ -639,6 +648,7 @@ impl Gpu3DRegisters {
         self.decrease_mtx_queue();
     }
 
+    #[inline(never)]
     fn exe_mtx_store(&mut self, param: u32) {
         match self.mtx_mode {
             MtxMode::Projection => self.matrices.proj_stack = self.matrices.proj,
@@ -656,6 +666,7 @@ impl Gpu3DRegisters {
         }
     }
 
+    #[inline(never)]
     fn exe_mtx_restore(&mut self, param: u32) {
         match self.mtx_mode {
             MtxMode::Projection => {
@@ -677,6 +688,7 @@ impl Gpu3DRegisters {
         }
     }
 
+    #[inline(never)]
     fn exe_mtx_identity(&mut self) {
         match self.mtx_mode {
             MtxMode::Projection => self.matrices.proj = Matrix::default(),
@@ -708,11 +720,13 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_load44(&mut self, param: [u32; 16]) {
-        self.mtx_load(unsafe { mem::transmute(param) });
+    #[inline(never)]
+    fn exe_mtx_load44(&mut self, param: &[u32; 16]) {
+        self.mtx_load(unsafe { mem::transmute(*param) });
     }
 
-    fn exe_mtx_load43(&mut self, param: [u32; 12]) {
+    #[inline(never)]
+    fn exe_mtx_load43(&mut self, param: &[u32; 12]) {
         let mut mtx = Matrix::default();
         for i in 0..4 {
             mtx.as_mut()[i * 4..i * 4 + 3].copy_from_slice(unsafe { mem::transmute(&param[i * 3..i * 3 + 3]) });
@@ -741,11 +755,13 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_mult44(&mut self, param: [u32; 16]) {
-        self.mtx_mult(unsafe { mem::transmute(param) });
+    #[inline(never)]
+    fn exe_mtx_mult44(&mut self, param: &[u32; 16]) {
+        self.mtx_mult(unsafe { mem::transmute(*param) });
     }
 
-    fn exe_mtx_mult43(&mut self, param: [u32; 12]) {
+    #[inline(never)]
+    fn exe_mtx_mult43(&mut self, param: &[u32; 12]) {
         let mut mtx = Matrix::default();
         for i in 0..4 {
             mtx.as_mut()[i * 4..i * 4 + 3].copy_from_slice(unsafe { mem::transmute(&param[i * 3..i * 3 + 3]) });
@@ -753,7 +769,8 @@ impl Gpu3DRegisters {
         self.mtx_mult(mtx);
     }
 
-    fn exe_mtx_mult33(&mut self, param: [u32; 9]) {
+    #[inline(never)]
+    fn exe_mtx_mult33(&mut self, param: &[u32; 9]) {
         let mut mtx = Matrix::default();
         for i in 0..3 {
             mtx.as_mut()[i * 4..i * 4 + 3].copy_from_slice(unsafe { mem::transmute(&param[i * 3..i * 3 + 3]) });
@@ -761,7 +778,8 @@ impl Gpu3DRegisters {
         self.mtx_mult(mtx);
     }
 
-    fn exe_mtx_scale(&mut self, param: [u32; 3]) {
+    #[inline(never)]
+    fn exe_mtx_scale(&mut self, param: &[u32; 3]) {
         let mut mtx = Matrix::default();
         for i in 0..3 {
             mtx[i * 5] = param[i] as i32;
@@ -769,16 +787,19 @@ impl Gpu3DRegisters {
         self.mtx_mult(mtx);
     }
 
-    fn exe_mtx_trans(&mut self, param: [u32; 3]) {
+    #[inline(never)]
+    fn exe_mtx_trans(&mut self, param: &[u32; 3]) {
         let mut mtx = Matrix::default();
         mtx.as_mut()[12..15].copy_from_slice(unsafe { mem::transmute(param.as_slice()) });
         self.mtx_mult(mtx);
     }
 
+    #[inline(never)]
     fn exe_color(&mut self, param: u32) {
         self.saved_vertex.color = rgb5_to_rgb6(param);
     }
 
+    #[inline(never)]
     fn exe_normal(&mut self, param: u32) {
         let normal_vector_param = NormalVector::from(param);
         let mut normal_vector = Vectori32::<3>::default();
@@ -844,6 +865,7 @@ impl Gpu3DRegisters {
         }
     }
 
+    #[inline(never)]
     fn exe_tex_coord(&mut self, param: u32) {
         let tex_coord = TexCoord::from(param);
         if self.texture_coord_mode == TextureCoordTransMode::TexCoord {
@@ -863,7 +885,8 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_vtx16(&mut self, params: [u32; 2]) {
+    #[inline(never)]
+    fn exe_vtx16(&mut self, params: &[u32; 2]) {
         self.saved_vertex.coords[0] = params[0] as i16 as i32;
         self.saved_vertex.coords[1] = (params[0] >> 16) as i16 as i32;
         self.saved_vertex.coords[2] = params[1] as i16 as i32;
@@ -871,6 +894,7 @@ impl Gpu3DRegisters {
         self.add_vertex();
     }
 
+    #[inline(never)]
     fn exe_vtx10(&mut self, param: u32) {
         self.saved_vertex.coords[0] = ((param & 0x3FF) << 6) as i16 as i32;
         self.saved_vertex.coords[1] = ((param & 0xFFC00) >> 4) as i16 as i32;
@@ -879,6 +903,7 @@ impl Gpu3DRegisters {
         self.add_vertex();
     }
 
+    #[inline(never)]
     fn exe_vtx_x_y(&mut self, param: u32) {
         self.saved_vertex.coords[0] = param as i16 as i32;
         self.saved_vertex.coords[1] = (param >> 16) as i16 as i32;
@@ -886,6 +911,7 @@ impl Gpu3DRegisters {
         self.add_vertex();
     }
 
+    #[inline(never)]
     fn exe_vtx_x_z(&mut self, param: u32) {
         self.saved_vertex.coords[0] = param as i16 as i32;
         self.saved_vertex.coords[2] = (param >> 16) as i16 as i32;
@@ -893,6 +919,7 @@ impl Gpu3DRegisters {
         self.add_vertex();
     }
 
+    #[inline(never)]
     fn exe_vtx_y_z(&mut self, param: u32) {
         self.saved_vertex.coords[1] = param as i16 as i32;
         self.saved_vertex.coords[2] = (param >> 16) as i16 as i32;
@@ -900,6 +927,7 @@ impl Gpu3DRegisters {
         self.add_vertex();
     }
 
+    #[inline(never)]
     fn exe_vtx_diff(&mut self, param: u32) {
         self.saved_vertex.coords[0] += (((param & 0x3FF) << 6) as i16 as i32) >> 6;
         self.saved_vertex.coords[1] += (((param & 0xFFC00) >> 4) as i16 as i32) >> 6;
@@ -912,6 +940,7 @@ impl Gpu3DRegisters {
         self.polygon_attr = param.into();
     }
 
+    #[inline(never)]
     fn exe_tex_image_param(&mut self, param: u32) {
         let Self {
             saved_polygon, texture_coord_mode, ..
@@ -924,6 +953,7 @@ impl Gpu3DRegisters {
         self.saved_polygon.palette_addr = (param & 0x1FFF) as u16;
     }
 
+    #[inline(never)]
     fn exe_dif_amb(&mut self, param: u32) {
         let material_color0 = MaterialColor0::from(param);
         self.diffuse_color = rgb5_to_rgb6(u32::from(material_color0.dif()));
@@ -934,6 +964,7 @@ impl Gpu3DRegisters {
         }
     }
 
+    #[inline(never)]
     fn exe_spe_emi(&mut self, param: u32) {
         let material_color1 = MaterialColor1::from(param);
         self.specular_color = rgb5_to_rgb6(u32::from(material_color1.spe()));
@@ -941,6 +972,7 @@ impl Gpu3DRegisters {
         self.shininess_enabled = material_color1.set_shininess();
     }
 
+    #[inline(never)]
     fn exe_light_vector(&mut self, param: u32) {
         let light_vector = LightVector::from(param);
         let num = u8::from(light_vector.num()) as usize;
@@ -957,11 +989,13 @@ impl Gpu3DRegisters {
         self.half_vectors[num][2] = (self.light_vectors[num][2] - (1 << 12)) >> 1;
     }
 
+    #[inline(never)]
     fn exe_light_color(&mut self, param: u32) {
         let light_color = LightColor::from(param);
         self.light_colors[u8::from(light_color.num()) as usize] = rgb5_to_rgb6(u32::from(light_color.color()));
     }
 
+    #[inline(never)]
     fn exe_shininess(&mut self, param: u32) {
         let shininess = Shininess::from(param);
         self.shininess[0] = shininess.shininess0();
@@ -970,6 +1004,7 @@ impl Gpu3DRegisters {
         self.shininess[3] = shininess.shininess3();
     }
 
+    #[inline(never)]
     fn exe_begin_vtxs(&mut self, param: u32) {
         if self.vertex_count < self.polygon_type.vertex_count() as usize {
             self.vertices.count_in -= self.vertex_count;
@@ -999,6 +1034,7 @@ impl Gpu3DRegisters {
         self.flushed = true;
     }
 
+    #[inline(never)]
     fn exe_viewport(&mut self, param: u32) {
         let viewport = Viewport::from(param);
         self.viewport_next[0] = viewport.x1() as u16;
@@ -1007,7 +1043,8 @@ impl Gpu3DRegisters {
         self.viewport_next[3] = (191 - viewport.y1() as u16) - self.viewport_next[1] + 1;
     }
 
-    fn exe_box_test(&mut self, params: [u32; 3]) {
+    #[inline(never)]
+    fn exe_box_test(&mut self, params: &[u32; 3]) {
         let mut box_test_coords = [
             params[0] as i16,
             (params[0] >> 16) as i16,
@@ -1053,7 +1090,7 @@ impl Gpu3DRegisters {
 
         for i in 0..6 {
             let mut size = 4;
-            let mut clipped = [Vectori32::<4>::default(); 10];
+            let mut clipped = [Vectorf32::<4>::default(); 10];
 
             clip_polygon(&faces[i], &mut clipped, &mut size);
 
@@ -1066,10 +1103,11 @@ impl Gpu3DRegisters {
         self.gx_stat.set_box_test_result(false);
     }
 
-    fn exe_pos_test(&mut self, params: [u32; 2]) {
+    #[inline(never)]
+    fn exe_pos_test(&mut self, params: &[u32; 2]) {
         self.saved_vertex.coords[0] = params[0] as i16 as i32;
         self.saved_vertex.coords[1] = (params[0] >> 16) as i16 as i32;
-        self.saved_vertex.coords[2] = (params[1]) as i16 as i32;
+        self.saved_vertex.coords[2] = params[1] as i16 as i32;
         self.saved_vertex.coords[3] = 1 << 12;
 
         if self.clip_dirty {
@@ -1085,6 +1123,7 @@ impl Gpu3DRegisters {
         }
     }
 
+    #[inline(never)]
     fn exe_vec_test(&mut self, param: u32) {
         let mut vector = Vectori32::<3>::default();
         vector[0] = (((param & 0x000003FF) << 6) as i16 as i32) >> 3;
@@ -1222,7 +1261,7 @@ impl Gpu3DRegisters {
             self.clockwise = !self.clockwise;
         }
 
-        let mut clipped = [Vectori32::<4>::default(); 10];
+        let mut clipped = [Vectorf32::<4>::default(); 10];
         let cull = (!self.render_front && dot > 0) || (!self.render_back && dot < 0);
         let mut clipped_size = self.saved_polygon.size;
         let clip = if cull { false } else { clip_polygon(&unclipped, &mut clipped, &mut clipped_size) };
