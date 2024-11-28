@@ -23,20 +23,22 @@ impl IoArm9 {
     }
 
     pub fn read<T: Convert>(&mut self, addr_offset: u32, emu: &mut Emu) -> T {
-        if likely(IoArm9ReadLut::is_in_range(addr_offset)) {
-            T::from(IoArm9ReadLut::read(addr_offset, size_of::<T>() as u8, emu))
-        } else if IoArm9ReadLutUpper::is_in_range(addr_offset) {
-            T::from(IoArm9ReadLutUpper::read(addr_offset, size_of::<T>() as u8, emu))
-        } else {
-            T::from(0)
+        match addr_offset & 0xF00000 {
+            0x0 if IoArm9ReadLut::is_in_range(addr_offset) => T::from(IoArm9ReadLut::read(addr_offset, size_of::<T>() as u8, emu)),
+            0x100000 if IoArm9ReadLutUpper::is_in_range(addr_offset) => T::from(IoArm9ReadLutUpper::read(addr_offset, size_of::<T>() as u8, emu)),
+            _ => T::from(0),
         }
     }
 
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, emu: &mut Emu) {
-        IoArm9WriteLut::write(value.into(), addr_offset, size_of::<T>() as u8, emu);
+        if likely(IoArm9WriteLut::is_in_range(addr_offset)) {
+            IoArm9WriteLut::write(value.into(), addr_offset, size_of::<T>() as u8, emu);
+        }
     }
 
     pub fn write_fixed_slice<T: Convert>(&mut self, addr_offset: u32, slice: &[T], emu: &mut Emu) {
-        IoArm9WriteLut::write_fixed_slice(addr_offset, slice, emu);
+        if likely(IoArm9WriteLut::is_in_range(addr_offset)) {
+            IoArm9WriteLut::write_fixed_slice(addr_offset, slice, emu);
+        }
     }
 }

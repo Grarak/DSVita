@@ -8,7 +8,6 @@ use crate::core::timers::Timers;
 use crate::core::wifi::Wifi;
 use crate::core::CpuType::ARM7;
 use crate::utils::Convert;
-use std::intrinsics::likely;
 use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 
@@ -34,22 +33,19 @@ impl IoArm7 {
     }
 
     pub fn read<T: Convert>(&mut self, addr_offset: u32, emu: &mut Emu) -> T {
-        if likely(IoArm7ReadLut::is_in_range(addr_offset)) {
-            T::from(IoArm7ReadLut::read(addr_offset, size_of::<T>() as u8, emu))
-        } else if IoArm7ReadLutUpper::is_in_range(addr_offset) {
-            T::from(IoArm7ReadLutUpper::read(addr_offset, size_of::<T>() as u8, emu))
-        } else if IoArm7ReadLutWifi::is_in_range(addr_offset) {
-            T::from(IoArm7ReadLutWifi::read(addr_offset, size_of::<T>() as u8, emu))
-        } else {
-            T::from(0)
+        match addr_offset & 0xF00000 {
+            0x0 if IoArm7ReadLut::is_in_range(addr_offset) => T::from(IoArm7ReadLut::read(addr_offset, size_of::<T>() as u8, emu)),
+            0x100000 if IoArm7ReadLutUpper::is_in_range(addr_offset) => T::from(IoArm7ReadLutUpper::read(addr_offset, size_of::<T>() as u8, emu)),
+            0x800000 if IoArm7ReadLutWifi::is_in_range(addr_offset) => T::from(IoArm7ReadLutWifi::read(addr_offset, size_of::<T>() as u8, emu)),
+            _ => T::from(0),
         }
     }
 
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, emu: &mut Emu) {
-        if likely(IoArm7WriteLut::is_in_range(addr_offset)) {
-            IoArm7WriteLut::write(value.into(), addr_offset, size_of::<T>() as u8, emu);
-        } else if IoArm7WriteLutWifi::is_in_range(addr_offset) {
-            IoArm7WriteLutWifi::write(value.into(), addr_offset, size_of::<T>() as u8, emu);
+        match addr_offset & 0xF00000 {
+            0x0 if IoArm7WriteLut::is_in_range(addr_offset) => IoArm7WriteLut::write(value.into(), addr_offset, size_of::<T>() as u8, emu),
+            0x800000 if IoArm7WriteLutWifi::is_in_range(addr_offset) => IoArm7WriteLutWifi::write(value.into(), addr_offset, size_of::<T>() as u8, emu),
+            _ => {}
         }
     }
 }
