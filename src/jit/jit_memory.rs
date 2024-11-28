@@ -11,8 +11,8 @@ use crate::jit::reg::Reg;
 use crate::jit::Cond;
 use crate::logging::debug_println;
 use crate::mmap::{flush_icache, Mmap, PAGE_SIZE};
+use crate::utils;
 use crate::utils::{HeapMem, HeapMemU8};
-use crate::{utils, IS_DEBUG};
 use paste::paste;
 use std::intrinsics::unlikely;
 use std::marker::ConstParamTy;
@@ -94,8 +94,6 @@ pub struct JitLiveRanges {
     pub vram_arm7: HeapMemU8<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
 }
 
-const JIT_PERF_MAP_RECORD: bool = IS_DEBUG;
-
 #[cfg(target_os = "linux")]
 struct JitPerfMapRecord {
     common_records: Vec<(usize, usize, String)>,
@@ -115,27 +113,21 @@ impl JitPerfMapRecord {
     }
 
     fn record_common(&mut self, jit_start: usize, jit_size: usize, name: impl AsRef<str>) {
-        if JIT_PERF_MAP_RECORD {
-            self.common_records.push((jit_start, jit_size, name.as_ref().to_string()));
-            use std::io::Write;
-            writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {}", name.as_ref()).unwrap();
-        }
+        self.common_records.push((jit_start, jit_size, name.as_ref().to_string()));
+        use std::io::Write;
+        writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {}", name.as_ref()).unwrap();
     }
 
     fn record(&mut self, jit_start: usize, jit_size: usize, guest_pc: u32, cpu_type: CpuType) {
-        if JIT_PERF_MAP_RECORD {
-            use std::io::Write;
-            writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {cpu_type:?}_{guest_pc:x}").unwrap();
-        }
+        use std::io::Write;
+        writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {cpu_type:?}_{guest_pc:x}").unwrap();
     }
 
     fn reset(&mut self) {
-        if JIT_PERF_MAP_RECORD {
-            self.perf_map = std::fs::File::create(&self.perf_map_path).unwrap();
-            for (jit_start, jit_size, name) in &self.common_records {
-                use std::io::Write;
-                writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {name}").unwrap();
-            }
+        self.perf_map = std::fs::File::create(&self.perf_map_path).unwrap();
+        for (jit_start, jit_size, name) in &self.common_records {
+            use std::io::Write;
+            writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {name}").unwrap();
         }
     }
 }
