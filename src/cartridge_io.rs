@@ -84,7 +84,7 @@ pub struct CartridgeIo {
     pub file_name: String,
     pub file_size: u32,
     pub header: CartridgeHeader,
-    content_pages: UnsafeCell<NoHashMap<u32, HeapMemU8<{ PAGE_SIZE * 4 }>>>,
+    content_pages: UnsafeCell<NoHashMap<u32, HeapMemU8<{ PAGE_SIZE }>>>,
     save_file_path: PathBuf,
     pub save_file_size: u32,
     save_buf: Mutex<(Vec<u8>, bool)>,
@@ -136,13 +136,13 @@ impl CartridgeIo {
         })
     }
 
-    fn get_page(&self, page_addr: u32) -> io::Result<*const [u8; PAGE_SIZE * 4]> {
-        debug_assert_eq!(page_addr & ((PAGE_SIZE * 4) as u32 - 1), 0);
+    fn get_page(&self, page_addr: u32) -> io::Result<*const [u8; PAGE_SIZE]> {
+        debug_assert_eq!(page_addr & (PAGE_SIZE as u32 - 1), 0);
         let pages = unsafe { self.content_pages.get().as_mut_unchecked() };
         match pages.get(&page_addr) {
             None => {
                 // exceeds 8MB
-                if pages.len() >= 512 {
+                if pages.len() >= 2048 {
                     debug_println!("clear cartridge pages");
                     pages.clear();
                 }
@@ -162,7 +162,7 @@ impl CartridgeIo {
         while remaining > 0 {
             let slice_start = slice.len() - remaining;
 
-            let page_addr = (offset + slice_start as u32) & !((PAGE_SIZE * 4) as u32 - 1);
+            let page_addr = (offset + slice_start as u32) & !(PAGE_SIZE as u32 - 1);
             let page_offset = offset + slice_start as u32 - page_addr;
             let page = match self.get_page(page_addr) {
                 Ok(page) => page,

@@ -16,7 +16,7 @@ struct AuxSpiCnt {
     busy: u1,
     not_used2: u5,
     nds_slot_mode: u1,
-    transfer_ready_irq: u1,
+    transfer_ready_irq: bool,
     nds_slot_enable: u1,
 }
 
@@ -41,7 +41,7 @@ pub struct RomCtrl {
     key1_gap_clks: u1,
     resb_release_reset: u1,
     wr: u1,
-    block_start_status: u1,
+    block_start_status: bool,
 }
 
 impl Default for RomCtrl {
@@ -115,8 +115,8 @@ impl Cartridge {
         inner.rom_ctrl.set_data_word_status(u1::new(0));
         inner.read_count += 4;
         if inner.read_count == inner.block_size {
-            inner.rom_ctrl.set_block_start_status(u1::new(0));
-            if bool::from(inner.aux_spi_cnt.transfer_ready_irq()) {
+            inner.rom_ctrl.set_block_start_status(false);
+            if inner.aux_spi_cnt.transfer_ready_irq() {
                 get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, emu);
             }
         } else {
@@ -301,7 +301,7 @@ impl Cartridge {
         let inner = &mut self.inner[CPU];
 
         inner.rom_ctrl.set_resb_release_reset(new_rom_ctrl.resb_release_reset());
-        let transfer = !bool::from(inner.rom_ctrl.block_start_status()) && bool::from(new_rom_ctrl.block_start_status());
+        let transfer = !inner.rom_ctrl.block_start_status() && new_rom_ctrl.block_start_status();
 
         mask &= 0xDF7F7FFF;
         inner.rom_ctrl = ((u32::from(inner.rom_ctrl) & !mask) | (value & mask)).into();
@@ -352,8 +352,8 @@ impl Cartridge {
 
         if inner.block_size == 0 {
             inner.rom_ctrl.set_data_word_status(u1::new(0));
-            inner.rom_ctrl.set_block_start_status(u1::new(0));
-            if bool::from(inner.aux_spi_cnt.transfer_ready_irq()) {
+            inner.rom_ctrl.set_block_start_status(false);
+            if inner.aux_spi_cnt.transfer_ready_irq() {
                 get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, emu);
             }
         } else {
