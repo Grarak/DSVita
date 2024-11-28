@@ -942,7 +942,6 @@ impl<'a> BlockAsm<'a> {
             }
 
             basic_block.remove_dead_code(self);
-            basic_block.consolidate_reg_io(self);
         }
 
         (basic_blocks, reachable_blocks)

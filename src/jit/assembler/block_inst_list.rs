@@ -205,9 +205,9 @@ impl<'a> Iterator for BlockIntListIter<'a> {
         if unlikely(self.entry.is_null()) {
             None
         } else {
-            let entry = unsafe { self.entry.as_ref() };
-            self.entry = entry?.next;
-            entry
+            let entry = unsafe { self.entry.as_ref_unchecked() };
+            self.entry = entry.next;
+            Some(entry)
         }
     }
 
@@ -233,12 +233,12 @@ impl<'a> Iterator for BlockIntListRevIter<'a> {
     type Item = &'a BlockInstListEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.entry.is_null() {
+        if unlikely(self.entry.is_null()) {
             None
         } else {
-            let entry = unsafe { self.entry.as_ref() };
-            self.entry = entry?.previous;
-            entry
+            let entry = unsafe { self.entry.as_ref_unchecked() };
+            self.entry = entry.previous;
+            Some(entry)
         }
     }
 
