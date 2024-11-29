@@ -1,7 +1,44 @@
 use paste::paste;
+use std::arch::arm::{int64x2_t, uint64x2_t, vaddq_u64, vmovn_u64, vmull_u32, vreinterpretq_s64_u64, vreinterpretq_u64_s64, vshlq_n_u64, vshrq_n_u64};
 use std::arch::asm;
 use std::ops;
 use std::ops::{Index, IndexMut};
+
+// Taken from https://github.com/awxkee/erydanos/blob/master/src/neon/general.rs
+#[inline]
+/// Multiplies u64 together and takes low part, do not care about overflowing
+pub unsafe fn vmulq_u64(ab: uint64x2_t, cd: uint64x2_t) -> uint64x2_t {
+    /* ac = (ab & 0xFFFFFFFF) * (cd & 0xFFFFFFFF); */
+    let ab_low = vmovn_u64(ab);
+    let cd_low = vmovn_u64(cd);
+    let ac = vmull_u32(ab_low, cd_low);
+
+    /* b = ab >> 32; */
+    let b = vshrq_n_u64::<32>(ab);
+
+    /* bc = b * (cd & 0xFFFFFFFF); */
+    let bc = vmull_u32(vmovn_u64(b), vmovn_u64(cd));
+
+    /* d = cd >> 32; */
+    let d = vshrq_n_u64::<32>(cd);
+
+    /* ad = (ab & 0xFFFFFFFF) * d; */
+    let ad = vmull_u32(vmovn_u64(ab), vmovn_u64(d));
+
+    /* high = bc + ad; */
+    let mut high = vaddq_u64(bc, ad);
+
+    /* high <<= 32; */
+    high = vshlq_n_u64::<32>(high);
+
+    /* return ac + high; */
+    vaddq_u64(high, ac)
+}
+
+#[inline]
+pub unsafe fn vmulq_s64(ab: int64x2_t, cd: int64x2_t) -> int64x2_t {
+    vreinterpretq_s64_u64(vmulq_u64(vreinterpretq_u64_s64(ab), vreinterpretq_u64_s64(cd)))
+}
 
 #[derive(Copy, Clone)]
 pub struct Matrix([i32; 16]);

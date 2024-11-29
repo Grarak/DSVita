@@ -11,7 +11,9 @@
 #![feature(new_zeroed_alloc)]
 #![feature(ptr_as_ref_unchecked)]
 #![feature(seek_stream_len)]
+#![feature(stdarch_arm_neon_intrinsics)]
 #![feature(stmt_expr_attributes)]
+#![feature(vec_push_within_capacity)]
 
 use crate::cartridge_io::CartridgeIo;
 use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, get_spu_mut, Emu};
@@ -185,6 +187,8 @@ fn run_cpu(
         })
         .unwrap();
 
+    unsafe { register_abort_handler(fault_handler).unwrap() };
+
     if emu.settings.arm7_hle() {
         common.ipc.use_hle();
         common.gpu.arm7_hle = true;
@@ -231,8 +235,6 @@ fn fault_handler(mem_addr: usize, host_pc: &mut usize) -> bool {
 
 #[inline(never)]
 fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
-    unsafe { register_abort_handler(fault_handler).unwrap() };
-
     let mut jit_asm_arm9 = JitAsm::<{ ARM9 }>::new(unsafe { emu.get().as_mut().unwrap() });
     let mut jit_asm_arm7 = JitAsm::<{ ARM7 }>::new(unsafe { emu.get().as_mut().unwrap() });
 

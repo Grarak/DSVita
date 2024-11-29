@@ -1,12 +1,16 @@
 use crate::core::cycle_manager::{CycleManager, EventType};
 use crate::core::emu::{get_cm_mut, get_spu, get_spu_mut, Emu};
 use crate::core::CpuType::ARM7;
+use crate::math::vmulq_s64;
 use crate::presenter::{PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE};
 use crate::utils::HeapMemU32;
 use bilge::prelude::*;
+use std::arch::arm::{
+    vaddq_s64, vcombine_s64, vdupq_n_s32, vdupq_n_s64, vget_high_s64, vget_low_s64, vgetq_lane_s32, vld1q_s64, vmaxq_s32, vminq_s32, vmovq_n_s32, vmovq_n_s64, vshlq_n_s32, vshrq_n_s64, vsubq_s32,
+};
 use std::cmp::{max, min};
 use std::collections::VecDeque;
-use std::hint::unreachable_unchecked;
+use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::{likely, unlikely};
 use std::mem;
 use std::sync::{Arc, Condvar, Mutex};
@@ -132,6 +136,7 @@ pub struct MainSoundCnt {
 #[derive(Copy, Clone, Default)]
 pub struct SpuChannel {
     cnt: SoundCnt,
+    pannings: [i64; 2],
     volume: u8,
     sad: u32,
     tmr: u16,
@@ -189,7 +194,7 @@ impl Spu {
             sound_bias: 0,
             duty_cycles: [0; 6],
             noise_values: [0; 2],
-            samples_buffer: Vec::new(),
+            samples_buffer: Vec::with_capacity(SAMPLE_BUFFER_SIZE),
             sound_sampler,
         }
     }
@@ -215,6 +220,12 @@ impl Spu {
 
         mask &= 0xFF7F837F;
         self.channels[channel].cnt = ((u32::from(self.channels[channel].cnt) & !mask) | (value & mask)).into();
+        let mut panning = u8::from(self.channels[channel].cnt.panning());
+        if panning == 127 {
+            panning += 1;
+        }
+        self.channels[channel].pannings[0] = 128 - panning as i64;
+        self.channels[channel].pannings[1] = panning as i64;
         let mut volume = u8::from(self.channels[channel].cnt.volume_mul());
         if volume == 127 {
             volume += 1;
@@ -330,6 +341,9 @@ impl Spu {
     }
 
     fn next_sample_adpcm(channel: &mut SpuChannel, emu: &mut Emu) {
+        unsafe { assert_unchecked(channel.adpcm_index >= 0) };
+        unsafe { assert_unchecked(channel.adpcm_index < ADPCM_TABLE.len() as i32) };
+
         if channel.sad_current == channel.sad + ((channel.pnt as u32) << 2) && !channel.adpcm_toggle {
             channel.adpcm_loop_value = channel.adpcm_value;
             channel.adpcm_loop_index = channel.adpcm_index;
@@ -372,21 +386,18 @@ impl Spu {
         if (8..=13).contains(&channel_num) {
             self.duty_cycles[channel_num - 8] = (self.duty_cycles[channel_num - 8] + 1) % 8;
         } else if channel_num >= 14 {
-            self.noise_values[channel_num - 14] &= !(1 << 15);
-            if self.noise_values[channel_num - 14] & 1 != 0 {
-                self.noise_values[channel_num - 14] = (1 << 15) | ((self.noise_values[channel_num - 14] >> 1) ^ 0x6000);
+            let noise_value = unsafe { self.noise_values.get_unchecked_mut(channel_num - 14) };
+            *noise_value &= !(1 << 15);
+            if *noise_value & 1 != 0 {
+                *noise_value = (1 << 15) | ((*noise_value >> 1) ^ 0x6000);
             } else {
-                self.noise_values[channel_num - 14] >>= 1;
+                *noise_value >>= 1;
             }
         }
     }
 
+    #[inline(never)]
     pub fn on_sample_event(emu: &mut Emu) {
-        let mut mixer_left = 0;
-        let mut mixer_right = 0;
-        let mut channels_left = [0; 2];
-        let mut channels_right = [0; 2];
-
         macro_rules! get_channel {
             ($emu:expr, $channel:expr) => {{
                 &get_spu!($emu).channels[$channel]
@@ -412,6 +423,10 @@ impl Spu {
             get_cm_mut!(emu).schedule(512 * 2, EventType::SpuSample);
             return;
         }
+
+        let mut mixers = unsafe { vmovq_n_s64(0) };
+        let mut channels_1 = unsafe { vmovq_n_s64(0) };
+        let mut channels_3 = unsafe { vmovq_n_s64(0) };
 
         for i in 0..CHANNEL_COUNT {
             if likely(!get_channel!(emu, i).active) {
@@ -477,69 +492,76 @@ impl Spu {
             let channel = get_channel!(emu, i);
             let volume_div = u8::from(channel.cnt.volume_div());
             const VOLUME_DIVS: [u8; 4] = [4, 3, 2, 0];
-            data <<= VOLUME_DIVS[volume_div as usize];
+            data <<= unsafe { *VOLUME_DIVS.get_unchecked(volume_div as usize) };
 
             let volume_mul = channel.volume as i64;
             data = ((data << 7) * volume_mul) >> 7;
 
-            let mut panning = u8::from(channel.cnt.panning()) as i64;
-            if panning == 127 {
-                panning += 1;
-            }
-            let data_left = (data * (128 - panning) / 128) >> 3;
-            let data_right = (data * panning / 128) >> 3;
+            let panning = unsafe { vld1q_s64(channel.pannings.as_ptr()) };
+            let data = unsafe { vdupq_n_s64(data) };
+            let data = unsafe { vmulq_s64(data, panning) };
+            let data = unsafe { vshrq_n_s64::<10>(data) };
 
-            if i == 1 {
-                channels_left[0] = data_left;
-                channels_right[0] = data_right;
-                if get_spu!(emu).main_sound_cnt.output_ch1_to_mixer() {
-                    continue;
+            match i {
+                1 => {
+                    channels_1 = data;
+                    if get_spu!(emu).main_sound_cnt.output_ch1_to_mixer() {
+                        continue;
+                    }
                 }
-            } else if i == 3 {
-                channels_left[1] = data_left;
-                channels_right[1] = data_right;
-                if get_spu!(emu).main_sound_cnt.output_ch3_to_mixer() {
-                    continue;
+                3 => {
+                    channels_3 = data;
+                    if get_spu!(emu).main_sound_cnt.output_ch3_to_mixer() {
+                        continue;
+                    }
                 }
+                _ => {}
             }
 
-            mixer_left += data_left;
-            mixer_right += data_right;
+            mixers = unsafe { vaddq_s64(mixers, data) };
         }
 
         let spu = get_spu!(emu);
 
         let sample_left = match u8::from(spu.main_sound_cnt.left_output_from()) {
-            0 => mixer_left,
-            1 => channels_left[0],
-            2 => channels_left[1],
-            3 => channels_left[0] + channels_left[1],
+            0 => unsafe { vget_low_s64(mixers) },
+            1 => unsafe { vget_low_s64(channels_1) },
+            2 => unsafe { vget_low_s64(channels_3) },
+            3 => unsafe { vget_low_s64(vaddq_s64(channels_1, channels_3)) },
             _ => unsafe { unreachable_unchecked() },
         };
 
         let sample_right = match u8::from(spu.main_sound_cnt.right_output_from()) {
-            0 => mixer_right,
-            1 => channels_right[0],
-            2 => channels_right[1],
-            3 => channels_right[0] + channels_right[1],
+            0 => unsafe { vget_high_s64(mixers) },
+            1 => unsafe { vget_high_s64(channels_1) },
+            2 => unsafe { vget_high_s64(channels_3) },
+            3 => unsafe { vget_high_s64(vaddq_s64(channels_1, channels_3)) },
             _ => unsafe { unreachable_unchecked() },
         };
 
-        let master_volume = spu.master_volume as i64;
-        let sample_left = ((sample_left * master_volume) >> 7) >> 8;
-        let sample_right = ((sample_right * master_volume) >> 7) >> 8;
+        let sample = unsafe { vcombine_s64(sample_left, sample_right) };
 
-        let sample_left = (sample_left >> 6) + spu.sound_bias as i64;
-        let sample_right = (sample_right >> 6) + spu.sound_bias as i64;
+        let master_volume = unsafe { vdupq_n_s64(spu.master_volume as i64) };
+        let sample = unsafe { vmulq_s64(sample, master_volume) };
+        let sample = unsafe { vshrq_n_s64::<21>(sample) };
 
-        let sample_left = sample_left.clamp(0, 0x3FF);
-        let sample_right = sample_right.clamp(0, 0x3FF);
+        let sound_bias = unsafe { vdupq_n_s64(spu.sound_bias as i64) };
+        let sample = unsafe { vaddq_s64(sample, sound_bias) };
 
-        let sample_left = (sample_left - 0x200) << 5;
-        let sample_right = (sample_right - 0x200) << 5;
+        let sample = unsafe { vmaxq_s32(mem::transmute(sample), vmovq_n_s32(0)) };
+        let sample = unsafe { vminq_s32(sample, vdupq_n_s32(0x3FF)) };
+
+        let sample = unsafe { vsubq_s32(sample, vdupq_n_s32(0x200)) };
+        let sample = unsafe { vshlq_n_s32::<5>(sample) };
+
+        let sample_left = unsafe { vgetq_lane_s32::<0>(sample) } as u32;
+        let sample_right = unsafe { vgetq_lane_s32::<2>(sample) } as u32;
 
         let spu = get_spu_mut!(emu);
-        spu.samples_buffer.push(((sample_right << 16) | (sample_left & 0xFFFF)) as u32);
+        unsafe {
+            assert_unchecked(spu.samples_buffer.len() < spu.samples_buffer.capacity());
+            spu.samples_buffer.push_within_capacity((sample_right << 16) | sample_left).unwrap_unchecked();
+        }
         if unlikely(spu.samples_buffer.len() == SAMPLE_BUFFER_SIZE) {
             spu.sound_sampler.push(spu.samples_buffer.as_slice());
             spu.samples_buffer.clear();
