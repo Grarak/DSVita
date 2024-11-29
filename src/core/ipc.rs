@@ -3,9 +3,9 @@ use crate::core::emu::{get_arm7_hle_mut, get_cpu_regs_mut, get_ipc, get_ipc_mut,
 use crate::core::hle::arm7_hle::Arm7Hle;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
+use crate::fixed_fifo::FixedFifo;
 use crate::logging::debug_println;
 use bilge::prelude::*;
-use std::collections::VecDeque;
 use std::rc::Rc;
 
 #[bitsize(16)]
@@ -40,7 +40,7 @@ pub struct IpcFifoCnt {
 
 pub struct Fifo {
     pub cnt: IpcFifoCnt,
-    pub queue: VecDeque<u32>,
+    pub queue: FixedFifo<u32, 16>,
     last_received: u32,
 }
 
@@ -48,7 +48,7 @@ impl Fifo {
     fn new() -> Self {
         Fifo {
             cnt: IpcFifoCnt::from(0x0101),
-            queue: VecDeque::new(),
+            queue: FixedFifo::new(),
             last_received: 0,
         }
     }
@@ -90,10 +90,10 @@ impl IpcInner for IpcLle {
     }
 
     fn fifo_send(&self, cpu: CpuType, mask: u32, value: u32, emu: &mut Emu) {
-        if bool::from(get_ipc!(emu).fifo[cpu].cnt.enable()) {
+        if get_ipc!(emu).fifo[cpu].cnt.enable() {
             let fifo_len = get_ipc!(emu).fifo[cpu].queue.len();
             if fifo_len < 16 {
-                get_ipc_mut!(emu).fifo[cpu].queue.push_back(value & mask);
+                unsafe { get_ipc_mut!(emu).fifo[cpu].queue.push_back_unchecked(value & mask) };
 
                 if fifo_len == 0 {
                     get_ipc_mut!(emu).fifo[cpu].cnt.set_send_empty_status(false);
@@ -155,10 +155,10 @@ impl IpcInner for IpcHle {
     }
 
     fn fifo_send(&self, _: CpuType, mask: u32, value: u32, emu: &mut Emu) {
-        if bool::from(get_ipc!(emu).fifo[ARM9].cnt.enable()) {
+        if get_ipc!(emu).fifo[ARM9].cnt.enable() {
             let fifo_len = get_ipc!(emu).fifo[ARM9].queue.len();
             if fifo_len < 16 {
-                get_ipc_mut!(emu).fifo[ARM9].queue.push_back(value & mask);
+                unsafe { get_ipc_mut!(emu).fifo[ARM9].queue.push_back_unchecked(value & mask) };
 
                 if fifo_len == 0 {
                     get_ipc_mut!(emu).fifo[ARM9].cnt.set_send_empty_status(false);
@@ -240,7 +240,7 @@ impl Ipc {
     pub fn fifo_recv<const CPU: CpuType>(&mut self, emu: &mut Emu) -> u32 {
         let other_fifo_len = self.fifo[!CPU].queue.len();
         if other_fifo_len > 0 {
-            self.fifo[CPU].last_received = *self.fifo[!CPU].queue.front().unwrap();
+            self.fifo[CPU].last_received = unsafe { *self.fifo[!CPU].queue.front_unchecked() };
 
             if self.fifo[CPU].cnt.enable() {
                 self.fifo[!CPU].queue.pop_front();

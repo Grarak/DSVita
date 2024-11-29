@@ -43,6 +43,12 @@ impl<T, const SIZE: usize> FixedFifo<T, SIZE> {
     pub fn is_full(&self) -> bool {
         self.len() == SIZE
     }
+
+    pub fn clear(&mut self) {
+        self.len = 0;
+        self.start = 0;
+        self.end = 0;
+    }
 }
 
 impl<T: Default, const SIZE: usize> Default for FixedFifo<T, SIZE> {
