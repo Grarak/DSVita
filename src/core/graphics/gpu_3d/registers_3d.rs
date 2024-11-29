@@ -231,6 +231,7 @@ pub struct Vertex {
     pub coords: Vectori32<4>,
     pub tex_coords: Vectori16<2>,
     pub color: u32,
+    pub viewport: Vectoru16<4>,
 }
 
 fn intersect(v1: &Vectorf32<4>, v2: &Vectorf32<4>, val1: f32, val2: f32) -> Vectorf32<4> {
@@ -1142,19 +1143,11 @@ impl Gpu3DRegisters {
     }
 
     fn process_vertices(&mut self) {
-        let [x, y, w, h] = *self.viewport.as_ref();
-        let Self { vertices, .. } = self;
-
-        for i in vertices.process_count..vertices.count_in {
-            let coords = &mut vertices.ins[i].coords;
-            if coords[3] != 0 {
-                coords[0] = ((coords[0] as i64 + coords[3] as i64) * w as i64 / (coords[3] as i64 * 2) + x as i64) as i32;
-                coords[1] = ((-coords[1] as i64 + coords[3] as i64) * h as i64 / (coords[3] as i64 * 2) + y as i64) as i32;
-                coords[2] = (((coords[2] as i64) << 12) / coords[3] as i64) as i32;
-            }
+        for i in self.vertices.process_count..self.vertices.count_in {
+            unsafe { self.vertices.ins.get_unchecked_mut(i).viewport = self.viewport };
         }
 
-        vertices.process_count = vertices.count_in;
+        self.vertices.process_count = self.vertices.count_in;
         self.viewport = self.viewport_next;
     }
 
@@ -1264,7 +1257,7 @@ impl Gpu3DRegisters {
         let mut clipped = [Vectorf32::<4>::default(); 10];
         let cull = (!self.render_front && dot > 0) || (!self.render_back && dot < 0);
         let mut clipped_size = self.saved_polygon.size;
-        let clip = if cull { false } else { clip_polygon(&unclipped, &mut clipped, &mut clipped_size) };
+        let clip = !cull && clip_polygon(&unclipped, &mut clipped, &mut clipped_size);
 
         if cull || clipped_size == 0 {
             match self.polygon_type {

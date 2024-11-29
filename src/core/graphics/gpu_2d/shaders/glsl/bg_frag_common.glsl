@@ -13,12 +13,12 @@ uniform int bgCnt;
 
 uniform BgUbo {
     int bgOfs[192 * 4];
-    float bgX[192 * 2];
-    float bgY[192 * 2];
-    float bgPas[192 * 2];
-    float bgPbs[192 * 2];
-    float bgPcs[192 * 2];
-    float bgPds[192 * 2];
+    int bgX[192 * 2];
+    int bgY[192 * 2];
+    int bgPas[192 * 2];
+    int bgPbs[192 * 2];
+    int bgPcs[192 * 2];
+    int bgPds[192 * 2];
 };
 
 uniform sampler2D bgTex;
@@ -66,11 +66,11 @@ vec3 normRgb5(int color) {
 
 ivec2 calculateAffineCoords(int x, int y, int bgNum) {
     int index = (bgNum - 2) * 192 + y;
-    float bgX = bgX[index];
-    float bgY = bgY[index];
-    float bgPa = bgPas[index];
-    float bgPb = bgPbs[index];
-    float bgPc = bgPcs[index];
-    float bgPd = bgPds[index];
+    float bgX = float(bgX[index]) / 256.0;
+    float bgY = float(bgY[index]) / 256.0;
+    float bgPa = float(bgPas[index]) / 256.0;
+    float bgPb = float(bgPbs[index]) / 256.0;
+    float bgPc = float(bgPcs[index]) / 256.0;
+    float bgPd = float(bgPds[index]) / 256.0;
     return ivec2(int(bgX + bgPb + float(x) * bgPa), int(bgY + bgPd + float(x) * bgPc));
 }

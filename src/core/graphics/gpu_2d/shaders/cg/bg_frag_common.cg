@@ -13,12 +13,12 @@ uniform sampler2D display3dTex : TEXUNIT4;
 
 uniform BgUbo {
     int bgOfs[192 * 4];
-    float bgX[192 * 2];
-    float bgY[192 * 2];
-    float bgPas[192 * 2];
-    float bgPbs[192 * 2];
-    float bgPcs[192 * 2];
-    float bgPds[192 * 2];
+    int bgX[192 * 2];
+    int bgY[192 * 2];
+    int bgPas[192 * 2];
+    int bgPbs[192 * 2];
+    int bgPcs[192 * 2];
+    int bgPds[192 * 2];
 } BgUbo : BUFFER[0];
 
 short readBg8(int addr) {
@@ -57,11 +57,11 @@ float3 normRgb5(short color) {
 
 short2 calculateAffineCoords(short x, short y, short bgNum) {
     short index = (bgNum - 2) * 192 + y;
-    float bgX = BgUbo.bgX[index];
-    float bgY = BgUbo.bgY[index];
-    float bgPa = BgUbo.bgPas[index];
-    float bgPb = BgUbo.bgPbs[index];
-    float bgPc = BgUbo.bgPcs[index];
-    float bgPd = BgUbo.bgPds[index];
+    float bgX = float(BgUbo.bgX[index]) / 256.0;
+    float bgY = float(BgUbo.bgY[index]) / 256.0;
+    float bgPa = float(BgUbo.bgPas[index]) / 256.0;
+    float bgPb = float(BgUbo.bgPbs[index]) / 256.0;
+    float bgPc = float(BgUbo.bgPcs[index]) / 256.0;
+    float bgPd = float(BgUbo.bgPds[index]) / 256.0;
     return short2(short(bgX + bgPb + float(x) * bgPa), short(bgY + bgPd + float(x) * bgPc));
 }

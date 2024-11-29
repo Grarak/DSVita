@@ -14,7 +14,7 @@ use crate::utils;
 use crate::utils::rgb5_to_float8;
 use gl::types::{GLint, GLuint};
 use static_assertions::const_assert;
-use std::hint::unreachable_unchecked;
+use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::unlikely;
 use std::{mem, ptr, slice};
 
@@ -73,12 +73,12 @@ const_assert!(size_of::<WinBgUbo>() <= 16 * 1024);
 #[repr(C)]
 struct BgUbo {
     ofs: [u32; DISPLAY_HEIGHT * 4],
-    x: [f32; DISPLAY_HEIGHT * 2],
-    y: [f32; DISPLAY_HEIGHT * 2],
-    pa: [f32; DISPLAY_HEIGHT * 2],
-    pb: [f32; DISPLAY_HEIGHT * 2],
-    pc: [f32; DISPLAY_HEIGHT * 2],
-    pd: [f32; DISPLAY_HEIGHT * 2],
+    x: [i32; DISPLAY_HEIGHT * 2],
+    y: [i32; DISPLAY_HEIGHT * 2],
+    pa: [i32; DISPLAY_HEIGHT * 2],
+    pb: [i32; DISPLAY_HEIGHT * 2],
+    pc: [i32; DISPLAY_HEIGHT * 2],
+    pd: [i32; DISPLAY_HEIGHT * 2],
 }
 
 const_assert!(size_of::<BgUbo>() <= 16 * 1024);
@@ -102,6 +102,7 @@ impl Default for Gpu2DRenderRegs {
 
 impl Gpu2DRenderRegs {
     fn on_scanline<const ENGINE: Gpu2DEngine>(&mut self, inner: &mut Gpu2DRegisters<ENGINE>, line: u8) {
+        unsafe { assert_unchecked(self.current_batch_count_index < DISPLAY_HEIGHT) };
         let updated = self.disp_cnts[self.current_batch_count_index] != u32::from(inner.disp_cnt);
         let updated = updated || {
             let mut updated = false;
@@ -135,21 +136,21 @@ impl Gpu2DRenderRegs {
             self.bg_ubo.ofs[i * DISPLAY_HEIGHT + line as usize] = (inner.bg_h_ofs[i] as u32) | ((inner.bg_v_ofs[i] as u32) << 16);
         }
         for i in 0..2 {
-            self.bg_ubo.x[i * DISPLAY_HEIGHT + line as usize] = inner.bg_x[i] as f32 / 256.0;
-            self.bg_ubo.y[i * DISPLAY_HEIGHT + line as usize] = inner.bg_y[i] as f32 / 256.0;
-            self.bg_ubo.pa[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pa[i] as f32 / 256.0;
-            self.bg_ubo.pc[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pc[i] as f32 / 256.0;
+            self.bg_ubo.x[i * DISPLAY_HEIGHT + line as usize] = inner.bg_x[i];
+            self.bg_ubo.y[i * DISPLAY_HEIGHT + line as usize] = inner.bg_y[i];
+            self.bg_ubo.pa[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pa[i] as i32;
+            self.bg_ubo.pc[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pc[i] as i32;
 
             if unlikely(inner.bg_x_dirty || line == 0) {
-                self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize] = 0f32;
+                self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize] = 0;
             } else {
-                self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pb[i] as f32 / 256.0 + self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize - 1];
+                self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pb[i] as i32 + self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize - 1];
             }
 
             if unlikely(inner.bg_y_dirty || line == 0) {
-                self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize] = 0f32;
+                self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize] = 0;
             } else {
-                self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pd[i] as f32 / 256.0 + self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize - 1];
+                self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pd[i] as i32 + self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize - 1];
             }
         }
         inner.bg_x_dirty = false;
