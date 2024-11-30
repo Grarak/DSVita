@@ -11,6 +11,7 @@
 #![feature(new_zeroed_alloc)]
 #![feature(ptr_as_ref_unchecked)]
 #![feature(seek_stream_len)]
+#![feature(slice_swap_unchecked)]
 #![feature(stdarch_arm_neon_intrinsics)]
 #![feature(stmt_expr_attributes)]
 #![feature(vec_push_within_capacity)]
@@ -51,6 +52,7 @@ mod mmap;
 mod presenter;
 mod settings;
 mod utils;
+mod linked_list;
 
 const BUILD_PROFILE_NAME: &str = include_str!(concat!(env!("OUT_DIR"), "/build_profile_name"));
 pub const DEBUG_LOG: bool = const_str_equal(BUILD_PROFILE_NAME, "debug");

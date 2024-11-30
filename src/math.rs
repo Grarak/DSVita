@@ -1,6 +1,7 @@
 use paste::paste;
 use std::arch::arm::{int64x2_t, uint64x2_t, vaddq_u64, vmovn_u64, vmull_u32, vreinterpretq_s64_u64, vreinterpretq_u64_s64, vshlq_n_u64, vshrq_n_u64};
 use std::arch::asm;
+use std::mem::MaybeUninit;
 use std::ops;
 use std::ops::{Index, IndexMut};
 
@@ -159,9 +160,7 @@ impl ops::Mul<Matrix> for Vectori32<3> {
     type Output = Self;
 
     fn mul(self, rhs: Matrix) -> Self::Output {
-        let mut v0: i32;
-        let mut v1: i32;
-        let mut v2: i32;
+        let mut ret: [i32; 8] = unsafe { MaybeUninit::uninit().assume_init() };
         unsafe {
             asm!(
             "vmov.s32 d1, 0",
@@ -181,18 +180,14 @@ impl ops::Mul<Matrix> for Vectori32<3> {
             "vmlal.s32 q6, d9, d1[1]",
             "vshr.s64 q5, q5, 12",
             "vshr.s64 q6, q6, 12",
-            "vmov.s32 {v0}, s20",
-            "vmov.s32 {v1}, s22",
-            "vmov.s32 {v2}, s24",
+            "vst4.s32 {{d10, d11, d12, d13}}, [{ret}]",
             v = in(reg) self.0.as_ptr(),
             m = in(reg) rhs.0.as_ptr(),
-            v0 = out(reg) v0,
-            v1 = out(reg) v1,
-            v2 = out(reg) v2,
-            options(pure, readonly, preserves_flags, nostack),
+            ret = in(reg) ret.as_mut().as_mut_ptr(),
+            options(readonly, preserves_flags, nostack),
             );
         }
-        Vectori32([v0, v1, v2])
+        Vectori32([ret[0], ret[1], ret[2]])
     }
 }
 
@@ -200,10 +195,7 @@ impl ops::Mul<Matrix> for Vectori32<4> {
     type Output = Self;
 
     fn mul(self, rhs: Matrix) -> Self::Output {
-        let mut v0: i32;
-        let mut v1: i32;
-        let mut v2: i32;
-        let mut v3: i32;
+        let mut ret: [i32; 8] = unsafe { MaybeUninit::uninit().assume_init() };
         unsafe {
             asm!(
             "vld1.s32 {{q0}}, [{v}]",
@@ -221,20 +213,14 @@ impl ops::Mul<Matrix> for Vectori32<4> {
             "vmlal.s32 q6, d9, d1[1]",
             "vshr.s64 q5, q5, 12",
             "vshr.s64 q6, q6, 12",
-            "vmov.s32 {v0}, s20",
-            "vmov.s32 {v1}, s22",
-            "vmov.s32 {v2}, s24",
-            "vmov.s32 {v3}, s26",
+            "vst4.s32 {{d10, d11, d12, d13}}, [{ret}]",
             v = in(reg) self.0.as_ptr(),
             m = in(reg) rhs.0.as_ptr(),
-            v0 = out(reg) v0,
-            v1 = out(reg) v1,
-            v2 = out(reg) v2,
-            v3 = out(reg) v3,
-            options(pure, readonly, preserves_flags, nostack),
+            ret = in(reg) ret.as_mut().as_mut_ptr(),
+            options(readonly, preserves_flags, nostack),
             );
         }
-        Vectori32([v0, v1, v2, v3])
+        Vectori32([ret[0], ret[1], ret[2], ret[3]])
     }
 }
 

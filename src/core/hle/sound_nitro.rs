@@ -1,4 +1,4 @@
-use crate::core::cycle_manager::EventType;
+use crate::core::cycle_manager::{CycleManager, EventType};
 use crate::core::emu::{get_arm7_hle_mut, get_cm_mut, get_spu, get_spu_mut, Emu};
 use crate::core::hle::arm7_hle::Arm7Hle;
 use crate::core::hle::bios::{PITCH_TABLE, VOLUME_TABLE};
@@ -223,7 +223,7 @@ impl SoundNitro {
         get_cm_mut!(emu).schedule(174592, EventType::SoundCmdHle);
     }
 
-    fn on_alarm(&mut self, alarm_id: usize, emu: &mut Emu) {
+    fn on_alarm(&mut self, alarm_id: usize, cm: &mut CycleManager, emu: &mut Emu) {
         let alarm = &mut self.alarms[alarm_id];
         if !alarm.active {
             return;
@@ -233,7 +233,7 @@ impl SoundNitro {
 
         let delay = alarm.repeat;
         if delay != 0 {
-            get_cm_mut!(emu).schedule(delay * 64, EventType::SoundAlarmHle(alarm_id as u8));
+            cm.schedule(delay * 64, EventType::SoundAlarmHle(alarm_id as u8));
         } else {
             alarm.active = false;
         }
@@ -2164,9 +2164,9 @@ impl SoundNitro {
         (self.counter >> 16) as u16
     }
 
-    fn process(&mut self, param: u32, emu: &mut Emu) {
+    fn process(&mut self, cm: &mut CycleManager, param: u32, emu: &mut Emu) {
         if param != 0 {
-            get_cm_mut!(emu).schedule(174592, EventType::SoundCmdHle);
+            cm.schedule(174592, EventType::SoundCmdHle);
         }
 
         self.update_hardware_channels(emu);
@@ -2179,17 +2179,19 @@ impl SoundNitro {
 
     pub(super) fn ipc_recv(&mut self, data: u32, emu: &mut Emu) {
         if data == 0 {
-            self.process(0, emu);
+            self.process(get_cm_mut!(emu), 0, emu);
         } else if data >= 0x02000000 {
             self.cmd_queue.push_back(data);
         }
     }
 
-    pub fn on_cmd_event(emu: &mut Emu) {
-        get_arm7_hle_mut!(emu).sound.nitro.process(1, emu);
+    #[inline(never)]
+    pub fn on_cmd_event(cm: &mut CycleManager, emu: &mut Emu) {
+        get_arm7_hle_mut!(emu).sound.nitro.process(cm, 1, emu);
     }
 
-    pub fn on_alarm_event(id: u8, emu: &mut Emu) {
-        get_arm7_hle_mut!(emu).sound.nitro.on_alarm(id as usize, emu);
+    #[inline(never)]
+    pub fn on_alarm_event(id: u8, cm: &mut CycleManager, emu: &mut Emu) {
+        get_arm7_hle_mut!(emu).sound.nitro.on_alarm(id as usize, cm, emu);
     }
 }

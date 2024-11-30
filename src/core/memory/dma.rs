@@ -302,6 +302,7 @@ impl Dma {
         }
     }
 
+    #[inline(never)]
     pub fn on_event<const CPU: CpuType>(channel_num: u8, emu: &mut Emu) {
         let channel_num = channel_num as usize;
         unsafe { assert_unchecked(channel_num < CHANNEL_COUNT) };

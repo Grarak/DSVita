@@ -7,6 +7,7 @@ use crate::fixed_fifo::FixedFifo;
 use crate::math::{Matrix, Vectorf32, Vectori16, Vectori32, Vectoru16};
 use crate::utils::{rgb5_to_rgb6, HeapMem};
 use bilge::prelude::*;
+use std::arch::arm::{vcvtq_f32_s32, vld1q_s32, vmulq_n_f32, vst1q_f32};
 use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 use std::mem;
@@ -241,12 +242,12 @@ fn intersect(v1: &Vectorf32<4>, v2: &Vectorf32<4>, val1: f32, val2: f32) -> Vect
         return *v1;
     }
 
-    let mut vertex = Vectorf32::default();
-    let dist_inverse = -d1 / (d2 - d1);
-    vertex[0] = v1[0] + ((v2[0] - v1[0]) * dist_inverse);
-    vertex[1] = v1[1] + ((v2[1] - v1[1]) * dist_inverse);
-    vertex[2] = v1[2] + ((v2[2] - v1[2]) * dist_inverse);
-    vertex[3] = v1[3] + ((v2[3] - v1[3]) * dist_inverse);
+    let mut vertex: Vectorf32<4> = unsafe { MaybeUninit::uninit().assume_init() };
+    let dist_inverse = -d1 as f64 / (d2 - d1) as f64;
+    vertex[0] = v1[0] + (((v2[0] - v1[0]) as f64 * dist_inverse) as f32);
+    vertex[1] = v1[1] + (((v2[1] - v1[1]) as f64 * dist_inverse) as f32);
+    vertex[2] = v1[2] + (((v2[2] - v1[2]) as f64 * dist_inverse) as f32);
+    vertex[3] = v1[3] + (((v2[3] - v1[3]) as f64 * dist_inverse) as f32);
     vertex
 }
 
@@ -254,11 +255,26 @@ fn clip_polygon(unclipped: &[Vectori32<4>; 4], clipped: &mut [Vectorf32<4>; 10],
     let mut clip = false;
 
     let mut vertices = [Vectorf32::<4>::default(); 10];
-    for i in 0..4 {
-        for j in 0..4 {
-            const NORMALIZE: f32 = 1f32 / 4096f32;
-            vertices[i][j] = unclipped[i][j] as f32 * NORMALIZE;
-        }
+    unsafe {
+        let vertices0 = vld1q_s32(unclipped[0].as_ref().as_ptr());
+        let vertices1 = vld1q_s32(unclipped[1].as_ref().as_ptr());
+        let vertices2 = vld1q_s32(unclipped[2].as_ref().as_ptr());
+        let vertices3 = vld1q_s32(unclipped[3].as_ref().as_ptr());
+
+        let vertices0 = vcvtq_f32_s32(vertices0);
+        let vertices1 = vcvtq_f32_s32(vertices1);
+        let vertices2 = vcvtq_f32_s32(vertices2);
+        let vertices3 = vcvtq_f32_s32(vertices3);
+
+        let vertices0 = vmulq_n_f32(vertices0, 1f32 / 4096f32);
+        let vertices1 = vmulq_n_f32(vertices1, 1f32 / 4096f32);
+        let vertices2 = vmulq_n_f32(vertices2, 1f32 / 4096f32);
+        let vertices3 = vmulq_n_f32(vertices3, 1f32 / 4096f32);
+
+        vst1q_f32(vertices[0].as_mut().as_mut_ptr(), vertices0);
+        vst1q_f32(vertices[1].as_mut().as_mut_ptr(), vertices1);
+        vst1q_f32(vertices[2].as_mut().as_mut_ptr(), vertices2);
+        vst1q_f32(vertices[3].as_mut().as_mut_ptr(), vertices3);
     }
 
     for i in 0..6 {
@@ -269,15 +285,11 @@ fn clip_polygon(unclipped: &[Vectori32<4>; 4], clipped: &mut [Vectorf32<4>; 10],
             let current = unsafe { vertices.get_unchecked(j) };
             let previous = unsafe { vertices.get_unchecked(if unlikely(j == 0) { old_size - 1 } else { j - 1 }) };
 
-            let (current_val, previous_val) = match i {
-                0 => (current[0], previous[0]),
-                1 => (-current[0], -previous[0]),
-                2 => (current[1], previous[1]),
-                3 => (-current[1], -previous[1]),
-                4 => (current[2], previous[2]),
-                5 => (-current[2], -previous[2]),
-                _ => unsafe { unreachable_unchecked() },
-            };
+            let (mut current_val, mut previous_val) = (current[i >> 1], previous[i >> 1]);
+            if i & 1 == 1 {
+                current_val = -current_val;
+                previous_val = -previous_val;
+            }
 
             if current_val >= -current[3] {
                 if previous_val < -previous[3] {
@@ -1218,12 +1230,14 @@ impl Gpu3DRegisters {
 
         let mut unclipped = [Vectori32::<4>::default(); 4];
         for i in 0..size {
-            unclipped[i] = self.vertices.ins[self.saved_polygon.vertices_index + i].coords;
+            unsafe { *unclipped.get_unchecked_mut(i) = self.vertices.ins.get_unchecked(self.saved_polygon.vertices_index + i).coords };
         }
 
         if self.polygon_type == PolygonType::QuadliteralStrips {
-            unclipped.swap(2, 3);
-            self.vertices.ins.swap(self.saved_polygon.vertices_index + 2, self.saved_polygon.vertices_index + 3);
+            unsafe {
+                unclipped.swap_unchecked(2, 3);
+                self.vertices.ins.swap_unchecked(self.saved_polygon.vertices_index + 2, self.saved_polygon.vertices_index + 3);
+            }
         }
 
         let x1 = (unclipped[1][0] - unclipped[0][0]) as i64;
@@ -1265,23 +1279,31 @@ impl Gpu3DRegisters {
                     self.vertices.count_in -= size;
                 }
                 PolygonType::TriangleStrips => {
+                    let Vertices { ins, count_in, .. } = &mut self.vertices;
                     if self.vertex_count == 3 {
-                        self.vertices.ins[self.vertices.count_in - 3] = self.vertices.ins[self.vertices.count_in - 2];
-                        self.vertices.ins[self.vertices.count_in - 2] = self.vertices.ins[self.vertices.count_in - 1];
-                        self.vertices.count_in -= 1;
+                        unsafe {
+                            *ins.get_unchecked_mut(*count_in - 3) = *ins.get_unchecked(*count_in - 2);
+                            *ins.get_unchecked_mut(*count_in - 2) = *ins.get_unchecked(*count_in - 1);
+                        }
+                        *count_in -= 1;
                         self.vertex_count -= 1;
-                    } else if self.vertices.count_in < 6144 {
-                        self.vertices.ins[self.vertices.count_in] = self.vertices.ins[self.vertices.count_in - 1];
-                        self.vertices.ins[self.vertices.count_in - 1] = self.vertices.ins[self.vertices.count_in - 2];
-                        self.vertices.count_in += 1;
+                    } else if *count_in < 6144 {
+                        unsafe {
+                            *ins.get_unchecked_mut(*count_in) = *ins.get_unchecked(*count_in - 1);
+                            *ins.get_unchecked_mut(*count_in - 1) = *ins.get_unchecked(*count_in - 2);
+                        }
+                        *count_in += 1;
                         self.vertex_count = 2;
                     }
                 }
                 PolygonType::QuadliteralStrips => {
                     if self.vertex_count == 4 {
-                        self.vertices.ins[self.vertices.count_in - 4] = self.vertices.ins[self.vertices.count_in - 2];
-                        self.vertices.ins[self.vertices.count_in - 3] = self.vertices.ins[self.vertices.count_in - 1];
-                        self.vertices.count_in -= 2;
+                        let Vertices { ins, count_in, .. } = &mut self.vertices;
+                        unsafe {
+                            *ins.get_unchecked_mut(*count_in - 4) = *ins.get_unchecked(*count_in - 2);
+                            *ins.get_unchecked_mut(*count_in - 3) = *ins.get_unchecked(*count_in - 1);
+                        }
+                        *count_in -= 2;
                         self.vertex_count -= 2;
                     } else {
                         self.vertex_count = 2;

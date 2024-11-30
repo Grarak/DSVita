@@ -1,6 +1,6 @@
 use crate::core::cpu_regs::InterruptFlag;
 use crate::core::cycle_manager::{CycleManager, EventType};
-use crate::core::emu::{get_arm7_hle_mut, get_cm_mut, get_common_mut, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
+use crate::core::emu::{get_arm7_hle_mut, get_common_mut, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
@@ -141,7 +141,8 @@ impl Gpu {
         self.disp_cap_cnt = (self.disp_cap_cnt & !mask) | (value & mask);
     }
 
-    pub fn on_scanline256_event(emu: &mut Emu) {
+    #[inline(never)]
+    pub fn on_scanline256_event(cm: &mut CycleManager, emu: &mut Emu) {
         let gpu = &mut get_common_mut!(emu).gpu;
 
         if gpu.v_count < 192 {
@@ -151,7 +152,7 @@ impl Gpu {
                     .as_mut()
                     .on_scanline(&mut gpu.gpu_2d_regs_a, &mut gpu.gpu_2d_regs_b, gpu.v_count as u8)
             }
-            io_dma!(emu, ARM9).trigger_all(DmaTransferMode::StartAtHBlank, get_cm_mut!(emu));
+            io_dma!(emu, ARM9).trigger_all(DmaTransferMode::StartAtHBlank, cm);
         }
 
         for i in 0..2 {
@@ -162,10 +163,11 @@ impl Gpu {
             }
         }
 
-        get_cm_mut!(emu).schedule((355 - 256) * 6, EventType::GpuScanline355);
+        cm.schedule((355 - 256) * 6, EventType::GpuScanline355);
     }
 
-    pub fn on_scanline355_event(emu: &mut Emu) {
+    #[inline(never)]
+    pub fn on_scanline355_event(cm: &mut CycleManager, emu: &mut Emu) {
         let gpu = &mut get_common_mut!(emu).gpu;
 
         gpu.v_count += 1;
@@ -186,7 +188,7 @@ impl Gpu {
                     disp_stat.set_v_blank_flag(u1::new(1));
                     if disp_stat.v_blank_irq_enable() {
                         get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdVBlank, emu);
-                        io_dma!(emu, CpuType::from(i as u8)).trigger_all(DmaTransferMode::StartAtVBlank, get_cm_mut!(emu));
+                        io_dma!(emu, CpuType::from(i as u8)).trigger_all(DmaTransferMode::StartAtVBlank, cm);
                     }
                 }
             }
@@ -225,6 +227,6 @@ impl Gpu {
             get_arm7_hle_mut!(emu).on_scanline(gpu.v_count, emu);
         }
 
-        get_cm_mut!(emu).schedule(256 * 6, EventType::GpuScanline256);
+        cm.schedule(256 * 6, EventType::GpuScanline256);
     }
 }
