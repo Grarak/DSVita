@@ -112,7 +112,7 @@ pub fn io_read(item: TokenStream) -> TokenStream {
         } else {
             let mut j = i + 1;
             while j < max_addr {
-                if exprs.get(&j).is_some() {
+                if exprs.contains_key(&j) {
                     break;
                 }
                 j += 1;
@@ -147,7 +147,7 @@ pub fn io_read(item: TokenStream) -> TokenStream {
             #lut_tokens
 
             const MIN_ADDR: u32 = #min_addr;
-            const MAX_ADDR: u32 = #max_addr;
+            const MAX_ADDR: u32 = #max_addr - 3;
 
             pub fn is_in_range(addr: u32) -> bool {
                 (Self::MIN_ADDR..Self::MAX_ADDR).contains(&addr)
@@ -312,7 +312,7 @@ pub fn io_write(item: TokenStream) -> TokenStream {
         } else {
             let mut j = i + 1;
             while j < max_addr {
-                if exprs.get(&j).is_some() {
+                if exprs.contains_key(&j) {
                     break;
                 }
                 j += 1;
@@ -347,7 +347,7 @@ pub fn io_write(item: TokenStream) -> TokenStream {
             #lut_tokens
 
             const MIN_ADDR: u32 = #min_addr;
-            const MAX_ADDR: u32 = #max_addr;
+            const MAX_ADDR: u32 = #max_addr - 3;
 
             pub fn is_in_range(addr: u32) -> bool {
                 (Self::MIN_ADDR..Self::MAX_ADDR).contains(&addr)
