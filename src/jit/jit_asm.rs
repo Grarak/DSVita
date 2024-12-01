@@ -1,11 +1,13 @@
-use crate::core::emu::{get_cpu_regs, get_jit, get_jit_mut, get_regs, get_regs_mut, Emu};
+use crate::core::emu::{get_cpu_regs, get_cpu_regs_mut, get_jit, get_jit_mut, get_regs, get_regs_mut, Emu};
 use crate::core::hle::bios;
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
+use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::{BlockAsm, BLOCK_LOG};
 use crate::jit::assembler::BlockAsmBuf;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
+use crate::jit::inst_branch_handler::{branch_lr, call_jit_fun};
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm_common_funs::{exit_guest_context, JitAsmCommonFuns};
 use crate::jit::op::Op;
@@ -14,6 +16,7 @@ use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, DEBUG_LOG, IS_DEBUG};
 use std::cell::UnsafeCell;
+use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 use std::{mem, ptr};
 
@@ -50,7 +53,8 @@ impl JitBuf {
 
 pub const RETURN_STACK_SIZE: usize = 16;
 
-#[repr(C, align(64))]
+#[repr(C)]
+#[derive(Default)]
 pub struct JitRuntimeData {
     pub idle_loop: bool,
     pub return_stack_ptr: u8,
@@ -59,19 +63,13 @@ pub struct JitRuntimeData {
     pub accumulated_cycles: u16,
     pub host_sp: usize,
     pub branch_out_pc: u32,
+    guest_irq_table_addr: u32,
+    guest_irq_handler_thread_switch_addr: u32,
 }
 
 impl JitRuntimeData {
     fn new() -> Self {
-        let instance = JitRuntimeData {
-            branch_out_pc: u32::MAX,
-            pre_cycle_count_sum: 0,
-            accumulated_cycles: 0,
-            idle_loop: false,
-            host_sp: 0,
-            return_stack_ptr: 0,
-            return_stack: [0; RETURN_STACK_SIZE],
-        };
+        let instance = JitRuntimeData::default();
         assert_eq!(size_of_val(&instance.return_stack), RETURN_STACK_SIZE * 4);
         instance
     }
@@ -106,7 +104,7 @@ impl JitRuntimeData {
 }
 
 pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) {
-    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
+    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
     if IS_DEBUG {
         asm.runtime_data.branch_out_pc = get_regs!(asm.emu, CPU).pc;
     }
@@ -129,8 +127,38 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) 
     }
 }
 
+pub extern "C" fn hle_interrupt_handler_arm9(store_host_sp: bool) {
+    let asm = unsafe { get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked() };
+
+    let regs = get_regs_mut!(asm.emu, ARM9);
+    let cpu_regs = get_cpu_regs_mut!(asm.emu, ARM9);
+
+    let enabled_interrupts = cpu_regs.ie & cpu_regs.irf;
+    if cpu_regs.ime == 0 || enabled_interrupts == 0 {
+        regs.pc = regs.lr;
+        unsafe { branch_lr::<{ ARM9 }, false>(0, regs.pc, store_host_sp, 0x1ff8000) };
+        return;
+    }
+
+    regs.sp -= 4;
+    asm.emu.mem_write::<{ ARM9 }, _>(regs.sp, regs.lr);
+
+    let interrupt_number = enabled_interrupts.trailing_zeros();
+    let ack_interrupt = 1 << interrupt_number;
+    cpu_regs.set_irf(0xFFFFFFFF, ack_interrupt);
+
+    let handler_addr = asm.emu.mem_read::<{ ARM9 }, u32>(asm.runtime_data.guest_irq_table_addr + (interrupt_number << 2));
+    regs.lr = asm.runtime_data.guest_irq_handler_thread_switch_addr;
+    regs.pc = handler_addr;
+
+    unsafe { call_jit_fun::<{ ARM9 }>(asm, regs.pc, store_host_sp) };
+    if !store_host_sp {
+        unsafe { unreachable_unchecked() };
+    }
+}
+
 pub extern "C" fn emit_code_block<const CPU: CpuType>(store_host_sp: bool) {
-    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
+    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
 
     let guest_pc = get_regs!(asm.emu, CPU).pc;
     let thumb = (guest_pc & 1) == 1;
@@ -141,7 +169,35 @@ pub extern "C" fn emit_code_block<const CPU: CpuType>(store_host_sp: bool) {
     }
 }
 
+fn emit_hle_interrupt_handler_arm9(asm: &mut JitAsm<{ ARM9 }>, store_host_sp: bool) {
+    {
+        let ldr_irq_table_op = asm.emu.mem_read::<{ ARM9 }, u32>(0x1ff8040);
+        let (op, func) = lookup_opcode(ldr_irq_table_op);
+        let inst_info = func(ldr_irq_table_op, *op);
+        assert!(*op == Op::LdrOfip && *inst_info.operands()[1].as_reg_no_shift().unwrap() == Reg::PC && *inst_info.operands()[2].as_imm().unwrap() == 8);
+    }
+
+    {
+        let ldr_irq_handler_thread_switch_op = asm.emu.mem_read::<{ ARM9 }, u32>(0x1ff8048);
+        let (op, func) = lookup_opcode(ldr_irq_handler_thread_switch_op);
+        let inst_info = func(ldr_irq_handler_thread_switch_op, *op);
+        assert!(*op == Op::LdrOfip && *inst_info.operands()[1].as_reg_no_shift().unwrap() == Reg::PC && *inst_info.operands()[2].as_imm().unwrap() == 4);
+    }
+
+    asm.runtime_data.guest_irq_table_addr = asm.emu.mem_read::<{ ARM9 }, _>(0x1ff8040 + 16);
+    asm.runtime_data.guest_irq_handler_thread_switch_addr = asm.emu.mem_read::<{ ARM9 }, _>(0x1ff8048 + 12);
+
+    get_jit_mut!(asm.emu).insert_function::<{ ARM9 }>(0x1ff8000, hle_interrupt_handler_arm9 as _);
+
+    hle_interrupt_handler_arm9(store_host_sp);
+}
+
 fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut JitAsm<CPU>, store_host_sp: bool, guest_pc: u32) {
+    if CPU == ARM9 && unlikely(guest_pc == 0x1ff8000) {
+        unsafe { emit_hle_interrupt_handler_arm9(mem::transmute(asm), store_host_sp) };
+        return;
+    }
+
     let mut uncond_branch_count = 0;
     let mut pc_offset = 0;
     loop {
@@ -227,9 +283,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
         }
         let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(insert_entry) };
 
-        if DEBUG_LOG {
-            // println!("{CPU:?} Mapping {guest_pc:#010x} to {:#010x}", jit_entry as *const fn() as usize);
-        }
+        debug_println!("{CPU:?} Mapping {guest_pc:#010x} to {:#010x}", jit_entry as *const fn() as usize);
         asm.jit_buf.clear_all();
         jit_entry
     };
@@ -238,7 +292,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
 }
 
 fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
-    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
+    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
 
     let thumb = (guest_pc & 1) == 1;
     debug_println!("{:?} Execute {:x} thumb {}", CPU, guest_pc, thumb);

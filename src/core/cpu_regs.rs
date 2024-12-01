@@ -114,7 +114,7 @@ impl CpuRegs {
     }
 
     pub fn set_irf(&mut self, mask: u32, value: u32) {
-        // debug_println!("{:?} set irf {:?}", self.cpu_type, InterruptFlags(value & mask));
+        debug_println!("{:?} set irf {:?}", self.cpu_type, InterruptFlags(value & mask));
         self.irf &= !(value & mask);
     }
 

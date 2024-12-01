@@ -67,3 +67,4 @@ opt-level = 3
 [profile.release]
 panic = "abort"
 lto = "fat"
+debug = 1

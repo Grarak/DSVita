@@ -305,6 +305,16 @@ impl JitMemory {
         }
     }
 
+    pub fn insert_function<const CPU: CpuType>(&mut self, guest_pc: u32, func: *const extern "C" fn(bool)) {
+        unsafe {
+            let entry = self.jit_memory_map.get_jit_entry::<CPU>(guest_pc).as_mut_unchecked();
+            entry.0 = func;
+            let live_range = self.jit_memory_map.get_live_range::<CPU>(guest_pc);
+            let live_ranges_bit = (guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
+            *live_range |= 1 << live_ranges_bit;
+        }
+    }
+
     pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> *const extern "C" fn(bool) {
         unsafe { (*self.jit_memory_map.get_jit_entry::<CPU>(guest_pc)).0 }
     }
