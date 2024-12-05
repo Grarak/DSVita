@@ -6,7 +6,6 @@
 #![feature(const_trait_impl)]
 #![feature(core_intrinsics)]
 #![feature(generic_const_exprs)]
-#![feature(isqrt)]
 #![feature(naked_functions)]
 #![feature(new_zeroed_alloc)]
 #![feature(ptr_as_ref_unchecked)]
