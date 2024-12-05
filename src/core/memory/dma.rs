@@ -281,7 +281,6 @@ impl Dma {
                 *dest_addr += total_size;
             }
             _ => {
-                // println!("{CPU:?} dma transfer {mode:?} from {src_addr:x} {src_addr_ctrl:?} to {dest_addr:x} {dest_addr_ctrl:?} with size {count}");
                 for _ in 0..count {
                     let src = emu.mem_read_no_tcm::<CPU, T>(*src_addr);
                     emu.mem_write_no_tcm::<CPU, T>(*dest_addr, src);

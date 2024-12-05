@@ -306,7 +306,7 @@ impl Memory {
     pub fn read_multiple<const CPU: CpuType, T: Convert, F: FnMut(T)>(&mut self, addr: u32, emu: &mut Emu, size: usize, mut write_value: F) {
         debug_println!("{CPU:?} multiple memory read at {addr:x} with size {size}");
         let read_shift = size_of::<T>() >> 1;
-        let aligned_addr = addr & !3;
+        let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
         {
@@ -378,7 +378,7 @@ impl Memory {
     pub fn read_multiple_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu, slice: &mut [T]) {
         debug_println!("{CPU:?} slice memory read at {addr:x} with size {}", size_of_val(slice));
         let read_shift = size_of::<T>() >> 1;
-        let aligned_addr = addr & !3;
+        let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
         {
@@ -423,7 +423,7 @@ impl Memory {
 
     pub fn read_fixed_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu, slice: &mut [T]) {
         debug_println!("{CPU:?} fixed slice memory read at {addr:x} with size {}", size_of_val(slice));
-        let aligned_addr = addr & !3;
+        let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
         {
@@ -507,7 +507,7 @@ impl Memory {
     pub fn write_multiple<const CPU: CpuType, T: Convert, F: FnMut() -> T>(&mut self, addr: u32, emu: &mut Emu, size: usize, mut get_value: F) {
         debug_println!("{CPU:?} multiple memory write at {addr:x} with size {size}");
         let write_shift = size_of::<T>() >> 1;
-        let aligned_addr = addr & !3;
+        let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
         let shm_offset = self.get_shm_offset::<CPU, true, true>(aligned_addr) as u32;
@@ -566,7 +566,7 @@ impl Memory {
     pub fn write_multiple_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu, slice: &[T]) {
         debug_println!("{CPU:?} fixed slice memory write at {addr:x} with size {}", slice.len());
         let write_shift = size_of::<T>() >> 1;
-        let aligned_addr = addr & !3;
+        let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
         let shm_offset = self.get_shm_offset::<CPU, TCM, true>(aligned_addr) as u32;
@@ -606,7 +606,7 @@ impl Memory {
 
     pub fn write_fixed_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu, slice: &[T]) {
         debug_println!("{CPU:?} fixed slice memory write at {addr:x} with size {}", slice.len());
-        let aligned_addr = addr & !3;
+        let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
         let shm_offset = self.get_shm_offset::<CPU, TCM, true>(aligned_addr) as u32;
@@ -649,7 +649,7 @@ impl Memory {
     pub fn write_multiple_memset<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, value: T, size: usize, emu: &mut Emu) {
         debug_println!("{CPU:?} multiple memset memory write at {addr:x} with size {size}");
         let write_shift = size_of::<T>() >> 1;
-        let aligned_addr = addr & !3;
+        let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
         let shm_offset = self.get_shm_offset::<CPU, TCM, true>(aligned_addr) as u32;
