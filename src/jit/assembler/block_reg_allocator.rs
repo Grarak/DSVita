@@ -244,7 +244,7 @@ impl BlockRegAllocator {
         }
     }
 
-    fn relocate_guest_regs(&mut self, guest_regs: RegReserve, live_ranges: &[BlockRegSet], inputs: &BlockRegSet, used_regs: &BlockRegSet, is_input: bool) {
+    fn relocate_guest_regs(&mut self, guest_regs: RegReserve, live_ranges: &[BlockRegSet], inputs: &BlockRegSet, is_input: bool) {
         let mut relocatable_regs = RegReserve::new();
         for guest_reg in guest_regs {
             if self.stored_mapping[guest_reg as usize] != guest_reg
@@ -255,7 +255,6 @@ impl BlockRegAllocator {
             }
         }
 
-        let mut spilled_regs = Vec::new();
         for guest_reg in relocatable_regs {
             if let Some(currently_used_by) = self.stored_mapping_reverse[guest_reg as usize] {
                 if DEBUG && unsafe { BLOCK_LOG } {
@@ -264,19 +263,16 @@ impl BlockRegAllocator {
                 if inputs.contains(BlockReg::Any(currently_used_by)) || live_ranges[1].contains(BlockReg::Any(currently_used_by)) {
                     self.spilled += BlockReg::Any(currently_used_by);
                     self.gen_pre_handle_spilled_inst(currently_used_by, guest_reg, BlockTransferOp::Write);
-                    spilled_regs.push((BlockReg::Any(currently_used_by), guest_reg, self.pre_allocate_insts.len() - 1));
                 }
                 self.remove_stored_mapping(currently_used_by);
             }
         }
 
-        let mut dirty_regs = RegReserve::new();
         for guest_reg in relocatable_regs {
-            let reg_mapped = self.stored_mapping[guest_reg as usize];
-            if reg_mapped != Reg::None {
+            let stored_mapping = self.stored_mapping[guest_reg as usize];
+            if stored_mapping != Reg::None {
                 if is_input {
-                    self.gen_pre_move_reg(guest_reg, reg_mapped);
-                    dirty_regs += guest_reg;
+                    self.gen_pre_move_reg(guest_reg, stored_mapping);
                 }
                 self.remove_stored_mapping(guest_reg as u16);
                 self.set_stored_mapping(guest_reg as u16, guest_reg);
@@ -286,39 +282,15 @@ impl BlockRegAllocator {
 
         for guest_reg in relocatable_regs {
             if is_input {
-                debug_assert!(self.spilled.contains(BlockReg::Any(guest_reg as u16)));
+                debug_assert!(self.spilled.contains(BlockReg::Any(guest_reg as u16)), "{guest_reg:?}, {relocatable_regs:?}");
                 self.spilled -= BlockReg::Any(guest_reg as u16);
                 self.gen_pre_handle_spilled_inst(guest_reg as u16, guest_reg, BlockTransferOp::Read);
-                dirty_regs += guest_reg;
             }
             self.set_stored_mapping(guest_reg as u16, guest_reg);
         }
-
-        let mut new_pre_allocate_insts_filter = Bitset::<1>::new();
-        for (spilled_reg, previous_mapping, pre_allocate_index) in spilled_regs {
-            if inputs.contains(spilled_reg) && !dirty_regs.is_reserved(previous_mapping) {
-                let reg = if live_ranges.last().unwrap().contains(spilled_reg) {
-                    self.allocate_reg(spilled_reg.as_any(), live_ranges, used_regs)
-                } else {
-                    self.allocate_local(spilled_reg.as_any(), live_ranges, used_regs)
-                };
-                self.spilled -= spilled_reg;
-                self.gen_pre_move_reg(reg, previous_mapping);
-                new_pre_allocate_insts_filter += pre_allocate_index;
-            }
-        }
-
-        if !new_pre_allocate_insts_filter.is_empty() {
-            let mut new_pre_allocate_insts = Vec::new();
-            for (i, inst) in self.pre_allocate_insts.iter().enumerate() {
-                if !new_pre_allocate_insts_filter.contains(i) {
-                    new_pre_allocate_insts.push(inst.clone());
-                }
-            }
-            self.pre_allocate_insts = new_pre_allocate_insts;
-        }
     }
 
+    #[inline(never)]
     pub fn inst_allocate(&mut self, inst: &mut BlockInst, live_ranges: &[BlockRegSet]) {
         self.pre_allocate_insts.clear();
 
@@ -338,8 +310,8 @@ impl BlockRegAllocator {
             println!("used regs {:?}", used_regs);
         }
 
-        self.relocate_guest_regs(inputs.get_guests().get_gp_regs(), live_ranges, &inputs, &used_regs, true);
-        self.relocate_guest_regs(outputs.get_guests().get_gp_regs(), live_ranges, &inputs, &used_regs, false);
+        self.relocate_guest_regs(inputs.get_guests().get_gp_regs(), live_ranges, &inputs, true);
+        self.relocate_guest_regs(outputs.get_guests().get_gp_regs(), live_ranges, &inputs, false);
 
         if DEBUG && unsafe { BLOCK_LOG } {
             println!("pre mapping {:?}", self.stored_mapping_reverse);
