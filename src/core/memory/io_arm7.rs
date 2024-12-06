@@ -32,6 +32,7 @@ impl IoArm7 {
         }
     }
 
+    #[inline(never)]
     pub fn read<T: Convert>(&mut self, addr_offset: u32, emu: &mut Emu) -> T {
         match addr_offset & 0xF00000 {
             0x0 if IoArm7ReadLut::is_in_range(addr_offset) => T::from(IoArm7ReadLut::read(addr_offset, size_of::<T>() as u8, emu)),
@@ -41,6 +42,7 @@ impl IoArm7 {
         }
     }
 
+    #[inline(never)]
     pub fn write<T: Convert>(&mut self, addr_offset: u32, value: T, emu: &mut Emu) {
         match addr_offset & 0xF00000 {
             0x0 if IoArm7WriteLut::is_in_range(addr_offset) => IoArm7WriteLut::write(value.into(), addr_offset, size_of::<T>() as u8, emu),

@@ -243,7 +243,6 @@ where
         }
     }
 
-    #[inline]
     fn write<T: utils::Convert>(&mut self, mut addr: u32, value: T) {
         addr %= SIZE as u32;
         let section_index = addr as usize / CHUNK_SIZE;
@@ -686,6 +685,7 @@ impl Vram {
         }
     }
 
+    #[inline(never)]
     pub fn read<const CPU: CpuType, T: utils::Convert>(&self, addr: u32) -> T {
         let base_addr = addr & 0xF00000;
         let addr_offset = (addr - base_addr) & 0xFFFFF;
@@ -702,6 +702,7 @@ impl Vram {
         }
     }
 
+    #[inline(never)]
     pub fn write<const CPU: CpuType, T: utils::Convert>(&mut self, addr: u32, value: T) {
         let base_addr = addr & 0xF00000;
         let addr_offset = (addr - base_addr) & 0xFFFFF;

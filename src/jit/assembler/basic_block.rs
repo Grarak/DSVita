@@ -251,10 +251,6 @@ impl BasicBlock {
         }
     }
 
-    pub fn add_required_outputs(&mut self, required_outputs: BlockRegSet) {
-        *self.regs_live_ranges.last_mut().unwrap() += required_outputs;
-    }
-
     pub fn set_required_outputs(&mut self, required_outputs: BlockRegSet) {
         *self.regs_live_ranges.last_mut().unwrap() = required_outputs;
     }

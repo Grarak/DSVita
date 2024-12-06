@@ -789,17 +789,6 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
-    fn remove_guest_input_regs(basic_blocks: &mut [BasicBlock], guest_input_regs: RegReserve, block_indices: &[usize]) {
-        for &i in block_indices {
-            let basic_block = &mut basic_blocks[i];
-            for regs_live_range in &mut basic_block.regs_live_ranges {
-                regs_live_range.remove_guests(guest_input_regs);
-            }
-            let enter_blocks = unsafe { slice::from_raw_parts(basic_block.enter_blocks.as_ptr(), basic_block.enter_blocks.len()) };
-            Self::remove_guest_input_regs(basic_blocks, guest_input_regs, enter_blocks);
-        }
-    }
-
     fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> (Vec<BasicBlock>, NoHashSet<usize>) {
         unsafe { block_inst_list::reset_inst_list_entries() };
         for i in 0..self.buf.insts.len() {

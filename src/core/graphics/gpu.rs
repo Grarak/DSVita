@@ -24,7 +24,6 @@ struct FrameRateCounter {
     frame_counter: u16,
     fps: Arc<AtomicU16>,
     last_update: Instant,
-    last_frame: Instant,
 }
 
 impl FrameRateCounter {
@@ -33,7 +32,6 @@ impl FrameRateCounter {
             frame_counter: 0,
             fps,
             last_update: Instant::now(),
-            last_frame: Instant::now(),
         }
     }
 
