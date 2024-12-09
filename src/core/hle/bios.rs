@@ -42,7 +42,7 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
 
     match CPU {
         ARM9 => {
-            let pc_addr = get_cp15!(emu, ARM9).dtcm_addr + 0x3FFC;
+            let pc_addr = get_cp15!(emu).dtcm_addr + 0x3FFC;
             get_regs_mut!(emu, CPU).lr = 0xFFFF0000;
             get_regs_mut!(emu, CPU).pc = emu.mem_read::<CPU, _>(pc_addr);
         }
@@ -159,7 +159,7 @@ pub fn huff_uncomp<const CPU: CpuType>(emu: &mut Emu) {
 
 pub fn check_wait_flags<const CPU: CpuType>(emu: &mut Emu) {
     let addr = match CPU {
-        ARM9 => get_cp15!(emu, ARM9).dtcm_addr + 0x3FF8,
+        ARM9 => get_cp15!(emu).dtcm_addr + 0x3FF8,
         ARM7 => 0x3FFFFF8,
     };
     let flags = emu.mem_read::<CPU, u32>(addr);

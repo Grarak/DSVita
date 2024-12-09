@@ -1,4 +1,3 @@
-use crate::bitset::Bitset;
 use crate::jit::assembler::block_asm::BLOCK_LOG;
 use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockInst, BlockInstKind, BlockTransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;

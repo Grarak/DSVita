@@ -83,7 +83,7 @@ fn run_cpu(
     get_mmu!(emu, ARM7).update_all(emu);
 
     {
-        let cp15 = get_cp15_mut!(emu, ARM9);
+        let cp15 = get_cp15_mut!(emu);
         cp15.write(0x010000, 0x0005707D, emu); // control
         cp15.write(0x090100, 0x0300000A, emu); // dtcm addr/size
         cp15.write(0x090101, 0x00000020, emu); // itcm size
