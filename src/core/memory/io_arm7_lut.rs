@@ -1,9 +1,10 @@
 use crate::core::emu::{
     get_cm, get_common, get_common_mut, get_cpu_regs, get_cpu_regs_mut, get_mem, get_spu, get_spu_mut, io_dma, io_dma_mut, io_rtc, io_rtc_mut, io_spi, io_spi_mut, io_timers, io_timers_mut, io_wifi,
-    io_wifi_mut,
+    io_wifi_mut, Emu,
 };
 use crate::core::wifi::PaketType;
 use crate::core::CpuType::ARM7;
+use crate::utils::Convert;
 use dsvita_macros::{io_read, io_write};
 
 io_read!(
@@ -359,3 +360,43 @@ io_write!(
         (io16(0x80021C), |mask, value, emu| io_wifi_mut!(emu).set_w_irf_set(mask, value, emu)),
     ]
 );
+
+impl IoArm7WriteLut {
+    pub fn write_fixed_slice<T: Convert>(addr: u32, slice: &[T], emu: &mut Emu) {
+        let lut_addr = addr - Self::MIN_ADDR;
+        let (func, write_size, offset) = unsafe { Self::_LUT.get_unchecked(lut_addr as usize) };
+
+        if *write_size < size_of::<T>() as u8 {
+            for value in slice {
+                Self::write((*value).into(), addr, size_of::<T>() as u8, emu);
+            }
+        } else {
+            let mask = 0xFFFFFFFF >> ((4 - size_of::<T>()) << 3);
+            let mask = mask << *offset;
+            for value in slice {
+                let value = (*value).into() << *offset;
+                func(mask, value, emu)
+            }
+        }
+    }
+}
+
+impl IoArm7WriteLutWifi {
+    pub fn write_fixed_slice<T: Convert>(addr: u32, slice: &[T], emu: &mut Emu) {
+        let lut_addr = addr - Self::MIN_ADDR;
+        let (func, write_size, offset) = unsafe { Self::_LUT.get_unchecked(lut_addr as usize) };
+
+        if *write_size < size_of::<T>() as u8 {
+            for value in slice {
+                Self::write((*value).into(), addr, size_of::<T>() as u8, emu);
+            }
+        } else {
+            let mask = 0xFFFFFFFF >> ((4 - size_of::<T>()) << 3);
+            let mask = mask << *offset;
+            for value in slice {
+                let value = (*value).into() << *offset;
+                func(mask, value, emu)
+            }
+        }
+    }
+}

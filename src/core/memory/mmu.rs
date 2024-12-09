@@ -134,7 +134,7 @@ impl MmuArm9Inner {
     fn update_tcm(&mut self, start: u32, end: u32, emu: &Emu) {
         let shm = &get_mem!(emu).shm;
 
-        let cp15 = get_cp15!(emu, ARM9);
+        let cp15 = get_cp15!(emu);
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
             self.vmem_tcm.destroy_map(addr as usize, MMU_PAGE_SIZE);
 
@@ -250,13 +250,13 @@ impl Mmu for MmuArm9 {
 
     fn update_itcm(&self, emu: &Emu) {
         let inner = unsafe { self.inner.get().as_mut().unwrap_unchecked() };
-        inner.update_tcm(regions::ITCM_OFFSET, max(inner.current_itcm_size, get_cp15!(emu, ARM9).itcm_size), emu);
+        inner.update_tcm(regions::ITCM_OFFSET, max(inner.current_itcm_size, get_cp15!(emu).itcm_size), emu);
     }
 
     fn update_dtcm(&self, emu: &Emu) {
         let inner = unsafe { self.inner.get().as_mut().unwrap_unchecked() };
         inner.update_tcm(inner.current_dtcm_addr, inner.current_dtcm_addr + inner.current_dtcm_size, emu);
-        let cp15 = get_cp15!(emu, ARM9);
+        let cp15 = get_cp15!(emu);
         inner.update_tcm(cp15.dtcm_addr, cp15.dtcm_addr + cp15.dtcm_size, emu);
     }
 

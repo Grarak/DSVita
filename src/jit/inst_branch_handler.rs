@@ -4,13 +4,13 @@ use crate::jit::jit_asm::{JitAsm, RETURN_STACK_SIZE};
 use crate::jit::jit_asm_common_funs::{exit_guest_context, get_max_loop_cycle_count, JitAsmCommonFuns};
 use crate::{get_jit_asm_ptr, DEBUG_LOG, IS_DEBUG};
 use std::hint::unreachable_unchecked;
-use std::intrinsics::{likely, unlikely};
+use std::intrinsics::likely;
 use std::mem;
 
 unsafe extern "C" fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm<CPU>, total_cycles: u16, current_pc: u32) {
     asm.runtime_data.accumulated_cycles += total_cycles + 2 - asm.runtime_data.pre_cycle_count_sum;
 
-    if unlikely(asm.runtime_data.accumulated_cycles >= get_max_loop_cycle_count::<CPU>() as u16) {
+    if asm.runtime_data.accumulated_cycles >= get_max_loop_cycle_count::<CPU>() as u16 {
         if IS_DEBUG {
             asm.runtime_data.branch_out_pc = current_pc;
         }
@@ -54,7 +54,7 @@ pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target
 
     flush_cycles(asm, total_cycles, current_pc);
 
-    if unlikely(asm.runtime_data.return_stack_ptr == 0) {
+    if asm.runtime_data.return_stack_ptr == 0 {
         if DEBUG_LOG {
             JitAsmCommonFuns::<CPU>::debug_return_stack_empty(current_pc, target_pc);
         }

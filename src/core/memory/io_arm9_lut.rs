@@ -2,7 +2,6 @@ use crate::core::emu::{get_cm, get_common, get_common_mut, get_cpu_regs, get_cpu
 use crate::core::CpuType::ARM9;
 use crate::utils::Convert;
 use dsvita_macros::{io_read, io_write};
-use std::intrinsics::unlikely;
 
 io_read!(
     IoArm9ReadLut,
@@ -405,7 +404,7 @@ impl IoArm9WriteLut {
         let lut_addr = addr - Self::MIN_ADDR;
         let (func, write_size, offset) = unsafe { Self::_LUT.get_unchecked(lut_addr as usize) };
 
-        if unlikely(*write_size < size_of::<T>() as u8) {
+        if *write_size < size_of::<T>() as u8 {
             for value in slice {
                 Self::write((*value).into(), addr, size_of::<T>() as u8, emu);
             }

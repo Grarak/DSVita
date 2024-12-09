@@ -50,4 +50,13 @@ impl IoArm7 {
             _ => {}
         }
     }
+
+    #[inline(never)]
+    pub fn write_fixed_slice<T: Convert>(&mut self, addr_offset: u32, slice: &[T], emu: &mut Emu) {
+        match addr_offset & 0xF00000 {
+            0x0 if IoArm7WriteLut::is_in_range(addr_offset) => IoArm7WriteLut::write_fixed_slice(addr_offset, slice, emu),
+            0x800000 if IoArm7WriteLutWifi::is_in_range(addr_offset) => IoArm7WriteLutWifi::write_fixed_slice(addr_offset, slice, emu),
+            _ => {}
+        }
+    }
 }

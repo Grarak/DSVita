@@ -301,7 +301,7 @@ fn clip_polygon(unclipped: &[Vectori32<4>; 4], clipped: &mut [Vectorf32<4>; 10],
                 if previous_val < -previous[3] {
                     unsafe { *clipped.get_unchecked_mut(*size) = intersect(current, previous, current_val, previous_val) };
                     *size += 1;
-                    clip = true;
+                    return true;
                 }
 
                 unsafe { *clipped.get_unchecked_mut(*size) = *current };
@@ -309,7 +309,7 @@ fn clip_polygon(unclipped: &[Vectori32<4>; 4], clipped: &mut [Vectorf32<4>; 10],
             } else if previous_val >= -previous[3] {
                 unsafe { *clipped.get_unchecked_mut(*size) = intersect(current, previous, current_val, previous_val) };
                 *size += 1;
-                clip = true;
+                return true;
             }
         }
 
@@ -526,7 +526,7 @@ impl Gpu3DRegisters {
             let entry = unsafe { *self.cmd_fifo.front_unchecked() };
             let param_count = entry.param_len;
 
-            if param_count as usize > self.cmd_fifo.len() {
+            if unlikely(param_count as usize > self.cmd_fifo.len()) {
                 break;
             }
 
@@ -1473,13 +1473,16 @@ impl Gpu3DRegisters {
         if self.gx_fifo == 0 {
             self.gx_fifo = value & mask;
         } else {
+            let mut param_count = self.cmd_fifo_param_count;
             let len = FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize];
             self.queue_entry(Entry::new_with_len(self.gx_fifo as u8, len, value & mask), emu);
-            self.cmd_fifo_param_count += 1;
+            param_count += 1;
 
-            if self.cmd_fifo_param_count == len {
+            if param_count == len {
                 self.gx_fifo >>= 8;
                 self.cmd_fifo_param_count = 0;
+            } else {
+                self.cmd_fifo_param_count = param_count;
             }
         }
 

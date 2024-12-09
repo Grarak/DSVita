@@ -41,8 +41,8 @@ pub(crate) use get_mem_mut;
 macro_rules! get_regs {
     ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::core::CpuType::ARM9 => crate::core::emu::get_common!($emu).cpus.arm9.regs(),
-            crate::core::CpuType::ARM7 => crate::core::emu::get_common!($emu).cpus.arm7.regs(),
+            crate::core::CpuType::ARM9 => &crate::core::emu::get_common!($emu).cpus.thread_regs_arm9,
+            crate::core::CpuType::ARM7 => &crate::core::emu::get_common!($emu).cpus.thread_regs_arm7,
         }
     }};
 }
@@ -51,8 +51,8 @@ pub(crate) use get_regs;
 macro_rules! get_regs_mut {
     ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::core::CpuType::ARM9 => crate::core::emu::get_common_mut!($emu).cpus.arm9.regs_mut(),
-            crate::core::CpuType::ARM7 => crate::core::emu::get_common_mut!($emu).cpus.arm7.regs_mut(),
+            crate::core::CpuType::ARM9 => &mut crate::core::emu::get_common_mut!($emu).cpus.thread_regs_arm9,
+            crate::core::CpuType::ARM7 => &mut crate::core::emu::get_common_mut!($emu).cpus.thread_regs_arm7,
         }
     }};
 }
@@ -61,8 +61,8 @@ pub(crate) use get_regs_mut;
 macro_rules! get_cpu_regs {
     ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::core::CpuType::ARM9 => &crate::core::emu::get_common!($emu).cpus.arm9.regs().cpu,
-            crate::core::CpuType::ARM7 => &crate::core::emu::get_common!($emu).cpus.arm7.regs().cpu,
+            crate::core::CpuType::ARM9 => &crate::core::emu::get_regs!($emu, $cpu).cpu,
+            crate::core::CpuType::ARM7 => &crate::core::emu::get_regs!($emu, $cpu).cpu,
         }
     }};
 }
@@ -71,29 +71,23 @@ pub(crate) use get_cpu_regs;
 macro_rules! get_cpu_regs_mut {
     ($emu:expr, $cpu:expr) => {{
         match $cpu {
-            crate::core::CpuType::ARM9 => &mut crate::core::emu::get_common_mut!($emu).cpus.arm9.regs_mut().cpu,
-            crate::core::CpuType::ARM7 => &mut crate::core::emu::get_common_mut!($emu).cpus.arm7.regs_mut().cpu,
+            crate::core::CpuType::ARM9 => &mut crate::core::emu::get_regs_mut!($emu, $cpu).cpu,
+            crate::core::CpuType::ARM7 => &mut crate::core::emu::get_regs_mut!($emu, $cpu).cpu,
         }
     }};
 }
 pub(crate) use get_cpu_regs_mut;
 
 macro_rules! get_cp15 {
-    ($emu:expr, $cpu:expr) => {{
-        match $cpu {
-            crate::core::CpuType::ARM9 => crate::core::emu::get_common!($emu).cpus.arm9.cp15(),
-            crate::core::CpuType::ARM7 => crate::core::emu::get_common!($emu).cpus.arm7.cp15(),
-        }
+    ($emu:expr) => {{
+        &crate::core::emu::get_common!($emu).cpus.cp15
     }};
 }
 pub(crate) use get_cp15;
 
 macro_rules! get_cp15_mut {
-    ($emu:expr, $cpu:expr) => {{
-        match $cpu {
-            crate::core::CpuType::ARM9 => crate::core::emu::get_common_mut!($emu).cpus.arm9.cp15_mut(),
-            crate::core::CpuType::ARM7 => crate::core::emu::get_common_mut!($emu).cpus.arm7.cp15_mut(),
-        }
+    ($emu:expr) => {{
+        &mut crate::core::emu::get_common_mut!($emu).cpus.cp15
     }};
 }
 pub(crate) use get_cp15_mut;
@@ -278,7 +272,7 @@ macro_rules! get_arm7_hle_mut {
 pub(crate) use get_arm7_hle_mut;
 
 use crate::cartridge_io::CartridgeIo;
-use crate::core::cpu::{CpuArm7, CpuArm9};
+use crate::core::cp15::Cp15;
 use crate::core::cycle_manager::CycleManager;
 use crate::core::graphics::gpu::Gpu;
 use crate::core::hle::arm7_hle::Arm7Hle;
@@ -287,7 +281,9 @@ use crate::core::ipc::Ipc;
 use crate::core::memory::cartridge::Cartridge;
 use crate::core::memory::mem::Memory;
 use crate::core::spu::SoundSampler;
+use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
+use crate::core::CpuType::{ARM7, ARM9};
 use crate::settings::Settings;
 use crate::utils::Convert;
 use std::cell::UnsafeCell;
@@ -295,15 +291,17 @@ use std::sync::atomic::{AtomicU16, AtomicU32};
 use std::sync::Arc;
 
 pub struct Cpus {
-    pub arm9: CpuArm9,
-    pub arm7: CpuArm7,
+    pub thread_regs_arm9: ThreadRegs,
+    pub cp15: Cp15,
+    pub thread_regs_arm7: ThreadRegs,
 }
 
 impl Cpus {
     fn new() -> Self {
         Cpus {
-            arm9: CpuArm9::new(),
-            arm7: CpuArm7::new(),
+            thread_regs_arm9: ThreadRegs::new(ARM9),
+            cp15: Cp15::new(),
+            thread_regs_arm7: ThreadRegs::new(ARM7),
         }
     }
 }

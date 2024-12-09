@@ -6,7 +6,7 @@ use crate::utils::{rgb6_to_float8, HeapMem};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert;
-use std::ptr;
+use std::{mem, ptr};
 
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
@@ -110,22 +110,26 @@ struct Gpu3DVertex {
 impl From<(&Vertex, u16)> for Gpu3DVertex {
     fn from(value: (&Vertex, u16)) -> Self {
         let (vertex, polygon_index) = value;
-        let c = rgb6_to_float8(vertex.color);
+        if vertex.coords[3] != 0 {
+            let c = rgb6_to_float8(vertex.color);
 
-        let [x, y, w, h] = *vertex.viewport.as_ref();
-        let vertex_x = ((vertex.coords[0] as i64 + vertex.coords[3] as i64) * w as i64 / (vertex.coords[3] as i64 * 2) + x as i64) as i32;
-        let vertex_y = ((-vertex.coords[1] as i64 + vertex.coords[3] as i64) * h as i64 / (vertex.coords[3] as i64 * 2) + y as i64) as i32;
-        let vertex_z = (((vertex.coords[2] as i64) << 12) / vertex.coords[3] as i64) as i32;
+            let [x, y, w, h] = *vertex.viewport.as_ref();
+            let vertex_x = ((vertex.coords[0] as i64 + vertex.coords[3] as i64) * w as i64 / (vertex.coords[3] as i64 * 2) + x as i64) as i32;
+            let vertex_y = ((-vertex.coords[1] as i64 + vertex.coords[3] as i64) * h as i64 / (vertex.coords[3] as i64 * 2) + y as i64) as i32;
+            let vertex_z = (((vertex.coords[2] as i64) << 12) / vertex.coords[3] as i64) as i32;
 
-        Gpu3DVertex {
-            coords: [
-                vertex_x as f32 / 255f32 * 2f32 - 1f32,
-                1f32 - vertex_y as f32 / 191f32 * 2f32,
-                (vertex_z as f32 / 4096f32) * 0.5 - 0.5,
-                polygon_index as f32,
-            ],
-            color: [c.0, c.1, c.2],
-            tex_coords: [vertex.tex_coords[0] as f32 / 16f32, vertex.tex_coords[1] as f32 / 16f32],
+            Gpu3DVertex {
+                coords: [
+                    vertex_x as f32 / 255f32 * 2f32 - 1f32,
+                    1f32 - vertex_y as f32 / 191f32 * 2f32,
+                    (vertex_z as f32 / 4096f32) * 0.5 - 0.5,
+                    polygon_index as f32,
+                ],
+                color: [c.0, c.1, c.2],
+                tex_coords: [vertex.tex_coords[0] as f32 / 16f32, vertex.tex_coords[1] as f32 / 16f32],
+            }
+        } else {
+            unsafe { mem::zeroed() }
         }
     }
 }

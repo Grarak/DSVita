@@ -4,7 +4,6 @@ use std::ops;
 use std::ops::{Index, IndexMut};
 
 pub mod cp15;
-pub mod cpu;
 pub mod cpu_regs;
 pub mod cycle_manager;
 mod div_sqrt;
