@@ -15,8 +15,8 @@ use crate::core::CpuType::ARM9;
 use crate::jit::jit_memory::{JitMemory, JitRegion};
 use crate::logging::debug_println;
 use crate::mmap::Shm;
+use crate::utils;
 use crate::utils::Convert;
-use crate::{utils, IS_DEBUG};
 use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 use std::marker::PhantomData;
@@ -122,7 +122,7 @@ macro_rules! slow_read {
                     $zero_read;
                 }
                 ARM7 => {
-                    if IS_DEBUG {
+                    if crate::IS_DEBUG {
                         unreachable!("{CPU:?} {:x} tcm: {}", $addr, $tcm)
                     } else {
                         unsafe { unreachable_unchecked() }
@@ -130,7 +130,7 @@ macro_rules! slow_read {
                 }
             },
             _ => {
-                if IS_DEBUG {
+                if crate::IS_DEBUG {
                     unreachable!("{CPU:?} {:x} tcm: {}", $addr, $tcm)
                 } else {
                     unsafe { unreachable_unchecked() }
@@ -741,6 +741,9 @@ impl<const CPU: CpuType, T: Convert, F: FnMut() -> T> MemoryWriteMultipleIo<CPU,
         for i in 0..size {
             mem.vram.write::<CPU, _>(addr + (i << write_shift) as u32, read_value());
         }
+        if CPU == ARM7 {
+            mem.jit.invalidate_block::<{ JitRegion::VramArm7 }>(addr, size << write_shift);
+        }
     }
 
     fn write_oam(addr: u32, size: usize, mut read_value: F, emu: &mut Emu) {
@@ -769,7 +772,8 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
     fn read(addr: u32, slice: &mut [T], emu: &mut Emu) {
         read_dtcm!(CPU, TCM, addr, emu, mem, shm_offset, {
             utils::read_from_mem_slice(&mem.shm, shm_offset, slice);
-        })
+        });
+        Self::READ_LUT[((addr >> 24) & 0xF) as usize](addr, slice, emu);
     }
 
     fn read_itcm(addr: u32, slice: &mut [T], emu: &mut Emu) {
@@ -909,6 +913,9 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
         for i in 0..slice.len() {
             mem.vram.write::<CPU, _>(addr + (i << write_shift) as u32, slice[i]);
         }
+        if CPU == ARM7 {
+            mem.jit.invalidate_block::<{ JitRegion::VramArm7 }>(addr, size_of_val(slice));
+        }
     }
 
     fn write_oam(addr: u32, slice: &[T], emu: &mut Emu) {
@@ -916,6 +923,241 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
     }
 
     fn write_gba(_: u32, _: &[T], _: &mut Emu) {}
+}
+
+struct MemoryFixedSliceIo<const CPU: CpuType, const TCM: bool, T: Convert> {
+    _data: PhantomData<T>,
+}
+
+impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TCM, T> {
+    const READ_LUT: [fn(u32, &mut [T], &mut Emu); 16] = create_io_read_lut!();
+    const WRITE_LUT: [fn(u32, &[T], &mut Emu); 9] = create_io_write_lut!();
+
+    fn read(addr: u32, slice: &mut [T], emu: &mut Emu) {
+        read_dtcm!(CPU, TCM, addr, emu, mem, shm_offset, {
+            slice.fill(utils::read_from_mem(&mem.shm, shm_offset));
+        });
+        Self::READ_LUT[((addr >> 24) & 0xF) as usize](addr, slice, emu);
+    }
+
+    fn read_itcm(addr: u32, slice: &mut [T], emu: &mut Emu) {
+        read_itcm!(
+            CPU,
+            TCM,
+            addr,
+            emu,
+            mem,
+            shm_offset,
+            {
+                slice.fill(utils::read_from_mem(&mem.shm, shm_offset));
+            },
+            {
+                slice.fill(T::from(0));
+            }
+        )
+    }
+
+    fn read_main(addr: u32, slice: &mut [T], emu: &mut Emu) {
+        read_main!(addr, emu, mem, shm_offset, {
+            slice.fill(utils::read_from_mem(&mem.shm, shm_offset));
+        })
+    }
+
+    fn read_wram(addr: u32, slice: &mut [T], emu: &mut Emu) {
+        read_wram!(CPU, addr, emu, mem, shm_offset, {
+            slice.fill(utils::read_from_mem(&mem.shm, shm_offset));
+        });
+    }
+
+    fn read_io_ports(addr: u32, slice: &mut [T], emu: &mut Emu) {
+        read_io_ports!(
+            CPU,
+            addr,
+            emu,
+            mem,
+            addr_offset,
+            {
+                for i in 0..slice.len() {
+                    slice[i] = match CPU {
+                        ARM9 => mem.io_arm9.read(addr_offset, emu),
+                        ARM7 => mem.io_arm7.read(addr_offset, emu),
+                    };
+                }
+            },
+            {
+                slice.fill(mem.wifi.read(addr_offset));
+            }
+        )
+    }
+
+    fn read_palettes(addr: u32, slice: &mut [T], emu: &mut Emu) {
+        slice.fill(get_mem!(emu).palettes.read(addr));
+    }
+
+    fn read_vram(addr: u32, slice: &mut [T], emu: &mut Emu) {
+        slice.fill(get_mem!(emu).vram.read::<CPU, _>(addr));
+    }
+
+    fn read_oam(addr: u32, slice: &mut [T], emu: &mut Emu) {
+        slice.fill(get_mem!(emu).oam.read(addr));
+    }
+
+    fn read_gba(_: u32, slice: &mut [T], _: &mut Emu) {
+        slice.fill(T::from(0xFFFFFFFF));
+    }
+
+    fn read_invalid(_: u32, _: &mut [T], _: &mut Emu) {
+        unsafe { unreachable_unchecked() }
+    }
+
+    fn read_bios(_: u32, slice: &mut [T], _: &mut Emu) {
+        slice.fill(T::from(0));
+    }
+
+    fn write(addr: u32, slice: &[T], emu: &mut Emu) {
+        write_dtcm!(CPU, TCM, addr, emu, mem, shm_offset, {
+            utils::write_to_mem(&mut mem.shm, shm_offset, unsafe { slice.last().unwrap_unchecked() })
+        });
+        let func = unsafe { Self::WRITE_LUT.get_unchecked(((addr >> 24) & 0xF) as usize) };
+        func(addr, slice, emu);
+    }
+
+    fn write_itcm(addr: u32, slice: &[T], emu: &mut Emu) {
+        write_itcm!(CPU, TCM, addr, size_of_val(slice), emu, mem, shm_offset, {
+            utils::write_to_mem(&mut mem.shm, shm_offset, unsafe { slice.last().unwrap_unchecked() });
+        });
+    }
+
+    fn write_main(addr: u32, slice: &[T], emu: &mut Emu) {
+        write_main!(addr, size_of_val(slice), emu, mem, shm_offset, {
+            utils::write_to_mem(&mut mem.shm, shm_offset, unsafe { slice.last().unwrap_unchecked() });
+        });
+    }
+
+    fn write_wram(addr: u32, slice: &[T], emu: &mut Emu) {
+        write_wram!(CPU, addr, size_of_val(slice), emu, mem, shm_offset, {
+            utils::write_to_mem(&mut mem.shm, shm_offset, unsafe { slice.last().unwrap_unchecked() });
+        })
+    }
+
+    fn write_io_ports(addr: u32, slice: &[T], emu: &mut Emu) {
+        write_io_ports!(
+            CPU,
+            addr,
+            emu,
+            mem,
+            addr_offset,
+            {
+                match CPU {
+                    ARM9 => mem.io_arm9.write_fixed_slice(addr_offset, slice, emu),
+                    ARM7 => mem.io_arm7.write_fixed_slice(addr_offset, slice, emu),
+                }
+            },
+            { mem.wifi.write(addr_offset, unsafe { *slice.last().unwrap_unchecked() }) }
+        );
+    }
+
+    fn write_palettes(addr: u32, slice: &[T], emu: &mut Emu) {
+        get_mem_mut!(emu).palettes.write(addr, unsafe { *slice.last().unwrap_unchecked() });
+    }
+
+    fn write_vram(addr: u32, slice: &[T], emu: &mut Emu) {
+        let emu = get_mem_mut!(emu);
+        for i in 0..slice.len() {
+            emu.vram.write::<CPU, _>(addr, slice[i]);
+        }
+    }
+
+    fn write_oam(addr: u32, slice: &[T], emu: &mut Emu) {
+        get_mem_mut!(emu).oam.write(addr, unsafe { *slice.last().unwrap_unchecked() })
+    }
+
+    fn write_gba(_: u32, _: &[T], _: &mut Emu) {}
+
+    fn write_invalid(_: u32, _: &[T], _: &mut Emu) {
+        unsafe { unreachable_unchecked() }
+    }
+}
+
+struct MemoryMultipleMemsetIo<const CPU: CpuType, const TCM: bool, T: Convert> {
+    _data: PhantomData<T>,
+}
+
+impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleMemsetIo<CPU, TCM, T> {
+    const WRITE_LUT: [fn(u32, T, usize, &mut Emu); 9] = create_io_write_lut!();
+
+    fn write(addr: u32, value: T, size: usize, emu: &mut Emu) {
+        write_dtcm!(CPU, TCM, addr, emu, mem, shm_offset, {
+            utils::write_memset(&mut mem.shm, shm_offset as usize, value, size);
+        });
+        let func = unsafe { Self::WRITE_LUT.get_unchecked(((addr >> 24) & 0xF) as usize) };
+        func(addr, value, size, emu);
+    }
+
+    fn write_itcm(addr: u32, value: T, size: usize, emu: &mut Emu) {
+        let write_shift = size_of::<T>() >> 1;
+        write_itcm!(CPU, TCM, addr, size << write_shift, emu, mem, shm_offset, {
+            utils::write_memset(&mut mem.shm, shm_offset as usize, value, size);
+        });
+    }
+
+    fn write_main(addr: u32, value: T, size: usize, emu: &mut Emu) {
+        let write_shift = size_of::<T>() >> 1;
+        write_main!(addr, size << write_shift, emu, mem, shm_offset, {
+            utils::write_memset(&mut mem.shm, shm_offset as usize, value, size);
+        });
+    }
+
+    fn write_wram(addr: u32, value: T, size: usize, emu: &mut Emu) {
+        let write_shift = size_of::<T>() >> 1;
+        write_wram!(CPU, addr, size << write_shift, emu, mem, shm_offset, {
+            utils::write_memset(&mut mem.shm, shm_offset as usize, value, size);
+        });
+    }
+
+    fn write_io_ports(addr: u32, value: T, size: usize, emu: &mut Emu) {
+        let write_shift = size_of::<T>() >> 1;
+        write_io_ports!(
+            CPU,
+            addr,
+            emu,
+            mem,
+            addr_offset,
+            {
+                for i in 0..size {
+                    match CPU {
+                        ARM9 => mem.io_arm9.write(addr_offset + (i << write_shift) as u32, value, emu),
+                        ARM7 => mem.io_arm7.write(addr_offset + (i << write_shift) as u32, value, emu),
+                    }
+                }
+            },
+            {
+                mem.wifi.write_memset(addr_offset, value, size);
+            }
+        )
+    }
+
+    fn write_palettes(addr: u32, value: T, size: usize, emu: &mut Emu) {
+        get_mem_mut!(emu).palettes.write_memset(addr, value, size);
+    }
+
+    fn write_vram(addr: u32, value: T, size: usize, emu: &mut Emu) {
+        let write_shift = size_of::<T>() >> 1;
+        let mem = get_mem_mut!(emu);
+        for i in 0..size {
+            mem.vram.write::<CPU, _>(addr + (i << write_shift) as u32, value);
+        }
+    }
+
+    fn write_oam(addr: u32, value: T, size: usize, emu: &mut Emu) {
+        get_mem_mut!(emu).oam.write_memset(addr, value, size);
+    }
+
+    fn write_gba(_: u32, _: T, _: usize, _: &mut Emu) {}
+
+    fn write_invalid(_: u32, _: T, _: usize, _: &mut Emu) {
+        unsafe { unreachable_unchecked() }
+    }
 }
 
 impl Memory {
@@ -979,7 +1221,31 @@ impl Memory {
             return utils::read_from_mem(&self.shm, shm_offset);
         }
 
-        MemoryIo::<CPU, TCM, T>::read(aligned_addr, emu)
+        // MemoryIo::<CPU, TCM, T>::read(aligned_addr, emu)
+        let mut ret = T::from(0);
+        slow_read!(
+            self,
+            CPU,
+            TCM,
+            emu,
+            aligned_addr,
+            ret,
+            shm_offset,
+            addr_offset,
+            { ret = utils::read_from_mem(&self.shm, shm_offset) },
+            {
+                ret = match CPU {
+                    ARM9 => self.io_arm9.read(addr_offset, emu),
+                    ARM7 => self.io_arm7.read(addr_offset, emu),
+                }
+            },
+            { ret = self.wifi.read(addr_offset) },
+            { ret = self.palettes.read(addr_offset) },
+            { ret = self.vram.read::<CPU, _>(addr_offset) },
+            { ret = self.oam.read(addr_offset) },
+            { ret = T::from(0xFFFFFFFF) },
+            { ret = T::from(0) }
+        )
     }
 
     pub fn read_multiple<const CPU: CpuType, T: Convert, F: FnMut(T)>(&mut self, addr: u32, emu: &mut Emu, size: usize, mut write_value: F) {
@@ -996,7 +1262,62 @@ impl Memory {
             return;
         }
 
-        MemoryReadMultipleIo::<CPU, T, F>::read(aligned_addr, size, write_value, emu);
+        // MemoryReadMultipleIo::<CPU, T, F>::read(aligned_addr, size, write_value, emu);
+        let read_shift = size_of::<T>() >> 1;
+        let fn_ret = ();
+        slow_read!(
+            self,
+            CPU,
+            true,
+            emu,
+            aligned_addr,
+            fn_ret,
+            shm_offset,
+            addr_offset,
+            {
+                for i in 0..size {
+                    write_value(utils::read_from_mem(&self.shm, shm_offset + (i << read_shift) as u32));
+                }
+            },
+            {
+                for i in 0..size {
+                    write_value(match CPU {
+                        ARM9 => self.io_arm9.read(addr_offset + (i << read_shift) as u32, emu),
+                        ARM7 => self.io_arm7.read(addr_offset + (i << read_shift) as u32, emu),
+                    });
+                }
+            },
+            {
+                for i in 0..size {
+                    write_value(self.wifi.read(addr_offset + (i << read_shift) as u32));
+                }
+            },
+            {
+                for i in 0..size {
+                    write_value(self.palettes.read(addr_offset + (i << read_shift) as u32));
+                }
+            },
+            {
+                for i in 0..size {
+                    write_value(self.vram.read::<CPU, _>(addr_offset + (i << read_shift) as u32));
+                }
+            },
+            {
+                for i in 0..size {
+                    write_value(self.oam.read(addr_offset + (i << read_shift) as u32));
+                }
+            },
+            {
+                for i in 0..size {
+                    write_value(T::from(0xFFFFFFFF));
+                }
+            },
+            {
+                for i in 0..size {
+                    write_value(T::from(0));
+                }
+            }
+        );
     }
 
     pub fn read_multiple_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu, slice: &mut [T]) {
@@ -1004,15 +1325,44 @@ impl Memory {
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
-        {
-            let shm_offset = self.get_shm_offset::<CPU, TCM, false>(aligned_addr) as u32;
-            if shm_offset != 0 {
-                utils::read_from_mem_slice(&self.shm, shm_offset, slice);
-                return;
-            }
+        let shm_offset = self.get_shm_offset::<CPU, TCM, false>(aligned_addr) as u32;
+        if shm_offset != 0 {
+            utils::read_from_mem_slice(&self.shm, shm_offset, slice);
+            return;
         }
 
-        MemoryMultipleSliceIo::<CPU, TCM, T>::read(aligned_addr, slice, emu);
+        // MemoryMultipleSliceIo::<CPU, TCM, T>::read(aligned_addr, slice, emu);
+        let read_shift = size_of::<T>() >> 1;
+        let fn_ret = ();
+        slow_read!(
+            self,
+            CPU,
+            TCM,
+            emu,
+            aligned_addr,
+            fn_ret,
+            shm_offset,
+            addr_offset,
+            { utils::read_from_mem_slice(&self.shm, shm_offset, slice) },
+            {
+                for i in 0..slice.len() {
+                    slice[i] = match CPU {
+                        ARM9 => self.io_arm9.read(addr_offset + (i << read_shift) as u32, emu),
+                        ARM7 => self.io_arm7.read(addr_offset + (i << read_shift) as u32, emu),
+                    };
+                }
+            },
+            { self.wifi.read_slice(addr_offset, slice) },
+            { self.palettes.read_slice(addr_offset, slice) },
+            {
+                for i in 0..slice.len() {
+                    slice[i] = self.vram.read::<CPU, _>(addr_offset + (i << read_shift) as u32);
+                }
+            },
+            { self.oam.read_slice(addr_offset, slice) },
+            { slice.fill(T::from(0xFFFFFFFF)) },
+            { slice.fill(T::from(0)) }
+        );
     }
 
     pub fn read_fixed_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu, slice: &mut [T]) {
@@ -1020,14 +1370,13 @@ impl Memory {
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
-        {
-            let shm_offset = self.get_shm_offset::<CPU, TCM, false>(aligned_addr) as u32;
-            if shm_offset != 0 {
-                slice.fill(utils::read_from_mem(&self.shm, shm_offset));
-                return;
-            }
+        let shm_offset = self.get_shm_offset::<CPU, TCM, false>(aligned_addr) as u32;
+        if shm_offset != 0 {
+            slice.fill(utils::read_from_mem(&self.shm, shm_offset));
+            return;
         }
 
+        // MemoryFixedSliceIo::<CPU, TCM, T>::read(aligned_addr, slice, emu);
         let fn_ret = ();
         slow_read!(
             self,
@@ -1075,24 +1424,89 @@ impl Memory {
             return;
         }
 
-        MemoryIo::<CPU, TCM, T>::write(aligned_addr, value, emu);
+        // MemoryIo::<CPU, TCM, T>::write(aligned_addr, value, emu);
+        slow_write!(
+            self,
+            CPU,
+            TCM,
+            emu,
+            aligned_addr,
+            size_of::<T>(),
+            shm_offset,
+            addr_offset,
+            { utils::write_to_mem(&mut self.shm, shm_offset, value) },
+            {
+                match CPU {
+                    ARM9 => self.io_arm9.write(addr_offset, value, emu),
+                    ARM7 => self.io_arm7.write(addr_offset, value, emu),
+                }
+            },
+            { self.wifi.write(addr_offset, value) },
+            { self.palettes.write(addr_offset, value) },
+            { self.vram.write::<CPU, _>(addr_offset, value) },
+            { self.oam.write(addr_offset, value) }
+        );
     }
 
     pub fn write_multiple<const CPU: CpuType, T: Convert, F: FnMut() -> T>(&mut self, addr: u32, emu: &mut Emu, size: usize, mut read_value: F) {
         debug_println!("{CPU:?} multiple memory write at {addr:x} with size {size}");
-        let write_shift = size_of::<T>() >> 1;
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
         let shm_offset = self.get_shm_offset::<CPU, true, true>(aligned_addr) as u32;
         if shm_offset != 0 {
+            let write_shift = size_of::<T>() >> 1;
             for i in 0..size {
                 utils::write_to_mem(&mut self.shm, shm_offset + (i << write_shift) as u32, read_value());
             }
             return;
         }
 
-        MemoryWriteMultipleIo::<CPU, T, F>::write(aligned_addr, size, read_value, emu);
+        // MemoryWriteMultipleIo::<CPU, T, F>::write(aligned_addr, size, read_value, emu);
+        let write_shift = size_of::<T>() >> 1;
+        slow_write!(
+            self,
+            CPU,
+            true,
+            emu,
+            aligned_addr,
+            size << write_shift,
+            shm_offset,
+            addr_offset,
+            {
+                for i in 0..size {
+                    utils::write_to_mem(&mut self.shm, shm_offset + (i << write_shift) as u32, read_value());
+                }
+            },
+            {
+                for i in 0..size {
+                    match CPU {
+                        ARM9 => self.io_arm9.write(addr_offset + (i << write_shift) as u32, read_value(), emu),
+                        ARM7 => self.io_arm7.write(addr_offset + (i << write_shift) as u32, read_value(), emu),
+                    }
+                }
+            },
+            {
+                for i in 0..size {
+                    self.wifi.write(addr_offset + (i << write_shift) as u32, read_value());
+                }
+            },
+            {
+                for i in 0..size {
+                    self.palettes.write(addr_offset + (i << write_shift) as u32, read_value());
+                }
+            },
+            {
+                for i in 0..size {
+                    self.vram.write::<CPU, _>(addr_offset + (i << write_shift) as u32, read_value());
+                }
+            },
+            {
+                for i in 0..size {
+                    self.oam.write(addr_offset + (i << write_shift) as u32, read_value());
+                }
+            }
+        );
     }
 
     pub fn write_multiple_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu, slice: &[T]) {
@@ -1106,7 +1520,35 @@ impl Memory {
             return;
         }
 
-        MemoryMultipleSliceIo::<CPU, TCM, T>::write(aligned_addr, slice, emu);
+        // MemoryMultipleSliceIo::<CPU, TCM, T>::write(aligned_addr, slice, emu);
+        let write_shift = size_of::<T>() >> 1;
+        slow_write!(
+            self,
+            CPU,
+            TCM,
+            emu,
+            aligned_addr,
+            size_of_val(slice),
+            shm_offset,
+            addr_offset,
+            { utils::write_to_mem_slice(&mut self.shm, shm_offset as usize, slice) },
+            {
+                for i in 0..slice.len() {
+                    match CPU {
+                        ARM9 => self.io_arm9.write(addr_offset + (i << write_shift) as u32, slice[i], emu),
+                        ARM7 => self.io_arm7.write(addr_offset + (i << write_shift) as u32, slice[i], emu),
+                    }
+                }
+            },
+            { self.wifi.write_slice(addr_offset, slice) },
+            { self.palettes.write_slice(addr_offset, slice) },
+            {
+                for i in 0..slice.len() {
+                    self.vram.write::<CPU, _>(addr_offset + (i << write_shift) as u32, slice[i]);
+                }
+            },
+            { self.oam.write_slice(addr_offset, slice) }
+        );
     }
 
     pub fn write_fixed_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu, slice: &[T]) {
@@ -1120,6 +1562,7 @@ impl Memory {
             return;
         }
 
+        // MemoryFixedSliceIo::<CPU, TCM, T>::write(aligned_addr, slice, emu);
         slow_write!(
             self,
             CPU,
@@ -1149,7 +1592,6 @@ impl Memory {
 
     pub fn write_multiple_memset<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, value: T, size: usize, emu: &mut Emu) {
         debug_println!("{CPU:?} multiple memset memory write at {addr:x} with size {size}");
-        let write_shift = size_of::<T>() >> 1;
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
@@ -1159,6 +1601,8 @@ impl Memory {
             return;
         }
 
+        // MemoryMultipleMemsetIo::<CPU, TCM, T>::write(aligned_addr, value, size, emu);
+        let write_shift = size_of::<T>() >> 1;
         slow_write!(
             self,
             CPU,

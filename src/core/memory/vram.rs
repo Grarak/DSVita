@@ -685,12 +685,11 @@ impl Vram {
         }
     }
 
-    #[inline(never)]
     pub fn read<const CPU: CpuType, T: utils::Convert>(&self, addr: u32) -> T {
         let base_addr = addr & 0xF00000;
-        let addr_offset = (addr - base_addr) & 0xFFFFF;
+        let addr_offset = addr & 0xFFFFF;
         match CPU {
-            ARM9 => match addr & 0xF00000 {
+            ARM9 => match base_addr {
                 LCDC_OFFSET => self.lcdc.read(addr_offset),
                 BG_A_OFFSET => self.bg_a.read(addr_offset),
                 OBJ_A_OFFSET => self.obj_a.read(addr_offset),
@@ -702,10 +701,9 @@ impl Vram {
         }
     }
 
-    #[inline(never)]
     pub fn write<const CPU: CpuType, T: utils::Convert>(&mut self, addr: u32, value: T) {
         let base_addr = addr & 0xF00000;
-        let addr_offset = (addr - base_addr) & 0xFFFFF;
+        let addr_offset = addr & 0xFFFFF;
         match CPU {
             ARM9 => match base_addr {
                 LCDC_OFFSET => self.lcdc.write(addr_offset, value),
