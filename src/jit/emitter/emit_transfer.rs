@@ -362,7 +362,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let mmu_ptr_reg = block_asm.new_reg();
                 let mmu_offset_reg = block_asm.new_reg();
 
-                block_asm.bic(base_reg, op0, 0xF0000000);
+                block_asm.bic(base_reg, op0, 0xF0000003);
                 block_asm.mov(mmu_index_reg, (base_reg.into(), ShiftType::Lsr, BlockOperand::from(mmu::MMU_PAGE_SHIFT as u32)));
                 block_asm.mov(mmu_ptr_reg, mmu_ptr as u32);
                 block_asm.transfer_read(mmu_offset_reg, mmu_ptr_reg, (mmu_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)), false, MemoryAmount::Word);
@@ -403,8 +403,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let base_reg_out = block_asm.new_reg();
                 let mmu = get_mmu!(self.emu, CPU);
                 let base_ptr = mmu.get_base_tcm_ptr();
-                block_asm.bic(base_reg, op0, 0xF0000000);
+                block_asm.bic(base_reg, op0, 0xF0000003);
                 block_asm.add(base_reg, base_reg, base_ptr as u32);
+
                 block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
 
                 for (guest_reg, fixed_reg) in non_gp_regs_mappings {
