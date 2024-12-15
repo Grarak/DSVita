@@ -431,11 +431,19 @@ impl<'a> BlockAsm<'a> {
         });
     }
 
-    pub fn label(&mut self, label: BlockLabel) {
+    fn label_internal(&mut self, label: BlockLabel, unlikely: bool) {
         if !self.used_labels.insert(label.0) {
             panic!("{label:?} was already added");
         }
-        self.insert_inst(BlockInstKind::Label { label, guest_pc: None })
+        self.insert_inst(BlockInstKind::Label { label, guest_pc: None, unlikely })
+    }
+
+    pub fn label(&mut self, label: BlockLabel) {
+        self.label_internal(label, false);
+    }
+
+    pub fn label_unlikely(&mut self, label: BlockLabel) {
+        self.label_internal(label, true);
     }
 
     pub fn branch(&mut self, label: BlockLabel, cond: Cond) {
@@ -726,25 +734,27 @@ impl<'a> BlockAsm<'a> {
                     self.buf.insts[i] = BlockInstKind::Label {
                         label: *guest_label,
                         guest_pc: Some(*pc),
+                        unlikely: false,
                     }
                     .into();
                 }
             }
 
-            if let BlockInstKind::Label { label, guest_pc } = &self.buf.insts[i].kind {
+            if let BlockInstKind::Label { label, guest_pc, unlikely } = self.buf.insts[i].kind {
                 if let Some((p_label, p_guest_pc)) = previous_label {
-                    let replace_guest_pc = p_guest_pc.or(*guest_pc);
+                    let replace_guest_pc = p_guest_pc.or(guest_pc);
                     previous_label = Some((p_label, replace_guest_pc));
                     let previous_node = BlockInstList::deref(current_node).previous;
                     let previous_i = BlockInstList::deref(previous_node).value;
                     self.insts_link.remove_entry(current_node);
                     label_aliases.insert(label.0, p_label.0);
                     current_node = previous_node;
-                    if let BlockInstKind::Label { guest_pc, .. } = &mut self.buf.insts[previous_i].kind {
+                    if let BlockInstKind::Label { guest_pc, unlikely: p_unlikely, .. } = &mut self.buf.insts[previous_i].kind {
                         *guest_pc = replace_guest_pc;
+                        *p_unlikely |= unlikely;
                     }
                 } else {
-                    previous_label = Some((*label, *guest_pc));
+                    previous_label = Some((label, guest_pc));
                 }
             } else {
                 previous_label = None
@@ -798,17 +808,26 @@ impl<'a> BlockAsm<'a> {
         self.resolve_labels(&mut label_aliases);
 
         let mut basic_blocks = Vec::new();
+        let mut basic_blocks_unlikely = Vec::new();
         let mut basic_block_label_mapping = NoHashMap::<u16, usize>::default();
+        let mut basic_block_unlikely_label_mapping = NoHashMap::<u16, usize>::default();
         let mut last_label = None::<BlockLabel>;
+        let mut last_label_unlikely = false;
         let mut basic_block_start = self.insts_link.root;
 
         let mut current_node = basic_block_start;
         while !current_node.is_null() {
             let i = BlockInstList::deref(current_node).value;
+            let (basic_blocks, basic_block_label_mapping) = if last_label_unlikely {
+                (&mut basic_blocks_unlikely, &mut basic_block_unlikely_label_mapping)
+            } else {
+                (&mut basic_blocks, &mut basic_block_label_mapping)
+            };
 
             match &mut self.buf.insts[i].kind {
-                BlockInstKind::Label { label, .. } => {
+                BlockInstKind::Label { label, unlikely, .. } => {
                     let label = *label;
+                    let unlikely = *unlikely;
                     // block_start_entry can be the same as current_node, when the previous iteration ended with a branch
                     if basic_block_start != current_node {
                         basic_blocks.push(BasicBlock::new(self, basic_block_start, BlockInstList::deref(current_node).previous));
@@ -817,6 +836,7 @@ impl<'a> BlockAsm<'a> {
                             basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
                         }
                     }
+                    last_label_unlikely = unlikely;
                     last_label = Some(label);
                 }
                 BlockInstKind::Branch { label, .. } => {
@@ -828,6 +848,7 @@ impl<'a> BlockAsm<'a> {
                     if let Some(last_label) = last_label {
                         basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
                     }
+                    last_label_unlikely = false;
                     last_label = None;
                 }
                 BlockInstKind::Call { has_return: false, .. } | BlockInstKind::CallCommon { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {
@@ -836,6 +857,7 @@ impl<'a> BlockAsm<'a> {
                     if let Some(last_label) = last_label {
                         basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
                     }
+                    last_label_unlikely = false;
                     last_label = None;
                 }
                 _ => {}
@@ -845,11 +867,21 @@ impl<'a> BlockAsm<'a> {
         }
 
         if !basic_block_start.is_null() {
+            let (basic_blocks, basic_block_label_mapping) = if last_label_unlikely {
+                (&mut basic_blocks_unlikely, &mut basic_block_unlikely_label_mapping)
+            } else {
+                (&mut basic_blocks, &mut basic_block_label_mapping)
+            };
             basic_blocks.push(BasicBlock::new(self, basic_block_start, self.insts_link.end));
             if let Some(last_label) = last_label {
                 basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
             }
         }
+
+        for (label, block_index) in basic_block_unlikely_label_mapping {
+            basic_block_label_mapping.insert(label, block_index + basic_blocks.len());
+        }
+        basic_blocks.extend(basic_blocks_unlikely);
 
         let basic_blocks_len = basic_blocks.len();
         // Link blocks

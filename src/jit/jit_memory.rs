@@ -400,12 +400,21 @@ impl JitMemory {
 
         let mut fast_mem_end = *host_pc + 4;
         found = false;
+        let mut slow_mem_begin = 0;
         while fast_mem_end - *host_pc < 128 {
             let ptr = fast_mem_end as *const u32;
             let (op, _) = lookup_opcode(unsafe { ptr.read() });
             if *op == Op::B {
-                found = true;
-                break;
+                let ptr = (fast_mem_end + 4) as *const u32;
+                let opcode = unsafe { ptr.read() };
+                let (op, func) = lookup_opcode(opcode);
+                if *op == Op::B {
+                    let inst = func(opcode, *op);
+                    let relative_pc = *inst.operands()[0].as_imm().unwrap() as isize + 8;
+                    slow_mem_begin = (fast_mem_end as isize + 4 + relative_pc) as usize;
+                    found = true;
+                    break;
+                }
             }
             fast_mem_end += 4;
         }
@@ -413,7 +422,6 @@ impl JitMemory {
             return false;
         }
 
-        let slow_mem_begin = fast_mem_end + 4;
         let diff = (slow_mem_begin - fast_mem_begin) >> 2;
         unsafe {
             (fast_mem_begin as *mut u32).write(B::b(diff as i32 - 2, Cond::AL));
