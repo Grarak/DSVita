@@ -431,11 +431,19 @@ impl<'a> BlockAsm<'a> {
         });
     }
 
-    pub fn label(&mut self, label: BlockLabel) {
+    fn label_internal(&mut self, label: BlockLabel, unlikely: bool) {
         if !self.used_labels.insert(label.0) {
             panic!("{label:?} was already added");
         }
-        self.insert_inst(BlockInstKind::Label { label, guest_pc: None })
+        self.insert_inst(BlockInstKind::Label { label, guest_pc: None, unlikely })
+    }
+
+    pub fn label(&mut self, label: BlockLabel) {
+        self.label_internal(label, false);
+    }
+
+    pub fn label_unlikely(&mut self, label: BlockLabel) {
+        self.label_internal(label, true);
     }
 
     pub fn branch(&mut self, label: BlockLabel, cond: Cond) {
@@ -714,6 +722,14 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
+    pub fn pad_block(&mut self, label: BlockLabel, correction: i32) {
+        self.insert_inst(BlockInstKind::PadBlock { label, half: false, correction });
+    }
+
+    pub fn pad_block_half(&mut self, label: BlockLabel, correction: i32) {
+        self.insert_inst(BlockInstKind::PadBlock { label, half: true, correction });
+    }
+
     // Convert guest pc with labels into labels
     fn resolve_labels(&mut self, label_aliases: &mut NoHashMap<u16, u16>) {
         let mut previous_label: Option<(BlockLabel, Option<u32>)> = None;
@@ -726,25 +742,27 @@ impl<'a> BlockAsm<'a> {
                     self.buf.insts[i] = BlockInstKind::Label {
                         label: *guest_label,
                         guest_pc: Some(*pc),
+                        unlikely: false,
                     }
                     .into();
                 }
             }
 
-            if let BlockInstKind::Label { label, guest_pc } = &self.buf.insts[i].kind {
+            if let BlockInstKind::Label { label, guest_pc, unlikely } = self.buf.insts[i].kind {
                 if let Some((p_label, p_guest_pc)) = previous_label {
-                    let replace_guest_pc = p_guest_pc.or(*guest_pc);
+                    let replace_guest_pc = p_guest_pc.or(guest_pc);
                     previous_label = Some((p_label, replace_guest_pc));
                     let previous_node = BlockInstList::deref(current_node).previous;
                     let previous_i = BlockInstList::deref(previous_node).value;
                     self.insts_link.remove_entry(current_node);
                     label_aliases.insert(label.0, p_label.0);
                     current_node = previous_node;
-                    if let BlockInstKind::Label { guest_pc, .. } = &mut self.buf.insts[previous_i].kind {
+                    if let BlockInstKind::Label { guest_pc, unlikely: p_unlikely, .. } = &mut self.buf.insts[previous_i].kind {
                         *guest_pc = replace_guest_pc;
+                        *p_unlikely |= unlikely;
                     }
                 } else {
-                    previous_label = Some((*label, *guest_pc));
+                    previous_label = Some((label, guest_pc));
                 }
             } else {
                 previous_label = None
@@ -798,17 +816,26 @@ impl<'a> BlockAsm<'a> {
         self.resolve_labels(&mut label_aliases);
 
         let mut basic_blocks = Vec::new();
+        let mut basic_blocks_unlikely = Vec::new();
         let mut basic_block_label_mapping = NoHashMap::<u16, usize>::default();
+        let mut basic_block_unlikely_label_mapping = NoHashMap::<u16, usize>::default();
         let mut last_label = None::<BlockLabel>;
+        let mut last_label_unlikely = false;
         let mut basic_block_start = self.insts_link.root;
 
         let mut current_node = basic_block_start;
         while !current_node.is_null() {
             let i = BlockInstList::deref(current_node).value;
+            let (basic_blocks, basic_block_label_mapping) = if last_label_unlikely {
+                (&mut basic_blocks_unlikely, &mut basic_block_unlikely_label_mapping)
+            } else {
+                (&mut basic_blocks, &mut basic_block_label_mapping)
+            };
 
             match &mut self.buf.insts[i].kind {
-                BlockInstKind::Label { label, .. } => {
+                BlockInstKind::Label { label, unlikely, .. } => {
                     let label = *label;
+                    let unlikely = *unlikely;
                     // block_start_entry can be the same as current_node, when the previous iteration ended with a branch
                     if basic_block_start != current_node {
                         basic_blocks.push(BasicBlock::new(self, basic_block_start, BlockInstList::deref(current_node).previous));
@@ -817,6 +844,7 @@ impl<'a> BlockAsm<'a> {
                             basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
                         }
                     }
+                    last_label_unlikely = unlikely;
                     last_label = Some(label);
                 }
                 BlockInstKind::Branch { label, .. } => {
@@ -828,6 +856,7 @@ impl<'a> BlockAsm<'a> {
                     if let Some(last_label) = last_label {
                         basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
                     }
+                    last_label_unlikely = false;
                     last_label = None;
                 }
                 BlockInstKind::Call { has_return: false, .. } | BlockInstKind::CallCommon { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {
@@ -836,6 +865,7 @@ impl<'a> BlockAsm<'a> {
                     if let Some(last_label) = last_label {
                         basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
                     }
+                    last_label_unlikely = false;
                     last_label = None;
                 }
                 _ => {}
@@ -845,11 +875,21 @@ impl<'a> BlockAsm<'a> {
         }
 
         if !basic_block_start.is_null() {
+            let (basic_blocks, basic_block_label_mapping) = if last_label_unlikely {
+                (&mut basic_blocks_unlikely, &mut basic_block_unlikely_label_mapping)
+            } else {
+                (&mut basic_blocks, &mut basic_block_label_mapping)
+            };
             basic_blocks.push(BasicBlock::new(self, basic_block_start, self.insts_link.end));
             if let Some(last_label) = last_label {
                 basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
             }
         }
+
+        for (label, block_index) in basic_block_unlikely_label_mapping {
+            basic_block_label_mapping.insert(label, block_index + basic_blocks.len());
+        }
+        basic_blocks.extend(basic_blocks_unlikely);
 
         let basic_blocks_len = basic_blocks.len();
         // Link blocks
@@ -933,6 +973,8 @@ impl<'a> BlockAsm<'a> {
             basic_block.remove_dead_code(self);
         }
 
+        self.buf.basic_block_label_mapping = basic_block_label_mapping;
+
         (basic_blocks, reachable_blocks)
     }
 
@@ -1009,45 +1051,63 @@ impl<'a> BlockAsm<'a> {
         }
 
         self.buf.opcodes.clear();
-        self.buf.block_opcode_offsets.clear();
-        self.buf.branch_placeholders.clear();
+        self.buf.block_opcode_offsets.resize(basic_blocks.len(), 0);
+        self.buf.branch_placeholders.resize(basic_blocks.len(), Vec::new());
 
-        for (i, basic_block) in basic_blocks.iter().enumerate() {
+        for i in 0..basic_blocks.len() {
+            if let Some((label, half, correction)) = basic_blocks[i].pad_label {
+                let block_to_pad_to = *self.buf.basic_block_label_mapping.get(&label.0).unwrap();
+                basic_blocks[block_to_pad_to].emit_opcodes(self, 0, block_to_pad_to, used_host_regs);
+                basic_blocks[i].pad_size = (basic_blocks[block_to_pad_to].opcodes.len() as i32 + correction) as usize;
+                if half {
+                    basic_blocks[i].pad_size = (basic_blocks[i].pad_size + 1) >> 1;
+                }
+            }
+        }
+
+        for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
             let opcodes_len = self.buf.opcodes.len();
-            self.buf.block_opcode_offsets.push(opcodes_len);
+            self.buf.block_opcode_offsets[i] = opcodes_len;
 
             if !reachable_blocks.contains(&i) {
+                self.buf.branch_placeholders[i].clear();
                 continue;
             }
 
-            let opcodes = basic_block.emit_opcodes(self, opcodes_len, used_host_regs);
-            self.buf.opcodes.extend(opcodes);
+            basic_block.emit_opcodes(self, opcodes_len, i, used_host_regs);
+            self.buf.opcodes.extend(&basic_block.opcodes);
         }
 
         self.buf.opcodes.len()
     }
 
     pub fn finalize(&mut self, jit_mem_offset: usize) -> &Vec<u32> {
-        for &branch_placeholder in &self.buf.branch_placeholders {
-            let encoding = BranchEncoding::from(self.buf.opcodes[branch_placeholder]);
-            if Cond::from(u8::from(encoding.cond())) == Cond::NV {
-                self.buf.opcodes[branch_placeholder] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
-                continue;
-            }
+        for (block_index, branch_placeholders) in self.buf.branch_placeholders.iter().enumerate() {
+            for branch_placeholder in branch_placeholders {
+                if IS_DEBUG && unsafe { BLOCK_LOG } {
+                    println!("{block_index}: offset: {}, {branch_placeholder}", self.buf.block_opcode_offsets[block_index]);
+                }
+                let index = self.buf.block_opcode_offsets[block_index] + *branch_placeholder;
+                let encoding = BranchEncoding::from(self.buf.opcodes[index]);
+                if Cond::from(u8::from(encoding.cond())) == Cond::NV {
+                    self.buf.opcodes[index] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
+                    continue;
+                }
 
-            let diff = if encoding.is_call_common() {
-                let opcode_index = (jit_mem_offset >> 2) + branch_placeholder;
-                let branch_to = u32::from(encoding.index()) >> 2;
-                branch_to as i32 - opcode_index as i32
-            } else {
-                let block_index = u32::from(encoding.index());
-                let branch_to = self.buf.block_opcode_offsets[block_index as usize];
-                branch_to as i32 - branch_placeholder as i32
-            };
-            if diff == 1 && !encoding.has_return() {
-                self.buf.opcodes[branch_placeholder] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
-            } else {
-                self.buf.opcodes[branch_placeholder] = if encoding.has_return() { B::bl } else { B::b }(diff - 2, Cond::from(u8::from(encoding.cond())));
+                let diff = if encoding.is_call_common() {
+                    let opcode_index = (jit_mem_offset >> 2) + index;
+                    let branch_to = u32::from(encoding.index()) >> 2;
+                    branch_to as i32 - opcode_index as i32
+                } else {
+                    let block_index = u32::from(encoding.index());
+                    let branch_to = self.buf.block_opcode_offsets[block_index as usize];
+                    branch_to as i32 - index as i32
+                };
+                if diff == 1 && !encoding.has_return() {
+                    self.buf.opcodes[index] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
+                } else {
+                    self.buf.opcodes[index] = if encoding.has_return() { B::bl } else { B::b }(diff - 2, Cond::from(u8::from(encoding.cond())));
+                }
             }
         }
 

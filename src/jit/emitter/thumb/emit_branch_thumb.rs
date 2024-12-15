@@ -38,11 +38,12 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
 
     pub fn emit_bl_thumb(&mut self, block_asm: &mut BlockAsm) {
         let previous_inst_info = &self.jit_buf.insts[self.jit_buf.current_index - 1];
-        if previous_inst_info.op != Op::BlSetupT {
-            return;
-        }
+        let relative_pc = if previous_inst_info.op != Op::BlSetupT {
+            0
+        } else {
+            *previous_inst_info.operands()[0].as_imm().unwrap() as i32
+        } + 4;
 
-        let relative_pc = *previous_inst_info.operands()[0].as_imm().unwrap() as i32 + 4;
         let mut target_pc = (self.jit_buf.current_pc as i32 - 2 + relative_pc) as u32;
 
         let inst_info = self.jit_buf.current_inst();

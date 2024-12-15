@@ -4,6 +4,7 @@ use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockOperand, BlockReg};
 use crate::jit::inst_info::Operand;
+use crate::jit::inst_jit_handler::inst_slow_mem_patch;
 use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple, inst_mem_handler_swp};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
@@ -78,6 +79,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov(op1, post_addr_reg);
         }
 
+        let slow_write_label = block_asm.new_label();
+        let slow_write_patch_label = block_asm.new_label();
+        let continue_label = block_asm.new_label();
+
+        block_asm.branch(slow_write_label, Cond::NV);
+        block_asm.pad_block_half(slow_write_label, 0);
+
         let cpsr_backup_reg = block_asm.new_reg();
         block_asm.mrs_cpsr(cpsr_backup_reg);
 
@@ -87,9 +95,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let fast_mmu_ptr_reg = block_asm.new_reg();
         let fast_mmu_index_reg = block_asm.new_reg();
         let fast_mmu_offset_reg = block_asm.new_reg();
-
-        let slow_read_label = block_asm.new_label();
-        let continue_label = block_asm.new_label();
 
         let size = if amount == MemoryAmount::Double { MemoryAmount::Word.size() } else { amount.size() };
         block_asm.bic(fast_write_addr_reg, addr_reg, 0xF0000000 | (size as u32 - 1));
@@ -104,7 +109,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         );
 
         block_asm.cmp(fast_mmu_offset_reg, 0);
-        block_asm.branch(slow_read_label, Cond::EQ);
+        block_asm.branch(slow_write_patch_label, Cond::EQ);
+        block_asm.pad_block_half(slow_write_label, 0);
 
         let shm_ptr = get_mem!(self.emu).shm.as_ptr();
 
@@ -127,8 +133,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         block_asm.branch(continue_label, Cond::AL);
 
-        block_asm.label(slow_read_label);
+        block_asm.label_unlikely(slow_write_patch_label);
+        block_asm.call(inst_slow_mem_patch::<true> as *const ());
         block_asm.msr_cpsr(cpsr_backup_reg);
+        block_asm.branch(slow_write_label, Cond::AL);
+
+        block_asm.label_unlikely(slow_write_label);
         block_asm.save_context();
 
         let op0_addr = get_regs!(self.emu, CPU).get_reg(op0) as *const _ as u32;
@@ -159,6 +169,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         );
         block_asm.restore_reg(Reg::CPSR);
 
+        block_asm.branch(continue_label, Cond::AL);
         block_asm.label(continue_label);
 
         block_asm.free_reg(fast_mmu_offset_reg);
@@ -217,10 +228,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let fast_read_next_addr_reg = block_asm.new_reg();
         let fast_read_addr_masked_reg = block_asm.new_reg();
 
+        let slow_read_patch_label = block_asm.new_label();
         let slow_read_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
         block_asm.branch(slow_read_label, Cond::NV);
+        block_asm.pad_block(slow_read_label, -3);
 
         let mmu = get_mmu!(self.emu, CPU);
         let base_ptr = mmu.get_base_tcm_ptr();
@@ -248,7 +261,16 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
 
         block_asm.branch_fallthrough(continue_label, Cond::AL);
-        block_asm.label(slow_read_label);
+        block_asm.branch(slow_read_patch_label, Cond::AL);
+
+        block_asm.label_unlikely(slow_read_patch_label);
+        let cpsr_backup_reg = block_asm.new_reg();
+        block_asm.mrs_cpsr(cpsr_backup_reg);
+        block_asm.call(inst_slow_mem_patch::<false> as *const ());
+        block_asm.msr_cpsr(cpsr_backup_reg);
+        block_asm.branch(slow_read_label, Cond::AL);
+
+        block_asm.label_unlikely(slow_read_label);
 
         block_asm.restore_reg(op0);
         if amount == MemoryAmount::Double {
@@ -275,8 +297,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
         block_asm.restore_reg(Reg::CPSR);
 
+        block_asm.branch(continue_label, Cond::AL);
         block_asm.label(continue_label);
 
+        block_asm.free_reg(cpsr_backup_reg);
         block_asm.free_reg(fast_read_addr_masked_reg);
         block_asm.free_reg(fast_read_next_addr_reg);
         block_asm.free_reg(fast_read_value_reg);
@@ -313,7 +337,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let is_valid = !rlist.is_empty() && (!write_back || !rlist.is_reserved(op0));
 
-        let slow_read_label = block_asm.new_label();
+        let slow_label = block_asm.new_label();
+        let slow_patch_label = block_asm.new_label();
         let fast_mem_mark_dirty_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
@@ -352,6 +377,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             debug_assert!(non_gp_regs.is_empty());
 
             if inst_info.op.mem_is_write() {
+                block_asm.branch(slow_label, Cond::NV);
+                block_asm.pad_block_half(slow_label, 0);
                 block_asm.mrs_cpsr(cpsr_backup_reg);
 
                 let mmu_ptr = get_mmu!(self.emu, CPU).get_mmu_write_tcm().as_ptr();
@@ -368,7 +395,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 block_asm.transfer_read(mmu_offset_reg, mmu_ptr_reg, (mmu_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)), false, MemoryAmount::Word);
 
                 block_asm.cmp(mmu_offset_reg, 0);
-                block_asm.branch(slow_read_label, Cond::EQ);
+                block_asm.branch(slow_patch_label, Cond::EQ);
+                block_asm.pad_block_half(slow_label, 0);
 
                 let shm_ptr = get_mem!(self.emu).shm.as_ptr();
 
@@ -397,7 +425,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 block_asm.free_reg(base_reg_out);
                 block_asm.free_reg(base_reg);
             } else {
-                block_asm.branch(slow_read_label, Cond::NV);
+                block_asm.branch(slow_label, Cond::NV);
+                block_asm.pad_block(slow_label, -3);
 
                 let base_reg = block_asm.new_reg();
                 let base_reg_out = block_asm.new_reg();
@@ -422,6 +451,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 }
 
                 block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
+                block_asm.branch(slow_patch_label, Cond::AL);
 
                 block_asm.free_reg(base_reg_out);
                 block_asm.free_reg(base_reg);
@@ -466,9 +496,18 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             (true, true, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, true, true> as _,
         };
 
-        block_asm.label(slow_read_label);
-        if use_fast_mem && inst_info.op.mem_is_write() {
+        if use_fast_mem {
+            block_asm.label_unlikely(slow_patch_label);
+            if inst_info.op.mem_is_write() {
+                block_asm.call(inst_slow_mem_patch::<true> as *const ());
+            } else {
+                block_asm.mrs_cpsr(cpsr_backup_reg);
+                block_asm.call(inst_slow_mem_patch::<false> as *const ());
+            }
             block_asm.msr_cpsr(cpsr_backup_reg);
+            block_asm.branch(slow_label, Cond::AL);
+
+            block_asm.label_unlikely(slow_label);
         }
         block_asm.save_context();
         block_asm.call3(
@@ -489,14 +528,19 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.restore_reg(reg);
         }
         block_asm.restore_reg(Reg::CPSR);
-        block_asm.branch(continue_label, Cond::AL);
 
-        block_asm.label(fast_mem_mark_dirty_label);
-        for guest_reg in rlist {
-            block_asm.mark_reg_dirty(guest_reg, true);
+        if use_fast_mem {
+            block_asm.branch(continue_label, Cond::AL);
+
+            if !inst_info.op.mem_is_write() {
+                block_asm.label(fast_mem_mark_dirty_label);
+                for guest_reg in rlist {
+                    block_asm.mark_reg_dirty(guest_reg, true);
+                }
+            }
+
+            block_asm.label(continue_label);
         }
-
-        block_asm.label(continue_label);
 
         block_asm.free_reg(cpsr_backup_reg);
     }

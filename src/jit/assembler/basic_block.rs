@@ -1,8 +1,9 @@
+use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::block_asm::{BlockAsm, BLOCK_LOG};
 use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp};
 use crate::jit::assembler::block_inst_list::{BlockInstList, BlockInstListEntry};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
-use crate::jit::assembler::{BlockAsmBuf, BlockInstKind};
+use crate::jit::assembler::{BlockAsmBuf, BlockInstKind, BlockLabel};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{MemoryAmount, ShiftType};
 use crate::IS_DEBUG;
@@ -13,6 +14,9 @@ pub struct BasicBlock {
 
     pub block_entry_start: *mut BlockInstListEntry,
     pub block_entry_end: *mut BlockInstListEntry,
+
+    pub pad_label: Option<(BlockLabel, bool, i32)>,
+    pub pad_size: usize,
 
     pub guest_regs_resolved: bool,
     pub guest_regs_input_dirty: RegReserve,
@@ -27,6 +31,8 @@ pub struct BasicBlock {
     pub insts_link: BlockInstList,
 
     pub start_pc: u32,
+
+    pub opcodes: Vec<u32>,
 }
 
 impl BasicBlock {
@@ -36,6 +42,9 @@ impl BasicBlock {
 
             block_entry_start,
             block_entry_end,
+
+            pad_label: None,
+            pad_size: 0,
 
             guest_regs_resolved: false,
             guest_regs_input_dirty: RegReserve::new(),
@@ -50,6 +59,8 @@ impl BasicBlock {
             insts_link: BlockInstList::new(),
 
             start_pc: 0,
+
+            opcodes: Vec::new(),
         }
     }
 
@@ -113,6 +124,7 @@ impl BasicBlock {
                         add_inst = false;
                     }
                     BlockInstKind::SaveReg { .. } | BlockInstKind::MarkRegDirty { .. } => {}
+                    BlockInstKind::PadBlock { label, half, correction } => self.pad_label = Some((*label, *half, *correction)),
                     _ => {
                         let (inputs, _) = asm.buf.insts[i].get_io();
                         for guest_reg in inputs.get_guests() {
@@ -300,8 +312,17 @@ impl BasicBlock {
         }
     }
 
-    pub fn emit_opcodes(&self, asm: &mut BlockAsm, opcodes_offset: usize, used_host_regs: RegReserve) -> Vec<u32> {
-        let mut opcodes = Vec::new();
+    pub fn emit_opcodes(&mut self, asm: &mut BlockAsm, opcodes_offset: usize, block_index: usize, used_host_regs: RegReserve) {
+        // if IS_DEBUG && unsafe { BLOCK_LOG } && opcodes_offset != 0 {
+        //     self.opcodes.clear();
+        // }
+
+        if !self.opcodes.is_empty() {
+            return;
+        }
+
+        asm.buf.branch_placeholders[block_index].clear();
+
         let mut inst_opcodes = Vec::new();
         for entry in self.insts_link.iter() {
             let inst = &mut asm.buf.insts[entry.value];
@@ -309,13 +330,13 @@ impl BasicBlock {
                 continue;
             }
 
-            if IS_DEBUG && unsafe { BLOCK_LOG } {
+            if IS_DEBUG && unsafe { BLOCK_LOG } && opcodes_offset != 0 {
                 match &inst.kind {
                     BlockInstKind::GuestPc(pc) => {
-                        println!("(0x{:x}, 0x{pc:x}),", opcodes.len() + opcodes_offset);
+                        println!("(0x{:x}, 0x{pc:x}),", self.opcodes.len() + opcodes_offset);
                     }
                     BlockInstKind::Label { guest_pc: Some(pc), .. } => {
-                        println!("(0x{:x}, 0x{pc:x}),", opcodes.len() + opcodes_offset);
+                        println!("(0x{:x}, 0x{pc:x}),", self.opcodes.len() + opcodes_offset);
                     }
                     _ => {}
                 }
@@ -323,13 +344,16 @@ impl BasicBlock {
 
             inst_opcodes.clear();
             inst.kind
-                .emit_opcode(&mut inst_opcodes, opcodes.len(), &mut asm.buf.branch_placeholders, opcodes_offset, used_host_regs);
+                .emit_opcode(&mut inst_opcodes, self.opcodes.len(), &mut asm.buf.branch_placeholders[block_index], used_host_regs);
             for opcode in &mut inst_opcodes {
                 *opcode = (*opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);
             }
-            opcodes.extend(&inst_opcodes);
+            self.opcodes.extend(&inst_opcodes);
         }
-        opcodes
+
+        for _ in self.opcodes.len()..self.pad_size {
+            self.opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0));
+        }
     }
 }
 

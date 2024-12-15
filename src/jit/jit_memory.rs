@@ -2,13 +2,11 @@ use crate::core::emu::{get_mmu, Emu};
 use crate::core::memory::{regions, vram};
 use crate::core::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
-use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt};
 use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
-use crate::jit::Cond;
 use crate::logging::debug_println;
 use crate::mmap::{flush_icache, Mmap, PAGE_SIZE};
 use crate::utils;
@@ -370,7 +368,7 @@ impl JitMemory {
 
         let nop_opcode = AluShiftImm::mov_al(Reg::R0, Reg::R0);
         for pc_offset in (4..128).step_by(4) {
-            let ptr = (*host_pc + pc_offset) as *const u32;
+            let ptr = (*host_pc + pc_offset) as *mut u32;
             let opcode = unsafe { ptr.read() };
             if opcode == nop_opcode {
                 // Already patched, double transfers
@@ -379,49 +377,14 @@ impl JitMemory {
             } else {
                 let (op, _) = lookup_opcode(opcode);
                 if *op == Op::B {
-                    break;
+                    unsafe { ptr.write(nop_opcode) };
+                    *host_pc += 4;
+                    unsafe { flush_icache(ptr as _, 4) };
+                    return true;
                 }
             }
         }
 
-        let mut fast_mem_begin = *host_pc - 4;
-        let mut found = false;
-        while *host_pc - fast_mem_begin < 128 {
-            let ptr = fast_mem_begin as *const u32;
-            if unsafe { ptr.read() } == nop_opcode {
-                found = true;
-                break;
-            }
-            fast_mem_begin -= 4;
-        }
-        if !found {
-            return false;
-        }
-
-        let mut fast_mem_end = *host_pc + 4;
-        found = false;
-        while fast_mem_end - *host_pc < 128 {
-            let ptr = fast_mem_end as *const u32;
-            let (op, _) = lookup_opcode(unsafe { ptr.read() });
-            if *op == Op::B {
-                found = true;
-                break;
-            }
-            fast_mem_end += 4;
-        }
-        if !found {
-            return false;
-        }
-
-        let slow_mem_begin = fast_mem_end + 4;
-        let diff = (slow_mem_begin - fast_mem_begin) >> 2;
-        unsafe {
-            (fast_mem_begin as *mut u32).write(B::b(diff as i32 - 2, Cond::AL));
-            (fast_mem_end as *mut u32).write(nop_opcode);
-        }
-
-        *host_pc += 4;
-        unsafe { flush_icache(fast_mem_begin as _, fast_mem_end - fast_mem_begin + 4) }
-        true
+        false
     }
 }

@@ -213,6 +213,7 @@ pub enum BlockInstKind {
     Label {
         label: BlockLabel,
         guest_pc: Option<u32>,
+        unlikely: bool,
     },
     Branch {
         label: BlockLabel,
@@ -262,6 +263,12 @@ pub enum BlockInstKind {
     Prologue,
     Epilogue {
         restore_all_regs: bool,
+    },
+
+    PadBlock {
+        label: BlockLabel,
+        half: bool,
+        correction: i32,
     },
 }
 
@@ -446,7 +453,9 @@ impl BlockInstKind {
                 block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(Reg::PC))),
             ),
 
-            BlockInstKind::Label { .. } | BlockInstKind::Branch { .. } | BlockInstKind::GuestPc(_) | BlockInstKind::Bkpt(_) | BlockInstKind::Nop => (block_reg_set!(), block_reg_set!()),
+            BlockInstKind::Label { .. } | BlockInstKind::Branch { .. } | BlockInstKind::GuestPc(_) | BlockInstKind::Bkpt(_) | BlockInstKind::Nop | BlockInstKind::PadBlock { .. } => {
+                (block_reg_set!(), block_reg_set!())
+            }
         }
     }
 
@@ -527,7 +536,8 @@ impl BlockInstKind {
             | BlockInstKind::Bkpt(_)
             | BlockInstKind::Nop
             | BlockInstKind::Prologue
-            | BlockInstKind::Epilogue { .. } => {}
+            | BlockInstKind::Epilogue { .. }
+            | BlockInstKind::PadBlock { .. } => {}
         }
     }
 
@@ -589,7 +599,8 @@ impl BlockInstKind {
             | BlockInstKind::Bkpt(_)
             | BlockInstKind::Nop
             | BlockInstKind::Prologue
-            | BlockInstKind::Epilogue { .. } => {}
+            | BlockInstKind::Epilogue { .. }
+            | BlockInstKind::PadBlock { .. } => {}
         }
     }
 
@@ -600,7 +611,7 @@ impl BlockInstKind {
         opcodes.push(LdrStrImm::strb_offset_al(host_reg, thread_regs_addr_reg, Reg::CPSR as u16 * 4 + 3));
     }
 
-    pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize, used_host_regs: RegReserve) {
+    pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, used_host_regs: RegReserve) {
         let alu_reg = |op: BlockAluOp, op0: BlockReg, op1: BlockReg, op2: BlockReg, shift: BlockShift, set_cond: bool| match shift.value {
             BlockOperand::Reg(shift_reg) => AluReg::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_reg.as_fixed(), set_cond, Cond::AL),
             BlockOperand::Imm(shift_imm) => {
@@ -774,7 +785,7 @@ impl BlockInstKind {
                 // Encode label
                 // Branch offset can only be figured out later
                 opcodes.push(BranchEncoding::new(u26::new(*block_index as u32), false, false, u4::new(Cond::AL as u8)).into());
-                branch_placeholders.push(opcodes_offset + opcode_index);
+                branch_placeholders.push(opcode_index);
             }
 
             BlockInstKind::SaveContext { .. } => unsafe { unreachable_unchecked() },
@@ -809,7 +820,7 @@ impl BlockInstKind {
                 // Encode common offset
                 // Branch offset can only be figured out later
                 opcodes.push(BranchEncoding::new(u26::new(*mem_offset as u32), *has_return, true, u4::new(Cond::AL as u8)).into());
-                branch_placeholders.push(opcodes_offset + opcode_index);
+                branch_placeholders.push(opcode_index);
             }
             BlockInstKind::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
             BlockInstKind::Nop => opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0)),
@@ -854,7 +865,7 @@ impl BlockInstKind {
                 Cond::AL,
             )),
 
-            BlockInstKind::Label { .. } | BlockInstKind::MarkRegDirty { .. } | BlockInstKind::GuestPc(_) => {}
+            BlockInstKind::Label { .. } | BlockInstKind::MarkRegDirty { .. } | BlockInstKind::GuestPc(_) | BlockInstKind::PadBlock { .. } => {}
         }
     }
 }
@@ -959,12 +970,12 @@ impl Debug for BlockInstKind {
             BlockInstKind::Bfi { operands, lsb, width } => write!(f, "Bfi {:?}, {:?}, {lsb}, {width}", operands[0], operands[1]),
             BlockInstKind::Ubfx { operands, lsb, width } => write!(f, "Ubfx {:?}, {:?}, {lsb}, {width}", operands[0], operands[1]),
             BlockInstKind::Mul { operands, set_cond, thumb_pc_aligned } => write!(f, "Mul{set_cond:?} {operands:?}, align pc: {thumb_pc_aligned}"),
-            BlockInstKind::Label { label, guest_pc } => {
+            BlockInstKind::Label { label, guest_pc, unlikely } => {
                 let guest_pc = match guest_pc {
                     None => "",
                     Some(pc) => &format!(" {pc:x}"),
                 };
-                write!(f, "Label {label:?}{guest_pc}")
+                write!(f, "Label {label:?}{guest_pc} unlikely: {unlikely}")
             }
             BlockInstKind::Branch { label, block_index, .. } => write!(f, "B {label:?}, block index: {block_index}"),
             BlockInstKind::SaveContext { .. } => write!(f, "SaveContext"),
@@ -997,6 +1008,7 @@ impl Debug for BlockInstKind {
             BlockInstKind::GenericGuestInst { inst, .. } => write!(f, "{inst:?}"),
             BlockInstKind::Prologue => write!(f, "Prologue"),
             BlockInstKind::Epilogue { restore_all_regs } => write!(f, "Epilogue restore all regs {restore_all_regs}"),
+            BlockInstKind::PadBlock { label, half, correction } => write!(f, "PadBlock {label:?} half: {half} {correction}"),
         }
     }
 }
