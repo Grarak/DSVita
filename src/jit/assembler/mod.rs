@@ -347,17 +347,19 @@ pub struct BlockLabel(u16);
 
 pub struct BlockAsmBuf {
     pub insts: Vec<BlockInst>,
+    pub basic_block_label_mapping: NoHashMap<u16, usize>,
     pub guest_branches_mapping: NoHashMap<u32, BlockLabel>,
     pub reg_allocator: BlockRegAllocator,
     pub block_opcode_offsets: Vec<usize>,
     pub opcodes: Vec<u32>,
-    pub branch_placeholders: Vec<usize>,
+    pub branch_placeholders: Vec<Vec<usize>>,
 }
 
 impl BlockAsmBuf {
     pub fn new() -> Self {
         BlockAsmBuf {
             insts: Vec::new(),
+            basic_block_label_mapping: NoHashMap::default(),
             guest_branches_mapping: NoHashMap::default(),
             reg_allocator: BlockRegAllocator::new(),
             block_opcode_offsets: Vec::new(),

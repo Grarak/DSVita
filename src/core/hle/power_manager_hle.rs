@@ -23,6 +23,9 @@ impl PowerManagerHle {
 
         let cmd = (self.data[0] >> 8) - 0x60;
         match cmd {
+            1 => {
+                Arm7Hle::send_ipc_fifo(0x8, 0x0300E300, 0, emu);
+            }
             3 => {
                 Arm7Hle::send_ipc_fifo(0x8, 0x0300E300, 0, emu);
             }

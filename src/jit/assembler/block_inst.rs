@@ -607,7 +607,7 @@ impl BlockInstKind {
         opcodes.push(LdrStrImm::strb_offset_al(host_reg, thread_regs_addr_reg, Reg::CPSR as u16 * 4 + 3));
     }
 
-    pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, opcodes_offset: usize, used_host_regs: RegReserve) {
+    pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, used_host_regs: RegReserve) {
         let alu_reg = |op: BlockAluOp, op0: BlockReg, op1: BlockReg, op2: BlockReg, shift: BlockShift, set_cond: bool| match shift.value {
             BlockOperand::Reg(shift_reg) => AluReg::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_reg.as_fixed(), set_cond, Cond::AL),
             BlockOperand::Imm(shift_imm) => {
@@ -781,7 +781,7 @@ impl BlockInstKind {
                 // Encode label
                 // Branch offset can only be figured out later
                 opcodes.push(BranchEncoding::new(u26::new(*block_index as u32), false, false, u4::new(Cond::AL as u8)).into());
-                branch_placeholders.push(opcodes_offset + opcode_index);
+                branch_placeholders.push(opcode_index);
             }
 
             BlockInstKind::SaveContext { .. } => unsafe { unreachable_unchecked() },
@@ -816,7 +816,7 @@ impl BlockInstKind {
                 // Encode common offset
                 // Branch offset can only be figured out later
                 opcodes.push(BranchEncoding::new(u26::new(*mem_offset as u32), *has_return, true, u4::new(Cond::AL as u8)).into());
-                branch_placeholders.push(opcodes_offset + opcode_index);
+                branch_placeholders.push(opcode_index);
             }
             BlockInstKind::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
             BlockInstKind::Nop => opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0)),

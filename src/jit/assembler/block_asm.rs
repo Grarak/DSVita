@@ -722,6 +722,10 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
+    pub fn pad_block(&mut self, label: BlockLabel) {
+        self.insert_inst(BlockInstKind::PadBlock(label));
+    }
+
     // Convert guest pc with labels into labels
     fn resolve_labels(&mut self, label_aliases: &mut NoHashMap<u16, u16>) {
         let mut previous_label: Option<(BlockLabel, Option<u32>)> = None;
@@ -965,6 +969,8 @@ impl<'a> BlockAsm<'a> {
             basic_block.remove_dead_code(self);
         }
 
+        self.buf.basic_block_label_mapping = basic_block_label_mapping;
+
         (basic_blocks, reachable_blocks)
     }
 
@@ -1041,45 +1047,57 @@ impl<'a> BlockAsm<'a> {
         }
 
         self.buf.opcodes.clear();
-        self.buf.block_opcode_offsets.clear();
-        self.buf.branch_placeholders.clear();
+        self.buf.block_opcode_offsets.resize(basic_blocks.len(), 0);
+        self.buf.branch_placeholders.resize(basic_blocks.len(), Vec::new());
 
-        for (i, basic_block) in basic_blocks.iter().enumerate() {
+        for i in 0..basic_blocks.len() {
+            if let Some(label) = basic_blocks[i].pad_label {
+                let block_to_pad_to = *self.buf.basic_block_label_mapping.get(&label.0).unwrap();
+                self.buf.branch_placeholders[block_to_pad_to].clear();
+                basic_blocks[block_to_pad_to].emit_opcodes(self, 0, block_to_pad_to, used_host_regs);
+                basic_blocks[i].pad_size = basic_blocks[block_to_pad_to].opcodes.len();
+            }
+        }
+
+        for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
             let opcodes_len = self.buf.opcodes.len();
-            self.buf.block_opcode_offsets.push(opcodes_len);
+            self.buf.block_opcode_offsets[i] = opcodes_len;
 
             if !reachable_blocks.contains(&i) {
                 continue;
             }
 
-            let opcodes = basic_block.emit_opcodes(self, opcodes_len, used_host_regs);
-            self.buf.opcodes.extend(opcodes);
+            basic_block.emit_opcodes(self, opcodes_len, i, used_host_regs);
+            self.buf.opcodes.extend(&basic_block.opcodes);
         }
 
         self.buf.opcodes.len()
     }
 
     pub fn finalize(&mut self, jit_mem_offset: usize) -> &Vec<u32> {
-        for &branch_placeholder in &self.buf.branch_placeholders {
-            let encoding = BranchEncoding::from(self.buf.opcodes[branch_placeholder]);
-            if Cond::from(u8::from(encoding.cond())) == Cond::NV {
-                self.buf.opcodes[branch_placeholder] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
-                continue;
-            }
+        for (block_index, branch_placeholders) in self.buf.branch_placeholders.iter().enumerate() {
+            for branch_placeholder in branch_placeholders {
+                let index = self.buf.block_opcode_offsets[block_index] + *branch_placeholder;
+                let encoding = BranchEncoding::from(self.buf.opcodes[index]);
+                if Cond::from(u8::from(encoding.cond())) == Cond::NV {
+                    self.buf.opcodes[index] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
+                    continue;
+                }
 
-            let diff = if encoding.is_call_common() {
-                let opcode_index = (jit_mem_offset >> 2) + branch_placeholder;
-                let branch_to = u32::from(encoding.index()) >> 2;
-                branch_to as i32 - opcode_index as i32
-            } else {
-                let block_index = u32::from(encoding.index());
-                let branch_to = self.buf.block_opcode_offsets[block_index as usize];
-                branch_to as i32 - branch_placeholder as i32
-            };
-            if diff == 1 && !encoding.has_return() {
-                self.buf.opcodes[branch_placeholder] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
-            } else {
-                self.buf.opcodes[branch_placeholder] = if encoding.has_return() { B::bl } else { B::b }(diff - 2, Cond::from(u8::from(encoding.cond())));
+                let diff = if encoding.is_call_common() {
+                    let opcode_index = (jit_mem_offset >> 2) + index;
+                    let branch_to = u32::from(encoding.index()) >> 2;
+                    branch_to as i32 - opcode_index as i32
+                } else {
+                    let block_index = u32::from(encoding.index());
+                    let branch_to = self.buf.block_opcode_offsets[block_index as usize];
+                    branch_to as i32 - index as i32
+                };
+                if diff == 1 && !encoding.has_return() {
+                    self.buf.opcodes[index] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
+                } else {
+                    self.buf.opcodes[index] = if encoding.has_return() { B::bl } else { B::b }(diff - 2, Cond::from(u8::from(encoding.cond())));
+                }
             }
         }
 

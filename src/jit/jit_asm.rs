@@ -181,7 +181,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
     }
 
     let jit_entry = {
-        // unsafe { BLOCK_LOG = guest_pc == 0x2025826 };
+        // unsafe { BLOCK_LOG = true };
 
         let mut block_asm = asm.new_block_asm(false);
 
@@ -211,6 +211,8 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
                 block_asm.restore_reg(Reg::CPSR);
             }
         }
+
+        block_asm.epilogue();
 
         let opcodes_len = block_asm.emit_opcodes(guest_pc, THUMB);
         let next_jit_entry = get_jit!(asm.emu).get_next_entry(opcodes_len);

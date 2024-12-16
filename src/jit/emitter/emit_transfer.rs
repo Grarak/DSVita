@@ -4,6 +4,7 @@ use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockOperand, BlockReg};
 use crate::jit::inst_info::Operand;
+use crate::jit::inst_jit_handler::inst_slow_mem_patch;
 use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple, inst_mem_handler_swp};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
@@ -218,10 +219,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let fast_read_next_addr_reg = block_asm.new_reg();
         let fast_read_addr_masked_reg = block_asm.new_reg();
 
+        let slow_read_patch_label = block_asm.new_label();
         let slow_read_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
         block_asm.branch(slow_read_label, Cond::NV);
+        block_asm.pad_block(slow_read_label);
 
         let mmu = get_mmu!(self.emu, CPU);
         let base_ptr = mmu.get_base_tcm_ptr();
@@ -249,7 +252,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
 
         block_asm.branch_fallthrough(continue_label, Cond::AL);
+        block_asm.branch(slow_read_patch_label, Cond::AL);
+
+        block_asm.label_unlikely(slow_read_patch_label);
+        block_asm.call(inst_slow_mem_patch as *const ());
         block_asm.branch(slow_read_label, Cond::AL);
+
         block_asm.label_unlikely(slow_read_label);
 
         block_asm.restore_reg(op0);
@@ -322,7 +330,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let cpsr_backup_reg = block_asm.new_reg();
 
-        let use_fast_mem = is_valid && !inst_info.op.mem_transfer_user() && rlist.len() < (RegReserve::gp() + Reg::LR).len() - 2;
+        let use_fast_mem = false && is_valid && !inst_info.op.mem_transfer_user() && rlist.len() < (RegReserve::gp() + Reg::LR).len() - 2;
         if use_fast_mem {
             let mut gp_regs = rlist.get_gp_regs();
             let mut free_gp_regs = if gp_regs.is_empty() {
