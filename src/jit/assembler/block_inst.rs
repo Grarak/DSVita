@@ -267,7 +267,6 @@ pub enum BlockInstKind {
 
     PadBlock {
         label: BlockLabel,
-        half: bool,
         correction: i32,
     },
 }
@@ -1008,7 +1007,7 @@ impl Debug for BlockInstKind {
             BlockInstKind::GenericGuestInst { inst, .. } => write!(f, "{inst:?}"),
             BlockInstKind::Prologue => write!(f, "Prologue"),
             BlockInstKind::Epilogue { restore_all_regs } => write!(f, "Epilogue restore all regs {restore_all_regs}"),
-            BlockInstKind::PadBlock { label, half, correction } => write!(f, "PadBlock {label:?} half: {half} {correction}"),
+            BlockInstKind::PadBlock { label, correction } => write!(f, "PadBlock {label:?} {correction}"),
         }
     }
 }

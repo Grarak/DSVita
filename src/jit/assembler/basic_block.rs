@@ -15,7 +15,7 @@ pub struct BasicBlock {
     pub block_entry_start: *mut BlockInstListEntry,
     pub block_entry_end: *mut BlockInstListEntry,
 
-    pub pad_label: Option<(BlockLabel, bool, i32)>,
+    pub pad_label: Option<(BlockLabel, i32)>,
     pub pad_size: usize,
 
     pub guest_regs_resolved: bool,
@@ -124,7 +124,7 @@ impl BasicBlock {
                         add_inst = false;
                     }
                     BlockInstKind::SaveReg { .. } | BlockInstKind::MarkRegDirty { .. } => {}
-                    BlockInstKind::PadBlock { label, half, correction } => self.pad_label = Some((*label, *half, *correction)),
+                    BlockInstKind::PadBlock { label, correction } => self.pad_label = Some((*label, *correction)),
                     _ => {
                         let (inputs, _) = asm.buf.insts[i].get_io();
                         for guest_reg in inputs.get_guests() {

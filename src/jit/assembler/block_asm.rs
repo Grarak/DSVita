@@ -723,11 +723,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn pad_block(&mut self, label: BlockLabel, correction: i32) {
-        self.insert_inst(BlockInstKind::PadBlock { label, half: false, correction });
-    }
-
-    pub fn pad_block_half(&mut self, label: BlockLabel, correction: i32) {
-        self.insert_inst(BlockInstKind::PadBlock { label, half: true, correction });
+        self.insert_inst(BlockInstKind::PadBlock { label, correction });
     }
 
     // Convert guest pc with labels into labels
@@ -1055,13 +1051,10 @@ impl<'a> BlockAsm<'a> {
         self.buf.branch_placeholders.resize(basic_blocks.len(), Vec::new());
 
         for i in 0..basic_blocks.len() {
-            if let Some((label, half, correction)) = basic_blocks[i].pad_label {
+            if let Some((label, correction)) = basic_blocks[i].pad_label {
                 let block_to_pad_to = *self.buf.basic_block_label_mapping.get(&label.0).unwrap();
                 basic_blocks[block_to_pad_to].emit_opcodes(self, 0, block_to_pad_to, used_host_regs);
                 basic_blocks[i].pad_size = (basic_blocks[block_to_pad_to].opcodes.len() as i32 + correction) as usize;
-                if half {
-                    basic_blocks[i].pad_size = (basic_blocks[i].pad_size + 1) >> 1;
-                }
             }
         }
 

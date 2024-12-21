@@ -6,7 +6,7 @@ use crate::mmap::flush_icache;
 use core::slice;
 use std::arch::asm;
 
-pub unsafe extern "C" fn inst_slow_mem_patch<const WRITE: bool>() {
+pub unsafe extern "C" fn inst_slow_mem_patch() {
     let mut lr: u32;
     asm!(
     "mov {}, lr",
@@ -47,31 +47,16 @@ pub unsafe extern "C" fn inst_slow_mem_patch<const WRITE: bool>() {
 
     let mut fast_mem_start = 0;
     let mut found_non_op = false;
-    let mut found_mrs_op = false;
     for pc_offset in (4..256).step_by(4) {
         let ptr = (fast_mem_end - pc_offset) as *const u32;
         let opcode = ptr.read();
-        if WRITE {
-            if found_mrs_op {
-                if opcode == nop_opcode {
-                    fast_mem_start = ptr as usize;
-                    break;
-                }
-            } else {
-                let (op, _) = lookup_opcode(opcode);
-                if *op == Op::MrsRc {
-                    found_mrs_op = true;
-                }
+        if found_non_op {
+            if opcode == nop_opcode {
+                fast_mem_start = ptr as usize;
+                break;
             }
-        } else {
-            if found_non_op {
-                if opcode == nop_opcode {
-                    fast_mem_start = ptr as usize;
-                    break;
-                }
-            } else if opcode != nop_opcode {
-                found_non_op = true;
-            }
+        } else if opcode != nop_opcode {
+            found_non_op = true;
         }
     }
     debug_assert_ne!(fast_mem_start, 0);
