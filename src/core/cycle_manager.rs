@@ -15,11 +15,12 @@ use std::ptr;
 struct CycleEventEntry {
     cycle_count: u64,
     event_type: EventType,
+    arg: u8,
 }
 
 impl CycleEventEntry {
-    fn new(cycle_count: u64, event_type: EventType) -> Self {
-        CycleEventEntry { cycle_count, event_type }
+    fn new(cycle_count: u64, event_type: EventType, arg: u8) -> Self {
+        CycleEventEntry { cycle_count, event_type, arg }
     }
 }
 
@@ -46,21 +47,22 @@ impl LinkedListAllocator<CycleEventEntry> for CycleEventsListAllocator {
     }
 }
 
+#[repr(u8)]
 #[derive(Debug)]
 pub enum EventType {
-    CpuInterruptArm9,
-    CpuInterruptArm7,
-    GpuScanline256,
-    GpuScanline355,
-    SoundCmdHle,
-    SoundAlarmHle(u8),
-    CartridgeWordReadArm9,
-    CartridgeWordReadArm7,
-    DmaArm9(u8),
-    DmaArm7(u8),
-    SpuSample,
-    TimerArm9(u8),
-    TimerArm7(u8),
+    CpuInterruptArm9 = 0,
+    CpuInterruptArm7 = 1,
+    GpuScanline256 = 2,
+    GpuScanline355 = 3,
+    SoundCmdHle = 4,
+    SoundAlarmHle = 5,
+    CartridgeWordReadArm9 = 6,
+    CartridgeWordReadArm7 = 7,
+    DmaArm9 = 8,
+    DmaArm7 = 9,
+    SpuSample = 10,
+    TimerArm9 = 11,
+    TimerArm7 = 12,
 }
 
 pub struct CycleManager {
@@ -84,8 +86,23 @@ impl CycleManager {
         self.cycle_count
     }
 
-    #[inline(always)]
     pub fn check_events(&mut self, emu: &mut Emu) -> bool {
+        const LUT: [fn(&mut CycleManager, &mut Emu, u64, u8); EventType::TimerArm7 as usize + 1] = [
+            CpuRegs::on_interrupt_event::<{ ARM9 }>,
+            CpuRegs::on_interrupt_event::<{ ARM7 }>,
+            Gpu::on_scanline256_event,
+            Gpu::on_scanline355_event,
+            SoundNitro::on_cmd_event,
+            SoundNitro::on_alarm_event,
+            Cartridge::on_word_read_event::<{ ARM9 }>,
+            Cartridge::on_word_read_event::<{ ARM7 }>,
+            Dma::on_event::<{ ARM9 }>,
+            Dma::on_event::<{ ARM7 }>,
+            Spu::on_sample_event,
+            Timers::on_overflow_event::<{ ARM9 }>,
+            Timers::on_overflow_event::<{ ARM7 }>,
+        ];
+
         let cycle_count = self.cycle_count;
         let mut event_triggered = false;
         while {
@@ -94,26 +111,17 @@ impl CycleManager {
         } {
             event_triggered = true;
             let entry = self.events.remove_begin();
-            match entry.event_type {
-                EventType::CpuInterruptArm9 => CpuRegs::on_interrupt_event::<{ ARM9 }>(emu),
-                EventType::CpuInterruptArm7 => CpuRegs::on_interrupt_event::<{ ARM7 }>(emu),
-                EventType::GpuScanline256 => Gpu::on_scanline256_event(self, emu),
-                EventType::GpuScanline355 => Gpu::on_scanline355_event(self, emu),
-                EventType::SoundCmdHle => SoundNitro::on_cmd_event(self, emu),
-                EventType::SoundAlarmHle(id) => SoundNitro::on_alarm_event(id, self, emu),
-                EventType::CartridgeWordReadArm9 => Cartridge::on_word_read_event::<{ ARM9 }>(emu),
-                EventType::CartridgeWordReadArm7 => Cartridge::on_word_read_event::<{ ARM7 }>(emu),
-                EventType::DmaArm9(channel) => Dma::on_event::<{ ARM9 }>(channel, emu),
-                EventType::DmaArm7(channel) => Dma::on_event::<{ ARM7 }>(channel, emu),
-                EventType::SpuSample => Spu::on_sample_event(emu),
-                EventType::TimerArm9(channel) => Timers::on_overflow_event::<{ ARM9 }>(entry.cycle_count, channel, emu),
-                EventType::TimerArm7(channel) => Timers::on_overflow_event::<{ ARM7 }>(entry.cycle_count, channel, emu),
-            }
+            let func = unsafe { LUT.get_unchecked(entry.event_type as usize) };
+            func(self, emu, entry.cycle_count, entry.arg);
         }
         event_triggered
     }
 
     pub fn schedule(&mut self, in_cycles: u32, event_type: EventType) -> u64 {
+        self.schedule_with_arg(in_cycles, event_type, 0)
+    }
+
+    pub fn schedule_with_arg(&mut self, in_cycles: u32, event_type: EventType, arg: u8) -> u64 {
         debug_assert_ne!(in_cycles, 0);
         let event_cycle = self.cycle_count + in_cycles as u64;
 
@@ -121,12 +129,12 @@ impl CycleManager {
         while !current_node.is_null() {
             let entry = LinkedList::<_, CycleEventsListAllocator>::deref(current_node);
             if entry.value.cycle_count > event_cycle {
-                self.events.insert_entry_begin(current_node, CycleEventEntry::new(event_cycle, event_type));
+                self.events.insert_entry_begin(current_node, CycleEventEntry::new(event_cycle, event_type, arg));
                 return event_cycle;
             }
             current_node = entry.next;
         }
-        self.events.insert_end(CycleEventEntry::new(event_cycle, event_type));
+        self.events.insert_end(CycleEventEntry::new(event_cycle, event_type, arg));
         event_cycle
     }
 

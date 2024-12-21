@@ -177,12 +177,13 @@ impl Dma {
 
             get_mem_mut!(emu).breakout_imm = true;
 
-            get_cm_mut!(emu).schedule(
+            get_cm_mut!(emu).schedule_with_arg(
                 1,
                 match self.cpu_type {
-                    ARM9 => EventType::DmaArm9(CHANNEL_NUM as u8),
-                    ARM7 => EventType::DmaArm7(CHANNEL_NUM as u8),
+                    ARM9 => EventType::DmaArm9,
+                    ARM7 => EventType::DmaArm7,
                 },
+                CHANNEL_NUM as u8,
             );
         }
 
@@ -203,12 +204,13 @@ impl Dma {
 
                 get_mem_mut!(emu).breakout_imm = true;
 
-                get_cm_mut!(emu).schedule(
+                get_cm_mut!(emu).schedule_with_arg(
                     1,
                     match self.cpu_type {
-                        ARM9 => EventType::DmaArm9(CHANNEL_NUM as u8),
-                        ARM7 => EventType::DmaArm7(CHANNEL_NUM as u8),
+                        ARM9 => EventType::DmaArm9,
+                        ARM7 => EventType::DmaArm7,
                     },
+                    CHANNEL_NUM as u8,
                 );
             }
         }
@@ -234,12 +236,13 @@ impl Dma {
                     channel.current_src,
                     channel.current_count
                 );
-                cycle_manager.schedule(
+                cycle_manager.schedule_with_arg(
                     1,
                     match self.cpu_type {
-                        ARM9 => EventType::DmaArm9(index as u8),
-                        ARM7 => EventType::DmaArm7(index as u8),
+                        ARM9 => EventType::DmaArm9,
+                        ARM7 => EventType::DmaArm7,
                     },
+                    index as u8,
                 );
             }
         }
@@ -301,8 +304,7 @@ impl Dma {
         }
     }
 
-    #[inline(never)]
-    pub fn on_event<const CPU: CpuType>(channel_num: u8, emu: &mut Emu) {
+    pub fn on_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, _: u64, channel_num: u8) {
         let channel_num = channel_num as usize;
         unsafe { assert_unchecked(channel_num < CHANNEL_COUNT) };
         let (cnt, mode, mut dest, mut src, count) = {
@@ -331,12 +333,13 @@ impl Dma {
         if mode == DmaTransferMode::GeometryCmdFifo && count > 112 {
             io_dma_mut!(emu, CPU).channels[channel_num].current_count -= 112;
             if get_common!(emu).gpu.gpu_3d_regs.gx_stat.cmd_fifo_less_half_full() {
-                get_cm_mut!(emu).schedule(
+                get_cm_mut!(emu).schedule_with_arg(
                     1,
                     match CPU {
-                        ARM9 => EventType::DmaArm9(channel_num as u8),
-                        ARM7 => EventType::DmaArm7(channel_num as u8),
+                        ARM9 => EventType::DmaArm9,
+                        ARM7 => EventType::DmaArm7,
                     },
+                    channel_num as u8,
                 );
             }
             return;
@@ -350,12 +353,13 @@ impl Dma {
             }
 
             if mode == DmaTransferMode::GeometryCmdFifo && get_common!(emu).gpu.gpu_3d_regs.gx_stat.cmd_fifo_less_half_full() {
-                get_cm_mut!(emu).schedule(
+                get_cm_mut!(emu).schedule_with_arg(
                     1,
                     match CPU {
-                        ARM9 => EventType::DmaArm9(channel_num as u8),
-                        ARM7 => EventType::DmaArm7(channel_num as u8),
+                        ARM9 => EventType::DmaArm9,
+                        ARM7 => EventType::DmaArm7,
                     },
+                    channel_num as u8,
                 );
             }
         } else {

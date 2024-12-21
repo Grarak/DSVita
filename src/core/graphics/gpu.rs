@@ -139,8 +139,7 @@ impl Gpu {
         self.disp_cap_cnt = (self.disp_cap_cnt & !mask) | (value & mask);
     }
 
-    #[inline(never)]
-    pub fn on_scanline256_event(cm: &mut CycleManager, emu: &mut Emu) {
+    pub fn on_scanline256_event(cm: &mut CycleManager, emu: &mut Emu, _: u64, _: u8) {
         let gpu = &mut get_common_mut!(emu).gpu;
 
         if gpu.v_count < 192 {
@@ -164,8 +163,7 @@ impl Gpu {
         cm.schedule((355 - 256) * 6, EventType::GpuScanline355);
     }
 
-    #[inline(never)]
-    pub fn on_scanline355_event(cm: &mut CycleManager, emu: &mut Emu) {
+    pub fn on_scanline355_event(cm: &mut CycleManager, emu: &mut Emu, _: u64, _: u8) {
         let gpu = &mut get_common_mut!(emu).gpu;
 
         gpu.v_count += 1;

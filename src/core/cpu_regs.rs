@@ -175,7 +175,7 @@ impl CpuRegs {
         }
     }
 
-    pub fn on_interrupt_event<const CPU: CpuType>(emu: &mut Emu) {
+    pub fn on_interrupt_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, _: u64, _: u8) {
         let interrupted = {
             let cpu_regs = get_cpu_regs!(emu, CPU);
             let interrupt = cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && !Cpsr::from(get_regs!(emu, CPU).cpsr).irq_disable();

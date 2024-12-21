@@ -1,6 +1,6 @@
 use crate::cartridge_io::CartridgeIo;
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::cycle_manager::EventType;
+use crate::core::cycle_manager::{CycleManager, EventType};
 use crate::core::emu::{get_cm_mut, get_common_mut, get_cpu_regs_mut, io_dma, Emu};
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
@@ -368,7 +368,7 @@ impl Cartridge {
         }
     }
 
-    pub fn on_word_read_event<const CPU: CpuType>(emu: &mut Emu) {
+    pub fn on_word_read_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, _: u64, _: u8) {
         get_common_mut!(emu).cartridge.inner[CPU].rom_ctrl.set_data_word_status(u1::new(1));
         io_dma!(emu, CPU).trigger_all(DmaTransferMode::DsCartSlot, get_cm_mut!(emu));
     }

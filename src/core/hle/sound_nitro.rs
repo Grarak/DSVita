@@ -233,7 +233,7 @@ impl SoundNitro {
 
         let delay = alarm.repeat;
         if delay != 0 {
-            cm.schedule(delay * 64, EventType::SoundAlarmHle(alarm_id as u8));
+            cm.schedule_with_arg(delay * 64, EventType::SoundAlarmHle, alarm_id as u8);
         } else {
             alarm.active = false;
         }
@@ -834,7 +834,7 @@ impl SoundNitro {
                                 delay = alarm.delay;
                             }
 
-                            get_cm_mut!(emu).schedule(delay * 64, EventType::SoundAlarmHle(i as u8));
+                            get_cm_mut!(emu).schedule_with_arg(delay * 64, EventType::SoundAlarmHle, i as u8);
                         }
 
                         self.report_hardware_status(emu);
@@ -2185,13 +2185,11 @@ impl SoundNitro {
         }
     }
 
-    #[inline(never)]
-    pub fn on_cmd_event(cm: &mut CycleManager, emu: &mut Emu) {
+    pub fn on_cmd_event(cm: &mut CycleManager, emu: &mut Emu, _: u64, _: u8) {
         get_arm7_hle_mut!(emu).sound.nitro.process(cm, 1, emu);
     }
 
-    #[inline(never)]
-    pub fn on_alarm_event(id: u8, cm: &mut CycleManager, emu: &mut Emu) {
+    pub fn on_alarm_event(cm: &mut CycleManager, emu: &mut Emu, _: u64, id: u8) {
         get_arm7_hle_mut!(emu).sound.nitro.on_alarm(id as usize, cm, emu);
     }
 }

@@ -95,12 +95,13 @@ impl Timers {
 
         if update && bool::from(cnt.start()) && !cnt.is_count_up(CHANNEL_NUM) {
             let remaining_cycles = (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
-            channel.scheduled_cycle = get_cm_mut!(emu).schedule(
+            channel.scheduled_cycle = get_cm_mut!(emu).schedule_with_arg(
                 remaining_cycles,
                 match self.cpu_type {
-                    ARM9 => EventType::TimerArm9(CHANNEL_NUM as u8),
-                    ARM7 => EventType::TimerArm7(CHANNEL_NUM as u8),
+                    ARM9 => EventType::TimerArm9,
+                    ARM7 => EventType::TimerArm7,
                 },
+                CHANNEL_NUM as u8,
             );
         }
     }
@@ -115,12 +116,13 @@ impl Timers {
             channel.current_value = channel.cnt_l;
             if !cnt.is_count_up(channel_num) {
                 let remaining_cycles = (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
-                channel.scheduled_cycle = get_cm_mut!(emu).schedule(
+                channel.scheduled_cycle = get_cm_mut!(emu).schedule_with_arg(
                     remaining_cycles,
                     match CPU {
-                        ARM9 => EventType::TimerArm9(channel_num as u8),
-                        ARM7 => EventType::TimerArm7(channel_num as u8),
+                        ARM9 => EventType::TimerArm9,
+                        ARM7 => EventType::TimerArm7,
                     },
+                    channel_num as u8,
                 )
             }
 
@@ -144,7 +146,7 @@ impl Timers {
         }
     }
 
-    pub fn on_overflow_event<const CPU: CpuType>(cycles: u64, channel_num: u8, emu: &mut Emu) {
+    pub fn on_overflow_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, cycles: u64, channel_num: u8) {
         if cycles == io_timers!(emu, CPU).channels[channel_num as usize].scheduled_cycle {
             Self::overflow::<CPU>(channel_num as usize, emu);
         }

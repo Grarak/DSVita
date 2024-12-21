@@ -396,8 +396,7 @@ impl Spu {
         }
     }
 
-    #[inline(never)]
-    pub fn on_sample_event(emu: &mut Emu) {
+    pub fn on_sample_event(_: &mut CycleManager, emu: &mut Emu, _: u64, _: u8) {
         macro_rules! get_channel {
             ($emu:expr, $channel:expr) => {{
                 &get_spu!($emu).channels[$channel]
