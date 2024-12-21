@@ -1,6 +1,6 @@
 use crate::core::emu::{get_jit, get_regs_mut};
 use crate::core::CpuType;
-use crate::jit::jit_asm::{JitAsm, RETURN_STACK_SIZE};
+use crate::jit::jit_asm::{align_guest_pc, JitAsm, RETURN_STACK_SIZE};
 use crate::jit::jit_asm_common_funs::{exit_guest_context, get_max_loop_cycle_count, JitAsmCommonFuns};
 use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, DEBUG_LOG, IS_DEBUG};
@@ -23,15 +23,12 @@ unsafe extern "C" fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm<CPU>, tot
 }
 
 #[inline(always)]
-unsafe extern "C" fn call_jit_fun<const CPU: CpuType>(asm: &mut JitAsm<CPU>, target_pc: u32) {
-    let thumb = target_pc & 1 != 0;
-    get_regs_mut!(asm.emu, CPU).set_thumb(thumb);
-    let aligned_pc_mask = !(1 | ((!thumb as u32) << 1));
-    let aligned_pc = target_pc & aligned_pc_mask;
+pub unsafe extern "C" fn call_jit_fun<const CPU: CpuType>(asm: &mut JitAsm<CPU>, target_pc: u32, store_host_sp: bool) {
+    get_regs_mut!(asm.emu, CPU).set_thumb(target_pc & 1 == 1);
 
-    let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(aligned_pc);
+    let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(align_guest_pc(target_pc));
     let jit_entry: extern "C" fn(bool) = mem::transmute(jit_entry);
-    jit_entry(false);
+    jit_entry(store_host_sp);
 }
 
 pub unsafe extern "C" fn branch_reg_with_lr_return<const CPU: CpuType>(total_cycles: u16, lr: u32, target_pc: u32, current_pc: u32) {
@@ -49,7 +46,7 @@ pub unsafe extern "C" fn branch_reg_with_lr_return<const CPU: CpuType>(total_cyc
         JitAsmCommonFuns::<CPU>::debug_branch_reg(current_pc, target_pc);
     }
 
-    call_jit_fun(asm, target_pc);
+    call_jit_fun(asm, target_pc, false);
     asm.runtime_data.pre_cycle_count_sum = total_cycles;
 }
 
@@ -63,7 +60,7 @@ pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target
             JitAsmCommonFuns::<CPU>::debug_return_stack_empty(current_pc, target_pc);
         }
         asm.runtime_data.pre_cycle_count_sum = 0;
-        call_jit_fun(asm, target_pc);
+        call_jit_fun(asm, target_pc, false);
         unsafe { unreachable_unchecked() };
     } else {
         asm.runtime_data.return_stack_ptr -= 1;
@@ -79,7 +76,7 @@ pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target
             }
             asm.runtime_data.pre_cycle_count_sum = 0;
             asm.runtime_data.return_stack_ptr = 0;
-            call_jit_fun(asm, target_pc);
+            call_jit_fun(asm, target_pc, false);
             unsafe { unreachable_unchecked() };
         }
     }

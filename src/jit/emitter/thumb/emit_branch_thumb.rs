@@ -58,10 +58,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
 
         block_asm.mov(Reg::LR, (self.jit_buf.current_pc + 2) | 1);
-        let target_pc_reg = block_asm.new_reg();
-        block_asm.mov(target_pc_reg, target_pc);
-        self.emit_branch_reg_common(block_asm, target_pc_reg, true);
-        block_asm.free_reg(target_pc_reg);
+        self.emit_branch_external_label(block_asm, target_pc, true);
     }
 
     pub fn emit_bx_thumb(&mut self, block_asm: &mut BlockAsm) {

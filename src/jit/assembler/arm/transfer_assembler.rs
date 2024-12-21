@@ -468,3 +468,20 @@ impl Mrs {
         ))
     }
 }
+
+#[bitsize(32)]
+#[derive(FromBits)]
+pub struct Preload {
+    pub imm: u12,
+    pub id: u4,
+    pub rn: u4,
+    pub id1: u3,
+    pub add: bool,
+    pub id2: u8,
+}
+
+impl Preload {
+    pub fn pli(op0: Reg, imm: u16, add: bool) -> u32 {
+        u32::from(Preload::new(u12::new(imm), u4::new(0b1111), u4::new(op0 as u8), u3::new(0b101), add, 0b11110100))
+    }
+}

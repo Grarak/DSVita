@@ -635,6 +635,10 @@ impl<'a> BlockAsm<'a> {
         self.insert_inst(BlockInstKind::Bkpt(id));
     }
 
+    pub fn pli(&mut self, op0: impl Into<BlockReg>, offset: u16, add: bool) {
+        self.insert_inst(BlockInstKind::Preload { operand: op0.into(), offset, add })
+    }
+
     pub fn nop(&mut self) {
         self.insert_inst(BlockInstKind::Nop);
     }

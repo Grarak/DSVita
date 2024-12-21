@@ -1,10 +1,12 @@
+use crate::core::emu::get_jit;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::BlockReg;
 use crate::jit::inst_info::InstInfo;
-use crate::jit::jit_asm::JitAsm;
+use crate::jit::jit_asm::{align_guest_pc, JitAsm, JitRuntimeData};
 use crate::jit::jit_asm_common_funs::JitAsmCommonFuns;
+use crate::jit::jit_memory::{DEFAULT_JIT_ENTRY_ARM7, DEFAULT_JIT_ENTRY_ARM9};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
@@ -70,10 +72,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         if op == Op::Bl {
             block_asm.mov(Reg::LR, self.jit_buf.current_pc + 4);
-            let target_pc_reg = block_asm.new_reg();
-            block_asm.mov(target_pc_reg, target_pc);
-            self.emit_branch_reg_common(block_asm, target_pc_reg, true);
-            block_asm.free_reg(target_pc_reg);
+            self.emit_branch_external_label(block_asm, target_pc, true);
         } else {
             self.emit_branch_label_common::<false>(block_asm, target_pc, inst_info.cond);
         }
@@ -129,10 +128,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 block_asm.epilogue();
             }
             JitBranchInfo::None => {
-                let target_pc_reg = block_asm.new_reg();
-                block_asm.mov(target_pc_reg, target_pc);
-                self.emit_branch_reg_common(block_asm, target_pc_reg, false);
-                block_asm.free_reg(target_pc_reg);
+                self.emit_branch_external_label(block_asm, target_pc, false);
             }
         }
     }
@@ -167,6 +163,66 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         self.emit_branch_reg_common(block_asm, target_pc_reg, true);
 
         block_asm.free_reg(target_pc_reg);
+    }
+
+    pub fn emit_branch_external_label(&mut self, block_asm: &mut BlockAsm, target_pc: u32, has_lr_return: bool) {
+        let target_pc = align_guest_pc(target_pc) | (target_pc & 1);
+
+        let target_jit_addr = get_jit!(self.emu).get_jit_start_addr::<CPU>(target_pc);
+        if target_jit_addr != DEFAULT_JIT_ENTRY_ARM9.0 && target_jit_addr != DEFAULT_JIT_ENTRY_ARM7.0 {
+            let target_jit_addr_reg = block_asm.new_reg();
+            block_asm.mov(target_jit_addr_reg, target_jit_addr as u32);
+            block_asm.pli(target_jit_addr_reg, 0, true);
+            block_asm.free_reg(target_jit_addr_reg);
+        }
+
+        block_asm.mov(Reg::PC, target_pc);
+        block_asm.save_context();
+
+        let total_cycles_reg = block_asm.new_reg();
+        block_asm.mov(total_cycles_reg, self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32);
+        let target_pre_cycle_count_sum_reg = block_asm.new_reg();
+        block_asm.mov(target_pre_cycle_count_sum_reg, 0);
+        JitAsmCommonFuns::<CPU>::emit_flush_cycles(
+            self,
+            block_asm,
+            total_cycles_reg,
+            target_pre_cycle_count_sum_reg,
+            true,
+            |asm, block_asm, runtime_data_addr_reg, _| {
+                if has_lr_return {
+                    JitAsmCommonFuns::<CPU>::emit_return_stack_write_desired_lr(block_asm, runtime_data_addr_reg, Reg::LR.into(), asm.jit_buf.current_pc);
+                }
+
+                if DEBUG_LOG {
+                    block_asm.call2(JitAsmCommonFuns::<CPU>::debug_branch_reg as *const (), asm.jit_buf.current_pc, target_pc);
+                }
+
+                JitAsmCommonFuns::<CPU>::emit_call_jit_addr_imm(block_asm, asm, target_pc, true);
+
+                if has_lr_return {
+                    if asm.jit_buf.current_index == asm.jit_buf.insts.len() - 1 {
+                        asm.emit_branch_out_metadata_no_count_cycles(block_asm);
+                        block_asm.epilogue();
+                    } else {
+                        block_asm.store_u16(total_cycles_reg, runtime_data_addr_reg, JitRuntimeData::get_pre_cycle_count_sum_offset() as u32);
+                        for reg in Reg::R0 as u8..=Reg::LR as u8 {
+                            block_asm.restore_reg(Reg::from(reg));
+                        }
+                        block_asm.restore_reg(Reg::CPSR);
+                    }
+                } else {
+                    block_asm.epilogue_previous_block();
+                }
+            },
+            |asm, block_asm, _| {
+                asm.emit_branch_out_metadata_no_count_cycles(block_asm);
+                block_asm.epilogue();
+            },
+        );
+
+        block_asm.free_reg(target_pre_cycle_count_sum_reg);
+        block_asm.free_reg(total_cycles_reg);
     }
 
     pub fn emit_branch_reg_common(&mut self, block_asm: &mut BlockAsm, target_pc_reg: BlockReg, has_lr_return: bool) {
@@ -226,13 +282,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let relative_pc = *self.jit_buf.current_inst().operands()[0].as_imm().unwrap() as i32 + 8;
         let target_pc = (self.jit_buf.current_pc as i32 + relative_pc) as u32;
 
-        let target_pc_reg = block_asm.new_reg();
-        block_asm.mov(target_pc_reg, target_pc | 1);
-
         block_asm.mov(Reg::LR, self.jit_buf.current_pc + 4);
-        self.emit_branch_reg_common(block_asm, target_pc_reg, true);
-
-        block_asm.free_reg(target_pc_reg);
+        self.emit_branch_external_label(block_asm, target_pc | 1, true);
     }
 
     extern "C" fn debug_branch_label(current_pc: u32, target_pc: u32) {

@@ -1,6 +1,6 @@
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Bfc, Bfi, MulReg, Ubfx};
 use crate::jit::assembler::arm::branch_assembler::Bx;
-use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, LdrStrImmSBHD, LdrStrReg, LdrStrRegSBHD, Mrs, Msr};
+use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, LdrStrImmSBHD, LdrStrReg, LdrStrRegSBHD, Mrs, Msr, Preload};
 use crate::jit::assembler::arm::Bkpt;
 use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
 use crate::jit::assembler::block_reg_set::{block_reg_set, BlockRegSet};
@@ -252,6 +252,11 @@ pub enum BlockInstKind {
         has_return: bool,
     },
     Bkpt(u16),
+    Preload {
+        operand: BlockReg,
+        offset: u16,
+        add: bool,
+    },
     Nop,
 
     GuestPc(u32),
@@ -272,6 +277,10 @@ pub enum BlockInstKind {
 }
 
 impl BlockInstKind {
+    pub fn unconditional(&self) -> bool {
+        matches!(self, BlockInstKind::Bkpt(_) | BlockInstKind::Preload { .. })
+    }
+
     fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
         match self {
             BlockInstKind::Alu3 { operands, set_cond, .. } | BlockInstKind::Mul { operands, set_cond, .. } => {
@@ -431,6 +440,7 @@ impl BlockInstKind {
                     ),
                 )
             }
+            BlockInstKind::Preload { operand, .. } => (block_reg_set!(Some(*operand)), block_reg_set!()),
             BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
                 let mut inputs = BlockRegSet::new();
                 let mut outputs = BlockRegSet::new();
@@ -522,6 +532,7 @@ impl BlockInstKind {
             }
             BlockInstKind::RestoreReg { thread_regs_addr_reg, .. } => Self::replace_reg(thread_regs_addr_reg, old, new),
             BlockInstKind::Call { func_reg, .. } => Self::replace_reg(func_reg, old, new),
+            BlockInstKind::Preload { operand, .. } => Self::replace_reg(operand, old, new),
             BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
                 for reg in inst.src_regs {
                     Self::replace_reg(&mut regs_mapping[reg as usize], old, new);
@@ -596,6 +607,7 @@ impl BlockInstKind {
             | BlockInstKind::MarkRegDirty { .. }
             | BlockInstKind::GuestPc(_)
             | BlockInstKind::Bkpt(_)
+            | BlockInstKind::Preload { .. }
             | BlockInstKind::Nop
             | BlockInstKind::Prologue
             | BlockInstKind::Epilogue { .. }
@@ -822,6 +834,7 @@ impl BlockInstKind {
                 branch_placeholders.push(opcode_index);
             }
             BlockInstKind::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
+            BlockInstKind::Preload { operand, offset, add } => opcodes.push(Preload::pli(operand.as_fixed(), *offset, *add)),
             BlockInstKind::Nop => opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0)),
 
             BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
@@ -1002,6 +1015,7 @@ impl Debug for BlockInstKind {
                 }
             }
             BlockInstKind::Bkpt(id) => write!(f, "Bkpt {id}"),
+            BlockInstKind::Preload { operand, offset, add } => write!(f, "Pli [{operand:?}, #{}{offset}]", if *add { "+" } else { "-" }),
             BlockInstKind::Nop => write!(f, "Nop"),
             BlockInstKind::GuestPc(pc) => write!(f, "GuestPc {pc:x}"),
             BlockInstKind::GenericGuestInst { inst, .. } => write!(f, "{inst:?}"),

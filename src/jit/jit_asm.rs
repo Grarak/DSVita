@@ -6,6 +6,7 @@ use crate::jit::assembler::block_asm::{BlockAsm, BLOCK_LOG};
 use crate::jit::assembler::BlockAsmBuf;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
+use crate::jit::inst_branch_handler::call_jit_fun;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm_common_funs::{exit_guest_context, JitAsmCommonFuns};
 use crate::jit::op::Op;
@@ -48,7 +49,7 @@ impl JitBuf {
     }
 }
 
-pub const RETURN_STACK_SIZE: usize = 16;
+pub const RETURN_STACK_SIZE: usize = 8;
 
 #[repr(C, align(32))]
 pub struct JitRuntimeData {
@@ -105,6 +106,12 @@ impl JitRuntimeData {
     }
 }
 
+pub fn align_guest_pc(guest_pc: u32) -> u32 {
+    let thumb = guest_pc & 1 == 1;
+    let guest_pc_mask = !(1 | ((!thumb as u32) << 1));
+    guest_pc & guest_pc_mask
+}
+
 pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
     if IS_DEBUG {
@@ -118,14 +125,7 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) 
             unsafe { exit_guest_context!(asm) };
         }
     } else {
-        let regs = get_regs_mut!(asm.emu, CPU);
-        let thumb = regs.pc & 1 == 1;
-        get_regs_mut!(asm.emu, CPU).set_thumb(thumb);
-        let guest_pc_mask = !(1 | ((!thumb as u32) << 1));
-
-        let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(regs.pc & guest_pc_mask);
-        let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(jit_entry) };
-        jit_entry(store_host_sp);
+        unsafe { call_jit_fun(asm, get_regs_mut!(asm.emu, CPU).pc, store_host_sp) };
     }
 }
 
@@ -196,7 +196,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
             asm.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
             debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
-            // if asm.jit_buf.current_pc == 0x2000804 {
+            // if asm.jit_buf.current_pc == 0x20026f8 {
             //     block_asm.bkpt(1);
             // }
 
@@ -249,9 +249,7 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
     let jit_entry = {
         get_regs_mut!(asm.emu, CPU).set_thumb(thumb);
 
-        let guest_pc_mask = !(1 | ((!thumb as u32) << 1));
-        let guest_pc = guest_pc & guest_pc_mask;
-        let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(guest_pc);
+        let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(align_guest_pc(guest_pc));
         let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(jit_entry) };
 
         debug_println!("{CPU:?} Enter jit addr {:x}", jit_entry as usize);
