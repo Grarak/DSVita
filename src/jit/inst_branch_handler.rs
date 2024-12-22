@@ -2,6 +2,7 @@ use crate::core::emu::{get_jit, get_regs_mut};
 use crate::core::CpuType;
 use crate::jit::jit_asm::{JitAsm, RETURN_STACK_SIZE};
 use crate::jit::jit_asm_common_funs::{exit_guest_context, get_max_loop_cycle_count, JitAsmCommonFuns};
+use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, DEBUG_LOG, IS_DEBUG};
 use std::hint::unreachable_unchecked;
 use std::intrinsics::likely;
@@ -10,7 +11,10 @@ use std::mem;
 unsafe extern "C" fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm<CPU>, total_cycles: u16, current_pc: u32) {
     asm.runtime_data.accumulated_cycles += total_cycles + 2 - asm.runtime_data.pre_cycle_count_sum;
 
+    debug_println!("{CPU:?} flush cycles {} at {current_pc:x}", asm.runtime_data.accumulated_cycles);
+
     if asm.runtime_data.accumulated_cycles >= get_max_loop_cycle_count::<CPU>() as u16 {
+        debug_println!("{CPU:?} exit guest flush cycles");
         if IS_DEBUG {
             asm.runtime_data.branch_out_pc = current_pc;
         }
