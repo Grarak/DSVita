@@ -50,14 +50,14 @@ impl JitBuf {
 
 pub const RETURN_STACK_SIZE: usize = 16;
 
-#[repr(C, align(64))]
+#[repr(C, align(32))]
 pub struct JitRuntimeData {
-    pub idle_loop: bool,
-    pub return_stack_ptr: u8,
-    pub return_stack: [u32; RETURN_STACK_SIZE],
     pub pre_cycle_count_sum: u16,
     pub accumulated_cycles: u16,
     pub host_sp: usize,
+    pub idle_loop: bool,
+    pub return_stack_ptr: u8,
+    pub return_stack: [u32; RETURN_STACK_SIZE],
     pub branch_out_pc: u32,
 }
 

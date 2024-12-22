@@ -47,7 +47,7 @@ pub struct OtherModeRegs {
     pub spsr: u32,
 }
 
-#[repr(C, align(64))]
+#[repr(C, align(32))]
 pub struct ThreadRegs {
     pub gp_regs: [u32; 13],
     pub sp: u32,
