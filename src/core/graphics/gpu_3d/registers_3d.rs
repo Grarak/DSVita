@@ -523,7 +523,7 @@ impl Gpu3DRegisters {
 
         while !self.cmd_fifo.is_empty() && executed_cycles < cycle_diff && !self.flushed {
             let mut params: [u32; 32] = unsafe { MaybeUninit::uninit().assume_init() };
-            let entry = unsafe { *self.cmd_fifo.front_unchecked() };
+            let entry = *self.cmd_fifo.front();
             let param_count = entry.param_len;
 
             if unlikely(param_count as usize > self.cmd_fifo.len()) {
@@ -534,7 +534,7 @@ impl Gpu3DRegisters {
             self.cmd_fifo.pop_front();
 
             for i in 1..param_count {
-                unsafe { *params.get_unchecked_mut(i as usize) = self.cmd_fifo.front_unchecked().param };
+                unsafe { *params.get_unchecked_mut(i as usize) = self.cmd_fifo.front().param };
                 self.cmd_fifo.pop_front();
             }
 
@@ -1414,7 +1414,7 @@ impl Gpu3DRegisters {
     }
 
     fn queue_entry(&mut self, entry: Entry, emu: &mut Emu) {
-        unsafe { self.cmd_fifo.push_back_unchecked(entry) };
+        self.cmd_fifo.push_back(entry);
 
         self.gx_stat.set_geometry_busy(true);
 

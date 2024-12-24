@@ -1,4 +1,5 @@
 use crate::utils::HeapMem;
+use std::fmt::{Debug, Formatter};
 
 pub struct FixedFifo<T, const SIZE: usize> {
     fifo: HeapMem<T, SIZE>,
@@ -21,14 +22,20 @@ impl<T, const SIZE: usize> FixedFifo<T, SIZE> {
         self.len
     }
 
-    pub unsafe fn push_back_unchecked(&mut self, value: T) {
-        *self.fifo.get_unchecked_mut(self.end) = value;
+    pub fn push_front(&mut self, value: T) {
+        self.start = self.start.wrapping_sub(1) % SIZE;
+        unsafe { *self.fifo.get_unchecked_mut(self.start) = value };
+        self.len += 1;
+    }
+
+    pub fn push_back(&mut self, value: T) {
+        unsafe { *self.fifo.get_unchecked_mut(self.end) = value };
         self.end = (self.end + 1) % SIZE;
         self.len += 1;
     }
 
-    pub unsafe fn front_unchecked(&self) -> &T {
-        self.fifo.get_unchecked(self.start)
+    pub fn front(&self) -> &T {
+        unsafe { self.fifo.get_unchecked(self.start) }
     }
 
     pub fn pop_front(&mut self) {
@@ -59,5 +66,16 @@ impl<T: Default, const SIZE: usize> Default for FixedFifo<T, SIZE> {
             start: 0,
             end: 0,
         }
+    }
+}
+
+impl<T: Debug, const SIZE: usize> Debug for FixedFifo<T, SIZE> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut list = f.debug_list();
+        for i in 0..self.len() {
+            let start = (self.start.wrapping_add(i)) % SIZE;
+            list.entry(&self.fifo[start]);
+        }
+        list.finish()
     }
 }

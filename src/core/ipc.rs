@@ -93,7 +93,7 @@ impl IpcInner for IpcLle {
         if get_ipc!(emu).fifo[cpu].cnt.enable() {
             let fifo_len = get_ipc!(emu).fifo[cpu].queue.len();
             if fifo_len < 16 {
-                unsafe { get_ipc_mut!(emu).fifo[cpu].queue.push_back_unchecked(value & mask) };
+                get_ipc_mut!(emu).fifo[cpu].queue.push_back(value & mask);
 
                 if fifo_len == 0 {
                     get_ipc_mut!(emu).fifo[cpu].cnt.set_send_empty_status(false);
@@ -158,7 +158,7 @@ impl IpcInner for IpcHle {
         if get_ipc!(emu).fifo[ARM9].cnt.enable() {
             let fifo_len = get_ipc!(emu).fifo[ARM9].queue.len();
             if fifo_len < 16 {
-                unsafe { get_ipc_mut!(emu).fifo[ARM9].queue.push_back_unchecked(value & mask) };
+                get_ipc_mut!(emu).fifo[ARM9].queue.push_back(value & mask);
 
                 if fifo_len == 0 {
                     get_ipc_mut!(emu).fifo[ARM9].cnt.set_send_empty_status(false);
@@ -240,7 +240,7 @@ impl Ipc {
     pub fn fifo_recv<const CPU: CpuType>(&mut self, emu: &mut Emu) -> u32 {
         let other_fifo_len = self.fifo[!CPU].queue.len();
         if other_fifo_len > 0 {
-            self.fifo[CPU].last_received = unsafe { *self.fifo[!CPU].queue.front_unchecked() };
+            self.fifo[CPU].last_received = *self.fifo[!CPU].queue.front();
 
             if self.fifo[CPU].cnt.enable() {
                 self.fifo[!CPU].queue.pop_front();

@@ -182,7 +182,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
 
     let jit_entry = {
         // println!("{CPU:?} {THUMB} emit code block {guest_pc:x}");
-        // unsafe { BLOCK_LOG = true };
+        // unsafe { BLOCK_LOG = guest_pc == 0x2000800 };
 
         let mut block_asm = asm.new_block_asm(false);
 
