@@ -1,16 +1,7 @@
 use crate::cartridge_io::CartridgeIo;
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::input::Keycode;
-use crate::presenter::platform::imgui::{
-    ImFontAtlas_AddFontFromMemoryTTF, ImFontAtlas_GetGlyphRangesDefault, ImFontConfig, ImFontConfig_ImFontConfig, ImGuiCond__ImGuiSetCond_Always, ImGuiHoveredFlags__ImGuiHoveredFlags_Default,
-    ImGuiItemFlags__ImGuiItemFlags_Disabled, ImGuiNavInput__ImGuiNavInput_Cancel, ImGuiStyleVar__ImGuiStyleVar_Alpha, ImGuiStyleVar__ImGuiStyleVar_ItemSpacing,
-    ImGuiStyleVar__ImGuiStyleVar_WindowRounding, ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus, ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse,
-    ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags__ImGuiWindowFlags_NoMove, ImGuiWindowFlags__ImGuiWindowFlags_NoResize, ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar,
-    ImGui_Begin, ImGui_BeginMainMenuBar, ImGui_Button, ImGui_CreateContext, ImGui_DestroyContext, ImGui_Dummy, ImGui_End, ImGui_EndMainMenuBar, ImGui_GetContentRegionAvail, ImGui_GetCursorPosX,
-    ImGui_GetDrawData, ImGui_GetIO, ImGui_GetStyle, ImGui_Image, ImGui_ImplVitaGL_GamepadUsage, ImGui_ImplVitaGL_Init, ImGui_ImplVitaGL_MouseStickUsage, ImGui_ImplVitaGL_NewFrame,
-    ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImGui_IsItemHovered, ImGui_PopID, ImGui_PopItemFlag, ImGui_PopStyleVar, ImGui_PushID3, ImGui_PushItemFlag, ImGui_PushStyleVar,
-    ImGui_PushStyleVar1, ImGui_Render, ImGui_SameLine, ImGui_SetCursorPosX, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
-};
+use crate::presenter::platform::imgui::{vglGetProcAddress, ImFontAtlas_AddFontFromMemoryTTF, ImFontAtlas_GetGlyphRangesDefault, ImFontConfig, ImFontConfig_ImFontConfig, ImGuiCond__ImGuiSetCond_Always, ImGuiHoveredFlags__ImGuiHoveredFlags_Default, ImGuiItemFlags__ImGuiItemFlags_Disabled, ImGuiNavInput__ImGuiNavInput_Cancel, ImGuiStyleVar__ImGuiStyleVar_Alpha, ImGuiStyleVar__ImGuiStyleVar_ItemSpacing, ImGuiStyleVar__ImGuiStyleVar_WindowRounding, ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus, ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags__ImGuiWindowFlags_NoMove, ImGuiWindowFlags__ImGuiWindowFlags_NoResize, ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar, ImGui_Begin, ImGui_BeginMainMenuBar, ImGui_Button, ImGui_CreateContext, ImGui_DestroyContext, ImGui_Dummy, ImGui_End, ImGui_EndMainMenuBar, ImGui_GetContentRegionAvail, ImGui_GetCursorPosX, ImGui_GetDrawData, ImGui_GetIO, ImGui_GetStyle, ImGui_Image, ImGui_ImplVitaGL_GamepadUsage, ImGui_ImplVitaGL_Init, ImGui_ImplVitaGL_MouseStickUsage, ImGui_ImplVitaGL_NewFrame, ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImGui_IsItemHovered, ImGui_PopID, ImGui_PopItemFlag, ImGui_PopStyleVar, ImGui_PushID3, ImGui_PushItemFlag, ImGui_PushStyleVar, ImGui_PushStyleVar1, ImGui_Render, ImGui_SameLine, ImGui_SetCursorPosX, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4};
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
 use crate::settings::{Settings, SettingsConfig};
 use gl::types::{GLboolean, GLenum, GLuint};
@@ -43,7 +34,6 @@ pub enum SharkOpt {
 #[link(name = "mathneon", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "vitashark", kind = "static", modifiers = "+whole-archive")]
 extern "C" {
-    pub fn vglGetProcAddress(name: *const c_char) -> *mut c_void;
     pub fn vglSwapBuffers(has_commondialog: GLboolean);
     pub fn vglSetupRuntimeShaderCompiler(opt_level: c_uint, use_fastmath: c_int, use_fastprecision: c_int, use_fastint: c_int);
     pub fn vglInitExtended(legacy_pool_size: c_int, width: c_int, height: c_int, ram_threshold: c_int, msaa: SceGxmMultisampleMode) -> GLboolean;
