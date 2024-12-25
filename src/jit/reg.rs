@@ -141,6 +141,17 @@ impl RegReserve {
         None
     }
 
+    pub fn pop_rev(&mut self) -> Option<Reg> {
+        for i in (Reg::R0 as u8..Reg::SPSR as u8).rev() {
+            let reg = Reg::from(i);
+            if self.is_reserved(reg) {
+                self.0 &= !(1 << i);
+                return Some(reg);
+            }
+        }
+        None
+    }
+
     pub fn clear(&mut self) {
         self.0 = 0;
     }

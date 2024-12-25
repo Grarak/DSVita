@@ -335,8 +335,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let cpsr_backup_reg = block_asm.new_reg();
 
-        let use_fast_mem = is_valid && !inst_info.op.mem_transfer_user() && rlist.len() < (RegReserve::gp() + Reg::LR).len() - 2;
-        if use_fast_mem {
+        let assemble_rlist = |rlist: RegReserve| {
             let mut gp_regs = rlist.get_gp_regs();
             let mut free_gp_regs = if gp_regs.is_empty() {
                 RegReserve::gp()
@@ -367,6 +366,20 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             debug_assert!(non_gp_regs.is_empty());
 
+            (gp_regs, fixed_regs, non_gp_regs_mappings)
+        };
+
+        let needs_rlist_split = rlist.len() >= (RegReserve::gp() + Reg::LR).len() - 2;
+        let use_fast_mem = is_valid && !inst_info.op.mem_transfer_user();
+        if use_fast_mem {
+            let mut regs = rlist;
+            if needs_rlist_split {
+                for _ in 0..regs.len() / 2 {
+                    regs.pop_rev();
+                }
+            }
+            let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(regs);
+
             if inst_info.op.mem_is_write() {
                 block_asm.mrs_cpsr(cpsr_backup_reg);
 
@@ -386,24 +399,55 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 block_asm.cmp(mmu_offset_reg, 0);
                 block_asm.branch(slow_label, Cond::EQ);
 
+                block_asm.msr_cpsr(cpsr_backup_reg);
+
                 let shm_ptr = get_mem!(self.emu).shm.as_ptr();
 
                 block_asm.bfc(base_reg, mmu::MMU_PAGE_SHIFT as u8, 32 - mmu::MMU_PAGE_SHIFT as u8);
                 block_asm.add(base_reg, mmu_offset_reg, base_reg);
                 block_asm.add(base_reg, base_reg, shm_ptr as u32);
 
-                for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                    block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
-                }
+                if needs_rlist_split {
+                    if decrement {
+                        {
+                            let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
 
-                block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
+                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                                block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
+                            }
+                            block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, true, pre, false);
+                        }
+
+                        for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                            block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
+                        }
+                        block_asm.guest_transfer_write_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, false);
+                    } else {
+                        for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                            block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
+                        }
+                        block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, true, pre, true);
+
+                        {
+                            let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
+
+                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                                block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
+                            }
+                            block_asm.guest_transfer_write_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, true);
+                        }
+                    }
+                } else {
+                    for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                        block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
+                    }
+                    block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
+                }
 
                 if write_back {
                     block_asm.sub(base_reg, base_reg_out, base_reg);
                     block_asm.add(op0, op0, base_reg);
                 }
-
-                block_asm.msr_cpsr(cpsr_backup_reg);
 
                 block_asm.branch(continue_label, Cond::AL);
 
@@ -423,10 +467,42 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 block_asm.bic(base_reg, op0, 0xF0000003);
                 block_asm.add(base_reg, base_reg, base_ptr as u32);
 
-                block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
+                if needs_rlist_split {
+                    if decrement {
+                        {
+                            let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
 
-                for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                    block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
+                            block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, true, pre, false);
+                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                                block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
+                            }
+                        }
+
+                        block_asm.guest_transfer_read_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, false);
+                        for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                            block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
+                        }
+                    } else {
+                        block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, true, pre, true);
+                        for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                            block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
+                        }
+
+                        {
+                            let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
+
+                            block_asm.guest_transfer_read_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, true);
+                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                                block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
+                            }
+                        }
+                    }
+                } else {
+                    block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
+
+                    for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                        block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
+                    }
                 }
 
                 if write_back {
