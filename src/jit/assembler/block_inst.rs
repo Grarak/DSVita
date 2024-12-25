@@ -113,11 +113,13 @@ impl BlockInst {
         }
     }
 
+    #[inline(never)]
     pub fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
         *self.io_cache.borrow_mut() = None;
         self.kind.replace_input_regs(old, new);
     }
 
+    #[inline(never)]
     pub fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
         *self.io_cache.borrow_mut() = None;
         self.kind.replace_output_regs(old, new);

@@ -188,6 +188,7 @@ impl BlockRegAllocator {
         }
     }
 
+    #[inline(never)]
     fn relocate_guest_regs(&mut self, guest_regs: RegReserve, live_ranges: &[BlockRegSet], inputs: &BlockRegSet, is_input: bool) {
         let mut relocatable_regs = RegReserve::new();
         for guest_reg in guest_regs {
@@ -251,6 +252,7 @@ impl BlockRegAllocator {
         }
     }
 
+    #[inline(never)]
     pub fn inst_allocate(&mut self, inst: &mut BlockInst, live_ranges: &[BlockRegSet]) {
         self.pre_allocate_insts.clear();
 

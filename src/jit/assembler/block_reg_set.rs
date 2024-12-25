@@ -2,6 +2,7 @@ use crate::bitset::Bitset;
 use crate::jit::assembler::{BlockReg, ANY_REG_LIMIT};
 use crate::jit::reg::{Reg, RegReserve};
 use std::fmt::{Debug, Formatter};
+use std::intrinsics::unlikely;
 use std::ops::{Add, AddAssign, BitAnd, BitXor, BitXorAssign, Not, Sub, SubAssign};
 
 pub const BLOCK_REG_SET_ARRAY_SIZE: usize = 2;
@@ -92,6 +93,7 @@ impl BlockRegSet {
         BlockRegAnySetIter {
             block_reg_set: self,
             current: 0,
+            found: 0,
             len: self.len_any(),
         }
     }
@@ -252,6 +254,7 @@ impl<'a> Iterator for BlockRegFixedSetIter<'a> {
 pub struct BlockRegAnySetIter<'a> {
     block_reg_set: &'a BlockRegSet,
     current: u16,
+    found: usize,
     len: usize,
 }
 
@@ -259,9 +262,14 @@ impl Iterator for BlockRegAnySetIter<'_> {
     type Item = u16;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if unlikely(self.found == self.len) {
+            return None;
+        }
+
         for i in self.current..ANY_REG_LIMIT {
             if self.block_reg_set.contains(BlockReg::Any(i)) {
                 self.current = i + 1;
+                self.found += 1;
                 return Some(i);
             }
         }
