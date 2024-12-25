@@ -169,12 +169,15 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
     pub fn emit_branch_external_label(&mut self, block_asm: &mut BlockAsm, target_pc: u32, has_lr_return: bool, thumb: bool) {
         let target_pc = align_guest_pc(target_pc) | (target_pc & 1);
 
-        let target_jit_addr = get_jit!(self.emu).get_jit_start_addr::<CPU>(target_pc);
-        if target_jit_addr != DEFAULT_JIT_ENTRY_ARM9.0 && target_jit_addr != DEFAULT_JIT_ENTRY_ARM7.0 {
-            let target_jit_addr_reg = block_asm.new_reg();
-            block_asm.mov(target_jit_addr_reg, target_jit_addr as u32);
-            block_asm.pli(target_jit_addr_reg, 0, true);
-            block_asm.free_reg(target_jit_addr_reg);
+        let target_jit_addr_entry = get_jit!(self.emu).jit_memory_map.get_jit_entry::<CPU>(target_pc);
+        if !target_jit_addr_entry.is_null() {
+            let target_jit_addr = unsafe { (*target_jit_addr_entry).0 };
+            if target_jit_addr != DEFAULT_JIT_ENTRY_ARM9.0 && target_jit_addr != DEFAULT_JIT_ENTRY_ARM7.0 {
+                let target_jit_addr_reg = block_asm.new_reg();
+                block_asm.mov(target_jit_addr_reg, target_jit_addr as u32);
+                block_asm.pli(target_jit_addr_reg, 0, true);
+                block_asm.free_reg(target_jit_addr_reg);
+            }
         }
 
         block_asm.mov(Reg::PC, target_pc);
