@@ -269,10 +269,13 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
 
     if DEBUG_LOG {
         println!(
-            "{:?} reading opcode of breakout at {:x} executed cycles {}",
-            CPU, asm.runtime_data.branch_out_pc, asm.runtime_data.accumulated_cycles
+            "{CPU:?} reading opcode of breakout at {:x} executed cycles {}",
+            asm.runtime_data.branch_out_pc, asm.runtime_data.accumulated_cycles,
         );
-        let inst_info = if thumb {
+        if asm.runtime_data.idle_loop {
+            println!("{CPU:?} idle loop");
+        }
+        let inst_info = if get_regs!(asm.emu, CPU).is_thumb() {
             let opcode = asm.emu.mem_read::<CPU, _>(asm.runtime_data.branch_out_pc);
             let (op, func) = lookup_thumb_opcode(opcode);
             InstInfo::from(func(opcode, *op))

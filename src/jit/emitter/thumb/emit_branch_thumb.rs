@@ -58,7 +58,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         }
 
         block_asm.mov(Reg::LR, (self.jit_buf.current_pc + 2) | 1);
-        self.emit_branch_external_label(block_asm, target_pc, true);
+        self.emit_branch_external_label(block_asm, target_pc, true, true);
     }
 
     pub fn emit_bx_thumb(&mut self, block_asm: &mut BlockAsm) {
@@ -70,7 +70,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             block_asm.save_context();
             self.emit_branch_return_stack_common(block_asm, target_pc_reg.into());
         } else {
-            self.emit_branch_reg_common(block_asm, target_pc_reg.into(), false);
+            self.emit_branch_reg_common(block_asm, target_pc_reg.into(), false, true);
         }
     }
 
@@ -82,7 +82,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
         block_asm.mov(target_pc_reg, op0);
 
         block_asm.mov(Reg::LR, self.jit_buf.current_pc + 3);
-        self.emit_branch_reg_common(block_asm, target_pc_reg, true);
+        self.emit_branch_reg_common(block_asm, target_pc_reg, true, true);
 
         block_asm.free_reg(target_pc_reg);
     }
