@@ -117,6 +117,39 @@ impl BlockRegAllocator {
     }
 
     fn allocate_reg(&mut self, any_reg: u16, live_ranges: &[BlockRegSet], used_regs: &BlockRegSet) -> Reg {
+        let global_mapping = self.global_mapping[any_reg as usize];
+        if global_mapping != Reg::None && !used_regs.contains(BlockReg::Fixed(global_mapping)) && !live_ranges[1].contains(BlockReg::Fixed(global_mapping)) {
+            let mut use_global_mapping = true;
+
+            if let Some(mapped_reg) = self.stored_mapping_reverse[global_mapping as usize] {
+                use_global_mapping = !used_regs.contains(BlockReg::Any(mapped_reg));
+                if use_global_mapping {
+                    if live_ranges[1].contains(BlockReg::Any(mapped_reg)) {
+                        self.spilled += BlockReg::Any(mapped_reg);
+                        self.gen_pre_handle_spilled_inst(mapped_reg, global_mapping, BlockTransferOp::Write);
+                    }
+                    self.remove_stored_mapping(mapped_reg);
+                }
+            }
+
+            if use_global_mapping {
+                self.set_stored_mapping(any_reg, global_mapping);
+
+                let mut new_lru = FixedFifo::new();
+                while !self.lru_reg.is_empty() {
+                    let reg = *self.lru_reg.front();
+                    self.lru_reg.pop_front();
+                    if reg != global_mapping {
+                        new_lru.push_back(reg);
+                    }
+                }
+                new_lru.push_back(global_mapping);
+                self.lru_reg = new_lru;
+
+                return global_mapping;
+            }
+        }
+
         loop {
             let reg = self.pop_lru_reg();
             if used_regs.contains(BlockReg::Fixed(reg)) || live_ranges[1].contains(BlockReg::Fixed(reg)) {
