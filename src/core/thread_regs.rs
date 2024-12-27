@@ -5,7 +5,7 @@ use crate::jit::reg::Reg;
 use crate::logging::debug_println;
 use crate::DEBUG_LOG;
 use bilge::prelude::*;
-use std::ptr;
+use std::{mem, ptr};
 
 #[bitsize(32)]
 #[derive(FromBits)]
@@ -127,6 +127,10 @@ impl ThreadRegs {
             Reg::LR => &mut self.user.lr,
             _ => self.get_reg_mut(reg),
         }
+    }
+
+    pub const fn get_user_regs_offset() -> u8 {
+        mem::offset_of!(ThreadRegs, user) as u8
     }
 
     #[inline]
