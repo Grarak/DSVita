@@ -43,10 +43,10 @@ pub unsafe fn vmulq_s64(ab: int64x2_t, cd: int64x2_t) -> int64x2_t {
 #[derive(Copy, Clone)]
 pub struct Matrix([i32; 16]);
 
-impl ops::Mul for Matrix {
+impl ops::Mul<&Matrix> for Matrix {
     type Output = Matrix;
 
-    fn mul(self, rhs: Self) -> Self::Output {
+    fn mul(self, rhs: &Matrix) -> Self::Output {
         let mut ret = Matrix::default();
         for y in 0..4 {
             for x in 0..4 {
@@ -155,26 +155,26 @@ define_vector!(i16);
 define_vector!(i32);
 define_vector!(f32);
 
-impl ops::Mul<Matrix> for Vectori32<3> {
+impl ops::Mul<&Matrix> for Vectori32<3> {
     type Output = Self;
 
-    fn mul(mut self, rhs: Matrix) -> Self::Output {
+    fn mul(mut self, rhs: &Matrix) -> Self::Output {
         self *= rhs;
         self
     }
 }
 
-impl ops::Mul<Matrix> for Vectori32<4> {
+impl ops::Mul<&Matrix> for Vectori32<4> {
     type Output = Self;
 
-    fn mul(mut self, rhs: Matrix) -> Self::Output {
+    fn mul(mut self, rhs: &Matrix) -> Self::Output {
         self *= rhs;
         self
     }
 }
 
-impl ops::MulAssign<Matrix> for Vectori32<3> {
-    fn mul_assign(&mut self, rhs: Matrix) {
+impl ops::MulAssign<&Matrix> for Vectori32<3> {
+    fn mul_assign(&mut self, rhs: &Matrix) {
         let mut v0: i32;
         let mut v1: i32;
         let mut v2: i32;
@@ -214,8 +214,8 @@ impl ops::MulAssign<Matrix> for Vectori32<3> {
     }
 }
 
-impl ops::MulAssign<Matrix> for Vectori32<4> {
-    fn mul_assign(&mut self, rhs: Matrix) {
+impl ops::MulAssign<&Matrix> for Vectori32<4> {
+    fn mul_assign(&mut self, rhs: &Matrix) {
         let mut v0: i32;
         let mut v1: i32;
         let mut v2: i32;
@@ -257,10 +257,10 @@ impl ops::MulAssign<Matrix> for Vectori32<4> {
     }
 }
 
-impl ops::Mul for Vectori32<3> {
+impl ops::Mul<&Vectori32<3>> for Vectori32<3> {
     type Output = i32;
 
-    fn mul(self, rhs: Self) -> Self::Output {
+    fn mul(self, rhs: &Vectori32<3>) -> Self::Output {
         /* Vectorization of
         let mut dot = 0;
         dot += self[0] as i64 * rhs[0] as i64;

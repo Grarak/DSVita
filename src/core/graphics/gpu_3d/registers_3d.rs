@@ -809,20 +809,20 @@ impl Gpu3DRegisters {
     fn mtx_mult(&mut self, mtx: Matrix) {
         match self.mtx_mode {
             MtxMode::Projection => {
-                self.matrices.proj = mtx * self.matrices.proj;
+                self.matrices.proj = mtx * &self.matrices.proj;
                 self.clip_dirty = true;
             }
             MtxMode::ModelView => {
-                self.matrices.model = mtx * self.matrices.model;
+                self.matrices.model = mtx * &self.matrices.model;
                 self.clip_dirty = true;
             }
             MtxMode::ModelViewVec => {
-                self.matrices.model = mtx * self.matrices.model;
-                self.matrices.vec = mtx * self.matrices.vec;
+                self.matrices.model = mtx * &self.matrices.model;
+                self.matrices.vec = mtx * &self.matrices.vec;
                 self.clip_dirty = true;
             }
             MtxMode::Texture => {
-                self.matrices.tex = mtx * self.matrices.tex;
+                self.matrices.tex = mtx * &self.matrices.tex;
             }
         }
     }
@@ -882,13 +882,13 @@ impl Gpu3DRegisters {
             matrix[12] = (self.s as i32) << 12;
             matrix[13] = (self.t as i32) << 12;
 
-            vector *= matrix;
+            vector *= &matrix;
 
             self.saved_vertex.tex_coords[0] = (vector[0] >> 12) as i16;
             self.saved_vertex.tex_coords[1] = (vector[1] >> 12) as i16;
         }
 
-        normal_vector *= self.matrices.vec;
+        normal_vector *= &self.matrices.vec;
 
         self.saved_vertex.color = self.emission_color;
 
@@ -897,10 +897,10 @@ impl Gpu3DRegisters {
                 continue;
             }
 
-            let diffuse_level = -(self.light_vectors[i] * normal_vector);
+            let diffuse_level = -(self.light_vectors[i] * &normal_vector);
             let diffuse_level = diffuse_level.clamp(0, 1 << 12) as u32;
 
-            let shininess_level = -(self.half_vectors[i] * normal_vector);
+            let shininess_level = -(self.half_vectors[i] * &normal_vector);
             let shininess_level = shininess_level.clamp(0, 1 << 12) as u32;
             let mut shininess_level = (shininess_level * shininess_level) >> 12;
 
@@ -941,7 +941,7 @@ impl Gpu3DRegisters {
             vector[2] = 1 << 8;
             vector[3] = 1 << 8;
 
-            vector *= self.matrices.tex;
+            vector *= &self.matrices.tex;
 
             self.saved_vertex.tex_coords[0] = (vector[0] >> 8) as i16;
             self.saved_vertex.tex_coords[1] = (vector[1] >> 8) as i16;
@@ -1038,7 +1038,7 @@ impl Gpu3DRegisters {
         self.light_vectors[num][1] = (((u16::from(light_vector.y()) << 6) as i16) >> 3) as i32;
         self.light_vectors[num][2] = (((u16::from(light_vector.z()) << 6) as i16) >> 3) as i32;
 
-        self.light_vectors[num] *= self.matrices.vec;
+        self.light_vectors[num] *= &self.matrices.vec;
 
         self.half_vectors[num][0] = self.light_vectors[num][0] >> 1;
         self.half_vectors[num][1] = self.light_vectors[num][1] >> 1;
@@ -1112,7 +1112,7 @@ impl Gpu3DRegisters {
         const INDICES: [u8; 8 * 3] = [0, 1, 2, 3, 1, 2, 0, 4, 2, 0, 1, 5, 3, 4, 2, 3, 1, 5, 0, 4, 5, 3, 4, 5];
 
         if self.clip_dirty {
-            self.matrices.clip = self.matrices.model * self.matrices.proj;
+            self.matrices.clip = self.matrices.model * &self.matrices.proj;
             self.clip_dirty = false;
         }
 
@@ -1122,7 +1122,7 @@ impl Gpu3DRegisters {
             vertices[i][1] = box_test_coords[INDICES[i * 3 + 1] as usize] as i32;
             vertices[i][2] = box_test_coords[INDICES[i * 3 + 2] as usize] as i32;
             vertices[i][3] = 1 << 12;
-            vertices[i] *= self.matrices.clip;
+            vertices[i] *= &self.matrices.clip;
         }
 
         let faces = [
@@ -1161,11 +1161,11 @@ impl Gpu3DRegisters {
         self.saved_vertex.coords[3] = 1 << 12;
 
         if self.clip_dirty {
-            self.matrices.clip = self.matrices.model * self.matrices.proj;
+            self.matrices.clip = self.matrices.model * &self.matrices.proj;
             self.clip_dirty = false;
         }
 
-        self.pos_result = self.saved_vertex.coords * self.matrices.clip;
+        self.pos_result = self.saved_vertex.coords * &self.matrices.clip;
 
         self.test_queue -= 2;
         if self.test_queue == 0 {
@@ -1179,7 +1179,7 @@ impl Gpu3DRegisters {
         vector[1] = (((params[0] & 0x000FFC00) >> 4) as i16 as i32) >> 3;
         vector[2] = (((params[0] & 0x3FF00000) >> 14) as i16 as i32) >> 3;
 
-        vector *= self.matrices.vec;
+        vector *= &self.matrices.vec;
         self.vec_result[0] = ((vector[0] << 3) as i16) >> 3;
         self.vec_result[1] = ((vector[1] << 3) as i16) >> 3;
         self.vec_result[2] = ((vector[2] << 3) as i16) >> 3;
@@ -1229,18 +1229,18 @@ impl Gpu3DRegisters {
             matrix[12] = (self.s as i32) << 12;
             matrix[13] = (self.t as i32) << 12;
 
-            let vector = vertices.ins[vertices.count_in].coords * matrix;
+            let vector = vertices.ins[vertices.count_in].coords * &matrix;
 
             vertices.ins[vertices.count_in].tex_coords[0] = (vector[0] >> 12) as i16;
             vertices.ins[vertices.count_in].tex_coords[1] = (vector[1] >> 12) as i16;
         }
 
         if self.clip_dirty {
-            matrices.clip = matrices.model * matrices.proj;
+            matrices.clip = matrices.model * &matrices.proj;
             self.clip_dirty = false;
         }
 
-        vertices.ins[vertices.count_in].coords *= matrices.clip;
+        vertices.ins[vertices.count_in].coords *= &matrices.clip;
 
         vertices.count_in += 1;
         self.vertex_count += 1;
@@ -1255,6 +1255,7 @@ impl Gpu3DRegisters {
         }
     }
 
+    #[inline(never)]
     fn add_polygon(&mut self) {
         if self.polygons.count_in >= 2048 {
             return;
@@ -1443,7 +1444,7 @@ impl Gpu3DRegisters {
 
     pub fn get_clip_mtx_result(&mut self, index: usize) -> u32 {
         if self.clip_dirty {
-            self.matrices.clip = self.matrices.model * self.matrices.proj;
+            self.matrices.clip = self.matrices.model * &self.matrices.proj;
             self.clip_dirty = false;
         }
         self.matrices.clip[index] as u32
