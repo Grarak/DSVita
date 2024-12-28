@@ -934,20 +934,19 @@ impl Gpu3DRegisters {
 
     fn exe_tex_coord(&mut self, params: &[u32; 32]) {
         let tex_coord = TexCoord::from(params[0]);
+        self.s = tex_coord.s() as i16;
+        self.t = tex_coord.t() as i16;
+
         if self.texture_coord_mode == TextureCoordTransMode::TexCoord {
-            let mut vector = Vectori32::<4>::default();
-            vector[0] = (tex_coord.s() as i16 as i32) << 8;
-            vector[1] = (tex_coord.t() as i16 as i32) << 8;
-            vector[2] = 1 << 8;
-            vector[3] = 1 << 8;
+            let mut vector = Vectori32::<4>([(self.s as i32) << 8, (self.t as i32) << 8, 1 << 8, 1 << 8]);
 
             vector *= &self.matrices.tex;
 
             self.saved_vertex.tex_coords[0] = (vector[0] >> 8) as i16;
             self.saved_vertex.tex_coords[1] = (vector[1] >> 8) as i16;
         } else {
-            self.saved_vertex.tex_coords[0] = tex_coord.s() as i16;
-            self.saved_vertex.tex_coords[1] = tex_coord.t() as i16;
+            self.saved_vertex.tex_coords[0] = self.s;
+            self.saved_vertex.tex_coords[1] = self.t;
         }
     }
 

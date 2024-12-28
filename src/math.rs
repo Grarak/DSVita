@@ -103,7 +103,7 @@ macro_rules! define_vector {
     ($t:ident) => {
         paste! {
             #[derive(Copy, Clone)]
-            pub struct [<Vector $t>]<const SIZE: usize>([$t; SIZE]);
+            pub struct [<Vector $t>]<const SIZE: usize>(pub [$t; SIZE]);
 
             impl<const SIZE: usize> Default for [<Vector $t>]<SIZE> {
                 fn default() -> Self {
