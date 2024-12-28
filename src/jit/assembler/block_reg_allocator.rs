@@ -1,10 +1,12 @@
 use crate::fixed_fifo::FixedFifo;
+use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
+use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::assembler::block_asm::BLOCK_LOG;
-use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockInst, BlockInstKind, BlockTransferOp};
+use crate::jit::assembler::block_inst::{BlockInst, BlockTransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockReg, ANY_REG_LIMIT};
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
-use crate::jit::MemoryAmount;
+use crate::jit::Cond;
 use crate::utils::HeapMem;
 use crate::IS_DEBUG;
 
@@ -19,7 +21,7 @@ pub struct BlockRegAllocator {
     stored_mapping_reverse: [Option<u16>; Reg::PC as usize],
     spilled: BlockRegSet,
     pub dirty_regs: RegReserve,
-    pub pre_allocate_insts: Vec<BlockInst>,
+    pub pre_allocate_insts: Vec<u32>,
     lru_reg: FixedFifo<Reg, 16>,
 }
 
@@ -61,29 +63,13 @@ impl BlockRegAllocator {
 
     fn gen_pre_handle_spilled_inst(&mut self, any_reg: u16, mapping: Reg, op: BlockTransferOp) {
         self.dirty_regs += mapping;
-        self.pre_allocate_insts.push(
-            BlockInstKind::Transfer {
-                op,
-                operands: [BlockReg::Fixed(mapping).into(), BlockReg::Fixed(Reg::SP).into(), (any_reg as u32 * 4).into()],
-                signed: false,
-                amount: MemoryAmount::Word,
-                add_to_base: true,
-            }
-            .into(),
-        );
+        self.pre_allocate_insts
+            .push(LdrStrImm::generic(mapping, Reg::SP, any_reg * 4, op == BlockTransferOp::Read, false, false, true, true, Cond::AL));
     }
 
     fn gen_pre_move_reg(&mut self, dst: Reg, src: Reg) {
         self.dirty_regs += dst;
-        self.pre_allocate_insts.push(
-            BlockInstKind::Alu2Op0 {
-                op: BlockAluOp::Mov,
-                operands: [BlockReg::Fixed(dst).into(), BlockReg::Fixed(src).into()],
-                set_cond: BlockAluSetCond::None,
-                thumb_pc_aligned: false,
-            }
-            .into(),
-        );
+        self.pre_allocate_insts.push(AluShiftImm::mov_al(dst, src));
     }
 
     fn set_stored_mapping(&mut self, any_reg: u16, reg: Reg) {
@@ -287,8 +273,6 @@ impl BlockRegAllocator {
 
     #[inline(never)]
     pub fn inst_allocate(&mut self, inst: &mut BlockInst, live_ranges: &[BlockRegSet]) {
-        self.pre_allocate_insts.clear();
-
         if DEBUG && unsafe { BLOCK_LOG } {
             println!("allocate reg for {inst:?}");
         }
@@ -349,8 +333,6 @@ impl BlockRegAllocator {
     }
 
     pub fn ensure_global_mappings(&mut self, output_regs: BlockRegSet) {
-        self.pre_allocate_insts.clear();
-
         for output_reg in output_regs.iter_any() {
             match self.global_mapping[output_reg as usize] {
                 Reg::None => {

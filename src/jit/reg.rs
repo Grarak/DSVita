@@ -295,6 +295,7 @@ impl Debug for RegReserve {
 pub struct RegReserveIter {
     reserve: RegReserve,
     current: usize,
+    found: usize,
     len: usize,
 }
 
@@ -306,6 +307,7 @@ impl IntoIterator for RegReserve {
         RegReserveIter {
             reserve: self,
             current: 0,
+            found: 0,
             len: self.len(),
         }
     }
@@ -315,10 +317,15 @@ impl Iterator for RegReserveIter {
     type Item = <RegReserve as IntoIterator>::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.found == self.len {
+            return None;
+        }
+
         for i in self.current..Reg::None as usize {
             let reg = Reg::from(i as u8);
             if self.reserve.is_reserved(reg) {
                 self.current = i + 1;
+                self.found += 1;
                 return Some(reg);
             }
         }

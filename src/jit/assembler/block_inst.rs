@@ -9,7 +9,7 @@ use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
 use bilge::prelude::*;
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::fmt::{Debug, Formatter};
 use std::hint::unreachable_unchecked;
 use std::ops::{Deref, DerefMut};
@@ -78,7 +78,7 @@ pub struct BranchEncoding {
 pub struct BlockInst {
     pub cond: Cond,
     pub kind: BlockInstKind,
-    io_cache: RefCell<Option<(BlockRegSet, BlockRegSet)>>,
+    io_cache: Cell<Option<(BlockRegSet, BlockRegSet)>>,
     pub skip: bool,
 }
 
@@ -87,18 +87,18 @@ impl BlockInst {
         BlockInst {
             cond,
             kind,
-            io_cache: RefCell::new(None),
+            io_cache: Cell::new(None),
             skip: false,
         }
     }
 
     pub fn invalidate_io_cache(&self) {
-        *self.io_cache.borrow_mut() = None;
+        self.io_cache.set(None);
     }
 
     pub fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
-        let mut cached_io = self.io_cache.borrow_mut();
-        match *cached_io {
+        let cached_io = self.io_cache.get();
+        match cached_io {
             None => {
                 let (mut inputs, outputs) = self.kind.get_io();
                 if self.cond != Cond::AL {
@@ -106,7 +106,7 @@ impl BlockInst {
                     // Otherwise arbitrary values for regs will be saved
                     inputs.add_guests(outputs.get_guests());
                 }
-                *cached_io = Some((inputs, outputs));
+                self.io_cache.set(Some((inputs, outputs)));
                 (inputs, outputs)
             }
             Some(cache) => cache,
@@ -115,13 +115,13 @@ impl BlockInst {
 
     #[inline(never)]
     pub fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
-        *self.io_cache.borrow_mut() = None;
+        self.io_cache.set(None);
         self.kind.replace_input_regs(old, new);
     }
 
     #[inline(never)]
     pub fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
-        *self.io_cache.borrow_mut() = None;
+        self.io_cache.set(None);
         self.kind.replace_output_regs(old, new);
     }
 }

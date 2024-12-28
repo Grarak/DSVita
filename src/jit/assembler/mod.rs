@@ -13,7 +13,6 @@ pub mod arm;
 mod basic_block;
 pub mod block_asm;
 mod block_inst;
-mod block_inst_list;
 mod block_reg_allocator;
 mod block_reg_set;
 

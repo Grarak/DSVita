@@ -146,6 +146,15 @@ impl Add<BlockRegSet> for BlockRegSet {
     }
 }
 
+impl Add<&BlockRegSet> for BlockRegSet {
+    type Output = BlockRegSet;
+
+    fn add(mut self, rhs: &BlockRegSet) -> Self::Output {
+        self.0 += rhs.0;
+        self
+    }
+}
+
 impl AddAssign<BlockRegSet> for BlockRegSet {
     fn add_assign(&mut self, rhs: BlockRegSet) {
         self.0 += rhs.0;
@@ -212,6 +221,17 @@ impl Not for BlockRegSet {
     }
 }
 
+impl PartialEq<&BlockRegSet> for BlockRegSet {
+    fn eq(&self, other: &&BlockRegSet) -> bool {
+        for i in 0..self.0 .0.len() {
+            if self.0 .0[i] != other.0 .0[i] {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 impl Debug for BlockRegSet {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut debug_set = f.debug_set();
@@ -236,7 +256,7 @@ pub struct BlockRegFixedSetIter<'a> {
     current: u8,
 }
 
-impl<'a> Iterator for BlockRegFixedSetIter<'a> {
+impl Iterator for BlockRegFixedSetIter<'_> {
     type Item = Reg;
 
     fn next(&mut self) -> Option<Self::Item> {

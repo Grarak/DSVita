@@ -396,7 +396,7 @@ impl<const CPU: CpuType, T: Convert, F: FnMut(T)> MemoryReadMultipleIo<CPU, T, F
                 }
             },
             {
-                for i in 0..size {
+                for _ in 0..size {
                     write_value(T::from(0));
                 }
             }
