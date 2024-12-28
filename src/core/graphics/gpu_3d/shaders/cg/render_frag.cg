@@ -4,15 +4,7 @@ float in oPolygonIndex : TEXCOORD2;
 
 uniform sampler2D tex : TEXUNIT0;
 uniform sampler2D palTex : TEXUNIT1;
-
-typedef struct {
-  int texImageParam;
-  int palAddr;
-} Polygon;
-
-uniform PolygonUbo {
-    Polygon polygons[2048];
-} PolygonUbo : BUFFER[0];
+uniform sampler2D attrTex : TEXUNIT2;
 
 short readTex8(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
@@ -44,7 +36,7 @@ float3 normRgb5(short color) {
     return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-float4 a3i5Tex(short index, int addrOffset, short s, short t, short sizeS) {
+float4 a3i5Tex(short palAddr, int addrOffset, short s, short t, short sizeS) {
     int addr = addrOffset + t * sizeS + s;
 
     short palIndex = readTex8(addr);
@@ -52,13 +44,13 @@ float4 a3i5Tex(short index, int addrOffset, short s, short t, short sizeS) {
         discard;
     }
 
-    short palOffset = PolygonUbo.polygons[index].palAddr << 3;
+    short palOffset = palAddr << 3;
     float4 color = readPal(palOffset + (palIndex & 0x1F));
     float alpha = float((palIndex >> 5) & 0x3) / 7.0;
     return float4(color.rgb, alpha);
 }
 
-float4 pal4Tex(short index, int addrOffset, short s, short t, short sizeS, bool transparent0) {
+float4 pal4Tex(short palAddr, int addrOffset, short s, short t, short sizeS, bool transparent0) {
     int addr = addrOffset + (t * sizeS + s) / 4;
 
     int palIndex = readTex8(addr);
@@ -67,12 +59,12 @@ float4 pal4Tex(short index, int addrOffset, short s, short t, short sizeS, bool 
     }
     palIndex = (palIndex >> ((s & 0x3) * 2)) & 0x03;
 
-    int palOffset = PolygonUbo.polygons[index].palAddr << 2;
+    int palOffset = int(palAddr) << 2;
     float4 color = readPal(palOffset + palIndex);
     return float4(color.rgb, 1.0);
 }
 
-float4 pal16Tex(short index, int addrOffset, int s, int t, int sizeS, bool transparent0) {
+float4 pal16Tex(short palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
     int addr = addrOffset + (t * sizeS + s) / 2;
 
     int palIndex = readTex8(addr);
@@ -81,12 +73,12 @@ float4 pal16Tex(short index, int addrOffset, int s, int t, int sizeS, bool trans
     }
     palIndex = (palIndex >> ((s & 0x1) * 4)) & 0x0F;
 
-    int palOffset = PolygonUbo.polygons[index].palAddr << 3;
+    int palOffset = int(palAddr) << 3;
     float4 color = readPal(palOffset + palIndex);
     return float4(color.rgb, 1.0);
 }
 
-float4 pal256Tex(short index, int addrOffset, int s, int t, int sizeS, bool transparent0) {
+float4 pal256Tex(short palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
     int addr = addrOffset + (t * sizeS + s);
 
     int palIndex = readTex8(addr);
@@ -94,12 +86,12 @@ float4 pal256Tex(short index, int addrOffset, int s, int t, int sizeS, bool tran
         discard;
     }
 
-    int palOffset = PolygonUbo.polygons[index].palAddr << 3;
+    int palOffset = int(palAddr) << 3;
     float4 color = readPal(palOffset + palIndex);
     return float4(color.rgb, 1.0);
 }
 
-float4 a5i3Tex(short index, int addrOffset, short s, short t, short sizeS) {
+float4 a5i3Tex(short palAddr, int addrOffset, short s, short t, short sizeS) {
     int addr = addrOffset + t * sizeS + s;
 
     short palIndex = readTex8(addr);
@@ -107,7 +99,7 @@ float4 a5i3Tex(short index, int addrOffset, short s, short t, short sizeS) {
         discard;
     }
 
-    int palOffset = PolygonUbo.polygons[index].palAddr << 3;
+    int palOffset = int(palAddr) << 3;
     float4 color = readPal(palOffset + (palIndex & 0x07));
     float alpha = float((palIndex >> 3) & 0x1F) / 31.0;
     return float4(color.rgb, alpha);
@@ -115,27 +107,36 @@ float4 a5i3Tex(short index, int addrOffset, short s, short t, short sizeS) {
 
 float4 directTex(int addrOffset, short s, short t, short sizeS) {
     int addr = (addrOffset + t * sizeS + s) * 2;
-    int tex = readTex16Aligned(addr);
-    if (tex == 0) {
+    int color = readTex16Aligned(addr);
+    if (color == 0) {
         discard;
     }
-    return float4(normRgb5(tex), 1.0);
+    return float4(normRgb5(color), 1.0);
 }
 
 void main(out float4 color : COLOR) {
     short polygonIndex = short(oPolygonIndex);
-    int texImageParam = PolygonUbo.polygons[polygonIndex].texImageParam;
 
-    int addrOffset = (texImageParam & 0xFFFF) << 3;
-    short sizeS = 8 << ((texImageParam >> 20) & 0x7);
-    short sizeT = 8 << ((texImageParam >> 23) & 0x7);
+    polygonIndex <<= 1;
+    float x = float(polygonIndex & 0x7F) / 127.0;
+    float y = float(polygonIndex >> 7) / 127.0;
+    float4 value = tex2D(attrTex, float2(x, y));
+
+    int addrOffset = int((short(value[0] * 255.0) | (short(value[1] * 255.0) << 8))) << 3;
+    short texImageParam = short(value[2] * 255.0) | (short(value[3] * 255.0) << 8);
+
+    value = tex2D(attrTex, float2(x + 1.0 / 127.0, y));
+    short palAddr = short(value[0] * 255.0) | (short(value[1] * 255.0) << 8);
+
+    short sizeS = 8 << ((texImageParam >> 4) & 0x7);
+    short sizeT = 8 << ((texImageParam >> 7) & 0x7);
     short s = short(oTexCoords.x);
     short t = short(oTexCoords.y);
 
-    bool repeatS = ((texImageParam >> 16) & 0x1) == 1;
-    bool repeatT = ((texImageParam >> 17) & 0x1) == 1;
+    bool repeatS = (texImageParam & 0x1) == 1;
+    bool repeatT = ((texImageParam >> 1) & 0x1) == 1;
     if (repeatS) {
-        bool flip = ((texImageParam >> 18) & 0x1) == 1;
+        bool flip = ((texImageParam >> 2) & 0x1) == 1;
         if (flip && (s & sizeT) != 0) {
             s = -s;
         }
@@ -148,7 +149,7 @@ void main(out float4 color : COLOR) {
     }
 
     if (repeatT) {
-        bool flip = ((texImageParam >> 19) & 0x1) == 1;
+        bool flip = ((texImageParam >> 3) & 0x1) == 1;
         if (flip && (t & sizeT) != 0) {
             t = -t;
         }
@@ -160,25 +161,25 @@ void main(out float4 color : COLOR) {
         t = sizeT - 1;
     }
 
-    int texFmt = (texImageParam >> 26) & 0x7;
+    int texFmt = (texImageParam >> 10) & 0x7;
 
     if (texFmt == 0) {
         color = float4(oColor, 1.0);
     } else if (texFmt == 1) {
-        color = a3i5Tex(polygonIndex, addrOffset, s, t, sizeS);
+        color = a3i5Tex(palAddr, addrOffset, s, t, sizeS);
     } else if (texFmt == 2) {
-        bool transparent0 = ((texImageParam >> 29) & 0x1) == 1;
-        color = pal4Tex(polygonIndex, addrOffset, s, t, sizeS, transparent0);
+        bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+        color = pal4Tex(palAddr, addrOffset, s, t, sizeS, transparent0);
     } else if (texFmt == 3) {
-        bool transparent0 = ((texImageParam >> 29) & 0x1) == 1;
-        color = pal16Tex(polygonIndex, addrOffset, s, t, sizeS, transparent0);
+        bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+        color = pal16Tex(palAddr, addrOffset, s, t, sizeS, transparent0);
     } else if (texFmt == 4) {
-        bool transparent0 = ((texImageParam >> 29) & 0x1) == 1;
-        color = pal256Tex(polygonIndex, addrOffset, s, t, sizeS, transparent0);
+        bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+        color = pal256Tex(palAddr, addrOffset, s, t, sizeS, transparent0);
     } else if (texFmt == 5) {
         color = float4(0.0, 1.0, 0.0, 1.0);
     } else if (texFmt == 6) {
-        color = a5i3Tex(polygonIndex, addrOffset, s, t, sizeS);
+        color = a5i3Tex(palAddr, addrOffset, s, t, sizeS);
     } else if (texFmt == 7) {
         color = directTex(addrOffset, s, t, sizeS);
     }

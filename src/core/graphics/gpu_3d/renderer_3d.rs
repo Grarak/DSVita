@@ -1,11 +1,12 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, Vertex};
+use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::utils::{rgb6_to_float8, HeapMem};
 use bilge::prelude::*;
 use gl::types::GLuint;
-use static_assertions::const_assert;
+use static_assertions::const_assert_eq;
 use std::{mem, ptr};
 
 #[bitsize(16)]
@@ -47,8 +48,8 @@ struct Gpu3DRendererInner {
 pub struct Gpu3DGl {
     tex: GLuint,
     pal_tex: GLuint,
+    attr_tex: GLuint,
     vertices_buf: GLuint,
-    polygon_ubo: GLuint,
     program: GLuint,
     pub fbo: GpuFbo,
 }
@@ -70,14 +71,7 @@ impl Default for Gpu3DGl {
 
             gl::Uniform1i(gl::GetUniformLocation(program, "tex\0".as_ptr() as _), 0);
             gl::Uniform1i(gl::GetUniformLocation(program, "palTex\0".as_ptr() as _), 1);
-
-            let mut polygon_ubo = 0;
-            gl::GenBuffers(1, &mut polygon_ubo);
-            gl::BindBuffer(gl::UNIFORM_BUFFER, polygon_ubo);
-
-            if cfg!(target_os = "linux") {
-                gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "PolygonUbo\0".as_ptr() as _), 0);
-            }
+            gl::Uniform1i(gl::GetUniformLocation(program, "attrTex\0".as_ptr() as _), 2);
 
             let mut vertices_buf = 0;
             gl::GenBuffers(1, &mut vertices_buf);
@@ -90,8 +84,8 @@ impl Default for Gpu3DGl {
             Gpu3DGl {
                 tex: create_mem_texture2d(1024, 512),
                 pal_tex: create_pal_texture2d(1024, 96),
+                attr_tex: create_mem_texture2d(256, 256),
                 vertices_buf,
-                polygon_ubo,
                 program,
                 fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, true).unwrap(),
             }
@@ -136,25 +130,25 @@ impl From<(&Vertex, u16)> for Gpu3DVertex {
 
 #[derive(Default)]
 #[repr(C)]
-struct Gpu3DPolygonUbo {
+struct Gpu3dPolygonAttr {
     tex_image_param: u32,
     pal_addr: u32,
 }
 
-const_assert!(size_of::<Gpu3DPolygonUbo>() * 2048 <= 16 * 1024);
+const_assert_eq!(size_of::<Gpu3dPolygonAttr>(), 8);
 
 #[derive(Default)]
 pub struct Gpu3DRenderer {
     pub dirty: bool,
     inners: [Gpu3DRendererInner; 2],
-    vertices: HeapMem<Vertex, 6144>,
-    vertex_count: usize,
-    polygons: HeapMem<Polygon, 2048>,
-    polygon_count: usize,
+    vertices: HeapMem<Vertex, VERTEX_LIMIT>,
+    vertex_count: u16,
+    polygons: HeapMem<Polygon, POLYGON_LIMIT>,
+    polygon_count: u16,
     pub gl: Gpu3DGl,
     vertices_buf: Vec<Gpu3DVertex>,
     indices_buf: Vec<u16>,
-    polygon_ubo_buf: HeapMem<Gpu3DPolygonUbo, 2048>,
+    polygon_attrs: HeapMem<Gpu3dPolygonAttr, POLYGON_LIMIT>,
 }
 
 impl Gpu3DRenderer {
@@ -245,15 +239,15 @@ impl Gpu3DRenderer {
         self.invalidate();
     }
 
-    pub fn finish_scanline(&mut self, registers: &Gpu3DRegisters) {
+    pub fn finish_scanline(&mut self, registers: &mut Gpu3DRegisters) {
         if self.dirty {
             self.inners[0] = self.inners[1].clone();
 
             self.vertex_count = registers.vertices.count_out;
-            self.vertices[..self.vertex_count].copy_from_slice(&registers.vertices.outs[..self.vertex_count]);
+            mem::swap(&mut self.vertices, &mut registers.vertices.outs);
 
             self.polygon_count = registers.polygons.count_out;
-            self.polygons[..self.polygon_count].copy_from_slice(&registers.polygons.outs[..self.polygon_count]);
+            mem::swap(&mut self.polygons, &mut registers.polygons.outs);
         }
     }
 
@@ -261,7 +255,7 @@ impl Gpu3DRenderer {
         self.vertices_buf.clear();
         self.indices_buf.clear();
         for i in 0..self.polygon_count {
-            let polygon = &self.polygons[i];
+            let polygon = &self.polygons[i as usize];
 
             if u8::from(polygon.tex_image_param.format()) != 0
                 && u8::from(polygon.tex_image_param.format()) != 1
@@ -298,7 +292,7 @@ impl Gpu3DRenderer {
             }
 
             for j in 0..polygon.size {
-                self.vertices_buf.push(Gpu3DVertex::from((&self.vertices[polygon.vertices_index + j], i as u16)));
+                self.vertices_buf.push(Gpu3DVertex::from((&self.vertices[polygon.vertices_index as usize + j as usize], i)));
 
                 // println!(
                 //     "vertex {j} s {} t {} s_norm {} t_norm {}",
@@ -309,9 +303,8 @@ impl Gpu3DRenderer {
                 // )
             }
 
-            let ubo_buf = &mut self.polygon_ubo_buf[i];
-            ubo_buf.tex_image_param = polygon.tex_image_param.into();
-            ubo_buf.pal_addr = polygon.palette_addr as u32;
+            self.polygon_attrs[i as usize].tex_image_param = u32::from(polygon.tex_image_param);
+            self.polygon_attrs[i as usize].pal_addr = polygon.palette_addr as u32;
         }
 
         gl::BindFramebuffer(gl::FRAMEBUFFER, self.gl.fbo.fbo);
@@ -336,11 +329,17 @@ impl Gpu3DRenderer {
         gl::BindTexture(gl::TEXTURE_2D, self.gl.pal_tex);
         sub_pal_texture2d(1024, 96, common.mem_buf.tex_pal.as_ptr());
 
+        gl::BindTexture(gl::TEXTURE_2D, self.gl.attr_tex);
+        sub_mem_texture2d(256, 256, self.polygon_attrs.as_ptr() as _);
+
         gl::ActiveTexture(gl::TEXTURE0);
         gl::BindTexture(gl::TEXTURE_2D, self.gl.tex);
 
         gl::ActiveTexture(gl::TEXTURE1);
         gl::BindTexture(gl::TEXTURE_2D, self.gl.pal_tex);
+
+        gl::ActiveTexture(gl::TEXTURE2);
+        gl::BindTexture(gl::TEXTURE_2D, self.gl.attr_tex);
 
         gl::BindBuffer(gl::ARRAY_BUFFER, self.gl.vertices_buf);
         gl::BufferData(
@@ -358,15 +357,6 @@ impl Gpu3DRenderer {
 
         gl::EnableVertexAttribArray(2);
         gl::VertexAttribPointer(2, 2, gl::FLOAT, gl::FALSE, size_of::<Gpu3DVertex>() as _, (size_of::<f32>() * 7) as _);
-
-        gl::BindBuffer(gl::UNIFORM_BUFFER, self.gl.polygon_ubo);
-        gl::BufferData(
-            gl::UNIFORM_BUFFER,
-            (size_of::<Gpu3DPolygonUbo>() * self.polygon_count) as _,
-            self.polygon_ubo_buf.as_ptr() as _,
-            gl::DYNAMIC_DRAW,
-        );
-        gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, self.gl.polygon_ubo);
 
         gl::DrawElements(gl::TRIANGLES, self.indices_buf.len() as _, gl::UNSIGNED_SHORT, self.indices_buf.as_ptr() as _);
 

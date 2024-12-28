@@ -14,6 +14,9 @@ use std::intrinsics::unlikely;
 use std::mem;
 use std::mem::MaybeUninit;
 
+pub const POLYGON_LIMIT: usize = 8192;
+pub const VERTEX_LIMIT: usize = POLYGON_LIMIT * 4;
+
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
 pub struct GxStat {
@@ -321,8 +324,8 @@ fn clip_polygon(unclipped: &[Vectori32<4>; 4], clipped: &mut [Vectorf32<4>; 10],
 
 #[derive(Copy, Clone, Default)]
 pub struct Polygon {
-    pub size: usize,
-    pub vertices_index: usize,
+    pub vertices_index: u16,
+    pub size: u8,
     crossed: bool,
     clockwise: bool,
 
@@ -401,19 +404,19 @@ struct Matrices {
 
 #[derive(Default)]
 pub struct Vertices {
-    ins: HeapMem<Vertex, 6144>,
-    pub outs: HeapMem<Vertex, 6144>,
-    count_in: usize,
-    pub count_out: usize,
-    process_count: usize,
+    ins: HeapMem<Vertex, VERTEX_LIMIT>,
+    pub outs: HeapMem<Vertex, VERTEX_LIMIT>,
+    count_in: u16,
+    pub count_out: u16,
+    process_count: u16,
 }
 
 #[derive(Default)]
 pub struct Polygons {
-    ins: HeapMem<Polygon, 2048>,
-    pub outs: HeapMem<Polygon, 2048>,
-    count_in: usize,
-    pub count_out: usize,
+    ins: HeapMem<Polygon, POLYGON_LIMIT>,
+    pub outs: HeapMem<Polygon, POLYGON_LIMIT>,
+    count_in: u16,
+    pub count_out: u16,
 }
 
 #[derive(Default)]
@@ -439,7 +442,7 @@ pub struct Gpu3DRegisters {
     s: i16,
     t: i16,
 
-    vertex_count: usize,
+    vertex_count: u16,
     clockwise: bool,
     polygon_type: PolygonType,
     texture_coord_mode: TextureCoordTransMode,
@@ -1058,7 +1061,7 @@ impl Gpu3DRegisters {
     }
 
     fn exe_begin_vtxs(&mut self, params: &[u32; 32]) {
-        if self.vertex_count < self.polygon_type.vertex_count() as usize {
+        if self.vertex_count < self.polygon_type.vertex_count() as u16 {
             self.vertices.count_in -= self.vertex_count;
         }
 
@@ -1095,62 +1098,63 @@ impl Gpu3DRegisters {
     }
 
     fn exe_box_test(&mut self, params: &[u32; 32]) {
-        let mut box_test_coords = [
-            params[0] as i16,
-            (params[0] >> 16) as i16,
-            params[1] as i16,
-            (params[1] >> 16) as i16,
-            params[2] as i16,
-            (params[2] >> 16) as i16,
-        ];
-
-        box_test_coords[3] += box_test_coords[0];
-        box_test_coords[4] += box_test_coords[1];
-        box_test_coords[5] += box_test_coords[2];
-
-        const INDICES: [u8; 8 * 3] = [0, 1, 2, 3, 1, 2, 0, 4, 2, 0, 1, 5, 3, 4, 2, 3, 1, 5, 0, 4, 5, 3, 4, 5];
-
-        if self.clip_dirty {
-            self.matrices.clip = self.matrices.model * &self.matrices.proj;
-            self.clip_dirty = false;
-        }
-
-        let mut vertices = [Vectori32::<4>::default(); 8];
-        for i in 0..8 {
-            vertices[i][0] = box_test_coords[INDICES[i * 3 + 0] as usize] as i32;
-            vertices[i][1] = box_test_coords[INDICES[i * 3 + 1] as usize] as i32;
-            vertices[i][2] = box_test_coords[INDICES[i * 3 + 2] as usize] as i32;
-            vertices[i][3] = 1 << 12;
-            vertices[i] *= &self.matrices.clip;
-        }
-
-        let faces = [
-            [vertices[0], vertices[1], vertices[4], vertices[2]],
-            [vertices[3], vertices[5], vertices[7], vertices[6]],
-            [vertices[3], vertices[5], vertices[1], vertices[0]],
-            [vertices[6], vertices[7], vertices[4], vertices[2]],
-            [vertices[0], vertices[3], vertices[6], vertices[2]],
-            [vertices[1], vertices[5], vertices[7], vertices[4]],
-        ];
-
+        // let mut box_test_coords = [
+        //     params[0] as i16,
+        //     (params[0] >> 16) as i16,
+        //     params[1] as i16,
+        //     (params[1] >> 16) as i16,
+        //     params[2] as i16,
+        //     (params[2] >> 16) as i16,
+        // ];
+        //
+        // box_test_coords[3] += box_test_coords[0];
+        // box_test_coords[4] += box_test_coords[1];
+        // box_test_coords[5] += box_test_coords[2];
+        //
+        // const INDICES: [u8; 8 * 3] = [0, 1, 2, 3, 1, 2, 0, 4, 2, 0, 1, 5, 3, 4, 2, 3, 1, 5, 0, 4, 5, 3, 4, 5];
+        //
+        // if self.clip_dirty {
+        //     self.matrices.clip = self.matrices.model * &self.matrices.proj;
+        //     self.clip_dirty = false;
+        // }
+        //
+        // let mut vertices = [Vectori32::<4>::default(); 8];
+        // for i in 0..8 {
+        //     vertices[i][0] = box_test_coords[INDICES[i * 3 + 0] as usize] as i32;
+        //     vertices[i][1] = box_test_coords[INDICES[i * 3 + 1] as usize] as i32;
+        //     vertices[i][2] = box_test_coords[INDICES[i * 3 + 2] as usize] as i32;
+        //     vertices[i][3] = 1 << 12;
+        //     vertices[i] *= &self.matrices.clip;
+        // }
+        //
+        // let faces = [
+        //     [vertices[0], vertices[1], vertices[4], vertices[2]],
+        //     [vertices[3], vertices[5], vertices[7], vertices[6]],
+        //     [vertices[3], vertices[5], vertices[1], vertices[0]],
+        //     [vertices[6], vertices[7], vertices[4], vertices[2]],
+        //     [vertices[0], vertices[3], vertices[6], vertices[2]],
+        //     [vertices[1], vertices[5], vertices[7], vertices[4]],
+        // ];
+        //
         self.test_queue -= 3;
         if self.test_queue == 0 {
             self.gx_stat.set_box_pos_vec_test_busy(false);
         }
-
-        for i in 0..6 {
-            let mut size = 4;
-            let mut clipped = [Vectorf32::<4>::default(); 10];
-
-            clip_polygon(&faces[i], &mut clipped, &mut size);
-
-            if size > 0 {
-                self.gx_stat.set_box_test_result(true);
-                return;
-            }
-        }
-
-        self.gx_stat.set_box_test_result(false);
+        //
+        // for i in 0..6 {
+        //     let mut size = 4;
+        //     let mut clipped = [Vectorf32::<4>::default(); 10];
+        //
+        //     clip_polygon(&faces[i], &mut clipped, &mut size);
+        //
+        //     if size > 0 {
+        //         self.gx_stat.set_box_test_result(true);
+        //         return;
+        //     }
+        // }
+        //
+        // self.gx_stat.set_box_test_result(false);
+        self.gx_stat.set_box_test_result(true);
     }
 
     fn exe_pos_test(&mut self, params: &[u32; 32]) {
@@ -1191,7 +1195,7 @@ impl Gpu3DRegisters {
 
     fn process_vertices(&mut self) {
         for i in self.vertices.process_count..self.vertices.count_in {
-            unsafe { self.vertices.ins.get_unchecked_mut(i).viewport = self.viewport };
+            unsafe { self.vertices.ins.get_unchecked_mut(i as usize).viewport = self.viewport };
         }
 
         self.vertices.process_count = self.vertices.count_in;
@@ -1216,22 +1220,22 @@ impl Gpu3DRegisters {
     fn add_vertex(&mut self) {
         let Self { vertices, matrices, .. } = self;
 
-        if vertices.count_in >= 6144 {
+        if vertices.count_in as usize >= vertices.ins.len() {
             return;
         }
 
-        vertices.ins[vertices.count_in] = self.saved_vertex;
-        vertices.ins[vertices.count_in].coords[3] = 1 << 12;
+        vertices.ins[vertices.count_in as usize] = self.saved_vertex;
+        vertices.ins[vertices.count_in as usize].coords[3] = 1 << 12;
 
         if self.texture_coord_mode == TextureCoordTransMode::Vertex {
             let mut matrix = matrices.tex;
             matrix[12] = (self.s as i32) << 12;
             matrix[13] = (self.t as i32) << 12;
 
-            let vector = vertices.ins[vertices.count_in].coords * &matrix;
+            let vector = vertices.ins[vertices.count_in as usize].coords * &matrix;
 
-            vertices.ins[vertices.count_in].tex_coords[0] = (vector[0] >> 12) as i16;
-            vertices.ins[vertices.count_in].tex_coords[1] = (vector[1] >> 12) as i16;
+            vertices.ins[vertices.count_in as usize].tex_coords[0] = (vector[0] >> 12) as i16;
+            vertices.ins[vertices.count_in as usize].tex_coords[1] = (vector[1] >> 12) as i16;
         }
 
         if self.clip_dirty {
@@ -1239,7 +1243,7 @@ impl Gpu3DRegisters {
             self.clip_dirty = false;
         }
 
-        vertices.ins[vertices.count_in].coords *= &matrices.clip;
+        vertices.ins[vertices.count_in as usize].coords *= &matrices.clip;
 
         vertices.count_in += 1;
         self.vertex_count += 1;
@@ -1254,161 +1258,25 @@ impl Gpu3DRegisters {
         }
     }
 
-    #[inline(never)]
     fn add_polygon(&mut self) {
-        if self.polygons.count_in >= 2048 {
+        if self.polygons.count_in as usize >= self.polygons.ins.len() {
             return;
         }
 
-        let size = self.polygon_type.vertex_count() as usize;
+        let size = self.polygon_type.vertex_count();
         self.saved_polygon.size = size;
-        self.saved_polygon.vertices_index = self.vertices.count_in - size;
-
-        let mut unclipped = [Vectori32::<4>::default(); 4];
-        for i in 0..size {
-            unsafe { *unclipped.get_unchecked_mut(i) = self.vertices.ins.get_unchecked(self.saved_polygon.vertices_index + i).coords };
-        }
+        self.saved_polygon.vertices_index = self.vertices.count_in - size as u16;
 
         if self.polygon_type == PolygonType::QuadliteralStrips {
             unsafe {
-                unclipped.swap_unchecked(2, 3);
-                self.vertices.ins.swap_unchecked(self.saved_polygon.vertices_index + 2, self.saved_polygon.vertices_index + 3);
+                self.vertices
+                    .ins
+                    .swap_unchecked(self.saved_polygon.vertices_index as usize + 2, self.saved_polygon.vertices_index as usize + 3);
             }
         }
 
-        let x1 = (unclipped[1][0] - unclipped[0][0]) as i64;
-        let y1 = (unclipped[1][1] - unclipped[0][1]) as i64;
-        let w1 = (unclipped[1][3] - unclipped[0][3]) as i64;
-        let x2 = (unclipped[2][0] - unclipped[0][0]) as i64;
-        let y2 = (unclipped[2][1] - unclipped[0][1]) as i64;
-        let w2 = (unclipped[2][3] - unclipped[0][3]) as i64;
-
-        let mut xc = y1 * w2 - w1 * y2;
-        let mut yc = w1 * x2 - x1 * w2;
-        let mut wc = x1 * y2 - y1 * x2;
-
-        while xc != xc as i32 as i64 || yc != yc as i32 as i64 || wc != wc as i32 as i64 {
-            xc >>= 4;
-            yc >>= 4;
-            wc >>= 4;
-        }
-
-        let mut dot = xc * unclipped[0][0] as i64 + yc * unclipped[0][1] as i64 + wc * unclipped[0][3] as i64;
-
-        self.saved_polygon.clockwise = dot < 0;
-
-        if self.polygon_type == PolygonType::TriangleStrips {
-            if self.clockwise {
-                dot = -dot;
-            }
-            self.clockwise = !self.clockwise;
-        }
-
-        let mut clipped = [Vectorf32::<4>::default(); 10];
-        let cull = (!self.render_front && dot > 0) || (!self.render_back && dot < 0);
-        let mut clipped_size = self.saved_polygon.size;
-        let clip = !cull && clip_polygon(&unclipped, &mut clipped, &mut clipped_size);
-
-        if cull || clipped_size == 0 {
-            match self.polygon_type {
-                PolygonType::SeparateTriangles | PolygonType::SeparateQuadliterals => {
-                    self.vertices.count_in -= size;
-                }
-                PolygonType::TriangleStrips => {
-                    let Vertices { ins, count_in, .. } = &mut self.vertices;
-                    if self.vertex_count == 3 {
-                        unsafe {
-                            *ins.get_unchecked_mut(*count_in - 3) = *ins.get_unchecked(*count_in - 2);
-                            *ins.get_unchecked_mut(*count_in - 2) = *ins.get_unchecked(*count_in - 1);
-                        }
-                        *count_in -= 1;
-                        self.vertex_count -= 1;
-                    } else if *count_in < 6144 {
-                        unsafe {
-                            *ins.get_unchecked_mut(*count_in) = *ins.get_unchecked(*count_in - 1);
-                            *ins.get_unchecked_mut(*count_in - 1) = *ins.get_unchecked(*count_in - 2);
-                        }
-                        *count_in += 1;
-                        self.vertex_count = 2;
-                    }
-                }
-                PolygonType::QuadliteralStrips => {
-                    if self.vertex_count == 4 {
-                        let Vertices { ins, count_in, .. } = &mut self.vertices;
-                        unsafe {
-                            *ins.get_unchecked_mut(*count_in - 4) = *ins.get_unchecked(*count_in - 2);
-                            *ins.get_unchecked_mut(*count_in - 3) = *ins.get_unchecked(*count_in - 1);
-                        }
-                        *count_in -= 2;
-                        self.vertex_count -= 2;
-                    } else {
-                        self.vertex_count = 2;
-                    }
-                }
-            }
-            return;
-        }
-
-        // if clip {
-        //     match self.polygon_type {
-        //         PolygonType::SeparateTriangles | PolygonType::SeparateQuadliterals => {
-        //             self.vertices.count_in -= size;
-        //
-        //             for i in 0..self.saved_polygon.size {
-        //                 if self.vertices.count_in >= 6144 {
-        //                     return;
-        //                 }
-        //                 self.vertices.ins[self.vertices.count_in] = clipped[i];
-        //                 self.vertices.count_in += 1;
-        //             }
-        //         }
-        //         PolygonType::TriangleStrips => {
-        //             self.vertices.count_in -= if self.vertex_count == 3 { 3 } else { 1 };
-        //             self.saved_polygon.vertices_index = self.vertices.count_in;
-        //
-        //             for i in 0..self.saved_polygon.size {
-        //                 if self.vertices.count_in >= 6144 {
-        //                     return;
-        //                 }
-        //                 self.vertices.ins[self.vertices.count_in] = clipped[i];
-        //                 self.vertices.count_in += 1;
-        //             }
-        //
-        //             for i in 0..2 {
-        //                 if self.vertices.count_in >= 6144 {
-        //                     return;
-        //                 }
-        //                 self.vertices.ins[self.vertices.count_in] = clipped[i];
-        //                 self.vertices.count_in += 1;
-        //             }
-        //             self.vertex_count = 2;
-        //         }
-        //         PolygonType::QuadliteralStrips => {
-        //             self.vertices.count_in -= if self.vertex_count == 4 { 4 } else { 2 };
-        //             self.saved_polygon.vertices_index = self.vertices.count_in;
-        //
-        //             for i in 0..self.saved_polygon.size {
-        //                 if self.vertices.count_in >= 6144 {
-        //                     return;
-        //                 }
-        //                 self.vertices.ins[self.vertices.count_in] = clipped[i];
-        //                 self.vertices.count_in += 1;
-        //             }
-        //
-        //             for i in 0..2 {
-        //                 if self.vertices.count_in >= 6144 {
-        //                     return;
-        //                 }
-        //                 self.vertices.ins[self.vertices.count_in] = clipped[3 - i];
-        //                 self.vertices.count_in += 1;
-        //             }
-        //             self.vertex_count = 2;
-        //         }
-        //     }
-        // }
-
-        self.polygons.ins[self.polygons.count_in] = self.saved_polygon;
-        self.polygons.ins[self.polygons.count_in].crossed = self.polygon_type == PolygonType::QuadliteralStrips && !clip;
+        self.polygons.ins[self.polygons.count_in as usize] = self.saved_polygon;
+        self.polygons.ins[self.polygons.count_in as usize].crossed = self.polygon_type == PolygonType::QuadliteralStrips;
 
         self.polygons.count_in += 1;
     }

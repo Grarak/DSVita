@@ -5,21 +5,13 @@ precision highp float;
 
 uniform sampler2D tex;
 uniform sampler2D palTex;
+uniform sampler2D attrTex;
 
 in vec3 oColor;
 in vec2 oTexCoords;
 in float oPolygonIndex;
 
 layout(location = 0) out vec4 color;
-
-struct Polygon {
-    int texImageParam;
-    int palAddr;
-};
-
-uniform PolygonUbo {
-    Polygon polygons[2048];
-};
 
 int readTex8(int addr) {
     float x = float((addr >> 2) & 0x1FF) / 511.0;
@@ -51,7 +43,7 @@ vec3 normRgb5(int color) {
     return vec3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-void a3i5Tex(int index, int addrOffset, int s, int t, int sizeS) {
+void a3i5Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
     int addr = addrOffset + t * sizeS + s;
 
     int palIndex = readTex8(addr);
@@ -59,13 +51,13 @@ void a3i5Tex(int index, int addrOffset, int s, int t, int sizeS) {
         discard;
     }
 
-    int palOffset = polygons[index].palAddr << 4;
+    int palOffset = palAddr << 4;
     int tex = readPal16Aligned(palOffset + (palIndex & 0x1F) * 2);
     float alpha = float((palIndex >> 5) & 0x3) / 7.0;
     color = vec4(normRgb5(tex), alpha);
 }
 
-void pal4Tex(int index, int addrOffset, int s, int t, int sizeS, bool transparent0) {
+void pal4Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
     int addr = addrOffset + (t * sizeS + s) / 4;
 
     int palIndex = readTex8(addr);
@@ -74,12 +66,12 @@ void pal4Tex(int index, int addrOffset, int s, int t, int sizeS, bool transparen
     }
     palIndex = (palIndex >> ((s % 4) * 2)) & 0x03;
 
-    int palOffset = polygons[index].palAddr << 3;
+    int palOffset = palAddr << 3;
     int tex = readPal16Aligned(palOffset + palIndex * 2);
     color = vec4(normRgb5(tex), 1.0);
 }
 
-void pal16Tex(int index, int addrOffset, int s, int t, int sizeS, bool transparent0) {
+void pal16Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
     int addr = addrOffset + (t * sizeS + s) / 2;
 
     int palIndex = readTex8(addr);
@@ -88,12 +80,12 @@ void pal16Tex(int index, int addrOffset, int s, int t, int sizeS, bool transpare
     }
     palIndex = (palIndex >> ((s % 2) * 4)) & 0x0F;
 
-    int palOffset = polygons[index].palAddr << 4;
+    int palOffset = palAddr << 4;
     int tex = readPal16Aligned(palOffset + palIndex * 2);
     color = vec4(normRgb5(tex), 1.0);
 }
 
-void pal256Tex(int index, int addrOffset, int s, int t, int sizeS, bool transparent0) {
+void pal256Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
     int addr = addrOffset + (t * sizeS + s);
 
     int palIndex = readTex8(addr);
@@ -101,12 +93,12 @@ void pal256Tex(int index, int addrOffset, int s, int t, int sizeS, bool transpar
         discard;
     }
 
-    int palOffset = polygons[index].palAddr << 4;
+    int palOffset = palAddr << 4;
     int tex = readPal16Aligned(palOffset + palIndex * 2);
     color = vec4(normRgb5(tex), 1.0);
 }
 
-void a5i3Tex(int index, int addrOffset, int s, int t, int sizeS) {
+void a5i3Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
     int addr = addrOffset + t * sizeS + s;
 
     int palIndex = readTex8(addr);
@@ -114,7 +106,7 @@ void a5i3Tex(int index, int addrOffset, int s, int t, int sizeS) {
         discard;
     }
 
-    int palOffset = polygons[index].palAddr << 4;
+    int palOffset = palAddr << 4;
     int tex = readPal16Aligned(palOffset + (palIndex & 0x07) * 2);
     float alpha = float((palIndex >> 3) & 0x1F) / 31.0;
     color = vec4(normRgb5(tex), alpha);
@@ -131,18 +123,27 @@ void directTex(int addrOffset, int s, int t, int sizeS) {
 
 void main() {
     int polygonIndex = int(oPolygonIndex);
-    int texImageParam = polygons[polygonIndex].texImageParam;
 
-    int addrOffset = (texImageParam & 0xFFFF) << 3;
-    int sizeS = 8 << ((texImageParam >> 20) & 0x7);
-    int sizeT = 8 << ((texImageParam >> 23) & 0x7);
+    polygonIndex <<= 1;
+    float x = float(polygonIndex & 0x7F) / 127.0;
+    float y = float(polygonIndex >> 7) / 127.0;
+    vec4 value = texture(attrTex, vec2(x, y));
+
+    int addrOffset = (int(value[0] * 255.0) | (int(value[1] * 255.0) << 8)) << 3;
+    int texImageParam = int(value[2] * 255.0) | (int(value[3] * 255.0) << 8);
+
+    value = texture(attrTex, vec2(x + 1.0 / 127.0, y));
+    int palAddr = int(value[0] * 255.0) | (int(value[1] * 255.0) << 8);
+
+    int sizeS = 8 << ((texImageParam >> 4) & 0x7);
+    int sizeT = 8 << ((texImageParam >> 7) & 0x7);
     int s = int(oTexCoords.s);
     int t = int(oTexCoords.t);
 
-    bool repeatS = ((texImageParam >> 16) & 0x1) == 1;
-    bool repeatT = ((texImageParam >> 17) & 0x1) == 1;
+    bool repeatS = (texImageParam & 0x1) == 1;
+    bool repeatT = ((texImageParam >> 1) & 0x1) == 1;
     if (repeatS) {
-        bool flip = ((texImageParam >> 18) & 0x1) == 1;
+        bool flip = ((texImageParam >> 2) & 0x1) == 1;
         if (flip && (s & sizeT) != 0) {
             s = -s;
         }
@@ -155,7 +156,7 @@ void main() {
     }
 
     if (repeatT) {
-        bool flip = ((texImageParam >> 19) & 0x1) == 1;
+        bool flip = ((texImageParam >> 3) & 0x1) == 1;
         if (flip && (t & sizeT) != 0) {
             t = -t;
         }
@@ -167,7 +168,7 @@ void main() {
         t = sizeT - 1;
     }
 
-    int texFmt = (texImageParam >> 26) & 0x7;
+    int texFmt = (texImageParam >> 10) & 0x7;
 
     switch (texFmt) {
         case 0: {
@@ -175,26 +176,26 @@ void main() {
             break;
         }
         case 1: {
-            a3i5Tex(polygonIndex, addrOffset, int(s), int(t), sizeS);
+            a3i5Tex(palAddr, addrOffset, int(s), int(t), sizeS);
             break;
         }
         case 2: {
-            bool transparent0 = ((texImageParam >> 29) & 0x1) == 1;
-            pal4Tex(polygonIndex, addrOffset, int(s), int(t), sizeS, transparent0);
+            bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+            pal4Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
             break;
         }
         case 3: {
-            bool transparent0 = ((texImageParam >> 29) & 0x1) == 1;
-            pal16Tex(polygonIndex, addrOffset, int(s), int(t), sizeS, transparent0);
+            bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+            pal16Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
             break;
         }
         case 4: {
-            bool transparent0 = ((texImageParam >> 29) & 0x1) == 1;
-            pal256Tex(polygonIndex, addrOffset, int(s), int(t), sizeS, transparent0);
+            bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+            pal256Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
             break;
         }
         case 6: {
-            a5i3Tex(polygonIndex, addrOffset, int(s), int(t), sizeS);
+            a5i3Tex(palAddr, addrOffset, int(s), int(t), sizeS);
             break;
         }
         case 7: {
