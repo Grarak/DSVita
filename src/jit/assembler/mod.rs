@@ -1,5 +1,5 @@
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::block_inst::{BlockInst, BlockInstKind};
+use crate::jit::assembler::block_inst::BlockInst;
 use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
 use crate::jit::assembler::block_reg_set::BLOCK_REG_SET_ARRAY_SIZE;
 use crate::jit::inst_info::{Shift, ShiftValue};
@@ -22,6 +22,12 @@ pub const ANY_REG_LIMIT: u16 = BLOCK_REG_SET_ARRAY_SIZE as u16 * 32 - Reg::None 
 pub enum BlockReg {
     Any(u16),
     Fixed(Reg),
+}
+
+impl Default for BlockReg {
+    fn default() -> Self {
+        BlockReg::Any(0)
+    }
 }
 
 impl Hash for BlockReg {
@@ -94,6 +100,12 @@ impl Debug for BlockOperand {
                 write!(f, "{:x}", *imm)
             }
         }
+    }
+}
+
+impl Default for BlockOperand {
+    fn default() -> Self {
+        BlockOperand::Imm(0)
     }
 }
 
@@ -216,7 +228,7 @@ impl Debug for BlockShift {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct BlockOperandShift {
     pub operand: BlockOperand,
     pub shift: BlockShift,

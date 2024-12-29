@@ -5,6 +5,7 @@
 #![feature(arm_target_feature)]
 #![feature(const_trait_impl)]
 #![feature(core_intrinsics)]
+#![feature(downcast_unchecked)]
 #![feature(generic_const_exprs)]
 #![feature(naked_functions)]
 #![feature(new_zeroed_alloc)]
@@ -13,6 +14,7 @@
 #![feature(slice_swap_unchecked)]
 #![feature(stdarch_arm_neon_intrinsics)]
 #![feature(stmt_expr_attributes)]
+#![feature(trait_upcasting)]
 #![feature(vec_push_within_capacity)]
 
 use crate::cartridge_io::CartridgeIo;
@@ -45,13 +47,13 @@ mod cartridge_metadata;
 mod core;
 mod fixed_fifo;
 mod jit;
+mod linked_list;
 mod logging;
 mod math;
 mod mmap;
 mod presenter;
 mod settings;
 mod utils;
-mod linked_list;
 
 const BUILD_PROFILE_NAME: &str = include_str!(concat!(env!("OUT_DIR"), "/build_profile_name"));
 pub const DEBUG_LOG: bool = const_str_equal(BUILD_PROFILE_NAME, "debug");

@@ -2,7 +2,7 @@ use crate::fixed_fifo::FixedFifo;
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
 use crate::jit::assembler::block_asm::BLOCK_LOG;
-use crate::jit::assembler::block_inst::{BlockInst, BlockTransferOp};
+use crate::jit::assembler::block_inst::{BlockInst, TransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockReg, ANY_REG_LIMIT};
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
@@ -61,10 +61,10 @@ impl BlockRegAllocator {
         }
     }
 
-    fn gen_pre_handle_spilled_inst(&mut self, any_reg: u16, mapping: Reg, op: BlockTransferOp) {
+    fn gen_pre_handle_spilled_inst(&mut self, any_reg: u16, mapping: Reg, op: TransferOp) {
         self.dirty_regs += mapping;
         self.pre_allocate_insts
-            .push(LdrStrImm::generic(mapping, Reg::SP, any_reg * 4, op == BlockTransferOp::Read, false, false, true, true, Cond::AL));
+            .push(LdrStrImm::generic(mapping, Reg::SP, any_reg * 4, op == TransferOp::Read, false, false, true, true, Cond::AL));
     }
 
     fn gen_pre_move_reg(&mut self, dst: Reg, src: Reg) {
@@ -112,7 +112,7 @@ impl BlockRegAllocator {
                 if use_global_mapping {
                     if live_ranges[1].contains(BlockReg::Any(mapped_reg)) {
                         self.spilled += BlockReg::Any(mapped_reg);
-                        self.gen_pre_handle_spilled_inst(mapped_reg, global_mapping, BlockTransferOp::Write);
+                        self.gen_pre_handle_spilled_inst(mapped_reg, global_mapping, TransferOp::Write);
                     }
                     self.remove_stored_mapping(mapped_reg);
                 }
@@ -149,7 +149,7 @@ impl BlockRegAllocator {
 
                 if live_ranges[1].contains(BlockReg::Any(mapped_reg)) {
                     self.spilled += BlockReg::Any(mapped_reg);
-                    self.gen_pre_handle_spilled_inst(mapped_reg, reg, BlockTransferOp::Write);
+                    self.gen_pre_handle_spilled_inst(mapped_reg, reg, TransferOp::Write);
                 }
                 self.remove_stored_mapping(mapped_reg);
             }
@@ -168,7 +168,7 @@ impl BlockRegAllocator {
                 if self.spilled.contains(BlockReg::Any(any_reg)) {
                     let reg = self.allocate_reg(any_reg, live_ranges, used_regs);
                     self.spilled -= BlockReg::Any(any_reg);
-                    self.gen_pre_handle_spilled_inst(any_reg, reg, BlockTransferOp::Read);
+                    self.gen_pre_handle_spilled_inst(any_reg, reg, TransferOp::Read);
                     reg
                 } else {
                     panic!("input reg {any_reg} must be allocated")
@@ -192,7 +192,7 @@ impl BlockRegAllocator {
                     println!("Spill any reg {any_reg}");
                 }
                 self.spilled += BlockReg::Any(any_reg);
-                self.gen_pre_handle_spilled_inst(any_reg, fixed_reg, BlockTransferOp::Write);
+                self.gen_pre_handle_spilled_inst(any_reg, fixed_reg, TransferOp::Write);
             }
         }
     }
@@ -243,7 +243,7 @@ impl BlockRegAllocator {
                 }
                 if inputs.contains(BlockReg::Any(currently_used_by)) || live_ranges[1].contains(BlockReg::Any(currently_used_by)) {
                     self.spilled += BlockReg::Any(currently_used_by);
-                    self.gen_pre_handle_spilled_inst(currently_used_by, guest_reg, BlockTransferOp::Write);
+                    self.gen_pre_handle_spilled_inst(currently_used_by, guest_reg, TransferOp::Write);
                 }
                 self.remove_stored_mapping(currently_used_by);
             }
@@ -265,7 +265,7 @@ impl BlockRegAllocator {
             if is_input {
                 debug_assert!(self.spilled.contains(BlockReg::Any(guest_reg as u16)), "{guest_reg:?}, {relocatable_regs:?}");
                 self.spilled -= BlockReg::Any(guest_reg as u16);
-                self.gen_pre_handle_spilled_inst(guest_reg as u16, guest_reg, BlockTransferOp::Read);
+                self.gen_pre_handle_spilled_inst(guest_reg as u16, guest_reg, TransferOp::Read);
             }
             self.set_stored_mapping(guest_reg as u16, guest_reg);
         }
@@ -340,7 +340,7 @@ impl BlockRegAllocator {
                     if stored_mapping != Reg::None {
                         self.remove_stored_mapping(output_reg);
                         self.spilled += BlockReg::Any(output_reg);
-                        self.gen_pre_handle_spilled_inst(output_reg, stored_mapping, BlockTransferOp::Write);
+                        self.gen_pre_handle_spilled_inst(output_reg, stored_mapping, TransferOp::Write);
                     }
                 }
                 desired_reg_mapping => {
@@ -359,7 +359,7 @@ impl BlockRegAllocator {
                                     // other any reg is part of predetermined spilled
                                     self.remove_stored_mapping(currently_used_by);
                                     self.spilled += BlockReg::Any(currently_used_by);
-                                    self.gen_pre_handle_spilled_inst(currently_used_by, desired_reg_mapping, BlockTransferOp::Write);
+                                    self.gen_pre_handle_spilled_inst(currently_used_by, desired_reg_mapping, TransferOp::Write);
                                 }
                                 _ => {
                                     let mut moved = false;
@@ -381,7 +381,7 @@ impl BlockRegAllocator {
                                         // no unused any reg found, just spill the any reg using the desired reg
                                         self.remove_stored_mapping(currently_used_by);
                                         self.spilled += BlockReg::Any(currently_used_by);
-                                        self.gen_pre_handle_spilled_inst(currently_used_by, desired_reg_mapping, BlockTransferOp::Write);
+                                        self.gen_pre_handle_spilled_inst(currently_used_by, desired_reg_mapping, TransferOp::Write);
                                     }
                                 }
                             }
@@ -395,7 +395,7 @@ impl BlockRegAllocator {
                         self.gen_pre_move_reg(desired_reg_mapping, stored_mapping);
                     } else if self.spilled.contains(BlockReg::Any(output_reg)) {
                         self.spilled -= BlockReg::Any(output_reg);
-                        self.gen_pre_handle_spilled_inst(output_reg, desired_reg_mapping, BlockTransferOp::Read);
+                        self.gen_pre_handle_spilled_inst(output_reg, desired_reg_mapping, TransferOp::Read);
                     } else {
                         panic!("required output reg {output_reg:?} must already have a value");
                     }

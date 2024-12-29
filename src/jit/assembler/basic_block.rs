@@ -1,8 +1,8 @@
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::block_asm::{BlockAsm, BLOCK_LOG};
-use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockSystemRegOp, BlockTransferOp};
+use crate::jit::assembler::block_inst::{Alu, AluOp, AluSetCond, BlockInstType, SaveReg, SystemReg, SystemRegOp, Transfer, TransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
-use crate::jit::assembler::{BlockAsmBuf, BlockInstKind, BlockLabel};
+use crate::jit::assembler::{BlockAsmBuf, BlockLabel, BlockReg};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{MemoryAmount, ShiftType};
 use crate::IS_DEBUG;
@@ -69,15 +69,20 @@ impl BasicBlock {
         self.guest_regs_output_dirty = self.guest_regs_input_dirty;
 
         for i in self.block_entry_start..=self.block_entry_end {
-            match &mut asm.buf.insts[i].kind {
-                BlockInstKind::SaveContext { guest_regs, .. } => {
-                    *guest_regs = self.guest_regs_output_dirty;
+            match &mut asm.buf.insts[i].inst_type {
+                BlockInstType::SaveContext(inner) => {
+                    inner.guest_regs = self.guest_regs_output_dirty;
                     self.guest_regs_output_dirty.clear();
                 }
-                BlockInstKind::SaveReg { guest_reg, .. } | BlockInstKind::RestoreReg { guest_reg, .. } | BlockInstKind::MarkRegDirty { guest_reg, dirty: false } => {
-                    self.guest_regs_output_dirty -= *guest_reg
+                BlockInstType::SaveReg(inner) => self.guest_regs_output_dirty -= inner.guest_reg,
+                BlockInstType::RestoreReg(inner) => self.guest_regs_output_dirty -= inner.guest_reg,
+                BlockInstType::MarkRegDirty(inner) => {
+                    if inner.dirty {
+                        self.guest_regs_output_dirty += inner.guest_reg;
+                    } else {
+                        self.guest_regs_output_dirty -= inner.guest_reg;
+                    }
                 }
-                BlockInstKind::MarkRegDirty { guest_reg, dirty: true } => self.guest_regs_output_dirty += *guest_reg,
                 _ => {
                     let inst = &asm.buf.insts[i];
                     let (_, outputs) = inst.get_io();
@@ -93,131 +98,106 @@ impl BasicBlock {
         let mut last_pc = basic_block_start_pc;
 
         for i in self.block_entry_start..=self.block_entry_end {
-            let mut add_inst = true;
-
-            match &mut asm.buf.insts[i].kind {
-                BlockInstKind::Label { guest_pc: Some(pc), .. } => last_pc = *pc,
-                BlockInstKind::GuestPc(pc) => last_pc = *pc,
-                BlockInstKind::SaveContext { guest_regs, thread_regs_addr_reg } => {
-                    let thread_regs_addr_reg = *thread_regs_addr_reg;
+            match &asm.buf.insts[i].inst_type {
+                BlockInstType::Label(inner) => {
+                    if let Some(pc) = inner.guest_pc {
+                        last_pc = pc;
+                    }
+                }
+                BlockInstType::GuestPc(inner) => last_pc = inner.0,
+                BlockInstType::SaveContext(inner) => {
+                    let thread_regs_addr_reg = inner.thread_regs_addr_reg;
                     // Unroll regs to save into individual save regs, easier on reg allocator later on
-                    for guest_reg in *guest_regs {
+                    for guest_reg in inner.guest_regs {
                         self.inst_indices.push(asm.buf.insts.len() as u16);
                         asm.buf.insts.push(
-                            BlockInstKind::SaveReg {
+                            SaveReg {
                                 guest_reg,
-                                reg_mapped: guest_reg.into(),
+                                reg_mapped: BlockReg::from(guest_reg),
                                 thread_regs_addr_reg,
                             }
                             .into(),
                         );
                     }
-                    add_inst = false;
+                    continue;
                 }
-                BlockInstKind::SaveReg { .. } | BlockInstKind::MarkRegDirty { .. } => {}
-                BlockInstKind::PadBlock { label, correction } => self.pad_label = Some((*label, *correction)),
-                _ => {
+                BlockInstType::SaveReg(_) | BlockInstType::MarkRegDirty(_) => {}
+                BlockInstType::PadBlock(inner) => {
+                    self.pad_label = Some((inner.label, inner.correction));
+                }
+                inst_type => {
                     let (inputs, _) = asm.buf.insts[i].get_io();
-                    for guest_reg in inputs.get_guests() {
-                        match guest_reg {
-                            Reg::PC => {
-                                let mut last_pc = last_pc + if thumb { 4 } else { 8 };
-                                if thumb {
-                                    match &asm.buf.insts[i].kind {
-                                        BlockInstKind::Alu3 { thumb_pc_aligned, .. }
-                                        | BlockInstKind::Alu2Op1 { thumb_pc_aligned, .. }
-                                        | BlockInstKind::Alu2Op0 { thumb_pc_aligned, .. }
-                                        | BlockInstKind::Mul { thumb_pc_aligned, .. } => {
-                                            if *thumb_pc_aligned {
-                                                last_pc &= !0x3;
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                } else if let BlockInstKind::GenericGuestInst { inst, .. } = &asm.buf.insts[i].kind {
-                                    // PC + 12 when ALU shift by register
-                                    if inst.op.is_alu_reg_shift() && *inst.operands().last().unwrap().as_reg().unwrap().0 == Reg::PC {
-                                        last_pc += 4;
-                                    }
+                    let inputs = inputs.get_guests();
+
+                    if inputs.is_reserved(Reg::PC) {
+                        let mut last_pc = last_pc + if thumb { 4 } else { 8 };
+                        if thumb {
+                            if let BlockInstType::Alu(inner) = inst_type {
+                                if inner.thumb_pc_aligned {
+                                    last_pc &= !0x3;
                                 }
-
-                                self.inst_indices.push(asm.buf.insts.len() as u16);
-                                asm.buf.insts.push(
-                                    BlockInstKind::Alu2Op0 {
-                                        op: BlockAluOp::Mov,
-                                        operands: [Reg::PC.into(), last_pc.into()],
-                                        set_cond: BlockAluSetCond::None,
-                                        thumb_pc_aligned: false,
-                                    }
-                                    .into(),
-                                );
                             }
-                            Reg::CPSR => {
-                                self.inst_indices.push(asm.buf.insts.len() as u16);
-                                asm.buf.insts.push(
-                                    BlockInstKind::SystemReg {
-                                        op: BlockSystemRegOp::Mrs,
-                                        operand: Reg::CPSR.into(),
-                                    }
-                                    .into(),
-                                );
-
-                                self.inst_indices.push(asm.buf.insts.len() as u16);
-                                asm.buf.insts.push(
-                                    BlockInstKind::Transfer {
-                                        op: BlockTransferOp::Read,
-                                        operands: [asm.tmp_guest_cpsr_reg.into(), asm.thread_regs_addr_reg.into(), (Reg::CPSR as u32 * 4).into()],
-                                        signed: false,
-                                        amount: MemoryAmount::Half,
-                                        add_to_base: true,
-                                    }
-                                    .into(),
-                                );
-
-                                self.inst_indices.push(asm.buf.insts.len() as u16);
-                                asm.buf.insts.push(
-                                    BlockInstKind::Alu3 {
-                                        op: BlockAluOp::And,
-                                        operands: [Reg::CPSR.into(), Reg::CPSR.into(), (0xF8, ShiftType::Ror, 4).into()],
-                                        set_cond: BlockAluSetCond::None,
-                                        thumb_pc_aligned: false,
-                                    }
-                                    .into(),
-                                );
-
-                                self.inst_indices.push(asm.buf.insts.len() as u16);
-                                asm.buf.insts.push(
-                                    BlockInstKind::Alu3 {
-                                        op: BlockAluOp::Orr,
-                                        operands: [Reg::CPSR.into(), Reg::CPSR.into(), asm.tmp_guest_cpsr_reg.into()],
-                                        set_cond: BlockAluSetCond::None,
-                                        thumb_pc_aligned: false,
-                                    }
-                                    .into(),
-                                );
+                        } else if let BlockInstType::GenericGuest(inner) = inst_type {
+                            // PC + 12 when ALU shift by register
+                            if inner.inst_info.op.is_alu_reg_shift() && *inner.inst_info.operands().last().unwrap().as_reg().unwrap().0 == Reg::PC {
+                                last_pc += 4;
                             }
-                            Reg::SPSR => {
-                                self.inst_indices.push(asm.buf.insts.len() as u16);
-                                asm.buf.insts.push(
-                                    BlockInstKind::Transfer {
-                                        op: BlockTransferOp::Read,
-                                        operands: [Reg::SPSR.into(), asm.thread_regs_addr_reg.into(), (Reg::SPSR as u32 * 4).into()],
-                                        signed: false,
-                                        amount: MemoryAmount::Word,
-                                        add_to_base: true,
-                                    }
-                                    .into(),
-                                );
-                            }
-                            _ => {}
                         }
+
+                        self.inst_indices.push(asm.buf.insts.len() as u16);
+                        asm.buf.insts.push(Alu::alu2(AluOp::Mov, [Reg::PC.into(), last_pc.into()], AluSetCond::None, false).into());
+                    }
+
+                    if inputs.is_reserved(Reg::CPSR) {
+                        self.inst_indices.push(asm.buf.insts.len() as u16);
+                        asm.buf.insts.push(
+                            SystemReg {
+                                op: SystemRegOp::Mrs,
+                                operand: Reg::CPSR.into(),
+                            }
+                            .into(),
+                        );
+
+                        self.inst_indices.push(asm.buf.insts.len() as u16);
+                        asm.buf.insts.push(
+                            Transfer {
+                                op: TransferOp::Read,
+                                operands: [asm.tmp_guest_cpsr_reg.into(), asm.thread_regs_addr_reg.into(), (Reg::CPSR as u32 * 4).into()],
+                                signed: false,
+                                amount: MemoryAmount::Half,
+                                add_to_base: true,
+                            }
+                            .into(),
+                        );
+
+                        self.inst_indices.push(asm.buf.insts.len() as u16);
+                        asm.buf
+                            .insts
+                            .push(Alu::alu3(AluOp::And, [Reg::CPSR.into(), Reg::CPSR.into(), (0xF8, ShiftType::Ror, 4).into()], AluSetCond::None, false).into());
+
+                        self.inst_indices.push(asm.buf.insts.len() as u16);
+                        asm.buf
+                            .insts
+                            .push(Alu::alu3(AluOp::Orr, [Reg::CPSR.into(), Reg::CPSR.into(), asm.tmp_guest_cpsr_reg.into()], AluSetCond::None, false).into());
+                    }
+
+                    if inputs.is_reserved(Reg::SPSR) {
+                        self.inst_indices.push(asm.buf.insts.len() as u16);
+                        asm.buf.insts.push(
+                            Transfer {
+                                op: TransferOp::Read,
+                                operands: [Reg::SPSR.into(), asm.thread_regs_addr_reg.into(), (Reg::SPSR as u32 * 4).into()],
+                                signed: false,
+                                amount: MemoryAmount::Word,
+                                add_to_base: true,
+                            }
+                            .into(),
+                        );
                     }
                 }
             }
 
-            if add_inst {
-                self.inst_indices.push(i as u16);
-            }
+            self.inst_indices.push(i as u16);
         }
 
         self.regs_live_ranges.resize(self.inst_indices.len() + 1, BlockRegSet::new());
@@ -236,8 +216,8 @@ impl BasicBlock {
     pub fn remove_dead_code(&mut self, asm: &mut BlockAsm) {
         for (i, &inst_index) in self.inst_indices.iter().enumerate() {
             let inst = &mut asm.buf.insts[inst_index as usize];
-            if let BlockInstKind::RestoreReg { guest_reg, .. } = &inst.kind {
-                if *guest_reg != Reg::CPSR {
+            if let BlockInstType::RestoreReg(inner) = &inst.inst_type {
+                if inner.guest_reg != Reg::CPSR {
                     let (_, outputs) = inst.get_io();
                     if (self.regs_live_ranges[i + 1] - outputs) == self.regs_live_ranges[i + 1] {
                         inst.skip = true;
@@ -277,7 +257,7 @@ impl BasicBlock {
 
             let end_entry = *self.inst_indices.last().unwrap() as usize;
             // Make sure to restore mapping before a branch
-            if let BlockInstKind::Branch { .. } = &asm.buf.insts[end_entry].kind {
+            if let BlockInstType::Branch(_) = &asm.buf.insts[end_entry].inst_type {
                 self.pre_opcodes_indices[last_index] = pre_opcodes_start as u16;
                 self.pre_opcodes_indices[last_index + 1] = asm.buf.reg_allocator.pre_allocate_insts.len() as u16;
             }
@@ -309,19 +289,21 @@ impl BasicBlock {
             let start_len = self.opcodes.len();
 
             if IS_DEBUG && unsafe { BLOCK_LOG } && opcodes_offset != 0 {
-                match &inst.kind {
-                    BlockInstKind::GuestPc(pc) => {
-                        println!("(0x{:x}, 0x{pc:x}),", start_len + opcodes_offset);
+                match &inst.inst_type {
+                    BlockInstType::GuestPc(inner) => {
+                        println!("(0x{:x}, 0x{:x}),", start_len + opcodes_offset, inner.0);
                     }
-                    BlockInstKind::Label { guest_pc: Some(pc), .. } => {
-                        println!("(0x{:x}, 0x{pc:x}),", start_len + opcodes_offset);
+                    BlockInstType::Label(inner) => {
+                        if let Some(pc) = inner.guest_pc {
+                            println!("(0x{:x}, 0x{pc:x}),", start_len + opcodes_offset);
+                        }
                     }
                     _ => {}
                 }
             }
 
-            inst.kind.emit_opcode(&mut self.opcodes, start_len, &mut asm.buf.branch_placeholders[block_index], used_host_regs);
-            if !inst.kind.unconditional() {
+            inst.emit_opcode(&mut self.opcodes, start_len, &mut asm.buf.branch_placeholders[block_index], used_host_regs);
+            if !inst.unconditional {
                 for i in start_len..self.opcodes.len() {
                     self.opcodes[i] = (self.opcodes[i] & !(0xF << 28)) | ((inst.cond as u32) << 28);
                 }

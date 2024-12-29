@@ -1,10 +1,13 @@
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::basic_block::BasicBlock;
-use crate::jit::assembler::block_inst::{BlockAluOp, BlockAluSetCond, BlockInst, BlockSystemRegOp, BlockTransferOp, BranchEncoding, GuestInstInfo};
+use crate::jit::assembler::block_inst::{
+    Alu, AluOp, AluSetCond, BitField, BlockInst, BlockInstType, Branch, BranchEncoding, Call, Epilogue, Generic, GenericGuest, GuestPc, GuestTransferMultiple, Label, MarkRegDirty, PadBlock, Preload,
+    RestoreReg, SaveContext, SaveReg, SystemReg, SystemRegOp, Transfer, TransferMultiple, TransferOp,
+};
 use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
 use crate::jit::assembler::block_reg_set::BlockRegSet;
-use crate::jit::assembler::{BlockAsmBuf, BlockInstKind, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift, ANY_REG_LIMIT};
+use crate::jit::assembler::{BlockAsmBuf, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift, ANY_REG_LIMIT};
 use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
@@ -18,7 +21,7 @@ pub static mut BLOCK_LOG: bool = false;
 macro_rules! alu3 {
     ($name:ident, $inst:ident, $set_cond:ident, $thumb_pc_aligned:expr) => {
         pub fn $name(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-            self.add_op3(BlockAluOp::$inst, op0.into(), op1.into(), op2.into(), BlockAluSetCond::$set_cond, $thumb_pc_aligned)
+            self.add_op3(AluOp::$inst, op0.into(), op1.into(), op2.into(), AluSetCond::$set_cond, $thumb_pc_aligned)
         }
     };
 }
@@ -26,7 +29,7 @@ macro_rules! alu3 {
 macro_rules! alu2_op1 {
     ($name:ident, $inst:ident, $set_cond:ident, $thumb_pc_aligned:expr) => {
         pub fn $name(&mut self, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-            self.add_op2_op1(BlockAluOp::$inst, op1.into(), op2.into(), BlockAluSetCond::$set_cond, $thumb_pc_aligned)
+            self.add_op2_op1(AluOp::$inst, op1.into(), op2.into(), AluSetCond::$set_cond, $thumb_pc_aligned)
         }
     };
 }
@@ -34,7 +37,7 @@ macro_rules! alu2_op1 {
 macro_rules! alu2_op0 {
     ($name:ident, $inst:ident, $set_cond:ident, $thumb_pc_aligned:expr) => {
         pub fn $name(&mut self, op0: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-            self.add_op2_op0(BlockAluOp::$inst, op0.into(), op2.into(), BlockAluSetCond::$set_cond, $thumb_pc_aligned)
+            self.add_op2_op0(AluOp::$inst, op0.into(), op2.into(), AluSetCond::$set_cond, $thumb_pc_aligned)
         }
     };
 }
@@ -94,7 +97,7 @@ impl<'a> BlockAsm<'a> {
             inst_insert_index: None,
         };
 
-        instance.insert_inst(BlockInstKind::Prologue);
+        instance.insert_inst(Generic::Prologue);
 
         // First argument is store_host_sp: bool
         if !is_common_fun {
@@ -229,37 +232,22 @@ impl<'a> BlockAsm<'a> {
         }
     }
 
-    fn add_op3(&mut self, op: BlockAluOp, op0: BlockReg, op1: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
+    fn add_op3(&mut self, op: AluOp, op0: BlockReg, op1: BlockReg, mut op2: BlockOperandShift, set_cond: AluSetCond, thumb_pc_aligned: bool) {
         self.check_alu_imm_limit(&mut op2, true);
         self.check_imm_shift_limit(&mut op2);
-        self.insert_inst(BlockInstKind::Alu3 {
-            op,
-            operands: [op0.into(), op1.into(), op2],
-            set_cond,
-            thumb_pc_aligned,
-        })
+        self.insert_inst(Alu::alu3(op, [op0.into(), op1.into(), op2], set_cond, thumb_pc_aligned))
     }
 
-    fn add_op2_op1(&mut self, op: BlockAluOp, op1: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
+    fn add_op2_op1(&mut self, op: AluOp, op1: BlockReg, mut op2: BlockOperandShift, set_cond: AluSetCond, thumb_pc_aligned: bool) {
         self.check_alu_imm_limit(&mut op2, true);
         self.check_imm_shift_limit(&mut op2);
-        self.insert_inst(BlockInstKind::Alu2Op1 {
-            op,
-            operands: [op1.into(), op2],
-            set_cond,
-            thumb_pc_aligned,
-        })
+        self.insert_inst(Alu::alu2(op, [op1.into(), op2], set_cond, thumb_pc_aligned))
     }
 
-    fn add_op2_op0(&mut self, op: BlockAluOp, op0: BlockReg, mut op2: BlockOperandShift, set_cond: BlockAluSetCond, thumb_pc_aligned: bool) {
-        self.check_alu_imm_limit(&mut op2, op != BlockAluOp::Mov);
+    fn add_op2_op0(&mut self, op: AluOp, op0: BlockReg, mut op2: BlockOperandShift, set_cond: AluSetCond, thumb_pc_aligned: bool) {
+        self.check_alu_imm_limit(&mut op2, op != AluOp::Mov);
         self.check_imm_shift_limit(&mut op2);
-        self.insert_inst(BlockInstKind::Alu2Op0 {
-            op,
-            operands: [op0.into(), op2],
-            set_cond,
-            thumb_pc_aligned,
-        })
+        self.insert_inst(Alu::alu2(op, [op0.into(), op2], set_cond, thumb_pc_aligned))
     }
 
     pub fn load_u8(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
@@ -287,27 +275,27 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn transfer_read(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
-        self.transfer(BlockTransferOp::Read, op0, op1, op2, signed, amount)
+        self.transfer(TransferOp::Read, op0, op1, op2, signed, amount)
     }
 
     pub fn transfer_write(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
-        self.transfer(BlockTransferOp::Write, op0, op1, op2, signed, amount)
+        self.transfer(TransferOp::Write, op0, op1, op2, signed, amount)
     }
 
-    pub fn transfer(&mut self, op: BlockTransferOp, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
+    pub fn transfer(&mut self, op: TransferOp, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
         let mut op2 = op2.into();
         if op2.operand.needs_reg_for_imm(0xFFF) {
             self.mov(self.tmp_operand_imm_reg, op2.operand);
             op2 = self.tmp_operand_imm_reg.into();
         }
         self.check_imm_shift_limit(&mut op2);
-        self.insert_inst(BlockInstKind::Transfer {
+        self.insert_inst(Transfer {
             op,
             operands: [op0.into().into(), op1.into().into(), op2],
             signed,
             amount,
             add_to_base: true,
-        });
+        })
     }
 
     pub fn transfer_push(&mut self, operand: impl Into<BlockReg>, regs: RegReserve) {
@@ -319,8 +307,8 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn transfer_read_multiple(&mut self, operand: impl Into<BlockReg>, regs: RegReserve, write_back: bool, pre: bool, add_to_base: bool) {
-        self.insert_inst(BlockInstKind::TransferMultiple {
-            op: BlockTransferOp::Read,
+        self.insert_inst(TransferMultiple {
+            op: TransferOp::Read,
             operand: operand.into(),
             regs,
             write_back,
@@ -330,8 +318,8 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn transfer_write_multiple(&mut self, operand: impl Into<BlockReg>, regs: RegReserve, write_back: bool, pre: bool, add_to_base: bool) {
-        self.insert_inst(BlockInstKind::TransferMultiple {
-            op: BlockTransferOp::Write,
+        self.insert_inst(TransferMultiple {
+            op: TransferOp::Write,
             operand: operand.into(),
             regs,
             write_back,
@@ -350,8 +338,8 @@ impl<'a> BlockAsm<'a> {
         pre: bool,
         add_to_base: bool,
     ) {
-        self.insert_inst(BlockInstKind::GuestTransferMultiple {
-            op: BlockTransferOp::Read,
+        self.insert_inst(GuestTransferMultiple {
+            op: TransferOp::Read,
             addr_reg: addr_reg.into(),
             addr_out_reg: addr_out_reg.into(),
             gp_regs,
@@ -372,8 +360,8 @@ impl<'a> BlockAsm<'a> {
         pre: bool,
         add_to_base: bool,
     ) {
-        self.insert_inst(BlockInstKind::GuestTransferMultiple {
-            op: BlockTransferOp::Write,
+        self.insert_inst(GuestTransferMultiple {
+            op: TransferOp::Write,
             addr_reg: addr_reg.into(),
             addr_out_reg: addr_out_reg.into(),
             gp_regs,
@@ -385,52 +373,40 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn mrs_cpsr(&mut self, operand: impl Into<BlockReg>) {
-        self.insert_inst(BlockInstKind::SystemReg {
-            op: BlockSystemRegOp::Mrs,
+        self.insert_inst(SystemReg {
+            op: SystemRegOp::Mrs,
             operand: operand.into().into(),
         })
     }
 
     pub fn msr_cpsr(&mut self, operand: impl Into<BlockOperand>) {
-        self.insert_inst(BlockInstKind::SystemReg {
-            op: BlockSystemRegOp::Msr,
+        self.insert_inst(SystemReg {
+            op: SystemRegOp::Msr,
             operand: operand.into(),
         })
     }
 
     pub fn bfc(&mut self, operand: impl Into<BlockReg>, lsb: u8, width: u8) {
-        self.insert_inst(BlockInstKind::Bfc { operand: operand.into(), lsb, width })
+        self.insert_inst(BitField::bfc(operand.into(), lsb, width))
     }
 
     pub fn bfi(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, lsb: u8, width: u8) {
-        self.insert_inst(BlockInstKind::Bfi {
-            operands: [op0.into(), op1.into()],
-            lsb,
-            width,
-        });
+        self.insert_inst(BitField::bfi([op0.into(), op1.into()], lsb, width));
     }
 
     pub fn ubfx(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, lsb: u8, width: u8) {
-        self.insert_inst(BlockInstKind::Ubfx {
-            operands: [op0.into(), op1.into()],
-            lsb,
-            width,
-        });
+        self.insert_inst(BitField::ubfx([op0.into(), op1.into()], lsb, width));
     }
 
     pub fn muls_guest_thumb_pc_aligned(&mut self, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>) {
-        self.insert_inst(BlockInstKind::Mul {
-            operands: [op0.into().into(), op1.into().into(), op2.into()],
-            set_cond: BlockAluSetCond::HostGuest,
-            thumb_pc_aligned: true,
-        });
+        self.insert_inst(Alu::mul([op0.into().into(), op1.into().into(), op2.into()], AluSetCond::HostGuest, true));
     }
 
     fn label_internal(&mut self, label: BlockLabel, unlikely: bool) {
         if !self.used_labels.insert(label.0) {
             panic!("{label:?} was already added");
         }
-        self.insert_inst(BlockInstKind::Label { label, guest_pc: None, unlikely })
+        self.insert_inst(Label { label, guest_pc: None, unlikely })
     }
 
     pub fn label(&mut self, label: BlockLabel) {
@@ -444,34 +420,36 @@ impl<'a> BlockAsm<'a> {
     pub fn branch(&mut self, label: BlockLabel, cond: Cond) {
         self.insert_inst(BlockInst::new(
             cond,
-            BlockInstKind::Branch {
+            Branch {
                 label,
                 block_index: 0,
                 fallthrough: false,
-            },
+            }
+            .into(),
         ))
     }
 
     pub fn branch_fallthrough(&mut self, label: BlockLabel, cond: Cond) {
         self.insert_inst(BlockInst::new(
             cond,
-            BlockInstKind::Branch {
+            Branch {
                 label,
                 block_index: 0,
                 fallthrough: true,
-            },
+            }
+            .into(),
         ))
     }
 
     pub fn save_context(&mut self) {
-        self.insert_inst(BlockInstKind::SaveContext {
+        self.insert_inst(SaveContext {
             guest_regs: RegReserve::new(),
             thread_regs_addr_reg: self.thread_regs_addr_reg,
         });
     }
 
     pub fn save_reg(&mut self, guest_reg: Reg) {
-        self.insert_inst(BlockInstKind::SaveReg {
+        self.insert_inst(SaveReg {
             guest_reg,
             reg_mapped: BlockReg::from(guest_reg),
             thread_regs_addr_reg: self.thread_regs_addr_reg,
@@ -479,7 +457,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn restore_reg(&mut self, guest_reg: Reg) {
-        self.insert_inst(BlockInstKind::RestoreReg {
+        self.insert_inst(RestoreReg {
             guest_reg,
             reg_mapped: BlockReg::from(guest_reg),
             thread_regs_addr_reg: self.thread_regs_addr_reg,
@@ -488,19 +466,19 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn mark_reg_dirty(&mut self, guest_reg: Reg, dirty: bool) {
-        self.insert_inst(BlockInstKind::MarkRegDirty { guest_reg, dirty });
+        self.insert_inst(MarkRegDirty { guest_reg, dirty });
     }
 
     pub fn epilogue(&mut self) {
         let host_sp_addr_reg = self.thread_regs_addr_reg;
         self.mov(host_sp_addr_reg, self.host_sp_ptr as u32);
         self.load_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
-        self.insert_inst(BlockInstKind::Epilogue { restore_all_regs: true });
+        self.insert_inst(Epilogue { restore_all_regs: true });
     }
 
     pub fn epilogue_previous_block(&mut self) {
         self.add(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4);
-        self.insert_inst(BlockInstKind::Epilogue { restore_all_regs: false });
+        self.insert_inst(Epilogue { restore_all_regs: false });
     }
 
     pub fn call(&mut self, func: impl Into<BlockOperand>) {
@@ -572,16 +550,16 @@ impl<'a> BlockAsm<'a> {
     ) {
         let args = self.handle_call_args(arg0, arg1, arg2, arg3);
         self.mov(self.tmp_func_call_reg, func.into());
-        self.insert_inst(BlockInstKind::Call {
-            func_reg: self.tmp_func_call_reg,
-            args: [
+        self.insert_inst(Call::reg(
+            self.tmp_func_call_reg,
+            [
                 args[0].map(|_| BlockReg::Fixed(Reg::R0)),
                 args[1].map(|_| BlockReg::Fixed(Reg::R1)),
                 args[2].map(|_| BlockReg::Fixed(Reg::R2)),
                 args[3].map(|_| BlockReg::Fixed(Reg::R3)),
             ],
             has_return,
-        });
+        ));
     }
 
     pub fn call_common(&mut self, offset: usize) {
@@ -614,43 +592,32 @@ impl<'a> BlockAsm<'a> {
         has_return: bool,
     ) {
         let args = self.handle_call_args(arg0, arg1, arg2, arg3);
-        self.insert_inst(BlockInstKind::CallCommon {
-            mem_offset: offset,
-            args: [
+        self.insert_inst(Call::offset(
+            offset,
+            [
                 args[0].map(|_| BlockReg::Fixed(Reg::R0)),
                 args[1].map(|_| BlockReg::Fixed(Reg::R1)),
                 args[2].map(|_| BlockReg::Fixed(Reg::R2)),
                 args[3].map(|_| BlockReg::Fixed(Reg::R3)),
             ],
             has_return,
-        });
+        ));
     }
 
     pub fn bkpt(&mut self, id: u16) {
-        self.insert_inst(BlockInstKind::Bkpt(id));
+        self.insert_inst(Generic::Bkpt(id));
     }
 
     pub fn pli(&mut self, op0: impl Into<BlockReg>, offset: u16, add: bool) {
-        self.insert_inst(BlockInstKind::Preload { operand: op0.into(), offset, add })
+        self.insert_inst(Preload { operand: op0.into(), offset, add })
     }
 
     pub fn nop(&mut self) {
-        self.insert_inst(BlockInstKind::Nop);
-    }
-
-    pub fn find_guest_pc_inst_index(&self, guest_pc_to_find: u32) -> Option<usize> {
-        for (i, inst) in self.buf.insts.iter().enumerate().rev() {
-            if let BlockInstKind::GuestPc(guest_pc) = &inst.kind {
-                if *guest_pc == guest_pc_to_find {
-                    return Some(i);
-                }
-            }
-        }
-        None
+        self.insert_inst(Generic::Nop);
     }
 
     pub fn guest_pc(&mut self, pc: u32) {
-        self.insert_inst(BlockInstKind::GuestPc(pc));
+        self.insert_inst(GuestPc(pc));
     }
 
     pub fn guest_branch(&mut self, cond: Cond, target_pc: u32) {
@@ -664,38 +631,17 @@ impl<'a> BlockAsm<'a> {
         };
         self.insert_inst(BlockInst::new(
             cond,
-            BlockInstKind::Branch {
+            Branch {
                 label,
                 block_index: 0,
                 fallthrough: false,
-            },
+            }
+            .into(),
         ));
     }
 
     pub fn generic_guest_inst(&mut self, inst_info: &mut InstInfo) {
-        self.insert_inst(BlockInstKind::GenericGuestInst {
-            inst: GuestInstInfo::new(inst_info),
-            regs_mapping: [
-                BlockReg::from(Reg::R0),
-                BlockReg::from(Reg::R1),
-                BlockReg::from(Reg::R2),
-                BlockReg::from(Reg::R3),
-                BlockReg::from(Reg::R4),
-                BlockReg::from(Reg::R5),
-                BlockReg::from(Reg::R6),
-                BlockReg::from(Reg::R7),
-                BlockReg::from(Reg::R8),
-                BlockReg::from(Reg::R9),
-                BlockReg::from(Reg::R10),
-                BlockReg::from(Reg::R11),
-                BlockReg::from(Reg::R12),
-                BlockReg::from(Reg::SP),
-                BlockReg::from(Reg::LR),
-                BlockReg::from(Reg::PC),
-                BlockReg::from(Reg::CPSR),
-                BlockReg::from(Reg::SPSR),
-            ],
-        });
+        self.insert_inst(GenericGuest::new(inst_info));
     }
 
     pub fn start_cond_block(&mut self, cond: Cond) {
@@ -722,7 +668,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn pad_block(&mut self, label: BlockLabel, correction: i32) {
-        self.insert_inst(BlockInstKind::PadBlock { label, correction });
+        self.insert_inst(PadBlock { label, correction });
     }
 
     fn resolve_guest_regs(&mut self, basic_blocks: &mut [BasicBlock], guest_regs_dirty: RegReserve, block_indices: &[usize], reachable_blocks: &mut NoHashSet<usize>) {
@@ -777,49 +723,82 @@ impl<'a> BlockAsm<'a> {
                 (&mut basic_blocks, &mut basic_block_label_mapping)
             };
 
-            let mut handle_label = |asm: &mut Self, label: BlockLabel, unlikely: bool| {
+            let handle_label = |asm,
+                                basic_blocks: &mut Vec<BasicBlock>,
+                                label: BlockLabel,
+                                unlikely: bool,
+                                basic_block_start: &mut usize,
+                                basic_block_label_mapping: &mut NoHashMap<_, _>,
+                                last_label_unlikely: &mut bool,
+                                last_label: &mut Option<BlockLabel>| {
                 // block_start_entry can be the same as current_node, when the previous iteration ended with a branch
-                if basic_block_start != i {
-                    basic_blocks.push(BasicBlock::new(asm, basic_block_start, i - 1));
-                    basic_block_start = i;
+                if *basic_block_start != i {
+                    basic_blocks.push(BasicBlock::new(asm, *basic_block_start, i - 1));
+                    *basic_block_start = i;
                     if let Some(last_label) = last_label {
                         basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
                     }
                 }
-                last_label_unlikely = unlikely;
-                last_label = Some(label);
+                *last_label_unlikely = unlikely;
+                *last_label = Some(label);
             };
 
-            match &self.buf.insts[i].kind {
-                BlockInstKind::GuestPc(pc) => {
-                    if let Some(guest_label) = self.buf.guest_branches_mapping.get(pc) {
-                        self.buf.insts[i] = BlockInstKind::Label {
+            let handle_branch = |asm,
+                                 basic_blocks: &mut Vec<BasicBlock>,
+                                 basic_block_start: &mut usize,
+                                 basic_block_label_mapping: &mut NoHashMap<_, _>,
+                                 last_label_unlikely: &mut bool,
+                                 last_label: &mut Option<BlockLabel>| {
+                basic_blocks.push(BasicBlock::new(asm, *basic_block_start, i));
+                *basic_block_start = i + 1;
+                if let Some(last_label) = last_label {
+                    basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
+                }
+                *last_label_unlikely = false;
+                *last_label = None;
+            };
+
+            match &self.buf.insts[i].inst_type {
+                BlockInstType::GuestPc(inner) => {
+                    let guest_pc = inner.0;
+                    if let Some(guest_label) = self.buf.guest_branches_mapping.get(&guest_pc) {
+                        self.buf.insts[i] = Label {
                             label: *guest_label,
-                            guest_pc: Some(*pc),
+                            guest_pc: Some(guest_pc),
                             unlikely: false,
                         }
                         .into();
-                        handle_label(self, *guest_label, false);
+                        handle_label(
+                            self,
+                            basic_blocks,
+                            *guest_label,
+                            false,
+                            &mut basic_block_start,
+                            basic_block_label_mapping,
+                            &mut last_label_unlikely,
+                            &mut last_label,
+                        );
                     }
                 }
-                BlockInstKind::Label { label, unlikely, .. } => handle_label(self, *label, *unlikely),
-                BlockInstKind::Branch { .. } => {
-                    basic_blocks.push(BasicBlock::new(self, basic_block_start, i));
-                    basic_block_start = i + 1;
-                    if let Some(last_label) = last_label {
-                        basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
-                    }
-                    last_label_unlikely = false;
-                    last_label = None;
+                BlockInstType::Label(inner) => {
+                    handle_label(
+                        self,
+                        basic_blocks,
+                        inner.label,
+                        inner.unlikely,
+                        &mut basic_block_start,
+                        basic_block_label_mapping,
+                        &mut last_label_unlikely,
+                        &mut last_label,
+                    );
                 }
-                BlockInstKind::Call { has_return: false, .. } | BlockInstKind::CallCommon { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {
-                    basic_blocks.push(BasicBlock::new(self, basic_block_start, i));
-                    basic_block_start = i + 1;
-                    if let Some(last_label) = last_label {
-                        basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
+                BlockInstType::Branch(_) | BlockInstType::Epilogue(_) => {
+                    handle_branch(self, basic_blocks, &mut basic_block_start, basic_block_label_mapping, &mut last_label_unlikely, &mut last_label)
+                }
+                BlockInstType::Call(inner) => {
+                    if !inner.has_return {
+                        handle_branch(self, basic_blocks, &mut basic_block_start, basic_block_label_mapping, &mut last_label_unlikely, &mut last_label);
                     }
-                    last_label_unlikely = false;
-                    last_label = None;
                 }
                 _ => {}
             }
@@ -848,17 +827,22 @@ impl<'a> BlockAsm<'a> {
             let last_inst_index = basic_block.block_entry_end;
             let cond = self.buf.insts[last_inst_index].cond;
 
-            match &mut self.buf.insts[last_inst_index].kind {
-                BlockInstKind::Branch { label, block_index, fallthrough } => {
-                    let labelled_block_index = basic_block_label_mapping.get(&label.0).unwrap();
+            match &mut self.buf.insts[last_inst_index].inst_type {
+                BlockInstType::Branch(inner) => {
+                    let labelled_block_index = basic_block_label_mapping.get(&inner.label.0).unwrap();
                     basic_block.exit_blocks.push(*labelled_block_index);
-                    *block_index = *labelled_block_index;
-                    if (*fallthrough || cond != Cond::AL) && i + 1 < basic_blocks_len {
+                    inner.block_index = *labelled_block_index;
+                    if (inner.fallthrough || cond != Cond::AL) && i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.push(i + 1);
                     }
                 }
                 // Don't add exit when last command in basic block is a breakout
-                BlockInstKind::Call { has_return: false, .. } | BlockInstKind::CallCommon { has_return: false, .. } | BlockInstKind::Epilogue { .. } => {
+                BlockInstType::Call(inner) => {
+                    if (inner.has_return || cond != Cond::AL) && i + 1 < basic_blocks_len {
+                        basic_block.exit_blocks.push(i + 1);
+                    }
+                }
+                BlockInstType::Epilogue(_) => {
                     if cond != Cond::AL && i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.push(i + 1);
                     }
@@ -889,13 +873,15 @@ impl<'a> BlockAsm<'a> {
 
             let mut basic_block_start_pc = block_start_pc;
             for i in (0..=basic_block.block_entry_start).rev() {
-                match &self.buf.insts[i].kind {
-                    BlockInstKind::Label { guest_pc: Some(pc), .. } => {
-                        basic_block_start_pc = *pc;
-                        break;
+                match &self.buf.insts[i].inst_type {
+                    BlockInstType::Label(inner) => {
+                        if let Some(pc) = inner.guest_pc {
+                            basic_block_start_pc = pc;
+                            break;
+                        }
                     }
-                    BlockInstKind::GuestPc(pc) => {
-                        basic_block_start_pc = *pc;
+                    BlockInstType::GuestPc(inner) => {
+                        basic_block_start_pc = inner.0;
                         break;
                     }
                     _ => {}

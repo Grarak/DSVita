@@ -1,7 +1,7 @@
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Bfc, Bfi, MulReg, Ubfx};
 use crate::jit::assembler::arm::branch_assembler::Bx;
-use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, LdrStrImmSBHD, LdrStrReg, LdrStrRegSBHD, Mrs, Msr, Preload};
-use crate::jit::assembler::arm::Bkpt;
+use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, LdrStrImmSBHD, LdrStrReg, LdrStrRegSBHD, Mrs, Msr};
+use crate::jit::assembler::arm::{transfer_assembler, Bkpt};
 use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
 use crate::jit::assembler::block_reg_set::{block_reg_set, BlockRegSet};
 use crate::jit::assembler::{BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift};
@@ -9,15 +9,15 @@ use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
 use bilge::prelude::*;
+use enum_dispatch::enum_dispatch;
 use std::cell::Cell;
 use std::fmt::{Debug, Formatter};
-use std::hint::unreachable_unchecked;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum BlockAluOp {
+pub enum AluOp {
     And = 0,
     Eor = 1,
     Sub = 2,
@@ -36,855 +36,120 @@ pub enum BlockAluOp {
     Mvn = 15,
 }
 
+enum AluType {
+    Alu3,
+    Alu2Op1,
+    Alu2Op0,
+    Mul,
+}
+
+impl From<AluOp> for AluType {
+    fn from(value: AluOp) -> Self {
+        match value {
+            AluOp::And | AluOp::Eor | AluOp::Sub | AluOp::Rsb | AluOp::Add | AluOp::Adc | AluOp::Sbc | AluOp::Rsc | AluOp::Orr | AluOp::Bic => AluType::Alu3,
+            AluOp::Tst | AluOp::Teq | AluOp::Cmp | AluOp::Cmn => AluType::Alu2Op1,
+            AluOp::Mov | AluOp::Mvn => AluType::Alu2Op0,
+        }
+    }
+}
+
 #[derive(Clone, Eq, PartialEq)]
-pub enum BlockAluSetCond {
+pub enum AluSetCond {
     None,
     Host,
     HostGuest,
 }
 
-impl Debug for BlockAluSetCond {
+impl Debug for AluSetCond {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            BlockAluSetCond::None => write!(f, ""),
-            BlockAluSetCond::Host => write!(f, "s"),
-            BlockAluSetCond::HostGuest => write!(f, "s_guest"),
+            AluSetCond::None => write!(f, ""),
+            AluSetCond::Host => write!(f, "s"),
+            AluSetCond::HostGuest => write!(f, "s_guest"),
         }
     }
 }
 
+pub struct Alu {
+    op: AluOp,
+    op_type: AluType,
+    operands: [BlockOperandShift; 3],
+    set_cond: AluSetCond,
+    pub thumb_pc_aligned: bool,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum BlockTransferOp {
+pub enum TransferOp {
     Read,
     Write,
 }
 
+pub struct Transfer {
+    pub op: TransferOp,
+    pub operands: [BlockOperandShift; 3],
+    pub signed: bool,
+    pub amount: MemoryAmount,
+    pub add_to_base: bool,
+}
+
+pub struct TransferMultiple {
+    pub op: TransferOp,
+    pub operand: BlockReg,
+    pub regs: RegReserve,
+    pub write_back: bool,
+    pub pre: bool,
+    pub add_to_base: bool,
+}
+
+pub struct GuestTransferMultiple {
+    pub op: TransferOp,
+    pub addr_reg: BlockReg,
+    pub addr_out_reg: BlockReg,
+    pub gp_regs: RegReserve,
+    pub fixed_regs: RegReserve,
+    pub write_back: bool,
+    pub pre: bool,
+    pub add_to_base: bool,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum BlockSystemRegOp {
+pub enum SystemRegOp {
     Mrs,
     Msr,
 }
 
-#[bitsize(32)]
-#[derive(FromBits)]
-pub struct BranchEncoding {
-    pub index: u26,
-    pub has_return: bool,
-    pub is_call_common: bool,
-    pub cond: u4,
+pub struct SystemReg {
+    pub op: SystemRegOp,
+    pub operand: BlockOperand,
 }
 
-#[derive(Clone)]
-pub struct BlockInst {
-    pub cond: Cond,
-    pub kind: BlockInstKind,
-    io_cache: Cell<Option<(BlockRegSet, BlockRegSet)>>,
-    pub skip: bool,
+#[derive(Debug)]
+pub enum BitFieldOp {
+    Bfc,
+    Bfi,
+    Ubfx,
 }
 
-impl BlockInst {
-    pub fn new(cond: Cond, kind: BlockInstKind) -> Self {
-        BlockInst {
-            cond,
-            kind,
-            io_cache: Cell::new(None),
-            skip: false,
-        }
-    }
-
-    pub fn invalidate_io_cache(&self) {
-        self.io_cache.set(None);
-    }
-
-    pub fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
-        let cached_io = self.io_cache.get();
-        match cached_io {
-            None => {
-                let (mut inputs, outputs) = self.kind.get_io();
-                if self.cond != Cond::AL {
-                    // For conditional insts initialize output guest regs as well
-                    // Otherwise arbitrary values for regs will be saved
-                    inputs.add_guests(outputs.get_guests());
-                }
-                self.io_cache.set(Some((inputs, outputs)));
-                (inputs, outputs)
-            }
-            Some(cache) => cache,
-        }
-    }
-
-    #[inline(never)]
-    pub fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
-        self.io_cache.set(None);
-        self.kind.replace_input_regs(old, new);
-    }
-
-    #[inline(never)]
-    pub fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
-        self.io_cache.set(None);
-        self.kind.replace_output_regs(old, new);
-    }
+pub struct BitField {
+    op: BitFieldOp,
+    operands: [BlockReg; 2],
+    lsb: u8,
+    width: u8,
 }
 
-impl From<BlockInstKind> for BlockInst {
-    fn from(value: BlockInstKind) -> Self {
-        BlockInst::new(Cond::AL, value)
-    }
+pub struct SaveReg {
+    pub guest_reg: Reg,
+    pub reg_mapped: BlockReg,
+    pub thread_regs_addr_reg: BlockReg,
 }
 
-impl Debug for BlockInst {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.skip {
-            write!(f, "SKIPPED: {:?} {:?}", self.cond, self.kind)
-        } else {
-            write!(f, "{:?} {:?}", self.cond, self.kind)
-        }
-    }
+pub struct RestoreReg {
+    pub guest_reg: Reg,
+    pub reg_mapped: BlockReg,
+    pub thread_regs_addr_reg: BlockReg,
+    pub tmp_guest_cpsr_reg: BlockReg,
 }
 
-#[derive(Clone)]
-pub enum BlockInstKind {
-    Alu3 {
-        op: BlockAluOp,
-        operands: [BlockOperandShift; 3],
-        set_cond: BlockAluSetCond,
-        thumb_pc_aligned: bool,
-    },
-    Alu2Op1 {
-        op: BlockAluOp,
-        operands: [BlockOperandShift; 2],
-        set_cond: BlockAluSetCond,
-        thumb_pc_aligned: bool,
-    },
-    Alu2Op0 {
-        op: BlockAluOp,
-        operands: [BlockOperandShift; 2],
-        set_cond: BlockAluSetCond,
-        thumb_pc_aligned: bool,
-    },
-    Transfer {
-        op: BlockTransferOp,
-        operands: [BlockOperandShift; 3],
-        signed: bool,
-        amount: MemoryAmount,
-        add_to_base: bool,
-    },
-    TransferMultiple {
-        op: BlockTransferOp,
-        operand: BlockReg,
-        regs: RegReserve,
-        write_back: bool,
-        pre: bool,
-        add_to_base: bool,
-    },
-    GuestTransferMultiple {
-        op: BlockTransferOp,
-        addr_reg: BlockReg,
-        addr_out_reg: BlockReg,
-        gp_regs: RegReserve,
-        fixed_regs: RegReserve,
-        write_back: bool,
-        pre: bool,
-        add_to_base: bool,
-    },
-    SystemReg {
-        op: BlockSystemRegOp,
-        operand: BlockOperand,
-    },
-    Bfc {
-        operand: BlockReg,
-        lsb: u8,
-        width: u8,
-    },
-    Bfi {
-        operands: [BlockReg; 2],
-        lsb: u8,
-        width: u8,
-    },
-    Ubfx {
-        operands: [BlockReg; 2],
-        lsb: u8,
-        width: u8,
-    },
-    Mul {
-        operands: [BlockOperandShift; 3],
-        set_cond: BlockAluSetCond,
-        thumb_pc_aligned: bool,
-    },
-
-    Label {
-        label: BlockLabel,
-        guest_pc: Option<u32>,
-        unlikely: bool,
-    },
-    Branch {
-        label: BlockLabel,
-        block_index: usize,
-        fallthrough: bool,
-    },
-
-    SaveContext {
-        guest_regs: RegReserve,
-        thread_regs_addr_reg: BlockReg,
-    },
-    SaveReg {
-        guest_reg: Reg,
-        reg_mapped: BlockReg,
-        thread_regs_addr_reg: BlockReg,
-    },
-    RestoreReg {
-        guest_reg: Reg,
-        reg_mapped: BlockReg,
-        thread_regs_addr_reg: BlockReg,
-        tmp_guest_cpsr_reg: BlockReg,
-    },
-    MarkRegDirty {
-        guest_reg: Reg,
-        dirty: bool,
-    },
-
-    Call {
-        func_reg: BlockReg,
-        args: [Option<BlockReg>; 4],
-        has_return: bool,
-    },
-    CallCommon {
-        mem_offset: usize,
-        args: [Option<BlockReg>; 4],
-        has_return: bool,
-    },
-    Bkpt(u16),
-    Preload {
-        operand: BlockReg,
-        offset: u16,
-        add: bool,
-    },
-    Nop,
-
-    GuestPc(u32),
-    GenericGuestInst {
-        inst: GuestInstInfo,
-        regs_mapping: [BlockReg; Reg::None as usize],
-    },
-
-    Prologue,
-    Epilogue {
-        restore_all_regs: bool,
-    },
-
-    PadBlock {
-        label: BlockLabel,
-        correction: i32,
-    },
-}
-
-impl BlockInstKind {
-    pub fn unconditional(&self) -> bool {
-        matches!(self, BlockInstKind::Bkpt(_) | BlockInstKind::Preload { .. })
-    }
-
-    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
-        match self {
-            BlockInstKind::Alu3 { operands, set_cond, .. } | BlockInstKind::Mul { operands, set_cond, .. } => {
-                let mut outputs = BlockRegSet::new();
-                outputs += operands[0].as_reg();
-                match set_cond {
-                    BlockAluSetCond::Host => outputs += BlockReg::Fixed(Reg::CPSR),
-                    BlockAluSetCond::HostGuest => {
-                        outputs += BlockReg::from(Reg::CPSR);
-                        outputs += BlockReg::Fixed(Reg::CPSR);
-                    }
-                    _ => {}
-                }
-                (block_reg_set!(Some(operands[1].as_reg()), operands[2].try_as_reg(), operands[2].try_as_shift_reg()), outputs)
-            }
-            BlockInstKind::Alu2Op1 { operands, set_cond, .. } => {
-                let mut outputs = BlockRegSet::new();
-                match set_cond {
-                    BlockAluSetCond::Host => outputs += BlockReg::Fixed(Reg::CPSR),
-                    BlockAluSetCond::HostGuest => {
-                        outputs += BlockReg::from(Reg::CPSR);
-                        outputs += BlockReg::Fixed(Reg::CPSR);
-                    }
-                    _ => panic!(),
-                }
-                (block_reg_set!(Some(operands[0].as_reg()), operands[1].try_as_reg(), operands[1].try_as_shift_reg()), outputs)
-            }
-            BlockInstKind::Alu2Op0 { operands, set_cond, .. } => {
-                let mut outputs = BlockRegSet::new();
-                outputs += operands[0].as_reg();
-                match set_cond {
-                    BlockAluSetCond::Host => outputs += BlockReg::Fixed(Reg::CPSR),
-                    BlockAluSetCond::HostGuest => {
-                        outputs += BlockReg::from(Reg::CPSR);
-                        outputs += BlockReg::Fixed(Reg::CPSR)
-                    }
-                    _ => {}
-                }
-                (block_reg_set!(operands[1].try_as_reg(), operands[1].try_as_shift_reg()), outputs)
-            }
-            BlockInstKind::Transfer { op, operands, .. } => match op {
-                BlockTransferOp::Read => (
-                    block_reg_set!(Some(operands[1].as_reg()), operands[2].try_as_reg(), operands[2].try_as_shift_reg()),
-                    block_reg_set!(Some(operands[0].as_reg())),
-                ),
-                BlockTransferOp::Write => (
-                    block_reg_set!(Some(operands[0].as_reg()), Some(operands[1].as_reg()), operands[2].try_as_reg(), operands[2].try_as_shift_reg()),
-                    block_reg_set!(),
-                ),
-            },
-            BlockInstKind::TransferMultiple { op, operand, regs, write_back, .. } => match op {
-                BlockTransferOp::Read => (
-                    block_reg_set!(Some(*operand)),
-                    if *write_back { BlockRegSet::new_fixed(*regs) + *operand } else { BlockRegSet::new_fixed(*regs) },
-                ),
-                BlockTransferOp::Write => (BlockRegSet::new_fixed(*regs) + *operand, if *write_back { block_reg_set!(Some(*operand)) } else { block_reg_set!() }),
-            },
-            BlockInstKind::GuestTransferMultiple {
-                op,
-                addr_reg,
-                addr_out_reg,
-                gp_regs,
-                fixed_regs,
-                write_back,
-                ..
-            } => match op {
-                BlockTransferOp::Read => {
-                    let mut outputs = BlockRegSet::new_fixed(*fixed_regs);
-                    outputs.add_guests(*gp_regs);
-                    (block_reg_set!(Some(*addr_reg)), if *write_back { outputs + *addr_out_reg } else { outputs })
-                }
-                BlockTransferOp::Write => {
-                    let mut inputs = BlockRegSet::new_fixed(*fixed_regs);
-                    inputs.add_guests(*gp_regs);
-                    (inputs + *addr_reg, if *write_back { block_reg_set!(Some(*addr_out_reg)) } else { block_reg_set!() })
-                }
-            },
-            BlockInstKind::SystemReg { op, operand } => match op {
-                BlockSystemRegOp::Mrs => (block_reg_set!(), block_reg_set!(Some(operand.as_reg()))),
-                BlockSystemRegOp::Msr => (block_reg_set!(operand.try_as_reg()), block_reg_set!()),
-            },
-            BlockInstKind::Bfc { operand, .. } => (block_reg_set!(Some(*operand)), block_reg_set!(Some(*operand))),
-            BlockInstKind::Bfi { operands, .. } | BlockInstKind::Ubfx { operands, .. } => (block_reg_set!(Some(operands[0]), Some(operands[1])), block_reg_set!(Some(operands[0]))),
-
-            BlockInstKind::SaveContext { .. } => (block_reg_set!(), block_reg_set!()),
-            BlockInstKind::SaveReg {
-                guest_reg,
-                reg_mapped,
-                thread_regs_addr_reg,
-            } => {
-                let mut inputs = BlockRegSet::new();
-                let mut outputs = BlockRegSet::new();
-                match guest_reg {
-                    Reg::CPSR => {
-                        inputs += BlockReg::Fixed(Reg::CPSR);
-                        inputs += *thread_regs_addr_reg;
-                        outputs += *reg_mapped;
-                    }
-                    _ => {
-                        inputs += *reg_mapped;
-                        inputs += *thread_regs_addr_reg;
-                    }
-                }
-                (inputs, outputs)
-            }
-            BlockInstKind::RestoreReg {
-                guest_reg,
-                reg_mapped,
-                thread_regs_addr_reg,
-                tmp_guest_cpsr_reg,
-            } => {
-                let mut outputs = BlockRegSet::new();
-                outputs += *reg_mapped;
-                if *guest_reg == Reg::CPSR {
-                    outputs += *tmp_guest_cpsr_reg;
-                    outputs += BlockReg::Fixed(Reg::CPSR);
-                }
-                (block_reg_set!(Some(*thread_regs_addr_reg)), outputs)
-            }
-            BlockInstKind::MarkRegDirty { guest_reg, dirty: true } => (block_reg_set!(Some(BlockReg::from(*guest_reg))), block_reg_set!(Some(BlockReg::from(*guest_reg)))),
-            BlockInstKind::MarkRegDirty { guest_reg, dirty: false } => (block_reg_set!(Some(BlockReg::from(*guest_reg))), block_reg_set!()),
-
-            BlockInstKind::Call { func_reg, args, has_return } => {
-                let mut inputs = BlockRegSet::new();
-                inputs += *func_reg;
-                for &arg in args.iter().flatten() {
-                    inputs += arg;
-                }
-                (
-                    inputs,
-                    block_reg_set!(
-                        Some(BlockReg::Fixed(Reg::R0)),
-                        Some(BlockReg::Fixed(Reg::R1)),
-                        Some(BlockReg::Fixed(Reg::R2)),
-                        Some(BlockReg::Fixed(Reg::R3)),
-                        Some(BlockReg::Fixed(Reg::R12)),
-                        Some(BlockReg::Fixed(Reg::CPSR)),
-                        if *has_return { Some(BlockReg::Fixed(Reg::LR)) } else { None }
-                    ),
-                )
-            }
-            BlockInstKind::CallCommon { args, has_return, .. } => {
-                let mut inputs = BlockRegSet::new();
-                for &arg in args.iter().flatten() {
-                    inputs += arg;
-                }
-                (
-                    inputs,
-                    block_reg_set!(
-                        Some(BlockReg::Fixed(Reg::R0)),
-                        Some(BlockReg::Fixed(Reg::R1)),
-                        Some(BlockReg::Fixed(Reg::R2)),
-                        Some(BlockReg::Fixed(Reg::R3)),
-                        Some(BlockReg::Fixed(Reg::R12)),
-                        Some(BlockReg::Fixed(Reg::CPSR)),
-                        if *has_return { Some(BlockReg::Fixed(Reg::LR)) } else { None }
-                    ),
-                )
-            }
-            BlockInstKind::Preload { operand, .. } => (block_reg_set!(Some(*operand)), block_reg_set!()),
-            BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
-                let mut inputs = BlockRegSet::new();
-                let mut outputs = BlockRegSet::new();
-                for reg in inst.src_regs {
-                    inputs += regs_mapping[reg as usize];
-                }
-                for reg in inst.out_regs {
-                    outputs += regs_mapping[reg as usize];
-                }
-                (inputs, outputs)
-            }
-
-            BlockInstKind::Prologue => (
-                block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(Reg::LR))),
-                block_reg_set!(Some(BlockReg::Fixed(Reg::SP))),
-            ),
-            BlockInstKind::Epilogue { .. } => (
-                block_reg_set!(Some(BlockReg::Fixed(Reg::SP))),
-                block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(Reg::PC))),
-            ),
-
-            BlockInstKind::Label { .. } | BlockInstKind::Branch { .. } | BlockInstKind::GuestPc(_) | BlockInstKind::Bkpt(_) | BlockInstKind::Nop | BlockInstKind::PadBlock { .. } => {
-                (block_reg_set!(), block_reg_set!())
-            }
-        }
-    }
-
-    fn replace_reg(reg: &mut BlockReg, old: BlockReg, new: BlockReg) {
-        if *reg == old {
-            *reg = new;
-        }
-    }
-
-    fn replace_operand(operand: &mut BlockOperand, old: BlockReg, new: BlockReg) {
-        if let BlockOperand::Reg(reg) = operand {
-            if *reg == old {
-                *reg = new;
-            }
-        }
-    }
-
-    fn replace_shift_operands(operands: &mut [BlockOperandShift], old: BlockReg, new: BlockReg) {
-        for operand in operands {
-            operand.replace_regs(old, new);
-        }
-    }
-
-    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
-        match self {
-            BlockInstKind::Alu3 { operands, .. } | BlockInstKind::Mul { operands, .. } => {
-                operands[1].replace_regs(old, new);
-                operands[2].replace_regs(old, new);
-            }
-            BlockInstKind::Alu2Op1 { operands, .. } => Self::replace_shift_operands(operands, old, new),
-            BlockInstKind::Alu2Op0 { operands, .. } => operands[1].replace_regs(old, new),
-            BlockInstKind::Transfer { op, operands, .. } => {
-                if *op == BlockTransferOp::Write {
-                    operands[0].replace_regs(old, new);
-                }
-                operands[1].replace_regs(old, new);
-                operands[2].replace_regs(old, new);
-            }
-            BlockInstKind::TransferMultiple { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInstKind::GuestTransferMultiple { addr_reg, .. } => Self::replace_reg(addr_reg, old, new),
-            BlockInstKind::SystemReg { op, operand } => {
-                if *op == BlockSystemRegOp::Msr {
-                    Self::replace_operand(operand, old, new);
-                }
-            }
-            BlockInstKind::Bfc { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInstKind::Bfi { operands, .. } => {
-                Self::replace_reg(&mut operands[0], old, new);
-                Self::replace_reg(&mut operands[1], old, new);
-            }
-            BlockInstKind::Ubfx { operands, .. } => Self::replace_reg(&mut operands[1], old, new),
-            BlockInstKind::SaveContext { .. } => {
-                unreachable!()
-            }
-            BlockInstKind::SaveReg {
-                guest_reg,
-                reg_mapped,
-                thread_regs_addr_reg,
-                ..
-            } => {
-                if *guest_reg != Reg::CPSR {
-                    Self::replace_reg(reg_mapped, old, new);
-                }
-                Self::replace_reg(thread_regs_addr_reg, old, new);
-            }
-            BlockInstKind::RestoreReg { thread_regs_addr_reg, .. } => Self::replace_reg(thread_regs_addr_reg, old, new),
-            BlockInstKind::Call { func_reg, .. } => Self::replace_reg(func_reg, old, new),
-            BlockInstKind::Preload { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
-                for reg in inst.src_regs {
-                    Self::replace_reg(&mut regs_mapping[reg as usize], old, new);
-                }
-            }
-            BlockInstKind::CallCommon { .. }
-            | BlockInstKind::Label { .. }
-            | BlockInstKind::Branch { .. }
-            | BlockInstKind::MarkRegDirty { .. }
-            | BlockInstKind::GuestPc(_)
-            | BlockInstKind::Bkpt(_)
-            | BlockInstKind::Nop
-            | BlockInstKind::Prologue
-            | BlockInstKind::Epilogue { .. }
-            | BlockInstKind::PadBlock { .. } => {}
-        }
-    }
-
-    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
-        match self {
-            BlockInstKind::Alu3 { operands, .. } | BlockInstKind::Mul { operands, .. } => operands[0].replace_regs(old, new),
-            BlockInstKind::Alu2Op1 { .. } => {}
-            BlockInstKind::Alu2Op0 { operands, .. } => operands[0].replace_regs(old, new),
-            BlockInstKind::Transfer { op, operands, .. } => {
-                if *op == BlockTransferOp::Read {
-                    operands[0].replace_regs(old, new);
-                }
-            }
-            BlockInstKind::TransferMultiple { operand, write_back, .. } => {
-                if *write_back {
-                    Self::replace_reg(operand, old, new);
-                }
-            }
-            BlockInstKind::GuestTransferMultiple { addr_out_reg, write_back, .. } => {
-                if *write_back {
-                    Self::replace_reg(addr_out_reg, old, new);
-                }
-            }
-            BlockInstKind::SystemReg { op, operand } => {
-                if *op == BlockSystemRegOp::Mrs {
-                    Self::replace_operand(operand, old, new);
-                }
-            }
-            BlockInstKind::Bfc { operand, .. } => Self::replace_reg(operand, old, new),
-            BlockInstKind::Bfi { operands, .. } | BlockInstKind::Ubfx { operands, .. } => Self::replace_reg(&mut operands[0], old, new),
-            BlockInstKind::SaveContext { .. } => {}
-            BlockInstKind::SaveReg { guest_reg, reg_mapped, .. } => {
-                if *guest_reg == Reg::CPSR {
-                    Self::replace_reg(reg_mapped, old, new);
-                }
-            }
-            BlockInstKind::RestoreReg {
-                guest_reg,
-                reg_mapped,
-                tmp_guest_cpsr_reg,
-                ..
-            } => {
-                Self::replace_reg(reg_mapped, old, new);
-                if *guest_reg == Reg::CPSR {
-                    Self::replace_reg(tmp_guest_cpsr_reg, old, new);
-                }
-            }
-            BlockInstKind::Call { .. } => {}
-            BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
-                for reg in inst.out_regs {
-                    Self::replace_reg(&mut regs_mapping[reg as usize], old, new);
-                }
-            }
-            BlockInstKind::CallCommon { .. }
-            | BlockInstKind::Label { .. }
-            | BlockInstKind::Branch { .. }
-            | BlockInstKind::MarkRegDirty { .. }
-            | BlockInstKind::GuestPc(_)
-            | BlockInstKind::Bkpt(_)
-            | BlockInstKind::Preload { .. }
-            | BlockInstKind::Nop
-            | BlockInstKind::Prologue
-            | BlockInstKind::Epilogue { .. }
-            | BlockInstKind::PadBlock { .. } => {}
-        }
-    }
-
-    fn save_guest_cpsr(opcodes: &mut Vec<u32>, thread_regs_addr_reg: Reg, host_reg: Reg) {
-        opcodes.push(Mrs::cpsr(host_reg, Cond::AL));
-        // Only copy the cond flags from host cpsr
-        opcodes.push(AluShiftImm::mov(host_reg, host_reg, ShiftType::Lsr, 24, Cond::AL));
-        opcodes.push(LdrStrImm::strb_offset_al(host_reg, thread_regs_addr_reg, Reg::CPSR as u16 * 4 + 3));
-    }
-
-    pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, used_host_regs: RegReserve) {
-        let alu_reg = |op: BlockAluOp, op0: BlockReg, op1: BlockReg, op2: BlockReg, shift: BlockShift, set_cond: bool| match shift.value {
-            BlockOperand::Reg(shift_reg) => AluReg::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_reg.as_fixed(), set_cond, Cond::AL),
-            BlockOperand::Imm(shift_imm) => {
-                debug_assert_eq!(shift_imm & !0x1F, 0);
-                AluShiftImm::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_imm as u8, set_cond, Cond::AL)
-            }
-        };
-        let alu_imm = |op: BlockAluOp, op0: BlockReg, op1: BlockReg, op2: u32, shift: BlockShift, set_cond: bool| {
-            debug_assert_eq!(op2 & !0xFF, 0);
-            let shift_value = shift.value.as_imm();
-            debug_assert_eq!(shift_value & !0xF, 0);
-            debug_assert!(shift_value == 0 || shift.shift_type == ShiftType::Ror);
-            AluImm::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2 as u8, shift_value as u8, set_cond, Cond::AL)
-        };
-
-        match self {
-            BlockInstKind::Alu3 { op, operands, set_cond, .. } => match operands[2].operand {
-                BlockOperand::Reg(reg) => opcodes.push(alu_reg(*op, operands[0].as_reg(), operands[1].as_reg(), reg, operands[2].shift, *set_cond != BlockAluSetCond::None)),
-                BlockOperand::Imm(imm) => opcodes.push(alu_imm(*op, operands[0].as_reg(), operands[1].as_reg(), imm, operands[2].shift, *set_cond != BlockAluSetCond::None)),
-            },
-            BlockInstKind::Alu2Op1 { op, operands, set_cond, .. } => {
-                debug_assert_ne!(*set_cond, BlockAluSetCond::None);
-                match operands[1].operand {
-                    BlockOperand::Reg(reg) => opcodes.push(alu_reg(*op, BlockReg::Fixed(Reg::R0), operands[0].as_reg(), reg, operands[1].shift, true)),
-                    BlockOperand::Imm(imm) => opcodes.push(alu_imm(*op, BlockReg::Fixed(Reg::R0), operands[0].as_reg(), imm, operands[1].shift, true)),
-                }
-            }
-            BlockInstKind::Alu2Op0 { op, operands, set_cond, .. } => match operands[1].operand {
-                BlockOperand::Reg(reg) => {
-                    if *op == BlockAluOp::Mov && operands[0].as_reg() == reg && operands[1].shift == BlockShift::default() && *set_cond == BlockAluSetCond::None {
-                        return;
-                    }
-                    opcodes.push(alu_reg(*op, operands[0].as_reg(), BlockReg::Fixed(Reg::R0), reg, operands[1].shift, *set_cond != BlockAluSetCond::None))
-                }
-                BlockOperand::Imm(imm) => {
-                    if *op == BlockAluOp::Mov && operands[1].shift == BlockShift::default() && *set_cond == BlockAluSetCond::None {
-                        opcodes.extend(AluImm::mov32(operands[0].as_reg().as_fixed(), imm))
-                    } else {
-                        opcodes.push(alu_imm(*op, operands[0].as_reg(), BlockReg::Fixed(Reg::R0), imm, operands[1].shift, *set_cond != BlockAluSetCond::None))
-                    }
-                }
-            },
-            BlockInstKind::Transfer {
-                op,
-                operands,
-                signed,
-                amount,
-                add_to_base,
-            } => opcodes.push(match operands[2].operand {
-                BlockOperand::Reg(reg) => {
-                    let func = match amount {
-                        MemoryAmount::Byte => |op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
-                            if signed {
-                                debug_assert_eq!(shift_amount, 0);
-                                LdrStrRegSBHD::generic(op0, op1, op2, true, MemoryAmount::Byte, read, false, add_to_base, true, cond)
-                            } else {
-                                LdrStrReg::generic(op0, op1, op2, shift_amount, shift_type, read, false, true, add_to_base, true, cond)
-                            }
-                        },
-                        MemoryAmount::Half => |op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, _: ShiftType, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
-                            debug_assert_eq!(shift_amount, 0);
-                            LdrStrRegSBHD::generic(op0, op1, op2, signed, MemoryAmount::Half, read, false, add_to_base, true, cond)
-                        },
-                        MemoryAmount::Word => |op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
-                            debug_assert!(!signed);
-                            LdrStrReg::generic(op0, op1, op2, shift_amount, shift_type, read, false, false, add_to_base, true, cond)
-                        },
-                        MemoryAmount::Double => {
-                            todo!()
-                        }
-                    };
-                    let shift = operands[2].as_shift_imm();
-                    debug_assert_eq!(shift & !0x1F, 0);
-                    func(
-                        operands[0].as_reg().as_fixed(),
-                        operands[1].as_reg().as_fixed(),
-                        reg.as_fixed(),
-                        shift as u8,
-                        operands[2].shift.shift_type,
-                        *signed,
-                        *op == BlockTransferOp::Read,
-                        *add_to_base,
-                        Cond::AL,
-                    )
-                }
-                BlockOperand::Imm(imm) => {
-                    let func = match amount {
-                        MemoryAmount::Byte => |op0: Reg, op1: Reg, imm_offset: u16, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
-                            if signed {
-                                debug_assert_eq!(imm_offset & !0xFF, 0);
-                                LdrStrImmSBHD::generic(op0, op1, imm_offset as u8, true, MemoryAmount::Byte, read, false, true, true, cond)
-                            } else {
-                                LdrStrImm::generic(op0, op1, imm_offset, read, false, true, add_to_base, true, cond)
-                            }
-                        },
-                        MemoryAmount::Half => |op0: Reg, op1: Reg, imm_offset: u16, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
-                            debug_assert_eq!(imm_offset & !0xFF, 0);
-                            LdrStrImmSBHD::generic(op0, op1, imm_offset as u8, signed, MemoryAmount::Half, read, false, add_to_base, true, cond)
-                        },
-                        MemoryAmount::Word => |op0: Reg, op1: Reg, imm_offset: u16, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
-                            debug_assert!(!signed);
-                            LdrStrImm::generic(op0, op1, imm_offset, read, false, false, add_to_base, true, cond)
-                        },
-                        MemoryAmount::Double => {
-                            todo!()
-                        }
-                    };
-                    func(
-                        operands[0].as_reg().as_fixed(),
-                        operands[1].as_reg().as_fixed(),
-                        imm as u16,
-                        *signed,
-                        *op == BlockTransferOp::Read,
-                        *add_to_base,
-                        Cond::AL,
-                    )
-                }
-            }),
-            BlockInstKind::TransferMultiple {
-                op,
-                operand,
-                regs,
-                write_back,
-                pre,
-                add_to_base,
-            } => opcodes.push(LdmStm::generic(operand.as_fixed(), *regs, *op == BlockTransferOp::Read, *write_back, *add_to_base, *pre, Cond::AL)),
-            BlockInstKind::GuestTransferMultiple {
-                op,
-                addr_reg,
-                addr_out_reg,
-                gp_regs,
-                fixed_regs,
-                write_back,
-                pre,
-                add_to_base,
-            } => {
-                if *write_back && *addr_reg != *addr_out_reg {
-                    opcodes.push(AluShiftImm::mov_al(addr_out_reg.as_fixed(), addr_reg.as_fixed()))
-                }
-                opcodes.push(LdmStm::generic(
-                    if *write_back { addr_out_reg.as_fixed() } else { addr_reg.as_fixed() },
-                    *gp_regs + *fixed_regs,
-                    *op == BlockTransferOp::Read,
-                    *write_back,
-                    *add_to_base,
-                    *pre,
-                    Cond::AL,
-                ))
-            }
-            BlockInstKind::SystemReg { op, operand } => match op {
-                BlockSystemRegOp::Mrs => opcodes.push(Mrs::cpsr(operand.as_reg().as_fixed(), Cond::AL)),
-                BlockSystemRegOp::Msr => opcodes.push(Msr::cpsr_flags(operand.as_reg().as_fixed(), Cond::AL)),
-            },
-            BlockInstKind::Bfc { operand, lsb, width } => opcodes.push(Bfc::create(operand.as_fixed(), *lsb, *width, Cond::AL)),
-            BlockInstKind::Bfi { operands, lsb, width } => opcodes.push(Bfi::create(operands[0].as_fixed(), operands[1].as_fixed(), *lsb, *width, Cond::AL)),
-            BlockInstKind::Ubfx { operands, lsb, width } => opcodes.push(Ubfx::create(operands[0].as_fixed(), operands[1].as_fixed(), *lsb, *width, Cond::AL)),
-            BlockInstKind::Mul { operands, set_cond, .. } => match operands[2].operand {
-                BlockOperand::Reg(reg) => opcodes.push(MulReg::mul(
-                    operands[0].as_reg().as_fixed(),
-                    operands[1].as_reg().as_fixed(),
-                    reg.as_fixed(),
-                    *set_cond != BlockAluSetCond::None,
-                    Cond::AL,
-                )),
-                BlockOperand::Imm(_) => {
-                    todo!()
-                }
-            },
-
-            BlockInstKind::Branch { block_index, .. } => {
-                // Encode label
-                // Branch offset can only be figured out later
-                opcodes.push(BranchEncoding::new(u26::new(*block_index as u32), false, false, u4::new(Cond::AL as u8)).into());
-                branch_placeholders.push(opcode_index);
-            }
-
-            BlockInstKind::SaveContext { .. } => unsafe { unreachable_unchecked() },
-            BlockInstKind::SaveReg {
-                guest_reg,
-                reg_mapped,
-                thread_regs_addr_reg,
-                ..
-            } => match guest_reg {
-                Reg::CPSR => Self::save_guest_cpsr(opcodes, thread_regs_addr_reg.as_fixed(), reg_mapped.as_fixed()),
-                _ => opcodes.push(LdrStrImm::str_offset_al(reg_mapped.as_fixed(), thread_regs_addr_reg.as_fixed(), *guest_reg as u16 * 4)),
-            },
-            BlockInstKind::RestoreReg {
-                guest_reg,
-                reg_mapped,
-                thread_regs_addr_reg,
-                tmp_guest_cpsr_reg,
-            } => match guest_reg {
-                Reg::CPSR => {
-                    opcodes.push(LdrStrImm::ldr_offset_al(tmp_guest_cpsr_reg.as_fixed(), thread_regs_addr_reg.as_fixed(), Reg::CPSR as u16 * 4));
-                    opcodes.push(Msr::cpsr_flags(tmp_guest_cpsr_reg.as_fixed(), Cond::AL));
-                }
-                _ => opcodes.push(LdrStrImm::ldr_offset_al(reg_mapped.as_fixed(), thread_regs_addr_reg.as_fixed(), *guest_reg as u16 * 4)),
-            },
-
-            BlockInstKind::Call { func_reg, has_return, .. } => opcodes.push(if *has_return {
-                Bx::blx(func_reg.as_fixed(), Cond::AL)
-            } else {
-                Bx::bx(func_reg.as_fixed(), Cond::AL)
-            }),
-            BlockInstKind::CallCommon { mem_offset, has_return, .. } => {
-                // Encode common offset
-                // Branch offset can only be figured out later
-                opcodes.push(BranchEncoding::new(u26::new(*mem_offset as u32), *has_return, true, u4::new(Cond::AL as u8)).into());
-                branch_placeholders.push(opcode_index);
-            }
-            BlockInstKind::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
-            BlockInstKind::Preload { operand, offset, add } => opcodes.push(Preload::pli(operand.as_fixed(), *offset, *add)),
-            BlockInstKind::Nop => opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0)),
-
-            BlockInstKind::GenericGuestInst { inst, regs_mapping } => {
-                let replace_reg = |reg: &mut Reg| {
-                    *reg = regs_mapping[*reg as usize].as_fixed();
-                };
-                let replace_shift = |shift_value: &mut ShiftValue| {
-                    if let ShiftValue::Reg(reg) = shift_value {
-                        replace_reg(reg);
-                    }
-                };
-
-                let inst_info = inst.deref_mut();
-                for operand in inst_info.operands_mut() {
-                    if let Operand::Reg { reg, shift } = operand {
-                        replace_reg(reg);
-                        if let Some(shift) = shift {
-                            match shift {
-                                Shift::Lsl(v) => replace_shift(v),
-                                Shift::Lsr(v) => replace_shift(v),
-                                Shift::Asr(v) => replace_shift(v),
-                                Shift::Ror(v) => replace_shift(v),
-                            }
-                        }
-                    }
-                }
-
-                inst_info.set_cond(Cond::AL);
-                opcodes.push(inst_info.assemble());
-            }
-
-            BlockInstKind::Prologue => opcodes.push(LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL)),
-            BlockInstKind::Epilogue { restore_all_regs } => opcodes.push(LdmStm::generic(
-                Reg::SP,
-                if *restore_all_regs { ALLOCATION_REGS + Reg::R12 } else { used_host_regs } + Reg::PC,
-                true,
-                true,
-                true,
-                false,
-                Cond::AL,
-            )),
-
-            BlockInstKind::Label { .. } | BlockInstKind::MarkRegDirty { .. } | BlockInstKind::GuestPc(_) | BlockInstKind::PadBlock { .. } => {}
-        }
-    }
-}
-
-#[derive(Clone)]
 pub struct GuestInstInfo(pub NonNull<InstInfo>);
 
 impl GuestInstInfo {
@@ -913,117 +178,1208 @@ impl DerefMut for GuestInstInfo {
     }
 }
 
-impl Debug for BlockInstKind {
+pub struct GenericGuest {
+    pub inst_info: GuestInstInfo,
+    regs_mapping: [BlockReg; Reg::None as usize],
+}
+
+#[bitsize(32)]
+#[derive(FromBits)]
+pub struct BranchEncoding {
+    pub index: u26,
+    pub has_return: bool,
+    pub is_call_common: bool,
+    pub cond: u4,
+}
+
+pub enum CallOp {
+    Reg(BlockReg),
+    Offset(usize),
+}
+
+pub struct Call {
+    op: CallOp,
+    args: [Option<BlockReg>; 4],
+    pub has_return: bool,
+}
+
+pub struct Label {
+    pub label: BlockLabel,
+    pub guest_pc: Option<u32>,
+    pub unlikely: bool,
+}
+
+pub struct Branch {
+    pub label: BlockLabel,
+    pub block_index: usize,
+    pub fallthrough: bool,
+}
+
+pub struct Preload {
+    pub operand: BlockReg,
+    pub offset: u16,
+    pub add: bool,
+}
+
+pub struct SaveContext {
+    pub guest_regs: RegReserve,
+    pub thread_regs_addr_reg: BlockReg,
+}
+
+pub struct GuestPc(pub u32);
+
+pub struct Epilogue {
+    pub restore_all_regs: bool,
+}
+
+pub struct MarkRegDirty {
+    pub guest_reg: Reg,
+    pub dirty: bool,
+}
+
+pub struct PadBlock {
+    pub label: BlockLabel,
+    pub correction: i32,
+}
+
+pub enum Generic {
+    Bkpt(u16),
+    Nop,
+    Prologue,
+}
+
+#[enum_dispatch]
+pub enum BlockInstType {
+    Alu,
+    Transfer,
+    TransferMultiple,
+    GuestTransferMultiple,
+    SystemReg,
+    BitField,
+    SaveReg,
+    RestoreReg,
+    GenericGuest,
+    Call,
+    Label,
+    Branch,
+    Preload,
+    SaveContext,
+    GuestPc,
+    Epilogue,
+    MarkRegDirty,
+    PadBlock,
+    Generic,
+}
+
+#[enum_dispatch(BlockInstType)]
+pub trait BlockInstTrait {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet);
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg);
+    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg);
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, used_host_regs: RegReserve);
+    fn unconditional(&self) -> bool {
+        false
+    }
+}
+
+impl Debug for BlockInstType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let write_alu = |op, operands: &[BlockOperandShift], set_cond, thumb_pc_aligned, f: &mut Formatter<'_>| write!(f, "{op:?}{set_cond:?} {operands:?}, align pc: {thumb_pc_aligned}");
         match self {
-            BlockInstKind::Alu3 {
-                op,
-                operands,
-                set_cond,
-                thumb_pc_aligned,
-            } => write_alu(op, operands, set_cond, thumb_pc_aligned, f),
-            BlockInstKind::Alu2Op1 {
-                op,
-                operands,
-                set_cond,
-                thumb_pc_aligned,
-            } => write_alu(op, operands, set_cond, thumb_pc_aligned, f),
-            BlockInstKind::Alu2Op0 {
-                op,
-                operands,
-                set_cond,
-                thumb_pc_aligned,
-            } => write_alu(op, operands, set_cond, thumb_pc_aligned, f),
-            BlockInstKind::Transfer {
-                op,
-                operands,
-                signed,
-                amount,
-                add_to_base,
-            } => {
-                let signed = if *signed { "S" } else { "U" };
-                let amount = match amount {
-                    MemoryAmount::Byte => "8",
-                    MemoryAmount::Half => "16",
-                    MemoryAmount::Word => "32",
-                    MemoryAmount::Double => "64",
-                };
-                let add_to_base = if *add_to_base { "+" } else { "-" };
-                write!(f, "{op:?}{signed}{amount} {:?} [{:?}, {:?}], {add_to_base}base", operands[0], operands[1], operands[2])
+            BlockInstType::Alu(inner) => inner.fmt(f),
+            BlockInstType::Transfer(inner) => inner.fmt(f),
+            BlockInstType::TransferMultiple(inner) => inner.fmt(f),
+            BlockInstType::GuestTransferMultiple(inner) => inner.fmt(f),
+            BlockInstType::SystemReg(inner) => inner.fmt(f),
+            BlockInstType::BitField(inner) => inner.fmt(f),
+            BlockInstType::SaveReg(inner) => inner.fmt(f),
+            BlockInstType::RestoreReg(inner) => inner.fmt(f),
+            BlockInstType::GenericGuest(inner) => inner.fmt(f),
+            BlockInstType::Call(inner) => inner.fmt(f),
+            BlockInstType::Label(inner) => inner.fmt(f),
+            BlockInstType::Branch(inner) => inner.fmt(f),
+            BlockInstType::Preload(inner) => inner.fmt(f),
+            BlockInstType::SaveContext(inner) => inner.fmt(f),
+            BlockInstType::GuestPc(inner) => inner.fmt(f),
+            BlockInstType::Epilogue(inner) => inner.fmt(f),
+            BlockInstType::MarkRegDirty(inner) => inner.fmt(f),
+            BlockInstType::PadBlock(inner) => inner.fmt(f),
+            BlockInstType::Generic(inner) => inner.fmt(f),
+        }
+    }
+}
+
+pub struct BlockInst {
+    pub cond: Cond,
+    pub inst_type: BlockInstType,
+    io_cache: Cell<Option<(BlockRegSet, BlockRegSet)>>,
+    pub unconditional: bool,
+    pub skip: bool,
+}
+
+impl BlockInst {
+    pub fn new(cond: Cond, inst_type: BlockInstType) -> Self {
+        let unconditional = inst_type.unconditional();
+        BlockInst {
+            cond,
+            inst_type,
+            io_cache: Cell::new(None),
+            unconditional,
+            skip: false,
+        }
+    }
+
+    pub fn invalidate_io_cache(&self) {
+        self.io_cache.set(None);
+    }
+
+    pub fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        let cached_io = self.io_cache.get();
+        match cached_io {
+            None => {
+                let (mut inputs, outputs) = self.inst_type.get_io();
+                if self.cond != Cond::AL {
+                    // For conditional insts initialize output guest regs as well
+                    // Otherwise arbitrary values for regs will be saved
+                    inputs.add_guests(outputs.get_guests());
+                }
+                self.io_cache.set(Some((inputs, outputs)));
+                (inputs, outputs)
             }
-            BlockInstKind::TransferMultiple {
-                op,
-                operand,
-                regs,
-                write_back,
-                pre,
-                add_to_base,
-            } => {
-                let add_to_base = if *add_to_base { "+" } else { "-" };
-                write!(f, "{op:?}M {operand:?} {regs:?}, write back: {write_back}, pre {pre}, {add_to_base}base")
+            Some(cache) => cache,
+        }
+    }
+
+    pub fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        self.io_cache.set(None);
+        self.inst_type.replace_input_regs(old, new);
+    }
+
+    pub fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        self.io_cache.set(None);
+        self.inst_type.replace_output_regs(old, new);
+    }
+
+    pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, used_host_regs: RegReserve) {
+        self.inst_type.emit_opcode(opcodes, opcode_index, branch_placeholders, used_host_regs)
+    }
+}
+
+impl Debug for BlockInst {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.skip {
+            write!(f, "SKIPPED: {:?} {:?}", self.cond, self.inst_type)
+        } else {
+            write!(f, "{:?} {:?}", self.cond, self.inst_type)
+        }
+    }
+}
+
+impl<T: Into<BlockInstType>> From<T> for BlockInst {
+    fn from(value: T) -> Self {
+        BlockInst::new(Cond::AL, value.into())
+    }
+}
+
+fn replace_reg(reg: &mut BlockReg, old: BlockReg, new: BlockReg) {
+    if *reg == old {
+        *reg = new;
+    }
+}
+
+fn replace_operand(operand: &mut BlockOperand, old: BlockReg, new: BlockReg) {
+    if let BlockOperand::Reg(reg) = operand {
+        if *reg == old {
+            *reg = new;
+        }
+    }
+}
+
+fn replace_shift_operands(operands: &mut [BlockOperandShift], old: BlockReg, new: BlockReg) {
+    for operand in operands {
+        operand.replace_regs(old, new);
+    }
+}
+
+impl Alu {
+    pub fn alu3(op: AluOp, operands: [BlockOperandShift; 3], set_cond: AluSetCond, thumb_pc_aligned: bool) -> Self {
+        Alu {
+            op,
+            op_type: AluType::Alu3,
+            operands,
+            set_cond,
+            thumb_pc_aligned,
+        }
+    }
+
+    pub fn alu2(op: AluOp, operands: [BlockOperandShift; 2], set_cond: AluSetCond, thumb_pc_aligned: bool) -> Self {
+        Alu {
+            op,
+            op_type: AluType::from(op),
+            operands: [operands[0], operands[1], BlockOperandShift::default()],
+            set_cond,
+            thumb_pc_aligned,
+        }
+    }
+
+    pub fn mul(operands: [BlockOperandShift; 3], set_cond: AluSetCond, thumb_pc_aligned: bool) -> Self {
+        Alu {
+            op: AluOp::And,
+            op_type: AluType::Mul,
+            operands,
+            set_cond,
+            thumb_pc_aligned,
+        }
+    }
+}
+
+impl BlockInstTrait for Alu {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        let mut outputs = BlockRegSet::new();
+        match self.set_cond {
+            AluSetCond::Host => outputs += BlockReg::Fixed(Reg::CPSR),
+            AluSetCond::HostGuest => {
+                outputs += BlockReg::from(Reg::CPSR);
+                outputs += BlockReg::Fixed(Reg::CPSR);
             }
-            BlockInstKind::GuestTransferMultiple {
-                op,
-                addr_reg,
-                addr_out_reg,
-                gp_regs,
-                fixed_regs,
-                write_back,
-                pre,
-                add_to_base,
-            } => {
-                let add_to_base = if *add_to_base { "+" } else { "-" };
-                write!(
-                    f,
-                    "Guest{op:?}M {addr_reg:?} -> {addr_out_reg:?} gp regs: {gp_regs:?}, fixed regs: {fixed_regs:?}, write back: {write_back}, pre {pre}, {add_to_base}base"
+            _ => {}
+        }
+
+        match self.op_type {
+            AluType::Alu3 | AluType::Mul => {
+                outputs += self.operands[0].as_reg();
+                (
+                    block_reg_set!(Some(self.operands[1].as_reg()), self.operands[2].try_as_reg(), self.operands[2].try_as_shift_reg()),
+                    outputs,
                 )
             }
-            BlockInstKind::SystemReg { op, operand } => write!(f, "{op:?} {operand:?}"),
-            BlockInstKind::Bfc { operand, lsb, width } => write!(f, "Bfc {operand:?}, {lsb}, {width}"),
-            BlockInstKind::Bfi { operands, lsb, width } => write!(f, "Bfi {:?}, {:?}, {lsb}, {width}", operands[0], operands[1]),
-            BlockInstKind::Ubfx { operands, lsb, width } => write!(f, "Ubfx {:?}, {:?}, {lsb}, {width}", operands[0], operands[1]),
-            BlockInstKind::Mul { operands, set_cond, thumb_pc_aligned } => write!(f, "Mul{set_cond:?} {operands:?}, align pc: {thumb_pc_aligned}"),
-            BlockInstKind::Label { label, guest_pc, unlikely } => {
-                let guest_pc = match guest_pc {
-                    None => "",
-                    Some(pc) => &format!(" {pc:x}"),
+            AluType::Alu2Op1 => {
+                debug_assert_ne!(self.set_cond, AluSetCond::None);
+                (
+                    block_reg_set!(Some(self.operands[0].as_reg()), self.operands[1].try_as_reg(), self.operands[1].try_as_shift_reg()),
+                    outputs,
+                )
+            }
+            AluType::Alu2Op0 => {
+                outputs += self.operands[0].as_reg();
+                (block_reg_set!(self.operands[1].try_as_reg(), self.operands[1].try_as_shift_reg()), outputs)
+            }
+        }
+    }
+
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        match self.op_type {
+            AluType::Alu3 | AluType::Mul => {
+                self.operands[1].replace_regs(old, new);
+                self.operands[2].replace_regs(old, new);
+            }
+            AluType::Alu2Op1 => replace_shift_operands(&mut self.operands[..2], old, new),
+            AluType::Alu2Op0 => self.operands[1].replace_regs(old, new),
+        }
+    }
+
+    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        match self.op_type {
+            AluType::Alu3 | AluType::Alu2Op0 | AluType::Mul => self.operands[0].replace_regs(old, new),
+            AluType::Alu2Op1 => {}
+        }
+    }
+
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+        let alu_reg = |op: AluOp, op0: BlockReg, op1: BlockReg, op2: BlockReg, shift: BlockShift, set_cond: bool| match shift.value {
+            BlockOperand::Reg(shift_reg) => AluReg::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_reg.as_fixed(), set_cond, Cond::AL),
+            BlockOperand::Imm(shift_imm) => {
+                debug_assert_eq!(shift_imm & !0x1F, 0);
+                AluShiftImm::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_imm as u8, set_cond, Cond::AL)
+            }
+        };
+        let alu_imm = |op: AluOp, op0: BlockReg, op1: BlockReg, op2: u32, shift: BlockShift, set_cond: bool| {
+            debug_assert_eq!(op2 & !0xFF, 0);
+            let shift_value = shift.value.as_imm();
+            debug_assert_eq!(shift_value & !0xF, 0);
+            debug_assert!(shift_value == 0 || shift.shift_type == ShiftType::Ror);
+            AluImm::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2 as u8, shift_value as u8, set_cond, Cond::AL)
+        };
+
+        let Self { op, operands, set_cond, .. } = self;
+
+        match self.op_type {
+            AluType::Alu3 => match operands[2].operand {
+                BlockOperand::Reg(reg) => opcodes.push(alu_reg(*op, operands[0].as_reg(), operands[1].as_reg(), reg, operands[2].shift, *set_cond != AluSetCond::None)),
+                BlockOperand::Imm(imm) => opcodes.push(alu_imm(*op, operands[0].as_reg(), operands[1].as_reg(), imm, operands[2].shift, *set_cond != AluSetCond::None)),
+            },
+            AluType::Alu2Op1 => {
+                debug_assert_ne!(*set_cond, AluSetCond::None);
+                match operands[1].operand {
+                    BlockOperand::Reg(reg) => opcodes.push(alu_reg(*op, BlockReg::Fixed(Reg::R0), operands[0].as_reg(), reg, operands[1].shift, true)),
+                    BlockOperand::Imm(imm) => opcodes.push(alu_imm(*op, BlockReg::Fixed(Reg::R0), operands[0].as_reg(), imm, operands[1].shift, true)),
+                }
+            }
+            AluType::Alu2Op0 => match operands[1].operand {
+                BlockOperand::Reg(reg) => {
+                    if *op == AluOp::Mov && operands[0].as_reg() == reg && operands[1].shift == BlockShift::default() && *set_cond == AluSetCond::None {
+                        return;
+                    }
+                    opcodes.push(alu_reg(*op, operands[0].as_reg(), BlockReg::Fixed(Reg::R0), reg, operands[1].shift, *set_cond != AluSetCond::None))
+                }
+                BlockOperand::Imm(imm) => {
+                    if *op == AluOp::Mov && operands[1].shift == BlockShift::default() && *set_cond == AluSetCond::None {
+                        opcodes.extend(AluImm::mov32(operands[0].as_reg().as_fixed(), imm))
+                    } else {
+                        opcodes.push(alu_imm(*op, operands[0].as_reg(), BlockReg::Fixed(Reg::R0), imm, operands[1].shift, *set_cond != AluSetCond::None))
+                    }
+                }
+            },
+            AluType::Mul => match operands[2].operand {
+                BlockOperand::Reg(reg) => opcodes.push(MulReg::mul(
+                    operands[0].as_reg().as_fixed(),
+                    operands[1].as_reg().as_fixed(),
+                    reg.as_fixed(),
+                    *set_cond != AluSetCond::None,
+                    Cond::AL,
+                )),
+                BlockOperand::Imm(_) => {
+                    todo!()
+                }
+            },
+        }
+    }
+}
+
+impl Debug for Alu {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            op,
+            operands,
+            set_cond,
+            thumb_pc_aligned,
+            ..
+        } = self;
+        match self.op_type {
+            AluType::Alu3 => write!(f, "{op:?}{set_cond:?} {operands:?}, align pc: {thumb_pc_aligned}"),
+            AluType::Alu2Op1 | AluType::Alu2Op0 => write!(f, "{op:?}{set_cond:?} [{:?}, {:?}], align pc: {thumb_pc_aligned}", operands[0], operands[1]),
+            AluType::Mul => write!(f, "Mul{set_cond:?} {operands:?}, align pc: {thumb_pc_aligned}"),
+        }
+    }
+}
+
+impl BlockInstTrait for Transfer {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        match self.op {
+            TransferOp::Read => (
+                block_reg_set!(Some(self.operands[1].as_reg()), self.operands[2].try_as_reg(), self.operands[2].try_as_shift_reg()),
+                block_reg_set!(Some(self.operands[0].as_reg())),
+            ),
+            TransferOp::Write => (
+                block_reg_set!(
+                    Some(self.operands[0].as_reg()),
+                    Some(self.operands[1].as_reg()),
+                    self.operands[2].try_as_reg(),
+                    self.operands[2].try_as_shift_reg()
+                ),
+                block_reg_set!(),
+            ),
+        }
+    }
+
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        if self.op == TransferOp::Write {
+            self.operands[0].replace_regs(old, new);
+        }
+        self.operands[1].replace_regs(old, new);
+        self.operands[2].replace_regs(old, new);
+    }
+
+    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        if self.op == TransferOp::Read {
+            self.operands[0].replace_regs(old, new);
+        }
+    }
+
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+        let Self {
+            op,
+            operands,
+            signed,
+            amount,
+            add_to_base,
+        } = self;
+
+        opcodes.push(match operands[2].operand {
+            BlockOperand::Reg(reg) => {
+                let func = match amount {
+                    MemoryAmount::Byte => |op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
+                        if signed {
+                            debug_assert_eq!(shift_amount, 0);
+                            LdrStrRegSBHD::generic(op0, op1, op2, true, MemoryAmount::Byte, read, false, add_to_base, true, cond)
+                        } else {
+                            LdrStrReg::generic(op0, op1, op2, shift_amount, shift_type, read, false, true, add_to_base, true, cond)
+                        }
+                    },
+                    MemoryAmount::Half => |op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, _: ShiftType, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
+                        debug_assert_eq!(shift_amount, 0);
+                        LdrStrRegSBHD::generic(op0, op1, op2, signed, MemoryAmount::Half, read, false, add_to_base, true, cond)
+                    },
+                    MemoryAmount::Word => |op0: Reg, op1: Reg, op2: Reg, shift_amount: u8, shift_type: ShiftType, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
+                        debug_assert!(!signed);
+                        LdrStrReg::generic(op0, op1, op2, shift_amount, shift_type, read, false, false, add_to_base, true, cond)
+                    },
+                    MemoryAmount::Double => {
+                        todo!()
+                    }
                 };
-                write!(f, "Label {label:?}{guest_pc} unlikely: {unlikely}")
+                let shift = operands[2].as_shift_imm();
+                debug_assert_eq!(shift & !0x1F, 0);
+                func(
+                    operands[0].as_reg().as_fixed(),
+                    operands[1].as_reg().as_fixed(),
+                    reg.as_fixed(),
+                    shift as u8,
+                    operands[2].shift.shift_type,
+                    *signed,
+                    *op == TransferOp::Read,
+                    *add_to_base,
+                    Cond::AL,
+                )
             }
-            BlockInstKind::Branch { label, block_index, .. } => write!(f, "B {label:?}, block index: {block_index}"),
-            BlockInstKind::SaveContext { .. } => write!(f, "SaveContext"),
-            BlockInstKind::SaveReg { guest_reg, reg_mapped, .. } => write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}"),
-            BlockInstKind::RestoreReg { guest_reg, reg_mapped, .. } => write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}"),
-            BlockInstKind::MarkRegDirty { guest_reg, dirty } => {
-                if *dirty {
-                    write!(f, "Dirty {guest_reg:?}")
+            BlockOperand::Imm(imm) => {
+                let func = match amount {
+                    MemoryAmount::Byte => |op0: Reg, op1: Reg, imm_offset: u16, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
+                        if signed {
+                            debug_assert_eq!(imm_offset & !0xFF, 0);
+                            LdrStrImmSBHD::generic(op0, op1, imm_offset as u8, true, MemoryAmount::Byte, read, false, true, true, cond)
+                        } else {
+                            LdrStrImm::generic(op0, op1, imm_offset, read, false, true, add_to_base, true, cond)
+                        }
+                    },
+                    MemoryAmount::Half => |op0: Reg, op1: Reg, imm_offset: u16, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
+                        debug_assert_eq!(imm_offset & !0xFF, 0);
+                        LdrStrImmSBHD::generic(op0, op1, imm_offset as u8, signed, MemoryAmount::Half, read, false, add_to_base, true, cond)
+                    },
+                    MemoryAmount::Word => |op0: Reg, op1: Reg, imm_offset: u16, signed: bool, read: bool, add_to_base: bool, cond: Cond| {
+                        debug_assert!(!signed);
+                        LdrStrImm::generic(op0, op1, imm_offset, read, false, false, add_to_base, true, cond)
+                    },
+                    MemoryAmount::Double => {
+                        todo!()
+                    }
+                };
+                func(
+                    operands[0].as_reg().as_fixed(),
+                    operands[1].as_reg().as_fixed(),
+                    imm as u16,
+                    *signed,
+                    *op == TransferOp::Read,
+                    *add_to_base,
+                    Cond::AL,
+                )
+            }
+        });
+    }
+}
+
+impl Debug for Transfer {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            op,
+            operands,
+            signed,
+            amount,
+            add_to_base,
+        } = self;
+        let signed = if *signed { "S" } else { "U" };
+        let amount = match amount {
+            MemoryAmount::Byte => "8",
+            MemoryAmount::Half => "16",
+            MemoryAmount::Word => "32",
+            MemoryAmount::Double => "64",
+        };
+        let add_to_base = if *add_to_base { "+" } else { "-" };
+        write!(f, "{op:?}{signed}{amount} {:?} [{:?}, {:?}], {add_to_base}base", operands[0], operands[1], operands[2])
+    }
+}
+
+impl BlockInstTrait for TransferMultiple {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        match self.op {
+            TransferOp::Read => (
+                block_reg_set!(Some(self.operand)),
+                if self.write_back {
+                    BlockRegSet::new_fixed(self.regs) + self.operand
                 } else {
-                    write!(f, "Undirty {guest_reg:?}")
+                    BlockRegSet::new_fixed(self.regs)
+                },
+            ),
+            TransferOp::Write => (
+                BlockRegSet::new_fixed(self.regs) + self.operand,
+                if self.write_back { block_reg_set!(Some(self.operand)) } else { block_reg_set!() },
+            ),
+        }
+    }
+
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        replace_reg(&mut self.operand, old, new);
+    }
+
+    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        if self.write_back {
+            replace_reg(&mut self.operand, old, new);
+        }
+    }
+
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+        opcodes.push(LdmStm::generic(
+            self.operand.as_fixed(),
+            self.regs,
+            self.op == TransferOp::Read,
+            self.write_back,
+            self.add_to_base,
+            self.pre,
+            Cond::AL,
+        ))
+    }
+}
+
+impl Debug for TransferMultiple {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            op,
+            operand,
+            regs,
+            write_back,
+            pre,
+            add_to_base,
+        } = self;
+        let add_to_base = if *add_to_base { "+" } else { "-" };
+        write!(f, "{op:?}M {operand:?} {regs:?}, write back: {write_back}, pre {pre}, {add_to_base}base")
+    }
+}
+
+impl BlockInstTrait for GuestTransferMultiple {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        match self.op {
+            TransferOp::Read => {
+                let mut outputs = BlockRegSet::new_fixed(self.fixed_regs);
+                outputs.add_guests(self.gp_regs);
+                (block_reg_set!(Some(self.addr_reg)), if self.write_back { outputs + self.addr_out_reg } else { outputs })
+            }
+            TransferOp::Write => {
+                let mut inputs = BlockRegSet::new_fixed(self.fixed_regs);
+                inputs.add_guests(self.gp_regs);
+                (inputs + self.addr_reg, if self.write_back { block_reg_set!(Some(self.addr_out_reg)) } else { block_reg_set!() })
+            }
+        }
+    }
+
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        replace_reg(&mut self.addr_reg, old, new)
+    }
+
+    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        if self.write_back {
+            replace_reg(&mut self.addr_out_reg, old, new);
+        }
+    }
+
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+        if self.write_back && self.addr_reg != self.addr_out_reg {
+            opcodes.push(AluShiftImm::mov_al(self.addr_out_reg.as_fixed(), self.addr_reg.as_fixed()))
+        }
+        opcodes.push(LdmStm::generic(
+            if self.write_back { self.addr_out_reg.as_fixed() } else { self.addr_reg.as_fixed() },
+            self.gp_regs + self.fixed_regs,
+            self.op == TransferOp::Read,
+            self.write_back,
+            self.add_to_base,
+            self.pre,
+            Cond::AL,
+        ))
+    }
+}
+
+impl Debug for GuestTransferMultiple {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            op,
+            addr_reg,
+            addr_out_reg,
+            gp_regs,
+            fixed_regs,
+            write_back,
+            pre,
+            add_to_base,
+        } = self;
+        let add_to_base = if *add_to_base { "+" } else { "-" };
+        write!(
+            f,
+            "Guest{op:?}M {addr_reg:?} -> {addr_out_reg:?} gp regs: {gp_regs:?}, fixed regs: {fixed_regs:?}, write back: {write_back}, pre {pre}, {add_to_base}base"
+        )
+    }
+}
+
+impl BlockInstTrait for SystemReg {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        match self.op {
+            SystemRegOp::Mrs => (block_reg_set!(), block_reg_set!(Some(self.operand.as_reg()))),
+            SystemRegOp::Msr => (block_reg_set!(self.operand.try_as_reg()), block_reg_set!()),
+        }
+    }
+
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        if self.op == SystemRegOp::Msr {
+            replace_operand(&mut self.operand, old, new);
+        }
+    }
+
+    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        if self.op == SystemRegOp::Mrs {
+            replace_operand(&mut self.operand, old, new);
+        }
+    }
+
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+        match self.op {
+            SystemRegOp::Mrs => opcodes.push(Mrs::cpsr(self.operand.as_reg().as_fixed(), Cond::AL)),
+            SystemRegOp::Msr => opcodes.push(Msr::cpsr_flags(self.operand.as_reg().as_fixed(), Cond::AL)),
+        }
+    }
+}
+
+impl Debug for SystemReg {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Self { op, operand } = self;
+        write!(f, "{op:?} {operand:?}")
+    }
+}
+
+impl BitField {
+    pub fn bfc(operand: BlockReg, lsb: u8, width: u8) -> Self {
+        BitField {
+            op: BitFieldOp::Bfc,
+            operands: [operand, BlockReg::default()],
+            lsb,
+            width,
+        }
+    }
+
+    pub fn bfi(operands: [BlockReg; 2], lsb: u8, width: u8) -> Self {
+        BitField {
+            op: BitFieldOp::Bfi,
+            operands,
+            lsb,
+            width,
+        }
+    }
+
+    pub fn ubfx(operands: [BlockReg; 2], lsb: u8, width: u8) -> Self {
+        BitField {
+            op: BitFieldOp::Ubfx,
+            operands,
+            lsb,
+            width,
+        }
+    }
+}
+
+impl BlockInstTrait for BitField {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        match self.op {
+            BitFieldOp::Bfc => (block_reg_set!(Some(self.operands[0])), block_reg_set!(Some(self.operands[0]))),
+            BitFieldOp::Bfi | BitFieldOp::Ubfx => (block_reg_set!(Some(self.operands[0]), Some(self.operands[1])), block_reg_set!(Some(self.operands[0]))),
+        }
+    }
+
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        match self.op {
+            BitFieldOp::Bfc => replace_reg(&mut self.operands[0], old, new),
+            BitFieldOp::Bfi => {
+                replace_reg(&mut self.operands[0], old, new);
+                replace_reg(&mut self.operands[1], old, new);
+            }
+            BitFieldOp::Ubfx => replace_reg(&mut self.operands[1], old, new),
+        }
+    }
+
+    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        replace_reg(&mut self.operands[0], old, new)
+    }
+
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+        match self.op {
+            BitFieldOp::Bfc => opcodes.push(Bfc::create(self.operands[0].as_fixed(), self.lsb, self.width, Cond::AL)),
+            BitFieldOp::Bfi => opcodes.push(Bfi::create(self.operands[0].as_fixed(), self.operands[1].as_fixed(), self.lsb, self.width, Cond::AL)),
+            BitFieldOp::Ubfx => opcodes.push(Ubfx::create(self.operands[0].as_fixed(), self.operands[1].as_fixed(), self.lsb, self.width, Cond::AL)),
+        }
+    }
+}
+
+impl Debug for BitField {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Self { op, operands, lsb, width } = self;
+        match op {
+            BitFieldOp::Bfc => write!(f, "{op:?} {:?}, {lsb}, {width}", operands[0]),
+            BitFieldOp::Bfi | BitFieldOp::Ubfx => write!(f, "{op:?} {:?}, {:?}, {lsb}, {width}", operands[0], operands[1]),
+        }
+    }
+}
+
+impl SaveReg {
+    fn save_guest_cpsr(opcodes: &mut Vec<u32>, thread_regs_addr_reg: Reg, host_reg: Reg) {
+        opcodes.push(Mrs::cpsr(host_reg, Cond::AL));
+        // Only copy the cond flags from host cpsr
+        opcodes.push(AluShiftImm::mov(host_reg, host_reg, ShiftType::Lsr, 24, Cond::AL));
+        opcodes.push(LdrStrImm::strb_offset_al(host_reg, thread_regs_addr_reg, Reg::CPSR as u16 * 4 + 3));
+    }
+}
+
+impl BlockInstTrait for SaveReg {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        let mut inputs = BlockRegSet::new();
+        let mut outputs = BlockRegSet::new();
+        match self.guest_reg {
+            Reg::CPSR => {
+                inputs += BlockReg::Fixed(Reg::CPSR);
+                inputs += self.thread_regs_addr_reg;
+                outputs += self.reg_mapped;
+            }
+            _ => {
+                inputs += self.reg_mapped;
+                inputs += self.thread_regs_addr_reg;
+            }
+        }
+        (inputs, outputs)
+    }
+
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        if self.guest_reg != Reg::CPSR {
+            replace_reg(&mut self.reg_mapped, old, new);
+        }
+        replace_reg(&mut self.thread_regs_addr_reg, old, new)
+    }
+
+    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        if self.guest_reg == Reg::CPSR {
+            replace_reg(&mut self.reg_mapped, old, new);
+        }
+    }
+
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+        match self.guest_reg {
+            Reg::CPSR => Self::save_guest_cpsr(opcodes, self.thread_regs_addr_reg.as_fixed(), self.reg_mapped.as_fixed()),
+            _ => opcodes.push(LdrStrImm::str_offset_al(self.reg_mapped.as_fixed(), self.thread_regs_addr_reg.as_fixed(), self.guest_reg as u16 * 4)),
+        }
+    }
+}
+
+impl Debug for SaveReg {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Self { guest_reg, reg_mapped, .. } = self;
+        write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}")
+    }
+}
+
+impl BlockInstTrait for RestoreReg {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        let mut outputs = BlockRegSet::new();
+        outputs += self.reg_mapped;
+        if self.guest_reg == Reg::CPSR {
+            outputs += self.tmp_guest_cpsr_reg;
+            outputs += BlockReg::Fixed(Reg::CPSR);
+        }
+        (block_reg_set!(Some(self.thread_regs_addr_reg)), outputs)
+    }
+
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        replace_reg(&mut self.thread_regs_addr_reg, old, new)
+    }
+
+    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        replace_reg(&mut self.reg_mapped, old, new);
+        if self.guest_reg == Reg::CPSR {
+            replace_reg(&mut self.tmp_guest_cpsr_reg, old, new);
+        }
+    }
+
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+        match self.guest_reg {
+            Reg::CPSR => {
+                opcodes.push(LdrStrImm::ldr_offset_al(self.tmp_guest_cpsr_reg.as_fixed(), self.thread_regs_addr_reg.as_fixed(), Reg::CPSR as u16 * 4));
+                opcodes.push(Msr::cpsr_flags(self.tmp_guest_cpsr_reg.as_fixed(), Cond::AL));
+            }
+            _ => opcodes.push(LdrStrImm::ldr_offset_al(self.reg_mapped.as_fixed(), self.thread_regs_addr_reg.as_fixed(), self.guest_reg as u16 * 4)),
+        }
+    }
+}
+
+impl Debug for RestoreReg {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let Self { guest_reg, reg_mapped, .. } = self;
+        write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}")
+    }
+}
+
+impl GenericGuest {
+    pub fn new(inst_info: &mut InstInfo) -> Self {
+        GenericGuest {
+            inst_info: GuestInstInfo::new(inst_info),
+            regs_mapping: [
+                BlockReg::from(Reg::R0),
+                BlockReg::from(Reg::R1),
+                BlockReg::from(Reg::R2),
+                BlockReg::from(Reg::R3),
+                BlockReg::from(Reg::R4),
+                BlockReg::from(Reg::R5),
+                BlockReg::from(Reg::R6),
+                BlockReg::from(Reg::R7),
+                BlockReg::from(Reg::R8),
+                BlockReg::from(Reg::R9),
+                BlockReg::from(Reg::R10),
+                BlockReg::from(Reg::R11),
+                BlockReg::from(Reg::R12),
+                BlockReg::from(Reg::SP),
+                BlockReg::from(Reg::LR),
+                BlockReg::from(Reg::PC),
+                BlockReg::from(Reg::CPSR),
+                BlockReg::from(Reg::SPSR),
+            ],
+        }
+    }
+}
+
+impl BlockInstTrait for GenericGuest {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        let mut inputs = BlockRegSet::new();
+        let mut outputs = BlockRegSet::new();
+        for reg in self.inst_info.src_regs {
+            inputs += self.regs_mapping[reg as usize];
+        }
+        for reg in self.inst_info.out_regs {
+            outputs += self.regs_mapping[reg as usize];
+        }
+        (inputs, outputs)
+    }
+
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        for reg in self.inst_info.src_regs {
+            replace_reg(&mut self.regs_mapping[reg as usize], old, new);
+        }
+    }
+
+    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
+        for reg in self.inst_info.out_regs {
+            replace_reg(&mut self.regs_mapping[reg as usize], old, new);
+        }
+    }
+
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+        let replace_reg = |reg: &mut Reg| {
+            *reg = self.regs_mapping[*reg as usize].as_fixed();
+        };
+        let replace_shift = |shift_value: &mut ShiftValue| {
+            if let ShiftValue::Reg(reg) = shift_value {
+                replace_reg(reg);
+            }
+        };
+
+        for operand in self.inst_info.operands_mut() {
+            if let Operand::Reg { reg, shift } = operand {
+                replace_reg(reg);
+                if let Some(shift) = shift {
+                    match shift {
+                        Shift::Lsl(v) => replace_shift(v),
+                        Shift::Lsr(v) => replace_shift(v),
+                        Shift::Asr(v) => replace_shift(v),
+                        Shift::Ror(v) => replace_shift(v),
+                    }
                 }
             }
-            BlockInstKind::Call { func_reg, args, has_return } => {
-                if *has_return {
-                    write!(f, "Blx {func_reg:?} {args:?}")
+        }
+
+        self.inst_info.set_cond(Cond::AL);
+        opcodes.push(self.inst_info.assemble());
+    }
+}
+
+impl Debug for GenericGuest {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.inst_info)
+    }
+}
+
+impl Call {
+    pub fn reg(reg: BlockReg, args: [Option<BlockReg>; 4], has_return: bool) -> Self {
+        Call {
+            op: CallOp::Reg(reg),
+            args,
+            has_return,
+        }
+    }
+
+    pub fn offset(offset: usize, args: [Option<BlockReg>; 4], has_return: bool) -> Self {
+        Call {
+            op: CallOp::Offset(offset),
+            args,
+            has_return,
+        }
+    }
+}
+
+impl BlockInstTrait for Call {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        let mut inputs = BlockRegSet::new();
+        if let CallOp::Reg(reg) = self.op {
+            inputs += reg;
+        }
+        for &arg in self.args.iter().flatten() {
+            inputs += arg;
+        }
+        (
+            inputs,
+            block_reg_set!(
+                Some(BlockReg::Fixed(Reg::R0)),
+                Some(BlockReg::Fixed(Reg::R1)),
+                Some(BlockReg::Fixed(Reg::R2)),
+                Some(BlockReg::Fixed(Reg::R3)),
+                Some(BlockReg::Fixed(Reg::R12)),
+                Some(BlockReg::Fixed(Reg::CPSR)),
+                if self.has_return { Some(BlockReg::Fixed(Reg::LR)) } else { None }
+            ),
+        )
+    }
+
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        if let CallOp::Reg(reg) = &mut self.op {
+            replace_reg(reg, old, new)
+        }
+    }
+
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
+
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, _: RegReserve) {
+        match self.op {
+            CallOp::Reg(reg) => opcodes.push(if self.has_return { Bx::blx(reg.as_fixed(), Cond::AL) } else { Bx::bx(reg.as_fixed(), Cond::AL) }),
+            CallOp::Offset(offset) => {
+                // Encode common offset
+                // Branch offset can only be figured out later
+                opcodes.push(BranchEncoding::new(u26::new(offset as u32), self.has_return, true, u4::new(Cond::AL as u8)).into());
+                branch_placeholders.push(opcode_index);
+            }
+        }
+    }
+}
+
+impl Debug for Call {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.op {
+            CallOp::Reg(reg) => {
+                if self.has_return {
+                    write!(f, "Blx {reg:?} {:?}", self.args)
                 } else {
-                    write!(f, "Bx {func_reg:?} {args:?}")
+                    write!(f, "Bx {reg:?} {:?}", self.args)
                 }
             }
-            BlockInstKind::CallCommon { mem_offset, args, has_return } => {
-                if *has_return {
-                    write!(f, "Bl {mem_offset:x} {args:?}")
+            CallOp::Offset(offset) => {
+                if self.has_return {
+                    write!(f, "Bl {offset:x} {:?}", self.args)
                 } else {
-                    write!(f, "B {mem_offset:x} {args:?}")
+                    write!(f, "B {offset:x} {:?}", self.args)
                 }
             }
-            BlockInstKind::Bkpt(id) => write!(f, "Bkpt {id}"),
-            BlockInstKind::Preload { operand, offset, add } => write!(f, "Pli [{operand:?}, #{}{offset}]", if *add { "+" } else { "-" }),
-            BlockInstKind::Nop => write!(f, "Nop"),
-            BlockInstKind::GuestPc(pc) => write!(f, "GuestPc {pc:x}"),
-            BlockInstKind::GenericGuestInst { inst, .. } => write!(f, "{inst:?}"),
-            BlockInstKind::Prologue => write!(f, "Prologue"),
-            BlockInstKind::Epilogue { restore_all_regs } => write!(f, "Epilogue restore all regs {restore_all_regs}"),
-            BlockInstKind::PadBlock { label, correction } => write!(f, "PadBlock {label:?} {correction}"),
+        }
+    }
+}
+
+impl BlockInstTrait for Label {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        (block_reg_set!(), block_reg_set!())
+    }
+    fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn emit_opcode(&mut self, _: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {}
+}
+
+impl Debug for Label {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let guest_pc = match self.guest_pc {
+            None => "",
+            Some(pc) => &format!(" {pc:x}"),
+        };
+        write!(f, "Label {:?}{guest_pc} unlikely: {}", self.label, self.unlikely)
+    }
+}
+
+impl BlockInstTrait for Branch {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        (block_reg_set!(), block_reg_set!())
+    }
+    fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, _: RegReserve) {
+        // Encode label
+        // Branch offset can only be figured out later
+        opcodes.push(BranchEncoding::new(u26::new(self.block_index as u32), false, false, u4::new(Cond::AL as u8)).into());
+        branch_placeholders.push(opcode_index);
+    }
+}
+
+impl Debug for Branch {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "B {:?}, block index: {}", self.label, self.block_index)
+    }
+}
+
+impl BlockInstTrait for Preload {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        (block_reg_set!(Some(self.operand)), block_reg_set!())
+    }
+
+    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
+        replace_reg(&mut self.operand, old, new)
+    }
+
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
+
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+        opcodes.push(transfer_assembler::Preload::pli(self.operand.as_fixed(), self.offset, self.add))
+    }
+
+    fn unconditional(&self) -> bool {
+        true
+    }
+}
+
+impl Debug for Preload {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Pli [{:?}, #{}{}]", self.operand, if self.add { "+" } else { "-" }, self.offset)
+    }
+}
+
+impl BlockInstTrait for SaveContext {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        (block_reg_set!(), block_reg_set!())
+    }
+    fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn emit_opcode(&mut self, _: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {}
+}
+
+impl Debug for SaveContext {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SaveContext")
+    }
+}
+
+impl BlockInstTrait for GuestPc {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        (block_reg_set!(), block_reg_set!())
+    }
+    fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn emit_opcode(&mut self, _: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {}
+}
+
+impl Debug for GuestPc {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GuestPc {:x}", self.0)
+    }
+}
+
+impl BlockInstTrait for Epilogue {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        (
+            block_reg_set!(Some(BlockReg::Fixed(Reg::SP))),
+            block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(Reg::PC))),
+        )
+    }
+    fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, used_host_regs: RegReserve) {
+        opcodes.push(LdmStm::generic(
+            Reg::SP,
+            if self.restore_all_regs { ALLOCATION_REGS + Reg::R12 } else { used_host_regs } + Reg::PC,
+            true,
+            true,
+            true,
+            false,
+            Cond::AL,
+        ))
+    }
+}
+
+impl Debug for Epilogue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Epilogue restore all regs {}", self.restore_all_regs)
+    }
+}
+
+impl BlockInstTrait for MarkRegDirty {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        if self.dirty {
+            (block_reg_set!(Some(BlockReg::from(self.guest_reg))), block_reg_set!(Some(BlockReg::from(self.guest_reg))))
+        } else {
+            (block_reg_set!(Some(BlockReg::from(self.guest_reg))), block_reg_set!())
+        }
+    }
+    fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn emit_opcode(&mut self, _: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {}
+}
+
+impl Debug for MarkRegDirty {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.dirty {
+            write!(f, "Dirty {:?}", self.guest_reg)
+        } else {
+            write!(f, "Undirty {:?}", self.guest_reg)
+        }
+    }
+}
+
+impl BlockInstTrait for PadBlock {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        (block_reg_set!(), block_reg_set!())
+    }
+    fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn emit_opcode(&mut self, _: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {}
+}
+
+impl Debug for PadBlock {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PadBlock {:?} {}", self.label, self.correction)
+    }
+}
+
+impl BlockInstTrait for Generic {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        match self {
+            Generic::Prologue => (
+                block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(Reg::LR))),
+                block_reg_set!(Some(BlockReg::Fixed(Reg::SP))),
+            ),
+            _ => (block_reg_set!(), block_reg_set!()),
+        }
+    }
+    fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, used_host_regs: RegReserve) {
+        match self {
+            Generic::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
+            Generic::Nop => opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0)),
+            Generic::Prologue => opcodes.push(LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL)),
+            _ => {}
+        }
+    }
+    fn unconditional(&self) -> bool {
+        true
+    }
+}
+
+impl Debug for Generic {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Generic::Bkpt(id) => write!(f, "Bkpt {id}"),
+            Generic::Nop => write!(f, "Nop"),
+            Generic::Prologue => write!(f, "Prologue"),
         }
     }
 }
