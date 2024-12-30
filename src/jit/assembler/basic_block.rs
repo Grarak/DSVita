@@ -7,6 +7,7 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{MemoryAmount, ShiftType};
 use crate::IS_DEBUG;
 use std::fmt::{Debug, Formatter};
+use std::hint::assert_unchecked;
 use std::ptr;
 
 pub struct BasicBlock {
@@ -93,7 +94,7 @@ impl BasicBlock {
         self.guest_regs_output_dirty = self.guest_regs_input_dirty;
 
         for i in self.block_entry_start..=self.block_entry_end {
-            match &mut buf.insts[i].inst_type {
+            match &mut buf.get_inst_mut(i).inst_type {
                 BlockInstType::SaveContext(inner) => {
                     inner.guest_regs = self.guest_regs_output_dirty;
                     self.guest_regs_output_dirty.clear();
@@ -108,7 +109,7 @@ impl BasicBlock {
                     }
                 }
                 _ => {
-                    let inst = &buf.insts[i];
+                    let inst = buf.get_inst(i);
                     let (_, outputs) = inst.get_io();
                     self.guest_regs_output_dirty += outputs.get_guests();
                 }
@@ -122,7 +123,7 @@ impl BasicBlock {
         let mut last_pc = basic_block_start_pc;
 
         for i in self.block_entry_start..=self.block_entry_end {
-            match &buf.insts[i].inst_type {
+            match &buf.get_inst(i).inst_type {
                 BlockInstType::Label(inner) => {
                     if let Some(pc) = inner.guest_pc {
                         last_pc = pc;
@@ -150,7 +151,7 @@ impl BasicBlock {
                     self.pad_label = Some((inner.label, inner.correction));
                 }
                 inst_type => {
-                    let (inputs, _) = buf.insts[i].get_io();
+                    let (inputs, _) = buf.get_inst(i).get_io();
                     let inputs = inputs.get_guests();
 
                     if inputs.is_reserved(Reg::PC) {
@@ -229,7 +230,8 @@ impl BasicBlock {
 
     pub fn init_resolve_io(&mut self, buf: &BlockAsmBuf) {
         for (i, &inst_index) in self.inst_indices.iter().enumerate().rev() {
-            let (inputs, outputs) = buf.insts[inst_index as usize].get_io();
+            unsafe { assert_unchecked(i + 1 < self.regs_live_ranges.len()) };
+            let (inputs, outputs) = buf.get_inst(inst_index as usize).get_io();
             let mut previous_ranges = self.regs_live_ranges[i + 1];
             previous_ranges -= outputs;
             self.regs_live_ranges[i] = previous_ranges + inputs;
@@ -238,10 +240,11 @@ impl BasicBlock {
 
     pub fn remove_dead_code(&mut self, buf: &mut BlockAsmBuf) {
         for (i, &inst_index) in self.inst_indices.iter().enumerate() {
-            let inst = &mut buf.insts[inst_index as usize];
+            let inst = buf.get_inst_mut(inst_index as usize);
             if let BlockInstType::RestoreReg(inner) = &inst.inst_type {
                 if inner.guest_reg != Reg::CPSR {
                     let (_, outputs) = inst.get_io();
+                    unsafe { assert_unchecked(i + 1 < self.regs_live_ranges.len()) };
                     if (self.regs_live_ranges[i + 1] - outputs) == self.regs_live_ranges[i + 1] {
                         inst.skip = true;
                     }
@@ -251,20 +254,21 @@ impl BasicBlock {
     }
 
     pub fn set_required_outputs(&mut self, required_outputs: BlockRegSet) {
-        *self.regs_live_ranges.last_mut().unwrap() = required_outputs;
+        let last = self.regs_live_ranges.len() - 1;
+        unsafe { *self.regs_live_ranges.get_unchecked_mut(last) = required_outputs }
     }
 
     pub fn get_required_inputs(&self) -> &BlockRegSet {
-        self.regs_live_ranges.first().unwrap()
+        unsafe { self.regs_live_ranges.get_unchecked(0) }
     }
 
     pub fn get_required_outputs(&self) -> &BlockRegSet {
-        self.regs_live_ranges.last().unwrap()
+        unsafe { self.regs_live_ranges.get_unchecked(self.regs_live_ranges.len() - 1) }
     }
 
     pub fn allocate_regs(&mut self, buf: &mut BlockAsmBuf) {
         for (i, &inst_index) in self.inst_indices.iter().enumerate() {
-            let inst = &mut buf.insts[inst_index as usize];
+            let inst = unsafe { buf.insts.get_unchecked_mut(inst_index as usize) };
             self.pre_opcodes_indices[i] = buf.reg_allocator.pre_allocate_insts.len() as u16;
             if !inst.skip {
                 buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..]);
@@ -280,7 +284,7 @@ impl BasicBlock {
 
             let end_entry = *self.inst_indices.last().unwrap() as usize;
             // Make sure to restore mapping before a branch
-            if let BlockInstType::Branch(_) = &buf.insts[end_entry].inst_type {
+            if let BlockInstType::Branch(_) = &buf.get_inst(end_entry).inst_type {
                 self.pre_opcodes_indices[last_index] = pre_opcodes_start as u16;
                 self.pre_opcodes_indices[last_index + 1] = buf.reg_allocator.pre_allocate_insts.len() as u16;
             }
@@ -298,16 +302,21 @@ impl BasicBlock {
             return;
         }
 
+        unsafe { assert_unchecked(block_index < buf.branch_placeholders.len()) }
         buf.branch_placeholders[block_index].clear();
 
         for (i, &inst_index) in self.inst_indices.iter().enumerate() {
-            let inst = &mut buf.insts[inst_index as usize];
+            let inst = unsafe { buf.insts.get_unchecked_mut(inst_index as usize) };
             if inst.skip {
                 continue;
             }
 
-            self.opcodes
-                .extend(&buf.reg_allocator.pre_allocate_insts[self.pre_opcodes_indices[i] as usize..self.pre_opcodes_indices[i + 1] as usize]);
+            let pre_opcodes_start = unsafe { *self.pre_opcodes_indices.get_unchecked(i) as usize };
+            let pre_opcodes_end = unsafe { *self.pre_opcodes_indices.get_unchecked(i + 1) as usize };
+            if pre_opcodes_start < pre_opcodes_end {
+                unsafe { assert_unchecked(pre_opcodes_end <= buf.reg_allocator.pre_allocate_insts.len()) };
+                self.opcodes.extend(&buf.reg_allocator.pre_allocate_insts[pre_opcodes_start..pre_opcodes_end]);
+            }
 
             let start_len = self.opcodes.len();
 
@@ -333,9 +342,12 @@ impl BasicBlock {
             }
         }
 
-        self.opcodes.extend(
-            &buf.reg_allocator.pre_allocate_insts[self.pre_opcodes_indices[self.pre_opcodes_indices.len() - 2] as usize..self.pre_opcodes_indices[self.pre_opcodes_indices.len() - 1] as usize],
-        );
+        let pre_opcodes_start = unsafe { *self.pre_opcodes_indices.get_unchecked(self.pre_opcodes_indices.len() - 2) as usize };
+        let pre_opcodes_end = unsafe { *self.pre_opcodes_indices.get_unchecked(self.pre_opcodes_indices.len() - 1) as usize };
+        if pre_opcodes_start < pre_opcodes_end {
+            unsafe { assert_unchecked(pre_opcodes_end <= buf.reg_allocator.pre_allocate_insts.len()) };
+            self.opcodes.extend(&buf.reg_allocator.pre_allocate_insts[pre_opcodes_start..pre_opcodes_end]);
+        }
 
         for _ in self.opcodes.len()..self.pad_size {
             self.opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0));
@@ -348,7 +360,7 @@ impl Debug for BasicBlock {
         if self.inst_indices.is_empty() {
             writeln!(f, "BasicBlock: uninitialized enter blocks: {:?}", self.enter_blocks)?;
             for i in self.block_entry_start..self.block_entry_end {
-                let inst = unsafe { &self.block_asm_buf_ptr.as_ref().unwrap().insts[i] };
+                let inst = unsafe { self.block_asm_buf_ptr.as_ref().unwrap().get_inst(i) };
                 writeln!(f, "\t{inst:?}")?;
                 let (inputs, outputs) = inst.get_io();
                 writeln!(f, "\t\tinputs: {inputs:?}, outputs: {outputs:?}")?;
@@ -357,7 +369,7 @@ impl Debug for BasicBlock {
         } else {
             writeln!(f, "BasicBlock: inputs: {:?} enter blocks: {:?}", self.regs_live_ranges.first().unwrap(), self.enter_blocks,)?;
             for (i, &inst_index) in self.inst_indices.iter().enumerate() {
-                let inst = unsafe { &self.block_asm_buf_ptr.as_ref().unwrap().insts[inst_index as usize] };
+                let inst = unsafe { self.block_asm_buf_ptr.as_ref().unwrap().get_inst(inst_index as usize) };
                 writeln!(f, "\t{inst:?}")?;
                 let (inputs, outputs) = inst.get_io();
                 writeln!(f, "\t\tinputs: {inputs:?}, outputs: {outputs:?}")?;

@@ -39,14 +39,14 @@ impl BlockRegAllocator {
         }
     }
 
-    pub fn init_inputs(&mut self, input_regs: BlockRegSet) {
+    pub fn init_inputs(&mut self, input_regs: &BlockRegSet) {
         self.stored_mapping.fill(Reg::None);
         self.stored_mapping_reverse.fill(None);
         self.spilled.clear();
         self.lru_reg.clear();
 
         for any_input_reg in input_regs.iter_any() {
-            match self.global_mapping[any_input_reg as usize] {
+            match self.get_global_mapping(any_input_reg) {
                 Reg::None => self.spilled += BlockReg::Any(any_input_reg),
                 global_mapping => {
                     self.set_stored_mapping(any_input_reg, global_mapping);
@@ -56,10 +56,30 @@ impl BlockRegAllocator {
         }
 
         for reg in SCRATCH_REGS + ALLOCATION_REGS {
-            if self.stored_mapping_reverse[reg as usize].is_none() {
+            if self.get_stored_mapping_reverse(reg).is_none() {
                 self.lru_reg.push_front(reg);
             }
         }
+    }
+
+    fn get_global_mapping(&self, any_reg: u16) -> Reg {
+        unsafe { *self.global_mapping.get_unchecked(any_reg as usize) }
+    }
+
+    fn get_stored_mapping(&self, any_reg: u16) -> &Reg {
+        unsafe { self.stored_mapping.get_unchecked(any_reg as usize) }
+    }
+
+    fn get_stored_mapping_mut(&mut self, any_reg: u16) -> &mut Reg {
+        unsafe { self.stored_mapping.get_unchecked_mut(any_reg as usize) }
+    }
+
+    fn get_stored_mapping_reverse(&self, reg: Reg) -> &Option<u16> {
+        unsafe { self.stored_mapping_reverse.get_unchecked(reg as usize) }
+    }
+
+    fn get_stored_mapping_reverse_mut(&mut self, reg: Reg) -> &mut Option<u16> {
+        unsafe { self.stored_mapping_reverse.get_unchecked_mut(reg as usize) }
     }
 
     fn gen_pre_handle_spilled_inst(&mut self, any_reg: u16, mapping: Reg, op: TransferOp) {
@@ -74,26 +94,14 @@ impl BlockRegAllocator {
     }
 
     fn set_stored_mapping(&mut self, any_reg: u16, reg: Reg) {
-        self.stored_mapping[any_reg as usize] = reg;
-        self.stored_mapping_reverse[reg as usize] = Some(any_reg);
+        *self.get_stored_mapping_mut(any_reg) = reg;
+        *self.get_stored_mapping_reverse_mut(reg) = Some(any_reg);
     }
 
     fn remove_stored_mapping(&mut self, any_reg: u16) {
-        let stored_mapping = self.stored_mapping[any_reg as usize];
-        self.stored_mapping[any_reg as usize] = Reg::None;
-        self.stored_mapping_reverse[stored_mapping as usize] = None;
-    }
-
-    fn swap_stored_mapping(&mut self, any_reg: u16, other_any_reg: u16) {
-        let stored_mapping = self.stored_mapping[any_reg as usize];
-        let stored_mapping_other = self.stored_mapping[other_any_reg as usize];
-        self.stored_mapping.swap(any_reg as usize, other_any_reg as usize);
-        if stored_mapping != Reg::None {
-            self.stored_mapping_reverse[stored_mapping as usize] = Some(other_any_reg);
-        }
-        if stored_mapping_other != Reg::None {
-            self.stored_mapping_reverse[stored_mapping_other as usize] = Some(any_reg);
-        }
+        let stored_mapping = *self.get_stored_mapping(any_reg);
+        *self.get_stored_mapping_mut(any_reg) = Reg::None;
+        *self.get_stored_mapping_reverse_mut(stored_mapping) = None;
     }
 
     fn pop_lru_reg(&mut self) -> Reg {
@@ -104,11 +112,11 @@ impl BlockRegAllocator {
     }
 
     fn allocate_reg(&mut self, any_reg: u16, live_ranges: &[BlockRegSet], used_regs: &BlockRegSet) -> Reg {
-        let global_mapping = self.global_mapping[any_reg as usize];
+        let global_mapping = self.get_global_mapping(any_reg);
         if global_mapping != Reg::None && !used_regs.contains(BlockReg::Fixed(global_mapping)) && !live_ranges[1].contains(BlockReg::Fixed(global_mapping)) {
             let mut use_global_mapping = true;
 
-            if let Some(mapped_reg) = self.stored_mapping_reverse[global_mapping as usize] {
+            if let Some(mapped_reg) = *self.get_stored_mapping_reverse(global_mapping) {
                 use_global_mapping = !used_regs.contains(BlockReg::Any(mapped_reg));
                 if use_global_mapping {
                     if live_ranges[1].contains(BlockReg::Any(mapped_reg)) {
@@ -143,7 +151,7 @@ impl BlockRegAllocator {
                 continue;
             }
 
-            if let Some(mapped_reg) = self.stored_mapping_reverse[reg as usize] {
+            if let Some(mapped_reg) = *self.get_stored_mapping_reverse(reg) {
                 if used_regs.contains(BlockReg::Any(mapped_reg)) {
                     continue;
                 }
@@ -164,7 +172,7 @@ impl BlockRegAllocator {
     }
 
     fn get_input_reg(&mut self, any_reg: u16, live_ranges: &[BlockRegSet], used_regs: &BlockRegSet) -> Reg {
-        match self.stored_mapping[any_reg as usize] {
+        match self.get_stored_mapping(any_reg) {
             Reg::None => {
                 if self.spilled.contains(BlockReg::Any(any_reg)) {
                     let reg = self.allocate_reg(any_reg, live_ranges, used_regs);
@@ -175,7 +183,7 @@ impl BlockRegAllocator {
                     panic!("input reg {any_reg} must be allocated")
                 }
             }
-            stored_mapping => stored_mapping,
+            stored_mapping => *stored_mapping,
         }
     }
 
@@ -183,7 +191,7 @@ impl BlockRegAllocator {
         if DEBUG && unsafe { BLOCK_LOG } {
             println!("Remove fixed reg {fixed_reg:?}");
         }
-        if let Some(any_reg) = self.stored_mapping_reverse[fixed_reg as usize] {
+        if let Some(any_reg) = *self.get_stored_mapping_reverse(fixed_reg) {
             self.remove_stored_mapping(any_reg);
             if DEBUG && unsafe { BLOCK_LOG } {
                 println!("Remove stored mapping {any_reg}");
@@ -199,20 +207,19 @@ impl BlockRegAllocator {
     }
 
     fn get_output_reg(&mut self, any_reg: u16, live_ranges: &[BlockRegSet], used_regs: &BlockRegSet) -> Reg {
-        match self.stored_mapping[any_reg as usize] {
+        match self.get_stored_mapping(any_reg) {
             Reg::None => {
                 self.spilled -= BlockReg::Any(any_reg);
                 self.allocate_reg(any_reg, live_ranges, used_regs)
             }
-            stored_mapping => stored_mapping,
+            stored_mapping => *stored_mapping,
         }
     }
 
-    #[inline(never)]
     fn relocate_guest_regs(&mut self, guest_regs: RegReserve, live_ranges: &[BlockRegSet], inputs: &BlockRegSet, is_input: bool) {
         let mut relocatable_regs = RegReserve::new();
         for guest_reg in guest_regs {
-            if self.stored_mapping[guest_reg as usize] != guest_reg
+            if *self.get_stored_mapping(guest_reg as u16) != guest_reg
                 // Check if reg is used as a fixed input for something else
                 && !live_ranges[1].contains(BlockReg::Fixed(guest_reg))
             {
@@ -238,7 +245,7 @@ impl BlockRegAllocator {
         self.lru_reg = new_lru;
 
         for guest_reg in relocatable_regs {
-            if let Some(currently_used_by) = self.stored_mapping_reverse[guest_reg as usize] {
+            if let Some(currently_used_by) = *self.get_stored_mapping_reverse(guest_reg) {
                 if DEBUG && unsafe { BLOCK_LOG } {
                     println!("relocate guest spill {currently_used_by} for {guest_reg:?}");
                 }
@@ -251,7 +258,7 @@ impl BlockRegAllocator {
         }
 
         for guest_reg in relocatable_regs {
-            let stored_mapping = self.stored_mapping[guest_reg as usize];
+            let stored_mapping = *self.get_stored_mapping(guest_reg as u16);
             if stored_mapping != Reg::None {
                 if is_input {
                     self.gen_pre_move_reg(guest_reg, stored_mapping);
@@ -272,7 +279,6 @@ impl BlockRegAllocator {
         }
     }
 
-    #[inline(never)]
     pub fn inst_allocate(&mut self, inst: &mut BlockInst, live_ranges: &[BlockRegSet]) {
         if DEBUG && unsafe { BLOCK_LOG } {
             println!("allocate reg for {inst:?}");
@@ -324,12 +330,12 @@ impl BlockRegAllocator {
         if DEBUG {
             for (any_reg, &stored_mapping) in self.stored_mapping.iter().enumerate() {
                 if stored_mapping != Reg::None {
-                    assert_eq!(self.stored_mapping_reverse[stored_mapping as usize], Some(any_reg as u16));
+                    assert_eq!(*self.get_stored_mapping_reverse(stored_mapping), Some(any_reg as u16));
                 }
             }
             for (reg, &mapped_reg) in self.stored_mapping_reverse.iter().enumerate() {
                 if let Some(mapped_reg) = mapped_reg {
-                    assert_eq!(Reg::from(reg as u8), self.stored_mapping[mapped_reg as usize]);
+                    assert_eq!(Reg::from(reg as u8), *self.get_stored_mapping(mapped_reg));
                 }
             }
         }
@@ -337,9 +343,9 @@ impl BlockRegAllocator {
 
     pub fn ensure_global_mappings(&mut self, output_regs: BlockRegSet) {
         for output_reg in output_regs.iter_any() {
-            match self.global_mapping[output_reg as usize] {
+            match self.get_global_mapping(output_reg) {
                 Reg::None => {
-                    let stored_mapping = self.stored_mapping[output_reg as usize];
+                    let stored_mapping = *self.get_stored_mapping(output_reg);
                     if stored_mapping != Reg::None {
                         self.remove_stored_mapping(output_reg);
                         self.spilled += BlockReg::Any(output_reg);
@@ -347,17 +353,17 @@ impl BlockRegAllocator {
                     }
                 }
                 desired_reg_mapping => {
-                    let stored_mapping = self.stored_mapping[output_reg as usize];
+                    let stored_mapping = *self.get_stored_mapping(output_reg);
                     if desired_reg_mapping == stored_mapping {
                         // Already at correct register, skip
                         continue;
                     }
 
-                    if let Some(currently_used_by) = self.stored_mapping_reverse[desired_reg_mapping as usize] {
+                    if let Some(currently_used_by) = *self.get_stored_mapping_reverse(desired_reg_mapping) {
                         // Some other any reg is using the desired reg
                         if output_regs.contains(BlockReg::Any(currently_used_by)) {
                             // other any reg is part of required output
-                            match self.global_mapping[currently_used_by as usize] {
+                            match self.get_global_mapping(currently_used_by) {
                                 Reg::None => {
                                     // other any reg is part of predetermined spilled
                                     self.remove_stored_mapping(currently_used_by);

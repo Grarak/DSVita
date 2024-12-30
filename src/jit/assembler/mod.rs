@@ -6,6 +6,7 @@ use crate::jit::inst_info::{Shift, ShiftValue};
 use crate::jit::reg::Reg;
 use crate::jit::ShiftType;
 use crate::utils::NoHashMap;
+use bit_set::BitSet;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 
@@ -374,10 +375,21 @@ pub struct BlockAsmBuf {
     pub insts: Vec<BlockInst>,
     pub basic_block_label_mapping: NoHashMap<u16, usize>,
     pub guest_branches_mapping: NoHashMap<u32, BlockLabel>,
+    pub reachable_blocks: BitSet,
     pub reg_allocator: BlockRegAllocator,
     pub block_opcode_offsets: Vec<usize>,
     pub opcodes: Vec<u32>,
     pub branch_placeholders: Vec<Vec<usize>>,
+}
+
+impl BlockAsmBuf {
+    pub fn get_inst(&self, index: usize) -> &BlockInst {
+        unsafe { self.insts.get_unchecked(index) }
+    }
+
+    pub fn get_inst_mut(&mut self, index: usize) -> &mut BlockInst {
+        unsafe { self.insts.get_unchecked_mut(index) }
+    }
 }
 
 impl BlockAsmBuf {
@@ -386,6 +398,7 @@ impl BlockAsmBuf {
             insts: Vec::new(),
             basic_block_label_mapping: NoHashMap::default(),
             guest_branches_mapping: NoHashMap::default(),
+            reachable_blocks: BitSet::new(),
             reg_allocator: BlockRegAllocator::new(),
             block_opcode_offsets: Vec::new(),
             opcodes: Vec::new(),

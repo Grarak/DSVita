@@ -41,11 +41,11 @@ impl JitBuf {
     }
 
     pub fn current_inst(&self) -> &InstInfo {
-        &self.insts[self.current_index]
+        unsafe { self.insts.get_unchecked(self.current_index) }
     }
 
     pub fn current_inst_mut(&mut self) -> &mut InstInfo {
-        &mut self.insts[self.current_index]
+        unsafe { self.insts.get_unchecked_mut(self.current_index) }
     }
 }
 

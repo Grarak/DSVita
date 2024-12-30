@@ -249,8 +249,8 @@ impl Iterator for BlockRegAnySetIter<'_> {
     type Item = u16;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let reg = BlockReg::Any(self.current);
-        let array_index = (reg.get_id() >> 5) as usize;
+        let id = self.current + Reg::None as u16;
+        let array_index = (id >> 5) as usize;
         unsafe { assert_unchecked(array_index < self.set.0.len()) };
         let zeros = self.set.0[array_index].trailing_zeros();
         self.set.0[array_index] = self.set.0[array_index].wrapping_shr(zeros);
@@ -258,7 +258,7 @@ impl Iterator for BlockRegAnySetIter<'_> {
             if array_index == self.set.0.len() - 1 {
                 None
             } else {
-                self.current = utils::align_up(reg.get_id() as usize, 32) as u16 - Reg::None as u16;
+                self.current = utils::align_up(id as usize, 32) as u16 - Reg::None as u16;
                 self.next()
             }
         } else {
@@ -266,6 +266,7 @@ impl Iterator for BlockRegAnySetIter<'_> {
             let reg = self.current;
             self.set.0[array_index] >>= 1;
             self.current += 1;
+            unsafe { assert_unchecked(reg < ANY_REG_LIMIT) };
             Some(reg)
         }
     }
