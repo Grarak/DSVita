@@ -44,6 +44,7 @@ macro_rules! alu2_op0 {
 
 pub struct BlockTmpRegs {
     pub thread_regs_addr_reg: BlockReg,
+    pub host_cpsr_reg: BlockReg,
     pub guest_cpsr_reg: BlockReg,
     pub operand_imm_reg: BlockReg,
     shift_imm_reg: BlockReg,
@@ -75,22 +76,24 @@ impl BlockAsm {
         buf.guest_branches_mapping.clear();
 
         let thread_regs_addr_reg = BlockReg::Any(Reg::SPSR as u16 + 1);
-        let tmp_guest_cpsr_reg = BlockReg::Any(Reg::SPSR as u16 + 2);
-        let tmp_operand_imm_reg = BlockReg::Any(Reg::SPSR as u16 + 3);
-        let tmp_shift_imm_reg = BlockReg::Any(Reg::SPSR as u16 + 4);
-        let tmp_func_call_reg = BlockReg::Any(Reg::SPSR as u16 + 5);
+        let tmp_host_cpsr_reg = BlockReg::Any(Reg::SPSR as u16 + 2);
+        let tmp_guest_cpsr_reg = BlockReg::Any(Reg::SPSR as u16 + 3);
+        let tmp_operand_imm_reg = BlockReg::Any(Reg::SPSR as u16 + 4);
+        let tmp_shift_imm_reg = BlockReg::Any(Reg::SPSR as u16 + 5);
+        let tmp_func_call_reg = BlockReg::Any(Reg::SPSR as u16 + 6);
         let mut instance = BlockAsm {
             cache,
             buf,
 
             // First couple any regs are reserved for guest mapping
-            any_reg_count: Reg::SPSR as u16 + 6,
+            any_reg_count: Reg::SPSR as u16 + 7,
             freed_any_regs: NoHashSet::default(),
             label_count: 0,
             used_labels: NoHashSet::default(),
 
             tmp_regs: BlockTmpRegs {
                 thread_regs_addr_reg,
+                host_cpsr_reg: tmp_host_cpsr_reg,
                 guest_cpsr_reg: tmp_guest_cpsr_reg,
                 operand_imm_reg: tmp_operand_imm_reg,
                 shift_imm_reg: tmp_shift_imm_reg,
@@ -450,10 +453,7 @@ impl BlockAsm {
     }
 
     pub fn save_context(&mut self) {
-        self.insert_inst(SaveContext {
-            guest_regs: RegReserve::new(),
-            thread_regs_addr_reg: self.tmp_regs.thread_regs_addr_reg,
-        });
+        self.insert_inst(SaveContext { guest_regs: RegReserve::new() });
     }
 
     pub fn save_reg(&mut self, guest_reg: Reg) {
@@ -461,6 +461,7 @@ impl BlockAsm {
             guest_reg,
             reg_mapped: BlockReg::from(guest_reg),
             thread_regs_addr_reg: self.tmp_regs.thread_regs_addr_reg,
+            tmp_host_cpsr_reg: self.tmp_regs.host_cpsr_reg,
         });
     }
 

@@ -290,7 +290,10 @@ impl BlockRegAllocator {
         }
 
         let inputs = *inputs;
-        let outputs = *outputs;
+        let mut outputs = *outputs;
+        // cpsr changes don't need reg allocations, since they write to the actual cpsr reg
+        // it's only part of output to keep track for savereg
+        outputs -= BlockReg::from(Reg::CPSR);
         let used_regs = inputs + outputs;
 
         if DEBUG && unsafe { BLOCK_LOG } {

@@ -10,7 +10,7 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
 use bilge::prelude::*;
 use enum_dispatch::enum_dispatch;
-use std::cell::{UnsafeCell};
+use std::cell::UnsafeCell;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
@@ -141,6 +141,7 @@ pub struct SaveReg {
     pub guest_reg: Reg,
     pub reg_mapped: BlockReg,
     pub thread_regs_addr_reg: BlockReg,
+    pub tmp_host_cpsr_reg: BlockReg,
 }
 
 pub struct RestoreReg {
@@ -180,7 +181,7 @@ impl DerefMut for GuestInstInfo {
 
 pub struct GenericGuest {
     pub inst_info: GuestInstInfo,
-    regs_mapping: [BlockReg; Reg::None as usize],
+    regs_mapping: [Reg; 3],
 }
 
 #[bitsize(32)]
@@ -223,7 +224,6 @@ pub struct Preload {
 
 pub struct SaveContext {
     pub guest_regs: RegReserve,
-    pub thread_regs_addr_reg: BlockReg,
 }
 
 pub struct GuestPc(pub u32);
@@ -936,16 +936,13 @@ impl BlockInstTrait for SaveReg {
     fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
         let mut inputs = BlockRegSet::new();
         let mut outputs = BlockRegSet::new();
+        inputs += self.thread_regs_addr_reg;
         match self.guest_reg {
             Reg::CPSR => {
                 inputs += BlockReg::Fixed(Reg::CPSR);
-                inputs += self.thread_regs_addr_reg;
-                outputs += self.reg_mapped;
+                outputs += self.tmp_host_cpsr_reg;
             }
-            _ => {
-                inputs += self.reg_mapped;
-                inputs += self.thread_regs_addr_reg;
-            }
+            _ => inputs += self.reg_mapped,
         }
         (inputs, outputs)
     }
@@ -959,13 +956,13 @@ impl BlockInstTrait for SaveReg {
 
     fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
         if self.guest_reg == Reg::CPSR {
-            replace_reg(&mut self.reg_mapped, old, new);
+            replace_reg(&mut self.tmp_host_cpsr_reg, old, new);
         }
     }
 
     fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
         match self.guest_reg {
-            Reg::CPSR => Self::save_guest_cpsr(opcodes, self.thread_regs_addr_reg.as_fixed(), self.reg_mapped.as_fixed()),
+            Reg::CPSR => Self::save_guest_cpsr(opcodes, self.thread_regs_addr_reg.as_fixed(), self.tmp_host_cpsr_reg.as_fixed()),
             _ => opcodes.push(LdrStrImm::str_offset_al(self.reg_mapped.as_fixed(), self.thread_regs_addr_reg.as_fixed(), self.guest_reg as u16 * 4)),
         }
     }
@@ -973,8 +970,7 @@ impl BlockInstTrait for SaveReg {
 
 impl Debug for SaveReg {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Self { guest_reg, reg_mapped, .. } = self;
-        write!(f, "SaveReg {guest_reg:?}, mapped: {reg_mapped:?}")
+        write!(f, "SaveReg {:?}", self.guest_reg)
     }
 }
 
@@ -1013,8 +1009,7 @@ impl BlockInstTrait for RestoreReg {
 
 impl Debug for RestoreReg {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let Self { guest_reg, reg_mapped, .. } = self;
-        write!(f, "RestoreReg {guest_reg:?}, mapped: {reg_mapped:?}")
+        write!(f, "RestoreReg {:?}", self.guest_reg)
     }
 }
 
@@ -1022,26 +1017,7 @@ impl GenericGuest {
     pub fn new(inst_info: &mut InstInfo) -> Self {
         GenericGuest {
             inst_info: GuestInstInfo::new(inst_info),
-            regs_mapping: [
-                BlockReg::from(Reg::R0),
-                BlockReg::from(Reg::R1),
-                BlockReg::from(Reg::R2),
-                BlockReg::from(Reg::R3),
-                BlockReg::from(Reg::R4),
-                BlockReg::from(Reg::R5),
-                BlockReg::from(Reg::R6),
-                BlockReg::from(Reg::R7),
-                BlockReg::from(Reg::R8),
-                BlockReg::from(Reg::R9),
-                BlockReg::from(Reg::R10),
-                BlockReg::from(Reg::R11),
-                BlockReg::from(Reg::R12),
-                BlockReg::from(Reg::SP),
-                BlockReg::from(Reg::LR),
-                BlockReg::from(Reg::PC),
-                BlockReg::from(Reg::CPSR),
-                BlockReg::from(Reg::SPSR),
-            ],
+            regs_mapping: [Reg::None; 3],
         }
     }
 }
@@ -1050,40 +1026,36 @@ impl BlockInstTrait for GenericGuest {
     fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
         let mut inputs = BlockRegSet::new();
         let mut outputs = BlockRegSet::new();
-        for reg in self.inst_info.src_regs {
-            inputs += self.regs_mapping[reg as usize];
-        }
-        for reg in self.inst_info.out_regs {
-            outputs += self.regs_mapping[reg as usize];
-        }
+        inputs.add_guests(self.inst_info.src_regs);
+        outputs.add_guests(self.inst_info.out_regs);
         (inputs, outputs)
     }
 
     fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
-        for reg in self.inst_info.src_regs {
-            replace_reg(&mut self.regs_mapping[reg as usize], old, new);
+        let old = Reg::from(old.as_any() as u8);
+        if old >= Reg::SP {
+            self.regs_mapping[old as usize - Reg::SP as usize] = new.as_fixed();
         }
     }
 
     fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
-        for reg in self.inst_info.out_regs {
-            replace_reg(&mut self.regs_mapping[reg as usize], old, new);
-        }
+        self.replace_input_regs(old, new)
     }
 
     fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
-        let replace_reg = |reg: &mut Reg| {
-            *reg = self.regs_mapping[*reg as usize].as_fixed();
-        };
         let replace_shift = |shift_value: &mut ShiftValue| {
             if let ShiftValue::Reg(reg) = shift_value {
-                replace_reg(reg);
+                if *reg >= Reg::SP {
+                    *reg = self.regs_mapping[*reg as usize - Reg::SP as usize];
+                }
             }
         };
 
         for operand in self.inst_info.operands_mut() {
             if let Operand::Reg { reg, shift } = operand {
-                replace_reg(reg);
+                if *reg >= Reg::SP {
+                    *reg = self.regs_mapping[*reg as usize - Reg::SP as usize];
+                }
                 if let Some(shift) = shift {
                     match shift {
                         Shift::Lsl(v) => replace_shift(v),

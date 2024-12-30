@@ -131,7 +131,6 @@ impl BasicBlock {
                 }
                 BlockInstType::GuestPc(inner) => last_pc = inner.0,
                 BlockInstType::SaveContext(inner) => {
-                    let thread_regs_addr_reg = inner.thread_regs_addr_reg;
                     // Unroll regs to save into individual save regs, easier on reg allocator later on
                     for guest_reg in inner.guest_regs {
                         self.inst_indices.push(buf.insts.len());
@@ -139,7 +138,8 @@ impl BasicBlock {
                             SaveReg {
                                 guest_reg,
                                 reg_mapped: BlockReg::from(guest_reg),
-                                thread_regs_addr_reg,
+                                thread_regs_addr_reg: tmp_regs.thread_regs_addr_reg,
+                                tmp_host_cpsr_reg: tmp_regs.host_cpsr_reg,
                             }
                             .into(),
                         );
@@ -178,7 +178,7 @@ impl BasicBlock {
                         buf.insts.push(
                             SystemReg {
                                 op: SystemRegOp::Mrs,
-                                operand: Reg::CPSR.into(),
+                                operand: tmp_regs.host_cpsr_reg.into(),
                             }
                             .into(),
                         );
@@ -196,12 +196,28 @@ impl BasicBlock {
                         );
 
                         self.inst_indices.push(buf.insts.len());
-                        buf.insts
-                            .push(Alu::alu3(AluOp::And, [Reg::CPSR.into(), Reg::CPSR.into(), (0xF8, ShiftType::Ror, 4).into()], AluSetCond::None, false).into());
+                        buf.insts.push(
+                            Alu::alu3(
+                                AluOp::And,
+                                [tmp_regs.host_cpsr_reg.into(), tmp_regs.host_cpsr_reg.into(), (0xF8, ShiftType::Ror, 4).into()],
+                                AluSetCond::None,
+                                false,
+                            )
+                            .into(),
+                        );
 
                         self.inst_indices.push(buf.insts.len());
-                        buf.insts
-                            .push(Alu::alu3(AluOp::Orr, [Reg::CPSR.into(), Reg::CPSR.into(), tmp_regs.guest_cpsr_reg.into()], AluSetCond::None, false).into());
+                        buf.insts.push(
+                            Alu::alu3(
+                                AluOp::Orr,
+                                [tmp_regs.host_cpsr_reg.into(), tmp_regs.host_cpsr_reg.into(), tmp_regs.guest_cpsr_reg.into()],
+                                AluSetCond::None,
+                                false,
+                            )
+                            .into(),
+                        );
+
+                        buf.get_inst_mut(i).replace_input_regs(Reg::CPSR.into(), tmp_regs.host_cpsr_reg.into());
                     }
 
                     if inputs.is_reserved(Reg::SPSR) {

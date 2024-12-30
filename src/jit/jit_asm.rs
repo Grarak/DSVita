@@ -182,7 +182,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
 
     let jit_entry = {
         // println!("{CPU:?} {THUMB} emit code block {guest_pc:x}");
-        // unsafe { BLOCK_LOG = guest_pc == 0x20025dc };
+        // unsafe { BLOCK_LOG = guest_pc == 0x3801c28 };
 
         let guest_regs_ptr = get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr();
         let host_sp_ptr = ptr::addr_of_mut!(asm.runtime_data.host_sp);
@@ -200,8 +200,8 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
             asm.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
             debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
-            // if asm.jit_buf.current_pc == 0x1ff8150 {
-            //     block_asm.bkpt(1);
+            // if asm.jit_buf.current_pc == 0x20025dc {
+                // block_asm.bkpt(1);
             // }
 
             if THUMB {
