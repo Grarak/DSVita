@@ -1,4 +1,4 @@
-use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::basic_block::BasicBlock;
 use crate::jit::assembler::block_inst::BlockInst;
 use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
 use crate::jit::assembler::block_reg_set::BLOCK_REG_SET_ARRAY_SIZE;
@@ -356,6 +356,20 @@ impl BlockOperandShift {
 #[derive(Copy, Clone, Debug)]
 pub struct BlockLabel(u16);
 
+pub struct BasicBlocksCache {
+    pub basic_blocks: Vec<BasicBlock>,
+    pub basic_blocks_unlikely: Vec<BasicBlock>,
+}
+
+impl BasicBlocksCache {
+    pub fn new() -> Self {
+        BasicBlocksCache {
+            basic_blocks: Vec::new(),
+            basic_blocks_unlikely: Vec::new(),
+        }
+    }
+}
+
 pub struct BlockAsmBuf {
     pub insts: Vec<BlockInst>,
     pub basic_block_label_mapping: NoHashMap<u16, usize>,
@@ -377,9 +391,5 @@ impl BlockAsmBuf {
             opcodes: Vec::new(),
             branch_placeholders: Vec::new(),
         }
-    }
-
-    pub fn new_asm(&mut self, is_common_fun: bool, guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize) -> BlockAsm {
-        BlockAsm::new(is_common_fun, guest_regs_ptr, host_sp_ptr, self)
     }
 }

@@ -427,7 +427,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                                 for (i, user_reg) in user_regs.into_iter().enumerate() {
                                     let fixed_reg = Reg::from(i as u8);
                                     let gp_offset = user_reg as u32 - 8;
-                                    block_asm.load_u32(BlockReg::Fixed(fixed_reg), block_asm.thread_regs_addr_reg, ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4);
+                                    block_asm.load_u32(
+                                        BlockReg::Fixed(fixed_reg),
+                                        block_asm.tmp_regs.thread_regs_addr_reg,
+                                        ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4,
+                                    );
                                 }
                                 let fixed_regs = RegReserve::from((1 << user_regs.len()) - 1);
                                 block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, reg_reserve!(), fixed_regs, true, pre, true);
@@ -459,7 +463,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                                 for (i, user_reg) in user_regs.into_iter().enumerate() {
                                     let fixed_reg = Reg::from(i as u8);
                                     let gp_offset = user_reg as u32 - 8;
-                                    block_asm.load_u32(BlockReg::Fixed(fixed_reg), block_asm.thread_regs_addr_reg, ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4);
+                                    block_asm.load_u32(
+                                        BlockReg::Fixed(fixed_reg),
+                                        block_asm.tmp_regs.thread_regs_addr_reg,
+                                        ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4,
+                                    );
                                 }
                                 let fixed_regs = RegReserve::from((1 << user_regs.len()) - 1);
                                 block_asm.guest_transfer_write_multiple(
@@ -521,7 +529,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                                 for (i, user_reg) in user_regs.into_iter().enumerate() {
                                     let fixed_reg = Reg::from(i as u8);
                                     let gp_offset = user_reg as u32 - 8;
-                                    block_asm.store_u32(BlockReg::Fixed(fixed_reg), block_asm.thread_regs_addr_reg, ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4);
+                                    block_asm.store_u32(
+                                        BlockReg::Fixed(fixed_reg),
+                                        block_asm.tmp_regs.thread_regs_addr_reg,
+                                        ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4,
+                                    );
                                 }
                             }
                         } else {
@@ -563,7 +575,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                                 for (i, user_reg) in user_regs.into_iter().enumerate() {
                                     let fixed_reg = Reg::from(i as u8);
                                     let gp_offset = user_reg as u32 - 8;
-                                    block_asm.store_u32(BlockReg::Fixed(fixed_reg), block_asm.thread_regs_addr_reg, ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4);
+                                    block_asm.store_u32(
+                                        BlockReg::Fixed(fixed_reg),
+                                        block_asm.tmp_regs.thread_regs_addr_reg,
+                                        ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4,
+                                    );
                                 }
                             }
                         } else {

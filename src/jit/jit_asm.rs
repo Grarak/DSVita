@@ -3,7 +3,7 @@ use crate::core::hle::bios;
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::{BlockAsm, BLOCK_LOG};
-use crate::jit::assembler::BlockAsmBuf;
+use crate::jit::assembler::{BasicBlocksCache, BlockAsmBuf};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_branch_handler::call_jit_fun;
@@ -182,9 +182,13 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
 
     let jit_entry = {
         // println!("{CPU:?} {THUMB} emit code block {guest_pc:x}");
-        // unsafe { BLOCK_LOG = true };
+        // unsafe { BLOCK_LOG = guest_pc == 0x20025dc };
 
-        let mut block_asm = asm.new_block_asm(false);
+        let guest_regs_ptr = get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr();
+        let host_sp_ptr = ptr::addr_of_mut!(asm.runtime_data.host_sp);
+        let basic_blocks_cache = asm.basic_blocks_cache.get_mut();
+        let block_asm_buf = asm.block_asm_buf.get_mut();
+        let mut block_asm = unsafe { BlockAsm::new(false, guest_regs_ptr, host_sp_ptr, mem::transmute(basic_blocks_cache), mem::transmute(block_asm_buf)) };
 
         if DEBUG_LOG {
             block_asm.call1(debug_enter_block::<CPU> as *const (), guest_pc | (THUMB as u32));
@@ -197,7 +201,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
             debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
             // if asm.jit_buf.current_pc == 0x1ff8150 {
-            // block_asm.bkpt(1);
+            //     block_asm.bkpt(1);
             // }
 
             if THUMB {
@@ -294,8 +298,9 @@ pub struct JitAsm<'a, const CPU: CpuType> {
     pub emu: &'a mut Emu,
     pub jit_buf: JitBuf,
     pub runtime_data: JitRuntimeData,
-    block_asm_buf: UnsafeCell<BlockAsmBuf>,
     pub jit_common_funs: JitAsmCommonFuns<CPU>,
+    basic_blocks_cache: UnsafeCell<BasicBlocksCache>,
+    block_asm_buf: UnsafeCell<BlockAsmBuf>,
 }
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
@@ -305,8 +310,9 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             emu,
             jit_buf: JitBuf::new(),
             runtime_data: JitRuntimeData::new(),
-            block_asm_buf: UnsafeCell::new(BlockAsmBuf::new()),
             jit_common_funs: JitAsmCommonFuns::default(),
+            basic_blocks_cache: UnsafeCell::new(BasicBlocksCache::new()),
+            block_asm_buf: UnsafeCell::new(BlockAsmBuf::new()),
         }
     }
 
@@ -318,12 +324,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     pub fn execute(&mut self) -> u16 {
         let entry = get_regs!(self.emu, CPU).pc;
         execute_internal::<CPU>(entry)
-    }
-
-    pub fn new_block_asm(&mut self, is_common_fun: bool) -> BlockAsm<'static> {
-        let guest_regs_ptr = get_regs_mut!(self.emu, CPU).get_reg_mut_ptr();
-        let host_sp_ptr = ptr::addr_of_mut!(self.runtime_data.host_sp);
-        unsafe { (*self.block_asm_buf.get()).new_asm(is_common_fun, guest_regs_ptr, host_sp_ptr) }
     }
 }
 

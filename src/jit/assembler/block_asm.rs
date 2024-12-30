@@ -7,7 +7,7 @@ use crate::jit::assembler::block_inst::{
 };
 use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
 use crate::jit::assembler::block_reg_set::BlockRegSet;
-use crate::jit::assembler::{BlockAsmBuf, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift, ANY_REG_LIMIT};
+use crate::jit::assembler::{BasicBlocksCache, BlockAsmBuf, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift, ANY_REG_LIMIT};
 use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
@@ -42,19 +42,24 @@ macro_rules! alu2_op0 {
     };
 }
 
-pub struct BlockAsm<'a> {
-    pub buf: &'a mut BlockAsmBuf,
+pub struct BlockTmpRegs {
+    pub thread_regs_addr_reg: BlockReg,
+    pub guest_cpsr_reg: BlockReg,
+    pub operand_imm_reg: BlockReg,
+    shift_imm_reg: BlockReg,
+    func_call_reg: BlockReg,
+}
+
+pub struct BlockAsm {
+    cache: &'static mut BasicBlocksCache,
+    buf: &'static mut BlockAsmBuf,
 
     any_reg_count: u16,
     freed_any_regs: NoHashSet<u16>,
     label_count: u16,
     used_labels: NoHashSet<u16>,
 
-    pub thread_regs_addr_reg: BlockReg,
-    pub tmp_guest_cpsr_reg: BlockReg,
-    pub tmp_operand_imm_reg: BlockReg,
-    tmp_shift_imm_reg: BlockReg,
-    tmp_func_call_reg: BlockReg,
+    pub tmp_regs: BlockTmpRegs,
 
     cond_block_end_label_stack: Vec<(BlockLabel, Cond, usize)>,
 
@@ -64,8 +69,8 @@ pub struct BlockAsm<'a> {
     inst_insert_index: Option<usize>,
 }
 
-impl<'a> BlockAsm<'a> {
-    pub fn new(is_common_fun: bool, guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize, buf: &'a mut BlockAsmBuf) -> Self {
+impl BlockAsm {
+    pub fn new(is_common_fun: bool, guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize, cache: &'static mut BasicBlocksCache, buf: &'static mut BlockAsmBuf) -> Self {
         buf.insts.clear();
         buf.guest_branches_mapping.clear();
 
@@ -75,6 +80,7 @@ impl<'a> BlockAsm<'a> {
         let tmp_shift_imm_reg = BlockReg::Any(Reg::SPSR as u16 + 4);
         let tmp_func_call_reg = BlockReg::Any(Reg::SPSR as u16 + 5);
         let mut instance = BlockAsm {
+            cache,
             buf,
 
             // First couple any regs are reserved for guest mapping
@@ -83,11 +89,13 @@ impl<'a> BlockAsm<'a> {
             label_count: 0,
             used_labels: NoHashSet::default(),
 
-            thread_regs_addr_reg,
-            tmp_guest_cpsr_reg,
-            tmp_operand_imm_reg,
-            tmp_shift_imm_reg,
-            tmp_func_call_reg,
+            tmp_regs: BlockTmpRegs {
+                thread_regs_addr_reg,
+                guest_cpsr_reg: tmp_guest_cpsr_reg,
+                operand_imm_reg: tmp_operand_imm_reg,
+                shift_imm_reg: tmp_shift_imm_reg,
+                func_call_reg: tmp_func_call_reg,
+            },
 
             cond_block_end_label_stack: Vec::new(),
 
@@ -203,8 +211,8 @@ impl<'a> BlockAsm<'a> {
 
     fn check_imm_shift_limit(&mut self, operand: &mut BlockOperandShift) {
         if operand.shift.value.needs_reg_for_imm(0x1F) {
-            self.mov(self.tmp_shift_imm_reg, operand.shift.value);
-            operand.shift.value = self.tmp_shift_imm_reg.into();
+            self.mov(self.tmp_regs.shift_imm_reg, operand.shift.value);
+            operand.shift.value = self.tmp_regs.shift_imm_reg.into();
         }
     }
 
@@ -226,8 +234,8 @@ impl<'a> BlockAsm<'a> {
             if (imm >> lsb_zeros) & !0xFF == 0 {
                 *op2 = (imm >> lsb_zeros, ShiftType::Ror, (32 - lsb_zeros) >> 1).into();
             } else if emit_mov {
-                self.mov(self.tmp_operand_imm_reg, op2.operand);
-                *op2 = self.tmp_operand_imm_reg.into();
+                self.mov(self.tmp_regs.operand_imm_reg, op2.operand);
+                *op2 = self.tmp_regs.operand_imm_reg.into();
             }
         }
     }
@@ -285,8 +293,8 @@ impl<'a> BlockAsm<'a> {
     pub fn transfer(&mut self, op: TransferOp, op0: impl Into<BlockReg>, op1: impl Into<BlockReg>, op2: impl Into<BlockOperandShift>, signed: bool, amount: MemoryAmount) {
         let mut op2 = op2.into();
         if op2.operand.needs_reg_for_imm(0xFFF) {
-            self.mov(self.tmp_operand_imm_reg, op2.operand);
-            op2 = self.tmp_operand_imm_reg.into();
+            self.mov(self.tmp_regs.operand_imm_reg, op2.operand);
+            op2 = self.tmp_regs.operand_imm_reg.into();
         }
         self.check_imm_shift_limit(&mut op2);
         self.insert_inst(Transfer {
@@ -444,7 +452,7 @@ impl<'a> BlockAsm<'a> {
     pub fn save_context(&mut self) {
         self.insert_inst(SaveContext {
             guest_regs: RegReserve::new(),
-            thread_regs_addr_reg: self.thread_regs_addr_reg,
+            thread_regs_addr_reg: self.tmp_regs.thread_regs_addr_reg,
         });
     }
 
@@ -452,7 +460,7 @@ impl<'a> BlockAsm<'a> {
         self.insert_inst(SaveReg {
             guest_reg,
             reg_mapped: BlockReg::from(guest_reg),
-            thread_regs_addr_reg: self.thread_regs_addr_reg,
+            thread_regs_addr_reg: self.tmp_regs.thread_regs_addr_reg,
         });
     }
 
@@ -460,8 +468,8 @@ impl<'a> BlockAsm<'a> {
         self.insert_inst(RestoreReg {
             guest_reg,
             reg_mapped: BlockReg::from(guest_reg),
-            thread_regs_addr_reg: self.thread_regs_addr_reg,
-            tmp_guest_cpsr_reg: self.tmp_guest_cpsr_reg,
+            thread_regs_addr_reg: self.tmp_regs.thread_regs_addr_reg,
+            tmp_guest_cpsr_reg: self.tmp_regs.guest_cpsr_reg,
         });
     }
 
@@ -470,7 +478,7 @@ impl<'a> BlockAsm<'a> {
     }
 
     pub fn epilogue(&mut self) {
-        let host_sp_addr_reg = self.thread_regs_addr_reg;
+        let host_sp_addr_reg = self.tmp_regs.thread_regs_addr_reg;
         self.mov(host_sp_addr_reg, self.host_sp_ptr as u32);
         self.load_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
         self.insert_inst(Epilogue { restore_all_regs: true });
@@ -549,9 +557,9 @@ impl<'a> BlockAsm<'a> {
         has_return: bool,
     ) {
         let args = self.handle_call_args(arg0, arg1, arg2, arg3);
-        self.mov(self.tmp_func_call_reg, func.into());
+        self.mov(self.tmp_regs.func_call_reg, func.into());
         self.insert_inst(Call::reg(
-            self.tmp_func_call_reg,
+            self.tmp_regs.func_call_reg,
             [
                 args[0].map(|_| BlockReg::Fixed(Reg::R0)),
                 args[1].map(|_| BlockReg::Fixed(Reg::R1)),
@@ -671,91 +679,97 @@ impl<'a> BlockAsm<'a> {
         self.insert_inst(PadBlock { label, correction });
     }
 
-    fn resolve_guest_regs(&mut self, basic_blocks: &mut [BasicBlock], guest_regs_dirty: RegReserve, block_indices: &[usize], reachable_blocks: &mut NoHashSet<usize>) {
+    fn resolve_guest_regs(&mut self, guest_regs_dirty: RegReserve, block_indices: &[usize], reachable_blocks: &mut NoHashSet<usize>) {
         for &i in block_indices {
-            let basic_block = &mut basic_blocks[i];
+            let basic_block = &mut self.cache.basic_blocks[i];
             let sum_guest_regs_input_dirty = basic_block.guest_regs_input_dirty + guest_regs_dirty;
             if sum_guest_regs_input_dirty != basic_block.guest_regs_input_dirty || !basic_block.guest_regs_resolved {
                 reachable_blocks.insert(i);
                 basic_block.guest_regs_resolved = true;
                 basic_block.guest_regs_input_dirty = sum_guest_regs_input_dirty;
-                basic_block.init_guest_regs(self);
+                basic_block.init_guest_regs(self.buf);
                 let exit_blocks = unsafe { slice::from_raw_parts(basic_block.exit_blocks.as_ptr(), basic_block.exit_blocks.len()) };
                 let guest_regs_dirty = basic_block.guest_regs_output_dirty;
-                self.resolve_guest_regs(basic_blocks, guest_regs_dirty, exit_blocks, reachable_blocks);
+                self.resolve_guest_regs(guest_regs_dirty, exit_blocks, reachable_blocks);
             }
         }
     }
 
-    fn resolve_io(&self, basic_blocks: &mut [BasicBlock], required_outputs: &BlockRegSet, block_indices: &[usize], reachable_blocks: &NoHashSet<usize>) {
+    fn resolve_io(&mut self, required_outputs: &BlockRegSet, block_indices: &[usize], reachable_blocks: &NoHashSet<usize>) {
         for &i in block_indices {
             if !reachable_blocks.contains(&i) {
                 continue;
             }
 
-            let basic_block = unsafe { basic_blocks.get_unchecked_mut(i) };
+            let basic_block = unsafe { self.cache.basic_blocks.get_unchecked_mut(i) };
             let sum_required_outputs = *basic_block.get_required_outputs() + required_outputs;
             if sum_required_outputs != basic_block.get_required_outputs() || !basic_block.io_resolved {
                 basic_block.io_resolved = true;
                 basic_block.set_required_outputs(sum_required_outputs);
-                basic_block.init_resolve_io(self);
+                basic_block.init_resolve_io(self.buf);
                 let enter_blocks = unsafe { slice::from_raw_parts(basic_block.enter_blocks.as_ptr(), basic_block.enter_blocks.len()) };
-                let required_inputs = basic_block.get_required_inputs() as *const _ as usize;
-                self.resolve_io(basic_blocks, unsafe { (required_inputs as *const BlockRegSet).as_ref_unchecked() }, enter_blocks, reachable_blocks);
+                let required_inputs = unsafe { (basic_block.get_required_inputs() as *const BlockRegSet).as_ref_unchecked() };
+                self.resolve_io(required_inputs, enter_blocks, reachable_blocks);
             }
         }
     }
 
-    fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> (Vec<BasicBlock>, NoHashSet<usize>) {
-        let mut basic_blocks = Vec::new();
-        let mut basic_blocks_unlikely = Vec::new();
-        let mut basic_block_label_mapping = NoHashMap::<u16, usize>::default();
-        let mut basic_block_unlikely_label_mapping = NoHashMap::<u16, usize>::default();
-        let mut last_label = None::<BlockLabel>;
-        let mut last_label_unlikely = false;
+    fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> (usize, NoHashSet<usize>) {
+        #[derive(Default)]
+        struct BasicBlockData {
+            start: u16,
+            last_label: Option<BlockLabel>,
+            last_label_unlikely: bool,
+        }
+        let mut basic_block_data = BasicBlockData::default();
 
-        let mut basic_block_start = 0;
+        let mut basic_blocks_label_mapping = NoHashMap::<u16, usize>::default();
+        let mut basic_blocks_unlikely_label_mapping = NoHashMap::<u16, usize>::default();
+        let mut basic_blocks_len = 0;
+        let mut basic_blocks_unlikely_len = 0;
 
         for i in 0..self.buf.insts.len() {
-            let (basic_blocks, basic_block_label_mapping) = if last_label_unlikely {
-                (&mut basic_blocks_unlikely, &mut basic_block_unlikely_label_mapping)
+            let (basic_blocks, basic_blocks_len, basic_block_label_mapping) = if basic_block_data.last_label_unlikely {
+                (&mut self.cache.basic_blocks_unlikely, &mut basic_blocks_unlikely_len, &mut basic_blocks_unlikely_label_mapping)
             } else {
-                (&mut basic_blocks, &mut basic_block_label_mapping)
+                (&mut self.cache.basic_blocks, &mut basic_blocks_len, &mut basic_blocks_label_mapping)
             };
 
-            let handle_label = |asm,
+            let handle_label = |buf,
                                 basic_blocks: &mut Vec<BasicBlock>,
                                 label: BlockLabel,
                                 unlikely: bool,
-                                basic_block_start: &mut usize,
-                                basic_block_label_mapping: &mut NoHashMap<_, _>,
-                                last_label_unlikely: &mut bool,
-                                last_label: &mut Option<BlockLabel>| {
+                                basic_blocks_len: &mut u16,
+                                basic_block_label_mapping: &mut NoHashMap<u16, usize>,
+                                data: &mut BasicBlockData| {
                 // block_start_entry can be the same as current_node, when the previous iteration ended with a branch
-                if *basic_block_start != i {
-                    basic_blocks.push(BasicBlock::new(asm, *basic_block_start, i - 1));
-                    *basic_block_start = i;
-                    if let Some(last_label) = last_label {
-                        basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
+                if data.start as usize != i {
+                    *basic_blocks_len += 1;
+                    if *basic_blocks_len as usize > basic_blocks.len() {
+                        basic_blocks.push(BasicBlock::new());
+                    }
+                    basic_blocks[*basic_blocks_len as usize - 1].init(buf, data.start as usize, i - 1);
+                    data.start = i as u16;
+                    if let Some(last_label) = data.last_label {
+                        basic_block_label_mapping.insert(last_label.0, *basic_blocks_len as usize - 1);
                     }
                 }
-                *last_label_unlikely = unlikely;
-                *last_label = Some(label);
+                data.last_label_unlikely = unlikely;
+                data.last_label = Some(label);
             };
 
-            let handle_branch = |asm,
-                                 basic_blocks: &mut Vec<BasicBlock>,
-                                 basic_block_start: &mut usize,
-                                 basic_block_label_mapping: &mut NoHashMap<_, _>,
-                                 last_label_unlikely: &mut bool,
-                                 last_label: &mut Option<BlockLabel>| {
-                basic_blocks.push(BasicBlock::new(asm, *basic_block_start, i));
-                *basic_block_start = i + 1;
-                if let Some(last_label) = last_label {
-                    basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
+            let handle_branch = |buf, basic_blocks: &mut Vec<BasicBlock>, basic_blocks_len: &mut u16, basic_block_label_mapping: &mut NoHashMap<u16, usize>, data: &mut BasicBlockData| {
+                *basic_blocks_len += 1;
+                if *basic_blocks_len as usize > basic_blocks.len() {
+                    basic_blocks.push(BasicBlock::new());
                 }
-                *last_label_unlikely = false;
-                *last_label = None;
+                basic_blocks[*basic_blocks_len as usize - 1].init(buf, data.start as usize, i);
+                data.start = i as u16 + 1;
+                if let Some(last_label) = data.last_label {
+                    basic_block_label_mapping.insert(last_label.0, *basic_blocks_len as usize - 1);
+                }
+                data.last_label_unlikely = false;
+                data.last_label = None;
             };
 
             match &self.buf.insts[i].inst_type {
@@ -768,68 +782,57 @@ impl<'a> BlockAsm<'a> {
                             unlikely: false,
                         }
                         .into();
-                        handle_label(
-                            self,
-                            basic_blocks,
-                            *guest_label,
-                            false,
-                            &mut basic_block_start,
-                            basic_block_label_mapping,
-                            &mut last_label_unlikely,
-                            &mut last_label,
-                        );
+                        handle_label(self.buf, basic_blocks, *guest_label, false, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data);
                     }
                 }
                 BlockInstType::Label(inner) => {
-                    handle_label(
-                        self,
-                        basic_blocks,
-                        inner.label,
-                        inner.unlikely,
-                        &mut basic_block_start,
-                        basic_block_label_mapping,
-                        &mut last_label_unlikely,
-                        &mut last_label,
-                    );
+                    handle_label(self.buf, basic_blocks, inner.label, inner.unlikely, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data);
                 }
-                BlockInstType::Branch(_) | BlockInstType::Epilogue(_) => {
-                    handle_branch(self, basic_blocks, &mut basic_block_start, basic_block_label_mapping, &mut last_label_unlikely, &mut last_label)
-                }
+                BlockInstType::Branch(_) | BlockInstType::Epilogue(_) => handle_branch(self.buf, basic_blocks, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data),
                 BlockInstType::Call(inner) => {
                     if !inner.has_return {
-                        handle_branch(self, basic_blocks, &mut basic_block_start, basic_block_label_mapping, &mut last_label_unlikely, &mut last_label);
+                        handle_branch(self.buf, basic_blocks, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data);
                     }
                 }
                 _ => {}
             }
         }
 
-        if basic_block_start < self.buf.insts.len() {
-            let (basic_blocks, basic_block_label_mapping) = if last_label_unlikely {
-                (&mut basic_blocks_unlikely, &mut basic_block_unlikely_label_mapping)
+        if (basic_block_data.start as usize) < self.buf.insts.len() {
+            let (basic_blocks, basic_blocks_len, basic_block_label_mapping) = if basic_block_data.last_label_unlikely {
+                (&mut self.cache.basic_blocks_unlikely, &mut basic_blocks_unlikely_len, &mut basic_blocks_unlikely_label_mapping)
             } else {
-                (&mut basic_blocks, &mut basic_block_label_mapping)
+                (&mut self.cache.basic_blocks, &mut basic_blocks_len, &mut basic_blocks_label_mapping)
             };
-            basic_blocks.push(BasicBlock::new(self, basic_block_start, self.buf.insts.len() - 1));
-            if let Some(last_label) = last_label {
-                basic_block_label_mapping.insert(last_label.0, basic_blocks.len() - 1);
+            *basic_blocks_len += 1;
+            if *basic_blocks_len as usize > basic_blocks.len() {
+                basic_blocks.push(BasicBlock::new());
+            }
+            basic_blocks[*basic_blocks_len as usize - 1].init(self.buf, basic_block_data.start as usize, self.buf.insts.len() - 1);
+            if let Some(last_label) = basic_block_data.last_label {
+                basic_block_label_mapping.insert(last_label.0, *basic_blocks_len as usize - 1);
             }
         }
 
-        for (label, block_index) in basic_block_unlikely_label_mapping {
-            basic_block_label_mapping.insert(label, block_index + basic_blocks.len());
+        for (label, block_index) in basic_blocks_unlikely_label_mapping {
+            basic_blocks_label_mapping.insert(label, block_index + basic_blocks_len as usize);
         }
-        basic_blocks.extend(basic_blocks_unlikely);
+        if self.cache.basic_blocks.len() < (basic_blocks_len + basic_blocks_unlikely_len) as usize {
+            self.cache.basic_blocks.resize_with((basic_blocks_len + basic_blocks_unlikely_len) as usize, BasicBlock::new);
+        }
+        self.cache.basic_blocks[basic_blocks_len as usize..(basic_blocks_len + basic_blocks_unlikely_len) as usize]
+            .swap_with_slice(&mut self.cache.basic_blocks_unlikely[..basic_blocks_unlikely_len as usize]);
+        basic_blocks_len += basic_blocks_unlikely_len;
 
-        let basic_blocks_len = basic_blocks.len();
+        let basic_blocks_len = basic_blocks_len as usize;
         // Link blocks
-        for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
+        for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
             let last_inst_index = basic_block.block_entry_end;
             let cond = self.buf.insts[last_inst_index].cond;
 
             match &mut self.buf.insts[last_inst_index].inst_type {
                 BlockInstType::Branch(inner) => {
-                    let labelled_block_index = basic_block_label_mapping.get(&inner.label.0).unwrap();
+                    let labelled_block_index = basic_blocks_label_mapping.get(&inner.label.0).unwrap();
                     basic_block.exit_blocks.push(*labelled_block_index);
                     inner.block_index = *labelled_block_index;
                     if (inner.fallthrough || cond != Cond::AL) && i + 1 < basic_blocks_len {
@@ -852,21 +855,21 @@ impl<'a> BlockAsm<'a> {
             }
         }
 
-        for i in 0..basic_blocks.len() {
-            let exit_blocks = &basic_blocks[i].exit_blocks;
+        for i in 0..basic_blocks_len {
+            let exit_blocks = &self.cache.basic_blocks[i].exit_blocks;
             debug_assert!(exit_blocks.len() <= 1 || (exit_blocks.len() == 2 && exit_blocks[0] != exit_blocks[1]));
             for j in 0..exit_blocks.len() {
-                let exit_block = basic_blocks[i].exit_blocks[j];
-                if !basic_blocks[exit_block].enter_blocks.contains(&i) {
-                    basic_blocks[exit_block].enter_blocks.push(i);
+                let exit_block = self.cache.basic_blocks[i].exit_blocks[j];
+                if !self.cache.basic_blocks[exit_block].enter_blocks.contains(&i) {
+                    self.cache.basic_blocks[exit_block].enter_blocks.push(i);
                 }
             }
         }
 
         let mut reachable_blocks = NoHashSet::default();
-        self.resolve_guest_regs(&mut basic_blocks, RegReserve::new(), &[0], &mut reachable_blocks);
+        self.resolve_guest_regs(RegReserve::new(), &[0], &mut reachable_blocks);
 
-        for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
+        for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
             if !reachable_blocks.contains(&i) {
                 continue;
             }
@@ -887,7 +890,7 @@ impl<'a> BlockAsm<'a> {
                     _ => {}
                 }
             }
-            basic_block.init_insts(self, basic_block_start_pc, thumb);
+            basic_block.init_insts(self.buf, &self.tmp_regs, basic_block_start_pc, thumb);
         }
 
         for i in (0..basic_blocks_len).rev() {
@@ -895,44 +898,44 @@ impl<'a> BlockAsm<'a> {
                 continue;
             }
 
-            if basic_blocks[i].exit_blocks.is_empty() {
-                self.resolve_io(&mut basic_blocks, &BlockRegSet::new(), &[i], &reachable_blocks);
+            if self.cache.basic_blocks[i].exit_blocks.is_empty() {
+                self.resolve_io(&BlockRegSet::new(), &[i], &reachable_blocks);
             }
         }
 
-        for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
+        for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
             if !reachable_blocks.contains(&i) {
                 continue;
             }
 
-            basic_block.remove_dead_code(self);
+            basic_block.remove_dead_code(self.buf);
         }
 
-        self.buf.basic_block_label_mapping = basic_block_label_mapping;
+        self.buf.basic_block_label_mapping = basic_blocks_label_mapping;
 
-        (basic_blocks, reachable_blocks)
+        (basic_blocks_len, reachable_blocks)
     }
 
     pub fn emit_opcodes(&mut self, block_start_pc: u32, thumb: bool) -> usize {
-        let (mut basic_blocks, reachable_blocks) = self.assemble_basic_blocks(block_start_pc, thumb);
+        let (basic_blocks_len, reachable_blocks) = self.assemble_basic_blocks(block_start_pc, thumb);
 
-        if IS_DEBUG && !basic_blocks[0].get_required_inputs().get_guests().is_empty() {
-            println!("inputs as requirement {:?}", basic_blocks[0].get_required_inputs().get_guests());
+        if IS_DEBUG && !self.cache.basic_blocks[0].get_required_inputs().get_guests().is_empty() {
+            println!("inputs as requirement {:?}", self.cache.basic_blocks[0].get_required_inputs().get_guests());
             unsafe { BLOCK_LOG = true };
         }
 
         if IS_DEBUG && unsafe { BLOCK_LOG } {
-            for (i, basic_block) in basic_blocks.iter().enumerate() {
+            for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter().enumerate() {
                 println!("{i}[{i} {:x}]", basic_block.start_pc);
             }
 
-            for (i, basic_block) in basic_blocks.iter().enumerate() {
+            for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter().enumerate() {
                 for &exit_i in &basic_block.exit_blocks {
                     println!("{i} --> {exit_i}");
                 }
             }
 
-            for (i, basic_block) in basic_blocks.iter().enumerate() {
+            for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter().enumerate() {
                 println!("{i}: {basic_block:?}");
             }
         }
@@ -940,7 +943,7 @@ impl<'a> BlockAsm<'a> {
         self.buf.reg_allocator.dirty_regs.clear();
         self.buf.reg_allocator.global_mapping.fill(Reg::None);
         let mut input_regs = BlockRegSet::new();
-        for (i, basic_block) in basic_blocks.iter().enumerate() {
+        for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter().enumerate() {
             if !reachable_blocks.contains(&i) {
                 continue;
             }
@@ -966,13 +969,13 @@ impl<'a> BlockAsm<'a> {
         }
 
         self.buf.reg_allocator.pre_allocate_insts.clear();
-        for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
+        for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
             if !reachable_blocks.contains(&i) {
                 continue;
             }
 
             self.buf.reg_allocator.init_inputs(*basic_block.get_required_inputs());
-            basic_block.allocate_regs(self);
+            basic_block.allocate_regs(self.buf);
         }
 
         // Used to determine what regs to push and pop for prologue and epilogue
@@ -987,18 +990,18 @@ impl<'a> BlockAsm<'a> {
         }
 
         self.buf.opcodes.clear();
-        self.buf.block_opcode_offsets.resize(basic_blocks.len(), 0);
-        self.buf.branch_placeholders.resize(basic_blocks.len(), Vec::new());
+        self.buf.block_opcode_offsets.resize(basic_blocks_len, 0);
+        self.buf.branch_placeholders.resize(basic_blocks_len, Vec::new());
 
-        for i in 0..basic_blocks.len() {
-            if let Some((label, correction)) = basic_blocks[i].pad_label {
+        for i in 0..basic_blocks_len {
+            if let Some((label, correction)) = self.cache.basic_blocks[i].pad_label {
                 let block_to_pad_to = *self.buf.basic_block_label_mapping.get(&label.0).unwrap();
-                basic_blocks[block_to_pad_to].emit_opcodes(self, 0, block_to_pad_to, used_host_regs);
-                basic_blocks[i].pad_size = (basic_blocks[block_to_pad_to].opcodes.len() as i32 + correction) as usize;
+                self.cache.basic_blocks[block_to_pad_to].emit_opcodes(self.buf, 0, block_to_pad_to, used_host_regs);
+                self.cache.basic_blocks[i].pad_size = (self.cache.basic_blocks[block_to_pad_to].opcodes.len() as i32 + correction) as usize;
             }
         }
 
-        for (i, basic_block) in basic_blocks.iter_mut().enumerate() {
+        for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
             let opcodes_len = self.buf.opcodes.len();
             self.buf.block_opcode_offsets[i] = opcodes_len;
 
@@ -1007,7 +1010,7 @@ impl<'a> BlockAsm<'a> {
                 continue;
             }
 
-            basic_block.emit_opcodes(self, opcodes_len, i, used_host_regs);
+            basic_block.emit_opcodes(self.buf, opcodes_len, i, used_host_regs);
             self.buf.opcodes.extend(&basic_block.opcodes);
         }
 

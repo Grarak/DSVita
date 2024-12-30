@@ -1,5 +1,5 @@
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
-use crate::jit::assembler::block_asm::{BlockAsm, BLOCK_LOG};
+use crate::jit::assembler::block_asm::{BlockTmpRegs, BLOCK_LOG};
 use crate::jit::assembler::block_inst::{Alu, AluOp, AluSetCond, BlockInstType, SaveReg, SystemReg, SystemRegOp, Transfer, TransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockAsmBuf, BlockLabel, BlockReg};
@@ -7,6 +7,7 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{MemoryAmount, ShiftType};
 use crate::IS_DEBUG;
 use std::fmt::{Debug, Formatter};
+use std::ptr;
 
 pub struct BasicBlock {
     block_asm_buf_ptr: *const BlockAsmBuf,
@@ -36,12 +37,12 @@ pub struct BasicBlock {
 }
 
 impl BasicBlock {
-    pub fn new(asm: &mut BlockAsm, block_entry_start: usize, block_entry_end: usize) -> Self {
+    pub fn new() -> Self {
         BasicBlock {
-            block_asm_buf_ptr: asm.buf as *mut _,
+            block_asm_buf_ptr: ptr::null(),
 
-            block_entry_start,
-            block_entry_end,
+            block_entry_start: 0,
+            block_entry_end: 0,
 
             pad_label: None,
             pad_size: 0,
@@ -65,11 +66,34 @@ impl BasicBlock {
         }
     }
 
-    pub fn init_guest_regs(&mut self, asm: &mut BlockAsm) {
+    pub fn init(&mut self, buf: &mut BlockAsmBuf, block_entry_start: usize, block_entry_end: usize) {
+        self.block_asm_buf_ptr = buf as _;
+
+        self.block_entry_start = block_entry_start;
+        self.block_entry_end = block_entry_end;
+
+        self.pad_label = None;
+        self.pad_size = 0;
+
+        self.guest_regs_resolved = false;
+        self.guest_regs_input_dirty = RegReserve::new();
+        self.guest_regs_output_dirty = RegReserve::new();
+
+        self.io_resolved = false;
+
+        self.enter_blocks.clear();
+        self.exit_blocks.clear();
+
+        self.inst_indices.clear();
+
+        self.opcodes.clear();
+    }
+
+    pub fn init_guest_regs(&mut self, buf: &mut BlockAsmBuf) {
         self.guest_regs_output_dirty = self.guest_regs_input_dirty;
 
         for i in self.block_entry_start..=self.block_entry_end {
-            match &mut asm.buf.insts[i].inst_type {
+            match &mut buf.insts[i].inst_type {
                 BlockInstType::SaveContext(inner) => {
                     inner.guest_regs = self.guest_regs_output_dirty;
                     self.guest_regs_output_dirty.clear();
@@ -84,7 +108,7 @@ impl BasicBlock {
                     }
                 }
                 _ => {
-                    let inst = &asm.buf.insts[i];
+                    let inst = &buf.insts[i];
                     let (_, outputs) = inst.get_io();
                     self.guest_regs_output_dirty += outputs.get_guests();
                 }
@@ -92,13 +116,13 @@ impl BasicBlock {
         }
     }
 
-    pub fn init_insts(&mut self, asm: &mut BlockAsm, basic_block_start_pc: u32, thumb: bool) {
+    pub fn init_insts(&mut self, buf: &mut BlockAsmBuf, tmp_regs: &BlockTmpRegs, basic_block_start_pc: u32, thumb: bool) {
         self.start_pc = basic_block_start_pc;
 
         let mut last_pc = basic_block_start_pc;
 
         for i in self.block_entry_start..=self.block_entry_end {
-            match &asm.buf.insts[i].inst_type {
+            match &buf.insts[i].inst_type {
                 BlockInstType::Label(inner) => {
                     if let Some(pc) = inner.guest_pc {
                         last_pc = pc;
@@ -109,8 +133,8 @@ impl BasicBlock {
                     let thread_regs_addr_reg = inner.thread_regs_addr_reg;
                     // Unroll regs to save into individual save regs, easier on reg allocator later on
                     for guest_reg in inner.guest_regs {
-                        self.inst_indices.push(asm.buf.insts.len() as u16);
-                        asm.buf.insts.push(
+                        self.inst_indices.push(buf.insts.len() as u16);
+                        buf.insts.push(
                             SaveReg {
                                 guest_reg,
                                 reg_mapped: BlockReg::from(guest_reg),
@@ -126,7 +150,7 @@ impl BasicBlock {
                     self.pad_label = Some((inner.label, inner.correction));
                 }
                 inst_type => {
-                    let (inputs, _) = asm.buf.insts[i].get_io();
+                    let (inputs, _) = buf.insts[i].get_io();
                     let inputs = inputs.get_guests();
 
                     if inputs.is_reserved(Reg::PC) {
@@ -144,13 +168,13 @@ impl BasicBlock {
                             }
                         }
 
-                        self.inst_indices.push(asm.buf.insts.len() as u16);
-                        asm.buf.insts.push(Alu::alu2(AluOp::Mov, [Reg::PC.into(), last_pc.into()], AluSetCond::None, false).into());
+                        self.inst_indices.push(buf.insts.len() as u16);
+                        buf.insts.push(Alu::alu2(AluOp::Mov, [Reg::PC.into(), last_pc.into()], AluSetCond::None, false).into());
                     }
 
                     if inputs.is_reserved(Reg::CPSR) {
-                        self.inst_indices.push(asm.buf.insts.len() as u16);
-                        asm.buf.insts.push(
+                        self.inst_indices.push(buf.insts.len() as u16);
+                        buf.insts.push(
                             SystemReg {
                                 op: SystemRegOp::Mrs,
                                 operand: Reg::CPSR.into(),
@@ -158,11 +182,11 @@ impl BasicBlock {
                             .into(),
                         );
 
-                        self.inst_indices.push(asm.buf.insts.len() as u16);
-                        asm.buf.insts.push(
+                        self.inst_indices.push(buf.insts.len() as u16);
+                        buf.insts.push(
                             Transfer {
                                 op: TransferOp::Read,
-                                operands: [asm.tmp_guest_cpsr_reg.into(), asm.thread_regs_addr_reg.into(), (Reg::CPSR as u32 * 4).into()],
+                                operands: [tmp_regs.guest_cpsr_reg.into(), tmp_regs.thread_regs_addr_reg.into(), (Reg::CPSR as u32 * 4).into()],
                                 signed: false,
                                 amount: MemoryAmount::Half,
                                 add_to_base: true,
@@ -170,23 +194,21 @@ impl BasicBlock {
                             .into(),
                         );
 
-                        self.inst_indices.push(asm.buf.insts.len() as u16);
-                        asm.buf
-                            .insts
+                        self.inst_indices.push(buf.insts.len() as u16);
+                        buf.insts
                             .push(Alu::alu3(AluOp::And, [Reg::CPSR.into(), Reg::CPSR.into(), (0xF8, ShiftType::Ror, 4).into()], AluSetCond::None, false).into());
 
-                        self.inst_indices.push(asm.buf.insts.len() as u16);
-                        asm.buf
-                            .insts
-                            .push(Alu::alu3(AluOp::Orr, [Reg::CPSR.into(), Reg::CPSR.into(), asm.tmp_guest_cpsr_reg.into()], AluSetCond::None, false).into());
+                        self.inst_indices.push(buf.insts.len() as u16);
+                        buf.insts
+                            .push(Alu::alu3(AluOp::Orr, [Reg::CPSR.into(), Reg::CPSR.into(), tmp_regs.guest_cpsr_reg.into()], AluSetCond::None, false).into());
                     }
 
                     if inputs.is_reserved(Reg::SPSR) {
-                        self.inst_indices.push(asm.buf.insts.len() as u16);
-                        asm.buf.insts.push(
+                        self.inst_indices.push(buf.insts.len() as u16);
+                        buf.insts.push(
                             Transfer {
                                 op: TransferOp::Read,
-                                operands: [Reg::SPSR.into(), asm.thread_regs_addr_reg.into(), (Reg::SPSR as u32 * 4).into()],
+                                operands: [Reg::SPSR.into(), tmp_regs.thread_regs_addr_reg.into(), (Reg::SPSR as u32 * 4).into()],
                                 signed: false,
                                 amount: MemoryAmount::Word,
                                 add_to_base: true,
@@ -201,21 +223,22 @@ impl BasicBlock {
         }
 
         self.regs_live_ranges.resize(self.inst_indices.len() + 1, BlockRegSet::new());
+        self.regs_live_ranges.last_mut().unwrap().clear();
         self.pre_opcodes_indices.resize(self.inst_indices.len() + 2, 0);
     }
 
-    pub fn init_resolve_io(&mut self, asm: &BlockAsm) {
+    pub fn init_resolve_io(&mut self, buf: &BlockAsmBuf) {
         for (i, &inst_index) in self.inst_indices.iter().enumerate().rev() {
-            let (inputs, outputs) = asm.buf.insts[inst_index as usize].get_io();
+            let (inputs, outputs) = buf.insts[inst_index as usize].get_io();
             let mut previous_ranges = self.regs_live_ranges[i + 1];
             previous_ranges -= outputs;
             self.regs_live_ranges[i] = previous_ranges + inputs;
         }
     }
 
-    pub fn remove_dead_code(&mut self, asm: &mut BlockAsm) {
+    pub fn remove_dead_code(&mut self, buf: &mut BlockAsmBuf) {
         for (i, &inst_index) in self.inst_indices.iter().enumerate() {
-            let inst = &mut asm.buf.insts[inst_index as usize];
+            let inst = &mut buf.insts[inst_index as usize];
             if let BlockInstType::RestoreReg(inner) = &inst.inst_type {
                 if inner.guest_reg != Reg::CPSR {
                     let (_, outputs) = inst.get_io();
@@ -239,34 +262,34 @@ impl BasicBlock {
         self.regs_live_ranges.last().unwrap()
     }
 
-    pub fn allocate_regs(&mut self, asm: &mut BlockAsm) {
+    pub fn allocate_regs(&mut self, buf: &mut BlockAsmBuf) {
         for (i, &inst_index) in self.inst_indices.iter().enumerate() {
-            let inst = &mut asm.buf.insts[inst_index as usize];
-            self.pre_opcodes_indices[i] = asm.buf.reg_allocator.pre_allocate_insts.len() as u16;
+            let inst = &mut buf.insts[inst_index as usize];
+            self.pre_opcodes_indices[i] = buf.reg_allocator.pre_allocate_insts.len() as u16;
             if !inst.skip {
-                asm.buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..]);
+                buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..]);
             }
         }
 
         let last_index = self.inst_indices.len() - 1;
-        let pre_opcodes_start = asm.buf.reg_allocator.pre_allocate_insts.len();
+        let pre_opcodes_start = buf.reg_allocator.pre_allocate_insts.len();
         self.pre_opcodes_indices[last_index + 1] = pre_opcodes_start as u16;
 
         if !self.exit_blocks.is_empty() {
-            asm.buf.reg_allocator.ensure_global_mappings(*self.get_required_outputs());
+            buf.reg_allocator.ensure_global_mappings(*self.get_required_outputs());
 
             let end_entry = *self.inst_indices.last().unwrap() as usize;
             // Make sure to restore mapping before a branch
-            if let BlockInstType::Branch(_) = &asm.buf.insts[end_entry].inst_type {
+            if let BlockInstType::Branch(_) = &buf.insts[end_entry].inst_type {
                 self.pre_opcodes_indices[last_index] = pre_opcodes_start as u16;
-                self.pre_opcodes_indices[last_index + 1] = asm.buf.reg_allocator.pre_allocate_insts.len() as u16;
+                self.pre_opcodes_indices[last_index + 1] = buf.reg_allocator.pre_allocate_insts.len() as u16;
             }
         }
 
-        self.pre_opcodes_indices[last_index + 2] = asm.buf.reg_allocator.pre_allocate_insts.len() as u16;
+        self.pre_opcodes_indices[last_index + 2] = buf.reg_allocator.pre_allocate_insts.len() as u16;
     }
 
-    pub fn emit_opcodes(&mut self, asm: &mut BlockAsm, opcodes_offset: usize, block_index: usize, used_host_regs: RegReserve) {
+    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf, opcodes_offset: usize, block_index: usize, used_host_regs: RegReserve) {
         // if IS_DEBUG && unsafe { BLOCK_LOG } && opcodes_offset != 0 {
         //     self.opcodes.clear();
         // }
@@ -275,16 +298,16 @@ impl BasicBlock {
             return;
         }
 
-        asm.buf.branch_placeholders[block_index].clear();
+        buf.branch_placeholders[block_index].clear();
 
         for (i, &inst_index) in self.inst_indices.iter().enumerate() {
-            let inst = &mut asm.buf.insts[inst_index as usize];
+            let inst = &mut buf.insts[inst_index as usize];
             if inst.skip {
                 continue;
             }
 
             self.opcodes
-                .extend(&asm.buf.reg_allocator.pre_allocate_insts[self.pre_opcodes_indices[i] as usize..self.pre_opcodes_indices[i + 1] as usize]);
+                .extend(&buf.reg_allocator.pre_allocate_insts[self.pre_opcodes_indices[i] as usize..self.pre_opcodes_indices[i + 1] as usize]);
 
             let start_len = self.opcodes.len();
 
@@ -302,7 +325,7 @@ impl BasicBlock {
                 }
             }
 
-            inst.emit_opcode(&mut self.opcodes, start_len, &mut asm.buf.branch_placeholders[block_index], used_host_regs);
+            inst.emit_opcode(&mut self.opcodes, start_len, &mut buf.branch_placeholders[block_index], used_host_regs);
             if !inst.unconditional {
                 for i in start_len..self.opcodes.len() {
                     self.opcodes[i] = (self.opcodes[i] & !(0xF << 28)) | ((inst.cond as u32) << 28);
@@ -311,7 +334,7 @@ impl BasicBlock {
         }
 
         self.opcodes.extend(
-            &asm.buf.reg_allocator.pre_allocate_insts[self.pre_opcodes_indices[self.pre_opcodes_indices.len() - 2] as usize..self.pre_opcodes_indices[self.pre_opcodes_indices.len() - 1] as usize],
+            &buf.reg_allocator.pre_allocate_insts[self.pre_opcodes_indices[self.pre_opcodes_indices.len() - 2] as usize..self.pre_opcodes_indices[self.pre_opcodes_indices.len() - 1] as usize],
         );
 
         for _ in self.opcodes.len()..self.pad_size {

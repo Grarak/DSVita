@@ -83,7 +83,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 || (op.is_single_mem_transfer() && (self.jit_buf.current_inst().src_regs.is_reserved(Reg::R9) || self.jit_buf.current_inst().src_regs.is_reserved(Reg::SP)))
             {
                 let guest_pc_reg = block_asm.new_reg();
-                block_asm.load_u32(guest_pc_reg, block_asm.thread_regs_addr_reg, Reg::PC as u32 * 4);
+                block_asm.load_u32(guest_pc_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
                 self.emit_branch_return_stack_common(block_asm, guest_pc_reg);
                 block_asm.free_reg(guest_pc_reg);
             } else {
