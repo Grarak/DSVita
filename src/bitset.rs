@@ -29,18 +29,14 @@ impl<const SIZE: usize> Bitset<SIZE> {
         unsafe { *self.0.get_unchecked(array_index) & (1 << pos_index) != 0 }
     }
 
-    pub const fn len(&self) -> usize {
-        let mut sum = 0;
+    pub const fn is_empty(&self) -> bool {
         let mut i = 0;
+        let mut sum = 0;
         while i < self.0.len() {
-            sum += self.0[i].count_ones();
+            sum |= self.0[i];
             i += 1;
         }
-        sum as usize
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.len() == 0
+        sum == 0
     }
 
     pub const fn clear(&mut self) {

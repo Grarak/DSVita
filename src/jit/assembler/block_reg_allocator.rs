@@ -9,6 +9,7 @@ use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use crate::utils::HeapMem;
 use crate::IS_DEBUG;
+use std::intrinsics::unlikely;
 
 const DEBUG: bool = IS_DEBUG;
 
@@ -278,10 +279,12 @@ impl BlockRegAllocator {
         }
 
         let (inputs, outputs) = inst.get_io();
-        if inputs.is_empty() && outputs.is_empty() {
+        if unlikely(inputs.is_empty() && outputs.is_empty()) {
             return;
         }
 
+        let inputs = *inputs;
+        let outputs = *outputs;
         let used_regs = inputs + outputs;
 
         if DEBUG && unsafe { BLOCK_LOG } {

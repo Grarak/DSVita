@@ -109,7 +109,7 @@ impl RegReserve {
     }
 
     pub const fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.0 == 0
     }
 
     pub fn get_gp_regs(&self) -> RegReserve {
@@ -293,10 +293,8 @@ impl Debug for RegReserve {
 }
 
 pub struct RegReserveIter {
-    reserve: RegReserve,
-    current: usize,
-    found: usize,
-    len: usize,
+    reserve: u32,
+    current: u32,
 }
 
 impl IntoIterator for RegReserve {
@@ -304,12 +302,7 @@ impl IntoIterator for RegReserve {
     type IntoIter = RegReserveIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        RegReserveIter {
-            reserve: self,
-            current: 0,
-            found: 0,
-            len: self.len(),
-        }
+        RegReserveIter { reserve: self.0, current: 0 }
     }
 }
 
@@ -317,29 +310,16 @@ impl Iterator for RegReserveIter {
     type Item = <RegReserve as IntoIterator>::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.found == self.len {
-            return None;
+        let zeros = self.reserve.trailing_zeros();
+        self.reserve = self.reserve.wrapping_shr(zeros);
+        if self.reserve == 0 {
+            None
+        } else {
+            self.current += zeros;
+            let reg = Reg::from(self.current as u8);
+            self.reserve >>= 1;
+            self.current += 1;
+            Some(reg)
         }
-
-        for i in self.current..Reg::None as usize {
-            let reg = Reg::from(i as u8);
-            if self.reserve.is_reserved(reg) {
-                self.current = i + 1;
-                self.found += 1;
-                return Some(reg);
-            }
-        }
-        None
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.len, Some(self.len))
-    }
-
-    fn count(self) -> usize
-    where
-        Self: Sized,
-    {
-        self.len
     }
 }

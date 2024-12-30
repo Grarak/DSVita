@@ -2,7 +2,7 @@ use crate::bitset::Bitset;
 use crate::jit::assembler::{BlockReg, ANY_REG_LIMIT};
 use crate::jit::reg::{Reg, RegReserve};
 use std::fmt::{Debug, Formatter};
-use std::intrinsics::unlikely;
+use std::hint::assert_unchecked;
 use std::ops::{Add, AddAssign, BitAnd, BitXor, BitXorAssign, Not, Sub, SubAssign};
 
 pub const BLOCK_REG_SET_ARRAY_SIZE: usize = 2;
@@ -26,6 +26,7 @@ macro_rules! block_reg_set {
     };
 }
 
+use crate::utils;
 pub(crate) use block_reg_set;
 
 impl BlockRegSet {
@@ -54,17 +55,6 @@ impl BlockRegSet {
         RegReserve::from(self.0 .0[0] & ((1 << Reg::None as u8) - 1))
     }
 
-    pub const fn len_any(&self) -> usize {
-        let mut sum = 0;
-        let mut i = 0;
-        while i < self.0 .0.len() {
-            sum += self.0 .0[i].count_ones();
-            i += 1;
-        }
-        const FIXED_REGS_OVERFLOW: u8 = Reg::None as u8;
-        (sum - (self.0 .0[0] & ((1 << FIXED_REGS_OVERFLOW) - 1)).count_ones()) as usize
-    }
-
     pub const fn add_guests(&mut self, reg_reserve: RegReserve) {
         self.0 .0[0] |= reg_reserve.0 << Reg::None as u8;
         let spilled_over_count = Reg::None as u8 * 2 - 32;
@@ -82,28 +72,12 @@ impl BlockRegSet {
     }
 
     pub const fn is_empty(&self) -> bool {
-        self.0.len() == 0
-    }
-
-    pub fn iter_fixed(&self) -> BlockRegFixedSetIter {
-        BlockRegFixedSetIter { block_reg_set: self, current: 0 }
+        self.0.is_empty()
     }
 
     pub fn iter_any(&self) -> BlockRegAnySetIter {
-        BlockRegAnySetIter {
-            block_reg_set: self,
-            current: 0,
-            found: 0,
-            len: self.len_any(),
-        }
-    }
-
-    pub fn iter(&self) -> BlockRegSetIter {
-        BlockRegSetIter {
-            block_reg_set: self,
-            current: 0,
-            len: self.0.len(),
-        }
+        let set = Bitset([self.0 .0[0] >> Reg::None as u8, self.0 .0[1]]);
+        BlockRegAnySetIter { set, current: 0 }
     }
 }
 
@@ -170,8 +144,23 @@ impl Sub<BlockRegSet> for BlockRegSet {
     }
 }
 
+impl Sub<&BlockRegSet> for BlockRegSet {
+    type Output = BlockRegSet;
+
+    fn sub(mut self, rhs: &BlockRegSet) -> Self::Output {
+        self.0 -= rhs.0;
+        self
+    }
+}
+
 impl SubAssign<BlockRegSet> for BlockRegSet {
     fn sub_assign(&mut self, rhs: BlockRegSet) {
+        self.0 -= rhs.0;
+    }
+}
+
+impl SubAssign<&BlockRegSet> for BlockRegSet {
+    fn sub_assign(&mut self, rhs: &BlockRegSet) {
         self.0 -= rhs.0;
     }
 }
@@ -251,104 +240,33 @@ impl Debug for BlockRegSet {
     }
 }
 
-pub struct BlockRegFixedSetIter<'a> {
-    block_reg_set: &'a BlockRegSet,
-    current: u8,
-}
-
-impl Iterator for BlockRegFixedSetIter<'_> {
-    type Item = Reg;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        for i in self.current..Reg::None as u8 {
-            let reg = Reg::from(i);
-            if self.block_reg_set.contains(BlockReg::Fixed(reg)) {
-                self.current = i + 1;
-                return Some(reg);
-            }
-        }
-        None
-    }
-}
-
 pub struct BlockRegAnySetIter<'a> {
-    block_reg_set: &'a BlockRegSet,
+    set: Bitset<BLOCK_REG_SET_ARRAY_SIZE>,
     current: u16,
-    found: usize,
-    len: usize,
 }
 
 impl Iterator for BlockRegAnySetIter<'_> {
     type Item = u16;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if unlikely(self.found == self.len) {
-            return None;
-        }
-
-        for i in self.current..ANY_REG_LIMIT {
-            if self.block_reg_set.contains(BlockReg::Any(i)) {
-                self.current = i + 1;
-                self.found += 1;
-                return Some(i);
+        let reg = BlockReg::Any(self.current);
+        let array_index = (reg.get_id() >> 5) as usize;
+        unsafe { assert_unchecked(array_index < self.set.0.len()) };
+        let zeros = self.set.0[array_index].trailing_zeros();
+        self.set.0[array_index] = self.set.0[array_index].wrapping_shr(zeros);
+        if self.set.0[array_index] == 0 {
+            if array_index == self.set.0.len() - 1 {
+                None
+            } else {
+                self.current = utils::align_up(reg.get_id() as usize, 32) as u16 - Reg::None as u16;
+                self.next()
             }
+        } else {
+            self.current += zeros as u16;
+            let reg = self.current;
+            self.set.0[array_index] >>= 1;
+            self.current += 1;
+            Some(reg)
         }
-        None
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.len, Some(self.len))
-    }
-
-    fn count(self) -> usize
-    where
-        Self: Sized,
-    {
-        self.len
-    }
-}
-
-pub struct BlockRegSetIter<'a> {
-    block_reg_set: &'a BlockRegSet,
-    current: u16,
-    len: usize,
-}
-
-impl Iterator for BlockRegSetIter<'_> {
-    type Item = BlockReg;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        const LAST_FIXED: u16 = BlockReg::Fixed(Reg::SPSR).get_id();
-        const LAST_ANY: u16 = BlockReg::Any(ANY_REG_LIMIT - 1).get_id();
-
-        for i in self.current..=LAST_FIXED {
-            let reg = BlockReg::Fixed(Reg::from(i as u8));
-            if self.block_reg_set.contains(reg) {
-                self.current = i + 1;
-                return Some(reg);
-            }
-        }
-        if self.current <= LAST_FIXED {
-            self.current = LAST_FIXED + 1;
-        }
-        for i in self.current..=LAST_ANY {
-            let reg = BlockReg::Any(i - LAST_FIXED - 1);
-            if self.block_reg_set.contains(reg) {
-                self.current = i + 1;
-                return Some(reg);
-            }
-        }
-        None
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.len, Some(self.len))
-    }
-
-    fn count(self) -> usize
-    where
-        Self: Sized,
-    {
-        self.len
     }
 }
