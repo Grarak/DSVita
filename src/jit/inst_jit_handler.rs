@@ -2,16 +2,19 @@ use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
+use crate::logging::debug_println;
 use crate::mmap::flush_icache;
 use core::slice;
 use std::arch::asm;
 
-pub unsafe extern "C" fn inst_slow_mem_patch() {
+pub unsafe extern "C" fn inst_slow_mem_patch(pc: u32) {
     let mut lr: u32;
     asm!(
     "mov {}, lr",
     out(reg) lr
     );
+
+    debug_println!("Slow mem patch {pc:x}");
 
     let nop_opcode = AluShiftImm::mov_al(Reg::R0, Reg::R0);
 

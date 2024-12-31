@@ -200,8 +200,8 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
             asm.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
             debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
-            // if asm.jit_buf.current_pc == 0x20025dc {
-                // block_asm.bkpt(1);
+            // if asm.jit_buf.current_pc == 0x207616c {
+            //     block_asm.bkpt(1);
             // }
 
             if THUMB {

@@ -277,9 +277,6 @@ pub trait BlockInstTrait {
     fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg);
     fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg);
     fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, used_host_regs: RegReserve);
-    fn unconditional(&self) -> bool {
-        false
-    }
 }
 
 impl Debug for BlockInstType {
@@ -312,18 +309,15 @@ pub struct BlockInst {
     pub cond: Cond,
     pub inst_type: BlockInstType,
     io_cache: UnsafeCell<Option<(BlockRegSet, BlockRegSet)>>,
-    pub unconditional: bool,
     pub skip: bool,
 }
 
 impl BlockInst {
     pub fn new(cond: Cond, inst_type: BlockInstType) -> Self {
-        let unconditional = inst_type.unconditional();
         BlockInst {
             cond,
             inst_type,
             io_cache: UnsafeCell::new(None),
-            unconditional,
             skip: false,
         }
     }
@@ -1214,10 +1208,6 @@ impl BlockInstTrait for Preload {
     fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
         opcodes.push(transfer_assembler::Preload::pli(self.operand.as_fixed(), self.offset, self.add))
     }
-
-    fn unconditional(&self) -> bool {
-        true
-    }
 }
 
 impl Debug for Preload {
@@ -1341,9 +1331,6 @@ impl BlockInstTrait for Generic {
             Generic::Prologue => opcodes.push(LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL)),
             _ => {}
         }
-    }
-    fn unconditional(&self) -> bool {
-        true
     }
 }
 

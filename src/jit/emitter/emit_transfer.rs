@@ -11,6 +11,7 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
+use crate::IS_DEBUG;
 
 impl<const CPU: CpuType> JitAsm<'_, CPU> {
     fn get_inst_mem_handler_func<const THUMB: bool, const WRITE: bool>(op: Op, amount: MemoryAmount) -> *const () {
@@ -258,7 +259,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.label_unlikely(slow_read_patch_label);
         let cpsr_backup_reg = block_asm.new_reg();
         block_asm.mrs_cpsr(cpsr_backup_reg);
-        block_asm.call(inst_slow_mem_patch as *const ());
+        if IS_DEBUG {
+            block_asm.call1(inst_slow_mem_patch as *const (), self.jit_buf.current_pc);
+        } else {
+            block_asm.call(inst_slow_mem_patch as *const ());
+        }
         block_asm.msr_cpsr(cpsr_backup_reg);
         block_asm.branch(slow_read_label, Cond::AL);
 
@@ -666,7 +671,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             if !inst_info.op.mem_is_write() {
                 block_asm.label_unlikely(slow_patch_label);
                 block_asm.mrs_cpsr(cpsr_backup_reg);
-                block_asm.call(inst_slow_mem_patch as *const ());
+                if IS_DEBUG {
+                    block_asm.call1(inst_slow_mem_patch as *const (), self.jit_buf.current_pc);
+                } else {
+                    block_asm.call(inst_slow_mem_patch as *const ());
+                }
                 block_asm.msr_cpsr(cpsr_backup_reg);
                 block_asm.branch(slow_label, Cond::AL);
             }

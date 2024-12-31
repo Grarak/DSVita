@@ -997,7 +997,7 @@ impl BlockAsm {
         for i in 0..basic_blocks_len {
             if let Some((label, correction)) = self.cache.basic_blocks[i].pad_label {
                 let block_to_pad_to = *self.buf.basic_block_label_mapping.get(&label.0).unwrap();
-                self.cache.basic_blocks[block_to_pad_to].emit_opcodes(self.buf, 0, block_to_pad_to, used_host_regs);
+                self.cache.basic_blocks[block_to_pad_to].emit_opcodes(self.buf, true, block_to_pad_to, used_host_regs);
                 self.cache.basic_blocks[i].pad_size = (self.cache.basic_blocks[block_to_pad_to].opcodes.len() as i32 + correction) as usize;
             }
         }
@@ -1011,7 +1011,7 @@ impl BlockAsm {
                 continue;
             }
 
-            basic_block.emit_opcodes(self.buf, opcodes_len, i, used_host_regs);
+            basic_block.emit_opcodes(self.buf, false, i, used_host_regs);
             self.buf.opcodes.extend(&basic_block.opcodes);
         }
 

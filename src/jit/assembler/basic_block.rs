@@ -4,7 +4,7 @@ use crate::jit::assembler::block_inst::{Alu, AluOp, AluSetCond, BlockInstType, S
 use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockAsmBuf, BlockLabel, BlockReg};
 use crate::jit::reg::{Reg, RegReserve};
-use crate::jit::{MemoryAmount, ShiftType};
+use crate::jit::{Cond, MemoryAmount, ShiftType};
 use crate::IS_DEBUG;
 use std::fmt::{Debug, Formatter};
 use std::hint::assert_unchecked;
@@ -35,6 +35,7 @@ pub struct BasicBlock {
 
     pre_opcodes_indices: Vec<usize>,
     pub opcodes: Vec<u32>,
+    opcodes_emitted: bool,
 }
 
 impl BasicBlock {
@@ -64,6 +65,7 @@ impl BasicBlock {
 
             pre_opcodes_indices: Vec::new(),
             opcodes: Vec::new(),
+            opcodes_emitted: false,
         }
     }
 
@@ -88,6 +90,7 @@ impl BasicBlock {
         self.inst_indices.clear();
 
         self.opcodes.clear();
+        self.opcodes_emitted = false;
     }
 
     pub fn init_guest_regs(&mut self, buf: &mut BlockAsmBuf) {
@@ -309,14 +312,16 @@ impl BasicBlock {
         self.pre_opcodes_indices[last_index + 2] = buf.reg_allocator.pre_allocate_insts.len();
     }
 
-    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf, opcodes_offset: usize, block_index: usize, used_host_regs: RegReserve) {
-        // if IS_DEBUG && unsafe { BLOCK_LOG } && opcodes_offset != 0 {
-        //     self.opcodes.clear();
-        // }
-
-        if !self.opcodes.is_empty() {
+    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf, emit_local: bool, block_index: usize, used_host_regs: RegReserve) {
+        if self.opcodes_emitted {
+            if !emit_local {
+                buf.opcodes.extend(&self.opcodes);
+            }
             return;
         }
+
+        let (opcodes_start_len, opcodes) = if emit_local { (0, &mut self.opcodes) } else { (buf.opcodes.len(), &mut buf.opcodes) };
+        self.opcodes_emitted = true;
 
         unsafe { assert_unchecked(block_index < buf.branch_placeholders.len()) }
         buf.branch_placeholders[block_index].clear();
@@ -331,29 +336,29 @@ impl BasicBlock {
             let pre_opcodes_end = unsafe { *self.pre_opcodes_indices.get_unchecked(i + 1) };
             if pre_opcodes_start < pre_opcodes_end {
                 unsafe { assert_unchecked(pre_opcodes_end <= buf.reg_allocator.pre_allocate_insts.len()) };
-                self.opcodes.extend(&buf.reg_allocator.pre_allocate_insts[pre_opcodes_start..pre_opcodes_end]);
+                opcodes.extend(&buf.reg_allocator.pre_allocate_insts[pre_opcodes_start..pre_opcodes_end]);
             }
 
-            let start_len = self.opcodes.len();
+            let start_len = opcodes.len();
 
-            if IS_DEBUG && unsafe { BLOCK_LOG } && opcodes_offset != 0 {
+            if IS_DEBUG && unsafe { BLOCK_LOG } && !emit_local {
                 match &inst.inst_type {
                     BlockInstType::GuestPc(inner) => {
-                        println!("(0x{:x}, 0x{:x}),", start_len + opcodes_offset, inner.0);
+                        println!("(0x{:x}, 0x{:x}),", start_len, inner.0);
                     }
                     BlockInstType::Label(inner) => {
                         if let Some(pc) = inner.guest_pc {
-                            println!("(0x{:x}, 0x{pc:x}),", start_len + opcodes_offset);
+                            println!("(0x{:x}, 0x{pc:x}),", start_len);
                         }
                     }
                     _ => {}
                 }
             }
 
-            inst.emit_opcode(&mut self.opcodes, start_len, &mut buf.branch_placeholders[block_index], used_host_regs);
-            if !inst.unconditional {
-                for i in start_len..self.opcodes.len() {
-                    self.opcodes[i] = (self.opcodes[i] & !(0xF << 28)) | ((inst.cond as u32) << 28);
+            inst.emit_opcode(opcodes, start_len - opcodes_start_len, &mut buf.branch_placeholders[block_index], used_host_regs);
+            if inst.cond != Cond::AL {
+                for opcode in &mut opcodes[start_len..] {
+                    *opcode = (*opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);
                 }
             }
         }
@@ -362,11 +367,11 @@ impl BasicBlock {
         let pre_opcodes_end = unsafe { *self.pre_opcodes_indices.get_unchecked(self.pre_opcodes_indices.len() - 1) };
         if pre_opcodes_start < pre_opcodes_end {
             unsafe { assert_unchecked(pre_opcodes_end <= buf.reg_allocator.pre_allocate_insts.len()) };
-            self.opcodes.extend(&buf.reg_allocator.pre_allocate_insts[pre_opcodes_start..pre_opcodes_end]);
+            opcodes.extend(&buf.reg_allocator.pre_allocate_insts[pre_opcodes_start..pre_opcodes_end]);
         }
 
-        for _ in self.opcodes.len()..self.pad_size {
-            self.opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0));
+        for _ in opcodes.len() - opcodes_start_len..self.pad_size {
+            opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0));
         }
     }
 }
