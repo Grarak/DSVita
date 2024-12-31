@@ -434,7 +434,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                                     );
                                 }
                                 let fixed_regs = RegReserve::from((1 << user_regs.len()) - 1);
-                                block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, reg_reserve!(), fixed_regs, true, pre, true);
+                                block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, reg_reserve!(), fixed_regs, true, pre, false);
                             }
                         } else {
                             let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
@@ -445,10 +445,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                             block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, true, pre, false);
                         }
 
-                        for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                            block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
+                        if !gp_regs.is_empty() {
+                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                                block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
+                            }
+                            block_asm.guest_transfer_write_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, false);
                         }
-                        block_asm.guest_transfer_write_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, false);
                     } else {
                         if !gp_regs.is_empty() {
                             for (guest_reg, fixed_reg) in non_gp_regs_mappings {
