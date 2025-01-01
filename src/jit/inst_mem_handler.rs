@@ -167,7 +167,7 @@ pub unsafe extern "C" fn inst_mem_handler<const CPU: CpuType, const THUMB: bool,
 ) {
     let asm = get_jit_asm_ptr::<CPU>();
     handle_request::<CPU, WRITE, AMOUNT, SIGNED>(op0.as_mut().unwrap_unchecked(), addr, (*asm).emu);
-    if WRITE && unlikely(get_mem!((*asm).emu).breakout_imm) {
+    if unlikely(get_mem!((*asm).emu).breakout_imm) {
         imm_breakout!((*asm), pc, THUMB, total_cycles);
     }
 }
@@ -179,7 +179,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<const CPU: CpuType, const THU
 ) {
     let asm = get_jit_asm_ptr::<CPU>();
     handle_multiple_request::<CPU, THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(pc, (op0_rlist & 0xFFFF) as u16, (op0_rlist >> 16) as u8, (*asm).emu);
-    if WRITE && unlikely(get_mem!((*asm).emu).breakout_imm) {
+    if unlikely(get_mem!((*asm).emu).breakout_imm) {
         imm_breakout!((*asm), pc, THUMB, total_cycles);
     }
 }

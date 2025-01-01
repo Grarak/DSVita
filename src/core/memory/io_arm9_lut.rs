@@ -47,9 +47,9 @@ io_read!(
         (io16(0x130), |emu| get_common!(emu).input.get_key_input()),
         (io16(0x180), |emu| get_common!(emu).ipc.get_sync_reg::<{ ARM9 }>()),
         (io16(0x184), |emu| get_common!(emu).ipc.get_fifo_cnt::<{ ARM9 }>()),
-        (io16(0x1A0), |emu| get_common!(emu).cartridge.get_aux_spi_cnt::<{ ARM9 }>()),
-        (io8(0x1A2), |emu| get_common!(emu).cartridge.get_aux_spi_data::<{ ARM9 }>()),
-        (io32(0x1A4), |emu| get_common!(emu).cartridge.get_rom_ctrl::<{ ARM9 }>()),
+        (io16(0x1A0), |emu| get_common!(emu).cartridge.get_aux_spi_cnt(ARM9)),
+        (io8(0x1A2), |emu| get_common!(emu).cartridge.get_aux_spi_data(ARM9)),
+        (io32(0x1A4), |emu| get_common!(emu).cartridge.get_rom_ctrl(ARM9)),
         (io8(0x208), |emu| get_cpu_regs!(emu, ARM9).ime),
         (io32(0x210), |emu| get_cpu_regs!(emu, ARM9).ie),
         (io32(0x214), |emu| get_cpu_regs!(emu, ARM9).irf),
@@ -129,7 +129,7 @@ io_read!(
     IoArm9ReadLutUpper,
     [
         (io32(0x100000), |emu| get_common_mut!(emu).ipc.fifo_recv::<{ ARM9 }>(emu)),
-        (io32(0x100010), |emu| get_common_mut!(emu).cartridge.get_rom_data_in::<{ ARM9 }>(emu)),
+        (io32(0x100010), |emu| get_common_mut!(emu).cartridge.get_rom_data_in(ARM9, emu)),
     ]
 );
 
@@ -202,11 +202,11 @@ io_write!(
         (io16(0x180), |mask, value, emu| get_common_mut!(emu).ipc.set_sync_reg::<{ ARM9 }>(mask, value, emu)),
         (io16(0x184), |mask, value, emu| get_common_mut!(emu).ipc.set_fifo_cnt::<{ ARM9 }>(mask, value, emu)),
         (io32(0x188), |mask, value, emu| get_common_mut!(emu).ipc.fifo_send::<{ ARM9 }>(mask, value, emu)),
-        (io16(0x1A0), |mask, value, emu| get_common_mut!(emu).cartridge.set_aux_spi_cnt::<{ ARM9 }>(mask, value)),
-        (io8(0x1A2), |value, emu| get_common_mut!(emu).cartridge.set_aux_spi_data::<{ ARM9 }>(value)),
-        (io32(0x1A4), |mask, value, emu| get_common_mut!(emu).cartridge.set_rom_ctrl::<{ ARM9 }>(mask, value, emu)),
-        (io32(0x1A8), |mask, value, emu| get_common_mut!(emu).cartridge.set_bus_cmd_out_l::<{ ARM9 }>(mask, value)),
-        (io32(0x1AC), |mask, value, emu| get_common_mut!(emu).cartridge.set_bus_cmd_out_h::<{ ARM9 }>(mask, value)),
+        (io16(0x1A0), |mask, value, emu| get_common_mut!(emu).cartridge.set_aux_spi_cnt(ARM9, mask, value)),
+        (io8(0x1A2), |value, emu| get_common_mut!(emu).cartridge.set_aux_spi_data(ARM9, value)),
+        (io32(0x1A4), |mask, value, emu| get_common_mut!(emu).cartridge.set_rom_ctrl(ARM9, mask, value, emu)),
+        (io32(0x1A8), |mask, value, emu| get_common_mut!(emu).cartridge.set_bus_cmd_out_l(ARM9, mask, value)),
+        (io32(0x1AC), |mask, value, emu| get_common_mut!(emu).cartridge.set_bus_cmd_out_h(ARM9, mask, value)),
         (io8(0x208), |value, emu| get_cpu_regs_mut!(emu, ARM9).set_ime(value, emu)),
         (io32(0x210), |mask, value, emu| get_cpu_regs_mut!(emu, ARM9).set_ie(mask, value, emu)),
         (io32(0x214), |mask, value, emu| get_cpu_regs_mut!(emu, ARM9).set_irf(mask, value)),
