@@ -1,5 +1,5 @@
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::emu::{get_cp15, get_cpu_regs, get_cpu_regs_mut, get_regs, get_regs_mut, Emu};
+use crate::core::emu::{get_cp15, get_cpu_regs, get_cpu_regs_mut, get_mem_mut, get_regs, get_regs_mut, Emu};
 use crate::core::hle::bios_lookup_table::{ARM7_SWI_LOOKUP_TABLE, ARM9_SWI_LOOKUP_TABLE};
 use crate::core::thread_regs::Cpsr;
 use crate::core::CpuType;
@@ -22,33 +22,39 @@ pub fn swi<const CPU: CpuType>(comment: u8, emu: &mut Emu) {
 pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
     debug_println!("{CPU:?} interrupt");
 
+    let regs = get_regs_mut!(emu, CPU);
     let mut cpsr = Cpsr::from(get_regs!(emu, CPU).cpsr);
     cpsr.set_irq_disable(true);
     cpsr.set_thumb(false);
     cpsr.set_mode(u5::new(0x12));
-    get_regs_mut!(emu, CPU).set_cpsr::<true>(u32::from(cpsr), emu);
+    regs.set_cpsr::<true>(u32::from(cpsr), emu);
 
     let is_thumb = (get_regs!(emu, CPU).pc & 1) == 1;
     let mut spsr = Cpsr::from(get_regs!(emu, CPU).spsr);
     spsr.set_thumb(is_thumb);
-    get_regs_mut!(emu, CPU).spsr = u32::from(spsr);
+    regs.spsr = u32::from(spsr);
 
-    get_regs_mut!(emu, CPU).sp -= 4;
-    emu.mem_write::<CPU, _>(get_regs!(emu, CPU).sp, get_regs!(emu, CPU).pc + 4);
-    for reg in [Reg::R12, Reg::R3, Reg::R2, Reg::R1, Reg::R0] {
-        get_regs_mut!(emu, CPU).sp -= 4;
-        emu.mem_write::<CPU, _>(get_regs!(emu, CPU).sp, *get_regs!(emu, CPU).get_reg(reg));
-    }
+    let regs_to_push = [
+        *regs.get_reg(Reg::R0),
+        *regs.get_reg(Reg::R1),
+        *regs.get_reg(Reg::R2),
+        *regs.get_reg(Reg::R3),
+        *regs.get_reg(Reg::R12),
+        *regs.get_reg(Reg::PC) + 4,
+    ];
+    regs.sp -= regs_to_push.len() as u32 * 4;
+    let mem = get_mem_mut!(emu);
+    mem.write_multiple_slice::<CPU, true, _>(regs.sp, emu, &regs_to_push);
 
     match CPU {
         ARM9 => {
             let pc_addr = get_cp15!(emu).dtcm_addr + 0x3FFC;
-            get_regs_mut!(emu, CPU).lr = 0xFFFF0000;
-            get_regs_mut!(emu, CPU).pc = emu.mem_read::<CPU, _>(pc_addr);
+            regs.lr = 0xFFFF0000;
+            regs.pc = mem.read::<CPU, _>(pc_addr, emu);
         }
         ARM7 => {
-            get_regs_mut!(emu, CPU).lr = 0x00000000;
-            get_regs_mut!(emu, CPU).pc = emu.mem_read::<CPU, _>(0x3FFFFFC);
+            regs.lr = 0x00000000;
+            regs.pc = mem.read::<CPU, _>(0x3FFFFFC, emu);
         }
     }
 }
@@ -60,16 +66,19 @@ pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
         check_wait_flags::<CPU>(emu);
     }
 
-    for reg in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR] {
-        *get_regs_mut!(emu, CPU).get_reg_mut(reg) = emu.mem_read::<CPU, _>(get_regs!(emu, CPU).sp);
-        get_regs_mut!(emu, CPU).sp += 4;
+    let regs = get_regs_mut!(emu, CPU);
+    let mut reg_values = [0u32; 6];
+    let mem = get_mem_mut!(emu);
+    mem.read_multiple_slice::<CPU, true, _>(regs.sp, emu, &mut reg_values);
+    regs.sp += reg_values.len() as u32 * 4;
+    for (i, &reg) in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR].iter().enumerate() {
+        *regs.get_reg_mut(reg) = reg_values[i];
     }
-    get_regs_mut!(emu, CPU).pc = get_regs!(emu, CPU).lr - 4;
+    regs.pc = regs.lr - 4;
 
-    let spsr = get_regs!(emu, CPU).spsr;
-
-    get_regs_mut!(emu, CPU).pc = (get_regs_mut!(emu, CPU).pc & !1) | Cpsr::from(spsr).thumb() as u32;
-    get_regs_mut!(emu, CPU).set_cpsr::<false>(spsr, emu);
+    let spsr = regs.spsr;
+    regs.pc = (regs.pc & !1) | Cpsr::from(spsr).thumb() as u32;
+    regs.set_cpsr::<false>(spsr, emu);
 }
 
 pub fn bit_unpack<const CPU: CpuType>(emu: &mut Emu) {
