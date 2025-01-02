@@ -3,9 +3,10 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockLabel, BlockOperand, BlockReg};
-use crate::jit::jit_asm::{JitAsm, JitRuntimeData, RETURN_STACK_SIZE};
+use crate::jit::inst_branch_handler::{branch_lr, branch_reg_with_lr_return};
+use crate::jit::jit_asm::{JitAsm, JitRuntimeData, RETURN_STACK_SIZE, STACK_DEPTH_LIMIT};
 use crate::jit::reg::Reg;
-use crate::jit::{jit_memory_map, Cond, ShiftType};
+use crate::jit::{inst_branch_handler, jit_memory_map, Cond, ShiftType};
 use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
 
@@ -29,8 +30,6 @@ macro_rules! exit_guest_context {
         std::hint::unreachable_unchecked();
     }};
 }
-
-use crate::jit::inst_branch_handler::{branch_lr, branch_reg_with_lr_return};
 pub(crate) use exit_guest_context;
 
 pub struct JitAsmCommonFuns<const CPU: CpuType> {}
@@ -127,6 +126,53 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         block_asm.free_reg(thread_regs_addr_reg);
     }
 
+    pub fn emit_check_stack_depth(block_asm: &mut BlockAsm, runtime_data_addr_reg: BlockReg, breakout_label: BlockLabel, current_pc: u32) {
+        if CPU == ARM7 {
+            return;
+        }
+
+        let stack_depth_reg = block_asm.new_reg();
+        block_asm.load_u16(stack_depth_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
+        block_asm.bic(stack_depth_reg, stack_depth_reg, 0x8000);
+        block_asm.cmp(stack_depth_reg, STACK_DEPTH_LIMIT as u32);
+
+        if DEBUG_LOG {
+            block_asm.start_cond_block(Cond::HS);
+            block_asm.mov(stack_depth_reg, (stack_depth_reg.into(), ShiftType::Lsr, BlockOperand::from(3)));
+            block_asm.call2(Self::debug_stack_depth_too_big as *const _, stack_depth_reg, current_pc);
+            block_asm.branch(breakout_label, Cond::AL);
+            block_asm.end_cond_block();
+        } else {
+            block_asm.branch(breakout_label, Cond::HS);
+        }
+
+        block_asm.free_reg(stack_depth_reg);
+    }
+
+    pub fn emit_increment_stack_depth(block_asm: &mut BlockAsm, runtime_data_addr_reg: BlockReg) {
+        if CPU == ARM7 {
+            return;
+        }
+
+        let stack_depth_reg = block_asm.new_reg();
+        block_asm.load_u16(stack_depth_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
+        block_asm.add(stack_depth_reg, stack_depth_reg, 1);
+        block_asm.store_u16(stack_depth_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
+        block_asm.free_reg(stack_depth_reg);
+    }
+
+    pub fn emit_decrement_stack_depth(block_asm: &mut BlockAsm, runtime_data_addr_reg: BlockReg) {
+        if CPU == ARM7 {
+            return;
+        }
+
+        let stack_depth_reg = block_asm.new_reg();
+        block_asm.load_u16(stack_depth_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
+        block_asm.sub(stack_depth_reg, stack_depth_reg, 1);
+        block_asm.store_u16(stack_depth_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
+        block_asm.free_reg(stack_depth_reg);
+    }
+
     fn emit_align_guest_pc(block_asm: &mut BlockAsm, guest_pc_reg: BlockReg, aligned_guest_pc_reg: BlockReg) {
         // Align pc to 2 or 4
         // let thumb = (guest_pc & 1) == 1;
@@ -158,31 +204,71 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         block_asm.free_reg(pre_cycle_count_sum_reg);
     }
 
-    pub fn emit_flush_cycles<ContinueFn: Fn(&mut JitAsm<CPU>, &mut BlockAsm, BlockReg, BlockLabel), BreakoutFn: Fn(&mut JitAsm<CPU>, &mut BlockAsm, BlockReg)>(
+    pub fn emit_flush_cycles<
+        PreFlushFn: Fn(&mut JitAsm<CPU>, &mut BlockAsm, BlockReg, BlockLabel),
+        ContinueFn: Fn(&mut JitAsm<CPU>, &mut BlockAsm, BlockReg, BlockLabel),
+        PreRunSchedulerFn: Fn(&mut JitAsm<CPU>, &mut BlockAsm),
+        BreakoutFn: Fn(&mut JitAsm<CPU>, &mut BlockAsm, BlockReg),
+    >(
         asm: &mut JitAsm<CPU>,
         block_asm: &mut BlockAsm,
         total_cycles_reg: BlockReg,
         target_pre_cycle_count_sum_reg: BlockReg,
         add_continue_label: bool,
+        run_scheduler: bool,
+        pre_flush_fn: PreFlushFn,
         continue_fn: ContinueFn,
+        pre_run_scheduler_fn: PreRunSchedulerFn,
         breakout_fn: BreakoutFn,
     ) {
+        let continue_label = if add_continue_label { Some(block_asm.new_label()) } else { None };
+        let run_scheduler_label = block_asm.new_label();
+        let post_run_scheduler_label = block_asm.new_label();
+        let breakout_label = block_asm.new_label();
+
         let runtime_data_addr_reg = block_asm.new_reg();
         block_asm.mov(runtime_data_addr_reg, ptr::addr_of_mut!(asm.runtime_data) as u32);
 
         let result_accumulated_cycles_reg = block_asm.new_reg();
         Self::emit_count_cycles(block_asm, total_cycles_reg, runtime_data_addr_reg, result_accumulated_cycles_reg);
 
+        pre_flush_fn(asm, block_asm, runtime_data_addr_reg, breakout_label);
+
         block_asm.cmp(result_accumulated_cycles_reg, get_max_loop_cycle_count::<CPU>());
 
-        let continue_label = if add_continue_label { Some(block_asm.new_label()) } else { None };
-        let breakout_label = block_asm.new_label();
-        block_asm.branch(breakout_label, Cond::HS);
+        block_asm.branch(if run_scheduler { run_scheduler_label } else { breakout_label }, Cond::HS);
+
+        if run_scheduler {
+            block_asm.label(post_run_scheduler_label);
+        }
         block_asm.store_u16(target_pre_cycle_count_sum_reg, runtime_data_addr_reg, JitRuntimeData::get_pre_cycle_count_sum_offset() as u32);
 
         continue_fn(asm, block_asm, runtime_data_addr_reg, breakout_label);
         if add_continue_label {
             block_asm.branch(continue_label.unwrap(), Cond::AL);
+        }
+
+        if run_scheduler {
+            block_asm.label_unlikely(run_scheduler_label);
+            pre_run_scheduler_fn(asm, block_asm);
+
+            let pc_og_reg = block_asm.new_reg();
+            let pc_new_reg = block_asm.new_reg();
+            block_asm.load_u32(pc_og_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
+            if asm.emu.settings.arm7_hle() {
+                block_asm.call1(inst_branch_handler::run_scheduler::<CPU, true> as *const (), asm as *mut _ as u32);
+            } else {
+                block_asm.call1(inst_branch_handler::run_scheduler::<CPU, false> as *const (), asm as *mut _ as u32);
+            }
+            block_asm.load_u32(pc_new_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
+            block_asm.cmp(pc_new_reg, pc_og_reg);
+
+            block_asm.branch(breakout_label, Cond::NE);
+            block_asm.restore_reg(Reg::CPSR);
+            block_asm.branch(post_run_scheduler_label, Cond::AL);
+
+            block_asm.free_reg(pc_new_reg);
+            block_asm.free_reg(pc_og_reg);
         }
 
         block_asm.label_unlikely(breakout_label);
@@ -200,7 +286,6 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         let return_stack_ptr_reg = block_asm.new_reg();
 
         block_asm.load_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
-        block_asm.and(return_stack_ptr_reg, return_stack_ptr_reg, RETURN_STACK_SIZE as u32 - 1);
 
         let return_stack_reg = block_asm.new_reg();
         block_asm.add(return_stack_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_offset() as u32);
@@ -211,6 +296,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         }
 
         block_asm.add(return_stack_ptr_reg, return_stack_ptr_reg, 1);
+        block_asm.and(return_stack_ptr_reg, return_stack_ptr_reg, RETURN_STACK_SIZE as u32 - 1);
         block_asm.store_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
 
         block_asm.free_reg(return_stack_reg);
@@ -235,6 +321,10 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
 
     pub extern "C" fn debug_push_return_stack(current_pc: u32, lr_pc: u32, stack_size: u8) {
         println!("{CPU:?} push {lr_pc:x} to return stack with size {stack_size} at {current_pc:x}")
+    }
+
+    pub extern "C" fn debug_stack_depth_too_big(size: u16, current_pc: u32) {
+        println!("{CPU:?} stack depth exceeded {size} at {current_pc:x}")
     }
 
     pub extern "C" fn debug_branch_reg(current_pc: u32, target_pc: u32) {

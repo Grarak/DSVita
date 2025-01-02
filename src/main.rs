@@ -258,7 +258,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     let gpu_3d_regs = &mut get_common_mut!(emu).gpu.gpu_3d_regs;
 
     loop {
-        let arm9_cycles = if likely(!cpu_regs_arm9.is_halted() && !jit_asm_arm9.runtime_data.idle_loop) {
+        let arm9_cycles = if likely(!cpu_regs_arm9.is_halted() && !jit_asm_arm9.runtime_data.is_idle_loop()) {
             unsafe { CURRENT_RUNNING_CPU = ARM9 };
             (jit_asm_arm9.execute() + 1) >> 1
         } else {
@@ -266,13 +266,13 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
         };
 
         if ARM7_HLE {
-            if unlikely(cpu_regs_arm9.is_halted() || jit_asm_arm9.runtime_data.idle_loop) {
+            if unlikely(cpu_regs_arm9.is_halted() || jit_asm_arm9.runtime_data.is_idle_loop()) {
                 cm.jump_to_next_event();
             } else {
                 cm.add_cycles(arm9_cycles);
             }
         } else {
-            let arm7_cycles = if likely(!cpu_regs_arm7.is_halted() && !jit_asm_arm7.runtime_data.idle_loop) {
+            let arm7_cycles = if likely(!cpu_regs_arm7.is_halted() && !jit_asm_arm7.runtime_data.is_idle_loop()) {
                 unsafe { CURRENT_RUNNING_CPU = ARM7 };
                 jit_asm_arm7.execute()
             } else {
@@ -287,10 +287,10 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
             }
         }
 
-        if unlikely(cm.check_events(emu)) {
-            jit_asm_arm9.runtime_data.idle_loop = false;
+        if cm.check_events(emu) {
+            jit_asm_arm9.runtime_data.clear_idle_loop();
             if !ARM7_HLE {
-                jit_asm_arm7.runtime_data.idle_loop = false;
+                jit_asm_arm7.runtime_data.clear_idle_loop();
             }
         }
 
@@ -363,6 +363,7 @@ pub fn actual_main() {
 
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
+        .stack_size(4 * 1024 * 1024)
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
             println!("Start cpu {:?}", thread::current().id());

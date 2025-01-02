@@ -1,6 +1,6 @@
 use crate::core::emu::get_jit;
 use crate::core::CpuType;
-use crate::core::CpuType::ARM9;
+use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::BlockReg;
 use crate::jit::inst_info::InstInfo;
@@ -98,6 +98,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     total_cycles_reg,
                     target_pre_cycle_count_sum_reg,
                     false,
+                    CPU == ARM9,
+                    |_, _, _, _| {},
                     |asm, block_asm, _, _| {
                         if DEBUG_LOG {
                             block_asm.call2(Self::debug_branch_label as *const (), asm.jit_buf.current_pc, target_pc);
@@ -105,11 +107,20 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                         block_asm.msr_cpsr(backed_up_cpsr_reg);
                         block_asm.guest_branch(Cond::AL, target_pc & !1);
                     },
-                    |asm, block_asm, _| {
+                    |_, block_asm| {
                         block_asm.msr_cpsr(backed_up_cpsr_reg);
 
                         block_asm.mov(Reg::PC, target_pc);
                         block_asm.save_context();
+                    },
+                    |asm, block_asm, _| {
+                        if CPU == ARM7 {
+                            block_asm.msr_cpsr(backed_up_cpsr_reg);
+
+                            block_asm.mov(Reg::PC, target_pc);
+                            block_asm.save_context();
+                        }
+
                         asm.emit_branch_out_metadata_no_count_cycles(block_asm);
                         block_asm.epilogue();
                     },
@@ -128,9 +139,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 self.emit_branch_out_metadata_with_idle_loop(block_asm);
                 block_asm.epilogue();
             }
-            JitBranchInfo::None => {
-                self.emit_branch_external_label(block_asm, target_pc, false, false);
-            }
+            JitBranchInfo::None => self.emit_branch_external_label(block_asm, target_pc, false, false),
         }
     }
 
@@ -187,12 +196,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.mov(total_cycles_reg, self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32);
         let target_pre_cycle_count_sum_reg = block_asm.new_reg();
         block_asm.mov(target_pre_cycle_count_sum_reg, 0);
-        JitAsmCommonFuns::<CPU>::emit_flush_cycles(
+
+        JitAsmCommonFuns::emit_flush_cycles(
             self,
             block_asm,
             total_cycles_reg,
             target_pre_cycle_count_sum_reg,
             true,
+            CPU == ARM9,
+            |asm, block_asm, runtime_data_addr_reg, breakout_label| {
+                JitAsmCommonFuns::<CPU>::emit_check_stack_depth(block_asm, runtime_data_addr_reg, breakout_label, asm.jit_buf.current_pc);
+            },
             |asm, block_asm, runtime_data_addr_reg, _| {
                 if has_lr_return {
                     JitAsmCommonFuns::<CPU>::emit_return_stack_write_desired_lr(block_asm, runtime_data_addr_reg, Reg::LR.into(), asm.jit_buf.current_pc);
@@ -202,13 +216,19 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     block_asm.call2(JitAsmCommonFuns::<CPU>::debug_branch_reg as *const (), asm.jit_buf.current_pc, target_pc);
                 }
 
+                JitAsmCommonFuns::<CPU>::emit_increment_stack_depth(block_asm, runtime_data_addr_reg);
                 JitAsmCommonFuns::<CPU>::emit_call_jit_addr_imm(block_asm, asm, target_pc, true);
+                JitAsmCommonFuns::<CPU>::emit_decrement_stack_depth(block_asm, runtime_data_addr_reg);
 
                 if has_lr_return {
                     if asm.jit_buf.current_index == asm.jit_buf.insts.len() - 1 {
                         block_asm.mov(total_cycles_reg, 0);
                         block_asm.store_u16(total_cycles_reg, runtime_data_addr_reg, JitRuntimeData::get_pre_cycle_count_sum_offset() as u32);
+
+                        JitAsmCommonFuns::<CPU>::emit_increment_stack_depth(block_asm, runtime_data_addr_reg);
                         JitAsmCommonFuns::<CPU>::emit_call_jit_addr_imm(block_asm, asm, if thumb { (asm.jit_buf.current_pc + 2) | 1 } else { asm.jit_buf.current_pc + 4 }, true);
+                        JitAsmCommonFuns::<CPU>::emit_decrement_stack_depth(block_asm, runtime_data_addr_reg);
+
                         block_asm.epilogue_previous_block();
                     } else {
                         block_asm.store_u16(total_cycles_reg, runtime_data_addr_reg, JitRuntimeData::get_pre_cycle_count_sum_offset() as u32);
@@ -221,6 +241,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     block_asm.epilogue_previous_block();
                 }
             },
+            |_, _| {},
             |asm, block_asm, _| {
                 asm.emit_branch_out_metadata_no_count_cycles(block_asm);
                 block_asm.epilogue();
@@ -246,10 +267,14 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             if self.jit_buf.current_index == self.jit_buf.insts.len() - 1 {
                 let total_cycles_reg = block_asm.new_reg();
                 let runtime_data_addr_reg = block_asm.new_reg();
+
                 block_asm.mov(total_cycles_reg, 0);
                 block_asm.mov(runtime_data_addr_reg, ptr::addr_of_mut!(self.runtime_data) as u32);
                 block_asm.store_u16(total_cycles_reg, runtime_data_addr_reg, JitRuntimeData::get_pre_cycle_count_sum_offset() as u32);
+
+                JitAsmCommonFuns::<CPU>::emit_increment_stack_depth(block_asm, runtime_data_addr_reg);
                 JitAsmCommonFuns::<CPU>::emit_call_jit_addr_imm(block_asm, self, if thumb { (self.jit_buf.current_pc + 2) | 1 } else { self.jit_buf.current_pc + 4 }, true);
+                JitAsmCommonFuns::<CPU>::emit_decrement_stack_depth(block_asm, runtime_data_addr_reg);
 
                 block_asm.epilogue_previous_block();
 
@@ -266,19 +291,29 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov(total_cycles_reg, self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32);
             let target_pre_cycle_count_sum_reg = block_asm.new_reg();
             block_asm.mov(target_pre_cycle_count_sum_reg, 0);
+
             JitAsmCommonFuns::emit_flush_cycles(
                 self,
                 block_asm,
                 total_cycles_reg,
                 target_pre_cycle_count_sum_reg,
                 false,
-                |asm, block_asm, _, _| {
+                CPU == ARM9,
+                |asm, block_asm, runtime_data_addr_reg, breakout_label| {
+                    JitAsmCommonFuns::<CPU>::emit_check_stack_depth(block_asm, runtime_data_addr_reg, breakout_label, asm.jit_buf.current_pc);
+                },
+                |asm, block_asm, runtime_data_addr_reg, _| {
                     if DEBUG_LOG {
                         block_asm.call2(Self::debug_branch_reg as *const (), asm.jit_buf.current_pc, target_pc_reg);
                     }
+
+                    JitAsmCommonFuns::<CPU>::emit_increment_stack_depth(block_asm, runtime_data_addr_reg);
                     JitAsmCommonFuns::emit_call_jit_addr(block_asm, asm, target_pc_reg, true);
+                    JitAsmCommonFuns::<CPU>::emit_decrement_stack_depth(block_asm, runtime_data_addr_reg);
+
                     block_asm.epilogue_previous_block();
                 },
+                |_, _| {},
                 |asm, block_asm, _| {
                     asm.emit_branch_out_metadata_no_count_cycles(block_asm);
                     block_asm.epilogue();

@@ -855,9 +855,15 @@ impl BlockAsm {
             }
         }
 
+        if IS_DEBUG && unsafe { BLOCK_LOG } {
+            for i in 0..basic_blocks_len {
+                println!("basic block: {i} {:?}", self.cache.basic_blocks[i]);
+            }
+        }
+
         for i in 0..basic_blocks_len {
             let exit_blocks = &self.cache.basic_blocks[i].exit_blocks;
-            debug_assert!(exit_blocks.len() <= 1 || (exit_blocks.len() == 2 && exit_blocks[0] != exit_blocks[1]));
+            debug_assert!(exit_blocks.len() <= 1 || (exit_blocks.len() == 2 && exit_blocks[0] != exit_blocks[1]), "basic block {i}");
             for j in 0..exit_blocks.len() {
                 let exit_block = self.cache.basic_blocks[i].exit_blocks[j];
                 if !self.cache.basic_blocks[exit_block].enter_blocks.contains(&i) {

@@ -49,36 +49,65 @@ impl JitBuf {
     }
 }
 
-pub const RETURN_STACK_SIZE: usize = 8;
+pub const RETURN_STACK_SIZE: usize = 32;
+pub const STACK_DEPTH_LIMIT: u16 = 2048;
 
 #[repr(C, align(32))]
 pub struct JitRuntimeData {
     pub pre_cycle_count_sum: u16,
     pub accumulated_cycles: u16,
     pub host_sp: usize,
-    pub idle_loop: bool,
+    idle_loop_stack_depth: u16,
     pub return_stack_ptr: u8,
     pub return_stack: [u32; RETURN_STACK_SIZE],
-    pub branch_out_pc: u32,
+    #[cfg(debug_assertions)]
+    branch_out_pc: u32,
 }
 
 impl JitRuntimeData {
     fn new() -> Self {
         let instance = JitRuntimeData {
-            branch_out_pc: u32::MAX,
             pre_cycle_count_sum: 0,
             accumulated_cycles: 0,
-            idle_loop: false,
             host_sp: 0,
+            idle_loop_stack_depth: 0,
             return_stack_ptr: 0,
             return_stack: [0; RETURN_STACK_SIZE],
+            #[cfg(debug_assertions)]
+            branch_out_pc: u32::MAX,
         };
         assert_eq!(size_of_val(&instance.return_stack), RETURN_STACK_SIZE * 4);
         instance
     }
 
+    #[cfg(debug_assertions)]
     pub const fn get_out_pc_offset() -> u8 {
         mem::offset_of!(JitRuntimeData, branch_out_pc) as u8
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub const fn get_out_pc_offset() -> u8 {
+        panic!()
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn set_branch_out_pc(&mut self, pc: u32) {
+        self.branch_out_pc = pc;
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub fn set_branch_out_pc(&mut self, _: u32) {
+        panic!()
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn get_branch_out_pc(&self) -> u32 {
+        self.branch_out_pc
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub fn get_branch_out_pc(&self) -> u32 {
+        panic!()
     }
 
     pub const fn get_pre_cycle_count_sum_offset() -> u8 {
@@ -89,12 +118,12 @@ impl JitRuntimeData {
         mem::offset_of!(JitRuntimeData, accumulated_cycles) as u8
     }
 
-    pub const fn get_idle_loop_offset() -> u8 {
-        mem::offset_of!(JitRuntimeData, idle_loop) as u8
-    }
-
     pub const fn get_host_sp_offset() -> u8 {
         mem::offset_of!(JitRuntimeData, host_sp) as u8
+    }
+
+    pub const fn get_idle_loop_stack_depth_offset() -> u8 {
+        mem::offset_of!(JitRuntimeData, idle_loop_stack_depth) as u8
     }
 
     pub const fn get_return_stack_ptr_offset() -> u8 {
@@ -103,6 +132,31 @@ impl JitRuntimeData {
 
     pub const fn get_return_stack_offset() -> u8 {
         mem::offset_of!(JitRuntimeData, return_stack) as u8
+    }
+
+    pub fn is_idle_loop(&self) -> bool {
+        self.idle_loop_stack_depth & 0x8000 != 0
+    }
+
+    pub fn clear_idle_loop(&mut self) {
+        self.idle_loop_stack_depth &= !0x8000;
+    }
+
+    pub fn stack_depth(&self) -> u16 {
+        self.idle_loop_stack_depth & !0x8000
+    }
+
+    pub fn increment_stack_depth(&mut self) {
+        self.idle_loop_stack_depth += 1;
+    }
+
+    pub fn decrement_stack_depth(&mut self) {
+        self.idle_loop_stack_depth -= 1;
+    }
+
+    pub fn clear_return_stack_ptr(&mut self) {
+        self.return_stack_ptr = 0;
+        self.return_stack[RETURN_STACK_SIZE - 1] = 0;
     }
 }
 
@@ -115,9 +169,9 @@ pub fn align_guest_pc(guest_pc: u32) -> u32 {
 pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
     if IS_DEBUG {
-        asm.runtime_data.branch_out_pc = get_regs!(asm.emu, CPU).pc;
+        asm.runtime_data.set_branch_out_pc(get_regs!(asm.emu, CPU).pc);
     }
-    asm.runtime_data.return_stack_ptr = 0;
+    asm.runtime_data.clear_return_stack_ptr();
     asm.runtime_data.accumulated_cycles += 3;
     bios::uninterrupt::<CPU>(asm.emu);
     if unlikely(get_cpu_regs!(asm.emu, CPU).is_halted()) {
@@ -182,7 +236,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
 
     let (jit_entry, flushed) = {
         // println!("{CPU:?} {THUMB} emit code block {guest_pc:x}");
-        // unsafe { BLOCK_LOG = guest_pc == 0x3801c28 };
+        // unsafe { BLOCK_LOG = guest_pc == 0x2000800 };
 
         let guest_regs_ptr = get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr();
         let host_sp_ptr = ptr::addr_of_mut!(asm.runtime_data.host_sp);
@@ -259,36 +313,38 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
         debug_println!("{CPU:?} Enter jit addr {:x}", jit_entry as usize);
 
         if IS_DEBUG {
-            asm.runtime_data.branch_out_pc = u32::MAX;
+            asm.runtime_data.set_branch_out_pc(u32::MAX);
         }
         asm.runtime_data.pre_cycle_count_sum = 0;
         asm.runtime_data.accumulated_cycles = 0;
-        asm.runtime_data.return_stack_ptr = 0;
+        asm.runtime_data.clear_return_stack_ptr();
+        asm.runtime_data.idle_loop_stack_depth = 0;
         jit_entry
     };
 
     jit_entry(true);
 
-    debug_assert_ne!(asm.runtime_data.branch_out_pc, u32::MAX);
+    debug_assert_ne!(asm.runtime_data.get_branch_out_pc(), u32::MAX);
 
     if DEBUG_LOG {
         println!(
             "{CPU:?} reading opcode of breakout at {:x} executed cycles {}",
-            asm.runtime_data.branch_out_pc, asm.runtime_data.accumulated_cycles,
+            asm.runtime_data.get_branch_out_pc(),
+            asm.runtime_data.accumulated_cycles,
         );
-        if asm.runtime_data.idle_loop {
+        if asm.runtime_data.is_idle_loop() {
             println!("{CPU:?} idle loop");
         }
         let inst_info = if get_regs!(asm.emu, CPU).is_thumb() {
-            let opcode = asm.emu.mem_read::<CPU, _>(asm.runtime_data.branch_out_pc);
+            let opcode = asm.emu.mem_read::<CPU, _>(asm.runtime_data.get_branch_out_pc());
             let (op, func) = lookup_thumb_opcode(opcode);
             InstInfo::from(func(opcode, *op))
         } else {
-            let opcode = asm.emu.mem_read::<CPU, _>(asm.runtime_data.branch_out_pc);
+            let opcode = asm.emu.mem_read::<CPU, _>(asm.runtime_data.get_branch_out_pc());
             let (op, func) = lookup_opcode(opcode);
             func(opcode, *op)
         };
-        debug_inst_info::<CPU>(get_regs!(asm.emu, CPU), asm.runtime_data.branch_out_pc, &format!("breakout\n\t{:?} {:?}", CPU, inst_info));
+        debug_inst_info::<CPU>(get_regs!(asm.emu, CPU), asm.runtime_data.get_branch_out_pc(), &format!("breakout\n\t{:?} {:?}", CPU, inst_info));
     }
 
     asm.runtime_data.accumulated_cycles

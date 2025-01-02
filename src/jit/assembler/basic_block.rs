@@ -380,7 +380,7 @@ impl Debug for BasicBlock {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if self.inst_indices.is_empty() {
             writeln!(f, "BasicBlock: uninitialized enter blocks: {:?}", self.enter_blocks)?;
-            for i in self.block_entry_start..self.block_entry_end {
+            for i in self.block_entry_start..=self.block_entry_end {
                 let inst = unsafe { self.block_asm_buf_ptr.as_ref().unwrap().get_inst(i) };
                 writeln!(f, "\t{inst:?}")?;
                 let (inputs, outputs) = inst.get_io();
