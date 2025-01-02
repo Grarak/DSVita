@@ -180,7 +180,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
         pc_offset += if THUMB { 2 } else { 4 };
     }
 
-    let jit_entry = {
+    let (jit_entry, flushed) = {
         // println!("{CPU:?} {THUMB} emit code block {guest_pc:x}");
         // unsafe { BLOCK_LOG = guest_pc == 0x3801c28 };
 
@@ -229,19 +229,19 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
             todo!()
         }
         let (insert_entry, flushed) = get_jit_mut!(asm.emu).insert_block::<CPU>(opcodes, guest_pc, asm.emu);
-        if unlikely(flushed) {
-            asm.runtime_data.return_stack_ptr = 0;
-        }
         let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {
             // println!("{CPU:?} Mapping {guest_pc:#010x} to {:#010x}", jit_entry as *const fn() as usize);
         }
         asm.jit_buf.clear_all();
-        jit_entry
+        (jit_entry, flushed)
     };
 
     jit_entry(store_host_sp);
+    if flushed && !store_host_sp {
+        unsafe { exit_guest_context!(asm) };
+    }
 }
 
 fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
