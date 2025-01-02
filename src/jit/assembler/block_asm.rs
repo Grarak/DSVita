@@ -769,7 +769,6 @@ impl BlockAsm {
                 if let Some(last_label) = data.last_label {
                     basic_block_label_mapping.insert(last_label.0, *basic_blocks_len as usize - 1);
                 }
-                data.last_label_unlikely = false;
                 data.last_label = None;
             };
 
