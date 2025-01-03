@@ -1329,7 +1329,6 @@ impl BlockInstTrait for Generic {
             Generic::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
             Generic::Nop => opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0)),
             Generic::Prologue => opcodes.push(LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL)),
-            _ => {}
         }
     }
 }

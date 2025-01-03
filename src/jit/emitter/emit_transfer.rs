@@ -6,7 +6,7 @@ use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockOperand, BlockReg};
 use crate::jit::inst_info::Operand;
 use crate::jit::inst_jit_handler::inst_slow_mem_patch;
-use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple, inst_mem_handler_swp};
+use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
@@ -14,36 +14,36 @@ use crate::jit::{Cond, MemoryAmount, ShiftType};
 use crate::IS_DEBUG;
 
 impl<const CPU: CpuType> JitAsm<'_, CPU> {
-    fn get_inst_mem_handler_func<const THUMB: bool, const WRITE: bool>(op: Op, amount: MemoryAmount) -> *const () {
+    fn get_inst_mem_handler_func<const WRITE: bool, const IS_SWP: bool>(signed: bool, amount: MemoryAmount) -> *const () {
         match amount {
             MemoryAmount::Byte => {
-                if op.mem_transfer_single_signed() {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, true> as *const _
+                if signed {
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, true, IS_SWP> as *const _
                 } else {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Byte }, false> as *const _
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, false, IS_SWP> as *const _
                 }
             }
             MemoryAmount::Half => {
-                if op.mem_transfer_single_signed() {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, true> as *const _
+                if signed {
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, true, IS_SWP> as *const _
                 } else {
-                    inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Half }, false> as *const _
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, false, IS_SWP> as *const _
                 }
             }
-            MemoryAmount::Word => inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Word }, false> as *const _,
-            MemoryAmount::Double => inst_mem_handler::<CPU, THUMB, WRITE, { MemoryAmount::Double }, false> as *const _,
+            MemoryAmount::Word => inst_mem_handler::<CPU, WRITE, { MemoryAmount::Word }, false, IS_SWP> as *const _,
+            MemoryAmount::Double => inst_mem_handler::<CPU, WRITE, { MemoryAmount::Double }, false, IS_SWP> as *const _,
         }
     }
 
-    pub fn emit_single_transfer<const THUMB: bool, const WRITE: bool>(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount) {
+    pub fn emit_single_transfer<const WRITE: bool>(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount, thumb: bool) {
         if WRITE {
-            self.emit_single_transfer_write::<THUMB>(block_asm, pre, write_back, amount)
+            self.emit_single_transfer_write(block_asm, pre, write_back, amount, thumb)
         } else {
-            self.emit_single_transfer_read::<THUMB>(block_asm, pre, write_back, amount)
+            self.emit_single_transfer_read(block_asm, pre, write_back, amount, thumb)
         }
     }
 
-    fn emit_single_transfer_write<const THUMB: bool>(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount) {
+    fn emit_single_transfer_write(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount, thumb: bool) {
         let (op, op0, op1, op2) = {
             let inst_info = self.jit_buf.current_inst();
             let operands = inst_info.operands();
@@ -81,6 +81,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov(op1, post_addr_reg);
         }
 
+        self.emit_write(op0, addr_reg, block_asm, op.mem_transfer_single_signed(), amount, thumb);
+
+        if !thumb && op0 == Reg::PC && write_back && op1 == Reg::PC {
+            todo!()
+        }
+
+        block_asm.free_reg(addr_reg);
+        block_asm.free_reg(post_addr_reg);
+    }
+
+    fn emit_write(&mut self, op0: Reg, addr_reg: BlockReg, block_asm: &mut BlockAsm, signed: bool, amount: MemoryAmount, thumb: bool) {
         let slow_write_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
@@ -118,12 +129,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             op0,
             fast_mmu_ptr_reg,
             fast_write_addr_reg,
-            op.mem_transfer_single_signed(),
+            signed,
             if amount == MemoryAmount::Double { MemoryAmount::Word } else { amount },
         );
         if amount == MemoryAmount::Double {
             block_asm.add(fast_write_addr_reg, fast_write_addr_reg, 4);
-            block_asm.transfer_write(Reg::from(op0 as u8 + 1), fast_mmu_ptr_reg, fast_write_addr_reg, op.mem_transfer_single_signed(), MemoryAmount::Word);
+            block_asm.transfer_write(Reg::from(op0 as u8 + 1), fast_mmu_ptr_reg, fast_write_addr_reg, signed, MemoryAmount::Word);
         }
 
         block_asm.msr_cpsr(cpsr_backup_reg);
@@ -138,7 +149,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let op0_addr_reg = block_asm.new_reg();
         block_asm.mov(op0_addr_reg, op0_addr);
 
-        if !THUMB && op0 == Reg::PC {
+        if !thumb && op0 == Reg::PC {
             // When op0 is PC, it's read as PC+12
             // Don't need to restore it, since breakouts only happen when PC was written to
             let tmp_pc_reg = block_asm.new_reg();
@@ -146,18 +157,14 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.store_u32(tmp_pc_reg, op0_addr_reg, 0);
 
             block_asm.free_reg(tmp_pc_reg);
-
-            if write_back && op1 == Reg::PC {
-                todo!();
-            }
         }
 
-        let func_addr = Self::get_inst_mem_handler_func::<THUMB, true>(op, amount);
+        let func_addr = Self::get_inst_mem_handler_func::<true, false>(signed, amount);
         block_asm.call4(
             func_addr,
             addr_reg,
             op0_addr_reg,
-            self.jit_buf.current_pc,
+            self.jit_buf.current_pc | (thumb as u32),
             self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32,
         );
         block_asm.restore_reg(Reg::CPSR);
@@ -171,11 +178,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.free_reg(fast_write_addr_reg);
         block_asm.free_reg(cpsr_backup_reg);
         block_asm.free_reg(op0_addr_reg);
-        block_asm.free_reg(addr_reg);
-        block_asm.free_reg(post_addr_reg);
     }
 
-    fn emit_single_transfer_read<const THUMB: bool>(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount) {
+    fn emit_single_transfer_read(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount, thumb: bool) {
         let (op, op0, op1, op2) = {
             let inst_info = self.jit_buf.current_inst();
             let operands = inst_info.operands();
@@ -217,6 +222,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov(op1, post_addr_reg);
         }
 
+        self.emit_read(op0, addr_reg, block_asm, op.mem_transfer_single_signed(), amount, thumb, false);
+
+        block_asm.free_reg(addr_reg);
+        block_asm.free_reg(post_addr_reg);
+    }
+
+    fn emit_read(&mut self, op0: Reg, addr_reg: BlockReg, block_asm: &mut BlockAsm, signed: bool, amount: MemoryAmount, thumb: bool, is_swp: bool) {
         let fast_read_value_reg = block_asm.new_reg();
         let fast_read_next_addr_reg = block_asm.new_reg();
         let fast_read_addr_masked_reg = block_asm.new_reg();
@@ -237,7 +249,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             if needs_ror { fast_read_value_reg } else { op0.into() },
             fast_read_addr_masked_reg,
             base_ptr as u32,
-            op.mem_transfer_single_signed(),
+            signed,
             if amount == MemoryAmount::Double { MemoryAmount::Word } else { amount },
         );
         if needs_ror {
@@ -280,12 +292,16 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let op0_addr_reg = block_asm.new_reg();
         block_asm.mov(op0_addr_reg, op0_addr);
 
-        let func_addr = Self::get_inst_mem_handler_func::<THUMB, false>(op, amount);
+        let func_addr = if is_swp {
+            Self::get_inst_mem_handler_func::<false, true>(signed, amount)
+        } else {
+            Self::get_inst_mem_handler_func::<false, false>(signed, amount)
+        };
         block_asm.call4(
             func_addr,
             addr_reg,
             op0_addr_reg,
-            self.jit_buf.current_pc,
+            self.jit_buf.current_pc | (thumb as u32),
             self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32,
         );
         block_asm.restore_reg(op0);
@@ -302,24 +318,22 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.free_reg(fast_read_next_addr_reg);
         block_asm.free_reg(fast_read_value_reg);
         block_asm.free_reg(op0_addr_reg);
-        block_asm.free_reg(addr_reg);
-        block_asm.free_reg(post_addr_reg);
     }
 
     pub fn emit_single_write(&mut self, block_asm: &mut BlockAsm) {
         let op = self.jit_buf.current_inst().op;
-        self.emit_single_transfer::<false, true>(block_asm, op.mem_transfer_pre(), op.mem_transfer_write_back(), MemoryAmount::from(op));
+        self.emit_single_transfer::<true>(block_asm, op.mem_transfer_pre(), op.mem_transfer_write_back(), MemoryAmount::from(op), false);
     }
 
     pub fn emit_single_read(&mut self, block_asm: &mut BlockAsm) {
         let op = self.jit_buf.current_inst().op;
-        self.emit_single_transfer::<false, false>(block_asm, op.mem_transfer_pre(), op.mem_transfer_write_back(), MemoryAmount::from(op));
+        self.emit_single_transfer::<false>(block_asm, op.mem_transfer_pre(), op.mem_transfer_write_back(), MemoryAmount::from(op), false);
     }
 
-    pub fn emit_multiple_transfer<const THUMB: bool>(&mut self, block_asm: &mut BlockAsm) {
+    pub fn emit_multiple_transfer(&mut self, block_asm: &mut BlockAsm, thumb: bool) {
         let inst_info = self.jit_buf.current_inst();
 
-        let mut rlist = RegReserve::from(inst_info.opcode & if THUMB { 0xFF } else { 0xFFFF });
+        let mut rlist = RegReserve::from(inst_info.opcode & if thumb { 0xFF } else { 0xFFFF });
         if inst_info.op == Op::PushLrT {
             rlist += Reg::LR;
         } else if inst_info.op == Op::PopPcT {
@@ -633,38 +647,38 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             pre = !pre;
         }
         let func_addr: *const () = match (inst_info.op.mem_is_write(), inst_info.op.mem_transfer_user(), pre, write_back, decrement) {
-            (false, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, false> as _,
-            (true, false, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, false> as _,
-            (false, true, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, false> as _,
-            (true, true, false, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, false, false> as _,
-            (false, false, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, false, false> as _,
-            (true, false, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, false, false> as _,
-            (false, true, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, false, false> as _,
-            (true, true, true, false, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, false, false> as _,
-            (false, false, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, true, false> as _,
-            (true, false, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, true, false> as _,
-            (false, true, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, true, false> as _,
-            (true, true, false, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, true, false> as _,
-            (false, false, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, true, false> as _,
-            (true, false, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, true, false> as _,
-            (false, true, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, true, false> as _,
-            (true, true, true, true, false) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, true, false> as _,
-            (false, false, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, false, true> as _,
-            (true, false, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, false, true> as _,
-            (false, true, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, false, true> as _,
-            (true, true, false, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, false, true> as _,
-            (false, false, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, false, true> as _,
-            (true, false, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, false, true> as _,
-            (false, true, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, false, true> as _,
-            (true, true, true, false, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, false, true> as _,
-            (false, false, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, false, true, true> as _,
-            (true, false, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, false, true, true> as _,
-            (false, true, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, false, true, true> as _,
-            (true, true, false, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, false, true, true> as _,
-            (false, false, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, false, true, true, true> as _,
-            (true, false, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, false, true, true, true> as _,
-            (false, true, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, false, true, true, true, true> as _,
-            (true, true, true, true, true) => inst_mem_handler_multiple::<CPU, THUMB, true, true, true, true, true> as _,
+            (false, false, false, false, false) => inst_mem_handler_multiple::<CPU, false, false, false, false, false> as _,
+            (true, false, false, false, false) => inst_mem_handler_multiple::<CPU, true, false, false, false, false> as _,
+            (false, true, false, false, false) => inst_mem_handler_multiple::<CPU, false, true, false, false, false> as _,
+            (true, true, false, false, false) => inst_mem_handler_multiple::<CPU, true, true, false, false, false> as _,
+            (false, false, true, false, false) => inst_mem_handler_multiple::<CPU, false, false, true, false, false> as _,
+            (true, false, true, false, false) => inst_mem_handler_multiple::<CPU, true, false, true, false, false> as _,
+            (false, true, true, false, false) => inst_mem_handler_multiple::<CPU, false, true, true, false, false> as _,
+            (true, true, true, false, false) => inst_mem_handler_multiple::<CPU, true, true, true, false, false> as _,
+            (false, false, false, true, false) => inst_mem_handler_multiple::<CPU, false, false, false, true, false> as _,
+            (true, false, false, true, false) => inst_mem_handler_multiple::<CPU, true, false, false, true, false> as _,
+            (false, true, false, true, false) => inst_mem_handler_multiple::<CPU, false, true, false, true, false> as _,
+            (true, true, false, true, false) => inst_mem_handler_multiple::<CPU, true, true, false, true, false> as _,
+            (false, false, true, true, false) => inst_mem_handler_multiple::<CPU, false, false, true, true, false> as _,
+            (true, false, true, true, false) => inst_mem_handler_multiple::<CPU, true, false, true, true, false> as _,
+            (false, true, true, true, false) => inst_mem_handler_multiple::<CPU, false, true, true, true, false> as _,
+            (true, true, true, true, false) => inst_mem_handler_multiple::<CPU, true, true, true, true, false> as _,
+            (false, false, false, false, true) => inst_mem_handler_multiple::<CPU, false, false, false, false, true> as _,
+            (true, false, false, false, true) => inst_mem_handler_multiple::<CPU, true, false, false, false, true> as _,
+            (false, true, false, false, true) => inst_mem_handler_multiple::<CPU, false, true, false, false, true> as _,
+            (true, true, false, false, true) => inst_mem_handler_multiple::<CPU, true, true, false, false, true> as _,
+            (false, false, true, false, true) => inst_mem_handler_multiple::<CPU, false, false, true, false, true> as _,
+            (true, false, true, false, true) => inst_mem_handler_multiple::<CPU, true, false, true, false, true> as _,
+            (false, true, true, false, true) => inst_mem_handler_multiple::<CPU, false, true, true, false, true> as _,
+            (true, true, true, false, true) => inst_mem_handler_multiple::<CPU, true, true, true, false, true> as _,
+            (false, false, false, true, true) => inst_mem_handler_multiple::<CPU, false, false, false, true, true> as _,
+            (true, false, false, true, true) => inst_mem_handler_multiple::<CPU, true, false, false, true, true> as _,
+            (false, true, false, true, true) => inst_mem_handler_multiple::<CPU, false, true, false, true, true> as _,
+            (true, true, false, true, true) => inst_mem_handler_multiple::<CPU, true, true, false, true, true> as _,
+            (false, false, true, true, true) => inst_mem_handler_multiple::<CPU, false, false, true, true, true> as _,
+            (true, false, true, true, true) => inst_mem_handler_multiple::<CPU, true, false, true, true, true> as _,
+            (false, true, true, true, true) => inst_mem_handler_multiple::<CPU, false, true, true, true, true> as _,
+            (true, true, true, true, true) => inst_mem_handler_multiple::<CPU, true, true, true, true, true> as _,
         };
 
         if use_fast_mem {
@@ -689,7 +703,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.call3(
             func_addr,
             rlist.0 | ((op0 as u32) << 16),
-            self.jit_buf.current_pc,
+            self.jit_buf.current_pc | (thumb as u32),
             self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32,
         );
 
@@ -730,21 +744,32 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
     pub fn emit_swp(&mut self, block_asm: &mut BlockAsm) {
         let inst_info = self.jit_buf.current_inst();
         let operands = inst_info.operands();
+        let op = inst_info.op;
+
         let op0 = *operands[0].as_reg_no_shift().unwrap();
         let op1 = *operands[1].as_reg_no_shift().unwrap();
         let op2 = *operands[2].as_reg_no_shift().unwrap();
 
-        let op0_total_cycles = (op0 as u32) << 16 | (self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32);
-
-        let func_addr = if inst_info.op == Op::Swpb {
-            inst_mem_handler_swp::<CPU, { MemoryAmount::Byte }> as *const ()
-        } else {
-            inst_mem_handler_swp::<CPU, { MemoryAmount::Word }> as *const ()
+        let amount = match op {
+            Op::Swp => MemoryAmount::Word,
+            Op::Swpb => MemoryAmount::Byte,
+            _ => unreachable!(),
         };
 
-        block_asm.save_context();
-        block_asm.call4(func_addr, op1, op2, self.jit_buf.current_pc, op0_total_cycles);
-        block_asm.restore_reg(op0);
-        block_asm.restore_reg(Reg::CPSR);
+        let read_reg = block_asm.new_reg();
+        let value_reg = block_asm.new_reg();
+        let addr_reg = block_asm.new_reg();
+        block_asm.mov(value_reg, op1);
+        block_asm.mov(addr_reg, op2);
+
+        self.emit_read(op0, addr_reg, block_asm, false, amount, false, true);
+        block_asm.mov(read_reg, op0);
+        block_asm.mov(op1, value_reg);
+        self.emit_write(op1, addr_reg, block_asm, false, amount, false);
+        block_asm.mov(op0, read_reg);
+
+        block_asm.free_reg(addr_reg);
+        block_asm.free_reg(value_reg);
+        block_asm.free_reg(read_reg);
     }
 }

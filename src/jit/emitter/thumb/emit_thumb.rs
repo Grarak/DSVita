@@ -64,7 +64,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                     self.emit_ldr_thumb(block_asm)
                 }
             }
-            op if op.is_multiple_mem_transfer() => self.emit_multiple_transfer::<true>(block_asm),
+            op if op.is_multiple_mem_transfer() => self.emit_multiple_transfer(block_asm, true),
             _ => {
                 todo!("{:?}", self.jit_buf.current_inst())
             }

@@ -1,7 +1,6 @@
 use crate::core::emu::get_mem;
 use crate::core::CpuType;
 use crate::get_jit_asm_ptr;
-use crate::jit::reg::Reg;
 use crate::jit::MemoryAmount;
 use handler::*;
 use std::intrinsics::unlikely;
@@ -64,13 +63,15 @@ mod handler {
         }
     }
 
-    pub fn handle_multiple_request<const CPU: CpuType, const THUMB: bool, const WRITE: bool, const USER: bool, const PRE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(
+    pub fn handle_multiple_request<const CPU: CpuType, const WRITE: bool, const USER: bool, const PRE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(
         pc: u32,
         rlist: u16,
         op0: u8,
         emu: &mut Emu,
     ) {
-        debug_println!("handle multiple request at {:x} thumb: {} write: {}", pc, THUMB, WRITE);
+        let is_thumb = pc & 1 == 1;
+        let pc = pc & !1;
+        debug_println!("handle multiple request at {pc:x} thumb: {is_thumb} write: {WRITE}");
 
         let rlist = RegReserve::from(rlist as u32);
         let op0 = Reg::from(op0);
@@ -90,7 +91,8 @@ mod handler {
         }
 
         if WRITE && unlikely(rlist.is_reserved(Reg::PC) || op0 == Reg::PC) {
-            *regs.get_reg_mut(Reg::PC) = pc + if THUMB { 4 } else { 8 };
+            let pc_offset = 4 << (!is_thumb as u8);
+            *regs.get_reg_mut(Reg::PC) = pc + pc_offset;
         }
 
         let start_addr = if DECREMENT { *regs.get_reg(op0) - ((rlist.len() as u32) << 2) } else { *regs.get_reg(op0) };
@@ -133,33 +135,26 @@ mod handler {
             unsafe { unreachable_unchecked() }
         }
     }
-
-    pub fn handle_swp_request<const CPU: CpuType, const AMOUNT: MemoryAmount>(op0: Reg, value: u32, addr: u32, emu: &mut Emu) {
-        if AMOUNT == MemoryAmount::Byte {
-            *get_regs_mut!(emu, CPU).get_reg_mut(op0) = emu.mem_read::<CPU, u8>(addr) as u32;
-            emu.mem_write::<CPU, _>(addr, (value & 0xFF) as u8);
-        } else {
-            *get_regs_mut!(emu, CPU).get_reg_mut(op0) = emu.mem_read::<CPU, _>(addr);
-            emu.mem_write::<CPU, _>(addr, value);
-        }
-    }
 }
 
 macro_rules! imm_breakout {
-    ($asm:expr, $pc:expr, $thumb:expr, $total_cycles:expr) => {{
+    ($asm:expr, $pc:expr, $total_cycles:expr) => {{
         crate::logging::debug_println!("immediate breakout");
+        let is_thumb = $pc & 1 == 1;
+        let pc = $pc & !1;
         if crate::IS_DEBUG {
-            $asm.runtime_data.set_branch_out_pc($pc);
+            $asm.runtime_data.set_branch_out_pc(pc & !1);
         }
         $asm.runtime_data.accumulated_cycles += $total_cycles - $asm.runtime_data.pre_cycle_count_sum;
-        crate::core::emu::get_regs_mut!($asm.emu, CPU).pc = $pc + if $thumb { 3 } else { 4 };
+        let next_pc_offset = (1 << (!is_thumb as u8)) + 2;
+        crate::core::emu::get_regs_mut!($asm.emu, CPU).pc = pc + next_pc_offset;
         crate::core::emu::get_mem_mut!($asm.emu).breakout_imm = false;
         crate::jit::jit_asm_common_funs::exit_guest_context!($asm);
     }};
 }
 pub(super) use imm_breakout;
 
-pub unsafe extern "C" fn inst_mem_handler<const CPU: CpuType, const THUMB: bool, const WRITE: bool, const AMOUNT: MemoryAmount, const SIGNED: bool>(
+pub unsafe extern "C" fn inst_mem_handler<const CPU: CpuType, const WRITE: bool, const AMOUNT: MemoryAmount, const SIGNED: bool, const IS_SWP: bool>(
     addr: u32,
     op0: *mut u32,
     pc: u32,
@@ -167,27 +162,19 @@ pub unsafe extern "C" fn inst_mem_handler<const CPU: CpuType, const THUMB: bool,
 ) {
     let asm = get_jit_asm_ptr::<CPU>();
     handle_request::<CPU, WRITE, AMOUNT, SIGNED>(op0.as_mut().unwrap_unchecked(), addr, (*asm).emu);
-    if unlikely(get_mem!((*asm).emu).breakout_imm) {
-        imm_breakout!((*asm), pc, THUMB, total_cycles);
+    if (WRITE || !IS_SWP) && unlikely(get_mem!((*asm).emu).breakout_imm) {
+        imm_breakout!((*asm), pc, total_cycles);
     }
 }
 
-pub unsafe extern "C" fn inst_mem_handler_multiple<const CPU: CpuType, const THUMB: bool, const WRITE: bool, const USER: bool, const PRE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(
+pub unsafe extern "C" fn inst_mem_handler_multiple<const CPU: CpuType, const WRITE: bool, const USER: bool, const PRE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(
     op0_rlist: u32,
     pc: u32,
     total_cycles: u16,
 ) {
     let asm = get_jit_asm_ptr::<CPU>();
-    handle_multiple_request::<CPU, THUMB, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(pc, (op0_rlist & 0xFFFF) as u16, (op0_rlist >> 16) as u8, (*asm).emu);
+    handle_multiple_request::<CPU, WRITE, USER, PRE, WRITE_BACK, DECREMENT>(pc, (op0_rlist & 0xFFFF) as u16, (op0_rlist >> 16) as u8, (*asm).emu);
     if unlikely(get_mem!((*asm).emu).breakout_imm) {
-        imm_breakout!((*asm), pc, THUMB, total_cycles);
-    }
-}
-
-pub unsafe extern "C" fn inst_mem_handler_swp<const CPU: CpuType, const AMOUNT: MemoryAmount>(value: u32, addr: u32, pc: u32, op0_total_cycles: u32) {
-    let asm = get_jit_asm_ptr::<CPU>();
-    handle_swp_request::<CPU, AMOUNT>(Reg::from((op0_total_cycles >> 16) as u8), value, addr, (*asm).emu);
-    if unlikely(get_mem!((*asm).emu).breakout_imm) {
-        imm_breakout!((*asm), pc, false, op0_total_cycles as u16);
+        imm_breakout!((*asm), pc, total_cycles);
     }
 }

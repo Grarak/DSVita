@@ -36,7 +36,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     self.emit_single_read(block_asm)
                 }
             }
-            op if op.is_multiple_mem_transfer() => self.emit_multiple_transfer::<false>(block_asm),
+            op if op.is_multiple_mem_transfer() => self.emit_multiple_transfer(block_asm, false),
             _ => {
                 block_asm.generic_guest_inst(self.jit_buf.current_inst_mut());
             }
