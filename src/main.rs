@@ -327,8 +327,10 @@ pub fn actual_main() {
     }
 
     let mut presenter = Presenter::new();
-    let (cartridge_io, settings) = presenter.present_ui();
+    let (mut cartridge_io, settings) = presenter.present_ui();
     presenter.destroy_ui();
+
+    cartridge_io.init_cache();
 
     let fps = Arc::new(AtomicU16::new(0));
     let fps_clone = fps.clone();

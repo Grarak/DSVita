@@ -11,6 +11,7 @@ mod platform;
 mod platform;
 
 pub const PAGE_SIZE: usize = 4096;
+pub const PAGE_SHIFT: usize = 12;
 
 pub struct MemRegion {
     pub start: usize,
