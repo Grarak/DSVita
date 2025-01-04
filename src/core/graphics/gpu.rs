@@ -82,8 +82,8 @@ pub struct Gpu {
     frame_rate_counter: FrameRateCounter,
     pub arm7_hle: bool,
     pub v_count: u16,
-    pub gpu_2d_regs_a: Gpu2DRegisters<{ A }>,
-    pub gpu_2d_regs_b: Gpu2DRegisters<{ B }>,
+    pub gpu_2d_regs_a: Gpu2DRegisters,
+    pub gpu_2d_regs_b: Gpu2DRegisters,
     pub gpu_3d_regs: Gpu3DRegisters,
     pub gpu_renderer: Option<NonNull<GpuRenderer>>,
 }
@@ -97,8 +97,8 @@ impl Gpu {
             frame_rate_counter: FrameRateCounter::new(fps),
             arm7_hle: false,
             v_count: 0,
-            gpu_2d_regs_a: Gpu2DRegisters::default(),
-            gpu_2d_regs_b: Gpu2DRegisters::default(),
+            gpu_2d_regs_a: Gpu2DRegisters::new(A),
+            gpu_2d_regs_b: Gpu2DRegisters::new(B),
             gpu_3d_regs: Gpu3DRegisters::default(),
             gpu_renderer: None,
         }

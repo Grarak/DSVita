@@ -101,64 +101,62 @@ impl Default for Gpu2DRenderRegs {
 }
 
 impl Gpu2DRenderRegs {
-    fn on_scanline<const ENGINE: Gpu2DEngine>(&mut self, inner: &mut Gpu2DRegisters<ENGINE>, line: u8) {
-        unsafe { assert_unchecked(self.current_batch_count_index < DISPLAY_HEIGHT) };
-        let updated = self.disp_cnts[self.current_batch_count_index] != u32::from(inner.disp_cnt);
-        let updated = updated || {
-            let mut updated = false;
-            for i in 0..4 {
-                if self.bg_cnts[self.current_batch_count_index * 4 + i] != u16::from(inner.bg_cnt[i]) as u32 {
-                    updated = true;
-                    break;
-                }
-            }
-            updated
-        };
+    fn on_scanline(&mut self, inner: &mut Gpu2DRegisters, line: u8) {
+        let line = line as usize;
+        unsafe { assert_unchecked(self.current_batch_count_index < DISPLAY_HEIGHT && line < DISPLAY_HEIGHT) };
+        let mut updated = self.disp_cnts[self.current_batch_count_index] != u32::from(inner.disp_cnt);
+        for i in 0..4 {
+            updated |= self.bg_cnts[self.current_batch_count_index * 4 + i] != u16::from(inner.bg_cnt[i]) as u32;
+        }
 
         if updated {
-            self.disp_cnts[line as usize] = u32::from(inner.disp_cnt);
+            self.disp_cnts[line] = u32::from(inner.disp_cnt);
             for i in 0..4 {
-                self.bg_cnts[line as usize * 4 + i] = u16::from(inner.bg_cnt[i]) as u32;
+                self.bg_cnts[line * 4 + i] = u16::from(inner.bg_cnt[i]) as u32;
             }
-            self.current_batch_count_index = line as usize;
+            self.current_batch_count_index = line;
         } else {
             self.batch_counts[self.current_batch_count_index] += 1;
         }
 
         for i in 0..2 {
-            self.win_bg_ubo.win_h[i * DISPLAY_HEIGHT + line as usize] = inner.win_h[i] as u32;
-            self.win_bg_ubo.win_v[i * DISPLAY_HEIGHT + line as usize] = inner.win_v[i] as u32;
+            self.win_bg_ubo.win_h[i * DISPLAY_HEIGHT + line] = inner.win_h[i] as u32;
+            self.win_bg_ubo.win_v[i * DISPLAY_HEIGHT + line] = inner.win_v[i] as u32;
         }
-        self.win_bg_ubo.win_in[line as usize] = inner.win_in as u32;
-        self.win_bg_ubo.win_out[line as usize] = inner.win_out as u32;
+        self.win_bg_ubo.win_in[line] = inner.win_in as u32;
+        self.win_bg_ubo.win_out[line] = inner.win_out as u32;
 
         for i in 0..4 {
-            self.bg_ubo.ofs[i * DISPLAY_HEIGHT + line as usize] = (inner.bg_h_ofs[i] as u32) | ((inner.bg_v_ofs[i] as u32) << 16);
+            self.bg_ubo.ofs[i * DISPLAY_HEIGHT + line] = (inner.bg_h_ofs[i] as u32) | ((inner.bg_v_ofs[i] as u32) << 16);
         }
         for i in 0..2 {
-            self.bg_ubo.x[i * DISPLAY_HEIGHT + line as usize] = inner.bg_x[i];
-            self.bg_ubo.y[i * DISPLAY_HEIGHT + line as usize] = inner.bg_y[i];
-            self.bg_ubo.pa[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pa[i] as i32;
-            self.bg_ubo.pc[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pc[i] as i32;
-
-            if unlikely(inner.bg_x_dirty || line == 0) {
-                self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize] = 0;
-            } else {
-                self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pb[i] as i32 + self.bg_ubo.pb[i * DISPLAY_HEIGHT + line as usize - 1];
-            }
-
-            if unlikely(inner.bg_y_dirty || line == 0) {
-                self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize] = 0;
-            } else {
-                self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize] = inner.bg_pd[i] as i32 + self.bg_ubo.pd[i * DISPLAY_HEIGHT + line as usize - 1];
-            }
+            self.bg_ubo.x[i * DISPLAY_HEIGHT + line] = inner.bg_x[i];
+            self.bg_ubo.y[i * DISPLAY_HEIGHT + line] = inner.bg_y[i];
+            self.bg_ubo.pa[i * DISPLAY_HEIGHT + line] = inner.bg_pa[i] as i32;
+            self.bg_ubo.pc[i * DISPLAY_HEIGHT + line] = inner.bg_pc[i] as i32;
         }
-        inner.bg_x_dirty = false;
-        inner.bg_y_dirty = false;
 
-        self.blend_ubo.bld_cnts[line as usize] = inner.bld_cnt as u32;
-        self.blend_ubo.bld_alphas[line as usize] = inner.bld_alpha as u32;
-        self.blend_ubo.bld_ys[line as usize] = inner.bld_y as u32;
+        if unlikely(line == 0) || inner.bg_x_dirty {
+            self.bg_ubo.pb[line] = 0;
+            self.bg_ubo.pb[DISPLAY_HEIGHT + line] = 0;
+            inner.bg_x_dirty = false;
+        } else {
+            self.bg_ubo.pb[line] = inner.bg_pb[0] as i32 + self.bg_ubo.pb[line - 1];
+            self.bg_ubo.pb[DISPLAY_HEIGHT + line] = inner.bg_pb[1] as i32 + self.bg_ubo.pb[DISPLAY_HEIGHT + line - 1];
+        }
+
+        if unlikely(line == 0) || inner.bg_y_dirty {
+            self.bg_ubo.pd[line] = 0;
+            self.bg_ubo.pd[DISPLAY_HEIGHT + line] = 0;
+            inner.bg_y_dirty = false;
+        } else {
+            self.bg_ubo.pd[line] = inner.bg_pd[0] as i32 + self.bg_ubo.pd[line - 1];
+            self.bg_ubo.pd[DISPLAY_HEIGHT + line] = inner.bg_pd[1] as i32 + self.bg_ubo.pd[DISPLAY_HEIGHT + line - 1];
+        }
+
+        self.blend_ubo.bld_cnts[line] = inner.bld_cnt as u32;
+        self.blend_ubo.bld_alphas[line] = inner.bld_alpha as u32;
+        self.blend_ubo.bld_ys[line] = inner.bld_y as u32;
     }
 }
 
@@ -1065,7 +1063,7 @@ impl Gpu2DRenderer {
         }
     }
 
-    pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters<{ A }>, inner_b: &mut Gpu2DRegisters<{ B }>, line: u8) {
+    pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters, inner_b: &mut Gpu2DRegisters, line: u8) {
         self.regs_a[1].on_scanline(inner_a, line);
         self.regs_b[1].on_scanline(inner_b, line);
         if u8::from(DispCnt::from(self.regs_a[1].disp_cnts[line as usize]).display_mode()) == 2 {

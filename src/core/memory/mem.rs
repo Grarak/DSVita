@@ -357,10 +357,6 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryIo<CPU, TCM, T> {
     }
 
     fn write_gba(_: u32, _: T, _: &mut Emu) {}
-
-    fn write_invalid(_: u32, _: T, _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
 }
 
 struct MemoryReadMultipleIo<const CPU: CpuType, T: Convert, F: FnMut(T)> {
@@ -584,10 +580,6 @@ impl<const CPU: CpuType, T: Convert, F: FnMut() -> T> MemoryWriteMultipleIo<CPU,
     }
 
     fn write_gba(_: u32, _: usize, _: F, _: &mut Emu) {}
-
-    fn write_invalid(_: u32, _: T, _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
 }
 
 struct MemoryMultipleSliceIo<const CPU: CpuType, const TCM: bool, T: Convert> {
@@ -737,11 +729,8 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
     }
 
     fn write_vram(addr: u32, slice: &[T], emu: &mut Emu) {
-        let write_shift = size_of::<T>() >> 1;
         let mem = get_mem_mut!(emu);
-        for i in 0..slice.len() {
-            mem.vram.write::<CPU, _>(addr + (i << write_shift) as u32, slice[i]);
-        }
+        mem.vram.write_slice::<CPU, _>(addr, slice);
         if CPU == ARM7 {
             mem.jit.invalidate_block::<{ JitRegion::VramArm7 }>(addr, size_of_val(slice));
         }
@@ -902,10 +891,6 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TC
     }
 
     fn write_gba(_: u32, _: &[T], _: &mut Emu) {}
-
-    fn write_invalid(_: u32, _: &[T], _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
 }
 
 struct MemoryMultipleMemsetIo<const CPU: CpuType, const TCM: bool, T: Convert> {
@@ -983,10 +968,6 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleMemsetIo<CPU
     }
 
     fn write_gba(_: u32, _: T, _: usize, _: &mut Emu) {}
-
-    fn write_invalid(_: u32, _: T, _: usize, _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
 }
 
 impl Memory {

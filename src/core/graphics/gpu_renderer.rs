@@ -62,7 +62,7 @@ impl GpuRenderer {
         }
     }
 
-    pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters<{ A }>, inner_b: &mut Gpu2DRegisters<{ B }>, line: u8) {
+    pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters, inner_b: &mut Gpu2DRegisters, line: u8) {
         self.renderer_2d.on_scanline(inner_a, inner_b, line);
     }
 

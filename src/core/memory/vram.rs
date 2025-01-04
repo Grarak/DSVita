@@ -8,7 +8,8 @@ use bilge::prelude::*;
 use paste::paste;
 use static_assertions::{const_assert, const_assert_eq};
 use std::cell::UnsafeCell;
-use std::hint::unreachable_unchecked;
+use std::cmp::min;
+use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::ops::{Deref, DerefMut};
 use std::{array, mem, ptr, slice};
 
@@ -121,13 +122,13 @@ impl<const SIZE: usize> AsMut<[u8]> for VramMapMut<SIZE> {
 
 struct OverlapSection<const SIZE: usize> {
     overlaps: [VramMap<SIZE>; 4],
-    count: usize,
+    count: u8,
     read_buf: UnsafeCell<HeapMemU8<SIZE>>,
 }
 
 impl<const SIZE: usize> OverlapSection<SIZE> {
     fn add(&mut self, map: VramMap<SIZE>) {
-        self.overlaps[self.count] = map;
+        unsafe { *self.overlaps.get_unchecked_mut(self.count as usize) = map };
         self.count += 1;
     }
 
@@ -142,7 +143,7 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
     fn read<T: utils::Convert>(&self, index: u32) -> T {
         let mut ret = 0;
         for i in 0..self.count {
-            let map = unsafe { self.overlaps.get_unchecked(i) };
+            let map = unsafe { self.overlaps.get_unchecked(i as usize) };
             debug_assert_ne!(map.ptr, ptr::null());
             ret |= utils::read_from_mem::<T>(map, index).into();
         }
@@ -155,7 +156,7 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
             buf.fill(0);
             let read_buf = unsafe { self.read_buf.get().as_mut().unwrap_unchecked() };
             for i in 0..self.count {
-                let map = unsafe { self.overlaps.get_unchecked_mut(i) };
+                let map = unsafe { self.overlaps.get_unchecked_mut(i as usize) };
                 map.dirty = false;
                 if !map.ptr.is_null() {
                     utils::read_from_mem_slice(map, index, read_buf.deref_mut());
@@ -169,11 +170,21 @@ impl<const SIZE: usize> OverlapSection<SIZE> {
 
     fn write<T: utils::Convert>(&mut self, index: u32, value: T) {
         for i in 0..self.count {
-            let map = unsafe { self.overlaps.get_unchecked_mut(i) };
+            let map = unsafe { self.overlaps.get_unchecked_mut(i as usize) };
             map.dirty = true;
             let mut map = map.as_mut();
             debug_assert_ne!(map.ptr, ptr::null_mut());
             utils::write_to_mem(&mut map, index, value);
+        }
+    }
+
+    fn write_slice<T: utils::Convert>(&mut self, index: u32, slice: &[T]) {
+        for i in 0..self.count {
+            let map = unsafe { self.overlaps.get_unchecked_mut(i as usize) };
+            map.dirty = true;
+            let mut map = map.as_mut();
+            debug_assert_ne!(map.ptr, ptr::null_mut());
+            utils::write_to_mem_slice(&mut map, index as usize, slice);
         }
     }
 }
@@ -248,6 +259,24 @@ where
         let section_index = addr as usize / CHUNK_SIZE;
         let section_offset = addr as usize % CHUNK_SIZE;
         self.sections[section_index].write(section_offset as u32, value);
+    }
+
+    fn write_slice<T: utils::Convert>(&mut self, mut addr: u32, slice: &[T]) {
+        addr %= SIZE as u32;
+        let mut remaining = size_of_val(slice);
+        while remaining != 0 {
+            let section_index = addr as usize / CHUNK_SIZE;
+            let section_offset = addr as usize % CHUNK_SIZE;
+            let slice_start = size_of_val(slice) - remaining;
+            let to_write = min(remaining, CHUNK_SIZE - section_offset);
+            let slice_end = slice_start + to_write;
+            let slice_start = slice_start / size_of::<T>();
+            let slice_end = slice_end / size_of::<T>();
+            unsafe { assert_unchecked(section_index < self.sections.len() && slice_start < slice_end && slice_end <= slice.len()) }
+            self.sections[section_index].write_slice(section_offset as u32, &slice[slice_start..slice_end]);
+            addr += to_write as u32;
+            remaining -= to_write;
+        }
     }
 }
 
@@ -714,6 +743,22 @@ impl Vram {
                 _ => unsafe { unreachable_unchecked() },
             },
             ARM7 => self.arm7.write(addr_offset, value),
+        };
+    }
+
+    pub fn write_slice<const CPU: CpuType, T: utils::Convert>(&mut self, addr: u32, slice: &[T]) {
+        let base_addr = addr & 0xF00000;
+        let addr_offset = addr & 0xFFFFF;
+        match CPU {
+            ARM9 => match base_addr {
+                LCDC_OFFSET => self.lcdc.write_slice(addr_offset, slice),
+                BG_A_OFFSET => self.bg_a.write_slice(addr_offset, slice),
+                OBJ_A_OFFSET => self.obj_a.write_slice(addr_offset, slice),
+                BG_B_OFFSET => self.bg_b.write_slice(addr_offset, slice),
+                OBJ_B_OFFSET => self.obj_b.write_slice(addr_offset, slice),
+                _ => unsafe { unreachable_unchecked() },
+            },
+            ARM7 => self.arm7.write_slice(addr_offset, slice),
         };
     }
 

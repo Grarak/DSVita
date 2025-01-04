@@ -106,7 +106,8 @@ pub struct Gpu2DRegistersInner {
 }
 
 #[derive(Default)]
-pub struct Gpu2DRegisters<const ENGINE: Gpu2DEngine> {
+pub struct Gpu2DRegisters {
+    pub engine: Gpu2DEngine,
     pub disp_cnt: DispCnt,
     pub bg_cnt: [BgCnt; 4],
     pub bg_h_ofs: [u16; 4],
@@ -135,7 +136,11 @@ pub struct Gpu2DRegisters<const ENGINE: Gpu2DEngine> {
     internal: Gpu2DRegistersInner,
 }
 
-impl<const ENGINE: Gpu2DEngine> Gpu2DRegisters<ENGINE> {
+impl Gpu2DRegisters {
+    pub fn new(engine: Gpu2DEngine) -> Self {
+        Gpu2DRegisters { engine, ..Gpu2DRegisters::default() }
+    }
+
     pub fn get_disp_cnt(&self) -> u32 {
         self.disp_cnt.into()
     }
@@ -145,11 +150,11 @@ impl<const ENGINE: Gpu2DEngine> Gpu2DRegisters<ENGINE> {
     }
 
     pub fn set_disp_cnt(&mut self, mut mask: u32, value: u32) {
-        if ENGINE == Gpu2DEngine::B {
+        if self.engine == Gpu2DEngine::B {
             mask &= 0xC0B1FFF7;
         }
         self.disp_cnt = ((u32::from(self.disp_cnt) & !mask) | (value & mask)).into();
-        debug_println!("GPU engine {:?} set disp cnt {:x} {}", ENGINE, u32::from(self.disp_cnt), u8::from(self.disp_cnt.display_mode()),);
+        debug_println!("GPU engine {:?} set disp cnt {:x} {}", self.engine, u32::from(self.disp_cnt), u8::from(self.disp_cnt.display_mode()),);
     }
 
     pub fn set_bg_cnt(&mut self, bg_num: usize, mask: u16, value: u16) {
