@@ -200,7 +200,7 @@ impl Spu {
     }
 
     pub fn initialize_schedule(cycle_manager: &mut CycleManager) {
-        cycle_manager.schedule(512 * 2, EventType::SpuSample);
+        cycle_manager.schedule(512 * 2, EventType::SpuSample, 0);
     }
 
     pub fn get_cnt(&self, channel: usize) -> u32 {
@@ -396,7 +396,7 @@ impl Spu {
         }
     }
 
-    pub fn on_sample_event(_: &mut CycleManager, emu: &mut Emu, _: u64, _: u8) {
+    pub fn on_sample_event(_: &mut CycleManager, emu: &mut Emu, _: u16) {
         macro_rules! get_channel {
             ($emu:expr, $channel:expr) => {{
                 &get_spu!($emu).channels[$channel]
@@ -419,7 +419,7 @@ impl Spu {
                 spu.sound_sampler.push(spu.samples_buffer.as_slice());
                 spu.samples_buffer.clear();
             }
-            get_cm_mut!(emu).schedule(512 * 2, EventType::SpuSample);
+            get_cm_mut!(emu).schedule(512 * 2, EventType::SpuSample, 0);
             return;
         }
 
@@ -566,6 +566,6 @@ impl Spu {
             spu.samples_buffer.clear();
         }
 
-        get_cm_mut!(emu).schedule(512 * 2, EventType::SpuSample);
+        get_cm_mut!(emu).schedule(512 * 2, EventType::SpuSample, 0);
     }
 }

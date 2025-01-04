@@ -31,7 +31,15 @@ struct TimerChannel {
     cnt_h: u16,
     current_value: u16,
     current_shift: u8,
+    id: u16,
     scheduled_cycle: u64,
+}
+
+impl TimerChannel {
+    fn increment_id(&mut self) {
+        self.id += 1;
+        self.id &= 0x3FF;
+    }
 }
 
 pub struct Timers {
@@ -95,14 +103,17 @@ impl Timers {
 
         if update && bool::from(cnt.start()) && !cnt.is_count_up(CHANNEL_NUM) {
             let remaining_cycles = (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
-            channel.scheduled_cycle = get_cm_mut!(emu).schedule_with_arg(
+            let cm = get_cm_mut!(emu);
+            channel.scheduled_cycle = cm.get_cycles() + remaining_cycles as u64;
+            channel.increment_id();
+            cm.schedule(
                 remaining_cycles,
                 match self.cpu_type {
                     ARM9 => EventType::TimerArm9,
                     ARM7 => EventType::TimerArm7,
                 },
-                CHANNEL_NUM as u8,
-            );
+                (channel.id << 2) | CHANNEL_NUM as u16,
+            )
         }
     }
 
@@ -116,13 +127,16 @@ impl Timers {
             channel.current_value = channel.cnt_l;
             if !cnt.is_count_up(channel_num) {
                 let remaining_cycles = (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
-                channel.scheduled_cycle = get_cm_mut!(emu).schedule_with_arg(
+                let cm = get_cm_mut!(emu);
+                channel.scheduled_cycle = cm.get_cycles() + remaining_cycles as u64;
+                channel.increment_id();
+                cm.schedule(
                     remaining_cycles,
                     match CPU {
                         ARM9 => EventType::TimerArm9,
                         ARM7 => EventType::TimerArm7,
                     },
-                    channel_num as u8,
+                    (channel.id << 2) | channel_num as u16,
                 )
             }
 
@@ -146,8 +160,10 @@ impl Timers {
         }
     }
 
-    pub fn on_overflow_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, cycles: u64, channel_num: u8) {
-        if cycles == io_timers!(emu, CPU).channels[channel_num as usize].scheduled_cycle {
+    pub fn on_overflow_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, id_channel_num: u16) {
+        let channel_num = id_channel_num & 0x3;
+        let id = id_channel_num >> 2;
+        if id == io_timers!(emu, CPU).channels[channel_num as usize].id {
             Self::overflow::<CPU>(channel_num as usize, emu);
         }
     }

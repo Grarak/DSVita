@@ -107,10 +107,13 @@ impl CpuRegs {
     }
 
     fn schedule_interrupt(&self, cycle_manager: &mut CycleManager) {
-        match self.cpu_type {
-            ARM9 => cycle_manager.schedule(1, EventType::CpuInterruptArm9),
-            ARM7 => cycle_manager.schedule(1, EventType::CpuInterruptArm7),
-        };
+        cycle_manager.schedule_imm(
+            match self.cpu_type {
+                ARM9 => EventType::CpuInterruptArm9,
+                ARM7 => EventType::CpuInterruptArm7,
+            },
+            0,
+        )
     }
 
     pub fn set_irf(&mut self, mask: u32, value: u32) {
@@ -175,7 +178,7 @@ impl CpuRegs {
         }
     }
 
-    pub fn on_interrupt_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, _: u64, _: u8) {
+    pub fn on_interrupt_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, _: u16) {
         let interrupted = {
             let cpu_regs = get_cpu_regs!(emu, CPU);
             let interrupt = cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && !Cpsr::from(get_regs!(emu, CPU).cpsr).irq_disable();

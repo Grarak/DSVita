@@ -104,11 +104,12 @@ impl Gpu {
         }
     }
 
-    pub fn initialize_schedule(cycle_manager: &mut CycleManager) {
-        cycle_manager.schedule(
+    pub fn initialize_schedule(cm: &mut CycleManager) {
+        cm.schedule(
             // 8 pixel delay according to https://melonds.kuribo64.net/board/thread.php?id=13
             (256 + 8) * 6,
             EventType::GpuScanline256,
+            0,
         );
     }
 
@@ -139,7 +140,7 @@ impl Gpu {
         self.disp_cap_cnt = (self.disp_cap_cnt & !mask) | (value & mask);
     }
 
-    pub fn on_scanline256_event(cm: &mut CycleManager, emu: &mut Emu, _: u64, _: u8) {
+    pub fn on_scanline256_event(cm: &mut CycleManager, emu: &mut Emu, _: u16) {
         let gpu = &mut get_common_mut!(emu).gpu;
 
         if gpu.v_count < 192 {
@@ -160,10 +161,10 @@ impl Gpu {
             }
         }
 
-        cm.schedule((355 - 256) * 6, EventType::GpuScanline355);
+        cm.schedule((355 - 256) * 6, EventType::GpuScanline355, 0);
     }
 
-    pub fn on_scanline355_event(cm: &mut CycleManager, emu: &mut Emu, _: u64, _: u8) {
+    pub fn on_scanline355_event(cm: &mut CycleManager, emu: &mut Emu, _: u16) {
         let gpu = &mut get_common_mut!(emu).gpu;
 
         gpu.v_count += 1;
@@ -223,6 +224,6 @@ impl Gpu {
             get_arm7_hle_mut!(emu).on_scanline(gpu.v_count, emu);
         }
 
-        cm.schedule(256 * 6, EventType::GpuScanline256);
+        cm.schedule(256 * 6, EventType::GpuScanline256, 0);
     }
 }

@@ -81,7 +81,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov(op1, post_addr_reg);
         }
 
-        self.emit_write(op0, addr_reg, block_asm, op.mem_transfer_single_signed(), amount, thumb);
+        self.emit_write(op0, addr_reg, block_asm, op.mem_transfer_single_signed(), amount, thumb, false);
 
         if !thumb && op0 == Reg::PC && write_back && op1 == Reg::PC {
             todo!()
@@ -91,7 +91,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.free_reg(post_addr_reg);
     }
 
-    fn emit_write(&mut self, op0: Reg, addr_reg: BlockReg, block_asm: &mut BlockAsm, signed: bool, amount: MemoryAmount, thumb: bool) {
+    fn emit_write(&mut self, op0: Reg, addr_reg: BlockReg, block_asm: &mut BlockAsm, signed: bool, amount: MemoryAmount, thumb: bool, is_swp: bool) {
         let slow_write_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
@@ -159,7 +159,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.free_reg(tmp_pc_reg);
         }
 
-        let func_addr = Self::get_inst_mem_handler_func::<true, false>(signed, amount);
+        let func_addr = if is_swp {
+            Self::get_inst_mem_handler_func::<true, true>(signed, amount)
+        } else {
+            Self::get_inst_mem_handler_func::<true, false>(signed, amount)
+        };
         block_asm.call4(
             func_addr,
             addr_reg,
@@ -765,7 +769,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         self.emit_read(op0, addr_reg, block_asm, false, amount, false, true);
         block_asm.mov(read_reg, op0);
         block_asm.mov(op1, value_reg);
-        self.emit_write(op1, addr_reg, block_asm, false, amount, false);
+        self.emit_write(op1, addr_reg, block_asm, false, amount, false, true);
         block_asm.mov(op0, read_reg);
 
         block_asm.free_reg(addr_reg);

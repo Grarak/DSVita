@@ -4,6 +4,7 @@ use crate::core::cycle_manager::{CycleManager, EventType};
 use crate::core::emu::{get_cm_mut, get_common_mut, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
+use crate::core::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
 use crate::mmap::PAGE_SIZE;
 use crate::utils;
@@ -126,29 +127,28 @@ impl Cartridge {
 
     pub fn get_rom_data_in(&mut self, cpu: CpuType, emu: &mut Emu) -> u32 {
         let inner = &mut self.inner[cpu];
-        if !inner.rom_ctrl.data_word_status() {
+        if !inner.rom_ctrl.data_word_status() || !inner.rom_ctrl.block_start_status() {
             return 0;
         }
 
-        inner.rom_ctrl.set_data_word_status(false);
         inner.read_count += 4;
         if inner.read_count == inner.block_size {
+            inner.rom_ctrl.set_data_word_status(false);
             inner.rom_ctrl.set_block_start_status(false);
             if inner.aux_spi_cnt.transfer_ready_irq() {
                 get_cpu_regs_mut!(emu, cpu).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, emu);
             }
         } else {
-            get_cm_mut!(emu).schedule(
-                1,
+            get_cm_mut!(emu).schedule_imm(
                 match cpu {
-                    CpuType::ARM9 => EventType::CartridgeWordReadArm9,
-                    CpuType::ARM7 => EventType::CartridgeWordReadArm7,
+                    ARM9 => EventType::CartridgeWordReadArm9,
+                    ARM7 => EventType::CartridgeWordReadArm7,
                 },
+                0,
             );
-            get_mem_mut!(emu).breakout_imm = true;
         }
 
-        match self.cmd_mode {
+        let ret = match self.cmd_mode {
             CmdMode::Header => {
                 let read_count = (inner.read_count - 4) & 0xFFF;
                 let read_addr = read_count as u32 + inner.read_addr;
@@ -169,7 +169,9 @@ impl Cartridge {
                 }
             }
             CmdMode::None => 0xFFFFFFFF,
-        }
+        };
+
+        ret
     }
 
     pub fn set_aux_spi_cnt(&mut self, cpu: CpuType, mut mask: u16, value: u16) {
@@ -375,18 +377,19 @@ impl Cartridge {
             }
         } else {
             inner.read_count = 0;
-            get_cm_mut!(emu).schedule(
-                1,
+            get_cm_mut!(emu).schedule_imm(
                 match cpu {
-                    CpuType::ARM9 => EventType::CartridgeWordReadArm9,
-                    CpuType::ARM7 => EventType::CartridgeWordReadArm7,
+                    ARM9 => EventType::CartridgeWordReadArm9,
+                    ARM7 => EventType::CartridgeWordReadArm7,
                 },
+                0,
             );
+            get_mem_mut!(emu).breakout_imm = true;
         }
     }
 
-    pub fn on_word_read_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, _: u64, _: u8) {
+    pub fn on_word_read_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, _: u16) {
         get_common_mut!(emu).cartridge.inner[CPU].rom_ctrl.set_data_word_status(true);
-        io_dma!(emu, CPU).trigger_all(DmaTransferMode::DsCartSlot, get_cm_mut!(emu));
+        io_dma!(emu, CPU).trigger_imm(DmaTransferMode::DsCartSlot, 0xF, emu);
     }
 }

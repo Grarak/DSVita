@@ -35,7 +35,7 @@ struct DmaCntArm9 {
     dest_addr_ctrl: u2,
     src_addr_ctrl: u2,
     repeat: bool,
-    transfer_type: u1,
+    transfer_type: bool,
     transfer_mode: u3,
     irq_at_end: bool,
     enable: bool,
@@ -49,7 +49,7 @@ struct DmaCntArm7 {
     dest_addr_ctrl: u2,
     src_addr_ctrl: u2,
     repeat: bool,
-    transfer_type: u1,
+    transfer_type: bool,
     not_used1: u1,
     transfer_mode: u2,
     irq_at_end: bool,
@@ -177,13 +177,12 @@ impl Dma {
 
             get_mem_mut!(emu).breakout_imm = true;
 
-            get_cm_mut!(emu).schedule_with_arg(
-                1,
+            get_cm_mut!(emu).schedule_imm(
                 match self.cpu_type {
                     ARM9 => EventType::DmaArm9,
                     ARM7 => EventType::DmaArm7,
                 },
-                CHANNEL_NUM as u8,
+                CHANNEL_NUM as u16,
             );
         }
 
@@ -204,13 +203,12 @@ impl Dma {
 
                 get_mem_mut!(emu).breakout_imm = true;
 
-                get_cm_mut!(emu).schedule_with_arg(
-                    1,
+                get_cm_mut!(emu).schedule_imm(
                     match self.cpu_type {
                         ARM9 => EventType::DmaArm9,
                         ARM7 => EventType::DmaArm7,
                     },
-                    CHANNEL_NUM as u8,
+                    CHANNEL_NUM as u16,
                 );
             }
         }
@@ -224,7 +222,7 @@ impl Dma {
         self.trigger(mode, 0xF, cycle_manager);
     }
 
-    pub fn trigger(&self, mode: DmaTransferMode, channels: u8, cycle_manager: &mut CycleManager) {
+    pub fn trigger(&self, mode: DmaTransferMode, channels: u8, cm: &mut CycleManager) {
         for (index, channel) in self.channels.iter().enumerate() {
             if channels & (1 << index) != 0 && DmaCntArm9::from(channel.cnt).enable() && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode {
                 debug_println!(
@@ -236,16 +234,35 @@ impl Dma {
                     channel.current_src,
                     channel.current_count
                 );
-                cycle_manager.schedule_with_arg(
-                    1,
+                cm.schedule_imm(
                     match self.cpu_type {
                         ARM9 => EventType::DmaArm9,
                         ARM7 => EventType::DmaArm7,
                     },
-                    index as u8,
+                    index as u16,
                 );
             }
         }
+    }
+
+    pub fn trigger_imm(&self, mode: DmaTransferMode, channels: u8, emu: &mut Emu) {
+        for (index, channel) in self.channels.iter().enumerate() {
+            if channels & (1 << index) != 0 && DmaCntArm9::from(channel.cnt).enable() && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode {
+                match self.cpu_type {
+                    ARM9 => Self::on_event::<{ ARM9 }>(get_cm_mut!(emu), emu, index as u16),
+                    ARM7 => Self::on_event::<{ ARM7 }>(get_cm_mut!(emu), emu, index as u16),
+                }
+            }
+        }
+    }
+
+    pub fn is_scheduled(&self, mode: DmaTransferMode, channels: u8) -> bool {
+        for (index, channel) in self.channels.iter().enumerate() {
+            if channels & (1 << index) != 0 && DmaCntArm9::from(channel.cnt).enable() && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode {
+                return true;
+            }
+        }
+        false
     }
 
     fn do_transfer<const CPU: CpuType, T: utils::Convert>(emu: &mut Emu, dest_addr: &mut u32, src_addr: &mut u32, count: u32, cnt: &DmaCntArm9, mode: DmaTransferMode) {
@@ -304,7 +321,7 @@ impl Dma {
         }
     }
 
-    pub fn on_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, _: u64, channel_num: u8) {
+    pub fn on_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, channel_num: u16) {
         let channel_num = channel_num as usize;
         unsafe { assert_unchecked(channel_num < CHANNEL_COUNT) };
         let (cnt, mode, mut dest, mut src, count) = {
@@ -318,7 +335,7 @@ impl Dma {
             )
         };
 
-        if bool::from(cnt.transfer_type()) {
+        if cnt.transfer_type() {
             Self::do_transfer::<CPU, u32>(emu, &mut dest, &mut src, count, &cnt, mode)
         } else {
             Self::do_transfer::<CPU, u16>(emu, &mut dest, &mut src, count, &cnt, mode)
@@ -333,13 +350,12 @@ impl Dma {
         if mode == DmaTransferMode::GeometryCmdFifo && count > 112 {
             io_dma_mut!(emu, CPU).channels[channel_num].current_count -= 112;
             if get_common!(emu).gpu.gpu_3d_regs.gx_stat.cmd_fifo_less_half_full() {
-                get_cm_mut!(emu).schedule_with_arg(
-                    1,
+                get_cm_mut!(emu).schedule_imm(
                     match CPU {
                         ARM9 => EventType::DmaArm9,
                         ARM7 => EventType::DmaArm7,
                     },
-                    channel_num as u8,
+                    channel_num as u16,
                 );
             }
             return;
@@ -353,13 +369,12 @@ impl Dma {
             }
 
             if mode == DmaTransferMode::GeometryCmdFifo && get_common!(emu).gpu.gpu_3d_regs.gx_stat.cmd_fifo_less_half_full() {
-                get_cm_mut!(emu).schedule_with_arg(
-                    1,
+                get_cm_mut!(emu).schedule_imm(
                     match CPU {
                         ARM9 => EventType::DmaArm9,
                         ARM7 => EventType::DmaArm7,
                     },
-                    channel_num as u8,
+                    channel_num as u16,
                 );
             }
         } else {
