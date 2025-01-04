@@ -10,7 +10,7 @@ use crate::core::CpuType::{ARM7, ARM9};
 use crate::linked_list::{LinkedList, LinkedListAllocator, LinkedListEntry};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::intrinsics::unlikely;
-use std::ptr;
+use std::{mem, ptr};
 
 struct CycleEventEntry {
     cycle_count: u64,
@@ -48,7 +48,7 @@ impl LinkedListAllocator<CycleEventEntry> for CycleEventsListAllocator {
 }
 
 #[repr(u8)]
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub enum EventType {
     CpuInterruptArm9 = 0,
     CpuInterruptArm7 = 1,
@@ -68,6 +68,8 @@ pub enum EventType {
 pub struct CycleManager {
     cycle_count: u64,
     events: LinkedList<CycleEventEntry, CycleEventsListAllocator>,
+    imm_events: Vec<(EventType, u8)>,
+    imm_events_swap: Vec<(EventType, u8)>,
 }
 
 impl CycleManager {
@@ -75,6 +77,8 @@ impl CycleManager {
         CycleManager {
             cycle_count: 0,
             events: LinkedList::new(),
+            imm_events: Vec::new(),
+            imm_events_swap: Vec::new(),
         }
     }
 
@@ -103,6 +107,14 @@ impl CycleManager {
             Timers::on_overflow_event::<{ ARM7 }>,
         ];
 
+        self.imm_events_swap.clear();
+        mem::swap(&mut self.imm_events, &mut self.imm_events_swap);
+        for i in 0..self.imm_events_swap.len() {
+            let (event_type, arg) = self.imm_events_swap[i];
+            let func = unsafe { LUT.get_unchecked(event_type as usize) };
+            func(self, emu, 0, arg);
+        }
+
         let cycle_count = self.cycle_count;
         let mut event_triggered = false;
         while {
@@ -124,6 +136,11 @@ impl CycleManager {
     pub fn schedule_with_arg(&mut self, in_cycles: u32, event_type: EventType, arg: u8) -> u64 {
         debug_assert_ne!(in_cycles, 0);
         let event_cycle = self.cycle_count + in_cycles as u64;
+
+        if in_cycles == 1 && event_type < EventType::TimerArm9 {
+            self.imm_events.push((event_type, arg));
+            return event_cycle;
+        }
 
         let mut current_node = self.events.root;
         while !current_node.is_null() {

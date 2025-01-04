@@ -382,7 +382,6 @@ impl Cartridge {
                     CpuType::ARM7 => EventType::CartridgeWordReadArm7,
                 },
             );
-            get_mem_mut!(emu).breakout_imm = true;
         }
     }
 
