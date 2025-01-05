@@ -1,8 +1,8 @@
 use paste::paste;
 use std::arch::arm::{int64x2_t, uint64x2_t, vaddq_u64, vmovn_u64, vmull_u32, vreinterpretq_s64_u64, vreinterpretq_u64_s64, vshlq_n_u64, vshrq_n_u64};
 use std::arch::asm;
-use std::ops;
 use std::ops::{Index, IndexMut};
+use std::{mem, ops};
 
 // Taken from https://github.com/awxkee/erydanos/blob/master/src/neon/general.rs
 #[inline]
@@ -150,9 +150,82 @@ macro_rules! define_vector {
     };
 }
 
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct Vectori32<const SIZE: usize>
+where
+    [(); 4 - SIZE]:,
+{
+    values: [i32; SIZE],
+    padding: [i32; 4 - SIZE],
+}
+
+impl<const SIZE: usize> Vectori32<SIZE>
+where
+    [(); 4 - SIZE]:,
+{
+    pub fn new(values: [i32; SIZE]) -> Self {
+        Vectori32 {
+            values,
+            padding: unsafe { mem::zeroed() },
+        }
+    }
+}
+
+impl<const SIZE: usize> Default for Vectori32<SIZE>
+where
+    [(); 4 - SIZE]:,
+{
+    fn default() -> Self {
+        unsafe { mem::zeroed() }
+    }
+}
+
+impl<const SIZE: usize> AsRef<[i32; SIZE]> for Vectori32<SIZE>
+where
+    [(); 4 - SIZE]:,
+{
+    fn as_ref(&self) -> &[i32; SIZE] {
+        &self.values
+    }
+}
+
+impl<const SIZE: usize> AsMut<[i32; SIZE]> for Vectori32<SIZE>
+where
+    [(); 4 - SIZE]:,
+{
+    fn as_mut(&mut self) -> &mut [i32; SIZE] {
+        &mut self.values
+    }
+}
+
+impl<const SIZE: usize> Index<usize> for Vectori32<SIZE>
+where
+    [(); 4 - SIZE]:,
+{
+    type Output = i32;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.values[index]
+    }
+}
+
+impl<const SIZE: usize> IndexMut<usize> for Vectori32<SIZE>
+where
+    [(); 4 - SIZE]:,
+{
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.values[index]
+    }
+}
+
+impl From<Vectori32<3>> for Vectori32<4> {
+    fn from(value: Vectori32<3>) -> Self {
+        unsafe { mem::transmute(value) }
+    }
+}
+
 define_vector!(u16);
 define_vector!(i16);
-define_vector!(i32);
 define_vector!(f32);
 
 impl ops::Mul<&Matrix> for Vectori32<3> {
@@ -175,51 +248,13 @@ impl ops::Mul<&Matrix> for Vectori32<4> {
 
 impl ops::MulAssign<&Matrix> for Vectori32<3> {
     fn mul_assign(&mut self, rhs: &Matrix) {
-        let mut v0: i32;
-        let mut v1: i32;
-        let mut v2: i32;
-        unsafe {
-            asm!(
-            "vmov.s32 d1, 0",
-            "vld1.s32 {{d0}}, [{v}]!",
-            "vld1.s32 {{d1[0]}}, [{v}]",
-            "vld1.s32 {{q1}}, [{m}]!",
-            "vld1.s32 {{q2}}, [{m}]!",
-            "vld1.s32 {{q3}}, [{m}]!",
-            "vld1.s32 {{q4}}, [{m}]",
-            "vmull.s32 q5, d2, d0[0]",
-            "vmull.s32 q6, d3, d0[0]",
-            "vmlal.s32 q5, d4, d0[1]",
-            "vmlal.s32 q6, d5, d0[1]",
-            "vmlal.s32 q5, d6, d1[0]",
-            "vmlal.s32 q6, d7, d1[0]",
-            "vmlal.s32 q5, d8, d1[1]",
-            "vmlal.s32 q6, d9, d1[1]",
-            "vshr.s64 q5, q5, 12",
-            "vshr.s64 q6, q6, 12",
-            "vmov.s32 {v0}, s20",
-            "vmov.s32 {v1}, s22",
-            "vmov.s32 {v2}, s24",
-            v = in(reg) self.0.as_ptr(),
-            m = in(reg) rhs.0.as_ptr(),
-            v0 = out(reg) v0,
-            v1 = out(reg) v1,
-            v2 = out(reg) v2,
-            options(pure, readonly, preserves_flags, nostack),
-            );
-        }
-        self[0] = v0;
-        self[1] = v1;
-        self[2] = v2;
+        let vec4: &mut Vectori32<4> = unsafe { mem::transmute(self) };
+        vec4.mul_assign(rhs)
     }
 }
 
 impl ops::MulAssign<&Matrix> for Vectori32<4> {
     fn mul_assign(&mut self, rhs: &Matrix) {
-        let mut v0: i32;
-        let mut v1: i32;
-        let mut v2: i32;
-        let mut v3: i32;
         unsafe {
             asm!(
             "vld1.s32 {{q0}}, [{v}]",
@@ -237,30 +272,20 @@ impl ops::MulAssign<&Matrix> for Vectori32<4> {
             "vmlal.s32 q6, d9, d1[1]",
             "vshr.s64 q5, q5, 12",
             "vshr.s64 q6, q6, 12",
-            "vmov.s32 {v0}, s20",
-            "vmov.s32 {v1}, s22",
-            "vmov.s32 {v2}, s24",
-            "vmov.s32 {v3}, s26",
-            v = in(reg) self.0.as_ptr(),
+            "vuzp.32 q5, q6",
+            "vst1.s32 {{q5}}, [{v}]",
+            v = in(reg) self.values.as_mut_ptr(),
             m = in(reg) rhs.0.as_ptr(),
-            v0 = out(reg) v0,
-            v1 = out(reg) v1,
-            v2 = out(reg) v2,
-            v3 = out(reg) v3,
-            options(pure, readonly, preserves_flags, nostack),
+            options(preserves_flags, nostack),
             );
         }
-        self[0] = v0;
-        self[1] = v1;
-        self[2] = v2;
-        self[3] = v3;
     }
 }
 
 impl ops::Mul<&Vectori32<3>> for Vectori32<3> {
     type Output = i32;
 
-    fn mul(self, rhs: &Vectori32<3>) -> Self::Output {
+    fn mul(mut self, rhs: &Vectori32<3>) -> Self::Output {
         /* Vectorization of
         let mut dot = 0;
         dot += self[0] as i64 * rhs[0] as i64;
@@ -269,24 +294,19 @@ impl ops::Mul<&Vectori32<3>> for Vectori32<3> {
         (dot >> 12) as i32
          */
 
-        let v1 = self.0.as_ptr();
-        let v2 = rhs.0.as_ptr();
+        self.padding[0] = 0;
         let mut dot: i32;
         unsafe {
             asm!(
-            "vmov.s32 d1, 0",
-            "vmov.s32 d3, 0",
-            "vld1.s32 {{d0}}, [{v1}]!",
-            "vld1.s32 {{d1[0]}}, [{v1}]",
-            "vld1.s32 {{d2}}, [{v2}]!",
-            "vld1.s32 {{d3[0]}}, [{v2}]",
+            "vld1.s32 {{q1}}, [{v1}]",
+            "vld1.s32 {{q2}}, [{v2}]",
             "vmull.s32 q2, d0, d2",
             "vmlal.s32 q2, d1, d3",
             "vadd.s64 d4, d4, d5",
             "vshr.s64 d4, d4, 12",
             "vmov.s32 {dot}, d4[0]",
-            v1 = in(reg) v1,
-            v2 = in(reg) v2,
+            v1 = in(reg) self.values.as_ptr(),
+            v2 = in(reg) rhs.values.as_ptr(),
             dot = out(reg) dot,
             options(pure, readonly, preserves_flags, nostack),
             );

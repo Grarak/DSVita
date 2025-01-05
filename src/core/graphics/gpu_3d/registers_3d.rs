@@ -872,10 +872,11 @@ impl Gpu3DRegisters {
 
     fn exe_normal(&mut self, params: &[u32; 32]) {
         let normal_vector_param = NormalVector::from(params[0]);
-        let mut normal_vector = Vectori32::<3>::default();
-        normal_vector[0] = (((u16::from(normal_vector_param.x()) << 6) as i16) >> 3) as i32;
-        normal_vector[1] = (((u16::from(normal_vector_param.y()) << 6) as i16) >> 3) as i32;
-        normal_vector[2] = (((u16::from(normal_vector_param.z()) << 6) as i16) >> 3) as i32;
+        let mut normal_vector = Vectori32::<3>::new([
+            (((u16::from(normal_vector_param.x()) << 6) as i16) >> 3) as i32,
+            (((u16::from(normal_vector_param.y()) << 6) as i16) >> 3) as i32,
+            (((u16::from(normal_vector_param.z()) << 6) as i16) >> 3) as i32,
+        ]);
 
         if self.texture_coord_mode == TextureCoordTransMode::Normal {
             let mut vector = Vectori32::<4>::from(normal_vector);
@@ -941,7 +942,7 @@ impl Gpu3DRegisters {
         self.t = tex_coord.t() as i16;
 
         if self.texture_coord_mode == TextureCoordTransMode::TexCoord {
-            let mut vector = Vectori32::<4>([(self.s as i32) << 8, (self.t as i32) << 8, 1 << 8, 1 << 8]);
+            let mut vector = Vectori32::<4>::new([(self.s as i32) << 8, (self.t as i32) << 8, 1 << 8, 1 << 8]);
 
             vector *= &self.matrices.tex;
 
@@ -1177,10 +1178,11 @@ impl Gpu3DRegisters {
     }
 
     fn exe_vec_test(&mut self, params: &[u32; 32]) {
-        let mut vector = Vectori32::<3>::default();
-        vector[0] = (((params[0] & 0x000003FF) << 6) as i16 as i32) >> 3;
-        vector[1] = (((params[0] & 0x000FFC00) >> 4) as i16 as i32) >> 3;
-        vector[2] = (((params[0] & 0x3FF00000) >> 14) as i16 as i32) >> 3;
+        let mut vector = Vectori32::<3>::new([
+            (((params[0] & 0x000003FF) << 6) as i16 as i32) >> 3,
+            (((params[0] & 0x000FFC00) >> 4) as i16 as i32) >> 3,
+            (((params[0] & 0x3FF00000) >> 14) as i16 as i32) >> 3,
+        ]);
 
         vector *= &self.matrices.vec;
         self.vec_result[0] = ((vector[0] << 3) as i16) >> 3;
