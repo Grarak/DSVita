@@ -4,10 +4,12 @@ use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
 use crate::fixed_fifo::FixedFifo;
-use crate::math::{Matrix, Vectorf32, Vectori16, Vectori32, Vectoru16};
+use crate::math::{vdot_vec3, Matrix, Vectorf32, Vectori16, Vectori32, Vectoru8};
 use crate::utils::{rgb5_to_rgb6, HeapMem};
 use bilge::prelude::*;
-use std::arch::arm::{vcvtq_f32_s32, vld1q_s32, vmulq_n_f32, vst1q_f32};
+use std::arch::arm::{
+    vcvtq_f32_s32, vget_high_s32, vget_low_s32, vgetq_lane_s16, vgetq_lane_s32, vld1q_s32, vmlal_n_s32, vmull_n_s32, vmulq_n_f32, vshrn_n_s64, vshrq_n_s64, vst1q_f32, vst1q_s32, vuzp_s32, vuzpq_s32,
+};
 use std::cmp::max;
 use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
@@ -241,7 +243,7 @@ pub struct Vertex {
     pub coords: Vectori32<4>,
     pub tex_coords: Vectori16<2>,
     pub color: u32,
-    pub viewport: Vectoru16<4>,
+    pub viewport: Vectoru8<4>,
 }
 
 fn intersect(v1: &Vectorf32<4>, v2: &Vectorf32<4>, val1: f32, val2: f32) -> Vectorf32<4> {
@@ -326,7 +328,7 @@ fn clip_polygon(unclipped: &[Vectori32<4>; 4], clipped: &mut [Vectorf32<4>; 10],
 pub struct Polygon {
     pub vertices_index: u16,
     pub size: u8,
-    crossed: bool,
+    pub crossed: bool,
     clockwise: bool,
 
     mode: PolygonMode,
@@ -462,8 +464,8 @@ pub struct Gpu3DRegisters {
     light_colors: [u32; 4],
     shininess: [u8; 4],
 
-    viewport: Vectoru16<4>,
-    viewport_next: Vectoru16<4>,
+    viewport: Vectoru8<4>,
+    viewport_next: Vectoru8<4>,
 
     pub gx_stat: GxStat,
     gx_fifo: u32,
@@ -485,7 +487,7 @@ impl Gpu3DRegisters {
     }
 
     fn get_cmd_fifo_len(&self) -> usize {
-        max(self.cmd_fifo.len(), 4) - 4
+        max(self.cmd_fifo.len() as isize - 4, 0) as usize
     }
 
     pub fn run_cmds(&mut self, total_cycles: u64, emu: &mut Emu) {
@@ -497,32 +499,6 @@ impl Gpu3DRegisters {
         let cycle_diff = (total_cycles - self.last_total_cycles) as u32;
         self.last_total_cycles = total_cycles;
         let mut executed_cycles = 0;
-
-        let mut refresh_state = |gpu_3d: &mut Self| {
-            gpu_3d.gx_stat.set_num_entries_cmd_fifo(u9::new(gpu_3d.get_cmd_fifo_len() as u16));
-            gpu_3d.gx_stat.set_cmd_fifo_empty(gpu_3d.is_cmd_fifo_empty());
-            gpu_3d.gx_stat.set_geometry_busy(!gpu_3d.cmd_fifo.is_empty());
-
-            if !gpu_3d.gx_stat.cmd_fifo_less_half_full() && !gpu_3d.is_cmd_fifo_half_full() {
-                gpu_3d.gx_stat.set_cmd_fifo_less_half_full(true);
-                io_dma!(emu, ARM9).trigger_all(DmaTransferMode::GeometryCmdFifo, get_cm_mut!(emu));
-            }
-
-            match u8::from(gpu_3d.gx_stat.cmd_fifo_irq()) {
-                0 | 3 => {}
-                1 => {
-                    if gpu_3d.gx_stat.cmd_fifo_less_half_full() {
-                        get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::GeometryCmdFifo, emu);
-                    }
-                }
-                2 => {
-                    if gpu_3d.gx_stat.cmd_fifo_empty() {
-                        get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::GeometryCmdFifo, emu);
-                    }
-                }
-                _ => unsafe { unreachable_unchecked() },
-            }
-        };
 
         while !self.cmd_fifo.is_empty() && executed_cycles < cycle_diff && !self.flushed {
             let mut params: [u32; 32] = unsafe { MaybeUninit::uninit().assume_init() };
@@ -648,7 +624,29 @@ impl Gpu3DRegisters {
             executed_cycles += 4;
         }
 
-        refresh_state(self);
+        self.gx_stat.set_num_entries_cmd_fifo(u9::new(self.get_cmd_fifo_len() as u16));
+        self.gx_stat.set_cmd_fifo_empty(self.is_cmd_fifo_empty());
+        self.gx_stat.set_geometry_busy(!self.cmd_fifo.is_empty());
+
+        if !self.gx_stat.cmd_fifo_less_half_full() && !self.is_cmd_fifo_half_full() {
+            self.gx_stat.set_cmd_fifo_less_half_full(true);
+            io_dma!(emu, ARM9).trigger_all(DmaTransferMode::GeometryCmdFifo, get_cm_mut!(emu));
+        }
+
+        match u8::from(self.gx_stat.cmd_fifo_irq()) {
+            0 | 3 => {}
+            1 => {
+                if self.gx_stat.cmd_fifo_less_half_full() {
+                    get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::GeometryCmdFifo, emu);
+                }
+            }
+            2 => {
+                if self.gx_stat.cmd_fifo_empty() {
+                    get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::GeometryCmdFifo, emu);
+                }
+            }
+            _ => unsafe { unreachable_unchecked() },
+        }
 
         if !self.is_cmd_fifo_full() {
             get_cpu_regs_mut!(emu, ARM9).unhalt(1);
@@ -872,67 +870,92 @@ impl Gpu3DRegisters {
 
     fn exe_normal(&mut self, params: &[u32; 32]) {
         let normal_vector_param = NormalVector::from(params[0]);
-        let mut normal_vector = Vectori32::<3>::new([
+        let normal_vector = Vectori32::<3>::new([
             (((u16::from(normal_vector_param.x()) << 6) as i16) >> 3) as i32,
             (((u16::from(normal_vector_param.y()) << 6) as i16) >> 3) as i32,
             (((u16::from(normal_vector_param.z()) << 6) as i16) >> 3) as i32,
         ]);
 
-        if self.texture_coord_mode == TextureCoordTransMode::Normal {
-            let mut vector = Vectori32::<4>::from(normal_vector);
-            vector[3] = 1 << 12;
-
-            let mut matrix = self.matrices.tex;
-            matrix[12] = (self.s as i32) << 12;
-            matrix[13] = (self.t as i32) << 12;
-
-            vector *= &matrix;
-
-            self.saved_vertex.tex_coords[0] = (vector[0] >> 12) as i16;
-            self.saved_vertex.tex_coords[1] = (vector[1] >> 12) as i16;
-        }
-
-        normal_vector *= &self.matrices.vec;
+        // if self.texture_coord_mode == TextureCoordTransMode::Normal {
+        //     let mut vector = Vectori32::<4>::from(normal_vector);
+        //     vector[3] = 1 << 12;
+        //
+        //     let mut matrix = self.matrices.tex;
+        //     matrix[12] = (self.s as i32) << 12;
+        //     matrix[13] = (self.t as i32) << 12;
+        //
+        //     vector *= &matrix;
+        //
+        //     self.saved_vertex.tex_coords[0] = (vector[0] >> 12) as i16;
+        //     self.saved_vertex.tex_coords[1] = (vector[1] >> 12) as i16;
+        // }
 
         self.saved_vertex.color = self.emission_color;
 
-        for i in 0..4 {
-            if self.enabled_lights & (1 << i) == 0 {
-                continue;
+        return;
+
+        if self.enabled_lights == 0 {
+            return;
+        }
+
+        unsafe {
+            let mtx_vec_0 = vld1q_s32(self.matrices.vec.as_ref().as_ptr());
+            let mtx_vec_1 = vld1q_s32(self.matrices.vec.as_ref().as_ptr().add(4));
+            let mtx_vec_2 = vld1q_s32(self.matrices.vec.as_ref().as_ptr().add(8));
+
+            let lower_result = vmull_n_s32(vget_low_s32(mtx_vec_0), normal_vector[0]);
+            let lower_result = vmlal_n_s32(lower_result, vget_low_s32(mtx_vec_1), normal_vector[1]);
+            let lower_result = vmlal_n_s32(lower_result, vget_low_s32(mtx_vec_2), normal_vector[2]);
+
+            let higher_result = vmull_n_s32(vget_high_s32(mtx_vec_0), normal_vector[0]);
+            let higher_result = vmlal_n_s32(higher_result, vget_high_s32(mtx_vec_1), normal_vector[1]);
+            let higher_result = vmlal_n_s32(higher_result, vget_high_s32(mtx_vec_2), normal_vector[2]);
+
+            let lower_result = vshrn_n_s64::<12>(lower_result);
+            let higher_result = vshrn_n_s64::<12>(higher_result);
+
+            let normal_vector = vuzp_s32(lower_result, higher_result);
+
+            for i in 0..4 {
+                if self.enabled_lights & (1 << i) == 0 {
+                    continue;
+                }
+
+                let light_vector = vld1q_s32(self.light_vectors[i].as_ref().as_ptr());
+                let diffuse_level = -vdot_vec3(light_vector, mem::transmute(normal_vector));
+                let diffuse_level = diffuse_level.clamp(0, 1 << 12) as u32;
+
+                let half_vector = vld1q_s32(self.half_vectors[i].as_ref().as_ptr());
+                let shininess_level = -vdot_vec3(half_vector, mem::transmute(normal_vector));
+                let shininess_level = shininess_level.clamp(0, 1 << 12) as u32;
+                let mut shininess_level = (shininess_level * shininess_level) >> 12;
+
+                if self.shininess_enabled {
+                    shininess_level = (self.shininess[((shininess_level >> 5) as usize) & 3] << 4) as u32;
+                }
+
+                let mut r = self.saved_vertex.color & 0x3F;
+                let mut g = (self.saved_vertex.color >> 6) & 0x3F;
+                let mut b = (self.saved_vertex.color >> 12) & 0x3F;
+
+                r += ((self.specular_color & 0x3F) * (self.light_colors[i] & 0x3F) * shininess_level) >> 18;
+                g += (((self.specular_color >> 6) & 0x3F) * ((self.light_colors[i] >> 6) & 0x3F) * shininess_level) >> 18;
+                b += (((self.specular_color >> 12) & 0x3F) * ((self.light_colors[i] >> 12) & 0x3F) * shininess_level) >> 18;
+
+                r += ((self.diffuse_color & 0x3F) * (self.light_colors[i] & 0x3F) * diffuse_level) >> 18;
+                g += (((self.diffuse_color >> 6) & 0x3F) * ((self.light_colors[i] >> 6) & 0x3F) * diffuse_level) >> 18;
+                b += (((self.diffuse_color >> 12) & 0x3F) * ((self.light_colors[i] >> 12) & 0x3F) * diffuse_level) >> 18;
+
+                r += ((self.ambient_color & 0x3F) * (self.light_colors[i] & 0x3F)) >> 6;
+                g += (((self.ambient_color >> 6) & 0x3F) * ((self.light_colors[i] >> 6) & 0x3F)) >> 6;
+                b += (((self.ambient_color >> 12) & 0x3F) * ((self.light_colors[i] >> 12) & 0x3F)) >> 6;
+
+                let r = r.clamp(0, 0x3F);
+                let g = g.clamp(0, 0x3F);
+                let b = b.clamp(0, 0x3F);
+
+                self.saved_vertex.color = (b << 12) | (g << 6) | r;
             }
-
-            let diffuse_level = -(self.light_vectors[i] * &normal_vector);
-            let diffuse_level = diffuse_level.clamp(0, 1 << 12) as u32;
-
-            let shininess_level = -(self.half_vectors[i] * &normal_vector);
-            let shininess_level = shininess_level.clamp(0, 1 << 12) as u32;
-            let mut shininess_level = (shininess_level * shininess_level) >> 12;
-
-            if self.shininess_enabled {
-                shininess_level = (self.shininess[((shininess_level >> 5) as usize) & 3] << 4) as u32;
-            }
-
-            let mut r = self.saved_vertex.color & 0x3F;
-            let mut g = (self.saved_vertex.color >> 6) & 0x3F;
-            let mut b = (self.saved_vertex.color >> 12) & 0x3F;
-
-            r += ((self.specular_color & 0x3F) * (self.light_colors[i] & 0x3F) * shininess_level) >> 18;
-            g += (((self.specular_color >> 6) & 0x3F) * ((self.light_colors[i] >> 6) & 0x3F) * shininess_level) >> 18;
-            b += (((self.specular_color >> 12) & 0x3F) * ((self.light_colors[i] >> 12) & 0x3F) * shininess_level) >> 18;
-
-            r += ((self.diffuse_color & 0x3F) * (self.light_colors[i] & 0x3F) * diffuse_level) >> 18;
-            g += (((self.diffuse_color >> 6) & 0x3F) * ((self.light_colors[i] >> 6) & 0x3F) * diffuse_level) >> 18;
-            b += (((self.diffuse_color >> 12) & 0x3F) * ((self.light_colors[i] >> 12) & 0x3F) * diffuse_level) >> 18;
-
-            r += ((self.ambient_color & 0x3F) * (self.light_colors[i] & 0x3F)) >> 6;
-            g += (((self.ambient_color >> 6) & 0x3F) * ((self.light_colors[i] >> 6) & 0x3F)) >> 6;
-            b += (((self.ambient_color >> 12) & 0x3F) * ((self.light_colors[i] >> 12) & 0x3F)) >> 6;
-
-            let r = r.clamp(0, 0x3F);
-            let g = g.clamp(0, 0x3F);
-            let b = b.clamp(0, 0x3F);
-
-            self.saved_vertex.color = (b << 12) | (g << 6) | r;
         }
     }
 
@@ -942,12 +965,21 @@ impl Gpu3DRegisters {
         self.t = tex_coord.t() as i16;
 
         if self.texture_coord_mode == TextureCoordTransMode::TexCoord {
-            let mut vector = Vectori32::<4>::new([(self.s as i32) << 8, (self.t as i32) << 8, 1 << 8, 1 << 8]);
+            unsafe {
+                let mtx_tex_0 = vld1q_s32(self.matrices.tex.as_ref().as_ptr());
+                let mtx_tex_1 = vld1q_s32(self.matrices.tex.as_ref().as_ptr().add(4));
+                let mtx_tex_2 = vld1q_s32(self.matrices.tex.as_ref().as_ptr().add(8));
+                let mtx_tex_3 = vld1q_s32(self.matrices.tex.as_ref().as_ptr().add(12));
 
-            vector *= &self.matrices.tex;
+                let lower_result = vmull_n_s32(vget_low_s32(mtx_tex_0), (self.s as i32) << 8);
+                let lower_result = vmlal_n_s32(lower_result, vget_low_s32(mtx_tex_1), (self.t as i32) << 8);
+                let lower_result = vmlal_n_s32(lower_result, vget_low_s32(mtx_tex_2), 1 << 8);
+                let lower_result = vmlal_n_s32(lower_result, vget_low_s32(mtx_tex_3), 1 << 8);
 
-            self.saved_vertex.tex_coords[0] = (vector[0] >> 8) as i16;
-            self.saved_vertex.tex_coords[1] = (vector[1] >> 8) as i16;
+                let lower_result = vshrq_n_s64::<20>(lower_result);
+                self.saved_vertex.tex_coords[0] = vgetq_lane_s16::<0>(mem::transmute(lower_result));
+                self.saved_vertex.tex_coords[1] = vgetq_lane_s16::<4>(mem::transmute(lower_result));
+            }
         } else {
             self.saved_vertex.tex_coords[0] = self.s;
             self.saved_vertex.tex_coords[1] = self.t;
@@ -1092,10 +1124,10 @@ impl Gpu3DRegisters {
 
     fn exe_viewport(&mut self, params: &[u32; 32]) {
         let viewport = Viewport::from(params[0]);
-        self.viewport_next[0] = viewport.x1() as u16;
-        self.viewport_next[1] = 191 - viewport.y2() as u16;
-        self.viewport_next[2] = viewport.x2() as u16 - self.viewport_next[0] + 1;
-        self.viewport_next[3] = (191 - viewport.y1() as u16) - self.viewport_next[1] + 1;
+        self.viewport_next[0] = viewport.x1();
+        self.viewport_next[1] = viewport.y1();
+        self.viewport_next[2] = viewport.x2();
+        self.viewport_next[3] = viewport.y2();
     }
 
     fn exe_box_test(&mut self, params: &[u32; 32]) {
@@ -1226,26 +1258,50 @@ impl Gpu3DRegisters {
             return;
         }
 
-        vertices.ins[vertices.count_in as usize] = self.saved_vertex;
-        vertices.ins[vertices.count_in as usize].coords[3] = 1 << 12;
-
-        if self.texture_coord_mode == TextureCoordTransMode::Vertex {
-            let mut matrix = matrices.tex;
-            matrix[12] = (self.s as i32) << 12;
-            matrix[13] = (self.t as i32) << 12;
-
-            let vector = vertices.ins[vertices.count_in as usize].coords * &matrix;
-
-            vertices.ins[vertices.count_in as usize].tex_coords[0] = (vector[0] >> 12) as i16;
-            vertices.ins[vertices.count_in as usize].tex_coords[1] = (vector[1] >> 12) as i16;
-        }
+        // if self.texture_coord_mode == TextureCoordTransMode::Vertex {
+        //     let mut matrix = matrices.tex;
+        //     matrix[12] = (self.s as i32) << 12;
+        //     matrix[13] = (self.t as i32) << 12;
+        //
+        //     let vector = vertices.ins[vertices.count_in as usize].coords * &matrix;
+        //
+        //     vertices.ins[vertices.count_in as usize].tex_coords[0] = (vector[0] >> 12) as i16;
+        //     vertices.ins[vertices.count_in as usize].tex_coords[1] = (vector[1] >> 12) as i16;
+        // }
 
         if self.clip_dirty {
             matrices.clip = matrices.model * &matrices.proj;
             self.clip_dirty = false;
         }
 
-        vertices.ins[vertices.count_in as usize].coords *= &matrices.clip;
+        self.saved_vertex.coords[3] = 1 << 12;
+
+        unsafe {
+            let vertex_coords = vld1q_s32(self.saved_vertex.coords.as_ref().as_ptr());
+            let mtx_clip_0 = vld1q_s32(matrices.clip.as_ref().as_ptr());
+            let mtx_clip_1 = vld1q_s32(matrices.clip.as_ref().as_ptr().add(4));
+            let mtx_clip_2 = vld1q_s32(matrices.clip.as_ref().as_ptr().add(8));
+            let mtx_clip_3 = vld1q_s32(matrices.clip.as_ref().as_ptr().add(12));
+
+            let lower_result = vmull_n_s32(vget_low_s32(mtx_clip_0), vgetq_lane_s32::<0>(vertex_coords));
+            let lower_result = vmlal_n_s32(lower_result, vget_low_s32(mtx_clip_1), vgetq_lane_s32::<1>(vertex_coords));
+            let lower_result = vmlal_n_s32(lower_result, vget_low_s32(mtx_clip_2), vgetq_lane_s32::<2>(vertex_coords));
+            let lower_result = vmlal_n_s32(lower_result, vget_low_s32(mtx_clip_3), vgetq_lane_s32::<3>(vertex_coords));
+
+            let higher_result = vmull_n_s32(vget_high_s32(mtx_clip_0), vgetq_lane_s32::<0>(vertex_coords));
+            let higher_result = vmlal_n_s32(higher_result, vget_high_s32(mtx_clip_1), vgetq_lane_s32::<1>(vertex_coords));
+            let higher_result = vmlal_n_s32(higher_result, vget_high_s32(mtx_clip_2), vgetq_lane_s32::<2>(vertex_coords));
+            let higher_result = vmlal_n_s32(higher_result, vget_high_s32(mtx_clip_3), vgetq_lane_s32::<3>(vertex_coords));
+
+            let lower_result = vshrq_n_s64::<12>(lower_result);
+            let higher_result = vshrq_n_s64::<12>(higher_result);
+
+            let vertex_coords = vuzpq_s32(mem::transmute(lower_result), mem::transmute(higher_result));
+            vst1q_s32(vertices.ins[vertices.count_in as usize].coords.as_mut().as_mut_ptr(), vertex_coords.0);
+        }
+
+        vertices.ins[vertices.count_in as usize].color = self.saved_vertex.color;
+        vertices.ins[vertices.count_in as usize].tex_coords = self.saved_vertex.tex_coords;
 
         vertices.count_in += 1;
         self.vertex_count += 1;
@@ -1269,45 +1325,35 @@ impl Gpu3DRegisters {
         self.saved_polygon.size = size;
         self.saved_polygon.vertices_index = self.vertices.count_in - size as u16;
 
-        if self.polygon_type == PolygonType::QuadliteralStrips {
-            unsafe {
-                self.vertices
-                    .ins
-                    .swap_unchecked(self.saved_polygon.vertices_index as usize + 2, self.saved_polygon.vertices_index as usize + 3);
-            }
-        }
-
         self.polygons.ins[self.polygons.count_in as usize] = self.saved_polygon;
         self.polygons.ins[self.polygons.count_in as usize].crossed = self.polygon_type == PolygonType::QuadliteralStrips;
 
         self.polygons.count_in += 1;
     }
 
-    fn queue_entry(&mut self, entry: Entry, emu: &mut Emu) {
+    fn queue_entry(&mut self, entry: Entry) {
         self.cmd_fifo.push_back(entry);
+        match entry.cmd {
+            0x11 | 0x12 => self.mtx_queue += 1,
+            0x70 | 0x71 | 0x72 => self.test_queue += 1,
+            _ => {}
+        }
+    }
 
-        self.gx_stat.set_geometry_busy(true);
+    fn post_queue_entry(&mut self, emu: &mut Emu) {
+        self.gx_stat.set_geometry_busy(!self.cmd_fifo.is_empty());
 
         self.gx_stat.set_num_entries_cmd_fifo(u9::new(self.get_cmd_fifo_len() as u16));
-        self.gx_stat.set_cmd_fifo_empty(false);
+        self.gx_stat.set_cmd_fifo_empty(self.cmd_fifo.is_empty());
 
         self.gx_stat.set_cmd_fifo_less_half_full(!self.is_cmd_fifo_half_full());
+
+        self.gx_stat.set_mtx_stack_busy(self.mtx_queue > 0);
+        self.gx_stat.set_box_pos_vec_test_busy(self.test_queue > 0);
 
         if unlikely(self.is_cmd_fifo_full()) {
             get_mem_mut!(emu).breakout_imm = true;
             get_cpu_regs_mut!(emu, ARM9).halt(1);
-        }
-
-        match entry.cmd {
-            0x11 | 0x12 => {
-                self.mtx_queue += 1;
-                self.gx_stat.set_mtx_stack_busy(true);
-            }
-            0x70 | 0x71 | 0x72 => {
-                self.test_queue += 1;
-                self.gx_stat.set_box_pos_vec_test_busy(true);
-            }
-            _ => {}
         }
     }
 
@@ -1345,7 +1391,7 @@ impl Gpu3DRegisters {
         } else {
             let mut param_count = self.cmd_fifo_param_count;
             let len = FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize];
-            self.queue_entry(Entry::new_with_len(self.gx_fifo as u8, len, value & mask), emu);
+            self.queue_entry(Entry::new_with_len(self.gx_fifo as u8, len, value & mask));
             param_count += 1;
 
             if param_count == len {
@@ -1356,158 +1402,200 @@ impl Gpu3DRegisters {
             }
         }
 
-        while self.gx_fifo != 0 && FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize] == 0 {
-            self.queue_entry(Entry::new_with_len(self.gx_fifo as u8, 0, value & mask), emu);
+        for _ in 0..4 {
+            if self.gx_fifo == 0 || FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize] != 0 {
+                break;
+            }
+            self.queue_entry(Entry::new_with_len(self.gx_fifo as u8, 0, value & mask));
             self.gx_fifo >>= 8;
         }
+
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_mode(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x10, value & mask), emu);
+        self.queue_entry(Entry::new(0x10, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_push(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x11, value & mask), emu);
+        self.queue_entry(Entry::new(0x11, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_pop(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x12, value & mask), emu);
+        self.queue_entry(Entry::new(0x12, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_store(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x13, value & mask), emu);
+        self.queue_entry(Entry::new(0x13, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_restore(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x14, value & mask), emu);
+        self.queue_entry(Entry::new(0x14, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_identity(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x15, value & mask), emu);
+        self.queue_entry(Entry::new(0x15, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_load44(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x16, value & mask), emu);
+        self.queue_entry(Entry::new(0x16, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_load43(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x17, value & mask), emu);
+        self.queue_entry(Entry::new(0x17, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_mult44(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x18, value & mask), emu);
+        self.queue_entry(Entry::new(0x18, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_mult43(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x19, value & mask), emu);
+        self.queue_entry(Entry::new(0x19, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_mult33(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x1A, value & mask), emu);
+        self.queue_entry(Entry::new(0x1A, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_scale(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x1B, value & mask), emu);
+        self.queue_entry(Entry::new(0x1B, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_mtx_trans(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x1C, value & mask), emu);
+        self.queue_entry(Entry::new(0x1C, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_color(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x20, value & mask), emu);
+        self.queue_entry(Entry::new(0x20, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_normal(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x21, value & mask), emu);
+        self.queue_entry(Entry::new(0x21, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_tex_coord(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x22, value & mask), emu);
+        self.queue_entry(Entry::new(0x22, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_vtx16(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x23, value & mask), emu);
+        self.queue_entry(Entry::new(0x23, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_vtx10(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x24, value & mask), emu);
+        self.queue_entry(Entry::new(0x24, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_vtx_x_y(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x25, value & mask), emu);
+        self.queue_entry(Entry::new(0x25, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_vtx_x_z(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x26, value & mask), emu);
+        self.queue_entry(Entry::new(0x26, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_vtx_y_z(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x27, value & mask), emu);
+        self.queue_entry(Entry::new(0x27, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_vtx_diff(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x28, value & mask), emu);
+        self.queue_entry(Entry::new(0x28, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_polygon_attr(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x29, value & mask), emu);
+        self.queue_entry(Entry::new(0x29, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_tex_image_param(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x2A, value & mask), emu);
+        self.queue_entry(Entry::new(0x2A, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_pltt_base(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x2B, value & mask), emu);
+        self.queue_entry(Entry::new(0x2B, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_dif_amb(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x30, value & mask), emu);
+        self.queue_entry(Entry::new(0x30, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_spe_emi(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x31, value & mask), emu);
+        self.queue_entry(Entry::new(0x31, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_light_vector(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x32, value & mask), emu);
+        self.queue_entry(Entry::new(0x32, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_light_color(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x33, value & mask), emu);
+        self.queue_entry(Entry::new(0x33, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_shininess(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x34, value & mask), emu);
+        self.queue_entry(Entry::new(0x34, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_begin_vtxs(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x40, value & mask), emu);
+        self.queue_entry(Entry::new(0x40, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_end_vtxs(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x41, value & mask), emu);
+        self.queue_entry(Entry::new(0x41, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_swap_buffers(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x50, value & mask), emu);
+        self.queue_entry(Entry::new(0x50, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_viewport(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x60, value & mask), emu);
+        self.queue_entry(Entry::new(0x60, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_box_test(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x70, value & mask), emu);
+        self.queue_entry(Entry::new(0x70, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_pos_test(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x71, value & mask), emu);
+        self.queue_entry(Entry::new(0x71, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_vec_test(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_entry(Entry::new(0x72, value & mask), emu);
+        self.queue_entry(Entry::new(0x72, value & mask));
+        self.post_queue_entry(emu);
     }
 
     pub fn set_gx_stat(&mut self, mut mask: u32, value: u32) {

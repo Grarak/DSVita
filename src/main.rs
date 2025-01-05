@@ -365,7 +365,7 @@ pub fn actual_main() {
 
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
-        .stack_size(4 * 1024 * 1024)
+        .stack_size(8 * 1024 * 1024)
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
             println!("Start cpu {:?}", thread::current().id());

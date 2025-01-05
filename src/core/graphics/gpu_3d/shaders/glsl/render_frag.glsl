@@ -11,7 +11,7 @@ in vec3 oColor;
 in vec2 oTexCoords;
 in float oPolygonIndex;
 
-layout(location = 0) out vec4 color;
+layout (location = 0) out vec4 color;
 
 int readTex8(int addr) {
     float x = float((addr >> 2) & 0x1FF) / 511.0;
@@ -132,7 +132,10 @@ void main() {
     int addrOffset = (int(value[0] * 255.0) | (int(value[1] * 255.0) << 8)) << 3;
     int texImageParam = int(value[2] * 255.0) | (int(value[3] * 255.0) << 8);
 
-    value = texture(attrTex, vec2(x + 1.0 / 127.0, y));
+    polygonIndex += 1;
+    x = float(polygonIndex & 0x7F) / 127.0;
+    y = float(polygonIndex >> 7) / 127.0;
+    value = texture(attrTex, vec2(x, y));
     int palAddr = int(value[0] * 255.0) | (int(value[1] * 255.0) << 8);
 
     int sizeS = 8 << ((texImageParam >> 4) & 0x7);
@@ -172,35 +175,35 @@ void main() {
 
     switch (texFmt) {
         case 0: {
-            color = vec4(oColor, 1.0);
-            break;
-        }
+                    color = vec4(oColor, 1.0);
+                    break;
+                }
         case 1: {
-            a3i5Tex(palAddr, addrOffset, int(s), int(t), sizeS);
-            break;
-        }
+                    a3i5Tex(palAddr, addrOffset, int(s), int(t), sizeS);
+                    break;
+                }
         case 2: {
-            bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
-            pal4Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
-            break;
-        }
+                    bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+                    pal4Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
+                    break;
+                }
         case 3: {
-            bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
-            pal16Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
-            break;
-        }
+                    bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+                    pal16Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
+                    break;
+                }
         case 4: {
-            bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
-            pal256Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
-            break;
-        }
+                    bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+                    pal256Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
+                    break;
+                }
         case 6: {
-            a5i3Tex(palAddr, addrOffset, int(s), int(t), sizeS);
-            break;
-        }
+                    a5i3Tex(palAddr, addrOffset, int(s), int(t), sizeS);
+                    break;
+                }
         case 7: {
-            directTex(addrOffset, int(s), int(t), sizeS);
-            break;
-        }
+                    directTex(addrOffset, int(s), int(t), sizeS);
+                    break;
+                }
     }
 }

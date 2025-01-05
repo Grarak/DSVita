@@ -125,7 +125,10 @@ void main(out float4 color : COLOR) {
     int addrOffset = int((short(value[0] * 255.0) | (short(value[1] * 255.0) << 8))) << 3;
     short texImageParam = short(value[2] * 255.0) | (short(value[3] * 255.0) << 8);
 
-    value = tex2D(attrTex, float2(x + 1.0 / 127.0, y));
+    polygonIndex += 1;
+    x = float(polygonIndex & 0x7F) / 127.0;
+    y = float(polygonIndex >> 7) / 127.0;
+    value = tex2D(attrTex, float2(x, y));
     short palAddr = short(value[0] * 255.0) | (short(value[1] * 255.0) << 8);
 
     short sizeS = 8 << ((texImageParam >> 4) & 0x7);

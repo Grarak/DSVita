@@ -107,7 +107,11 @@ impl From<(&Vertex, u16)> for Gpu3DVertex {
         if vertex.coords[3] != 0 {
             let c = rgb6_to_float8(vertex.color);
 
-            let [x, y, w, h] = *vertex.viewport.as_ref();
+            let [x1, y1, x2, y2] = *vertex.viewport.as_ref();
+            let x = x1;
+            let y = 191 - y2;
+            let w = (x2 - x1) as u16 + 1;
+            let h = (191 - y1 - y) as u16 + 1;
             let vertex_x = ((vertex.coords[0] as i64 + vertex.coords[3] as i64) * w as i64 / (vertex.coords[3] as i64 * 2) + x as i64) as i32;
             let vertex_y = ((-vertex.coords[1] as i64 + vertex.coords[3] as i64) * h as i64 / (vertex.coords[3] as i64 * 2) + y as i64) as i32;
             let vertex_z = (((vertex.coords[2] as i64) << 12) / vertex.coords[3] as i64) as i32;
@@ -283,7 +287,11 @@ impl Gpu3DRenderer {
             let vertex_index = self.vertices_buf.len() as u16;
             self.indices_buf.push(vertex_index);
             self.indices_buf.push(vertex_index + 1);
-            self.indices_buf.push(vertex_index + 2);
+            if polygon.crossed {
+                self.indices_buf.push(vertex_index + 3);
+            } else {
+                self.indices_buf.push(vertex_index + 2);
+            }
 
             for j in 3..polygon.size as u16 {
                 self.indices_buf.push(vertex_index);

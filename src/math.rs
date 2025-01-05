@@ -1,6 +1,10 @@
 use paste::paste;
-use std::arch::arm::{int64x2_t, uint64x2_t, vaddq_u64, vmovn_u64, vmull_u32, vreinterpretq_s64_u64, vreinterpretq_u64_s64, vshlq_n_u64, vshrq_n_u64};
+use std::arch::arm::{
+    int32x4_t, int64x1_t, int64x2_t, uint64x2_t, vaddq_u64, vget_high_s32, vget_high_s64, vget_lane_s32, vget_low_s32, vget_low_s64, vmlal_s32, vmovn_u64, vmull_s32, vmull_u32, vreinterpretq_s64_u64,
+    vreinterpretq_u64_s64, vshlq_n_u64, vshr_n_s64, vshrq_n_u64,
+};
 use std::arch::asm;
+use std::intrinsics::simd::simd_add;
 use std::ops::{Index, IndexMut};
 use std::{mem, ops};
 
@@ -224,6 +228,7 @@ impl From<Vectori32<3>> for Vectori32<4> {
     }
 }
 
+define_vector!(u8);
 define_vector!(u16);
 define_vector!(i16);
 define_vector!(f32);
@@ -248,8 +253,27 @@ impl ops::Mul<&Matrix> for Vectori32<4> {
 
 impl ops::MulAssign<&Matrix> for Vectori32<3> {
     fn mul_assign(&mut self, rhs: &Matrix) {
-        let vec4: &mut Vectori32<4> = unsafe { mem::transmute(self) };
-        vec4.mul_assign(rhs)
+        unsafe {
+            asm!(
+            "vld1.s32 {{q0}}, [{v}]",
+            "vld1.s32 {{q1}}, [{m}]!",
+            "vld1.s32 {{q2}}, [{m}]!",
+            "vld1.s32 {{q3}}, [{m}]",
+            "vmull.s32 q5, d2, d0[0]",
+            "vmull.s32 q6, d3, d0[0]",
+            "vmlal.s32 q5, d4, d0[1]",
+            "vmlal.s32 q6, d5, d0[1]",
+            "vmlal.s32 q5, d6, d1[0]",
+            "vmlal.s32 q6, d7, d1[0]",
+            "vshr.s64 q5, q5, 12",
+            "vshr.s64 q6, q6, 12",
+            "vuzp.32 q5, q6",
+            "vst1.s32 {{q5}}, [{v}]",
+            v = in(reg) self.values.as_mut_ptr(),
+            m = in(reg) rhs.0.as_ptr(),
+            options(preserves_flags, nostack),
+            );
+        }
     }
 }
 
@@ -298,8 +322,8 @@ impl ops::Mul<&Vectori32<3>> for Vectori32<3> {
         let mut dot: i32;
         unsafe {
             asm!(
-            "vld1.s32 {{q1}}, [{v1}]",
-            "vld1.s32 {{q2}}, [{v2}]",
+            "vld1.s32 {{q0}}, [{v1}]",
+            "vld1.s32 {{q1}}, [{v2}]",
             "vmull.s32 q2, d0, d2",
             "vmlal.s32 q2, d1, d3",
             "vadd.s64 d4, d4, d5",
@@ -313,4 +337,16 @@ impl ops::Mul<&Vectori32<3>> for Vectori32<3> {
         }
         dot
     }
+}
+
+pub unsafe fn vadd_u64(a: int64x1_t, b: int64x1_t) -> int64x1_t {
+    simd_add(a, b)
+}
+
+pub unsafe fn vdot_vec3(v1: int32x4_t, v2: int32x4_t) -> i32 {
+    let ret = vmull_s32(vget_low_s32(v1), vget_low_s32(v2));
+    let ret = vmlal_s32(ret, vget_high_s32(v1), vget_high_s32(v2));
+    let ret = vadd_u64(vget_low_s64(ret), vget_high_s64(ret));
+    let ret = vshr_n_s64::<12>(ret);
+    vget_lane_s32::<0>(mem::transmute(ret))
 }
