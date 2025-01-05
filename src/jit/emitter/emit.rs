@@ -107,7 +107,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         if IS_DEBUG {
             let pc_reg = block_asm.new_reg();
             block_asm.mov(pc_reg, self.jit_buf.current_pc);
-            block_asm.store_u32(pc_reg, runtime_data_addr_reg, JitRuntimeData::get_out_pc_offset() as u32);
+            block_asm.store_u32(pc_reg, runtime_data_addr_reg, JitRuntimeData::get_branch_out_pc_offset() as u32);
             block_asm.free_reg(pc_reg);
         }
 

@@ -138,7 +138,6 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
 
         if DEBUG_LOG {
             block_asm.start_cond_block(Cond::HS);
-            block_asm.mov(stack_depth_reg, (stack_depth_reg.into(), ShiftType::Lsr, BlockOperand::from(3)));
             block_asm.call2(Self::debug_stack_depth_too_big as *const _, stack_depth_reg, current_pc);
             block_asm.branch(breakout_label, Cond::AL);
             block_asm.end_cond_block();

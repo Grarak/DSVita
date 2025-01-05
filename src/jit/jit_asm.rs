@@ -50,7 +50,7 @@ impl JitBuf {
 }
 
 pub const RETURN_STACK_SIZE: usize = 32;
-pub const STACK_DEPTH_LIMIT: u16 = 2048;
+pub const STACK_DEPTH_LIMIT: u16 = (1 << 15) - 1;
 
 #[repr(C, align(32))]
 pub struct JitRuntimeData {
@@ -81,12 +81,12 @@ impl JitRuntimeData {
     }
 
     #[cfg(debug_assertions)]
-    pub const fn get_out_pc_offset() -> u8 {
-        mem::offset_of!(JitRuntimeData, branch_out_pc) as u8
+    pub const fn get_branch_out_pc_offset() -> usize {
+        mem::offset_of!(JitRuntimeData, branch_out_pc)
     }
 
     #[cfg(not(debug_assertions))]
-    pub const fn get_out_pc_offset() -> u8 {
+    pub const fn get_branch_out_pc_offset() -> u8 {
         panic!()
     }
 
@@ -110,28 +110,28 @@ impl JitRuntimeData {
         panic!()
     }
 
-    pub const fn get_pre_cycle_count_sum_offset() -> u8 {
-        mem::offset_of!(JitRuntimeData, pre_cycle_count_sum) as u8
+    pub const fn get_pre_cycle_count_sum_offset() -> usize {
+        mem::offset_of!(JitRuntimeData, pre_cycle_count_sum)
     }
 
-    pub const fn get_accumulated_cycles_offset() -> u8 {
-        mem::offset_of!(JitRuntimeData, accumulated_cycles) as u8
+    pub const fn get_accumulated_cycles_offset() -> usize {
+        mem::offset_of!(JitRuntimeData, accumulated_cycles)
     }
 
-    pub const fn get_host_sp_offset() -> u8 {
-        mem::offset_of!(JitRuntimeData, host_sp) as u8
+    pub const fn get_host_sp_offset() -> usize {
+        mem::offset_of!(JitRuntimeData, host_sp)
     }
 
-    pub const fn get_idle_loop_stack_depth_offset() -> u8 {
-        mem::offset_of!(JitRuntimeData, idle_loop_stack_depth) as u8
+    pub const fn get_idle_loop_stack_depth_offset() -> usize {
+        mem::offset_of!(JitRuntimeData, idle_loop_stack_depth)
     }
 
-    pub const fn get_return_stack_ptr_offset() -> u8 {
-        mem::offset_of!(JitRuntimeData, return_stack_ptr) as u8
+    pub const fn get_return_stack_ptr_offset() -> usize {
+        mem::offset_of!(JitRuntimeData, return_stack_ptr)
     }
 
-    pub const fn get_return_stack_offset() -> u8 {
-        mem::offset_of!(JitRuntimeData, return_stack) as u8
+    pub const fn get_return_stack_offset() -> usize {
+        mem::offset_of!(JitRuntimeData, return_stack)
     }
 
     pub fn is_idle_loop(&self) -> bool {
@@ -299,7 +299,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
 }
 
 fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
-    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
+    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
 
     let thumb = (guest_pc & 1) == 1;
     debug_println!("{:?} Execute {:x} thumb {}", CPU, guest_pc, thumb);
@@ -324,7 +324,14 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
 
     jit_entry(true);
 
-    debug_assert_ne!(asm.runtime_data.get_branch_out_pc(), u32::MAX);
+    debug_assert_ne!(
+        asm.runtime_data.get_branch_out_pc(),
+        u32::MAX,
+        "{CPU:?} idle loop {} return stack ptr {} stack depth {}",
+        asm.runtime_data.is_idle_loop(),
+        asm.runtime_data.return_stack_ptr,
+        asm.runtime_data.stack_depth(),
+    );
 
     if DEBUG_LOG {
         println!(
