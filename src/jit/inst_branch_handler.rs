@@ -75,7 +75,7 @@ fn check_scheduler<const CPU: CpuType>(asm: &mut JitAsm<CPU>, current_pc: u32) {
 pub unsafe extern "C" fn call_jit_fun<const CPU: CpuType>(asm: &mut JitAsm<CPU>, target_pc: u32, store_host_sp: bool) {
     get_regs_mut!(asm.emu, CPU).set_thumb(target_pc & 1 == 1);
 
-    let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(align_guest_pc(target_pc));
+    let jit_entry = get_jit!(asm.emu).get_jit_start_addr(align_guest_pc(target_pc));
     let jit_entry: extern "C" fn(bool) = mem::transmute(jit_entry);
     jit_entry(store_host_sp);
 }

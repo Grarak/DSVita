@@ -51,7 +51,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         let aligned_target_reg = block_asm.new_reg();
         Self::emit_align_guest_pc(block_asm, target_pc_reg, aligned_target_reg);
 
-        let map_ptr = get_jit!(asm.emu).jit_memory_map.get_map_ptr::<CPU>();
+        let map_ptr = get_jit!(asm.emu).jit_memory_map.get_map_ptr();
 
         let map_ptr_reg = block_asm.new_reg();
         let map_index_reg = block_asm.new_reg();
@@ -87,7 +87,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         let jit_entry_add_reg = block_asm.new_reg();
         let entry_fn_reg = block_asm.new_reg();
 
-        let jit_entry_addr = get_jit!(asm.emu).jit_memory_map.get_jit_entry::<CPU>(target_pc);
+        let jit_entry_addr = get_jit!(asm.emu).jit_memory_map.get_jit_entry(target_pc);
         block_asm.mov(jit_entry_add_reg, jit_entry_addr as u32);
         block_asm.load_u32(entry_fn_reg, jit_entry_add_reg, 0);
         if has_return {

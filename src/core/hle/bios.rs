@@ -53,7 +53,7 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
             regs.pc = mem.read::<CPU, _>(pc_addr, emu);
         }
         ARM7 => {
-            regs.lr = 0x00000000;
+            regs.lr = 0xFFF00000;
             regs.pc = mem.read::<CPU, _>(0x3FFFFFC, emu);
         }
     }

@@ -168,7 +168,7 @@ pub fn align_guest_pc(guest_pc: u32) -> u32 {
 }
 
 pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) {
-    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
+    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
     if IS_DEBUG {
         asm.runtime_data.set_branch_out_pc(get_regs!(asm.emu, CPU).pc);
     }
@@ -295,7 +295,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, store_hos
             }
             todo!()
         }
-        let (insert_entry, flushed) = get_jit_mut!(asm.emu).insert_block::<CPU>(opcodes, guest_pc, asm.emu);
+        let (insert_entry, flushed) = get_jit_mut!(asm.emu).insert_block(opcodes, guest_pc, CPU, asm.emu);
         let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {
@@ -320,7 +320,7 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
     let jit_entry = {
         get_regs_mut!(asm.emu, CPU).set_thumb(thumb);
 
-        let jit_entry = get_jit!(asm.emu).get_jit_start_addr::<CPU>(align_guest_pc(guest_pc));
+        let jit_entry = get_jit!(asm.emu).get_jit_start_addr(align_guest_pc(guest_pc));
         let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(jit_entry) };
 
         debug_println!("{CPU:?} Enter jit addr {:x}", jit_entry as usize);

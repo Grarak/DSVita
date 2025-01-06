@@ -238,7 +238,7 @@ impl JitMemory {
         (allocated_offset_addr, aligned_size, flushed)
     }
 
-    pub fn insert_block<const CPU: CpuType>(&mut self, opcodes: &[u32], guest_pc: u32, emu: &Emu) -> (*const extern "C" fn(bool), bool) {
+    pub fn insert_block(&mut self, opcodes: &[u32], guest_pc: u32, cpu_type: CpuType, emu: &Emu) -> (*const extern "C" fn(bool), bool) {
         macro_rules! insert {
             ($entries:expr, $live_ranges:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
                 let ret = insert!($entries, $live_ranges);
@@ -257,14 +257,14 @@ impl JitMemory {
                 let entries_index = (guest_pc >> 1) as usize;
                 let entries_index = entries_index % $entries.len();
                 $entries[entries_index] = JitEntry(jit_entry_addr);
-                assert_eq!(ptr::addr_of!($entries[entries_index]), self.jit_memory_map.get_jit_entry::<CPU>(guest_pc));
+                assert_eq!(ptr::addr_of!($entries[entries_index]), self.jit_memory_map.get_jit_entry(guest_pc), "jit memory mapping {guest_pc:x}");
 
                 // >> 3 for u8 (each bit represents a page)
                 let live_ranges_index = ((guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) >> 3) as usize;
                 let live_ranges_index = live_ranges_index % $live_ranges.len();
                 let live_ranges_bit = (guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
                 $live_ranges[live_ranges_index] |= 1 << live_ranges_bit;
-                assert_eq!(ptr::addr_of!($live_ranges[live_ranges_index]), self.jit_memory_map.get_live_range::<CPU>(guest_pc));
+                assert_eq!(ptr::addr_of!($live_ranges[live_ranges_index]), self.jit_memory_map.get_live_range(guest_pc), "jit live ranges mapping {guest_pc:x}");
 
                 let per = (self.mem_start * 100) as f32 / JIT_MEMORY_SIZE as f32;
                 debug_println!(
@@ -276,13 +276,13 @@ impl JitMemory {
                     guest_pc
                 );
 
-                self.jit_perf_map_record.record(jit_entry_addr as usize, aligned_size, guest_pc, CPU);
+                self.jit_perf_map_record.record(jit_entry_addr as usize, aligned_size, guest_pc, cpu_type);
 
                 (jit_entry_addr, flushed)
             }};
         }
 
-        match CPU {
+        match cpu_type {
             ARM9 => match guest_pc & 0xFF000000 {
                 regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm, regions::ITCM_REGION, [ARM9]),
                 regions::MAIN_OFFSET => insert!(self.jit_entries.main, self.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
@@ -303,41 +303,39 @@ impl JitMemory {
         }
     }
 
-    pub fn get_jit_start_addr<const CPU: CpuType>(&self, guest_pc: u32) -> *const extern "C" fn(bool) {
-        unsafe { (*self.jit_memory_map.get_jit_entry::<CPU>(guest_pc)).0 }
+    pub fn get_jit_start_addr(&self, guest_pc: u32) -> *const extern "C" fn(bool) {
+        unsafe { (*self.jit_memory_map.get_jit_entry(guest_pc)).0 }
     }
 
     #[inline(never)]
     pub fn invalidate_block<const REGION: JitRegion>(&mut self, guest_addr: u32, size: usize) {
         macro_rules! invalidate {
-            ($guest_addr:expr, $cpu:expr, [$($cpu_entry:expr),+]) => {{
-                let live_range = unsafe { self.jit_memory_map.get_live_range::<{ $cpu }>($guest_addr).as_mut_unchecked() };
+            ($guest_addr:expr) => {{
+                let live_range = unsafe { self.jit_memory_map.get_live_range($guest_addr).as_mut_unchecked() };
                 let live_ranges_bit = ($guest_addr >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
                 if unlikely(*live_range & (1 << live_ranges_bit) != 0) {
                     *live_range &= !(1 << live_ranges_bit);
 
                     let guest_addr_start = $guest_addr & !(JIT_LIVE_RANGE_PAGE_SIZE - 1);
                     debug_println!("Invalidating jit {guest_addr_start:x} - {:x}", guest_addr_start + JIT_LIVE_RANGE_PAGE_SIZE);
-                    $(
-                        let jit_entry_start = self.jit_memory_map.get_jit_entry::<{ $cpu_entry }>(guest_addr_start);
-                        unsafe { slice::from_raw_parts_mut(jit_entry_start, JIT_LIVE_RANGE_PAGE_SIZE as usize).fill(DEFAULT_JIT_ENTRY) }
-                    )*
+                    let jit_entry_start = self.jit_memory_map.get_jit_entry(guest_addr_start);
+                    unsafe { slice::from_raw_parts_mut(jit_entry_start, JIT_LIVE_RANGE_PAGE_SIZE as usize).fill(DEFAULT_JIT_ENTRY) }
                 }
             }};
         }
 
         match REGION {
             JitRegion::Itcm => {
-                invalidate!(guest_addr, ARM9, [ARM9]);
-                invalidate!(guest_addr + size as u32 - 1, ARM9, [ARM9]);
+                invalidate!(guest_addr);
+                invalidate!(guest_addr + size as u32 - 1);
             }
             JitRegion::Main => {
-                invalidate!(guest_addr, ARM9, [ARM9, ARM7]);
-                invalidate!(guest_addr + size as u32 - 1, ARM9, [ARM9, ARM7]);
+                invalidate!(guest_addr);
+                invalidate!(guest_addr + size as u32 - 1);
             }
             JitRegion::Wram | JitRegion::VramArm7 => {
-                invalidate!(guest_addr, ARM7, [ARM7]);
-                invalidate!(guest_addr + size as u32 - 1, ARM7, [ARM7]);
+                invalidate!(guest_addr);
+                invalidate!(guest_addr + size as u32 - 1);
             }
         }
     }

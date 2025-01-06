@@ -1,36 +1,28 @@
 use crate::core::memory::regions;
-use crate::core::CpuType;
 use crate::jit::jit_memory::{JitEntries, JitEntry, JitLiveRanges, BIOS_UNINTERRUPT_ENTRY_ARM7, BIOS_UNINTERRUPT_ENTRY_ARM9, JIT_LIVE_RANGE_PAGE_SIZE_SHIFT};
 use crate::utils::HeapMemU32;
 use std::ptr;
-use CpuType::{ARM7, ARM9};
 
 // ARM9 Bios starts at 0xFFFF0000, but just treat everything above OAM region as bios
 // Also omit 0xF msb to save more memory
-const MEMORY_RANGE_ARM9: u32 = 0x10000000;
-const MEMORY_RANGE_ARM7: u32 = regions::OAM_OFFSET;
+// Also move ARM7 bios to 0xFFF00000, so we don't need separate mappings
+const MEMORY_RANGE: u32 = 0x10000000;
 
 pub const BLOCK_SHIFT: usize = 13;
 pub const BLOCK_SIZE: usize = 1 << BLOCK_SHIFT;
-const SIZE_ARM9: usize = (MEMORY_RANGE_ARM9 >> 1) as usize / BLOCK_SIZE;
-const SIZE_ARM7: usize = (MEMORY_RANGE_ARM7 >> 1) as usize / BLOCK_SIZE;
-const LIVE_RANGES_SIZE_ARM9: usize = (MEMORY_RANGE_ARM9 >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize;
-const LIVE_RANGES_SIZE_ARM7: usize = (MEMORY_RANGE_ARM7 >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize;
+const SIZE: usize = (MEMORY_RANGE >> 1) as usize / BLOCK_SIZE;
+const LIVE_RANGES_SIZE: usize = (MEMORY_RANGE >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize;
 
 pub struct JitMemoryMap {
-    map_arm9: HeapMemU32<SIZE_ARM9>,
-    map_arm7: HeapMemU32<SIZE_ARM7>,
-    live_ranges_map_arm9: HeapMemU32<LIVE_RANGES_SIZE_ARM9>,
-    live_ranges_map_arm7: HeapMemU32<LIVE_RANGES_SIZE_ARM7>,
+    map: HeapMemU32<SIZE>,
+    live_ranges_map: HeapMemU32<LIVE_RANGES_SIZE>,
 }
 
 impl JitMemoryMap {
     pub fn new(entries: &JitEntries, live_ranges: &JitLiveRanges) -> Self {
         let mut instance = JitMemoryMap {
-            map_arm9: HeapMemU32::new(),
-            map_arm7: HeapMemU32::new(),
-            live_ranges_map_arm9: HeapMemU32::new(),
-            live_ranges_map_arm7: HeapMemU32::new(),
+            map: HeapMemU32::new(),
+            live_ranges_map: HeapMemU32::new(),
         };
 
         macro_rules! get_ptr {
@@ -39,35 +31,24 @@ impl JitMemoryMap {
             }};
         }
 
-        instance.map_arm9[(0xFFF0000) >> BLOCK_SHIFT >> 1] = ptr::addr_of!(BIOS_UNINTERRUPT_ENTRY_ARM9) as u32;
+        instance.map[(0xFFF0000) >> BLOCK_SHIFT >> 1] = ptr::addr_of!(BIOS_UNINTERRUPT_ENTRY_ARM9) as u32;
+        instance.map[(0xFF00000) >> BLOCK_SHIFT >> 1] = ptr::addr_of!(BIOS_UNINTERRUPT_ENTRY_ARM7) as u32;
 
-        for i in 0..SIZE_ARM9 {
+        for i in 0..SIZE {
             let addr = (i << BLOCK_SHIFT) << 1;
-            let arm9_ptr = &mut instance.map_arm9[i];
+            let map_ptr = &mut instance.map[i];
 
             match (addr as u32) & 0x0F000000 {
-                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => *arm9_ptr = get_ptr!(addr, entries.itcm),
-                regions::MAIN_OFFSET => *arm9_ptr = get_ptr!(addr, entries.main),
-                _ => {}
-            }
-        }
-
-        instance.map_arm7[0] = ptr::addr_of!(BIOS_UNINTERRUPT_ENTRY_ARM7) as u32;
-
-        for i in 0..SIZE_ARM7 {
-            let addr = (i << BLOCK_SHIFT) << 1;
-            let arm7_ptr = &mut instance.map_arm7[i];
-
-            match (addr as u32) & 0x0F000000 {
-                regions::MAIN_OFFSET => *arm7_ptr = get_ptr!(addr, entries.main),
+                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => *map_ptr = get_ptr!(addr, entries.itcm),
+                regions::MAIN_OFFSET => *map_ptr = get_ptr!(addr, entries.main),
                 regions::SHARED_WRAM_OFFSET => {
                     if (addr as u32) & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
-                        *arm7_ptr = get_ptr!(addr, entries.wram_arm7)
+                        *map_ptr = get_ptr!(addr, entries.wram_arm7)
                     } else {
-                        *arm7_ptr = get_ptr!(addr, entries.shared_wram_arm7)
+                        *map_ptr = get_ptr!(addr, entries.shared_wram_arm7)
                     }
                 }
-                regions::VRAM_OFFSET => *arm7_ptr = get_ptr!(addr, entries.vram_arm7),
+                regions::VRAM_OFFSET => *map_ptr = get_ptr!(addr, entries.vram_arm7),
                 _ => {}
             }
         }
@@ -78,31 +59,21 @@ impl JitMemoryMap {
             }};
         }
 
-        for i in 0..LIVE_RANGES_SIZE_ARM9 {
+        for i in 0..LIVE_RANGES_SIZE {
             let addr = i << (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3);
-            let arm9_ptr = &mut instance.live_ranges_map_arm9[i];
+            let map_ptr = &mut instance.live_ranges_map[i];
 
             match (addr as u32) & 0xFF000000 {
-                0 | regions::ITCM_OFFSET2 => *arm9_ptr = get_ptr!(i, live_ranges.itcm),
-                regions::MAIN_OFFSET => *arm9_ptr = get_ptr!(i, live_ranges.main),
-                _ => {}
-            }
-        }
-
-        for i in 0..LIVE_RANGES_SIZE_ARM7 {
-            let addr = i << (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3);
-            let arm7_ptr = &mut instance.live_ranges_map_arm7[i];
-
-            match (addr as u32) & 0xFF000000 {
-                regions::MAIN_OFFSET => *arm7_ptr = get_ptr!(i, live_ranges.main),
+                0 | regions::ITCM_OFFSET2 => *map_ptr = get_ptr!(i, live_ranges.itcm),
+                regions::MAIN_OFFSET => *map_ptr = get_ptr!(i, live_ranges.main),
                 regions::SHARED_WRAM_OFFSET => {
                     if (addr as u32) & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
-                        *arm7_ptr = get_ptr!(i, live_ranges.wram_arm7)
+                        *map_ptr = get_ptr!(i, live_ranges.wram_arm7)
                     } else {
-                        *arm7_ptr = get_ptr!(i, live_ranges.shared_wram_arm7)
+                        *map_ptr = get_ptr!(i, live_ranges.shared_wram_arm7)
                     }
                 }
-                regions::VRAM_OFFSET => *arm7_ptr = get_ptr!(i, live_ranges.vram_arm7),
+                regions::VRAM_OFFSET => *map_ptr = get_ptr!(i, live_ranges.vram_arm7),
                 _ => {}
             }
         }
@@ -110,35 +81,16 @@ impl JitMemoryMap {
         instance
     }
 
-    pub fn get_jit_entry<const CPU: CpuType>(&self, addr: u32) -> *mut JitEntry {
+    pub fn get_jit_entry(&self, addr: u32) -> *mut JitEntry {
         let addr = (addr & 0x0FFFFFFF) >> 1;
-        macro_rules! get_jit_entry {
-            ($map:expr) => {{
-                unsafe { ((*$map.get_unchecked((addr >> BLOCK_SHIFT) as usize)) as *mut JitEntry).add((addr as usize) & (BLOCK_SIZE - 1)) }
-            }};
-        }
-        match CPU {
-            ARM9 => get_jit_entry!(self.map_arm9),
-            ARM7 => get_jit_entry!(self.map_arm7),
-        }
+        unsafe { ((*self.map.get_unchecked((addr >> BLOCK_SHIFT) as usize)) as *mut JitEntry).add((addr as usize) & (BLOCK_SIZE - 1)) }
     }
 
-    pub fn get_live_range<const CPU: CpuType>(&self, addr: u32) -> *mut u8 {
-        macro_rules! get_live_range {
-            ($map:expr) => {{
-                unsafe { (*$map.get_unchecked((addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize)) as _ }
-            }};
-        }
-        match CPU {
-            ARM9 => get_live_range!(self.live_ranges_map_arm9),
-            ARM7 => get_live_range!(self.live_ranges_map_arm7),
-        }
+    pub fn get_live_range(&self, addr: u32) -> *mut u8 {
+        unsafe { (*self.live_ranges_map.get_unchecked((addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize)) as _ }
     }
 
-    pub fn get_map_ptr<const CPU: CpuType>(&self) -> *const JitEntry {
-        match CPU {
-            ARM9 => self.map_arm9.as_ptr() as _,
-            ARM7 => self.map_arm7.as_ptr() as _,
-        }
+    pub fn get_map_ptr(&self) -> *const JitEntry {
+        self.map.as_ptr() as _
     }
 }
