@@ -424,8 +424,8 @@ pub struct Polygons {
 #[derive(Default)]
 pub struct Gpu3DRegisters {
     cmd_fifo: FixedFifo<Entry, 512>,
-    test_queue: u32,
-    mtx_queue: u32,
+    test_queue: u16,
+    mtx_queue: u16,
 
     cmd_fifo_param_count: u8,
 
@@ -500,8 +500,9 @@ impl Gpu3DRegisters {
         self.last_total_cycles = total_cycles;
         let mut executed_cycles = 0;
 
-        while !self.cmd_fifo.is_empty() && executed_cycles < cycle_diff && !self.flushed {
-            let mut params: [u32; 32] = unsafe { MaybeUninit::uninit().assume_init() };
+        let mut params: [u32; 32] = unsafe { MaybeUninit::uninit().assume_init() };
+
+        while !self.cmd_fifo.is_empty() && executed_cycles < cycle_diff {
             let entry = *self.cmd_fifo.front();
             let param_count = entry.param_len;
 
@@ -517,7 +518,7 @@ impl Gpu3DRegisters {
                 self.cmd_fifo.pop_front();
             }
 
-            const LUT: [fn(&mut Gpu3DRegisters, params: &[u32; 32]); 99] = [
+            static LUT: [fn(&mut Gpu3DRegisters, params: &[u32; 32]); 99] = [
                 Gpu3DRegisters::exe_mtx_mode,
                 Gpu3DRegisters::exe_mtx_push,
                 Gpu3DRegisters::exe_mtx_pop,
@@ -621,6 +622,10 @@ impl Gpu3DRegisters {
 
             let func = unsafe { LUT.get_unchecked(entry.cmd as usize - 0x10) };
             func(self, &params);
+
+            if unlikely(self.flushed) {
+                break;
+            }
             executed_cycles += 4;
         }
 

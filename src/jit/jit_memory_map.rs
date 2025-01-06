@@ -2,6 +2,7 @@ use crate::core::memory::regions;
 use crate::core::CpuType;
 use crate::jit::jit_memory::{JitEntries, JitEntry, JitLiveRanges, BIOS_UNINTERRUPT_ENTRY_ARM7, BIOS_UNINTERRUPT_ENTRY_ARM9, JIT_LIVE_RANGE_PAGE_SIZE_SHIFT};
 use crate::utils::HeapMemU32;
+use std::ptr;
 use CpuType::{ARM7, ARM9};
 
 // ARM9 Bios starts at 0xFFFF0000, but just treat everything above OAM region as bios
@@ -15,9 +16,6 @@ const SIZE_ARM9: usize = (MEMORY_RANGE_ARM9 >> 1) as usize / BLOCK_SIZE;
 const SIZE_ARM7: usize = (MEMORY_RANGE_ARM7 >> 1) as usize / BLOCK_SIZE;
 const LIVE_RANGES_SIZE_ARM9: usize = (MEMORY_RANGE_ARM9 >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize;
 const LIVE_RANGES_SIZE_ARM7: usize = (MEMORY_RANGE_ARM7 >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize;
-
-const BIOS_UNINTERRUPT_ENTRIES_ARM9: [JitEntry; BLOCK_SIZE] = [BIOS_UNINTERRUPT_ENTRY_ARM9; BLOCK_SIZE];
-const BIOS_UNINTERRUPT_ENTRIES_ARM7: [JitEntry; BLOCK_SIZE] = [BIOS_UNINTERRUPT_ENTRY_ARM7; BLOCK_SIZE];
 
 pub struct JitMemoryMap {
     map_arm9: HeapMemU32<SIZE_ARM9>,
@@ -41,25 +39,27 @@ impl JitMemoryMap {
             }};
         }
 
+        instance.map_arm9[(0xFFF0000) >> BLOCK_SHIFT >> 1] = ptr::addr_of!(BIOS_UNINTERRUPT_ENTRY_ARM9) as u32;
+
         for i in 0..SIZE_ARM9 {
             let addr = (i << BLOCK_SHIFT) << 1;
             let arm9_ptr = &mut instance.map_arm9[i];
 
             match (addr as u32) & 0x0F000000 {
                 regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => *arm9_ptr = get_ptr!(addr, entries.itcm),
-                regions::MAIN_OFFSET => *arm9_ptr = get_ptr!(addr, entries.main_arm9),
-                0x0F000000 => *arm9_ptr = BIOS_UNINTERRUPT_ENTRIES_ARM9.as_ptr() as u32,
+                regions::MAIN_OFFSET => *arm9_ptr = get_ptr!(addr, entries.main),
                 _ => {}
             }
         }
+
+        instance.map_arm7[0] = ptr::addr_of!(BIOS_UNINTERRUPT_ENTRY_ARM7) as u32;
 
         for i in 0..SIZE_ARM7 {
             let addr = (i << BLOCK_SHIFT) << 1;
             let arm7_ptr = &mut instance.map_arm7[i];
 
             match (addr as u32) & 0x0F000000 {
-                0 => *arm7_ptr = BIOS_UNINTERRUPT_ENTRIES_ARM7.as_ptr() as u32,
-                regions::MAIN_OFFSET => *arm7_ptr = get_ptr!(addr, entries.main_arm7),
+                regions::MAIN_OFFSET => *arm7_ptr = get_ptr!(addr, entries.main),
                 regions::SHARED_WRAM_OFFSET => {
                     if (addr as u32) & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
                         *arm7_ptr = get_ptr!(addr, entries.wram_arm7)

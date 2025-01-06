@@ -32,20 +32,21 @@ pub enum JitRegion {
 #[derive(Copy, Clone)]
 pub struct JitEntry(pub *const extern "C" fn(bool));
 
+unsafe impl Sync for JitEntry {}
+
 impl Default for JitEntry {
     fn default() -> Self {
         JitEntry(ptr::null())
     }
 }
 
-pub const DEFAULT_JIT_ENTRY_ARM9: JitEntry = JitEntry(emit_code_block::<{ ARM9 }> as _);
-pub const DEFAULT_JIT_ENTRY_ARM7: JitEntry = JitEntry(emit_code_block::<{ ARM7 }> as _);
+pub const DEFAULT_JIT_ENTRY: JitEntry = JitEntry(emit_code_block as _);
 
-pub const BIOS_UNINTERRUPT_ENTRY_ARM9: JitEntry = JitEntry(hle_bios_uninterrupt::<{ ARM9 }> as _);
-pub const BIOS_UNINTERRUPT_ENTRY_ARM7: JitEntry = JitEntry(hle_bios_uninterrupt::<{ ARM7 }> as _);
+pub static BIOS_UNINTERRUPT_ENTRY_ARM9: JitEntry = JitEntry(hle_bios_uninterrupt::<{ ARM9 }> as _);
+pub static BIOS_UNINTERRUPT_ENTRY_ARM7: JitEntry = JitEntry(hle_bios_uninterrupt::<{ ARM7 }> as _);
 
 macro_rules! create_jit_blocks {
-    ($([$block_name:ident, $size:expr, $default_block:expr]),+) => {
+    ($([$block_name:ident, $size:expr]),+) => {
         paste! {
             pub struct JitEntries {
                 $(
@@ -66,7 +67,7 @@ macro_rules! create_jit_blocks {
 
                 fn reset(&mut self) {
                     $(
-                        self.$block_name.fill($default_block);
+                        self.$block_name.fill(DEFAULT_JIT_ENTRY);
                     )*
                 }
             }
@@ -75,12 +76,11 @@ macro_rules! create_jit_blocks {
 }
 
 create_jit_blocks!(
-    [itcm, regions::ITCM_SIZE, DEFAULT_JIT_ENTRY_ARM9],
-    [main_arm9, regions::MAIN_SIZE, DEFAULT_JIT_ENTRY_ARM9],
-    [main_arm7, regions::MAIN_SIZE, DEFAULT_JIT_ENTRY_ARM7],
-    [shared_wram_arm7, regions::SHARED_WRAM_SIZE, DEFAULT_JIT_ENTRY_ARM7],
-    [wram_arm7, regions::ARM7_WRAM_SIZE, DEFAULT_JIT_ENTRY_ARM7],
-    [vram_arm7, vram::ARM7_SIZE, DEFAULT_JIT_ENTRY_ARM7]
+    [itcm, regions::ITCM_SIZE],
+    [main, regions::MAIN_SIZE],
+    [shared_wram_arm7, regions::SHARED_WRAM_SIZE],
+    [wram_arm7, regions::ARM7_WRAM_SIZE],
+    [vram_arm7, vram::ARM7_SIZE]
 );
 
 #[derive(Default)]
@@ -285,11 +285,11 @@ impl JitMemory {
         match CPU {
             ARM9 => match guest_pc & 0xFF000000 {
                 regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm, regions::ITCM_REGION, [ARM9]),
-                regions::MAIN_OFFSET => insert!(self.jit_entries.main_arm9, self.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
+                regions::MAIN_OFFSET => insert!(self.jit_entries.main, self.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
                 _ => todo!("{:x}", guest_pc),
             },
             ARM7 => match guest_pc & 0xFF000000 {
-                regions::MAIN_OFFSET => insert!(self.jit_entries.main_arm7, self.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
+                regions::MAIN_OFFSET => insert!(self.jit_entries.main, self.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
                 regions::SHARED_WRAM_OFFSET => {
                     if guest_pc & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
                         insert!(self.jit_entries.wram_arm7, self.jit_live_ranges.wram_arm7, regions::ARM7_WRAM_REGION, [ARM7])
@@ -320,12 +320,7 @@ impl JitMemory {
                     debug_println!("Invalidating jit {guest_addr_start:x} - {:x}", guest_addr_start + JIT_LIVE_RANGE_PAGE_SIZE);
                     $(
                         let jit_entry_start = self.jit_memory_map.get_jit_entry::<{ $cpu_entry }>(guest_addr_start);
-                        unsafe { slice::from_raw_parts_mut(jit_entry_start, JIT_LIVE_RANGE_PAGE_SIZE as usize).fill(
-                            match $cpu_entry {
-                                ARM9 => DEFAULT_JIT_ENTRY_ARM9,
-                                ARM7 => DEFAULT_JIT_ENTRY_ARM7,
-                            }
-                        ) }
+                        unsafe { slice::from_raw_parts_mut(jit_entry_start, JIT_LIVE_RANGE_PAGE_SIZE as usize).fill(DEFAULT_JIT_ENTRY) }
                     )*
                 }
             }};
@@ -349,14 +344,14 @@ impl JitMemory {
 
     pub fn invalidate_wram(&mut self) {
         if !self.arm7_hle {
-            self.jit_entries.shared_wram_arm7.fill(DEFAULT_JIT_ENTRY_ARM7);
+            self.jit_entries.shared_wram_arm7.fill(DEFAULT_JIT_ENTRY);
             self.jit_live_ranges.shared_wram_arm7.fill(0);
         }
     }
 
     pub fn invalidate_vram(&mut self) {
         if !self.arm7_hle {
-            self.jit_entries.vram_arm7.fill(DEFAULT_JIT_ENTRY_ARM7);
+            self.jit_entries.vram_arm7.fill(DEFAULT_JIT_ENTRY);
             self.jit_live_ranges.vram_arm7.fill(0);
         }
     }

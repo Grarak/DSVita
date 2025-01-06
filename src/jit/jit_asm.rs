@@ -2,6 +2,7 @@ use crate::core::emu::{get_cpu_regs, get_jit, get_jit_mut, get_regs, get_regs_mu
 use crate::core::hle::bios;
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
+use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::{BlockAsm, BLOCK_LOG};
 use crate::jit::assembler::{BasicBlocksCache, BlockAsmBuf};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
@@ -13,7 +14,7 @@ use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::debug_println;
-use crate::{get_jit_asm_ptr, DEBUG_LOG, IS_DEBUG};
+use crate::{get_jit_asm_ptr, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
 use std::cell::UnsafeCell;
 use std::intrinsics::unlikely;
 use std::{mem, ptr};
@@ -183,31 +184,44 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) 
     }
 }
 
-pub extern "C" fn emit_code_block<const CPU: CpuType>(store_host_sp: bool) {
-    let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut().unwrap_unchecked() };
-
-    let guest_pc = get_regs!(asm.emu, CPU).pc;
-    let thumb = (guest_pc & 1) == 1;
-    if thumb {
-        emit_code_block_internal::<CPU, true>(asm, store_host_sp, guest_pc & !1)
-    } else {
-        emit_code_block_internal::<CPU, false>(asm, store_host_sp, guest_pc & !3)
+pub extern "C" fn emit_code_block(store_host_sp: bool) {
+    match unsafe { CURRENT_RUNNING_CPU } {
+        ARM9 => {
+            let asm = unsafe { get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked() };
+            let guest_pc = get_regs!(asm.emu, ARM9).pc;
+            let aligned_guest_pc = align_guest_pc(guest_pc);
+            let thumb = (guest_pc & 1) == 1;
+            emit_code_block_internal::<{ ARM9 }>(asm, store_host_sp, aligned_guest_pc, thumb)
+        }
+        ARM7 => {
+            let asm = unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() };
+            let guest_pc = get_regs!(asm.emu, ARM7).pc;
+            let aligned_guest_pc = align_guest_pc(guest_pc);
+            let thumb = (guest_pc & 1) == 1;
+            emit_code_block_internal::<{ ARM7 }>(asm, store_host_sp, aligned_guest_pc, thumb)
+        }
     }
 }
 
-fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut JitAsm<CPU>, store_host_sp: bool, guest_pc: u32) {
+fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, store_host_sp: bool, guest_pc: u32, thumb: bool) {
     let mut uncond_branch_count = 0;
     let mut pc_offset = 0;
-    loop {
-        let inst_info = if THUMB {
-            let opcode = asm.emu.mem_read::<CPU, u16>(guest_pc + pc_offset);
+    let get_inst_info = if thumb {
+        |asm: &mut JitAsm<CPU>, pc| {
+            let opcode = asm.emu.mem_read::<CPU, u16>(pc);
             let (op, func) = lookup_thumb_opcode(opcode);
             InstInfo::from(func(opcode, *op))
-        } else {
-            let opcode = asm.emu.mem_read::<CPU, u32>(guest_pc + pc_offset);
+        }
+    } else {
+        |asm: &mut JitAsm<CPU>, pc| {
+            let opcode = asm.emu.mem_read::<CPU, u32>(pc);
             let (op, func) = lookup_opcode(opcode);
             func(opcode, *op)
-        };
+        }
+    };
+    let pc_step = if thumb { 2 } else { 4 };
+    loop {
+        let inst_info = get_inst_info(asm, guest_pc + pc_offset);
 
         if inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb {
             break;
@@ -231,7 +245,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
         if is_unreturnable_branch || uncond_branch_count == 4 {
             break;
         }
-        pc_offset += if THUMB { 2 } else { 4 };
+        pc_offset += pc_step;
     }
 
     let (jit_entry, flushed) = {
@@ -245,24 +259,23 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
         let mut block_asm = unsafe { BlockAsm::new(false, guest_regs_ptr, host_sp_ptr, mem::transmute(basic_blocks_cache), mem::transmute(block_asm_buf)) };
 
         if DEBUG_LOG {
-            block_asm.call1(debug_enter_block::<CPU> as *const (), guest_pc | (THUMB as u32));
+            block_asm.call1(debug_enter_block::<CPU> as *const (), guest_pc | (thumb as u32));
             block_asm.restore_reg(Reg::CPSR);
         }
 
+        let emit_func = if thumb { JitAsm::emit_thumb } else { JitAsm::emit };
+
+        let pc_shift = if thumb { 1 } else { 2 };
         for i in 0..asm.jit_buf.insts.len() {
             asm.jit_buf.current_index = i;
-            asm.jit_buf.current_pc = guest_pc + (i << if THUMB { 1 } else { 2 }) as u32;
+            asm.jit_buf.current_pc = guest_pc + (i << pc_shift) as u32;
             debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
             // if asm.jit_buf.current_pc == 0x207616c {
             //     block_asm.bkpt(1);
             // }
 
-            if THUMB {
-                asm.emit_thumb(&mut block_asm);
-            } else {
-                asm.emit(&mut block_asm);
-            }
+            emit_func(asm, &mut block_asm);
 
             if DEBUG_LOG {
                 block_asm.save_context();
@@ -273,7 +286,7 @@ fn emit_code_block_internal<const CPU: CpuType, const THUMB: bool>(asm: &mut Jit
 
         block_asm.epilogue();
 
-        let opcodes_len = block_asm.emit_opcodes(guest_pc, THUMB);
+        let opcodes_len = block_asm.emit_opcodes(guest_pc, thumb);
         let next_jit_entry = get_jit!(asm.emu).get_next_entry(opcodes_len);
         let opcodes = block_asm.finalize(next_jit_entry);
         if IS_DEBUG && unsafe { BLOCK_LOG } {

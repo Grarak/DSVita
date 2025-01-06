@@ -6,7 +6,7 @@ use crate::jit::assembler::BlockReg;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm::{align_guest_pc, JitAsm, JitRuntimeData};
 use crate::jit::jit_asm_common_funs::JitAsmCommonFuns;
-use crate::jit::jit_memory::{DEFAULT_JIT_ENTRY_ARM7, DEFAULT_JIT_ENTRY_ARM9};
+use crate::jit::jit_memory::DEFAULT_JIT_ENTRY;
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
@@ -181,7 +181,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let target_jit_addr_entry = get_jit!(self.emu).jit_memory_map.get_jit_entry::<CPU>(target_pc);
         if !target_jit_addr_entry.is_null() {
             let target_jit_addr = unsafe { (*target_jit_addr_entry).0 };
-            if target_jit_addr != DEFAULT_JIT_ENTRY_ARM9.0 && target_jit_addr != DEFAULT_JIT_ENTRY_ARM7.0 {
+            if target_jit_addr != DEFAULT_JIT_ENTRY.0 {
                 let target_jit_addr_reg = block_asm.new_reg();
                 block_asm.mov(target_jit_addr_reg, target_jit_addr as u32);
                 block_asm.pli(target_jit_addr_reg, 0, true);

@@ -107,7 +107,7 @@ impl CycleManager {
     }
 
     pub fn check_events(&mut self, emu: &mut Emu) -> bool {
-        const LUT: [fn(&mut CycleManager, &mut Emu, u16); EventType::TimerArm7 as usize + 1] = [
+        static LUT: [fn(&mut CycleManager, &mut Emu, u16); EventType::TimerArm7 as usize + 1] = [
             CpuRegs::on_interrupt_event::<{ ARM9 }>,
             CpuRegs::on_interrupt_event::<{ ARM7 }>,
             Gpu::on_scanline256_event,
