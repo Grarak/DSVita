@@ -79,7 +79,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
     }
 
     pub fn emit_cmp_h_thumb(&mut self, block_asm: &mut BlockAsm) {
-        let inst_info = &self.jit_buf.current_inst();
+        let inst_info = self.jit_buf.current_inst();
 
         let operands = inst_info.operands();
         let op1 = *operands[0].as_reg_no_shift().unwrap();

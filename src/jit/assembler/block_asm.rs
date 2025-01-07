@@ -55,6 +55,8 @@ pub struct BlockAsm {
     cache: &'static mut BasicBlocksCache,
     buf: &'static mut BlockAsmBuf,
 
+    is_thumb: bool,
+
     any_reg_count: u16,
     freed_any_regs: NoHashSet<u16>,
     label_count: u16,
@@ -66,12 +68,14 @@ pub struct BlockAsm {
 
     is_common_fun: bool,
     host_sp_ptr: *mut usize,
-    block_start: usize,
-    inst_insert_index: Option<usize>,
+
+    last_pc: u32,
+    last_pc_thumb_aligned: bool,
+    last_pc_alu_shift: bool,
 }
 
 impl BlockAsm {
-    pub fn new(is_common_fun: bool, guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize, cache: &'static mut BasicBlocksCache, buf: &'static mut BlockAsmBuf) -> Self {
+    pub fn new(is_common_fun: bool, guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize, cache: &'static mut BasicBlocksCache, buf: &'static mut BlockAsmBuf, is_thumb: bool) -> Self {
         buf.insts.clear();
         buf.guest_branches_mapping.clear();
 
@@ -84,6 +88,8 @@ impl BlockAsm {
         let mut instance = BlockAsm {
             cache,
             buf,
+
+            is_thumb,
 
             // First couple any regs are reserved for guest mapping
             any_reg_count: Reg::SPSR as u16 + 7,
@@ -104,8 +110,10 @@ impl BlockAsm {
 
             is_common_fun,
             host_sp_ptr,
-            block_start: 0,
-            inst_insert_index: None,
+
+            last_pc: 0,
+            last_pc_thumb_aligned: false,
+            last_pc_alu_shift: false,
         };
 
         instance.insert_inst(Generic::Prologue);
@@ -130,26 +138,93 @@ impl BlockAsm {
             instance.restore_reg(Reg::CPSR);
         }
 
-        instance.block_start = instance.buf.insts.len();
         instance
     }
 
     fn insert_inst(&mut self, inst: impl Into<BlockInst>) {
-        match self.inst_insert_index {
-            None => self.buf.insts.push(inst.into()),
-            Some(index) => {
-                self.buf.insts.insert(index, inst.into());
-                self.inst_insert_index = Some(index + 1);
+        let mut inst = inst.into();
+        let (inputs, outputs) = inst.get_io();
+
+        let guest_inputs = inputs.get_guests();
+        let guest_outputs = outputs.get_guests();
+
+        if guest_inputs.is_reserved(Reg::PC) {
+            let mut last_pc = self.last_pc + if self.is_thumb { 4 } else { 8 };
+            if self.last_pc_thumb_aligned {
+                last_pc &= !0x3;
+            } else if self.last_pc_alu_shift {
+                last_pc += 4;
             }
+            self.buf.insts.push(Alu::alu2(AluOp::Mov, [Reg::PC.into(), last_pc.into()], AluSetCond::None, false).into());
         }
-    }
+        self.last_pc_alu_shift = false;
+        self.last_pc_thumb_aligned = false;
 
-    pub fn set_insert_inst_index(&mut self, index: usize) {
-        self.inst_insert_index = Some(index);
-    }
+        if unlikely(guest_inputs.is_reserved(Reg::CPSR)) {
+            self.buf.insts.push(
+                SystemReg {
+                    op: SystemRegOp::Mrs,
+                    operand: self.tmp_regs.host_cpsr_reg.into(),
+                }
+                .into(),
+            );
 
-    pub fn reset_insert_inst_index(&mut self) {
-        self.inst_insert_index = None;
+            self.buf.insts.push(
+                Transfer {
+                    op: TransferOp::Read,
+                    operands: [self.tmp_regs.guest_cpsr_reg.into(), self.tmp_regs.thread_regs_addr_reg.into(), (Reg::CPSR as u32 * 4).into()],
+                    signed: false,
+                    amount: MemoryAmount::Half,
+                    add_to_base: true,
+                }
+                .into(),
+            );
+
+            self.buf.insts.push(
+                Alu::alu3(
+                    AluOp::And,
+                    [self.tmp_regs.host_cpsr_reg.into(), self.tmp_regs.host_cpsr_reg.into(), (0xF8, ShiftType::Ror, 4).into()],
+                    AluSetCond::None,
+                    false,
+                )
+                .into(),
+            );
+
+            self.buf.insts.push(
+                Alu::alu3(
+                    AluOp::Orr,
+                    [self.tmp_regs.host_cpsr_reg.into(), self.tmp_regs.host_cpsr_reg.into(), self.tmp_regs.guest_cpsr_reg.into()],
+                    AluSetCond::None,
+                    false,
+                )
+                .into(),
+            );
+
+            inst.replace_input_regs(Reg::CPSR.into(), self.tmp_regs.host_cpsr_reg);
+        }
+
+        if unlikely(guest_inputs.is_reserved(Reg::SPSR)) {
+            self.buf.insts.push(
+                Transfer {
+                    op: TransferOp::Read,
+                    operands: [Reg::SPSR.into(), self.tmp_regs.thread_regs_addr_reg.into(), (Reg::SPSR as u32 * 4).into()],
+                    signed: false,
+                    amount: MemoryAmount::Word,
+                    add_to_base: true,
+                }
+                .into(),
+            );
+        }
+
+        self.buf.insts.push(inst);
+
+        if guest_inputs.is_reserved(Reg::PC) && !guest_outputs.is_reserved(Reg::PC) {
+            self.buf.insts.push(MarkRegDirty { guest_reg: Reg::PC, dirty: false }.into());
+        }
+
+        if unlikely(guest_inputs.is_reserved(Reg::SPSR) && !guest_outputs.is_reserved(Reg::SPSR)) {
+            self.buf.insts.push(MarkRegDirty { guest_reg: Reg::SPSR, dirty: false }.into());
+        }
     }
 
     pub fn new_reg(&mut self) -> BlockReg {
@@ -246,18 +321,21 @@ impl BlockAsm {
     fn add_op3(&mut self, op: AluOp, op0: BlockReg, op1: BlockReg, mut op2: BlockOperandShift, set_cond: AluSetCond, thumb_pc_aligned: bool) {
         self.check_alu_imm_limit(&mut op2, true);
         self.check_imm_shift_limit(&mut op2);
+        self.last_pc_thumb_aligned = thumb_pc_aligned;
         self.insert_inst(Alu::alu3(op, [op0.into(), op1.into(), op2], set_cond, thumb_pc_aligned))
     }
 
     fn add_op2_op1(&mut self, op: AluOp, op1: BlockReg, mut op2: BlockOperandShift, set_cond: AluSetCond, thumb_pc_aligned: bool) {
         self.check_alu_imm_limit(&mut op2, true);
         self.check_imm_shift_limit(&mut op2);
+        self.last_pc_thumb_aligned = thumb_pc_aligned;
         self.insert_inst(Alu::alu2(op, [op1.into(), op2], set_cond, thumb_pc_aligned))
     }
 
     fn add_op2_op0(&mut self, op: AluOp, op0: BlockReg, mut op2: BlockOperandShift, set_cond: AluSetCond, thumb_pc_aligned: bool) {
         self.check_alu_imm_limit(&mut op2, op != AluOp::Mov);
         self.check_imm_shift_limit(&mut op2);
+        self.last_pc_thumb_aligned = thumb_pc_aligned;
         self.insert_inst(Alu::alu2(op, [op0.into(), op2], set_cond, thumb_pc_aligned))
     }
 
@@ -454,15 +532,30 @@ impl BlockAsm {
 
     pub fn save_context(&mut self) {
         self.insert_inst(SaveContext { guest_regs: RegReserve::new() });
+        for reg in Reg::R1 as u8..Reg::SPSR as u8 {
+            let guest_reg = Reg::from(reg);
+            let mut inst: BlockInst = SaveReg {
+                guest_reg,
+                reg_mapped: BlockReg::from(guest_reg),
+                thread_regs_addr_reg: self.tmp_regs.thread_regs_addr_reg,
+                tmp_host_cpsr_reg: self.tmp_regs.host_cpsr_reg,
+            }
+            .into();
+            inst.skip = true;
+            self.buf.insts.push(inst);
+        }
     }
 
     pub fn save_reg(&mut self, guest_reg: Reg) {
-        self.insert_inst(SaveReg {
-            guest_reg,
-            reg_mapped: BlockReg::from(guest_reg),
-            thread_regs_addr_reg: self.tmp_regs.thread_regs_addr_reg,
-            tmp_host_cpsr_reg: self.tmp_regs.host_cpsr_reg,
-        });
+        self.buf.insts.push(
+            SaveReg {
+                guest_reg,
+                reg_mapped: BlockReg::from(guest_reg),
+                thread_regs_addr_reg: self.tmp_regs.thread_regs_addr_reg,
+                tmp_host_cpsr_reg: self.tmp_regs.host_cpsr_reg,
+            }
+            .into(),
+        );
     }
 
     pub fn restore_reg(&mut self, guest_reg: Reg) {
@@ -475,7 +568,7 @@ impl BlockAsm {
     }
 
     pub fn mark_reg_dirty(&mut self, guest_reg: Reg, dirty: bool) {
-        self.insert_inst(MarkRegDirty { guest_reg, dirty });
+        self.buf.insts.push(MarkRegDirty { guest_reg, dirty }.into());
     }
 
     pub fn epilogue(&mut self) {
@@ -626,6 +719,7 @@ impl BlockAsm {
     }
 
     pub fn guest_pc(&mut self, pc: u32) {
+        self.last_pc = pc;
         self.insert_inst(GuestPc(pc));
     }
 
@@ -650,6 +744,10 @@ impl BlockAsm {
     }
 
     pub fn generic_guest_inst(&mut self, inst_info: &mut InstInfo) {
+        // PC + 12 when ALU shift by register
+        if inst_info.op.is_alu_reg_shift() && *inst_info.operands().last().unwrap().as_reg().unwrap().0 == Reg::PC {
+            self.last_pc_alu_shift = true;
+        }
         self.insert_inst(GenericGuest::new(inst_info));
     }
 
@@ -715,7 +813,7 @@ impl BlockAsm {
         }
     }
 
-    fn assemble_basic_blocks(&mut self, block_start_pc: u32, thumb: bool) -> usize {
+    fn assemble_basic_blocks(&mut self, block_start_pc: u32) -> usize {
         #[derive(Default)]
         struct BasicBlockData {
             start: u16,
@@ -896,7 +994,7 @@ impl BlockAsm {
                     _ => {}
                 }
             }
-            basic_block.init_insts(self.buf, &self.tmp_regs, basic_block_start_pc, thumb);
+            basic_block.init_insts(self.buf, &self.tmp_regs, basic_block_start_pc);
         }
 
         for i in (0..basic_blocks_len).rev() {
@@ -922,8 +1020,8 @@ impl BlockAsm {
         basic_blocks_len
     }
 
-    pub fn emit_opcodes(&mut self, block_start_pc: u32, thumb: bool) -> usize {
-        let basic_blocks_len = self.assemble_basic_blocks(block_start_pc, thumb);
+    pub fn emit_opcodes(&mut self, block_start_pc: u32) -> usize {
+        let basic_blocks_len = self.assemble_basic_blocks(block_start_pc);
 
         if IS_DEBUG && !self.cache.basic_blocks[0].get_required_inputs().get_guests().is_empty() {
             println!("inputs as requirement {:?}", self.cache.basic_blocks[0].get_required_inputs().get_guests());

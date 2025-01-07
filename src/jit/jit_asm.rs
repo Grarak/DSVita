@@ -256,7 +256,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, store_hos
         let host_sp_ptr = ptr::addr_of_mut!(asm.runtime_data.host_sp);
         let basic_blocks_cache = asm.basic_blocks_cache.get_mut();
         let block_asm_buf = asm.block_asm_buf.get_mut();
-        let mut block_asm = unsafe { BlockAsm::new(false, guest_regs_ptr, host_sp_ptr, mem::transmute(basic_blocks_cache), mem::transmute(block_asm_buf)) };
+        let mut block_asm = unsafe { BlockAsm::new(false, guest_regs_ptr, host_sp_ptr, mem::transmute(basic_blocks_cache), mem::transmute(block_asm_buf), thumb) };
 
         if DEBUG_LOG {
             block_asm.call1(debug_enter_block::<CPU> as *const (), guest_pc | (thumb as u32));
@@ -286,7 +286,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, store_hos
 
         block_asm.epilogue();
 
-        let opcodes_len = block_asm.emit_opcodes(guest_pc, thumb);
+        let opcodes_len = block_asm.emit_opcodes(guest_pc);
         let next_jit_entry = get_jit!(asm.emu).get_next_entry(opcodes_len);
         let opcodes = block_asm.finalize(next_jit_entry);
         if IS_DEBUG && unsafe { BLOCK_LOG } {
