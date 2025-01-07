@@ -183,14 +183,12 @@ impl Cartridge {
         let inner = &mut self.inner[cpu];
 
         if inner.aux_write_count == 0 {
-            match value {
-                0x4 | 0x6 => inner.aux_spi_data = 0,
-                _ => {
-                    inner.aux_command = value;
-                    inner.aux_address = 0;
-                    inner.aux_spi_data = 0xFF;
-                }
+            if value == 0 {
+                return;
             }
+            inner.aux_command = value;
+            inner.aux_address = 0;
+            inner.aux_spi_data = 0;
         } else {
             if self.io.save_file_size == 0 {
                 match inner.aux_command {
