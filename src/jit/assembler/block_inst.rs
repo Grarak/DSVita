@@ -2,9 +2,9 @@ use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Bfc
 use crate::jit::assembler::arm::branch_assembler::Bx;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, LdrStrImmSBHD, LdrStrReg, LdrStrRegSBHD, Mrs, Msr};
 use crate::jit::assembler::arm::{transfer_assembler, Bkpt};
-use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
+use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
 use crate::jit::assembler::block_reg_set::{block_reg_set, BlockRegSet};
-use crate::jit::assembler::{BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift};
+use crate::jit::assembler::{BlockAsmPlaceholders, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift};
 use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
@@ -276,7 +276,7 @@ pub trait BlockInstTrait {
     fn get_io(&self) -> (BlockRegSet, BlockRegSet);
     fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg);
     fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg);
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, used_host_regs: RegReserve);
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, opcode_index: usize, placeholders: &mut BlockAsmPlaceholders);
 }
 
 impl Debug for BlockInstType {
@@ -354,8 +354,8 @@ impl BlockInst {
         self.inst_type.replace_output_regs(old, new);
     }
 
-    pub fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, used_host_regs: RegReserve) {
-        self.inst_type.emit_opcode(opcodes, opcode_index, branch_placeholders, used_host_regs)
+    pub fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, opcode_index: usize, placeholders: &mut BlockAsmPlaceholders) {
+        self.inst_type.emit_opcode(alloc, opcodes, opcode_index, placeholders)
     }
 }
 
@@ -479,12 +479,30 @@ impl BlockInstTrait for Alu {
         }
     }
 
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
         let alu_reg = |op: AluOp, op0: BlockReg, op1: BlockReg, op2: BlockReg, shift: BlockShift, set_cond: bool| match shift.value {
-            BlockOperand::Reg(shift_reg) => AluReg::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_reg.as_fixed(), set_cond, Cond::AL),
+            BlockOperand::Reg(shift_reg) => AluReg::generic(
+                op as u8,
+                alloc.for_emit_output(op0),
+                alloc.for_emit_input(op1),
+                alloc.for_emit_input(op2),
+                shift.shift_type,
+                alloc.for_emit_input(shift_reg),
+                set_cond,
+                Cond::AL,
+            ),
             BlockOperand::Imm(shift_imm) => {
                 debug_assert_eq!(shift_imm & !0x1F, 0);
-                AluShiftImm::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2.as_fixed(), shift.shift_type, shift_imm as u8, set_cond, Cond::AL)
+                AluShiftImm::generic(
+                    op as u8,
+                    alloc.for_emit_output(op0),
+                    alloc.for_emit_input(op1),
+                    alloc.for_emit_input(op2),
+                    shift.shift_type,
+                    shift_imm as u8,
+                    set_cond,
+                    Cond::AL,
+                )
             }
         };
         let alu_imm = |op: AluOp, op0: BlockReg, op1: BlockReg, op2: u32, shift: BlockShift, set_cond: bool| {
@@ -492,7 +510,7 @@ impl BlockInstTrait for Alu {
             let shift_value = shift.value.as_imm();
             debug_assert_eq!(shift_value & !0xF, 0);
             debug_assert!(shift_value == 0 || shift.shift_type == ShiftType::Ror);
-            AluImm::generic(op as u8, op0.as_fixed(), op1.as_fixed(), op2 as u8, shift_value as u8, set_cond, Cond::AL)
+            AluImm::generic(op as u8, alloc.for_emit_output(op0), alloc.for_emit_input(op1), op2 as u8, shift_value as u8, set_cond, Cond::AL)
         };
 
         let Self { op, operands, set_cond, .. } = self;
@@ -518,7 +536,7 @@ impl BlockInstTrait for Alu {
                 }
                 BlockOperand::Imm(imm) => {
                     if *op == AluOp::Mov && operands[1].shift == BlockShift::default() && *set_cond == AluSetCond::None {
-                        opcodes.extend(AluImm::mov32(operands[0].as_reg().as_fixed(), imm))
+                        opcodes.extend(AluImm::mov32(alloc.for_emit_output(operands[0].as_reg()), imm))
                     } else {
                         opcodes.push(alu_imm(*op, operands[0].as_reg(), BlockReg::Fixed(Reg::R0), imm, operands[1].shift, *set_cond != AluSetCond::None))
                     }
@@ -526,9 +544,9 @@ impl BlockInstTrait for Alu {
             },
             AluType::Mul => match operands[2].operand {
                 BlockOperand::Reg(reg) => opcodes.push(MulReg::mul(
-                    operands[0].as_reg().as_fixed(),
-                    operands[1].as_reg().as_fixed(),
-                    reg.as_fixed(),
+                    alloc.for_emit_output(operands[0].as_reg()),
+                    alloc.for_emit_input(operands[1].as_reg()),
+                    alloc.for_emit_input(reg),
                     *set_cond != AluSetCond::None,
                     Cond::AL,
                 )),
@@ -590,7 +608,7 @@ impl BlockInstTrait for Transfer {
         }
     }
 
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
         let Self {
             op,
             operands,
@@ -598,6 +616,11 @@ impl BlockInstTrait for Transfer {
             amount,
             add_to_base,
         } = self;
+
+        let op0 = match op {
+            TransferOp::Read => alloc.for_emit_output(operands[0].as_reg()),
+            TransferOp::Write => alloc.for_emit_input(operands[0].as_reg()),
+        };
 
         opcodes.push(match operands[2].operand {
             BlockOperand::Reg(reg) => {
@@ -625,9 +648,9 @@ impl BlockInstTrait for Transfer {
                 let shift = operands[2].as_shift_imm();
                 debug_assert_eq!(shift & !0x1F, 0);
                 func(
-                    operands[0].as_reg().as_fixed(),
-                    operands[1].as_reg().as_fixed(),
-                    reg.as_fixed(),
+                    op0,
+                    alloc.for_emit_input(operands[1].as_reg()),
+                    alloc.for_emit_input(reg),
                     shift as u8,
                     operands[2].shift.shift_type,
                     *signed,
@@ -658,15 +681,7 @@ impl BlockInstTrait for Transfer {
                         todo!()
                     }
                 };
-                func(
-                    operands[0].as_reg().as_fixed(),
-                    operands[1].as_reg().as_fixed(),
-                    imm as u16,
-                    *signed,
-                    *op == TransferOp::Read,
-                    *add_to_base,
-                    Cond::AL,
-                )
+                func(op0, alloc.for_emit_input(operands[1].as_reg()), imm as u16, *signed, *op == TransferOp::Read, *add_to_base, Cond::AL)
             }
         });
     }
@@ -721,9 +736,13 @@ impl BlockInstTrait for TransferMultiple {
         }
     }
 
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
         opcodes.push(LdmStm::generic(
-            self.operand.as_fixed(),
+            if self.write_back {
+                alloc.for_emit_output(self.operand)
+            } else {
+                alloc.for_emit_input(self.operand)
+            },
             self.regs,
             self.op == TransferOp::Read,
             self.write_back,
@@ -775,12 +794,13 @@ impl BlockInstTrait for GuestTransferMultiple {
         }
     }
 
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
+        let addr_reg = alloc.for_emit_input(self.addr_reg);
         if self.write_back && self.addr_reg != self.addr_out_reg {
-            opcodes.push(AluShiftImm::mov_al(self.addr_out_reg.as_fixed(), self.addr_reg.as_fixed()))
+            opcodes.push(AluShiftImm::mov_al(alloc.for_emit_output(self.addr_out_reg), addr_reg))
         }
         opcodes.push(LdmStm::generic(
-            if self.write_back { self.addr_out_reg.as_fixed() } else { self.addr_reg.as_fixed() },
+            if self.write_back { alloc.for_emit_output(self.addr_out_reg) } else { addr_reg },
             self.gp_regs + self.fixed_regs,
             self.op == TransferOp::Read,
             self.write_back,
@@ -831,10 +851,10 @@ impl BlockInstTrait for SystemReg {
         }
     }
 
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
         match self.op {
-            SystemRegOp::Mrs => opcodes.push(Mrs::cpsr(self.operand.as_reg().as_fixed(), Cond::AL)),
-            SystemRegOp::Msr => opcodes.push(Msr::cpsr_flags(self.operand.as_reg().as_fixed(), Cond::AL)),
+            SystemRegOp::Mrs => opcodes.push(Mrs::cpsr(alloc.for_emit_output(self.operand.as_reg()), Cond::AL)),
+            SystemRegOp::Msr => opcodes.push(Msr::cpsr_flags(alloc.for_emit_input(self.operand.as_reg()), Cond::AL)),
         }
     }
 }
@@ -898,11 +918,23 @@ impl BlockInstTrait for BitField {
         replace_reg(&mut self.operands[0], old, new)
     }
 
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
         match self.op {
-            BitFieldOp::Bfc => opcodes.push(Bfc::create(self.operands[0].as_fixed(), self.lsb, self.width, Cond::AL)),
-            BitFieldOp::Bfi => opcodes.push(Bfi::create(self.operands[0].as_fixed(), self.operands[1].as_fixed(), self.lsb, self.width, Cond::AL)),
-            BitFieldOp::Ubfx => opcodes.push(Ubfx::create(self.operands[0].as_fixed(), self.operands[1].as_fixed(), self.lsb, self.width, Cond::AL)),
+            BitFieldOp::Bfc => opcodes.push(Bfc::create(alloc.for_emit_output(self.operands[0]), self.lsb, self.width, Cond::AL)),
+            BitFieldOp::Bfi => opcodes.push(Bfi::create(
+                alloc.for_emit_output(self.operands[0]),
+                alloc.for_emit_input(self.operands[1]),
+                self.lsb,
+                self.width,
+                Cond::AL,
+            )),
+            BitFieldOp::Ubfx => opcodes.push(Ubfx::create(
+                alloc.for_emit_output(self.operands[0]),
+                alloc.for_emit_input(self.operands[1]),
+                self.lsb,
+                self.width,
+                Cond::AL,
+            )),
         }
     }
 }
@@ -954,10 +986,14 @@ impl BlockInstTrait for SaveReg {
         }
     }
 
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
         match self.guest_reg {
-            Reg::CPSR => Self::save_guest_cpsr(opcodes, self.thread_regs_addr_reg.as_fixed(), self.tmp_host_cpsr_reg.as_fixed()),
-            _ => opcodes.push(LdrStrImm::str_offset_al(self.reg_mapped.as_fixed(), self.thread_regs_addr_reg.as_fixed(), self.guest_reg as u16 * 4)),
+            Reg::CPSR => Self::save_guest_cpsr(opcodes, alloc.for_emit_input(self.thread_regs_addr_reg), alloc.for_emit_output(self.tmp_host_cpsr_reg)),
+            _ => opcodes.push(LdrStrImm::str_offset_al(
+                alloc.for_emit_input(self.reg_mapped),
+                alloc.for_emit_input(self.thread_regs_addr_reg),
+                self.guest_reg as u16 * 4,
+            )),
         }
     }
 }
@@ -990,13 +1026,21 @@ impl BlockInstTrait for RestoreReg {
         }
     }
 
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
         match self.guest_reg {
             Reg::CPSR => {
-                opcodes.push(LdrStrImm::ldr_offset_al(self.tmp_guest_cpsr_reg.as_fixed(), self.thread_regs_addr_reg.as_fixed(), Reg::CPSR as u16 * 4));
-                opcodes.push(Msr::cpsr_flags(self.tmp_guest_cpsr_reg.as_fixed(), Cond::AL));
+                opcodes.push(LdrStrImm::ldr_offset_al(
+                    alloc.for_emit_output(self.tmp_guest_cpsr_reg),
+                    alloc.for_emit_input(self.thread_regs_addr_reg),
+                    Reg::CPSR as u16 * 4,
+                ));
+                opcodes.push(Msr::cpsr_flags(alloc.for_emit_output(self.tmp_guest_cpsr_reg), Cond::AL));
             }
-            _ => opcodes.push(LdrStrImm::ldr_offset_al(self.reg_mapped.as_fixed(), self.thread_regs_addr_reg.as_fixed(), self.guest_reg as u16 * 4)),
+            _ => opcodes.push(LdrStrImm::ldr_offset_al(
+                alloc.for_emit_output(self.reg_mapped),
+                alloc.for_emit_input(self.thread_regs_addr_reg),
+                self.guest_reg as u16 * 4,
+            )),
         }
     }
 }
@@ -1036,11 +1080,16 @@ impl BlockInstTrait for GenericGuest {
         self.replace_input_regs(old, new)
     }
 
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
+        let outputs = self.inst_info.out_regs;
         let replace_shift = |shift_value: &mut ShiftValue| {
             if let ShiftValue::Reg(reg) = shift_value {
                 if *reg >= Reg::SP {
-                    *reg = self.regs_mapping[*reg as usize - Reg::SP as usize];
+                    if outputs.is_reserved(*reg) {
+                        *reg = alloc.for_emit_output(BlockReg::from(*reg));
+                    } else {
+                        *reg = alloc.for_emit_input(BlockReg::from(*reg));
+                    }
                 }
             }
         };
@@ -1048,7 +1097,11 @@ impl BlockInstTrait for GenericGuest {
         for operand in self.inst_info.operands_mut() {
             if let Operand::Reg { reg, shift } = operand {
                 if *reg >= Reg::SP {
-                    *reg = self.regs_mapping[*reg as usize - Reg::SP as usize];
+                    if outputs.is_reserved(*reg) {
+                        *reg = alloc.for_emit_output(BlockReg::from(*reg));
+                    } else {
+                        *reg = alloc.for_emit_input(BlockReg::from(*reg));
+                    }
                 }
                 if let Some(shift) = shift {
                     match shift {
@@ -1121,14 +1174,18 @@ impl BlockInstTrait for Call {
 
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
 
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, _: RegReserve) {
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, opcode_index: usize, placeholders: &mut BlockAsmPlaceholders) {
         match self.op {
-            CallOp::Reg(reg) => opcodes.push(if self.has_return { Bx::blx(reg.as_fixed(), Cond::AL) } else { Bx::bx(reg.as_fixed(), Cond::AL) }),
+            CallOp::Reg(reg) => opcodes.push(if self.has_return {
+                Bx::blx(alloc.for_emit_input(reg), Cond::AL)
+            } else {
+                Bx::bx(alloc.for_emit_input(reg), Cond::AL)
+            }),
             CallOp::Offset(offset) => {
                 // Encode common offset
                 // Branch offset can only be figured out later
                 opcodes.push(BranchEncoding::new(u26::new(offset as u32), self.has_return, true, u4::new(Cond::AL as u8)).into());
-                branch_placeholders.push(opcode_index);
+                placeholders.branch.push(opcode_index);
             }
         }
     }
@@ -1161,7 +1218,7 @@ impl BlockInstTrait for Label {
     }
     fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
-    fn emit_opcode(&mut self, _: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {}
+    fn emit_opcode(&mut self, _: &BlockRegAllocator, _: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {}
 }
 
 impl Debug for Label {
@@ -1180,11 +1237,11 @@ impl BlockInstTrait for Branch {
     }
     fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, opcode_index: usize, branch_placeholders: &mut Vec<usize>, _: RegReserve) {
+    fn emit_opcode(&mut self, _: &BlockRegAllocator, opcodes: &mut Vec<u32>, opcode_index: usize, placeholders: &mut BlockAsmPlaceholders) {
         // Encode label
         // Branch offset can only be figured out later
         opcodes.push(BranchEncoding::new(u26::new(self.block_index as u32), false, false, u4::new(Cond::AL as u8)).into());
-        branch_placeholders.push(opcode_index);
+        placeholders.branch.push(opcode_index);
     }
 }
 
@@ -1205,8 +1262,8 @@ impl BlockInstTrait for Preload {
 
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
 
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {
-        opcodes.push(transfer_assembler::Preload::pli(self.operand.as_fixed(), self.offset, self.add))
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
+        opcodes.push(transfer_assembler::Preload::pli(alloc.for_emit_input(self.operand), self.offset, self.add))
     }
 }
 
@@ -1222,7 +1279,7 @@ impl BlockInstTrait for SaveContext {
     }
     fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
-    fn emit_opcode(&mut self, _: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {}
+    fn emit_opcode(&mut self, _: &BlockRegAllocator, _: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {}
 }
 
 impl Debug for SaveContext {
@@ -1237,7 +1294,7 @@ impl BlockInstTrait for GuestPc {
     }
     fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
-    fn emit_opcode(&mut self, _: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {}
+    fn emit_opcode(&mut self, _: &BlockRegAllocator, _: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {}
 }
 
 impl Debug for GuestPc {
@@ -1255,16 +1312,9 @@ impl BlockInstTrait for Epilogue {
     }
     fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, used_host_regs: RegReserve) {
-        opcodes.push(LdmStm::generic(
-            Reg::SP,
-            if self.restore_all_regs { ALLOCATION_REGS + Reg::R12 } else { used_host_regs } + Reg::PC,
-            true,
-            true,
-            true,
-            false,
-            Cond::AL,
-        ))
+    fn emit_opcode(&mut self, _: &BlockRegAllocator, opcodes: &mut Vec<u32>, opcode_index: usize, placeholders: &mut BlockAsmPlaceholders) {
+        opcodes.push(self.restore_all_regs as u32);
+        placeholders.epilogue.push(opcode_index);
     }
 }
 
@@ -1284,7 +1334,7 @@ impl BlockInstTrait for MarkRegDirty {
     }
     fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
-    fn emit_opcode(&mut self, _: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {}
+    fn emit_opcode(&mut self, _: &BlockRegAllocator, _: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {}
 }
 
 impl Debug for MarkRegDirty {
@@ -1303,7 +1353,7 @@ impl BlockInstTrait for PadBlock {
     }
     fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
-    fn emit_opcode(&mut self, _: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, _: RegReserve) {}
+    fn emit_opcode(&mut self, _: &BlockRegAllocator, _: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {}
 }
 
 impl Debug for PadBlock {
@@ -1324,11 +1374,14 @@ impl BlockInstTrait for Generic {
     }
     fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
-    fn emit_opcode(&mut self, opcodes: &mut Vec<u32>, _: usize, _: &mut Vec<usize>, used_host_regs: RegReserve) {
+    fn emit_opcode(&mut self, _: &BlockRegAllocator, opcodes: &mut Vec<u32>, opcode_index: usize, placeholders: &mut BlockAsmPlaceholders) {
         match self {
             Generic::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
             Generic::Nop => opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0)),
-            Generic::Prologue => opcodes.push(LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL)),
+            Generic::Prologue => {
+                opcodes.push(0);
+                placeholders.prologue.push(opcode_index);
+            }
         }
     }
 }

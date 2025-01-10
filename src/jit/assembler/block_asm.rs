@@ -1,5 +1,6 @@
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::arm::branch_assembler::B;
+use crate::jit::assembler::arm::transfer_assembler::LdmStm;
 use crate::jit::assembler::basic_block::BasicBlock;
 use crate::jit::assembler::block_inst::{
     Alu, AluOp, AluSetCond, BitField, BlockInst, BlockInstType, Branch, BranchEncoding, Call, Epilogue, Generic, GenericGuest, GuestPc, GuestTransferMultiple, Label, MarkRegDirty, PadBlock, Preload,
@@ -13,6 +14,7 @@ use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
 use crate::utils::{NoHashMap, NoHashSet};
 use crate::IS_DEBUG;
+use std::hint::assert_unchecked;
 use std::intrinsics::unlikely;
 use std::slice;
 
@@ -1072,16 +1074,34 @@ impl BlockAsm {
             println!("global not guests {non_input_guest_regs:?}");
         }
 
-        self.buf.reg_allocator.pre_allocate_insts.clear();
+        self.buf.opcodes.clear();
+        self.buf.block_opcode_offsets.resize(basic_blocks_len, 0);
+        self.buf.resize_placeholders(basic_blocks_len);
+
+        for i in 0..basic_blocks_len {
+            if let Some((label, correction)) = self.cache.basic_blocks[i].pad_label {
+                let block_to_pad_to = *self.buf.basic_block_label_mapping.get(&label.0).unwrap();
+                self.cache.basic_blocks[block_to_pad_to].emit_opcodes(self.buf, true, block_to_pad_to);
+                self.cache.basic_blocks[i].pad_size = (self.cache.basic_blocks[block_to_pad_to].opcodes.len() as i32 + correction) as usize;
+            }
+        }
+
         for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
+            let opcodes_len = self.buf.opcodes.len();
+            self.buf.block_opcode_offsets[i] = opcodes_len;
+
             if !self.buf.reachable_blocks.contains(i) {
+                self.buf.clear_placeholders_block(i);
                 continue;
             }
 
-            self.buf.reg_allocator.init_inputs(basic_block.get_required_inputs());
-            basic_block.allocate_regs(self.buf);
+            basic_block.emit_opcodes(self.buf, false, i);
         }
 
+        self.buf.opcodes.len()
+    }
+
+    pub fn finalize(&mut self, jit_mem_offset: usize) -> &Vec<u32> {
         // Used to determine what regs to push and pop for prologue and epilogue
         let mut used_host_regs = if unlikely(self.is_common_fun) {
             self.buf.reg_allocator.dirty_regs & ALLOCATION_REGS
@@ -1093,41 +1113,14 @@ impl BlockAsm {
             used_host_regs += Reg::R12;
         }
 
-        self.buf.opcodes.clear();
-        self.buf.block_opcode_offsets.resize(basic_blocks_len, 0);
-        self.buf.branch_placeholders.resize(basic_blocks_len, Vec::new());
-
-        for i in 0..basic_blocks_len {
-            if let Some((label, correction)) = self.cache.basic_blocks[i].pad_label {
-                let block_to_pad_to = *self.buf.basic_block_label_mapping.get(&label.0).unwrap();
-                self.cache.basic_blocks[block_to_pad_to].emit_opcodes(self.buf, true, block_to_pad_to, used_host_regs);
-                self.cache.basic_blocks[i].pad_size = (self.cache.basic_blocks[block_to_pad_to].opcodes.len() as i32 + correction) as usize;
-            }
-        }
-
-        for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
-            let opcodes_len = self.buf.opcodes.len();
-            self.buf.block_opcode_offsets[i] = opcodes_len;
-
-            if !self.buf.reachable_blocks.contains(i) {
-                self.buf.branch_placeholders[i].clear();
-                continue;
-            }
-
-            basic_block.emit_opcodes(self.buf, false, i, used_host_regs);
-            self.buf.opcodes.extend(&basic_block.opcodes);
-        }
-
-        self.buf.opcodes.len()
-    }
-
-    pub fn finalize(&mut self, jit_mem_offset: usize) -> &Vec<u32> {
-        for (block_index, branch_placeholders) in self.buf.branch_placeholders.iter().enumerate() {
-            for branch_placeholder in branch_placeholders {
+        for (block_index, placeholders) in self.buf.placeholders.iter().enumerate() {
+            unsafe { assert_unchecked(block_index < self.buf.block_opcode_offsets.len()) };
+            for &branch_placeholder in &placeholders.branch {
                 if IS_DEBUG && unsafe { BLOCK_LOG } {
                     println!("{block_index}: offset: {}, {branch_placeholder}", self.buf.block_opcode_offsets[block_index]);
                 }
-                let index = self.buf.block_opcode_offsets[block_index] + *branch_placeholder;
+                let index = self.buf.block_opcode_offsets[block_index] + branch_placeholder;
+                unsafe { assert_unchecked(index < self.buf.opcodes.len()) };
                 let encoding = BranchEncoding::from(self.buf.opcodes[index]);
                 if Cond::from(u8::from(encoding.cond())) == Cond::NV {
                     self.buf.opcodes[index] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
@@ -1148,6 +1141,27 @@ impl BlockAsm {
                 } else {
                     self.buf.opcodes[index] = if encoding.has_return() { B::bl } else { B::b }(diff - 2, Cond::from(u8::from(encoding.cond())));
                 }
+            }
+
+            for &prologue_placeholder in &placeholders.prologue {
+                let index = self.buf.block_opcode_offsets[block_index] + prologue_placeholder;
+                unsafe { assert_unchecked(index < self.buf.opcodes.len()) };
+                self.buf.opcodes[index] = LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL);
+            }
+
+            for &epilogue_placeholder in &placeholders.epilogue {
+                let index = self.buf.block_opcode_offsets[block_index] + epilogue_placeholder;
+                unsafe { assert_unchecked(index < self.buf.opcodes.len()) };
+                let restore_all_regs = self.buf.opcodes[index] != 0;
+                self.buf.opcodes[index] = LdmStm::generic(
+                    Reg::SP,
+                    if restore_all_regs { ALLOCATION_REGS + Reg::R12 } else { used_host_regs } + Reg::PC,
+                    true,
+                    true,
+                    true,
+                    false,
+                    Cond::AL,
+                );
             }
         }
 

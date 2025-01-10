@@ -371,6 +371,13 @@ impl BasicBlocksCache {
     }
 }
 
+#[derive(Default)]
+pub struct BlockAsmPlaceholders {
+    pub branch: Vec<usize>,
+    pub prologue: Vec<usize>,
+    pub epilogue: Vec<usize>,
+}
+
 pub struct BlockAsmBuf {
     pub insts: Vec<BlockInst>,
     pub basic_block_label_mapping: NoHashMap<u16, usize>,
@@ -378,8 +385,8 @@ pub struct BlockAsmBuf {
     pub reachable_blocks: BitSet,
     pub reg_allocator: BlockRegAllocator,
     pub block_opcode_offsets: Vec<usize>,
+    pub placeholders: Vec<BlockAsmPlaceholders>,
     pub opcodes: Vec<u32>,
-    pub branch_placeholders: Vec<Vec<usize>>,
 }
 
 impl BlockAsmBuf {
@@ -401,8 +408,19 @@ impl BlockAsmBuf {
             reachable_blocks: BitSet::new(),
             reg_allocator: BlockRegAllocator::new(),
             block_opcode_offsets: Vec::new(),
+            placeholders: Vec::new(),
             opcodes: Vec::new(),
-            branch_placeholders: Vec::new(),
         }
+    }
+
+    pub fn resize_placeholders(&mut self, size: usize) {
+        self.placeholders.resize_with(size, BlockAsmPlaceholders::default);
+    }
+
+    pub fn clear_placeholders_block(&mut self, index: usize) {
+        let placeholder = &mut self.placeholders[index];
+        placeholder.branch.clear();
+        placeholder.prologue.clear();
+        placeholder.epilogue.clear();
     }
 }

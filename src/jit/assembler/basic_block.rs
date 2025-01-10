@@ -31,7 +31,6 @@ pub struct BasicBlock {
 
     pub start_pc: u32,
 
-    pre_opcodes_indices: Vec<usize>,
     pub opcodes: Vec<u32>,
     opcodes_emitted: bool,
 }
@@ -59,7 +58,6 @@ impl BasicBlock {
 
             start_pc: 0,
 
-            pre_opcodes_indices: Vec::new(),
             opcodes: Vec::new(),
             opcodes_emitted: false,
         }
@@ -148,7 +146,6 @@ impl BasicBlock {
         let size = self.block_entry_end - self.block_entry_start + 1;
         self.regs_live_ranges.resize(size + 1, BlockRegSet::new());
         self.regs_live_ranges.last_mut().unwrap().clear();
-        self.pre_opcodes_indices.resize(size + 2, 0);
     }
 
     pub fn init_resolve_io(&mut self, buf: &BlockAsmBuf) {
@@ -195,34 +192,7 @@ impl BasicBlock {
         unsafe { self.regs_live_ranges.get_unchecked(self.regs_live_ranges.len() - 1) }
     }
 
-    pub fn allocate_regs(&mut self, buf: &mut BlockAsmBuf) {
-        for (i, inst_index) in (self.block_entry_start..=self.block_entry_end).enumerate() {
-            let inst = unsafe { buf.insts.get_unchecked_mut(inst_index) };
-            self.pre_opcodes_indices[i] = buf.reg_allocator.pre_allocate_insts.len();
-            if !inst.skip {
-                buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..]);
-            }
-        }
-
-        let size = self.block_entry_end - self.block_entry_start + 1;
-        let last_index = size - 1;
-        let pre_opcodes_start = buf.reg_allocator.pre_allocate_insts.len();
-        self.pre_opcodes_indices[last_index + 1] = pre_opcodes_start;
-
-        if !self.exit_blocks.is_empty() {
-            buf.reg_allocator.ensure_global_mappings(*self.get_required_outputs());
-
-            // Make sure to restore mapping before a branch
-            if let BlockInstType::Branch(_) = &buf.get_inst(self.block_entry_end).inst_type {
-                self.pre_opcodes_indices[last_index] = pre_opcodes_start;
-                self.pre_opcodes_indices[last_index + 1] = buf.reg_allocator.pre_allocate_insts.len();
-            }
-        }
-
-        self.pre_opcodes_indices[last_index + 2] = buf.reg_allocator.pre_allocate_insts.len();
-    }
-
-    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf, emit_local: bool, block_index: usize, used_host_regs: RegReserve) {
+    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf, emit_local: bool, block_index: usize) {
         if self.opcodes_emitted {
             if !emit_local {
                 buf.opcodes.extend(&self.opcodes);
@@ -230,11 +200,13 @@ impl BasicBlock {
             return;
         }
 
+        unsafe { assert_unchecked(block_index < buf.placeholders.len()) }
+        buf.clear_placeholders_block(block_index);
+
+        buf.reg_allocator.init_inputs(self.get_required_inputs());
+
         let (opcodes_start_len, opcodes) = if emit_local { (0, &mut self.opcodes) } else { (buf.opcodes.len(), &mut buf.opcodes) };
         self.opcodes_emitted = true;
-
-        unsafe { assert_unchecked(block_index < buf.branch_placeholders.len()) }
-        buf.branch_placeholders[block_index].clear();
 
         for (i, inst_index) in (self.block_entry_start..=self.block_entry_end).enumerate() {
             let inst = unsafe { buf.insts.get_unchecked_mut(inst_index) };
@@ -242,30 +214,26 @@ impl BasicBlock {
                 continue;
             }
 
-            let pre_opcodes_start = unsafe { *self.pre_opcodes_indices.get_unchecked(i) };
-            let pre_opcodes_end = unsafe { *self.pre_opcodes_indices.get_unchecked(i + 1) };
-            if pre_opcodes_start < pre_opcodes_end {
-                unsafe { assert_unchecked(pre_opcodes_end <= buf.reg_allocator.pre_allocate_insts.len()) };
-                opcodes.extend(&buf.reg_allocator.pre_allocate_insts[pre_opcodes_start..pre_opcodes_end]);
-            }
+            buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..]);
+            opcodes.extend(&buf.reg_allocator.pre_allocate_insts);
 
             let start_len = opcodes.len();
 
             if IS_DEBUG && unsafe { BLOCK_LOG } && !emit_local {
                 match &inst.inst_type {
                     BlockInstType::GuestPc(inner) => {
-                        println!("(0x{:x}, 0x{:x}),", start_len, inner.0);
+                        println!("(0x{start_len:x}, 0x{:x}),", inner.0);
                     }
                     BlockInstType::Label(inner) => {
                         if let Some(pc) = inner.guest_pc {
-                            println!("(0x{:x}, 0x{pc:x}),", start_len);
+                            println!("(0x{start_len:x}, 0x{pc:x}),");
                         }
                     }
                     _ => {}
                 }
             }
 
-            inst.emit_opcode(opcodes, start_len - opcodes_start_len, &mut buf.branch_placeholders[block_index], used_host_regs);
+            inst.emit_opcode(&buf.reg_allocator, opcodes, start_len - opcodes_start_len, &mut buf.placeholders[block_index]);
             if inst.cond != Cond::AL {
                 for opcode in &mut opcodes[start_len..] {
                     *opcode = (*opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);
@@ -273,13 +241,29 @@ impl BasicBlock {
             }
         }
 
-        let pre_opcodes_start = unsafe { *self.pre_opcodes_indices.get_unchecked(self.pre_opcodes_indices.len() - 2) };
-        let pre_opcodes_end = unsafe { *self.pre_opcodes_indices.get_unchecked(self.pre_opcodes_indices.len() - 1) };
-        if pre_opcodes_start < pre_opcodes_end {
-            unsafe { assert_unchecked(pre_opcodes_end <= buf.reg_allocator.pre_allocate_insts.len()) };
-            opcodes.extend(&buf.reg_allocator.pre_allocate_insts[pre_opcodes_start..pre_opcodes_end]);
+        if !self.exit_blocks.is_empty() {
+            buf.reg_allocator.ensure_global_mappings(*self.get_required_outputs());
+
+            // Make sure to restore mapping before a branch
+            if let BlockInstType::Branch(_) = &buf.get_inst(self.block_entry_end).inst_type {
+                let opcodes = if emit_local { &mut self.opcodes } else { &mut buf.opcodes };
+                opcodes.pop().unwrap();
+                opcodes.extend(&buf.reg_allocator.pre_allocate_insts);
+                buf.placeholders[block_index].branch.pop().unwrap();
+
+                let inst = unsafe { buf.insts.get_unchecked_mut(self.block_entry_end) };
+                inst.emit_opcode(&buf.reg_allocator, opcodes, opcodes.len() - opcodes_start_len, &mut buf.placeholders[block_index]);
+                if inst.cond != Cond::AL {
+                    let branch_opcode = opcodes.last_mut().unwrap();
+                    *branch_opcode = (*branch_opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);
+                }
+            } else {
+                let opcodes = if emit_local { &mut self.opcodes } else { &mut buf.opcodes };
+                opcodes.extend(&buf.reg_allocator.pre_allocate_insts);
+            }
         }
 
+        let opcodes = if emit_local { &mut self.opcodes } else { &mut buf.opcodes };
         for _ in opcodes.len() - opcodes_start_len..self.pad_size {
             opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0));
         }

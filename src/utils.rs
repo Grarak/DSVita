@@ -129,6 +129,16 @@ impl<T: Sized + Copy, const SIZE: usize> Clone for HeapMem<T, SIZE> {
     }
 }
 
+impl<T: Debug, const SIZE: usize> Debug for HeapMem<T, SIZE> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut list = f.debug_map();
+        for (i, v) in self.deref().iter().enumerate() {
+            list.entry(&i, v);
+        }
+        list.finish()
+    }
+}
+
 pub const fn crc16(mut crc: u32, buf: &[u8], start: usize, size: usize) -> u16 {
     const TABLE: [u16; 8] = [0xC0C1, 0xC181, 0xC301, 0xC601, 0xCC01, 0xD801, 0xF001, 0xA001];
 

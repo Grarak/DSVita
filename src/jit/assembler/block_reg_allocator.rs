@@ -18,6 +18,7 @@ const SCRATCH_REGS: RegReserve = reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3
 
 pub struct BlockRegAllocator {
     pub global_mapping: HeapMem<Reg, { ANY_REG_LIMIT as usize }>,
+    stored_mapping_inputs: HeapMem<Reg, { ANY_REG_LIMIT as usize }>,
     stored_mapping: HeapMem<Reg, { ANY_REG_LIMIT as usize }>, // mappings to real registers
     stored_mapping_reverse: [Option<u16>; Reg::PC as usize],
     spilled: BlockRegSet,
@@ -30,6 +31,7 @@ impl BlockRegAllocator {
     pub fn new() -> Self {
         BlockRegAllocator {
             global_mapping: HeapMem::new(),
+            stored_mapping_inputs: HeapMem::new(),
             stored_mapping: HeapMem::new(),
             stored_mapping_reverse: [None; Reg::PC as usize],
             spilled: BlockRegSet::new(),
@@ -40,6 +42,7 @@ impl BlockRegAllocator {
     }
 
     pub fn init_inputs(&mut self, input_regs: &BlockRegSet) {
+        self.stored_mapping_inputs.fill(Reg::None);
         self.stored_mapping.fill(Reg::None);
         self.stored_mapping_reverse.fill(None);
         self.spilled.clear();
@@ -59,6 +62,28 @@ impl BlockRegAllocator {
             if self.get_stored_mapping_reverse(reg).is_none() {
                 self.lru_reg.push_front(reg);
             }
+        }
+    }
+
+    pub fn for_emit_input(&self, reg: BlockReg) -> Reg {
+        match reg {
+            BlockReg::Any(any) => {
+                let mapped_reg = self.stored_mapping_inputs[any as usize];
+                debug_assert_ne!(mapped_reg, Reg::None);
+                mapped_reg
+            }
+            BlockReg::Fixed(reg) => reg,
+        }
+    }
+
+    pub fn for_emit_output(&self, reg: BlockReg) -> Reg {
+        match reg {
+            BlockReg::Any(any) => {
+                let mapped_reg = *self.get_stored_mapping(any);
+                debug_assert_ne!(mapped_reg, Reg::None);
+                mapped_reg
+            }
+            BlockReg::Fixed(reg) => reg,
         }
     }
 
@@ -279,7 +304,9 @@ impl BlockRegAllocator {
         }
     }
 
-    pub fn inst_allocate(&mut self, inst: &mut BlockInst, live_ranges: &[BlockRegSet]) {
+    pub fn inst_allocate(&mut self, inst: &BlockInst, live_ranges: &[BlockRegSet]) {
+        self.pre_allocate_insts.clear();
+
         if DEBUG && unsafe { BLOCK_LOG } {
             println!("allocate reg for {inst:?}");
         }
@@ -311,7 +338,7 @@ impl BlockRegAllocator {
 
         for any_input_reg in inputs.iter_any() {
             let reg = self.get_input_reg(any_input_reg, live_ranges, &used_regs);
-            inst.replace_input_regs(BlockReg::Any(any_input_reg), BlockReg::Fixed(reg));
+            self.stored_mapping_inputs[any_input_reg as usize] = reg;
         }
 
         for fixed_reg_output in outputs.get_fixed().get_gp_lr_regs() {
@@ -321,7 +348,6 @@ impl BlockRegAllocator {
 
         for any_output_reg in outputs.iter_any() {
             let reg = self.get_output_reg(any_output_reg, live_ranges, &used_regs);
-            inst.replace_output_regs(BlockReg::Any(any_output_reg), BlockReg::Fixed(reg));
             self.dirty_regs += reg;
         }
 
@@ -345,6 +371,8 @@ impl BlockRegAllocator {
     }
 
     pub fn ensure_global_mappings(&mut self, output_regs: BlockRegSet) {
+        self.pre_allocate_insts.clear();
+
         for output_reg in output_regs.iter_any() {
             match self.get_global_mapping(output_reg) {
                 Reg::None => {
