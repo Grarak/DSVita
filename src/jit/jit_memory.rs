@@ -8,10 +8,11 @@ use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::logging::debug_println;
-use crate::mmap::{flush_icache, Mmap, PAGE_SIZE};
+use crate::mmap::{flush_icache, Mmap, PAGE_SHIFT, PAGE_SIZE};
 use crate::utils;
 use crate::utils::{HeapMem, HeapMemU8};
 use paste::paste;
+use std::collections::VecDeque;
 use std::intrinsics::unlikely;
 use std::marker::ConstParamTy;
 use std::{ptr, slice};
@@ -150,6 +151,8 @@ pub struct JitMemory {
     mem: Mmap,
     mem_common_end: usize,
     mem_start: usize,
+    mem_end: usize,
+    jit_funcs: VecDeque<(usize, u16, u16)>,
     jit_entries: JitEntries,
     jit_live_ranges: JitLiveRanges,
     pub jit_memory_map: JitMemoryMap,
@@ -166,6 +169,8 @@ impl JitMemory {
             mem: Mmap::executable("jit", JIT_MEMORY_SIZE).unwrap(),
             mem_common_end: 0,
             mem_start: 0,
+            mem_end: JIT_MEMORY_SIZE,
+            jit_funcs: VecDeque::new(),
             jit_entries,
             jit_live_ranges,
             jit_memory_map,
@@ -175,23 +180,35 @@ impl JitMemory {
     }
 
     fn reset_blocks(&mut self) {
-        debug_println!("Jit memory reset");
         self.jit_perf_map_record.reset();
 
-        self.mem_start = self.mem_common_end;
+        let (jit_entry, addr_offset_start, addr_offset_end) = self.jit_funcs.pop_front().unwrap();
+        let jit_entry = jit_entry as *mut JitEntry;
+        unsafe { *jit_entry = DEFAULT_JIT_ENTRY };
+        let freed_start = addr_offset_start;
+        let mut freed_end = addr_offset_end;
+        while (freed_end - freed_start) < (JIT_MEMORY_SIZE / 6 / PAGE_SIZE) as u16 {
+            let (jit_entry, _, addr_offset_end) = self.jit_funcs.front().unwrap();
+            if *addr_offset_end < freed_start {
+                break;
+            }
+            let jit_entry = *jit_entry as *mut JitEntry;
+            unsafe { *jit_entry = DEFAULT_JIT_ENTRY };
+            freed_end = *addr_offset_end;
+            self.jit_funcs.pop_front().unwrap();
+        }
 
-        self.jit_entries.reset();
-        self.jit_live_ranges.itcm.fill(0);
-        self.jit_live_ranges.main.fill(0);
-        self.jit_live_ranges.shared_wram_arm7.fill(0);
-        self.jit_live_ranges.wram_arm7.fill(0);
-        self.jit_live_ranges.vram_arm7.fill(0);
+        self.mem_start = (freed_start as usize) << PAGE_SHIFT;
+        self.mem_end = (freed_end as usize) << PAGE_SHIFT;
+
+        debug_println!("Jit memory reset from {:x} - {:x}", self.mem_start, self.mem_end);
     }
 
     fn allocate_block(&mut self, required_size: usize) -> (usize, bool) {
         let mut flushed = false;
-        if self.mem_start + required_size > JIT_MEMORY_SIZE {
+        if self.mem_start + required_size > self.mem_end {
             self.reset_blocks();
+            assert!(self.mem_start + required_size <= self.mem_end);
             flushed = true;
         }
 
@@ -206,7 +223,7 @@ impl JitMemory {
 
     pub fn get_next_entry(&self, opcodes_len: usize) -> usize {
         let aligned_size = utils::align_up(opcodes_len << 2, PAGE_SIZE);
-        if self.mem_start + aligned_size > JIT_MEMORY_SIZE {
+        if self.mem_start + aligned_size > self.mem_end {
             self.mem_common_end
         } else {
             self.mem_start
@@ -258,6 +275,8 @@ impl JitMemory {
                 let entries_index = entries_index % $entries.len();
                 $entries[entries_index] = JitEntry(jit_entry_addr);
                 assert_eq!(ptr::addr_of!($entries[entries_index]), self.jit_memory_map.get_jit_entry(guest_pc), "jit memory mapping {guest_pc:x}");
+
+                self.jit_funcs.push_back((ptr::addr_of!($entries[entries_index]) as usize, (allocated_offset_addr >> PAGE_SHIFT) as u16, ((allocated_offset_addr + aligned_size) >> PAGE_SHIFT) as u16));
 
                 // >> 3 for u8 (each bit represents a page)
                 let live_ranges_index = ((guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) >> 3) as usize;
