@@ -49,7 +49,7 @@ io_read!(
         (io16(0x184), |emu| get_common!(emu).ipc.get_fifo_cnt::<{ ARM9 }>()),
         (io16(0x1A0), |emu| get_common!(emu).cartridge.get_aux_spi_cnt(ARM9)),
         (io8(0x1A2), |emu| get_common!(emu).cartridge.get_aux_spi_data(ARM9)),
-        (io32(0x1A4), |emu| get_common!(emu).cartridge.get_rom_ctrl(ARM9)),
+        (io32(0x1A4), |emu| get_common_mut!(emu).cartridge.get_rom_ctrl(ARM9)),
         (io8(0x208), |emu| get_cpu_regs!(emu, ARM9).ime),
         (io32(0x210), |emu| get_cpu_regs!(emu, ARM9).ie),
         (io32(0x214), |emu| get_cpu_regs!(emu, ARM9).irf),

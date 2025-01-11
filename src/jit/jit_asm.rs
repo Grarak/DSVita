@@ -337,14 +337,16 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
 
     jit_entry(true);
 
-    debug_assert_ne!(
-        asm.runtime_data.get_branch_out_pc(),
-        u32::MAX,
-        "{CPU:?} idle loop {} return stack ptr {} stack depth {}",
-        asm.runtime_data.is_idle_loop(),
-        asm.runtime_data.return_stack_ptr,
-        asm.runtime_data.stack_depth(),
-    );
+    if IS_DEBUG {
+        assert_ne!(
+            asm.runtime_data.get_branch_out_pc(),
+            u32::MAX,
+            "{CPU:?} idle loop {} return stack ptr {} stack depth {}",
+            asm.runtime_data.is_idle_loop(),
+            asm.runtime_data.return_stack_ptr,
+            asm.runtime_data.stack_depth(),
+        );
+    }
 
     if DEBUG_LOG {
         println!(

@@ -121,19 +121,30 @@ impl Cartridge {
         self.inner[cpu].aux_spi_data
     }
 
-    pub fn get_rom_ctrl(&self, cpu: CpuType) -> u32 {
-        self.inner[cpu].rom_ctrl.into()
+    pub fn get_rom_ctrl(&mut self, cpu: CpuType) -> u32 {
+        let ret = self.inner[cpu].rom_ctrl.into();
+        if !self.inner[cpu].rom_ctrl.data_word_status() && self.inner[cpu].rom_ctrl.block_start_status() {
+            // Some games break when data word status is always on
+            // Emulate cartridge read delay by toggling the status bit
+            self.inner[cpu].rom_ctrl.set_data_word_status(true);
+        }
+        ret
     }
 
     pub fn get_rom_data_in(&mut self, cpu: CpuType, emu: &mut Emu) -> u32 {
         let inner = &mut self.inner[cpu];
         if !inner.rom_ctrl.data_word_status() || !inner.rom_ctrl.block_start_status() {
+            if inner.rom_ctrl.block_start_status() {
+                // Some games break when data word status is always on
+                // Emulate cartridge read delay by toggling the status bit
+                inner.rom_ctrl.set_data_word_status(true);
+            }
             return 0;
         }
 
+        inner.rom_ctrl.set_data_word_status(false);
         inner.read_count += 4;
         if inner.read_count == inner.block_size {
-            inner.rom_ctrl.set_data_word_status(false);
             inner.rom_ctrl.set_block_start_status(false);
             if inner.aux_spi_cnt.transfer_ready_irq() {
                 get_cpu_regs_mut!(emu, cpu).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, emu);
