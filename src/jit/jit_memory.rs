@@ -15,6 +15,7 @@ use paste::paste;
 use std::collections::VecDeque;
 use std::intrinsics::unlikely;
 use std::marker::ConstParamTy;
+use std::ops::Deref;
 use std::{ptr, slice};
 use CpuType::{ARM7, ARM9};
 
@@ -81,7 +82,7 @@ create_jit_blocks!(
     [main, regions::MAIN_SIZE],
     [shared_wram_arm7, regions::SHARED_WRAM_SIZE],
     [wram_arm7, regions::ARM7_WRAM_SIZE],
-    [vram_arm7, vram::ARM7_SIZE]
+    [vram, vram::ARM7_SIZE]
 );
 
 #[derive(Default)]
@@ -90,7 +91,7 @@ pub struct JitLiveRanges {
     pub main: HeapMemU8<{ (regions::MAIN_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
     pub shared_wram_arm7: HeapMemU8<{ (regions::SHARED_WRAM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
     pub wram_arm7: HeapMemU8<{ (regions::ARM7_WRAM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
-    pub vram_arm7: HeapMemU8<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
+    pub vram: HeapMemU8<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>, // Use arm7 vram size for arm9 as well
 }
 
 #[cfg(target_os = "linux")]
@@ -305,6 +306,7 @@ impl JitMemory {
             ARM9 => match guest_pc & 0xFF000000 {
                 regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm, regions::ITCM_REGION, [ARM9]),
                 regions::MAIN_OFFSET => insert!(self.jit_entries.main, self.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
+                regions::VRAM_OFFSET => insert!(self.jit_entries.vram, self.jit_live_ranges.vram),
                 _ => todo!("{:x}", guest_pc),
             },
             ARM7 => match guest_pc & 0xFF000000 {
@@ -316,7 +318,7 @@ impl JitMemory {
                         insert!(self.jit_entries.shared_wram_arm7, self.jit_live_ranges.shared_wram_arm7, regions::SHARED_WRAM_ARM7_REGION, [ARM7])
                     }
                 }
-                regions::VRAM_OFFSET => insert!(self.jit_entries.vram_arm7, self.jit_live_ranges.vram_arm7),
+                regions::VRAM_OFFSET => insert!(self.jit_entries.vram, self.jit_live_ranges.vram),
                 _ => todo!("{:x}", guest_pc),
             },
         }
@@ -361,15 +363,23 @@ impl JitMemory {
 
     pub fn invalidate_wram(&mut self) {
         if !self.arm7_hle {
-            self.jit_entries.shared_wram_arm7.fill(DEFAULT_JIT_ENTRY);
-            self.jit_live_ranges.shared_wram_arm7.fill(0);
+            for live_range in self.jit_live_ranges.shared_wram_arm7.deref() {
+                if *live_range != 0 {
+                    self.jit_entries.shared_wram_arm7.fill(DEFAULT_JIT_ENTRY);
+                    self.jit_live_ranges.shared_wram_arm7.fill(0);
+                    return;
+                }
+            }
         }
     }
 
     pub fn invalidate_vram(&mut self) {
-        if !self.arm7_hle {
-            self.jit_entries.vram_arm7.fill(DEFAULT_JIT_ENTRY);
-            self.jit_live_ranges.vram_arm7.fill(0);
+        for live_range in self.jit_live_ranges.vram.deref() {
+            if *live_range != 0 {
+                self.jit_entries.vram.fill(DEFAULT_JIT_ENTRY);
+                self.jit_live_ranges.vram.fill(0);
+                return;
+            }
         }
     }
 

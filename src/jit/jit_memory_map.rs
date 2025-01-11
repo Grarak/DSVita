@@ -48,7 +48,7 @@ impl JitMemoryMap {
                         *map_ptr = get_ptr!(addr, entries.shared_wram_arm7)
                     }
                 }
-                regions::VRAM_OFFSET => *map_ptr = get_ptr!(addr, entries.vram_arm7),
+                regions::VRAM_OFFSET => *map_ptr = get_ptr!(addr, entries.vram),
                 _ => {}
             }
         }
@@ -73,7 +73,7 @@ impl JitMemoryMap {
                         *map_ptr = get_ptr!(i, live_ranges.shared_wram_arm7)
                     }
                 }
-                regions::VRAM_OFFSET => *map_ptr = get_ptr!(i, live_ranges.vram_arm7),
+                regions::VRAM_OFFSET => *map_ptr = get_ptr!(i, live_ranges.vram),
                 _ => {}
             }
         }

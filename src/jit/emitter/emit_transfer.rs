@@ -77,21 +77,21 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             reg
         };
 
+        let value_reg = block_asm.new_reg();
+        block_asm.mov(value_reg, op0);
+
         if write_back {
             block_asm.mov(op1, post_addr_reg);
         }
 
-        self.emit_write(op0, addr_reg, block_asm, op.mem_transfer_single_signed(), amount, thumb, false);
+        self.emit_write(op0, value_reg, addr_reg, block_asm, op.mem_transfer_single_signed(), amount, thumb, false);
 
-        if !thumb && op0 == Reg::PC && write_back && op1 == Reg::PC {
-            todo!()
-        }
-
+        block_asm.free_reg(value_reg);
         block_asm.free_reg(addr_reg);
         block_asm.free_reg(post_addr_reg);
     }
 
-    fn emit_write(&mut self, op0: Reg, addr_reg: BlockReg, block_asm: &mut BlockAsm, signed: bool, amount: MemoryAmount, thumb: bool, is_swp: bool) {
+    fn emit_write(&mut self, op0: Reg, value_reg: BlockReg, addr_reg: BlockReg, block_asm: &mut BlockAsm, signed: bool, amount: MemoryAmount, thumb: bool, is_swp: bool) {
         let slow_write_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
@@ -126,7 +126,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.add(fast_write_addr_reg, fast_mmu_offset_reg, fast_write_addr_reg);
         block_asm.mov(fast_mmu_ptr_reg, shm_ptr as u32);
         block_asm.transfer_write(
-            op0,
+            value_reg,
             fast_mmu_ptr_reg,
             fast_write_addr_reg,
             signed,
@@ -145,18 +145,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.msr_cpsr(cpsr_backup_reg);
         block_asm.save_context();
 
-        let op0_addr = get_regs!(self.emu, CPU).get_reg(op0) as *const _ as u32;
-        let op0_addr_reg = block_asm.new_reg();
-        block_asm.mov(op0_addr_reg, op0_addr);
-
         if !thumb && op0 == Reg::PC {
             // When op0 is PC, it's read as PC+12
             // Don't need to restore it, since breakouts only happen when PC was written to
-            let tmp_pc_reg = block_asm.new_reg();
-            block_asm.mov(tmp_pc_reg, self.jit_buf.current_pc + 12);
-            block_asm.store_u32(tmp_pc_reg, op0_addr_reg, 0);
-
-            block_asm.free_reg(tmp_pc_reg);
+            block_asm.add(value_reg, value_reg, 4);
         }
 
         let func_addr = if is_swp {
@@ -167,9 +159,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.call4(
             func_addr,
             addr_reg,
-            op0_addr_reg,
+            value_reg,
             self.jit_buf.current_pc | (thumb as u32),
-            self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32,
+            (self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32) | ((op0 as u32) << 16),
         );
         block_asm.restore_reg(Reg::CPSR);
 
@@ -181,7 +173,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.free_reg(fast_mmu_ptr_reg);
         block_asm.free_reg(fast_write_addr_reg);
         block_asm.free_reg(cpsr_backup_reg);
-        block_asm.free_reg(op0_addr_reg);
     }
 
     fn emit_single_transfer_read(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount, thumb: bool) {
@@ -769,7 +760,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         self.emit_read(op0, addr_reg, block_asm, false, amount, false, true);
         block_asm.mov(read_reg, op0);
         block_asm.mov(op1, value_reg);
-        self.emit_write(op1, addr_reg, block_asm, false, amount, false, true);
+        self.emit_write(op1, value_reg, addr_reg, block_asm, false, amount, false, true);
         block_asm.mov(op0, read_reg);
 
         block_asm.free_reg(addr_reg);
