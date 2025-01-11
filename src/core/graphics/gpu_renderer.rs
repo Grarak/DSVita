@@ -3,6 +3,7 @@ use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::renderer_2d::Gpu2DRenderer;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
+use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
@@ -66,7 +67,7 @@ impl GpuRenderer {
         self.renderer_2d.on_scanline(inner_a, inner_b, line);
     }
 
-    pub fn on_scanline_finish(&mut self, mem: &mut Memory, pow_cnt1: PowCnt1) {
+    pub fn on_scanline_finish(&mut self, mem: &mut Memory, pow_cnt1: PowCnt1, registers_3d: &mut Gpu3DRegisters) {
         let mut rendering = self.rendering.lock().unwrap();
 
         if !*rendering {
@@ -75,6 +76,7 @@ impl GpuRenderer {
 
             self.common.mem_buf.read_2d(mem, self.renderer_2d.has_vram_display[0]);
             if self.renderer_3d.dirty {
+                self.renderer_3d.finish_scanline(registers_3d);
                 self.renderer_3d.dirty = false;
                 self.rendering_3d = true;
                 self.common.mem_buf.read_3d(mem);

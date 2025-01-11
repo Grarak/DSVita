@@ -244,15 +244,13 @@ impl Gpu3DRenderer {
     }
 
     pub fn finish_scanline(&mut self, registers: &mut Gpu3DRegisters) {
-        if self.dirty {
-            self.inners[0] = self.inners[1].clone();
+        self.inners[0] = self.inners[1].clone();
 
-            self.vertex_count = registers.vertices.count_out;
-            mem::swap(&mut self.vertices, &mut registers.vertices.outs);
+        self.vertex_count = registers.vertices.count_out;
+        mem::swap(&mut self.vertices, &mut registers.vertices.outs);
 
-            self.polygon_count = registers.polygons.count_out;
-            mem::swap(&mut self.polygons, &mut registers.polygons.outs);
-        }
+        self.polygon_count = registers.polygons.count_out;
+        mem::swap(&mut self.polygons, &mut registers.polygons.outs);
     }
 
     pub unsafe fn render(&mut self, common: &GpuRendererCommon) {
