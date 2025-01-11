@@ -626,7 +626,7 @@ impl Gpu3DRegisters {
             if unlikely(self.flushed) {
                 break;
             }
-            executed_cycles += 4;
+            executed_cycles += 8;
         }
 
         self.gx_stat.set_num_entries_cmd_fifo(u9::new(self.get_cmd_fifo_len() as u16));
