@@ -181,7 +181,6 @@ impl DerefMut for GuestInstInfo {
 
 pub struct GenericGuest {
     pub inst_info: GuestInstInfo,
-    regs_mapping: [Reg; 3],
 }
 
 #[bitsize(32)]
@@ -1055,7 +1054,6 @@ impl GenericGuest {
     pub fn new(inst_info: &mut InstInfo) -> Self {
         GenericGuest {
             inst_info: GuestInstInfo::new(inst_info),
-            regs_mapping: [Reg::None; 3],
         }
     }
 }
@@ -1069,16 +1067,9 @@ impl BlockInstTrait for GenericGuest {
         (inputs, outputs)
     }
 
-    fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
-        let old = Reg::from(old.as_any() as u8);
-        if old >= Reg::SP {
-            self.regs_mapping[old as usize - Reg::SP as usize] = new.as_fixed();
-        }
-    }
+    fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
 
-    fn replace_output_regs(&mut self, old: BlockReg, new: BlockReg) {
-        self.replace_input_regs(old, new)
-    }
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
 
     fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
         let outputs = self.inst_info.out_regs;
