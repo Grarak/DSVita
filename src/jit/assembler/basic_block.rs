@@ -214,8 +214,7 @@ impl BasicBlock {
                 continue;
             }
 
-            buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..]);
-            opcodes.extend(&buf.reg_allocator.pre_allocate_insts);
+            buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..], opcodes);
 
             let start_len = opcodes.len();
 
@@ -242,13 +241,13 @@ impl BasicBlock {
         }
 
         if !self.exit_blocks.is_empty() {
-            buf.reg_allocator.ensure_global_mappings(*self.get_required_outputs());
+            let required_outputs = *self.get_required_outputs();
 
             // Make sure to restore mapping before a branch
             if let BlockInstType::Branch(_) = &buf.get_inst(self.block_entry_end).inst_type {
                 let opcodes = if emit_local { &mut self.opcodes } else { &mut buf.opcodes };
                 opcodes.pop().unwrap();
-                opcodes.extend(&buf.reg_allocator.pre_allocate_insts);
+                buf.reg_allocator.ensure_global_mappings(required_outputs, opcodes);
                 buf.placeholders[block_index].branch.pop().unwrap();
 
                 let inst = unsafe { buf.insts.get_unchecked_mut(self.block_entry_end) };
@@ -259,7 +258,7 @@ impl BasicBlock {
                 }
             } else {
                 let opcodes = if emit_local { &mut self.opcodes } else { &mut buf.opcodes };
-                opcodes.extend(&buf.reg_allocator.pre_allocate_insts);
+                buf.reg_allocator.ensure_global_mappings(required_outputs, opcodes);
             }
         }
 
