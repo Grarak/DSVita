@@ -120,16 +120,6 @@ impl BlockAsm {
 
         instance.insert_inst(Generic::Prologue);
 
-        // First argument is store_host_sp: bool
-        if !is_common_fun {
-            instance.cmp(BlockReg::Fixed(Reg::R0), 0);
-            instance.start_cond_block(Cond::NE);
-            let host_sp_addr_reg = thread_regs_addr_reg;
-            instance.mov(host_sp_addr_reg, host_sp_ptr as u32);
-            instance.store_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
-            instance.end_cond_block();
-        }
-
         instance.sub(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4); // Reserve for spilled registers
 
         if !is_common_fun {

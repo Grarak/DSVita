@@ -15,6 +15,7 @@ use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
+use std::arch::naked_asm;
 use std::cell::UnsafeCell;
 use std::intrinsics::unlikely;
 use std::{mem, ptr};
@@ -167,7 +168,7 @@ pub fn align_guest_pc(guest_pc: u32) -> u32 {
     guest_pc & guest_pc_mask
 }
 
-pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) {
+pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
     if IS_DEBUG {
         asm.runtime_data.set_branch_out_pc(get_regs!(asm.emu, CPU).pc);
@@ -176,34 +177,32 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>(store_host_sp: bool) 
     asm.runtime_data.accumulated_cycles += 3;
     bios::uninterrupt::<CPU>(asm.emu);
     if unlikely(get_cpu_regs!(asm.emu, CPU).is_halted()) {
-        if !store_host_sp {
-            unsafe { exit_guest_context!(asm) };
-        }
+        unsafe { exit_guest_context!(asm) };
     } else {
-        unsafe { call_jit_fun(asm, get_regs_mut!(asm.emu, CPU).pc, store_host_sp) };
+        unsafe { call_jit_fun(asm, get_regs_mut!(asm.emu, CPU).pc) };
     }
 }
 
-pub extern "C" fn emit_code_block(store_host_sp: bool) {
+pub extern "C" fn emit_code_block() {
     match unsafe { CURRENT_RUNNING_CPU } {
         ARM9 => {
             let asm = unsafe { get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked() };
             let guest_pc = get_regs!(asm.emu, ARM9).pc;
             let aligned_guest_pc = align_guest_pc(guest_pc);
             let thumb = (guest_pc & 1) == 1;
-            emit_code_block_internal::<{ ARM9 }>(asm, store_host_sp, aligned_guest_pc, thumb)
+            emit_code_block_internal::<{ ARM9 }>(asm, aligned_guest_pc, thumb)
         }
         ARM7 => {
             let asm = unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() };
             let guest_pc = get_regs!(asm.emu, ARM7).pc;
             let aligned_guest_pc = align_guest_pc(guest_pc);
             let thumb = (guest_pc & 1) == 1;
-            emit_code_block_internal::<{ ARM7 }>(asm, store_host_sp, aligned_guest_pc, thumb)
+            emit_code_block_internal::<{ ARM7 }>(asm, aligned_guest_pc, thumb)
         }
     }
 }
 
-fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, store_host_sp: bool, guest_pc: u32, thumb: bool) {
+fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc: u32, thumb: bool) {
     let mut uncond_branch_count = 0;
     let mut pc_offset = 0;
     let get_inst_info = if thumb {
@@ -296,7 +295,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, store_hos
             todo!()
         }
         let (insert_entry, flushed) = get_jit_mut!(asm.emu).insert_block(opcodes, guest_pc, CPU, asm.emu);
-        let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(insert_entry) };
+        let jit_entry: extern "C" fn() = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {
             // println!("{CPU:?} Mapping {guest_pc:#010x} to {:#010x}", jit_entry as *const fn() as usize);
@@ -305,10 +304,21 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, store_hos
         (jit_entry, flushed)
     };
 
-    jit_entry(store_host_sp);
-    if flushed && !store_host_sp {
+    jit_entry();
+    if flushed {
         unsafe { exit_guest_context!(asm) };
     }
+}
+
+#[naked]
+unsafe extern "C" fn call_jit_entry(entry: *const fn(), host_sp_ptr: *mut usize) {
+    #[rustfmt::skip]
+    naked_asm!(
+        "push {{r4-r12,lr}}",
+        "str sp, [r1]",
+        "blx r0",
+        "pop {{r4-r12,pc}}",
+    );
 }
 
 fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
@@ -321,7 +331,6 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
         get_regs_mut!(asm.emu, CPU).set_thumb(thumb);
 
         let jit_entry = get_jit!(asm.emu).get_jit_start_addr(align_guest_pc(guest_pc));
-        let jit_entry: extern "C" fn(bool) = unsafe { mem::transmute(jit_entry) };
 
         debug_println!("{CPU:?} Enter jit addr {:x}", jit_entry as usize);
 
@@ -335,7 +344,7 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
         jit_entry
     };
 
-    jit_entry(true);
+    unsafe { call_jit_entry(jit_entry as _, ptr::addr_of_mut!(asm.runtime_data.host_sp)) };
 
     if IS_DEBUG {
         assert_ne!(
