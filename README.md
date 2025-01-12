@@ -17,7 +17,8 @@ This runs some games, however following things are missing:
 
 - Grab the latest vpk from [releases](https://github.com/Grarak/DSVita/releases)
 - Install `libshacccg.suprx`, follow this [guide](https://cimmerian.gitbook.io/vita-troubleshooting-guide/shader-compiler/extract-libshacccg.suprx)
-- It's recommend overclock your vita to 500MHz
+- Install `kubridge.suprx` from https://github.com/bythos14/kubridge/releases
+- It's strongly recommend to overclock your vita to 500MHz
 - Create the folder ux0:data/dsvita and put your roms there
 
 ## Credits
@@ -27,7 +28,8 @@ This runs some games, however following things are missing:
 - [DesmumePSPExperimental](https://github.com/Xiro28/DesmumePSPExperimental) for ARM7 HLE implementation.
 - [pokediamond](https://github.com/pret/pokediamond) for ARM7 HLE implementation.
 - [DSHBA](https://github.com/DenSinH/DSHBA) Copied some PPU hardware acceleration implementation (Thanks for xiro28 linking me the repo)
-- [vitaGL](https://github.com/Rinnegatamante/vitaGL) 2D hardware acceleration wouldn't be possible without it
+- [vitaGL](https://github.com/Rinnegatamante/vitaGL) 2D/3D hardware acceleration wouldn't be possible without it
 - [Tonc](https://www.coranac.com/tonc/text/toc.htm) GBA PPU documentation
 - [GBATEK](http://problemkaputt.de/gbatek-index.htm) GBA/NDS documentation
+- [kubridge](https://github.com/bythos14/kubridge) For fastmem implementation
 - @TheIronUniverse for livearea assets
