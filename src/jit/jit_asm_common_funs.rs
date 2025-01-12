@@ -10,12 +10,10 @@ use crate::jit::{inst_branch_handler, jit_memory_map, Cond, ShiftType};
 use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
 
-const MAX_LOOP_CYCLE_COUNT: u32 = 255;
-
 pub const fn get_max_loop_cycle_count<const CPU: CpuType>() -> u32 {
     match CPU {
-        ARM9 => MAX_LOOP_CYCLE_COUNT * 2,
-        ARM7 => MAX_LOOP_CYCLE_COUNT,
+        ARM9 => 512,
+        ARM7 => 256,
     }
 }
 
