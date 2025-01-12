@@ -183,20 +183,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let total_cycles = self.jit_buf.insts_cycle_counts[self.jit_buf.current_index];
         let current_pc = self.jit_buf.current_pc;
-
         let target_jit_addr_entry = get_jit!(self.emu).jit_memory_map.get_jit_entry(target_pc);
-        match (has_lr_return, target_is_thumb) {
-            (false, false) => self.jit_common_funs.emit_call_branch_imm_no_return::<false>(block_asm, total_cycles, target_jit_addr_entry, current_pc),
-            (false, true) => self.jit_common_funs.emit_call_branch_imm_no_return::<true>(block_asm, total_cycles, target_jit_addr_entry, current_pc),
-            (true, false) => self
-                .jit_common_funs
-                .emit_call_branch_imm_with_lr_return::<false>(block_asm, total_cycles, target_jit_addr_entry, Reg::LR.into(), current_pc),
-            (true, true) => self
-                .jit_common_funs
-                .emit_call_branch_imm_with_lr_return::<true>(block_asm, total_cycles, target_jit_addr_entry, Reg::LR.into(), current_pc),
-        }
 
         if has_lr_return {
+            if target_is_thumb {
+                self.jit_common_funs
+                    .emit_call_branch_imm_with_lr_return::<true>(block_asm, total_cycles, target_jit_addr_entry, Reg::LR.into(), current_pc)
+            } else {
+                self.jit_common_funs
+                    .emit_call_branch_imm_with_lr_return::<false>(block_asm, total_cycles, target_jit_addr_entry, Reg::LR.into(), current_pc)
+            }
+
             if self.jit_buf.current_index == self.jit_buf.insts.len() - 1 {
                 let total_cycles_reg = block_asm.new_reg();
                 let runtime_data_addr_reg = block_asm.new_reg();
@@ -219,8 +216,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 }
                 block_asm.restore_reg(Reg::CPSR);
             }
+        } else if target_is_thumb {
+            self.jit_common_funs.emit_call_branch_imm_no_return::<true>(block_asm, total_cycles, target_jit_addr_entry, current_pc)
         } else {
-            block_asm.epilogue_previous_block();
+            self.jit_common_funs.emit_call_branch_imm_no_return::<false>(block_asm, total_cycles, target_jit_addr_entry, current_pc)
         }
     }
 
@@ -261,7 +260,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         } else {
             self.jit_common_funs
                 .emit_call_branch_reg_no_return(block_asm, self.jit_buf.insts_cycle_counts[self.jit_buf.current_index], target_pc_reg, self.jit_buf.current_pc);
-            block_asm.epilogue_previous_block();
         }
     }
 

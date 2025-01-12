@@ -229,6 +229,7 @@ pub struct GuestPc(pub u32);
 
 pub struct Epilogue {
     pub restore_all_regs: bool,
+    pub restore_state: bool,
 }
 
 pub struct MarkRegDirty {
@@ -1298,13 +1299,13 @@ impl BlockInstTrait for Epilogue {
     fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
         (
             block_reg_set!(Some(BlockReg::Fixed(Reg::SP))),
-            block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(Reg::PC))),
+            block_reg_set!(Some(BlockReg::Fixed(Reg::SP)), Some(BlockReg::Fixed(if self.restore_state { Reg::LR } else { Reg::PC }))),
         )
     }
     fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn emit_opcode(&mut self, _: &BlockRegAllocator, opcodes: &mut Vec<u32>, opcode_index: usize, placeholders: &mut BlockAsmPlaceholders) {
-        opcodes.push(self.restore_all_regs as u32);
+        opcodes.push(self.restore_all_regs as u32 | ((self.restore_state as u32) << 1));
         placeholders.epilogue.push(opcode_index);
     }
 }

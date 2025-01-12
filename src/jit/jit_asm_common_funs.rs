@@ -253,10 +253,18 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
             let pc_og_reg = block_asm.new_reg();
             let pc_new_reg = block_asm.new_reg();
             block_asm.load_u32(pc_og_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
-            if asm.emu.settings.arm7_hle() {
-                block_asm.call1(inst_branch_handler::run_scheduler::<CPU, true> as *const (), asm as *mut _ as u32);
+            let func = if asm.emu.settings.arm7_hle() {
+                inst_branch_handler::run_scheduler::<CPU, true> as *const ()
             } else {
-                block_asm.call1(inst_branch_handler::run_scheduler::<CPU, false> as *const (), asm as *mut _ as u32);
+                inst_branch_handler::run_scheduler::<CPU, false> as *const ()
+            };
+            // if asm.jit_buf.current_pc == 0x2000a58 {
+            //     block_asm.bkpt(1);
+            // }
+            if IS_DEBUG {
+                block_asm.call2(func, asm as *mut _ as u32, asm.jit_buf.current_pc);
+            } else {
+                block_asm.call1(func, asm as *mut _ as u32);
             }
             block_asm.load_u32(pc_new_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
             block_asm.cmp(pc_new_reg, pc_og_reg);
@@ -318,10 +326,24 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
     }
 
     pub fn emit_call_branch_reg_no_return(&self, block_asm: &mut BlockAsm, total_cycles: u16, target_pc_reg: BlockReg, current_pc: u32) {
+        block_asm.mov(BlockReg::Fixed(Reg::R0), total_cycles as u32);
+        block_asm.mov(BlockReg::Fixed(Reg::R1), target_pc_reg);
         if IS_DEBUG {
-            block_asm.call4(branch_reg::<CPU, false> as *const (), total_cycles as u32, target_pc_reg, 0, current_pc);
+            block_asm.mov(BlockReg::Fixed(Reg::R2), 0);
+            block_asm.mov(BlockReg::Fixed(Reg::R3), current_pc);
+        }
+        block_asm.epilogue_previous_state();
+        block_asm.mov(BlockReg::Fixed(Reg::R12), branch_reg::<CPU, false> as *const () as u32);
+        if IS_DEBUG {
+            block_asm.call4_no_return(
+                BlockReg::Fixed(Reg::R12),
+                BlockReg::Fixed(Reg::R0),
+                BlockReg::Fixed(Reg::R1),
+                BlockReg::Fixed(Reg::R2),
+                BlockReg::Fixed(Reg::R3),
+            );
         } else {
-            block_asm.call2(branch_reg::<CPU, false> as *const (), total_cycles as u32, target_pc_reg);
+            block_asm.call2_no_return(BlockReg::Fixed(Reg::R12), BlockReg::Fixed(Reg::R0), BlockReg::Fixed(Reg::R1));
         }
     }
 
@@ -334,10 +356,24 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
     }
 
     pub fn emit_call_branch_imm_no_return<const THUMB: bool>(&self, block_asm: &mut BlockAsm, total_cycles: u16, target_entry: *const JitEntry, current_pc: u32) {
+        block_asm.mov(BlockReg::Fixed(Reg::R0), total_cycles as u32);
+        block_asm.mov(BlockReg::Fixed(Reg::R1), target_entry as u32);
         if IS_DEBUG {
-            block_asm.call4(branch_imm::<CPU, THUMB, false> as *const (), total_cycles as u32, target_entry as u32, 0, current_pc);
+            block_asm.mov(BlockReg::Fixed(Reg::R2), 0);
+            block_asm.mov(BlockReg::Fixed(Reg::R3), current_pc);
+        }
+        block_asm.epilogue_previous_state();
+        block_asm.mov(BlockReg::Fixed(Reg::R12), branch_imm::<CPU, THUMB, false> as *const () as u32);
+        if IS_DEBUG {
+            block_asm.call4_no_return(
+                BlockReg::Fixed(Reg::R12),
+                BlockReg::Fixed(Reg::R0),
+                BlockReg::Fixed(Reg::R1),
+                BlockReg::Fixed(Reg::R2),
+                BlockReg::Fixed(Reg::R3),
+            );
         } else {
-            block_asm.call2(branch_imm::<CPU, THUMB, false> as *const (), total_cycles as u32, target_entry as u32);
+            block_asm.call2_no_return(BlockReg::Fixed(Reg::R12), BlockReg::Fixed(Reg::R0), BlockReg::Fixed(Reg::R1));
         }
     }
 

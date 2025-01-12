@@ -388,7 +388,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         const USER_REGS: RegReserve = reg_reserve!(Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::R12, Reg::SP, Reg::LR);
         let use_fast_mem = !rlist.is_empty() && (!write_back || !rlist.is_reserved(op0)) && (!inst_info.op.mem_transfer_user() || !rlist.is_reserved(Reg::PC));
-        // let use_fast_mem = !rlist.is_empty() && (!write_back || !rlist.is_reserved(op0)) && !inst_info.op.mem_transfer_user();
         if use_fast_mem {
             let needs_rlist_split = rlist.len() >= (RegReserve::gp() + Reg::LR).len() - 2 && !inst_info.op.mem_transfer_user();
 

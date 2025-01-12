@@ -10,7 +10,9 @@ use std::cmp::min;
 use std::intrinsics::likely;
 use std::mem;
 
-pub extern "C" fn run_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: *mut JitAsm<CPU>) {
+pub extern "C" fn run_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: *mut JitAsm<CPU>, current_pc: u32) {
+    debug_println!("{CPU:?} run scheduler at {current_pc:x}");
+
     let asm = unsafe { asm.as_mut_unchecked() };
     let cycles = if ARM7_HLE {
         (asm.runtime_data.accumulated_cycles + 1) >> 1
@@ -48,9 +50,9 @@ fn check_scheduler<const CPU: CpuType>(asm: &mut JitAsm<CPU>, current_pc: u32) {
             ARM9 => {
                 let pc_og = get_regs!(asm.emu, ARM9).pc;
                 if asm.emu.settings.arm7_hle() {
-                    run_scheduler::<CPU, true>(asm as _);
+                    run_scheduler::<CPU, true>(asm as _, current_pc);
                 } else {
-                    run_scheduler::<CPU, false>(asm as _);
+                    run_scheduler::<CPU, false>(asm as _, current_pc);
                 }
 
                 // Handle interrupts
@@ -84,7 +86,7 @@ pub unsafe extern "C" fn call_jit_fun<const CPU: CpuType>(asm: &mut JitAsm<CPU>,
 fn pre_branch<const CPU: CpuType, const HAS_LR_RETURN: bool>(asm: &mut JitAsm<CPU>, total_cycles: u16, lr: u32, current_pc: u32) {
     flush_cycles(asm, total_cycles, current_pc);
 
-    if CPU == ARM9 && asm.runtime_data.stack_depth() >= STACK_DEPTH_LIMIT {
+    if CPU == ARM9 && HAS_LR_RETURN && asm.runtime_data.stack_depth() >= STACK_DEPTH_LIMIT {
         if IS_DEBUG {
             asm.runtime_data.set_branch_out_pc(current_pc);
         }
@@ -117,14 +119,14 @@ pub unsafe extern "C" fn branch_reg<const CPU: CpuType, const HAS_LR_RETURN: boo
         JitAsmCommonFuns::<CPU>::debug_branch_reg(current_pc, target_pc);
     }
 
-    if CPU == ARM9 {
+    if CPU == ARM9 && HAS_LR_RETURN {
         asm.runtime_data.increment_stack_depth();
     }
     call_jit_fun(asm, target_pc);
-    if CPU == ARM9 {
-        asm.runtime_data.decrement_stack_depth();
-    }
     if HAS_LR_RETURN {
+        if CPU == ARM9 {
+            asm.runtime_data.decrement_stack_depth();
+        }
         asm.runtime_data.pre_cycle_count_sum = total_cycles;
     }
 }
@@ -134,17 +136,17 @@ pub unsafe extern "C" fn branch_imm<const CPU: CpuType, const THUMB: bool, const
 
     pre_branch::<CPU, HAS_LR_RETURN>(asm, total_cycles, lr, current_pc);
 
-    if CPU == ARM9 {
+    if CPU == ARM9 && HAS_LR_RETURN {
         asm.runtime_data.increment_stack_depth();
     }
     get_regs_mut!(asm.emu, CPU).set_thumb(THUMB);
     let entry = (*target_entry).0;
     let entry: extern "C" fn() = mem::transmute(entry);
     entry();
-    if CPU == ARM9 {
-        asm.runtime_data.decrement_stack_depth();
-    }
     if HAS_LR_RETURN {
+        if CPU == ARM9 {
+            asm.runtime_data.decrement_stack_depth();
+        }
         asm.runtime_data.pre_cycle_count_sum = total_cycles;
     }
 }

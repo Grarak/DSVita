@@ -567,12 +567,26 @@ impl BlockAsm {
         let host_sp_addr_reg = self.tmp_regs.thread_regs_addr_reg;
         self.mov(host_sp_addr_reg, self.host_sp_ptr as u32);
         self.load_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
-        self.insert_inst(Epilogue { restore_all_regs: true });
+        self.insert_inst(Epilogue {
+            restore_all_regs: true,
+            restore_state: false,
+        });
+    }
+
+    pub fn epilogue_previous_state(&mut self) {
+        self.add(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4);
+        self.insert_inst(Epilogue {
+            restore_all_regs: false,
+            restore_state: true,
+        });
     }
 
     pub fn epilogue_previous_block(&mut self) {
         self.add(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4);
-        self.insert_inst(Epilogue { restore_all_regs: false });
+        self.insert_inst(Epilogue {
+            restore_all_regs: false,
+            restore_state: false,
+        });
     }
 
     pub fn call(&mut self, func: impl Into<BlockOperand>) {
@@ -643,9 +657,15 @@ impl BlockAsm {
         has_return: bool,
     ) {
         let args = self.handle_call_args(arg0, arg1, arg2, arg3);
-        self.mov(self.tmp_regs.func_call_reg, func.into());
+        let reg = match func.into() {
+            BlockOperand::Reg(reg) => reg,
+            BlockOperand::Imm(imm) => {
+                self.mov(self.tmp_regs.func_call_reg, imm);
+                self.tmp_regs.func_call_reg
+            }
+        };
         self.insert_inst(Call::reg(
-            self.tmp_regs.func_call_reg,
+            reg,
             [
                 args[0].map(|_| BlockReg::Fixed(Reg::R0)),
                 args[1].map(|_| BlockReg::Fixed(Reg::R1)),
@@ -878,7 +898,12 @@ impl BlockAsm {
                 BlockInstType::Label(inner) => {
                     handle_label(self.buf, basic_blocks, inner.label, inner.unlikely, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data);
                 }
-                BlockInstType::Branch(_) | BlockInstType::Epilogue(_) => handle_branch(self.buf, basic_blocks, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data),
+                BlockInstType::Branch(_) => handle_branch(self.buf, basic_blocks, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data),
+                BlockInstType::Epilogue(inner) => {
+                    if !inner.restore_state {
+                        handle_branch(self.buf, basic_blocks, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data);
+                    }
+                }
                 BlockInstType::Call(inner) => {
                     if !inner.has_return {
                         handle_branch(self.buf, basic_blocks, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data);
@@ -935,8 +960,8 @@ impl BlockAsm {
                         basic_block.exit_blocks.push(i + 1);
                     }
                 }
-                BlockInstType::Epilogue(_) => {
-                    if cond != Cond::AL && i + 1 < basic_blocks_len {
+                BlockInstType::Epilogue(inner) => {
+                    if (cond != Cond::AL || inner.restore_state) && i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.push(i + 1);
                     }
                 }
@@ -1142,10 +1167,11 @@ impl BlockAsm {
             for &epilogue_placeholder in &placeholders.epilogue {
                 let index = self.buf.block_opcode_offsets[block_index] + epilogue_placeholder;
                 unsafe { assert_unchecked(index < self.buf.opcodes.len()) };
-                let restore_all_regs = self.buf.opcodes[index] != 0;
+                let restore_all_regs = self.buf.opcodes[index] & 1 != 0;
+                let restore_state = self.buf.opcodes[index] & 2 != 0;
                 self.buf.opcodes[index] = LdmStm::generic(
                     Reg::SP,
-                    if restore_all_regs { ALLOCATION_REGS + Reg::R12 } else { used_host_regs } + Reg::PC,
+                    if restore_all_regs { ALLOCATION_REGS + Reg::R12 } else { used_host_regs } + if restore_state { Reg::LR } else { Reg::PC },
                     true,
                     true,
                     true,
