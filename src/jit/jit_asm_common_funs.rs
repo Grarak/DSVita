@@ -3,7 +3,7 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockLabel, BlockOperand, BlockReg};
-use crate::jit::inst_branch_handler::{branch_lr, branch_reg_with_lr_return};
+use crate::jit::inst_branch_handler::{branch_imm, branch_lr, branch_reg};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData, RETURN_STACK_SIZE, STACK_DEPTH_LIMIT};
 use crate::jit::reg::Reg;
 use crate::jit::{inst_branch_handler, jit_memory_map, Cond, ShiftType};
@@ -30,6 +30,7 @@ macro_rules! exit_guest_context {
         std::hint::unreachable_unchecked();
     }};
 }
+use crate::jit::jit_memory::JitEntry;
 pub(crate) use exit_guest_context;
 
 pub struct JitAsmCommonFuns<const CPU: CpuType> {}
@@ -310,11 +311,35 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         }
     }
 
-    pub fn emit_call_branch_reg(&self, block_asm: &mut BlockAsm, total_cycles: u16, lr_reg: BlockReg, target_pc_reg: BlockReg, current_pc: u32) {
+    pub fn emit_call_branch_reg_with_lr_return(&self, block_asm: &mut BlockAsm, total_cycles: u16, target_pc_reg: BlockReg, lr_reg: BlockReg, current_pc: u32) {
         if IS_DEBUG {
-            block_asm.call4(branch_reg_with_lr_return::<CPU> as *const (), total_cycles as u32, lr_reg, target_pc_reg, current_pc);
+            block_asm.call4(branch_reg::<CPU, true> as *const (), total_cycles as u32, target_pc_reg, lr_reg, current_pc);
         } else {
-            block_asm.call3(branch_reg_with_lr_return::<CPU> as *const (), total_cycles as u32, lr_reg, target_pc_reg);
+            block_asm.call3(branch_reg::<CPU, true> as *const (), total_cycles as u32, target_pc_reg, lr_reg);
+        }
+    }
+
+    pub fn emit_call_branch_reg_no_return(&self, block_asm: &mut BlockAsm, total_cycles: u16, target_pc_reg: BlockReg, current_pc: u32) {
+        if IS_DEBUG {
+            block_asm.call4(branch_reg::<CPU, false> as *const (), total_cycles as u32, target_pc_reg, 0, current_pc);
+        } else {
+            block_asm.call2(branch_reg::<CPU, false> as *const (), total_cycles as u32, target_pc_reg);
+        }
+    }
+
+    pub fn emit_call_branch_imm_with_lr_return<const THUMB: bool>(&self, block_asm: &mut BlockAsm, total_cycles: u16, target_entry: *const JitEntry, lr_reg: BlockReg, current_pc: u32) {
+        if IS_DEBUG {
+            block_asm.call4(branch_imm::<CPU, THUMB, true> as *const (), total_cycles as u32, target_entry as u32, lr_reg, current_pc);
+        } else {
+            block_asm.call3(branch_imm::<CPU, THUMB, true> as *const (), total_cycles as u32, target_entry as u32, lr_reg);
+        }
+    }
+
+    pub fn emit_call_branch_imm_no_return<const THUMB: bool>(&self, block_asm: &mut BlockAsm, total_cycles: u16, target_entry: *const JitEntry, current_pc: u32) {
+        if IS_DEBUG {
+            block_asm.call4(branch_imm::<CPU, THUMB, false> as *const (), total_cycles as u32, target_entry as u32, 0, current_pc);
+        } else {
+            block_asm.call2(branch_imm::<CPU, THUMB, false> as *const (), total_cycles as u32, target_entry as u32);
         }
     }
 

@@ -277,11 +277,11 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, store_hos
 
             emit_func(asm, &mut block_asm);
 
-            // if DEBUG_LOG {
-            //     block_asm.save_context();
-            //     block_asm.call2(debug_after_exec_op::<CPU> as *const (), asm.jit_buf.current_pc, asm.jit_buf.current_inst().opcode);
-            //     block_asm.restore_reg(Reg::CPSR);
-            // }
+            if DEBUG_LOG {
+                block_asm.save_context();
+                block_asm.call2(debug_after_exec_op::<CPU> as *const (), asm.jit_buf.current_pc, asm.jit_buf.current_inst().opcode);
+                block_asm.restore_reg(Reg::CPSR);
+            }
         }
 
         block_asm.epilogue();
