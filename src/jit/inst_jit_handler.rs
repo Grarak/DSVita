@@ -49,17 +49,28 @@ pub unsafe extern "C" fn inst_slow_mem_patch(pc: u32) {
     debug_assert_ne!(fast_mem_end, 0);
 
     let mut fast_mem_start = 0;
-    let mut found_non_op = false;
+    let mut found_nop_op = 0;
     for pc_offset in (4..256).step_by(4) {
         let ptr = (fast_mem_end - pc_offset) as *const u32;
         let opcode = ptr.read();
-        if found_non_op {
-            if opcode == nop_opcode {
-                fast_mem_start = ptr as usize;
-                break;
+        match found_nop_op {
+            0 => {
+                if opcode == nop_opcode {
+                    found_nop_op = 1;
+                }
             }
-        } else if opcode != nop_opcode {
-            found_non_op = true;
+            1 => {
+                if opcode != nop_opcode {
+                    found_nop_op = 2;
+                }
+            }
+            2 => {
+                if opcode == nop_opcode {
+                    fast_mem_start = ptr as usize;
+                    break;
+                }
+            }
+            _ => {}
         }
     }
     debug_assert_ne!(fast_mem_start, 0);

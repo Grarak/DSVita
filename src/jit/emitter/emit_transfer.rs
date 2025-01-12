@@ -230,6 +230,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let slow_read_patch_label = block_asm.new_label();
         let slow_read_label = block_asm.new_label();
+        let fast_mem_mark_dirty_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
         block_asm.branch(slow_read_label, Cond::NV);
@@ -260,7 +261,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov(op0, (fast_read_value_reg, ShiftType::Ror, fast_read_addr_masked_reg));
         }
 
-        block_asm.branch_fallthrough(continue_label, Cond::AL);
+        block_asm.mark_reg_dirty(op0, false);
+        if amount == MemoryAmount::Double {
+            block_asm.mark_reg_dirty(Reg::from(op0 as u8 + 1), false);
+        }
+        block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
         block_asm.branch(slow_read_patch_label, Cond::AL);
 
         block_asm.label_unlikely(slow_read_patch_label);
@@ -306,6 +311,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.restore_reg(Reg::CPSR);
 
         block_asm.branch(continue_label, Cond::AL);
+
+        block_asm.label(fast_mem_mark_dirty_label);
+        block_asm.mark_reg_dirty(op0, true);
+        if amount == MemoryAmount::Double {
+            block_asm.mark_reg_dirty(Reg::from(op0 as u8 + 1), true);
+        }
+
         block_asm.label(continue_label);
 
         block_asm.free_reg(cpsr_backup_reg);
