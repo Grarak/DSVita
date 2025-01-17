@@ -10,6 +10,7 @@ use crate::core::CpuType::{ARM7, ARM9};
 use crate::linked_list::{LinkedList, LinkedListAllocator, LinkedListEntry};
 use bilge::prelude::*;
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cmp::max;
 use std::intrinsics::unlikely;
 use std::{mem, ptr};
 
@@ -150,8 +151,7 @@ impl CycleManager {
     }
 
     pub fn schedule(&mut self, in_cycles: u32, event_type: EventType, arg: u16) {
-        debug_assert_ne!(in_cycles, 0);
-        let event_cycle = self.cycle_count + in_cycles as u64;
+        let event_cycle = self.cycle_count + max(in_cycles, 1) as u64;
 
         let mut current_node = self.events.root;
         while !current_node.is_null() {
