@@ -410,33 +410,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(regs);
 
+            block_asm.branch(slow_label, Cond::NV);
+            block_asm.pad_block(slow_label, -3);
+
+            let base_reg = block_asm.new_reg();
+            let base_reg_out = block_asm.new_reg();
+            let mmu = get_mmu!(self.emu, CPU);
+            let base_ptr = mmu.get_base_tcm_ptr();
+            block_asm.bic(base_reg, op0, 0xF0000003);
+            block_asm.add(base_reg, base_reg, base_ptr as u32);
+
             if inst_info.op.mem_is_write() {
-                block_asm.mrs_cpsr(cpsr_backup_reg);
-
-                let mmu_ptr = get_mmu!(self.emu, CPU).get_mmu_write_tcm().as_ptr();
-
-                let base_reg = block_asm.new_reg();
-                let base_reg_out = block_asm.new_reg();
-                let mmu_index_reg = block_asm.new_reg();
-                let mmu_ptr_reg = block_asm.new_reg();
-                let mmu_offset_reg = block_asm.new_reg();
-
-                block_asm.bic(base_reg, op0, 0xF0000003);
-                block_asm.mov(mmu_index_reg, (base_reg.into(), ShiftType::Lsr, BlockOperand::from(mmu::MMU_PAGE_SHIFT as u32)));
-                block_asm.mov(mmu_ptr_reg, mmu_ptr as u32);
-                block_asm.transfer_read(mmu_offset_reg, mmu_ptr_reg, (mmu_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)), false, MemoryAmount::Word);
-
-                block_asm.cmp(mmu_offset_reg, 0);
-                block_asm.branch(slow_label, Cond::EQ);
-
-                block_asm.msr_cpsr(cpsr_backup_reg);
-
-                let shm_ptr = get_mem!(self.emu).shm.as_ptr();
-
-                block_asm.bfc(base_reg, mmu::MMU_PAGE_SHIFT as u8, 32 - mmu::MMU_PAGE_SHIFT as u8);
-                block_asm.add(base_reg, mmu_offset_reg, base_reg);
-                block_asm.add(base_reg, base_reg, shm_ptr as u32);
-
                 if needs_rlist_split || inst_info.op.mem_transfer_user() {
                     if decrement {
                         if inst_info.op.mem_transfer_user() {
@@ -521,24 +505,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     block_asm.add(op0, op0, base_reg);
                 }
 
-                block_asm.branch(continue_label, Cond::AL);
-
-                block_asm.free_reg(mmu_offset_reg);
-                block_asm.free_reg(mmu_ptr_reg);
-                block_asm.free_reg(mmu_index_reg);
-                block_asm.free_reg(base_reg_out);
-                block_asm.free_reg(base_reg);
+                block_asm.branch_fallthrough(continue_label, Cond::AL);
+                block_asm.branch(slow_patch_label, Cond::AL);
             } else {
-                block_asm.branch(slow_label, Cond::NV);
-                block_asm.pad_block(slow_label, -3);
-
-                let base_reg = block_asm.new_reg();
-                let base_reg_out = block_asm.new_reg();
-                let mmu = get_mmu!(self.emu, CPU);
-                let base_ptr = mmu.get_base_tcm_ptr();
-                block_asm.bic(base_reg, op0, 0xF0000003);
-                block_asm.add(base_reg, base_reg, base_ptr as u32);
-
                 if needs_rlist_split || inst_info.op.mem_transfer_user() {
                     if decrement {
                         if inst_info.op.mem_transfer_user() {
@@ -636,10 +605,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
                 block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
                 block_asm.branch(slow_patch_label, Cond::AL);
-
-                block_asm.free_reg(base_reg_out);
-                block_asm.free_reg(base_reg);
             }
+
+            block_asm.free_reg(base_reg_out);
+            block_asm.free_reg(base_reg);
         }
 
         if decrement {
@@ -681,22 +650,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         };
 
         if use_fast_mem {
-            if !inst_info.op.mem_is_write() {
-                block_asm.label_unlikely(slow_patch_label);
-                block_asm.mrs_cpsr(cpsr_backup_reg);
-                if IS_DEBUG {
-                    block_asm.call1(inst_slow_mem_patch as *const (), self.jit_buf.current_pc);
-                } else {
-                    block_asm.call(inst_slow_mem_patch as *const ());
-                }
-                block_asm.msr_cpsr(cpsr_backup_reg);
-                block_asm.branch(slow_label, Cond::AL);
+            block_asm.label_unlikely(slow_patch_label);
+            block_asm.mrs_cpsr(cpsr_backup_reg);
+            if IS_DEBUG {
+                block_asm.call1(inst_slow_mem_patch as *const (), self.jit_buf.current_pc);
+            } else {
+                block_asm.call(inst_slow_mem_patch as *const ());
             }
+            block_asm.msr_cpsr(cpsr_backup_reg);
+            block_asm.branch(slow_label, Cond::AL);
 
             block_asm.label_unlikely(slow_label);
-            if inst_info.op.mem_is_write() {
-                block_asm.msr_cpsr(cpsr_backup_reg);
-            }
         }
         block_asm.save_context();
         block_asm.call3(
