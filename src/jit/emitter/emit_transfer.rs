@@ -84,66 +84,21 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov(op1, post_addr_reg);
         }
 
-        self.emit_write(op0, value_reg, addr_reg, block_asm, op.mem_transfer_single_signed(), amount, thumb, false);
+        self.emit_write(op0, value_reg, addr_reg, block_asm, amount, thumb, false);
 
         block_asm.free_reg(value_reg);
         block_asm.free_reg(addr_reg);
         block_asm.free_reg(post_addr_reg);
     }
 
-    fn emit_write(&mut self, op0: Reg, value_reg: BlockReg, addr_reg: BlockReg, block_asm: &mut BlockAsm, signed: bool, amount: MemoryAmount, thumb: bool, is_swp: bool) {
+    fn emit_write(&mut self, op0: Reg, value_reg: BlockReg, addr_reg: BlockReg, block_asm: &mut BlockAsm, amount: MemoryAmount, thumb: bool, is_swp: bool) {
+        let fast_write_value_reg = block_asm.new_reg();
+        let fast_write_next_addr_reg = block_asm.new_reg();
+        let fast_write_addr_masked_reg = block_asm.new_reg();
+
+        let slow_write_patch_label = block_asm.new_label();
         let slow_write_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
-
-        let cpsr_backup_reg = block_asm.new_reg();
-        block_asm.mrs_cpsr(cpsr_backup_reg);
-
-        let mmu_ptr = get_mmu!(self.emu, CPU).get_mmu_write_tcm().as_ptr();
-
-        let fast_write_addr_reg = block_asm.new_reg();
-        let fast_mmu_ptr_reg = block_asm.new_reg();
-        let fast_mmu_index_reg = block_asm.new_reg();
-        let fast_mmu_offset_reg = block_asm.new_reg();
-
-        let size = if amount == MemoryAmount::Double { MemoryAmount::Word.size() } else { amount.size() };
-        block_asm.bic(fast_write_addr_reg, addr_reg, 0xF0000000 | (size as u32 - 1));
-        block_asm.mov(fast_mmu_index_reg, (fast_write_addr_reg.into(), ShiftType::Lsr, BlockOperand::from(mmu::MMU_PAGE_SHIFT as u32)));
-        block_asm.mov(fast_mmu_ptr_reg, mmu_ptr as u32);
-        block_asm.transfer_read(
-            fast_mmu_offset_reg,
-            fast_mmu_ptr_reg,
-            (fast_mmu_index_reg.into(), ShiftType::Lsl, BlockOperand::from(2)),
-            false,
-            MemoryAmount::Word,
-        );
-
-        block_asm.cmp(fast_mmu_offset_reg, 0);
-        block_asm.branch(slow_write_label, Cond::EQ);
-
-        let shm_ptr = get_mem!(self.emu).shm.as_ptr();
-
-        block_asm.bfc(fast_write_addr_reg, mmu::MMU_PAGE_SHIFT as u8, 32 - mmu::MMU_PAGE_SHIFT as u8);
-        block_asm.add(fast_write_addr_reg, fast_mmu_offset_reg, fast_write_addr_reg);
-        block_asm.mov(fast_mmu_ptr_reg, shm_ptr as u32);
-        block_asm.transfer_write(
-            value_reg,
-            fast_mmu_ptr_reg,
-            fast_write_addr_reg,
-            signed,
-            if amount == MemoryAmount::Double { MemoryAmount::Word } else { amount },
-        );
-        if amount == MemoryAmount::Double {
-            block_asm.add(fast_write_addr_reg, fast_write_addr_reg, 4);
-            block_asm.transfer_write(Reg::from(op0 as u8 + 1), fast_mmu_ptr_reg, fast_write_addr_reg, signed, MemoryAmount::Word);
-        }
-
-        block_asm.msr_cpsr(cpsr_backup_reg);
-
-        block_asm.branch(continue_label, Cond::AL);
-
-        block_asm.label_unlikely(slow_write_label);
-        block_asm.msr_cpsr(cpsr_backup_reg);
-        block_asm.save_context();
 
         if !thumb && op0 == Reg::PC {
             // When op0 is PC, it's read as PC+12
@@ -151,10 +106,49 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.add(value_reg, value_reg, 4);
         }
 
-        let func_addr = if is_swp {
-            Self::get_inst_mem_handler_func::<true, true>(signed, amount)
+        block_asm.branch(slow_write_label, Cond::NV);
+        block_asm.pad_block(slow_write_label, -3);
+
+        let mmu = get_mmu!(self.emu, CPU);
+        let base_ptr = mmu.get_base_tcm_ptr();
+        let size = if amount == MemoryAmount::Double { MemoryAmount::Word.size() } else { amount.size() };
+        block_asm.bic(fast_write_addr_masked_reg, addr_reg, 0xF0000000 | (size as u32 - 1));
+        block_asm.transfer_write(
+            value_reg,
+            fast_write_addr_masked_reg,
+            base_ptr as u32,
+            false,
+            if amount == MemoryAmount::Double { MemoryAmount::Word } else { amount },
+        );
+        if amount == MemoryAmount::Double {
+            let op0 = Reg::from(op0 as u8 + 1);
+            block_asm.add(fast_write_next_addr_reg, addr_reg, 4);
+            block_asm.bic(fast_write_addr_masked_reg, fast_write_next_addr_reg, 0xF0000000 | (size as u32 - 1));
+            block_asm.transfer_write(op0, fast_write_addr_masked_reg, base_ptr as u32, false, MemoryAmount::Word);
+        }
+
+        block_asm.branch_fallthrough(continue_label, Cond::AL);
+        block_asm.branch(slow_write_patch_label, Cond::AL);
+
+        block_asm.label_unlikely(slow_write_patch_label);
+        let cpsr_backup_reg = block_asm.new_reg();
+        block_asm.mrs_cpsr(cpsr_backup_reg);
+        if IS_DEBUG {
+            block_asm.call1(inst_slow_mem_patch as *const (), self.jit_buf.current_pc);
         } else {
-            Self::get_inst_mem_handler_func::<true, false>(signed, amount)
+            block_asm.call(inst_slow_mem_patch as *const ());
+        }
+        block_asm.msr_cpsr(cpsr_backup_reg);
+        block_asm.branch(slow_write_label, Cond::AL);
+
+        block_asm.label_unlikely(slow_write_label);
+
+        block_asm.save_context();
+
+        let func_addr = if is_swp {
+            Self::get_inst_mem_handler_func::<true, true>(false, amount)
+        } else {
+            Self::get_inst_mem_handler_func::<true, false>(false, amount)
         };
         block_asm.call4(
             func_addr,
@@ -168,11 +162,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.branch(continue_label, Cond::AL);
         block_asm.label(continue_label);
 
-        block_asm.free_reg(fast_mmu_offset_reg);
-        block_asm.free_reg(fast_mmu_index_reg);
-        block_asm.free_reg(fast_mmu_ptr_reg);
-        block_asm.free_reg(fast_write_addr_reg);
         block_asm.free_reg(cpsr_backup_reg);
+        block_asm.free_reg(fast_write_addr_masked_reg);
+        block_asm.free_reg(fast_write_next_addr_reg);
+        block_asm.free_reg(fast_write_value_reg);
     }
 
     fn emit_single_transfer_read(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount, thumb: bool) {
@@ -771,7 +764,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         self.emit_read(op0, addr_reg, block_asm, false, amount, false, true);
         block_asm.mov(read_reg, op0);
         block_asm.mov(op1, value_reg);
-        self.emit_write(op1, value_reg, addr_reg, block_asm, false, amount, false, true);
+        self.emit_write(op1, value_reg, addr_reg, block_asm, amount, false, true);
         block_asm.mov(op0, read_reg);
 
         block_asm.free_reg(addr_reg);

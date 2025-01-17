@@ -8,10 +8,9 @@ use crate::jit::assembler::{BlockReg, ANY_REG_LIMIT};
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use crate::utils::HeapMem;
-use crate::IS_DEBUG;
 use std::intrinsics::unlikely;
 
-const DEBUG: bool = IS_DEBUG;
+const DEBUG: bool = crate::IS_DEBUG;
 
 pub const ALLOCATION_REGS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11);
 const SCRATCH_REGS: RegReserve = reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR);

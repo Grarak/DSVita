@@ -12,7 +12,7 @@ use crate::core::memory::wram::Wram;
 use crate::core::spu::SoundSampler;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
-use crate::jit::jit_memory::{JitMemory, JitRegion};
+use crate::jit::jit_memory::JitMemory;
 use crate::logging::debug_println;
 use crate::mmap::Shm;
 use crate::utils;
@@ -182,7 +182,7 @@ macro_rules! write_itcm {
                 let $shm_offset = regions::ITCM_REGION.shm_offset as u32 + ($addr & (regions::ITCM_SIZE - 1));
                 let $mem = get_mem_mut!($emu);
                 $write;
-                get_jit_mut!($emu).invalidate_block::<{ JitRegion::Itcm }>($addr, $size);
+                get_jit_mut!($emu).invalidate_block($addr, $size);
             }
         }
     }};
@@ -193,7 +193,7 @@ macro_rules! write_main {
         let $shm_offset = regions::MAIN_REGION.shm_offset as u32 + ($addr & (regions::MAIN_SIZE - 1));
         let $mem = get_mem_mut!($emu);
         $write;
-        get_jit_mut!($emu).invalidate_block::<{ JitRegion::Main }>($addr, $size);
+        get_jit_mut!($emu).invalidate_block($addr, $size);
     }};
 }
 
@@ -203,7 +203,7 @@ macro_rules! write_wram {
         let $shm_offset = $mem.wram.get_shm_offset::<{ $cpu }>($addr) as u32;
         $write;
         if $cpu == ARM7 {
-            get_jit_mut!($emu).invalidate_block::<{ JitRegion::Wram }>($addr, $size);
+            get_jit_mut!($emu).invalidate_block($addr, $size);
         }
     }};
 }
@@ -234,9 +234,7 @@ macro_rules! write_vram {
     ($addr:expr, $size:expr, $emu:expr, $mem:ident, $write:block) => {
         let $mem = get_mem_mut!($emu);
         $write;
-        if CPU == ARM7 {
-            get_jit_mut!($emu).invalidate_block::<{ JitRegion::VramArm7 }>($addr, $size);
-        }
+        get_jit_mut!($emu).invalidate_block($addr, $size);
     };
 }
 
@@ -566,9 +564,7 @@ impl<const CPU: CpuType, T: Convert, F: FnMut() -> T> MemoryWriteMultipleIo<CPU,
         for i in 0..size {
             mem.vram.write::<CPU, _>(addr + (i << write_shift) as u32, read_value());
         }
-        if CPU == ARM7 {
-            mem.jit.invalidate_block::<{ JitRegion::VramArm7 }>(addr, size << write_shift);
-        }
+        mem.jit.invalidate_block(addr, size << write_shift);
     }
 
     fn write_oam(addr: u32, size: usize, mut read_value: F, emu: &mut Emu) {
@@ -731,9 +727,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
     fn write_vram(addr: u32, slice: &[T], emu: &mut Emu) {
         let mem = get_mem_mut!(emu);
         mem.vram.write_slice::<CPU, _>(addr, slice);
-        if CPU == ARM7 {
-            mem.jit.invalidate_block::<{ JitRegion::VramArm7 }>(addr, size_of_val(slice));
-        }
+        mem.jit.invalidate_block(addr, size_of_val(slice));
     }
 
     fn write_oam(addr: u32, slice: &[T], emu: &mut Emu) {
