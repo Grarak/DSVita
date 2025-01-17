@@ -14,7 +14,6 @@ use crate::utils::{HeapMem, HeapMemU8};
 use paste::paste;
 use std::collections::VecDeque;
 use std::intrinsics::unlikely;
-use std::marker::ConstParamTy;
 use std::ops::Deref;
 use std::{ptr, slice};
 use CpuType::{ARM7, ARM9};
@@ -22,14 +21,6 @@ use CpuType::{ARM7, ARM9};
 const JIT_MEMORY_SIZE: usize = 24 * 1024 * 1024;
 pub const JIT_LIVE_RANGE_PAGE_SIZE_SHIFT: u32 = 10;
 const JIT_LIVE_RANGE_PAGE_SIZE: u32 = 1 << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
-
-#[derive(ConstParamTy, Eq, PartialEq)]
-pub enum JitRegion {
-    Itcm,
-    Main,
-    Wram,
-    VramArm7,
-}
 
 #[derive(Copy, Clone)]
 pub struct JitEntry(pub *const extern "C" fn());
@@ -329,7 +320,7 @@ impl JitMemory {
     }
 
     #[inline(never)]
-    pub fn invalidate_block<const REGION: JitRegion>(&mut self, guest_addr: u32, size: usize) {
+    pub fn invalidate_block(&mut self, guest_addr: u32, size: usize) {
         macro_rules! invalidate {
             ($guest_addr:expr) => {{
                 let live_range = unsafe { self.jit_memory_map.get_live_range($guest_addr).as_mut_unchecked() };
@@ -345,20 +336,8 @@ impl JitMemory {
             }};
         }
 
-        match REGION {
-            JitRegion::Itcm => {
-                invalidate!(guest_addr);
-                invalidate!(guest_addr + size as u32 - 1);
-            }
-            JitRegion::Main => {
-                invalidate!(guest_addr);
-                invalidate!(guest_addr + size as u32 - 1);
-            }
-            JitRegion::Wram | JitRegion::VramArm7 => {
-                invalidate!(guest_addr);
-                invalidate!(guest_addr + size as u32 - 1);
-            }
-        }
+        invalidate!(guest_addr);
+        invalidate!(guest_addr + size as u32 - 1);
     }
 
     pub fn invalidate_wram(&mut self) {

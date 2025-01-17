@@ -34,12 +34,16 @@ pub trait Mmu {
     fn remove_write(&self, addr: u32, region: &MemRegion);
 }
 
-fn remove_mmu_entry(addr: u32, region: &MemRegion, mmu: &mut [usize]) {
+fn remove_mmu_write_entry(addr: u32, region: &MemRegion, mmu: &mut [usize], vmem: &mut VirtualMem) {
+    if mmu[(addr >> MMU_PAGE_SHIFT) as usize] == 0 {
+        return;
+    }
     let base_offset = addr - region.start as u32;
     let base_offset = base_offset & (region.size as u32 - 1);
     for addr_offset in (region.start as u32 + base_offset..region.end as u32).step_by(region.size) {
         mmu[(addr_offset >> MMU_PAGE_SHIFT) as usize] = 0;
     }
+    vmem.set_region_protection(addr as usize & !(MMU_PAGE_SIZE - 1), MMU_PAGE_SIZE, region, true, false, false);
 }
 
 struct MmuArm9Inner {
@@ -300,12 +304,9 @@ impl Mmu for MmuArm9 {
     }
 
     fn remove_write(&self, addr: u32, region: &MemRegion) {
-        unsafe {
-            let mmu = (*self.inner.get()).mmu_write.as_mut();
-            remove_mmu_entry(addr, region, mmu);
-            let mmu = (*self.inner.get()).mmu_write_tcm.as_mut();
-            remove_mmu_entry(addr, region, mmu);
-        }
+        let inner = unsafe { self.inner.get().as_mut_unchecked() };
+        remove_mmu_write_entry(addr, region, inner.mmu_write.as_mut(), &mut inner.vmem);
+        remove_mmu_write_entry(addr, region, inner.mmu_write_tcm.as_mut(), &mut inner.vmem_tcm);
     }
 }
 
@@ -455,9 +456,7 @@ impl Mmu for MmuArm7 {
     }
 
     fn remove_write(&self, addr: u32, region: &MemRegion) {
-        unsafe {
-            let mmu = (*self.inner.get()).mmu_write.as_mut();
-            remove_mmu_entry(addr, region, mmu);
-        }
+        let inner = unsafe { self.inner.get().as_mut_unchecked() };
+        remove_mmu_write_entry(addr, region, inner.mmu_write.as_mut(), &mut inner.vmem);
     }
 }

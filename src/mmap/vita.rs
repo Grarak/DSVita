@@ -282,8 +282,9 @@ impl VirtualMem {
     }
 
     pub fn set_region_protection(&mut self, start: usize, size: usize, mem_region: &MemRegion, read: bool, write: bool, exe: bool) {
-        let start = mem_region.start + start & (mem_region.size - 1);
-        for addr_offset in (start..mem_region.end).step_by(mem_region.size) {
+        let base_offset = start - mem_region.start;
+        let base_offset = base_offset & (mem_region.size - 1);
+        for addr_offset in (mem_region.start + base_offset..mem_region.end).step_by(mem_region.size) {
             unsafe { set_protection(self.ptr.add(addr_offset), size, read, write, exe) }
         }
     }
