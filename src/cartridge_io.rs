@@ -1,19 +1,19 @@
 use crate::cartridge_metadata::get_cartridge_metadata;
-use crate::mmap::{PAGE_SHIFT, PAGE_SIZE};
+use crate::logging::debug_println;
+use crate::mmap::PAGE_SIZE;
 use crate::utils;
-use crate::utils::{rgb5_to_rgb8, HeapMemU8};
+use crate::utils::{rgb5_to_rgb8, HeapMemU8, NoHashMap};
 use static_assertions::const_assert_eq;
 use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::fs::File;
-use std::hint::unreachable_unchecked;
 use std::io::{ErrorKind, Read, Seek};
 use std::ops::{Deref, DerefMut};
 use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use std::{io, mem, slice};
+use std::{io, mem};
 
 #[repr(C, packed)]
 pub struct ArmValues {
@@ -78,29 +78,13 @@ pub const HEADER_IN_RAM_SIZE: usize = 0x170;
 const_assert_eq!(HEADER_SIZE, HEADER_IN_RAM_SIZE + 0x90);
 
 const SAVE_SIZES: [u32; 9] = [0x000200, 0x002000, 0x008000, 0x010000, 0x020000, 0x040000, 0x080000, 0x100000, 0x800000];
-const CONTENT_CACHE_SIZE: usize = 16 * 1024 * 1024;
-const CONTENT_CACHE_TAGS_SIZE: usize = CONTENT_CACHE_SIZE / PAGE_SIZE;
-const CONTENT_CACHE_TAGS_SHIFT: usize = 12;
-
-struct ContentCache {
-    data: HeapMemU8<CONTENT_CACHE_SIZE>,
-    tags: HeapMemU8<CONTENT_CACHE_TAGS_SIZE>,
-}
-
-impl ContentCache {
-    fn new() -> Self {
-        let mut tags = HeapMemU8::new();
-        tags.fill(0xFF);
-        ContentCache { data: HeapMemU8::new(), tags }
-    }
-}
 
 pub struct CartridgeIo {
     file: File,
     pub file_name: String,
     pub file_size: u32,
     pub header: CartridgeHeader,
-    content_cache: Option<UnsafeCell<ContentCache>>,
+    content_pages: UnsafeCell<NoHashMap<u32, HeapMemU8<{ PAGE_SIZE }>>>,
     save_file_path: PathBuf,
     pub save_file_size: u32,
     save_buf: Mutex<(Vec<u8>, bool)>,
@@ -145,50 +129,45 @@ impl CartridgeIo {
             file_name: file_path.file_name().unwrap().to_str().unwrap().to_string(),
             file_size,
             header,
-            content_cache: None,
+            content_pages: UnsafeCell::new(NoHashMap::default()),
             save_file_path,
             save_file_size,
             save_buf: Mutex::new((save_buf, false)),
         })
     }
 
-    pub fn init_cache(&mut self) {
-        self.content_cache = Some(UnsafeCell::new(ContentCache::new()));
-    }
-
-    pub fn get_page(&self, page_addr: u32) -> io::Result<*const [u8; PAGE_SIZE]> {
+    fn get_page(&self, page_addr: u32) -> io::Result<*const [u8; PAGE_SIZE]> {
         debug_assert_eq!(page_addr & (PAGE_SIZE as u32 - 1), 0);
-        let tag_index = (page_addr >> PAGE_SHIFT) & (CONTENT_CACHE_TAGS_SIZE as u32 - 1);
+        let pages = unsafe { self.content_pages.get().as_mut_unchecked() };
+        match pages.get(&page_addr) {
+            None => {
+                // exceeds 8MB
+                if pages.len() >= 2048 {
+                    debug_println!("clear cartridge pages");
+                    pages.clear();
+                }
 
-        let content_cache = match &self.content_cache {
-            None => unsafe { unreachable_unchecked() },
-            Some(content_cache) => unsafe { content_cache.get().as_mut_unchecked() },
-        };
-
-        let cached_tag = content_cache.tags[tag_index as usize];
-        let addr_tag = ((page_addr >> PAGE_SHIFT) >> CONTENT_CACHE_TAGS_SHIFT) as u8;
-
-        let content_offset = tag_index << PAGE_SHIFT;
-        let ptr = unsafe { content_cache.data.as_mut_ptr().add(content_offset as usize) };
-        let buf = unsafe { slice::from_raw_parts_mut(ptr, PAGE_SIZE) };
-
-        if cached_tag != addr_tag {
-            // println!("collision {page_addr:x} {cached_tag:x} vs {addr_tag:x}");
-            content_cache.tags[tag_index as usize] = addr_tag;
-            self.file.read_at(buf, page_addr as u64)?;
+                let mut buf = HeapMemU8::new();
+                let ptr = buf.as_ptr();
+                self.file.read_at(buf.as_mut(), page_addr as u64)?;
+                pages.insert(page_addr, buf);
+                Ok(ptr as _)
+            }
+            Some(page) => Ok(page.as_ptr() as _),
         }
-
-        Ok(ptr as _)
     }
 
-    pub fn read_slice_cached(&self, offset: u32, slice: &mut [u8]) -> io::Result<()> {
+    pub fn read_slice(&self, offset: u32, slice: &mut [u8]) -> io::Result<()> {
         let mut remaining = slice.len();
         while remaining > 0 {
             let slice_start = slice.len() - remaining;
 
             let page_addr = (offset + slice_start as u32) & !(PAGE_SIZE as u32 - 1);
             let page_offset = offset + slice_start as u32 - page_addr;
-            let page = self.get_page(page_addr)?;
+            let page = match self.get_page(page_addr) {
+                Ok(page) => page,
+                Err(err) => return Err(err),
+            };
             let page = unsafe { page.as_ref().unwrap_unchecked() };
             let page_slice = &page[page_offset as usize..];
 
@@ -200,13 +179,9 @@ impl CartridgeIo {
         Ok(())
     }
 
-    pub fn read_slice(&self, offset: u32, slice: &mut [u8]) -> io::Result<()> {
-        self.file.read_exact_at(slice, offset as u64)
-    }
-
     pub fn read_arm9_code(&self) -> Vec<u8> {
         let mut boot_code = vec![0u8; self.header.arm9_values.size as usize];
-        self.read_slice_cached(self.header.arm9_values.rom_offset, &mut boot_code).unwrap();
+        self.read_slice(self.header.arm9_values.rom_offset, &mut boot_code).unwrap();
 
         // if (0x4000..0x8000).contains(&(self.header.arm9_values.rom_offset as i32)) {
         //     let (_, boot_code_aligned, _) = unsafe { boot_code.align_to_mut::<u32>() };
@@ -231,7 +206,7 @@ impl CartridgeIo {
 
     pub fn read_arm7_code(&self) -> Vec<u8> {
         let mut boot_code = vec![0u8; self.header.arm7_values.size as usize];
-        self.read_slice_cached(self.header.arm7_values.rom_offset, &mut boot_code).unwrap();
+        self.read_slice(self.header.arm7_values.rom_offset, &mut boot_code).unwrap();
         boot_code
     }
 

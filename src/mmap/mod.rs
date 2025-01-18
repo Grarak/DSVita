@@ -1,4 +1,5 @@
 pub use self::platform::*;
+use static_assertions::const_assert_eq;
 use std::ops::{Deref, DerefMut};
 use std::slice;
 
@@ -12,6 +13,7 @@ mod platform;
 
 pub const PAGE_SIZE: usize = 4096;
 pub const PAGE_SHIFT: usize = 12;
+const_assert_eq!(PAGE_SIZE, 1 << PAGE_SHIFT);
 
 pub struct MemRegion {
     pub start: usize,

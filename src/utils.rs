@@ -80,7 +80,6 @@ impl Display for StrErr {
 impl Error for StrErr {}
 
 pub type HeapMemU8<const SIZE: usize> = HeapMem<u8, SIZE>;
-pub type HeapMemU16<const SIZE: usize> = HeapMem<u16, SIZE>;
 pub type HeapMemU32<const SIZE: usize> = HeapMem<u32, SIZE>;
 pub type HeapMemUsize<const SIZE: usize> = HeapMem<usize, SIZE>;
 
