@@ -6,10 +6,7 @@ use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
-use crate::mmap::PAGE_SIZE;
-use crate::utils;
 use bilge::prelude::*;
-use std::ptr;
 
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
@@ -67,7 +64,6 @@ enum CmdMode {
 struct CartridgeInner {
     block_size: u16,
     read_count: u16,
-    read_addr: u32,
     encrypted: bool,
 
     aux_command: u8,
@@ -85,8 +81,7 @@ pub struct Cartridge {
     pub io: CartridgeIo,
     cmd_mode: CmdMode,
     inner: [CartridgeInner; 2],
-    read_buf: *const [u8; PAGE_SIZE],
-    read_buf_addr: u32,
+    read_buf: Vec<u8>,
 }
 
 impl Cartridge {
@@ -95,22 +90,8 @@ impl Cartridge {
             io: cartridge_io,
             inner: [CartridgeInner::default(), CartridgeInner::default()],
             cmd_mode: CmdMode::None,
-            read_buf: ptr::null(),
-            read_buf_addr: u32::MAX,
+            read_buf: Vec::new(),
         }
-    }
-
-    fn set_read_buf_addr(&mut self, addr: u32) {
-        let page_addr = addr & !(PAGE_SIZE as u32 - 1);
-        if page_addr != self.read_buf_addr {
-            self.read_buf = self.io.get_page(page_addr).unwrap();
-            self.read_buf_addr = page_addr;
-        }
-    }
-
-    fn read_buf(&self, addr: u32) -> u32 {
-        let buf = unsafe { self.read_buf.as_ref_unchecked() };
-        utils::read_from_mem(buf, addr & (PAGE_SIZE as u32 - 1))
     }
 
     pub fn get_aux_spi_cnt(&self, cpu: CpuType) -> u16 {
@@ -161,20 +142,21 @@ impl Cartridge {
 
         let ret = match self.cmd_mode {
             CmdMode::Header => {
-                let read_count = (inner.read_count - 4) & 0xFFF;
-                let read_addr = read_count as u32 + inner.read_addr;
-                self.set_read_buf_addr(read_addr);
-                self.read_buf(read_addr)
+                let offset = ((inner.read_count as u32 - 4) & 0xFFF) as usize;
+                let mut buf = [0u8; 4];
+                buf.copy_from_slice(&self.read_buf[offset..offset + 4]);
+                u32::from_le_bytes(buf)
             }
             CmdMode::Chip => 0x00001FC2,
             CmdMode::Secure => {
                 todo!()
             }
             CmdMode::Data => {
-                if inner.read_count - 4 < inner.block_size {
-                    let read_addr = inner.read_count as u32 - 4 + inner.read_addr;
-                    self.set_read_buf_addr(read_addr);
-                    self.read_buf(read_addr)
+                let offset = (inner.read_count as u32 - 4) as usize;
+                if offset + 3 < self.read_buf.len() {
+                    let mut buf = [0u8; 4];
+                    buf.copy_from_slice(&self.read_buf[offset..offset + 4]);
+                    u32::from_le_bytes(buf)
                 } else {
                     0xFFFFFFFF
                 }
@@ -354,8 +336,8 @@ impl Cartridge {
         self.cmd_mode = CmdMode::None;
         if cmd == 0 {
             self.cmd_mode = CmdMode::Header;
-            inner.read_addr = 0;
-            self.set_read_buf_addr(0);
+            self.read_buf.resize(inner.block_size as usize, 0);
+            self.io.read_slice(0, &mut self.read_buf).unwrap();
         } else if cmd == 0x9000000000000000 || (cmd >> 60) == 0x1 || cmd == 0xB800000000000000 {
             self.cmd_mode = CmdMode::Chip;
         } else if (cmd >> 56) == 0x3C {
@@ -371,13 +353,12 @@ impl Cartridge {
             if read_addr < 0x8000 {
                 read_addr = 0x8000 + (read_addr & 0x1FF);
             }
-            inner.read_addr = read_addr;
-            self.set_read_buf_addr(read_addr);
+            self.read_buf.resize(inner.block_size as usize, 0);
+            self.io.read_slice(read_addr, &mut self.read_buf).unwrap();
         } else if cmd != 0x9F00000000000000 {
             debug_println!("Unknown rom transfer command {:x}", cmd);
         }
 
-        let inner = &mut self.inner[cpu];
         if inner.block_size == 0 {
             inner.rom_ctrl.set_data_word_status(false);
             inner.rom_ctrl.set_block_start_status(false);
