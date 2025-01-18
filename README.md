@@ -17,7 +17,7 @@ This runs some games, however following things are missing:
 
 - Grab the latest vpk from [releases](https://github.com/Grarak/DSVita/releases)
 - Install `libshacccg.suprx`, follow this [guide](https://cimmerian.gitbook.io/vita-troubleshooting-guide/shader-compiler/extract-libshacccg.suprx)
-- Install `kubridge.suprx` from https://github.com/bythos14/kubridge/releases
+- Install `kubridge.skprx` from https://github.com/bythos14/kubridge/releases
 - It's strongly recommend to overclock your vita to 500MHz
 - Create the folder ux0:data/dsvita and put your roms there
 
