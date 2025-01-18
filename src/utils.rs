@@ -32,23 +32,23 @@ impl Convert for u32 {
 }
 
 pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
+    debug_assert!(addr as usize <= mem.len() - size_of::<T>());
     unsafe { (mem.as_ptr().add(addr as usize) as *const T).read() }
 }
 
-pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) -> usize {
-    let read_amount = cmp::min(mem.len() / size_of::<T>(), slice.len());
-    unsafe { (mem.as_ptr().add(addr as usize) as *const T).copy_to(slice.as_mut_ptr(), read_amount) };
-    read_amount
+pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) {
+    debug_assert!(addr as usize <= mem.len() - size_of_val(slice));
+    unsafe { (mem.as_ptr().add(addr as usize) as *const T).copy_to(slice.as_mut_ptr(), slice.len()) };
 }
 
 pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
+    debug_assert!(addr as usize <= mem.len() - size_of::<T>());
     unsafe { (mem.as_mut_ptr().add(addr as usize) as *mut T).write(value) }
 }
 
-pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: usize, slice: &[T]) -> usize {
-    let write_amount = cmp::min(mem.len() / size_of::<T>(), slice.len());
-    unsafe { (mem.as_mut_ptr().add(addr) as *mut T).copy_from(slice.as_ptr(), write_amount) };
-    write_amount
+pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: usize, slice: &[T]) {
+    debug_assert!(addr <= mem.len() - size_of_val(slice));
+    unsafe { (mem.as_mut_ptr().add(addr) as *mut T).copy_from(slice.as_ptr(), slice.len()) };
 }
 
 pub fn write_memset<T: Copy>(mem: &mut [u8], addr: usize, value: T, size: usize) {
