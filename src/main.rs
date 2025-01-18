@@ -298,6 +298,10 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     }
 }
 
+#[used]
+#[export_name = "_newlib_heap_size_user"]
+pub static _NEWLIB_HEAP_SIZE_USER: u32 = 256 * 1024 * 1024; // 256 MiB
+
 pub fn main() {
     // For some reason setting the stack size with the global variable doesn't work
     // #[used]
