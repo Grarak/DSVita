@@ -1,5 +1,4 @@
-use crate::core::emu::{get_mem, get_mmu, get_regs};
-use crate::core::memory::mmu;
+use crate::core::emu::{get_mmu, get_regs};
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;

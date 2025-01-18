@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{BuildHasher, Hasher};
 use std::ops::{Deref, DerefMut};
-use std::{cmp, slice};
+use std::slice;
 
 pub const fn align_up(n: usize, align: usize) -> usize {
     (n + align - 1) & !(align - 1)
