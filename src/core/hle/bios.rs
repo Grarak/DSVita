@@ -248,7 +248,8 @@ pub fn runlen_uncomp<const CPU: CpuType>(emu: &mut Emu) {
 }
 
 pub fn square_root<const CPU: CpuType>(emu: &mut Emu) {
-    todo!()
+    let reg0 = get_regs_mut!(emu, CPU).get_reg_mut(Reg::R0);
+    *reg0 = reg0.isqrt();
 }
 
 pub fn unknown<const CPU: CpuType>(_: &mut Emu) {}
