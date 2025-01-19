@@ -12,7 +12,6 @@ use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
 use bilge::prelude::*;
 use std::intrinsics::unlikely;
-use std::ptr;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
@@ -171,12 +170,13 @@ impl Gpu {
         gpu.v_count += 1;
         match gpu.v_count {
             192 => {
-                let pow_cnt1 = PowCnt1::from(gpu.pow_cnt1);
-                let gpu_3d_regs_ptr = ptr::addr_of_mut!(gpu.gpu_3d_regs);
-                gpu.get_renderer_mut().on_scanline_finish(get_mem_mut!(emu), pow_cnt1, unsafe { gpu_3d_regs_ptr.as_mut_unchecked() });
+                let gpu_3d_regs = &mut get_common_mut!(emu).gpu.gpu_3d_regs;
 
-                if gpu.gpu_3d_regs.flushed {
-                    gpu.gpu_3d_regs.swap_buffers();
+                let pow_cnt1 = PowCnt1::from(gpu.pow_cnt1);
+                gpu.get_renderer_mut().on_scanline_finish(get_mem_mut!(emu), pow_cnt1, gpu_3d_regs);
+
+                if gpu_3d_regs.flushed {
+                    gpu_3d_regs.swap_buffers();
                     gpu.get_renderer_mut().renderer_3d.invalidate();
                 }
 
