@@ -1,12 +1,15 @@
 use crate::cartridge_io::CartridgeIo;
 use crate::core::cpu_regs::InterruptFlag;
 use crate::core::cycle_manager::{CycleManager, EventType};
-use crate::core::emu::{get_cm_mut, get_common_mut, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
+use crate::core::emu::{get_cm_mut, get_common_mut, get_cpu_regs_mut, io_dma, Emu};
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
+use crate::utils;
+use crate::utils::HeapMemU8;
 use bilge::prelude::*;
+use std::ops::{Deref, DerefMut};
 
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
@@ -81,7 +84,7 @@ pub struct Cartridge {
     pub io: CartridgeIo,
     cmd_mode: CmdMode,
     inner: [CartridgeInner; 2],
-    read_buf: Vec<u8>,
+    read_buf: HeapMemU8<{ 16 * 1024 }>,
 }
 
 impl Cartridge {
@@ -90,7 +93,7 @@ impl Cartridge {
             io: cartridge_io,
             inner: [CartridgeInner::default(), CartridgeInner::default()],
             cmd_mode: CmdMode::None,
-            read_buf: Vec::new(),
+            read_buf: HeapMemU8::new(),
         }
     }
 
@@ -140,31 +143,25 @@ impl Cartridge {
             );
         }
 
-        let ret = match self.cmd_mode {
+        match self.cmd_mode {
             CmdMode::Header => {
-                let offset = ((inner.read_count as u32 - 4) & 0xFFF) as usize;
-                let mut buf = [0u8; 4];
-                buf.copy_from_slice(&self.read_buf[offset..offset + 4]);
-                u32::from_le_bytes(buf)
+                let offset = (inner.read_count as u32 - 4) & 0xFFF;
+                utils::read_from_mem(self.read_buf.deref(), offset)
             }
             CmdMode::Chip => 0x00001FC2,
             CmdMode::Secure => {
                 todo!()
             }
             CmdMode::Data => {
-                let offset = (inner.read_count as u32 - 4) as usize;
-                if offset + 3 < self.read_buf.len() {
-                    let mut buf = [0u8; 4];
-                    buf.copy_from_slice(&self.read_buf[offset..offset + 4]);
-                    u32::from_le_bytes(buf)
+                let offset = inner.read_count as u32 - 4;
+                if offset + 3 < inner.block_size as u32 {
+                    utils::read_from_mem(self.read_buf.deref(), offset)
                 } else {
                     0xFFFFFFFF
                 }
             }
             CmdMode::None => 0xFFFFFFFF,
-        };
-
-        ret
+        }
     }
 
     pub fn set_aux_spi_cnt(&mut self, cpu: CpuType, mut mask: u16, value: u16) {
@@ -336,8 +333,7 @@ impl Cartridge {
         self.cmd_mode = CmdMode::None;
         if cmd == 0 {
             self.cmd_mode = CmdMode::Header;
-            self.read_buf.resize(inner.block_size as usize, 0);
-            self.io.read_slice(0, &mut self.read_buf).unwrap();
+            self.io.read_slice(0, self.read_buf.deref_mut()).unwrap();
         } else if cmd == 0x9000000000000000 || (cmd >> 60) == 0x1 || cmd == 0xB800000000000000 {
             self.cmd_mode = CmdMode::Chip;
         } else if (cmd >> 56) == 0x3C {
@@ -353,8 +349,7 @@ impl Cartridge {
             if read_addr < 0x8000 {
                 read_addr = 0x8000 + (read_addr & 0x1FF);
             }
-            self.read_buf.resize(inner.block_size as usize, 0);
-            self.io.read_slice(read_addr, &mut self.read_buf).unwrap();
+            self.io.read_slice(read_addr, self.read_buf.deref_mut()).unwrap();
         } else if cmd != 0x9F00000000000000 {
             debug_println!("Unknown rom transfer command {:x}", cmd);
         }
@@ -374,7 +369,6 @@ impl Cartridge {
                 },
                 0,
             );
-            get_mem_mut!(emu).breakout_imm = true;
         }
     }
 

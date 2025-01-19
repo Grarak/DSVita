@@ -141,8 +141,8 @@ impl CartridgeIo {
         let pages = unsafe { self.content_pages.get().as_mut_unchecked() };
         match pages.get(&page_addr) {
             None => {
-                // exceeds 8MB
-                if pages.len() >= 2048 {
+                // exceeds 1MB
+                if pages.len() >= 256 {
                     debug_println!("clear cartridge pages");
                     pages.clear();
                 }
@@ -164,11 +164,8 @@ impl CartridgeIo {
 
             let page_addr = (offset + slice_start as u32) & !(PAGE_SIZE as u32 - 1);
             let page_offset = offset + slice_start as u32 - page_addr;
-            let page = match self.get_page(page_addr) {
-                Ok(page) => page,
-                Err(err) => return Err(err),
-            };
-            let page = unsafe { page.as_ref().unwrap_unchecked() };
+            let page = self.get_page(page_addr)?;
+            let page = unsafe { page.as_ref_unchecked() };
             let page_slice = &page[page_offset as usize..];
 
             let read_amount = min(remaining, page_slice.len());
