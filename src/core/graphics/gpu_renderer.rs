@@ -74,12 +74,12 @@ impl GpuRenderer {
             self.common.pow_cnt1 = pow_cnt1;
             self.renderer_2d.on_scanline_finish();
 
-            self.common.mem_buf.read_2d(mem, self.renderer_2d.has_vram_display[0]);
+            self.common.mem_buf.read_vram(&mut mem.vram);
+            self.common.mem_buf.read_palettes_oam(mem);
             if self.renderer_3d.dirty {
                 self.renderer_3d.finish_scanline(registers_3d);
                 self.renderer_3d.dirty = false;
                 self.rendering_3d = true;
-                self.common.mem_buf.read_3d(mem);
             }
 
             *rendering = true;
@@ -123,10 +123,13 @@ impl GpuRenderer {
                     );
                 };
 
+                self.common.mem_buf.rebuild_vram_maps();
                 if self.rendering_3d {
                     self.rendering_3d = false;
+                    self.common.mem_buf.read_3d();
                     self.renderer_3d.render(&self.common);
                 }
+                self.common.mem_buf.read_2d(self.renderer_2d.has_vram_display[0]);
                 self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color);
                 blit_fb(
                     self.renderer_2d.common.blend_fbo.fbo,

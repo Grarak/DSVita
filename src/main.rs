@@ -320,7 +320,6 @@ pub fn main() {
         .unwrap();
 }
 
-// Must be pub for vita
 pub fn actual_main() {
     if cfg!(target_os = "vita") {
         set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core1);

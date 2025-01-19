@@ -973,7 +973,7 @@ impl Memory {
             io_arm9: IoArm9::new(),
             wifi: Wifi::new(),
             palettes: Palettes::new(),
-            vram: Vram::new(),
+            vram: Vram::default(),
             oam: Oam::new(),
             jit: JitMemory::new(),
             breakout_imm: false,
