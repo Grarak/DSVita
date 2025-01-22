@@ -155,15 +155,126 @@ struct PolygonAttr {
     not_used3: u2,
 }
 
-const FIFO_PARAM_COUNTS: [u8; 128] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x00-0x0F
+static FIFO_PARAM_COUNTS: [u8; 99] = [
     1, 0, 1, 1, 1, 0, 16, 12, 16, 12, 9, 3, 3, 0, 0, 0, // 0x10-0x1F
     1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, // 0x20-0x2F
     1, 1, 1, 1, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x30-0x3F
     1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x40-0x4F
     1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x50-0x5F
     1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x60-0x6F
-    3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x70-0x7F
+    3, 2, 1, // 0x70-0x72
+];
+
+static CYCLE_COUNTS: [u16; 99] = [
+    1, 17, 36, 17, 36, 19, 34, 30, 35, 31, 28, 22, 22, 0, 0, 0, // 0x10-0x1F
+    1, 9, 1, 9, 8, 8, 8, 8, 8, 1, 1, 1, 0, 0, 0, 0, // 0x20-0x2F
+    4, 4, 6, 1, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x30-0x3F
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x40-0x4F
+    392, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x50-0x5F
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x60-0x6F
+    103, 9, 5, // 0x70-0x72
+];
+
+static FUNC_LUT: [fn(&mut Gpu3DRegisters, params: &[u32; 32]); 99] = [
+    Gpu3DRegisters::exe_mtx_mode,
+    Gpu3DRegisters::exe_mtx_push,
+    Gpu3DRegisters::exe_mtx_pop,
+    Gpu3DRegisters::exe_mtx_store,
+    Gpu3DRegisters::exe_mtx_restore,
+    Gpu3DRegisters::exe_mtx_identity,
+    Gpu3DRegisters::exe_mtx_load44,
+    Gpu3DRegisters::exe_mtx_load43,
+    Gpu3DRegisters::exe_mtx_mult44,
+    Gpu3DRegisters::exe_mtx_mult43,
+    Gpu3DRegisters::exe_mtx_mult33,
+    Gpu3DRegisters::exe_mtx_scale,
+    Gpu3DRegisters::exe_mtx_trans,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_color,
+    Gpu3DRegisters::exe_normal,
+    Gpu3DRegisters::exe_tex_coord,
+    Gpu3DRegisters::exe_vtx16,
+    Gpu3DRegisters::exe_vtx10,
+    Gpu3DRegisters::exe_vtx_x_y,
+    Gpu3DRegisters::exe_vtx_x_z,
+    Gpu3DRegisters::exe_vtx_y_z,
+    Gpu3DRegisters::exe_vtx_diff,
+    Gpu3DRegisters::exe_polygon_attr,
+    Gpu3DRegisters::exe_tex_image_param,
+    Gpu3DRegisters::exe_pltt_base,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_dif_amb,
+    Gpu3DRegisters::exe_spe_emi,
+    Gpu3DRegisters::exe_light_vector,
+    Gpu3DRegisters::exe_light_color,
+    Gpu3DRegisters::exe_shininess,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_begin_vtxs,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_swap_buffers,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_viewport,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_box_test,
+    Gpu3DRegisters::exe_pos_test,
+    Gpu3DRegisters::exe_vec_test,
 ];
 
 #[derive(Copy, Clone, Default)]
@@ -175,7 +286,7 @@ struct Entry {
 
 impl Entry {
     fn new(cmd: u8, param: u32) -> Self {
-        Self::new_with_len(cmd, FIFO_PARAM_COUNTS[cmd as usize], param)
+        Self::new_with_len(cmd, FIFO_PARAM_COUNTS[cmd as usize - 0x10], param)
     }
 
     fn new_with_len(cmd: u8, param_len: u8, param: u32) -> Self {
@@ -471,6 +582,8 @@ pub struct Gpu3DRegisters {
     gx_fifo: u32,
     pos_result: Vectori32<4>,
     vec_result: Vectori16<3>,
+
+    vtx_begin: bool,
 }
 
 impl Gpu3DRegisters {
@@ -518,115 +631,13 @@ impl Gpu3DRegisters {
                 self.cmd_fifo.pop_front();
             }
 
-            static LUT: [fn(&mut Gpu3DRegisters, params: &[u32; 32]); 99] = [
-                Gpu3DRegisters::exe_mtx_mode,
-                Gpu3DRegisters::exe_mtx_push,
-                Gpu3DRegisters::exe_mtx_pop,
-                Gpu3DRegisters::exe_mtx_store,
-                Gpu3DRegisters::exe_mtx_restore,
-                Gpu3DRegisters::exe_mtx_identity,
-                Gpu3DRegisters::exe_mtx_load44,
-                Gpu3DRegisters::exe_mtx_load43,
-                Gpu3DRegisters::exe_mtx_mult44,
-                Gpu3DRegisters::exe_mtx_mult43,
-                Gpu3DRegisters::exe_mtx_mult33,
-                Gpu3DRegisters::exe_mtx_scale,
-                Gpu3DRegisters::exe_mtx_trans,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_color,
-                Gpu3DRegisters::exe_normal,
-                Gpu3DRegisters::exe_tex_coord,
-                Gpu3DRegisters::exe_vtx16,
-                Gpu3DRegisters::exe_vtx10,
-                Gpu3DRegisters::exe_vtx_x_y,
-                Gpu3DRegisters::exe_vtx_x_z,
-                Gpu3DRegisters::exe_vtx_y_z,
-                Gpu3DRegisters::exe_vtx_diff,
-                Gpu3DRegisters::exe_polygon_attr,
-                Gpu3DRegisters::exe_tex_image_param,
-                Gpu3DRegisters::exe_pltt_base,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_dif_amb,
-                Gpu3DRegisters::exe_spe_emi,
-                Gpu3DRegisters::exe_light_vector,
-                Gpu3DRegisters::exe_light_color,
-                Gpu3DRegisters::exe_shininess,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_begin_vtxs,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_swap_buffers,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_viewport,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_empty,
-                Gpu3DRegisters::exe_box_test,
-                Gpu3DRegisters::exe_pos_test,
-                Gpu3DRegisters::exe_vec_test,
-            ];
-
-            let func = unsafe { LUT.get_unchecked(entry.cmd as usize - 0x10) };
+            let func = unsafe { FUNC_LUT.get_unchecked(entry.cmd as usize - 0x10) };
             func(self, &params);
 
             if unlikely(self.flushed) {
                 break;
             }
-            executed_cycles += 8;
+            executed_cycles += unsafe { *CYCLE_COUNTS.get_unchecked(entry.cmd as usize - 0x10) as u32 };
         }
 
         self.gx_stat.set_num_entries_cmd_fifo(u9::new(self.get_cmd_fifo_len() as u16));
@@ -1395,7 +1406,7 @@ impl Gpu3DRegisters {
             self.gx_fifo = value & mask;
         } else {
             let mut param_count = self.cmd_fifo_param_count;
-            let len = FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize];
+            let len = FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize - 0x10];
             self.queue_entry(Entry::new_with_len(self.gx_fifo as u8, len, value & mask));
             param_count += 1;
 
@@ -1408,7 +1419,7 @@ impl Gpu3DRegisters {
         }
 
         for _ in 0..4 {
-            if self.gx_fifo == 0 || FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize] != 0 {
+            if self.gx_fifo == 0 || FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize - 0x10] != 0 {
                 break;
             }
             self.queue_entry(Entry::new_with_len(self.gx_fifo as u8, 0, value & mask));
