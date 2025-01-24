@@ -1,8 +1,9 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, Vertex};
+use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, TextureCoordTransMode, Vertex};
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
+use crate::math::{Matrix, Vectori32};
 use crate::utils::{rgb6_to_float8, HeapMem};
 use bilge::prelude::*;
 use gl::types::GLuint;
@@ -101,37 +102,6 @@ struct Gpu3DVertex {
     tex_coords: [f32; 2],
 }
 
-impl From<(&Vertex, u16)> for Gpu3DVertex {
-    fn from(value: (&Vertex, u16)) -> Self {
-        let (vertex, polygon_index) = value;
-        if vertex.coords[3] != 0 {
-            let c = rgb6_to_float8(vertex.color);
-
-            let [x1, y1, x2, y2] = *vertex.viewport.as_ref();
-            let x = x1;
-            let y = 191 - y2;
-            let w = (x2 - x1) as u16 + 1;
-            let h = (191 - y1 - y) as u16 + 1;
-            let vertex_x = ((vertex.coords[0] as i64 + vertex.coords[3] as i64) * w as i64 / (vertex.coords[3] as i64 * 2) + x as i64) as i32;
-            let vertex_y = ((-vertex.coords[1] as i64 + vertex.coords[3] as i64) * h as i64 / (vertex.coords[3] as i64 * 2) + y as i64) as i32;
-            let vertex_z = (((vertex.coords[2] as i64) << 12) / vertex.coords[3] as i64) as i32;
-
-            Gpu3DVertex {
-                coords: [
-                    vertex_x as f32 / 255f32 * 2f32 - 1f32,
-                    1f32 - vertex_y as f32 / 191f32 * 2f32,
-                    (vertex_z as f32 / 4096f32) * 0.5 - 0.5,
-                    polygon_index as f32,
-                ],
-                color: [c.0, c.1, c.2],
-                tex_coords: [vertex.tex_coords[0] as f32 / 16f32, vertex.tex_coords[1] as f32 / 16f32],
-            }
-        } else {
-            unsafe { mem::zeroed() }
-        }
-    }
-}
-
 #[derive(Default)]
 #[repr(C)]
 struct Gpu3dPolygonAttr {
@@ -142,13 +112,20 @@ struct Gpu3dPolygonAttr {
 const_assert_eq!(size_of::<Gpu3dPolygonAttr>(), 8);
 
 #[derive(Default)]
+pub struct Gpu3DRendererContent {
+    pub vertices: HeapMem<Vertex, VERTEX_LIMIT>,
+    pub vertices_size: u16,
+    pub polygons: HeapMem<Polygon, POLYGON_LIMIT>,
+    pub polygons_size: u16,
+    pub clip_matrices: Vec<Matrix>,
+    pub tex_matrices: Vec<Matrix>,
+}
+
+#[derive(Default)]
 pub struct Gpu3DRenderer {
     pub dirty: bool,
     inners: [Gpu3DRendererInner; 2],
-    vertices: HeapMem<Vertex, VERTEX_LIMIT>,
-    vertex_count: u16,
-    polygons: HeapMem<Polygon, POLYGON_LIMIT>,
-    polygon_count: u16,
+    content: Gpu3DRendererContent,
     pub gl: Gpu3DGl,
     vertices_buf: Vec<Gpu3DVertex>,
     indices_buf: Vec<u16>,
@@ -246,18 +223,19 @@ impl Gpu3DRenderer {
     pub fn finish_scanline(&mut self, registers: &mut Gpu3DRegisters) {
         self.inners[0] = self.inners[1].clone();
 
-        self.vertex_count = registers.vertices.count_out;
-        mem::swap(&mut self.vertices, &mut registers.vertices.outs);
+        if registers.consume {
+            registers.consume = false;
 
-        self.polygon_count = registers.polygons.count_out;
-        mem::swap(&mut self.polygons, &mut registers.polygons.outs);
+            registers.swap_to_renderer(&mut self.content);
+        }
     }
 
     pub unsafe fn render(&mut self, common: &GpuRendererCommon) {
         self.vertices_buf.clear();
         self.indices_buf.clear();
-        for i in 0..self.polygon_count {
-            let polygon = &self.polygons[i as usize];
+
+        for i in 0..self.content.polygons_size {
+            let polygon = &self.content.polygons[i as usize];
 
             if u8::from(polygon.tex_image_param.format()) != 0
                 && u8::from(polygon.tex_image_param.format()) != 1
@@ -270,7 +248,8 @@ impl Gpu3DRenderer {
             }
 
             // println!(
-            //     "polygon {i} format {} addr {:x} pal addr {:x} size s {} size t {} repeat s {} flip s {} repeat t {} flip t {}",
+            //     "renderer: polygon {i} type {:?} format {} addr {:x} pal addr {:x} size s {} size t {} repeat s {} flip s {} repeat t {} flip t {}",
+            //     polygon.polygon_type,
             //     u8::from(polygon.tex_image_param.format()),
             //     u32::from(polygon.tex_image_param.vram_offset()) << 3,
             //     (polygon.palette_addr as u32) << 3,
@@ -285,25 +264,62 @@ impl Gpu3DRenderer {
             let vertex_index = self.vertices_buf.len() as u16;
             self.indices_buf.push(vertex_index);
             self.indices_buf.push(vertex_index + 1);
-            if polygon.crossed {
+            if polygon.polygon_type == PrimitiveType::QuadliteralStrips {
                 self.indices_buf.push(vertex_index + 3);
             } else {
                 self.indices_buf.push(vertex_index + 2);
             }
 
-            for j in 3..polygon.size as u16 {
+            for j in 3..polygon.polygon_type.vertex_count() as u16 {
                 self.indices_buf.push(vertex_index);
                 self.indices_buf.push(vertex_index + j - 1);
                 self.indices_buf.push(vertex_index + j);
             }
 
-            for j in 0..polygon.size {
-                self.vertices_buf.push(Gpu3DVertex::from((&self.vertices[polygon.vertices_index as usize + j as usize], i)));
+            let x = polygon.viewport.x1();
+            let y = 191 - polygon.viewport.y2();
+            let w = (polygon.viewport.x2() - polygon.viewport.x1()) as u16 + 1;
+            let h = (191 - polygon.viewport.y1() - y) as u16 + 1;
+
+            for j in 0..polygon.polygon_type.vertex_count() {
+                let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
+                vertex.coords[3] = 1 << 12;
+                let coords = vertex.coords * &self.content.clip_matrices[vertex.clip_matrix_index as usize];
+                let gpu_vertex = if coords[3] != 0 {
+                    let c = rgb6_to_float8(vertex.color);
+
+                    let vertex_x = ((coords[0] as i64 + coords[3] as i64) * w as i64 / (coords[3] as i64 * 2) + x as i64) as i32;
+                    let vertex_y = ((-coords[1] as i64 + coords[3] as i64) * h as i64 / (coords[3] as i64 * 2) + y as i64) as i32;
+                    let vertex_z = (((coords[2] as i64) << 12) / coords[3] as i64) as i32;
+
+                    let mut tex_coords = vertex.tex_coords;
+                    let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
+                    if tex_coord_trans_mode == TextureCoordTransMode::TexCoord {
+                        let mut vector = Vectori32::<4>::new([(tex_coords[0] as i32) << 8, (tex_coords[1] as i32) << 8, 1 << 12, 1 << 12]);
+                        vector *= &self.content.tex_matrices[vertex.tex_matrix_index as usize];
+                        tex_coords[0] = (vector[0] >> 8) as i16;
+                        tex_coords[1] = (vector[1] >> 8) as i16;
+                    }
+
+                    Gpu3DVertex {
+                        coords: [
+                            vertex_x as f32 * 2f32 / 255f32 - 1f32,
+                            1f32 - vertex_y as f32 * 2f32 / 191f32,
+                            (vertex_z as f32 / 4096f32) * 0.5 - 0.5,
+                            i as f32,
+                        ],
+                        color: [c.0, c.1, c.2],
+                        tex_coords: [tex_coords[0] as f32 / 16f32, tex_coords[1] as f32 / 16f32],
+                    }
+                } else {
+                    unsafe { mem::zeroed() }
+                };
+                self.vertices_buf.push(gpu_vertex);
 
                 // println!(
                 //     "vertex {j} s {} t {} s_norm {} t_norm {}",
-                //     self.vertices[polygon.vertices_index + j].tex_coords[0],
-                //     self.vertices[polygon.vertices_index + j].tex_coords[1],
+                //     self.content.vertices[polygon.vertices_index as usize + j as usize].tex_coords[0],
+                //     self.content.vertices[polygon.vertices_index as usize + j as usize].tex_coords[1],
                 //     self.vertices_buf[self.vertices_buf.len() - 1].tex_coords[0],
                 //     self.vertices_buf[self.vertices_buf.len() - 1].tex_coords[1],
                 // )

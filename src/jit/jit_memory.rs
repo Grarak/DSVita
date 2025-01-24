@@ -11,7 +11,6 @@ use crate::logging::debug_println;
 use crate::mmap::{flush_icache, Mmap, PAGE_SHIFT, PAGE_SIZE};
 use crate::utils;
 use crate::utils::{HeapMem, HeapMemU8};
-use paste::paste;
 use std::collections::VecDeque;
 use std::intrinsics::unlikely;
 use std::ops::Deref;
@@ -40,29 +39,27 @@ pub static BIOS_UNINTERRUPT_ENTRY_ARM7: JitEntry = JitEntry(hle_bios_uninterrupt
 
 macro_rules! create_jit_blocks {
     ($([$block_name:ident, $size:expr]),+) => {
-        paste! {
-            pub struct JitEntries {
-                $(
-                    pub $block_name: HeapMem<JitEntry, { $size as usize / 2 }>,
-                )*
+        pub struct JitEntries {
+            $(
+                pub $block_name: HeapMem<JitEntry, { $size as usize / 2 }>,
+            )*
+        }
+
+        impl JitEntries {
+            fn new() -> Self {
+                let mut instance = JitEntries {
+                    $(
+                        $block_name: HeapMem::new(),
+                    )*
+                };
+                instance.reset();
+                instance
             }
 
-            impl JitEntries {
-                fn new() -> Self {
-                    let mut instance = JitEntries {
-                        $(
-                            $block_name: HeapMem::new(),
-                        )*
-                    };
-                    instance.reset();
-                    instance
-                }
-
-                fn reset(&mut self) {
-                    $(
-                        self.$block_name.fill(DEFAULT_JIT_ENTRY);
-                    )*
-                }
+            fn reset(&mut self) {
+                $(
+                    self.$block_name.fill(DEFAULT_JIT_ENTRY);
+                )*
             }
         }
     };
