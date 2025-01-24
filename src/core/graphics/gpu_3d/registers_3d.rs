@@ -1360,7 +1360,7 @@ impl Gpu3DRegisters {
         self.gx_stat.set_geometry_busy(!self.cmd_fifo.is_empty());
 
         self.gx_stat.set_num_entries_cmd_fifo(u9::new(self.get_cmd_fifo_len() as u16));
-        self.gx_stat.set_cmd_fifo_empty(self.cmd_fifo.is_empty());
+        self.gx_stat.set_cmd_fifo_empty(self.is_cmd_fifo_empty());
 
         self.gx_stat.set_cmd_fifo_less_half_full(!self.is_cmd_fifo_half_full());
 
