@@ -535,9 +535,6 @@ pub struct Polygons {
 #[derive(Default)]
 pub struct Gpu3DRegisters {
     cmd_fifo: FixedFifo<Entry, 512>,
-    test_queue: u16,
-    mtx_queue: u16,
-
     cmd_fifo_param_count: u8,
 
     last_total_cycles: u64,
@@ -675,13 +672,6 @@ impl Gpu3DRegisters {
         self.mtx_mode = MtxMode::from((params[0] & 0x3) as u8);
     }
 
-    fn decrease_mtx_queue(&mut self) {
-        self.mtx_queue -= 1;
-        if self.mtx_queue == 0 {
-            self.gx_stat.set_mtx_stack_busy(false);
-        }
-    }
-
     fn exe_mtx_push(&mut self, _: &[u32; 32]) {
         match self.mtx_mode {
             MtxMode::Projection => {
@@ -707,8 +697,6 @@ impl Gpu3DRegisters {
             }
             MtxMode::Texture => self.matrices.tex_stack = self.matrices.tex,
         }
-
-        self.decrease_mtx_queue();
     }
 
     fn exe_mtx_pop(&mut self, params: &[u32; 32]) {
@@ -737,8 +725,6 @@ impl Gpu3DRegisters {
             }
             MtxMode::Texture => self.matrices.tex = self.matrices.tex_stack,
         }
-
-        self.decrease_mtx_queue();
     }
 
     fn exe_mtx_store(&mut self, params: &[u32; 32]) {
@@ -1185,11 +1171,6 @@ impl Gpu3DRegisters {
         //     [vertices[1], vertices[5], vertices[7], vertices[4]],
         // ];
         //
-        self.test_queue -= 3;
-        if self.test_queue == 0 {
-            self.gx_stat.set_box_pos_vec_test_busy(false);
-        }
-        //
         // for i in 0..6 {
         //     let mut size = 4;
         //     let mut clipped = [Vectorf32::<4>::default(); 10];
@@ -1218,11 +1199,6 @@ impl Gpu3DRegisters {
         }
 
         self.pos_result = self.saved_vertex.coords * &self.matrices.clip;
-
-        self.test_queue -= 2;
-        if self.test_queue == 0 {
-            self.gx_stat.set_box_pos_vec_test_busy(false);
-        }
     }
 
     fn exe_vec_test(&mut self, params: &[u32; 32]) {
@@ -1236,11 +1212,6 @@ impl Gpu3DRegisters {
         self.vec_result[0] = ((vector[0] << 3) as i16) >> 3;
         self.vec_result[1] = ((vector[1] << 3) as i16) >> 3;
         self.vec_result[2] = ((vector[2] << 3) as i16) >> 3;
-
-        self.test_queue -= 1;
-        if self.test_queue == 0 {
-            self.gx_stat.set_box_pos_vec_test_busy(false);
-        }
     }
 
     fn process_vertices(&mut self) {
@@ -1349,11 +1320,6 @@ impl Gpu3DRegisters {
 
     fn queue_entry(&mut self, entry: Entry) {
         self.cmd_fifo.push_back(entry);
-        match entry.cmd {
-            0x11 | 0x12 => self.mtx_queue += 1,
-            0x70 | 0x71 | 0x72 => self.test_queue += 1,
-            _ => {}
-        }
     }
 
     fn post_queue_entry(&mut self, emu: &mut Emu) {
@@ -1363,9 +1329,6 @@ impl Gpu3DRegisters {
         self.gx_stat.set_cmd_fifo_empty(self.is_cmd_fifo_empty());
 
         self.gx_stat.set_cmd_fifo_less_half_full(!self.is_cmd_fifo_half_full());
-
-        self.gx_stat.set_mtx_stack_busy(self.mtx_queue > 0);
-        self.gx_stat.set_box_pos_vec_test_busy(self.test_queue > 0);
 
         if unlikely(self.is_cmd_fifo_full()) {
             get_mem_mut!(emu).breakout_imm = true;
