@@ -286,7 +286,7 @@ struct Entry {
 
 impl Entry {
     fn new(cmd: u8, param: u32) -> Self {
-        Self::new_with_len(cmd, FIFO_PARAM_COUNTS[cmd as usize - 0x10], param)
+        Self::new_with_len(cmd, unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd as usize - 0x10) }, param)
     }
 
     fn new_with_len(cmd: u8, param_len: u8, param: u32) -> Self {
@@ -1322,6 +1322,7 @@ impl Gpu3DRegisters {
         self.cmd_fifo.push_back(entry);
     }
 
+    #[inline(never)]
     fn post_queue_entry(&mut self, emu: &mut Emu) {
         self.gx_stat.set_geometry_busy(!self.cmd_fifo.is_empty());
 
@@ -1364,13 +1365,13 @@ impl Gpu3DRegisters {
         self.vec_result[index] as u16
     }
 
-    pub fn set_gx_fifo(&mut self, mask: u32, value: u32, emu: &mut Emu) {
+    fn queue_packed_value(&mut self, value: u32) {
         if self.gx_fifo == 0 {
-            self.gx_fifo = value & mask;
+            self.gx_fifo = value;
         } else {
             let mut param_count = self.cmd_fifo_param_count;
-            let len = FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize - 0x10];
-            self.queue_entry(Entry::new_with_len(self.gx_fifo as u8, len, value & mask));
+            let len = unsafe { *FIFO_PARAM_COUNTS.get_unchecked((self.gx_fifo & 0x7F) as usize - 0x10) };
+            self.queue_entry(Entry::new_with_len(self.gx_fifo as u8, len, value));
             param_count += 1;
 
             if param_count == len {
@@ -1381,14 +1382,24 @@ impl Gpu3DRegisters {
             }
         }
 
-        for _ in 0..4 {
-            if self.gx_fifo == 0 || FIFO_PARAM_COUNTS[(self.gx_fifo & 0x7F) as usize - 0x10] != 0 {
+        for _ in 0..4 - (self.gx_fifo.leading_zeros() >> 3) {
+            if unsafe { *FIFO_PARAM_COUNTS.get_unchecked((self.gx_fifo & 0x7F) as usize - 0x10) } != 0 {
                 break;
             }
-            self.queue_entry(Entry::new_with_len(self.gx_fifo as u8, 0, value & mask));
+            self.queue_entry(Entry::new_with_len(self.gx_fifo as u8, 0, 0));
             self.gx_fifo >>= 8;
         }
+    }
 
+    pub fn set_gx_fifo(&mut self, mask: u32, value: u32, emu: &mut Emu) {
+        self.queue_packed_value(value & mask);
+        self.post_queue_entry(emu);
+    }
+
+    pub fn set_gx_fifo_multiple(&mut self, values: &[u32], emu: &mut Emu) {
+        for &value in values {
+            self.queue_packed_value(value);
+        }
         self.post_queue_entry(emu);
     }
 

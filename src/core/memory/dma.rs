@@ -1,6 +1,6 @@
 use crate::core::cpu_regs::InterruptFlag;
 use crate::core::cycle_manager::{CycleManager, EventType};
-use crate::core::emu::{get_cm_mut, get_common, get_cpu_regs_mut, get_mem_mut, io_dma, io_dma_mut, Emu};
+use crate::core::emu::{get_cm_mut, get_common, get_common_mut, get_cpu_regs_mut, get_mem_mut, io_dma, io_dma_mut, Emu};
 use crate::core::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
@@ -275,14 +275,21 @@ impl Dma {
 
         let dma = io_dma_mut!(emu, CPU);
         let total_size = count << (step_size >> 1);
-        dma.src_buf.resize(total_size as usize, 0);
+        if dma.src_buf.len() < total_size as usize {
+            dma.src_buf.resize(total_size as usize, 0);
+        }
 
         match (src_addr_ctrl, dest_addr_ctrl) {
             (DmaAddrCtrl::Increment, DmaAddrCtrl::Fixed) => {
                 let mem = get_mem_mut!(emu);
                 let slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
                 mem.read_multiple_slice::<CPU, false, T>(*src_addr, emu, slice);
-                mem.write_fixed_slice::<CPU, false, T>(*dest_addr, emu, slice);
+                if *dest_addr >= 0x4000400 && *dest_addr < 0x4000440 {
+                    let slice = unsafe { slice::from_raw_parts(slice.as_ptr() as *const u32, (total_size as usize) >> 2) };
+                    get_common_mut!(emu).gpu.gpu_3d_regs.set_gx_fifo_multiple(slice, emu);
+                } else {
+                    mem.write_fixed_slice::<CPU, false, T>(*dest_addr, emu, slice);
+                }
                 *src_addr += total_size;
             }
             (DmaAddrCtrl::Increment, DmaAddrCtrl::Increment | DmaAddrCtrl::IncrementReload) => {
