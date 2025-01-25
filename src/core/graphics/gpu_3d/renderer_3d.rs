@@ -294,7 +294,7 @@ impl Gpu3DRenderer {
 
                     let mut tex_coords = vertex.tex_coords;
                     let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
-                    if tex_coord_trans_mode == TextureCoordTransMode::TexCoord {
+                    if tex_coord_trans_mode == TextureCoordTransMode::TexCoord && (vertex.tex_matrix_index as usize) < self.content.tex_matrices.len() {
                         let mut vector = Vectori32::<4>::new([(tex_coords[0] as i32) << 8, (tex_coords[1] as i32) << 8, 1 << 12, 1 << 12]);
                         vector *= &self.content.tex_matrices[vertex.tex_matrix_index as usize];
                         tex_coords[0] = (vector[0] >> 8) as i16;

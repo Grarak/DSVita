@@ -579,6 +579,14 @@ macro_rules! unpacked_cmd {
 }
 
 impl Gpu3DRegisters {
+    pub fn new() -> Self {
+        Gpu3DRegisters {
+            clip_mtx_push: true,
+            tex_mtx_push: true,
+            ..Gpu3DRegisters::default()
+        }
+    }
+
     fn is_cmd_fifo_full(&self) -> bool {
         self.cmd_fifo.len() >= 260
     }
@@ -914,11 +922,11 @@ impl Gpu3DRegisters {
         let tex_coord = TexCoord::from(params[0]);
         self.cur_vtx.tex_coords[0] = tex_coord.s() as i16;
         self.cur_vtx.tex_coords[1] = tex_coord.t() as i16;
-        if self.tex_mtx_push {
+        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::TexCoord && self.tex_mtx_push {
             self.tex_matrices.push(self.matrices.tex);
             self.tex_mtx_push = false;
         }
-        self.cur_vtx.tex_matrix_index = self.tex_matrices.len() as u16 - 1;
+        self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
     }
 
     fn exe_vtx16(&mut self, params: &[u32; 32]) {

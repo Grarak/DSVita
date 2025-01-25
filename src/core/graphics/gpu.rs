@@ -99,7 +99,7 @@ impl Gpu {
             v_count: 0,
             gpu_2d_regs_a: Gpu2DRegisters::new(A),
             gpu_2d_regs_b: Gpu2DRegisters::new(B),
-            gpu_3d_regs: Gpu3DRegisters::default(),
+            gpu_3d_regs: Gpu3DRegisters::new(),
             gpu_renderer: None,
         }
     }
