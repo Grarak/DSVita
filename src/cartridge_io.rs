@@ -141,8 +141,8 @@ impl CartridgeIo {
         let pages = unsafe { self.content_pages.get().as_mut_unchecked() };
         match pages.get(&page_addr) {
             None => {
-                // exceeds 1MB
-                if pages.len() >= 256 {
+                // exceeds 0.5MB
+                if pages.len() >= 128 {
                     debug_println!("clear cartridge pages");
                     pages.clear();
                 }
