@@ -1030,6 +1030,7 @@ impl BlockAsm {
             }
 
             basic_block.remove_dead_code(self.buf);
+            basic_block.consolidate_reg_io(self.buf, &self.tmp_regs);
         }
 
         self.buf.basic_block_label_mapping = basic_blocks_label_mapping;

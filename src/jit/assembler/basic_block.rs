@@ -1,6 +1,6 @@
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::block_asm::{BlockTmpRegs, BLOCK_LOG};
-use crate::jit::assembler::block_inst::{BlockInst, BlockInstType, SaveReg};
+use crate::jit::assembler::block_inst::{Alu, AluOp, AluSetCond, BlockInst, BlockInstType, GuestTransferMultiple, SaveReg, TransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockAsmBuf, BlockLabel, BlockReg};
 use crate::jit::reg::{Reg, RegReserve};
@@ -174,6 +174,96 @@ impl BasicBlock {
                     if (self.regs_live_ranges[i + 1] - outputs) == self.regs_live_ranges[i + 1] {
                         inst.skip = true;
                     }
+                }
+            }
+        }
+    }
+
+    fn flush_reg_io_consolidation(&mut self, buf: &mut BlockAsmBuf, tmp_regs: &BlockTmpRegs, from_reg: Reg, to_reg: Reg, save: bool, start_i: usize, end_i: usize) {
+        for i in start_i..=end_i {
+            let inst = buf.get_inst_mut(i);
+            if !inst.skip {
+                inst.skip = true;
+            }
+        }
+        self.regs_live_ranges[end_i - self.block_entry_start] = self.regs_live_ranges[start_i - self.block_entry_start];
+        let mut thread_regs_addr_reg = tmp_regs.thread_regs_addr_reg;
+        if from_reg as u8 > 0 {
+            thread_regs_addr_reg = tmp_regs.operand_imm_reg;
+            let previous_inst = buf.get_inst_mut(end_i - 1);
+            *previous_inst = Alu::alu3(
+                AluOp::Add,
+                [thread_regs_addr_reg.into(), tmp_regs.thread_regs_addr_reg.into(), (from_reg as u32 * 4).into()],
+                AluSetCond::None,
+                false,
+            )
+            .into();
+            self.regs_live_ranges[end_i - self.block_entry_start - 1] = self.regs_live_ranges[start_i - self.block_entry_start];
+            self.regs_live_ranges[end_i - self.block_entry_start] += thread_regs_addr_reg;
+        }
+        let end_inst = buf.get_inst_mut(end_i);
+        let op = if save { TransferOp::Write } else { TransferOp::Read };
+        let mut guest_regs = RegReserve::new();
+        for reg in from_reg as u8..=to_reg as u8 {
+            guest_regs += Reg::from(reg);
+        }
+        *end_inst = GuestTransferMultiple {
+            op,
+            addr_reg: thread_regs_addr_reg,
+            addr_out_reg: thread_regs_addr_reg,
+            gp_regs: guest_regs,
+            fixed_regs: RegReserve::new(),
+            write_back: false,
+            pre: false,
+            add_to_base: true,
+        }
+        .into();
+    }
+
+    pub fn consolidate_reg_io(&mut self, buf: &mut BlockAsmBuf, tmp_regs: &BlockTmpRegs) {
+        let mut count = 0;
+        let mut target_reg = Reg::None;
+        let mut target_save = false;
+        let mut last_reg = Reg::None;
+        let mut was_save = None;
+        let mut start_i = 0;
+
+        for i in self.block_entry_start..=self.block_entry_end {
+            let inst = buf.get_inst_mut(i);
+            if !inst.skip {
+                let mut flush = true;
+                match &inst.inst_type {
+                    BlockInstType::SaveReg(inner) => {
+                        if was_save == Some(true) && inner.guest_reg <= Reg::R12 && last_reg as u8 + 1 == inner.guest_reg as u8 {
+                            count += 1;
+                            flush = false;
+                            target_reg = inner.guest_reg;
+                            target_save = true;
+                        }
+                        last_reg = inner.guest_reg;
+                        was_save = Some(true);
+                    }
+                    BlockInstType::RestoreReg(inner) => {
+                        if was_save == Some(false) && inner.guest_reg <= Reg::R12 && last_reg as u8 + 1 == inner.guest_reg as u8 {
+                            count += 1;
+                            flush = false;
+                            target_reg = inner.guest_reg;
+                            target_save = false;
+                        }
+                        last_reg = inner.guest_reg;
+                        was_save = Some(false);
+                    }
+                    _ => {
+                        last_reg = Reg::None;
+                        was_save = None;
+                    }
+                }
+                if flush && count > 0 {
+                    self.flush_reg_io_consolidation(buf, tmp_regs, Reg::from(target_reg as u8 - count), target_reg, target_save, start_i, i - 1);
+                    count = 0;
+                }
+                if count == 0 {
+                    start_i = i;
                 }
             }
         }
