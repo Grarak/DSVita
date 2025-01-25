@@ -86,12 +86,21 @@ const_assert!(size_of::<BgUbo>() <= 16 * 1024);
 #[derive(Clone)]
 pub struct Gpu2DRenderRegs {
     disp_cnts: [u32; DISPLAY_HEIGHT],
-    bg_cnts: [u32; DISPLAY_HEIGHT * 4],
+    bg_cnts: [u16; DISPLAY_HEIGHT * 4],
     win_bg_ubo: WinBgUbo,
     bg_ubo: BgUbo,
     blend_ubo: BlendUbo,
     batch_counts: [u8; DISPLAY_HEIGHT],
     current_batch_count_index: usize,
+}
+
+impl Gpu2DRenderRegs {
+    fn reset(&mut self) {
+        self.disp_cnts = unsafe { mem::zeroed() };
+        self.bg_cnts = unsafe { mem::zeroed() };
+        self.batch_counts = unsafe { mem::zeroed() };
+        self.current_batch_count_index = 0;
+    }
 }
 
 impl Default for Gpu2DRenderRegs {
@@ -106,13 +115,13 @@ impl Gpu2DRenderRegs {
         unsafe { assert_unchecked(self.current_batch_count_index < DISPLAY_HEIGHT && line < DISPLAY_HEIGHT) };
         let mut updated = self.disp_cnts[self.current_batch_count_index] != u32::from(inner.disp_cnt);
         for i in 0..4 {
-            updated |= self.bg_cnts[self.current_batch_count_index * 4 + i] != u16::from(inner.bg_cnt[i]) as u32;
+            updated |= self.bg_cnts[self.current_batch_count_index * 4 + i] != u16::from(inner.bg_cnt[i]);
         }
 
         if updated {
             self.disp_cnts[line] = u32::from(inner.disp_cnt);
             for i in 0..4 {
-                self.bg_cnts[line * 4 + i] = u16::from(inner.bg_cnt[i]) as u32;
+                self.bg_cnts[line * 4 + i] = u16::from(inner.bg_cnt[i]);
             }
             self.current_batch_count_index = line;
         } else {
@@ -1021,8 +1030,8 @@ impl Gpu2DProgram {
 }
 
 pub struct Gpu2DRenderer {
-    regs_a: [Gpu2DRenderRegs; 2],
-    regs_b: [Gpu2DRenderRegs; 2],
+    regs_a: [Box<Gpu2DRenderRegs>; 2],
+    regs_b: [Box<Gpu2DRenderRegs>; 2],
     pub has_vram_display: [bool; 2],
     lcdc_pal: GLuint,
     vram_display_program: Gpu2DVramDisplayProgram,
@@ -1042,8 +1051,8 @@ impl Gpu2DRenderer {
             let bg_vert_bitmap_shader = create_shader("bg bitmap", shader_source!("bg_vert_bitmap"), gl::VERTEX_SHADER).unwrap();
 
             let instance = Gpu2DRenderer {
-                regs_a: [Gpu2DRenderRegs::default(), Gpu2DRenderRegs::default()],
-                regs_b: [Gpu2DRenderRegs::default(), Gpu2DRenderRegs::default()],
+                regs_a: [Box::new(Gpu2DRenderRegs::default()), Box::new(Gpu2DRenderRegs::default())],
+                regs_b: [Box::new(Gpu2DRenderRegs::default()), Box::new(Gpu2DRenderRegs::default())],
                 has_vram_display: [false; 2],
                 lcdc_pal: create_pal_texture2d(1024, 656),
                 vram_display_program: Gpu2DVramDisplayProgram::new(),
@@ -1072,14 +1081,14 @@ impl Gpu2DRenderer {
     }
 
     pub fn on_scanline_finish(&mut self) {
-        self.regs_a[0] = self.regs_a[1].clone();
-        self.regs_b[0] = self.regs_b[1].clone();
+        self.regs_a.swap(0, 1);
+        self.regs_b.swap(0, 1);
         self.has_vram_display[0] = self.has_vram_display[1];
     }
 
     pub fn reload_registers(&mut self) {
-        self.regs_a[1] = Gpu2DRenderRegs::default();
-        self.regs_b[1] = Gpu2DRenderRegs::default();
+        self.regs_a[1].reset();
+        self.regs_b[1].reset();
         self.has_vram_display[1] = false;
     }
 
