@@ -889,7 +889,20 @@ impl Gpu3DRegisters {
         for i in 0..3 {
             mtx[i * 5] = params[i] as i32;
         }
-        self.mtx_mult(mtx);
+        match self.mtx_mode {
+            MtxMode::Projection => {
+                self.matrices.proj = mtx * &self.matrices.proj;
+                self.clip_mtx_dirty = true;
+            }
+            MtxMode::ModelView | MtxMode::ModelViewVec => {
+                self.matrices.coord = mtx * &self.matrices.coord;
+                self.clip_mtx_dirty = true;
+            }
+            MtxMode::Texture => {
+                self.matrices.tex = mtx * &self.matrices.tex;
+                self.tex_mtx_push = true;
+            }
+        }
     }
 
     fn exe_mtx_trans(&mut self, params: &[u32; 32]) {
