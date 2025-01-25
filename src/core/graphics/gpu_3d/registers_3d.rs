@@ -166,16 +166,6 @@ static FIFO_PARAM_COUNTS: [u8; 99] = [
     3, 2, 1, // 0x70-0x72
 ];
 
-static CYCLE_COUNTS: [u16; 99] = [
-    1, 17, 36, 17, 36, 19, 34, 30, 35, 31, 28, 22, 22, 0, 0, 0, // 0x10-0x1F
-    1, 9, 1, 9, 8, 8, 8, 8, 8, 1, 1, 1, 0, 0, 0, 0, // 0x20-0x2F
-    4, 4, 6, 1, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x30-0x3F
-    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x40-0x4F
-    392, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x50-0x5F
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x60-0x6F
-    103, 9, 5, // 0x70-0x72
-];
-
 static FUNC_LUT: [fn(&mut Gpu3DRegisters, params: &[u32; 32]); 99] = [
     Gpu3DRegisters::exe_mtx_mode,
     Gpu3DRegisters::exe_mtx_push,
@@ -738,7 +728,7 @@ impl Gpu3DRegisters {
             if unlikely(self.flushed) {
                 break;
             }
-            executed_cycles += unsafe { *CYCLE_COUNTS.get_unchecked(entry.cmd as usize - 0x10) as u32 };
+            executed_cycles += 8;
         }
 
         self.gx_stat.set_num_entries_cmd_fifo(u9::new(self.get_cmd_fifo_len() as u16));
