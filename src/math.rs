@@ -4,6 +4,7 @@ use std::arch::arm::{
     vreinterpretq_u64_s64, vshlq_n_u64, vshr_n_s64, vshrq_n_u64,
 };
 use std::arch::asm;
+use std::fmt::{Display, Formatter};
 use std::intrinsics::simd::simd_add;
 use std::ops::{Index, IndexMut};
 use std::{mem, ops};
@@ -100,6 +101,24 @@ impl Default for Matrix {
             0 << 12, 0 << 12, 1 << 12, 0 << 12,
             0 << 12, 0 << 12, 0 << 12, 1 << 12,
         ])
+    }
+}
+
+impl Display for Matrix {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let row0 = unsafe { (self.0[..4].as_ptr() as *const Vectori32<4>).as_ref_unchecked() };
+        let row1 = unsafe { (self.0[4..8].as_ptr() as *const Vectori32<4>).as_ref_unchecked() };
+        let row2 = unsafe { (self.0[8..12].as_ptr() as *const Vectori32<4>).as_ref_unchecked() };
+        let row3 = unsafe { (self.0[12..].as_ptr() as *const Vectori32<4>).as_ref_unchecked() };
+        write!(f, "[")?;
+        row0.fmt(f)?;
+        write!(f, ", ")?;
+        row1.fmt(f)?;
+        write!(f, ", ")?;
+        row2.fmt(f)?;
+        write!(f, ", ")?;
+        row3.fmt(f)?;
+        write!(f, "]")
     }
 }
 
@@ -219,6 +238,27 @@ where
 {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.values[index]
+    }
+}
+
+impl<const SIZE: usize> Display for Vectori32<SIZE>
+where
+    [(); 4 - SIZE]:,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let fraction_bits = f.precision().unwrap_or(12);
+        write!(f, "[")?;
+
+        let decimal = self.values[0] >> fraction_bits;
+        let fraction = self.values[0] & ((1 << fraction_bits) - 1);
+        write!(f, "{decimal}.{fraction}")?;
+
+        for i in 1..SIZE {
+            let decimal = self.values[i] >> fraction_bits;
+            let fraction = self.values[i] & ((1 << fraction_bits) - 1);
+            write!(f, ", {decimal}.{fraction}")?;
+        }
+        write!(f, "]")
     }
 }
 
