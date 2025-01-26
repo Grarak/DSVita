@@ -14,7 +14,7 @@ mod handler {
     use crate::jit::MemoryAmount;
     use crate::logging::debug_println;
     use std::hint::unreachable_unchecked;
-    use std::intrinsics::{likely, unlikely};
+    use std::intrinsics::unlikely;
 
     pub fn handle_request_write<const CPU: CpuType, const AMOUNT: MemoryAmount>(op0: u32, addr: u32, emu: &mut Emu, op0_reg: Reg) {
         match AMOUNT {
@@ -63,6 +63,16 @@ mod handler {
         }
     }
 
+    fn get_reg_usr_mut<const FIQ_MODE: bool>(regs: &mut ThreadRegs, reg: Reg) -> &mut u32 {
+        if FIQ_MODE {
+            regs.get_reg_usr_mut(reg)
+        } else if reg == Reg::SP || reg == Reg::LR {
+            ThreadRegs::get_reg_usr_mut(regs, reg)
+        } else {
+            ThreadRegs::get_reg_mut(regs, reg)
+        }
+    }
+
     pub fn handle_multiple_request<const CPU: CpuType, const WRITE: bool, const USER: bool, const PRE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(
         pc: u32,
         rlist: u16,
@@ -106,24 +116,28 @@ mod handler {
             }
         }
 
-        let get_reg_fun = if USER && likely(!rlist.is_reserved(Reg::PC)) {
-            ThreadRegs::get_reg_usr_mut
+        let mem_addr = if PRE { addr + 4 } else { addr };
+
+        let get_reg_mut = if USER && !rlist.is_reserved(Reg::PC) {
+            if get_regs!(emu, CPU).is_fiq_mode() {
+                get_reg_usr_mut::<true>
+            } else {
+                get_reg_usr_mut::<false>
+            }
         } else {
             ThreadRegs::get_reg_mut
         };
-
-        let mem_addr = if PRE { addr + 4 } else { addr };
 
         let mut rlist_iter = rlist.into_iter();
         if WRITE {
             get_mem_mut!(emu).write_multiple::<CPU, u32, _>(mem_addr, emu, rlist.len(), || {
                 let reg = unsafe { rlist_iter.next().unwrap_unchecked() };
-                *get_reg_fun(regs, reg)
+                *get_reg_mut(regs, reg)
             });
         } else {
             get_mem_mut!(emu).read_multiple::<CPU, u32, _>(mem_addr, emu, rlist.len(), |value| {
                 let reg = unsafe { rlist_iter.next().unwrap_unchecked() };
-                *get_reg_fun(regs, reg) = value;
+                *get_reg_mut(regs, reg) = value;
             });
         }
 

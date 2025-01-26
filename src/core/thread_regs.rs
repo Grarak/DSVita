@@ -62,7 +62,6 @@ pub struct ThreadRegs {
     pub irq: OtherModeRegs,
     pub und: OtherModeRegs,
     pub cpu: CpuRegs,
-    is_user: bool,
 }
 
 impl ThreadRegs {
@@ -74,7 +73,6 @@ impl ThreadRegs {
             pc: 0,
             cpsr: 0,
             spsr: 0,
-            is_user: false,
             user: UserRegs::default(),
             fiq: FiqRegs::default(),
             svc: OtherModeRegs::default(),
@@ -166,7 +164,7 @@ impl ThreadRegs {
 
     #[inline]
     pub fn restore_spsr(&mut self, emu: &mut Emu) {
-        if !self.is_user {
+        if !self.is_user_mode() {
             self.set_cpsr::<false>(self.spsr, emu);
         }
     }
@@ -207,34 +205,35 @@ impl ThreadRegs {
                 }
                 // IRQ
                 0x12 => {
+                    self.user.gp_regs.copy_from_slice(&self.gp_regs[8..13]);
                     self.irq.sp = self.sp;
                     self.irq.lr = self.lr;
                     self.irq.spsr = self.spsr;
                 }
                 // Supervisor
                 0x13 => {
+                    self.user.gp_regs.copy_from_slice(&self.gp_regs[8..13]);
                     self.svc.sp = self.sp;
                     self.svc.lr = self.lr;
                     self.svc.spsr = self.spsr;
                 }
                 // Abort
                 0x17 => {
+                    self.user.gp_regs.copy_from_slice(&self.gp_regs[8..13]);
                     self.abt.sp = self.sp;
                     self.abt.lr = self.lr;
                     self.abt.spsr = self.spsr;
                 }
                 // Undefined
                 0x1B => {
+                    self.user.gp_regs.copy_from_slice(&self.gp_regs[8..13]);
                     self.und.sp = self.sp;
                     self.und.lr = self.lr;
                     self.und.spsr = self.spsr;
                 }
-                _ => {
-                    debug_println!("Unknown old cpsr mode {:x}", new_mode)
-                }
+                _ => debug_println!("Unknown old cpsr mode {:x}", new_mode),
             }
 
-            self.is_user = false;
             match new_mode {
                 // User | System
                 0x10 | 0x1F => {
@@ -244,7 +243,6 @@ impl ThreadRegs {
                     if DEBUG_LOG {
                         self.spsr = 0;
                     }
-                    self.is_user = true;
                 }
                 // FIQ
                 0x11 => {
@@ -255,31 +253,33 @@ impl ThreadRegs {
                 }
                 // IRQ
                 0x12 => {
+                    self.gp_regs[8..13].copy_from_slice(&self.user.gp_regs);
                     self.sp = self.irq.sp;
                     self.lr = self.irq.lr;
                     self.spsr = self.irq.spsr;
                 }
                 // Supervisor
                 0x13 => {
+                    self.gp_regs[8..13].copy_from_slice(&self.user.gp_regs);
                     self.sp = self.svc.sp;
                     self.lr = self.svc.lr;
                     self.spsr = self.svc.spsr;
                 }
                 // Abort
                 0x17 => {
+                    self.gp_regs[8..13].copy_from_slice(&self.user.gp_regs);
                     self.sp = self.abt.sp;
                     self.lr = self.abt.lr;
                     self.spsr = self.abt.spsr;
                 }
                 // Undefined
                 0x1B => {
+                    self.gp_regs[8..13].copy_from_slice(&self.user.gp_regs);
                     self.sp = self.und.sp;
                     self.lr = self.und.lr;
                     self.spsr = self.und.spsr;
                 }
-                _ => {
-                    debug_println!("Unknown new cpsr mode {:x}", new_mode)
-                }
+                _ => debug_println!("Unknown new cpsr mode {:x}", new_mode),
             }
         }
 
@@ -295,6 +295,15 @@ impl ThreadRegs {
     }
 
     pub fn is_thumb(&self) -> bool {
-        bool::from(Cpsr::from(self.cpsr).thumb())
+        Cpsr::from(self.cpsr).thumb()
+    }
+
+    pub fn is_user_mode(&self) -> bool {
+        let mode = u8::from(Cpsr::from(self.cpsr).mode());
+        mode == 0x10 || mode == 0x1F
+    }
+
+    pub fn is_fiq_mode(&self) -> bool {
+        u8::from(Cpsr::from(self.cpsr).mode()) == 0x11
     }
 }

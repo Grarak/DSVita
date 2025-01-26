@@ -1,5 +1,4 @@
 use crate::core::emu::{get_mmu, get_regs};
-use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockOperand, BlockReg};
@@ -390,16 +389,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             (gp_regs, fixed_regs, non_gp_regs_mappings)
         };
 
-        const USER_REGS: RegReserve = reg_reserve!(Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::R12, Reg::SP, Reg::LR);
-        let use_fast_mem = !rlist.is_empty() && (!write_back || !rlist.is_reserved(op0)) && (!inst_info.op.mem_transfer_user() || !rlist.is_reserved(Reg::PC));
+        let use_fast_mem = !inst_info.op.mem_transfer_user() && !rlist.is_empty() && (!write_back || !rlist.is_reserved(op0));
         if use_fast_mem {
             let needs_rlist_split = rlist.len() >= (RegReserve::gp() + Reg::LR).len() - 2 && !inst_info.op.mem_transfer_user();
 
             let mut regs = rlist;
-
-            if inst_info.op.mem_transfer_user() {
-                regs -= USER_REGS;
-            }
 
             if needs_rlist_split {
                 for _ in 0..regs.len() / 2 {
@@ -422,22 +416,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             if inst_info.op.mem_is_write() {
                 if needs_rlist_split || inst_info.op.mem_transfer_user() {
                     if decrement {
-                        if inst_info.op.mem_transfer_user() {
-                            let user_regs = rlist & USER_REGS;
-                            if !user_regs.is_empty() {
-                                for (i, user_reg) in user_regs.into_iter().enumerate() {
-                                    let fixed_reg = Reg::from(i as u8);
-                                    let gp_offset = user_reg as u32 - 8;
-                                    block_asm.load_u32(
-                                        BlockReg::Fixed(fixed_reg),
-                                        block_asm.tmp_regs.thread_regs_addr_reg,
-                                        ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4,
-                                    );
-                                }
-                                let fixed_regs = RegReserve::from((1 << user_regs.len()) - 1);
-                                block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, reg_reserve!(), fixed_regs, true, pre, false);
-                            }
-                        } else {
+                        {
                             let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
 
                             for (guest_reg, fixed_reg) in non_gp_regs_mappings {
@@ -460,37 +439,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                             block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, true, pre, true);
                         }
 
-                        if inst_info.op.mem_transfer_user() {
-                            let user_regs = rlist & USER_REGS;
-                            if !user_regs.is_empty() {
-                                for (i, user_reg) in user_regs.into_iter().enumerate() {
-                                    let fixed_reg = Reg::from(i as u8);
-                                    let gp_offset = user_reg as u32 - 8;
-                                    block_asm.load_u32(
-                                        BlockReg::Fixed(fixed_reg),
-                                        block_asm.tmp_regs.thread_regs_addr_reg,
-                                        ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4,
-                                    );
-                                }
-                                let fixed_regs = RegReserve::from((1 << user_regs.len()) - 1);
-                                block_asm.guest_transfer_write_multiple(
-                                    if gp_regs.is_empty() { base_reg } else { base_reg_out },
-                                    base_reg_out,
-                                    reg_reserve!(),
-                                    fixed_regs,
-                                    write_back,
-                                    pre,
-                                    true,
-                                );
-                            }
-                        } else {
-                            let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
+                        let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
 
-                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                                block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
-                            }
-                            block_asm.guest_transfer_write_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, true);
+                        for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                            block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
                         }
+                        block_asm.guest_transfer_write_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, true);
                     }
                 } else {
                     for (guest_reg, fixed_reg) in non_gp_regs_mappings {
@@ -509,22 +463,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             } else {
                 if needs_rlist_split || inst_info.op.mem_transfer_user() {
                     if decrement {
-                        if inst_info.op.mem_transfer_user() {
-                            let user_regs = rlist & USER_REGS;
-                            if !user_regs.is_empty() {
-                                let fixed_regs = RegReserve::from((1 << user_regs.len()) - 1);
-                                block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, reg_reserve!(), fixed_regs, true, pre, false);
-                                for (i, user_reg) in user_regs.into_iter().enumerate() {
-                                    let fixed_reg = Reg::from(i as u8);
-                                    let gp_offset = user_reg as u32 - 8;
-                                    block_asm.store_u32(
-                                        BlockReg::Fixed(fixed_reg),
-                                        block_asm.tmp_regs.thread_regs_addr_reg,
-                                        ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4,
-                                    );
-                                }
-                            }
-                        } else {
+                        {
                             let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
 
                             block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, true, pre, false);
@@ -547,36 +486,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                             }
                         }
 
-                        if inst_info.op.mem_transfer_user() {
-                            let user_regs = rlist & USER_REGS;
-                            if !user_regs.is_empty() {
-                                let fixed_regs = RegReserve::from((1 << user_regs.len()) - 1);
-                                block_asm.guest_transfer_read_multiple(
-                                    if gp_regs.is_empty() { base_reg } else { base_reg_out },
-                                    base_reg_out,
-                                    reg_reserve!(),
-                                    fixed_regs,
-                                    write_back,
-                                    pre,
-                                    true,
-                                );
-                                for (i, user_reg) in user_regs.into_iter().enumerate() {
-                                    let fixed_reg = Reg::from(i as u8);
-                                    let gp_offset = user_reg as u32 - 8;
-                                    block_asm.store_u32(
-                                        BlockReg::Fixed(fixed_reg),
-                                        block_asm.tmp_regs.thread_regs_addr_reg,
-                                        ThreadRegs::get_user_regs_offset() as u32 + gp_offset * 4,
-                                    );
-                                }
-                            }
-                        } else {
-                            let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
+                        let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
 
-                            block_asm.guest_transfer_read_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, true);
-                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                                block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
-                            }
+                        block_asm.guest_transfer_read_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, true);
+                        for (guest_reg, fixed_reg) in non_gp_regs_mappings {
+                            block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
                         }
                     }
                 } else {
@@ -592,14 +506,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     block_asm.add(op0, base_reg, op0);
                 }
 
-                if inst_info.op.mem_transfer_user() {
-                    for guest_reg in rlist - USER_REGS {
-                        block_asm.mark_reg_dirty(guest_reg, false);
-                    }
-                } else {
-                    for guest_reg in rlist {
-                        block_asm.mark_reg_dirty(guest_reg, false);
-                    }
+                for guest_reg in rlist {
+                    block_asm.mark_reg_dirty(guest_reg, false);
                 }
 
                 block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
@@ -686,14 +594,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             if !inst_info.op.mem_is_write() {
                 block_asm.label(fast_mem_mark_dirty_label);
-                if inst_info.op.mem_transfer_user() {
-                    for guest_reg in rlist - USER_REGS {
-                        block_asm.mark_reg_dirty(guest_reg, true);
-                    }
-                } else {
-                    for guest_reg in rlist {
-                        block_asm.mark_reg_dirty(guest_reg, true);
-                    }
+                for guest_reg in rlist {
+                    block_asm.mark_reg_dirty(guest_reg, true);
                 }
             }
 
