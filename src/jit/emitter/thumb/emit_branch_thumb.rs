@@ -5,7 +5,7 @@ use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
 
-impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
+impl<const CPU: CpuType> JitAsm<'_, CPU> {
     pub fn emit_b_thumb(&mut self, block_asm: &mut BlockAsm) {
         let inst_info = self.jit_buf.current_inst();
 

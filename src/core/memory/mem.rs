@@ -1016,16 +1016,20 @@ impl Memory {
     }
 
     pub fn read_with_options<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu) -> T {
-        debug_println!("{:?} memory read at {:x}", CPU, addr);
+        debug_println!("{CPU:?} memory read at {addr:x}");
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
         let shm_offset = self.get_shm_offset::<CPU, TCM, false>(aligned_addr) as u32;
         if shm_offset != 0 {
-            return utils::read_from_mem(&self.shm, shm_offset);
+            let ret: T = utils::read_from_mem(&self.shm, shm_offset);
+            debug_println!("{CPU:?} memory read at {addr:x} with value {:x}", ret.into());
+            return ret;
         }
 
-        MemoryIo::<CPU, TCM, T>::read(aligned_addr, emu)
+        let ret: T = MemoryIo::<CPU, TCM, T>::read(aligned_addr, emu);
+        debug_println!("{CPU:?} memory read at {addr:x} with value {:x}", ret.into());
+        ret
     }
 
     pub fn read_multiple<const CPU: CpuType, T: Convert, F: FnMut(T)>(&mut self, addr: u32, emu: &mut Emu, size: usize, mut write_value: F) {

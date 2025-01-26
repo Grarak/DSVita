@@ -129,24 +129,33 @@ mod handler {
         };
 
         let mut rlist_iter = rlist.into_iter();
+        #[cfg(debug_assertions)]
+        let mut debug_addr = mem_addr;
         if WRITE {
             get_mem_mut!(emu).write_multiple::<CPU, u32, _>(mem_addr, emu, rlist.len(), || {
                 let reg = unsafe { rlist_iter.next().unwrap_unchecked() };
-                *get_reg_mut(regs, reg)
+                let reg = *get_reg_mut(regs, reg);
+                #[cfg(debug_assertions)]
+                {
+                    debug_println!("{CPU:?} multiple memory write at {debug_addr:x} of value {reg:x}");
+                    debug_addr += 4;
+                }
+                reg
             });
         } else {
             get_mem_mut!(emu).read_multiple::<CPU, u32, _>(mem_addr, emu, rlist.len(), |value| {
                 let reg = unsafe { rlist_iter.next().unwrap_unchecked() };
+                #[cfg(debug_assertions)]
+                {
+                    debug_println!("{CPU:?} multiple memory read at {debug_addr:x} with value {value:x} to {reg:?}");
+                    debug_addr += 4;
+                }
                 *get_reg_mut(regs, reg) = value;
             });
         }
 
         if WRITE_BACK && (WRITE || (CPU == CpuType::ARM9 && unlikely((rlist.0 & !((1 << (op0 as u8 + 1)) - 1)) != 0 || (rlist.0 == (1 << op0 as u8))))) {
             *regs.get_reg_mut(op0) = if DECREMENT { start_addr } else { addr + (rlist.len() << 2) as u32 }
-        }
-
-        if USER && unlikely(rlist.is_reserved(Reg::PC)) {
-            unsafe { unreachable_unchecked() }
         }
     }
 }

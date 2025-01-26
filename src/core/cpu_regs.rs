@@ -67,7 +67,7 @@ pub struct CpuRegs {
     pub post_flg: u8,
     pub halt_cnt: u8,
     halt: u8,
-    cpu_type: CpuType,
+    pub cpu_type: CpuType,
     pub bios_wait_flags: u32,
 }
 

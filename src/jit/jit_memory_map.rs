@@ -1,7 +1,9 @@
 use crate::core::memory::regions;
 use crate::jit::jit_memory::{JitEntries, JitEntry, JitLiveRanges, BIOS_UNINTERRUPT_ENTRY_ARM7, BIOS_UNINTERRUPT_ENTRY_ARM9, JIT_LIVE_RANGE_PAGE_SIZE_SHIFT};
+use crate::utils;
 use crate::utils::HeapMemU32;
-use std::ptr;
+use std::cmp::min;
+use std::{ptr, slice};
 
 // ARM9 Bios starts at 0xFFFF0000, but just treat everything above OAM region as bios
 // Also omit 0xF msb to save more memory
@@ -86,8 +88,27 @@ impl JitMemoryMap {
         unsafe { ((*self.map.get_unchecked((addr >> BLOCK_SHIFT) as usize)) as *mut JitEntry).add((addr as usize) & (BLOCK_SIZE - 1)) }
     }
 
+    pub fn write_jit_entries(&mut self, addr: u32, mut size: usize, value: JitEntry) {
+        let mut addr = (addr & 0x0FFFFFFF) >> 1;
+        while size > 0 {
+            let block = self.map[(addr >> BLOCK_SHIFT) as usize] as *mut JitEntry;
+            let block_offset = (addr as usize) & (BLOCK_SIZE - 1);
+            let block_remaining = BLOCK_SIZE - block_offset;
+            let write_size = min(block_remaining, size);
+            unsafe { slice::from_raw_parts_mut(block.add(block_offset), write_size).fill(value) };
+            addr = utils::align_up(addr as usize, BLOCK_SIZE) as u32;
+            size -= write_size;
+        }
+    }
+
     pub fn get_live_range(&self, addr: u32) -> *mut u8 {
         unsafe { (*self.live_ranges_map.get_unchecked((addr >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize)) as _ }
+    }
+
+    pub fn has_jit_block(&self, addr: u32) -> bool {
+        let live_range = self.get_live_range(addr);
+        let bit = (addr >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
+        unsafe { *live_range & (1 << bit) != 0 }
     }
 
     pub fn get_map_ptr(&self) -> *const JitEntry {

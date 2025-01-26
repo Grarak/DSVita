@@ -11,9 +11,9 @@ use std::intrinsics::likely;
 use std::mem;
 
 pub extern "C" fn run_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: *mut JitAsm<CPU>, current_pc: u32) {
-    debug_println!("{CPU:?} run scheduler at {current_pc:x}");
-
     let asm = unsafe { asm.as_mut_unchecked() };
+    debug_println!("{CPU:?} run scheduler at {current_pc:x} target pc {:x}", get_regs!(asm.emu, CPU).pc);
+
     let cycles = if ARM7_HLE {
         (asm.runtime_data.accumulated_cycles + 1) >> 1
     } else {

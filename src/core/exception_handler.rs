@@ -1,4 +1,5 @@
 #[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ExceptionVector {
     Reset = 0x0,
     UndefinedInstruction = 0x4,
@@ -11,10 +12,13 @@ pub enum ExceptionVector {
 }
 
 mod handler {
-    use crate::core::emu::{get_cp15, Emu};
+    use crate::core::emu::{get_cp15, get_regs_mut, Emu};
     use crate::core::exception_handler::ExceptionVector;
     use crate::core::hle::bios;
+    use crate::core::thread_regs::Cpsr;
     use crate::core::CpuType;
+    use crate::logging::debug_println;
+    use bilge::prelude::u5;
 
     pub fn handle<const CPU: CpuType, const THUMB: bool>(emu: &mut Emu, opcode: u32, vector: ExceptionVector) {
         if CPU == CpuType::ARM7 || get_cp15!(emu).exception_addr != 0 {
@@ -24,7 +28,22 @@ mod handler {
                 _ => todo!(),
             }
         } else {
-            todo!()
+            debug_println!("{CPU:?} handle exception");
+            debug_assert!(vector != ExceptionVector::SoftwareInterrupt);
+
+            const MODES: [u8; 8] = [0x13, 0x1B, 0x13, 0x17, 0x17, 0x13, 0x12, 0x11];
+            let regs = get_regs_mut!(emu, CPU);
+
+            let mut new_cpsr = Cpsr::from(regs.cpsr);
+            new_cpsr.set_mode(u5::new(MODES[(vector as usize) >> 2]));
+            new_cpsr.set_thumb(false);
+            new_cpsr.set_fiq_disable(true);
+            new_cpsr.set_irq_disable(true);
+            regs.set_cpsr::<true>(new_cpsr.into(), emu);
+
+            // Interrupt handler will subtract 4 from lr, offset this
+            regs.lr = regs.pc + 4;
+            regs.pc = vector as u32;
         }
     }
 }

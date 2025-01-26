@@ -14,7 +14,7 @@ use crate::utils::{HeapMem, HeapMemU8};
 use std::collections::VecDeque;
 use std::intrinsics::unlikely;
 use std::ops::Deref;
-use std::{ptr, slice};
+use std::ptr;
 use CpuType::{ARM7, ARM9};
 
 const JIT_MEMORY_SIZE: usize = 24 * 1024 * 1024;
@@ -327,8 +327,7 @@ impl JitMemory {
 
                     let guest_addr_start = $guest_addr & !(JIT_LIVE_RANGE_PAGE_SIZE - 1);
                     debug_println!("Invalidating jit {guest_addr_start:x} - {:x}", guest_addr_start + JIT_LIVE_RANGE_PAGE_SIZE);
-                    let jit_entry_start = self.jit_memory_map.get_jit_entry(guest_addr_start);
-                    unsafe { slice::from_raw_parts_mut(jit_entry_start, JIT_LIVE_RANGE_PAGE_SIZE as usize).fill(DEFAULT_JIT_ENTRY) }
+                    self.jit_memory_map.write_jit_entries(guest_addr_start, JIT_LIVE_RANGE_PAGE_SIZE as usize, DEFAULT_JIT_ENTRY);
                 }
             }};
         }

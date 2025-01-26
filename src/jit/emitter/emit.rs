@@ -47,7 +47,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             let restore_spsr = self.jit_buf.current_inst().out_regs.is_reserved(Reg::CPSR) && op.is_arm_alu();
             if restore_spsr {
-                block_asm.call2(register_restore_spsr as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32, self.emu as *mut _ as u32);
+                block_asm.call(register_restore_spsr::<CPU> as *const ());
             }
 
             if CPU == ARM7 || (!op.is_single_mem_transfer() && !op.is_multiple_mem_transfer()) {
@@ -61,7 +61,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             }
 
             if (op.is_mov() && self.jit_buf.current_inst().src_regs.is_reserved(Reg::LR) && !self.jit_buf.current_inst().out_regs.is_reserved(Reg::CPSR))
-                || (op.is_multiple_mem_transfer() && *self.jit_buf.current_inst().operands()[0].as_reg_no_shift().unwrap() == Reg::SP)
+                || (op.is_multiple_mem_transfer() && *self.jit_buf.current_inst().operands()[0].as_reg_no_shift().unwrap() == Reg::SP && !op.mem_transfer_user())
                 || (op.is_single_mem_transfer() && self.jit_buf.current_inst().src_regs.is_reserved(Reg::SP))
             {
                 let guest_pc_reg = block_asm.new_reg();
@@ -69,6 +69,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 self.emit_branch_return_stack_common(block_asm, guest_pc_reg);
                 block_asm.free_reg(guest_pc_reg);
             } else {
+                if op.mem_transfer_user() {
+                    block_asm.call(register_restore_spsr::<CPU> as *const ());
+                    if CPU == ARM7 {
+                        block_asm.call1(set_pc_arm_mode as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32);
+                    }
+                }
+
                 self.emit_branch_out_metadata(block_asm);
                 block_asm.epilogue();
             }

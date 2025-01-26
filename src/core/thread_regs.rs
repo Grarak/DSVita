@@ -188,6 +188,7 @@ impl ThreadRegs {
 
         let current_mode = u8::from(current_cpsr.mode());
         let new_mode = u8::from(new_cpsr.mode());
+        debug_println!("{:?} set cpsr from mode {current_mode:x} to {new_mode:x}", self.cpu.cpu_type);
         if current_mode != new_mode {
             match current_mode {
                 // User | System

@@ -61,6 +61,7 @@ pub struct Cp15 {
     itcm: u32,
     pub itcm_state: TcmState,
     pub itcm_size: u32,
+    proc_id: u32,
 }
 
 #[derive(Eq, PartialEq)]
@@ -96,6 +97,7 @@ impl Cp15 {
             itcm: 0,
             itcm_state: TcmState::Disabled,
             itcm_size: 0,
+            proc_id: 0,
         }
     }
 
@@ -141,6 +143,7 @@ impl Cp15 {
             0x010000 => self.set_control_reg(value, emu),
             0x090100 => self.set_dtcm(value, emu),
             0x090101 => self.set_itcm(value, emu),
+            0x0D0001 | 0x0D0101 => self.proc_id = value,
             _ => debug_println!("Unknown cp15 reg write {:x}", reg),
         }
     }
@@ -154,6 +157,7 @@ impl Cp15 {
             0x010000 => self.control,
             0x090100 => self.dtcm,
             0x090101 => self.itcm,
+            0x0D0001 | 0x0D0101 => self.proc_id,
             _ => {
                 debug_println!("Unknown cp15 reg read {:x}", reg);
                 0

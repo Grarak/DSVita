@@ -1,8 +1,9 @@
 use crate::core::cp15::TcmState;
-use crate::core::emu::{get_cp15, get_mem, Emu};
+use crate::core::emu::{get_cp15, get_jit, get_mem, Emu};
 use crate::core::memory::regions;
 use crate::core::memory::regions::{DTCM_REGION, ITCM_REGION, V_MEM_ARM7_RANGE};
 use crate::core::CpuType::{ARM7, ARM9};
+use crate::logging::debug_println;
 use crate::mmap::{MemRegion, VirtualMem};
 use crate::utils::HeapMemUsize;
 use regions::{IO_PORTS_OFFSET, MAIN_OFFSET, MAIN_REGION, SHARED_WRAM_OFFSET, V_MEM_ARM9_RANGE};
@@ -136,7 +137,10 @@ impl MmuArm9Inner {
     }
 
     fn update_tcm(&mut self, start: u32, end: u32, emu: &Emu) {
+        debug_println!("update tcm {start:x} - {end:x}");
+
         let shm = &get_mem!(emu).shm;
+        let jit_mmu = &get_jit!(emu).jit_memory_map;
 
         let cp15 = get_cp15!(emu);
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
@@ -152,9 +156,12 @@ impl MmuArm9Inner {
                 MAIN_OFFSET => {
                     let addr_offset = (addr as usize) & (MAIN_REGION.size - 1);
                     *mmu_read = MAIN_REGION.shm_offset + addr_offset;
-                    *mmu_write = MAIN_REGION.shm_offset + addr_offset;
+                    let write = !jit_mmu.has_jit_block(addr);
+                    if write {
+                        *mmu_write = MAIN_REGION.shm_offset + addr_offset;
+                    }
                     self.vmem_tcm
-                        .create_page_map(shm, MAIN_REGION.shm_offset, base_addr as usize, MAIN_REGION.size, addr as usize, MMU_PAGE_SIZE, MAIN_REGION.allow_write)
+                        .create_page_map(shm, MAIN_REGION.shm_offset, base_addr as usize, MAIN_REGION.size, addr as usize, MMU_PAGE_SIZE, write)
                         .unwrap();
                 }
                 SHARED_WRAM_OFFSET => {
@@ -201,10 +208,13 @@ impl MmuArm9Inner {
             if addr < cp15.itcm_size {
                 if cp15.itcm_state == TcmState::RW {
                     let addr_offset = (addr as usize) & (ITCM_REGION.size - 1);
+                    let write = !jit_mmu.has_jit_block(addr);
                     *mmu_read = ITCM_REGION.shm_offset + addr_offset;
-                    *mmu_write = ITCM_REGION.shm_offset + addr_offset;
+                    if write {
+                        *mmu_write = ITCM_REGION.shm_offset + addr_offset;
+                    }
                     self.vmem_tcm
-                        .create_page_map(shm, ITCM_REGION.shm_offset, base_addr as usize, ITCM_REGION.size, addr as usize, MMU_PAGE_SIZE, true)
+                        .create_page_map(shm, ITCM_REGION.shm_offset, base_addr as usize, ITCM_REGION.size, addr as usize, MMU_PAGE_SIZE, write)
                         .unwrap();
                 }
             } else if addr >= cp15.dtcm_addr && addr < cp15.dtcm_addr + cp15.dtcm_size {
@@ -378,6 +388,7 @@ impl MmuArm7Inner {
 
     fn update_wram(&mut self, emu: &Emu) {
         let shm = &get_mem!(emu).shm;
+        let jit_mmu = &get_jit!(emu).jit_memory_map;
 
         for addr in (SHARED_WRAM_OFFSET..IO_PORTS_OFFSET).step_by(MMU_PAGE_SIZE) {
             self.vmem.destroy_map(addr as usize, MMU_PAGE_SIZE);
@@ -385,10 +396,13 @@ impl MmuArm7Inner {
             let mmu_read = &mut self.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
 
+            let write = !jit_mmu.has_jit_block(addr);
             let shm_offset = get_mem!(emu).wram.get_shm_offset::<{ ARM7 }>(addr);
             *mmu_read = shm_offset;
-            *mmu_write = shm_offset;
-            self.vmem.create_map(shm, shm_offset, addr as usize, MMU_PAGE_SIZE, true, true, false).unwrap();
+            if write {
+                *mmu_write = shm_offset;
+            }
+            self.vmem.create_map(shm, shm_offset, addr as usize, MMU_PAGE_SIZE, true, write, false).unwrap();
         }
     }
 }
