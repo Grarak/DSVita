@@ -159,6 +159,10 @@ impl RegReserve {
     pub fn get_highest_reg(&self) -> Reg {
         Reg::from(32 - self.0.leading_zeros() as u8 - 1)
     }
+
+    pub fn get_lowest_reg(&self) -> Reg {
+        Reg::from(self.0.trailing_zeros() as u8)
+    }
 }
 
 impl ops::Add<RegReserve> for RegReserve {

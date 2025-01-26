@@ -406,7 +406,7 @@ impl BlockAsmBuf {
             basic_block_label_mapping: NoHashMap::default(),
             guest_branches_mapping: NoHashMap::default(),
             reachable_blocks: BitSet::new(),
-            reg_allocator: BlockRegAllocator::new(),
+            reg_allocator: BlockRegAllocator::default(),
             block_opcode_offsets: Vec::new(),
             placeholders: Vec::new(),
             opcodes: Vec::new(),

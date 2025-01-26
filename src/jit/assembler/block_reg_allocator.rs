@@ -1,6 +1,6 @@
 use crate::fixed_fifo::FixedFifo;
-use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
-use crate::jit::assembler::arm::transfer_assembler::LdrStrImm;
+use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
+use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm};
 use crate::jit::assembler::block_asm::BLOCK_LOG;
 use crate::jit::assembler::block_inst::{BlockInst, TransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
@@ -10,11 +10,12 @@ use crate::jit::Cond;
 use crate::utils::HeapMem;
 use std::intrinsics::unlikely;
 
-const DEBUG: bool = crate::IS_DEBUG;
+const DEBUG: bool = false;
 
 pub const ALLOCATION_REGS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11);
 const SCRATCH_REGS: RegReserve = reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR);
 
+#[derive(Default)]
 pub struct BlockRegAllocator {
     pub global_mapping: HeapMem<Reg, { ANY_REG_LIMIT as usize }>,
     stored_mapping_inputs: HeapMem<Reg, { ANY_REG_LIMIT as usize }>,
@@ -23,21 +24,13 @@ pub struct BlockRegAllocator {
     spilled: BlockRegSet,
     pub dirty_regs: RegReserve,
     lru_reg: FixedFifo<Reg, 16>,
+    last_gen_op: TransferOp,
+    last_gen_any_reg: u16,
+    last_gen_increment: bool,
+    last_gen_regs: RegReserve,
 }
 
 impl BlockRegAllocator {
-    pub fn new() -> Self {
-        BlockRegAllocator {
-            global_mapping: HeapMem::new(),
-            stored_mapping_inputs: HeapMem::new(),
-            stored_mapping: HeapMem::new(),
-            stored_mapping_reverse: [None; Reg::PC as usize],
-            spilled: BlockRegSet::new(),
-            dirty_regs: RegReserve::new(),
-            lru_reg: FixedFifo::new(),
-        }
-    }
-
     pub fn init_inputs(&mut self, input_regs: &BlockRegSet) {
         self.stored_mapping_inputs.fill(Reg::None);
         self.stored_mapping.fill(Reg::None);
@@ -106,12 +99,144 @@ impl BlockRegAllocator {
 
     fn gen_pre_handle_spilled_inst(&mut self, any_reg: u16, mapping: Reg, op: TransferOp, opcodes: &mut Vec<u32>) {
         self.dirty_regs += mapping;
-        opcodes.push(LdrStrImm::generic(mapping, Reg::SP, any_reg * 4, op == TransferOp::Read, false, false, true, true, Cond::AL));
+
+        if !self.last_gen_regs.is_empty() {
+            if self.last_gen_op != op || self.last_gen_any_reg.abs_diff(any_reg) != 1 {
+                self.gen_flush(opcodes);
+            } else if self.last_gen_regs.len() == 1 {
+                self.last_gen_increment = any_reg > self.last_gen_any_reg;
+                if self.last_gen_increment {
+                    if mapping as u8 <= self.last_gen_regs.get_highest_reg() as u8 {
+                        self.gen_flush(opcodes);
+                    }
+                } else if mapping as u8 >= self.last_gen_regs.get_lowest_reg() as u8 {
+                    self.gen_flush(opcodes);
+                }
+            } else if (any_reg > self.last_gen_any_reg) != self.last_gen_increment {
+                self.gen_flush(opcodes);
+            } else if self.last_gen_increment {
+                if mapping as u8 <= self.last_gen_regs.get_highest_reg() as u8 {
+                    self.gen_flush(opcodes);
+                }
+            } else if mapping as u8 >= self.last_gen_regs.get_lowest_reg() as u8 {
+                self.gen_flush(opcodes);
+            }
+        }
+
+        self.last_gen_op = op;
+        self.last_gen_any_reg = any_reg;
+        self.last_gen_regs += mapping;
     }
 
     fn gen_pre_move_reg(&mut self, dst: Reg, src: Reg, opcodes: &mut Vec<u32>) {
         self.dirty_regs += dst;
+        self.gen_flush(opcodes);
         opcodes.push(AluShiftImm::mov_al(dst, src));
+    }
+
+    fn gen_flush(&mut self, opcodes: &mut Vec<u32>) {
+        if self.last_gen_regs.is_empty() {
+            return;
+        }
+        let len = self.last_gen_regs.len();
+        if len > 2 || (self.last_gen_any_reg == len as u16 - 1 && len > 1) {
+            if self.last_gen_any_reg != len as u16 - 1 {
+                opcodes.push(AluImm::add(
+                    Reg::SP,
+                    Reg::SP,
+                    if self.last_gen_increment {
+                        self.last_gen_any_reg as u8 - (len as u8 - 1)
+                    } else {
+                        self.last_gen_any_reg as u8 + (len as u8 - 1)
+                    },
+                    15,
+                    Cond::AL,
+                ));
+            }
+            opcodes.push(LdmStm::generic(
+                Reg::SP,
+                self.last_gen_regs,
+                self.last_gen_op == TransferOp::Read,
+                false,
+                self.last_gen_increment,
+                false,
+                Cond::AL,
+            ));
+            if self.last_gen_any_reg != len as u16 - 1 {
+                opcodes.push(AluImm::sub(
+                    Reg::SP,
+                    Reg::SP,
+                    if self.last_gen_increment {
+                        self.last_gen_any_reg as u8 - (len as u8 - 1)
+                    } else {
+                        self.last_gen_any_reg as u8 + (len as u8 - 1)
+                    },
+                    15,
+                    Cond::AL,
+                ));
+            }
+        } else if len == 2 {
+            if self.last_gen_increment {
+                opcodes.push(LdrStrImm::generic(
+                    self.last_gen_regs.get_highest_reg(),
+                    Reg::SP,
+                    self.last_gen_any_reg * 4,
+                    self.last_gen_op == TransferOp::Read,
+                    false,
+                    false,
+                    true,
+                    true,
+                    Cond::AL,
+                ));
+                opcodes.push(LdrStrImm::generic(
+                    self.last_gen_regs.get_lowest_reg(),
+                    Reg::SP,
+                    (self.last_gen_any_reg - 1) * 4,
+                    self.last_gen_op == TransferOp::Read,
+                    false,
+                    false,
+                    true,
+                    true,
+                    Cond::AL,
+                ));
+            } else {
+                opcodes.push(LdrStrImm::generic(
+                    self.last_gen_regs.get_lowest_reg(),
+                    Reg::SP,
+                    self.last_gen_any_reg * 4,
+                    self.last_gen_op == TransferOp::Read,
+                    false,
+                    false,
+                    true,
+                    true,
+                    Cond::AL,
+                ));
+                opcodes.push(LdrStrImm::generic(
+                    self.last_gen_regs.get_highest_reg(),
+                    Reg::SP,
+                    (self.last_gen_any_reg - 1) * 4,
+                    self.last_gen_op == TransferOp::Read,
+                    false,
+                    false,
+                    true,
+                    true,
+                    Cond::AL,
+                ));
+            }
+        } else {
+            opcodes.push(LdrStrImm::generic(
+                self.last_gen_regs.get_lowest_reg(),
+                Reg::SP,
+                self.last_gen_any_reg * 4,
+                self.last_gen_op == TransferOp::Read,
+                false,
+                false,
+                true,
+                true,
+                Cond::AL,
+            ));
+        }
+        self.last_gen_regs.clear();
     }
 
     fn set_stored_mapping(&mut self, any_reg: u16, reg: Reg) {
@@ -345,6 +470,8 @@ impl BlockRegAllocator {
             self.dirty_regs += reg;
         }
 
+        self.gen_flush(opcodes);
+
         if DEBUG && unsafe { BLOCK_LOG } {
             println!("after mapping {:?}", self.stored_mapping_reverse);
             println!("after spilled {:?}", self.spilled);
@@ -435,5 +562,6 @@ impl BlockRegAllocator {
                 }
             }
         }
+        self.gen_flush(opcodes);
     }
 }

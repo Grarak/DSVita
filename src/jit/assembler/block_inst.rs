@@ -78,8 +78,9 @@ pub struct Alu {
     pub thumb_pc_aligned: bool,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum TransferOp {
+    #[default]
     Read,
     Write,
 }

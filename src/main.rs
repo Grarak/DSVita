@@ -326,7 +326,7 @@ pub fn actual_main() {
     }
 
     if IS_DEBUG {
-        std::env::set_var("RUST_BACKTRACE", "full");
+        std::env::set_var("RUST_BACKTRACE", "1");
     }
 
     let mut presenter = Presenter::new();
