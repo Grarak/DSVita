@@ -9,6 +9,7 @@
 #![feature(generic_const_exprs)]
 #![feature(naked_functions)]
 #![feature(new_zeroed_alloc)]
+#![feature(panic_payload_as_str)]
 #![feature(ptr_as_ref_unchecked)]
 #![feature(seek_stream_len)]
 #![feature(slice_swap_unchecked)]
@@ -327,6 +328,55 @@ pub fn actual_main() {
 
     if IS_DEBUG {
         std::env::set_var("RUST_BACKTRACE", "1");
+        #[cfg(target_os = "linux")]
+        std::panic::set_hook(Box::new(|panic_info| {
+            let mut count = 0;
+            let cwd = std::env::current_dir();
+            backtrace::trace(|frame| {
+                backtrace::resolve_frame(frame, |symbols| {
+                    eprint!("{count}: {:4x} - ", frame.ip() as usize);
+                    match symbols.name() {
+                        None => eprint!("<unknown>"),
+                        Some(name) => {
+                            eprint!("{name}");
+                            if name.to_string().starts_with("dsvita") {
+                                eprint!(" <----------");
+                            }
+                        }
+                    }
+                    eprintln!();
+                    if let (Some(file), Some(line)) = (symbols.filename(), symbols.lineno()) {
+                        eprint!("{:4}", "");
+                        if let Ok(cwd) = &cwd {
+                            if let Ok(suffix) = file.strip_prefix(cwd) {
+                                eprint!("          at {suffix:?}:{line}");
+                            } else {
+                                eprint!("          at {file:?}:{line}");
+                            }
+                        } else {
+                            eprint!("          at {file:?}:{line}");
+                        }
+                        if let Some(colno) = symbols.colno() {
+                            eprint!(":{colno}")
+                        }
+                        eprintln!();
+                    }
+                });
+
+                count += 1;
+                count < 25
+            });
+
+            eprintln!();
+            eprintln!(
+                "{}: {} <----------",
+                panic_info.payload_as_str().unwrap_or("No payload"),
+                panic_info
+                    .location()
+                    .map_or("No location".to_string(), |location| { format!("{}:{}:{}", location.file(), location.line(), location.column()) })
+            );
+            eprintln!();
+        }));
     }
 
     let mut presenter = Presenter::new();
