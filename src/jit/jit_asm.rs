@@ -59,8 +59,10 @@ pub struct JitRuntimeData {
     pub pre_cycle_count_sum: u16,
     pub accumulated_cycles: u16,
     pub host_sp: usize,
-    pub idle_loop_return_stack_ptr: u8,
+    pub idle_loop_in_interrupt_return_stack_ptr: u8,
     pub return_stack: [u32; RETURN_STACK_SIZE],
+    pub interrupt_sp: usize,
+    pub interrupt_lr: u32,
     #[cfg(debug_assertions)]
     branch_out_pc: u32,
 }
@@ -71,8 +73,10 @@ impl JitRuntimeData {
             pre_cycle_count_sum: 0,
             accumulated_cycles: 0,
             host_sp: 0,
-            idle_loop_return_stack_ptr: 0,
+            idle_loop_in_interrupt_return_stack_ptr: 0,
             return_stack: [0; RETURN_STACK_SIZE],
+            interrupt_sp: 0,
+            interrupt_lr: 0,
             #[cfg(debug_assertions)]
             branch_out_pc: u32::MAX,
         };
@@ -122,8 +126,8 @@ impl JitRuntimeData {
         mem::offset_of!(JitRuntimeData, host_sp)
     }
 
-    pub const fn get_idle_loop_return_stack_ptr_offset() -> usize {
-        mem::offset_of!(JitRuntimeData, idle_loop_return_stack_ptr)
+    pub const fn get_idle_loop_in_interrupt_return_stack_ptr_offset() -> usize {
+        mem::offset_of!(JitRuntimeData, idle_loop_in_interrupt_return_stack_ptr)
     }
 
     pub const fn get_return_stack_offset() -> usize {
@@ -131,15 +135,23 @@ impl JitRuntimeData {
     }
 
     pub fn is_idle_loop(&self) -> bool {
-        self.idle_loop_return_stack_ptr & 0x80 != 0
+        self.idle_loop_in_interrupt_return_stack_ptr & 0x80 != 0
     }
 
     pub fn clear_idle_loop(&mut self) {
-        self.idle_loop_return_stack_ptr &= !0x80;
+        self.idle_loop_in_interrupt_return_stack_ptr &= !0x80;
+    }
+
+    pub fn is_in_interrupt(&self) -> bool {
+        self.idle_loop_in_interrupt_return_stack_ptr & 0x40 != 0
+    }
+
+    pub fn set_in_interrupt(&mut self, in_interrupt: bool) {
+        self.idle_loop_in_interrupt_return_stack_ptr = (self.idle_loop_in_interrupt_return_stack_ptr & !0x40) | ((in_interrupt as u8) << 6)
     }
 
     pub fn get_return_stack_ptr(&self) -> u8 {
-        self.idle_loop_return_stack_ptr & !0x80
+        self.idle_loop_in_interrupt_return_stack_ptr & 0x3F
     }
 
     pub fn push_return_stack(&mut self, value: u32) {
@@ -147,14 +159,14 @@ impl JitRuntimeData {
         unsafe { *self.return_stack.get_unchecked_mut(return_stack_ptr as usize) = value };
         return_stack_ptr += 1;
         return_stack_ptr &= RETURN_STACK_SIZE as u8 - 1;
-        self.idle_loop_return_stack_ptr = (self.idle_loop_return_stack_ptr & 0x80) | return_stack_ptr;
+        self.idle_loop_in_interrupt_return_stack_ptr = (self.idle_loop_in_interrupt_return_stack_ptr & 0xC0) | return_stack_ptr;
     }
 
     pub fn pop_return_stack(&mut self) -> u32 {
         let mut return_stack_ptr = self.get_return_stack_ptr();
         return_stack_ptr = return_stack_ptr.wrapping_sub(1);
         return_stack_ptr &= RETURN_STACK_SIZE as u8 - 1;
-        self.idle_loop_return_stack_ptr = (self.idle_loop_return_stack_ptr & 0x80) | return_stack_ptr;
+        self.idle_loop_in_interrupt_return_stack_ptr = (self.idle_loop_in_interrupt_return_stack_ptr & 0xC0) | return_stack_ptr;
         unsafe { *self.return_stack.get_unchecked(return_stack_ptr as usize) }
     }
 
@@ -165,7 +177,7 @@ impl JitRuntimeData {
     }
 
     pub fn clear_return_stack_ptr(&mut self) {
-        self.idle_loop_return_stack_ptr &= 0x80;
+        self.idle_loop_in_interrupt_return_stack_ptr &= 0xC0;
         self.return_stack[RETURN_STACK_SIZE - 1] = 0;
     }
 }
@@ -178,16 +190,38 @@ pub fn align_guest_pc(guest_pc: u32) -> u32 {
 
 pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
-    if IS_DEBUG {
-        asm.runtime_data.set_branch_out_pc(get_regs!(asm.emu, CPU).pc);
-    }
-    asm.runtime_data.clear_return_stack_ptr();
+    let regs = get_regs_mut!(asm.emu, CPU);
+    let current_pc = regs.pc;
     asm.runtime_data.accumulated_cycles += 3;
     bios::uninterrupt::<CPU>(asm.emu);
     if unlikely(get_cpu_regs!(asm.emu, CPU).is_halted()) {
+        if IS_DEBUG {
+            asm.runtime_data.set_branch_out_pc(current_pc);
+        }
         unsafe { exit_guest_context!(asm) };
     } else {
-        unsafe { call_jit_fun(asm, get_regs_mut!(asm.emu, CPU).pc) };
+        match CPU {
+            ARM9 => {
+                if unlikely(asm.runtime_data.is_in_interrupt() && asm.runtime_data.interrupt_lr == regs.pc) {
+                    regs.set_thumb(regs.pc & 1 == 1);
+                    unsafe {
+                        std::arch::asm!(
+                        "mov sp, {}",
+                        "pop {{r4-r12,pc}}",
+                        in(reg) asm.runtime_data.interrupt_sp
+                        );
+                        std::hint::unreachable_unchecked();
+                    }
+                } else {
+                    asm.runtime_data.clear_return_stack_ptr();
+                    unsafe { call_jit_fun(asm, regs.pc) };
+                }
+            }
+            ARM7 => {
+                asm.runtime_data.clear_return_stack_ptr();
+                unsafe { call_jit_fun(asm, regs.pc) };
+            }
+        }
     }
 }
 
@@ -256,8 +290,8 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
     }
 
     let (jit_entry, flushed) = {
-        // println!("{CPU:?} {THUMB} emit code block {guest_pc:x}");
-        // unsafe { BLOCK_LOG = guest_pc == 0x2004824 };
+        // println!("{CPU:?} {thumb} emit code block {guest_pc:x}");
+        // unsafe { BLOCK_LOG = guest_pc == 0x200675e };
 
         let guest_regs_ptr = get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr();
         let host_sp_ptr = ptr::addr_of_mut!(asm.runtime_data.host_sp);
@@ -348,11 +382,11 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
         asm.runtime_data.pre_cycle_count_sum = 0;
         asm.runtime_data.accumulated_cycles = 0;
         asm.runtime_data.clear_return_stack_ptr();
-        asm.runtime_data.idle_loop_return_stack_ptr = 0;
+        asm.runtime_data.idle_loop_in_interrupt_return_stack_ptr = 0;
         jit_entry
     };
 
-    unsafe { call_jit_entry(jit_entry as _, ptr::addr_of_mut!(asm.runtime_data.host_sp)) };
+    unsafe { call_jit_entry(jit_entry as _, &mut asm.runtime_data.host_sp) };
 
     if IS_DEBUG {
         assert_ne!(

@@ -15,8 +15,8 @@ use crate::core::CpuType::ARM9;
 use crate::jit::jit_memory::JitMemory;
 use crate::logging::debug_println;
 use crate::mmap::Shm;
-use crate::utils;
 use crate::utils::Convert;
+use crate::{utils, DEBUG_LOG};
 use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 use std::marker::PhantomData;
@@ -819,10 +819,15 @@ impl Memory {
         let shm_offset = self.get_shm_offset::<CPU, TCM, false>(aligned_addr) as u32;
         if shm_offset != 0 {
             utils::read_from_mem_slice(&self.shm, shm_offset, slice);
-            return;
+        } else {
+            MemoryMultipleSliceIo::<CPU, TCM, T>::read(aligned_addr, slice, emu);
         }
 
-        MemoryMultipleSliceIo::<CPU, TCM, T>::read(aligned_addr, slice, emu);
+        if DEBUG_LOG {
+            for (i, &value) in slice.iter().enumerate() {
+                debug_println!("{CPU:?} slice memory read at {:x} with value {:x}", aligned_addr as usize + i * size_of::<T>(), value.into());
+            }
+        }
     }
 
     pub fn read_fixed_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu, slice: &mut [T]) {
@@ -833,10 +838,15 @@ impl Memory {
         let shm_offset = self.get_shm_offset::<CPU, TCM, false>(aligned_addr) as u32;
         if shm_offset != 0 {
             slice.fill(utils::read_from_mem(&self.shm, shm_offset));
-            return;
+        } else {
+            MemoryFixedSliceIo::<CPU, TCM, T>::read(aligned_addr, slice, emu);
         }
 
-        MemoryFixedSliceIo::<CPU, TCM, T>::read(aligned_addr, slice, emu);
+        if DEBUG_LOG {
+            for &mut value in slice {
+                debug_println!("{CPU:?} fixed slice memory read at {:x} with value {:x}", aligned_addr as usize, value.into());
+            }
+        }
     }
 
     pub fn write<const CPU: CpuType, T: Convert>(&mut self, addr: u32, value: T, emu: &mut Emu) {
@@ -862,9 +872,14 @@ impl Memory {
     }
 
     pub fn write_multiple_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu, slice: &[T]) {
-        debug_println!("{CPU:?} fixed slice memory write at {addr:x} with size {}", slice.len());
+        debug_println!("{CPU:?} fixed slice memory write at {addr:x} with size {}", size_of_val(slice));
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
+        if DEBUG_LOG {
+            for (i, &value) in slice.iter().enumerate() {
+                debug_println!("{CPU:?} slice memory write at {:x} with value {:x}", aligned_addr as usize + i * size_of::<T>(), value.into());
+            }
+        }
 
         let shm_offset = self.get_shm_offset::<CPU, TCM, true>(aligned_addr) as u32;
         if shm_offset != 0 {
@@ -876,9 +891,14 @@ impl Memory {
     }
 
     pub fn write_fixed_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, emu: &mut Emu, slice: &[T]) {
-        debug_println!("{CPU:?} fixed slice memory write at {addr:x} with size {}", slice.len());
+        debug_println!("{CPU:?} fixed slice memory write at {addr:x} with size {}", size_of_val(slice));
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
+        if DEBUG_LOG {
+            for &value in slice {
+                debug_println!("{CPU:?} fixed slice memory write at {:x} with value {:x}", aligned_addr, value.into());
+            }
+        }
 
         let shm_offset = self.get_shm_offset::<CPU, TCM, true>(aligned_addr) as u32;
         if shm_offset != 0 {
@@ -890,7 +910,7 @@ impl Memory {
     }
 
     pub fn write_multiple_memset<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, value: T, size: usize, emu: &mut Emu) {
-        debug_println!("{CPU:?} multiple memset memory write at {addr:x} with size {size}");
+        debug_println!("{CPU:?} multiple memset memory write at {addr:x} with size {}", size_of::<T>() * size);
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 

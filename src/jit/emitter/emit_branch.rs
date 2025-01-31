@@ -79,6 +79,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
     }
 
     pub fn emit_branch_label_common<const THUMB: bool>(&mut self, block_asm: &mut BlockAsm, target_pc: u32, cond: Cond) {
+        let target_pc = align_guest_pc(target_pc) | (target_pc & 1);
+
         match Self::analyze_branch_label::<THUMB>(&self.jit_buf.insts, self.jit_buf.current_index, cond, self.jit_buf.current_pc, target_pc) {
             JitBranchInfo::Local(target_index) => {
                 let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[target_index] - self.jit_buf.insts[target_index].cycle as u16;

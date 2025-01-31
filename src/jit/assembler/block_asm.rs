@@ -798,7 +798,7 @@ impl BlockAsm {
         for &i in block_indices {
             let basic_block = &mut self.cache.basic_blocks[i];
             let sum_guest_regs_input_dirty = basic_block.guest_regs_input_dirty + guest_regs_dirty;
-            if sum_guest_regs_input_dirty != basic_block.guest_regs_input_dirty || !basic_block.guest_regs_resolved {
+            if !basic_block.guest_regs_resolved || sum_guest_regs_input_dirty != basic_block.guest_regs_input_dirty {
                 self.buf.reachable_blocks.insert(i);
                 basic_block.guest_regs_resolved = true;
                 basic_block.guest_regs_input_dirty = sum_guest_regs_input_dirty;
@@ -818,7 +818,7 @@ impl BlockAsm {
 
             let basic_block = unsafe { self.cache.basic_blocks.get_unchecked_mut(i) };
             let sum_required_outputs = *basic_block.get_required_outputs() + required_outputs;
-            if sum_required_outputs != basic_block.get_required_outputs() || !basic_block.io_resolved {
+            if !basic_block.io_resolved || sum_required_outputs != basic_block.get_required_outputs() {
                 basic_block.io_resolved = true;
                 basic_block.set_required_outputs(sum_required_outputs);
                 basic_block.init_resolve_io(self.buf);

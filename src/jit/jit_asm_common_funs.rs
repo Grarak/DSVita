@@ -1,22 +1,3 @@
-use crate::core::emu::{get_jit, get_regs_mut};
-use crate::core::CpuType;
-use crate::core::CpuType::{ARM7, ARM9};
-use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::{BlockLabel, BlockOperand, BlockReg};
-use crate::jit::inst_branch_handler::{branch_imm, branch_lr, branch_reg, pre_branch};
-use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
-use crate::jit::reg::Reg;
-use crate::jit::{inst_branch_handler, jit_memory_map, Cond, ShiftType};
-use crate::{DEBUG_LOG, IS_DEBUG};
-use std::ptr;
-
-pub const fn get_max_loop_cycle_count<const CPU: CpuType>() -> u32 {
-    match CPU {
-        ARM9 => 512,
-        ARM7 => 256,
-    }
-}
-
 macro_rules! exit_guest_context {
     ($asm:expr) => {{
         // r4-r12,pc since we need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions
@@ -28,8 +9,27 @@ macro_rules! exit_guest_context {
         std::hint::unreachable_unchecked();
     }};
 }
-use crate::jit::jit_memory::JitEntry;
 pub(crate) use exit_guest_context;
+
+use crate::core::emu::{get_jit, get_regs_mut};
+use crate::core::CpuType;
+use crate::core::CpuType::{ARM7, ARM9};
+use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::{BlockLabel, BlockOperand, BlockReg};
+use crate::jit::inst_branch_handler::{branch_imm, branch_lr, branch_reg, handle_interrupt, pre_branch};
+use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
+use crate::jit::jit_memory::JitEntry;
+use crate::jit::reg::Reg;
+use crate::jit::{inst_branch_handler, jit_memory_map, Cond, ShiftType};
+use crate::{DEBUG_LOG, IS_DEBUG};
+use std::ptr;
+
+pub const fn get_max_loop_cycle_count<const CPU: CpuType>() -> u32 {
+    match CPU {
+        ARM9 => 512,
+        ARM7 => 256,
+    }
+}
 
 pub struct JitAsmCommonFuns<const CPU: CpuType> {}
 
@@ -175,6 +175,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
     ) {
         let continue_label = if add_continue_label { Some(block_asm.new_label()) } else { None };
         let run_scheduler_label = block_asm.new_label();
+        let handle_interrupt_label = block_asm.new_label();
         let post_run_scheduler_label = block_asm.new_label();
         let breakout_label = block_asm.new_label();
 
@@ -208,9 +209,9 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
             let pc_new_reg = block_asm.new_reg();
             block_asm.load_u32(pc_og_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
             let func = if asm.emu.settings.arm7_hle() {
-                inst_branch_handler::run_scheduler::<CPU, true> as *const ()
+                inst_branch_handler::run_scheduler::<true> as *const ()
             } else {
-                inst_branch_handler::run_scheduler::<CPU, false> as *const ()
+                inst_branch_handler::run_scheduler::<false> as *const ()
             };
             if IS_DEBUG {
                 block_asm.call2(func, asm as *mut _ as u32, asm.jit_buf.current_pc);
@@ -220,9 +221,15 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
             block_asm.load_u32(pc_new_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
             block_asm.cmp(pc_new_reg, pc_og_reg);
 
-            block_asm.branch(breakout_label, Cond::NE);
+            block_asm.branch(handle_interrupt_label, Cond::NE);
             block_asm.restore_reg(Reg::CPSR);
             block_asm.branch(post_run_scheduler_label, Cond::AL);
+
+            block_asm.label_unlikely(handle_interrupt_label);
+            block_asm.call3(handle_interrupt as *const (), asm as *mut _ as u32, pc_og_reg, asm.jit_buf.current_pc);
+            block_asm.restore_reg(Reg::CPSR);
+            block_asm.branch_fallthrough(post_run_scheduler_label, Cond::AL);
+            block_asm.branch(breakout_label, Cond::AL);
 
             block_asm.free_reg(pc_new_reg);
             block_asm.free_reg(pc_og_reg);
@@ -321,8 +328,8 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         println!("{CPU:?} branch lr from {current_pc:x} to {target_pc:x}")
     }
 
-    pub extern "C" fn debug_branch_lr_failed(current_pc: u32, target_pc: u32) {
-        println!("{CPU:?} failed to branch lr from {current_pc:x} to {target_pc:x}")
+    pub extern "C" fn debug_branch_lr_failed(current_pc: u32, target_pc: u32, desired_pc: u32) {
+        println!("{CPU:?} failed to branch lr from {current_pc:x} to {target_pc:x} desired: {desired_pc:x}")
     }
 
     pub extern "C" fn debug_return_stack_empty(current_pc: u32, target_pc: u32) {

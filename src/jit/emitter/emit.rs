@@ -61,14 +61,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             }
 
             if (op.is_mov() && self.jit_buf.current_inst().src_regs.is_reserved(Reg::LR) && !self.jit_buf.current_inst().out_regs.is_reserved(Reg::CPSR))
-                || (op.is_multiple_mem_transfer() && *self.jit_buf.current_inst().operands()[0].as_reg_no_shift().unwrap() == Reg::SP && !op.mem_transfer_user())
+                || (op.is_multiple_mem_transfer() && *self.jit_buf.current_inst().operands()[0].as_reg_no_shift().unwrap() == Reg::SP)
                 || (op.is_single_mem_transfer() && self.jit_buf.current_inst().src_regs.is_reserved(Reg::SP))
             {
-                let guest_pc_reg = block_asm.new_reg();
-                block_asm.load_u32(guest_pc_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
-                self.emit_branch_return_stack_common(block_asm, guest_pc_reg);
-                block_asm.free_reg(guest_pc_reg);
-            } else {
                 if op.mem_transfer_user() {
                     block_asm.call(register_restore_spsr::<CPU> as *const ());
                     if CPU == ARM7 {
@@ -76,8 +71,15 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     }
                 }
 
-                self.emit_branch_out_metadata(block_asm);
-                block_asm.epilogue();
+                let guest_pc_reg = block_asm.new_reg();
+                block_asm.load_u32(guest_pc_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
+                self.emit_branch_return_stack_common(block_asm, guest_pc_reg);
+                block_asm.free_reg(guest_pc_reg);
+            } else {
+                let guest_pc_reg = block_asm.new_reg();
+                block_asm.load_u32(guest_pc_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
+                self.emit_branch_reg_common(block_asm, guest_pc_reg, false, false);
+                block_asm.free_reg(guest_pc_reg);
             }
         }
 
@@ -126,9 +128,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         if set_idle_loop {
             let idle_loop_reg = block_asm.new_reg();
-            block_asm.load_u8(idle_loop_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_return_stack_ptr_offset() as u32);
+            block_asm.load_u8(idle_loop_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_in_interrupt_return_stack_ptr_offset() as u32);
             block_asm.orr(idle_loop_reg, idle_loop_reg, 0x80);
-            block_asm.store_u16(idle_loop_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_return_stack_ptr_offset() as u32);
+            block_asm.store_u8(idle_loop_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_in_interrupt_return_stack_ptr_offset() as u32);
             block_asm.free_reg(idle_loop_reg);
         }
 

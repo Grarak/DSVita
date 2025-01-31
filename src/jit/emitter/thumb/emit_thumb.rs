@@ -7,7 +7,7 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 
-impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
+impl<const CPU: CpuType> JitAsm<'_, CPU> {
     pub fn emit_thumb(&mut self, block_asm: &mut BlockAsm) {
         block_asm.guest_pc(self.jit_buf.current_pc);
 
@@ -87,8 +87,10 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
                 self.emit_branch_return_stack_common(block_asm, guest_pc_reg);
                 block_asm.free_reg(guest_pc_reg);
             } else {
-                self.emit_branch_out_metadata(block_asm);
-                block_asm.epilogue();
+                let guest_pc_reg = block_asm.new_reg();
+                block_asm.load_u32(guest_pc_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
+                self.emit_branch_reg_common(block_asm, guest_pc_reg, false, true);
+                block_asm.free_reg(guest_pc_reg);
             }
         }
     }
