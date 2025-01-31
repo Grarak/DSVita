@@ -1,8 +1,7 @@
-use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::block_asm::{BlockTmpRegs, BLOCK_LOG};
 use crate::jit::assembler::block_inst::{Alu, AluOp, AluSetCond, BlockInst, BlockInstType, GuestTransferMultiple, SaveReg, TransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
-use crate::jit::assembler::{BlockAsmBuf, BlockLabel, BlockReg};
+use crate::jit::assembler::{BlockAsmBuf, BlockReg};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::Cond;
 use crate::IS_DEBUG;
@@ -16,9 +15,6 @@ pub struct BasicBlock {
     pub block_entry_start: usize,
     pub block_entry_end: usize,
 
-    pub pad_label: Option<(BlockLabel, i32)>,
-    pub pad_size: usize,
-
     pub guest_regs_resolved: bool,
     pub guest_regs_input_dirty: RegReserve,
     pub guest_regs_output_dirty: RegReserve,
@@ -30,9 +26,6 @@ pub struct BasicBlock {
     pub exit_blocks: Vec<usize>,
 
     pub start_pc: u32,
-
-    pub opcodes: Vec<u32>,
-    opcodes_emitted: bool,
 }
 
 impl BasicBlock {
@@ -42,9 +35,6 @@ impl BasicBlock {
 
             block_entry_start: 0,
             block_entry_end: 0,
-
-            pad_label: None,
-            pad_size: 0,
 
             guest_regs_resolved: false,
             guest_regs_input_dirty: RegReserve::new(),
@@ -57,9 +47,6 @@ impl BasicBlock {
             exit_blocks: Vec::with_capacity(2),
 
             start_pc: 0,
-
-            opcodes: Vec::new(),
-            opcodes_emitted: false,
         }
     }
 
@@ -69,9 +56,6 @@ impl BasicBlock {
         self.block_entry_start = block_entry_start;
         self.block_entry_end = block_entry_end;
 
-        self.pad_label = None;
-        self.pad_size = 0;
-
         self.guest_regs_resolved = false;
         self.guest_regs_input_dirty = RegReserve::new();
         self.guest_regs_output_dirty = RegReserve::new();
@@ -80,9 +64,6 @@ impl BasicBlock {
 
         self.enter_blocks.clear();
         self.exit_blocks.clear();
-
-        self.opcodes.clear();
-        self.opcodes_emitted = false;
     }
 
     pub fn init_guest_regs(&mut self, buf: &mut BlockAsmBuf) {
@@ -106,7 +87,6 @@ impl BasicBlock {
                         self.guest_regs_output_dirty -= inner.guest_reg;
                     }
                 }
-                BlockInstType::PadBlock(inner) => self.pad_label = Some((inner.label, inner.correction)),
                 _ => {
                     let inst = buf.get_inst(i);
                     let (_, outputs) = inst.get_io();
@@ -282,21 +262,13 @@ impl BasicBlock {
         unsafe { self.regs_live_ranges.get_unchecked(self.regs_live_ranges.len() - 1) }
     }
 
-    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf, emit_local: bool, block_index: usize) {
-        if self.opcodes_emitted {
-            if !emit_local {
-                buf.opcodes.extend(&self.opcodes);
-            }
-            return;
-        }
-
+    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf, block_index: usize) {
         unsafe { assert_unchecked(block_index < buf.placeholders.len()) }
         buf.clear_placeholders_block(block_index);
 
         buf.reg_allocator.init_inputs(self.get_required_inputs());
 
-        let (opcodes_start_len, opcodes) = if emit_local { (0, &mut self.opcodes) } else { (buf.opcodes.len(), &mut buf.opcodes) };
-        self.opcodes_emitted = true;
+        let opcodes_start_len = buf.opcodes.len();
 
         for (i, inst_index) in (self.block_entry_start..=self.block_entry_end).enumerate() {
             let inst = unsafe { buf.insts.get_unchecked_mut(inst_index) };
@@ -304,11 +276,11 @@ impl BasicBlock {
                 continue;
             }
 
-            buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..], opcodes);
+            buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..], &mut buf.opcodes);
 
-            let start_len = opcodes.len();
+            let start_len = buf.opcodes.len();
 
-            if IS_DEBUG && unsafe { BLOCK_LOG } && !emit_local {
+            if IS_DEBUG && unsafe { BLOCK_LOG } {
                 match &inst.inst_type {
                     BlockInstType::GuestPc(inner) => {
                         println!("(0x{start_len:x}, 0x{:x}),", inner.0);
@@ -322,9 +294,9 @@ impl BasicBlock {
                 }
             }
 
-            inst.emit_opcode(&buf.reg_allocator, opcodes, start_len - opcodes_start_len, &mut buf.placeholders[block_index]);
+            inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, start_len - opcodes_start_len, &mut buf.placeholders[block_index]);
             if inst.cond != Cond::AL {
-                for opcode in &mut opcodes[start_len..] {
+                for opcode in &mut buf.opcodes[start_len..] {
                     *opcode = (*opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);
                 }
             }
@@ -335,26 +307,20 @@ impl BasicBlock {
 
             // Make sure to restore mapping before a branch
             if let BlockInstType::Branch(_) = &buf.get_inst(self.block_entry_end).inst_type {
-                let opcodes = if emit_local { &mut self.opcodes } else { &mut buf.opcodes };
-                opcodes.pop().unwrap();
-                buf.reg_allocator.ensure_global_mappings(required_outputs, opcodes);
+                buf.opcodes.pop().unwrap();
+                buf.reg_allocator.ensure_global_mappings(required_outputs, &mut buf.opcodes);
                 buf.placeholders[block_index].branch.pop().unwrap();
 
                 let inst = unsafe { buf.insts.get_unchecked_mut(self.block_entry_end) };
-                inst.emit_opcode(&buf.reg_allocator, opcodes, opcodes.len() - opcodes_start_len, &mut buf.placeholders[block_index]);
+                let opcode_index = buf.opcodes.len() - opcodes_start_len;
+                inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, opcode_index, &mut buf.placeholders[block_index]);
                 if inst.cond != Cond::AL {
-                    let branch_opcode = opcodes.last_mut().unwrap();
+                    let branch_opcode = buf.opcodes.last_mut().unwrap();
                     *branch_opcode = (*branch_opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);
                 }
             } else {
-                let opcodes = if emit_local { &mut self.opcodes } else { &mut buf.opcodes };
-                buf.reg_allocator.ensure_global_mappings(required_outputs, opcodes);
+                buf.reg_allocator.ensure_global_mappings(required_outputs, &mut buf.opcodes);
             }
-        }
-
-        let opcodes = if emit_local { &mut self.opcodes } else { &mut buf.opcodes };
-        for _ in opcodes.len() - opcodes_start_len..self.pad_size {
-            opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0));
         }
     }
 }

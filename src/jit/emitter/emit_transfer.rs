@@ -3,33 +3,32 @@ use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockOperand, BlockReg};
 use crate::jit::inst_info::Operand;
-use crate::jit::inst_jit_handler::inst_slow_mem_patch;
-use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple};
+use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple, InstMemMultipleParams};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
-use crate::IS_DEBUG;
+use bilge::prelude::*;
 
 impl<const CPU: CpuType> JitAsm<'_, CPU> {
-    fn get_inst_mem_handler_func<const WRITE: bool, const IS_SWP: bool>(signed: bool, amount: MemoryAmount) -> *const () {
+    fn get_inst_mem_handler_func<const WRITE: bool>(signed: bool, amount: MemoryAmount) -> *const () {
         match amount {
             MemoryAmount::Byte => {
                 if signed {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, true, IS_SWP> as *const _
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, true> as *const _
                 } else {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, false, IS_SWP> as *const _
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, false> as *const _
                 }
             }
             MemoryAmount::Half => {
                 if signed {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, true, IS_SWP> as *const _
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, true> as *const _
                 } else {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, false, IS_SWP> as *const _
+                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, false> as *const _
                 }
             }
-            MemoryAmount::Word => inst_mem_handler::<CPU, WRITE, { MemoryAmount::Word }, false, IS_SWP> as *const _,
-            MemoryAmount::Double => inst_mem_handler::<CPU, WRITE, { MemoryAmount::Double }, false, IS_SWP> as *const _,
+            MemoryAmount::Word => inst_mem_handler::<CPU, WRITE, { MemoryAmount::Word }, false> as *const _,
+            MemoryAmount::Double => inst_mem_handler::<CPU, WRITE, { MemoryAmount::Double }, false> as *const _,
         }
     }
 
@@ -82,19 +81,18 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov(op1, post_addr_reg);
         }
 
-        self.emit_write(op0, value_reg, addr_reg, block_asm, amount, thumb, false);
+        self.emit_write(op0, value_reg, addr_reg, block_asm, amount, thumb);
 
         block_asm.free_reg(value_reg);
         block_asm.free_reg(addr_reg);
         block_asm.free_reg(post_addr_reg);
     }
 
-    fn emit_write(&mut self, op0: Reg, value_reg: BlockReg, addr_reg: BlockReg, block_asm: &mut BlockAsm, amount: MemoryAmount, thumb: bool, is_swp: bool) {
+    fn emit_write(&mut self, op0: Reg, value_reg: BlockReg, addr_reg: BlockReg, block_asm: &mut BlockAsm, amount: MemoryAmount, thumb: bool) {
         let fast_write_value_reg = block_asm.new_reg();
         let fast_write_next_addr_reg = block_asm.new_reg();
         let fast_write_addr_masked_reg = block_asm.new_reg();
 
-        let slow_write_patch_label = block_asm.new_label();
         let slow_write_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
@@ -105,7 +103,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
 
         block_asm.branch(slow_write_label, Cond::NV);
-        block_asm.pad_block(slow_write_label, -3);
 
         let mmu = get_mmu!(self.emu, CPU);
         let base_ptr = mmu.get_base_tcm_ptr();
@@ -126,28 +123,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
 
         block_asm.branch_fallthrough(continue_label, Cond::AL);
-        block_asm.branch(slow_write_patch_label, Cond::AL);
-
-        block_asm.label_unlikely(slow_write_patch_label);
-        let cpsr_backup_reg = block_asm.new_reg();
-        block_asm.mrs_cpsr(cpsr_backup_reg);
-        if IS_DEBUG {
-            block_asm.call1(inst_slow_mem_patch as *const (), self.jit_buf.current_pc);
-        } else {
-            block_asm.call(inst_slow_mem_patch as *const ());
-        }
-        block_asm.msr_cpsr(cpsr_backup_reg);
         block_asm.branch(slow_write_label, Cond::AL);
 
         block_asm.label_unlikely(slow_write_label);
 
         block_asm.save_context();
 
-        let func_addr = if is_swp {
-            Self::get_inst_mem_handler_func::<true, true>(false, amount)
-        } else {
-            Self::get_inst_mem_handler_func::<true, false>(false, amount)
-        };
+        let func_addr = Self::get_inst_mem_handler_func::<true>(false, amount);
         block_asm.call4(
             func_addr,
             addr_reg,
@@ -157,10 +139,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         );
         block_asm.restore_reg(Reg::CPSR);
 
-        block_asm.branch(continue_label, Cond::AL);
+        match CPU {
+            CpuType::ARM9 => {
+                block_asm.branch_fallthrough(continue_label, Cond::AL);
+                block_asm.generic_data(self.jit_buf.current_inst().opcode);
+                block_asm.force_end();
+            }
+            CpuType::ARM7 => block_asm.branch(continue_label, Cond::AL),
+        }
+
         block_asm.label(continue_label);
 
-        block_asm.free_reg(cpsr_backup_reg);
         block_asm.free_reg(fast_write_addr_masked_reg);
         block_asm.free_reg(fast_write_next_addr_reg);
         block_asm.free_reg(fast_write_value_reg);
@@ -208,24 +197,22 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov(op1, post_addr_reg);
         }
 
-        self.emit_read(op0, addr_reg, block_asm, op.mem_transfer_single_signed(), amount, thumb, false);
+        self.emit_read(op0, addr_reg, block_asm, op.mem_transfer_single_signed(), amount, thumb);
 
         block_asm.free_reg(addr_reg);
         block_asm.free_reg(post_addr_reg);
     }
 
-    fn emit_read(&mut self, op0: Reg, addr_reg: BlockReg, block_asm: &mut BlockAsm, signed: bool, amount: MemoryAmount, thumb: bool, is_swp: bool) {
+    fn emit_read(&mut self, op0: Reg, addr_reg: BlockReg, block_asm: &mut BlockAsm, signed: bool, amount: MemoryAmount, thumb: bool) {
         let fast_read_value_reg = block_asm.new_reg();
         let fast_read_next_addr_reg = block_asm.new_reg();
         let fast_read_addr_masked_reg = block_asm.new_reg();
 
-        let slow_read_patch_label = block_asm.new_label();
         let slow_read_label = block_asm.new_label();
         let fast_mem_mark_dirty_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
         block_asm.branch(slow_read_label, Cond::NV);
-        block_asm.pad_block(slow_read_label, -3);
 
         let mmu = get_mmu!(self.emu, CPU);
         let base_ptr = mmu.get_base_tcm_ptr();
@@ -257,17 +244,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mark_reg_dirty(Reg::from(op0 as u8 + 1), false);
         }
         block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
-        block_asm.branch(slow_read_patch_label, Cond::AL);
-
-        block_asm.label_unlikely(slow_read_patch_label);
-        let cpsr_backup_reg = block_asm.new_reg();
-        block_asm.mrs_cpsr(cpsr_backup_reg);
-        if IS_DEBUG {
-            block_asm.call1(inst_slow_mem_patch as *const (), self.jit_buf.current_pc);
-        } else {
-            block_asm.call(inst_slow_mem_patch as *const ());
-        }
-        block_asm.msr_cpsr(cpsr_backup_reg);
         block_asm.branch(slow_read_label, Cond::AL);
 
         block_asm.label_unlikely(slow_read_label);
@@ -283,11 +259,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let op0_addr_reg = block_asm.new_reg();
         block_asm.mov(op0_addr_reg, op0_addr);
 
-        let func_addr = if is_swp {
-            Self::get_inst_mem_handler_func::<false, true>(signed, amount)
-        } else {
-            Self::get_inst_mem_handler_func::<false, false>(signed, amount)
-        };
+        let func_addr = Self::get_inst_mem_handler_func::<false>(signed, amount);
         block_asm.call4(
             func_addr,
             addr_reg,
@@ -311,7 +283,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         block_asm.label(continue_label);
 
-        block_asm.free_reg(cpsr_backup_reg);
         block_asm.free_reg(fast_read_addr_masked_reg);
         block_asm.free_reg(fast_read_next_addr_reg);
         block_asm.free_reg(fast_read_value_reg);
@@ -345,7 +316,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
 
         let slow_label = block_asm.new_label();
-        let slow_patch_label = block_asm.new_label();
         let fast_mem_mark_dirty_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
@@ -404,7 +374,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(regs);
 
             block_asm.branch(slow_label, Cond::NV);
-            block_asm.pad_block(slow_label, -3);
 
             let base_reg = block_asm.new_reg();
             let base_reg_out = block_asm.new_reg();
@@ -459,7 +428,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 }
 
                 block_asm.branch_fallthrough(continue_label, Cond::AL);
-                block_asm.branch(slow_patch_label, Cond::AL);
+                block_asm.branch(slow_label, Cond::AL);
             } else {
                 if needs_rlist_split || inst_info.op.mem_transfer_user() {
                     if decrement {
@@ -511,7 +480,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 }
 
                 block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
-                block_asm.branch(slow_patch_label, Cond::AL);
+                block_asm.branch(slow_label, Cond::AL);
             }
 
             block_asm.free_reg(base_reg_out);
@@ -521,58 +490,31 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         if decrement {
             pre = !pre;
         }
-        let func_addr: *const () = match (inst_info.op.mem_is_write(), inst_info.op.mem_transfer_user(), pre, write_back, decrement) {
-            (false, false, false, false, false) => inst_mem_handler_multiple::<CPU, false, false, false, false, false> as _,
-            (true, false, false, false, false) => inst_mem_handler_multiple::<CPU, true, false, false, false, false> as _,
-            (false, true, false, false, false) => inst_mem_handler_multiple::<CPU, false, true, false, false, false> as _,
-            (true, true, false, false, false) => inst_mem_handler_multiple::<CPU, true, true, false, false, false> as _,
-            (false, false, true, false, false) => inst_mem_handler_multiple::<CPU, false, false, true, false, false> as _,
-            (true, false, true, false, false) => inst_mem_handler_multiple::<CPU, true, false, true, false, false> as _,
-            (false, true, true, false, false) => inst_mem_handler_multiple::<CPU, false, true, true, false, false> as _,
-            (true, true, true, false, false) => inst_mem_handler_multiple::<CPU, true, true, true, false, false> as _,
-            (false, false, false, true, false) => inst_mem_handler_multiple::<CPU, false, false, false, true, false> as _,
-            (true, false, false, true, false) => inst_mem_handler_multiple::<CPU, true, false, false, true, false> as _,
-            (false, true, false, true, false) => inst_mem_handler_multiple::<CPU, false, true, false, true, false> as _,
-            (true, true, false, true, false) => inst_mem_handler_multiple::<CPU, true, true, false, true, false> as _,
-            (false, false, true, true, false) => inst_mem_handler_multiple::<CPU, false, false, true, true, false> as _,
-            (true, false, true, true, false) => inst_mem_handler_multiple::<CPU, true, false, true, true, false> as _,
-            (false, true, true, true, false) => inst_mem_handler_multiple::<CPU, false, true, true, true, false> as _,
-            (true, true, true, true, false) => inst_mem_handler_multiple::<CPU, true, true, true, true, false> as _,
-            (false, false, false, false, true) => inst_mem_handler_multiple::<CPU, false, false, false, false, true> as _,
-            (true, false, false, false, true) => inst_mem_handler_multiple::<CPU, true, false, false, false, true> as _,
-            (false, true, false, false, true) => inst_mem_handler_multiple::<CPU, false, true, false, false, true> as _,
-            (true, true, false, false, true) => inst_mem_handler_multiple::<CPU, true, true, false, false, true> as _,
-            (false, false, true, false, true) => inst_mem_handler_multiple::<CPU, false, false, true, false, true> as _,
-            (true, false, true, false, true) => inst_mem_handler_multiple::<CPU, true, false, true, false, true> as _,
-            (false, true, true, false, true) => inst_mem_handler_multiple::<CPU, false, true, true, false, true> as _,
-            (true, true, true, false, true) => inst_mem_handler_multiple::<CPU, true, true, true, false, true> as _,
-            (false, false, false, true, true) => inst_mem_handler_multiple::<CPU, false, false, false, true, true> as _,
-            (true, false, false, true, true) => inst_mem_handler_multiple::<CPU, true, false, false, true, true> as _,
-            (false, true, false, true, true) => inst_mem_handler_multiple::<CPU, false, true, false, true, true> as _,
-            (true, true, false, true, true) => inst_mem_handler_multiple::<CPU, true, true, false, true, true> as _,
-            (false, false, true, true, true) => inst_mem_handler_multiple::<CPU, false, false, true, true, true> as _,
-            (true, false, true, true, true) => inst_mem_handler_multiple::<CPU, true, false, true, true, true> as _,
-            (false, true, true, true, true) => inst_mem_handler_multiple::<CPU, false, true, true, true, true> as _,
-            (true, true, true, true, true) => inst_mem_handler_multiple::<CPU, true, true, true, true, true> as _,
+        let func_addr: *const () = match (inst_info.op.mem_is_write(), write_back, decrement) {
+            (false, false, false) => inst_mem_handler_multiple::<CPU, false, false, false> as _,
+            (false, false, true) => inst_mem_handler_multiple::<CPU, false, false, true> as _,
+            (false, true, false) => inst_mem_handler_multiple::<CPU, false, true, false> as _,
+            (false, true, true) => inst_mem_handler_multiple::<CPU, false, true, true> as _,
+            (true, false, false) => inst_mem_handler_multiple::<CPU, true, false, false> as _,
+            (true, false, true) => inst_mem_handler_multiple::<CPU, true, false, true> as _,
+            (true, true, false) => inst_mem_handler_multiple::<CPU, true, true, false> as _,
+            (true, true, true) => inst_mem_handler_multiple::<CPU, true, true, true> as _,
         };
 
         if use_fast_mem {
-            block_asm.label_unlikely(slow_patch_label);
-            block_asm.mrs_cpsr(cpsr_backup_reg);
-            if IS_DEBUG {
-                block_asm.call1(inst_slow_mem_patch as *const (), self.jit_buf.current_pc);
-            } else {
-                block_asm.call(inst_slow_mem_patch as *const ());
-            }
-            block_asm.msr_cpsr(cpsr_backup_reg);
-            block_asm.branch(slow_label, Cond::AL);
-
             block_asm.label_unlikely(slow_label);
         }
         block_asm.save_context();
         block_asm.call3(
             func_addr,
-            rlist.0 | ((op0 as u32) << 16),
+            u32::from(InstMemMultipleParams::new(
+                rlist.0 as u16,
+                u4::new(rlist.len() as u8),
+                u4::new(op0 as u8),
+                pre,
+                inst_info.op.mem_transfer_user(),
+                u6::new(0),
+            )),
             self.jit_buf.current_pc | (thumb as u32),
             self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32,
         );
@@ -590,7 +532,14 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.restore_reg(Reg::CPSR);
 
         if use_fast_mem {
-            block_asm.branch(continue_label, Cond::AL);
+            match CPU {
+                CpuType::ARM9 => {
+                    block_asm.branch_fallthrough(continue_label, Cond::AL);
+                    block_asm.generic_data(self.jit_buf.current_inst().opcode);
+                    block_asm.force_end();
+                }
+                CpuType::ARM7 => block_asm.branch(continue_label, Cond::AL),
+            }
 
             if !inst_info.op.mem_is_write() {
                 block_asm.label(fast_mem_mark_dirty_label);
@@ -626,10 +575,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.mov(value_reg, op1);
         block_asm.mov(addr_reg, op2);
 
-        self.emit_read(op0, addr_reg, block_asm, false, amount, false, true);
+        self.emit_read(op0, addr_reg, block_asm, false, amount, false);
         block_asm.mov(read_reg, op0);
         block_asm.mov(op1, value_reg);
-        self.emit_write(op1, value_reg, addr_reg, block_asm, amount, false, true);
+        self.emit_write(op1, value_reg, addr_reg, block_asm, amount, false);
         block_asm.mov(op0, read_reg);
 
         block_asm.free_reg(addr_reg);

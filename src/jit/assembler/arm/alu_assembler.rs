@@ -605,7 +605,7 @@ pub struct Ubfx {
 impl Ubfx {
     #[inline]
     pub fn create(rd: Reg, rn: Reg, lsb: u8, width: u8, cond: Cond) -> u32 {
-        u32::from(crate::jit::assembler::arm::alu_assembler::Bfi::new(
+        u32::from(Ubfx::new(
             u4::new(rn as u8),
             u3::new(0b101),
             u5::new(lsb),

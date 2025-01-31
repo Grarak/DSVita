@@ -1,6 +1,7 @@
 use crate::bitset::Bitset;
 use crate::jit::assembler::{BlockReg, ANY_REG_LIMIT};
 use crate::jit::reg::{Reg, RegReserve};
+use crate::utils;
 use std::fmt::{Debug, Formatter};
 use std::hint::assert_unchecked;
 use std::ops::{Add, AddAssign, BitAnd, BitXor, BitXorAssign, Not, Sub, SubAssign};
@@ -25,8 +26,6 @@ macro_rules! block_reg_set {
         }
     };
 }
-
-use crate::utils;
 pub(crate) use block_reg_set;
 
 impl BlockRegSet {

@@ -8,6 +8,6 @@ pub unsafe extern "C" fn exception_handler<const CPU: CpuType, const THUMB: bool
     let asm = get_jit_asm_ptr::<CPU>();
     exception_handler::handle::<CPU, THUMB>((*asm).emu, opcode, vector);
     if get_cpu_regs!((*asm).emu, CPU).is_halted() {
-        imm_breakout!((*asm), pc | (THUMB as u32), total_cycles);
+        imm_breakout!(CPU, (*asm), pc | (THUMB as u32), total_cycles);
     }
 }

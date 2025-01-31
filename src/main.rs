@@ -227,7 +227,7 @@ fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize) -> bo
 
     let guest_mem_addr = (mem_addr - base_ptr as usize) as u32;
     debug_println!("fault at {host_pc:x} {mem_addr:x} to guest {guest_mem_addr:x}");
-    get_jit_mut!(asm.emu).patch_slow_mem(host_pc)
+    get_jit_mut!(asm.emu).patch_slow_mem(host_pc, guest_mem_addr, CPU)
 }
 
 fn fault_handler(mem_addr: usize, host_pc: &mut usize) -> bool {

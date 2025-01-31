@@ -1,10 +1,10 @@
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Bfc, Bfi, MulReg, Ubfx};
 use crate::jit::assembler::arm::branch_assembler::Bx;
+use crate::jit::assembler::arm::transfer_assembler;
 use crate::jit::assembler::arm::transfer_assembler::{LdmStm, LdrStrImm, LdrStrImmSBHD, LdrStrReg, LdrStrRegSBHD, Mrs, Msr};
-use crate::jit::assembler::arm::{transfer_assembler, Bkpt};
 use crate::jit::assembler::block_reg_allocator::BlockRegAllocator;
 use crate::jit::assembler::block_reg_set::{block_reg_set, BlockRegSet};
-use crate::jit::assembler::{BlockAsmPlaceholders, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift};
+use crate::jit::assembler::{arm, BlockAsmPlaceholders, BlockLabel, BlockOperand, BlockOperandShift, BlockReg, BlockShift};
 use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
@@ -238,15 +238,15 @@ pub struct MarkRegDirty {
     pub dirty: bool,
 }
 
-pub struct PadBlock {
-    pub label: BlockLabel,
-    pub correction: i32,
-}
+pub struct GenericData(pub u32);
 
+pub struct Bkpt(pub u16);
+
+#[derive(Eq, PartialEq)]
 pub enum Generic {
-    Bkpt(u16),
     Nop,
     Prologue,
+    ForceEnd,
 }
 
 #[enum_dispatch]
@@ -268,7 +268,8 @@ pub enum BlockInstType {
     GuestPc,
     Epilogue,
     MarkRegDirty,
-    PadBlock,
+    GenericData,
+    Bkpt,
     Generic,
 }
 
@@ -300,7 +301,8 @@ impl Debug for BlockInstType {
             BlockInstType::GuestPc(inner) => inner.fmt(f),
             BlockInstType::Epilogue(inner) => inner.fmt(f),
             BlockInstType::MarkRegDirty(inner) => inner.fmt(f),
-            BlockInstType::PadBlock(inner) => inner.fmt(f),
+            BlockInstType::GenericData(inner) => inner.fmt(f),
+            BlockInstType::Bkpt(inner) => inner.fmt(f),
             BlockInstType::Generic(inner) => inner.fmt(f),
         }
     }
@@ -1340,18 +1342,37 @@ impl Debug for MarkRegDirty {
     }
 }
 
-impl BlockInstTrait for PadBlock {
+impl BlockInstTrait for GenericData {
     fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
         (block_reg_set!(), block_reg_set!())
     }
     fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
-    fn emit_opcode(&mut self, _: &BlockRegAllocator, _: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {}
+    fn emit_opcode(&mut self, _: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
+        opcodes.push(self.0)
+    }
 }
 
-impl Debug for PadBlock {
+impl Debug for GenericData {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PadBlock {:?} {}", self.label, self.correction)
+        write!(f, "Generic data {:x}", self.0)
+    }
+}
+
+impl BlockInstTrait for Bkpt {
+    fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
+        (block_reg_set!(), block_reg_set!())
+    }
+    fn replace_input_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
+    fn emit_opcode(&mut self, _: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
+        opcodes.push(arm::Bkpt::bkpt(self.0))
+    }
+}
+
+impl Debug for Bkpt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Bkpt {}", self.0)
     }
 }
 
@@ -1369,12 +1390,12 @@ impl BlockInstTrait for Generic {
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
     fn emit_opcode(&mut self, _: &BlockRegAllocator, opcodes: &mut Vec<u32>, opcode_index: usize, placeholders: &mut BlockAsmPlaceholders) {
         match self {
-            Generic::Bkpt(id) => opcodes.push(Bkpt::bkpt(*id)),
             Generic::Nop => opcodes.push(AluShiftImm::mov_al(Reg::R0, Reg::R0)),
             Generic::Prologue => {
                 opcodes.push(0);
                 placeholders.prologue.push(opcode_index);
             }
+            Generic::ForceEnd => {}
         }
     }
 }
@@ -1382,9 +1403,9 @@ impl BlockInstTrait for Generic {
 impl Debug for Generic {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Generic::Bkpt(id) => write!(f, "Bkpt {id}"),
             Generic::Nop => write!(f, "Nop"),
             Generic::Prologue => write!(f, "Prologue"),
+            Generic::ForceEnd => write!(f, "Force end"),
         }
     }
 }

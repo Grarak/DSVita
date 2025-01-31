@@ -3,8 +3,8 @@ use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::arm::transfer_assembler::LdmStm;
 use crate::jit::assembler::basic_block::BasicBlock;
 use crate::jit::assembler::block_inst::{
-    Alu, AluOp, AluSetCond, BitField, BlockInst, BlockInstType, Branch, BranchEncoding, Call, Epilogue, Generic, GenericGuest, GuestPc, GuestTransferMultiple, Label, MarkRegDirty, PadBlock, Preload,
-    RestoreReg, SaveContext, SaveReg, SystemReg, SystemRegOp, Transfer, TransferMultiple, TransferOp,
+    Alu, AluOp, AluSetCond, BitField, Bkpt, BlockInst, BlockInstType, Branch, BranchEncoding, Call, Epilogue, Generic, GenericData, GenericGuest, GuestPc, GuestTransferMultiple, Label, MarkRegDirty,
+    Preload, RestoreReg, SaveContext, SaveReg, SystemReg, SystemRegOp, Transfer, TransferMultiple, TransferOp,
 };
 use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
 use crate::jit::assembler::block_reg_set::BlockRegSet;
@@ -719,7 +719,7 @@ impl BlockAsm {
     }
 
     pub fn bkpt(&mut self, id: u16) {
-        self.insert_inst(Generic::Bkpt(id));
+        self.insert_inst(Bkpt(id));
     }
 
     pub fn pli(&mut self, op0: impl Into<BlockReg>, offset: u16, add: bool) {
@@ -786,8 +786,12 @@ impl BlockAsm {
         }
     }
 
-    pub fn pad_block(&mut self, label: BlockLabel, correction: i32) {
-        self.insert_inst(PadBlock { label, correction });
+    pub fn generic_data(&mut self, data: u32) {
+        self.insert_inst(GenericData(data))
+    }
+
+    pub fn force_end(&mut self) {
+        self.insert_inst(Generic::ForceEnd)
     }
 
     fn resolve_guest_regs(&mut self, guest_regs_dirty: RegReserve, block_indices: &[usize]) {
@@ -909,6 +913,11 @@ impl BlockAsm {
                         handle_branch(self.buf, basic_blocks, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data);
                     }
                 }
+                BlockInstType::Generic(inner) => {
+                    if *inner == Generic::ForceEnd {
+                        handle_branch(self.buf, basic_blocks, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data);
+                    }
+                }
                 _ => {}
             }
         }
@@ -962,6 +971,11 @@ impl BlockAsm {
                 }
                 BlockInstType::Epilogue(inner) => {
                     if (cond != Cond::AL || inner.restore_state) && i + 1 < basic_blocks_len {
+                        basic_block.exit_blocks.push(i + 1);
+                    }
+                }
+                BlockInstType::Generic(inner) => {
+                    if *inner != Generic::ForceEnd && i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.push(i + 1);
                     }
                 }
@@ -1094,14 +1108,6 @@ impl BlockAsm {
         self.buf.block_opcode_offsets.resize(basic_blocks_len, 0);
         self.buf.resize_placeholders(basic_blocks_len);
 
-        for i in 0..basic_blocks_len {
-            if let Some((label, correction)) = self.cache.basic_blocks[i].pad_label {
-                let block_to_pad_to = *self.buf.basic_block_label_mapping.get(&label.0).unwrap();
-                self.cache.basic_blocks[block_to_pad_to].emit_opcodes(self.buf, true, block_to_pad_to);
-                self.cache.basic_blocks[i].pad_size = (self.cache.basic_blocks[block_to_pad_to].opcodes.len() as i32 + correction) as usize;
-            }
-        }
-
         for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
             let opcodes_len = self.buf.opcodes.len();
             self.buf.block_opcode_offsets[i] = opcodes_len;
@@ -1111,7 +1117,7 @@ impl BlockAsm {
                 continue;
             }
 
-            basic_block.emit_opcodes(self.buf, false, i);
+            basic_block.emit_opcodes(self.buf, i);
         }
 
         self.buf.opcodes.len()

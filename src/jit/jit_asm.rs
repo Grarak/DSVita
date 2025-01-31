@@ -249,7 +249,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
 
     let (jit_entry, flushed) = {
         // println!("{CPU:?} {THUMB} emit code block {guest_pc:x}");
-        // unsafe { BLOCK_LOG = guest_pc == 0x20ba6bc };
+        // unsafe { BLOCK_LOG = guest_pc == 0x2004824 };
 
         let guest_regs_ptr = get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr();
         let host_sp_ptr = ptr::addr_of_mut!(asm.runtime_data.host_sp);
