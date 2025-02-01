@@ -286,9 +286,9 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
 
     pub fn emit_call_branch_imm_with_lr_return<const THUMB: bool>(&self, block_asm: &mut BlockAsm, total_cycles: u16, target_entry: *const JitEntry, lr_reg: BlockReg, current_pc: u32) {
         if IS_DEBUG {
-            block_asm.call4(branch_imm::<CPU, THUMB, true> as *const (), total_cycles as u32, target_entry as u32, lr_reg, current_pc);
+            block_asm.call4(branch_imm::<CPU, THUMB> as *const (), total_cycles as u32, target_entry as u32, lr_reg, current_pc);
         } else {
-            block_asm.call3(branch_imm::<CPU, THUMB, true> as *const (), total_cycles as u32, target_entry as u32, lr_reg);
+            block_asm.call3(branch_imm::<CPU, THUMB> as *const (), total_cycles as u32, target_entry as u32, lr_reg);
         }
     }
 

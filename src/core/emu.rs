@@ -316,9 +316,9 @@ pub struct Common {
 }
 
 impl Common {
-    fn new(cartridge_io: CartridgeIo, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>) -> Self {
+    fn new(cartridge_io: CartridgeIo, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, settings: &Settings) -> Self {
         Common {
-            ipc: Ipc::new(),
+            ipc: Ipc::new(settings),
             cartridge: Cartridge::new(cartridge_io),
             gpu: Gpu::new(fps),
             cycle_manager: CycleManager::new(),
@@ -338,7 +338,7 @@ pub struct Emu {
 impl Emu {
     pub fn new(cartridge_io: CartridgeIo, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>, settings: Settings) -> Self {
         Emu {
-            common: UnsafeCell::new(Common::new(cartridge_io, fps, key_map)),
+            common: UnsafeCell::new(Common::new(cartridge_io, fps, key_map, &settings)),
             mem: UnsafeCell::new(Memory::new(&settings, touch_points, sound_sampler)),
             arm7_hle: UnsafeCell::new(Arm7Hle::new()),
             settings,

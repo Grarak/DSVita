@@ -5,8 +5,9 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::fixed_fifo::FixedFifo;
 use crate::logging::debug_println;
+use crate::settings::Settings;
 use bilge::prelude::*;
-use std::rc::Rc;
+use enum_dispatch::enum_dispatch;
 
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
@@ -57,24 +58,26 @@ impl Fifo {
 pub struct Ipc {
     pub sync_regs: [IpcSyncCnt; 2],
     pub fifo: [Fifo; 2],
-    inner: Rc<dyn IpcInner>,
+    ipc_type: IpcType,
 }
 
-trait IpcInner {
+struct IpcLle;
+struct IpcHle;
+
+#[enum_dispatch]
+enum IpcType {
+    IpcLle,
+    IpcHle,
+}
+
+#[enum_dispatch(IpcType)]
+trait IpcTrait {
     fn get_fifo_cnt(&self, cpu: CpuType, ipc: &Ipc) -> u16;
     fn set_sync_reg(&self, cpu: CpuType, mask: u16, value: u16, emu: &mut Emu);
     fn fifo_send(&self, cpu: CpuType, mask: u32, value: u32, emu: &mut Emu);
 }
 
-struct IpcLle {}
-
-impl IpcLle {
-    fn new() -> Self {
-        IpcLle {}
-    }
-}
-
-impl IpcInner for IpcLle {
+impl IpcTrait for IpcLle {
     fn get_fifo_cnt(&self, cpu: CpuType, ipc: &Ipc) -> u16 {
         ipc.fifo[cpu].cnt.into()
     }
@@ -113,15 +116,7 @@ impl IpcInner for IpcLle {
     }
 }
 
-struct IpcHle {}
-
-impl IpcHle {
-    fn new() -> Self {
-        IpcHle {}
-    }
-}
-
-impl IpcInner for IpcHle {
+impl IpcTrait for IpcHle {
     fn get_fifo_cnt(&self, _: CpuType, ipc: &Ipc) -> u16 {
         let mut cnt = ipc.fifo[ARM9].cnt;
 
@@ -174,16 +169,12 @@ impl IpcInner for IpcHle {
 }
 
 impl Ipc {
-    pub fn new() -> Self {
+    pub fn new(settings: &Settings) -> Self {
         Ipc {
             sync_regs: [IpcSyncCnt::from(0); 2],
             fifo: [Fifo::new(), Fifo::new()],
-            inner: Rc::new(IpcLle::new()),
+            ipc_type: if settings.arm7_hle() { IpcHle.into() } else { IpcLle.into() },
         }
-    }
-
-    pub fn use_hle(&mut self) {
-        self.inner = Rc::new(IpcHle::new());
     }
 
     pub fn get_sync_reg<const CPU: CpuType>(&self) -> u16 {
@@ -191,12 +182,12 @@ impl Ipc {
     }
 
     pub fn get_fifo_cnt<const CPU: CpuType>(&self) -> u16 {
-        self.inner.get_fifo_cnt(CPU, self)
+        self.ipc_type.get_fifo_cnt(CPU, self)
     }
 
     pub fn set_sync_reg<const CPU: CpuType>(&mut self, mask: u16, value: u16, emu: &mut Emu) {
         debug_println!("{:?} set ipc sync with mask {:x} and value {:x}", CPU, mask, value);
-        self.inner.clone().set_sync_reg(CPU, mask, value, emu);
+        self.ipc_type.set_sync_reg(CPU, mask, value, emu);
     }
 
     pub fn set_fifo_cnt<const CPU: CpuType>(&mut self, mut mask: u16, value: u16, emu: &mut Emu) {
@@ -234,7 +225,7 @@ impl Ipc {
     }
 
     pub fn fifo_send<const CPU: CpuType>(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.inner.clone().fifo_send(CPU, mask, value, emu);
+        self.ipc_type.fifo_send(CPU, mask, value, emu);
     }
 
     pub fn fifo_recv<const CPU: CpuType>(&mut self, emu: &mut Emu) -> u32 {

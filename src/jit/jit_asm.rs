@@ -170,7 +170,7 @@ impl JitRuntimeData {
 
     pub fn get_sp_depth_size(&self) -> usize {
         let mut sp: usize;
-        unsafe { asm!("mov {}, sp", out(reg) sp) };
+        unsafe { asm!("mov {}, sp", out(reg) sp, options(pure, nomem, preserves_flags)) };
         self.host_sp - sp
     }
 
@@ -281,13 +281,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && is_uncond_branch;
         asm.jit_buf.insts.push(inst_info);
 
-        if is_unreturnable_branch
-            || uncond_branch_count
-                == match CPU {
-                    ARM9 => 4,
-                    ARM7 => 1,
-                }
-        {
+        if is_unreturnable_branch || uncond_branch_count == 4 {
             break;
         }
         pc_offset += pc_step;

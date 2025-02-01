@@ -194,7 +194,6 @@ fn run_cpu(
     unsafe { register_abort_handler(fault_handler).unwrap() };
 
     if emu.settings.arm7_hle() {
-        common.ipc.use_hle();
         common.gpu.arm7_hle = true;
         execute_jit::<true>(&mut emu_unsafe);
     } else {

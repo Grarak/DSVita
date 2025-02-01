@@ -193,7 +193,7 @@ impl JitMemory {
     }
 
     fn reset_blocks(&mut self, cpu_type: CpuType) {
-        self.jit_perf_map_record.reset();
+        // self.jit_perf_map_record.reset();
 
         let jit_data = self.get_jit_data(cpu_type);
 

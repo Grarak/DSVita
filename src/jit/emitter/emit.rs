@@ -1,6 +1,6 @@
 use crate::core::emu::get_regs_mut;
 use crate::core::CpuType;
-use crate::core::CpuType::ARM7;
+use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::BlockReg;
 use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode};
@@ -75,11 +75,14 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 block_asm.load_u32(guest_pc_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
                 self.emit_branch_return_stack_common(block_asm, guest_pc_reg);
                 block_asm.free_reg(guest_pc_reg);
-            } else {
+            } else if CPU == ARM9 {
                 let guest_pc_reg = block_asm.new_reg();
                 block_asm.load_u32(guest_pc_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
                 self.emit_branch_reg_common(block_asm, guest_pc_reg, false, false);
                 block_asm.free_reg(guest_pc_reg);
+            } else {
+                self.emit_branch_out_metadata(block_asm);
+                block_asm.epilogue();
             }
         }
 
