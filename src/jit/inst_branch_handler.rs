@@ -1,13 +1,13 @@
 use crate::core::emu::{get_cm_mut, get_common_mut, get_cpu_regs, get_jit, get_regs, get_regs_mut};
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
-use crate::jit::jit_asm::{align_guest_pc, JitAsm, RETURN_STACK_SIZE, STACK_DEPTH_LIMIT};
+use crate::jit::jit_asm::{align_guest_pc, JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_asm_common_funs::{exit_guest_context, get_max_loop_cycle_count, JitAsmCommonFuns};
 use crate::jit::jit_memory::JitEntry;
 use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
 use std::cmp::min;
-use std::intrinsics::likely;
+use std::intrinsics::{breakpoint, likely, unlikely};
 use std::mem;
 
 pub extern "C" fn run_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: *mut JitAsm<CPU>, current_pc: u32) {
@@ -41,7 +41,11 @@ pub extern "C" fn run_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: *
 
 fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm<CPU>, total_cycles: u16, current_pc: u32) {
     asm.runtime_data.accumulated_cycles += total_cycles + 2 - asm.runtime_data.pre_cycle_count_sum;
-    debug_println!("{CPU:?} flush cycles {} at {current_pc:x}", asm.runtime_data.accumulated_cycles);
+    debug_println!(
+        "{CPU:?} flush cycles {} at {current_pc:x} sp size {}",
+        asm.runtime_data.accumulated_cycles,
+        asm.runtime_data.get_sp_depth_size()
+    );
 }
 
 fn check_scheduler<const CPU: CpuType>(asm: &mut JitAsm<CPU>, current_pc: u32) {
@@ -83,29 +87,29 @@ pub unsafe extern "C" fn call_jit_fun<const CPU: CpuType>(asm: &mut JitAsm<CPU>,
     jit_entry();
 }
 
-fn pre_branch<const CPU: CpuType, const HAS_LR_RETURN: bool>(asm: &mut JitAsm<CPU>, total_cycles: u16, lr: u32, current_pc: u32) {
+pub extern "C" fn pre_branch<const CPU: CpuType, const HAS_LR_RETURN: bool>(asm: &mut JitAsm<CPU>, total_cycles: u16, lr: u32, current_pc: u32) {
     flush_cycles(asm, total_cycles, current_pc);
 
-    if CPU == ARM9 && HAS_LR_RETURN && asm.runtime_data.stack_depth() >= STACK_DEPTH_LIMIT {
-        if IS_DEBUG {
-            asm.runtime_data.set_branch_out_pc(current_pc);
+    if CPU == ARM9 && HAS_LR_RETURN {
+        let sp_depth_size = asm.runtime_data.get_sp_depth_size();
+        if unlikely(sp_depth_size >= MAX_STACK_DEPTH_SIZE) {
+            if IS_DEBUG {
+                asm.runtime_data.set_branch_out_pc(current_pc);
+            }
+            if DEBUG_LOG {
+                JitAsmCommonFuns::<CPU>::debug_stack_depth_too_big(sp_depth_size, current_pc);
+            }
+            unsafe { exit_guest_context!(asm) };
         }
-        if DEBUG_LOG {
-            JitAsmCommonFuns::<CPU>::debug_stack_depth_too_big(asm.runtime_data.stack_depth(), current_pc);
-        }
-        unsafe { exit_guest_context!(asm) };
     }
 
     check_scheduler(asm, current_pc);
 
     asm.runtime_data.pre_cycle_count_sum = 0;
     if HAS_LR_RETURN {
-        unsafe { *asm.runtime_data.return_stack.get_unchecked_mut(asm.runtime_data.return_stack_ptr as usize) = lr };
-        asm.runtime_data.return_stack_ptr += 1;
-        asm.runtime_data.return_stack_ptr &= RETURN_STACK_SIZE as u8 - 1;
-
+        asm.runtime_data.push_return_stack(lr);
         if DEBUG_LOG {
-            JitAsmCommonFuns::<CPU>::debug_push_return_stack(current_pc, lr, asm.runtime_data.return_stack_ptr);
+            JitAsmCommonFuns::<CPU>::debug_push_return_stack(current_pc, lr, asm.runtime_data.get_return_stack_ptr());
         }
     }
 }
@@ -119,34 +123,36 @@ pub unsafe extern "C" fn branch_reg<const CPU: CpuType, const HAS_LR_RETURN: boo
         JitAsmCommonFuns::<CPU>::debug_branch_reg(current_pc, target_pc);
     }
 
-    if CPU == ARM9 && HAS_LR_RETURN {
-        asm.runtime_data.increment_stack_depth();
-    }
     call_jit_fun(asm, target_pc);
     if HAS_LR_RETURN {
-        if CPU == ARM9 {
-            asm.runtime_data.decrement_stack_depth();
-        }
         asm.runtime_data.pre_cycle_count_sum = total_cycles;
     }
 }
 
 pub unsafe extern "C" fn branch_imm<const CPU: CpuType, const THUMB: bool, const HAS_LR_RETURN: bool>(total_cycles: u16, target_entry: *const JitEntry, lr: u32, current_pc: u32) {
-    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
-
-    pre_branch::<CPU, HAS_LR_RETURN>(asm, total_cycles, lr, current_pc);
-
-    if CPU == ARM9 && HAS_LR_RETURN {
-        asm.runtime_data.increment_stack_depth();
+    if !HAS_LR_RETURN {
+        breakpoint();
     }
-    get_regs_mut!(asm.emu, CPU).set_thumb(THUMB);
-    let entry = (*target_entry).0;
-    let entry: extern "C" fn() = mem::transmute(entry);
+    let entry = {
+        let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
+
+        pre_branch::<CPU, HAS_LR_RETURN>(asm, total_cycles, lr, current_pc);
+
+        if DEBUG_LOG {
+            JitAsmCommonFuns::<CPU>::debug_branch_imm(current_pc, get_regs!(asm.emu, CPU).pc);
+        }
+
+        get_regs_mut!(asm.emu, CPU).set_thumb(THUMB);
+        let entry = (*target_entry).0;
+        let entry: extern "C" fn() = mem::transmute(entry);
+        entry
+    };
+    if !HAS_LR_RETURN {
+        breakpoint();
+    }
     entry();
     if HAS_LR_RETURN {
-        if CPU == ARM9 {
-            asm.runtime_data.decrement_stack_depth();
-        }
+        let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
         asm.runtime_data.pre_cycle_count_sum = total_cycles;
     }
 }
@@ -161,9 +167,7 @@ pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target
         asm.runtime_data.set_branch_out_pc(current_pc);
     }
 
-    asm.runtime_data.return_stack_ptr = asm.runtime_data.return_stack_ptr.wrapping_sub(1);
-    asm.runtime_data.return_stack_ptr &= RETURN_STACK_SIZE as u8 - 1;
-    let desired_lr = *asm.runtime_data.return_stack.get_unchecked(asm.runtime_data.return_stack_ptr as usize);
+    let desired_lr = asm.runtime_data.pop_return_stack();
     if likely(desired_lr == target_pc) {
         get_regs_mut!(asm.emu, CPU).set_thumb(target_pc & 1 == 1);
         if DEBUG_LOG {

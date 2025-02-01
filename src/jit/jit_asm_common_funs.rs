@@ -3,8 +3,8 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockLabel, BlockOperand, BlockReg};
-use crate::jit::inst_branch_handler::{branch_imm, branch_lr, branch_reg};
-use crate::jit::jit_asm::{JitAsm, JitRuntimeData, RETURN_STACK_SIZE, STACK_DEPTH_LIMIT};
+use crate::jit::inst_branch_handler::{branch_imm, branch_lr, branch_reg, pre_branch};
+use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::reg::Reg;
 use crate::jit::{inst_branch_handler, jit_memory_map, Cond, ShiftType};
 use crate::{DEBUG_LOG, IS_DEBUG};
@@ -90,9 +90,9 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         block_asm.mov(jit_entry_add_reg, jit_entry_addr as u32);
         block_asm.load_u32(entry_fn_reg, jit_entry_add_reg, 0);
         if has_return {
-            block_asm.call1(entry_fn_reg, 0);
+            block_asm.call(entry_fn_reg);
         } else {
-            block_asm.call1_no_return(entry_fn_reg, 0);
+            block_asm.call_no_return(entry_fn_reg);
         }
 
         block_asm.free_reg(entry_fn_reg);
@@ -123,52 +123,6 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         block_asm.store_u32(cpsr_reg, thread_regs_addr_reg, Reg::CPSR as u32 * 4);
         block_asm.free_reg(cpsr_reg);
         block_asm.free_reg(thread_regs_addr_reg);
-    }
-
-    pub fn emit_check_stack_depth(block_asm: &mut BlockAsm, runtime_data_addr_reg: BlockReg, breakout_label: BlockLabel, current_pc: u32) {
-        if CPU == ARM7 {
-            return;
-        }
-
-        let stack_depth_reg = block_asm.new_reg();
-        block_asm.load_u16(stack_depth_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
-        block_asm.bic(stack_depth_reg, stack_depth_reg, 0x8000);
-        block_asm.cmp(stack_depth_reg, STACK_DEPTH_LIMIT as u32);
-
-        if DEBUG_LOG {
-            block_asm.start_cond_block(Cond::HS);
-            block_asm.call2(Self::debug_stack_depth_too_big as *const _, stack_depth_reg, current_pc);
-            block_asm.branch(breakout_label, Cond::AL);
-            block_asm.end_cond_block();
-        } else {
-            block_asm.branch(breakout_label, Cond::HS);
-        }
-
-        block_asm.free_reg(stack_depth_reg);
-    }
-
-    pub fn emit_increment_stack_depth(block_asm: &mut BlockAsm, runtime_data_addr_reg: BlockReg) {
-        if CPU == ARM7 {
-            return;
-        }
-
-        let stack_depth_reg = block_asm.new_reg();
-        block_asm.load_u16(stack_depth_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
-        block_asm.add(stack_depth_reg, stack_depth_reg, 1);
-        block_asm.store_u16(stack_depth_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
-        block_asm.free_reg(stack_depth_reg);
-    }
-
-    pub fn emit_decrement_stack_depth(block_asm: &mut BlockAsm, runtime_data_addr_reg: BlockReg) {
-        if CPU == ARM7 {
-            return;
-        }
-
-        let stack_depth_reg = block_asm.new_reg();
-        block_asm.load_u16(stack_depth_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
-        block_asm.sub(stack_depth_reg, stack_depth_reg, 1);
-        block_asm.store_u16(stack_depth_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
-        block_asm.free_reg(stack_depth_reg);
     }
 
     fn emit_align_guest_pc(block_asm: &mut BlockAsm, guest_pc_reg: BlockReg, aligned_guest_pc_reg: BlockReg) {
@@ -258,9 +212,6 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
             } else {
                 inst_branch_handler::run_scheduler::<CPU, false> as *const ()
             };
-            // if asm.jit_buf.current_pc == 0x2000a58 {
-            //     block_asm.bkpt(1);
-            // }
             if IS_DEBUG {
                 block_asm.call2(func, asm as *mut _ as u32, asm.jit_buf.current_pc);
             } else {
@@ -286,27 +237,6 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
 
         block_asm.free_reg(result_accumulated_cycles_reg);
         block_asm.free_reg(runtime_data_addr_reg);
-    }
-
-    pub fn emit_return_stack_write_desired_lr(block_asm: &mut BlockAsm, runtime_data_addr_reg: BlockReg, lr_reg: BlockReg, current_pc: u32) {
-        let return_stack_ptr_reg = block_asm.new_reg();
-
-        block_asm.load_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
-
-        let return_stack_reg = block_asm.new_reg();
-        block_asm.add(return_stack_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_offset() as u32);
-        block_asm.store_u32(lr_reg, return_stack_reg, (return_stack_ptr_reg.into(), ShiftType::Lsl, BlockOperand::from(2)));
-
-        if DEBUG_LOG {
-            block_asm.call3(Self::debug_push_return_stack as *const (), current_pc, lr_reg, return_stack_ptr_reg);
-        }
-
-        block_asm.add(return_stack_ptr_reg, return_stack_ptr_reg, 1);
-        block_asm.and(return_stack_ptr_reg, return_stack_ptr_reg, RETURN_STACK_SIZE as u32 - 1);
-        block_asm.store_u8(return_stack_ptr_reg, runtime_data_addr_reg, JitRuntimeData::get_return_stack_ptr_offset() as u32);
-
-        block_asm.free_reg(return_stack_reg);
-        block_asm.free_reg(return_stack_ptr_reg);
     }
 
     pub fn emit_call_branch_return_stack(&self, block_asm: &mut BlockAsm, total_cycles: u16, target_pc_reg: BlockReg, current_pc: u32) {
@@ -355,33 +285,31 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         }
     }
 
-    pub fn emit_call_branch_imm_no_return<const THUMB: bool>(&self, block_asm: &mut BlockAsm, total_cycles: u16, target_entry: *const JitEntry, current_pc: u32) {
-        block_asm.mov(BlockReg::Fixed(Reg::R0), total_cycles as u32);
-        block_asm.mov(BlockReg::Fixed(Reg::R1), target_entry as u32);
+    pub fn emit_call_branch_imm_no_return(asm: &mut JitAsm<CPU>, block_asm: &mut BlockAsm, total_cycles: u16, current_pc: u32, target_pc: u32) {
         if IS_DEBUG {
-            block_asm.mov(BlockReg::Fixed(Reg::R2), 0);
-            block_asm.mov(BlockReg::Fixed(Reg::R3), current_pc);
-        }
-        block_asm.epilogue_previous_state();
-        block_asm.mov(BlockReg::Fixed(Reg::R12), branch_imm::<CPU, THUMB, false> as *const () as u32);
-        if IS_DEBUG {
-            block_asm.call4_no_return(
-                BlockReg::Fixed(Reg::R12),
-                BlockReg::Fixed(Reg::R0),
-                BlockReg::Fixed(Reg::R1),
-                BlockReg::Fixed(Reg::R2),
-                BlockReg::Fixed(Reg::R3),
-            );
+            block_asm.call4(pre_branch::<CPU, false> as *const (), asm as *mut _ as u32, total_cycles as u32, 0, current_pc);
         } else {
-            block_asm.call2_no_return(BlockReg::Fixed(Reg::R12), BlockReg::Fixed(Reg::R0), BlockReg::Fixed(Reg::R1));
+            block_asm.call2(pre_branch::<CPU, false> as *const (), asm as *mut _ as u32, total_cycles as u32);
         }
+
+        if DEBUG_LOG {
+            block_asm.call2(Self::debug_branch_imm as *const (), current_pc, target_pc);
+        }
+
+        Self::emit_set_cpsr_thumb_bit_imm(block_asm, asm, target_pc & 1 == 1);
+        block_asm.epilogue_previous_state();
+
+        let jit_entry_addr = get_jit!(asm.emu).jit_memory_map.get_jit_entry(target_pc);
+        block_asm.mov(Reg::R0, jit_entry_addr as u32);
+        block_asm.load_u32(Reg::R0, Reg::R0, 0);
+        block_asm.call_no_return(Reg::R0);
     }
 
     pub extern "C" fn debug_push_return_stack(current_pc: u32, lr_pc: u32, stack_size: u8) {
         println!("{CPU:?} push {lr_pc:x} to return stack with size {stack_size} at {current_pc:x}")
     }
 
-    pub extern "C" fn debug_stack_depth_too_big(size: u16, current_pc: u32) {
+    pub extern "C" fn debug_stack_depth_too_big(size: usize, current_pc: u32) {
         println!("{CPU:?} stack depth exceeded {size} at {current_pc:x}")
     }
 
@@ -399,5 +327,9 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
 
     pub extern "C" fn debug_return_stack_empty(current_pc: u32, target_pc: u32) {
         println!("{CPU:?} empty return stack {current_pc:x} to {target_pc:x}")
+    }
+
+    pub extern "C" fn debug_branch_imm(current_pc: u32, target_pc: u32) {
+        println!("{CPU:?} branch imm from {current_pc:x} to {target_pc:x}")
     }
 }

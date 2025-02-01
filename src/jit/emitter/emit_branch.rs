@@ -183,9 +183,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let total_cycles = self.jit_buf.insts_cycle_counts[self.jit_buf.current_index];
         let current_pc = self.jit_buf.current_pc;
-        let target_jit_addr_entry = get_jit!(self.emu).jit_memory_map.get_jit_entry(target_pc);
 
         if has_lr_return {
+            let target_jit_addr_entry = get_jit!(self.emu).jit_memory_map.get_jit_entry(target_pc);
+
             if target_is_thumb {
                 self.jit_common_funs
                     .emit_call_branch_imm_with_lr_return::<true>(block_asm, total_cycles, target_jit_addr_entry, Reg::LR.into(), current_pc)
@@ -202,9 +203,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 block_asm.mov(runtime_data_addr_reg, ptr::addr_of_mut!(self.runtime_data) as u32);
                 block_asm.store_u16(total_cycles_reg, runtime_data_addr_reg, JitRuntimeData::get_pre_cycle_count_sum_offset() as u32);
 
-                JitAsmCommonFuns::<CPU>::emit_increment_stack_depth(block_asm, runtime_data_addr_reg);
                 JitAsmCommonFuns::<CPU>::emit_call_jit_addr_imm(block_asm, self, if thumb { (self.jit_buf.current_pc + 2) | 1 } else { self.jit_buf.current_pc + 4 }, true);
-                JitAsmCommonFuns::<CPU>::emit_decrement_stack_depth(block_asm, runtime_data_addr_reg);
 
                 block_asm.epilogue_previous_block();
 
@@ -216,10 +215,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 }
                 block_asm.restore_reg(Reg::CPSR);
             }
-        } else if target_is_thumb {
-            self.jit_common_funs.emit_call_branch_imm_no_return::<true>(block_asm, total_cycles, target_jit_addr_entry, current_pc)
         } else {
-            self.jit_common_funs.emit_call_branch_imm_no_return::<false>(block_asm, total_cycles, target_jit_addr_entry, current_pc)
+            JitAsmCommonFuns::<CPU>::emit_call_branch_imm_no_return(self, block_asm, total_cycles, current_pc, target_pc)
         }
     }
 
@@ -243,9 +240,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 block_asm.mov(runtime_data_addr_reg, ptr::addr_of_mut!(self.runtime_data) as u32);
                 block_asm.store_u16(total_cycles_reg, runtime_data_addr_reg, JitRuntimeData::get_pre_cycle_count_sum_offset() as u32);
 
-                JitAsmCommonFuns::<CPU>::emit_increment_stack_depth(block_asm, runtime_data_addr_reg);
                 JitAsmCommonFuns::<CPU>::emit_call_jit_addr_imm(block_asm, self, if thumb { (self.jit_buf.current_pc + 2) | 1 } else { self.jit_buf.current_pc + 4 }, true);
-                JitAsmCommonFuns::<CPU>::emit_decrement_stack_depth(block_asm, runtime_data_addr_reg);
 
                 block_asm.epilogue_previous_block();
 

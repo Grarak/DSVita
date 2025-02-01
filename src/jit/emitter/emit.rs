@@ -126,9 +126,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         if set_idle_loop {
             let idle_loop_reg = block_asm.new_reg();
-            block_asm.load_u16(idle_loop_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
-            block_asm.orr(idle_loop_reg, idle_loop_reg, 0x8000);
-            block_asm.store_u16(idle_loop_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_stack_depth_offset() as u32);
+            block_asm.load_u8(idle_loop_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_return_stack_ptr_offset() as u32);
+            block_asm.orr(idle_loop_reg, idle_loop_reg, 0x80);
+            block_asm.store_u16(idle_loop_reg, runtime_data_addr_reg, JitRuntimeData::get_idle_loop_return_stack_ptr_offset() as u32);
             block_asm.free_reg(idle_loop_reg);
         }
 

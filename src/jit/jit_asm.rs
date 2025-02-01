@@ -15,7 +15,7 @@ use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
-use std::arch::naked_asm;
+use std::arch::{asm, naked_asm};
 use std::cell::UnsafeCell;
 use std::intrinsics::unlikely;
 use std::{mem, ptr};
@@ -52,15 +52,14 @@ impl JitBuf {
 }
 
 pub const RETURN_STACK_SIZE: usize = 32;
-pub const STACK_DEPTH_LIMIT: u16 = (1 << 15) - 1;
+pub const MAX_STACK_DEPTH_SIZE: usize = 9 * 1024 * 1024;
 
 #[repr(C, align(32))]
 pub struct JitRuntimeData {
     pub pre_cycle_count_sum: u16,
     pub accumulated_cycles: u16,
     pub host_sp: usize,
-    idle_loop_stack_depth: u16,
-    pub return_stack_ptr: u8,
+    pub idle_loop_return_stack_ptr: u8,
     pub return_stack: [u32; RETURN_STACK_SIZE],
     #[cfg(debug_assertions)]
     branch_out_pc: u32,
@@ -72,8 +71,7 @@ impl JitRuntimeData {
             pre_cycle_count_sum: 0,
             accumulated_cycles: 0,
             host_sp: 0,
-            idle_loop_stack_depth: 0,
-            return_stack_ptr: 0,
+            idle_loop_return_stack_ptr: 0,
             return_stack: [0; RETURN_STACK_SIZE],
             #[cfg(debug_assertions)]
             branch_out_pc: u32::MAX,
@@ -124,12 +122,8 @@ impl JitRuntimeData {
         mem::offset_of!(JitRuntimeData, host_sp)
     }
 
-    pub const fn get_idle_loop_stack_depth_offset() -> usize {
-        mem::offset_of!(JitRuntimeData, idle_loop_stack_depth)
-    }
-
-    pub const fn get_return_stack_ptr_offset() -> usize {
-        mem::offset_of!(JitRuntimeData, return_stack_ptr)
+    pub const fn get_idle_loop_return_stack_ptr_offset() -> usize {
+        mem::offset_of!(JitRuntimeData, idle_loop_return_stack_ptr)
     }
 
     pub const fn get_return_stack_offset() -> usize {
@@ -137,27 +131,41 @@ impl JitRuntimeData {
     }
 
     pub fn is_idle_loop(&self) -> bool {
-        self.idle_loop_stack_depth & 0x8000 != 0
+        self.idle_loop_return_stack_ptr & 0x80 != 0
     }
 
     pub fn clear_idle_loop(&mut self) {
-        self.idle_loop_stack_depth &= !0x8000;
+        self.idle_loop_return_stack_ptr &= !0x80;
     }
 
-    pub fn stack_depth(&self) -> u16 {
-        self.idle_loop_stack_depth & !0x8000
+    pub fn get_return_stack_ptr(&self) -> u8 {
+        self.idle_loop_return_stack_ptr & !0x80
     }
 
-    pub fn increment_stack_depth(&mut self) {
-        self.idle_loop_stack_depth += 1;
+    pub fn push_return_stack(&mut self, value: u32) {
+        let mut return_stack_ptr = self.get_return_stack_ptr();
+        unsafe { *self.return_stack.get_unchecked_mut(return_stack_ptr as usize) = value };
+        return_stack_ptr += 1;
+        return_stack_ptr &= RETURN_STACK_SIZE as u8 - 1;
+        self.idle_loop_return_stack_ptr = (self.idle_loop_return_stack_ptr & 0x80) | return_stack_ptr;
     }
 
-    pub fn decrement_stack_depth(&mut self) {
-        self.idle_loop_stack_depth -= 1;
+    pub fn pop_return_stack(&mut self) -> u32 {
+        let mut return_stack_ptr = self.get_return_stack_ptr();
+        return_stack_ptr = return_stack_ptr.wrapping_sub(1);
+        return_stack_ptr &= RETURN_STACK_SIZE as u8 - 1;
+        self.idle_loop_return_stack_ptr = (self.idle_loop_return_stack_ptr & 0x80) | return_stack_ptr;
+        unsafe { *self.return_stack.get_unchecked(return_stack_ptr as usize) }
+    }
+
+    pub fn get_sp_depth_size(&self) -> usize {
+        let mut sp: usize;
+        unsafe { asm!("mov {}, sp", out(reg) sp) };
+        self.host_sp - sp
     }
 
     pub fn clear_return_stack_ptr(&mut self) {
-        self.return_stack_ptr = 0;
+        self.idle_loop_return_stack_ptr &= 0x80;
         self.return_stack[RETURN_STACK_SIZE - 1] = 0;
     }
 }
@@ -340,7 +348,7 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
         asm.runtime_data.pre_cycle_count_sum = 0;
         asm.runtime_data.accumulated_cycles = 0;
         asm.runtime_data.clear_return_stack_ptr();
-        asm.runtime_data.idle_loop_stack_depth = 0;
+        asm.runtime_data.idle_loop_return_stack_ptr = 0;
         jit_entry
     };
 
@@ -350,10 +358,9 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
         assert_ne!(
             asm.runtime_data.get_branch_out_pc(),
             u32::MAX,
-            "{CPU:?} idle loop {} return stack ptr {} stack depth {}",
+            "{CPU:?} idle loop {} return stack ptr {}",
             asm.runtime_data.is_idle_loop(),
-            asm.runtime_data.return_stack_ptr,
-            asm.runtime_data.stack_depth(),
+            asm.runtime_data.get_return_stack_ptr(),
         );
     }
 

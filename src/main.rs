@@ -25,7 +25,7 @@ use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::memory::mmu::Mmu;
 use crate::core::spu::{SoundSampler, Spu};
 use crate::core::{spi, CpuType};
-use crate::jit::jit_asm::JitAsm;
+use crate::jit::jit_asm::{JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::logging::debug_println;
 use crate::mmap::register_abort_handler;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
@@ -416,7 +416,7 @@ pub fn actual_main() {
 
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
-        .stack_size(10 * 1024 * 1024)
+        .stack_size(MAX_STACK_DEPTH_SIZE + 1024 * 1024) // Add 1MB headroom to stack
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
             println!("Start cpu {:?}", thread::current().id());
