@@ -664,50 +664,8 @@ impl BlockAsm {
                 self.tmp_regs.func_call_reg
             }
         };
-        self.insert_inst(Call::reg(
+        self.insert_inst(Call::new(
             reg,
-            [
-                args[0].map(|_| BlockReg::Fixed(Reg::R0)),
-                args[1].map(|_| BlockReg::Fixed(Reg::R1)),
-                args[2].map(|_| BlockReg::Fixed(Reg::R2)),
-                args[3].map(|_| BlockReg::Fixed(Reg::R3)),
-            ],
-            has_return,
-        ));
-    }
-
-    pub fn call_common(&mut self, offset: usize) {
-        self.call_common_internal(offset, None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, true)
-    }
-
-    pub fn call1_common(&mut self, offset: usize, arg0: impl Into<BlockOperand>) {
-        self.call_common_internal(offset, Some(arg0.into()), None::<BlockOperand>, None::<BlockOperand>, None::<BlockOperand>, true)
-    }
-
-    pub fn call2_common(&mut self, offset: usize, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>) {
-        self.call_common_internal(offset, Some(arg0.into()), Some(arg1.into()), None::<BlockOperand>, None::<BlockOperand>, true)
-    }
-
-    pub fn call3_common(&mut self, offset: usize, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>, arg2: impl Into<BlockOperand>) {
-        self.call_common_internal(offset, Some(arg0.into()), Some(arg1.into()), Some(arg2.into()), None::<BlockOperand>, true)
-    }
-
-    pub fn call4_common(&mut self, offset: usize, arg0: impl Into<BlockOperand>, arg1: impl Into<BlockOperand>, arg2: impl Into<BlockOperand>, arg3: impl Into<BlockOperand>) {
-        self.call_common_internal(offset, Some(arg0.into()), Some(arg1.into()), Some(arg2.into()), Some(arg3.into()), true)
-    }
-
-    fn call_common_internal(
-        &mut self,
-        offset: usize,
-        arg0: Option<impl Into<BlockOperand>>,
-        arg1: Option<impl Into<BlockOperand>>,
-        arg2: Option<impl Into<BlockOperand>>,
-        arg3: Option<impl Into<BlockOperand>>,
-        has_return: bool,
-    ) {
-        let args = self.handle_call_args(arg0, arg1, arg2, arg3);
-        self.insert_inst(Call::offset(
-            offset,
             [
                 args[0].map(|_| BlockReg::Fixed(Reg::R0)),
                 args[1].map(|_| BlockReg::Fixed(Reg::R1)),
@@ -1123,7 +1081,7 @@ impl BlockAsm {
         self.buf.opcodes.len()
     }
 
-    pub fn finalize(&mut self, jit_mem_offset: usize) -> &Vec<u32> {
+    pub fn finalize(&mut self) -> &Vec<u32> {
         // Used to determine what regs to push and pop for prologue and epilogue
         let mut used_host_regs = if unlikely(self.is_common_fun) {
             self.buf.reg_allocator.dirty_regs & ALLOCATION_REGS
@@ -1149,15 +1107,10 @@ impl BlockAsm {
                     continue;
                 }
 
-                let diff = if encoding.is_call_common() {
-                    let opcode_index = (jit_mem_offset >> 2) + index;
-                    let branch_to = u32::from(encoding.index()) >> 2;
-                    branch_to as i32 - opcode_index as i32
-                } else {
-                    let block_index = u32::from(encoding.index());
-                    let branch_to = self.buf.block_opcode_offsets[block_index as usize];
-                    branch_to as i32 - index as i32
-                };
+                let block_index = u32::from(encoding.index());
+                let branch_to = self.buf.block_opcode_offsets[block_index as usize];
+                let diff = branch_to as i32 - index as i32;
+
                 if diff == 1 && !encoding.has_return() {
                     self.buf.opcodes[index] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
                 } else {

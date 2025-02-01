@@ -15,6 +15,7 @@ use crate::core::CpuType::ARM9;
 use crate::jit::jit_memory::JitMemory;
 use crate::logging::debug_println;
 use crate::mmap::Shm;
+use crate::settings::Settings;
 use crate::utils::Convert;
 use crate::{utils, DEBUG_LOG};
 use std::hint::unreachable_unchecked;
@@ -744,7 +745,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleMemsetIo<CPU
 }
 
 impl Memory {
-    pub fn new(touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
+    pub fn new(settings: &Settings, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>) -> Self {
         Memory {
             shm: Shm::new("physical", regions::TOTAL_MEM_SIZE as usize).unwrap(),
             wram: Wram::new(),
@@ -754,7 +755,7 @@ impl Memory {
             palettes: Palettes::new(),
             vram: Vram::default(),
             oam: Oam::new(),
-            jit: JitMemory::new(),
+            jit: JitMemory::new(settings),
             breakout_imm: false,
             mmu_arm9: MmuArm9::new(),
             mmu_arm7: MmuArm7::new(),

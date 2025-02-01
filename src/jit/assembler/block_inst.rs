@@ -187,19 +187,13 @@ pub struct GenericGuest {
 #[bitsize(32)]
 #[derive(FromBits)]
 pub struct BranchEncoding {
-    pub index: u26,
+    pub index: u27,
     pub has_return: bool,
-    pub is_call_common: bool,
     pub cond: u4,
 }
 
-pub enum CallOp {
-    Reg(BlockReg),
-    Offset(usize),
-}
-
 pub struct Call {
-    op: CallOp,
+    reg: BlockReg,
     args: [Option<BlockReg>; 4],
     pub has_return: bool,
 }
@@ -1121,29 +1115,15 @@ impl Debug for GenericGuest {
 }
 
 impl Call {
-    pub fn reg(reg: BlockReg, args: [Option<BlockReg>; 4], has_return: bool) -> Self {
-        Call {
-            op: CallOp::Reg(reg),
-            args,
-            has_return,
-        }
-    }
-
-    pub fn offset(offset: usize, args: [Option<BlockReg>; 4], has_return: bool) -> Self {
-        Call {
-            op: CallOp::Offset(offset),
-            args,
-            has_return,
-        }
+    pub fn new(reg: BlockReg, args: [Option<BlockReg>; 4], has_return: bool) -> Self {
+        Call { reg, args, has_return }
     }
 }
 
 impl BlockInstTrait for Call {
     fn get_io(&self) -> (BlockRegSet, BlockRegSet) {
         let mut inputs = BlockRegSet::new();
-        if let CallOp::Reg(reg) = self.op {
-            inputs += reg;
-        }
+        inputs += self.reg;
         for &arg in self.args.iter().flatten() {
             inputs += arg;
         }
@@ -1162,47 +1142,26 @@ impl BlockInstTrait for Call {
     }
 
     fn replace_input_regs(&mut self, old: BlockReg, new: BlockReg) {
-        if let CallOp::Reg(reg) = &mut self.op {
-            replace_reg(reg, old, new)
-        }
+        replace_reg(&mut self.reg, old, new)
     }
 
     fn replace_output_regs(&mut self, _: BlockReg, _: BlockReg) {}
 
-    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, opcode_index: usize, placeholders: &mut BlockAsmPlaceholders) {
-        match self.op {
-            CallOp::Reg(reg) => opcodes.push(if self.has_return {
-                Bx::blx(alloc.for_emit_input(reg), Cond::AL)
-            } else {
-                Bx::bx(alloc.for_emit_input(reg), Cond::AL)
-            }),
-            CallOp::Offset(offset) => {
-                // Encode common offset
-                // Branch offset can only be figured out later
-                opcodes.push(BranchEncoding::new(u26::new(offset as u32), self.has_return, true, u4::new(Cond::AL as u8)).into());
-                placeholders.branch.push(opcode_index);
-            }
-        }
+    fn emit_opcode(&mut self, alloc: &BlockRegAllocator, opcodes: &mut Vec<u32>, _: usize, _: &mut BlockAsmPlaceholders) {
+        opcodes.push(if self.has_return {
+            Bx::blx(alloc.for_emit_input(self.reg), Cond::AL)
+        } else {
+            Bx::bx(alloc.for_emit_input(self.reg), Cond::AL)
+        });
     }
 }
 
 impl Debug for Call {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.op {
-            CallOp::Reg(reg) => {
-                if self.has_return {
-                    write!(f, "Blx {reg:?} {:?}", self.args)
-                } else {
-                    write!(f, "Bx {reg:?} {:?}", self.args)
-                }
-            }
-            CallOp::Offset(offset) => {
-                if self.has_return {
-                    write!(f, "Bl {offset:x} {:?}", self.args)
-                } else {
-                    write!(f, "B {offset:x} {:?}", self.args)
-                }
-            }
+        if self.has_return {
+            write!(f, "Blx {:?} {:?}", self.reg, self.args)
+        } else {
+            write!(f, "Bx {:?} {:?}", self.reg, self.args)
         }
     }
 }
@@ -1235,7 +1194,7 @@ impl BlockInstTrait for Branch {
     fn emit_opcode(&mut self, _: &BlockRegAllocator, opcodes: &mut Vec<u32>, opcode_index: usize, placeholders: &mut BlockAsmPlaceholders) {
         // Encode label
         // Branch offset can only be figured out later
-        opcodes.push(BranchEncoding::new(u26::new(self.block_index as u32), false, false, u4::new(Cond::AL as u8)).into());
+        opcodes.push(BranchEncoding::new(u27::new(self.block_index as u32), false, u4::new(Cond::AL as u8)).into());
         placeholders.branch.push(opcode_index);
     }
 }

@@ -281,7 +281,13 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && is_uncond_branch;
         asm.jit_buf.insts.push(inst_info);
 
-        if is_unreturnable_branch || uncond_branch_count == 4 {
+        if is_unreturnable_branch
+            || uncond_branch_count
+                == match CPU {
+                    ARM9 => 4,
+                    ARM7 => 1,
+                }
+        {
             break;
         }
         pc_offset += pc_step;
@@ -325,9 +331,8 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
 
         block_asm.epilogue();
 
-        let opcodes_len = block_asm.emit_opcodes(guest_pc);
-        let next_jit_entry = get_jit!(asm.emu).get_next_entry(opcodes_len);
-        let opcodes = block_asm.finalize(next_jit_entry);
+        block_asm.emit_opcodes(guest_pc);
+        let opcodes = block_asm.finalize();
         if IS_DEBUG && unsafe { BLOCK_LOG } {
             for &opcode in opcodes {
                 println!("0x{opcode:x},");

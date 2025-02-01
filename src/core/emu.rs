@@ -339,7 +339,7 @@ impl Emu {
     pub fn new(cartridge_io: CartridgeIo, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>, settings: Settings) -> Self {
         Emu {
             common: UnsafeCell::new(Common::new(cartridge_io, fps, key_map)),
-            mem: UnsafeCell::new(Memory::new(touch_points, sound_sampler)),
+            mem: UnsafeCell::new(Memory::new(&settings, touch_points, sound_sampler)),
             arm7_hle: UnsafeCell::new(Arm7Hle::new()),
             settings,
         }
