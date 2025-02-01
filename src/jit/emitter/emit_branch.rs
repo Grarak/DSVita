@@ -3,17 +3,18 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::BlockReg;
+use crate::jit::inst_branch_handler::handle_idle_loop;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm::{align_guest_pc, JitAsm, JitRuntimeData};
 use crate::jit::jit_asm_common_funs::JitAsmCommonFuns;
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
-use crate::DEBUG_LOG;
+use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
 
 pub enum JitBranchInfo {
-    Idle,
+    Idle(usize),
     Local(usize),
     None,
 }
@@ -50,7 +51,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             if diff as usize <= branch_index {
                 let jump_to_index = branch_index - diff as usize;
                 if Self::is_idle_loop(&insts[jump_to_index..branch_index + 1]) {
-                    return JitBranchInfo::Idle;
+                    return JitBranchInfo::Idle(jump_to_index);
                 }
             }
         }
@@ -131,14 +132,33 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 block_asm.free_reg(target_pre_cycle_count_sum_reg);
                 block_asm.free_reg(total_cycles_reg);
             }
-            JitBranchInfo::Idle => {
+            JitBranchInfo::Idle(jump_to_index) => {
                 block_asm.mov(Reg::PC, target_pc);
                 block_asm.save_context();
                 if DEBUG_LOG {
                     block_asm.call2(Self::debug_idle_loop as *const (), self.jit_buf.current_pc, target_pc);
                 }
-                self.emit_branch_out_metadata_with_idle_loop(block_asm);
-                block_asm.epilogue();
+                match CPU {
+                    ARM9 => {
+                        let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
+                        let func = if self.emu.settings.arm7_hle() {
+                            handle_idle_loop::<true> as *const ()
+                        } else {
+                            handle_idle_loop::<false> as *const ()
+                        };
+                        if IS_DEBUG {
+                            block_asm.call3(func, self as *mut _ as u32, target_pre_cycle_count_sum as u32, self.jit_buf.current_pc);
+                        } else {
+                            block_asm.call2(func, self as *mut _ as u32, target_pre_cycle_count_sum as u32);
+                        }
+                        block_asm.restore_reg(Reg::CPSR);
+                        block_asm.guest_branch(Cond::AL, target_pc & !1);
+                    }
+                    ARM7 => {
+                        self.emit_branch_out_metadata_with_idle_loop(block_asm);
+                        block_asm.epilogue();
+                    }
+                }
             }
             JitBranchInfo::None => self.emit_branch_external_label(block_asm, target_pc, false, false),
         }

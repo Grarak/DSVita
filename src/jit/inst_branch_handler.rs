@@ -35,13 +35,36 @@ pub extern "C" fn run_scheduler<const ARM7_HLE: bool>(asm: *mut JitAsm<{ ARM9 }>
     cm.add_cycles(cycles);
     if cm.check_events(asm.emu) && !ARM7_HLE {
         let jit_asm_arm7 = unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() };
-        jit_asm_arm7.runtime_data.clear_idle_loop();
+        jit_asm_arm7.runtime_data.set_idle_loop(false);
+    }
+    get_common_mut!(asm.emu).gpu.gpu_3d_regs.run_cmds(cm.get_cycles(), asm.emu);
+}
+
+fn run_scheduler_idle_loop<const ARM7_HLE: bool>(asm: &mut JitAsm<{ ARM9 }>) {
+    let cm = get_cm_mut!(asm.emu);
+
+    if ARM7_HLE {
+        cm.jump_to_next_event();
+    } else {
+        let jit_asm_arm7 = unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() };
+        if likely(!get_cpu_regs!(jit_asm_arm7.emu, ARM7).is_halted() && !jit_asm_arm7.runtime_data.is_idle_loop()) {
+            unsafe { CURRENT_RUNNING_CPU = ARM7 };
+            cm.add_cycles(jit_asm_arm7.execute());
+        } else {
+            cm.jump_to_next_event();
+        };
+        unsafe { CURRENT_RUNNING_CPU = ARM9 };
+    }
+
+    if cm.check_events(asm.emu) && !ARM7_HLE {
+        let jit_asm_arm7 = unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() };
+        jit_asm_arm7.runtime_data.set_idle_loop(false);
     }
     get_common_mut!(asm.emu).gpu.gpu_3d_regs.run_cmds(cm.get_cycles(), asm.emu);
 }
 
 #[naked]
-unsafe extern "C" fn call_interrupt(entry: *const fn(), interrupt_sp_ptr: *mut usize) {
+unsafe extern "C" fn call_interrupt(_: *const fn(), _: *mut usize) {
     #[rustfmt::skip]
     naked_asm!(
         "push {{r4-r12,lr}}",
@@ -74,7 +97,7 @@ pub extern "C" fn handle_interrupt(asm: *mut JitAsm<{ ARM9 }>, target_pc: u32, c
 
     asm.runtime_data.pre_cycle_count_sum = 0;
     asm.runtime_data.set_in_interrupt(true);
-    asm.runtime_data.interrupt_lr = lr;
+    asm.runtime_data.push_return_stack(lr);
     get_regs_mut!(asm.emu, ARM9).set_thumb(regs.pc & 1 == 1);
     let jit_entry = get_jit!(asm.emu).get_jit_start_addr(align_guest_pc(regs.pc));
     unsafe { call_interrupt(jit_entry as _, &mut asm.runtime_data.interrupt_sp) };
@@ -136,6 +159,19 @@ pub extern "C" fn pre_branch<const CPU: CpuType, const HAS_LR_RETURN: bool>(asm:
             JitAsmCommonFuns::<CPU>::debug_push_return_stack(current_pc, lr, asm.runtime_data.get_return_stack_ptr());
         }
     }
+}
+
+pub extern "C" fn handle_idle_loop<const ARM7_HLE: bool>(asm: *mut JitAsm<{ ARM9 }>, target_pre_cycle_count_sum: u16, current_pc: u32) {
+    let asm = unsafe { asm.as_mut_unchecked() };
+
+    let pc_og = get_regs!(asm.emu, ARM9).pc;
+    run_scheduler_idle_loop::<ARM7_HLE>(asm);
+    if get_regs!(asm.emu, ARM9).pc != pc_og {
+        handle_interrupt(asm, pc_og, current_pc);
+    }
+
+    asm.runtime_data.accumulated_cycles = 0;
+    asm.runtime_data.pre_cycle_count_sum = target_pre_cycle_count_sum;
 }
 
 pub unsafe extern "C" fn branch_reg<const CPU: CpuType, const HAS_LR_RETURN: bool>(total_cycles: u16, target_pc: u32, lr: u32, current_pc: u32) {

@@ -1,6 +1,5 @@
 use crate::cartridge_metadata::get_cartridge_metadata;
 use crate::logging::debug_println;
-use crate::mmap::PAGE_SIZE;
 use crate::utils;
 use crate::utils::{rgb5_to_rgb8, HeapMemU8, NoHashMap};
 use static_assertions::const_assert_eq;
@@ -78,13 +77,15 @@ pub const HEADER_IN_RAM_SIZE: usize = 0x170;
 const_assert_eq!(HEADER_SIZE, HEADER_IN_RAM_SIZE + 0x90);
 
 const SAVE_SIZES: [u32; 9] = [0x000200, 0x002000, 0x008000, 0x010000, 0x020000, 0x040000, 0x080000, 0x100000, 0x800000];
+const CARTRIDGE_PAGE_SIZE: usize = 4096;
+const MAX_CARTRIDGE_CACHE: usize = 512 * 1024;
 
 pub struct CartridgeIo {
     file: File,
     pub file_name: String,
     pub file_size: u32,
     pub header: CartridgeHeader,
-    content_pages: UnsafeCell<NoHashMap<u32, HeapMemU8<{ PAGE_SIZE }>>>,
+    content_pages: UnsafeCell<NoHashMap<u32, HeapMemU8<{ CARTRIDGE_PAGE_SIZE }>>>,
     save_file_path: PathBuf,
     pub save_file_size: u32,
     save_buf: Mutex<(Vec<u8>, bool)>,
@@ -136,13 +137,13 @@ impl CartridgeIo {
         })
     }
 
-    fn get_page(&self, page_addr: u32) -> io::Result<*const [u8; PAGE_SIZE]> {
-        debug_assert_eq!(page_addr & (PAGE_SIZE as u32 - 1), 0);
+    fn get_page(&self, page_addr: u32) -> io::Result<*const [u8; CARTRIDGE_PAGE_SIZE]> {
+        debug_assert_eq!(page_addr & (CARTRIDGE_PAGE_SIZE as u32 - 1), 0);
         let pages = unsafe { self.content_pages.get().as_mut_unchecked() };
         match pages.get(&page_addr) {
             None => {
                 // exceeds 0.5MB
-                if pages.len() >= 128 {
+                if pages.len() >= MAX_CARTRIDGE_CACHE / CARTRIDGE_PAGE_SIZE {
                     debug_println!("clear cartridge pages");
                     pages.clear();
                 }
@@ -162,7 +163,7 @@ impl CartridgeIo {
         while remaining > 0 {
             let slice_start = slice.len() - remaining;
 
-            let page_addr = (offset + slice_start as u32) & !(PAGE_SIZE as u32 - 1);
+            let page_addr = (offset + slice_start as u32) & !(CARTRIDGE_PAGE_SIZE as u32 - 1);
             let page_offset = offset + slice_start as u32 - page_addr;
             let page = self.get_page(page_addr)?;
             let page = unsafe { page.as_ref_unchecked() };

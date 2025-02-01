@@ -62,7 +62,6 @@ pub struct JitRuntimeData {
     pub idle_loop_in_interrupt_return_stack_ptr: u8,
     pub return_stack: [u32; RETURN_STACK_SIZE],
     pub interrupt_sp: usize,
-    pub interrupt_lr: u32,
     #[cfg(debug_assertions)]
     branch_out_pc: u32,
 }
@@ -76,7 +75,6 @@ impl JitRuntimeData {
             idle_loop_in_interrupt_return_stack_ptr: 0,
             return_stack: [0; RETURN_STACK_SIZE],
             interrupt_sp: 0,
-            interrupt_lr: 0,
             #[cfg(debug_assertions)]
             branch_out_pc: u32::MAX,
         };
@@ -138,8 +136,8 @@ impl JitRuntimeData {
         self.idle_loop_in_interrupt_return_stack_ptr & 0x80 != 0
     }
 
-    pub fn clear_idle_loop(&mut self) {
-        self.idle_loop_in_interrupt_return_stack_ptr &= !0x80;
+    pub fn set_idle_loop(&mut self, idle_loop: bool) {
+        self.idle_loop_in_interrupt_return_stack_ptr = (self.idle_loop_in_interrupt_return_stack_ptr & !0x80) | ((idle_loop as u8) << 7)
     }
 
     pub fn is_in_interrupt(&self) -> bool {
@@ -202,7 +200,7 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
     } else {
         match CPU {
             ARM9 => {
-                if unlikely(asm.runtime_data.is_in_interrupt() && asm.runtime_data.interrupt_lr == regs.pc) {
+                if unlikely(asm.runtime_data.is_in_interrupt() && asm.runtime_data.pop_return_stack() == regs.pc) {
                     regs.set_thumb(regs.pc & 1 == 1);
                     unsafe {
                         std::arch::asm!(
@@ -353,7 +351,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
 }
 
 #[naked]
-unsafe extern "C" fn call_jit_entry(entry: *const fn(), host_sp_ptr: *mut usize) {
+unsafe extern "C" fn call_jit_entry(_: *const fn(), _: *mut usize) {
     #[rustfmt::skip]
     naked_asm!(
         "push {{r4-r12,lr}}",
