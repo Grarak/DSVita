@@ -559,7 +559,7 @@ impl Spu {
         let spu = get_spu_mut!(emu);
         unsafe {
             assert_unchecked(spu.samples_buffer.len() < spu.samples_buffer.capacity());
-            spu.samples_buffer.push_within_capacity((sample_right << 16) | sample_left).unwrap_unchecked();
+            spu.samples_buffer.push_within_capacity((sample_right << 16) | (sample_left & 0xFFFF)).unwrap_unchecked();
         }
         if unlikely(spu.samples_buffer.len() == SAMPLE_BUFFER_SIZE) {
             spu.sound_sampler.push(spu.samples_buffer.as_slice());
