@@ -137,11 +137,11 @@ mod handler {
 
         let mut values: [u32; Reg::CPSR as usize] = unsafe { MaybeUninit::uninit().assume_init() };
         if WRITE {
-            let mut rlist = rlist.0;
+            let mut rlist = rlist.0.reverse_bits();
             for i in 0..rlist_len {
-                let zeros = rlist.trailing_zeros();
+                let zeros = rlist.leading_zeros();
                 let reg = Reg::from(zeros as u8);
-                rlist &= !(1 << zeros);
+                rlist &= !(0x80000000 >> zeros);
                 unsafe { *values.get_unchecked_mut(i as usize) = *get_reg_mut(regs, reg) };
             }
             if GX_FIFO && likely(mem_addr >= 0x4000400 && mem_addr < 0x4000440) {
@@ -163,11 +163,11 @@ mod handler {
         } else {
             let slice = unsafe { slice::from_raw_parts_mut(values.as_mut_ptr(), rlist_len as usize) };
             get_mem_mut!(emu).read_multiple_slice::<CPU, true, _>(mem_addr, emu, slice);
-            let mut rlist = rlist.0;
+            let mut rlist = rlist.0.reverse_bits();
             for i in 0..rlist_len {
-                let zeros = rlist.trailing_zeros();
+                let zeros = rlist.leading_zeros();
                 let reg = Reg::from(zeros as u8);
-                rlist &= !(1 << zeros);
+                rlist &= !(0x80000000 >> zeros);
                 unsafe { *get_reg_mut(regs, reg) = *values.get_unchecked(i as usize) };
             }
         }

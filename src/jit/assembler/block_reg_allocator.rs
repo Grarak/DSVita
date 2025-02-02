@@ -8,6 +8,7 @@ use crate::jit::assembler::{BlockReg, ANY_REG_LIMIT};
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use crate::utils::HeapMem;
+use crate::IS_DEBUG;
 use std::intrinsics::unlikely;
 
 const DEBUG: bool = false;
@@ -32,7 +33,9 @@ pub struct BlockRegAllocator {
 
 impl BlockRegAllocator {
     pub fn init_inputs(&mut self, input_regs: &BlockRegSet) {
-        self.stored_mapping_inputs.fill(Reg::None);
+        if IS_DEBUG {
+            self.stored_mapping_inputs.fill(Reg::None);
+        }
         self.stored_mapping.fill(Reg::None);
         self.stored_mapping_reverse.fill(None);
         self.spilled.clear();
@@ -257,15 +260,15 @@ impl BlockRegAllocator {
         reg
     }
 
-    fn allocate_reg(&mut self, any_reg: u16, live_ranges: &[BlockRegSet], used_regs: &BlockRegSet, opcodes: &mut Vec<u32>) -> Reg {
+    fn allocate_reg(&mut self, any_reg: u16, next_live_range: &BlockRegSet, used_regs: &BlockRegSet, opcodes: &mut Vec<u32>) -> Reg {
         let global_mapping = self.get_global_mapping(any_reg);
-        if global_mapping != Reg::None && !used_regs.contains(BlockReg::Fixed(global_mapping)) && !live_ranges[1].contains(BlockReg::Fixed(global_mapping)) {
+        if global_mapping != Reg::None && !used_regs.contains(BlockReg::Fixed(global_mapping)) && !next_live_range.contains(BlockReg::Fixed(global_mapping)) {
             let mut use_global_mapping = true;
 
             if let Some(mapped_reg) = *self.get_stored_mapping_reverse(global_mapping) {
                 use_global_mapping = !used_regs.contains(BlockReg::Any(mapped_reg));
                 if use_global_mapping {
-                    if live_ranges[1].contains(BlockReg::Any(mapped_reg)) {
+                    if next_live_range.contains(BlockReg::Any(mapped_reg)) {
                         self.spilled += BlockReg::Any(mapped_reg);
                         self.gen_pre_handle_spilled_inst(mapped_reg, global_mapping, TransferOp::Write, opcodes);
                     }
@@ -293,7 +296,7 @@ impl BlockRegAllocator {
 
         loop {
             let reg = self.pop_lru_reg();
-            if used_regs.contains(BlockReg::Fixed(reg)) || live_ranges[1].contains(BlockReg::Fixed(reg)) {
+            if used_regs.contains(BlockReg::Fixed(reg)) || next_live_range.contains(BlockReg::Fixed(reg)) {
                 continue;
             }
 
@@ -302,7 +305,7 @@ impl BlockRegAllocator {
                     continue;
                 }
 
-                if live_ranges[1].contains(BlockReg::Any(mapped_reg)) {
+                if next_live_range.contains(BlockReg::Any(mapped_reg)) {
                     self.spilled += BlockReg::Any(mapped_reg);
                     self.gen_pre_handle_spilled_inst(mapped_reg, reg, TransferOp::Write, opcodes);
                 }
@@ -317,11 +320,11 @@ impl BlockRegAllocator {
         }
     }
 
-    fn get_input_reg(&mut self, any_reg: u16, live_ranges: &[BlockRegSet], used_regs: &BlockRegSet, opcodes: &mut Vec<u32>) -> Reg {
+    fn get_input_reg(&mut self, any_reg: u16, next_live_range: &BlockRegSet, used_regs: &BlockRegSet, opcodes: &mut Vec<u32>) -> Reg {
         match self.get_stored_mapping(any_reg) {
             Reg::None => {
                 if self.spilled.contains(BlockReg::Any(any_reg)) {
-                    let reg = self.allocate_reg(any_reg, live_ranges, used_regs, opcodes);
+                    let reg = self.allocate_reg(any_reg, next_live_range, used_regs, opcodes);
                     self.spilled -= BlockReg::Any(any_reg);
                     self.gen_pre_handle_spilled_inst(any_reg, reg, TransferOp::Read, opcodes);
                     reg
@@ -333,7 +336,7 @@ impl BlockRegAllocator {
         }
     }
 
-    fn remove_fixed_reg(&mut self, fixed_reg: Reg, live_ranges: &[BlockRegSet], opcodes: &mut Vec<u32>) {
+    fn remove_fixed_reg(&mut self, fixed_reg: Reg, next_live_range: &BlockRegSet, opcodes: &mut Vec<u32>) {
         if DEBUG && unsafe { BLOCK_LOG } {
             println!("Remove fixed reg {fixed_reg:?}");
         }
@@ -342,7 +345,7 @@ impl BlockRegAllocator {
             if DEBUG && unsafe { BLOCK_LOG } {
                 println!("Remove stored mapping {any_reg}");
             }
-            if live_ranges[1].contains(BlockReg::Any(any_reg)) {
+            if next_live_range.contains(BlockReg::Any(any_reg)) {
                 if DEBUG && unsafe { BLOCK_LOG } {
                     println!("Spill any reg {any_reg}");
                 }
@@ -352,22 +355,22 @@ impl BlockRegAllocator {
         }
     }
 
-    fn get_output_reg(&mut self, any_reg: u16, live_ranges: &[BlockRegSet], used_regs: &BlockRegSet, opcodes: &mut Vec<u32>) -> Reg {
+    fn get_output_reg(&mut self, any_reg: u16, next_live_range: &BlockRegSet, used_regs: &BlockRegSet, opcodes: &mut Vec<u32>) -> Reg {
         match self.get_stored_mapping(any_reg) {
             Reg::None => {
                 self.spilled -= BlockReg::Any(any_reg);
-                self.allocate_reg(any_reg, live_ranges, used_regs, opcodes)
+                self.allocate_reg(any_reg, next_live_range, used_regs, opcodes)
             }
             stored_mapping => *stored_mapping,
         }
     }
 
-    fn relocate_guest_regs(&mut self, guest_regs: RegReserve, live_ranges: &[BlockRegSet], inputs: &BlockRegSet, is_input: bool, opcodes: &mut Vec<u32>) {
+    fn relocate_guest_regs(&mut self, guest_regs: RegReserve, next_live_range: &BlockRegSet, inputs: &BlockRegSet, is_input: bool, opcodes: &mut Vec<u32>) {
         let mut relocatable_regs = RegReserve::new();
         for guest_reg in guest_regs {
             if *self.get_stored_mapping(guest_reg as u16) != guest_reg
                 // Check if reg is used as a fixed input for something else
-                && !live_ranges[1].contains(BlockReg::Fixed(guest_reg))
+                && !next_live_range.contains(BlockReg::Fixed(guest_reg))
             {
                 relocatable_regs += guest_reg;
             }
@@ -395,7 +398,7 @@ impl BlockRegAllocator {
                 if DEBUG && unsafe { BLOCK_LOG } {
                     println!("relocate guest spill {currently_used_by} for {guest_reg:?}");
                 }
-                if inputs.contains(BlockReg::Any(currently_used_by)) || live_ranges[1].contains(BlockReg::Any(currently_used_by)) {
+                if inputs.contains(BlockReg::Any(currently_used_by)) || next_live_range.contains(BlockReg::Any(currently_used_by)) {
                     self.spilled += BlockReg::Any(currently_used_by);
                     self.gen_pre_handle_spilled_inst(currently_used_by, guest_reg, TransferOp::Write, opcodes);
                 }
@@ -425,7 +428,7 @@ impl BlockRegAllocator {
         }
     }
 
-    pub fn inst_allocate(&mut self, inst: &BlockInst, live_ranges: &[BlockRegSet], opcodes: &mut Vec<u32>) {
+    pub fn inst_allocate(&mut self, inst: &BlockInst, next_live_range: &BlockRegSet, opcodes: &mut Vec<u32>) {
         if DEBUG && unsafe { BLOCK_LOG } {
             println!("allocate reg for {inst:?}");
         }
@@ -447,8 +450,8 @@ impl BlockRegAllocator {
             println!("used regs {:?}", used_regs);
         }
 
-        self.relocate_guest_regs(inputs.get_guests().get_gp_regs(), live_ranges, &inputs, true, opcodes);
-        self.relocate_guest_regs(outputs.get_guests().get_gp_regs(), live_ranges, &inputs, false, opcodes);
+        self.relocate_guest_regs(inputs.get_guests().get_gp_regs(), next_live_range, &inputs, true, opcodes);
+        self.relocate_guest_regs(outputs.get_guests().get_gp_regs(), next_live_range, &inputs, false, opcodes);
 
         if DEBUG && unsafe { BLOCK_LOG } {
             println!("pre mapping {:?}", self.stored_mapping_reverse);
@@ -456,17 +459,17 @@ impl BlockRegAllocator {
         }
 
         for any_input_reg in inputs.iter_any() {
-            let reg = self.get_input_reg(any_input_reg, live_ranges, &used_regs, opcodes);
+            let reg = self.get_input_reg(any_input_reg, next_live_range, &used_regs, opcodes);
             self.stored_mapping_inputs[any_input_reg as usize] = reg;
         }
 
         for fixed_reg_output in outputs.get_fixed().get_gp_lr_regs() {
-            self.remove_fixed_reg(fixed_reg_output, live_ranges, opcodes);
+            self.remove_fixed_reg(fixed_reg_output, next_live_range, opcodes);
             self.dirty_regs += fixed_reg_output;
         }
 
         for any_output_reg in outputs.iter_any() {
-            let reg = self.get_output_reg(any_output_reg, live_ranges, &used_regs, opcodes);
+            let reg = self.get_output_reg(any_output_reg, next_live_range, &used_regs, opcodes);
             self.dirty_regs += reg;
         }
 

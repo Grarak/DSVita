@@ -20,11 +20,12 @@ pub struct BasicBlock {
     pub guest_regs_output_dirty: RegReserve,
 
     pub io_resolved: bool,
-    pub regs_live_ranges: Vec<BlockRegSet>,
+    regs_live_ranges: Vec<BlockRegSet>,
 
     pub enter_blocks: Vec<usize>,
     pub exit_blocks: Vec<usize>,
 
+    #[cfg(debug_assertions)]
     pub start_pc: u32,
 }
 
@@ -46,6 +47,7 @@ impl BasicBlock {
             enter_blocks: Vec::new(),
             exit_blocks: Vec::with_capacity(2),
 
+            #[cfg(debug_assertions)]
             start_pc: 0,
         }
     }
@@ -98,7 +100,10 @@ impl BasicBlock {
     }
 
     pub fn init_insts(&mut self, buf: &mut BlockAsmBuf, tmp_regs: &BlockTmpRegs, basic_block_start_pc: u32) {
-        self.start_pc = basic_block_start_pc;
+        #[cfg(debug_assertions)]
+        {
+            self.start_pc = basic_block_start_pc;
+        }
 
         let mut i = self.block_entry_start;
         while i <= self.block_entry_end {
@@ -124,12 +129,15 @@ impl BasicBlock {
         }
 
         let size = self.block_entry_end - self.block_entry_start + 1;
-        self.regs_live_ranges.resize(size + 1, BlockRegSet::new());
-        self.regs_live_ranges.last_mut().unwrap().clear();
+        if size + 1 > self.regs_live_ranges.len() {
+            self.regs_live_ranges.resize(size + 1, BlockRegSet::new());
+        } else {
+            self.regs_live_ranges[size].clear();
+        }
     }
 
     pub fn init_resolve_io(&mut self, buf: &BlockAsmBuf) {
-        for inst_index in (self.block_entry_start..=self.block_entry_end).rev() {
+        for inst_index in (self.block_entry_start..self.block_entry_end + 1).rev() {
             let i = inst_index - self.block_entry_start;
             unsafe { assert_unchecked(i + 1 < self.regs_live_ranges.len()) };
             let inst = buf.get_inst(inst_index);
@@ -145,7 +153,7 @@ impl BasicBlock {
     }
 
     pub fn remove_dead_code(&mut self, buf: &mut BlockAsmBuf) {
-        for (i, inst_index) in (self.block_entry_start..=self.block_entry_end).enumerate() {
+        for (i, inst_index) in (self.block_entry_start..self.block_entry_end + 1).enumerate() {
             let inst = buf.get_inst_mut(inst_index);
             if let BlockInstType::RestoreReg(inner) = &inst.inst_type {
                 if inner.guest_reg != Reg::CPSR {
@@ -160,7 +168,7 @@ impl BasicBlock {
     }
 
     fn flush_reg_io_consolidation(&mut self, buf: &mut BlockAsmBuf, tmp_regs: &BlockTmpRegs, from_reg: Reg, to_reg: Reg, save: bool, start_i: usize, end_i: usize) {
-        for i in start_i..=end_i {
+        for i in start_i..end_i + 1 {
             let inst = buf.get_inst_mut(i);
             if !inst.skip {
                 inst.skip = true;
@@ -184,7 +192,7 @@ impl BasicBlock {
         let end_inst = buf.get_inst_mut(end_i);
         let op = if save { TransferOp::Write } else { TransferOp::Read };
         let mut guest_regs = RegReserve::new();
-        for reg in from_reg as u8..=to_reg as u8 {
+        for reg in from_reg as u8..to_reg as u8 + 1 {
             guest_regs += Reg::from(reg);
         }
         *end_inst = GuestTransferMultiple {
@@ -208,7 +216,7 @@ impl BasicBlock {
         let mut was_save = None;
         let mut start_i = 0;
 
-        for i in self.block_entry_start..=self.block_entry_end {
+        for i in self.block_entry_start..self.block_entry_end + 1 {
             let inst = buf.get_inst_mut(i);
             if !inst.skip {
                 let mut flush = true;
@@ -249,9 +257,9 @@ impl BasicBlock {
         }
     }
 
-    pub fn set_required_outputs(&mut self, required_outputs: BlockRegSet) {
-        let last = self.regs_live_ranges.len() - 1;
-        unsafe { *self.regs_live_ranges.get_unchecked_mut(last) = required_outputs }
+    pub fn set_required_outputs(&mut self, required_outputs: &BlockRegSet) {
+        let last = self.block_entry_end - self.block_entry_start + 1;
+        unsafe { *self.regs_live_ranges.get_unchecked_mut(last) = *required_outputs }
     }
 
     pub fn get_required_inputs(&self) -> &BlockRegSet {
@@ -259,7 +267,8 @@ impl BasicBlock {
     }
 
     pub fn get_required_outputs(&self) -> &BlockRegSet {
-        unsafe { self.regs_live_ranges.get_unchecked(self.regs_live_ranges.len() - 1) }
+        let last = self.block_entry_end - self.block_entry_start + 1;
+        unsafe { self.regs_live_ranges.get_unchecked(last) }
     }
 
     pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf, block_index: usize) {
@@ -270,13 +279,13 @@ impl BasicBlock {
 
         let opcodes_start_len = buf.opcodes.len();
 
-        for (i, inst_index) in (self.block_entry_start..=self.block_entry_end).enumerate() {
+        for (i, inst_index) in (self.block_entry_start..self.block_entry_end + 1).enumerate() {
             let inst = unsafe { buf.insts.get_unchecked_mut(inst_index) };
             if inst.skip {
                 continue;
             }
 
-            buf.reg_allocator.inst_allocate(inst, &self.regs_live_ranges[i..], &mut buf.opcodes);
+            buf.reg_allocator.inst_allocate(inst, unsafe { self.regs_live_ranges.get_unchecked(i + 1) }, &mut buf.opcodes);
 
             let start_len = buf.opcodes.len();
 
@@ -329,7 +338,7 @@ impl Debug for BasicBlock {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if !self.io_resolved {
             writeln!(f, "BasicBlock: uninitialized enter blocks: {:?}", self.enter_blocks)?;
-            for i in self.block_entry_start..=self.block_entry_end {
+            for i in self.block_entry_start..self.block_entry_end + 1 {
                 let inst = unsafe { self.block_asm_buf_ptr.as_ref().unwrap().get_inst(i) };
                 writeln!(f, "\t{inst:?}")?;
                 let (inputs, outputs) = inst.get_io();
@@ -338,7 +347,7 @@ impl Debug for BasicBlock {
             write!(f, "BasicBlock end exit blocks: {:?}", self.exit_blocks)
         } else {
             writeln!(f, "BasicBlock: inputs: {:?} enter blocks: {:?}", self.regs_live_ranges.first().unwrap(), self.enter_blocks,)?;
-            for (i, inst_index) in (self.block_entry_start..=self.block_entry_end).enumerate() {
+            for (i, inst_index) in (self.block_entry_start..self.block_entry_end + 1).enumerate() {
                 let inst = unsafe { self.block_asm_buf_ptr.as_ref().unwrap().get_inst(inst_index) };
                 writeln!(f, "\t{inst:?}")?;
                 let (inputs, outputs) = inst.get_io();

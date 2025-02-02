@@ -121,10 +121,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
                             block_asm.mov(Reg::PC, target_pc);
                             block_asm.save_context();
-                        }
 
-                        asm.emit_branch_out_metadata_no_count_cycles(block_asm);
-                        block_asm.epilogue();
+                            asm.emit_branch_out_metadata_no_count_cycles(block_asm);
+                            block_asm.epilogue();
+                        }
                     },
                 );
 

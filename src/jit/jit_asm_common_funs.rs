@@ -229,7 +229,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
             block_asm.call3(handle_interrupt as *const (), asm as *mut _ as u32, pc_og_reg, asm.jit_buf.current_pc);
             block_asm.restore_reg(Reg::CPSR);
             block_asm.branch_fallthrough(post_run_scheduler_label, Cond::AL);
-            block_asm.branch(breakout_label, Cond::AL);
+            block_asm.force_end();
 
             block_asm.free_reg(pc_new_reg);
             block_asm.free_reg(pc_og_reg);

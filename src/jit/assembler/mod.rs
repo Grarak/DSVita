@@ -159,7 +159,7 @@ impl BlockOperand {
     }
 
     pub fn as_reg(&self) -> BlockReg {
-        self.try_as_reg().unwrap()
+        unsafe { self.try_as_reg().unwrap_unchecked() }
     }
 
     pub fn try_as_imm(&self) -> Option<u32> {
@@ -170,7 +170,7 @@ impl BlockOperand {
     }
 
     pub fn as_imm(&self) -> u32 {
-        self.try_as_imm().unwrap()
+        unsafe { self.try_as_imm().unwrap_unchecked() }
     }
 }
 
@@ -418,7 +418,7 @@ impl BlockAsmBuf {
     }
 
     pub fn clear_placeholders_block(&mut self, index: usize) {
-        let placeholder = &mut self.placeholders[index];
+        let placeholder = unsafe { self.placeholders.get_unchecked_mut(index) };
         placeholder.branch.clear();
         placeholder.prologue.clear();
         placeholder.epilogue.clear();

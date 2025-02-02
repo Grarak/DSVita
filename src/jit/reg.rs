@@ -1,4 +1,5 @@
 use std::fmt::{Debug, Formatter};
+use std::intrinsics::unlikely;
 use std::{iter, mem, ops};
 
 #[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq, PartialOrd)]
@@ -298,7 +299,6 @@ impl Debug for RegReserve {
 
 pub struct RegReserveIter {
     reserve: u32,
-    current: u32,
 }
 
 impl IntoIterator for RegReserve {
@@ -306,7 +306,7 @@ impl IntoIterator for RegReserve {
     type IntoIter = RegReserveIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        RegReserveIter { reserve: self.0, current: 0 }
+        RegReserveIter { reserve: self.0.reverse_bits() }
     }
 }
 
@@ -314,15 +314,12 @@ impl Iterator for RegReserveIter {
     type Item = <RegReserve as IntoIterator>::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let zeros = self.reserve.trailing_zeros();
-        self.reserve = self.reserve.wrapping_shr(zeros);
-        if self.reserve == 0 {
+        if unlikely(self.reserve == 0) {
             None
         } else {
-            self.current += zeros;
-            let reg = Reg::from(self.current as u8);
-            self.reserve >>= 1;
-            self.current += 1;
+            let zeros = self.reserve.leading_zeros();
+            let reg = Reg::from(zeros as u8);
+            self.reserve &= !(0x80000000 >> zeros);
             Some(reg)
         }
     }

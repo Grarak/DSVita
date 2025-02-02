@@ -323,7 +323,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
             }
         }
 
-        block_asm.epilogue();
+        block_asm.force_end();
 
         block_asm.emit_opcodes(guest_pc);
         let opcodes = block_asm.finalize();

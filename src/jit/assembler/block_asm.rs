@@ -778,7 +778,7 @@ impl BlockAsm {
             let sum_required_outputs = *basic_block.get_required_outputs() + required_outputs;
             if !basic_block.io_resolved || sum_required_outputs != basic_block.get_required_outputs() {
                 basic_block.io_resolved = true;
-                basic_block.set_required_outputs(sum_required_outputs);
+                basic_block.set_required_outputs(&sum_required_outputs);
                 basic_block.init_resolve_io(self.buf);
                 let enter_blocks = unsafe { slice::from_raw_parts(basic_block.enter_blocks.as_ptr(), basic_block.enter_blocks.len()) };
                 let required_inputs = unsafe { (basic_block.get_required_inputs() as *const BlockRegSet).as_ref_unchecked() };
@@ -907,6 +907,7 @@ impl BlockAsm {
         basic_blocks_len += basic_blocks_unlikely_len;
 
         let basic_blocks_len = basic_blocks_len as usize;
+        unsafe { assert_unchecked(basic_blocks_len <= self.cache.basic_blocks.len()) };
         // Link blocks
         for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
             let last_inst_index = basic_block.block_entry_end;
@@ -950,9 +951,10 @@ impl BlockAsm {
 
         for i in 0..basic_blocks_len {
             let exit_blocks = &self.cache.basic_blocks[i].exit_blocks;
-            debug_assert!(exit_blocks.len() <= 1 || (exit_blocks.len() == 2 && exit_blocks[0] != exit_blocks[1]), "basic block {i}");
+            unsafe { assert_unchecked(exit_blocks.len() <= 1 || (exit_blocks.len() == 2 && exit_blocks[0] != exit_blocks[1])) };
             for j in 0..exit_blocks.len() {
                 let exit_block = self.cache.basic_blocks[i].exit_blocks[j];
+                unsafe { assert_unchecked(exit_block < self.cache.basic_blocks.len()) };
                 if !self.cache.basic_blocks[exit_block].enter_blocks.contains(&i) {
                     self.cache.basic_blocks[exit_block].enter_blocks.push(i);
                 }
@@ -968,7 +970,7 @@ impl BlockAsm {
             }
 
             let mut basic_block_start_pc = block_start_pc;
-            for i in (0..=basic_block.block_entry_start).rev() {
+            for i in (0..basic_block.block_entry_start + 1).rev() {
                 match &self.buf.get_inst(i).inst_type {
                     BlockInstType::Label(inner) => {
                         if let Some(pc) = inner.guest_pc {
@@ -1020,6 +1022,7 @@ impl BlockAsm {
 
         if IS_DEBUG && unsafe { BLOCK_LOG } {
             for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter().enumerate() {
+                #[cfg(debug_assertions)]
                 println!("{i}[{i} {:x}]", basic_block.start_pc);
             }
 

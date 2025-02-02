@@ -1,5 +1,6 @@
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
+use crate::logging::debug_panic;
 use bilge::prelude::*;
 
 #[bitsize(32)]
@@ -167,30 +168,22 @@ impl LdrStrRegSBHD {
         let opcode = match amount {
             MemoryAmount::Byte => match (signed, read) {
                 (true, true) => 2,
-                _ => {
-                    panic!("invalid combination signed: {signed} amount: {amount:?}")
-                }
+                _ => debug_panic!("invalid combination signed: {signed} amount: {amount:?}"),
             },
             MemoryAmount::Half => match (signed, read) {
                 (false, false) => 1,
                 (false, true) => 1,
                 (true, true) => 3,
-                _ => {
-                    panic!("invalid combination signed: {signed} amount: {amount:?}")
-                }
+                _ => debug_panic!("invalid combination signed: {signed} amount: {amount:?}"),
             },
-            MemoryAmount::Word => {
-                panic!("invalid combination signed: {signed} amount: {amount:?}")
-            }
+            MemoryAmount::Word => debug_panic!("invalid combination signed: {signed} amount: {amount:?}"),
             MemoryAmount::Double => match (signed, read) {
                 (false, false) => 3,
                 (false, true) => {
                     read = false;
                     2
                 }
-                _ => {
-                    panic!("invalid combination signed: {signed} amount: {amount:?}")
-                }
+                _ => debug_panic!("invalid combination signed: {signed} amount: {amount:?}"),
             },
         };
         u32::from(Self::new(

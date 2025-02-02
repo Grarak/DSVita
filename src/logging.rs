@@ -9,3 +9,14 @@ macro_rules! debug_println {
     };
 }
 pub(crate) use debug_println;
+
+macro_rules! debug_panic {
+    ($($args:tt)*) => {
+        if crate::IS_DEBUG {
+            panic!($($args)*)
+        } else {
+            unsafe { std::hint::unreachable_unchecked() }
+        }
+    };
+}
+pub(crate) use debug_panic;
