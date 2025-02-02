@@ -90,6 +90,7 @@ impl JitMemoryMap {
 
     pub fn write_jit_entries(&mut self, addr: u32, mut size: usize, value: JitEntry) {
         let mut addr = (addr & 0x0FFFFFFF) >> 1;
+        let mut size = size >> 1;
         while size > 0 {
             let block = self.map[(addr >> BLOCK_SHIFT) as usize] as *mut JitEntry;
             let block_offset = (addr as usize) & (BLOCK_SIZE - 1);
