@@ -271,13 +271,8 @@ impl BasicBlock {
         unsafe { self.regs_live_ranges.get_unchecked(last) }
     }
 
-    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf, block_index: usize) {
-        unsafe { assert_unchecked(block_index < buf.placeholders.len()) }
-        buf.clear_placeholders_block(block_index);
-
+    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf) {
         buf.reg_allocator.init_inputs(self.get_required_inputs());
-
-        let opcodes_start_len = buf.opcodes.len();
 
         for (i, inst_index) in (self.block_entry_start..self.block_entry_end + 1).enumerate() {
             let inst = unsafe { buf.insts.get_unchecked_mut(inst_index) };
@@ -303,7 +298,7 @@ impl BasicBlock {
                 }
             }
 
-            inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, start_len - opcodes_start_len, &mut buf.placeholders[block_index]);
+            inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
             if inst.cond != Cond::AL {
                 for opcode in &mut buf.opcodes[start_len..] {
                     *opcode = (*opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);
@@ -318,11 +313,10 @@ impl BasicBlock {
             if let BlockInstType::Branch(_) = &buf.get_inst(self.block_entry_end).inst_type {
                 buf.opcodes.pop().unwrap();
                 buf.reg_allocator.ensure_global_mappings(required_outputs, &mut buf.opcodes);
-                buf.placeholders[block_index].branch.pop().unwrap();
+                buf.placeholders.branch.pop().unwrap();
 
                 let inst = unsafe { buf.insts.get_unchecked_mut(self.block_entry_end) };
-                let opcode_index = buf.opcodes.len() - opcodes_start_len;
-                inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, opcode_index, &mut buf.placeholders[block_index]);
+                inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
                 if inst.cond != Cond::AL {
                     let branch_opcode = buf.opcodes.last_mut().unwrap();
                     *branch_opcode = (*branch_opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);

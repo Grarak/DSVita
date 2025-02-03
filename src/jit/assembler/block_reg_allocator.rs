@@ -101,7 +101,9 @@ impl BlockRegAllocator {
     }
 
     fn gen_pre_handle_spilled_inst(&mut self, any_reg: u16, mapping: Reg, op: TransferOp, opcodes: &mut Vec<u32>) {
-        self.dirty_regs += mapping;
+        if op == TransferOp::Read {
+            self.dirty_regs += mapping;
+        }
 
         if !self.last_gen_regs.is_empty() {
             if self.last_gen_op != op || self.last_gen_any_reg.abs_diff(any_reg) != 1 {

@@ -16,7 +16,6 @@ use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
 use std::arch::{asm, naked_asm};
-use std::cell::UnsafeCell;
 use std::intrinsics::unlikely;
 use std::{mem, ptr};
 
@@ -294,9 +293,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
 
         let guest_regs_ptr = get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr();
         let host_sp_ptr = ptr::addr_of_mut!(asm.runtime_data.host_sp);
-        let basic_blocks_cache = asm.basic_blocks_cache.get_mut();
-        let block_asm_buf = asm.block_asm_buf.get_mut();
-        let mut block_asm = unsafe { BlockAsm::new(false, guest_regs_ptr, host_sp_ptr, mem::transmute(basic_blocks_cache), mem::transmute(block_asm_buf), thumb) };
+        let mut block_asm = unsafe { BlockAsm::new(guest_regs_ptr, host_sp_ptr, mem::transmute(&mut asm.basic_blocks_cache), mem::transmute(&mut asm.block_asm_buf), thumb) };
 
         if DEBUG_LOG {
             block_asm.call1(debug_enter_block::<CPU> as *const (), guest_pc | (thumb as u32));
@@ -425,8 +422,8 @@ pub struct JitAsm<'a, const CPU: CpuType> {
     pub jit_buf: JitBuf,
     pub runtime_data: JitRuntimeData,
     pub jit_common_funs: JitAsmCommonFuns<CPU>,
-    basic_blocks_cache: UnsafeCell<BasicBlocksCache>,
-    block_asm_buf: UnsafeCell<BlockAsmBuf>,
+    basic_blocks_cache: BasicBlocksCache,
+    block_asm_buf: BlockAsmBuf,
 }
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
@@ -437,8 +434,8 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             jit_buf: JitBuf::new(),
             runtime_data: JitRuntimeData::new(),
             jit_common_funs: JitAsmCommonFuns::default(),
-            basic_blocks_cache: UnsafeCell::new(BasicBlocksCache::new()),
-            block_asm_buf: UnsafeCell::new(BlockAsmBuf::new()),
+            basic_blocks_cache: BasicBlocksCache::new(),
+            block_asm_buf: BlockAsmBuf::default(),
         }
     }
 

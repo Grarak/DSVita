@@ -3,8 +3,8 @@ use crate::jit::assembler::arm::branch_assembler::B;
 use crate::jit::assembler::arm::transfer_assembler::LdmStm;
 use crate::jit::assembler::basic_block::BasicBlock;
 use crate::jit::assembler::block_inst::{
-    Alu, AluOp, AluSetCond, BitField, Bkpt, BlockInst, BlockInstType, Branch, BranchEncoding, Call, Epilogue, Generic, GenericData, GenericGuest, GuestPc, GuestTransferMultiple, Label, MarkRegDirty,
-    Preload, RestoreReg, SaveContext, SaveReg, SystemReg, SystemRegOp, Transfer, TransferMultiple, TransferOp,
+    Alu, AluOp, AluSetCond, BitField, Bkpt, BlockInst, BlockInstType, Branch, BranchEncoding, Call, Epilogue, EpilogueOp, Generic, GenericData, GenericGuest, GuestPc, GuestTransferMultiple, Label,
+    MarkRegDirty, Preload, RestoreReg, SaveContext, SaveReg, SystemReg, SystemRegOp, Transfer, TransferMultiple, TransferOp,
 };
 use crate::jit::assembler::block_reg_allocator::ALLOCATION_REGS;
 use crate::jit::assembler::block_reg_set::BlockRegSet;
@@ -67,8 +67,6 @@ pub struct BlockAsm {
     pub tmp_regs: BlockTmpRegs,
 
     cond_block_end_label_stack: Vec<(BlockLabel, Cond, usize)>,
-
-    is_common_fun: bool,
     host_sp_ptr: *mut usize,
 
     last_pc: u32,
@@ -77,7 +75,7 @@ pub struct BlockAsm {
 }
 
 impl BlockAsm {
-    pub fn new(is_common_fun: bool, guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize, cache: &'static mut BasicBlocksCache, buf: &'static mut BlockAsmBuf, is_thumb: bool) -> Self {
+    pub fn new(guest_regs_ptr: *mut u32, host_sp_ptr: *mut usize, cache: &'static mut BasicBlocksCache, buf: &'static mut BlockAsmBuf, is_thumb: bool) -> Self {
         buf.insts.clear();
         buf.guest_branches_mapping.clear();
 
@@ -109,8 +107,6 @@ impl BlockAsm {
             },
 
             cond_block_end_label_stack: Vec::new(),
-
-            is_common_fun,
             host_sp_ptr,
 
             last_pc: 0,
@@ -122,13 +118,11 @@ impl BlockAsm {
 
         instance.sub(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4); // Reserve for spilled registers
 
-        if !is_common_fun {
-            instance.mov(thread_regs_addr_reg, guest_regs_ptr as u32);
-            for guest_reg in RegReserve::gp() + Reg::SP + Reg::LR {
-                instance.restore_reg(guest_reg);
-            }
-            instance.restore_reg(Reg::CPSR);
+        instance.mov(thread_regs_addr_reg, guest_regs_ptr as u32);
+        for guest_reg in RegReserve::gp() + Reg::SP + Reg::LR {
+            instance.restore_reg(guest_reg);
         }
+        instance.restore_reg(Reg::CPSR);
 
         instance
     }
@@ -567,26 +561,17 @@ impl BlockAsm {
         let host_sp_addr_reg = self.tmp_regs.thread_regs_addr_reg;
         self.mov(host_sp_addr_reg, self.host_sp_ptr as u32);
         self.load_u32(BlockReg::Fixed(Reg::SP), host_sp_addr_reg, 0);
-        self.insert_inst(Epilogue {
-            restore_all_regs: true,
-            restore_state: false,
-        });
+        self.insert_inst(Epilogue(EpilogueOp::ExitGuest));
     }
 
     pub fn epilogue_previous_state(&mut self) {
         self.add(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4);
-        self.insert_inst(Epilogue {
-            restore_all_regs: false,
-            restore_state: true,
-        });
+        self.insert_inst(Epilogue(EpilogueOp::NoPc));
     }
 
     pub fn epilogue_previous_block(&mut self) {
         self.add(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4);
-        self.insert_inst(Epilogue {
-            restore_all_regs: false,
-            restore_state: false,
-        });
+        self.insert_inst(Epilogue(EpilogueOp::Normal));
     }
 
     pub fn call(&mut self, func: impl Into<BlockOperand>) {
@@ -862,7 +847,7 @@ impl BlockAsm {
                 }
                 BlockInstType::Branch(_) => handle_branch(self.buf, basic_blocks, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data),
                 BlockInstType::Epilogue(inner) => {
-                    if !inner.restore_state {
+                    if inner.0 != EpilogueOp::NoPc {
                         handle_branch(self.buf, basic_blocks, basic_blocks_len, basic_block_label_mapping, &mut basic_block_data);
                     }
                 }
@@ -929,7 +914,7 @@ impl BlockAsm {
                     }
                 }
                 BlockInstType::Epilogue(inner) => {
-                    if (cond != Cond::AL || inner.restore_state) && i + 1 < basic_blocks_len {
+                    if (cond != Cond::AL || inner.0 == EpilogueOp::NoPc) && i + 1 < basic_blocks_len {
                         basic_block.exit_blocks.push(i + 1);
                     }
                 }
@@ -1066,19 +1051,20 @@ impl BlockAsm {
         }
 
         self.buf.opcodes.clear();
-        self.buf.block_opcode_offsets.resize(basic_blocks_len, 0);
-        self.buf.resize_placeholders(basic_blocks_len);
+        if basic_blocks_len > self.buf.block_opcode_offsets.len() {
+            self.buf.block_opcode_offsets.resize(basic_blocks_len, 0);
+        }
+        self.buf.clear_placeholders();
 
         for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
             let opcodes_len = self.buf.opcodes.len();
-            self.buf.block_opcode_offsets[i] = opcodes_len;
+            unsafe { *self.buf.block_opcode_offsets.get_unchecked_mut(i) = opcodes_len };
 
             if !self.buf.reachable_blocks.contains(i) {
-                self.buf.clear_placeholders_block(i);
                 continue;
             }
 
-            basic_block.emit_opcodes(self.buf, i);
+            basic_block.emit_opcodes(self.buf);
         }
 
         self.buf.opcodes.len()
@@ -1086,62 +1072,49 @@ impl BlockAsm {
 
     pub fn finalize(&mut self) -> &Vec<u32> {
         // Used to determine what regs to push and pop for prologue and epilogue
-        let mut used_host_regs = if unlikely(self.is_common_fun) {
-            self.buf.reg_allocator.dirty_regs & ALLOCATION_REGS
-        } else {
-            ALLOCATION_REGS
-        };
+        let mut used_host_regs = self.buf.reg_allocator.dirty_regs & ALLOCATION_REGS;
         // We need an even amount of registers for 8 byte alignment, in case the compiler decides to use neon instructions, epilogue adds Reg::LR
         if used_host_regs.len() & 1 == 0 {
             used_host_regs += Reg::R12;
         }
 
-        for (block_index, placeholders) in self.buf.placeholders.iter().enumerate() {
-            unsafe { assert_unchecked(block_index < self.buf.block_opcode_offsets.len()) };
-            for &branch_placeholder in &placeholders.branch {
-                if IS_DEBUG && unsafe { BLOCK_LOG } {
-                    println!("{block_index}: offset: {}, {branch_placeholder}", self.buf.block_opcode_offsets[block_index]);
-                }
-                let index = self.buf.block_opcode_offsets[block_index] + branch_placeholder;
-                unsafe { assert_unchecked(index < self.buf.opcodes.len()) };
-                let encoding = BranchEncoding::from(self.buf.opcodes[index]);
-                if Cond::from(u8::from(encoding.cond())) == Cond::NV {
-                    self.buf.opcodes[index] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
-                    continue;
-                }
+        unsafe { assert_unchecked(self.buf.placeholders.prologue < self.buf.opcodes.len()) };
+        self.buf.opcodes[self.buf.placeholders.prologue] = LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL);
 
-                let block_index = u32::from(encoding.index());
-                let branch_to = self.buf.block_opcode_offsets[block_index as usize];
-                let diff = branch_to as i32 - index as i32;
-
-                if diff == 1 && !encoding.has_return() {
-                    self.buf.opcodes[index] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
-                } else {
-                    self.buf.opcodes[index] = if encoding.has_return() { B::bl } else { B::b }(diff - 2, Cond::from(u8::from(encoding.cond())));
-                }
+        for &branch_placeholder in &self.buf.placeholders.branch {
+            unsafe { assert_unchecked(branch_placeholder < self.buf.opcodes.len()) };
+            let encoding = BranchEncoding::from(self.buf.opcodes[branch_placeholder]);
+            if Cond::from(u8::from(encoding.cond())) == Cond::NV {
+                self.buf.opcodes[branch_placeholder] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
+                continue;
             }
 
-            for &prologue_placeholder in &placeholders.prologue {
-                let index = self.buf.block_opcode_offsets[block_index] + prologue_placeholder;
-                unsafe { assert_unchecked(index < self.buf.opcodes.len()) };
-                self.buf.opcodes[index] = LdmStm::generic(Reg::SP, used_host_regs + Reg::LR, false, true, false, true, Cond::AL);
-            }
+            let block_index = u32::from(encoding.index());
+            let branch_to = unsafe { *self.buf.block_opcode_offsets.get_unchecked(block_index as usize) };
+            let diff = branch_to as i32 - branch_placeholder as i32;
 
-            for &epilogue_placeholder in &placeholders.epilogue {
-                let index = self.buf.block_opcode_offsets[block_index] + epilogue_placeholder;
-                unsafe { assert_unchecked(index < self.buf.opcodes.len()) };
-                let restore_all_regs = self.buf.opcodes[index] & 1 != 0;
-                let restore_state = self.buf.opcodes[index] & 2 != 0;
-                self.buf.opcodes[index] = LdmStm::generic(
-                    Reg::SP,
-                    if restore_all_regs { ALLOCATION_REGS + Reg::R12 } else { used_host_regs } + if restore_state { Reg::LR } else { Reg::PC },
-                    true,
-                    true,
-                    true,
-                    false,
-                    Cond::AL,
-                );
+            if diff == 1 && !encoding.has_return() {
+                self.buf.opcodes[branch_placeholder] = AluShiftImm::mov_al(Reg::R0, Reg::R0);
+            } else {
+                self.buf.opcodes[branch_placeholder] = if encoding.has_return() { B::bl } else { B::b }(diff - 2, Cond::from(u8::from(encoding.cond())));
             }
+        }
+
+        for &epilogue_placeholder in &self.buf.placeholders.epilogue {
+            unsafe { assert_unchecked(epilogue_placeholder < self.buf.opcodes.len()) };
+            self.buf.opcodes[epilogue_placeholder] = LdmStm::generic(
+                Reg::SP,
+                match EpilogueOp::from(self.buf.opcodes[epilogue_placeholder] as u8) {
+                    EpilogueOp::ExitGuest => ALLOCATION_REGS + Reg::R12 + Reg::PC,
+                    EpilogueOp::NoPc => used_host_regs + Reg::LR,
+                    EpilogueOp::Normal => used_host_regs + Reg::PC,
+                },
+                true,
+                true,
+                true,
+                false,
+                Cond::AL,
+            );
         }
 
         &self.buf.opcodes

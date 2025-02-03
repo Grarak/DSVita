@@ -374,10 +374,11 @@ impl BasicBlocksCache {
 #[derive(Default)]
 pub struct BlockAsmPlaceholders {
     pub branch: Vec<usize>,
-    pub prologue: Vec<usize>,
     pub epilogue: Vec<usize>,
+    pub prologue: usize,
 }
 
+#[derive(Default)]
 pub struct BlockAsmBuf {
     pub insts: Vec<BlockInst>,
     pub basic_block_label_mapping: NoHashMap<u16, usize>,
@@ -385,7 +386,7 @@ pub struct BlockAsmBuf {
     pub reachable_blocks: BitSet,
     pub reg_allocator: BlockRegAllocator,
     pub block_opcode_offsets: Vec<usize>,
-    pub placeholders: Vec<BlockAsmPlaceholders>,
+    pub placeholders: BlockAsmPlaceholders,
     pub opcodes: Vec<u32>,
 }
 
@@ -400,27 +401,8 @@ impl BlockAsmBuf {
 }
 
 impl BlockAsmBuf {
-    pub fn new() -> Self {
-        BlockAsmBuf {
-            insts: Vec::new(),
-            basic_block_label_mapping: NoHashMap::default(),
-            guest_branches_mapping: NoHashMap::default(),
-            reachable_blocks: BitSet::new(),
-            reg_allocator: BlockRegAllocator::default(),
-            block_opcode_offsets: Vec::new(),
-            placeholders: Vec::new(),
-            opcodes: Vec::new(),
-        }
-    }
-
-    pub fn resize_placeholders(&mut self, size: usize) {
-        self.placeholders.resize_with(size, BlockAsmPlaceholders::default);
-    }
-
-    pub fn clear_placeholders_block(&mut self, index: usize) {
-        let placeholder = unsafe { self.placeholders.get_unchecked_mut(index) };
-        placeholder.branch.clear();
-        placeholder.prologue.clear();
-        placeholder.epilogue.clear();
+    pub fn clear_placeholders(&mut self) {
+        self.placeholders.epilogue.clear();
+        self.placeholders.branch.clear();
     }
 }
