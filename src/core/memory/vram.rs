@@ -318,16 +318,16 @@ pub const ARM7_SIZE: u32 = 128 * 1024;
 pub struct VramMaps {
     lcdc: OverlapMapping<TOTAL_SIZE, { 16 * 1024 }, 1>,
 
-    bg_a: OverlapMapping<{ BG_A_SIZE as usize }, { 16 * 1024 }, 4>,
-    obj_a: OverlapMapping<{ 256 * 1024 }, { 16 * 1024 }, 2>,
+    bg_a: OverlapMapping<{ BG_A_SIZE as usize }, { 16 * 1024 }, 7>,
+    obj_a: OverlapMapping<{ 256 * 1024 }, { 16 * 1024 }, 5>,
     bg_ext_palette_a: [VramMap<{ BG_EXT_PAL_SIZE as usize / 4 }>; 4],
     obj_ext_palette_a: VramMap<{ OBJ_EXT_PAL_SIZE as usize }>,
 
     tex_rear_plane_img: [VramMap<{ 128 * 1024 }>; 4],
     tex_palette: [VramMap<{ 16 * 1024 }>; 6],
 
-    bg_b: OverlapMapping<{ BG_B_SIZE as usize }, { 16 * 1024 }, 1>,
-    obj_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }, 1>,
+    bg_b: OverlapMapping<{ BG_B_SIZE as usize }, { 16 * 1024 }, 3>,
+    obj_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }, 2>,
     bg_ext_palette_b: [VramMap<{ BG_EXT_PAL_SIZE as usize / 4 }>; 4],
     obj_ext_palette_b: VramMap<{ OBJ_EXT_PAL_SIZE as usize }>,
 }
@@ -537,9 +537,7 @@ impl Vram {
                     4 => {
                         self.maps.bg_b.add::<BANK_C_SIZE>(VramMap::new(VramBanks::get_c()), 0);
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => unsafe { unreachable_unchecked() },
                 }
             }
         }
@@ -568,9 +566,7 @@ impl Vram {
                     4 => {
                         self.maps.obj_b.add::<BANK_D_SIZE>(VramMap::new(VramBanks::get_d()), 0);
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => unsafe { unreachable_unchecked() },
                 }
             }
         }
@@ -601,9 +597,7 @@ impl Vram {
                             self.maps.bg_ext_palette_a[i] = vram_map.extract_section(i);
                         }
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => unsafe { unreachable_unchecked() },
                 }
             }
         }
@@ -638,9 +632,7 @@ impl Vram {
                     5 => {
                         self.maps.obj_ext_palette_a = VramMap::<BANK_F_SIZE>::new(VramBanks::get_f()).extract_section(0);
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => unsafe { unreachable_unchecked() },
                 }
             }
         }
@@ -677,9 +669,7 @@ impl Vram {
                     5 => {
                         self.maps.obj_ext_palette_a = VramMap::<BANK_G_SIZE>::new(VramBanks::get_g()).extract_section(0);
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => unsafe { unreachable_unchecked() },
                 }
             }
         }
@@ -703,9 +693,7 @@ impl Vram {
                             self.maps.bg_ext_palette_b[i] = vram_map.extract_section(i);
                         }
                     }
-                    _ => {
-                        unreachable!()
-                    }
+                    _ => unsafe { unreachable_unchecked() },
                 }
             }
         }
