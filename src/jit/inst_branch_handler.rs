@@ -92,15 +92,17 @@ pub extern "C" fn handle_interrupt(asm: *mut JitAsm<{ ARM9 }>, target_pc: u32, c
     let asm = unsafe { asm.as_mut_unchecked() };
     check_stack_depth(asm, current_pc);
 
-    let lr = align_guest_pc(target_pc) | (target_pc & 1);
     let regs = get_regs!(asm.emu, ARM9);
+
+    debug_println!("handle interrupt at {current_pc:x} return to {target_pc:x}");
 
     asm.runtime_data.pre_cycle_count_sum = 0;
     asm.runtime_data.set_in_interrupt(true);
-    asm.runtime_data.push_return_stack(lr);
+    asm.runtime_data.push_return_stack(target_pc);
     get_regs_mut!(asm.emu, ARM9).set_thumb(regs.pc & 1 == 1);
     let jit_entry = get_jit!(asm.emu).get_jit_start_addr(align_guest_pc(regs.pc));
     unsafe { call_interrupt(jit_entry as _, &mut asm.runtime_data.interrupt_sp) };
+    debug_println!("return from interrupt");
     asm.runtime_data.set_in_interrupt(false);
 }
 
@@ -239,4 +241,16 @@ pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target
         }
         exit_guest_context!(asm);
     }
+}
+
+pub unsafe extern "C" fn branch_any_reg(total_cycles: u16, current_pc: u32) {
+    let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
+
+    flush_cycles(asm, total_cycles, current_pc);
+    check_stack_depth(asm, current_pc);
+    check_scheduler(asm, current_pc);
+
+    asm.runtime_data.pre_cycle_count_sum = 0;
+    call_jit_fun(asm, get_regs!(asm.emu, ARM9).pc);
+    exit_guest_context!(asm);
 }

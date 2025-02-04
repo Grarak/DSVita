@@ -2,10 +2,12 @@ use crate::core::emu::get_regs_mut;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::inst_branch_handler::branch_any_reg;
 use crate::jit::inst_thread_regs_handler::set_pc_thumb_mode;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
+use crate::IS_DEBUG;
 
 impl<const CPU: CpuType> JitAsm<'_, CPU> {
     pub fn emit_thumb(&mut self, block_asm: &mut BlockAsm) {
@@ -87,10 +89,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 self.emit_branch_return_stack_common(block_asm, guest_pc_reg);
                 block_asm.free_reg(guest_pc_reg);
             } else if CPU == ARM9 {
-                let guest_pc_reg = block_asm.new_reg();
-                block_asm.load_u32(guest_pc_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
-                self.emit_branch_reg_common(block_asm, guest_pc_reg, false, true);
-                block_asm.free_reg(guest_pc_reg);
+                if IS_DEBUG {
+                    block_asm.call2_no_return(branch_any_reg as *const (), self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32, self.jit_buf.current_pc);
+                } else {
+                    block_asm.call1_no_return(branch_any_reg as *const (), self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32);
+                }
             } else {
                 self.emit_branch_out_metadata(block_asm);
                 block_asm.epilogue();

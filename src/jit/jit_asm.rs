@@ -204,13 +204,14 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
                     regs.set_thumb(regs.pc & 1 == 1);
                     unsafe {
                         std::arch::asm!(
-                        "mov sp, {}",
-                        "pop {{r4-r12,pc}}",
-                        in(reg) asm.runtime_data.interrupt_sp
+                            "mov sp, {}",
+                            "pop {{r4-r12,pc}}",
+                            in(reg) asm.runtime_data.interrupt_sp
                         );
                         std::hint::unreachable_unchecked();
                     }
                 } else {
+                    debug_println!("{CPU:?} uninterrupt return lr doesn't match pc");
                     asm.runtime_data.clear_return_stack_ptr();
                     unsafe { call_jit_fun(asm, regs.pc) };
                 }
