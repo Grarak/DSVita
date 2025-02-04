@@ -4,11 +4,22 @@ use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, Primi
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::math::{Matrix, Vectori32};
-use crate::utils::{rgb6_to_float8, HeapMem};
+use crate::utils::{rgb5_to_float8, rgb6_to_float8, HeapMem};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
 use std::{mem, ptr};
+
+#[bitsize(32)]
+#[derive(FromBits)]
+struct ClearColor {
+    color: u15,
+    fog: bool,
+    alpha: u5,
+    not_used: u3,
+    clear_polygon_id: u6,
+    not_used1: u2,
+}
 
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
@@ -331,7 +342,11 @@ impl Gpu3DRenderer {
 
         gl::BindFramebuffer(gl::FRAMEBUFFER, self.gl.fbo.fbo);
         gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
-        gl::ClearColor(0f32, 0f32, 0f32, 0f32);
+
+        let clear_color = ClearColor::from(self.inners[0].clear_color);
+        let (r, g, b) = rgb5_to_float8(u16::from(clear_color.color()));
+        gl::ClearColor(r, g, b, u8::from(clear_color.alpha()) as f32 / 31f32);
+
         gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
 
         if self.vertices_buf.is_empty() {
