@@ -14,8 +14,11 @@ fn main() {
 
     let target = env::var("TARGET").unwrap();
     if target != "armv7-sony-vita-newlibeabihf" {
+        if let Ok(sysroot) = env::var("SYSROOT") {
+            println!("cargo:rustc-link-arg=--sysroot={sysroot}");
+        }
         // Running IDE on anything other than linux will fail, so ignore compile error
-        let _ = cc::Build::new().file("builtins/cache.c").try_compile("cache").ok();
+        let _ = cc::Build::new().file("builtins/cache.c").compiler("/usr/bin/arm-linux-gnu-gcc").try_compile("cache").ok();
     }
 
     let num_jobs = env::var("NUM_JOBS").unwrap();
