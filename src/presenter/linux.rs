@@ -1,4 +1,4 @@
-use crate::cartridge_io::CartridgeIo;
+use crate::cartridge_io::{CartridgeIo, CartridgePreview};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::input;
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
@@ -122,7 +122,8 @@ impl Presenter {
         let file_path = PathBuf::from(matches.get_one::<String>("nds_rom").unwrap());
         let file_name = file_path.file_name().unwrap().to_str().unwrap();
         let save_path = file_path.parent().unwrap().join(format!("{file_name}.sav"));
-        (CartridgeIo::new(file_path, save_path).unwrap(), settings)
+        let preview = CartridgePreview::new(file_path).unwrap();
+        (CartridgeIo::from_preview(preview, save_path).unwrap(), settings)
     }
 
     pub fn destroy_ui(&self) {}

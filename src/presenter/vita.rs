@@ -1,7 +1,16 @@
-use crate::cartridge_io::CartridgeIo;
+use crate::cartridge_io::{CartridgeIo, CartridgePreview};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::input::Keycode;
-use crate::presenter::platform::imgui::{vglGetProcAddress, ImFontAtlas_AddFontFromMemoryTTF, ImFontAtlas_GetGlyphRangesDefault, ImFontConfig, ImFontConfig_ImFontConfig, ImGuiCond__ImGuiSetCond_Always, ImGuiHoveredFlags__ImGuiHoveredFlags_Default, ImGuiItemFlags__ImGuiItemFlags_Disabled, ImGuiNavInput__ImGuiNavInput_Cancel, ImGuiStyleVar__ImGuiStyleVar_Alpha, ImGuiStyleVar__ImGuiStyleVar_ItemSpacing, ImGuiStyleVar__ImGuiStyleVar_WindowRounding, ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus, ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags__ImGuiWindowFlags_NoMove, ImGuiWindowFlags__ImGuiWindowFlags_NoResize, ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar, ImGui_Begin, ImGui_BeginMainMenuBar, ImGui_Button, ImGui_CreateContext, ImGui_DestroyContext, ImGui_Dummy, ImGui_End, ImGui_EndMainMenuBar, ImGui_GetContentRegionAvail, ImGui_GetCursorPosX, ImGui_GetDrawData, ImGui_GetIO, ImGui_GetStyle, ImGui_Image, ImGui_ImplVitaGL_GamepadUsage, ImGui_ImplVitaGL_Init, ImGui_ImplVitaGL_MouseStickUsage, ImGui_ImplVitaGL_NewFrame, ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImGui_IsItemHovered, ImGui_PopID, ImGui_PopItemFlag, ImGui_PopStyleVar, ImGui_PushID3, ImGui_PushItemFlag, ImGui_PushStyleVar, ImGui_PushStyleVar1, ImGui_Render, ImGui_SameLine, ImGui_SetCursorPosX, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4};
+use crate::presenter::platform::imgui::{
+    vglGetProcAddress, ImFontAtlas_AddFontFromMemoryTTF, ImFontAtlas_GetGlyphRangesDefault, ImFontConfig, ImFontConfig_ImFontConfig, ImGuiCond__ImGuiSetCond_Always,
+    ImGuiHoveredFlags__ImGuiHoveredFlags_Default, ImGuiItemFlags__ImGuiItemFlags_Disabled, ImGuiNavInput__ImGuiNavInput_Cancel, ImGuiStyleVar__ImGuiStyleVar_Alpha,
+    ImGuiStyleVar__ImGuiStyleVar_ItemSpacing, ImGuiStyleVar__ImGuiStyleVar_WindowRounding, ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus, ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse,
+    ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags__ImGuiWindowFlags_NoMove, ImGuiWindowFlags__ImGuiWindowFlags_NoResize, ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar,
+    ImGui_Begin, ImGui_BeginMainMenuBar, ImGui_Button, ImGui_CreateContext, ImGui_DestroyContext, ImGui_Dummy, ImGui_End, ImGui_EndMainMenuBar, ImGui_GetContentRegionAvail, ImGui_GetCursorPosX,
+    ImGui_GetDrawData, ImGui_GetIO, ImGui_GetStyle, ImGui_Image, ImGui_ImplVitaGL_GamepadUsage, ImGui_ImplVitaGL_Init, ImGui_ImplVitaGL_MouseStickUsage, ImGui_ImplVitaGL_NewFrame,
+    ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImGui_IsItemHovered, ImGui_PopID, ImGui_PopItemFlag, ImGui_PopStyleVar, ImGui_PushID3, ImGui_PushItemFlag, ImGui_PushStyleVar,
+    ImGui_PushStyleVar1, ImGui_Render, ImGui_SameLine, ImGui_SetCursorPosX, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
+};
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
 use crate::settings::{Settings, SettingsConfig};
 use gl::types::{GLboolean, GLenum, GLuint};
@@ -187,14 +196,15 @@ impl Presenter {
                                 let name = path.file_name().unwrap().to_str().unwrap();
                                 let save_file = PathBuf::from(SAVES_PATH).join(format!("{name}.sav"));
                                 let settings_file = PathBuf::from(SETTINGS_PATH).join(format!("{name}.ini"));
-                                return (CartridgeIo::new(path, save_file).unwrap(), SettingsConfig::new(settings_file).settings);
+                                let preview = CartridgePreview::new(path).unwrap();
+                                return (CartridgeIo::from_preview(preview, save_file).unwrap(), SettingsConfig::new(settings_file).settings);
                             }
                         }
                     }
                 }
             }
 
-            let mut cartridges: Vec<CartridgeIo> = match fs::read_dir(ROM_PATH) {
+            let mut cartridges: Vec<CartridgePreview> = match fs::read_dir(ROM_PATH) {
                 Ok(rom_dir) => rom_dir
                     .into_iter()
                     .filter_map(|dir| dir.ok().and_then(|dir| dir.file_type().ok().and_then(|file_type| if file_type.is_file() { Some(dir) } else { None })))
@@ -213,7 +223,7 @@ impl Presenter {
                                     let _ = fs::rename(old_save_file, &save_file);
                                 }
                             }
-                            CartridgeIo::new(path, save_file).ok()
+                            CartridgePreview::new(path).ok()
                         } else {
                             None
                         }
@@ -399,7 +409,9 @@ impl Presenter {
 
             gl::DeleteTextures(1, &icon_tex);
 
-            (cartridges.remove(selected.unwrap()), settings_configs.remove(selected.unwrap()).settings)
+            let preview = cartridges.remove(selected.unwrap());
+            let save_file = PathBuf::from(SAVES_PATH).join(format!("{}.sav", preview.file_name));
+            (CartridgeIo::from_preview(preview, save_file).unwrap(), settings_configs.remove(selected.unwrap()).settings)
         }
     }
 

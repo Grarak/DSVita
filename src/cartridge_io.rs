@@ -6,7 +6,7 @@ use static_assertions::const_assert_eq;
 use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::fs::File;
-use std::io::{ErrorKind, Read, Seek};
+use std::io::{ErrorKind, Seek};
 use std::ops::{Deref, DerefMut};
 use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
@@ -80,6 +80,86 @@ const SAVE_SIZES: [u32; 9] = [0x000200, 0x002000, 0x008000, 0x010000, 0x020000, 
 const CARTRIDGE_PAGE_SIZE: usize = 4096;
 const MAX_CARTRIDGE_CACHE: usize = 512 * 1024;
 
+pub struct CartridgePreview {
+    file: File,
+    pub file_name: String,
+    header: CartridgeHeader,
+}
+
+impl CartridgePreview {
+    pub fn new(file_path: PathBuf) -> io::Result<Self> {
+        let mut raw_header = [0u8; HEADER_SIZE];
+        let file = File::open(&file_path)?;
+        file.read_exact_at(&mut raw_header, 0)?;
+
+        Ok(CartridgePreview {
+            file,
+            file_name: file_path.file_name().unwrap().to_str().unwrap().to_string(),
+            header: unsafe { mem::transmute(raw_header) },
+        })
+    }
+
+    pub fn read_icon(&self) -> io::Result<[u32; 32 * 32]> {
+        let mut icon = [0u32; 32 * 32];
+
+        let offset = self.header.icon_title_offset;
+        if offset == 0 {
+            return Err(io::Error::from(ErrorKind::InvalidData));
+        }
+
+        let mut data = [0u8; 0x200];
+        self.file.read_exact_at(&mut data, offset as u64 + 0x20)?;
+
+        let mut palette = [0u8; 0x20];
+        self.file.read_exact_at(&mut palette, offset as u64 + 0x20 + data.len() as u64)?;
+
+        let mut tiles = [0u32; 32 * 32];
+        for i in 0..icon.len() {
+            let pal_index = (data[i / 2] >> ((i & 1) * 4)) & 0xF;
+            if pal_index == 0 {
+                tiles[i] = 0xFFFFFFFF;
+            } else {
+                let color = utils::read_from_mem::<u16>(&palette, pal_index as u32 * 2);
+                tiles[i] = rgb5_to_rgb8(color);
+            }
+        }
+
+        for i in 0..4 {
+            for j in 0..8 {
+                for k in 0..4 {
+                    let icon_start = 256 * i + 32 * j + 8 * k;
+                    let tiles_start = 256 * i + 8 * j + 64 * k;
+                    icon[icon_start..icon_start + 8].copy_from_slice(&tiles[tiles_start..tiles_start + 8])
+                }
+            }
+        }
+
+        Ok(icon)
+    }
+
+    pub fn read_title(&self) -> io::Result<String> {
+        let offset = self.header.icon_title_offset;
+        if offset == 0 {
+            return Err(io::Error::from(ErrorKind::InvalidData));
+        }
+
+        let mut title = [0u8; 0x100];
+        self.file.read_exact_at(&mut title, offset as u64 + 0x340)?;
+
+        let (_, title, _) = unsafe { title.align_to() };
+        let nul_pos = title.iter().position(|b| *b == 0);
+        let end = match nul_pos {
+            None => title.len(),
+            Some(pos) => pos,
+        };
+
+        match String::from_utf16(&title[..end]) {
+            Ok(title) => Ok(title),
+            Err(_) => Err(io::Error::from(ErrorKind::InvalidData)),
+        }
+    }
+}
+
 pub struct CartridgeIo {
     file: File,
     pub file_name: String,
@@ -94,14 +174,9 @@ pub struct CartridgeIo {
 unsafe impl Send for CartridgeIo {}
 
 impl CartridgeIo {
-    pub fn new(file_path: PathBuf, save_file_path: PathBuf) -> io::Result<Self> {
-        let mut raw_header = [0u8; HEADER_SIZE];
-        let mut file = File::open(&file_path)?;
-        file.read_exact(&mut raw_header)?;
-        let file_size = file.stream_len().unwrap() as u32;
+    pub fn from_preview(mut preview: CartridgePreview, save_file_path: PathBuf) -> io::Result<Self> {
+        let file_size = preview.file.stream_len().unwrap() as u32;
         let mut save_buf = Vec::new();
-
-        let header: CartridgeHeader = unsafe { mem::transmute(raw_header) };
 
         let mut save_file_size = File::open(&save_file_path).map_or(0, |mut file| {
             let save_file_size = file.stream_len().unwrap();
@@ -115,7 +190,7 @@ impl CartridgeIo {
             }
         });
 
-        let game_code = u32::from_le_bytes(header.game_code);
+        let game_code = u32::from_le_bytes(preview.header.game_code);
         if let Some(metadata) = get_cartridge_metadata(game_code) {
             save_buf.resize(metadata.save_size as usize, 0xFF);
             save_file_size = metadata.save_size;
@@ -126,10 +201,10 @@ impl CartridgeIo {
         }
 
         Ok(CartridgeIo {
-            file,
-            file_name: file_path.file_name().unwrap().to_str().unwrap().to_string(),
+            file: preview.file,
+            file_name: preview.file_name,
             file_size,
-            header,
+            header: preview.header,
             content_pages: UnsafeCell::new(NoHashMap::default()),
             save_file_path,
             save_file_size,
@@ -243,66 +318,6 @@ impl CartridgeIo {
             let success = File::create(&self.save_file_path).is_ok_and(|file| file.write_at(save_buf, 0).is_ok());
             *last_save_time.lock().unwrap() = Some((Instant::now(), success));
             *dirty = false;
-        }
-    }
-
-    pub fn read_icon(&self) -> io::Result<[u32; 32 * 32]> {
-        let mut icon = [0u32; 32 * 32];
-
-        let offset = self.header.icon_title_offset;
-        if offset == 0 {
-            return Err(io::Error::from(ErrorKind::InvalidData));
-        }
-
-        let mut data = [0u8; 0x200];
-        self.read_slice(offset + 0x20, &mut data)?;
-
-        let mut palette = [0u8; 0x20];
-        self.read_slice(offset + 0x20 + data.len() as u32, &mut palette)?;
-
-        let mut tiles = [0u32; 32 * 32];
-        for i in 0..icon.len() {
-            let pal_index = (data[i / 2] >> ((i & 1) * 4)) & 0xF;
-            if pal_index == 0 {
-                tiles[i] = 0xFFFFFFFF;
-            } else {
-                let color = utils::read_from_mem::<u16>(&palette, pal_index as u32 * 2);
-                tiles[i] = rgb5_to_rgb8(color);
-            }
-        }
-
-        for i in 0..4 {
-            for j in 0..8 {
-                for k in 0..4 {
-                    let icon_start = 256 * i + 32 * j + 8 * k;
-                    let tiles_start = 256 * i + 8 * j + 64 * k;
-                    icon[icon_start..icon_start + 8].copy_from_slice(&tiles[tiles_start..tiles_start + 8])
-                }
-            }
-        }
-
-        Ok(icon)
-    }
-
-    pub fn read_title(&self) -> io::Result<String> {
-        let offset = self.header.icon_title_offset;
-        if offset == 0 {
-            return Err(io::Error::from(ErrorKind::InvalidData));
-        }
-
-        let mut title = [0u8; 0x100];
-        self.read_slice(offset + 0x340, &mut title)?;
-
-        let (_, title, _) = unsafe { title.align_to() };
-        let nul_pos = title.iter().position(|b| *b == 0);
-        let end = match nul_pos {
-            None => title.len(),
-            Some(pos) => pos,
-        };
-
-        match String::from_utf16(&title[..end]) {
-            Ok(title) => Ok(title),
-            Err(_) => Err(io::Error::from(ErrorKind::InvalidData)),
         }
     }
 }
