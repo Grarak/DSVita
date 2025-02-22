@@ -194,11 +194,11 @@ impl AluImm {
     }
 
     #[inline]
-    pub fn mov32(op0: Reg, op2: u32) -> Vec<u32> {
+    pub fn mov32(op0: Reg, op2: u32) -> ([u32; 2], usize) {
         if op2 & 0xFFFF0000 == 0 {
-            vec![Self::mov16_al(op0, op2 as u16)]
+            ([Self::mov16_al(op0, op2 as u16), 0], 1)
         } else {
-            vec![Self::mov16_al(op0, (op2 & 0xFFFF) as u16), Self::mov_t_al(op0, (op2 >> 16) as u16)]
+            ([Self::mov16_al(op0, (op2 & 0xFFFF) as u16), Self::mov_t_al(op0, (op2 >> 16) as u16)], 2)
         }
     }
 }

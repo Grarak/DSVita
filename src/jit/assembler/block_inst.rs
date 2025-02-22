@@ -8,10 +8,12 @@ use crate::jit::assembler::{arm, BlockAsmPlaceholders, BlockLabel, BlockOperand,
 use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount, ShiftType};
+use crate::logging::debug_panic;
 use bilge::prelude::*;
 use enum_dispatch::enum_dispatch;
 use std::cell::UnsafeCell;
 use std::fmt::{Debug, Formatter};
+use std::intrinsics::unlikely;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
@@ -542,14 +544,18 @@ impl BlockInstTrait for Alu {
             }
             AluType::Alu2Op0 => match operands[1].operand {
                 BlockOperand::Reg(reg) => {
-                    if *op == AluOp::Mov && operands[0].as_reg() == reg && operands[1].shift == BlockShift::default() && *set_cond == AluSetCond::None {
+                    if unlikely(*op == AluOp::Mov && operands[0].as_reg() == reg && operands[1].shift == BlockShift::default() && *set_cond == AluSetCond::None) {
                         return;
                     }
                     opcodes.push(alu_reg(*op, operands[0].as_reg(), BlockReg::Fixed(Reg::R0), reg, operands[1].shift, *set_cond != AluSetCond::None))
                 }
                 BlockOperand::Imm(imm) => {
                     if *op == AluOp::Mov && operands[1].shift == BlockShift::default() && *set_cond == AluSetCond::None {
-                        opcodes.extend(AluImm::mov32(alloc.for_emit_output(operands[0].as_reg()), imm))
+                        let (values, length) = AluImm::mov32(alloc.for_emit_output(operands[0].as_reg()), imm);
+                        opcodes.push(values[0]);
+                        if length == 2 {
+                            opcodes.push(values[1]);
+                        }
                     } else {
                         opcodes.push(alu_imm(*op, operands[0].as_reg(), BlockReg::Fixed(Reg::R0), imm, operands[1].shift, *set_cond != AluSetCond::None))
                     }
@@ -563,9 +569,7 @@ impl BlockInstTrait for Alu {
                     *set_cond != AluSetCond::None,
                     Cond::AL,
                 )),
-                BlockOperand::Imm(_) => {
-                    todo!()
-                }
+                BlockOperand::Imm(_) => debug_panic!("Mul with imm not implemented"),
             },
         }
     }

@@ -259,6 +259,9 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         }
     };
     let pc_step = if thumb { 2 } else { 4 };
+    let pc_shift = pc_step >> 1;
+    let mut heavy_inst_count = 0;
+    let mut last_inst_branch = false;
     loop {
         let inst_info = get_inst_info(asm, guest_pc + pc_offset);
 
@@ -279,9 +282,18 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
             uncond_branch_count += 1;
         }
         let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && is_uncond_branch;
+        let op = inst_info.op;
+        if op.is_single_mem_transfer() || op.is_multiple_mem_transfer() || op.is_branch() {
+            heavy_inst_count += 1;
+        }
         asm.jit_buf.insts.push(inst_info);
 
         if is_unreturnable_branch || uncond_branch_count == 4 {
+            last_inst_branch = true;
+            break;
+        }
+
+        if heavy_inst_count > 10 && op != Op::BlSetupT {
             break;
         }
         pc_offset += pc_step;
@@ -302,7 +314,6 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
 
         let emit_func = if thumb { JitAsm::emit_thumb } else { JitAsm::emit };
 
-        let pc_shift = if thumb { 1 } else { 2 };
         for i in 0..asm.jit_buf.insts.len() {
             asm.jit_buf.current_index = i;
             asm.jit_buf.current_pc = guest_pc + (i << pc_shift) as u32;
@@ -321,9 +332,14 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
             }
         }
 
-        block_asm.force_end();
+        if last_inst_branch {
+            block_asm.force_end();
+        } else {
+            let next_pc = guest_pc + pc_offset + if thumb { 3 } else { 4 };
+            asm.emit_branch_external_label(&mut block_asm, next_pc, false, thumb);
+        }
 
-        block_asm.emit_opcodes(guest_pc);
+        block_asm.emit_opcodes();
         let opcodes = block_asm.finalize();
         if IS_DEBUG && unsafe { BLOCK_LOG } {
             for &opcode in opcodes {

@@ -772,7 +772,7 @@ impl BlockAsm {
         }
     }
 
-    fn assemble_basic_blocks(&mut self, block_start_pc: u32) -> usize {
+    fn assemble_basic_blocks(&mut self) -> usize {
         #[derive(Default)]
         struct BasicBlockData {
             start: u16,
@@ -954,22 +954,27 @@ impl BlockAsm {
                 continue;
             }
 
-            let mut basic_block_start_pc = block_start_pc;
-            for i in (0..basic_block.block_entry_start + 1).rev() {
-                match &self.buf.get_inst(i).inst_type {
-                    BlockInstType::Label(inner) => {
-                        if let Some(pc) = inner.guest_pc {
-                            basic_block_start_pc = pc;
+            let basic_block_start_pc = if IS_DEBUG {
+                let mut basic_block_start_pc = 0;
+                for i in (0..basic_block.block_entry_start + 1).rev() {
+                    match &self.buf.get_inst(i).inst_type {
+                        BlockInstType::Label(inner) => {
+                            if let Some(pc) = inner.guest_pc {
+                                basic_block_start_pc = pc;
+                                break;
+                            }
+                        }
+                        BlockInstType::GuestPc(inner) => {
+                            basic_block_start_pc = inner.0;
                             break;
                         }
+                        _ => {}
                     }
-                    BlockInstType::GuestPc(inner) => {
-                        basic_block_start_pc = inner.0;
-                        break;
-                    }
-                    _ => {}
                 }
-            }
+                basic_block_start_pc
+            } else {
+                0
+            };
             basic_block.init_insts(self.buf, &self.tmp_regs, basic_block_start_pc);
         }
 
@@ -997,8 +1002,8 @@ impl BlockAsm {
         basic_blocks_len
     }
 
-    pub fn emit_opcodes(&mut self, block_start_pc: u32) -> usize {
-        let basic_blocks_len = self.assemble_basic_blocks(block_start_pc);
+    pub fn emit_opcodes(&mut self) -> usize {
+        let basic_blocks_len = self.assemble_basic_blocks();
 
         if IS_DEBUG && !self.cache.basic_blocks[0].get_required_inputs().get_guests().is_empty() {
             println!("inputs as requirement {:?}", self.cache.basic_blocks[0].get_required_inputs().get_guests());
@@ -1056,6 +1061,13 @@ impl BlockAsm {
         }
         self.buf.clear_placeholders();
 
+        #[cfg(debug_assertions)]
+        {
+            if unsafe { BLOCK_LOG } {
+                self.buf.opcodes_guest_pc_mapping.clear();
+            }
+        }
+
         for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
             let opcodes_len = self.buf.opcodes.len();
             unsafe { *self.buf.block_opcode_offsets.get_unchecked_mut(i) = opcodes_len };
@@ -1064,7 +1076,19 @@ impl BlockAsm {
                 continue;
             }
 
+            if IS_DEBUG && unsafe { BLOCK_LOG } {
+                println!("emit opcodes {}", i + 1);
+            }
             basic_block.emit_opcodes(self.buf);
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            if unsafe { BLOCK_LOG } {
+                for (guest_pc, opcodes_offset) in &self.buf.opcodes_guest_pc_mapping {
+                    println!("({opcodes_offset:x}, {guest_pc:x}),");
+                }
+            }
         }
 
         self.buf.opcodes.len()

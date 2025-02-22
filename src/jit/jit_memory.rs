@@ -356,11 +356,12 @@ impl JitMemory {
 
     pub fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType) -> bool {
         if *host_pc < self.mem.as_ptr() as usize || *host_pc >= self.mem.as_ptr() as usize + JIT_MEMORY_SIZE {
+            debug_println!("Segfault outside of guest context");
             return false;
         }
 
         let nop_opcode = AluShiftImm::mov_al(Reg::R0, Reg::R0);
-        for pc_offset in (4..128).step_by(4) {
+        for pc_offset in (4..256).step_by(4) {
             let ptr = (*host_pc + pc_offset) as *mut u32;
             let opcode = unsafe { ptr.read() };
             if opcode == nop_opcode {
@@ -377,7 +378,7 @@ impl JitMemory {
 
         let mut fast_mem_begin = *host_pc - 4;
         let mut found = false;
-        while *host_pc - fast_mem_begin < 128 {
+        while *host_pc - fast_mem_begin < 256 {
             let ptr = fast_mem_begin as *const u32;
             if unsafe { ptr.read() } == nop_opcode {
                 found = true;
@@ -390,7 +391,7 @@ impl JitMemory {
         }
         let mut fast_mem_end = *host_pc + 4;
         found = false;
-        while fast_mem_end - *host_pc < 128 {
+        while fast_mem_end - *host_pc < 256 {
             let ptr = fast_mem_end as *const u32;
             let (op, _) = lookup_opcode(unsafe { ptr.read() });
             if *op == Op::B {
@@ -419,7 +420,7 @@ impl JitMemory {
             if fault_op.mem_is_write() {
                 let mut slow_mem_end = slow_mem_begin + 4;
                 found = false;
-                while slow_mem_end - slow_mem_begin < 128 {
+                while slow_mem_end - slow_mem_begin < 256 {
                     let ptr = slow_mem_end as *const u32;
                     let (op, _) = lookup_opcode(unsafe { ptr.read() });
                     if *op == Op::B {
@@ -445,7 +446,7 @@ impl JitMemory {
                     let mut blx_opcode_pc = slow_mem_begin + 4;
                     let mut blx_reg = Reg::R0;
                     found = false;
-                    while blx_opcode_pc - slow_mem_begin < 128 {
+                    while blx_opcode_pc - slow_mem_begin < 256 {
                         let ptr = blx_opcode_pc as *const u32;
                         let opcode = unsafe { ptr.read() };
                         let (op, fun) = lookup_opcode(opcode);
@@ -469,7 +470,7 @@ impl JitMemory {
                     found = false;
 
                     let mut mov_reg_pc = blx_opcode_pc - 4;
-                    while blx_opcode_pc - mov_reg_pc < 128 {
+                    while blx_opcode_pc - mov_reg_pc < 256 {
                         let mov_16_ptr = (mov_reg_pc - 4) as *const u32;
                         let mov_t_ptr = mov_reg_pc as *const u32;
                         mov_reg_pc -= 4;
@@ -498,7 +499,8 @@ impl JitMemory {
                         }
                     };
 
-                    let mov_opcodes = AluImm::mov32(blx_reg, func as u32);
+                    let (mov_opcodes, mov_length) = AluImm::mov32(blx_reg, func as u32);
+                    debug_assert_eq!(mov_length, 2);
                     unsafe { (mov_reg_pc as *mut u32).write(mov_opcodes[0]) };
                     unsafe { ((mov_reg_pc + 4) as *mut u32).write(mov_opcodes[1]) };
                     unsafe { flush_icache(mov_reg_pc as _, 8) };

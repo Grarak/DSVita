@@ -1,10 +1,9 @@
-use crate::jit::assembler::block_asm::{BlockTmpRegs, BLOCK_LOG};
+use crate::jit::assembler::block_asm::BlockTmpRegs;
 use crate::jit::assembler::block_inst::{Alu, AluOp, AluSetCond, BlockInst, BlockInstType, GuestTransferMultiple, SaveReg, TransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockAsmBuf, BlockReg};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::Cond;
-use crate::IS_DEBUG;
 use std::fmt::{Debug, Formatter};
 use std::hint::assert_unchecked;
 use std::ptr;
@@ -271,59 +270,62 @@ impl BasicBlock {
         unsafe { self.regs_live_ranges.get_unchecked(last) }
     }
 
-    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf) {
-        buf.reg_allocator.init_inputs(self.get_required_inputs());
+    fn emit_opcode(&self, inst_index: usize, buf: &mut BlockAsmBuf) {
+        let i = inst_index - self.block_entry_start;
+        let inst = unsafe { buf.insts.get_unchecked_mut(inst_index) };
+        buf.reg_allocator.inst_allocate(inst, unsafe { self.regs_live_ranges.get_unchecked(i + 1) }, &mut buf.opcodes);
 
-        for (i, inst_index) in (self.block_entry_start..self.block_entry_end + 1).enumerate() {
-            let inst = unsafe { buf.insts.get_unchecked_mut(inst_index) };
-            if inst.skip {
-                continue;
-            }
+        let start_len = buf.opcodes.len();
 
-            buf.reg_allocator.inst_allocate(inst, unsafe { self.regs_live_ranges.get_unchecked(i + 1) }, &mut buf.opcodes);
-
-            let start_len = buf.opcodes.len();
-
-            if IS_DEBUG && unsafe { BLOCK_LOG } {
+        #[cfg(debug_assertions)]
+        {
+            if unsafe { crate::jit::assembler::block_asm::BLOCK_LOG } {
                 match &inst.inst_type {
-                    BlockInstType::GuestPc(inner) => {
-                        println!("(0x{start_len:x}, 0x{:x}),", inner.0);
-                    }
+                    BlockInstType::GuestPc(inner) => buf.opcodes_guest_pc_mapping.push((inner.0, start_len)),
                     BlockInstType::Label(inner) => {
                         if let Some(pc) = inner.guest_pc {
-                            println!("(0x{start_len:x}, 0x{pc:x}),");
+                            buf.opcodes_guest_pc_mapping.push((pc, start_len));
                         }
                     }
                     _ => {}
                 }
             }
+        }
 
-            inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
-            if inst.cond != Cond::AL {
-                for opcode in &mut buf.opcodes[start_len..] {
-                    *opcode = (*opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);
-                }
+        inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
+        if inst.cond != Cond::AL {
+            for opcode in &mut buf.opcodes[start_len..] {
+                *opcode = (*opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);
             }
+        }
+    }
+
+    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf) {
+        buf.reg_allocator.init_inputs(self.get_required_inputs());
+
+        for inst_index in self.block_entry_start..self.block_entry_end {
+            let inst = unsafe { buf.insts.get_unchecked_mut(inst_index) };
+            if inst.skip {
+                continue;
+            }
+
+            self.emit_opcode(inst_index, buf);
+        }
+
+        let last_inst = buf.get_inst(self.block_entry_end);
+        let last_inst_is_branch = matches!(&last_inst.inst_type, BlockInstType::Branch(_));
+        if !last_inst_is_branch {
+            debug_assert!(!last_inst.skip);
+            self.emit_opcode(self.block_entry_end, buf);
         }
 
         if !self.exit_blocks.is_empty() {
             let required_outputs = *self.get_required_outputs();
+            buf.reg_allocator.ensure_global_mappings(required_outputs, &mut buf.opcodes);
+        }
 
-            // Make sure to restore mapping before a branch
-            if let BlockInstType::Branch(_) = &buf.get_inst(self.block_entry_end).inst_type {
-                buf.opcodes.pop().unwrap();
-                buf.reg_allocator.ensure_global_mappings(required_outputs, &mut buf.opcodes);
-                buf.placeholders.branch.pop().unwrap();
-
-                let inst = unsafe { buf.insts.get_unchecked_mut(self.block_entry_end) };
-                inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
-                if inst.cond != Cond::AL {
-                    let branch_opcode = buf.opcodes.last_mut().unwrap();
-                    *branch_opcode = (*branch_opcode & !(0xF << 28)) | ((inst.cond as u32) << 28);
-                }
-            } else {
-                buf.reg_allocator.ensure_global_mappings(required_outputs, &mut buf.opcodes);
-            }
+        if last_inst_is_branch {
+            self.emit_opcode(self.block_entry_end, buf);
         }
     }
 }

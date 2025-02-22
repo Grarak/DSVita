@@ -297,6 +297,7 @@ impl Debug for RegReserve {
     }
 }
 
+#[derive(Clone)]
 pub struct RegReserveIter {
     reserve: u32,
 }

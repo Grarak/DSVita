@@ -108,7 +108,7 @@ pub extern "C" fn handle_interrupt(asm: *mut JitAsm<{ ARM9 }>, target_pc: u32, c
 
 fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm<CPU>, total_cycles: u16, current_pc: u32) {
     asm.runtime_data.accumulated_cycles += total_cycles + 2 - asm.runtime_data.pre_cycle_count_sum;
-    debug_println!("{CPU:?} flush cycles {} at {current_pc:x}", asm.runtime_data.accumulated_cycles,);
+    debug_println!("{CPU:?} flush cycles {} at {current_pc:x}", asm.runtime_data.accumulated_cycles);
 }
 
 #[inline(always)]

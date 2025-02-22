@@ -388,6 +388,8 @@ pub struct BlockAsmBuf {
     pub block_opcode_offsets: Vec<usize>,
     pub placeholders: BlockAsmPlaceholders,
     pub opcodes: Vec<u32>,
+    #[cfg(debug_assertions)]
+    pub opcodes_guest_pc_mapping: Vec<(u32, usize)>,
 }
 
 impl BlockAsmBuf {

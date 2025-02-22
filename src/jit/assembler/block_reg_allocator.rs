@@ -61,7 +61,7 @@ impl BlockRegAllocator {
     pub fn for_emit_input(&self, reg: BlockReg) -> Reg {
         match reg {
             BlockReg::Any(any) => {
-                let mapped_reg = self.stored_mapping_inputs[any as usize];
+                let mapped_reg = unsafe { *self.stored_mapping_inputs.get_unchecked(any as usize) };
                 debug_assert_ne!(mapped_reg, Reg::None);
                 mapped_reg
             }
@@ -390,12 +390,12 @@ impl BlockRegAllocator {
                 new_lru.push_back(reg);
             }
         }
-        for guest_reg in relocatable_regs {
-            new_lru.push_back(guest_reg);
-        }
-        self.lru_reg = new_lru;
 
-        for guest_reg in relocatable_regs {
+        let iterator = relocatable_regs.into_iter();
+
+        for guest_reg in iterator.clone() {
+            new_lru.push_back(guest_reg);
+
             if let Some(currently_used_by) = *self.get_stored_mapping_reverse(guest_reg) {
                 if DEBUG && unsafe { BLOCK_LOG } {
                     println!("relocate guest spill {currently_used_by} for {guest_reg:?}");
@@ -408,7 +408,9 @@ impl BlockRegAllocator {
             }
         }
 
-        for guest_reg in relocatable_regs {
+        self.lru_reg = new_lru;
+
+        for guest_reg in iterator {
             let stored_mapping = *self.get_stored_mapping(guest_reg as u16);
             if stored_mapping != Reg::None {
                 if is_input {
@@ -452,13 +454,13 @@ impl BlockRegAllocator {
             println!("used regs {:?}", used_regs);
         }
 
-        self.relocate_guest_regs(inputs.get_guests().get_gp_regs(), next_live_range, &inputs, true, opcodes);
-        self.relocate_guest_regs(outputs.get_guests().get_gp_regs(), next_live_range, &inputs, false, opcodes);
-
         if DEBUG && unsafe { BLOCK_LOG } {
             println!("pre mapping {:?}", self.stored_mapping_reverse);
             println!("pre spilled {:?}", self.spilled);
         }
+
+        self.relocate_guest_regs(inputs.get_guests().get_gp_regs(), next_live_range, &inputs, true, opcodes);
+        self.relocate_guest_regs(outputs.get_guests().get_gp_regs(), next_live_range, &inputs, false, opcodes);
 
         for any_input_reg in inputs.iter_any() {
             let reg = self.get_input_reg(any_input_reg, next_live_range, &used_regs, opcodes);
