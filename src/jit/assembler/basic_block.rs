@@ -1,8 +1,8 @@
 use crate::jit::assembler::block_asm::BlockTmpRegs;
-use crate::jit::assembler::block_inst::{Alu, AluOp, AluSetCond, BlockInst, BlockInstType, GuestTransferMultiple, SaveReg, TransferOp};
+use crate::jit::assembler::block_inst::{Alu, AluOp, AluSetCond, BlockInst, BlockInstType, GuestTransferMultiple, RestoreReg, SaveReg, TransferOp};
 use crate::jit::assembler::block_reg_set::BlockRegSet;
 use crate::jit::assembler::{BlockAsmBuf, BlockReg};
-use crate::jit::reg::{Reg, RegReserve};
+use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use std::fmt::{Debug, Formatter};
 use std::hint::assert_unchecked;
@@ -14,9 +14,8 @@ pub struct BasicBlock {
     pub block_entry_start: usize,
     pub block_entry_end: usize,
 
+    dirty_guest_regs: RegReserve,
     pub guest_regs_resolved: bool,
-    pub guest_regs_input_dirty: RegReserve,
-    pub guest_regs_output_dirty: RegReserve,
 
     pub io_resolved: bool,
     regs_live_ranges: Vec<BlockRegSet>,
@@ -36,9 +35,8 @@ impl BasicBlock {
             block_entry_start: 0,
             block_entry_end: 0,
 
+            dirty_guest_regs: RegReserve::new(),
             guest_regs_resolved: false,
-            guest_regs_input_dirty: RegReserve::new(),
-            guest_regs_output_dirty: RegReserve::new(),
 
             io_resolved: false,
             regs_live_ranges: Vec::new(),
@@ -57,9 +55,8 @@ impl BasicBlock {
         self.block_entry_start = block_entry_start;
         self.block_entry_end = block_entry_end;
 
+        self.dirty_guest_regs.clear();
         self.guest_regs_resolved = false;
-        self.guest_regs_input_dirty = RegReserve::new();
-        self.guest_regs_output_dirty = RegReserve::new();
 
         self.io_resolved = false;
 
@@ -67,62 +64,65 @@ impl BasicBlock {
         self.exit_blocks.clear();
     }
 
-    pub fn init_guest_regs(&mut self, buf: &mut BlockAsmBuf) {
-        self.guest_regs_output_dirty = self.guest_regs_input_dirty;
+    pub fn init_guest_regs(&mut self, tmp_regs: &BlockTmpRegs, buf: &mut BlockAsmBuf) {
+        #[cfg(debug_assertions)]
+        {
+            for i in (0..self.block_entry_start + 1).rev() {
+                match &buf.get_inst(i).inst_type {
+                    BlockInstType::Label(inner) => {
+                        if let Some(pc) = inner.guest_pc {
+                            self.start_pc = pc;
+                            break;
+                        }
+                    }
+                    BlockInstType::GuestPc(inner) => {
+                        self.start_pc = inner.0;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         let mut i = self.block_entry_start;
         while i <= self.block_entry_end {
             debug_assert!(!buf.get_inst(i).skip);
             match &mut buf.get_inst_mut(i).inst_type {
                 BlockInstType::SaveContext(inner) => {
-                    inner.guest_regs = self.guest_regs_output_dirty;
-                    self.guest_regs_output_dirty.clear();
+                    inner.guest_regs = self.dirty_guest_regs;
+
+                    let mut inst: BlockInst = SaveReg {
+                        guest_reg: Reg::R0,
+                        reg_mapped: BlockReg::from(Reg::R0),
+                        thread_regs_addr_reg: tmp_regs.thread_regs_addr_reg,
+                        tmp_host_cpsr_reg: tmp_regs.host_cpsr_reg,
+                    }
+                    .into();
+                    inst.skip = true;
+                    *buf.get_inst_mut(i) = inst;
+                    for j in Reg::R0 as u8..Reg::None as u8 {
+                        if self.dirty_guest_regs.is_reserved(Reg::from(j)) {
+                            buf.get_inst_mut(i + j as usize).skip = false;
+                        }
+                    }
+
+                    self.dirty_guest_regs.clear();
                     i += Reg::SPSR as usize - 1;
                 }
-                BlockInstType::SaveReg(inner) => self.guest_regs_output_dirty -= inner.guest_reg,
-                BlockInstType::RestoreReg(inner) => self.guest_regs_output_dirty -= inner.guest_reg,
+                BlockInstType::SaveReg(inner) => self.dirty_guest_regs -= inner.guest_reg,
+                BlockInstType::RestoreReg(inner) => self.dirty_guest_regs -= inner.guest_reg,
                 BlockInstType::MarkRegDirty(inner) => {
                     if inner.dirty {
-                        self.guest_regs_output_dirty += inner.guest_reg;
+                        self.dirty_guest_regs += inner.guest_reg;
                     } else {
-                        self.guest_regs_output_dirty -= inner.guest_reg;
+                        self.dirty_guest_regs -= inner.guest_reg;
                     }
                 }
                 _ => {
                     let inst = buf.get_inst(i);
                     let (_, outputs) = inst.get_io();
-                    self.guest_regs_output_dirty += outputs.get_guests();
+                    self.dirty_guest_regs += outputs.get_guests();
                 }
-            }
-            i += 1;
-        }
-    }
-
-    pub fn init_insts(&mut self, buf: &mut BlockAsmBuf, tmp_regs: &BlockTmpRegs, basic_block_start_pc: u32) {
-        #[cfg(debug_assertions)]
-        {
-            self.start_pc = basic_block_start_pc;
-        }
-
-        let mut i = self.block_entry_start;
-        while i <= self.block_entry_end {
-            if let BlockInstType::SaveContext(inner) = &buf.get_inst(i).inst_type {
-                let guest_regs = inner.guest_regs;
-                let mut inst: BlockInst = SaveReg {
-                    guest_reg: Reg::R0,
-                    reg_mapped: BlockReg::from(Reg::R0),
-                    thread_regs_addr_reg: tmp_regs.thread_regs_addr_reg,
-                    tmp_host_cpsr_reg: tmp_regs.host_cpsr_reg,
-                }
-                .into();
-                inst.skip = true;
-                *buf.get_inst_mut(i) = inst;
-                for j in Reg::R0 as u8..Reg::None as u8 {
-                    if guest_regs.is_reserved(Reg::from(j)) {
-                        buf.get_inst_mut(i + j as usize).skip = false;
-                    }
-                }
-                i += Reg::SPSR as usize - 1;
             }
             i += 1;
         }
@@ -132,6 +132,10 @@ impl BasicBlock {
             self.regs_live_ranges.resize(size + 1, BlockRegSet::new());
         } else {
             self.regs_live_ranges[size].clear();
+        }
+        if !self.dirty_guest_regs.is_empty() {
+            self.regs_live_ranges[size].add_guests(self.dirty_guest_regs);
+            self.regs_live_ranges[size] += tmp_regs.thread_regs_addr_reg;
         }
     }
 
@@ -166,96 +170,6 @@ impl BasicBlock {
         }
     }
 
-    fn flush_reg_io_consolidation(&mut self, buf: &mut BlockAsmBuf, tmp_regs: &BlockTmpRegs, from_reg: Reg, to_reg: Reg, save: bool, start_i: usize, end_i: usize) {
-        for i in start_i..end_i + 1 {
-            let inst = buf.get_inst_mut(i);
-            if !inst.skip {
-                inst.skip = true;
-            }
-        }
-        self.regs_live_ranges[end_i - self.block_entry_start] = self.regs_live_ranges[start_i - self.block_entry_start];
-        let mut thread_regs_addr_reg = tmp_regs.thread_regs_addr_reg;
-        if from_reg as u8 > 0 {
-            thread_regs_addr_reg = tmp_regs.operand_imm_reg;
-            let previous_inst = buf.get_inst_mut(end_i - 1);
-            *previous_inst = Alu::alu3(
-                AluOp::Add,
-                [thread_regs_addr_reg.into(), tmp_regs.thread_regs_addr_reg.into(), (from_reg as u32 * 4).into()],
-                AluSetCond::None,
-                false,
-            )
-            .into();
-            self.regs_live_ranges[end_i - self.block_entry_start - 1] = self.regs_live_ranges[start_i - self.block_entry_start];
-            self.regs_live_ranges[end_i - self.block_entry_start] += thread_regs_addr_reg;
-        }
-        let end_inst = buf.get_inst_mut(end_i);
-        let op = if save { TransferOp::Write } else { TransferOp::Read };
-        let mut guest_regs = RegReserve::new();
-        for reg in from_reg as u8..to_reg as u8 + 1 {
-            guest_regs += Reg::from(reg);
-        }
-        *end_inst = GuestTransferMultiple {
-            op,
-            addr_reg: thread_regs_addr_reg,
-            addr_out_reg: thread_regs_addr_reg,
-            gp_regs: guest_regs,
-            fixed_regs: RegReserve::new(),
-            write_back: false,
-            pre: false,
-            add_to_base: true,
-        }
-        .into();
-    }
-
-    pub fn consolidate_reg_io(&mut self, buf: &mut BlockAsmBuf, tmp_regs: &BlockTmpRegs) {
-        let mut count = 0;
-        let mut target_reg = Reg::None;
-        let mut target_save = false;
-        let mut last_reg = Reg::None;
-        let mut was_save = None;
-        let mut start_i = 0;
-
-        for i in self.block_entry_start..self.block_entry_end + 1 {
-            let inst = buf.get_inst_mut(i);
-            if !inst.skip {
-                let mut flush = true;
-                match &inst.inst_type {
-                    BlockInstType::SaveReg(inner) => {
-                        if was_save == Some(true) && inner.guest_reg <= Reg::R12 && last_reg as u8 + 1 == inner.guest_reg as u8 {
-                            count += 1;
-                            flush = false;
-                            target_reg = inner.guest_reg;
-                            target_save = true;
-                        }
-                        last_reg = inner.guest_reg;
-                        was_save = Some(true);
-                    }
-                    BlockInstType::RestoreReg(inner) => {
-                        if was_save == Some(false) && inner.guest_reg <= Reg::R12 && last_reg as u8 + 1 == inner.guest_reg as u8 {
-                            count += 1;
-                            flush = false;
-                            target_reg = inner.guest_reg;
-                            target_save = false;
-                        }
-                        last_reg = inner.guest_reg;
-                        was_save = Some(false);
-                    }
-                    _ => {
-                        last_reg = Reg::None;
-                        was_save = None;
-                    }
-                }
-                if flush && count > 0 {
-                    self.flush_reg_io_consolidation(buf, tmp_regs, Reg::from(target_reg as u8 - count), target_reg, target_save, start_i, i - 1);
-                    count = 0;
-                }
-                if count == 0 {
-                    start_i = i;
-                }
-            }
-        }
-    }
-
     pub fn set_required_outputs(&mut self, required_outputs: &BlockRegSet) {
         let last = self.block_entry_end - self.block_entry_start + 1;
         unsafe { *self.regs_live_ranges.get_unchecked_mut(last) = *required_outputs }
@@ -265,9 +179,107 @@ impl BasicBlock {
         unsafe { self.regs_live_ranges.get_unchecked(0) }
     }
 
+    pub fn get_required_inputs_mut(&mut self) -> &mut BlockRegSet {
+        unsafe { self.regs_live_ranges.get_unchecked_mut(0) }
+    }
+
     pub fn get_required_outputs(&self) -> &BlockRegSet {
         let last = self.block_entry_end - self.block_entry_start + 1;
         unsafe { self.regs_live_ranges.get_unchecked(last) }
+    }
+
+    fn emit_guest_regs_io(&mut self, tmp_regs: &BlockTmpRegs, buf: &mut BlockAsmBuf, guest_regs: RegReserve, index: usize, save_reg: bool) {
+        let mut current_reg = Reg::None;
+        let mut reg_length = 0;
+
+        let flush = |current_reg: Reg, reg_length: u8, buf: &mut BlockAsmBuf| {
+            if reg_length > 0 && current_reg as u8 - reg_length == 0 {
+                let gp_regs = RegReserve::from((1 << (current_reg as u8 + 1)) - 1);
+                let mut inst = GuestTransferMultiple {
+                    op: if save_reg { TransferOp::Write } else { TransferOp::Read },
+                    addr_reg: tmp_regs.thread_regs_addr_reg,
+                    addr_out_reg: tmp_regs.thread_regs_addr_reg,
+                    gp_regs,
+                    fixed_regs: RegReserve::new(),
+                    write_back: false,
+                    pre: false,
+                    add_to_base: true,
+                }
+                .into();
+                buf.reg_allocator.inst_allocate(&inst, &self.regs_live_ranges[index], &mut buf.opcodes);
+                inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
+            } else if reg_length > 2 {
+                let start_reg = current_reg as u8 - reg_length;
+                let mut guest_regs_mask = (1 << (current_reg as u8 + 1)) - 1;
+                guest_regs_mask &= !((1 << start_reg) - 1);
+                let gp_regs = RegReserve::from(guest_regs_mask);
+
+                let next_live_range = self.regs_live_ranges[index] + tmp_regs.io_offset_reg;
+                let mut base_inst = Alu::alu3(
+                    AluOp::Add,
+                    [tmp_regs.io_offset_reg.into(), tmp_regs.thread_regs_addr_reg.into(), (start_reg as u32 * 4).into()],
+                    AluSetCond::None,
+                    false,
+                )
+                .into();
+                buf.reg_allocator.inst_allocate(&base_inst, &next_live_range, &mut buf.opcodes);
+                base_inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
+
+                let mut inst = GuestTransferMultiple {
+                    op: if save_reg { TransferOp::Write } else { TransferOp::Read },
+                    addr_reg: tmp_regs.io_offset_reg,
+                    addr_out_reg: tmp_regs.io_offset_reg,
+                    gp_regs,
+                    fixed_regs: RegReserve::new(),
+                    write_back: false,
+                    pre: false,
+                    add_to_base: true,
+                }
+                .into();
+                buf.reg_allocator.inst_allocate(&inst, &self.regs_live_ranges[index], &mut buf.opcodes);
+                inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
+            } else {
+                let start_reg = current_reg as u8 - reg_length;
+                for i in 0..reg_length + 1 {
+                    let guest_reg = Reg::from(start_reg + i);
+                    let mut inst = if save_reg {
+                        SaveReg {
+                            guest_reg,
+                            reg_mapped: guest_reg.into(),
+                            thread_regs_addr_reg: tmp_regs.thread_regs_addr_reg,
+                            tmp_host_cpsr_reg: tmp_regs.host_cpsr_reg,
+                        }
+                        .into()
+                    } else {
+                        RestoreReg {
+                            guest_reg,
+                            reg_mapped: guest_reg.into(),
+                            thread_regs_addr_reg: tmp_regs.thread_regs_addr_reg,
+                            tmp_guest_cpsr_reg: tmp_regs.guest_cpsr_reg,
+                        }
+                        .into()
+                    };
+                    buf.reg_allocator.inst_allocate(&inst, &self.regs_live_ranges[index], &mut buf.opcodes);
+                    inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
+                }
+            }
+        };
+
+        for reg in guest_regs {
+            if reg as u8 == current_reg as u8 + 1 {
+                current_reg = reg;
+                reg_length += 1;
+            } else {
+                if current_reg != Reg::None {
+                    flush(current_reg, reg_length, buf);
+                }
+                current_reg = reg;
+                reg_length = 0;
+            }
+        }
+        if current_reg != Reg::None {
+            flush(current_reg, reg_length, buf);
+        }
     }
 
     fn emit_opcode(&self, inst_index: usize, buf: &mut BlockAsmBuf) {
@@ -300,27 +312,100 @@ impl BasicBlock {
         }
     }
 
-    pub fn emit_opcodes(&mut self, buf: &mut BlockAsmBuf) {
-        buf.reg_allocator.init_inputs(self.get_required_inputs());
+    pub fn emit_opcodes<const FIRST_BLOCK: bool>(&mut self, tmp_regs: &BlockTmpRegs, buf: &mut BlockAsmBuf, mov_thread_regs_addr_reg_inst: &mut BlockInst) {
+        let mut required_inputs = *self.get_required_inputs();
+        let needs_thread_regs_addr_reg = required_inputs.contains(tmp_regs.thread_regs_addr_reg);
+        let required_guest_regs = required_inputs.get_guests();
+        required_inputs.remove_guests(required_guest_regs);
+        required_inputs -= tmp_regs.thread_regs_addr_reg;
+        buf.reg_allocator.init_inputs(&required_inputs);
 
-        for inst_index in self.block_entry_start..self.block_entry_end {
+        let initialize_guest_regs = |block: &mut Self, buf: &mut BlockAsmBuf, mov_thread_regs_addr_reg_inst: &mut BlockInst, index: usize| {
+            if !required_guest_regs.is_empty() || needs_thread_regs_addr_reg {
+                let regs_live_range = block.regs_live_ranges[index] + tmp_regs.thread_regs_addr_reg;
+                buf.reg_allocator.inst_allocate(mov_thread_regs_addr_reg_inst, &regs_live_range, &mut buf.opcodes);
+                mov_thread_regs_addr_reg_inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
+
+                debug_assert!(!required_guest_regs.is_reserved(Reg::PC) && !required_guest_regs.is_reserved(Reg::CPSR));
+                block.emit_guest_regs_io(tmp_regs, buf, required_guest_regs.get_gp_regs(), index, false);
+                for guest_reg in required_guest_regs & (reg_reserve!(Reg::SP, Reg::LR)) {
+                    let mut inst = RestoreReg {
+                        guest_reg,
+                        reg_mapped: guest_reg.into(),
+                        thread_regs_addr_reg: tmp_regs.thread_regs_addr_reg,
+                        tmp_guest_cpsr_reg: tmp_regs.guest_cpsr_reg,
+                    }
+                    .into();
+                    buf.reg_allocator.inst_allocate(&inst, &regs_live_range, &mut buf.opcodes);
+                    inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
+                }
+            }
+        };
+
+        if !FIRST_BLOCK {
+            initialize_guest_regs(self, buf, mov_thread_regs_addr_reg_inst, 0);
+        }
+
+        let mut guest_initialized = false;
+        for (i, inst_index) in (self.block_entry_start..self.block_entry_end).enumerate() {
             let inst = unsafe { buf.insts.get_unchecked_mut(inst_index) };
             if inst.skip {
                 continue;
+            }
+
+            if FIRST_BLOCK && !guest_initialized {
+                if let BlockInstType::RestoreReg(inner) = &inst.inst_type {
+                    if inner.guest_reg == Reg::CPSR {
+                        initialize_guest_regs(self, buf, mov_thread_regs_addr_reg_inst, i);
+                        guest_initialized = true;
+                    }
+                }
             }
 
             self.emit_opcode(inst_index, buf);
         }
 
         let last_inst = buf.get_inst(self.block_entry_end);
+        let mut last_inst_i = self.block_entry_end - self.block_entry_start;
         let last_inst_is_branch = matches!(&last_inst.inst_type, BlockInstType::Branch(_));
         if !last_inst_is_branch {
             debug_assert!(!last_inst.skip);
+
+            if FIRST_BLOCK && !guest_initialized {
+                if let BlockInstType::RestoreReg(inner) = &last_inst.inst_type {
+                    if inner.guest_reg == Reg::CPSR {
+                        initialize_guest_regs(self, buf, mov_thread_regs_addr_reg_inst, last_inst_i);
+                        guest_initialized = true;
+                    }
+                }
+            }
+
             self.emit_opcode(self.block_entry_end, buf);
+            last_inst_i += 1;
+        }
+
+        debug_assert!(!FIRST_BLOCK || guest_initialized);
+
+        if !self.dirty_guest_regs.is_empty() {
+            self.emit_guest_regs_io(tmp_regs, buf, self.dirty_guest_regs.get_gp_regs(), last_inst_i, true);
+            for guest_reg in self.dirty_guest_regs & (reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR)) {
+                let mut inst = SaveReg {
+                    guest_reg,
+                    reg_mapped: guest_reg.into(),
+                    thread_regs_addr_reg: tmp_regs.thread_regs_addr_reg,
+                    tmp_host_cpsr_reg: tmp_regs.host_cpsr_reg,
+                }
+                .into();
+                buf.reg_allocator.inst_allocate(&inst, &self.regs_live_ranges[last_inst_i], &mut buf.opcodes);
+                inst.emit_opcode(&buf.reg_allocator, &mut buf.opcodes, &mut buf.placeholders);
+            }
         }
 
         if !self.exit_blocks.is_empty() {
-            let required_outputs = *self.get_required_outputs();
+            let mut required_outputs = *self.get_required_outputs();
+            required_outputs.remove_guests(RegReserve::gp() + Reg::SP + Reg::LR);
+            required_outputs -= tmp_regs.thread_regs_addr_reg;
+
             buf.reg_allocator.ensure_global_mappings(required_outputs, &mut buf.opcodes);
         }
 

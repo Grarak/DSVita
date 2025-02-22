@@ -45,10 +45,12 @@ macro_rules! alu2_op0 {
 }
 
 pub struct BlockTmpRegs {
+    pub guest_regs_ptr: usize,
     pub thread_regs_addr_reg: BlockReg,
     pub host_cpsr_reg: BlockReg,
     pub guest_cpsr_reg: BlockReg,
     pub operand_imm_reg: BlockReg,
+    pub io_offset_reg: BlockReg,
     shift_imm_reg: BlockReg,
     func_call_reg: BlockReg,
 }
@@ -85,6 +87,7 @@ impl BlockAsm {
         let tmp_operand_imm_reg = BlockReg::Any(Reg::SPSR as u16 + 4);
         let tmp_shift_imm_reg = BlockReg::Any(Reg::SPSR as u16 + 5);
         let tmp_func_call_reg = BlockReg::Any(Reg::SPSR as u16 + 6);
+        let tmp_io_offset_reg = BlockReg::Any(Reg::SPSR as u16 + 7);
         let mut instance = BlockAsm {
             cache,
             buf,
@@ -92,18 +95,20 @@ impl BlockAsm {
             is_thumb,
 
             // First couple any regs are reserved for guest mapping
-            any_reg_count: Reg::SPSR as u16 + 7,
+            any_reg_count: Reg::SPSR as u16 + 8,
             freed_any_regs: NoHashSet::default(),
             label_count: 0,
             used_labels: NoHashSet::default(),
 
             tmp_regs: BlockTmpRegs {
+                guest_regs_ptr: guest_regs_ptr as usize,
                 thread_regs_addr_reg,
                 host_cpsr_reg: tmp_host_cpsr_reg,
                 guest_cpsr_reg: tmp_guest_cpsr_reg,
                 operand_imm_reg: tmp_operand_imm_reg,
                 shift_imm_reg: tmp_shift_imm_reg,
                 func_call_reg: tmp_func_call_reg,
+                io_offset_reg: tmp_io_offset_reg,
             },
 
             cond_block_end_label_stack: Vec::new(),
@@ -115,15 +120,8 @@ impl BlockAsm {
         };
 
         instance.insert_inst(Generic::Prologue);
-
         instance.sub(BlockReg::Fixed(Reg::SP), BlockReg::Fixed(Reg::SP), ANY_REG_LIMIT as u32 * 4); // Reserve for spilled registers
-
-        instance.mov(thread_regs_addr_reg, guest_regs_ptr as u32);
-        for guest_reg in RegReserve::gp() + Reg::SP + Reg::LR {
-            instance.restore_reg(guest_reg);
-        }
         instance.restore_reg(Reg::CPSR);
-
         instance
     }
 
@@ -737,18 +735,15 @@ impl BlockAsm {
         self.insert_inst(Generic::ForceEnd)
     }
 
-    fn resolve_guest_regs(&mut self, guest_regs_dirty: RegReserve, block_indices: &[usize]) {
+    fn resolve_guest_regs(&mut self, block_indices: &[usize]) {
         for &i in block_indices {
             let basic_block = &mut self.cache.basic_blocks[i];
-            let sum_guest_regs_input_dirty = basic_block.guest_regs_input_dirty + guest_regs_dirty;
-            if !basic_block.guest_regs_resolved || sum_guest_regs_input_dirty != basic_block.guest_regs_input_dirty {
+            if !basic_block.guest_regs_resolved {
                 self.buf.reachable_blocks.insert(i);
                 basic_block.guest_regs_resolved = true;
-                basic_block.guest_regs_input_dirty = sum_guest_regs_input_dirty;
-                basic_block.init_guest_regs(self.buf);
+                basic_block.init_guest_regs(&self.tmp_regs, self.buf);
                 let exit_blocks = unsafe { slice::from_raw_parts(basic_block.exit_blocks.as_ptr(), basic_block.exit_blocks.len()) };
-                let guest_regs_dirty = basic_block.guest_regs_output_dirty;
-                self.resolve_guest_regs(guest_regs_dirty, exit_blocks);
+                self.resolve_guest_regs(exit_blocks);
             }
         }
     }
@@ -760,19 +755,22 @@ impl BlockAsm {
             }
 
             let basic_block = unsafe { self.cache.basic_blocks.get_unchecked_mut(i) };
-            let sum_required_outputs = *basic_block.get_required_outputs() + required_outputs;
+
+            let mut sum_required_outputs = *basic_block.get_required_outputs() + required_outputs;
             if !basic_block.io_resolved || sum_required_outputs != basic_block.get_required_outputs() {
                 basic_block.io_resolved = true;
                 basic_block.set_required_outputs(&sum_required_outputs);
                 basic_block.init_resolve_io(self.buf);
                 let enter_blocks = unsafe { slice::from_raw_parts(basic_block.enter_blocks.as_ptr(), basic_block.enter_blocks.len()) };
-                let required_inputs = unsafe { (basic_block.get_required_inputs() as *const BlockRegSet).as_ref_unchecked() };
-                self.resolve_io(required_inputs, enter_blocks);
+                let mut required_inputs = *basic_block.get_required_inputs();
+                required_inputs.remove_guests(RegReserve::gp() + Reg::SP + Reg::LR);
+                required_inputs -= self.tmp_regs.thread_regs_addr_reg;
+                self.resolve_io(&required_inputs, enter_blocks);
             }
         }
     }
 
-    fn assemble_basic_blocks(&mut self) -> usize {
+    fn create_basic_blocks(&mut self) -> usize {
         #[derive(Default)]
         struct BasicBlockData {
             start: u16,
@@ -781,7 +779,7 @@ impl BlockAsm {
         }
         let mut basic_block_data = BasicBlockData::default();
 
-        let mut basic_blocks_label_mapping = NoHashMap::<u16, usize>::default();
+        self.cache.basic_block_label_mapping.clear();
         let mut basic_blocks_unlikely_label_mapping = NoHashMap::<u16, usize>::default();
         let mut basic_blocks_len = 0;
         let mut basic_blocks_unlikely_len = 0;
@@ -790,7 +788,7 @@ impl BlockAsm {
             let (basic_blocks, basic_blocks_len, basic_block_label_mapping) = if basic_block_data.last_label_unlikely {
                 (&mut self.cache.basic_blocks_unlikely, &mut basic_blocks_unlikely_len, &mut basic_blocks_unlikely_label_mapping)
             } else {
-                (&mut self.cache.basic_blocks, &mut basic_blocks_len, &mut basic_blocks_label_mapping)
+                (&mut self.cache.basic_blocks, &mut basic_blocks_len, &mut self.cache.basic_block_label_mapping)
             };
 
             let handle_label = |buf,
@@ -869,7 +867,7 @@ impl BlockAsm {
             let (basic_blocks, basic_blocks_len, basic_block_label_mapping) = if basic_block_data.last_label_unlikely {
                 (&mut self.cache.basic_blocks_unlikely, &mut basic_blocks_unlikely_len, &mut basic_blocks_unlikely_label_mapping)
             } else {
-                (&mut self.cache.basic_blocks, &mut basic_blocks_len, &mut basic_blocks_label_mapping)
+                (&mut self.cache.basic_blocks, &mut basic_blocks_len, &mut self.cache.basic_block_label_mapping)
             };
             *basic_blocks_len += 1;
             if *basic_blocks_len as usize > basic_blocks.len() {
@@ -882,7 +880,7 @@ impl BlockAsm {
         }
 
         for (label, block_index) in basic_blocks_unlikely_label_mapping {
-            basic_blocks_label_mapping.insert(label, block_index + basic_blocks_len as usize);
+            self.cache.basic_block_label_mapping.insert(label, block_index + basic_blocks_len as usize);
         }
         if self.cache.basic_blocks.len() < (basic_blocks_len + basic_blocks_unlikely_len) as usize {
             self.cache.basic_blocks.resize_with((basic_blocks_len + basic_blocks_unlikely_len) as usize, BasicBlock::new);
@@ -890,8 +888,11 @@ impl BlockAsm {
         self.cache.basic_blocks[basic_blocks_len as usize..(basic_blocks_len + basic_blocks_unlikely_len) as usize]
             .swap_with_slice(&mut self.cache.basic_blocks_unlikely[..basic_blocks_unlikely_len as usize]);
         basic_blocks_len += basic_blocks_unlikely_len;
+        basic_blocks_len as usize
+    }
 
-        let basic_blocks_len = basic_blocks_len as usize;
+    fn assemble_basic_blocks(&mut self) -> usize {
+        let basic_blocks_len = self.create_basic_blocks();
         unsafe { assert_unchecked(basic_blocks_len <= self.cache.basic_blocks.len()) };
         // Link blocks
         for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
@@ -900,7 +901,7 @@ impl BlockAsm {
 
             match &mut self.buf.get_inst_mut(last_inst_index).inst_type {
                 BlockInstType::Branch(inner) => {
-                    let labelled_block_index = basic_blocks_label_mapping.get(&inner.label.0).unwrap();
+                    let labelled_block_index = self.cache.basic_block_label_mapping.get(&inner.label.0).unwrap();
                     basic_block.exit_blocks.push(*labelled_block_index);
                     inner.block_index = *labelled_block_index;
                     if (inner.fallthrough || cond != Cond::AL) && i + 1 < basic_blocks_len {
@@ -947,36 +948,7 @@ impl BlockAsm {
         }
 
         self.buf.reachable_blocks.clear();
-        self.resolve_guest_regs(RegReserve::new(), &[0]);
-
-        for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
-            if !self.buf.reachable_blocks.contains(i) {
-                continue;
-            }
-
-            let basic_block_start_pc = if IS_DEBUG {
-                let mut basic_block_start_pc = 0;
-                for i in (0..basic_block.block_entry_start + 1).rev() {
-                    match &self.buf.get_inst(i).inst_type {
-                        BlockInstType::Label(inner) => {
-                            if let Some(pc) = inner.guest_pc {
-                                basic_block_start_pc = pc;
-                                break;
-                            }
-                        }
-                        BlockInstType::GuestPc(inner) => {
-                            basic_block_start_pc = inner.0;
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-                basic_block_start_pc
-            } else {
-                0
-            };
-            basic_block.init_insts(self.buf, &self.tmp_regs, basic_block_start_pc);
-        }
+        self.resolve_guest_regs(&[0]);
 
         for i in (0..basic_blocks_len).rev() {
             if !self.buf.reachable_blocks.contains(i) {
@@ -994,21 +966,13 @@ impl BlockAsm {
             }
 
             basic_block.remove_dead_code(self.buf);
-            basic_block.consolidate_reg_io(self.buf, &self.tmp_regs);
         }
-
-        self.buf.basic_block_label_mapping = basic_blocks_label_mapping;
 
         basic_blocks_len
     }
 
     pub fn emit_opcodes(&mut self) -> usize {
         let basic_blocks_len = self.assemble_basic_blocks();
-
-        if IS_DEBUG && !self.cache.basic_blocks[0].get_required_inputs().get_guests().is_empty() {
-            println!("inputs as requirement {:?}", self.cache.basic_blocks[0].get_required_inputs().get_guests());
-            unsafe { BLOCK_LOG = true };
-        }
 
         if IS_DEBUG && unsafe { BLOCK_LOG } {
             for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter().enumerate() {
@@ -1037,22 +1001,17 @@ impl BlockAsm {
 
             input_regs += *basic_block.get_required_inputs();
         }
-        let gp_guest_regs = input_regs.get_guests().get_gp_regs();
-        for guest_reg in gp_guest_regs {
-            self.buf.reg_allocator.global_mapping[guest_reg as usize] = guest_reg;
-        }
+        input_regs.remove_guests(RegReserve::gp() + Reg::SP + Reg::LR);
+        input_regs -= self.tmp_regs.thread_regs_addr_reg;
 
-        let mut non_input_guest_regs = input_regs;
-        non_input_guest_regs.remove_guests(gp_guest_regs);
-        let mut free_input_regs = (!input_regs.get_guests()).get_gp_regs();
-        for reg in non_input_guest_regs.iter_any() {
+        let mut free_input_regs = RegReserve::gp() + Reg::LR;
+        for reg in input_regs.iter_any() {
             let free_input_reg = free_input_regs.pop().unwrap_or(Reg::None);
             self.buf.reg_allocator.global_mapping[reg as usize] = free_input_reg;
         }
 
         if IS_DEBUG && unsafe { BLOCK_LOG } {
-            println!("global input regs {input_regs:?} {:?}", input_regs.get_guests().get_gp_regs());
-            println!("global not guests {non_input_guest_regs:?}");
+            println!("global input regs {input_regs:?}");
         }
 
         self.buf.opcodes.clear();
@@ -1061,6 +1020,9 @@ impl BlockAsm {
         }
         self.buf.clear_placeholders();
 
+        let opcodes_len = self.buf.opcodes.len();
+        unsafe { *self.buf.block_opcode_offsets.get_unchecked_mut(0) = opcodes_len };
+
         #[cfg(debug_assertions)]
         {
             if unsafe { BLOCK_LOG } {
@@ -1068,18 +1030,26 @@ impl BlockAsm {
             }
         }
 
-        for (i, basic_block) in self.cache.basic_blocks[..basic_blocks_len].iter_mut().enumerate() {
-            let opcodes_len = self.buf.opcodes.len();
-            unsafe { *self.buf.block_opcode_offsets.get_unchecked_mut(i) = opcodes_len };
+        let mut mov_thread_regs_addr_reg_inst = Alu::alu2(
+            AluOp::Mov,
+            [self.tmp_regs.thread_regs_addr_reg.into(), (self.tmp_regs.guest_regs_ptr as u32).into()],
+            AluSetCond::None,
+            false,
+        )
+        .into();
+        self.cache.basic_blocks[0].emit_opcodes::<true>(&self.tmp_regs, self.buf, &mut mov_thread_regs_addr_reg_inst);
 
-            if !self.buf.reachable_blocks.contains(i) {
+        for (i, basic_block) in self.cache.basic_blocks[1..basic_blocks_len].iter_mut().enumerate() {
+            let opcodes_len = self.buf.opcodes.len();
+            unsafe { *self.buf.block_opcode_offsets.get_unchecked_mut(i + 1) = opcodes_len };
+            if !self.buf.reachable_blocks.contains(i + 1) {
                 continue;
             }
 
             if IS_DEBUG && unsafe { BLOCK_LOG } {
                 println!("emit opcodes {}", i + 1);
             }
-            basic_block.emit_opcodes(self.buf);
+            basic_block.emit_opcodes::<false>(&self.tmp_regs, self.buf, &mut mov_thread_regs_addr_reg_inst);
         }
 
         #[cfg(debug_assertions)]

@@ -209,7 +209,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let fast_read_addr_masked_reg = block_asm.new_reg();
 
         let slow_read_label = block_asm.new_label();
-        let fast_mem_mark_dirty_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
         block_asm.branch(slow_read_label, Cond::NV);
@@ -239,11 +238,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov(op0, (fast_read_value_reg, ShiftType::Ror, fast_read_addr_masked_reg));
         }
 
-        block_asm.mark_reg_dirty(op0, false);
-        if amount == MemoryAmount::Double {
-            block_asm.mark_reg_dirty(Reg::from(op0 as u8 + 1), false);
-        }
-        block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
+        block_asm.branch_fallthrough(continue_label, Cond::AL);
         block_asm.branch(slow_read_label, Cond::AL);
 
         block_asm.label_unlikely(slow_read_label);
@@ -274,12 +269,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.restore_reg(Reg::CPSR);
 
         block_asm.branch(continue_label, Cond::AL);
-
-        block_asm.label(fast_mem_mark_dirty_label);
-        block_asm.mark_reg_dirty(op0, true);
-        if amount == MemoryAmount::Double {
-            block_asm.mark_reg_dirty(Reg::from(op0 as u8 + 1), true);
-        }
 
         block_asm.label(continue_label);
 
@@ -316,7 +305,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
 
         let slow_label = block_asm.new_label();
-        let fast_mem_mark_dirty_label = block_asm.new_label();
         let continue_label = block_asm.new_label();
 
         let cpsr_backup_reg = block_asm.new_reg();
@@ -475,11 +463,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     block_asm.add(op0, base_reg, op0);
                 }
 
-                for guest_reg in rlist {
-                    block_asm.mark_reg_dirty(guest_reg, false);
-                }
-
-                block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
+                block_asm.branch_fallthrough(continue_label, Cond::AL);
                 block_asm.branch(slow_label, Cond::AL);
             }
 
@@ -539,13 +523,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     block_asm.force_end();
                 }
                 CpuType::ARM7 => block_asm.branch(continue_label, Cond::AL),
-            }
-
-            if !inst_info.op.mem_is_write() {
-                block_asm.label(fast_mem_mark_dirty_label);
-                for guest_reg in rlist {
-                    block_asm.mark_reg_dirty(guest_reg, true);
-                }
             }
 
             block_asm.label(continue_label);

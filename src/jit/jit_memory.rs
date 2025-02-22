@@ -387,6 +387,7 @@ impl JitMemory {
             fast_mem_begin -= 4;
         }
         if !found {
+            eprintln!("Couldn't find fast mem begin");
             return false;
         }
         let mut fast_mem_end = *host_pc + 4;
@@ -401,6 +402,7 @@ impl JitMemory {
             fast_mem_end += 4;
         }
         if !found {
+            eprintln!("Couldn't find fast mem end");
             return false;
         }
 

@@ -300,9 +300,9 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
     }
 
     let (jit_entry, flushed) = {
-        // println!("{CPU:?} {thumb} emit code block {guest_pc:x}");
-        // unsafe { BLOCK_LOG = guest_pc == 0x200675e };
-
+        // println!("{CPU:?} emit code block {guest_pc:x}");
+        // unsafe { BLOCK_LOG = guest_pc == 0x2000a60 };
+        
         let guest_regs_ptr = get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr();
         let host_sp_ptr = ptr::addr_of_mut!(asm.runtime_data.host_sp);
         let mut block_asm = unsafe { BlockAsm::new(guest_regs_ptr, host_sp_ptr, mem::transmute(&mut asm.basic_blocks_cache), mem::transmute(&mut asm.block_asm_buf), thumb) };
@@ -319,8 +319,8 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
             asm.jit_buf.current_pc = guest_pc + (i << pc_shift) as u32;
             debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
 
-            // if asm.jit_buf.current_pc == 0x207616c {
-            //     block_asm.bkpt(1);
+            // if asm.jit_buf.current_pc == 0x37f97cc {
+            //     unsafe { BLOCK_LOG = true };
             // }
 
             emit_func(asm, &mut block_asm);

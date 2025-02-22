@@ -360,6 +360,7 @@ pub struct BlockLabel(u16);
 pub struct BasicBlocksCache {
     pub basic_blocks: Vec<BasicBlock>,
     pub basic_blocks_unlikely: Vec<BasicBlock>,
+    pub basic_block_label_mapping: NoHashMap<u16, usize>,
 }
 
 impl BasicBlocksCache {
@@ -367,6 +368,7 @@ impl BasicBlocksCache {
         BasicBlocksCache {
             basic_blocks: Vec::new(),
             basic_blocks_unlikely: Vec::new(),
+            basic_block_label_mapping: NoHashMap::default(),
         }
     }
 }
@@ -381,7 +383,6 @@ pub struct BlockAsmPlaceholders {
 #[derive(Default)]
 pub struct BlockAsmBuf {
     pub insts: Vec<BlockInst>,
-    pub basic_block_label_mapping: NoHashMap<u16, usize>,
     pub guest_branches_mapping: NoHashMap<u32, BlockLabel>,
     pub reachable_blocks: BitSet,
     pub reg_allocator: BlockRegAllocator,
