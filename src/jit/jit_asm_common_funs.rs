@@ -9,6 +9,7 @@ macro_rules! exit_guest_context {
         std::hint::unreachable_unchecked();
     }};
 }
+
 pub(crate) use exit_guest_context;
 
 use crate::core::emu::{get_jit, get_regs_mut};
@@ -307,9 +308,9 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         block_asm.epilogue_previous_state();
 
         let jit_entry_addr = get_jit!(asm.emu).jit_memory_map.get_jit_entry(target_pc);
-        block_asm.mov(Reg::R0, jit_entry_addr as u32);
-        block_asm.load_u32(Reg::R0, Reg::R0, 0);
-        block_asm.call_no_return(Reg::R0);
+        block_asm.mov(BlockReg::Fixed(Reg::R0), jit_entry_addr as u32);
+        block_asm.load_u32(BlockReg::Fixed(Reg::R0), BlockReg::Fixed(Reg::R0), 0);
+        block_asm.call_no_return(BlockReg::Fixed(Reg::R0));
     }
 
     pub extern "C" fn debug_push_return_stack(current_pc: u32, lr_pc: u32, stack_size: u8) {
@@ -337,6 +338,6 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
     }
 
     pub extern "C" fn debug_branch_imm(current_pc: u32, target_pc: u32) {
-        println!("{CPU:?} branch imm from {current_pc:x} to {target_pc:x}")
+        println!("{CPU:?} branch imm from {current_pc:x} to {target_pc:x}");
     }
 }

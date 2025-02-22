@@ -1,12 +1,13 @@
 use bindgen::Formatter;
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
 fn main() {
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    println!("cargo:rerun-if-env-changed=OUT_DIR");
 
     let build_profile_name = out_path.to_str().unwrap().split(std::path::MAIN_SEPARATOR).nth_back(3).unwrap();
     let build_profile_name_file = out_path.join("build_profile_name");
@@ -14,16 +15,22 @@ fn main() {
 
     let target = env::var("TARGET").unwrap();
     if target != "armv7-sony-vita-newlibeabihf" {
+        println!("cargo:rerun-if-env-changed=SYSROOT");
         if let Ok(sysroot) = env::var("SYSROOT") {
             println!("cargo:rustc-link-arg=--sysroot={sysroot}");
         }
+        let mut cache_build = cc::Build::new();
+        if Path::new("/usr/bin/arm-linux-gnu-gcc").exists() {
+            cache_build.compiler("/usr/bin/arm-linux-gnu-gcc");
+        }
         // Running IDE on anything other than linux will fail, so ignore compile error
-        let _ = cc::Build::new().file("builtins/cache.c").compiler("/usr/bin/arm-linux-gnu-gcc").try_compile("cache").ok();
+        let _ = cache_build.file("builtins/cache.c").try_compile("cache").ok();
     }
 
     let num_jobs = env::var("NUM_JOBS").unwrap();
 
     let vitasdk_path = env::var("VITASDK").map(PathBuf::from);
+    println!("cargo:rerun-if-env-changed=VITASDK");
     if vitasdk_path.is_err() {
         return;
     }
@@ -51,7 +58,9 @@ fn main() {
         bindings.rust_target(bindgen::RustTarget::Nightly).generate().unwrap().write_to_file(bindings_file).unwrap();
 
         println!("cargo:rustc-link-search=native={vitasdk_lib_path:?}");
-        println!("cargo:rustc-link-lib=static=imgui");
+        if target == "armv7-sony-vita-newlibeabihf" {
+            println!("cargo:rustc-link-lib=static=imgui");
+        }
     }
 
     {
