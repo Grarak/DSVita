@@ -428,7 +428,7 @@ impl SoundNitro {
 
     fn is_capture_playing(&self, chan_id: usize, emu: &Emu) -> bool {
         let cap_cnt = SoundCapCnt::from(get_spu!(emu).get_snd_cap_cnt(chan_id));
-        bool::from(cap_cnt.cap_start_status())
+        cap_cnt.start_status()
     }
 
     fn update_hardware_channels(&mut self, emu: &mut Emu) {
@@ -810,14 +810,14 @@ impl SoundNitro {
                         if mask_cap & 0x1 != 0 {
                             let spu = get_spu_mut!(emu);
                             let mut cap_cnt = SoundCapCnt::from(spu.get_snd_cap_cnt(0));
-                            cap_cnt.set_cap_start_status(true);
+                            cap_cnt.set_start_status(true);
                             spu.set_snd_cap_cnt(0, u8::from(cap_cnt));
                         }
 
                         if mask_cap & 0x2 != 0 {
                             let spu = get_spu_mut!(emu);
                             let mut cap_cnt = SoundCapCnt::from(spu.get_snd_cap_cnt(1));
-                            cap_cnt.set_cap_start_status(true);
+                            cap_cnt.set_start_status(true);
                             spu.set_snd_cap_cnt(1, u8::from(cap_cnt));
                         }
 
