@@ -3,7 +3,7 @@ use crate::core::emu::Emu;
 use crate::core::CpuType;
 use crate::jit::reg::Reg;
 use crate::logging::debug_println;
-use crate::DEBUG_LOG;
+use crate::{DEBUG_LOG, IS_DEBUG};
 use bilge::prelude::*;
 use std::{mem, ptr};
 
@@ -148,7 +148,7 @@ impl ThreadRegs {
 
     #[inline]
     pub fn set_spsr_with_flags(&mut self, value: u32, flags: u8) {
-        if DEBUG_LOG {
+        if IS_DEBUG {
             let mode = u8::from(Cpsr::from(self.cpsr).mode());
             debug_assert_ne!(mode, 0x10);
             debug_assert_ne!(mode, 0x1F);

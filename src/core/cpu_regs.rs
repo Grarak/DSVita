@@ -44,7 +44,7 @@ impl From<u8> for InterruptFlag {
     }
 }
 
-struct InterruptFlags(u32);
+pub struct InterruptFlags(pub u32);
 
 impl Debug for InterruptFlags {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

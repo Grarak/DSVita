@@ -13,7 +13,7 @@ use crate::jit::reg::Reg;
 use crate::jit::{Cond, MemoryAmount};
 use crate::logging::debug_println;
 use crate::mmap::{flush_icache, Mmap, PAGE_SHIFT, PAGE_SIZE};
-use crate::settings::Settings;
+use crate::settings::{Arm7Emu, Settings};
 use crate::utils;
 use crate::utils::{HeapMem, HeapMemU8};
 use std::collections::VecDeque;
@@ -168,12 +168,12 @@ impl JitMemory {
         let jit_memory_map = JitMemoryMap::new(&jit_entries, &jit_live_ranges);
         JitMemory {
             mem: Mmap::executable("jit", JIT_MEMORY_SIZE).unwrap(),
-            arm9_data: if settings.arm7_hle() {
+            arm9_data: if settings.arm7_hle() == Arm7Emu::Hle {
                 JitMemoryMetadata::new(JIT_MEMORY_SIZE, 0, JIT_MEMORY_SIZE)
             } else {
                 JitMemoryMetadata::new(JIT_ARM9_MEMORY_SIZE, 0, JIT_ARM9_MEMORY_SIZE)
             },
-            arm7_data: if settings.arm7_hle() {
+            arm7_data: if settings.arm7_hle() == Arm7Emu::Hle {
                 JitMemoryMetadata::new(0, 0, 0)
             } else {
                 JitMemoryMetadata::new(JIT_ARM7_MEMORY_SIZE, JIT_ARM9_MEMORY_SIZE, JIT_MEMORY_SIZE)

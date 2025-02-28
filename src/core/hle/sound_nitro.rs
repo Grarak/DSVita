@@ -1,6 +1,6 @@
 use crate::core::cycle_manager::{CycleManager, EventType};
 use crate::core::emu::{get_arm7_hle_mut, get_cm_mut, get_spu, get_spu_mut, Emu};
-use crate::core::hle::arm7_hle::Arm7Hle;
+use crate::core::hle::arm7_hle::{Arm7Hle, IpcFifoTag};
 use crate::core::hle::bios::{PITCH_TABLE, VOLUME_TABLE};
 use crate::core::spu::{MainSoundCnt, SoundCapCnt, SoundChannelFormat, SoundCnt, CHANNEL_COUNT};
 use crate::core::CpuType::ARM7;
@@ -229,7 +229,7 @@ impl SoundNitro {
             return;
         }
 
-        Arm7Hle::send_ipc_fifo(0x7, alarm_id as u32 | (alarm.param << 8), 0, emu);
+        Arm7Hle::send_ipc_fifo(IpcFifoTag::Sound, alarm_id as u32 | (alarm.param << 8), false, emu);
 
         let delay = alarm.repeat;
         if delay != 0 {
@@ -241,7 +241,7 @@ impl SoundNitro {
 
     fn is_channel_playing(&self, chan_id: usize, emu: &Emu) -> bool {
         let cnt = SoundCnt::from(get_spu!(emu).get_cnt(chan_id));
-        bool::from(cnt.start_status())
+        cnt.start_status()
     }
 
     fn stop_channel(chan_id: usize, hold: bool, emu: &mut Emu) {
@@ -314,8 +314,8 @@ impl SoundNitro {
 
         let mut cnt = SoundCnt::from(0);
         cnt.set_format(u2::new(SoundChannelFormat::PsgNoise as u8));
-        cnt.set_wave_duty(u3::new(duty));
-        cnt.set_panning(u7::new(pan as u8));
+        cnt.set_wave_duty(u3::new(duty & 0x7));
+        cnt.set_panning(u7::new((pan & 127) as u8));
         cnt.set_volume_div(u2::new(vol_div));
         cnt.set_volume_mul(u7::new(vol as u8));
 
@@ -1123,7 +1123,7 @@ impl SoundNitro {
                     let swar_num = data[0x02];
 
                     let swar = emu.mem_read::<{ ARM7 }, u32>(sbnk + 0x18 + ((swar_num as u32) << 3));
-                    if swar == 0 {
+                    if swar == 0 || swar >= 0x03000000 {
                         return false;
                     }
 
@@ -1142,7 +1142,7 @@ impl SoundNitro {
                     swav
                 };
 
-                if swav == 0 {
+                if swav == 0 || swav >= 0x03000000 {
                     return false;
                 }
 
@@ -1415,7 +1415,7 @@ impl SoundNitro {
                 let val2 = val2 as i16;
 
                 let cnt = self.update_counter();
-                let mut res = ((val2 as i32 - val1 as i32) + 1) * cnt as i32;
+                let mut res = ((val2 as i32 - val1 as i32) + 1).wrapping_mul(cnt as i32);
                 res = val1 as i32 + (res >> 16);
                 res as u32
             }
@@ -1594,26 +1594,26 @@ impl SoundNitro {
                                 0xB0 => emu.mem_write::<{ ARM7 }, _>(paramaddr, param as u16),
                                 0xB1 => {
                                     let val = emu.mem_read::<{ ARM7 }, u16>(paramaddr) as i16;
-                                    emu.mem_write::<{ ARM7 }, _>(paramaddr, (val + param) as u16);
+                                    emu.mem_write::<{ ARM7 }, _>(paramaddr, val.wrapping_add(param) as u16);
                                 }
                                 0xB2 => {
                                     let val = emu.mem_read::<{ ARM7 }, u16>(paramaddr) as i16;
-                                    emu.mem_write::<{ ARM7 }, _>(paramaddr, (val - param) as u16);
+                                    emu.mem_write::<{ ARM7 }, _>(paramaddr, val.wrapping_sub(param) as u16);
                                 }
                                 0xB3 => {
                                     let val = emu.mem_read::<{ ARM7 }, u16>(paramaddr) as i16;
-                                    emu.mem_write::<{ ARM7 }, _>(paramaddr, (val * param) as u16);
+                                    emu.mem_write::<{ ARM7 }, _>(paramaddr, val.wrapping_mul(param) as u16);
                                 }
                                 0xB4 => {
                                     let val = emu.mem_read::<{ ARM7 }, u16>(paramaddr) as i16;
-                                    emu.mem_write::<{ ARM7 }, _>(paramaddr, (val / param) as u16);
+                                    emu.mem_write::<{ ARM7 }, _>(paramaddr, val.wrapping_div(param) as u16);
                                 }
                                 0xB5 => {
                                     let val = emu.mem_read::<{ ARM7 }, u16>(paramaddr) as i16;
                                     if param >= 0 {
-                                        emu.mem_write::<{ ARM7 }, _>(paramaddr, (val << param) as u16);
+                                        emu.mem_write::<{ ARM7 }, _>(paramaddr, val.wrapping_shl(param as u32) as u16);
                                     } else {
-                                        emu.mem_write::<{ ARM7 }, _>(paramaddr, (val >> -param) as u16);
+                                        emu.mem_write::<{ ARM7 }, _>(paramaddr, val.wrapping_shr(-param as u32) as u16);
                                     }
                                 }
                                 0xB6 => {
@@ -1683,7 +1683,7 @@ impl SoundNitro {
                         let param = self.read_note_op_param(track_id, seq_id, paramtype, emu) as u8;
                         if cond {
                             match note_op {
-                                0xC0 => self.tracks[track_id].pan = param as i8 - 64,
+                                0xC0 => self.tracks[track_id].pan = (param as i8).wrapping_sub(64),
                                 0xC1 => self.tracks[track_id].volume = param as usize,
                                 0xC2 => self.sequences[seq_id].volume = param as usize,
                                 0xC3 => self.tracks[track_id].transpose = param as i8,
@@ -1701,7 +1701,7 @@ impl SoundNitro {
                                     self.unlink_track_channels(track_id);
                                 }
                                 0xC9 => {
-                                    self.tracks[track_id].track_unk14 = param as i8 + self.tracks[track_id].transpose;
+                                    self.tracks[track_id].track_unk14 = (param as i8).wrapping_add(self.tracks[track_id].transpose);
                                     self.tracks[track_id].status_flags |= 1 << 5;
                                 }
                                 0xCA => self.tracks[track_id].modulation_depth = param,

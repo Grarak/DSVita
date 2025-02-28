@@ -2,7 +2,7 @@ use crate::cartridge_io::{CartridgeIo, CartridgePreview};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::input;
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
-use crate::settings::{SettingValue, Settings, DEFAULT_SETTINGS};
+use crate::settings::{Arm7Emu, SettingValue, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
 use clap::{arg, command, value_parser, ArgAction};
 use gl::types::GLuint;
@@ -110,14 +110,20 @@ impl Presenter {
         let matches = command!()
             .arg(arg!(framelimit: -f "Enable framelimit").required(false).action(ArgAction::SetTrue))
             .arg(arg!(audio: -a "Enable audio").required(false).action(ArgAction::SetTrue))
-            .arg(arg!(hle: -e "Enable arm7 HLE").required(false).action(ArgAction::SetTrue))
+            .arg(
+                arg!(-e <arm7_emu> "0: Accurate, 1: Partial, 2: Partial with Sound, 3: Hle")
+                    .num_args(1)
+                    .required(false)
+                    .default_value("0")
+                    .value_parser(value_parser!(u8)),
+            )
             .arg(arg!([nds_rom] "NDS rom to run").num_args(1).required(true).value_parser(value_parser!(String)))
             .get_matches();
 
         let mut settings = DEFAULT_SETTINGS.clone();
         settings.setting_framelimit_mut().value = SettingValue::Bool(matches.get_flag("framelimit"));
         settings.setting_audio_mut().value = SettingValue::Bool(matches.get_flag("audio"));
-        settings.setting_arm7_hle_mut().value = SettingValue::Bool(matches.get_flag("hle"));
+        settings.setting_arm7_hle_mut().value = SettingValue::Arm7Emu(Arm7Emu::from(*matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
 
         let file_path = PathBuf::from(matches.get_one::<String>("nds_rom").unwrap());
         let file_name = file_path.file_name().unwrap().to_str().unwrap();

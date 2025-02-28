@@ -22,6 +22,7 @@ use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::jit_memory::JitEntry;
 use crate::jit::reg::Reg;
 use crate::jit::{inst_branch_handler, jit_memory_map, Cond, ShiftType};
+use crate::settings::Arm7Emu;
 use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
 
@@ -209,7 +210,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
             let pc_og_reg = block_asm.new_reg();
             let pc_new_reg = block_asm.new_reg();
             block_asm.load_u32(pc_og_reg, block_asm.tmp_regs.thread_regs_addr_reg, Reg::PC as u32 * 4);
-            let func = if asm.emu.settings.arm7_hle() {
+            let func = if asm.emu.settings.arm7_hle() == Arm7Emu::Hle {
                 inst_branch_handler::run_scheduler::<true> as *const ()
             } else {
                 inst_branch_handler::run_scheduler::<false> as *const ()

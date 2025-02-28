@@ -23,6 +23,8 @@ static_assertions = "1.1.0"
 paste = "1.0.15"
 enum_dispatch = "0.3.13"
 bit-set = "0.8.0"
+strum = "0.27.1"
+strum_macros = "0.27.1"
 
 [target.armv7-unknown-linux-gnueabihf.dependencies]
 clap = { version = "4.5.17", features = ["cargo"] }

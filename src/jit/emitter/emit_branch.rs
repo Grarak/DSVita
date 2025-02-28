@@ -10,6 +10,7 @@ use crate::jit::jit_asm_common_funs::JitAsmCommonFuns;
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
+use crate::settings::Arm7Emu;
 use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
 
@@ -141,7 +142,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 match CPU {
                     ARM9 => {
                         let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
-                        let func = if self.emu.settings.arm7_hle() {
+                        let func = if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
                             handle_idle_loop::<true> as *const ()
                         } else {
                             handle_idle_loop::<false> as *const ()

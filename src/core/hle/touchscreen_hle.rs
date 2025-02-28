@@ -1,8 +1,8 @@
 use crate::core::emu::{get_common, get_spi, Emu};
-use crate::core::hle::arm7_hle::Arm7Hle;
+use crate::core::hle::arm7_hle::{Arm7Hle, IpcFifoTag};
 use crate::core::CpuType::ARM7;
 
-pub(super) struct TouchscreenHle {
+pub struct TouchscreenHle {
     status: i32,
     data: [u16; 16],
     num_samples: u16,
@@ -38,7 +38,7 @@ impl TouchscreenHle {
         emu.mem_write::<{ ARM7 }, _>(0x027FFFAC, (ts >> 16) as u16);
     }
 
-    pub(super) fn ipc_recv(&mut self, data: u32, emu: &mut Emu) {
+    pub fn ipc_recv(&mut self, data: u32, emu: &mut Emu) {
         if data & (1 << 25) != 0 {
             self.data.fill(0);
         }
@@ -52,23 +52,23 @@ impl TouchscreenHle {
         match self.data[0] >> 8 {
             0 => {
                 self.sample(emu);
-                Arm7Hle::send_ipc_fifo(0x6, 0x03008000, 0, emu);
+                Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008000, false, emu);
             }
             1 => {
                 if self.status != 0 {
-                    Arm7Hle::send_ipc_fifo(0x6, 0x03008103, 0, emu);
+                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008103, false, emu);
                     return;
                 }
 
                 let num = self.data[0] & 0xFF;
                 if num == 0 || num > 4 {
-                    Arm7Hle::send_ipc_fifo(0x6, 0x03008102, 0, emu);
+                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008102, false, emu);
                     return;
                 }
 
                 let offset = self.data[1];
                 if offset >= 263 {
-                    Arm7Hle::send_ipc_fifo(0x6, 0x03008102, 0, emu);
+                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008102, false, emu);
                     return;
                 }
 
@@ -81,22 +81,22 @@ impl TouchscreenHle {
                 }
 
                 self.status = 2;
-                Arm7Hle::send_ipc_fifo(0x6, 0x03008100, 0, emu);
+                Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008100, false, emu);
             }
             2 => {
                 if self.status != 2 {
-                    Arm7Hle::send_ipc_fifo(0x6, 0x03008103, 0, emu);
+                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008103, false, emu);
                     return;
                 }
 
                 self.status = 3;
                 self.num_samples = 0;
                 self.status = 0;
-                Arm7Hle::send_ipc_fifo(0x6, 0x03008200, 0, emu);
+                Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008200, false, emu);
             }
             3 => {
                 self.sample(emu);
-                Arm7Hle::send_ipc_fifo(0x6, 0x03008300, 0, emu);
+                Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008300, false, emu);
             }
             _ => {}
         }
@@ -106,7 +106,7 @@ impl TouchscreenHle {
         for i in 0..self.num_samples as usize {
             if v_count == self.sample_pos[i] {
                 self.sample(emu);
-                Arm7Hle::send_ipc_fifo(0x6, 0x03009000 | i as u32, 0, emu);
+                Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03009000 | i as u32, false, emu);
                 break;
             }
         }

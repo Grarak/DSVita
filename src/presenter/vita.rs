@@ -3,21 +3,24 @@ use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::input::Keycode;
 use crate::presenter::platform::imgui::{
     vglGetProcAddress, ImFontAtlas_AddFontFromMemoryTTF, ImFontAtlas_GetGlyphRangesDefault, ImFontConfig, ImFontConfig_ImFontConfig, ImGuiCond__ImGuiSetCond_Always,
-    ImGuiHoveredFlags__ImGuiHoveredFlags_Default, ImGuiItemFlags__ImGuiItemFlags_Disabled, ImGuiNavInput__ImGuiNavInput_Cancel, ImGuiStyleVar__ImGuiStyleVar_Alpha,
-    ImGuiStyleVar__ImGuiStyleVar_ItemSpacing, ImGuiStyleVar__ImGuiStyleVar_WindowRounding, ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus, ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse,
-    ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags__ImGuiWindowFlags_NoMove, ImGuiWindowFlags__ImGuiWindowFlags_NoResize, ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar,
-    ImGui_Begin, ImGui_BeginMainMenuBar, ImGui_Button, ImGui_CreateContext, ImGui_DestroyContext, ImGui_Dummy, ImGui_End, ImGui_EndMainMenuBar, ImGui_GetContentRegionAvail, ImGui_GetCursorPosX,
-    ImGui_GetDrawData, ImGui_GetIO, ImGui_GetStyle, ImGui_Image, ImGui_ImplVitaGL_GamepadUsage, ImGui_ImplVitaGL_Init, ImGui_ImplVitaGL_MouseStickUsage, ImGui_ImplVitaGL_NewFrame,
-    ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImGui_IsItemHovered, ImGui_PopID, ImGui_PopItemFlag, ImGui_PopStyleVar, ImGui_PushID3, ImGui_PushItemFlag, ImGui_PushStyleVar,
-    ImGui_PushStyleVar1, ImGui_Render, ImGui_SameLine, ImGui_SetCursorPosX, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
+    ImGuiFocusedFlags__ImGuiFocusedFlags_ChildWindows, ImGuiHoveredFlags__ImGuiHoveredFlags_Default, ImGuiItemFlags__ImGuiItemFlags_Disabled, ImGuiNavInput__ImGuiNavInput_Cancel,
+    ImGuiStyleVar__ImGuiStyleVar_Alpha, ImGuiStyleVar__ImGuiStyleVar_ItemSpacing, ImGuiStyleVar__ImGuiStyleVar_WindowRounding, ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus,
+    ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags__ImGuiWindowFlags_NoMove, ImGuiWindowFlags__ImGuiWindowFlags_NoResize,
+    ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar, ImGui_Begin, ImGui_BeginCombo, ImGui_BeginMainMenuBar, ImGui_Button, ImGui_CreateContext, ImGui_DestroyContext, ImGui_Dummy, ImGui_End,
+    ImGui_EndCombo, ImGui_EndMainMenuBar, ImGui_GetContentRegionAvail, ImGui_GetCursorPosX, ImGui_GetDrawData, ImGui_GetIO, ImGui_GetStyle, ImGui_Image, ImGui_ImplVitaGL_GamepadUsage,
+    ImGui_ImplVitaGL_Init, ImGui_ImplVitaGL_MouseStickUsage, ImGui_ImplVitaGL_NewFrame, ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImGui_IsItemHovered, ImGui_IsWindowFocused,
+    ImGui_PopItemFlag, ImGui_PopStyleVar, ImGui_PushItemFlag, ImGui_PushStyleVar, ImGui_PushStyleVar1, ImGui_Render, ImGui_SameLine, ImGui_Selectable, ImGui_SetCursorPosX, ImGui_SetItemDefaultFocus,
+    ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
 };
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
-use crate::settings::{Settings, SettingsConfig};
+use crate::settings::{Arm7Emu, SettingValue, Settings, SettingsConfig};
 use gl::types::{GLboolean, GLenum, GLuint};
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::{fs, mem, ptr};
+use strum::IntoEnumIterator;
 use vitasdk_sys::*;
 
 mod imgui {
@@ -268,16 +271,17 @@ impl Presenter {
                 let vec = ImVec2 { x: 553f32, y: 517f32 };
                 ImGui_SetNextWindowSize(&vec, ImGuiCond__ImGuiSetCond_Always as _);
                 ImGui_Begin(
-                    "##main\0".as_ptr() as _,
+                    c"##main".as_ptr() as _,
                     ptr::null_mut(),
                     (ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus
                         | ImGuiWindowFlags__ImGuiWindowFlags_NoResize
                         | ImGuiWindowFlags__ImGuiWindowFlags_NoMove
                         | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse
-                        | ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus) as _,
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing) as _,
                 );
 
-                if selected.is_none() {
+                if selected.is_none() && !ImGui_IsWindowFocused(ImGuiFocusedFlags__ImGuiFocusedFlags_ChildWindows as _) {
                     ImGui_SetWindowFocus();
                 }
 
@@ -300,18 +304,20 @@ impl Presenter {
                 let vec = ImVec2 { x: 407f32, y: 517f32 };
                 ImGui_SetNextWindowSize(&vec, ImGuiCond__ImGuiSetCond_Always as _);
                 ImGui_Begin(
-                    "##info\0".as_ptr() as _,
+                    c"##info".as_ptr() as _,
                     ptr::null_mut(),
                     (ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar
-                        | ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus
                         | ImGuiWindowFlags__ImGuiWindowFlags_NoResize
                         | ImGuiWindowFlags__ImGuiWindowFlags_NoMove
                         | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse
-                        | ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus) as _,
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing) as _,
                 );
 
                 if selected.is_some() {
-                    ImGui_SetWindowFocus();
+                    if !ImGui_IsWindowFocused(ImGuiFocusedFlags__ImGuiFocusedFlags_ChildWindows as _) {
+                        ImGui_SetWindowFocus();
+                    }
 
                     if (*ImGui_GetIO()).NavInputs[ImGuiNavInput__ImGuiNavInput_Cancel as usize] != 0f32 {
                         selected = None;
@@ -341,21 +347,21 @@ impl Presenter {
                             let title = CString::new(title).unwrap();
                             ImGui_Text(title.as_ptr() as _);
                         }
-                        Err(_) => ImGui_Text("Couldn't read game title\0".as_ptr() as _),
+                        Err(_) => ImGui_Text(c"Couldn't read game title".as_ptr() as _),
                     }
 
                     let vec = ImVec2 { x: 0f32, y: 10f32 };
                     ImGui_Dummy(&vec);
 
                     let vec = ImVec2 { x: -1f32, y: 0f32 };
-                    if ImGui_Button("Launch game\0".as_ptr() as _, &vec) {
+                    if ImGui_Button(c"Launch game".as_ptr() as _, &vec) {
                         break;
                     }
 
                     let vec = ImVec2 { x: 0f32, y: 10f32 };
                     ImGui_Dummy(&vec);
 
-                    ImGui_Text("Settings\0".as_ptr() as _);
+                    ImGui_Text(c"Settings".as_ptr() as _);
 
                     let vec = ImVec2 { x: 0f32, y: 10f32 };
                     ImGui_Dummy(&vec);
@@ -363,19 +369,45 @@ impl Presenter {
                     let settings_config = &mut settings_configs[i];
                     for (i, setting) in settings_config.settings.get_all_mut().iter_mut().enumerate() {
                         let title = CString::new(setting.title).unwrap();
+
                         ImGui_Text(title.as_ptr() as _);
                         ImGui_SameLine(0f32, -1f32);
 
-                        ImGui_SetCursorPosX(ImGui_GetCursorPosX() + ImGui_GetContentRegionAvail().x - 50f32);
+                        match setting.value {
+                            SettingValue::Bool(_) => {
+                                ImGui_SetCursorPosX(ImGui_GetCursorPosX() + ImGui_GetContentRegionAvail().x - 50f32);
 
-                        let value = CString::new(setting.value.to_string()).unwrap();
-                        let vec = ImVec2 { x: 50f32, y: 0f32 };
-                        ImGui_PushID3(i as _);
-                        if ImGui_Button(value.as_ptr() as _, &vec) {
-                            setting.value.next();
-                            settings_config.dirty = true;
+                                let value = CString::new(setting.value.to_string()).unwrap();
+                                let vec = ImVec2 { x: 50f32, y: 0f32 };
+
+                                if ImGui_Button(value.as_ptr() as _, &vec) {
+                                    setting.value.next();
+                                    settings_config.dirty = true;
+                                }
+                            }
+                            SettingValue::Arm7Emu(_) => {
+                                let value = CString::new(setting.value.to_string()).unwrap();
+
+                                ImGui_SetCursorPosX(ImGui_GetCursorPosX() + ImGui_GetContentRegionAvail().x - 125f32);
+
+                                if ImGui_BeginCombo(c"##arm7_emu".as_ptr() as _, value.as_ptr() as _, 0) {
+                                    for value in Arm7Emu::iter() {
+                                        let is_selected = setting.value.as_arm7_emu() == Some(value);
+                                        let value_str: &str = value.into();
+                                        let value_cstr = CString::from_str(value_str).unwrap();
+                                        let size = ImVec2 { x: 0f32, y: 0f32 };
+                                        if ImGui_Selectable(value_cstr.as_ptr() as _, is_selected, 0, &size) {
+                                            setting.value = SettingValue::Arm7Emu(value);
+                                            settings_config.dirty = true;
+                                        }
+                                        if is_selected {
+                                            ImGui_SetItemDefaultFocus();
+                                        }
+                                    }
+                                    ImGui_EndCombo();
+                                }
+                            }
                         }
-                        ImGui_PopID();
 
                         let description = CString::new(setting.description).unwrap();
                         ImGui_Text(description.as_ptr() as _);
@@ -390,7 +422,7 @@ impl Presenter {
                         ImGui_PushItemFlag(ImGuiItemFlags__ImGuiItemFlags_Disabled as _, true);
                         ImGui_PushStyleVar(ImGuiStyleVar__ImGuiStyleVar_Alpha as _, (*ImGui_GetStyle()).Alpha * 0.5f32);
                     }
-                    if ImGui_Button("Save settings\0".as_ptr() as _, &vec) {
+                    if ImGui_Button(c"Save settings".as_ptr() as _, &vec) {
                         settings_config.flush();
                     }
                     if !settings_dirty {

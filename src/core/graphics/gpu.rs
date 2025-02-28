@@ -10,6 +10,7 @@ use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
+use crate::settings::Arm7Emu;
 use bilge::prelude::*;
 use std::intrinsics::unlikely;
 use std::ptr::NonNull;
@@ -80,7 +81,6 @@ pub struct Gpu {
     pub pow_cnt1: u16,
     pub disp_cap_cnt: u32,
     frame_rate_counter: FrameRateCounter,
-    pub arm7_hle: bool,
     pub v_count: u16,
     pub gpu_2d_regs_a: Gpu2DRegisters,
     pub gpu_2d_regs_b: Gpu2DRegisters,
@@ -95,7 +95,6 @@ impl Gpu {
             pow_cnt1: 0,
             disp_cap_cnt: 0,
             frame_rate_counter: FrameRateCounter::new(fps),
-            arm7_hle: false,
             v_count: 0,
             gpu_2d_regs_a: Gpu2DRegisters::new(A),
             gpu_2d_regs_b: Gpu2DRegisters::new(B),
@@ -199,7 +198,7 @@ impl Gpu {
                 gpu.v_count = 0;
                 gpu.get_renderer_mut().reload_registers();
 
-                if gpu.arm7_hle {
+                if emu.settings.arm7_hle() == Arm7Emu::Hle {
                     Arm7Hle::on_frame(emu);
                 }
             }
@@ -220,7 +219,7 @@ impl Gpu {
             gpu.disp_stat[i].set_h_blank_flag(u1::new(0));
         }
 
-        if gpu.arm7_hle {
+        if emu.settings.arm7_hle() != Arm7Emu::AccurateLle {
             get_arm7_hle_mut!(emu).on_scanline(gpu.v_count, emu);
         }
 

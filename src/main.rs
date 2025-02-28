@@ -15,7 +15,6 @@
 #![feature(slice_swap_unchecked)]
 #![feature(stdarch_arm_neon_intrinsics)]
 #![feature(stmt_expr_attributes)]
-#![feature(trait_upcasting)]
 #![feature(vec_push_within_capacity)]
 
 use crate::cartridge_io::CartridgeIo;
@@ -29,7 +28,7 @@ use crate::jit::jit_asm::{JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::logging::debug_println;
 use crate::mmap::register_abort_handler;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
-use crate::settings::Settings;
+use crate::settings::{Arm7Emu, Settings};
 use crate::utils::{const_str_equal, set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
@@ -193,8 +192,7 @@ fn run_cpu(
 
     unsafe { register_abort_handler(fault_handler).unwrap() };
 
-    if emu.settings.arm7_hle() {
-        common.gpu.arm7_hle = true;
+    if emu.settings.arm7_hle() == Arm7Emu::Hle {
         execute_jit::<true>(&mut emu_unsafe);
     } else {
         execute_jit::<false>(&mut emu_unsafe);
@@ -377,6 +375,7 @@ pub fn actual_main() {
     let mut presenter = Presenter::new();
     let (cartridge_io, settings) = presenter.present_ui();
     presenter.destroy_ui();
+    eprintln!("{} Settings: {settings:?}", cartridge_io.file_name);
 
     let fps = Arc::new(AtomicU16::new(0));
     let fps_clone = fps.clone();

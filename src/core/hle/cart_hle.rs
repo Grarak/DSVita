@@ -1,5 +1,5 @@
 use crate::core::emu::{get_common, get_common_mut, Emu};
-use crate::core::hle::arm7_hle::Arm7Hle;
+use crate::core::hle::arm7_hle::{Arm7Hle, IpcFifoTag};
 use crate::core::CpuType::ARM7;
 use crate::logging::debug_println;
 
@@ -23,7 +23,7 @@ impl CartHle {
             0 => {
                 if self.data_pos == 1 {
                     self.buffer = data;
-                    Arm7Hle::send_ipc_fifo(0xB, 0x1, 1, emu);
+                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Filesystem, 0x1, true, emu);
                     self.data_pos = 0;
                     return;
                 }
@@ -34,7 +34,7 @@ impl CartHle {
                     let save_size_shift = (save_param >> 8) & 0xFF;
                     get_common_mut!(emu).cartridge.io.resize_save_file(1 << save_size_shift);
                 }
-                Arm7Hle::send_ipc_fifo(0xB, 0x1, 1, emu);
+                Arm7Hle::send_ipc_fifo(IpcFifoTag::Filesystem, 0x1, true, emu);
                 self.data_pos = 0;
                 return;
             }
@@ -48,7 +48,7 @@ impl CartHle {
                     emu.mem_write::<{ ARM7 }, u8>(dst + i, cartridge_io.read_save_buf((offset + i) & (cartridge_io.save_file_size - 1)));
                 }
 
-                Arm7Hle::send_ipc_fifo(0xB, 0x1, 1, emu);
+                Arm7Hle::send_ipc_fifo(IpcFifoTag::Filesystem, 0x1, true, emu);
                 self.data_pos = 0;
                 return;
             }
@@ -64,18 +64,16 @@ impl CartHle {
                 let cartridge_io = &mut get_common_mut!(emu).cartridge.io;
                 cartridge_io.write_save_buf_slice(offset & (cartridge_io.save_file_size - 1), &buf);
 
-                Arm7Hle::send_ipc_fifo(0xB, 0x1, 1, emu);
+                Arm7Hle::send_ipc_fifo(IpcFifoTag::Filesystem, 0x1, true, emu);
                 self.data_pos = 0;
                 return;
             }
             9 => {
-                Arm7Hle::send_ipc_fifo(0xB, 0x1, 1, emu);
+                Arm7Hle::send_ipc_fifo(IpcFifoTag::Filesystem, 0x1, true, emu);
                 self.data_pos = 0;
                 return;
             }
-            _ => {
-                debug_println!("cart save: unknown cmd {:x}", self.cmd);
-            }
+            _ => debug_println!("cart save: unknown cmd {:x}", self.cmd),
         }
 
         self.data_pos += 1;

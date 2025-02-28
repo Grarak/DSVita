@@ -1,5 +1,5 @@
 use crate::core::emu::Emu;
-use crate::core::hle::arm7_hle::Arm7Hle;
+use crate::core::hle::arm7_hle::{Arm7Hle, IpcFifoTag};
 use crate::core::spi;
 use crate::core::CpuType::ARM7;
 
@@ -26,17 +26,17 @@ impl FirmwareHle {
         let cmd = (self.data[0] >> 8) - 0x20;
         match cmd {
             0 => {
-                Arm7Hle::send_ipc_fifo(0x4, 0x0300A000, 0, emu);
+                Arm7Hle::send_ipc_fifo(IpcFifoTag::Nvram, 0x0300A000, false, emu);
             }
             1 => {
-                Arm7Hle::send_ipc_fifo(0x4, 0x0300A100, 0, emu);
+                Arm7Hle::send_ipc_fifo(IpcFifoTag::Nvram, 0x0300A100, false, emu);
             }
             2 => {
                 let addr = (((self.data[0] as u32) & 0xFF) << 24) | ((self.data[1] as u32) << 8) | (((self.data[2] as u32) >> 8) & 0xFF);
                 if (0x02000000..0x02800000).contains(&addr) {
-                    Arm7Hle::send_ipc_fifo(0x4, 0x0300A200, 0, emu);
+                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Nvram, 0x0300A200, false, emu);
                 } else {
-                    Arm7Hle::send_ipc_fifo(0x4, 0x0300A202, 0, emu);
+                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Nvram, 0x0300A202, false, emu);
                 }
             }
             3 => {
@@ -50,17 +50,17 @@ impl FirmwareHle {
                         emu.mem_write::<{ ARM7 }, _>(addr + i, val);
                     }
 
-                    Arm7Hle::send_ipc_fifo(0x4, 0x0300A300, 0, emu);
+                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Nvram, 0x0300A300, false, emu);
                 } else {
-                    Arm7Hle::send_ipc_fifo(0x4, 0x0300A302, 0, emu);
+                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Nvram, 0x0300A302, false, emu);
                 }
             }
             5 => {
                 let addr = ((self.data[3] as u32) << 16) | self.data[4] as u32;
                 if (0x02000000..0x02800000).contains(&addr) {
-                    Arm7Hle::send_ipc_fifo(0x4, 0x0300A500, 0, emu);
+                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Nvram, 0x0300A500, false, emu);
                 } else {
-                    Arm7Hle::send_ipc_fifo(0x4, 0x0300A502, 0, emu);
+                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Nvram, 0x0300A502, false, emu);
                 }
             }
             _ => {}

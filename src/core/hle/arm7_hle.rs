@@ -9,12 +9,51 @@ use crate::core::hle::touchscreen_hle::TouchscreenHle;
 use crate::core::CpuType::{ARM7, ARM9};
 use bilge::prelude::*;
 use std::cmp::Ordering;
+use std::mem;
+
+#[derive(Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum IpcFifoTag {
+    Ex = 0,
+    User0 = 1,
+    User1 = 2,
+    System = 3,
+    Nvram = 4,
+    Rtc = 5,
+    Touchpanel = 6,
+    Sound = 7,
+    PowerManager = 8,
+    Mic = 9,
+    WirelessManager = 10,
+    Filesystem = 11,
+    Os = 12,
+    Cartridge = 13,
+    Card = 14,
+    ControlDrivingWirelessLib = 15,
+    CartridgeEx = 16,
+    Max = 32,
+}
+
+impl From<u8> for IpcFifoTag {
+    fn from(value: u8) -> Self {
+        debug_assert!(value <= IpcFifoTag::Max as u8);
+        unsafe { mem::transmute(value) }
+    }
+}
+
+#[bitsize(32)]
+#[derive(FromBits)]
+pub struct IpcFifoMessage {
+    pub tag: u5,
+    pub err: bool,
+    pub data: u26,
+}
 
 pub struct Arm7Hle {
     firmware: FirmwareHle,
-    rtc: RtcHle,
-    touchscreen: TouchscreenHle,
-    pub(super) sound: SoundHle,
+    pub rtc: RtcHle,
+    pub touchscreen: TouchscreenHle,
+    pub sound: SoundHle,
     power_manager: PowerManagerHle,
     cart: CartHle,
 }
@@ -35,91 +74,90 @@ impl Arm7Hle {
         get_ipc_mut!(emu).sync_regs[ARM9].set_data_in(u4::new(val));
     }
 
-    pub(super) fn send_ipc_fifo(service: u32, data: u32, flag: u32, emu: &mut Emu) {
-        let val = (service & 0x1F) | (data << 6) | ((flag & 0x1) << 5);
-
-        let fifo = &mut get_ipc_mut!(emu).fifo[ARM7];
+    pub fn send_ipc_fifo(tag: IpcFifoTag, data: u32, err: bool, emu: &mut Emu) {
+        let ipc = get_ipc_mut!(emu);
+        let fifo = &mut ipc.fifo[ARM7];
         if fifo.queue.len() == 16 {
             fifo.cnt.set_err(true);
+            fifo.cnt.set_send_full_status(true);
+            ipc.fifo[ARM9].cnt.set_recv_full(true);
         } else {
-            fifo.queue.push_back(val);
+            fifo.queue.push_back(u32::from(IpcFifoMessage::new(u5::new(tag as u8), err, u26::new(data))));
             if fifo.queue.len() == 1 {
-                get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, emu);
+                ipc.fifo[ARM7].cnt.set_send_empty_status(false);
+                ipc.fifo[ARM9].cnt.set_recv_empty(false);
+                if ipc.fifo[ARM9].cnt.recv_not_empty_irq() {
+                    get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, emu);
+                }
             }
         }
     }
 
     pub fn ipc_recv(&mut self, emu: &mut Emu) {
-        let val = *get_ipc!(emu).fifo[ARM9].queue.front();
-        get_ipc_mut!(emu).fifo[ARM9].queue.pop_front();
-        if get_ipc!(emu).fifo[ARM9].queue.is_empty() && get_ipc!(emu).fifo[ARM9].cnt.send_empty_irq() {
+        let ipc = get_ipc_mut!(emu);
+        let val = *ipc.fifo[ARM9].queue.front();
+        ipc.fifo[ARM9].queue.pop_front();
+        if ipc.fifo[ARM9].queue.is_empty() && ipc.fifo[ARM9].cnt.send_empty_irq() {
             get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::IpcSendFifoEmpty, emu);
         }
 
-        let service = val & 0x1F;
-        let data = val >> 6;
-        let flag = ((val >> 5) & 0x1) != 0;
+        let message = IpcFifoMessage::from(val);
+        let tag = IpcFifoTag::from(u8::from(message.tag()));
+        let data = u32::from(message.data());
 
-        match service {
-            0x4 => {
-                if !flag {
+        match tag {
+            IpcFifoTag::Nvram => {
+                if !message.err() {
                     self.firmware.ipc_recv(data, emu);
                 }
             }
-            0x5 => {
-                if !flag {
+            IpcFifoTag::Rtc => {
+                if !message.err() {
                     self.rtc.ipc_recv(data, emu);
                 }
             }
-            0x6 => {
-                if !flag {
+            IpcFifoTag::Touchpanel => {
+                if !message.err() {
                     self.touchscreen.ipc_recv(data, emu);
                 }
             }
-            0x7 => {
-                self.sound.ipc_recv(data, emu);
-            }
-            0x8 => {
-                if !flag {
+            IpcFifoTag::Sound => self.sound.ipc_recv(data, emu),
+            IpcFifoTag::PowerManager => {
+                if !message.err() {
                     self.power_manager.ipc_recv(data, emu);
                 }
             }
-            0x9 => {
-                // Mic
-                if !flag {
+            IpcFifoTag::Mic => {
+                if !message.err() {
                     // todo!()
                 }
             }
-            0xA => {
-                // Wifi
-                if !flag {
+            IpcFifoTag::WirelessManager => {
+                if !message.err() {
                     // todo!()
                 }
             }
-            0xB => {
-                if flag {
+            IpcFifoTag::Filesystem => {
+                if message.err() {
                     self.cart.ipc_recv(data, emu);
                 }
             }
-            0xC => {
+            IpcFifoTag::Os => {
                 if data == 0x1000 {
-                    Self::send_ipc_fifo(0xC, 0x1000, 0, emu);
+                    Self::send_ipc_fifo(IpcFifoTag::Os, 0x1000, false, emu);
                 }
             }
-            0xD => {
-                // Cart
+            IpcFifoTag::Cartridge => {
                 if (data & 0x3F) == 1 {
-                    Self::send_ipc_fifo(0xD, 0x1, 0, emu);
+                    Self::send_ipc_fifo(IpcFifoTag::Cartridge, 0x1, false, emu);
                 }
             }
-            0xF => {
+            IpcFifoTag::ControlDrivingWirelessLib => {
                 if data == 0x10000 {
-                    Self::send_ipc_fifo(0xF, 0x10000, 0, emu);
+                    Self::send_ipc_fifo(IpcFifoTag::ControlDrivingWirelessLib, 0x10000, false, emu);
                 }
             }
-            _ => {
-                todo!("hle: Unknown ipc request {:x} service {:x} data {:x} flag {}", val, service, data, flag)
-            }
+            _ => todo!("hle: ipc request {val:x} tag {tag:?} data {data:x} err {}", message.err()),
         }
     }
 
@@ -129,7 +167,7 @@ impl Arm7Hle {
             Ordering::Less => Self::send_ipc_sync(data_in + 1, emu),
             Ordering::Equal => {
                 Self::send_ipc_sync(0, emu);
-                emu.mem_write::<{ ARM7 }, u32>(0x027FFF8C, 0x0000FFF0);
+                emu.mem_write::<{ ARM7 }, u32>(0x027FFF8C, 0x3fff0);
             }
             _ => {}
         }

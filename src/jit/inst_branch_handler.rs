@@ -5,6 +5,7 @@ use crate::jit::jit_asm::{align_guest_pc, JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_asm_common_funs::{exit_guest_context, get_max_loop_cycle_count, JitAsmCommonFuns};
 use crate::jit::jit_memory::JitEntry;
 use crate::logging::debug_println;
+use crate::settings::Arm7Emu;
 use crate::{get_jit_asm_ptr, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
 use std::arch::naked_asm;
 use std::cmp::min;
@@ -117,7 +118,7 @@ fn check_scheduler<const CPU: CpuType>(asm: &mut JitAsm<CPU>, current_pc: u32) {
         match CPU {
             ARM9 => {
                 let pc_og = get_regs!(asm.emu, ARM9).pc;
-                if asm.emu.settings.arm7_hle() {
+                if asm.emu.settings.arm7_hle() == Arm7Emu::Hle {
                     run_scheduler::<true>(unsafe { mem::transmute(asm as *mut JitAsm<CPU>) }, current_pc);
                 } else {
                     run_scheduler::<false>(unsafe { mem::transmute(asm as *mut JitAsm<CPU>) }, current_pc);
@@ -235,7 +236,7 @@ pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target
                 asm.runtime_data.pre_cycle_count_sum = 0;
                 asm.runtime_data.push_return_stack(desired_lr);
                 unsafe { call_jit_fun(asm, target_pc) };
-            } else {
+            } else if DEBUG_LOG {
                 JitAsmCommonFuns::<CPU>::debug_stack_depth_too_big(sp_depth_size, current_pc);
             }
         }
