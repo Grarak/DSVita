@@ -5,7 +5,7 @@ use std::str::FromStr;
 use strum_macros::{EnumIter, EnumString, IntoStaticStr};
 
 #[repr(u8)]
-#[derive(Copy, Clone, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
+#[derive(Copy, Clone, Debug, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
 pub enum Arm7Emu {
     AccurateLle = 0,
     PartialHle = 1,

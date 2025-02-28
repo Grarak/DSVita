@@ -408,6 +408,8 @@ pub fn actual_main() {
     let last_save_time = Arc::new(Mutex::new(None));
     let last_save_time_clone = last_save_time.clone();
 
+    let settings_clone = settings.clone();
+
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
         .stack_size(MAX_STACK_DEPTH_SIZE + 1024 * 1024) // Add 1MB headroom to stack
@@ -420,7 +422,7 @@ pub fn actual_main() {
                 key_map_clone,
                 touch_points_clone,
                 sound_sampler_clone,
-                settings,
+                settings_clone,
                 NonNull::new(gpu_renderer_ptr as *mut GpuRenderer).unwrap(),
                 last_save_time_clone,
             );
@@ -434,7 +436,7 @@ pub fn actual_main() {
         }
         key_map.store(keymap, Ordering::Relaxed);
 
-        gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time);
+        gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &settings);
     }
 
     audio_thread.join().unwrap();

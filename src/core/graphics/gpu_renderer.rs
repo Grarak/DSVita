@@ -8,6 +8,7 @@ use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
 use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN};
+use crate::settings::Settings;
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -91,7 +92,7 @@ impl GpuRenderer {
         self.renderer_2d.reload_registers();
     }
 
-    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>) {
+    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, settings: &Settings) {
         {
             let rendering = self.rendering.lock().unwrap();
             let _drawing = self.rendering_condvar.wait_while(rendering, |rendering| !*rendering).unwrap();
@@ -174,7 +175,12 @@ impl GpuRenderer {
                 }
             };
 
-            self.gl_glyph.draw(format!("Render time: {}ms\nFPS: {fps} ({per}%)\n{info_text}", self.average_render_time));
+            self.gl_glyph.draw(format!(
+                "{}ms ({}fps) {:?}\n{per}% ({fps}fps)\n{info_text}",
+                self.average_render_time,
+                if self.average_render_time == 0 { 0 } else { 1000 / self.average_render_time },
+                settings.arm7_hle(),
+            ));
 
             presenter.gl_swap_window();
         }
