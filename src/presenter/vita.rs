@@ -9,8 +9,8 @@ use crate::presenter::platform::imgui::{
     ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar, ImGui_Begin, ImGui_BeginCombo, ImGui_BeginMainMenuBar, ImGui_Button, ImGui_CreateContext, ImGui_DestroyContext, ImGui_Dummy, ImGui_End,
     ImGui_EndCombo, ImGui_EndMainMenuBar, ImGui_GetContentRegionAvail, ImGui_GetCursorPosX, ImGui_GetDrawData, ImGui_GetIO, ImGui_GetStyle, ImGui_Image, ImGui_ImplVitaGL_GamepadUsage,
     ImGui_ImplVitaGL_Init, ImGui_ImplVitaGL_MouseStickUsage, ImGui_ImplVitaGL_NewFrame, ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImGui_IsItemHovered, ImGui_IsWindowFocused,
-    ImGui_PopItemFlag, ImGui_PopStyleVar, ImGui_PushItemFlag, ImGui_PushStyleVar, ImGui_PushStyleVar1, ImGui_Render, ImGui_SameLine, ImGui_Selectable, ImGui_SetCursorPosX, ImGui_SetItemDefaultFocus,
-    ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
+    ImGui_PopID, ImGui_PopItemFlag, ImGui_PopStyleVar, ImGui_PushID3, ImGui_PushItemFlag, ImGui_PushStyleVar, ImGui_PushStyleVar1, ImGui_Render, ImGui_SameLine, ImGui_Selectable, ImGui_SetCursorPosX,
+    ImGui_SetItemDefaultFocus, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
 };
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
 use crate::settings::{Arm7Emu, SettingValue, Settings, SettingsConfig};
@@ -96,6 +96,7 @@ pub struct Presenter {
 }
 
 impl Presenter {
+    #[cold]
     pub fn new() -> Self {
         unsafe {
             scePowerSetArmClockFrequency(444);
@@ -373,6 +374,8 @@ impl Presenter {
                         ImGui_Text(title.as_ptr() as _);
                         ImGui_SameLine(0f32, -1f32);
 
+                        ImGui_PushID3(i as _);
+
                         match setting.value {
                             SettingValue::Bool(_) => {
                                 ImGui_SetCursorPosX(ImGui_GetCursorPosX() + ImGui_GetContentRegionAvail().x - 50f32);
@@ -408,6 +411,8 @@ impl Presenter {
                                 }
                             }
                         }
+
+                        ImGui_PopID();
 
                         let description = CString::new(setting.description).unwrap();
                         ImGui_Text(description.as_ptr() as _);

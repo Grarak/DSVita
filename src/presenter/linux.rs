@@ -49,6 +49,7 @@ pub struct Presenter {
 }
 
 impl Presenter {
+    #[cold]
     pub fn new() -> Self {
         sdl2::hint::set("SDL_NO_SIGNAL_HANDLERS", "1");
         let sdl = sdl2::init().unwrap();

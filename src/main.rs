@@ -231,6 +231,7 @@ fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize) -> bo
     get_jit_mut!(asm.emu).patch_slow_mem(host_pc, guest_mem_addr, CPU)
 }
 
+#[cold]
 fn fault_handler(mem_addr: usize, host_pc: &mut usize) -> bool {
     match unsafe { CURRENT_RUNNING_CPU } {
         ARM9 => process_fault::<{ ARM9 }>(mem_addr, host_pc),
@@ -319,6 +320,7 @@ pub fn main() {
         .unwrap();
 }
 
+#[cold]
 pub fn actual_main() {
     if cfg!(target_os = "vita") {
         set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core1);

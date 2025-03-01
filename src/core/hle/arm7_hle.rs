@@ -100,6 +100,7 @@ impl Arm7Hle {
         }
     }
 
+    #[cold]
     pub fn ipc_recv(&mut self, emu: &mut Emu) {
         let ipc = get_ipc_mut!(emu);
         let val = *ipc.fifo[ARM9].queue.front();

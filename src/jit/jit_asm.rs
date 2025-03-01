@@ -223,6 +223,7 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
     }
 }
 
+#[cold]
 pub extern "C" fn emit_code_block() {
     match unsafe { CURRENT_RUNNING_CPU } {
         ARM9 => {
