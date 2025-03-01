@@ -2,6 +2,7 @@ use crate::core::cpu_regs::CpuRegs;
 use crate::core::emu::Emu;
 use crate::core::graphics::gpu::Gpu;
 use crate::core::hle::sound_nitro::SoundNitro;
+use crate::core::hle::wifi_hle::WifiHle;
 use crate::core::memory::cartridge::Cartridge;
 use crate::core::memory::dma::Dma;
 use crate::core::spu::Spu;
@@ -80,6 +81,7 @@ pub enum EventType {
     SpuSample = 10,
     TimerArm9 = 11,
     TimerArm7 = 12,
+    WifiScanHle = 13,
 }
 
 pub struct CycleManager {
@@ -108,7 +110,7 @@ impl CycleManager {
     }
 
     pub fn check_events(&mut self, emu: &mut Emu) -> bool {
-        static LUT: [fn(&mut CycleManager, &mut Emu, u16); EventType::TimerArm7 as usize + 1] = [
+        static LUT: [fn(&mut CycleManager, &mut Emu, u16); EventType::WifiScanHle as usize + 1] = [
             CpuRegs::on_interrupt_event::<{ ARM9 }>,
             CpuRegs::on_interrupt_event::<{ ARM7 }>,
             Gpu::on_scanline256_event,
@@ -122,6 +124,7 @@ impl CycleManager {
             Spu::on_sample_event,
             Timers::on_overflow_event::<{ ARM9 }>,
             Timers::on_overflow_event::<{ ARM7 }>,
+            WifiHle::on_scan_event,
         ];
 
         self.imm_events_swap.clear();

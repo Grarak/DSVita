@@ -8,3 +8,4 @@ mod rtc_hle;
 mod sound_hle;
 pub mod sound_nitro;
 mod touchscreen_hle;
+pub mod wifi_hle;

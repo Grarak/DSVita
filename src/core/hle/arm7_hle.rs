@@ -6,6 +6,7 @@ use crate::core::hle::power_manager_hle::PowerManagerHle;
 use crate::core::hle::rtc_hle::RtcHle;
 use crate::core::hle::sound_hle::SoundHle;
 use crate::core::hle::touchscreen_hle::TouchscreenHle;
+use crate::core::hle::wifi_hle::WifiHle;
 use crate::core::CpuType::{ARM7, ARM9};
 use bilge::prelude::*;
 use std::cmp::Ordering;
@@ -56,6 +57,7 @@ pub struct Arm7Hle {
     pub sound: SoundHle,
     power_manager: PowerManagerHle,
     cart: CartHle,
+    pub wifi: WifiHle,
 }
 
 impl Arm7Hle {
@@ -67,7 +69,12 @@ impl Arm7Hle {
             sound: SoundHle::new(),
             power_manager: PowerManagerHle::new(),
             cart: CartHle::new(),
+            wifi: WifiHle::new(),
         }
+    }
+
+    pub fn initialize(emu: &mut Emu) {
+        WifiHle::initialize(emu);
     }
 
     fn send_ipc_sync(val: u8, emu: &mut Emu) {
@@ -134,7 +141,7 @@ impl Arm7Hle {
             }
             IpcFifoTag::WirelessManager => {
                 if !message.err() {
-                    // todo!()
+                    self.wifi.ipc_recv(data, emu);
                 }
             }
             IpcFifoTag::Filesystem => {

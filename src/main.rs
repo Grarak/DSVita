@@ -21,6 +21,7 @@ use crate::cartridge_io::CartridgeIo;
 use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, get_spu_mut, Emu};
 use crate::core::graphics::gpu::Gpu;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
+use crate::core::hle::arm7_hle::Arm7Hle;
 use crate::core::memory::mmu::Mmu;
 use crate::core::spu::{SoundSampler, Spu};
 use crate::core::{spi, CpuType};
@@ -175,6 +176,10 @@ fn run_cpu(
 
     get_spu_mut!(emu).audio_enabled = emu.settings.audio();
     Spu::initialize_schedule(get_cm_mut!(emu));
+
+    if emu.settings.arm7_hle() == Arm7Emu::Hle {
+        Arm7Hle::initialize(emu);
+    }
 
     let save_thread = thread::Builder::new()
         .name("save".to_owned())

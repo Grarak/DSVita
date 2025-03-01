@@ -21,6 +21,7 @@ use crate::{utils, DEBUG_LOG};
 use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 use std::marker::PhantomData;
+use std::mem;
 use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 use CpuType::ARM7;
@@ -922,5 +923,19 @@ impl Memory {
         }
 
         MemoryMultipleMemsetIo::<CPU, TCM, T>::write(aligned_addr, value, size, emu);
+    }
+
+    pub fn read_struct<const CPU: CpuType, const TCM: bool, T>(&mut self, addr: u32, emu: &mut Emu) -> T
+    where
+        [(); size_of::<T>()]:,
+    {
+        let mut mem = [0; size_of::<T>()];
+        self.read_multiple_slice::<CPU, TCM, u8>(addr, emu, &mut mem);
+        unsafe { mem::transmute_copy(&mem) }
+    }
+
+    pub fn write_struct<const CPU: CpuType, const TCM: bool, T>(&mut self, addr: u32, value: &T, emu: &mut Emu) {
+        let slice = unsafe { core::slice::from_raw_parts(value as *const T as *const u8, size_of::<T>()) };
+        self.write_multiple_slice::<CPU, TCM, u8>(addr, emu, slice);
     }
 }
