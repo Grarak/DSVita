@@ -48,6 +48,7 @@ jobs:
         run: cargo vita build vpk --release
         env:
           VITASDK: /usr/local/vitasdk
+          RUSTFLAGS: -Zlocation-detail=none -Zfmt-debug=none
 
       - name: Upload vpk
         uses: actions/upload-artifact@v4
