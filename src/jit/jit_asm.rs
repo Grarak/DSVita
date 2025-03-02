@@ -14,7 +14,7 @@ use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::logging::{branch_println, debug_println};
-use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG, LOGGING};
+use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
 use std::arch::{asm, naked_asm};
 use std::intrinsics::unlikely;
 use std::{mem, ptr};

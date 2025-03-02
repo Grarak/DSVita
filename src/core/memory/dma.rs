@@ -165,7 +165,7 @@ impl Dma {
         let transfer_type = DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, CHANNEL_NUM);
 
         let dma_cnt = DmaCntArm9::from(channel.cnt);
-        if transfer_type == DmaTransferMode::GeometryCmdFifo && dma_cnt.enable() && get_common!(emu).gpu.gpu_3d_regs.gx_stat.cmd_fifo_less_half_full() {
+        if transfer_type == DmaTransferMode::GeometryCmdFifo && dma_cnt.enable() && !get_common!(emu).gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
             debug_println!(
                 "{:?} dma schedule imm {:x} {:x} {:x} {:x}",
                 self.cpu_type,
@@ -356,7 +356,7 @@ impl Dma {
 
         if mode == DmaTransferMode::GeometryCmdFifo && count > 112 {
             io_dma_mut!(emu, CPU).channels[channel_num].current_count -= 112;
-            if get_common!(emu).gpu.gpu_3d_regs.gx_stat.cmd_fifo_less_half_full() {
+            if !get_common!(emu).gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
                 get_cm_mut!(emu).schedule_imm(
                     match CPU {
                         ARM9 => EventType::DmaArm9,
@@ -375,7 +375,7 @@ impl Dma {
                 channel.current_dest = channel.dad;
             }
 
-            if mode == DmaTransferMode::GeometryCmdFifo && get_common!(emu).gpu.gpu_3d_regs.gx_stat.cmd_fifo_less_half_full() {
+            if mode == DmaTransferMode::GeometryCmdFifo && !get_common!(emu).gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
                 get_cm_mut!(emu).schedule_imm(
                     match CPU {
                         ARM9 => EventType::DmaArm9,
