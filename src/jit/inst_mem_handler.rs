@@ -52,7 +52,7 @@ mod handler {
             MemoryAmount::Word => {
                 let value = emu.mem_read_with_options::<CPU, true, u32>(addr);
                 let shift = (addr & 0x3) << 3;
-                *op0 = value.wrapping_shl(32 - shift) | (value >> shift)
+                *op0 = value.rotate_right(shift);
             }
             MemoryAmount::Double => {
                 *op0 = emu.mem_read_with_options::<CPU, true, u32>(addr);

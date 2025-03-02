@@ -1611,9 +1611,9 @@ impl SoundNitro {
                                 0xB5 => {
                                     let val = emu.mem_read::<{ ARM7 }, u16>(paramaddr) as i16;
                                     if param >= 0 {
-                                        emu.mem_write::<{ ARM7 }, _>(paramaddr, val.wrapping_shl(param as u32) as u16);
+                                        emu.mem_write::<{ ARM7 }, _>(paramaddr, val.unbounded_shl(param as u32) as u16);
                                     } else {
-                                        emu.mem_write::<{ ARM7 }, _>(paramaddr, val.wrapping_shr(-param as u32) as u16);
+                                        emu.mem_write::<{ ARM7 }, _>(paramaddr, val.unbounded_shr(-param as u32) as u16);
                                     }
                                 }
                                 0xB6 => {

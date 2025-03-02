@@ -252,7 +252,7 @@ impl Iterator for BlockRegAnySetIter<'_> {
         let array_index = (id >> 5) as usize;
         unsafe { assert_unchecked(array_index < self.set.0.len()) };
         let zeros = self.set.0[array_index].trailing_zeros();
-        self.set.0[array_index] = self.set.0[array_index].wrapping_shr(zeros);
+        self.set.0[array_index] = self.set.0[array_index].unbounded_shr(zeros);
         if self.set.0[array_index] == 0 {
             if array_index == self.set.0.len() - 1 {
                 None

@@ -19,7 +19,7 @@ mod alu_variations {
     pub fn imm(opcode: u32) -> u32 {
         let value = opcode & 0xFF;
         let shift = (opcode >> 7) & 0x1E;
-        value.wrapping_shl(32 - shift) | (value >> shift)
+        value.rotate_right(shift)
     }
 }
 
