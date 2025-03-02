@@ -13,8 +13,8 @@ use crate::jit::jit_asm_common_funs::{exit_guest_context, JitAsmCommonFuns};
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
-use crate::logging::debug_println;
-use crate::{get_jit_asm_ptr, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
+use crate::logging::{branch_println, debug_println};
+use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG, LOGGING};
 use std::arch::{asm, naked_asm};
 use std::intrinsics::unlikely;
 use std::{mem, ptr};
@@ -308,7 +308,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         let host_sp_ptr = ptr::addr_of_mut!(asm.runtime_data.host_sp);
         let mut block_asm = unsafe { BlockAsm::new(guest_regs_ptr, host_sp_ptr, mem::transmute(&mut asm.basic_blocks_cache), mem::transmute(&mut asm.block_asm_buf), thumb) };
 
-        if DEBUG_LOG {
+        if BRANCH_LOG {
             block_asm.call1(debug_enter_block::<CPU> as *const (), guest_pc | (thumb as u32));
             block_asm.restore_reg(Reg::CPSR);
         }
@@ -410,14 +410,14 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
         );
     }
 
-    if DEBUG_LOG {
-        println!(
+    if BRANCH_LOG {
+        branch_println!(
             "{CPU:?} reading opcode of breakout at {:x} executed cycles {}",
             asm.runtime_data.get_branch_out_pc(),
             asm.runtime_data.accumulated_cycles,
         );
         if asm.runtime_data.is_idle_loop() {
-            println!("{CPU:?} idle loop");
+            branch_println!("{CPU:?} idle loop");
         }
         let inst_info = if get_regs!(asm.emu, CPU).is_thumb() {
             let opcode = asm.emu.mem_read::<CPU, _>(asm.runtime_data.get_branch_out_pc());
@@ -494,5 +494,5 @@ unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(pc: u32, opcode: u3
 }
 
 extern "C" fn debug_enter_block<const CPU: CpuType>(pc: u32) {
-    println!("{CPU:?} execute {pc:x}");
+    branch_println!("{CPU:?} execute {pc:x}");
 }

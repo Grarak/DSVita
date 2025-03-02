@@ -59,6 +59,7 @@ mod utils;
 const BUILD_PROFILE_NAME: &str = include_str!(concat!(env!("OUT_DIR"), "/build_profile_name"));
 pub const DEBUG_LOG: bool = const_str_equal(BUILD_PROFILE_NAME, "debug");
 pub const IS_DEBUG: bool = !const_str_equal(BUILD_PROFILE_NAME, "release");
+pub const BRANCH_LOG: bool = DEBUG_LOG;
 
 fn run_cpu(
     cartridge_io: CartridgeIo,

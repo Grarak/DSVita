@@ -10,8 +10,9 @@ use crate::jit::jit_asm_common_funs::JitAsmCommonFuns;
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
+use crate::logging::branch_println;
 use crate::settings::Arm7Emu;
-use crate::{DEBUG_LOG, IS_DEBUG};
+use crate::{BRANCH_LOG, IS_DEBUG};
 use std::ptr;
 
 pub enum JitBranchInfo {
@@ -104,7 +105,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     CPU == ARM9,
                     |_, _, _, _| {},
                     |asm, block_asm, _, _| {
-                        if DEBUG_LOG {
+                        if BRANCH_LOG {
                             block_asm.call2(Self::debug_branch_label as *const (), asm.jit_buf.current_pc, target_pc);
                         }
                         block_asm.msr_cpsr(backed_up_cpsr_reg);
@@ -136,7 +137,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             JitBranchInfo::Idle(jump_to_index) => {
                 block_asm.mov(Reg::PC, target_pc);
                 block_asm.save_context();
-                if DEBUG_LOG {
+                if BRANCH_LOG {
                     block_asm.call2(Self::debug_idle_loop as *const (), self.jit_buf.current_pc, target_pc);
                 }
                 match CPU {
@@ -294,14 +295,14 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
     }
 
     extern "C" fn debug_branch_label(current_pc: u32, target_pc: u32) {
-        println!("{CPU:?} branch label from {current_pc:x} to {target_pc:x}")
+        branch_println!("{CPU:?} branch label from {current_pc:x} to {target_pc:x}")
     }
 
     extern "C" fn debug_branch_reg(current_pc: u32, target_pc: u32) {
-        println!("{CPU:?} branch reg from {current_pc:x} to {target_pc:x}")
+        branch_println!("{CPU:?} branch reg from {current_pc:x} to {target_pc:x}")
     }
 
     extern "C" fn debug_idle_loop(current_pc: u32, target_pc: u32) {
-        println!("{CPU:?} detected idle loop {current_pc:x} to {target_pc:x}")
+        branch_println!("{CPU:?} detected idle loop {current_pc:x} to {target_pc:x}")
     }
 }

@@ -23,8 +23,9 @@ use crate::jit::jit_memory::JitEntry;
 use crate::jit::reg::Reg;
 use crate::jit::{inst_branch_handler, jit_memory_map, Cond, ShiftType};
 use crate::settings::Arm7Emu;
-use crate::{DEBUG_LOG, IS_DEBUG};
+use crate::{BRANCH_LOG, IS_DEBUG};
 use std::ptr;
+use crate::logging::branch_println;
 
 pub const fn get_max_loop_cycle_count<const CPU: CpuType>() -> u32 {
     match CPU {
@@ -301,7 +302,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
             block_asm.call2(pre_branch::<CPU, false> as *const (), asm as *mut _ as u32, total_cycles as u32);
         }
 
-        if DEBUG_LOG {
+        if BRANCH_LOG {
             block_asm.call2(Self::debug_branch_imm as *const (), current_pc, target_pc);
         }
 
@@ -315,30 +316,30 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
     }
 
     pub extern "C" fn debug_push_return_stack(current_pc: u32, lr_pc: u32, stack_size: u8) {
-        println!("{CPU:?} push {lr_pc:x} to return stack with size {stack_size} at {current_pc:x}")
+        branch_println!("{CPU:?} push {lr_pc:x} to return stack with size {stack_size} at {current_pc:x}")
     }
 
     pub extern "C" fn debug_stack_depth_too_big(size: usize, current_pc: u32) {
-        println!("{CPU:?} stack depth exceeded {size} at {current_pc:x}")
+        branch_println!("{CPU:?} stack depth exceeded {size} at {current_pc:x}")
     }
 
     pub extern "C" fn debug_branch_reg(current_pc: u32, target_pc: u32) {
-        println!("{CPU:?} branch reg from {current_pc:x} to {target_pc:x}")
+        branch_println!("{CPU:?} branch reg from {current_pc:x} to {target_pc:x}")
     }
 
     pub extern "C" fn debug_branch_lr(current_pc: u32, target_pc: u32) {
-        println!("{CPU:?} branch lr from {current_pc:x} to {target_pc:x}")
+        branch_println!("{CPU:?} branch lr from {current_pc:x} to {target_pc:x}")
     }
 
     pub extern "C" fn debug_branch_lr_failed(current_pc: u32, target_pc: u32, desired_pc: u32) {
-        println!("{CPU:?} failed to branch lr from {current_pc:x} to {target_pc:x} desired: {desired_pc:x}")
+        branch_println!("{CPU:?} failed to branch lr from {current_pc:x} to {target_pc:x} desired: {desired_pc:x}")
     }
 
     pub extern "C" fn debug_return_stack_empty(current_pc: u32, target_pc: u32) {
-        println!("{CPU:?} empty return stack {current_pc:x} to {target_pc:x}")
+        branch_println!("{CPU:?} empty return stack {current_pc:x} to {target_pc:x}")
     }
 
     pub extern "C" fn debug_branch_imm(current_pc: u32, target_pc: u32) {
-        println!("{CPU:?} branch imm from {current_pc:x} to {target_pc:x}");
+        branch_println!("{CPU:?} branch imm from {current_pc:x} to {target_pc:x}");
     }
 }

@@ -6,7 +6,7 @@ use crate::jit::jit_asm_common_funs::{exit_guest_context, get_max_loop_cycle_cou
 use crate::jit::jit_memory::JitEntry;
 use crate::logging::debug_println;
 use crate::settings::Arm7Emu;
-use crate::{get_jit_asm_ptr, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
+use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, IS_DEBUG};
 use std::arch::naked_asm;
 use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
@@ -82,7 +82,7 @@ fn check_stack_depth(asm: &mut JitAsm<{ ARM9 }>, current_pc: u32) {
         if IS_DEBUG {
             asm.runtime_data.set_branch_out_pc(current_pc);
         }
-        if DEBUG_LOG {
+        if BRANCH_LOG {
             JitAsmCommonFuns::<{ ARM9 }>::debug_stack_depth_too_big(sp_depth_size, current_pc);
         }
         unsafe { exit_guest_context!(asm) };
@@ -160,7 +160,7 @@ pub extern "C" fn pre_branch<const CPU: CpuType, const HAS_LR_RETURN: bool>(asm:
     asm.runtime_data.pre_cycle_count_sum = 0;
     if HAS_LR_RETURN {
         asm.runtime_data.push_return_stack(lr);
-        if DEBUG_LOG {
+        if BRANCH_LOG {
             JitAsmCommonFuns::<CPU>::debug_push_return_stack(current_pc, lr, asm.runtime_data.get_return_stack_ptr());
         }
     }
@@ -184,7 +184,7 @@ pub unsafe extern "C" fn branch_reg<const CPU: CpuType, const HAS_LR_RETURN: boo
 
     pre_branch::<CPU, HAS_LR_RETURN>(asm, total_cycles, lr, current_pc);
 
-    if DEBUG_LOG {
+    if BRANCH_LOG {
         JitAsmCommonFuns::<CPU>::debug_branch_reg(current_pc, target_pc);
     }
 
@@ -198,7 +198,7 @@ pub unsafe extern "C" fn branch_imm<const CPU: CpuType, const THUMB: bool>(total
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     pre_branch::<CPU, true>(asm, total_cycles, lr, current_pc);
 
-    if DEBUG_LOG {
+    if BRANCH_LOG {
         JitAsmCommonFuns::<CPU>::debug_branch_imm(current_pc, get_regs!(asm.emu, CPU).pc);
     }
 
@@ -223,11 +223,11 @@ pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target
     let desired_lr = asm.runtime_data.pop_return_stack();
     if likely(desired_lr == target_pc) {
         get_regs_mut!(asm.emu, CPU).set_thumb(target_pc & 1 == 1);
-        if DEBUG_LOG {
+        if BRANCH_LOG {
             JitAsmCommonFuns::<CPU>::debug_branch_lr(current_pc, target_pc);
         }
     } else {
-        if DEBUG_LOG {
+        if BRANCH_LOG {
             JitAsmCommonFuns::<CPU>::debug_branch_lr_failed(current_pc, target_pc, desired_lr);
         }
         if CPU == ARM9 && unlikely(asm.runtime_data.is_in_interrupt()) {
@@ -236,7 +236,7 @@ pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target
                 asm.runtime_data.pre_cycle_count_sum = 0;
                 asm.runtime_data.push_return_stack(desired_lr);
                 unsafe { call_jit_fun(asm, target_pc) };
-            } else if DEBUG_LOG {
+            } else if BRANCH_LOG {
                 JitAsmCommonFuns::<CPU>::debug_stack_depth_too_big(sp_depth_size, current_pc);
             }
         }
