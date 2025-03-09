@@ -3,6 +3,7 @@ use crate::core::cycle_manager::{CycleManager, EventType};
 use crate::core::emu::{get_arm7_hle_mut, get_common_mut, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
+use crate::core::graphics::gpu_3d::geometry_3d::Gpu3DGeometry;
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::hle::arm7_hle::Arm7Hle;
@@ -104,6 +105,7 @@ pub struct Gpu {
     pub gpu_2d_regs_a: Gpu2DRegisters,
     pub gpu_2d_regs_b: Gpu2DRegisters,
     pub gpu_3d_regs: Gpu3DRegisters,
+    pub gpu_3d_geometry: Option<NonNull<Gpu3DGeometry>>,
     pub gpu_renderer: Option<NonNull<GpuRenderer>>,
 }
 
@@ -117,7 +119,8 @@ impl Gpu {
             v_count: 0,
             gpu_2d_regs_a: Gpu2DRegisters::new(A),
             gpu_2d_regs_b: Gpu2DRegisters::new(B),
-            gpu_3d_regs: Gpu3DRegisters::new(),
+            gpu_3d_regs: Gpu3DRegisters::default(),
+            gpu_3d_geometry: None,
             gpu_renderer: None,
         }
     }
@@ -135,8 +138,16 @@ impl Gpu {
         unsafe { self.gpu_renderer.unwrap().as_ref() }
     }
 
-    pub fn get_renderer_mut(&mut self) -> &mut GpuRenderer {
-        unsafe { self.gpu_renderer.unwrap().as_mut() }
+    pub fn get_renderer_mut(&mut self) -> &'static mut GpuRenderer {
+        unsafe { self.gpu_renderer.unwrap_unchecked().as_mut() }
+    }
+
+    pub fn get_3d_geometry(&self) -> &'static Gpu3DGeometry {
+        unsafe { self.gpu_3d_geometry.unwrap_unchecked().as_ref() }
+    }
+
+    pub fn get_3d_geometry_mut(&mut self) -> &'static mut Gpu3DGeometry {
+        unsafe { self.gpu_3d_geometry.unwrap_unchecked().as_mut() }
     }
 
     pub fn get_disp_stat<const CPU: CpuType>(&self) -> u16 {
@@ -195,11 +206,11 @@ impl Gpu {
                 let gpu_3d_regs = &mut get_common_mut!(emu).gpu.gpu_3d_regs;
 
                 let pow_cnt1 = PowCnt1::from(gpu.pow_cnt1);
-                gpu.get_renderer_mut().on_scanline_finish(get_mem_mut!(emu), pow_cnt1, gpu_3d_regs);
+                gpu.get_renderer_mut().on_scanline_finish(get_mem_mut!(emu), pow_cnt1, gpu.get_3d_geometry_mut());
 
                 if gpu_3d_regs.flushed {
-                    gpu_3d_regs.swap_buffers();
                     gpu.get_renderer_mut().renderer_3d.invalidate();
+                    gpu_3d_regs.flushed = false;
                 }
 
                 for i in 0..2 {

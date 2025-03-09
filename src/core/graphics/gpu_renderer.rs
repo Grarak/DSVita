@@ -14,6 +14,7 @@ use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
+use crate::core::graphics::gpu_3d::geometry_3d::Gpu3DGeometry;
 
 pub struct GpuRendererCommon {
     pub mem_buf: GpuMemBuf,
@@ -68,7 +69,7 @@ impl GpuRenderer {
         self.renderer_2d.on_scanline(inner_a, inner_b, line);
     }
 
-    pub fn on_scanline_finish(&mut self, mem: &mut Memory, pow_cnt1: PowCnt1, registers_3d: &mut Gpu3DRegisters) {
+    pub fn on_scanline_finish(&mut self, mem: &mut Memory, pow_cnt1: PowCnt1, geometry_3d: &mut Gpu3DGeometry) {
         let mut rendering = self.rendering.lock().unwrap();
 
         if !*rendering {
@@ -78,7 +79,7 @@ impl GpuRenderer {
             self.common.mem_buf.read_vram(&mut mem.vram);
             self.common.mem_buf.read_palettes_oam(mem);
             if self.renderer_3d.dirty {
-                self.renderer_3d.finish_scanline(registers_3d);
+                self.renderer_3d.finish_scanline(geometry_3d);
                 self.renderer_3d.dirty = false;
                 self.rendering_3d = true;
             }
