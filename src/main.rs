@@ -20,6 +20,7 @@
 use crate::cartridge_io::CartridgeIo;
 use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, get_spu_mut, Emu};
 use crate::core::graphics::gpu::Gpu;
+use crate::core::graphics::gpu_3d::geometry_3d::Gpu3DGeometry;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::hle::arm7_hle::Arm7Hle;
 use crate::core::memory::mmu::Mmu;
@@ -61,6 +62,7 @@ pub const DEBUG_LOG: bool = const_str_equal(BUILD_PROFILE_NAME, "debug");
 pub const IS_DEBUG: bool = !const_str_equal(BUILD_PROFILE_NAME, "release");
 pub const BRANCH_LOG: bool = DEBUG_LOG;
 
+#[cold]
 fn run_cpu(
     cartridge_io: CartridgeIo,
     fps: Arc<AtomicU16>,
@@ -68,6 +70,7 @@ fn run_cpu(
     touch_points: Arc<AtomicU16>,
     sound_sampler: Arc<SoundSampler>,
     settings: Settings,
+    gpu3d_geometry: NonNull<Gpu3DGeometry>,
     gpu_renderer: NonNull<GpuRenderer>,
     last_save_time: Arc<Mutex<Option<(Instant, bool)>>>,
 ) {
@@ -173,6 +176,7 @@ fn run_cpu(
     }
 
     Gpu::initialize_schedule(get_cm_mut!(emu));
+    common.gpu.gpu_3d_geometry = Some(gpu3d_geometry);
     common.gpu.gpu_renderer = Some(gpu_renderer);
 
     get_spu_mut!(emu).audio_enabled = emu.settings.audio();
@@ -324,7 +328,7 @@ pub fn main() {
 #[cold]
 pub fn actual_main() {
     if cfg!(target_os = "vita") {
-        set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core1);
+        set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core0);
     }
 
     if IS_DEBUG {
@@ -410,13 +414,25 @@ pub fn actual_main() {
         })
         .unwrap();
 
+    let gpu3d_geometry = UnsafeCell::new(Gpu3DGeometry::default());
+    let gpu3d_geometry_ptr = gpu3d_geometry.get() as usize;
+
     let gpu_renderer = UnsafeCell::new(GpuRenderer::new());
-    let gpu_renderer_ptr = gpu_renderer.get() as u32;
+    let gpu_renderer_ptr = gpu_renderer.get() as usize;
 
     let last_save_time = Arc::new(Mutex::new(None));
     let last_save_time_clone = last_save_time.clone();
 
     let settings_clone = settings.clone();
+
+    let gpu3d_geometry_thread = thread::Builder::new()
+        .name("geometry".to_owned())
+        .spawn(move || {
+            set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core1);
+            let gpu3d_geometry_ptr = unsafe { (gpu3d_geometry_ptr as *mut Gpu3DGeometry).as_mut_unchecked() };
+            gpu3d_geometry_ptr.run();
+        })
+        .unwrap();
 
     let cpu_thread = thread::Builder::new()
         .name("cpu".to_owned())
@@ -431,6 +447,7 @@ pub fn actual_main() {
                 touch_points_clone,
                 sound_sampler_clone,
                 settings_clone,
+                NonNull::new(gpu3d_geometry_ptr as *mut Gpu3DGeometry).unwrap(),
                 NonNull::new(gpu_renderer_ptr as *mut GpuRenderer).unwrap(),
                 last_save_time_clone,
             );
@@ -449,4 +466,5 @@ pub fn actual_main() {
 
     audio_thread.join().unwrap();
     cpu_thread.join().unwrap();
+    gpu3d_geometry_thread.join().unwrap();
 }

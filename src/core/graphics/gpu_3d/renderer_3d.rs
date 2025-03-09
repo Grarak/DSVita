@@ -1,14 +1,11 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, SwapBuffers, TextureCoordTransMode, Vertex};
-use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
+use crate::core::graphics::gpu_3d::geometry_3d::{Gpu3DGeometry, Polygon, PrimitiveType, SwapBuffers, Vertex, POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
-use crate::math::{Matrix, Vectori32};
 use crate::utils::{rgb5_to_float8, rgb6_to_float8, HeapMem};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
-use std::mem::MaybeUninit;
 use std::ptr;
 
 #[bitsize(32)]
@@ -130,8 +127,6 @@ pub struct Gpu3DRendererContent {
     pub vertices_size: u16,
     pub polygons: HeapMem<Polygon, POLYGON_LIMIT>,
     pub polygons_size: u16,
-    pub clip_matrices: Vec<Matrix>,
-    pub tex_matrices: Vec<Matrix>,
     pub swap_buffers: SwapBuffers,
 }
 
@@ -234,13 +229,12 @@ impl Gpu3DRenderer {
         self.invalidate();
     }
 
-    pub fn finish_scanline(&mut self, registers: &mut Gpu3DRegisters) {
+    pub fn finish_scanline(&mut self, geometry: &mut Gpu3DGeometry) {
         self.inners[0] = self.inners[1].clone();
 
-        if registers.consume {
-            registers.consume = false;
-
-            registers.swap_to_renderer(&mut self.content);
+        let _lock = unsafe { geometry.syncing.get().as_ref_unchecked().swap_mutex.lock().unwrap() };
+        if geometry.swapped {
+            geometry.swap_to_renderer(&mut self.content);
         }
     }
 
@@ -269,12 +263,8 @@ impl Gpu3DRenderer {
             //     polygon.attr
             // );
 
-            let mut transformed_coords: [Vectori32<4>; 4] = unsafe { MaybeUninit::uninit().assume_init() };
             for j in 0..polygon.polygon_type.vertex_count() {
-                let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
-                vertex.coords[3] = 1 << 12;
-                transformed_coords[j as usize] = vertex.coords * &self.content.clip_matrices[vertex.clip_matrix_index as usize];
-                if transformed_coords[j as usize][3] == 0 {
+                if self.content.vertices[polygon.vertices_index as usize + j as usize].coords[3] == 0 {
                     continue 'outer;
                 }
             }
@@ -302,31 +292,21 @@ impl Gpu3DRenderer {
             for j in 0..polygon.polygon_type.vertex_count() {
                 let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
 
-                let coords = &transformed_coords[j as usize];
                 let c = rgb6_to_float8(vertex.color);
 
-                let vertex_x = ((coords[0] as i64 + coords[3] as i64) * w as i64 / (coords[3] as i64 * 2) + x as i64) as i32;
-                let vertex_y = ((-coords[1] as i64 + coords[3] as i64) * h as i64 / (coords[3] as i64 * 2) + y as i64) as i32;
+                let vertex_x = ((vertex.coords[0] as i64 + vertex.coords[3] as i64) * w as i64 / (vertex.coords[3] as i64 * 2) + x as i64) as i32;
+                let vertex_y = ((-vertex.coords[1] as i64 + vertex.coords[3] as i64) * h as i64 / (vertex.coords[3] as i64 * 2) + y as i64) as i32;
 
-                let mut tex_coords = vertex.tex_coords;
-                let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
-                if tex_coord_trans_mode == TextureCoordTransMode::TexCoord && (vertex.tex_matrix_index as usize) < self.content.tex_matrices.len() {
-                    let mut vector = Vectori32::<4>::new([(tex_coords[0] as i32) << 8, (tex_coords[1] as i32) << 8, 1 << 12, 1 << 12]);
-                    vector *= &self.content.tex_matrices[vertex.tex_matrix_index as usize];
-                    tex_coords[0] = (vector[0] >> 8) as i16;
-                    tex_coords[1] = (vector[1] >> 8) as i16;
-                }
-
-                let w = coords[3] as f32 / 4096f32;
+                let w = vertex.coords[3] as f32 / 4096f32;
                 self.vertices_buf.push(Gpu3DVertex {
                     coords: [
                         (vertex_x as f32 * 2f32 / 255f32 - 1f32) * w,
                         (1f32 - vertex_y as f32 * 2f32 / 191f32) * w,
-                        coords[2] as f32 / 4096f32,
+                        vertex.coords[2] as f32 / 4096f32,
                         w,
                     ],
                     color: [c.0, c.1, c.2, i as f32],
-                    tex_coords: [tex_coords[0] as f32 / 16f32, tex_coords[1] as f32 / 16f32],
+                    tex_coords: [vertex.tex_coords[0] as f32 / 16f32, vertex.tex_coords[1] as f32 / 16f32],
                 });
 
                 // println!(

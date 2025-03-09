@@ -458,6 +458,7 @@ impl Vram {
         get_jit_mut!(emu).invalidate_vram();
     }
 
+    #[cold]
     pub fn rebuild_maps(&mut self) {
         self.maps.reset();
         self.arm7.reset();
