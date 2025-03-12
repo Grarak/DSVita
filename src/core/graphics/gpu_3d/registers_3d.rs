@@ -4,17 +4,15 @@ use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRendererContent;
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
-use crate::fixed_fifo::FixedFifo;
 use crate::logging::debug_println;
 use crate::math::{vmult_mat4, Matrix, Vectori16, Vectori32};
 use crate::utils::{rgb5_to_rgb6, HeapMem};
 use bilge::prelude::*;
 use paste::paste;
 use std::arch::arm::{int32x4_t, vld1q_s32, vld1q_s32_x3, vsetq_lane_s32};
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::intrinsics::unlikely;
 use std::mem;
-use std::mem::MaybeUninit;
 
 pub const POLYGON_LIMIT: usize = 8192;
 pub const VERTEX_LIMIT: usize = POLYGON_LIMIT * 4;
@@ -588,10 +586,11 @@ pub struct Polygon {
 
 #[derive(Default)]
 pub struct Gpu3DRegisters {
-    cmd_fifo: FixedFifo<u32, 512>,
+    cmd_fifo: Vec<u32>,
     cmd_remaining_params: u8,
     last_cmd: u32,
     cmd_fifo_len: u16,
+    processing_offset: usize,
 
     test_queue: u8,
 
@@ -674,7 +673,7 @@ impl Gpu3DRegisters {
     }
 
     pub fn run_cmds(&mut self, total_cycles: u64, emu: &mut Emu) {
-        if self.cmd_fifo.is_empty() || self.flushed {
+        if self.processing_offset >= self.cmd_fifo.len() || self.flushed {
             self.last_total_cycles = total_cycles;
             return;
         }
@@ -685,28 +684,23 @@ impl Gpu3DRegisters {
         self.last_total_cycles = total_cycles;
         let mut executed_cycles = 0;
 
-        let mut params: [u32; 32] = unsafe { MaybeUninit::uninit().assume_init() };
-
-        while !self.cmd_fifo.is_empty() {
-            let value = *self.cmd_fifo.front() as usize;
-            self.cmd_fifo.pop_front();
+        while self.processing_offset < self.cmd_fifo.len() {
+            let value = self.cmd_fifo[self.processing_offset] as usize;
+            self.processing_offset += 1;
 
             let param_count = value >> 8;
             let cmd = value & 0xFF;
 
-            if unlikely(param_count > self.cmd_fifo.len()) {
-                self.cmd_fifo.push_front(value as u32);
+            if unlikely(param_count > self.cmd_fifo.len() - self.processing_offset) {
+                self.processing_offset -= 1;
                 break;
             }
 
             debug_println!("gx: {} {cmd:x} {param_count}", unsafe { FUNC_NAME_LUT.get_unchecked(cmd) });
-            for i in 0..param_count {
-                unsafe { *params.get_unchecked_mut(i) = *self.cmd_fifo.front() };
-                self.cmd_fifo.pop_front();
-            }
-
             let func = unsafe { FUNC_LUT.get_unchecked(cmd) };
-            func(self, &params);
+            func(self, unsafe { (self.cmd_fifo[self.processing_offset..].as_ptr() as *const [u32; 32]).as_ref_unchecked() });
+
+            self.processing_offset += param_count;
 
             self.cmd_fifo_len -= param_count as u16;
             self.cmd_fifo_len -= ((param_count as u32).wrapping_sub(1) >> 31) as u16;
@@ -1201,6 +1195,9 @@ impl Gpu3DRegisters {
             self.consume = true;
         }
         self.skip = self.consume;
+
+        self.cmd_fifo.drain(..self.processing_offset);
+        self.processing_offset = 0;
     }
 
     pub fn swap_to_renderer(&mut self, content: &mut Gpu3DRendererContent) {
@@ -1282,7 +1279,7 @@ impl Gpu3DRegisters {
 
     pub fn get_gx_stat(&self) -> u32 {
         let mut gx_stat = self.gx_stat;
-        gx_stat.set_geometry_busy(!self.cmd_fifo.is_empty());
+        gx_stat.set_geometry_busy(self.processing_offset < self.cmd_fifo.len());
         gx_stat.set_num_entries_cmd_fifo(u9::new(self.get_cmd_fifo_len() as u16));
         gx_stat.set_cmd_fifo_less_half_full(!self.is_cmd_fifo_half_full());
         gx_stat.set_cmd_fifo_empty(self.is_cmd_fifo_empty());
@@ -1308,7 +1305,7 @@ impl Gpu3DRegisters {
                 self.last_cmd = value;
                 let cmd = value & 0x7F;
                 self.cmd_remaining_params = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd as usize) };
-                self.cmd_fifo.push_back(cmd | ((self.cmd_remaining_params as u32) << 8));
+                self.cmd_fifo.push(cmd | ((self.cmd_remaining_params as u32) << 8));
                 self.test_queue += (cmd >= 0x70 && cmd <= 0x72) as u8;
                 self.cmd_fifo_len += ((self.cmd_remaining_params as u32).wrapping_sub(1) >> 31) as u16;
             } else {
@@ -1316,7 +1313,7 @@ impl Gpu3DRegisters {
             }
         } else {
             self.cmd_remaining_params -= 1;
-            self.cmd_fifo.push_back(value);
+            self.cmd_fifo.push(value);
             self.cmd_fifo_len += 1;
         }
 
@@ -1325,7 +1322,7 @@ impl Gpu3DRegisters {
             if self.last_cmd != 0 {
                 let cmd = self.last_cmd & 0x7F;
                 self.cmd_remaining_params = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd as usize) };
-                self.cmd_fifo.push_back(cmd | ((self.cmd_remaining_params as u32) << 8));
+                self.cmd_fifo.push(cmd | ((self.cmd_remaining_params as u32) << 8));
                 self.test_queue += (cmd >= 0x70 && cmd <= 0x72) as u8;
                 self.cmd_fifo_len += ((self.cmd_remaining_params as u32).wrapping_sub(1) >> 31) as u16;
             } else {
@@ -1349,10 +1346,10 @@ impl Gpu3DRegisters {
     fn queue_unpacked_value<const CMD: u8>(&mut self, value: u32, emu: &mut Emu) {
         if self.cmd_remaining_params == 0 {
             self.cmd_remaining_params = FIFO_PARAM_COUNTS[CMD as usize];
-            self.cmd_fifo.push_back(CMD as u32 | ((self.cmd_remaining_params as u32) << 8));
+            self.cmd_fifo.push(CMD as u32 | ((self.cmd_remaining_params as u32) << 8));
             if self.cmd_remaining_params > 0 {
                 self.cmd_remaining_params -= 1;
-                self.cmd_fifo.push_back(value);
+                self.cmd_fifo.push(value);
             }
 
             match CMD {
@@ -1361,7 +1358,7 @@ impl Gpu3DRegisters {
             }
         } else {
             self.cmd_remaining_params -= 1;
-            self.cmd_fifo.push_back(value);
+            self.cmd_fifo.push(value);
         }
         self.cmd_fifo_len += 1;
         self.post_queue_entry(emu);
