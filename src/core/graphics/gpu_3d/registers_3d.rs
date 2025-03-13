@@ -672,8 +672,15 @@ impl Gpu3DRegisters {
         max(self.cmd_fifo_len as isize - 4, 0) as usize
     }
 
+    fn can_run_cmds(&self) -> bool {
+        self.processing_offset < self.cmd_fifo.len() && {
+            let params_count = self.cmd_fifo[self.processing_offset] >> 8;
+            (params_count as usize) < self.cmd_fifo.len() - self.processing_offset
+        }
+    }
+
     pub fn run_cmds(&mut self, total_cycles: u64, emu: &mut Emu) {
-        if self.processing_offset >= self.cmd_fifo.len() || self.flushed {
+        if self.flushed || !self.can_run_cmds() {
             self.last_total_cycles = total_cycles;
             return;
         }
@@ -684,17 +691,12 @@ impl Gpu3DRegisters {
         self.last_total_cycles = total_cycles;
         let mut executed_cycles = 0;
 
-        while self.processing_offset < self.cmd_fifo.len() {
+        while {
             let value = self.cmd_fifo[self.processing_offset] as usize;
             self.processing_offset += 1;
 
             let param_count = value >> 8;
             let cmd = value & 0xFF;
-
-            if unlikely(param_count > self.cmd_fifo.len() - self.processing_offset) {
-                self.processing_offset -= 1;
-                break;
-            }
 
             debug_println!("gx: {} {cmd:x} {param_count}", unsafe { FUNC_NAME_LUT.get_unchecked(cmd) });
             let func = unsafe { FUNC_LUT.get_unchecked(cmd) };
@@ -706,10 +708,8 @@ impl Gpu3DRegisters {
             self.cmd_fifo_len -= ((param_count as u32).wrapping_sub(1) >> 31) as u16;
 
             executed_cycles += 8;
-            if unlikely(executed_cycles >= cycle_diff || cmd == 0x50) {
-                break;
-            }
-        }
+            self.can_run_cmds() && executed_cycles < cycle_diff && cmd != 0x50
+        } {}
 
         if is_cmd_fifo_half_full && !self.is_cmd_fifo_half_full() {
             io_dma!(emu, ARM9).trigger_all(DmaTransferMode::GeometryCmdFifo, get_cm_mut!(emu));
@@ -1279,7 +1279,7 @@ impl Gpu3DRegisters {
 
     pub fn get_gx_stat(&self) -> u32 {
         let mut gx_stat = self.gx_stat;
-        gx_stat.set_geometry_busy(self.processing_offset < self.cmd_fifo.len());
+        gx_stat.set_geometry_busy(self.can_run_cmds());
         gx_stat.set_num_entries_cmd_fifo(u9::new(self.get_cmd_fifo_len() as u16));
         gx_stat.set_cmd_fifo_less_half_full(!self.is_cmd_fifo_half_full());
         gx_stat.set_cmd_fifo_empty(self.is_cmd_fifo_empty());
