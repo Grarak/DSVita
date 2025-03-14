@@ -175,7 +175,8 @@ impl GpuRenderer {
                 }
             };
 
-            self.gl_glyph.draw(format!("{}ms {:?}\n{per}% ({fps}fps)\n{info_text}", self.average_render_time, settings.arm7_hle(),));
+            let arm7_emu: &str = settings.arm7_hle().into();
+            self.gl_glyph.draw(format!("{}ms {arm7_emu}\n{per}% ({fps}fps)\n{info_text}", self.average_render_time));
 
             presenter.gl_swap_window();
         }

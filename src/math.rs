@@ -1,7 +1,7 @@
 use paste::paste;
 use std::arch::arm::{
-    int32x4_t, int64x1_t, int64x2_t, uint64x2_t, vaddq_u64, vget_high_s32, vget_high_s64, vget_lane_s32, vget_low_s32, vget_low_s64, vgetq_lane_s32, vld1q_s32, vmlal_n_s32, vmlal_s32, vmovn_u64,
-    vmull_n_s32, vmull_s32, vmull_u32, vreinterpretq_s64_u64, vreinterpretq_u64_s64, vshlq_n_u64, vshr_n_s64, vshrq_n_s64, vshrq_n_u64, vst1q_s32, vuzpq_s32,
+    int32x4_t, int64x1_t, int64x2_t, uint64x2_t, vaddq_u64, vget_high_s32, vget_high_s64, vget_lane_s32, vget_low_s32, vget_low_s64, vgetq_lane_s32, vld1q_s32, vld1q_s32_x4, vmlal_n_s32, vmlal_s32,
+    vmovn_u64, vmull_n_s32, vmull_s32, vmull_u32, vreinterpretq_s64_u64, vreinterpretq_u64_s64, vshlq_n_u64, vshr_n_s64, vshrq_n_s64, vshrq_n_u64, vst1q_s32, vuzpq_s32,
 };
 use std::fmt::{Display, Formatter};
 use std::intrinsics::simd::simd_add;
@@ -45,7 +45,14 @@ pub unsafe fn vmulq_s64(ab: int64x2_t, cd: int64x2_t) -> int64x2_t {
 }
 
 #[derive(Copy, Clone)]
-pub struct Matrix([i32; 16]);
+pub struct Matrix(pub [i32; 16]);
+
+impl Matrix {
+    pub unsafe fn vld(&self) -> [int32x4_t; 4] {
+        let mtx = vld1q_s32_x4(self.0.as_ptr());
+        [mtx.0, mtx.1, mtx.2, mtx.3]
+    }
+}
 
 impl ops::Mul<&Matrix> for Matrix {
     type Output = Matrix;
@@ -58,39 +65,27 @@ impl ops::Mul<&Matrix> for Matrix {
 
 impl ops::MulAssign<&Matrix> for Matrix {
     fn mul_assign(&mut self, rhs: &Matrix) {
-        unsafe {
-            let lm = [
-                vld1q_s32(self.0.as_ptr()),
-                vld1q_s32(self.0.as_ptr().add(4)),
-                vld1q_s32(self.0.as_ptr().add(8)),
-                vld1q_s32(self.0.as_ptr().add(12)),
-            ];
+        unsafe { vmult_mat4(self.vld(), rhs.vld(), &mut self.0) };
+    }
+}
 
-            let rm = [
-                vld1q_s32(rhs.0.as_ptr()),
-                vld1q_s32(rhs.0.as_ptr().add(4)),
-                vld1q_s32(rhs.0.as_ptr().add(8)),
-                vld1q_s32(rhs.0.as_ptr().add(12)),
-            ];
+pub unsafe fn vmult_mat4(lm: [int32x4_t; 4], rm: [int32x4_t; 4], result: &mut [i32; 16]) {
+    for i in 0..4 {
+        let low = vmull_n_s32(vget_low_s32(rm[0]), vgetq_lane_s32::<0>(lm[i]));
+        let low = vmlal_n_s32(low, vget_low_s32(rm[1]), vgetq_lane_s32::<1>(lm[i]));
+        let low = vmlal_n_s32(low, vget_low_s32(rm[2]), vgetq_lane_s32::<2>(lm[i]));
+        let low = vmlal_n_s32(low, vget_low_s32(rm[3]), vgetq_lane_s32::<3>(lm[i]));
 
-            for i in 0..4 {
-                let low = vmull_n_s32(vget_low_s32(rm[0]), vgetq_lane_s32::<0>(lm[i]));
-                let low = vmlal_n_s32(low, vget_low_s32(rm[1]), vgetq_lane_s32::<1>(lm[i]));
-                let low = vmlal_n_s32(low, vget_low_s32(rm[2]), vgetq_lane_s32::<2>(lm[i]));
-                let low = vmlal_n_s32(low, vget_low_s32(rm[3]), vgetq_lane_s32::<3>(lm[i]));
+        let high = vmull_n_s32(vget_high_s32(rm[0]), vgetq_lane_s32::<0>(lm[i]));
+        let high = vmlal_n_s32(high, vget_high_s32(rm[1]), vgetq_lane_s32::<1>(lm[i]));
+        let high = vmlal_n_s32(high, vget_high_s32(rm[2]), vgetq_lane_s32::<2>(lm[i]));
+        let high = vmlal_n_s32(high, vget_high_s32(rm[3]), vgetq_lane_s32::<3>(lm[i]));
 
-                let high = vmull_n_s32(vget_high_s32(rm[0]), vgetq_lane_s32::<0>(lm[i]));
-                let high = vmlal_n_s32(high, vget_high_s32(rm[1]), vgetq_lane_s32::<1>(lm[i]));
-                let high = vmlal_n_s32(high, vget_high_s32(rm[2]), vgetq_lane_s32::<2>(lm[i]));
-                let high = vmlal_n_s32(high, vget_high_s32(rm[3]), vgetq_lane_s32::<3>(lm[i]));
+        let low = vshrq_n_s64::<12>(low);
+        let high = vshrq_n_s64::<12>(high);
 
-                let low = vshrq_n_s64::<12>(low);
-                let high = vshrq_n_s64::<12>(high);
-
-                let v = vuzpq_s32(mem::transmute(low), mem::transmute(high));
-                vst1q_s32(self.0.as_mut_ptr().add(i << 2), v.0);
-            }
-        }
+        let v = vuzpq_s32(mem::transmute(low), mem::transmute(high));
+        vst1q_s32(result.as_mut_ptr().add(i << 2), v.0);
     }
 }
 
