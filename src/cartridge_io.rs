@@ -3,7 +3,6 @@ use crate::logging::debug_println;
 use crate::utils;
 use crate::utils::{rgb5_to_rgb8, HeapMemU8, NoHashMap};
 use static_assertions::const_assert_eq;
-use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::fs::File;
 use std::io::{ErrorKind, Seek};
@@ -78,7 +77,7 @@ const_assert_eq!(HEADER_SIZE, HEADER_IN_RAM_SIZE + 0x90);
 
 const SAVE_SIZES: [u32; 9] = [0x000200, 0x002000, 0x008000, 0x010000, 0x020000, 0x040000, 0x080000, 0x100000, 0x800000];
 const CARTRIDGE_PAGE_SIZE: usize = 4096;
-const MAX_CARTRIDGE_CACHE: usize = 512 * 1024;
+const MAX_CARTRIDGE_CACHE: usize = 16 * 1024 * 1024;
 
 pub struct CartridgePreview {
     file: File,
@@ -165,7 +164,8 @@ pub struct CartridgeIo {
     pub file_name: String,
     pub file_size: u32,
     pub header: CartridgeHeader,
-    content_pages: UnsafeCell<NoHashMap<u32, HeapMemU8<{ CARTRIDGE_PAGE_SIZE }>>>,
+    content_pages: NoHashMap<u32, u16>,
+    content_cache: HeapMemU8<MAX_CARTRIDGE_CACHE>,
     save_file_path: PathBuf,
     pub save_file_size: u32,
     save_buf: Mutex<(Vec<u8>, bool)>,
@@ -205,35 +205,35 @@ impl CartridgeIo {
             file_name: preview.file_name,
             file_size,
             header: preview.header,
-            content_pages: UnsafeCell::new(NoHashMap::default()),
+            content_pages: NoHashMap::default(),
+            content_cache: HeapMemU8::new(),
             save_file_path,
             save_file_size,
             save_buf: Mutex::new((save_buf, false)),
         })
     }
 
-    fn get_page(&self, page_addr: u32) -> io::Result<*const [u8; CARTRIDGE_PAGE_SIZE]> {
+    fn get_page(&mut self, page_addr: u32) -> io::Result<*const [u8; CARTRIDGE_PAGE_SIZE]> {
         debug_assert_eq!(page_addr & (CARTRIDGE_PAGE_SIZE as u32 - 1), 0);
-        let pages = unsafe { self.content_pages.get().as_mut_unchecked() };
-        match pages.get(&page_addr) {
+        match self.content_pages.get(&page_addr) {
             None => {
-                // exceeds 0.5MB
-                if pages.len() >= MAX_CARTRIDGE_CACHE / CARTRIDGE_PAGE_SIZE {
+                if self.content_pages.len() >= MAX_CARTRIDGE_CACHE / CARTRIDGE_PAGE_SIZE {
                     debug_println!("clear cartridge pages");
-                    pages.clear();
+                    self.content_pages.clear();
                 }
 
-                let mut buf = HeapMemU8::new();
-                let ptr = buf.as_ptr();
-                self.file.read_at(buf.as_mut(), page_addr as u64)?;
-                pages.insert(page_addr, buf);
-                Ok(ptr as _)
+                let content_offset = self.content_pages.len() as u16;
+                let start = content_offset as usize * CARTRIDGE_PAGE_SIZE;
+                let buf = &mut self.content_cache[start..start + CARTRIDGE_PAGE_SIZE];
+                self.file.read_at(buf, page_addr as u64)?;
+                self.content_pages.insert(page_addr, content_offset);
+                Ok(buf.as_ptr() as _)
             }
-            Some(page) => Ok(page.as_ptr() as _),
+            Some(page) => Ok(self.content_cache[*page as usize * CARTRIDGE_PAGE_SIZE..].as_ptr() as _),
         }
     }
 
-    pub fn read_slice(&self, offset: u32, slice: &mut [u8]) -> io::Result<()> {
+    pub fn read_slice(&mut self, offset: u32, slice: &mut [u8]) -> io::Result<()> {
         let mut remaining = slice.len();
         while remaining > 0 {
             let slice_start = slice.len() - remaining;
@@ -252,7 +252,7 @@ impl CartridgeIo {
         Ok(())
     }
 
-    pub fn read_arm9_code(&self) -> Vec<u8> {
+    pub fn read_arm9_code(&mut self) -> Vec<u8> {
         let mut boot_code = vec![0u8; self.header.arm9_values.size as usize];
         self.read_slice(self.header.arm9_values.rom_offset, &mut boot_code).unwrap();
 
@@ -277,7 +277,7 @@ impl CartridgeIo {
         boot_code
     }
 
-    pub fn read_arm7_code(&self) -> Vec<u8> {
+    pub fn read_arm7_code(&mut self) -> Vec<u8> {
         let mut boot_code = vec![0u8; self.header.arm7_values.size as usize];
         self.read_slice(self.header.arm7_values.rom_offset, &mut boot_code).unwrap();
         boot_code
