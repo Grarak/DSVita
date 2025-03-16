@@ -1011,8 +1011,7 @@ impl SoundNitro {
                         cnt.set_master_enable(true);
                         cnt.set_left_output_from(u2::new((output_l & 0x3) as u8));
                         cnt.set_right_output_from(u2::new((output_r & 0x3) as u8));
-                        cnt.set_output_ch1_to_mixer((mixch1 & 0x1) != 0);
-                        cnt.set_output_ch3_to_mixer((mixch3 & 0x1) != 0);
+                        cnt.set_output_ch_to_mixer(u2::new(((mixch3 as u8 & 0x1) << 1) | (mixch1 as u8 & 0x1)));
                         spu.set_main_sound_cnt(!0, u16::from(cnt), emu);
                     }
                     0x1A => {}
