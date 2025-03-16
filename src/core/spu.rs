@@ -4,7 +4,7 @@ use crate::core::CpuType::ARM7;
 use crate::presenter::{PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE};
 use crate::utils::HeapMemU32;
 use bilge::prelude::*;
-use std::cmp::{max, min};
+use std::cmp::min;
 use std::collections::VecDeque;
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::{likely, unlikely};
@@ -63,14 +63,62 @@ impl SoundSampler {
     }
 }
 
-const ADPCM_INDEX_TABLE: [i8; 8] = [-1, -1, -1, -1, 2, 4, 6, 8];
-
 const ADPCM_TABLE: [i16; 89] = [
     0x0007, 0x0008, 0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x000E, 0x0010, 0x0011, 0x0013, 0x0015, 0x0017, 0x0019, 0x001C, 0x001F, 0x0022, 0x0025, 0x0029, 0x002D, 0x0032, 0x0037, 0x003C, 0x0042,
     0x0049, 0x0050, 0x0058, 0x0061, 0x006B, 0x0076, 0x0082, 0x008F, 0x009D, 0x00AD, 0x00BE, 0x00D1, 0x00E6, 0x00FD, 0x0117, 0x0133, 0x0151, 0x0173, 0x0198, 0x01C1, 0x01EE, 0x0220, 0x0256, 0x0292,
     0x02D4, 0x031C, 0x036C, 0x03C3, 0x0424, 0x048E, 0x0502, 0x0583, 0x0610, 0x06AB, 0x0756, 0x0812, 0x08E0, 0x09C3, 0x0ABD, 0x0BD0, 0x0CFF, 0x0E4C, 0x0FBA, 0x114C, 0x1307, 0x14EE, 0x1706, 0x1954,
     0x1BDC, 0x1EA5, 0x21B6, 0x2515, 0x28CA, 0x2CDF, 0x315B, 0x364B, 0x3BB9, 0x41B2, 0x4844, 0x4F7E, 0x5771, 0x602F, 0x69CE, 0x7462, 0x7FFF,
 ];
+
+const fn calculate_adpcm_diff_table() -> [[i32; 16]; 89] {
+    let mut table = [[0; 16]; 89];
+    let mut i = 0;
+    while i < 16 {
+        let mut j = 0;
+        while j < 89 {
+            table[j][i] = ADPCM_TABLE[j] as i32 / 8;
+            if i & 1 != 0 {
+                table[j][i] += ADPCM_TABLE[j] as i32 / 4;
+            }
+            if i & 2 != 0 {
+                table[j][i] += ADPCM_TABLE[j] as i32 / 2;
+            }
+            if i & 4 != 0 {
+                table[j][i] += ADPCM_TABLE[j] as i32;
+            }
+            if i & 8 == 0 {
+                table[j][i] = -table[j][i]
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+    table
+}
+const ADPCM_DIFF_TABLE: [[i32; 16]; 89] = calculate_adpcm_diff_table();
+
+const fn calculate_adpcm_index_table() -> [[u8; 8]; 89] {
+    let mut table = [[0; 8]; 89];
+    let mut i = 0;
+    while i < 8 {
+        let mut j = 0;
+        while j < 89 {
+            const INDICES: [i8; 8] = [-1, -1, -1, -1, 2, 4, 6, 8];
+            let mut index = j as i8 + INDICES[i];
+            if index < 0 {
+                index = 0;
+            } else if index > 88 {
+                index = 88;
+            }
+            table[j][i] = index as u8;
+            j += 1;
+        }
+        i += 1;
+    }
+    table
+}
+const ADPCM_INDEX_TABLE: [[u8; 8]; 89] = calculate_adpcm_index_table();
+// const ADPCM_INDEX_TABLE: [i8; 8] = [-1, -1, -1, -1, 2, 4, 6, 8];
 
 #[bitsize(32)]
 #[derive(Copy, Clone, Default, FromBits)]
@@ -137,10 +185,10 @@ struct SpuChannel {
     len: u32,
     sad_current: u32,
     tmr_current: u32,
-    adpcm_value: i32,
-    adpcm_loop_value: i32,
-    adpcm_index: i32,
-    adpcm_loop_index: i32,
+    adpcm_value: i16,
+    adpcm_loop_value: i16,
+    adpcm_index: u8,
+    adpcm_loop_index: u8,
     adpcm_toggle: bool,
     active: bool,
 }
@@ -316,8 +364,8 @@ impl Spu {
         match channel.cnt.get_format() {
             SoundChannelFormat::ImaAdpcm => {
                 let header = AdpcmHeader::from(emu.mem_read::<{ ARM7 }, u32>(channel.sad_current));
-                channel.adpcm_value = header.pcm16_value() as i16 as i32;
-                channel.adpcm_index = min(u8::from(header.table_index()) as i32, 88);
+                channel.adpcm_value = header.pcm16_value() as i16;
+                channel.adpcm_index = min(u8::from(header.table_index()), 88);
                 channel.adpcm_toggle = false;
                 channel.sad_current += 4;
             }
@@ -339,40 +387,20 @@ impl Spu {
     }
 
     fn next_sample_adpcm(channel: &mut SpuChannel, emu: &mut Emu) {
-        unsafe { assert_unchecked(channel.adpcm_index >= 0) };
-        unsafe { assert_unchecked(channel.adpcm_index < ADPCM_TABLE.len() as i32) };
+        unsafe { assert_unchecked(channel.adpcm_index < 89) };
 
         if channel.sad_current == channel.sad + ((channel.pnt as u32) << 2) && !channel.adpcm_toggle {
             channel.adpcm_loop_value = channel.adpcm_value;
             channel.adpcm_loop_index = channel.adpcm_index;
         }
 
-        let sad_current = channel.sad_current;
-        let adpcm_data = emu.mem_read::<{ ARM7 }, u8>(sad_current);
-
+        let adpcm_data = emu.mem_read::<{ ARM7 }, u8>(channel.sad_current);
         let adpcm_data = if channel.adpcm_toggle { adpcm_data >> 4 } else { adpcm_data & 0xF };
 
-        let mut diff = (ADPCM_TABLE[channel.adpcm_index as usize] / 8) as i32;
-        if adpcm_data & 1 != 0 {
-            diff += (ADPCM_TABLE[channel.adpcm_index as usize] / 4) as i32;
-        }
-        if adpcm_data & 2 != 0 {
-            diff += (ADPCM_TABLE[channel.adpcm_index as usize] / 2) as i32;
-        }
-        if adpcm_data & 4 != 0 {
-            diff += ADPCM_TABLE[channel.adpcm_index as usize] as i32;
-        }
+        let diff = ADPCM_DIFF_TABLE[channel.adpcm_index as usize][adpcm_data as usize];
+        channel.adpcm_value = (channel.adpcm_value as i32 + diff).clamp(-0x8000, 0x7FFF) as i16;
 
-        if adpcm_data & 8 != 0 {
-            channel.adpcm_value += diff;
-            channel.adpcm_value = min(channel.adpcm_value, 0x7FFF);
-        } else {
-            channel.adpcm_value -= diff;
-            channel.adpcm_value = max(channel.adpcm_value, -0x7FFF);
-        }
-
-        channel.adpcm_index += ADPCM_INDEX_TABLE[(adpcm_data & 0x7) as usize] as i32;
-        channel.adpcm_index = channel.adpcm_index.clamp(0, 88);
+        channel.adpcm_index = ADPCM_INDEX_TABLE[channel.adpcm_index as usize][(adpcm_data & 0x7) as usize];
 
         channel.adpcm_toggle = !channel.adpcm_toggle;
         if !channel.adpcm_toggle {
@@ -440,7 +468,7 @@ impl Spu {
             let mut data = match format {
                 SoundChannelFormat::Pcm8 => (emu.mem_read::<{ ARM7 }, u8>(channel.sad_current) as i8 as i32) << 8,
                 SoundChannelFormat::Pcm16 => emu.mem_read::<{ ARM7 }, u16>(channel.sad_current) as i16 as i32,
-                SoundChannelFormat::ImaAdpcm => channel.adpcm_value,
+                SoundChannelFormat::ImaAdpcm => channel.adpcm_value as i32,
                 SoundChannelFormat::PsgNoise => {
                     if i >= 8 && i <= 13 {
                         let duty = 7 - u8::from(channel.cnt.wave_duty());
