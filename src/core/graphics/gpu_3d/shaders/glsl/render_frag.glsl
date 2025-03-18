@@ -113,7 +113,7 @@ void a5i3Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
 }
 
 void directTex(int addrOffset, int s, int t, int sizeS) {
-    int addr = (addrOffset + t * sizeS + s) * 2;
+    int addr = addrOffset + (t * sizeS + s) * 2;
     int tex = readTex16Aligned(addr);
     if (tex == 0) {
         discard;

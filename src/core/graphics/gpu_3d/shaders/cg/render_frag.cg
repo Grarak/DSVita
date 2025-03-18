@@ -106,7 +106,7 @@ float4 a5i3Tex(short palAddr, int addrOffset, short s, short t, short sizeS) {
 }
 
 float4 directTex(int addrOffset, short s, short t, short sizeS) {
-    int addr = (addrOffset + t * sizeS + s) * 2;
+    int addr = addrOffset + (t * sizeS + s) * 2;
     int color = readTex16Aligned(addr);
     if (color == 0) {
         discard;
