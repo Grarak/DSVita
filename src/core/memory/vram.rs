@@ -238,7 +238,7 @@ struct VramCnt {
     mst: u3,
     ofs: u2,
     not_used: u2,
-    enable: u1,
+    enable: bool,
 }
 
 pub const BANK_A_SIZE: usize = 128 * 1024;
@@ -464,7 +464,7 @@ impl Vram {
 
         {
             let cnt_a = VramCnt::from(self.cnt[0]);
-            if bool::from(cnt_a.enable()) {
+            if cnt_a.enable() {
                 let mst = u8::from(cnt_a.mst()) & 0x3;
                 match mst {
                     0 => {
@@ -490,7 +490,7 @@ impl Vram {
 
         {
             let cnt_b = VramCnt::from(self.cnt[1]);
-            if bool::from(cnt_b.enable()) {
+            if cnt_b.enable() {
                 let mst = u8::from(cnt_b.mst()) & 0x3;
                 match mst {
                     0 => {
@@ -515,7 +515,7 @@ impl Vram {
 
         {
             let cnt_c = VramCnt::from(self.cnt[2]);
-            if bool::from(cnt_c.enable()) {
+            if cnt_c.enable() {
                 let mst = u8::from(cnt_c.mst());
                 match mst {
                     0 => {
@@ -544,7 +544,7 @@ impl Vram {
 
         {
             let cnt_d = VramCnt::from(self.cnt[3]);
-            if bool::from(cnt_d.enable()) {
+            if cnt_d.enable() {
                 let mst = u8::from(cnt_d.mst());
                 match mst {
                     0 => {
@@ -573,7 +573,7 @@ impl Vram {
 
         {
             let cnt_e = VramCnt::from(self.cnt[4]);
-            if bool::from(cnt_e.enable()) {
+            if cnt_e.enable() {
                 let mst = u8::from(cnt_e.mst());
                 match mst {
                     0 => {
@@ -604,7 +604,7 @@ impl Vram {
 
         {
             let cnt_f = VramCnt::from(self.cnt[5]);
-            if bool::from(cnt_f.enable()) {
+            if cnt_f.enable() {
                 let mst = u8::from(cnt_f.mst());
                 match mst {
                     0 => {
@@ -639,7 +639,7 @@ impl Vram {
 
         {
             let cnt_g = VramCnt::from(self.cnt[6]);
-            if bool::from(cnt_g.enable()) {
+            if cnt_g.enable() {
                 let mst = u8::from(cnt_g.mst());
                 match mst {
                     0 => {
@@ -676,7 +676,7 @@ impl Vram {
 
         {
             let cnt_h = VramCnt::from(self.cnt[7]);
-            if bool::from(cnt_h.enable()) {
+            if cnt_h.enable() {
                 let mst = u8::from(cnt_h.mst()) & 0x3;
                 match mst {
                     0 => {
@@ -700,7 +700,7 @@ impl Vram {
 
         {
             let cnt_i = VramCnt::from(self.cnt[8]);
-            if bool::from(cnt_i.enable()) {
+            if cnt_i.enable() {
                 let mst = u8::from(cnt_i.mst()) & 0x3;
                 match mst {
                     0 => {

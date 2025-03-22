@@ -661,7 +661,7 @@ impl Gpu2DProgram {
             }
 
             let bg_cnt = regs.bg_cnts[from_line as usize * 4 + bg_num as usize];
-            let bg_cnt = BgCnt::from(bg_cnt as u16);
+            let bg_cnt = BgCnt::from(bg_cnt);
             let program = match bg_mode {
                 BgMode::Text => {
                     if bg_cnt.color_256_palettes() {
@@ -806,16 +806,7 @@ impl Gpu2DProgram {
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
     }
 
-    unsafe fn draw<const HAS_VRAM_DISPLAY: bool>(
-        &mut self,
-        common: &Gpu2DCommon,
-        regs: &Gpu2DRenderRegs,
-        texs: &Gpu2DTextures,
-        mem: Gpu2DMem,
-        fb_tex_3d: GLuint,
-        lcdc_pal: GLuint,
-        vram_display_program: &Gpu2DVramDisplayProgram,
-    ) {
+    unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, fb_tex_3d: GLuint, lcdc_pal: GLuint, vram_display_program: &Gpu2DVramDisplayProgram) {
         macro_rules! draw_scanlines {
             ($draw_fn:expr, $draw_vram_display:expr) => {{
                 let mut line = 0;
@@ -824,7 +815,7 @@ impl Gpu2DProgram {
                     let from_line = line as u8;
                     let to_line = line as u8 + batch_count as u8 + 1;
                     line = to_line as usize;
-                    if HAS_VRAM_DISPLAY {
+                    if lcdc_pal != 0 {
                         let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
                         if u8::from(disp_cnt.display_mode()) == 2 {
                             if $draw_vram_display {
@@ -929,7 +920,7 @@ impl Gpu2DProgram {
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
 
-        if HAS_VRAM_DISPLAY {
+        if lcdc_pal != 0 {
             gl::BindTexture(gl::TEXTURE_2D, lcdc_pal);
             sub_pal_texture2d(1024, 656, mem.lcdc_ptr);
 
@@ -1095,31 +1086,19 @@ impl Gpu2DRenderer {
     pub unsafe fn render<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon, fb_tex_3d: GLuint) {
         match ENGINE {
             A => {
-                if self.has_vram_display[0] {
-                    self.program_a.draw::<true>(
-                        &self.common,
-                        &self.regs_a[0],
-                        &self.tex_a,
-                        Gpu2DMem::new::<{ A }>(&common.mem_buf),
-                        fb_tex_3d,
-                        self.lcdc_pal,
-                        &self.vram_display_program,
-                    );
-                } else {
-                    self.program_a.draw::<false>(
-                        &self.common,
-                        &self.regs_a[0],
-                        &self.tex_a,
-                        Gpu2DMem::new::<{ A }>(&common.mem_buf),
-                        fb_tex_3d,
-                        0,
-                        &self.vram_display_program,
-                    );
-                }
+                self.program_a.draw(
+                    &self.common,
+                    &self.regs_a[0],
+                    &self.tex_a,
+                    Gpu2DMem::new::<{ A }>(&common.mem_buf),
+                    fb_tex_3d,
+                    if self.has_vram_display[0] { self.lcdc_pal } else { 0 },
+                    &self.vram_display_program,
+                );
             }
             B => self
                 .program_b
-                .draw::<false>(&self.common, &self.regs_b[0], &self.tex_b, Gpu2DMem::new::<{ B }>(&common.mem_buf), 0, 0, &self.vram_display_program),
+                .draw(&self.common, &self.regs_b[0], &self.tex_b, Gpu2DMem::new::<{ B }>(&common.mem_buf), 0, 0, &self.vram_display_program),
         }
     }
 }
