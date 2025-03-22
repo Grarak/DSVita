@@ -139,20 +139,28 @@ struct Shininess {
 #[bitsize(32)]
 #[derive(Copy, Clone, Default, FromBits)]
 pub struct PolygonAttr {
-    enable_lights: u4,
-    mode: u2,
-    render_back: bool,
-    render_front: bool,
+    pub enable_lights: u4,
+    pub mode: u2,
+    pub render_back: bool,
+    pub render_front: bool,
     not_used: u3,
-    trans_new_depth: bool,
-    render_far_plane: bool,
-    render_1_bot_polygons: bool,
-    depth_test_equal: bool,
-    fog: bool,
-    alpha: u5,
+    pub trans_new_depth: bool,
+    pub render_far_plane: bool,
+    pub render_1_bot_polygons: bool,
+    pub depth_test_equal: bool,
+    pub fog: bool,
+    pub alpha: u5,
     not_used2: u3,
-    id: u6,
+    pub id: u6,
     not_used3: u2,
+}
+
+#[bitsize(8)]
+#[derive(Copy, Clone, Default, FromBits)]
+pub struct SwapBuffers {
+    pub manual_sort_translucent_polygon: bool,
+    pub depth_buffering_w: bool,
+    not_used: u6,
 }
 
 const FIFO_PARAM_COUNTS: [u8; 99] = [
@@ -528,9 +536,9 @@ pub struct Gpu3DRegisters {
 
     last_total_cycles: u64,
     pub flushed: bool,
+    swap_buffers: SwapBuffers,
 
     pub gx_stat: GxStat,
-    gx_fifo: u32,
 
     mtx_mode: MtxMode,
     matrices: Matrices,
@@ -1087,6 +1095,7 @@ impl Gpu3DRegisters {
 
     fn exe_swap_buffers(&mut self, params: &mut [u32; 32]) {
         self.flushed = true;
+        self.swap_buffers = SwapBuffers::from(params[0] as u8)
     }
 
     fn exe_viewport(&mut self, params: &mut [u32; 32]) {
@@ -1149,6 +1158,8 @@ impl Gpu3DRegisters {
         mem::swap(&mut self.tex_matrices, &mut content.tex_matrices);
         self.tex_matrices.clear();
         self.tex_mtx_push = true;
+
+        content.swap_buffers = self.swap_buffers;
     }
 
     fn add_vertex(&mut self) {

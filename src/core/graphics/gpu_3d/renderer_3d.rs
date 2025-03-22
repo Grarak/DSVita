@@ -1,6 +1,6 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, TextureCoordTransMode, Vertex};
+use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, SwapBuffers, TextureCoordTransMode, Vertex};
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::math::{Matrix, Vectori32};
@@ -77,13 +77,13 @@ impl Default for Gpu3DGl {
 
             gl::UseProgram(program);
 
-            gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
-            gl::BindAttribLocation(program, 1, "color\0".as_ptr() as _);
-            gl::BindAttribLocation(program, 2, "texCoords\0".as_ptr() as _);
+            gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
+            gl::BindAttribLocation(program, 1, c"color".as_ptr() as _);
+            gl::BindAttribLocation(program, 2, c"texCoords".as_ptr() as _);
 
-            gl::Uniform1i(gl::GetUniformLocation(program, "tex\0".as_ptr() as _), 0);
-            gl::Uniform1i(gl::GetUniformLocation(program, "palTex\0".as_ptr() as _), 1);
-            gl::Uniform1i(gl::GetUniformLocation(program, "attrTex\0".as_ptr() as _), 2);
+            gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
+            gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 1);
+            gl::Uniform1i(gl::GetUniformLocation(program, c"attrTex".as_ptr() as _), 2);
 
             let mut vertices_buf = 0;
             gl::GenBuffers(1, &mut vertices_buf);
@@ -109,7 +109,7 @@ impl Default for Gpu3DGl {
 #[repr(C)]
 struct Gpu3DVertex {
     coords: [f32; 4],
-    color: [f32; 3],
+    color: [f32; 4],
     tex_coords: [f32; 2],
 }
 
@@ -130,6 +130,7 @@ pub struct Gpu3DRendererContent {
     pub polygons_size: u16,
     pub clip_matrices: Vec<Matrix>,
     pub tex_matrices: Vec<Matrix>,
+    pub swap_buffers: SwapBuffers,
 }
 
 #[derive(Default)]
@@ -259,17 +260,11 @@ impl Gpu3DRenderer {
             }
 
             // println!(
-            //     "renderer: polygon {i} type {:?} format {} addr {:x} pal addr {:x} size s {} size t {} repeat s {} flip s {} repeat t {} flip t {}",
+            //     "renderer: polygon {i} type {:?} pal addr {:x} tex image param {:?} attr {:?}",
             //     polygon.polygon_type,
-            //     u8::from(polygon.tex_image_param.format()),
-            //     u32::from(polygon.tex_image_param.vram_offset()) << 3,
             //     (polygon.palette_addr as u32) << 3,
-            //     8 << u8::from(polygon.tex_image_param.size_s_shift()),
-            //     8 << u8::from(polygon.tex_image_param.size_t_shift()),
-            //     polygon.tex_image_param.repeat_s(),
-            //     polygon.tex_image_param.flip_s(),
-            //     polygon.tex_image_param.repeat_t(),
-            //     polygon.tex_image_param.flip_t(),
+            //     polygon.tex_image_param,
+            //     polygon.attr
             // );
 
             let vertex_index = self.vertices_buf.len() as u16;
@@ -295,13 +290,13 @@ impl Gpu3DRenderer {
             for j in 0..polygon.polygon_type.vertex_count() {
                 let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
                 vertex.coords[3] = 1 << 12;
+
                 let coords = vertex.coords * &self.content.clip_matrices[vertex.clip_matrix_index as usize];
                 let gpu_vertex = if coords[3] != 0 {
                     let c = rgb6_to_float8(vertex.color);
 
                     let vertex_x = ((coords[0] as i64 + coords[3] as i64) * w as i64 / (coords[3] as i64 * 2) + x as i64) as i32;
                     let vertex_y = ((-coords[1] as i64 + coords[3] as i64) * h as i64 / (coords[3] as i64 * 2) + y as i64) as i32;
-                    let vertex_z = (((coords[2] as i64) << 12) / coords[3] as i64) as i32;
 
                     let mut tex_coords = vertex.tex_coords;
                     let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
@@ -316,10 +311,10 @@ impl Gpu3DRenderer {
                         coords: [
                             vertex_x as f32 * 2f32 / 255f32 - 1f32,
                             1f32 - vertex_y as f32 * 2f32 / 191f32,
-                            (vertex_z as f32 / 4096f32) * 0.5 - 0.5,
-                            i as f32,
+                            coords[2] as f32 / 4096f32,
+                            coords[3] as f32 / 4096f32,
                         ],
-                        color: [c.0, c.1, c.2],
+                        color: [c.0, c.1, c.2, i as f32],
                         tex_coords: [tex_coords[0] as f32 / 16f32, tex_coords[1] as f32 / 16f32],
                     }
                 } else {
@@ -358,7 +353,8 @@ impl Gpu3DRenderer {
         gl::Enable(gl::BLEND);
         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
         gl::Enable(gl::DEPTH_TEST);
-        gl::DepthFunc(gl::LESS);
+        gl::DepthFunc(gl::LEQUAL);
+        gl::DepthRange(0.0, 1.0);
 
         gl::BindTexture(gl::TEXTURE_2D, self.gl.tex);
         sub_mem_texture2d(1024, 512, common.mem_buf.tex_rear_plane_image.as_ptr());
@@ -390,10 +386,10 @@ impl Gpu3DRenderer {
         gl::VertexAttribPointer(0, 4, gl::FLOAT, gl::FALSE, size_of::<Gpu3DVertex>() as _, ptr::null());
 
         gl::EnableVertexAttribArray(1);
-        gl::VertexAttribPointer(1, 3, gl::FLOAT, gl::FALSE, size_of::<Gpu3DVertex>() as _, (size_of::<f32>() * 4) as _);
+        gl::VertexAttribPointer(1, 4, gl::FLOAT, gl::FALSE, size_of::<Gpu3DVertex>() as _, (size_of::<f32>() * 4) as _);
 
         gl::EnableVertexAttribArray(2);
-        gl::VertexAttribPointer(2, 2, gl::FLOAT, gl::FALSE, size_of::<Gpu3DVertex>() as _, (size_of::<f32>() * 7) as _);
+        gl::VertexAttribPointer(2, 2, gl::FLOAT, gl::FALSE, size_of::<Gpu3DVertex>() as _, (size_of::<f32>() * 8) as _);
 
         gl::DrawElements(gl::TRIANGLES, self.indices_buf.len() as _, gl::UNSIGNED_SHORT, self.indices_buf.as_ptr() as _);
 

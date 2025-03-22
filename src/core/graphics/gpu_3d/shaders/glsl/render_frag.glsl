@@ -175,35 +175,39 @@ void main() {
 
     switch (texFmt) {
         case 0: {
-                    color = vec4(oColor, 1.0);
-                    break;
-                }
+            color = vec4(oColor, 1.0);
+            break;
+        }
         case 1: {
-                    a3i5Tex(palAddr, addrOffset, int(s), int(t), sizeS);
-                    break;
-                }
+            a3i5Tex(palAddr, addrOffset, int(s), int(t), sizeS);
+            break;
+        }
         case 2: {
-                    bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
-                    pal4Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
-                    break;
-                }
+            bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+            pal4Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
+            break;
+        }
         case 3: {
-                    bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
-                    pal16Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
-                    break;
-                }
+            bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+            pal16Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
+            break;
+        }
         case 4: {
-                    bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
-                    pal256Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
-                    break;
-                }
+            bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+            pal256Tex(palAddr, addrOffset, int(s), int(t), sizeS, transparent0);
+            break;
+        }
+        case 5: {
+            color = vec4(0.0, 1.0, 0.0, 1.0);
+            break;
+        }
         case 6: {
-                    a5i3Tex(palAddr, addrOffset, int(s), int(t), sizeS);
-                    break;
-                }
+            a5i3Tex(palAddr, addrOffset, int(s), int(t), sizeS);
+            break;
+        }
         case 7: {
-                    directTex(addrOffset, int(s), int(t), sizeS);
-                    break;
-                }
+            directTex(addrOffset, int(s), int(t), sizeS);
+            break;
+        }
     }
 }

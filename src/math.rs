@@ -272,14 +272,11 @@ where
         let fraction_bits = f.precision().unwrap_or(12);
         write!(f, "[")?;
 
-        let decimal = self.values[0] >> fraction_bits;
-        let fraction = self.values[0] & ((1 << fraction_bits) - 1);
-        write!(f, "{decimal}.{fraction}")?;
+        let divisor = (1 << fraction_bits) as f32;
+        write!(f, "{}", self.values[0] as f32 / divisor)?;
 
         for i in 1..SIZE {
-            let decimal = self.values[i] >> fraction_bits;
-            let fraction = self.values[i] & ((1 << fraction_bits) - 1);
-            write!(f, ", {decimal}.{fraction}")?;
+            write!(f, ", {}", self.values[i] as f32 / divisor)?;
         }
         write!(f, "]")
     }
