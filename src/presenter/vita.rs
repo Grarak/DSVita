@@ -215,7 +215,7 @@ impl Presenter {
                     .filter_map(|entry| {
                         let path = entry.path();
                         let name = path.file_name().unwrap().to_str().unwrap();
-                        if name.ends_with(".nds") {
+                        if name.to_lowercase().ends_with(".nds") {
                             // I mistyped the save file extension in 0.3.0
                             // Add migration step
                             let old_save_file = PathBuf::from(SAVES_PATH).join(format!("{name}.nds"));

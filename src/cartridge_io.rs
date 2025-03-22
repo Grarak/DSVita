@@ -80,7 +80,7 @@ const CARTRIDGE_PAGE_SIZE: usize = 4096;
 const MAX_CARTRIDGE_CACHE: usize = 16 * 1024 * 1024;
 
 pub struct CartridgePreview {
-    file: File,
+    file_path: PathBuf,
     pub file_name: String,
     header: CartridgeHeader,
 }
@@ -92,7 +92,7 @@ impl CartridgePreview {
         file.read_exact_at(&mut raw_header, 0)?;
 
         Ok(CartridgePreview {
-            file,
+            file_path: file_path.clone(),
             file_name: file_path.file_name().unwrap().to_str().unwrap().to_string(),
             header: unsafe { mem::transmute(raw_header) },
         })
@@ -106,11 +106,13 @@ impl CartridgePreview {
             return Err(io::Error::from(ErrorKind::InvalidData));
         }
 
+        let file = File::open(&self.file_path)?;
+
         let mut data = [0u8; 0x200];
-        self.file.read_exact_at(&mut data, offset as u64 + 0x20)?;
+        file.read_exact_at(&mut data, offset as u64 + 0x20)?;
 
         let mut palette = [0u8; 0x20];
-        self.file.read_exact_at(&mut palette, offset as u64 + 0x20 + data.len() as u64)?;
+        file.read_exact_at(&mut palette, offset as u64 + 0x20 + data.len() as u64)?;
 
         let mut tiles = [0u32; 32 * 32];
         for i in 0..icon.len() {
@@ -143,7 +145,8 @@ impl CartridgePreview {
         }
 
         let mut title = [0u8; 0x100];
-        self.file.read_exact_at(&mut title, offset as u64 + 0x340)?;
+        let file = File::open(&self.file_path)?;
+        file.read_exact_at(&mut title, offset as u64 + 0x340)?;
 
         let (_, title, _) = unsafe { title.align_to() };
         let nul_pos = title.iter().position(|b| *b == 0);
@@ -174,8 +177,9 @@ pub struct CartridgeIo {
 unsafe impl Send for CartridgeIo {}
 
 impl CartridgeIo {
-    pub fn from_preview(mut preview: CartridgePreview, save_file_path: PathBuf) -> io::Result<Self> {
-        let file_size = preview.file.stream_len().unwrap() as u32;
+    pub fn from_preview(preview: CartridgePreview, save_file_path: PathBuf) -> io::Result<Self> {
+        let mut file = File::open(&preview.file_path)?;
+        let file_size = file.stream_len().unwrap() as u32;
         let mut save_buf = Vec::new();
 
         let mut save_file_size = File::open(&save_file_path).map_or(0, |mut file| {
@@ -201,7 +205,7 @@ impl CartridgeIo {
         }
 
         Ok(CartridgeIo {
-            file: preview.file,
+            file,
             file_name: preview.file_name,
             file_size,
             header: preview.header,
