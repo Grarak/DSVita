@@ -728,12 +728,11 @@ impl Vram {
         let addr_offset = addr & 0xFFFFF;
         match CPU {
             ARM9 => match base_addr {
-                LCDC_OFFSET => self.maps.lcdc.read(addr_offset, self.banks.mem.deref()),
                 BG_A_OFFSET => self.maps.bg_a.read(addr_offset, self.banks.mem.deref()),
                 OBJ_A_OFFSET => self.maps.obj_a.read(addr_offset, self.banks.mem.deref()),
                 BG_B_OFFSET => self.maps.bg_b.read(addr_offset, self.banks.mem.deref()),
                 OBJ_B_OFFSET => self.maps.obj_b.read(addr_offset, self.banks.mem.deref()),
-                _ => unsafe { unreachable_unchecked() },
+                _ => self.maps.lcdc.read(addr_offset, self.banks.mem.deref()),
             },
             ARM7 => self.arm7.read(addr_offset, self.banks.mem.deref()),
         }
@@ -744,12 +743,11 @@ impl Vram {
         let addr_offset = addr & 0xFFFFF;
         match CPU {
             ARM9 => match base_addr {
-                LCDC_OFFSET => self.maps.lcdc.write(addr_offset, value, &mut self.banks),
                 BG_A_OFFSET => self.maps.bg_a.write(addr_offset, value, &mut self.banks),
                 OBJ_A_OFFSET => self.maps.obj_a.write(addr_offset, value, &mut self.banks),
                 BG_B_OFFSET => self.maps.bg_b.write(addr_offset, value, &mut self.banks),
                 OBJ_B_OFFSET => self.maps.obj_b.write(addr_offset, value, &mut self.banks),
-                _ => unsafe { unreachable_unchecked() },
+                _ => self.maps.lcdc.write(addr_offset, value, &mut self.banks),
             },
             ARM7 => self.arm7.write(addr_offset, value, &mut self.banks),
         };
@@ -760,12 +758,11 @@ impl Vram {
         let addr_offset = addr & 0xFFFFF;
         match CPU {
             ARM9 => match base_addr {
-                LCDC_OFFSET => self.maps.lcdc.write_slice(addr_offset, slice, &mut self.banks),
                 BG_A_OFFSET => self.maps.bg_a.write_slice(addr_offset, slice, &mut self.banks),
                 OBJ_A_OFFSET => self.maps.obj_a.write_slice(addr_offset, slice, &mut self.banks),
                 BG_B_OFFSET => self.maps.bg_b.write_slice(addr_offset, slice, &mut self.banks),
                 OBJ_B_OFFSET => self.maps.obj_b.write_slice(addr_offset, slice, &mut self.banks),
-                _ => unsafe { unreachable_unchecked() },
+                _ => self.maps.lcdc.write_slice(addr_offset, slice, &mut self.banks),
             },
             ARM7 => self.arm7.write_slice(addr_offset, slice, &mut self.banks),
         };
