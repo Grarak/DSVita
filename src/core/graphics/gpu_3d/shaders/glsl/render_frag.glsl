@@ -61,10 +61,10 @@ void pal4Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transpar
     int addr = addrOffset + (t * sizeS + s) / 4;
 
     int palIndex = readTex8(addr);
+    palIndex = (palIndex >> ((s % 4) * 2)) & 0x03;
     if (transparent0 && palIndex == 0) {
         discard;
     }
-    palIndex = (palIndex >> ((s % 4) * 2)) & 0x03;
 
     int palOffset = palAddr << 3;
     int tex = readPal16Aligned(palOffset + palIndex * 2);
@@ -75,10 +75,10 @@ void pal16Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transpa
     int addr = addrOffset + (t * sizeS + s) / 2;
 
     int palIndex = readTex8(addr);
+    palIndex = (palIndex >> ((s & 0x1) * 4)) & 0x0F;
     if (transparent0 && palIndex == 0) {
         discard;
     }
-    palIndex = (palIndex >> ((s % 2) * 4)) & 0x0F;
 
     int palOffset = palAddr << 4;
     int tex = readPal16Aligned(palOffset + palIndex * 2);
@@ -96,6 +96,82 @@ void pal256Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transp
     int palOffset = palAddr << 4;
     int tex = readPal16Aligned(palOffset + palIndex * 2);
     color = vec4(normRgb5(tex), 1.0);
+}
+
+void compressed4x4Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
+    int tile = (t / 4) * (sizeS / 4) + (s / 4);
+    int addr = addrOffset + (tile * 4 + (t & 0x3));
+
+    int palIndex = readTex8(addr);
+    palIndex = (palIndex >> ((s & 0x3) * 2)) & 0x3;
+
+    addr = 0x20000 + (addrOffset & 0x1FFFF) / 2 + (((addrOffset >> 17) == 2) ? 0x10000 : 0);
+    int palBase = readTex16Aligned(addr + tile * 2);
+    int palOffset = (palAddr << 4) + (palBase & 0x3FFF) * 4;
+
+    int mode = (palBase >> 14) & 0x3;
+    switch (mode) {
+        case 0: {
+            if (palIndex == 3) {
+                discard;
+            }
+            int tex = readPal16Aligned(palOffset + palIndex * 2);
+            color = vec4(normRgb5(tex), 1.0);
+            break;
+        }
+        case 1: {
+            switch (palIndex) {
+                case 2: {
+                    int tex = readPal16Aligned(palOffset);
+                    vec4 color0 = vec4(normRgb5(tex), 1.0);
+                    tex = readPal16Aligned(palOffset + 2);
+                    vec4 color1 = vec4(normRgb5(tex), 1.0);
+                    color = (color0 + color1) / 2.0;
+                    break;
+                }
+                case 3: {
+                    discard;
+                }
+                default : {
+                    int tex = readPal16Aligned(palOffset + palIndex * 2);
+                    color = vec4(normRgb5(tex), 1.0);
+                    break;
+                }
+            }
+            break;
+        }
+        case 2: {
+            int tex = readPal16Aligned(palOffset + palIndex * 2);
+            color = vec4(normRgb5(tex), 1.0);
+            break;
+        }
+        case 3: {
+            switch (palIndex) {
+                case 2: {
+                    int tex = readPal16Aligned(palOffset);
+                    vec4 color0 = vec4(normRgb5(tex), 1.0);
+                    tex = readPal16Aligned(palOffset + 2);
+                    vec4 color1 = vec4(normRgb5(tex), 1.0);
+                    color = (color0 * 5.0 + color1 * 3.0) / 8.0;
+                    break;
+                }
+                case 3: {
+                    int tex = readPal16Aligned(palOffset);
+                    vec4 color0 = vec4(normRgb5(tex), 1.0);
+                    tex = readPal16Aligned(palOffset + 2);
+                    vec4 color1 = vec4(normRgb5(tex), 1.0);
+                    color = (color0 * 3.0 + color1 * 5.0) / 8.0;
+                    break;
+                }
+                default : {
+                    int tex = readPal16Aligned(palOffset + palIndex * 2);
+                    color = vec4(normRgb5(tex), 1.0);
+                    break;
+                }
+            }
+            break;
+        }
+    }
 }
 
 void a5i3Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
@@ -118,7 +194,11 @@ void directTex(int addrOffset, int s, int t, int sizeS) {
     if (tex == 0) {
         discard;
     }
-    color = vec4(normRgb5(tex), 1.0);
+    if ((tex >> 15) == 0) {
+        color = vec4(normRgb5(tex), 0.0);
+    } else {
+        color = vec4(normRgb5(tex), 1.0);
+    }
 }
 
 void main() {
@@ -137,6 +217,7 @@ void main() {
     y = float(polygonIndex >> 7) / 127.0;
     value = texture(attrTex, vec2(x, y));
     int palAddr = int(value[0] * 255.0) | (int(value[1] * 255.0) << 8);
+    int polyAttr = int(value[2] * 255.0) | (int(value[3] * 255.0) << 8);
 
     int sizeS = 8 << ((texImageParam >> 4) & 0x7);
     int sizeT = 8 << ((texImageParam >> 7) & 0x7);
@@ -198,7 +279,7 @@ void main() {
             break;
         }
         case 5: {
-            color = vec4(0.0, 1.0, 0.0, 1.0);
+            compressed4x4Tex(palAddr, addrOffset, int(s), int(t), sizeS);
             break;
         }
         case 6: {
@@ -210,4 +291,7 @@ void main() {
             break;
         }
     }
+
+    float alpha = float(polyAttr & 31) / 31.0;
+    color.a *= alpha;
 }

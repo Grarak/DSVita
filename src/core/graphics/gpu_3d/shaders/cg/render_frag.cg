@@ -8,7 +8,7 @@ uniform sampler2D attrTex : TEXUNIT2;
 
 short readTex8(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
-    short addrY = addr >> 11;
+    int addrY = addr >> 11;
     float x = float(addrX) / 511.0;
     float y = float(addrY) / 255.0;
     return short(tex2D(tex, float2(x, y))[addr & 3] * 255.0);
@@ -16,7 +16,7 @@ short readTex8(int addr) {
 
 short readTex16Aligned(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
-    short addrY = addr >> 11;
+    int addrY = addr >> 11;
     float x = float(addrX) / 511.0;
     float y = float(addrY) / 255.0;
     float4 value = tex2D(tex, float2(x, y));
@@ -24,9 +24,9 @@ short readTex16Aligned(int addr) {
     return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
 }
 
-float4 readPal(short index) {
+float4 readPal(int index) {
     short indexX = index & 0x1FF;
-    short indexY = index >> 9;
+    int indexY = index >> 9;
     float x = float(indexX) / 511.0;
     float y = float(indexY) / 95.0;
     return tex2D(palTex, float2(x, y));
@@ -36,49 +36,49 @@ float3 normRgb5(short color) {
     return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-float4 a3i5Tex(short palAddr, int addrOffset, short s, short t, short sizeS) {
+float4 a3i5Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
     int addr = addrOffset + t * sizeS + s;
 
-    short palIndex = readTex8(addr);
+    int palIndex = readTex8(addr);
     if (palIndex == 0) {
         discard;
     }
 
-    short palOffset = palAddr << 3;
+    int palOffset = palAddr << 3;
     float4 color = readPal(palOffset + (palIndex & 0x1F));
-    float alpha = float((palIndex >> 5) & 0x3) / 7.0;
+    float alpha = float(short((palIndex >> 5) & 0x3)) / 7.0;
     return float4(color.rgb, alpha);
 }
 
-float4 pal4Tex(short palAddr, int addrOffset, short s, short t, short sizeS, bool transparent0) {
+float4 pal4Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
     int addr = addrOffset + (t * sizeS + s) / 4;
 
     int palIndex = readTex8(addr);
+    palIndex = (palIndex >> ((s & 0x3) * 2)) & 0x03;
     if (transparent0 && palIndex == 0) {
         discard;
     }
-    palIndex = (palIndex >> ((s & 0x3) * 2)) & 0x03;
 
-    int palOffset = int(palAddr) << 2;
+    int palOffset = palAddr << 2;
     float4 color = readPal(palOffset + palIndex);
     return float4(color.rgb, 1.0);
 }
 
-float4 pal16Tex(short palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
+float4 pal16Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
     int addr = addrOffset + (t * sizeS + s) / 2;
 
     int palIndex = readTex8(addr);
+    palIndex = (palIndex >> ((s & 0x1) * 4)) & 0x0F;
     if (transparent0 && palIndex == 0) {
         discard;
     }
-    palIndex = (palIndex >> ((s & 0x1) * 4)) & 0x0F;
 
-    int palOffset = int(palAddr) << 3;
+    int palOffset = palAddr << 3;
     float4 color = readPal(palOffset + palIndex);
     return float4(color.rgb, 1.0);
 }
 
-float4 pal256Tex(short palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
+float4 pal256Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
     int addr = addrOffset + (t * sizeS + s);
 
     int palIndex = readTex8(addr);
@@ -86,26 +86,80 @@ float4 pal256Tex(short palAddr, int addrOffset, int s, int t, int sizeS, bool tr
         discard;
     }
 
-    int palOffset = int(palAddr) << 3;
+    int palOffset = palAddr << 3;
     float4 color = readPal(palOffset + palIndex);
     return float4(color.rgb, 1.0);
 }
 
-float4 a5i3Tex(short palAddr, int addrOffset, short s, short t, short sizeS) {
+float4 compressed4x4Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
+    int tile = (t / 4) * (sizeS / 4) + (s / 4);
+    int addr = addrOffset + (tile * 4 + (t & 0x3));
+
+    int palIndex = readTex8(addr);
+    palIndex = (palIndex >> ((s & 0x3) * 2)) & 0x3;
+
+    addr = 0x20000 + (addrOffset & 0x1FFFF) / 2 + (((addrOffset >> 17) == 2) ? 0x10000 : 0);
+    int palBase = readTex16Aligned(addr + tile * 2);
+    int palOffset = (palAddr << 3) + (palBase & 0x3FFF) * 2;
+
+    int mode = (palBase >> 14) & 0x3;
+    if (mode == 0) {
+        if (palIndex == 3) {
+            discard;
+        }
+        float4 color = readPal(palOffset + palIndex);
+        return float4(color.rgb, 1.0);
+    } else if (mode == 1) {
+        if (palIndex == 2) {
+            float4 color = readPal(palOffset);
+            float4 color0 = float4(color.rgb, 1.0);
+            color = readPal(palOffset + 1);
+            float4 color1 = float4(color.rgb, 1.0);
+            return (color0 + color1) / 2.0;
+        } else if (palIndex == 3) {
+            discard;
+        } else {
+            float4 color = readPal(palOffset + palIndex);
+            return float4(color.rgb, 1.0);
+        }
+    } else if (mode == 2) {
+        float4 color = readPal(palOffset + palIndex);
+        return float4(color.rgb, 1.0);
+    } else {
+        if (palIndex == 2) {
+             float4 color = readPal(palOffset);
+             float4 color0 = float4(color.rgb, 1.0);
+             color = readPal(palOffset + 1);
+             float4 color1 = float4(color.rgb, 1.0);
+             return (color0 * 5.0 + color1 * 3.0) / 8.0;
+        } else if (palIndex == 3) {
+            float4 color = readPal(palOffset);
+            float4 color0 = float4(color.rgb, 1.0);
+            color = readPal(palOffset + 1);
+            float4 color1 = float4(color.rgb, 1.0);
+            return (color0 * 3.0 + color1 * 5.0) / 8.0;
+        } else {
+            float4 color = readPal(palOffset + palIndex);
+            return float4(color.rgb, 1.0);
+        }
+    }
+}
+
+float4 a5i3Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
     int addr = addrOffset + t * sizeS + s;
 
-    short palIndex = readTex8(addr);
+    int palIndex = readTex8(addr);
     if (palIndex == 0) {
         discard;
     }
 
-    int palOffset = int(palAddr) << 3;
+    int palOffset = palAddr << 3;
     float4 color = readPal(palOffset + (palIndex & 0x07));
-    float alpha = float((palIndex >> 3) & 0x1F) / 31.0;
+    float alpha = float(short((palIndex >> 3) & 0x1F)) / 31.0;
     return float4(color.rgb, alpha);
 }
 
-float4 directTex(int addrOffset, short s, short t, short sizeS) {
+float4 directTex(int addrOffset, int s, int t, int sizeS) {
     int addr = addrOffset + (t * sizeS + s) * 2;
     int color = readTex16Aligned(addr);
     if (color == 0) {
@@ -122,14 +176,15 @@ void main(out float4 color : COLOR) {
     float y = float(polygonIndex >> 7) / 127.0;
     float4 value = tex2D(attrTex, float2(x, y));
 
-    int addrOffset = (int(value[0] * 255.0) | (int(value[1] * 255.0) << 8)) << 3;
+    int addrOffset = (int(short(value[0] * 255.0)) | (int(short(value[1] * 255.0)) << 8)) << 3;
     short texImageParam = short(value[2] * 255.0) | (short(value[3] * 255.0) << 8);
 
     polygonIndex += 1;
     x = float(polygonIndex & 0x7F) / 127.0;
     y = float(polygonIndex >> 7) / 127.0;
     value = tex2D(attrTex, float2(x, y));
-    short palAddr = short(value[0] * 255.0) | (short(value[1] * 255.0) << 8);
+    int palAddr = short(value[0] * 255.0) | (short(value[1] * 255.0) << 8);
+    short polyAttr = short(value[2] * 255.0) | (short(value[3] * 255.0) << 8);
 
     short sizeS = 8 << ((texImageParam >> 4) & 0x7);
     short sizeT = 8 << ((texImageParam >> 7) & 0x7);
@@ -164,7 +219,7 @@ void main(out float4 color : COLOR) {
         t = sizeT - 1;
     }
 
-    int texFmt = (texImageParam >> 10) & 0x7;
+    short texFmt = (texImageParam >> 10) & 0x7;
 
     if (texFmt == 0) {
         color = float4(oColor, 1.0);
@@ -180,10 +235,13 @@ void main(out float4 color : COLOR) {
         bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
         color = pal256Tex(palAddr, addrOffset, s, t, sizeS, transparent0);
     } else if (texFmt == 5) {
-        color = float4(0.0, 1.0, 0.0, 1.0);
+        color = compressed4x4Tex(palAddr, addrOffset, s, t, sizeS);
     } else if (texFmt == 6) {
         color = a5i3Tex(palAddr, addrOffset, s, t, sizeS);
     } else if (texFmt == 7) {
         color = directTex(addrOffset, s, t, sizeS);
     }
+
+    float alpha = float(polyAttr & 31) / 31.0;
+    color.a *= alpha;
 }

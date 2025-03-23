@@ -118,7 +118,8 @@ struct Gpu3DVertex {
 #[repr(C)]
 struct Gpu3dPolygonAttr {
     tex_image_param: u32,
-    pal_addr: u32,
+    pal_addr: u16,
+    poly_attr: u16,
 }
 
 const_assert_eq!(size_of::<Gpu3dPolygonAttr>(), 8);
@@ -338,7 +339,8 @@ impl Gpu3DRenderer {
             }
 
             self.polygon_attrs[i as usize].tex_image_param = u32::from(polygon.tex_image_param);
-            self.polygon_attrs[i as usize].pal_addr = polygon.palette_addr as u32;
+            self.polygon_attrs[i as usize].pal_addr = polygon.palette_addr;
+            self.polygon_attrs[i as usize].poly_attr = u16::from(polygon.attr.alpha());
         }
 
         gl::BindFramebuffer(gl::FRAMEBUFFER, self.gl.fbo.fbo);
