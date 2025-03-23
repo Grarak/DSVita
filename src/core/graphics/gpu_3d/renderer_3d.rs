@@ -8,7 +8,8 @@ use crate::utils::{rgb5_to_float8, rgb6_to_float8, HeapMem};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
-use std::{mem, ptr};
+use std::mem::MaybeUninit;
+use std::ptr;
 
 #[bitsize(32)]
 #[derive(FromBits)]
@@ -246,7 +247,7 @@ impl Gpu3DRenderer {
         self.vertices_buf.clear();
         self.indices_buf.clear();
 
-        for i in 0..self.content.polygons_size {
+        'outer: for i in 0..self.content.polygons_size {
             let polygon = &self.content.polygons[i as usize];
 
             if u8::from(polygon.tex_image_param.format()) != 0
@@ -266,6 +267,16 @@ impl Gpu3DRenderer {
             //     polygon.tex_image_param,
             //     polygon.attr
             // );
+
+            let mut transformed_coords: [Vectori32<4>; 4] = unsafe { MaybeUninit::uninit().assume_init() };
+            for j in 0..polygon.polygon_type.vertex_count() {
+                let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
+                vertex.coords[3] = 1 << 12;
+                transformed_coords[j as usize] = vertex.coords * &self.content.clip_matrices[vertex.clip_matrix_index as usize];
+                if transformed_coords[j as usize][3] == 0 {
+                    continue 'outer;
+                }
+            }
 
             let vertex_index = self.vertices_buf.len() as u16;
             self.indices_buf.push(vertex_index);
@@ -289,38 +300,33 @@ impl Gpu3DRenderer {
 
             for j in 0..polygon.polygon_type.vertex_count() {
                 let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
-                vertex.coords[3] = 1 << 12;
 
-                let coords = vertex.coords * &self.content.clip_matrices[vertex.clip_matrix_index as usize];
-                let gpu_vertex = if coords[3] != 0 {
-                    let c = rgb6_to_float8(vertex.color);
+                let coords = &transformed_coords[j as usize];
+                let c = rgb6_to_float8(vertex.color);
 
-                    let vertex_x = ((coords[0] as i64 + coords[3] as i64) * w as i64 / (coords[3] as i64 * 2) + x as i64) as i32;
-                    let vertex_y = ((-coords[1] as i64 + coords[3] as i64) * h as i64 / (coords[3] as i64 * 2) + y as i64) as i32;
+                let vertex_x = ((coords[0] as i64 + coords[3] as i64) * w as i64 / (coords[3] as i64 * 2) + x as i64) as i32;
+                let vertex_y = ((-coords[1] as i64 + coords[3] as i64) * h as i64 / (coords[3] as i64 * 2) + y as i64) as i32;
 
-                    let mut tex_coords = vertex.tex_coords;
-                    let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
-                    if tex_coord_trans_mode == TextureCoordTransMode::TexCoord && (vertex.tex_matrix_index as usize) < self.content.tex_matrices.len() {
-                        let mut vector = Vectori32::<4>::new([(tex_coords[0] as i32) << 8, (tex_coords[1] as i32) << 8, 1 << 12, 1 << 12]);
-                        vector *= &self.content.tex_matrices[vertex.tex_matrix_index as usize];
-                        tex_coords[0] = (vector[0] >> 8) as i16;
-                        tex_coords[1] = (vector[1] >> 8) as i16;
-                    }
+                let mut tex_coords = vertex.tex_coords;
+                let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
+                if tex_coord_trans_mode == TextureCoordTransMode::TexCoord && (vertex.tex_matrix_index as usize) < self.content.tex_matrices.len() {
+                    let mut vector = Vectori32::<4>::new([(tex_coords[0] as i32) << 8, (tex_coords[1] as i32) << 8, 1 << 12, 1 << 12]);
+                    vector *= &self.content.tex_matrices[vertex.tex_matrix_index as usize];
+                    tex_coords[0] = (vector[0] >> 8) as i16;
+                    tex_coords[1] = (vector[1] >> 8) as i16;
+                }
 
-                    Gpu3DVertex {
-                        coords: [
-                            vertex_x as f32 * 2f32 / 255f32 - 1f32,
-                            1f32 - vertex_y as f32 * 2f32 / 191f32,
-                            coords[2] as f32 / 4096f32,
-                            coords[3] as f32 / 4096f32,
-                        ],
-                        color: [c.0, c.1, c.2, i as f32],
-                        tex_coords: [tex_coords[0] as f32 / 16f32, tex_coords[1] as f32 / 16f32],
-                    }
-                } else {
-                    unsafe { mem::zeroed() }
-                };
-                self.vertices_buf.push(gpu_vertex);
+                let w = coords[3] as f32 / 4096f32;
+                self.vertices_buf.push(Gpu3DVertex {
+                    coords: [
+                        (vertex_x as f32 * 2f32 / 255f32 - 1f32) * w,
+                        (1f32 - vertex_y as f32 * 2f32 / 191f32) * w,
+                        coords[2] as f32 / 4096f32,
+                        w,
+                    ],
+                    color: [c.0, c.1, c.2, i as f32],
+                    tex_coords: [tex_coords[0] as f32 / 16f32, tex_coords[1] as f32 / 16f32],
+                });
 
                 // println!(
                 //     "vertex {j} s {} t {} s_norm {} t_norm {}",

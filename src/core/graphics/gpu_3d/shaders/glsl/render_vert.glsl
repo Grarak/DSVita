@@ -12,5 +12,5 @@ void main() {
     oColor = color.rgb;
     oTexCoords = texCoords;
     oPolygonIndex = color.a;
-    gl_Position = vec4(position.xy * position.w, position.z, position.w);
+    gl_Position = position;
 }
