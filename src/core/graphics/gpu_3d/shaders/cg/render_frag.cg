@@ -122,7 +122,7 @@ void main(out float4 color : COLOR) {
     float y = float(polygonIndex >> 7) / 127.0;
     float4 value = tex2D(attrTex, float2(x, y));
 
-    int addrOffset = int((short(value[0] * 255.0) | (short(value[1] * 255.0) << 8))) << 3;
+    int addrOffset = (int(value[0] * 255.0) | (int(value[1] * 255.0) << 8)) << 3;
     short texImageParam = short(value[2] * 255.0) | (short(value[3] * 255.0) << 8);
 
     polygonIndex += 1;
