@@ -163,17 +163,34 @@ pub struct SwapBuffers {
     not_used: u6,
 }
 
-const FIFO_PARAM_COUNTS: [u8; 99] = [
+const FIFO_PARAM_COUNTS: [u8; 128] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x00-0x0F
     1, 0, 1, 1, 1, 0, 16, 12, 16, 12, 9, 3, 3, 0, 0, 0, // 0x10-0x1F
     1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, // 0x20-0x2F
     1, 1, 1, 1, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x30-0x3F
     1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x40-0x4F
     1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x50-0x5F
     1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x60-0x6F
-    3, 2, 1, // 0x70-0x72
+    3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x70-0x7F
 ];
 
-static FUNC_LUT: [fn(&mut Gpu3DRegisters, params: &mut [u32; 32]); 99] = [
+static FUNC_LUT: [fn(&mut Gpu3DRegisters, params: &mut [u32; 32]); 128] = [
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
     Gpu3DRegisters::exe_mtx_mode,
     Gpu3DRegisters::exe_mtx_push,
     Gpu3DRegisters::exe_mtx_pop,
@@ -273,9 +290,38 @@ static FUNC_LUT: [fn(&mut Gpu3DRegisters, params: &mut [u32; 32]); 99] = [
     Gpu3DRegisters::exe_box_test,
     Gpu3DRegisters::exe_pos_test,
     Gpu3DRegisters::exe_vec_test,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
+    Gpu3DRegisters::exe_empty,
 ];
 
-const FUNC_NAME_LUT: [&str; 99] = [
+const FUNC_NAME_LUT: [&str; 128] = [
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
     "exe_mtx_mode",
     "exe_mtx_push",
     "exe_mtx_pop",
@@ -375,6 +421,19 @@ const FUNC_NAME_LUT: [&str; 99] = [
     "exe_box_test",
     "exe_pos_test",
     "exe_vec_test",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
+    "exe_empty",
 ];
 
 #[derive(Copy, Clone, Default)]
@@ -386,7 +445,7 @@ struct Entry {
 
 impl Entry {
     fn new(cmd: u8, param: u32) -> Self {
-        Self::new_with_len(cmd, unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd as usize - 0x10) }, param)
+        Self::new_with_len(cmd, unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd as usize) }, param)
     }
 
     fn new_with_len(cmd: u8, param_len: u8, param: u32) -> Self {
@@ -635,20 +694,20 @@ impl Gpu3DRegisters {
                 if cmd == 0 {
                     break;
                 }
-                let param_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd - 0x10) };
+                let param_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
 
                 if unlikely(param_count as usize > self.cmd_fifo.len()) {
                     self.cmd_fifo.push_front(value >> (i << 3));
                     break 'outer;
                 }
 
-                debug_println!("gx: {} {cmd:x} {param_count}", unsafe { FUNC_NAME_LUT.get_unchecked(cmd - 0x10) });
+                debug_println!("gx: {} {cmd:x} {param_count}", unsafe { FUNC_NAME_LUT.get_unchecked(cmd) });
                 for i in 0..param_count {
                     unsafe { *params.get_unchecked_mut(i as usize) = *self.cmd_fifo.front() };
                     self.cmd_fifo.pop_front();
                 }
 
-                let func = unsafe { FUNC_LUT.get_unchecked(cmd - 0x10) };
+                let func = unsafe { FUNC_LUT.get_unchecked(cmd) };
                 func(self, &mut params);
 
                 executed_cycles += 8;
@@ -1247,9 +1306,9 @@ impl Gpu3DRegisters {
                 if cmd == 0 {
                     break;
                 }
-                let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd - 0x10) };
+                let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
                 self.cmd_remaining_params += params_count;
-                self.test_queue += ((cmd & 0xF0) == 0x70) as u8;
+                self.test_queue += (cmd >= 0x70 && cmd <= 0x72) as u8;
             }
         } else {
             self.cmd_remaining_params -= 1;
@@ -1272,9 +1331,9 @@ impl Gpu3DRegisters {
                     if cmd == 0 {
                         break;
                     }
-                    let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd - 0x10) };
+                    let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
                     self.cmd_remaining_params += params_count;
-                    self.test_queue += ((cmd & 0xF0) == 0x70) as u8;
+                    self.test_queue += (cmd >= 0x70 && cmd <= 0x72) as u8;
                 }
                 consumed += 1;
                 self.cmd_fifo.push_back(value);
@@ -1298,7 +1357,7 @@ impl Gpu3DRegisters {
 
     fn queue_unpacked_value<const CMD: u8>(&mut self, value: u32, emu: &mut Emu) {
         if self.cmd_remaining_params == 0 {
-            self.cmd_remaining_params = FIFO_PARAM_COUNTS[CMD as usize - 0x10];
+            self.cmd_remaining_params = FIFO_PARAM_COUNTS[CMD as usize];
             self.cmd_fifo.push_back(CMD as u32);
             if self.cmd_remaining_params > 0 {
                 self.cmd_remaining_params -= 1;
