@@ -18,7 +18,7 @@ io_read!(
         (io16(0x50), |emu| get_common!(emu).gpu.gpu_2d_regs_a.bld_cnt),
         (io16(0x52), |emu| get_common!(emu).gpu.gpu_2d_regs_a.bld_alpha),
         (io16(0x60), |emu| get_common!(emu).gpu.get_renderer().renderer_3d.get_disp_3d_cnt()),
-        (io32(0x64), |emu| get_common!(emu).gpu.disp_cap_cnt),
+        (io32(0x64), |emu| get_common!(emu).gpu.get_disp_cap_cnt()),
         (io16(0x6C), |emu| get_common!(emu).gpu.gpu_2d_regs_a.master_bright),
         (io32(0xB0), |emu| io_dma!(emu, ARM9).get_sad::<0>()),
         (io32(0xB4), |emu| io_dma!(emu, ARM9).get_dad::<0>()),
