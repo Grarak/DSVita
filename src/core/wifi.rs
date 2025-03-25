@@ -87,6 +87,7 @@ impl Wifi {
         let value = emu.mem_read::<{ ARM7 }, u16>(0x4804000 + self.w_rxbuf_rd_addr as u32);
 
         self.w_rxbuf_rd_addr += 2;
+        self.w_rxbuf_rd_addr &= 0x1FFE;
         if self.w_rxbuf_rd_addr == self.w_rxbuf_gap {
             self.w_rxbuf_rd_addr += self.w_rxbuf_gapdisp << 1;
         }
