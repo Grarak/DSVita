@@ -2,16 +2,24 @@
 
 [![Rust](https://github.com/Grarak/DSVita/actions/workflows/rust.yml/badge.svg)](https://github.com/Grarak/DSVita/actions/workflows/rust.yml)
 
-Experimental NDS Emulator for ARM32/PSVita
+Fast NDS Emulator for ARM32/PSVita
 
 ## Status
 
-This runs some games, however following things are missing:
+[![DSVita Mario Kart](http://img.youtube.com/vi/LS2YlOq5-q0/0.jpg)](https://www.youtube.com/watch?v=LS2YlOq5-q0 "DSVita Mario Kart")
 
-- 3D rendering is very broken
-- 2D rendering is almost complete
+This runs most games, however consider:
+
+- 3D rendering
+  - Polygons and their textures are drawn, however no lighting or other shading (e.g. toon) are implemented
+  - Games which swap screens every frame for displaying 3D on both screens at the same time, will flicker heavily
+- 2D rendering is mostly complete
+  - Mosaic and some window objects (you will see black screens or silhouettes) are not implemented
 - ARM7 HLE will not work with most games
   - Disable it if certain games don't boot further, get struck, crash or have any issues
+  - There are other emulation modes like PartialHle or PartialSoundHle. You can pick them if full HLE breaks anything
+- Auto frameskip is always used
+  - Games will feel choppy
 
 ## Installation/Setup
 
