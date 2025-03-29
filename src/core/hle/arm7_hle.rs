@@ -161,9 +161,7 @@ impl Arm7Hle {
                 }
             }
             IpcFifoTag::ControlDrivingWirelessLib => {
-                if data == 0x10000 {
-                    Self::send_ipc_fifo(IpcFifoTag::ControlDrivingWirelessLib, 0x10000, false, emu);
-                }
+                Self::send_ipc_fifo(IpcFifoTag::ControlDrivingWirelessLib, data, false, emu);
             }
             _ => todo!("hle: ipc request {val:x} tag {tag:?} data {data:x} err {}", message.err()),
         }
