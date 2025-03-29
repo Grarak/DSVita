@@ -1,6 +1,6 @@
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::emu::{get_cm_mut, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
-use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::emu::{get_cm_mut, get_common, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
+use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRendererContent;
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
@@ -634,6 +634,7 @@ pub struct Gpu3DRegisters {
 
     pub skip: bool,
     pub consume: bool,
+    pub pow_cnt1: u16,
 }
 
 macro_rules! unpacked_cmd {
@@ -732,6 +733,10 @@ impl Gpu3DRegisters {
 
         if !self.is_cmd_fifo_full() {
             get_cpu_regs_mut!(emu, ARM9).unhalt(1);
+        }
+
+        if self.flushed && !self.skip {
+            self.pow_cnt1 = get_common!(emu).gpu.pow_cnt1;
         }
     }
 
@@ -1226,6 +1231,7 @@ impl Gpu3DRegisters {
         self.tex_mtx_push = true;
 
         content.swap_buffers = self.swap_buffers;
+        content.pow_cnt1 = self.pow_cnt1;
     }
 
     fn add_vertex(&mut self) {

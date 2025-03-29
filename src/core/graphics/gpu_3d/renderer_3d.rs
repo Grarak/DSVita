@@ -1,5 +1,5 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
-use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, SwapBuffers, TextureCoordTransMode, Vertex};
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
@@ -133,6 +133,7 @@ pub struct Gpu3DRendererContent {
     pub clip_matrices: Vec<Matrix>,
     pub tex_matrices: Vec<Matrix>,
     pub swap_buffers: SwapBuffers,
+    pub pow_cnt1: u16,
 }
 
 #[derive(Default)]
@@ -239,12 +240,24 @@ impl Gpu3DRenderer {
 
         if registers.consume {
             registers.consume = false;
-
             registers.swap_to_renderer(&mut self.content);
         }
     }
 
     pub unsafe fn render(&mut self, common: &GpuRendererCommon) {
+        gl::BindFramebuffer(gl::FRAMEBUFFER, self.gl.fbo.fbo);
+        gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+
+        let clear_color = ClearColor::from(self.inners[0].clear_color);
+        let (r, g, b) = rgb5_to_float8(u16::from(clear_color.color()));
+        gl::ClearColor(r, g, b, u8::from(clear_color.alpha()) as f32 / 31f32);
+
+        gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+
+        if self.content.pow_cnt1 != u16::from(common.pow_cnt1) {
+            return;
+        }
+
         self.vertices_buf.clear();
         self.indices_buf.clear();
 
@@ -342,15 +355,6 @@ impl Gpu3DRenderer {
             self.polygon_attrs[i as usize].pal_addr = polygon.palette_addr;
             self.polygon_attrs[i as usize].poly_attr = u16::from(polygon.attr.alpha());
         }
-
-        gl::BindFramebuffer(gl::FRAMEBUFFER, self.gl.fbo.fbo);
-        gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
-
-        let clear_color = ClearColor::from(self.inners[0].clear_color);
-        let (r, g, b) = rgb5_to_float8(u16::from(clear_color.color()));
-        gl::ClearColor(r, g, b, u8::from(clear_color.alpha()) as f32 / 31f32);
-
-        gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
 
         if self.vertices_buf.is_empty() {
             return;
