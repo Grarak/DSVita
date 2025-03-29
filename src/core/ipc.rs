@@ -4,6 +4,7 @@ use crate::core::hle::arm7_hle::{Arm7Hle, IpcFifoMessage, IpcFifoTag};
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::fixed_fifo::FixedFifo;
+use crate::logging::debug_println;
 use crate::settings::{Arm7Emu, Settings};
 use bilge::prelude::*;
 use enum_dispatch::enum_dispatch;
@@ -98,6 +99,8 @@ impl IpcTrait for IpcLle {
         if ipc.fifo[cpu].cnt.enable() {
             let fifo_len = ipc.fifo[cpu].queue.len();
             if fifo_len < 16 {
+                let message = IpcFifoMessage::from(value & mask);
+                debug_println!("{cpu:?} ipc send {:x} {:x} {}", u8::from(message.tag()), u32::from(message.data()), message.err());
                 if cpu == ARM9 {
                     match self.0 {
                         Arm7Emu::PartialHle | Arm7Emu::PartialSoundHle => {
@@ -182,6 +185,8 @@ impl IpcTrait for IpcHle {
         if ipc.fifo[ARM9].cnt.enable() {
             let fifo_len = get_ipc!(emu).fifo[ARM9].queue.len();
             if fifo_len < 16 {
+                let message = IpcFifoMessage::from(value & mask);
+                debug_println!("hle ipc send {:x} {:x} {}", u8::from(message.tag()), u32::from(message.data()), message.err());
                 ipc.fifo[ARM9].queue.push_back(value & mask);
 
                 if fifo_len == 0 {

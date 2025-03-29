@@ -1,6 +1,6 @@
 use crate::core::cpu_regs::InterruptFlag;
 use crate::core::emu::{get_cm_mut, get_common, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
-use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRendererContent;
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;

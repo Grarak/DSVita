@@ -3,6 +3,7 @@ pub mod bios;
 mod bios_lookup_table;
 mod cart_hle;
 mod firmware_hle;
+mod mic_hle;
 mod power_manager_hle;
 mod rtc_hle;
 mod sound_hle;

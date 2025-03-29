@@ -1,5 +1,5 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
-use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, SwapBuffers, TextureCoordTransMode, Vertex};
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;

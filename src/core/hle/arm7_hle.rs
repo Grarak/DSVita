@@ -2,6 +2,7 @@ use crate::core::cpu_regs::InterruptFlag;
 use crate::core::emu::{get_common, get_cpu_regs_mut, get_ipc, get_ipc_mut, Emu};
 use crate::core::hle::cart_hle::CartHle;
 use crate::core::hle::firmware_hle::FirmwareHle;
+use crate::core::hle::mic_hle::MicHle;
 use crate::core::hle::power_manager_hle::PowerManagerHle;
 use crate::core::hle::rtc_hle::RtcHle;
 use crate::core::hle::sound_hle::SoundHle;
@@ -56,6 +57,7 @@ pub struct Arm7Hle {
     pub touchscreen: TouchscreenHle,
     pub sound: SoundHle,
     power_manager: PowerManagerHle,
+    mic: MicHle,
     cart: CartHle,
     pub wifi: WifiHle,
 }
@@ -68,6 +70,7 @@ impl Arm7Hle {
             touchscreen: TouchscreenHle::new(),
             sound: SoundHle::new(),
             power_manager: PowerManagerHle::new(),
+            mic: MicHle::new(),
             cart: CartHle::new(),
             wifi: WifiHle::new(),
         }
@@ -137,7 +140,7 @@ impl Arm7Hle {
             }
             IpcFifoTag::Mic => {
                 if !message.err() {
-                    // todo!()
+                    self.mic.ipc_recv(data, emu);
                 }
             }
             IpcFifoTag::WirelessManager => {
