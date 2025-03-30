@@ -554,7 +554,7 @@ struct Matrices {
 pub struct Vertex {
     pub coords: Vectori32<4>,
     pub tex_coords: Vectori16<2>,
-    pub color: u32,
+    pub color: u16,
     pub tex_coord_trans_mode: TextureCoordTransMode,
     pub tex_matrix_index: u16,
     pub clip_matrix_index: u16,
@@ -1012,7 +1012,7 @@ impl Gpu3DRegisters {
     }
 
     fn exe_color(&mut self, params: &[u32; 32]) {
-        self.cur_vtx.color = rgb5_to_rgb6(params[0]);
+        self.cur_vtx.color = params[0] as u16;
     }
 
     fn exe_normal(&mut self, params: &[u32; 32]) {
@@ -1096,7 +1096,7 @@ impl Gpu3DRegisters {
         self.material_color0 = MaterialColor0::from(params[0]);
 
         if self.material_color0.set_vertex_color() {
-            self.cur_vtx.color = rgb5_to_rgb6(u32::from(self.material_color0.dif()));
+            self.cur_vtx.color = u16::from(self.material_color0.dif());
         }
     }
 

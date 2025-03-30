@@ -316,7 +316,7 @@ impl Gpu3DRenderer {
                 let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
 
                 let coords = &transformed_coords[j as usize];
-                let c = rgb6_to_float8(vertex.color);
+                let c = rgb5_to_float8(vertex.color);
 
                 let vertex_x = ((coords[0] as i64 + coords[3] as i64) * w as i64 / (coords[3] as i64 * 2) + x as i64) as i32;
                 let vertex_y = ((-coords[1] as i64 + coords[3] as i64) * h as i64 / (coords[3] as i64 * 2) + y as i64) as i32;
