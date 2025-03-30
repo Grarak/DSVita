@@ -700,7 +700,7 @@ impl Gpu3DRegisters {
                     func(self, &params);
                 }
 
-                executed_cycles += 8;
+                executed_cycles += 4;
                 if unlikely(executed_cycles >= cycle_diff || cmd == 0x50) {
                     let remaining_cmds = value.unbounded_shr((i + 1) << 3);
                     if remaining_cmds != 0 {

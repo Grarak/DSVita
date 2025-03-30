@@ -29,8 +29,8 @@ use crate::logging::branch_println;
 
 pub const fn get_max_loop_cycle_count<const CPU: CpuType>() -> u32 {
     match CPU {
-        ARM9 => 512,
-        ARM7 => 256,
+        ARM9 => 256,
+        ARM7 => 128,
     }
 }
 
