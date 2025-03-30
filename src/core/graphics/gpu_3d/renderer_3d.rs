@@ -322,12 +322,35 @@ impl Gpu3DRenderer {
                 let vertex_y = ((-coords[1] as i64 + coords[3] as i64) * h as i64 / (coords[3] as i64 * 2) + y as i64) as i32;
 
                 let mut tex_coords = vertex.tex_coords;
-                let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
-                if tex_coord_trans_mode == TextureCoordTransMode::TexCoord && (vertex.tex_matrix_index as usize) < self.content.tex_matrices.len() {
-                    let mut vector = Vectori32::<4>::new([(tex_coords[0] as i32) << 8, (tex_coords[1] as i32) << 8, 1 << 12, 1 << 12]);
-                    vector *= &self.content.tex_matrices[vertex.tex_matrix_index as usize];
-                    tex_coords[0] = (vector[0] >> 8) as i16;
-                    tex_coords[1] = (vector[1] >> 8) as i16;
+                if (vertex.tex_matrix_index as usize) < self.content.tex_matrices.len() {
+                    let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
+                    match tex_coord_trans_mode {
+                        TextureCoordTransMode::None => {}
+                        TextureCoordTransMode::TexCoord => {
+                            let mut vector = Vectori32::<4>::new([(tex_coords[0] as i32) << 8, (tex_coords[1] as i32) << 8, 1 << 8, 1 << 8]);
+                            vector *= &self.content.tex_matrices[vertex.tex_matrix_index as usize];
+                            tex_coords[0] = (vector[0] >> 8) as i16;
+                            tex_coords[1] = (vector[1] >> 8) as i16;
+                        }
+                        TextureCoordTransMode::Normal => {
+                            let normal = Vectori32::<4>::new([polygon.normal[0] as i32, polygon.normal[1] as i32, polygon.normal[2] as i32, 1 << 12]);
+                            let mut mtx = self.content.tex_matrices[vertex.tex_matrix_index as usize];
+                            mtx[12] = (tex_coords[0] as i32) << 12;
+                            mtx[13] = (tex_coords[1] as i32) << 12;
+
+                            let vector = normal * &mtx;
+                            tex_coords[0] = (vector[0] >> 12) as i16;
+                            tex_coords[1] = (vector[1] >> 12) as i16;
+                        }
+                        TextureCoordTransMode::Vertex => {
+                            let mut mtx = self.content.tex_matrices[vertex.tex_matrix_index as usize];
+                            mtx[12] = (tex_coords[0] as i32) << 12;
+                            mtx[13] = (tex_coords[1] as i32) << 12;
+                            let vector = vertex.coords * &mtx;
+                            tex_coords[0] = (vector[0] >> 12) as i16;
+                            tex_coords[1] = (vector[1] >> 12) as i16;
+                        }
+                    }
                 }
 
                 let w = coords[3] as f32 / 4096f32;

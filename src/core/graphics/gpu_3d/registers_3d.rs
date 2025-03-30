@@ -1020,12 +1020,19 @@ impl Gpu3DRegisters {
         self.cur_polygon.normal[0] = ((u16::from(normal_vector_param.x()) << 6) as i16) >> 3;
         self.cur_polygon.normal[1] = ((u16::from(normal_vector_param.y()) << 6) as i16) >> 3;
         self.cur_polygon.normal[2] = ((u16::from(normal_vector_param.z()) << 6) as i16) >> 3;
+
+        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Normal && self.tex_mtx_push {
+            self.tex_matrices.push(self.matrices.tex);
+            self.tex_mtx_push = false;
+        }
+        self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
     }
 
     fn exe_tex_coord(&mut self, params: &[u32; 32]) {
         let tex_coord = TexCoord::from(params[0]);
         self.cur_vtx.tex_coords[0] = tex_coord.s() as i16;
         self.cur_vtx.tex_coords[1] = tex_coord.t() as i16;
+
         if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::TexCoord && self.tex_mtx_push {
             self.tex_matrices.push(self.matrices.tex);
             self.tex_mtx_push = false;
@@ -1200,6 +1207,12 @@ impl Gpu3DRegisters {
             self.clip_matrices.push(self.clip_matrix);
             self.clip_mtx_push = false;
         }
+
+        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Vertex && self.tex_mtx_push {
+            self.tex_matrices.push(self.matrices.tex);
+            self.tex_mtx_push = false;
+        }
+        self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
 
         self.vertices[self.vertices_size as usize] = self.cur_vtx;
         self.vertices[self.vertices_size as usize].clip_matrix_index = self.clip_matrices.len() as u16 - 1;
