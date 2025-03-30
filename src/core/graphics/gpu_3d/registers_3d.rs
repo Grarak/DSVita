@@ -1,5 +1,5 @@
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::emu::{get_cm_mut, get_common, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
+use crate::core::emu::{get_cm_mut, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRendererContent;
 use crate::core::memory::dma::DmaTransferMode;
@@ -620,6 +620,7 @@ pub struct Gpu3DRegisters {
     pub skip: bool,
     pub consume: bool,
     pub pow_cnt1: u16,
+    pub current_pow_cnt1: u16,
 }
 
 macro_rules! unpacked_cmd {
@@ -724,8 +725,8 @@ impl Gpu3DRegisters {
             get_cpu_regs_mut!(emu, ARM9).unhalt(1);
         }
 
-        if self.flushed && !self.skip {
-            self.pow_cnt1 = get_common!(emu).gpu.pow_cnt1;
+        if !self.skip && self.flushed {
+            self.pow_cnt1 = self.current_pow_cnt1;
         }
     }
 

@@ -194,6 +194,8 @@ impl Gpu {
             192 => {
                 let gpu_3d_regs = &mut get_common_mut!(emu).gpu.gpu_3d_regs;
 
+                gpu_3d_regs.current_pow_cnt1 = gpu.pow_cnt1;
+
                 let pow_cnt1 = PowCnt1::from(gpu.pow_cnt1);
                 gpu.get_renderer_mut().on_scanline_finish(get_mem_mut!(emu), pow_cnt1, gpu_3d_regs);
 
