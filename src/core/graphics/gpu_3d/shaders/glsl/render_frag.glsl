@@ -228,10 +228,9 @@ void main() {
     bool repeatT = ((texImageParam >> 1) & 0x1) == 1;
     if (repeatS) {
         bool flip = ((texImageParam >> 2) & 0x1) == 1;
-        if (flip && (s & sizeT) != 0) {
-            s = -s;
+        if (flip && (s & sizeS) != 0) {
+            s = -1 - s;
         }
-        s += sizeS;
         s &= sizeS - 1;
     } else if (s < 0) {
         s = 0;
@@ -242,9 +241,8 @@ void main() {
     if (repeatT) {
         bool flip = ((texImageParam >> 3) & 0x1) == 1;
         if (flip && (t & sizeT) != 0) {
-            t = -t;
+            t = -1 - t;
         }
-        t += sizeT;
         t &= sizeT - 1;
     } else if (t < 0) {
         t = 0;
