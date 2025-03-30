@@ -118,12 +118,13 @@ impl IndexMut<usize> for Matrix {
 impl Default for Matrix {
     fn default() -> Self {
         #[rustfmt::skip]
-        Matrix([
+        const MTX: Matrix = Matrix([
             1 << 12, 0 << 12, 0 << 12, 0 << 12,
             0 << 12, 1 << 12, 0 << 12, 0 << 12,
             0 << 12, 0 << 12, 1 << 12, 0 << 12,
             0 << 12, 0 << 12, 0 << 12, 1 << 12,
-        ])
+        ]);
+        MTX
     }
 }
 
