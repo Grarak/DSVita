@@ -1,5 +1,5 @@
 use crate::core::cycle_manager::{CycleManager, EventType};
-use crate::core::emu::{get_arm7_hle_mut, get_cm_mut, get_spu, get_spu_mut, Emu};
+use crate::core::emu::{get_arm7_hle_mut, get_cm_mut, get_common, get_spu, get_spu_mut, Emu};
 use crate::core::hle::arm7_hle::{Arm7Hle, IpcFifoTag};
 use crate::core::hle::bios::{PITCH_TABLE, VOLUME_TABLE};
 use crate::core::spu::{MainSoundCnt, SoundCapCnt, SoundChannelFormat, SoundCnt, CHANNEL_COUNT};
@@ -182,6 +182,8 @@ pub struct SoundNitro {
     master_pan: i32,
     surround_decay: i32,
     shared_mem: u32,
+    cmd_offset: u32,
+    cmd_translate: bool,
 }
 
 impl SoundNitro {
@@ -213,6 +215,21 @@ impl SoundNitro {
 
         for track in &mut self.tracks {
             track.status_flags &= !1;
+        }
+
+        let game_code = &get_common!(emu).cartridge.io.header.game_code[..3];
+        if game_code == [0x41, 0x43, 0x56] {
+            // Castlevania - Dawn of Sorrow
+            self.cmd_offset = 2;
+        } else if game_code == [0x41, 0x55, 0x47] {
+            // Need for Speed - Underground 2
+            self.cmd_offset = 3;
+        } else if game_code == [0x41, 0x53, 0x4D] {
+            // Super Mario 64 DS
+            self.cmd_translate = true;
+        } else if game_code == [0x41, 0x52, 0x59] {
+            // Rayman DS
+            self.cmd_offset = 3;
         }
 
         let mut main_cnt = MainSoundCnt::from(0);
@@ -695,7 +712,15 @@ impl SoundNitro {
             let mut cmd_buf = unsafe { self.cmd_queue.pop_front().unwrap_unchecked() };
             while cmd_buf != 0 {
                 let next = emu.mem_read::<{ ARM7 }, u32>(cmd_buf);
-                let cmd = emu.mem_read::<{ ARM7 }, u32>(cmd_buf + 4);
+                let mut cmd = emu.mem_read::<{ ARM7 }, u32>(cmd_buf + 4);
+                if self.cmd_translate {
+                    const TRANSLATION: [u32; 30] = [
+                        0x0, 0x1, 0x4, 0x6, 0x7, 0x8, 0x9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x21, 0x1E, 0x1F, 0x20,
+                    ];
+                    cmd = TRANSLATION[cmd as usize];
+                } else if cmd >= 2 {
+                    cmd += self.cmd_offset;
+                }
 
                 let args = [
                     emu.mem_read::<{ ARM7 }, u32>(cmd_buf + 8),

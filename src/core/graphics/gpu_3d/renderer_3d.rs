@@ -4,7 +4,7 @@ use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, Primi
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::math::{Matrix, Vectori32};
-use crate::utils::{rgb5_to_float8, rgb6_to_float8, HeapMem};
+use crate::utils::{rgb5_to_float8, HeapMem};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;

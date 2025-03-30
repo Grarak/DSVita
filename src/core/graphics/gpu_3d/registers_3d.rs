@@ -7,7 +7,7 @@ use crate::core::CpuType::ARM9;
 use crate::fixed_fifo::FixedFifo;
 use crate::logging::debug_println;
 use crate::math::{vmult_mat4, Matrix, Vectori16, Vectori32};
-use crate::utils::{rgb5_to_rgb6, HeapMem};
+use crate::utils::HeapMem;
 use bilge::prelude::*;
 use paste::paste;
 use std::arch::arm::{int32x4_t, vld1q_s32, vld1q_s32_x3, vsetq_lane_s32};
