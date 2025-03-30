@@ -315,7 +315,6 @@ impl BasicBlock {
         let last_inst = buf.get_inst(self.block_entry_end);
         let last_inst_is_branch = matches!(&last_inst.inst_type, BlockInstType::Branch(_));
         if !last_inst_is_branch {
-            debug_assert!(!last_inst.skip);
             self.emit_opcode(self.block_entry_end, buf);
         }
 
