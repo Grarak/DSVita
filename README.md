@@ -6,12 +6,12 @@ Fast NDS Emulator for ARM32/PSVita
 
 ## Status
 
-[![DSVita Mario Kart](http://img.youtube.com/vi/LS2YlOq5-q0/0.jpg)](https://www.youtube.com/watch?v=LS2YlOq5-q0 "DSVita Mario Kart")
+[![DSVita Mario Kart](http://img.youtube.com/vi/en2EX8GLauk/0.jpg)](https://www.youtube.com/watch?v=en2EX8GLauk "DSVita Mario Kart")
 
 This runs most games, however consider:
 
 - 3D rendering
-  - Polygons and their textures are drawn, however no lighting or other shading (e.g. toon) are implemented
+  - Polygons and their textures are drawn, however no lighting, any other shading (e.g. toon) nor shadow volumes are implemented
   - Games which swap screens every frame for displaying 3D on both screens at the same time, will flicker heavily
 - 2D rendering is mostly complete
   - Mosaic and some window objects (you will see black screens or silhouettes) are not implemented
@@ -19,7 +19,9 @@ This runs most games, however consider:
   - Disable it if certain games don't boot further, get struck, crash or have any issues
   - There are other emulation modes like PartialHle or PartialSoundHle. You can pick them if full HLE breaks anything
 - Auto frameskip is always used
-  - Games will feel choppy
+  - Games will feel choppy, you will most likely hover around 15 fps, even if they run at full game speed
+- No scanline rendering, thus games that update VRAM mid frame will not render correctly
+  - Not many games do this, however games that do use it for scrolling texts
 
 ## Installation/Setup
 
@@ -28,6 +30,13 @@ This runs most games, however consider:
 - Install `kubridge.skprx` from https://github.com/bythos14/kubridge/releases
 - It's strongly recommend to overclock your vita to 500MHz
 - Create the folder ux0:data/dsvita and put your roms there
+  - They must have the file extensions `*.nds`
+
+## Building
+1. Install [Vitasdk](https://vitasdk.org/)
+2. Install [cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html)
+3. Install [cargo vita](https://github.com/vita-rust/cargo-vita)
+4. `RUSTFLAGS="-Zlocation-detail=none -Zfmt-debug=none" cargo vita build vpk -- --release`
 
 ## Credits
 
