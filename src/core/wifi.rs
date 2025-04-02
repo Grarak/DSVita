@@ -1,5 +1,5 @@
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::emu::{get_cpu_regs_mut, Emu};
+use crate::core::emu::Emu;
 use crate::core::CpuType::ARM7;
 use crate::utils::HeapMemU8;
 use bilge::prelude::*;
@@ -82,268 +82,270 @@ impl Wifi {
         instance.bb_registers[0x64] = 0xFF;
         instance
     }
+}
 
-    pub fn get_w_rxbuf_rd_data(&mut self, emu: &mut Emu) -> u16 {
-        let value = emu.mem_read::<{ ARM7 }, u16>(0x4804000 + self.w_rxbuf_rd_addr as u32);
+impl Emu {
+    pub fn wifi_get_w_rxbuf_rd_data(&mut self) -> u16 {
+        let value = self.mem_read::<{ ARM7 }, u16>(0x4804000 + self.wifi.w_rxbuf_rd_addr as u32);
 
-        self.w_rxbuf_rd_addr += 2;
-        self.w_rxbuf_rd_addr &= 0x1FFE;
-        if self.w_rxbuf_rd_addr == self.w_rxbuf_gap {
-            self.w_rxbuf_rd_addr += self.w_rxbuf_gapdisp << 1;
+        self.wifi.w_rxbuf_rd_addr += 2;
+        self.wifi.w_rxbuf_rd_addr &= 0x1FFE;
+        if self.wifi.w_rxbuf_rd_addr == self.wifi.w_rxbuf_gap {
+            self.wifi.w_rxbuf_rd_addr += self.wifi.w_rxbuf_gapdisp << 1;
         }
 
-        let buf_size = (self.w_rxbuf_end & 0x1FFE) - (self.w_rxbuf_begin & 0x1FFE);
+        let buf_size = (self.wifi.w_rxbuf_end & 0x1FFE) - (self.wifi.w_rxbuf_begin & 0x1FFE);
         if buf_size != 0 {
-            self.w_rxbuf_rd_addr = ((self.w_rxbuf_begin & 0x1FFE) + (self.w_rxbuf_rd_addr - (self.w_rxbuf_begin & 0x1FFE)) % buf_size) & 0x1FFE;
+            self.wifi.w_rxbuf_rd_addr = ((self.wifi.w_rxbuf_begin & 0x1FFE) + (self.wifi.w_rxbuf_rd_addr - (self.wifi.w_rxbuf_begin & 0x1FFE)) % buf_size) & 0x1FFE;
         }
 
-        if self.w_rxbuf_count > 0 {
-            self.w_rxbuf_count -= 1;
-            if self.w_rxbuf_count == 0 {
+        if self.wifi.w_rxbuf_count > 0 {
+            self.wifi.w_rxbuf_count -= 1;
+            if self.wifi.w_rxbuf_count == 0 {
                 todo!()
             }
         }
         value
     }
 
-    pub fn get_w_txbuf_loc(&self, paket_type: PaketType) -> u16 {
-        self.w_txbuf_loc[paket_type as usize]
+    pub fn wifi_get_w_txbuf_loc(&self, paket_type: PaketType) -> u16 {
+        self.wifi.w_txbuf_loc[paket_type as usize]
     }
 
-    pub fn get_w_us_compare(&self, index: usize) -> u16 {
-        (self.w_us_compare >> (index * 16)) as u16
+    pub fn wifi_get_w_us_compare(&self, index: usize) -> u16 {
+        (self.wifi.w_us_compare >> (index * 16)) as u16
     }
 
-    pub fn get_w_us_count(&self, index: usize) -> u16 {
-        (self.w_us_count >> (index * 16)) as u16
+    pub fn wifi_get_w_us_count(&self, index: usize) -> u16 {
+        (self.wifi.w_us_count >> (index * 16)) as u16
     }
 
-    pub fn set_w_mode_wep(&mut self, mask: u16, value: u16) {
-        self.w_mode_wep = (self.w_mode_wep & !mask) | (value & mask);
+    pub fn wifi_set_w_mode_wep(&mut self, mask: u16, value: u16) {
+        self.wifi.w_mode_wep = (self.wifi.w_mode_wep & !mask) | (value & mask);
     }
 
-    pub fn set_w_txstat_cnt(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_txstat_cnt(&mut self, mut mask: u16, value: u16) {
         mask &= 0xF000;
-        self.w_txstat_cnt = (self.w_txstat_cnt & !mask) | (value & mask);
+        self.wifi.w_txstat_cnt = (self.wifi.w_txstat_cnt & !mask) | (value & mask);
     }
 
-    pub fn set_w_irf(&mut self, mask: u16, value: u16) {
-        self.w_irf &= !(value & mask);
+    pub fn wifi_set_w_irf(&mut self, mask: u16, value: u16) {
+        self.wifi.w_irf &= !(value & mask);
     }
 
-    pub fn set_w_ie(&mut self, mut mask: u16, value: u16, emu: &mut Emu) {
-        if self.w_ie & self.w_irf == 0 && value & mask & self.w_irf != 0 {
-            get_cpu_regs_mut!(emu, ARM7).send_interrupt(InterruptFlag::Wifi, emu);
+    pub fn wifi_set_w_ie(&mut self, mut mask: u16, value: u16) {
+        if self.wifi.w_ie & self.wifi.w_irf == 0 && value & mask & self.wifi.w_irf != 0 {
+            self.cpu_send_interrupt(ARM7, InterruptFlag::Wifi);
         }
 
         mask &= 0xFBFF;
-        self.w_ie = (self.w_ie & !mask) | (value & mask);
+        self.wifi.w_ie = (self.wifi.w_ie & !mask) | (value & mask);
     }
 
-    pub fn set_w_macaddr(&mut self, index: usize, mask: u16, value: u16) {
-        self.w_macaddr[index] = (self.w_macaddr[index] & !mask) | (value & mask);
+    pub fn wifi_set_w_macaddr(&mut self, index: usize, mask: u16, value: u16) {
+        self.wifi.w_macaddr[index] = (self.wifi.w_macaddr[index] & !mask) | (value & mask);
     }
 
-    pub fn set_w_bssid(&mut self, index: usize, mask: u16, value: u16) {
-        self.w_bssid[index] = (self.w_bssid[index] & !mask) | (value & mask);
+    pub fn wifi_set_w_bssid(&mut self, index: usize, mask: u16, value: u16) {
+        self.wifi.w_bssid[index] = (self.wifi.w_bssid[index] & !mask) | (value & mask);
     }
 
-    pub fn set_w_aid_full(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_aid_full(&mut self, mut mask: u16, value: u16) {
         mask &= 0x07FF;
-        self.w_aid_full = (self.w_aid_full & !mask) | (value & mask);
+        self.wifi.w_aid_full = (self.wifi.w_aid_full & !mask) | (value & mask);
     }
 
-    pub fn set_w_rxcnt(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_rxcnt(&mut self, mut mask: u16, value: u16) {
         mask &= 0xFF0E;
-        self.w_rxcnt = (self.w_rxcnt & !mask) | (value & mask);
+        self.wifi.w_rxcnt = (self.wifi.w_rxcnt & !mask) | (value & mask);
 
         if value & 0x1 != 0 {
-            self.w_rxbuf_wrcsr = self.w_rxbuf_wr_addr << 1;
+            self.wifi.w_rxbuf_wrcsr = self.wifi.w_rxbuf_wr_addr << 1;
         }
     }
 
-    pub fn set_w_powerstate(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_powerstate(&mut self, mut mask: u16, value: u16) {
         mask &= 0x0003;
-        self.w_powerstate = (self.w_powerstate & !mask) | (value & mask);
+        self.wifi.w_powerstate = (self.wifi.w_powerstate & !mask) | (value & mask);
 
-        if self.w_powerstate & 0x2 != 0 {
-            self.w_powerstate &= !(1 << 9);
+        if self.wifi.w_powerstate & 0x2 != 0 {
+            self.wifi.w_powerstate &= !(1 << 9);
         }
     }
 
-    pub fn set_w_powerforce(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_powerforce(&mut self, mut mask: u16, value: u16) {
         mask &= 0x8001;
-        self.w_powerforce = (self.w_powerforce & !mask) | (value & mask);
+        self.wifi.w_powerforce = (self.wifi.w_powerforce & !mask) | (value & mask);
 
-        if self.w_powerforce & (1 << 15) != 0 {
-            self.w_powerstate = (self.w_powerstate & !(1 << 9)) | ((self.w_powerforce & 0x1) << 9);
+        if self.wifi.w_powerforce & (1 << 15) != 0 {
+            self.wifi.w_powerstate = (self.wifi.w_powerstate & !(1 << 9)) | ((self.wifi.w_powerforce & 0x1) << 9);
         }
     }
 
-    pub fn set_w_rxbuf_begin(&mut self, mask: u16, value: u16) {
-        self.w_rxbuf_begin = (self.w_rxbuf_begin & !mask) | (value & mask);
+    pub fn wifi_set_w_rxbuf_begin(&mut self, mask: u16, value: u16) {
+        self.wifi.w_rxbuf_begin = (self.wifi.w_rxbuf_begin & !mask) | (value & mask);
     }
 
-    pub fn set_w_rxbuf_end(&mut self, mask: u16, value: u16) {
-        self.w_rxbuf_end = (self.w_rxbuf_end & !mask) | (value & mask);
+    pub fn wifi_set_w_rxbuf_end(&mut self, mask: u16, value: u16) {
+        self.wifi.w_rxbuf_end = (self.wifi.w_rxbuf_end & !mask) | (value & mask);
     }
 
-    pub fn set_w_rxbuf_wr_addr(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_rxbuf_wr_addr(&mut self, mut mask: u16, value: u16) {
         mask &= 0x0FFF;
-        self.w_rxbuf_wr_addr = (self.w_rxbuf_wr_addr & !mask) | (value & mask);
+        self.wifi.w_rxbuf_wr_addr = (self.wifi.w_rxbuf_wr_addr & !mask) | (value & mask);
     }
 
-    pub fn set_w_rxbuf_rd_addr(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_rxbuf_rd_addr(&mut self, mut mask: u16, value: u16) {
         mask &= 0x1FFE;
-        self.w_rxbuf_rd_addr = (self.w_rxbuf_rd_addr & !mask) | (value & mask);
+        self.wifi.w_rxbuf_rd_addr = (self.wifi.w_rxbuf_rd_addr & !mask) | (value & mask);
     }
 
-    pub fn set_w_rxbuf_readcsr(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_rxbuf_readcsr(&mut self, mut mask: u16, value: u16) {
         mask &= 0x0FFF;
-        self.w_rxbuf_readcsr = (self.w_rxbuf_readcsr & !mask) | (value & mask);
+        self.wifi.w_rxbuf_readcsr = (self.wifi.w_rxbuf_readcsr & !mask) | (value & mask);
     }
 
-    pub fn set_w_rxbuf_count(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_rxbuf_count(&mut self, mut mask: u16, value: u16) {
         mask &= 0x0FFF;
-        self.w_rxbuf_count = (self.w_rxbuf_count & !mask) | (value & mask);
+        self.wifi.w_rxbuf_count = (self.wifi.w_rxbuf_count & !mask) | (value & mask);
     }
 
-    pub fn set_w_rxbuf_gap(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_rxbuf_gap(&mut self, mut mask: u16, value: u16) {
         mask &= 0x1FFE;
-        self.w_rxbuf_gap = (self.w_rxbuf_gap & !mask) | (value & mask);
+        self.wifi.w_rxbuf_gap = (self.wifi.w_rxbuf_gap & !mask) | (value & mask);
     }
 
-    pub fn set_w_rxbuf_gapdisp(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_rxbuf_gapdisp(&mut self, mut mask: u16, value: u16) {
         mask &= 0x0FFF;
-        self.w_rxbuf_gapdisp = (self.w_rxbuf_gapdisp & !mask) | (value & mask);
+        self.wifi.w_rxbuf_gapdisp = (self.wifi.w_rxbuf_gapdisp & !mask) | (value & mask);
     }
 
-    pub fn set_w_txbuf_wr_addr(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_txbuf_wr_addr(&mut self, mut mask: u16, value: u16) {
         mask &= 0x1FFE;
-        self.w_txbuf_wr_addr = (self.w_txbuf_wr_addr & !mask) | (value & mask);
+        self.wifi.w_txbuf_wr_addr = (self.wifi.w_txbuf_wr_addr & !mask) | (value & mask);
     }
 
-    pub fn set_w_txbuf_count(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_txbuf_count(&mut self, mut mask: u16, value: u16) {
         mask &= 0x0FFF;
-        self.w_txbuf_count = (self.w_txbuf_count & !mask) | (value & mask);
+        self.wifi.w_txbuf_count = (self.wifi.w_txbuf_count & !mask) | (value & mask);
     }
 
-    pub fn set_w_txbuf_wr_data(&mut self, mask: u16, value: u16, emu: &mut Emu) {
-        emu.mem_write::<{ ARM7 }, u16>(0x4804000 + self.w_txbuf_wr_addr as u32, value & mask);
+    pub fn wifi_set_w_txbuf_wr_data(&mut self, mask: u16, value: u16) {
+        self.mem_write::<{ ARM7 }, u16>(0x4804000 + self.wifi.w_txbuf_wr_addr as u32, value & mask);
 
-        self.w_txbuf_wr_addr += 2;
-        if self.w_txbuf_wr_addr == self.w_txbuf_gap {
-            self.w_txbuf_wr_addr += self.w_txbuf_gapdisp << 1;
+        self.wifi.w_txbuf_wr_addr += 2;
+        if self.wifi.w_txbuf_wr_addr == self.wifi.w_txbuf_gap {
+            self.wifi.w_txbuf_wr_addr += self.wifi.w_txbuf_gapdisp << 1;
         }
-        self.w_txbuf_wr_addr &= 0x1FFF;
+        self.wifi.w_txbuf_wr_addr &= 0x1FFF;
 
-        if self.w_txbuf_count > 0 {
-            self.w_txbuf_count -= 1;
-            if self.w_txbuf_count == 0 {
+        if self.wifi.w_txbuf_count > 0 {
+            self.wifi.w_txbuf_count -= 1;
+            if self.wifi.w_txbuf_count == 0 {
                 todo!()
             }
         }
     }
 
-    pub fn set_w_txbuf_gap(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_txbuf_gap(&mut self, mut mask: u16, value: u16) {
         mask &= 0x1FFE;
-        self.w_txbuf_gap = (self.w_txbuf_gap & !mask) | (value & mask);
+        self.wifi.w_txbuf_gap = (self.wifi.w_txbuf_gap & !mask) | (value & mask);
     }
 
-    pub fn set_w_txbuf_gapdisp(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_txbuf_gapdisp(&mut self, mut mask: u16, value: u16) {
         mask &= 0x0FFF;
-        self.w_txbuf_gapdisp = (self.w_txbuf_gapdisp & !mask) | (value & mask);
+        self.wifi.w_txbuf_gapdisp = (self.wifi.w_txbuf_gapdisp & !mask) | (value & mask);
     }
 
-    pub fn set_w_txbuf_loc(&mut self, paket_type: PaketType, mask: u16, value: u16) {
-        self.w_txbuf_loc[paket_type as usize] = (self.w_txbuf_loc[paket_type as usize] & !mask) | (value & mask);
+    pub fn wifi_set_w_txbuf_loc(&mut self, paket_type: PaketType, mask: u16, value: u16) {
+        self.wifi.w_txbuf_loc[paket_type as usize] = (self.wifi.w_txbuf_loc[paket_type as usize] & !mask) | (value & mask);
 
-        if paket_type != PaketType::BeaconFrame && self.w_txbuf_loc[paket_type as usize] & (1 << 15) != 0 && self.w_txreq_read & (1 << paket_type as u8) != 0 {
+        if paket_type != PaketType::BeaconFrame && self.wifi.w_txbuf_loc[paket_type as usize] & (1 << 15) != 0 && self.wifi.w_txreq_read & (1 << paket_type as u8) != 0 {
             todo!()
         }
     }
 
-    pub fn set_w_beacon_int(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_beacon_int(&mut self, mut mask: u16, value: u16) {
         mask &= 0x03FF;
-        self.w_beacon_int = (self.w_beacon_int & !mask) | (value & mask);
+        self.wifi.w_beacon_int = (self.wifi.w_beacon_int & !mask) | (value & mask);
 
-        self.w_beacon_count = self.w_beacon_int;
+        self.wifi.w_beacon_count = self.wifi.w_beacon_int;
     }
 
-    pub fn set_w_txbuf_reply1(&mut self, mask: u16, value: u16) {
-        self.w_txbuf_reply1 = (self.w_txbuf_reply1 & !mask) | (value & mask);
+    pub fn wifi_set_w_txbuf_reply1(&mut self, mask: u16, value: u16) {
+        self.wifi.w_txbuf_reply1 = (self.wifi.w_txbuf_reply1 & !mask) | (value & mask);
     }
 
-    pub fn set_w_txreq_reset(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_txreq_reset(&mut self, mut mask: u16, value: u16) {
         mask &= 0x000F;
-        self.w_txreq_read &= !(value & mask);
+        self.wifi.w_txreq_read &= !(value & mask);
     }
 
-    pub fn set_w_txreq_set(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_txreq_set(&mut self, mut mask: u16, value: u16) {
         mask &= 0x000F;
-        self.w_txreq_read |= value & mask;
+        self.wifi.w_txreq_read |= value & mask;
 
         for i in 0..4 {
-            if self.w_txbuf_loc[i] & (1 << 15) != 0 && self.w_txreq_read & (1 << i) != 0 {
+            if self.wifi.w_txbuf_loc[i] & (1 << 15) != 0 && self.wifi.w_txreq_read & (1 << i) != 0 {
                 todo!()
             }
         }
     }
 
-    pub fn set_w_us_countcnt(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_us_countcnt(&mut self, mut mask: u16, value: u16) {
         mask &= 0x0001;
-        self.w_us_countcnt = (self.w_us_countcnt & !mask) | (value & mask);
+        self.wifi.w_us_countcnt = (self.wifi.w_us_countcnt & !mask) | (value & mask);
     }
 
-    pub fn set_w_us_comparecnt(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_us_comparecnt(&mut self, mut mask: u16, value: u16) {
         mask &= 0x0001;
-        self.w_us_comparecnt = (self.w_us_comparecnt & !mask) | (value & mask);
+        self.wifi.w_us_comparecnt = (self.wifi.w_us_comparecnt & !mask) | (value & mask);
 
         if value & 0x2 != 0 {
             todo!()
         }
     }
 
-    pub fn set_w_cmd_countcnt(&mut self, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_cmd_countcnt(&mut self, mut mask: u16, value: u16) {
         mask &= 0x0001;
-        self.w_cmd_countcnt = (self.w_cmd_countcnt & !mask) | (value & mask);
+        self.wifi.w_cmd_countcnt = (self.wifi.w_cmd_countcnt & !mask) | (value & mask);
     }
 
-    pub fn set_w_us_compare(&mut self, index: usize, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_us_compare(&mut self, index: usize, mut mask: u16, value: u16) {
         let shift = 16 * index;
         mask &= if index != 0 { 0xFFFF } else { 0xFC00 };
-        self.w_us_compare = (self.w_us_compare & !((mask as u64) << shift)) | (((value & mask) as u64) << shift);
+        self.wifi.w_us_compare = (self.wifi.w_us_compare & !((mask as u64) << shift)) | (((value & mask) as u64) << shift);
     }
 
-    pub fn set_w_us_count(&mut self, index: usize, mask: u16, value: u16) {
+    pub fn wifi_set_w_us_count(&mut self, index: usize, mask: u16, value: u16) {
         let shift = 16 * index;
-        self.w_us_count = (self.w_us_count & !((mask as u64) << shift)) | (((value & mask) as u64) << shift);
+        self.wifi.w_us_count = (self.wifi.w_us_count & !((mask as u64) << shift)) | (((value & mask) as u64) << shift);
     }
 
-    pub fn set_w_pre_beacon(&mut self, mask: u16, value: u16) {
-        self.w_pre_beacon = (self.w_pre_beacon & !mask) | (value & mask);
+    pub fn wifi_set_w_pre_beacon(&mut self, mask: u16, value: u16) {
+        self.wifi.w_pre_beacon = (self.wifi.w_pre_beacon & !mask) | (value & mask);
     }
 
-    pub fn set_w_cmd_count(&mut self, mask: u16, value: u16) {
-        self.w_cmd_count = (self.w_cmd_count & !mask) | (value & mask);
+    pub fn wifi_set_w_cmd_count(&mut self, mask: u16, value: u16) {
+        self.wifi.w_cmd_count = (self.wifi.w_cmd_count & !mask) | (value & mask);
     }
 
-    pub fn set_w_beacon_count(&mut self, mask: u16, value: u16) {
-        self.w_beacon_count = (self.w_beacon_count & !mask) | (value & mask);
+    pub fn wifi_set_w_beacon_count(&mut self, mask: u16, value: u16) {
+        self.wifi.w_beacon_count = (self.wifi.w_beacon_count & !mask) | (value & mask);
     }
 
-    pub fn set_w_config(&mut self, index: usize, mut mask: u16, value: u16) {
+    pub fn wifi_set_w_config(&mut self, index: usize, mut mask: u16, value: u16) {
         const MASKS: [u16; 15] = [0x81FF, 0xFFFF, 0xFFFF, 0xFFFF, 0x0FFF, 0x8FFF, 0xFFFF, 0xFFFF, 0x00FF, 0x00FF, 0x00FF, 0x00FF, 0xFFFF, 0xFF3F, 0x7A7F];
 
         mask &= MASKS[index];
-        self.w_config[index] = (self.w_config[index] & !mask) | (value & mask);
+        self.wifi.w_config[index] = (self.wifi.w_config[index] & !mask) | (value & mask);
     }
 
-    pub fn set_w_post_beacon(&mut self, mask: u16, value: u16) {
-        self.w_post_beacon = (self.w_post_beacon & !mask) | (value & mask);
+    pub fn wifi_set_w_post_beacon(&mut self, mask: u16, value: u16) {
+        self.wifi.w_post_beacon = (self.wifi.w_post_beacon & !mask) | (value & mask);
     }
 
-    pub fn set_w_bb_cnt(&mut self, mask: u16, value: u16) {
+    pub fn wifi_set_w_bb_cnt(&mut self, mask: u16, value: u16) {
         let cnt = WBBCnt::from(value & mask);
         let index = cnt.index();
         match u8::from(cnt.direction()) {
@@ -357,24 +359,24 @@ impl Wifi {
                     || (index == 0x65)
                     || (index >= 0x67 && index <= 0x68)
                 {
-                    self.bb_registers[index as usize] = self.w_bb_write as u8;
+                    self.wifi.bb_registers[index as usize] = self.wifi.w_bb_write as u8;
                 }
             }
-            6 => self.w_bb_read = self.bb_registers[index as usize] as u16,
+            6 => self.wifi.w_bb_read = self.wifi.bb_registers[index as usize] as u16,
             _ => {}
         }
     }
 
-    pub fn set_w_bb_write(&mut self, mask: u16, value: u16) {
-        self.w_bb_write = (self.w_bb_write & !mask) | (value & mask);
+    pub fn wifi_set_w_bb_write(&mut self, mask: u16, value: u16) {
+        self.wifi.w_bb_write = (self.wifi.w_bb_write & !mask) | (value & mask);
     }
 
-    pub fn set_w_irf_set(&mut self, mut mask: u16, value: u16, emu: &mut Emu) {
-        if self.w_ie & self.w_irf == 0 && self.w_ie & value & mask != 0 {
-            get_cpu_regs_mut!(emu, ARM7).send_interrupt(InterruptFlag::Wifi, emu);
+    pub fn wifi_set_w_irf_set(&mut self, mut mask: u16, value: u16) {
+        if self.wifi.w_ie & self.wifi.w_irf == 0 && self.wifi.w_ie & value & mask != 0 {
+            self.cpu_send_interrupt(ARM7, InterruptFlag::Wifi);
         }
 
         mask &= 0xFBFF;
-        self.w_irf |= value & mask;
+        self.wifi.w_irf |= value & mask;
     }
 }

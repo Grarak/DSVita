@@ -1,6 +1,6 @@
-use crate::core::cycle_manager::{CycleManager, EventType};
-use crate::core::emu::{get_arm7_hle_mut, get_cm_mut, get_mem_mut, Emu};
-use crate::core::hle::arm7_hle::{Arm7Hle, IpcFifoTag};
+use crate::core::cycle_manager::EventType;
+use crate::core::emu::Emu;
+use crate::core::hle::arm7_hle::IpcFifoTag;
 use crate::core::CpuType::ARM7;
 
 #[repr(u8)]
@@ -103,65 +103,67 @@ impl WifiHle {
             scan_channel: 0,
         }
     }
+}
 
-    pub(super) fn initialize(emu: &mut Emu) {
+impl Emu {
+    pub(super) fn wifi_hle_initialize(&mut self) {
         const CHAN_MASK: u16 = 0x2082;
-        emu.mem_write::<{ ARM7 }, _>(0x027FFCFA, CHAN_MASK);
+        self.mem_write::<{ ARM7 }, _>(0x027FFCFA, CHAN_MASK);
     }
 
-    fn reply(&self, cmd: WMApiid, status: u16, emu: &mut Emu) {
+    fn wifi_hle_reply(&mut self, cmd: WMApiid, status: u16) {
         let callback = WmCallback { api_id: cmd as u16, err_code: status };
-        get_mem_mut!(emu).write_struct::<{ ARM7 }, true, _>(self.fifo_7_to_9_ptr, &callback, emu);
+        self.mem_write_struct::<{ ARM7 }, true, _>(self.hle.wifi.fifo_7_to_9_ptr, &callback);
 
-        Arm7Hle::send_ipc_fifo(IpcFifoTag::WirelessManager, self.fifo_7_to_9_ptr, false, emu);
+        self.arm7_hle_send_ipc_fifo(IpcFifoTag::WirelessManager, self.hle.wifi.fifo_7_to_9_ptr, false);
     }
 
-    pub(super) fn ipc_recv(&mut self, data: u32, emu: &mut Emu) {
-        self.msg_ptr = data;
-        let cmd = emu.mem_read::<{ ARM7 }, u16>(self.msg_ptr) & !0x8000;
+    pub(super) fn wifi_hle_ipc_recv(&mut self, data: u32) {
+        self.hle.wifi.msg_ptr = data;
+        let cmd = self.mem_read::<{ ARM7 }, u16>(self.hle.wifi.msg_ptr) & !0x8000;
         if (cmd as u8) < WMApiid::AsyncKindMax as u8 {
             match WMApiid::from(cmd as u8) {
                 WMApiid::Initialize => {
-                    let arm7_buf_ptr = emu.mem_read::<{ ARM7 }, _>(self.msg_ptr + 4);
-                    self.status_ptr = emu.mem_read::<{ ARM7 }, _>(self.msg_ptr + 8);
-                    self.fifo_7_to_9_ptr = emu.mem_read::<{ ARM7 }, _>(self.msg_ptr + 12);
+                    let arm7_buf_ptr = self.mem_read::<{ ARM7 }, _>(self.hle.wifi.msg_ptr + 4);
+                    self.hle.wifi.status_ptr = self.mem_read::<{ ARM7 }, _>(self.hle.wifi.msg_ptr + 8);
+                    self.hle.wifi.fifo_7_to_9_ptr = self.mem_read::<{ ARM7 }, _>(self.hle.wifi.msg_ptr + 12);
 
                     let arm7_buf = WmArm7Buf {
-                        status_ptr: self.status_ptr,
-                        fifo_7_to_9: self.fifo_7_to_9_ptr,
+                        status_ptr: self.hle.wifi.status_ptr,
+                        fifo_7_to_9: self.hle.wifi.fifo_7_to_9_ptr,
                         ..Default::default()
                     };
-                    get_mem_mut!(emu).write_struct::<{ ARM7 }, true, _>(arm7_buf_ptr, &arm7_buf, emu);
+                    self.mem_write_struct::<{ ARM7 }, true, _>(arm7_buf_ptr, &arm7_buf);
 
                     let status = WmStatus {
                         state: WmState::Idle as u16,
                         busy_app_iid: 0,
                     };
-                    get_mem_mut!(emu).write_struct::<{ ARM7 }, true, _>(self.status_ptr, &status, emu);
+                    self.mem_write_struct::<{ ARM7 }, true, _>(self.hle.wifi.status_ptr, &status);
 
-                    self.reply(WMApiid::Initialize, 0, emu);
+                    self.wifi_hle_reply(WMApiid::Initialize, 0);
                 }
                 WMApiid::End => {
                     let status = WmStatus {
                         state: WmState::Ready as u16,
                         busy_app_iid: 0,
                     };
-                    get_mem_mut!(emu).write_struct::<{ ARM7 }, true, _>(self.status_ptr, &status, emu);
+                    self.mem_write_struct::<{ ARM7 }, true, _>(self.hle.wifi.status_ptr, &status);
 
-                    self.reply(WMApiid::End, 0, emu);
+                    self.wifi_hle_reply(WMApiid::End, 0);
                 }
                 WMApiid::StartScan => {
-                    let req = get_mem_mut!(emu).read_struct::<{ ARM7 }, true, WMStartScanReq>(self.msg_ptr, emu);
-                    self.scan_channel = req.channel;
+                    let req = self.mem_read_struct::<{ ARM7 }, true, WMStartScanReq>(self.hle.wifi.msg_ptr);
+                    self.hle.wifi.scan_channel = req.channel;
 
                     let status = WmStatus {
                         state: WmState::Scan as u16,
                         busy_app_iid: 0,
                     };
-                    get_mem_mut!(emu).write_struct::<{ ARM7 }, true, _>(self.status_ptr, &status, emu);
+                    self.mem_write_struct::<{ ARM7 }, true, _>(self.hle.wifi.status_ptr, &status);
 
                     const MS_CYCLES: u32 = 34418;
-                    get_cm_mut!(emu).schedule(req.max_channel_time as u32 * MS_CYCLES * 1024, EventType::WifiScanHle, 0);
+                    self.cm.schedule(req.max_channel_time as u32 * MS_CYCLES * 1024, EventType::WifiScanHle, 0);
                     return;
                 }
                 WMApiid::EndScan => {
@@ -169,31 +171,30 @@ impl WifiHle {
                         state: WmState::Idle as u16,
                         busy_app_iid: 0,
                     };
-                    get_mem_mut!(emu).write_struct::<{ ARM7 }, true, _>(self.status_ptr, &status, emu);
+                    self.mem_write_struct::<{ ARM7 }, true, _>(self.hle.wifi.status_ptr, &status);
 
-                    self.reply(WMApiid::EndScan, 0, emu);
+                    self.wifi_hle_reply(WMApiid::EndScan, 0);
                 }
                 _ => {}
             }
 
-            emu.mem_write::<{ ARM7 }, u32>(self.status_ptr + 4, 0);
+            self.mem_write::<{ ARM7 }, u32>(self.hle.wifi.status_ptr + 4, 0);
         }
 
-        emu.mem_write::<{ ARM7 }, u16>(self.msg_ptr, cmd | 0x8000);
+        self.mem_write::<{ ARM7 }, u16>(self.hle.wifi.msg_ptr, cmd | 0x8000);
     }
 
-    pub fn on_scan_event(_: &mut CycleManager, emu: &mut Emu, _: u16) {
-        let wifi = &get_arm7_hle_mut!(emu).wifi;
+    pub fn wifi_hle_on_scan_event(&mut self, _: u16) {
         let callback = WMStartScanCallback {
             state: WmScanState::ParentNotFound as u16,
-            channel: wifi.scan_channel,
+            channel: self.hle.wifi.scan_channel,
             link_level: 0,
             ..Default::default()
         };
-        get_mem_mut!(emu).write_struct::<{ ARM7 }, true, _>(wifi.fifo_7_to_9_ptr, &callback, emu);
-        wifi.reply(WMApiid::StartScan, 0, emu);
+        self.mem_write_struct::<{ ARM7 }, true, _>(self.hle.wifi.fifo_7_to_9_ptr, &callback);
+        self.wifi_hle_reply(WMApiid::StartScan, 0);
 
-        emu.mem_write::<{ ARM7 }, u32>(wifi.status_ptr + 4, 0);
-        emu.mem_write::<{ ARM7 }, u16>(wifi.msg_ptr, 0x8000 | WMApiid::StartScan as u16);
+        self.mem_write::<{ ARM7 }, u32>(self.hle.wifi.status_ptr + 4, 0);
+        self.mem_write::<{ ARM7 }, u16>(self.hle.wifi.msg_ptr, 0x8000 | WMApiid::StartScan as u16);
     }
 }

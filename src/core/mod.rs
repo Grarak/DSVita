@@ -60,7 +60,7 @@ impl ops::Not for CpuType {
     }
 }
 
-impl<T> Index<CpuType> for [T] {
+impl<T> Index<CpuType> for [T; 2] {
     type Output = T;
 
     fn index(&self, index: CpuType) -> &Self::Output {
@@ -68,7 +68,7 @@ impl<T> Index<CpuType> for [T] {
     }
 }
 
-impl<T> IndexMut<CpuType> for [T] {
+impl<T> IndexMut<CpuType> for [T; 2] {
     fn index_mut(&mut self, index: CpuType) -> &mut Self::Output {
         &mut self[index as usize]
     }

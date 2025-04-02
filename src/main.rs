@@ -18,14 +18,13 @@
 #![feature(vec_push_within_capacity)]
 
 use crate::cartridge_io::CartridgeIo;
-use crate::core::emu::{get_cm_mut, get_common_mut, get_cp15_mut, get_cpu_regs, get_jit_mut, get_mem_mut, get_mmu, get_regs_mut, get_spu_mut, Emu};
+use crate::core::emu::Emu;
 use crate::core::graphics::gpu::Gpu;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
-use crate::core::hle::arm7_hle::Arm7Hle;
-use crate::core::memory::mmu::Mmu;
-use crate::core::spu::{SoundSampler, Spu};
+use crate::core::spu::SoundSampler;
 use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::{JitAsm, MAX_STACK_DEPTH_SIZE};
+use crate::jit::jit_memory::JitMemory;
 use crate::logging::debug_println;
 use crate::mmap::register_abort_handler;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
@@ -76,27 +75,27 @@ fn run_cpu(
     let arm7_ram_addr = cartridge_io.header.arm7_values.ram_address;
     let arm7_entry_addr = cartridge_io.header.arm7_values.entry_address;
 
-    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_io, fps, key_map, touch_points, sound_sampler, settings));
+    // Initializing jit mem inside of emu, breaks kubridge for some reason
+    // Might be caused by initialize shared mem? Initialize here and pass it to emu
+    let jit_mem = JitMemory::new(&settings);
+    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_io, fps, key_map, touch_points, sound_sampler, jit_mem, settings));
     let emu_ptr = emu_unsafe.get() as u32;
     let emu = emu_unsafe.get_mut();
-    let common = get_common_mut!(emu);
-    let mem = get_mem_mut!(emu);
 
     debug_println!("Initialize mmu");
-    get_mmu!(emu, ARM9).update_all(emu);
-    get_mmu!(emu, ARM7).update_all(emu);
+    emu.mmu_update_all::<{ ARM9 }>();
+    emu.mmu_update_all::<{ ARM7 }>();
 
     {
-        let cp15 = get_cp15_mut!(emu);
-        cp15.write(0x010000, 0x0005707D, emu); // control
-        cp15.write(0x090100, 0x0300000A, emu); // dtcm addr/size
-        cp15.write(0x090101, 0x00000020, emu); // itcm size
+        emu.cp15_write(0x010000, 0x0005707D); // control
+        emu.cp15_write(0x090100, 0x0300000A); // dtcm addr/size
+        emu.cp15_write(0x090101, 0x00000020); // itcm size
     }
 
     {
         debug_println!("Copying cartridge header to main");
-        let cartridge_header: &[u8; cartridge_io::HEADER_IN_RAM_SIZE] = unsafe { mem::transmute(&common.cartridge.io.header) };
-        unsafe { mem.mmu_arm9.get_base_ptr().add(0x27FFE00).copy_from(cartridge_header.as_ptr(), cartridge_header.len()) };
+        let cartridge_header: &[u8; cartridge_io::HEADER_IN_RAM_SIZE] = unsafe { mem::transmute(&emu.cartridge.io.header) };
+        unsafe { emu.mmu_get_base_ptr::<{ ARM9 }>().add(0x27FFE00).copy_from(cartridge_header.as_ptr(), cartridge_header.len()) };
 
         emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
         emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FF880, 0x0007u16); // Message from ARM9 to ARM7
@@ -111,7 +110,7 @@ fn run_cpu(
 
         // User settings
         let user_settings = &spi::SPI_FIRMWARE[spi::USER_SETTINGS_1_ADDR..spi::USER_SETTINGS_1_ADDR + 0x70];
-        unsafe { mem.mmu_arm9.get_base_ptr().add(0x27FFC80).copy_from(user_settings.as_ptr(), user_settings.len()) };
+        unsafe { emu.mmu_get_base_ptr::<{ ARM9 }>().add(0x27FFC80).copy_from(user_settings.as_ptr(), user_settings.len()) };
     }
 
     // unsafe {
@@ -130,14 +129,14 @@ fn run_cpu(
     }
 
     {
-        let regs = get_regs_mut!(emu, ARM9);
+        let regs = &mut emu.thread[ARM9];
         regs.user.gp_regs[4] = arm9_entry_addr; // R12
         regs.user.sp = 0x3002F7C;
         regs.irq.sp = 0x3003F80;
         regs.svc.sp = 0x3003FC0;
         regs.user.lr = arm9_entry_addr;
         regs.pc = arm9_entry_addr;
-        regs.set_cpsr::<false>(0x000000DF, emu);
+        emu.thread_set_cpsr::<false>(ARM9, 0x000000DF);
     }
 
     {
@@ -147,19 +146,19 @@ fn run_cpu(
     }
 
     {
-        let regs = get_regs_mut!(emu, ARM7);
+        let regs = &mut emu.thread[ARM7];
         regs.user.gp_regs[4] = arm7_entry_addr; // R12
         regs.user.sp = 0x380FD80;
         regs.irq.sp = 0x380FF80;
         regs.user.sp = 0x380FFC0;
         regs.user.lr = arm7_entry_addr;
         regs.pc = arm7_entry_addr;
-        regs.set_cpsr::<false>(0x000000DF, emu);
+        emu.thread_set_cpsr::<false>(ARM7, 0x000000DF);
     }
 
     {
-        let arm9_code = common.cartridge.io.read_arm9_code();
-        let arm7_code = common.cartridge.io.read_arm7_code();
+        let arm9_code = emu.cartridge.io.read_arm9_code();
+        let arm7_code = emu.cartridge.io.read_arm7_code();
 
         debug_println!("write ARM9 code at {:x}", arm9_ram_addr);
         for (i, value) in arm9_code.iter().enumerate() {
@@ -172,14 +171,14 @@ fn run_cpu(
         }
     }
 
-    Gpu::initialize_schedule(get_cm_mut!(emu));
-    common.gpu.gpu_renderer = Some(gpu_renderer);
+    Gpu::initialize_schedule(&mut emu.cm);
+    emu.gpu.gpu_renderer = Some(gpu_renderer);
 
-    get_spu_mut!(emu).audio_enabled = emu.settings.audio();
-    Spu::initialize_schedule(get_cm_mut!(emu));
+    emu.spu.audio_enabled = emu.settings.audio();
+    emu.spu_initialize_schedule();
 
     if emu.settings.arm7_hle() == Arm7Emu::Hle {
-        Arm7Hle::initialize(emu);
+        emu.arm7_hle_initialize();
     }
 
     let save_thread = thread::Builder::new()
@@ -188,9 +187,8 @@ fn run_cpu(
             set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core1);
             let last_save_time = last_save_time;
             let emu = unsafe { (emu_ptr as *mut Emu).as_mut().unwrap_unchecked() };
-            let common = get_common_mut!(emu);
             loop {
-                common.cartridge.io.flush_save_buf(&last_save_time);
+                emu.cartridge.io.flush_save_buf(&last_save_time);
                 thread::sleep(Duration::from_secs(3));
             }
         })
@@ -220,8 +218,7 @@ pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a, CPU> 
 
 fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize) -> bool {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
-    let mmu = get_mmu!(asm.emu, CPU);
-    let base_ptr = mmu.get_base_tcm_ptr();
+    let base_ptr = asm.emu.mmu_get_base_tcm_ptr::<CPU>();
 
     if mem_addr < base_ptr as usize {
         return false;
@@ -229,7 +226,7 @@ fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize) -> bo
 
     let guest_mem_addr = (mem_addr - base_ptr as usize) as u32;
     debug_println!("fault at {host_pc:x} {mem_addr:x} to guest {guest_mem_addr:x}");
-    get_jit_mut!(asm.emu).patch_slow_mem(host_pc, guest_mem_addr, CPU)
+    asm.emu.jit.patch_slow_mem(host_pc, guest_mem_addr, CPU)
 }
 
 #[cold]
@@ -255,14 +252,8 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
         JIT_ASM_ARM7_PTR = &mut jit_asm_arm7;
     }
 
-    let cpu_regs_arm9 = get_cpu_regs!(emu, ARM9);
-    let cpu_regs_arm7 = get_cpu_regs!(emu, ARM7);
-
-    let cm = &mut get_common_mut!(emu).cycle_manager;
-    let gpu_3d_regs = &mut get_common_mut!(emu).gpu.gpu_3d_regs;
-
     loop {
-        let arm9_cycles = if likely(!cpu_regs_arm9.is_halted()) {
+        let arm9_cycles = if likely(!emu.cpu_is_halted(ARM9)) {
             unsafe { CURRENT_RUNNING_CPU = ARM9 };
             (jit_asm_arm9.execute() + 1) >> 1
         } else {
@@ -270,13 +261,13 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
         };
 
         if ARM7_HLE {
-            if unlikely(cpu_regs_arm9.is_halted()) {
-                cm.jump_to_next_event();
+            if unlikely(emu.cpu_is_halted(ARM9)) {
+                emu.cm.jump_to_next_event();
             } else {
-                cm.add_cycles(arm9_cycles);
+                emu.cm.add_cycles(arm9_cycles);
             }
         } else {
-            let arm7_cycles = if likely(!cpu_regs_arm7.is_halted() && !jit_asm_arm7.runtime_data.is_idle_loop()) {
+            let arm7_cycles = if likely(!emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop()) {
                 unsafe { CURRENT_RUNNING_CPU = ARM7 };
                 jit_asm_arm7.execute()
             } else {
@@ -285,17 +276,17 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
 
             let cycles = min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);
             if unlikely(cycles == 0) {
-                cm.jump_to_next_event();
+                emu.cm.jump_to_next_event();
             } else {
-                cm.add_cycles(cycles);
+                emu.cm.add_cycles(cycles);
             }
         }
 
-        if cm.check_events(emu) && !ARM7_HLE {
+        if emu.cm_check_events() && !ARM7_HLE {
             jit_asm_arm7.runtime_data.set_idle_loop(false);
         }
 
-        gpu_3d_regs.run_cmds(cm.get_cycles(), emu);
+        emu.regs_3d_run_cmds(emu.cm.get_cycles());
     }
 }
 

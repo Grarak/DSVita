@@ -1,6 +1,6 @@
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::cycle_manager::{CycleManager, EventType};
-use crate::core::emu::{get_cm_mut, get_common, get_common_mut, get_cpu_regs_mut, get_mem_mut, io_dma, io_dma_mut, Emu};
+use crate::core::cycle_manager::EventType;
+use crate::core::emu::Emu;
 use crate::core::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
@@ -105,54 +105,56 @@ struct DmaChannel {
 }
 
 pub struct Dma {
-    cpu_type: CpuType,
     channels: [DmaChannel; CHANNEL_COUNT],
     src_buf: Vec<u8>,
 }
 
 impl Dma {
-    pub fn new(cpu_type: CpuType) -> Self {
+    pub fn new() -> Self {
         Dma {
-            cpu_type,
             channels: [DmaChannel::default(); CHANNEL_COUNT],
             src_buf: Vec::new(),
         }
     }
+}
 
-    pub fn get_sad<const CHANNEL_NUM: usize>(&self) -> u32 {
-        self.channels[CHANNEL_NUM].sad
+impl Emu {
+    pub fn dma_get_sad(&self, cpu: CpuType, channel_num: usize) -> u32 {
+        self.dma[cpu].channels[channel_num].sad
     }
 
-    pub fn get_dad<const CHANNEL_NUM: usize>(&self) -> u32 {
-        self.channels[CHANNEL_NUM].dad
+    pub fn dma_get_dad(&self, cpu: CpuType, channel_num: usize) -> u32 {
+        self.dma[cpu].channels[channel_num].dad
     }
 
-    pub fn get_cnt<const CHANNEL_NUM: usize>(&self) -> u32 {
-        self.channels[CHANNEL_NUM].cnt
+    pub fn dma_get_cnt(&self, cpu: CpuType, channel_num: usize) -> u32 {
+        self.dma[cpu].channels[channel_num].cnt
     }
 
-    pub fn get_fill<const CHANNEL_NUM: usize>(&self) -> u32 {
-        self.channels[CHANNEL_NUM].fill
+    pub fn dma_get_fill(&self, cpu: CpuType, channel_num: usize) -> u32 {
+        self.dma[cpu].channels[channel_num].fill
     }
 
-    pub fn set_sad<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32) {
-        mask &= if self.cpu_type == ARM9 || CHANNEL_NUM != 0 { 0x0FFFFFFF } else { 0x07FFFFFF };
-        self.channels[CHANNEL_NUM].sad = (self.channels[CHANNEL_NUM].sad & !mask) | (value & mask);
+    pub fn dma_set_sad(&mut self, cpu: CpuType, channel_num: usize, mut mask: u32, value: u32) {
+        mask &= if cpu == ARM9 || channel_num != 0 { 0x0FFFFFFF } else { 0x07FFFFFF };
+        self.dma[cpu].channels[channel_num].sad = (self.dma[cpu].channels[channel_num].sad & !mask) | (value & mask);
     }
 
-    pub fn set_dad<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32) {
-        mask &= if self.cpu_type == ARM9 || CHANNEL_NUM != 0 { 0x0FFFFFFF } else { 0x07FFFFFF };
-        self.channels[CHANNEL_NUM].dad = (self.channels[CHANNEL_NUM].dad & !mask) | (value & mask);
+    pub fn dma_set_dad(&mut self, cpu: CpuType, channel_num: usize, mut mask: u32, value: u32) {
+        mask &= if cpu == ARM9 || channel_num != 0 { 0x0FFFFFFF } else { 0x07FFFFFF };
+        self.dma[cpu].channels[channel_num].dad = (self.dma[cpu].channels[channel_num].dad & !mask) | (value & mask);
     }
 
-    pub fn set_cnt<const CHANNEL_NUM: usize>(&mut self, mut mask: u32, value: u32, emu: &mut Emu) {
-        let channel = &mut self.channels[CHANNEL_NUM];
+    pub fn dma_set_cnt(&mut self, cpu: CpuType, channel_num: usize, mut mask: u32, value: u32) {
+        let dma = &mut self.dma[cpu];
+
+        let channel = &mut dma.channels[channel_num];
         let was_enabled = DmaCntArm9::from(channel.cnt).enable();
 
-        mask &= match self.cpu_type {
+        mask &= match cpu {
             ARM9 => 0xFFFFFFFF,
             ARM7 => {
-                if CHANNEL_NUM == 3 {
+                if channel_num == 3 {
                     0xF7E0FFFF
                 } else {
                     0xF7E03FFF
@@ -162,27 +164,26 @@ impl Dma {
 
         channel.cnt = (channel.cnt & !mask) | value & mask;
 
-        let transfer_type = DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, CHANNEL_NUM);
+        let transfer_type = DmaTransferMode::from_cnt(cpu, channel.cnt, channel_num);
 
         let dma_cnt = DmaCntArm9::from(channel.cnt);
-        if transfer_type == DmaTransferMode::GeometryCmdFifo && dma_cnt.enable() && !get_common!(emu).gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
+        if transfer_type == DmaTransferMode::GeometryCmdFifo && dma_cnt.enable() && !self.gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
             debug_println!(
-                "{:?} dma schedule imm {:x} {:x} {:x} {:x}",
-                self.cpu_type,
+                "{cpu:?} dma schedule imm {:x} {:x} {:x} {:x}",
                 channel.cnt,
                 channel.current_dest,
                 channel.current_src,
                 channel.current_count
             );
 
-            get_mem_mut!(emu).breakout_imm = true;
+            self.breakout_imm = true;
 
-            get_cm_mut!(emu).schedule_imm(
-                match self.cpu_type {
+            self.cm.schedule_imm(
+                match cpu {
                     ARM9 => EventType::DmaArm9,
                     ARM7 => EventType::DmaArm7,
                 },
-                CHANNEL_NUM as u16,
+                channel_num as u16,
             );
         }
 
@@ -193,49 +194,47 @@ impl Dma {
 
             if transfer_type == DmaTransferMode::StartImm {
                 debug_println!(
-                    "{:?} dma schedule imm {:x} {:x} {:x} {:x}",
-                    self.cpu_type,
+                    "{cpu:?} dma schedule imm {:x} {:x} {:x} {:x}",
                     channel.cnt,
                     channel.current_dest,
                     channel.current_src,
                     channel.current_count
                 );
 
-                get_mem_mut!(emu).breakout_imm = true;
+                self.breakout_imm = true;
 
-                get_cm_mut!(emu).schedule_imm(
-                    match self.cpu_type {
+                self.cm.schedule_imm(
+                    match cpu {
                         ARM9 => EventType::DmaArm9,
                         ARM7 => EventType::DmaArm7,
                     },
-                    CHANNEL_NUM as u16,
+                    channel_num as u16,
                 );
             }
         }
     }
 
-    pub fn set_fill<const CHANNEL_NUM: usize>(&mut self, mask: u32, value: u32) {
-        self.channels[CHANNEL_NUM].fill = (self.channels[CHANNEL_NUM].fill & !mask) | (value & mask);
+    pub fn dma_set_fill(&mut self, cpu: CpuType, channel_num: usize, mask: u32, value: u32) {
+        self.dma[cpu].channels[channel_num].fill = (self.dma[cpu].channels[channel_num].fill & !mask) | (value & mask);
     }
 
-    pub fn trigger_all(&self, mode: DmaTransferMode, cycle_manager: &mut CycleManager) {
-        self.trigger(mode, 0xF, cycle_manager);
+    pub fn dma_trigger_all(&mut self, cpu: CpuType, mode: DmaTransferMode) {
+        self.dma_trigger(cpu, mode, 0xF);
     }
 
-    pub fn trigger(&self, mode: DmaTransferMode, channels: u8, cm: &mut CycleManager) {
-        for (index, channel) in self.channels.iter().enumerate() {
-            if channels & (1 << index) != 0 && DmaCntArm9::from(channel.cnt).enable() && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode {
+    pub fn dma_trigger(&mut self, cpu: CpuType, mode: DmaTransferMode, channels: u8) {
+        for (index, channel) in self.dma[cpu].channels.iter().enumerate() {
+            if channels & (1 << index) != 0 && DmaCntArm9::from(channel.cnt).enable() && DmaTransferMode::from_cnt(cpu, channel.cnt, index) == mode {
                 debug_println!(
-                    "{:?} dma trigger {:?} {:x} {:x} {:x} {:x}",
-                    self.cpu_type,
+                    "{cpu:?} dma trigger {:?} {:x} {:x} {:x} {:x}",
                     mode,
                     channel.cnt,
                     channel.current_dest,
                     channel.current_src,
                     channel.current_count
                 );
-                cm.schedule_imm(
-                    match self.cpu_type {
+                self.cm.schedule_imm(
+                    match cpu {
                         ARM9 => EventType::DmaArm9,
                         ARM7 => EventType::DmaArm7,
                     },
@@ -245,27 +244,28 @@ impl Dma {
         }
     }
 
-    pub fn trigger_imm(&self, mode: DmaTransferMode, channels: u8, emu: &mut Emu) {
-        for (index, channel) in self.channels.iter().enumerate() {
-            if channels & (1 << index) != 0 && DmaCntArm9::from(channel.cnt).enable() && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode {
-                match self.cpu_type {
-                    ARM9 => Self::on_event::<{ ARM9 }>(get_cm_mut!(emu), emu, index as u16),
-                    ARM7 => Self::on_event::<{ ARM7 }>(get_cm_mut!(emu), emu, index as u16),
+    pub fn dma_trigger_imm(&mut self, cpu: CpuType, mode: DmaTransferMode, channels: u8) {
+        for i in 0..CHANNEL_COUNT {
+            let channel = &self.dma[cpu].channels[i];
+            if channels & (1 << i) != 0 && DmaCntArm9::from(channel.cnt).enable() && DmaTransferMode::from_cnt(cpu, channel.cnt, i) == mode {
+                match cpu {
+                    ARM9 => self.dma_on_event::<{ ARM9 }>(i as u16),
+                    ARM7 => self.dma_on_event::<{ ARM7 }>(i as u16),
                 }
             }
         }
     }
 
-    pub fn is_scheduled(&self, mode: DmaTransferMode, channels: u8) -> bool {
-        for (index, channel) in self.channels.iter().enumerate() {
-            if channels & (1 << index) != 0 && DmaCntArm9::from(channel.cnt).enable() && DmaTransferMode::from_cnt(self.cpu_type, channel.cnt, index) == mode {
+    pub fn dma_is_scheduled(&self, cpu: CpuType, mode: DmaTransferMode, channels: u8) -> bool {
+        for (index, channel) in self.dma[cpu].channels.iter().enumerate() {
+            if channels & (1 << index) != 0 && DmaCntArm9::from(channel.cnt).enable() && DmaTransferMode::from_cnt(cpu, channel.cnt, index) == mode {
                 return true;
             }
         }
         false
     }
 
-    fn do_transfer<const CPU: CpuType, T: utils::Convert>(emu: &mut Emu, dest_addr: &mut u32, src_addr: &mut u32, count: u32, cnt: &DmaCntArm9, mode: DmaTransferMode) {
+    fn dma_do_transfer<const CPU: CpuType, T: utils::Convert>(&mut self, dest_addr: &mut u32, src_addr: &mut u32, count: u32, cnt: &DmaCntArm9, mode: DmaTransferMode) {
         let dest_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.dest_addr_ctrl()));
         let src_addr_ctrl = DmaAddrCtrl::from(u8::from(cnt.src_addr_ctrl()));
 
@@ -273,7 +273,7 @@ impl Dma {
         let count = if mode == DmaTransferMode::GeometryCmdFifo { min(112, count) } else { count };
         debug_println!("{CPU:?} dma transfer {mode:?} from {src_addr:x} {src_addr_ctrl:?} to {dest_addr:x} {dest_addr_ctrl:?} with size {count}");
 
-        let dma = io_dma_mut!(emu, CPU);
+        let dma = &mut self.dma[CPU];
         let total_size = count << (step_size >> 1);
         if dma.src_buf.len() < total_size as usize {
             dma.src_buf.resize(total_size as usize, 0);
@@ -281,36 +281,33 @@ impl Dma {
 
         match (src_addr_ctrl, dest_addr_ctrl) {
             (DmaAddrCtrl::Increment, DmaAddrCtrl::Fixed) => {
-                let mem = get_mem_mut!(emu);
                 let slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
-                mem.read_multiple_slice::<CPU, false, T>(*src_addr, emu, slice);
+                self.mem_read_multiple_slice::<CPU, false, T>(*src_addr, slice);
                 if *dest_addr >= 0x4000400 && *dest_addr < 0x4000440 {
                     let slice = unsafe { slice::from_raw_parts(slice.as_ptr() as *const u32, (total_size as usize) >> 2) };
-                    get_common_mut!(emu).gpu.gpu_3d_regs.set_gx_fifo_multiple(slice, emu);
+                    self.regs_3d_set_gx_fifo_multiple(slice);
                 } else {
-                    mem.write_fixed_slice::<CPU, false, T>(*dest_addr, emu, slice);
+                    self.mem_write_fixed_slice::<CPU, false, T>(*dest_addr, slice);
                 }
                 *src_addr += total_size;
             }
             (DmaAddrCtrl::Increment, DmaAddrCtrl::Increment | DmaAddrCtrl::IncrementReload) => {
-                let mem = get_mem_mut!(emu);
                 let slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
-                mem.read_multiple_slice::<CPU, false, T>(*src_addr, emu, slice);
-                mem.write_multiple_slice::<CPU, false, T>(*dest_addr, emu, slice);
+                self.mem_read_multiple_slice::<CPU, false, T>(*src_addr, slice);
+                self.mem_write_multiple_slice::<CPU, false, T>(*dest_addr, slice);
                 *src_addr += total_size;
                 *dest_addr += total_size;
             }
             (DmaAddrCtrl::Fixed, DmaAddrCtrl::Increment | DmaAddrCtrl::IncrementReload) => {
-                let mem = get_mem_mut!(emu);
                 let slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
-                mem.read_fixed_slice::<CPU, false, T>(*src_addr, emu, slice);
-                mem.write_multiple_slice::<CPU, false, T>(*dest_addr, emu, slice);
+                self.mem_read_fixed_slice::<CPU, false, T>(*src_addr, slice);
+                self.mem_write_multiple_slice::<CPU, false, T>(*dest_addr, slice);
                 *dest_addr += total_size;
             }
             _ => {
                 for _ in 0..count {
-                    let src = emu.mem_read_no_tcm::<CPU, T>(*src_addr);
-                    emu.mem_write_no_tcm::<CPU, T>(*dest_addr, src);
+                    let src = self.mem_read_no_tcm::<CPU, T>(*src_addr);
+                    self.mem_write_no_tcm::<CPU, T>(*dest_addr, src);
 
                     match src_addr_ctrl {
                         DmaAddrCtrl::Increment => *src_addr += step_size,
@@ -328,11 +325,13 @@ impl Dma {
         }
     }
 
-    pub fn on_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, channel_num: u16) {
+    pub fn dma_on_event<const CPU: CpuType>(&mut self, channel_num: u16) {
         let channel_num = channel_num as usize;
         unsafe { assert_unchecked(channel_num < CHANNEL_COUNT) };
+
+        let channel = &mut self.dma[CPU].channels[channel_num];
+
         let (cnt, mode, mut dest, mut src, count) = {
-            let channel = &io_dma!(emu, CPU).channels[channel_num];
             (
                 DmaCntArm9::from(channel.cnt),
                 DmaTransferMode::from_cnt(CPU, channel.cnt, channel_num),
@@ -343,21 +342,19 @@ impl Dma {
         };
 
         if cnt.transfer_type() {
-            Self::do_transfer::<CPU, u32>(emu, &mut dest, &mut src, count, &cnt, mode)
+            self.dma_do_transfer::<CPU, u32>(&mut dest, &mut src, count, &cnt, mode)
         } else {
-            Self::do_transfer::<CPU, u16>(emu, &mut dest, &mut src, count, &cnt, mode)
+            self.dma_do_transfer::<CPU, u16>(&mut dest, &mut src, count, &cnt, mode)
         };
 
-        {
-            let channel = &mut io_dma_mut!(emu, CPU).channels[channel_num];
-            channel.current_dest = dest;
-            channel.current_src = src;
-        }
+        let channel = &mut self.dma[CPU].channels[channel_num];
+        channel.current_dest = dest;
+        channel.current_src = src;
 
         if mode == DmaTransferMode::GeometryCmdFifo && count > 112 {
-            io_dma_mut!(emu, CPU).channels[channel_num].current_count -= 112;
-            if !get_common!(emu).gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
-                get_cm_mut!(emu).schedule_imm(
+            channel.current_count -= 112;
+            if !self.gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
+                self.cm.schedule_imm(
                     match CPU {
                         ARM9 => EventType::DmaArm9,
                         ARM7 => EventType::DmaArm7,
@@ -369,14 +366,13 @@ impl Dma {
         }
 
         if cnt.repeat() && mode != DmaTransferMode::StartImm {
-            let channel = &mut io_dma_mut!(emu, CPU).channels[channel_num];
             channel.current_count = u32::from(DmaCntArm9::from(channel.cnt).word_count());
             if DmaAddrCtrl::from(u8::from(cnt.dest_addr_ctrl())) == DmaAddrCtrl::IncrementReload {
                 channel.current_dest = channel.dad;
             }
 
-            if mode == DmaTransferMode::GeometryCmdFifo && !get_common!(emu).gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
-                get_cm_mut!(emu).schedule_imm(
+            if mode == DmaTransferMode::GeometryCmdFifo && !self.gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
+                self.cm.schedule_imm(
                     match CPU {
                         ARM9 => EventType::DmaArm9,
                         ARM7 => EventType::DmaArm7,
@@ -385,11 +381,11 @@ impl Dma {
                 );
             }
         } else {
-            io_dma_mut!(emu, CPU).channels[channel_num].cnt &= !(1 << 31);
+            channel.cnt &= !(1 << 31);
         }
 
         if cnt.irq_at_end() {
-            get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::from(InterruptFlag::Dma0 as u8 + channel_num as u8), emu);
+            self.cpu_send_interrupt(CPU, InterruptFlag::from(InterruptFlag::Dma0 as u8 + channel_num as u8));
         }
     }
 }

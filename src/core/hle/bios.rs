@@ -1,5 +1,5 @@
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::emu::{get_cp15, get_cpu_regs, get_cpu_regs_mut, get_mem_mut, get_regs, get_regs_mut, Emu};
+use crate::core::emu::Emu;
 use crate::core::hle::bios_lookup_table::{ARM7_SWI_LOOKUP_TABLE, ARM9_SWI_LOOKUP_TABLE};
 use crate::core::thread_regs::Cpsr;
 use crate::core::CpuType;
@@ -22,39 +22,41 @@ pub fn swi<const CPU: CpuType>(comment: u8, emu: &mut Emu) {
 pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
     debug_println!("{CPU:?} interrupt");
 
-    let regs = get_regs_mut!(emu, CPU);
+    let regs = &mut emu.thread[CPU];
     let mut cpsr = Cpsr::from(regs.cpsr);
     cpsr.set_irq_disable(true);
     cpsr.set_thumb(false);
     cpsr.set_mode(u5::new(0x12));
-    regs.set_cpsr::<true>(u32::from(cpsr), emu);
+    emu.thread_set_cpsr::<true>(CPU, u32::from(cpsr));
 
+    let regs = &mut emu.thread[CPU];
     let is_thumb = (regs.pc & 1) == 1;
     let mut spsr = Cpsr::from(regs.spsr);
     spsr.set_thumb(is_thumb);
     regs.spsr = u32::from(spsr);
 
     let regs_to_push = [
-        *regs.get_reg(Reg::R0),
-        *regs.get_reg(Reg::R1),
-        *regs.get_reg(Reg::R2),
-        *regs.get_reg(Reg::R3),
-        *regs.get_reg(Reg::R12),
-        *regs.get_reg(Reg::PC) + 4,
+        *emu.thread_get_reg(CPU, Reg::R0),
+        *emu.thread_get_reg(CPU, Reg::R1),
+        *emu.thread_get_reg(CPU, Reg::R2),
+        *emu.thread_get_reg(CPU, Reg::R3),
+        *emu.thread_get_reg(CPU, Reg::R12),
+        *emu.thread_get_reg(CPU, Reg::PC) + 4,
     ];
+    let regs = &mut emu.thread[CPU];
     regs.sp -= regs_to_push.len() as u32 * 4;
-    let mem = get_mem_mut!(emu);
-    mem.write_multiple_slice::<CPU, true, _>(regs.sp, emu, &regs_to_push);
+    let sp = regs.sp;
+    emu.mem_write_multiple_slice::<CPU, true, _>(sp, &regs_to_push);
 
     match CPU {
         ARM9 => {
-            let pc_addr = get_cp15!(emu).dtcm_addr + 0x3FFC;
-            regs.lr = 0xFFFF0000;
-            regs.pc = mem.read::<CPU, _>(pc_addr, emu);
+            let pc_addr = emu.cp15.dtcm_addr + 0x3FFC;
+            emu.thread[CPU].lr = 0xFFFF0000;
+            emu.thread[CPU].pc = emu.mem_read::<CPU, _>(pc_addr);
         }
         ARM7 => {
-            regs.lr = 0xFFF00000;
-            regs.pc = mem.read::<CPU, _>(0x3FFFFFC, emu);
+            emu.thread[CPU].lr = 0xFFF00000;
+            emu.thread[CPU].pc = emu.mem_read::<CPU, _>(0x3FFFFFC);
         }
     }
 }
@@ -62,23 +64,23 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
 pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
     debug_println!("{CPU:?} uninterrupt");
 
-    if get_cpu_regs!(emu, CPU).bios_wait_flags != 0 {
+    if emu.cpu[CPU].bios_wait_flags != 0 {
         check_wait_flags::<CPU>(emu);
     }
 
-    let regs = get_regs_mut!(emu, CPU);
     let mut reg_values = [0u32; 6];
-    let mem = get_mem_mut!(emu);
-    mem.read_multiple_slice::<CPU, true, _>(regs.sp, emu, &mut reg_values);
-    regs.sp += reg_values.len() as u32 * 4;
+    emu.mem_read_multiple_slice::<CPU, true, _>(emu.thread[CPU].sp, &mut reg_values);
+
+    emu.thread[CPU].sp += reg_values.len() as u32 * 4;
     for (i, &reg) in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR].iter().enumerate() {
-        *regs.get_reg_mut(reg) = reg_values[i];
+        *emu.thread_get_reg_mut(CPU, reg) = reg_values[i];
     }
+    let regs = &mut emu.thread[CPU];
     regs.pc = regs.lr - 4;
 
     let spsr = regs.spsr;
     regs.pc = (regs.pc & !1) | Cpsr::from(spsr).thumb() as u32;
-    regs.set_cpsr::<false>(spsr, emu);
+    emu.thread_set_cpsr::<false>(CPU, spsr);
 }
 
 pub fn bit_unpack<const CPU: CpuType>(emu: &mut Emu) {
@@ -86,10 +88,7 @@ pub fn bit_unpack<const CPU: CpuType>(emu: &mut Emu) {
 }
 
 pub fn cpu_fast_set<const CPU: CpuType>(emu: &mut Emu) {
-    let (src, dest, length_mode) = {
-        let regs = get_regs!(emu, CPU);
-        (*regs.get_reg(Reg::R0), *regs.get_reg(Reg::R1), *regs.get_reg(Reg::R2))
-    };
+    let (src, dest, length_mode) = { (*emu.thread_get_reg(CPU, Reg::R0), *emu.thread_get_reg(CPU, Reg::R1), *emu.thread_get_reg(CPU, Reg::R2)) };
 
     let fixed = length_mode & (1 << 24) != 0;
     let size = (length_mode & 0xFFFFF) << 2;
@@ -102,10 +101,9 @@ pub fn cpu_fast_set<const CPU: CpuType>(emu: &mut Emu) {
 }
 
 pub fn cpu_set<const CPU: CpuType>(emu: &mut Emu) {
-    let regs = get_regs!(emu, CPU);
-    let src_addr = *regs.get_reg(Reg::R0);
-    let dst_addr = *regs.get_reg(Reg::R1);
-    let len_mode = *regs.get_reg(Reg::R2);
+    let src_addr = *emu.thread_get_reg(CPU, Reg::R0);
+    let dst_addr = *emu.thread_get_reg(CPU, Reg::R1);
+    let len_mode = *emu.thread_get_reg(CPU, Reg::R2);
 
     let count = len_mode & 0xFFFFF;
     let fill = (len_mode & (1 << 24)) != 0;
@@ -135,31 +133,27 @@ pub fn diff_unfilt8<const CPU: CpuType>(emu: &mut Emu) {
 }
 
 pub fn divide<const CPU: CpuType>(emu: &mut Emu) {
-    let regs = get_regs_mut!(emu, CPU);
-    let dividend = *regs.get_reg(Reg::R0) as i32;
-    let divisor = *regs.get_reg(Reg::R1) as i32;
+    let dividend = *emu.thread_get_reg(CPU, Reg::R0) as i32;
+    let divisor = *emu.thread_get_reg(CPU, Reg::R1) as i32;
     let quotient = dividend / divisor;
-    *regs.get_reg_mut(Reg::R0) = quotient as u32;
-    *regs.get_reg_mut(Reg::R1) = (dividend % divisor) as u32;
-    *regs.get_reg_mut(Reg::R3) = quotient.unsigned_abs();
+    *emu.thread_get_reg_mut(CPU, Reg::R0) = quotient as u32;
+    *emu.thread_get_reg_mut(CPU, Reg::R1) = (dividend % divisor) as u32;
+    *emu.thread_get_reg_mut(CPU, Reg::R3) = quotient.unsigned_abs();
 }
 
 pub fn get_crc16<const CPU: CpuType>(emu: &mut Emu) {
-    let (initial, addr, len) = {
-        let regs = get_regs!(emu, CPU);
-        (*regs.get_reg(Reg::R0), *regs.get_reg(Reg::R1), *regs.get_reg(Reg::R2))
-    };
+    let (initial, addr, len) = { (*emu.thread_get_reg(CPU, Reg::R0), *emu.thread_get_reg(CPU, Reg::R1), *emu.thread_get_reg(CPU, Reg::R2)) };
 
     let mut buf = vec![0u8; len as usize];
     buf.iter_mut().enumerate().for_each(|(index, value)| {
         *value = emu.mem_read::<CPU, _>(addr + index as u32);
     });
     let ret = utils::crc16(initial, &buf, 0, len as usize);
-    *get_regs_mut!(emu, CPU).get_reg_mut(Reg::R0) = ret as u32;
+    *emu.thread_get_reg_mut(CPU, Reg::R0) = ret as u32;
 }
 
 pub fn halt<const CPU: CpuType>(emu: &mut Emu) {
-    get_cpu_regs_mut!(emu, CPU).halt(0);
+    emu.cpu_halt(CPU, 0);
 }
 
 pub fn huff_uncomp<const CPU: CpuType>(emu: &mut Emu) {
@@ -168,44 +162,40 @@ pub fn huff_uncomp<const CPU: CpuType>(emu: &mut Emu) {
 
 pub fn check_wait_flags<const CPU: CpuType>(emu: &mut Emu) {
     let addr = match CPU {
-        ARM9 => get_cp15!(emu).dtcm_addr + 0x3FF8,
+        ARM9 => emu.cp15.dtcm_addr + 0x3FF8,
         ARM7 => 0x3FFFFF8,
     };
     let flags = emu.mem_read::<CPU, u32>(addr);
-    let wait_flags = get_cpu_regs!(emu, CPU).bios_wait_flags;
+    let wait_flags = emu.cpu[CPU].bios_wait_flags;
 
     if flags & wait_flags != 0 {
         emu.mem_write::<CPU, _>(addr, flags & !wait_flags);
-        get_cpu_regs_mut!(emu, CPU).bios_wait_flags = 0;
+        emu.cpu[CPU].bios_wait_flags = 0;
     } else {
-        get_cpu_regs_mut!(emu, CPU).halt(0);
+        emu.cpu_halt(CPU, 0);
     }
 }
 
 pub fn interrupt_wait<const CPU: CpuType>(emu: &mut Emu) {
-    let (discard_old, wait_flags) = {
-        let regs = get_regs!(emu, CPU);
-        (*regs.get_reg(Reg::R0) != 0, *regs.get_reg(Reg::R1))
-    };
-    get_cpu_regs_mut!(emu, CPU).bios_wait_flags = wait_flags;
+    let (discard_old, wait_flags) = { (*emu.thread_get_reg(CPU, Reg::R0) != 0, *emu.thread_get_reg(CPU, Reg::R1)) };
+    emu.cpu[CPU].bios_wait_flags = wait_flags;
 
     if discard_old {
         check_wait_flags::<CPU>(emu);
-        get_cpu_regs_mut!(emu, CPU).bios_wait_flags = wait_flags;
-        get_cpu_regs_mut!(emu, CPU).halt(0);
+        emu.cpu[CPU].bios_wait_flags = wait_flags;
+        emu.cpu_halt(CPU, 0);
     } else if CPU == ARM7 {
         check_wait_flags::<CPU>(emu);
     }
 }
 
 pub fn is_debugger<const CPU: CpuType>(emu: &mut Emu) {
-    *get_regs_mut!(emu, CPU).get_reg_mut(Reg::R0) = 0;
+    *emu.thread_get_reg_mut(CPU, Reg::R0) = 0;
 }
 
 pub fn lz77_uncomp<const CPU: CpuType>(emu: &mut Emu) {
-    let regs = get_regs!(emu, CPU);
-    let src_addr = *regs.get_reg(Reg::R0);
-    let dst_addr = *regs.get_reg(Reg::R1);
+    let src_addr = *emu.thread_get_reg(CPU, Reg::R0);
+    let dst_addr = *emu.thread_get_reg(CPU, Reg::R1);
 
     let size = emu.mem_read::<CPU, u32>(src_addr) >> 8;
     let mut src = 4;
@@ -248,7 +238,7 @@ pub fn runlen_uncomp<const CPU: CpuType>(emu: &mut Emu) {
 }
 
 pub fn square_root<const CPU: CpuType>(emu: &mut Emu) {
-    let reg0 = get_regs_mut!(emu, CPU).get_reg_mut(Reg::R0);
+    let reg0 = emu.thread_get_reg_mut(CPU, Reg::R0);
     *reg0 = reg0.isqrt();
 }
 
@@ -256,28 +246,25 @@ pub fn unknown<const CPU: CpuType>(_: &mut Emu) {}
 
 pub fn v_blank_intr_wait<const CPU: CpuType>(emu: &mut Emu) {
     {
-        let regs = get_regs_mut!(emu, CPU);
-        *regs.get_reg_mut(Reg::R0) = 1;
-        *regs.get_reg_mut(Reg::R1) = 1 << InterruptFlag::LcdVBlank as u8;
+        *emu.thread_get_reg_mut(CPU, Reg::R0) = 1;
+        *emu.thread_get_reg_mut(CPU, Reg::R1) = 1 << InterruptFlag::LcdVBlank as u8;
     }
     interrupt_wait::<CPU>(emu);
 }
 
 pub fn wait_by_loop<const CPU: CpuType>(emu: &mut Emu) {
-    let regs = get_regs_mut!(emu, CPU);
-    let delay = *regs.get_reg(Reg::R0);
+    let delay = *emu.thread_get_reg(CPU, Reg::R0);
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
     asm.runtime_data.accumulated_cycles += (delay as u16) << 2;
-    *regs.get_reg_mut(Reg::R0) = 0;
+    *emu.thread_get_reg_mut(CPU, Reg::R0) = 0;
 }
 
 pub fn sleep<const CPU: CpuType>(emu: &mut Emu) {
-    get_cpu_regs_mut!(emu, CPU).set_halt_cnt(0xC0);
+    emu.cpu_set_halt_cnt(CPU, 0xC0);
 }
 
 pub fn sound_bias<const CPU: CpuType>(emu: &mut Emu) {
-    let regs = get_regs!(emu, CPU);
-    let bias_level = if *regs.get_reg(Reg::R0) != 0 { 0x200u16 } else { 0u16 };
+    let bias_level = if *emu.thread_get_reg(CPU, Reg::R0) != 0 { 0x200u16 } else { 0u16 };
     emu.mem_write::<CPU, _>(0x4000504, bias_level);
 }
 
@@ -288,8 +275,7 @@ pub fn get_sine_table<const CPU: CpuType>(emu: &mut Emu) {
         0x7641, 0x776B, 0x7884, 0x7989, 0x7A7C, 0x7B5C, 0x7C29, 0x7CE3, 0x7D89, 0x7E1D, 0x7E9C, 0x7F09, 0x7F61, 0x7FA6, 0x7FD8, 0x7FF5,
     ];
 
-    let regs = get_regs_mut!(emu, CPU);
-    let reg0 = regs.get_reg_mut(Reg::R0);
+    let reg0 = emu.thread_get_reg_mut(CPU, Reg::R0);
     *reg0 = TABLE[min(*reg0 as usize, TABLE.len() - 1)] as u32;
 }
 
@@ -329,8 +315,7 @@ pub const PITCH_TABLE: [u16; 768] = [
 ];
 
 pub fn get_pitch_table<const CPU: CpuType>(emu: &mut Emu) {
-    let regs = get_regs_mut!(emu, CPU);
-    let reg0 = regs.get_reg_mut(Reg::R0);
+    let reg0 = emu.thread_get_reg_mut(CPU, Reg::R0);
     *reg0 = PITCH_TABLE[min(*reg0 as usize, PITCH_TABLE.len() - 1)] as u32;
 }
 
@@ -361,7 +346,6 @@ pub const VOLUME_TABLE: [u8; 724] = [
 ];
 
 pub fn get_volume_table<const CPU: CpuType>(emu: &mut Emu) {
-    let regs = get_regs_mut!(emu, CPU);
-    let reg0 = regs.get_reg_mut(Reg::R0);
+    let reg0 = emu.thread_get_reg_mut(CPU, Reg::R0);
     *reg0 = VOLUME_TABLE[min(*reg0 as usize, VOLUME_TABLE.len() - 1)] as u32;
 }

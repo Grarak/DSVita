@@ -1,12 +1,4 @@
-use crate::core::cpu_regs::CpuRegs;
 use crate::core::emu::Emu;
-use crate::core::graphics::gpu::Gpu;
-use crate::core::hle::sound_nitro::SoundNitro;
-use crate::core::hle::wifi_hle::WifiHle;
-use crate::core::memory::cartridge::Cartridge;
-use crate::core::memory::dma::Dma;
-use crate::core::spu::Spu;
-use crate::core::timers::Timers;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::linked_list::{LinkedList, LinkedListAllocator, LinkedListEntry};
 use bilge::prelude::*;
@@ -109,46 +101,6 @@ impl CycleManager {
         self.cycle_count
     }
 
-    pub fn check_events(&mut self, emu: &mut Emu) -> bool {
-        static LUT: [fn(&mut CycleManager, &mut Emu, u16); EventType::WifiScanHle as usize + 1] = [
-            CpuRegs::on_interrupt_event::<{ ARM9 }>,
-            CpuRegs::on_interrupt_event::<{ ARM7 }>,
-            Gpu::on_scanline256_event,
-            Gpu::on_scanline355_event,
-            SoundNitro::on_cmd_event,
-            SoundNitro::on_alarm_event,
-            Cartridge::on_word_read_event::<{ ARM9 }>,
-            Cartridge::on_word_read_event::<{ ARM7 }>,
-            Dma::on_event::<{ ARM9 }>,
-            Dma::on_event::<{ ARM7 }>,
-            Spu::on_sample_event,
-            Timers::on_overflow_event::<{ ARM9 }>,
-            Timers::on_overflow_event::<{ ARM7 }>,
-            WifiHle::on_scan_event,
-        ];
-
-        self.imm_events_swap.clear();
-        mem::swap(&mut self.imm_events, &mut self.imm_events_swap);
-        for i in 0..self.imm_events_swap.len() {
-            let event_type_entry = &self.imm_events_swap[i];
-            let func = unsafe { LUT.get_unchecked(u8::from(event_type_entry.event_type()) as usize) };
-            func(self, emu, u16::from(event_type_entry.arg()));
-        }
-
-        let cycle_count = self.cycle_count;
-        let mut event_triggered = false;
-        while {
-            let entry = &LinkedList::<_, CycleEventsListAllocator>::deref(self.events.root).value;
-            unlikely(entry.cycle_count <= cycle_count)
-        } {
-            event_triggered = true;
-            let entry = self.events.remove_begin();
-            let func = unsafe { LUT.get_unchecked(u8::from(entry.event_type_entry.event_type()) as usize) };
-            func(self, emu, u16::from(entry.event_type_entry.arg()));
-        }
-        event_triggered
-    }
-
     pub fn schedule_imm(&mut self, event_type: EventType, arg: u16) {
         self.imm_events.push(EventTypeEntry::create(event_type, arg))
     }
@@ -170,5 +122,47 @@ impl CycleManager {
 
     pub fn jump_to_next_event(&mut self) {
         self.cycle_count = LinkedList::<_, CycleEventsListAllocator>::deref(self.events.root).value.cycle_count
+    }
+}
+
+impl Emu {
+    pub fn cm_check_events(&mut self) -> bool {
+        static LUT: [fn(&mut Emu, u16); EventType::WifiScanHle as usize + 1] = [
+            Emu::cpu_on_interrupt_event::<{ ARM9 }>,
+            Emu::cpu_on_interrupt_event::<{ ARM7 }>,
+            Emu::gpu_on_scanline256_event,
+            Emu::gpu_on_scanline355_event,
+            Emu::sound_nitro_on_cmd_event,
+            Emu::sound_nitro_on_alarm_event,
+            Emu::cartridge_on_word_read_event::<{ ARM9 }>,
+            Emu::cartridge_on_word_read_event::<{ ARM7 }>,
+            Emu::dma_on_event::<{ ARM9 }>,
+            Emu::dma_on_event::<{ ARM7 }>,
+            Emu::spu_on_sample_event,
+            Emu::timers_on_overflow_event::<{ ARM9 }>,
+            Emu::timers_on_overflow_event::<{ ARM7 }>,
+            Emu::wifi_hle_on_scan_event,
+        ];
+
+        self.cm.imm_events_swap.clear();
+        mem::swap(&mut self.cm.imm_events, &mut self.cm.imm_events_swap);
+        for i in 0..self.cm.imm_events_swap.len() {
+            let event_type_entry = &self.cm.imm_events_swap[i];
+            let func = unsafe { LUT.get_unchecked(u8::from(event_type_entry.event_type()) as usize) };
+            func(self, u16::from(event_type_entry.arg()));
+        }
+
+        let cycle_count = self.cm.cycle_count;
+        let mut event_triggered = false;
+        while {
+            let entry = &LinkedList::<_, CycleEventsListAllocator>::deref(self.cm.events.root).value;
+            unlikely(entry.cycle_count <= cycle_count)
+        } {
+            event_triggered = true;
+            let entry = self.cm.events.remove_begin();
+            let func = unsafe { LUT.get_unchecked(u8::from(entry.event_type_entry.event_type()) as usize) };
+            func(self, u16::from(entry.event_type_entry.arg()));
+        }
+        event_triggered
     }
 }

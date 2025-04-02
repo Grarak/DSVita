@@ -1,4 +1,4 @@
-use crate::core::emu::{get_mmu, Emu};
+use crate::core::emu::Emu;
 use crate::core::memory::{regions, vram};
 use crate::core::CpuType;
 use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
@@ -161,6 +161,66 @@ pub struct JitMemory {
     jit_perf_map_record: JitPerfMapRecord,
 }
 
+impl Emu {
+    pub fn jit_insert_block(&mut self, opcodes: &[u32], guest_pc: u32, cpu_type: CpuType) -> (*const extern "C" fn(), bool) {
+        macro_rules! insert {
+            ($entries:expr, $live_ranges:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
+                let ret = insert!($entries, $live_ranges);
+                $(
+                    self.mmu_remove_write::<{ $cpu_entry }>(guest_pc, &$region);
+                )*
+                ret
+            }};
+
+            ($entries:expr, $live_ranges:expr) => {{
+                let (allocated_offset_addr, aligned_size, flushed) = self.jit.insert(opcodes, cpu_type);
+
+                let jit_entry_addr = (allocated_offset_addr + self.jit.mem.as_ptr() as usize) as *const extern "C" fn();
+
+                let entries_index = (guest_pc >> 1) as usize;
+                let entries_index = entries_index % $entries.len();
+                $entries[entries_index] = JitEntry(jit_entry_addr);
+                assert_eq!(ptr::addr_of!($entries[entries_index]), self.jit.jit_memory_map.get_jit_entry(guest_pc), "jit memory mapping {guest_pc:x}");
+
+                let entry_addr = ptr::addr_of!($entries[entries_index]) as usize;
+                self.jit.get_jit_data(cpu_type).jit_funcs.push_back((entry_addr, (allocated_offset_addr >> PAGE_SHIFT) as u16, ((allocated_offset_addr + aligned_size) >> PAGE_SHIFT) as u16));
+
+                // >> 3 for u8 (each bit represents a page)
+                let live_ranges_index = ((guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) >> 3) as usize;
+                let live_ranges_index = live_ranges_index % $live_ranges.len();
+                let live_ranges_bit = (guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
+                $live_ranges[live_ranges_index] |= 1 << live_ranges_bit;
+                assert_eq!(ptr::addr_of!($live_ranges[live_ranges_index]), self.jit.jit_memory_map.get_live_range(guest_pc), "jit live ranges mapping {guest_pc:x}");
+
+                self.jit.jit_perf_map_record.record(jit_entry_addr as usize, aligned_size, guest_pc, cpu_type);
+
+                (jit_entry_addr, flushed)
+            }};
+        }
+
+        match cpu_type {
+            ARM9 => match guest_pc & 0xFF000000 {
+                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit.jit_entries.itcm, self.jit.jit_live_ranges.itcm, regions::ITCM_REGION, [ARM9]),
+                regions::MAIN_OFFSET => insert!(self.jit.jit_entries.main, self.jit.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
+                regions::VRAM_OFFSET => insert!(self.jit.jit_entries.vram, self.jit.jit_live_ranges.vram),
+                _ => todo!("{:x}", guest_pc),
+            },
+            ARM7 => match guest_pc & 0xFF000000 {
+                regions::MAIN_OFFSET => insert!(self.jit.jit_entries.main, self.jit.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
+                regions::SHARED_WRAM_OFFSET => {
+                    if guest_pc & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
+                        insert!(self.jit.jit_entries.wram_arm7, self.jit.jit_live_ranges.wram_arm7, regions::ARM7_WRAM_REGION, [ARM7])
+                    } else {
+                        insert!(self.jit.jit_entries.shared_wram_arm7, self.jit.jit_live_ranges.shared_wram_arm7, regions::SHARED_WRAM_ARM7_REGION, [ARM7])
+                    }
+                }
+                regions::VRAM_OFFSET => insert!(self.jit.jit_entries.vram, self.jit.jit_live_ranges.vram),
+                _ => todo!("{:x}", guest_pc),
+            },
+        }
+    }
+}
+
 impl JitMemory {
     pub fn new(settings: &Settings) -> Self {
         let jit_entries = JitEntries::new();
@@ -247,65 +307,6 @@ impl JitMemory {
         unsafe { flush_icache(self.mem.as_ptr().add(allocated_offset_addr), aligned_size) };
 
         (allocated_offset_addr, aligned_size, flushed)
-    }
-
-    pub fn insert_block(&mut self, opcodes: &[u32], guest_pc: u32, cpu_type: CpuType, emu: &Emu) -> (*const extern "C" fn(), bool) {
-        macro_rules! insert {
-            ($entries:expr, $live_ranges:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
-                let ret = insert!($entries, $live_ranges);
-                $(
-                    let mmu = get_mmu!(emu, $cpu_entry);
-                    mmu.remove_write(guest_pc, &$region);
-                )*
-                ret
-            }};
-
-            ($entries:expr, $live_ranges:expr) => {{
-                let (allocated_offset_addr, aligned_size, flushed) = self.insert(opcodes, cpu_type);
-
-                let jit_entry_addr = (allocated_offset_addr + self.mem.as_ptr() as usize) as *const extern "C" fn();
-
-                let entries_index = (guest_pc >> 1) as usize;
-                let entries_index = entries_index % $entries.len();
-                $entries[entries_index] = JitEntry(jit_entry_addr);
-                assert_eq!(ptr::addr_of!($entries[entries_index]), self.jit_memory_map.get_jit_entry(guest_pc), "jit memory mapping {guest_pc:x}");
-
-                let entry_addr = ptr::addr_of!($entries[entries_index]) as usize;
-                self.get_jit_data(cpu_type).jit_funcs.push_back((entry_addr, (allocated_offset_addr >> PAGE_SHIFT) as u16, ((allocated_offset_addr + aligned_size) >> PAGE_SHIFT) as u16));
-
-                // >> 3 for u8 (each bit represents a page)
-                let live_ranges_index = ((guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) >> 3) as usize;
-                let live_ranges_index = live_ranges_index % $live_ranges.len();
-                let live_ranges_bit = (guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
-                $live_ranges[live_ranges_index] |= 1 << live_ranges_bit;
-                assert_eq!(ptr::addr_of!($live_ranges[live_ranges_index]), self.jit_memory_map.get_live_range(guest_pc), "jit live ranges mapping {guest_pc:x}");
-
-                self.jit_perf_map_record.record(jit_entry_addr as usize, aligned_size, guest_pc, cpu_type);
-
-                (jit_entry_addr, flushed)
-            }};
-        }
-
-        match cpu_type {
-            ARM9 => match guest_pc & 0xFF000000 {
-                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit_entries.itcm, self.jit_live_ranges.itcm, regions::ITCM_REGION, [ARM9]),
-                regions::MAIN_OFFSET => insert!(self.jit_entries.main, self.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
-                regions::VRAM_OFFSET => insert!(self.jit_entries.vram, self.jit_live_ranges.vram),
-                _ => todo!("{:x}", guest_pc),
-            },
-            ARM7 => match guest_pc & 0xFF000000 {
-                regions::MAIN_OFFSET => insert!(self.jit_entries.main, self.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
-                regions::SHARED_WRAM_OFFSET => {
-                    if guest_pc & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
-                        insert!(self.jit_entries.wram_arm7, self.jit_live_ranges.wram_arm7, regions::ARM7_WRAM_REGION, [ARM7])
-                    } else {
-                        insert!(self.jit_entries.shared_wram_arm7, self.jit_live_ranges.shared_wram_arm7, regions::SHARED_WRAM_ARM7_REGION, [ARM7])
-                    }
-                }
-                regions::VRAM_OFFSET => insert!(self.jit_entries.vram, self.jit_live_ranges.vram),
-                _ => todo!("{:x}", guest_pc),
-            },
-        }
     }
 
     pub fn get_jit_start_addr(&self, guest_pc: u32) -> *const extern "C" fn() {

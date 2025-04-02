@@ -1,4 +1,3 @@
-use crate::core::emu::{get_mmu, get_regs};
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::{BlockOperand, BlockReg};
@@ -104,8 +103,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         block_asm.branch(slow_write_label, Cond::NV);
 
-        let mmu = get_mmu!(self.emu, CPU);
-        let base_ptr = mmu.get_base_tcm_ptr();
+        let base_ptr = self.emu.mmu_get_base_tcm_ptr::<CPU>();
         let size = if amount == MemoryAmount::Double { MemoryAmount::Word.size() } else { amount.size() };
         block_asm.bic(fast_write_addr_masked_reg, addr_reg, 0xF0000000 | (size as u32 - 1));
         block_asm.transfer_write(
@@ -214,8 +212,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         block_asm.branch(slow_read_label, Cond::NV);
 
-        let mmu = get_mmu!(self.emu, CPU);
-        let base_ptr = mmu.get_base_tcm_ptr();
+        let base_ptr = self.emu.mmu_get_base_tcm_ptr::<CPU>();
         let size = if amount == MemoryAmount::Double { MemoryAmount::Word.size() } else { amount.size() };
         block_asm.bic(fast_read_addr_masked_reg, addr_reg, 0xF0000000 | (size as u32 - 1));
         let needs_ror = amount == MemoryAmount::Word || amount == MemoryAmount::Double;
@@ -255,7 +252,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         block_asm.save_context();
 
-        let op0_addr = get_regs!(self.emu, CPU).get_reg(op0) as *const _ as u32;
+        let op0_addr = self.emu.thread_get_reg(CPU, op0) as *const _ as u32;
         let op0_addr_reg = block_asm.new_reg();
         block_asm.mov(op0_addr_reg, op0_addr);
 
@@ -377,8 +374,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             let base_reg = block_asm.new_reg();
             let base_reg_out = block_asm.new_reg();
-            let mmu = get_mmu!(self.emu, CPU);
-            let base_ptr = mmu.get_base_tcm_ptr();
+            let base_ptr = self.emu.mmu_get_base_tcm_ptr::<CPU>();
             block_asm.bic(base_reg, op0, 0xF0000003);
             block_asm.add(base_reg, base_reg, base_ptr as u32);
 

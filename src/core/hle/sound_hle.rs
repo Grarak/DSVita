@@ -13,19 +13,21 @@ impl SoundHle {
             nitro: SoundNitro::default(),
         }
     }
+}
 
-    pub fn ipc_recv(&mut self, data: u32, emu: &mut Emu) {
-        if self.engine == -1 {
+impl Emu {
+    pub fn sound_hle_ipc_recv(&mut self, data: u32) {
+        if self.hle.sound.engine == -1 {
             if data >= 0x02000000 {
-                self.engine = 0;
-                self.nitro.reset(emu);
+                self.hle.sound.engine = 0;
+                self.sound_nitro_reset();
             } else {
-                self.engine = 1;
+                self.hle.sound.engine = 1;
             }
         }
 
-        if self.engine == 0 {
-            self.nitro.ipc_recv(data, emu);
+        if self.hle.sound.engine == 0 {
+            self.sound_nitro_ipc_recv(data);
         }
     }
 }

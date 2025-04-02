@@ -1,4 +1,4 @@
-use crate::core::emu::{get_mmu, Emu};
+use crate::core::emu::Emu;
 use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
 use bilge::prelude::*;
@@ -100,64 +100,66 @@ impl Cp15 {
             proc_id: 0,
         }
     }
+}
 
-    fn set_control_reg(&mut self, value: u32, emu: &Emu) {
-        self.control = (self.control & (!CONTROL_RW_BITS_MASK)) | (value & CONTROL_RW_BITS_MASK);
-        let control_reg = Cp15ControlReg::from(self.control);
+impl Emu {
+    fn cp15_set_control_reg(&mut self, value: u32) {
+        self.cp15.control = (self.cp15.control & (!CONTROL_RW_BITS_MASK)) | (value & CONTROL_RW_BITS_MASK);
+        let control_reg = Cp15ControlReg::from(self.cp15.control);
 
-        self.exception_addr = if bool::from(control_reg.exception_vectors()) { 0xFFFF0000 } else { 0x00000000 };
-        self.dtcm_state = TcmState::from(u8::from(control_reg.dtcm_enable()) + u8::from(control_reg.dtcm_load_mode()));
-        self.itcm_state = TcmState::from(u8::from(control_reg.itcm_enable()) + u8::from(control_reg.itcm_load_mode()));
+        self.cp15.exception_addr = if bool::from(control_reg.exception_vectors()) { 0xFFFF0000 } else { 0x00000000 };
+        self.cp15.dtcm_state = TcmState::from(u8::from(control_reg.dtcm_enable()) + u8::from(control_reg.dtcm_load_mode()));
+        self.cp15.itcm_state = TcmState::from(u8::from(control_reg.itcm_enable()) + u8::from(control_reg.itcm_load_mode()));
 
-        get_mmu!(emu, ARM9).update_itcm(emu);
-        get_mmu!(emu, ARM9).update_dtcm(emu);
+        self.mmu_update_itcm::<{ ARM9 }>();
+        self.mmu_update_dtcm::<{ ARM9 }>();
     }
 
-    fn set_dtcm(&mut self, value: u32, emu: &Emu) {
+    fn cp15_set_dtcm(&mut self, value: u32) {
         let tcm_reg = TcmReg::from(value);
 
-        self.dtcm = value;
-        self.dtcm_addr = u32::from(tcm_reg.region_base()) << 12;
-        self.dtcm_size = cmp::max(512 << u8::from(tcm_reg.virtual_size()), TCM_MIN_SIZE);
+        self.cp15.dtcm = value;
+        self.cp15.dtcm_addr = u32::from(tcm_reg.region_base()) << 12;
+        self.cp15.dtcm_size = cmp::max(512 << u8::from(tcm_reg.virtual_size()), TCM_MIN_SIZE);
 
-        get_mmu!(emu, ARM9).update_dtcm(emu);
+        self.mmu_update_dtcm::<{ ARM9 }>();
 
-        debug_println!("{:?} Set dtcm to addr {:x} with size {:x}", ARM9, self.dtcm_addr, self.dtcm_size);
+        debug_println!("{:?} Set dtcm to addr {:x} with size {:x}", ARM9, self.cp15.dtcm_addr, self.cp15.dtcm_size);
     }
 
-    fn set_itcm(&mut self, value: u32, emu: &Emu) {
+    fn cp15_set_itcm(&mut self, value: u32) {
         let tcm_reg = TcmReg::from(value);
 
-        self.itcm = value;
-        self.itcm_size = cmp::max(512 << u8::from(tcm_reg.virtual_size()), TCM_MIN_SIZE);
+        self.cp15.itcm = value;
+        self.cp15.itcm_size = cmp::max(512 << u8::from(tcm_reg.virtual_size()), TCM_MIN_SIZE);
 
-        get_mmu!(emu, ARM9).update_itcm(emu);
+        self.mmu_update_itcm::<{ ARM9 }>();
 
-        debug_println!("Set itcm with size {:x}", self.itcm_size);
+        debug_println!("Set itcm with size {:x}", self.cp15.itcm_size);
     }
 
-    pub fn write(&mut self, reg: u32, value: u32, emu: &Emu) {
+    pub fn cp15_write(&mut self, reg: u32, value: u32) {
         debug_println!("Writing to cp15 reg {:x} {:x}", reg, value);
 
         match reg {
-            0x010000 => self.set_control_reg(value, emu),
-            0x090100 => self.set_dtcm(value, emu),
-            0x090101 => self.set_itcm(value, emu),
-            0x0D0001 | 0x0D0101 => self.proc_id = value,
+            0x010000 => self.cp15_set_control_reg(value),
+            0x090100 => self.cp15_set_dtcm(value),
+            0x090101 => self.cp15_set_itcm(value),
+            0x0D0001 | 0x0D0101 => self.cp15.proc_id = value,
             _ => debug_println!("Unknown cp15 reg write {:x}", reg),
         }
     }
 
-    pub fn read(&self, reg: u32) -> u32 {
+    pub fn cp15_read(&self, reg: u32) -> u32 {
         debug_println!("Reading from cp15 reg {:x}", reg);
 
         match reg {
             0x000000 => 0x41059461, // Main ID
             0x000001 => 0x0F0D2112, // Cache type
-            0x010000 => self.control,
-            0x090100 => self.dtcm,
-            0x090101 => self.itcm,
-            0x0D0001 | 0x0D0101 => self.proc_id,
+            0x010000 => self.cp15.control,
+            0x090100 => self.cp15.dtcm,
+            0x090101 => self.cp15.itcm,
+            0x0D0001 | 0x0D0101 => self.cp15.proc_id,
             _ => {
                 debug_println!("Unknown cp15 reg read {:x}", reg);
                 0

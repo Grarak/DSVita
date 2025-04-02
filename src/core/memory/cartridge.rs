@@ -1,7 +1,7 @@
 use crate::cartridge_io::CartridgeIo;
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::cycle_manager::{CycleManager, EventType};
-use crate::core::emu::{get_cm_mut, get_common_mut, get_cpu_regs_mut, io_dma, Emu};
+use crate::core::cycle_manager::EventType;
+use crate::core::emu::Emu;
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
@@ -96,27 +96,29 @@ impl Cartridge {
             read_buf: HeapMemU8::new(),
         }
     }
+}
 
-    pub fn get_aux_spi_cnt(&self, cpu: CpuType) -> u16 {
-        u16::from(self.inner[cpu].aux_spi_cnt)
+impl Emu {
+    pub fn cartridge_get_aux_spi_cnt(&self, cpu: CpuType) -> u16 {
+        u16::from(self.cartridge.inner[cpu].aux_spi_cnt)
     }
 
-    pub fn get_aux_spi_data(&self, cpu: CpuType) -> u8 {
-        self.inner[cpu].aux_spi_data
+    pub fn cartridge_get_aux_spi_data(&self, cpu: CpuType) -> u8 {
+        self.cartridge.inner[cpu].aux_spi_data
     }
 
-    pub fn get_rom_ctrl(&mut self, cpu: CpuType) -> u32 {
-        let ret = self.inner[cpu].rom_ctrl.into();
-        if !self.inner[cpu].rom_ctrl.data_word_status() && self.inner[cpu].rom_ctrl.block_start_status() {
+    pub fn cartridge_get_rom_ctrl(&mut self, cpu: CpuType) -> u32 {
+        let ret = self.cartridge.inner[cpu].rom_ctrl.into();
+        if !self.cartridge.inner[cpu].rom_ctrl.data_word_status() && self.cartridge.inner[cpu].rom_ctrl.block_start_status() {
             // Some games break when data word status is always on
             // Emulate cartridge read delay by toggling the status bit
-            self.inner[cpu].rom_ctrl.set_data_word_status(true);
+            self.cartridge.inner[cpu].rom_ctrl.set_data_word_status(true);
         }
         ret
     }
 
-    pub fn get_rom_data_in(&mut self, cpu: CpuType, emu: &mut Emu) -> u32 {
-        let inner = &mut self.inner[cpu];
+    pub fn cartridge_get_rom_data_in(&mut self, cpu: CpuType) -> u32 {
+        let inner = &mut self.cartridge.inner[cpu];
         if !inner.rom_ctrl.data_word_status() || !inner.rom_ctrl.block_start_status() {
             if inner.rom_ctrl.block_start_status() {
                 // Some games break when data word status is always on
@@ -131,10 +133,10 @@ impl Cartridge {
         if inner.read_count == inner.block_size {
             inner.rom_ctrl.set_block_start_status(false);
             if inner.aux_spi_cnt.transfer_ready_irq() {
-                get_cpu_regs_mut!(emu, cpu).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, emu);
+                self.cpu_send_interrupt(cpu, InterruptFlag::NdsSlotTransferCompletion);
             }
         } else {
-            get_cm_mut!(emu).schedule_imm(
+            self.cm.schedule_imm(
                 match cpu {
                     ARM9 => EventType::CartridgeWordReadArm9,
                     ARM7 => EventType::CartridgeWordReadArm7,
@@ -143,10 +145,11 @@ impl Cartridge {
             );
         }
 
-        match self.cmd_mode {
+        let inner = &mut self.cartridge.inner[cpu];
+        match self.cartridge.cmd_mode {
             CmdMode::Header => {
                 let offset = (inner.read_count as u32 - 4) & 0xFFF;
-                utils::read_from_mem(self.read_buf.deref(), offset)
+                utils::read_from_mem(self.cartridge.read_buf.deref(), offset)
             }
             CmdMode::Chip => 0x00001FC2,
             CmdMode::Secure => {
@@ -155,7 +158,7 @@ impl Cartridge {
             CmdMode::Data => {
                 let offset = inner.read_count as u32 - 4;
                 if offset + 3 < inner.block_size as u32 {
-                    utils::read_from_mem(self.read_buf.deref(), offset)
+                    utils::read_from_mem(self.cartridge.read_buf.deref(), offset)
                 } else {
                     0xFFFFFFFF
                 }
@@ -164,13 +167,13 @@ impl Cartridge {
         }
     }
 
-    pub fn set_aux_spi_cnt(&mut self, cpu: CpuType, mut mask: u16, value: u16) {
+    pub fn cartridge_set_aux_spi_cnt(&mut self, cpu: CpuType, mut mask: u16, value: u16) {
         mask &= 0xE043;
-        self.inner[cpu].aux_spi_cnt = ((u16::from(self.inner[cpu].aux_spi_cnt) & !mask) | (value & mask)).into();
+        self.cartridge.inner[cpu].aux_spi_cnt = ((u16::from(self.cartridge.inner[cpu].aux_spi_cnt) & !mask) | (value & mask)).into();
     }
 
-    pub fn set_aux_spi_data(&mut self, cpu: CpuType, value: u8) {
-        let inner = &mut self.inner[cpu];
+    pub fn cartridge_set_aux_spi_data(&mut self, cpu: CpuType, value: u8) {
+        let inner = &mut self.cartridge.inner[cpu];
 
         if inner.aux_write_count == 0 {
             if value == 0 {
@@ -180,25 +183,25 @@ impl Cartridge {
             inner.aux_address = 0;
             inner.aux_spi_data = 0;
         } else {
-            if self.io.save_file_size == 0 {
+            if self.cartridge.io.save_file_size == 0 {
                 match inner.aux_command {
                     0x0B => {
-                        self.io.resize_save_file(0x200);
+                        self.cartridge.io.resize_save_file(0x200);
                         debug_println!("Detected EEPROM 0.5KB save type");
                     }
                     0x02 => {
-                        self.io.resize_save_file(0x10000);
+                        self.cartridge.io.resize_save_file(0x10000);
                         debug_println!("Detected EEPROM 64KB save type");
                     }
                     0x0A => {
-                        self.io.resize_save_file(0x80000);
+                        self.cartridge.io.resize_save_file(0x80000);
                         debug_println!("Detected FLASH 512KB save type");
                     }
                     _ => {}
                 }
             }
 
-            let save_size = self.io.save_file_size;
+            let save_size = self.cartridge.io.save_file_size;
             match save_size {
                 0x200 => match inner.aux_command {
                     0x03 | 0x0B => {
@@ -207,7 +210,7 @@ impl Cartridge {
                             inner.aux_spi_data = 0;
                         } else {
                             let addr_offset = if inner.aux_command == 0x0B { 0x100 } else { 0 };
-                            inner.aux_spi_data = self.io.read_save_buf((inner.aux_address + addr_offset) & (save_size - 1));
+                            inner.aux_spi_data = self.cartridge.io.read_save_buf((inner.aux_address + addr_offset) & (save_size - 1));
                             inner.aux_address += 1;
                         }
                     }
@@ -217,7 +220,7 @@ impl Cartridge {
                             inner.aux_spi_data = 0;
                         } else {
                             let addr_offset = if inner.aux_command == 0x0A { 0x100 } else { 0 };
-                            self.io.write_save_buf((inner.aux_address + addr_offset) & (save_size - 1), value);
+                            self.cartridge.io.write_save_buf((inner.aux_address + addr_offset) & (save_size - 1), value);
                             inner.aux_address += 1;
                             inner.aux_spi_data = 0;
                         }
@@ -234,7 +237,7 @@ impl Cartridge {
                             inner.aux_address |= (value as u32) << ((if save_size == 0x20000 { 3 } else { 2 } - inner.aux_write_count) * 8);
                             inner.aux_spi_data = 0;
                         } else {
-                            inner.aux_spi_data = if inner.aux_address < save_size { self.io.read_save_buf(inner.aux_address) } else { 0 };
+                            inner.aux_spi_data = if inner.aux_address < save_size { self.cartridge.io.read_save_buf(inner.aux_address) } else { 0 };
                             inner.aux_address += 1;
                         }
                     }
@@ -244,7 +247,7 @@ impl Cartridge {
                             inner.aux_spi_data = 0;
                         } else {
                             if inner.aux_address < save_size {
-                                self.io.write_save_buf(inner.aux_address, value);
+                                self.cartridge.io.write_save_buf(inner.aux_address, value);
                             }
                             inner.aux_address += 1;
                             inner.aux_spi_data = 0;
@@ -261,7 +264,7 @@ impl Cartridge {
                             inner.aux_address |= (value as u32) << ((3 - inner.aux_write_count) * 8);
                             inner.aux_spi_data = 0;
                         } else {
-                            inner.aux_spi_data = if inner.aux_address < save_size { self.io.read_save_buf(inner.aux_address) } else { 0 };
+                            inner.aux_spi_data = if inner.aux_address < save_size { self.cartridge.io.read_save_buf(inner.aux_address) } else { 0 };
                             inner.aux_address += 1;
                         }
                     }
@@ -271,20 +274,20 @@ impl Cartridge {
                             inner.aux_spi_data = 0;
                         } else {
                             if inner.aux_address < save_size {
-                                self.io.write_save_buf(inner.aux_address, value);
+                                self.cartridge.io.write_save_buf(inner.aux_address, value);
                             }
                             inner.aux_address += 1;
                             inner.aux_spi_data = 0;
                         }
                     }
-                    0x08 => inner.aux_spi_data = if self.io.header.game_code[0] == b'I' { 0xAA } else { 0 },
+                    0x08 => inner.aux_spi_data = if self.cartridge.io.header.game_code[0] == b'I' { 0xAA } else { 0 },
                     _ => {
                         debug_println!("Unknown FLASH command {:x}", inner.aux_command);
                         inner.aux_spi_data = 0;
                     }
                 },
                 _ => {
-                    debug_println!("Unknown api size {:x}", self.io.save_file_size)
+                    debug_println!("Unknown api size {:x}", self.cartridge.io.save_file_size)
                 }
             }
         }
@@ -296,17 +299,17 @@ impl Cartridge {
         }
     }
 
-    pub fn set_bus_cmd_out_l(&mut self, cpu: CpuType, mask: u32, value: u32) {
-        self.inner[cpu].bus_cmd_out = (self.inner[cpu].bus_cmd_out & !(mask as u64)) | (value & mask) as u64;
+    pub fn cartridge_set_bus_cmd_out_l(&mut self, cpu: CpuType, mask: u32, value: u32) {
+        self.cartridge.inner[cpu].bus_cmd_out = (self.cartridge.inner[cpu].bus_cmd_out & !(mask as u64)) | (value & mask) as u64;
     }
 
-    pub fn set_bus_cmd_out_h(&mut self, cpu: CpuType, mask: u32, value: u32) {
-        self.inner[cpu].bus_cmd_out = (self.inner[cpu].bus_cmd_out & !((mask as u64) << 32)) | ((value & mask) as u64) << 32;
+    pub fn cartridge_set_bus_cmd_out_h(&mut self, cpu: CpuType, mask: u32, value: u32) {
+        self.cartridge.inner[cpu].bus_cmd_out = (self.cartridge.inner[cpu].bus_cmd_out & !((mask as u64) << 32)) | ((value & mask) as u64) << 32;
     }
 
-    pub fn set_rom_ctrl(&mut self, cpu: CpuType, mut mask: u32, value: u32, emu: &mut Emu) {
+    pub fn cartridge_set_rom_ctrl(&mut self, cpu: CpuType, mut mask: u32, value: u32) {
         let new_rom_ctrl = RomCtrl::from(value);
-        let inner = &mut self.inner[cpu];
+        let inner = &mut self.cartridge.inner[cpu];
 
         inner.rom_ctrl.set_resb_release_reset(new_rom_ctrl.resb_release_reset());
         let transfer = !inner.rom_ctrl.block_start_status() && new_rom_ctrl.block_start_status();
@@ -330,26 +333,26 @@ impl Cartridge {
             todo!()
         }
 
-        self.cmd_mode = CmdMode::None;
+        self.cartridge.cmd_mode = CmdMode::None;
         if cmd == 0 {
-            self.cmd_mode = CmdMode::Header;
-            self.io.read_slice(0, &mut self.read_buf[..inner.block_size as usize]).unwrap();
+            self.cartridge.cmd_mode = CmdMode::Header;
+            self.cartridge.io.read_slice(0, &mut self.cartridge.read_buf[..inner.block_size as usize]).unwrap();
         } else if cmd == 0x9000000000000000 || (cmd >> 60) == 0x1 || cmd == 0xB800000000000000 {
-            self.cmd_mode = CmdMode::Chip;
+            self.cartridge.cmd_mode = CmdMode::Chip;
         } else if (cmd >> 56) == 0x3C {
             inner.encrypted = true;
         } else if (cmd >> 60) == 0x2 {
-            self.cmd_mode = CmdMode::Secure;
+            self.cartridge.cmd_mode = CmdMode::Secure;
             todo!()
         } else if (cmd >> 60) == 0xA {
             inner.encrypted = false;
         } else if (cmd >> 56) == 0xB7 {
-            self.cmd_mode = CmdMode::Data;
-            let mut read_addr = (((cmd >> 24) & 0xFFFFFFFF) as u32) % self.io.file_size;
+            self.cartridge.cmd_mode = CmdMode::Data;
+            let mut read_addr = (((cmd >> 24) & 0xFFFFFFFF) as u32) % self.cartridge.io.file_size;
             if read_addr < 0x8000 {
                 read_addr = 0x8000 + (read_addr & 0x1FF);
             }
-            self.io.read_slice(read_addr, &mut self.read_buf[..inner.block_size as usize]).unwrap();
+            self.cartridge.io.read_slice(read_addr, &mut self.cartridge.read_buf[..inner.block_size as usize]).unwrap();
         } else if cmd != 0x9F00000000000000 {
             debug_println!("Unknown rom transfer command {:x}", cmd);
         }
@@ -358,11 +361,11 @@ impl Cartridge {
             inner.rom_ctrl.set_data_word_status(false);
             inner.rom_ctrl.set_block_start_status(false);
             if inner.aux_spi_cnt.transfer_ready_irq() {
-                get_cpu_regs_mut!(emu, cpu).send_interrupt(InterruptFlag::NdsSlotTransferCompletion, emu);
+                self.cpu_send_interrupt(cpu, InterruptFlag::NdsSlotTransferCompletion);
             }
         } else {
             inner.read_count = 0;
-            get_cm_mut!(emu).schedule_imm(
+            self.cm.schedule_imm(
                 match cpu {
                     ARM9 => EventType::CartridgeWordReadArm9,
                     ARM7 => EventType::CartridgeWordReadArm7,
@@ -372,8 +375,8 @@ impl Cartridge {
         }
     }
 
-    pub fn on_word_read_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, _: u16) {
-        get_common_mut!(emu).cartridge.inner[CPU].rom_ctrl.set_data_word_status(true);
-        io_dma!(emu, CPU).trigger_imm(DmaTransferMode::DsCartSlot, 0xF, emu);
+    pub fn cartridge_on_word_read_event<const CPU: CpuType>(&mut self, _: u16) {
+        self.cartridge.inner[CPU].rom_ctrl.set_data_word_status(true);
+        self.dma_trigger_imm(CPU, DmaTransferMode::DsCartSlot, 0xF);
     }
 }

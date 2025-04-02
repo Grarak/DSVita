@@ -1,5 +1,5 @@
-use crate::core::cycle_manager::{CycleManager, EventType};
-use crate::core::emu::{get_cm_mut, get_cpu_regs, get_cpu_regs_mut, get_regs, Emu};
+use crate::core::cycle_manager::EventType;
+use crate::core::emu::Emu;
 use crate::core::exception_handler::ExceptionVector;
 use crate::core::thread_regs::Cpsr;
 use crate::core::CpuType::ARM7;
@@ -67,14 +67,12 @@ pub struct CpuRegs {
     pub post_flg: u8,
     pub halt_cnt: u8,
     halt: u8,
-    pub cpu_type: CpuType,
     pub bios_wait_flags: u32,
 }
 
 impl CpuRegs {
-    pub fn new(cpu_type: CpuType) -> Self {
+    pub fn new() -> Self {
         CpuRegs {
-            cpu_type,
             ime: 0,
             ie: 0,
             irf: 0,
@@ -84,31 +82,35 @@ impl CpuRegs {
             bios_wait_flags: 0,
         }
     }
+}
 
-    pub fn set_ime(&mut self, value: u8, emu: &mut Emu) {
-        self.ime = value & 0x1;
-        self.check_for_interrupt(emu);
+impl Emu {
+    pub fn cpu_set_ime(&mut self, cpu: CpuType, value: u8) {
+        self.cpu[cpu].ime = value & 0x1;
+        self.cpu_check_for_interrupt(cpu);
     }
 
-    pub fn set_ie(&mut self, mut mask: u32, value: u32, emu: &mut Emu) {
-        mask &= match self.cpu_type {
+    pub fn cpu_set_ie(&mut self, cpu: CpuType, mut mask: u32, value: u32) {
+        let CpuRegs { ie, .. } = &mut self.cpu[cpu];
+        mask &= match cpu {
             ARM9 => 0x003F3F7F,
             ARM7 => 0x01FF3FFF,
         };
-        self.ie = (self.ie & !mask) | (value & mask);
-        debug_println!("{:?} set ie {:x} {:?}", self.cpu_type, self.ie, InterruptFlags(self.ie));
-        self.check_for_interrupt(emu);
+        *ie = (*ie & !mask) | (value & mask);
+        debug_println!("{cpu:?} set ie {ie:x} {:?}", InterruptFlags(*ie));
+        self.cpu_check_for_interrupt(cpu);
     }
 
-    pub fn check_for_interrupt(&self, emu: &mut Emu) {
-        if self.ime != 0 && (self.ie & self.irf) != 0 && !Cpsr::from(get_regs!(emu, self.cpu_type).cpsr).irq_disable() {
-            self.schedule_interrupt(get_cm_mut!(emu));
+    pub fn cpu_check_for_interrupt(&mut self, cpu: CpuType) {
+        let cpu_regs = &self.cpu[cpu];
+        if cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && !Cpsr::from(self.thread[cpu].cpsr).irq_disable() {
+            self.cpu_schedule_interrupt(cpu);
         }
     }
 
-    fn schedule_interrupt(&self, cycle_manager: &mut CycleManager) {
-        cycle_manager.schedule_imm(
-            match self.cpu_type {
+    fn cpu_schedule_interrupt(&mut self, cpu: CpuType) {
+        self.cm.schedule_imm(
+            match cpu {
                 ARM9 => EventType::CpuInterruptArm9,
                 ARM7 => EventType::CpuInterruptArm7,
             },
@@ -116,58 +118,58 @@ impl CpuRegs {
         )
     }
 
-    pub fn set_irf(&mut self, mask: u32, value: u32) {
+    pub fn cpu_set_irf(&mut self, cpu: CpuType, mask: u32, value: u32) {
         // debug_println!("{:?} set irf {:?}", self.cpu_type, InterruptFlags(value & mask));
-        self.irf &= !(value & mask);
+        self.cpu[cpu].irf &= !(value & mask);
     }
 
-    pub fn set_post_flg(&mut self, value: u8) {
-        self.post_flg |= value & 0x1;
-        if self.cpu_type == ARM9 {
-            self.post_flg = (self.post_flg & !0x2) | (value & 0x2);
+    pub fn cpu_set_post_flg(&mut self, cpu: CpuType, value: u8) {
+        let cpu_regs = &mut self.cpu[cpu];
+        cpu_regs.post_flg |= value & 0x1;
+        if cpu == ARM9 {
+            cpu_regs.post_flg = (cpu_regs.post_flg & !0x2) | (value & 0x2);
         }
     }
 
-    pub fn halt(&mut self, bit: u8) {
-        debug_println!("{:?} halt with bit {}", self.cpu_type, bit);
-        self.halt |= 1 << bit;
+    pub fn cpu_halt(&mut self, cpu: CpuType, bit: u8) {
+        debug_println!("{cpu:?} halt with bit {bit}");
+        self.cpu[cpu].halt |= 1 << bit;
     }
 
-    pub fn unhalt(&mut self, bit: u8) {
-        debug_println!("{:?} unhalt with bit {}", self.cpu_type, bit);
-        self.halt &= !(1 << bit);
+    pub fn cpu_unhalt(&mut self, cpu: CpuType, bit: u8) {
+        debug_println!("{cpu:?} unhalt with bit {bit}");
+        self.cpu[cpu].halt &= !(1 << bit);
     }
 
-    pub fn is_halted(&self) -> bool {
-        self.halt != 0
+    pub fn cpu_is_halted(&self, cpu: CpuType) -> bool {
+        self.cpu[cpu].halt != 0
     }
 
-    pub fn send_interrupt(&mut self, flag: InterruptFlag, emu: &mut Emu) {
-        self.irf |= 1 << flag as u8;
+    pub fn cpu_send_interrupt(&mut self, cpu: CpuType, flag: InterruptFlag) {
+        let cpu_regs = &mut self.cpu[cpu];
+        cpu_regs.irf |= 1 << flag as u8;
         debug_println!(
-            "{:?} send interrupt {:?} {:?} {:?} {:x} {}",
-            self.cpu_type,
-            flag,
-            InterruptFlags(self.ie),
-            InterruptFlags(self.irf),
-            self.ime,
-            !Cpsr::from(get_regs!(emu, self.cpu_type).cpsr).irq_disable()
+            "{cpu:?} send interrupt {flag:?} {:?} {:?} {:x} {}",
+            InterruptFlags(cpu_regs.ie),
+            InterruptFlags(cpu_regs.irf),
+            cpu_regs.ime,
+            !Cpsr::from(self.thread[cpu].cpsr).irq_disable()
         );
-        if (self.ie & self.irf) != 0 {
-            if self.ime != 0 && !Cpsr::from(get_regs!(emu, self.cpu_type).cpsr).irq_disable() {
-                debug_println!("{:?} schedule send interrupt {:?}", self.cpu_type, flag);
-                self.schedule_interrupt(get_cm_mut!(emu));
-            } else if self.cpu_type == ARM7 || self.ime != 0 {
-                debug_println!("{:?} unhalt send interrupt {:?}", self.cpu_type, flag);
-                self.unhalt(0);
+        if (cpu_regs.ie & cpu_regs.irf) != 0 {
+            if cpu_regs.ime != 0 && !Cpsr::from(self.thread[cpu].cpsr).irq_disable() {
+                debug_println!("{cpu:?} schedule send interrupt {flag:?}");
+                self.cpu_schedule_interrupt(cpu);
+            } else if cpu == ARM7 || cpu_regs.ime != 0 {
+                debug_println!("{cpu:?} unhalt send interrupt {flag:?}");
+                self.cpu_unhalt(cpu, 0);
             }
         }
     }
 
-    pub fn set_halt_cnt(&mut self, value: u8) {
-        self.halt_cnt = value & 0xC0;
+    pub fn cpu_set_halt_cnt(&mut self, cpu: CpuType, value: u8) {
+        self.cpu[cpu].halt_cnt = value & 0xC0;
 
-        match self.halt_cnt {
+        match self.cpu[cpu].halt_cnt {
             1 => {
                 todo!("gba mode")
             }
@@ -178,18 +180,18 @@ impl CpuRegs {
         }
     }
 
-    pub fn on_interrupt_event<const CPU: CpuType>(_: &mut CycleManager, emu: &mut Emu, _: u16) {
+    pub fn cpu_on_interrupt_event<const CPU: CpuType>(&mut self, _: u16) {
+        let cpu_regs = &self.cpu[CPU];
         let interrupted = {
-            let cpu_regs = get_cpu_regs!(emu, CPU);
-            let interrupt = cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && !Cpsr::from(get_regs!(emu, CPU).cpsr).irq_disable();
+            let interrupt = cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && !Cpsr::from(self.thread[CPU].cpsr).irq_disable();
             if interrupt {
-                debug_println!("{:?} interrupt {:?}", cpu_regs.cpu_type, InterruptFlags(cpu_regs.ie & cpu_regs.irf));
+                debug_println!("{CPU:?} interrupt {:?}", InterruptFlags(cpu_regs.ie & cpu_regs.irf));
             }
             interrupt
         };
         if interrupted {
-            exception_handler::handle::<CPU, false>(emu, 0, ExceptionVector::NormalInterrupt);
-            get_cpu_regs_mut!(emu, CPU).unhalt(0);
+            exception_handler::handle::<CPU, false>(self, 0, ExceptionVector::NormalInterrupt);
+            self.cpu_unhalt(CPU, 0);
         }
     }
 }

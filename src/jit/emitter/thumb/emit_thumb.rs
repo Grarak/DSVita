@@ -1,4 +1,3 @@
-use crate::core::emu::get_regs_mut;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
@@ -76,7 +75,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.save_context();
 
             if CPU == ARM7 || !op.is_multiple_mem_transfer() {
-                block_asm.call1(set_pc_thumb_mode as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32);
+                block_asm.call1(set_pc_thumb_mode::<CPU> as *const (), self.emu as *mut _ as u32);
             }
 
             // R9 can be used as a substitution for SP for branch prediction

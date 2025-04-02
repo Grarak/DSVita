@@ -1,4 +1,3 @@
-use crate::core::emu::get_regs_mut;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
@@ -53,12 +52,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             if CPU == ARM7 || (!op.is_single_mem_transfer() && !op.is_multiple_mem_transfer()) {
                 if restore_spsr {
-                    block_asm.call1(restore_thumb_after_restore_spsr as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32);
+                    block_asm.call1(restore_thumb_after_restore_spsr::<CPU> as *const (), self.emu as *mut _ as u32);
                 } else {
-                    block_asm.call1(set_pc_arm_mode as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32);
+                    block_asm.call1(set_pc_arm_mode::<CPU> as *const (), self.emu as *mut _ as u32);
                 }
             } else if restore_spsr {
-                block_asm.call1(restore_thumb_after_restore_spsr as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32);
+                block_asm.call1(restore_thumb_after_restore_spsr::<CPU> as *const (), self.emu as *mut _ as u32);
             }
 
             if (op.is_mov() && self.jit_buf.current_inst().src_regs.is_reserved(Reg::LR) && !self.jit_buf.current_inst().out_regs.is_reserved(Reg::CPSR))
@@ -68,7 +67,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 if op.mem_transfer_user() {
                     block_asm.call(register_restore_spsr::<CPU> as *const ());
                     if CPU == ARM7 {
-                        block_asm.call1(set_pc_arm_mode as *const (), get_regs_mut!(self.emu, CPU) as *mut _ as u32);
+                        block_asm.call1(set_pc_arm_mode::<CPU> as *const (), self.emu as *mut _ as u32);
                     }
                 }
 

@@ -1,5 +1,5 @@
 use crate::core::emu::Emu;
-use crate::core::hle::arm7_hle::{Arm7Hle, IpcFifoTag};
+use crate::core::hle::arm7_hle::IpcFifoTag;
 
 pub(super) struct PowerManagerHle {
     data: [u16; 16],
@@ -9,35 +9,27 @@ impl PowerManagerHle {
     pub(super) fn new() -> Self {
         PowerManagerHle { data: [0; 16] }
     }
+}
 
-    pub(super) fn ipc_recv(&mut self, data: u32, emu: &mut Emu) {
+impl Emu {
+    pub(super) fn power_manager_hle_ipc_recv(&mut self, data: u32) {
         if data & (1 << 25) != 0 {
-            self.data.fill(0);
+            self.hle.power_manager.data.fill(0);
         }
 
-        self.data[((data >> 16) & 0xF) as usize] = data as u16;
+        self.hle.power_manager.data[((data >> 16) & 0xF) as usize] = data as u16;
 
         if data & (1 << 24) == 0 {
             return;
         }
 
-        let cmd = (self.data[0] >> 8) - 0x60;
+        let cmd = (self.hle.power_manager.data[0] >> 8) - 0x60;
         match cmd {
-            1 => {
-                Arm7Hle::send_ipc_fifo(IpcFifoTag::PowerManager, 0x0300E300, false, emu);
-            }
-            3 => {
-                Arm7Hle::send_ipc_fifo(IpcFifoTag::PowerManager, 0x0300E300, false, emu);
-            }
-            4 => {
-                Arm7Hle::send_ipc_fifo(IpcFifoTag::PowerManager, 0x03008000 | (((self.data[1] as u32 + 0x70) & 0xFF) << 8), false, emu);
-            }
-            5 => {
-                Arm7Hle::send_ipc_fifo(IpcFifoTag::PowerManager, 0x03008000 | (((self.data[1] as u32 + 0x70) & 0xFF) << 8), false, emu);
-            }
-            6 => {
-                Arm7Hle::send_ipc_fifo(IpcFifoTag::PowerManager, 0x03008000 | (((self.data[1] as u32 + 0x70) & 0xFF) << 8), false, emu);
-            }
+            1 => self.arm7_hle_send_ipc_fifo(IpcFifoTag::PowerManager, 0x0300E300, false),
+            3 => self.arm7_hle_send_ipc_fifo(IpcFifoTag::PowerManager, 0x0300E300, false),
+            4 => self.arm7_hle_send_ipc_fifo(IpcFifoTag::PowerManager, 0x03008000 | (((self.hle.power_manager.data[1] as u32 + 0x70) & 0xFF) << 8), false),
+            5 => self.arm7_hle_send_ipc_fifo(IpcFifoTag::PowerManager, 0x03008000 | (((self.hle.power_manager.data[1] as u32 + 0x70) & 0xFF) << 8), false),
+            6 => self.arm7_hle_send_ipc_fifo(IpcFifoTag::PowerManager, 0x03008000 | (((self.hle.power_manager.data[1] as u32 + 0x70) & 0xFF) << 8), false),
             _ => {}
         }
     }

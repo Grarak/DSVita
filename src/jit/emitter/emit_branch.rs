@@ -1,4 +1,3 @@
-use crate::core::emu::get_jit;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
@@ -209,7 +208,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let current_pc = self.jit_buf.current_pc;
 
         if has_lr_return {
-            let target_jit_addr_entry = get_jit!(self.emu).jit_memory_map.get_jit_entry(target_pc);
+            let target_jit_addr_entry = self.emu.jit.jit_memory_map.get_jit_entry(target_pc);
 
             if target_is_thumb {
                 self.jit_common_funs

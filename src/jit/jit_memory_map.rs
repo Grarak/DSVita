@@ -88,7 +88,7 @@ impl JitMemoryMap {
         unsafe { ((*self.map.get_unchecked((addr >> BLOCK_SHIFT) as usize)) as *mut JitEntry).add((addr as usize) & (BLOCK_SIZE - 1)) }
     }
 
-    pub fn write_jit_entries(&mut self, addr: u32, mut size: usize, value: JitEntry) {
+    pub fn write_jit_entries(&mut self, addr: u32, size: usize, value: JitEntry) {
         let mut addr = (addr & 0x0FFFFFFF) >> 1;
         let mut size = size >> 1;
         while size > 0 {

@@ -1,7 +1,9 @@
 pub mod cartridge;
 pub mod dma;
 pub mod io_arm7;
+mod io_arm7_lut;
 pub mod io_arm9;
+mod io_arm9_lut;
 pub mod main;
 pub mod mem;
 pub mod mmu;
@@ -11,5 +13,3 @@ pub mod regions;
 pub mod vram;
 mod wifi;
 pub mod wram;
-mod io_arm9_lut;
-mod io_arm7_lut;

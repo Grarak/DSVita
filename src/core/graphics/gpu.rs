@@ -1,11 +1,10 @@
 use crate::core::cpu_regs::InterruptFlag;
 use crate::core::cycle_manager::{CycleManager, EventType};
-use crate::core::emu::{get_arm7_hle_mut, get_common_mut, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
+use crate::core::emu::Emu;
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
-use crate::core::hle::arm7_hle::Arm7Hle;
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
@@ -135,21 +134,21 @@ impl Gpu {
         unsafe { self.gpu_renderer.unwrap().as_ref() }
     }
 
-    pub fn get_renderer_mut(&mut self) -> &mut GpuRenderer {
+    pub fn get_renderer_mut(&mut self) -> &'static mut GpuRenderer {
         unsafe { self.gpu_renderer.unwrap().as_mut() }
     }
 
-    pub fn get_disp_stat<const CPU: CpuType>(&self) -> u16 {
-        self.disp_stat[CPU].into()
+    pub fn get_disp_stat(&self, cpu: CpuType) -> u16 {
+        self.disp_stat[cpu].into()
     }
 
     pub fn get_disp_cap_cnt(&self) -> u32 {
         self.disp_cap_cnt.into()
     }
 
-    pub fn set_disp_stat<const CPU: CpuType>(&mut self, mut mask: u16, value: u16) {
+    pub fn set_disp_stat(&mut self, cpu: CpuType, mut mask: u16, value: u16) {
         mask &= 0xFFB8;
-        self.disp_stat[CPU] = ((u16::from(self.disp_stat[CPU]) & !mask) | (value & mask)).into();
+        self.disp_stat[cpu] = ((u16::from(self.disp_stat[cpu]) & !mask) | (value & mask)).into();
     }
 
     pub fn set_pow_cnt1(&mut self, mut mask: u16, value: u16) {
@@ -161,95 +160,92 @@ impl Gpu {
         mask &= 0xEF3F1F1F;
         self.disp_cap_cnt = ((u32::from(self.disp_cap_cnt) & !mask) | (value & mask)).into();
     }
+}
 
-    pub fn on_scanline256_event(cm: &mut CycleManager, emu: &mut Emu, _: u16) {
-        let gpu = &mut get_common_mut!(emu).gpu;
-
-        if gpu.v_count < 192 {
+impl Emu {
+    pub fn gpu_on_scanline256_event(&mut self, _: u16) {
+        if self.gpu.v_count < 192 {
             unsafe {
-                gpu.gpu_renderer
+                self.gpu
+                    .gpu_renderer
                     .unwrap_unchecked()
                     .as_mut()
-                    .on_scanline(&mut gpu.gpu_2d_regs_a, &mut gpu.gpu_2d_regs_b, gpu.v_count as u8)
+                    .on_scanline(&mut self.gpu.gpu_2d_regs_a, &mut self.gpu.gpu_2d_regs_b, self.gpu.v_count as u8)
             }
-            io_dma!(emu, ARM9).trigger_all(DmaTransferMode::StartAtHBlank, cm);
+            self.dma_trigger_all(ARM9, DmaTransferMode::StartAtHBlank);
         }
 
         for i in 0..2 {
-            let disp_stat = &mut gpu.disp_stat[i];
+            let disp_stat = &mut self.gpu.disp_stat[i];
             disp_stat.set_h_blank_flag(true);
             if disp_stat.h_blank_irq_enable() {
-                get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdHBlank, emu);
+                self.cpu_send_interrupt(CpuType::from(i as u8), InterruptFlag::LcdHBlank);
             }
         }
 
-        cm.schedule((355 - 256) * 6, EventType::GpuScanline355, 0);
+        self.cm.schedule((355 - 256) * 6, EventType::GpuScanline355, 0);
     }
 
-    pub fn on_scanline355_event(cm: &mut CycleManager, emu: &mut Emu, _: u16) {
-        let gpu = &mut get_common_mut!(emu).gpu;
-
-        gpu.v_count += 1;
-        match gpu.v_count {
+    pub fn gpu_on_scanline355_event(&mut self, _: u16) {
+        self.gpu.v_count += 1;
+        match self.gpu.v_count {
             192 => {
-                let gpu_3d_regs = &mut get_common_mut!(emu).gpu.gpu_3d_regs;
+                self.gpu.gpu_3d_regs.current_pow_cnt1 = self.gpu.pow_cnt1;
 
-                gpu_3d_regs.current_pow_cnt1 = gpu.pow_cnt1;
+                let pow_cnt1 = PowCnt1::from(self.gpu.pow_cnt1);
+                self.gpu.get_renderer_mut().on_scanline_finish(&mut self.mem, pow_cnt1, &mut self.gpu.gpu_3d_regs);
 
-                let pow_cnt1 = PowCnt1::from(gpu.pow_cnt1);
-                gpu.get_renderer_mut().on_scanline_finish(get_mem_mut!(emu), pow_cnt1, gpu_3d_regs);
-
-                if gpu_3d_regs.flushed {
-                    gpu_3d_regs.swap_buffers();
-                    gpu.get_renderer_mut().renderer_3d.invalidate();
+                if self.gpu.gpu_3d_regs.flushed {
+                    self.gpu.gpu_3d_regs.swap_buffers();
+                    self.gpu.get_renderer_mut().renderer_3d.invalidate();
                 }
 
                 for i in 0..2 {
-                    let disp_stat = &mut gpu.disp_stat[i];
+                    let disp_stat = &mut self.gpu.disp_stat[i];
                     disp_stat.set_v_blank_flag(true);
                     if disp_stat.v_blank_irq_enable() {
-                        get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdVBlank, emu);
-                        io_dma!(emu, CpuType::from(i as u8)).trigger_all(DmaTransferMode::StartAtVBlank, cm);
+                        self.cpu_send_interrupt(CpuType::from(i as u8), InterruptFlag::LcdVBlank);
+                        self.dma_trigger_all(CpuType::from(i as u8), DmaTransferMode::StartAtVBlank);
                     }
                 }
 
-                gpu.disp_cap_cnt.set_capture_enabled(false);
+                self.gpu.disp_cap_cnt.set_capture_enabled(false);
             }
             262 => {
                 for i in 0..2 {
-                    gpu.disp_stat[i].set_v_blank_flag(false);
+                    self.gpu.disp_stat[i].set_v_blank_flag(false);
                 }
-                gpu.frame_rate_counter.on_frame_ready();
+                self.gpu.frame_rate_counter.on_frame_ready();
             }
             263 => {
-                gpu.v_count = 0;
-                gpu.get_renderer_mut().reload_registers();
+                self.gpu.v_count = 0;
+                self.gpu.get_renderer_mut().reload_registers();
 
-                if emu.settings.arm7_hle() == Arm7Emu::Hle {
-                    Arm7Hle::on_frame(emu);
+                if self.settings.arm7_hle() == Arm7Emu::Hle {
+                    self.arm7_hle_on_frame();
                 }
             }
             _ => {}
         }
 
         for i in 0..2 {
-            let v_match = (u16::from(gpu.disp_stat[i].v_count_msb()) << 8) | gpu.disp_stat[i].v_count_setting() as u16;
-            debug_println!("v match {:x} {} {}", u16::from(gpu.disp_stat[i]), v_match, gpu.v_count);
-            if gpu.v_count == v_match {
-                gpu.disp_stat[i].set_v_counter_flag(true);
-                if gpu.disp_stat[i].v_counter_irq_enable() {
-                    get_cpu_regs_mut!(emu, CpuType::from(i as u8)).send_interrupt(InterruptFlag::LcdVCounterMatch, emu);
+            let v_match = (u16::from(self.gpu.disp_stat[i].v_count_msb()) << 8) | self.gpu.disp_stat[i].v_count_setting() as u16;
+            debug_println!("v match {:x} {} {}", u16::from(self.gpu.disp_stat[i]), v_match, self.gpu.v_count);
+            if self.gpu.v_count == v_match {
+                self.gpu.disp_stat[i].set_v_counter_flag(true);
+                if self.gpu.disp_stat[i].v_counter_irq_enable() {
+                    self.cpu_send_interrupt(CpuType::from(i as u8), InterruptFlag::LcdVCounterMatch);
                 }
             } else {
-                gpu.disp_stat[i].set_v_counter_flag(false);
+                self.gpu.disp_stat[i].set_v_counter_flag(false);
             }
-            gpu.disp_stat[i].set_h_blank_flag(false);
+            self.gpu.disp_stat[i].set_h_blank_flag(false);
         }
 
-        if emu.settings.arm7_hle() != Arm7Emu::AccurateLle {
-            get_arm7_hle_mut!(emu).on_scanline(gpu.v_count, emu);
+        if self.settings.arm7_hle() != Arm7Emu::AccurateLle {
+            self.arm7_hle_on_scanline(self.gpu.v_count);
         }
 
-        cm.schedule(256 * 6, EventType::GpuScanline256, 0);
+        self.cm.schedule(256 * 6, EventType::GpuScanline256, 0);
     }
 }

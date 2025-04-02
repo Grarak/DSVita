@@ -1,5 +1,5 @@
-use crate::core::emu::{get_common, get_spi, Emu};
-use crate::core::hle::arm7_hle::{Arm7Hle, IpcFifoTag};
+use crate::core::emu::Emu;
+use crate::core::hle::arm7_hle::IpcFifoTag;
 use crate::core::CpuType::ARM7;
 
 pub struct TouchscreenHle {
@@ -18,13 +18,15 @@ impl TouchscreenHle {
             sample_pos: [0; 4],
         }
     }
+}
 
-    fn sample(&self, emu: &mut Emu) {
-        let mut ts = (emu.mem_read::<{ ARM7 }, u16>(0x027FFFAA) as u32) | ((emu.mem_read::<{ ARM7 }, u16>(0x027FFFAC) as u32) << 16);
+impl Emu {
+    fn touchscreen_hle_sample(&mut self) {
+        let mut ts = (self.mem_read::<{ ARM7 }, u16>(0x027FFFAA) as u32) | ((self.mem_read::<{ ARM7 }, u16>(0x027FFFAC) as u32) << 16);
 
-        let is_pressed = get_common!(emu).input.get_ext_key_in() & 0x40 == 0;
+        let is_pressed = self.input.get_ext_key_in() & 0x40 == 0;
         if is_pressed {
-            let (x, y) = get_spi!(emu).get_touch_coordinates();
+            let (x, y) = self.spi.get_touch_coordinates();
             ts &= 0xF9000000;
             ts |= (x & 0xFFF) as u32;
             ts |= ((y & 0xFFF) as u32) << 12;
@@ -34,79 +36,81 @@ impl TouchscreenHle {
             ts |= 0x06000000;
         }
 
-        emu.mem_write::<{ ARM7 }, _>(0x027FFFAA, ts as u16);
-        emu.mem_write::<{ ARM7 }, _>(0x027FFFAC, (ts >> 16) as u16);
+        self.mem_write::<{ ARM7 }, _>(0x027FFFAA, ts as u16);
+        self.mem_write::<{ ARM7 }, _>(0x027FFFAC, (ts >> 16) as u16);
     }
 
-    pub fn ipc_recv(&mut self, data: u32, emu: &mut Emu) {
+    pub fn touchscreen_hle_ipc_recv(&mut self, data: u32) {
+        let touchscreen = &mut self.hle.touchscreen;
+
         if data & (1 << 25) != 0 {
-            self.data.fill(0);
+            touchscreen.data.fill(0);
         }
 
-        self.data[((data >> 16) & 0xF) as usize] = data as u16;
+        touchscreen.data[((data >> 16) & 0xF) as usize] = data as u16;
 
         if data & (1 << 24) == 0 {
             return;
         }
 
-        match self.data[0] >> 8 {
+        match touchscreen.data[0] >> 8 {
             0 => {
-                self.sample(emu);
-                Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008000, false, emu);
+                self.touchscreen_hle_sample();
+                self.arm7_hle_send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008000, false);
             }
             1 => {
-                if self.status != 0 {
-                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008103, false, emu);
+                if touchscreen.status != 0 {
+                    self.arm7_hle_send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008103, false);
                     return;
                 }
 
-                let num = self.data[0] & 0xFF;
+                let num = touchscreen.data[0] & 0xFF;
                 if num == 0 || num > 4 {
-                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008102, false, emu);
+                    self.arm7_hle_send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008102, false);
                     return;
                 }
 
-                let offset = self.data[1];
+                let offset = touchscreen.data[1];
                 if offset >= 263 {
-                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008102, false, emu);
+                    self.arm7_hle_send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008102, false);
                     return;
                 }
 
-                self.status = 1;
+                touchscreen.status = 1;
 
-                self.num_samples = num;
+                touchscreen.num_samples = num;
                 for i in 0..num {
                     let y_pos = offset + ((i * 263 / num) % 263);
-                    self.sample_pos[i as usize] = y_pos;
+                    touchscreen.sample_pos[i as usize] = y_pos;
                 }
 
-                self.status = 2;
-                Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008100, false, emu);
+                touchscreen.status = 2;
+                self.arm7_hle_send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008100, false);
             }
             2 => {
-                if self.status != 2 {
-                    Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008103, false, emu);
+                if touchscreen.status != 2 {
+                    self.arm7_hle_send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008103, false);
                     return;
                 }
 
-                self.status = 3;
-                self.num_samples = 0;
-                self.status = 0;
-                Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008200, false, emu);
+                touchscreen.status = 3;
+                touchscreen.num_samples = 0;
+                touchscreen.status = 0;
+                self.arm7_hle_send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008200, false);
             }
             3 => {
-                self.sample(emu);
-                Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008300, false, emu);
+                self.touchscreen_hle_sample();
+                self.arm7_hle_send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008300, false);
             }
             _ => {}
         }
     }
 
-    pub(super) fn on_scanline(&self, v_count: u16, emu: &mut Emu) {
-        for i in 0..self.num_samples as usize {
-            if v_count == self.sample_pos[i] {
-                self.sample(emu);
-                Arm7Hle::send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03009000 | i as u32, false, emu);
+    pub(super) fn touchscreen_hle_on_scanline(&mut self, v_count: u16) {
+        for i in 0..self.hle.touchscreen.num_samples as usize {
+            if v_count == self.hle.touchscreen.sample_pos[i] {
+                self.touchscreen_hle_sample();
+                self.arm7_hle_send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03009000 | i as u32, false);
                 break;
             }
         }

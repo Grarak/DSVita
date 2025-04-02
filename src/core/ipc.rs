@@ -1,6 +1,6 @@
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::emu::{get_arm7_hle_mut, get_cpu_regs_mut, get_ipc, get_ipc_mut, Emu};
-use crate::core::hle::arm7_hle::{Arm7Hle, IpcFifoMessage, IpcFifoTag};
+use crate::core::emu::Emu;
+use crate::core::hle::arm7_hle::{IpcFifoMessage, IpcFifoTag};
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::fixed_fifo::FixedFifo;
@@ -62,10 +62,13 @@ pub struct Ipc {
     ipc_type: IpcType,
 }
 
+#[derive(Clone)]
 struct IpcLle(Arm7Emu);
+#[derive(Clone)]
 struct IpcHle;
 
 #[enum_dispatch]
+#[derive(Clone)]
 enum IpcType {
     IpcLle,
     IpcHle,
@@ -73,31 +76,29 @@ enum IpcType {
 
 #[enum_dispatch(IpcType)]
 trait IpcTrait {
-    fn get_fifo_cnt(&self, cpu: CpuType, ipc: &Ipc) -> u16;
+    fn get_fifo_cnt(&self, cpu: CpuType, emu: &Emu) -> u16;
     fn set_sync_reg(&self, cpu: CpuType, mask: u16, value: u16, emu: &mut Emu);
     fn fifo_send(&self, cpu: CpuType, mask: u32, value: u32, emu: &mut Emu);
 }
 
 impl IpcTrait for IpcLle {
-    fn get_fifo_cnt(&self, cpu: CpuType, ipc: &Ipc) -> u16 {
-        ipc.fifo[cpu].cnt.into()
+    fn get_fifo_cnt(&self, cpu: CpuType, emu: &Emu) -> u16 {
+        emu.ipc.fifo[cpu].cnt.into()
     }
 
     fn set_sync_reg(&self, cpu: CpuType, mut mask: u16, value: u16, emu: &mut Emu) {
         mask &= 0x4F00;
-        let ipc = get_ipc_mut!(emu);
-        ipc.sync_regs[cpu] = ((u16::from(ipc.sync_regs[cpu]) & !mask) | (value & mask)).into();
-        ipc.sync_regs[!cpu] = ((u16::from(ipc.sync_regs[!cpu]) & !((mask >> 8) & 0xF)) | (((value & mask) >> 8) & 0xF)).into();
+        emu.ipc.sync_regs[cpu] = ((u16::from(emu.ipc.sync_regs[cpu]) & !mask) | (value & mask)).into();
+        emu.ipc.sync_regs[!cpu] = ((u16::from(emu.ipc.sync_regs[!cpu]) & !((mask >> 8) & 0xF)) | (((value & mask) >> 8) & 0xF)).into();
 
-        if IpcSyncCnt::from(value).send_irq() && ipc.sync_regs[!cpu].enable_irq() {
-            get_cpu_regs_mut!(emu, !cpu).send_interrupt(InterruptFlag::IpcSync, emu);
+        if IpcSyncCnt::from(value).send_irq() && emu.ipc.sync_regs[!cpu].enable_irq() {
+            emu.cpu_send_interrupt(!cpu, InterruptFlag::IpcSync);
         }
     }
 
     fn fifo_send(&self, cpu: CpuType, mask: u32, value: u32, emu: &mut Emu) {
-        let ipc = get_ipc_mut!(emu);
-        if ipc.fifo[cpu].cnt.enable() {
-            let fifo_len = ipc.fifo[cpu].queue.len();
+        if emu.ipc.fifo[cpu].cnt.enable() {
+            let fifo_len = emu.ipc.fifo[cpu].queue.len();
             if fifo_len < 16 {
                 let message = IpcFifoMessage::from(value & mask);
                 debug_println!("{cpu:?} ipc send {:x} {:x} {}", u8::from(message.tag()), u32::from(message.data()), message.err());
@@ -107,15 +108,15 @@ impl IpcTrait for IpcLle {
                             let message = IpcFifoMessage::from(value & mask);
                             match IpcFifoTag::from(u8::from(message.tag())) {
                                 IpcFifoTag::Sound if self.0 == Arm7Emu::PartialSoundHle => {
-                                    get_arm7_hle_mut!(emu).sound.ipc_recv(u32::from(message.data()), emu);
+                                    emu.sound_hle_ipc_recv(u32::from(message.data()));
                                     return;
                                 }
                                 IpcFifoTag::Touchpanel if !message.err() => {
-                                    get_arm7_hle_mut!(emu).touchscreen.ipc_recv(u32::from(message.data()), emu);
+                                    emu.touchscreen_hle_ipc_recv(u32::from(message.data()));
                                     return;
                                 }
                                 IpcFifoTag::Rtc if !message.err() => {
-                                    get_arm7_hle_mut!(emu).rtc.ipc_recv(u32::from(message.data()), emu);
+                                    emu.rtc_hle_ipc_recv(u32::from(message.data()));
                                     return;
                                 }
                                 _ => {}
@@ -126,45 +127,45 @@ impl IpcTrait for IpcLle {
                     }
                 }
 
-                ipc.fifo[cpu].queue.push_back(value & mask);
+                emu.ipc.fifo[cpu].queue.push_back(value & mask);
 
                 if fifo_len == 0 {
-                    ipc.fifo[cpu].cnt.set_send_empty_status(false);
-                    ipc.fifo[!cpu].cnt.set_recv_empty(false);
+                    emu.ipc.fifo[cpu].cnt.set_send_empty_status(false);
+                    emu.ipc.fifo[!cpu].cnt.set_recv_empty(false);
 
-                    if get_ipc!(emu).fifo[!cpu].cnt.recv_not_empty_irq() {
-                        get_cpu_regs_mut!(emu, !cpu).send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, emu);
+                    if emu.ipc.fifo[!cpu].cnt.recv_not_empty_irq() {
+                        emu.cpu_send_interrupt(!cpu, InterruptFlag::IpcRecvFifoNotEmpty);
                     }
                 } else if fifo_len == 15 {
-                    ipc.fifo[cpu].cnt.set_send_full_status(true);
-                    ipc.fifo[!cpu].cnt.set_recv_full(true);
+                    emu.ipc.fifo[cpu].cnt.set_send_full_status(true);
+                    emu.ipc.fifo[!cpu].cnt.set_recv_full(true);
                 }
             }
         } else {
-            ipc.fifo[cpu].cnt.set_err(true);
+            emu.ipc.fifo[cpu].cnt.set_err(true);
         }
     }
 }
 
 impl IpcTrait for IpcHle {
-    fn get_fifo_cnt(&self, _: CpuType, ipc: &Ipc) -> u16 {
-        let mut cnt = ipc.fifo[ARM9].cnt;
+    fn get_fifo_cnt(&self, _: CpuType, emu: &Emu) -> u16 {
+        let mut cnt = emu.ipc.fifo[ARM9].cnt;
 
         cnt.set_send_empty_status(false);
         cnt.set_send_full_status(false);
         cnt.set_recv_empty(false);
         cnt.set_recv_full(false);
 
-        if ipc.fifo[ARM9].queue.is_empty() {
+        if emu.ipc.fifo[ARM9].queue.is_empty() {
             cnt.set_send_empty_status(true);
-        } else if ipc.fifo[ARM9].queue.len() == 16 {
+        } else if emu.ipc.fifo[ARM9].queue.len() == 16 {
             cnt.set_send_full_status(true);
         }
 
         cnt.set_send_empty_status(true);
-        if ipc.fifo[ARM7].queue.is_empty() {
+        if emu.ipc.fifo[ARM7].queue.is_empty() {
             cnt.set_recv_empty(true);
-        } else if ipc.fifo[ARM7].queue.len() == 16 {
+        } else if emu.ipc.fifo[ARM7].queue.len() == 16 {
             cnt.set_recv_full(true);
         }
 
@@ -173,30 +174,28 @@ impl IpcTrait for IpcHle {
 
     fn set_sync_reg(&self, _: CpuType, mut mask: u16, value: u16, emu: &mut Emu) {
         mask &= 0x4F00;
-        let ipc = get_ipc_mut!(emu);
-        ipc.sync_regs[ARM9] = ((u16::from(ipc.sync_regs[ARM9]) & !mask) | (value & mask)).into();
-        ipc.sync_regs[ARM7] = ((u16::from(ipc.sync_regs[ARM7]) & !((mask >> 8) & 0xF)) | (((value & mask) >> 8) & 0xF)).into();
+        emu.ipc.sync_regs[ARM9] = ((u16::from(emu.ipc.sync_regs[ARM9]) & !mask) | (value & mask)).into();
+        emu.ipc.sync_regs[ARM7] = ((u16::from(emu.ipc.sync_regs[ARM7]) & !((mask >> 8) & 0xF)) | (((value & mask) >> 8) & 0xF)).into();
 
-        Arm7Hle::ipc_sync(emu);
+        emu.arm7_hle_ipc_sync();
     }
 
     fn fifo_send(&self, _: CpuType, mask: u32, value: u32, emu: &mut Emu) {
-        let ipc = get_ipc_mut!(emu);
-        if ipc.fifo[ARM9].cnt.enable() {
-            let fifo_len = get_ipc!(emu).fifo[ARM9].queue.len();
+        if emu.ipc.fifo[ARM9].cnt.enable() {
+            let fifo_len = emu.ipc.fifo[ARM9].queue.len();
             if fifo_len < 16 {
                 let message = IpcFifoMessage::from(value & mask);
                 debug_println!("hle ipc send {:x} {:x} {}", u8::from(message.tag()), u32::from(message.data()), message.err());
-                ipc.fifo[ARM9].queue.push_back(value & mask);
+                emu.ipc.fifo[ARM9].queue.push_back(value & mask);
 
                 if fifo_len == 0 {
-                    ipc.fifo[ARM9].cnt.set_send_empty_status(false);
+                    emu.ipc.fifo[ARM9].cnt.set_send_empty_status(false);
                 } else if fifo_len == 15 {
-                    ipc.fifo[ARM9].cnt.set_send_full_status(true);
+                    emu.ipc.fifo[ARM9].cnt.set_send_full_status(true);
                 }
-                get_arm7_hle_mut!(emu).ipc_recv(emu);
+                emu.arm7_hle_ipc_recv();
             } else {
-                ipc.fifo[ARM9].cnt.set_err(true);
+                emu.ipc.fifo[ARM9].cnt.set_err(true);
             }
         }
     }
@@ -213,81 +212,83 @@ impl Ipc {
             },
         }
     }
+}
 
-    pub fn get_sync_reg<const CPU: CpuType>(&self) -> u16 {
-        self.sync_regs[CPU].into()
+impl Emu {
+    pub fn ipc_get_sync_reg(&self, cpu: CpuType) -> u16 {
+        self.ipc.sync_regs[cpu].into()
     }
 
-    pub fn get_fifo_cnt<const CPU: CpuType>(&self) -> u16 {
-        self.ipc_type.get_fifo_cnt(CPU, self)
+    pub fn ipc_get_fifo_cnt(&self, cpu: CpuType) -> u16 {
+        self.ipc.ipc_type.clone().get_fifo_cnt(cpu, self)
     }
 
-    pub fn set_sync_reg<const CPU: CpuType>(&mut self, mask: u16, value: u16, emu: &mut Emu) {
-        self.ipc_type.set_sync_reg(CPU, mask, value, emu);
+    pub fn ipc_set_sync_reg(&mut self, cpu: CpuType, mask: u16, value: u16) {
+        self.ipc.ipc_type.clone().set_sync_reg(cpu, mask, value, self);
     }
 
-    pub fn set_fifo_cnt<const CPU: CpuType>(&mut self, mut mask: u16, value: u16, emu: &mut Emu) {
+    pub fn ipc_set_fifo_cnt(&mut self, cpu: CpuType, mut mask: u16, value: u16) {
         let new_fifo = IpcFifoCnt::from(value);
 
-        if new_fifo.send_clear() && !self.fifo[CPU].queue.is_empty() {
-            self.fifo[CPU].queue.clear();
-            self.fifo[CPU].last_received = 0;
+        if new_fifo.send_clear() && !self.ipc.fifo[cpu].queue.is_empty() {
+            self.ipc.fifo[cpu].queue.clear();
+            self.ipc.fifo[cpu].last_received = 0;
 
-            self.fifo[CPU].cnt.set_send_empty_status(true);
-            self.fifo[CPU].cnt.set_send_full_status(false);
+            self.ipc.fifo[cpu].cnt.set_send_empty_status(true);
+            self.ipc.fifo[cpu].cnt.set_send_full_status(false);
 
-            self.fifo[!CPU].cnt.set_recv_empty(true);
-            self.fifo[!CPU].cnt.set_recv_full(false);
+            self.ipc.fifo[!cpu].cnt.set_recv_empty(true);
+            self.ipc.fifo[!cpu].cnt.set_recv_full(false);
 
-            if self.fifo[CPU].cnt.send_empty_irq() {
+            if self.ipc.fifo[cpu].cnt.send_empty_irq() {
                 todo!()
             }
         }
 
-        if self.fifo[CPU].cnt.send_empty_status() && !self.fifo[CPU].cnt.send_empty_irq() && new_fifo.send_empty_irq() {
-            get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::IpcSendFifoEmpty, emu);
+        if self.ipc.fifo[cpu].cnt.send_empty_status() && !self.ipc.fifo[cpu].cnt.send_empty_irq() && new_fifo.send_empty_irq() {
+            self.cpu_send_interrupt(cpu, InterruptFlag::IpcSendFifoEmpty);
         }
 
-        if !self.fifo[CPU].cnt.recv_empty() && !self.fifo[CPU].cnt.recv_not_empty_irq() && new_fifo.recv_not_empty_irq() {
-            get_cpu_regs_mut!(emu, CPU).send_interrupt(InterruptFlag::IpcRecvFifoNotEmpty, emu);
+        if !self.ipc.fifo[cpu].cnt.recv_empty() && !self.ipc.fifo[cpu].cnt.recv_not_empty_irq() && new_fifo.recv_not_empty_irq() {
+            self.cpu_send_interrupt(cpu, InterruptFlag::IpcRecvFifoNotEmpty);
         }
 
         if new_fifo.err() {
-            self.fifo[CPU].cnt.set_err(false);
+            self.ipc.fifo[cpu].cnt.set_err(false);
         }
 
         mask &= 0x8404;
-        self.fifo[CPU].cnt = ((u16::from(self.fifo[CPU].cnt) & !mask) | (value & mask)).into();
+        self.ipc.fifo[cpu].cnt = ((u16::from(self.ipc.fifo[cpu].cnt) & !mask) | (value & mask)).into();
     }
 
-    pub fn fifo_send<const CPU: CpuType>(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.ipc_type.fifo_send(CPU, mask, value, emu);
+    pub fn ipc_fifo_send(&mut self, cpu: CpuType, mask: u32, value: u32) {
+        self.ipc.ipc_type.clone().fifo_send(cpu, mask, value, self);
     }
 
-    pub fn fifo_recv<const CPU: CpuType>(&mut self, emu: &mut Emu) -> u32 {
-        let other_fifo_len = self.fifo[!CPU].queue.len();
+    pub fn ipc_fifo_recv(&mut self, cpu: CpuType) -> u32 {
+        let other_fifo_len = self.ipc.fifo[!cpu].queue.len();
         if other_fifo_len > 0 {
-            self.fifo[CPU].last_received = *self.fifo[!CPU].queue.front();
+            self.ipc.fifo[cpu].last_received = *self.ipc.fifo[!cpu].queue.front();
 
-            if self.fifo[CPU].cnt.enable() {
-                self.fifo[!CPU].queue.pop_front();
+            if self.ipc.fifo[cpu].cnt.enable() {
+                self.ipc.fifo[!cpu].queue.pop_front();
 
                 if other_fifo_len == 1 {
-                    self.fifo[CPU].cnt.set_recv_empty(true);
-                    self.fifo[!CPU].cnt.set_send_empty_status(true);
+                    self.ipc.fifo[cpu].cnt.set_recv_empty(true);
+                    self.ipc.fifo[!cpu].cnt.set_send_empty_status(true);
 
-                    if self.fifo[!CPU].cnt.send_empty_irq() {
-                        get_cpu_regs_mut!(emu, !CPU).send_interrupt(InterruptFlag::IpcSendFifoEmpty, emu);
+                    if self.ipc.fifo[!cpu].cnt.send_empty_irq() {
+                        self.cpu_send_interrupt(!cpu, InterruptFlag::IpcSendFifoEmpty);
                     }
                 } else if other_fifo_len == 16 {
-                    self.fifo[CPU].cnt.set_recv_full(false);
-                    self.fifo[!CPU].cnt.set_send_full_status(false);
+                    self.ipc.fifo[cpu].cnt.set_recv_full(false);
+                    self.ipc.fifo[!cpu].cnt.set_send_full_status(false);
                 }
             }
         } else {
-            self.fifo[CPU].cnt.set_err(true);
+            self.ipc.fifo[cpu].cnt.set_err(true);
         }
 
-        self.fifo[CPU].last_received
+        self.ipc.fifo[cpu].last_received
     }
 }

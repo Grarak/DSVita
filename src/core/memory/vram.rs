@@ -1,5 +1,5 @@
 use crate::bitset::Bitset;
-use crate::core::emu::{get_jit_mut, Emu};
+use crate::core::emu::Emu;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
@@ -442,22 +442,6 @@ pub struct Vram {
 }
 
 impl Vram {
-    pub fn set_cnt(&mut self, bank: usize, value: u8, emu: &mut Emu) {
-        const MASKS: [u8; 9] = [0x9B, 0x9B, 0x9F, 0x9F, 0x87, 0x9F, 0x9F, 0x83, 0x83];
-        let value = value & MASKS[bank];
-        if self.cnt[bank] == value {
-            return;
-        }
-        self.cnt[bank] = value;
-
-        debug_println!("Set vram cnt {:x} to {:x}", bank, value);
-        self.stat = 0;
-
-        self.rebuild_maps();
-
-        get_jit_mut!(emu).invalidate_vram();
-    }
-
     pub fn rebuild_maps(&mut self) {
         self.maps.reset();
         self.arm7.reset();
@@ -766,5 +750,23 @@ impl Vram {
             },
             ARM7 => self.arm7.write_slice(addr_offset, slice, &mut self.banks),
         };
+    }
+}
+
+impl Emu {
+    pub fn vram_set_cnt(&mut self, bank: usize, value: u8) {
+        const MASKS: [u8; 9] = [0x9B, 0x9B, 0x9F, 0x9F, 0x87, 0x9F, 0x9F, 0x83, 0x83];
+        let value = value & MASKS[bank];
+        if self.mem.vram.cnt[bank] == value {
+            return;
+        }
+        self.mem.vram.cnt[bank] = value;
+
+        debug_println!("Set vram cnt {:x} to {:x}", bank, value);
+        self.mem.vram.stat = 0;
+
+        self.mem.vram.rebuild_maps();
+
+        self.jit.invalidate_vram();
     }
 }

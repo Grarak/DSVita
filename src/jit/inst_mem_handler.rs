@@ -1,4 +1,3 @@
-use crate::core::emu::{get_common_mut, get_mem};
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::get_jit_asm_ptr;
@@ -10,8 +9,7 @@ use std::hint::unreachable_unchecked;
 use std::intrinsics::{likely, unlikely};
 
 mod handler {
-    use crate::core::emu::{get_common_mut, get_mem_mut, get_regs, get_regs_mut, Emu};
-    use crate::core::thread_regs::ThreadRegs;
+    use crate::core::emu::Emu;
     use crate::core::CpuType;
     use crate::jit::reg::{Reg, RegReserve};
     use crate::jit::MemoryAmount;
@@ -28,7 +26,7 @@ mod handler {
             MemoryAmount::Word => emu.mem_write::<CPU, _>(addr, op0),
             MemoryAmount::Double => {
                 emu.mem_write::<CPU, _>(addr, op0);
-                emu.mem_write::<CPU, _>(addr + 4, *get_regs!(emu, CPU).get_reg(Reg::from(op0_reg as u8 + 1)));
+                emu.mem_write::<CPU, _>(addr + 4, *emu.thread_get_reg(CPU, Reg::from(op0_reg as u8 + 1)));
             }
         }
     }
@@ -56,19 +54,17 @@ mod handler {
             }
             MemoryAmount::Double => {
                 *op0 = emu.mem_read_with_options::<CPU, true, u32>(addr);
-                let next_reg = unsafe { (op0 as *mut u32).offset(1).as_mut().unwrap_unchecked() };
+                let next_reg = unsafe { (op0 as *mut u32).offset(1).as_mut_unchecked() };
                 *next_reg = emu.mem_read_with_options::<CPU, true, u32>(addr + 4);
             }
         }
     }
 
-    fn get_reg_usr_mut<const FIQ_MODE: bool>(regs: &mut ThreadRegs, reg: Reg) -> &mut u32 {
-        if FIQ_MODE {
-            regs.get_reg_usr_mut(reg)
-        } else if reg == Reg::SP || reg == Reg::LR {
-            ThreadRegs::get_reg_usr_mut(regs, reg)
+    fn get_reg_usr_mut<const FIQ_MODE: bool>(emu: &mut Emu, cpu: CpuType, reg: Reg) -> &mut u32 {
+        if FIQ_MODE || reg == Reg::SP || reg == Reg::LR {
+            emu.thread_get_reg_usr_mut(cpu, reg)
         } else {
-            ThreadRegs::get_reg_mut(regs, reg)
+            emu.thread_get_reg_mut(cpu, reg)
         }
     }
 
@@ -93,13 +89,11 @@ mod handler {
         let rlist = RegReserve::from(rlist as u32);
         let op0 = Reg::from(op0);
 
-        let regs = get_regs_mut!(emu, CPU);
-
         if unlikely(rlist_len == 0) {
             if WRITE {
-                *regs.get_reg_mut(op0) -= 0x40;
+                *emu.thread_get_reg_mut(CPU, op0) -= 0x40;
             } else {
-                *regs.get_reg_mut(op0) += 0x40;
+                *emu.thread_get_reg_mut(CPU, op0) += 0x40;
             }
             if CPU == CpuType::ARM7 {
                 unsafe { unreachable_unchecked() }
@@ -109,30 +103,34 @@ mod handler {
 
         if WRITE && unlikely(rlist.is_reserved(Reg::PC) || op0 == Reg::PC) {
             let pc_offset = 4 << (!is_thumb as u8);
-            *regs.get_reg_mut(Reg::PC) = pc + pc_offset;
+            *emu.thread_get_reg_mut(CPU, Reg::PC) = pc + pc_offset;
         }
 
-        let start_addr = if DECREMENT { *regs.get_reg(op0) - ((rlist_len as u32) << 2) } else { *regs.get_reg(op0) };
+        let start_addr = if DECREMENT {
+            *emu.thread_get_reg(CPU, op0) - ((rlist_len as u32) << 2)
+        } else {
+            *emu.thread_get_reg(CPU, op0)
+        };
         let addr = start_addr;
 
         if WRITE_BACK && (!WRITE || (CPU == CpuType::ARM7 && unlikely((rlist.0 & ((1 << (op0 as u8 + 1)) - 1)) > (1 << op0 as u8)))) {
             if DECREMENT {
-                *regs.get_reg_mut(op0) = addr;
+                *emu.thread_get_reg_mut(CPU, op0) = addr;
             } else {
-                *regs.get_reg_mut(op0) = addr + ((rlist_len as u32) << 2);
+                *emu.thread_get_reg_mut(CPU, op0) = addr + ((rlist_len as u32) << 2);
             }
         }
 
         let mem_addr = addr + ((pre as u32) << 2);
 
         let get_reg_mut = if unlikely(user && !rlist.is_reserved(Reg::PC)) {
-            if unlikely(get_regs!(emu, CPU).is_fiq_mode()) {
+            if unlikely(emu.thread_is_fiq_mode(CPU)) {
                 get_reg_usr_mut::<true>
             } else {
                 get_reg_usr_mut::<false>
             }
         } else {
-            ThreadRegs::get_reg_mut
+            Emu::thread_get_reg_mut
         };
 
         let mut values: [u32; Reg::CPSR as usize] = unsafe { MaybeUninit::uninit().assume_init() };
@@ -142,38 +140,38 @@ mod handler {
                 let zeros = rlist.leading_zeros();
                 let reg = Reg::from(zeros as u8);
                 rlist &= !(0x80000000 >> zeros);
-                unsafe { *values.get_unchecked_mut(i as usize) = *get_reg_mut(regs, reg) };
+                unsafe { *values.get_unchecked_mut(i as usize) = *get_reg_mut(emu, CPU, reg) };
             }
             if GX_FIFO && likely(mem_addr >= 0x4000400 && mem_addr < 0x4000440) {
                 let end_addr = mem_addr + ((rlist_len as u32) << 2);
                 if unlikely(end_addr > 0x4000440) {
                     let diff = (end_addr - 0x4000440) >> 2;
                     let slice = unsafe { slice::from_raw_parts(values.as_ptr(), (rlist_len - diff as u8) as usize) };
-                    get_common_mut!(emu).gpu.gpu_3d_regs.set_gx_fifo_multiple(slice, emu);
+                    emu.regs_3d_set_gx_fifo_multiple(slice);
                     let slice = unsafe { slice::from_raw_parts(values.as_ptr().add((rlist_len - diff as u8) as usize), diff as usize) };
-                    get_mem_mut!(emu).write_multiple_slice::<CPU, true, _>(mem_addr, emu, slice);
+                    emu.mem_write_multiple_slice::<CPU, true, _>(mem_addr, slice);
                 } else {
                     let slice = unsafe { slice::from_raw_parts(values.as_ptr(), rlist_len as usize) };
-                    get_common_mut!(emu).gpu.gpu_3d_regs.set_gx_fifo_multiple(slice, emu);
+                    emu.regs_3d_set_gx_fifo_multiple(slice);
                 }
             } else {
                 let slice = unsafe { slice::from_raw_parts(values.as_ptr(), rlist_len as usize) };
-                get_mem_mut!(emu).write_multiple_slice::<CPU, true, _>(mem_addr, emu, slice);
+                emu.mem_write_multiple_slice::<CPU, true, _>(mem_addr, slice);
             }
         } else {
             let slice = unsafe { slice::from_raw_parts_mut(values.as_mut_ptr(), rlist_len as usize) };
-            get_mem_mut!(emu).read_multiple_slice::<CPU, true, _>(mem_addr, emu, slice);
+            emu.mem_read_multiple_slice::<CPU, true, _>(mem_addr, slice);
             let mut rlist = rlist.0.reverse_bits();
             for i in 0..rlist_len {
                 let zeros = rlist.leading_zeros();
                 let reg = Reg::from(zeros as u8);
                 rlist &= !(0x80000000 >> zeros);
-                unsafe { *get_reg_mut(regs, reg) = *values.get_unchecked(i as usize) };
+                unsafe { *get_reg_mut(emu, CPU, reg) = *values.get_unchecked(i as usize) };
             }
         }
 
         if WRITE_BACK && (WRITE || (CPU == CpuType::ARM9 && unlikely((rlist.0 & !((1 << (op0 as u8 + 1)) - 1)) != 0 || (rlist.0 == (1 << op0 as u8))))) {
-            *regs.get_reg_mut(op0) = if DECREMENT { start_addr } else { addr + (rlist_len << 2) as u32 }
+            *emu.thread_get_reg_mut(CPU, op0) = if DECREMENT { start_addr } else { addr + (rlist_len << 2) as u32 }
         }
     }
 }
@@ -188,8 +186,8 @@ macro_rules! imm_breakout {
         }
         $asm.runtime_data.accumulated_cycles += $total_cycles - $asm.runtime_data.pre_cycle_count_sum;
         let next_pc_offset = (1 << (!is_thumb as u8)) + 2;
-        crate::core::emu::get_regs_mut!($asm.emu, $cpu).pc = pc + next_pc_offset;
-        crate::core::emu::get_mem_mut!($asm.emu).breakout_imm = false;
+        $asm.emu.thread[$cpu].pc = pc + next_pc_offset;
+        $asm.emu.breakout_imm = false;
         crate::jit::jit_asm_common_funs::exit_guest_context!($asm);
     }};
 }
@@ -206,7 +204,7 @@ pub unsafe extern "C" fn inst_mem_handler<const CPU: CpuType, const WRITE: bool,
     } else {
         handle_request_read::<CPU, AMOUNT, SIGNED>((op0 as *mut u32).as_mut_unchecked(), addr, (*asm).emu);
     }
-    if WRITE && unlikely(get_mem!((*asm).emu).breakout_imm) {
+    if WRITE && unlikely((*asm).emu.breakout_imm) {
         imm_breakout!(CPU, (*asm), pc, total_cycles_reg as u16);
     }
 }
@@ -226,7 +224,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<const CPU: CpuType, const WRI
     let asm = get_jit_asm_ptr::<CPU>();
     let params = InstMemMultipleParams::from(params);
     handle_multiple_request::<CPU, WRITE, WRITE_BACK, DECREMENT, false>(pc, params.rlist(), u8::from(params.rlist_len()), u8::from(params.op0()), params.pre(), params.user(), (*asm).emu);
-    if WRITE && unlikely(get_mem!((*asm).emu).breakout_imm) {
+    if WRITE && unlikely((*asm).emu.breakout_imm) {
         imm_breakout!(CPU, (*asm), pc, total_cycles);
     }
 }
@@ -234,9 +232,8 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<const CPU: CpuType, const WRI
 pub unsafe extern "C" fn inst_mem_handler_write_gx_fifo(addr: u32, op0: u32, pc: u32, total_cycles_reg: u32) {
     if likely(addr >= 0x4000400 && addr < 0x4000440) {
         let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
-        let regs = &mut get_common_mut!(asm.emu).gpu.gpu_3d_regs;
-        regs.set_gx_fifo(0xFFFFFFFF, op0, asm.emu);
-        if unlikely(get_mem!(asm.emu).breakout_imm) {
+        asm.emu.regs_3d_set_gx_fifo(0xFFFFFFFF, op0);
+        if unlikely(asm.emu.breakout_imm) {
             imm_breakout!(ARM9, (*asm), pc, total_cycles_reg as u16);
         }
     } else {
@@ -248,7 +245,7 @@ pub unsafe extern "C" fn inst_mem_handler_multiple_write_gx_fifo<const PRE: bool
     let asm = get_jit_asm_ptr::<{ ARM9 }>();
     let params = InstMemMultipleParams::from(params);
     handle_multiple_request::<{ ARM9 }, true, WRITE_BACK, DECREMENT, true>(pc, params.rlist(), u8::from(params.rlist_len()), u8::from(params.op0()), params.pre(), params.user(), (*asm).emu);
-    if unlikely(get_mem!((*asm).emu).breakout_imm) {
+    if unlikely((*asm).emu.breakout_imm) {
         imm_breakout!(ARM9, (*asm), pc, total_cycles);
     }
 }

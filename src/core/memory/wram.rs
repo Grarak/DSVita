@@ -1,4 +1,4 @@
-use crate::core::emu::{get_jit_mut, get_mmu, Emu};
+use crate::core::emu::Emu;
 use crate::core::memory::regions;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM7;
@@ -63,20 +63,8 @@ impl Wram {
                 self.arm9_map = SharedWramMap::default();
                 self.arm7_map = SharedWramMap::new(SHARED_OFFSET, SHARED_LEN);
             }
-            _ => {
-                unsafe { unreachable_unchecked() };
-            }
+            _ => unsafe { unreachable_unchecked() },
         }
-    }
-
-    pub fn set_cnt(&mut self, value: u8, emu: &mut Emu) {
-        self.cnt = value & 0x3;
-        self.init_maps();
-
-        get_jit_mut!(emu).invalidate_wram();
-
-        get_mmu!(emu, ARM9).update_wram(emu);
-        get_mmu!(emu, ARM7).update_wram(emu);
     }
 
     pub fn get_shm_offset<const CPU: CpuType>(&self, addr: u32) -> usize {
@@ -90,5 +78,17 @@ impl Wram {
                 }
             }
         }
+    }
+}
+
+impl Emu {
+    pub fn wram_set_cnt(&mut self, value: u8) {
+        self.mem.wram.cnt = value & 0x3;
+        self.mem.wram.init_maps();
+
+        self.jit.invalidate_wram();
+
+        self.mmu_update_wram::<{ ARM9 }>();
+        self.mmu_update_wram::<{ ARM7 }>();
     }
 }

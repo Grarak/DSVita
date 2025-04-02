@@ -1,5 +1,5 @@
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::emu::{get_cm_mut, get_cpu_regs_mut, get_mem_mut, io_dma, Emu};
+use crate::core::emu::Emu;
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRendererContent;
 use crate::core::memory::dma::DmaTransferMode;
@@ -626,11 +626,253 @@ pub struct Gpu3DRegisters {
 macro_rules! unpacked_cmd {
     ($name:ident, $cmd:expr) => {
         paste! {
-            pub fn [<set _ $name>](&mut self, mask: u32, value: u32, emu: &mut Emu) {
-                self.queue_unpacked_value::<$cmd>(value & mask, emu);
+            pub fn [<regs _ 3d _ set _ $name>](&mut self, mask: u32, value: u32) {
+                self.regs_3d_queue_unpacked_value::<$cmd>(value & mask);
             }
         }
     };
+}
+
+impl Emu {
+    pub fn regs_3d_run_cmds(&mut self, total_cycles: u64) {
+        let regs_3d = &mut self.gpu.gpu_3d_regs;
+        if regs_3d.cmd_fifo.is_empty() || regs_3d.flushed {
+            regs_3d.last_total_cycles = total_cycles;
+            return;
+        }
+
+        let is_cmd_fifo_half_full = regs_3d.is_cmd_fifo_half_full();
+
+        let cycle_diff = (total_cycles - regs_3d.last_total_cycles) as u32;
+        regs_3d.last_total_cycles = total_cycles;
+        let mut executed_cycles = 0;
+
+        let mut params: [u32; 32] = unsafe { MaybeUninit::uninit().assume_init() };
+
+        'outer: while !regs_3d.cmd_fifo.is_empty() {
+            let value = *regs_3d.cmd_fifo.front();
+            regs_3d.cmd_fifo.pop_front();
+
+            for i in 0..4 {
+                let cmd = ((value as usize) >> (i << 3)) & 0x7F;
+                if cmd == 0 {
+                    break;
+                }
+                let param_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
+                let count = param_count & 0x3F;
+
+                if unlikely(count as usize > regs_3d.cmd_fifo.len()) {
+                    regs_3d.cmd_fifo.push_front(value >> (i << 3));
+                    break 'outer;
+                }
+
+                debug_println!("gx: {} {cmd:x} {count}", unsafe { FUNC_NAME_LUT.get_unchecked(cmd) });
+                for i in 0..count {
+                    unsafe { *params.get_unchecked_mut(i as usize) = *regs_3d.cmd_fifo.front() };
+                    regs_3d.cmd_fifo.pop_front();
+                }
+
+                let skippable = param_count & (1 << 6) != 0;
+                if !skippable || !regs_3d.skip {
+                    let func = unsafe { FUNC_LUT.get_unchecked(cmd) };
+                    func(regs_3d, &params);
+                }
+
+                executed_cycles += 4;
+                if unlikely(executed_cycles >= cycle_diff || cmd == 0x50) {
+                    let remaining_cmds = value.unbounded_shr((i + 1) << 3);
+                    if remaining_cmds != 0 {
+                        regs_3d.cmd_fifo.push_front(remaining_cmds);
+                    }
+                    break 'outer;
+                }
+            }
+        }
+
+        if is_cmd_fifo_half_full && !regs_3d.is_cmd_fifo_half_full() {
+            self.dma_trigger_all(ARM9, DmaTransferMode::GeometryCmdFifo);
+        }
+
+        let regs_3d = &mut self.gpu.gpu_3d_regs;
+        let irq = u8::from(regs_3d.gx_stat.cmd_fifo_irq());
+        if (irq == 1 && !regs_3d.is_cmd_fifo_half_full()) || (irq == 2 && regs_3d.is_cmd_fifo_empty()) {
+            self.cpu_send_interrupt(ARM9, InterruptFlag::GeometryCmdFifo);
+        }
+
+        let regs_3d = &mut self.gpu.gpu_3d_regs;
+        if !regs_3d.is_cmd_fifo_full() {
+            self.cpu_unhalt(ARM9, 1);
+        }
+
+        let regs_3d = &mut self.gpu.gpu_3d_regs;
+        if !regs_3d.skip && regs_3d.flushed {
+            regs_3d.pow_cnt1 = regs_3d.current_pow_cnt1;
+        }
+    }
+
+    fn regs_3d_post_queue_entry(&mut self) {
+        if unlikely(self.gpu.gpu_3d_regs.is_cmd_fifo_full()) {
+            self.breakout_imm = true;
+            self.cpu_halt(ARM9, 1);
+        }
+    }
+
+    pub fn regs_3d_get_clip_mtx_result(&mut self, index: usize) -> u32 {
+        self.gpu.gpu_3d_regs.get_clip_matrix()[index] as u32
+    }
+
+    pub fn regs_3d_get_vec_mtx_result(&self, index: usize) -> u32 {
+        self.gpu.gpu_3d_regs.matrices.dir[(index / 3) * 4 + index % 3] as u32
+    }
+
+    pub fn regs_3d_get_gx_stat(&self) -> u32 {
+        let regs_3d = &self.gpu.gpu_3d_regs;
+        let mut gx_stat = regs_3d.gx_stat;
+        gx_stat.set_geometry_busy(!regs_3d.cmd_fifo.is_empty());
+        gx_stat.set_num_entries_cmd_fifo(u9::new(regs_3d.get_cmd_fifo_len() as u16));
+        gx_stat.set_cmd_fifo_less_half_full(!regs_3d.is_cmd_fifo_half_full());
+        gx_stat.set_cmd_fifo_empty(regs_3d.is_cmd_fifo_empty());
+        gx_stat.set_box_pos_vec_test_busy(regs_3d.test_queue != 0);
+        u32::from(gx_stat)
+    }
+
+    pub fn regs_3d_get_ram_count(&self) -> u32 {
+        ((self.gpu.gpu_3d_regs.vertices_size as u32) << 16) | (self.gpu.gpu_3d_regs.polygons_size as u32)
+    }
+
+    pub fn regs_3d_get_pos_result(&self, index: usize) -> u32 {
+        self.gpu.gpu_3d_regs.pos_result[index] as u32
+    }
+
+    pub fn regs_3d_get_vec_result(&self, index: usize) -> u16 {
+        self.gpu.gpu_3d_regs.vec_result[index] as u16
+    }
+
+    fn regs_3d_queue_packed_value(&mut self, value: u32) {
+        let regs_3d = &mut self.gpu.gpu_3d_regs;
+        if regs_3d.cmd_remaining_params == 0 {
+            for i in 0..4 {
+                let cmd = ((value as usize) >> (i << 3)) & 0x7F;
+                if cmd == 0 {
+                    break;
+                }
+                let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) } & 0x3F;
+                regs_3d.cmd_remaining_params += params_count;
+                regs_3d.test_queue += (cmd >= 0x70 && cmd <= 0x72) as u8;
+            }
+        } else {
+            regs_3d.cmd_remaining_params -= 1;
+        }
+        regs_3d.cmd_fifo.push_back(value);
+    }
+
+    pub fn regs_3d_set_gx_fifo(&mut self, mask: u32, value: u32) {
+        self.regs_3d_queue_packed_value(value & mask);
+        self.regs_3d_post_queue_entry();
+    }
+
+    pub fn regs_3d_set_gx_fifo_multiple(&mut self, values: &[u32]) {
+        let regs_3d = &mut self.gpu.gpu_3d_regs;
+        let mut consumed = 0;
+        while consumed < values.len() {
+            if regs_3d.cmd_remaining_params == 0 {
+                let value = values[consumed];
+                for i in 0..4 {
+                    let cmd = ((value as usize) >> (i << 3)) & 0x7F;
+                    if cmd == 0 {
+                        break;
+                    }
+                    let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) } & 0x3F;
+                    regs_3d.cmd_remaining_params += params_count;
+                    regs_3d.test_queue += (cmd >= 0x70 && cmd <= 0x72) as u8;
+                }
+                consumed += 1;
+                regs_3d.cmd_fifo.push_back(value);
+            }
+
+            if unlikely(consumed >= values.len()) {
+                break;
+            }
+
+            let values = &values[consumed..];
+
+            let can_consume = min(regs_3d.cmd_remaining_params as usize, values.len());
+            for i in 0..can_consume {
+                regs_3d.cmd_fifo.push_back(values[i]);
+            }
+            regs_3d.cmd_remaining_params -= can_consume as u8;
+            consumed += can_consume;
+        }
+        self.regs_3d_post_queue_entry();
+    }
+
+    fn regs_3d_queue_unpacked_value<const CMD: u8>(&mut self, value: u32) {
+        let regs_3d = &mut self.gpu.gpu_3d_regs;
+        if regs_3d.cmd_remaining_params == 0 {
+            regs_3d.cmd_remaining_params = FIFO_PARAM_COUNTS[CMD as usize] & 0x3F;
+            regs_3d.cmd_fifo.push_back(CMD as u32);
+            if regs_3d.cmd_remaining_params > 0 {
+                regs_3d.cmd_remaining_params -= 1;
+                regs_3d.cmd_fifo.push_back(value);
+            }
+
+            match CMD {
+                0x70 | 0x71 | 0x72 => regs_3d.test_queue += 1,
+                _ => {}
+            }
+        } else {
+            regs_3d.cmd_remaining_params -= 1;
+            regs_3d.cmd_fifo.push_back(value);
+        }
+        self.regs_3d_post_queue_entry();
+    }
+
+    unpacked_cmd!(mtx_mode, 0x10);
+    unpacked_cmd!(mtx_push, 0x11);
+    unpacked_cmd!(mtx_pop, 0x12);
+    unpacked_cmd!(mtx_store, 0x13);
+    unpacked_cmd!(mtx_restore, 0x14);
+    unpacked_cmd!(mtx_identity, 0x15);
+    unpacked_cmd!(mtx_load44, 0x16);
+    unpacked_cmd!(mtx_load43, 0x17);
+    unpacked_cmd!(mtx_mult44, 0x18);
+    unpacked_cmd!(mtx_mult43, 0x19);
+    unpacked_cmd!(mtx_mult33, 0x1A);
+    unpacked_cmd!(mtx_scale, 0x1B);
+    unpacked_cmd!(mtx_trans, 0x1C);
+    unpacked_cmd!(color, 0x20);
+    unpacked_cmd!(normal, 0x21);
+    unpacked_cmd!(tex_coord, 0x22);
+    unpacked_cmd!(vtx16, 0x23);
+    unpacked_cmd!(vtx10, 0x24);
+    unpacked_cmd!(vtx_x_y, 0x25);
+    unpacked_cmd!(vtx_x_z, 0x26);
+    unpacked_cmd!(vtx_y_z, 0x27);
+    unpacked_cmd!(vtx_diff, 0x28);
+    unpacked_cmd!(polygon_attr, 0x29);
+    unpacked_cmd!(tex_image_param, 0x2A);
+    unpacked_cmd!(pltt_base, 0x2B);
+    unpacked_cmd!(dif_amb, 0x30);
+    unpacked_cmd!(spe_emi, 0x31);
+    unpacked_cmd!(light_vector, 0x32);
+    unpacked_cmd!(light_color, 0x33);
+    unpacked_cmd!(shininess, 0x34);
+    unpacked_cmd!(begin_vtxs, 0x40);
+    unpacked_cmd!(end_vtxs, 0x41);
+    unpacked_cmd!(swap_buffers, 0x50);
+    unpacked_cmd!(viewport, 0x60);
+    unpacked_cmd!(box_test, 0x70);
+    unpacked_cmd!(pos_test, 0x71);
+    unpacked_cmd!(vec_test, 0x72);
+
+    pub fn regs_3d_set_gx_stat(&mut self, mut mask: u32, value: u32) {
+        if value & (1 << 15) != 0 {
+            self.gpu.gpu_3d_regs.gx_stat = (u32::from(self.gpu.gpu_3d_regs.gx_stat) & !0xA000).into();
+        }
+
+        mask &= 0xC0000000;
+        self.gpu.gpu_3d_regs.gx_stat = ((u32::from(self.gpu.gpu_3d_regs.gx_stat) & !mask) | (value & mask)).into();
+    }
 }
 
 impl Gpu3DRegisters {
@@ -656,78 +898,6 @@ impl Gpu3DRegisters {
 
     fn get_cmd_fifo_len(&self) -> usize {
         max(self.cmd_fifo.len() as isize - 4, 0) as usize
-    }
-
-    pub fn run_cmds(&mut self, total_cycles: u64, emu: &mut Emu) {
-        if self.cmd_fifo.is_empty() || self.flushed {
-            self.last_total_cycles = total_cycles;
-            return;
-        }
-
-        let is_cmd_fifo_half_full = self.is_cmd_fifo_half_full();
-
-        let cycle_diff = (total_cycles - self.last_total_cycles) as u32;
-        self.last_total_cycles = total_cycles;
-        let mut executed_cycles = 0;
-
-        let mut params: [u32; 32] = unsafe { MaybeUninit::uninit().assume_init() };
-
-        'outer: while !self.cmd_fifo.is_empty() {
-            let value = *self.cmd_fifo.front();
-            self.cmd_fifo.pop_front();
-
-            for i in 0..4 {
-                let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                if cmd == 0 {
-                    break;
-                }
-                let param_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
-                let count = param_count & 0x3F;
-
-                if unlikely(count as usize > self.cmd_fifo.len()) {
-                    self.cmd_fifo.push_front(value >> (i << 3));
-                    break 'outer;
-                }
-
-                debug_println!("gx: {} {cmd:x} {count}", unsafe { FUNC_NAME_LUT.get_unchecked(cmd) });
-                for i in 0..count {
-                    unsafe { *params.get_unchecked_mut(i as usize) = *self.cmd_fifo.front() };
-                    self.cmd_fifo.pop_front();
-                }
-
-                let skippable = param_count & (1 << 6) != 0;
-                if !skippable || !self.skip {
-                    let func = unsafe { FUNC_LUT.get_unchecked(cmd) };
-                    func(self, &params);
-                }
-
-                executed_cycles += 4;
-                if unlikely(executed_cycles >= cycle_diff || cmd == 0x50) {
-                    let remaining_cmds = value.unbounded_shr((i + 1) << 3);
-                    if remaining_cmds != 0 {
-                        self.cmd_fifo.push_front(remaining_cmds);
-                    }
-                    break 'outer;
-                }
-            }
-        }
-
-        if is_cmd_fifo_half_full && !self.is_cmd_fifo_half_full() {
-            io_dma!(emu, ARM9).trigger_all(DmaTransferMode::GeometryCmdFifo, get_cm_mut!(emu));
-        }
-
-        let irq = u8::from(self.gx_stat.cmd_fifo_irq());
-        if (irq == 1 && !self.is_cmd_fifo_half_full()) || (irq == 2 && self.is_cmd_fifo_empty()) {
-            get_cpu_regs_mut!(emu, ARM9).send_interrupt(InterruptFlag::GeometryCmdFifo, emu);
-        }
-
-        if !self.is_cmd_fifo_full() {
-            get_cpu_regs_mut!(emu, ARM9).unhalt(1);
-        }
-
-        if !self.skip && self.flushed {
-            self.pow_cnt1 = self.current_pow_cnt1;
-        }
     }
 
     fn get_clip_matrix(&mut self) -> &Matrix {
@@ -1243,165 +1413,5 @@ impl Gpu3DRegisters {
         polygon.vertices_index = self.vertices_size - size as u16;
 
         self.polygons_size += 1;
-    }
-
-    fn post_queue_entry(&self, emu: &mut Emu) {
-        if unlikely(self.is_cmd_fifo_full()) {
-            get_mem_mut!(emu).breakout_imm = true;
-            get_cpu_regs_mut!(emu, ARM9).halt(1);
-        }
-    }
-
-    pub fn get_clip_mtx_result(&mut self, index: usize) -> u32 {
-        self.get_clip_matrix()[index] as u32
-    }
-
-    pub fn get_vec_mtx_result(&self, index: usize) -> u32 {
-        self.matrices.dir[(index / 3) * 4 + index % 3] as u32
-    }
-
-    pub fn get_gx_stat(&self) -> u32 {
-        let mut gx_stat = self.gx_stat;
-        gx_stat.set_geometry_busy(!self.cmd_fifo.is_empty());
-        gx_stat.set_num_entries_cmd_fifo(u9::new(self.get_cmd_fifo_len() as u16));
-        gx_stat.set_cmd_fifo_less_half_full(!self.is_cmd_fifo_half_full());
-        gx_stat.set_cmd_fifo_empty(self.is_cmd_fifo_empty());
-        gx_stat.set_box_pos_vec_test_busy(self.test_queue != 0);
-        u32::from(gx_stat)
-    }
-
-    pub fn get_ram_count(&self) -> u32 {
-        ((self.vertices_size as u32) << 16) | (self.polygons_size as u32)
-    }
-
-    pub fn get_pos_result(&self, index: usize) -> u32 {
-        self.pos_result[index] as u32
-    }
-
-    pub fn get_vec_result(&self, index: usize) -> u16 {
-        self.vec_result[index] as u16
-    }
-
-    fn queue_packed_value(&mut self, value: u32) {
-        if self.cmd_remaining_params == 0 {
-            for i in 0..4 {
-                let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                if cmd == 0 {
-                    break;
-                }
-                let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) } & 0x3F;
-                self.cmd_remaining_params += params_count;
-                self.test_queue += (cmd >= 0x70 && cmd <= 0x72) as u8;
-            }
-        } else {
-            self.cmd_remaining_params -= 1;
-        }
-        self.cmd_fifo.push_back(value);
-    }
-
-    pub fn set_gx_fifo(&mut self, mask: u32, value: u32, emu: &mut Emu) {
-        self.queue_packed_value(value & mask);
-        self.post_queue_entry(emu);
-    }
-
-    pub fn set_gx_fifo_multiple(&mut self, values: &[u32], emu: &mut Emu) {
-        let mut consumed = 0;
-        while consumed < values.len() {
-            if self.cmd_remaining_params == 0 {
-                let value = values[consumed];
-                for i in 0..4 {
-                    let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                    if cmd == 0 {
-                        break;
-                    }
-                    let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) } & 0x3F;
-                    self.cmd_remaining_params += params_count;
-                    self.test_queue += (cmd >= 0x70 && cmd <= 0x72) as u8;
-                }
-                consumed += 1;
-                self.cmd_fifo.push_back(value);
-            }
-
-            if unlikely(consumed >= values.len()) {
-                break;
-            }
-
-            let values = &values[consumed..];
-
-            let can_consume = min(self.cmd_remaining_params as usize, values.len());
-            for i in 0..can_consume {
-                self.cmd_fifo.push_back(values[i]);
-            }
-            self.cmd_remaining_params -= can_consume as u8;
-            consumed += can_consume;
-        }
-        self.post_queue_entry(emu);
-    }
-
-    fn queue_unpacked_value<const CMD: u8>(&mut self, value: u32, emu: &mut Emu) {
-        if self.cmd_remaining_params == 0 {
-            self.cmd_remaining_params = FIFO_PARAM_COUNTS[CMD as usize] & 0x3F;
-            self.cmd_fifo.push_back(CMD as u32);
-            if self.cmd_remaining_params > 0 {
-                self.cmd_remaining_params -= 1;
-                self.cmd_fifo.push_back(value);
-            }
-
-            match CMD {
-                0x70 | 0x71 | 0x72 => self.test_queue += 1,
-                _ => {}
-            }
-        } else {
-            self.cmd_remaining_params -= 1;
-            self.cmd_fifo.push_back(value);
-        }
-        self.post_queue_entry(emu);
-    }
-
-    unpacked_cmd!(mtx_mode, 0x10);
-    unpacked_cmd!(mtx_push, 0x11);
-    unpacked_cmd!(mtx_pop, 0x12);
-    unpacked_cmd!(mtx_store, 0x13);
-    unpacked_cmd!(mtx_restore, 0x14);
-    unpacked_cmd!(mtx_identity, 0x15);
-    unpacked_cmd!(mtx_load44, 0x16);
-    unpacked_cmd!(mtx_load43, 0x17);
-    unpacked_cmd!(mtx_mult44, 0x18);
-    unpacked_cmd!(mtx_mult43, 0x19);
-    unpacked_cmd!(mtx_mult33, 0x1A);
-    unpacked_cmd!(mtx_scale, 0x1B);
-    unpacked_cmd!(mtx_trans, 0x1C);
-    unpacked_cmd!(color, 0x20);
-    unpacked_cmd!(normal, 0x21);
-    unpacked_cmd!(tex_coord, 0x22);
-    unpacked_cmd!(vtx16, 0x23);
-    unpacked_cmd!(vtx10, 0x24);
-    unpacked_cmd!(vtx_x_y, 0x25);
-    unpacked_cmd!(vtx_x_z, 0x26);
-    unpacked_cmd!(vtx_y_z, 0x27);
-    unpacked_cmd!(vtx_diff, 0x28);
-    unpacked_cmd!(polygon_attr, 0x29);
-    unpacked_cmd!(tex_image_param, 0x2A);
-    unpacked_cmd!(pltt_base, 0x2B);
-    unpacked_cmd!(dif_amb, 0x30);
-    unpacked_cmd!(spe_emi, 0x31);
-    unpacked_cmd!(light_vector, 0x32);
-    unpacked_cmd!(light_color, 0x33);
-    unpacked_cmd!(shininess, 0x34);
-    unpacked_cmd!(begin_vtxs, 0x40);
-    unpacked_cmd!(end_vtxs, 0x41);
-    unpacked_cmd!(swap_buffers, 0x50);
-    unpacked_cmd!(viewport, 0x60);
-    unpacked_cmd!(box_test, 0x70);
-    unpacked_cmd!(pos_test, 0x71);
-    unpacked_cmd!(vec_test, 0x72);
-
-    pub fn set_gx_stat(&mut self, mut mask: u32, value: u32) {
-        if value & (1 << 15) != 0 {
-            self.gx_stat = (u32::from(self.gx_stat) & !0xA000).into();
-        }
-
-        mask &= 0xC0000000;
-        self.gx_stat = ((u32::from(self.gx_stat) & !mask) | (value & mask)).into();
     }
 }

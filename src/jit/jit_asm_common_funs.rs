@@ -12,7 +12,6 @@ macro_rules! exit_guest_context {
 
 pub(crate) use exit_guest_context;
 
-use crate::core::emu::{get_jit, get_regs_mut};
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
@@ -22,10 +21,10 @@ use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::jit_memory::JitEntry;
 use crate::jit::reg::Reg;
 use crate::jit::{inst_branch_handler, jit_memory_map, Cond, ShiftType};
+use crate::logging::branch_println;
 use crate::settings::Arm7Emu;
 use crate::{BRANCH_LOG, IS_DEBUG};
 use std::ptr;
-use crate::logging::branch_println;
 
 pub const fn get_max_loop_cycle_count<const CPU: CpuType>() -> u32 {
     match CPU {
@@ -53,7 +52,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         let aligned_target_reg = block_asm.new_reg();
         Self::emit_align_guest_pc(block_asm, target_pc_reg, aligned_target_reg);
 
-        let map_ptr = get_jit!(asm.emu).jit_memory_map.get_map_ptr();
+        let map_ptr = asm.emu.jit.jit_memory_map.get_map_ptr();
 
         let map_ptr_reg = block_asm.new_reg();
         let map_index_reg = block_asm.new_reg();
@@ -89,7 +88,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         let jit_entry_add_reg = block_asm.new_reg();
         let entry_fn_reg = block_asm.new_reg();
 
-        let jit_entry_addr = get_jit!(asm.emu).jit_memory_map.get_jit_entry(target_pc);
+        let jit_entry_addr = asm.emu.jit.jit_memory_map.get_jit_entry(target_pc);
         block_asm.mov(jit_entry_add_reg, jit_entry_addr as u32);
         block_asm.load_u32(entry_fn_reg, jit_entry_add_reg, 0);
         if has_return {
@@ -104,7 +103,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
 
     fn emit_set_cpsr_thumb_bit(block_asm: &mut BlockAsm, asm: &mut JitAsm<CPU>, guest_pc_reg: BlockReg) {
         let thread_regs_addr_reg = block_asm.new_reg();
-        block_asm.mov(thread_regs_addr_reg, get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr() as u32);
+        block_asm.mov(thread_regs_addr_reg, asm.emu.thread_get_reg_mut_ptr(CPU) as u32);
         let cpsr_reg = block_asm.new_reg();
         block_asm.load_u32(cpsr_reg, thread_regs_addr_reg, Reg::CPSR as u32 * 4);
         block_asm.bfi(cpsr_reg, guest_pc_reg, 5, 1);
@@ -115,7 +114,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
 
     fn emit_set_cpsr_thumb_bit_imm(block_asm: &mut BlockAsm, asm: &mut JitAsm<CPU>, thumb: bool) {
         let thread_regs_addr_reg = block_asm.new_reg();
-        block_asm.mov(thread_regs_addr_reg, get_regs_mut!(asm.emu, CPU).get_reg_mut_ptr() as u32);
+        block_asm.mov(thread_regs_addr_reg, asm.emu.thread_get_reg_mut_ptr(CPU) as u32);
         let cpsr_reg = block_asm.new_reg();
         block_asm.load_u32(cpsr_reg, thread_regs_addr_reg, Reg::CPSR as u32 * 4);
         if thumb {
@@ -309,7 +308,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         Self::emit_set_cpsr_thumb_bit_imm(block_asm, asm, target_pc & 1 == 1);
         block_asm.epilogue_previous_state();
 
-        let jit_entry_addr = get_jit!(asm.emu).jit_memory_map.get_jit_entry(target_pc);
+        let jit_entry_addr = asm.emu.jit.jit_memory_map.get_jit_entry(target_pc);
         block_asm.mov(BlockReg::Fixed(Reg::R0), jit_entry_addr as u32);
         block_asm.load_u32(BlockReg::Fixed(Reg::R0), BlockReg::Fixed(Reg::R0), 0);
         block_asm.call_no_return(BlockReg::Fixed(Reg::R0));
