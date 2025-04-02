@@ -4,3 +4,6 @@
 [submodule "kubridge"]
 	path = kubridge
 	url = https://github.com/bythos14/kubridge.git
+[submodule "vixl"]
+	path = vixl
+	url = git@github.com:Linaro/vixl.git
