@@ -35,8 +35,9 @@ fn main() {
         return;
     }
     let vitasdk_path = vitasdk_path.unwrap();
-    let vitasdk_include_path = vitasdk_path.join("arm-vita-eabi").join("include");
-    let vitasdk_lib_path = vitasdk_path.join("arm-vita-eabi").join("lib");
+    let vitasdk_sysroot = vitasdk_path.join("arm-vita-eabi");
+    let vitasdk_include_path = vitasdk_sysroot.join("include");
+    let vitasdk_lib_path = vitasdk_sysroot.join("lib");
 
     let kubridge_path = PathBuf::from("kubridge");
 
@@ -45,10 +46,10 @@ fn main() {
 
         const IMGUI_HEADERS: [&str; 3] = ["imgui.h", "imgui_internal.h", "imgui_impl_vitagl.h"];
         let mut bindings = bindgen::Builder::default()
-            .clang_args(["-I", vitasdk_include_path.to_str().unwrap()])
             .clang_args(["-x", "c++"])
             .clang_args(["-std=c++17"])
-            .clang_args(["-target", "armv7a-none-eabihf"])
+            .clang_args(["-target", "armv7-unknown-linux-gnueabihf"])
+            .clang_args(["--sysroot", vitasdk_sysroot.to_str().unwrap()])
             .formatter(Formatter::Prettyplease);
         for header in IMGUI_HEADERS {
             let header_path = vitasdk_include_path.join(header);
@@ -68,11 +69,11 @@ fn main() {
 
         const KUBRIDGE_HEADERS: [&str; 1] = ["kubridge.h"];
         let mut bindings = bindgen::Builder::default()
-            .clang_args(["-I", vitasdk_include_path.to_str().unwrap()])
             .clang_args(["-I", kubridge_path.to_str().unwrap()])
             .clang_args(["-x", "c++"])
             .clang_args(["-std=c++17"])
-            .clang_args(["-target", "armv7a-none-eabihf"])
+            .clang_args(["-target", "armv7-unknown-linux-gnueabihf"])
+            .clang_args(["--sysroot", vitasdk_sysroot.to_str().unwrap()])
             .formatter(Formatter::Prettyplease);
         for header in KUBRIDGE_HEADERS {
             let header_path = kubridge_path.join(header);
