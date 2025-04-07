@@ -14,10 +14,10 @@ assets = "./static"
 
 [dependencies]
 bilge = { git = "https://github.com/Grarak/bilge.git" }
-chrono = "0.4.38"
+chrono = "0.4.40"
 dsvita_macros = { path = "macros" }
 gl = { git = "https://github.com/bjz/gl-rs" }
-glyph_brush = "0.7.9"
+glyph_brush = "0.7.12"
 rust-ini = "0.21.1"
 static_assertions = "1.1.0"
 paste = "1.0.15"
@@ -34,9 +34,10 @@ affinity = "0.1.2"
 backtrace = "0.3.74"
 
 [build-dependencies]
-bindgen = "0.70.0"
-cc = "1.0.100"
-cmake = "0.1"
+bindgen = "0.71.1"
+cc = { version = "1.2.18", features = ["parallel"] }
+cmake = "0.1.54"
+regex = "1.11.1"
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]
 vitasdk-sys = { version = "0.3.2", features = [
