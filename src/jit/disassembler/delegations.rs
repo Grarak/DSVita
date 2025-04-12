@@ -195,38 +195,38 @@ mod transfer_delegations {
     use paste::paste;
 
     macro_rules! generate_variation {
-        ($name:ident, $write:expr, $variation:ident, $processor:ident, mem_transfer_imm) => {
+        ($name:ident, $write:expr, $write_back:expr, $variation:ident, $processor:ident, mem_transfer_imm) => {
             paste! {
                 #[inline]
                 pub fn [<$name _ $variation>](opcode: u32, op: Op) -> InstInfo {
-                    mem_transfer_imm::<$write>(opcode, op, $processor(opcode))
+                    mem_transfer_imm::<$write, $write_back>(opcode, op, $processor(opcode))
                 }
             }
         };
 
-        ($name:ident, $write:expr, $variation:ident, mem_transfer_reg) => {
+        ($name:ident, $write:expr, $write_back:expr, $variation:ident, mem_transfer_reg) => {
             paste! {
                 #[inline]
                 pub fn [<$name _ $variation>](opcode: u32, op: Op) -> InstInfo {
-                    mem_transfer_reg::<$write>(opcode, op, reg(opcode))
+                    mem_transfer_reg::<$write, $write_back>(opcode, op, reg(opcode))
                 }
             }
         };
 
-        ($name:ident, $write:expr, $variation:ident, mem_transfer_reg_shift, $shift_type:expr) => {
+        ($name:ident, $write:expr, $write_back:expr, $variation:ident, mem_transfer_reg_shift, $shift_type:expr) => {
             paste! {
                 #[inline]
                 pub fn [<$name _ $variation>](opcode: u32, op: Op) -> InstInfo {
-                    mem_transfer_reg_shift::<$write, { $shift_type }>(opcode, op, reg_imm_shift(opcode))
+                    mem_transfer_reg_shift::<$write, $write_back, { $shift_type }>(opcode, op, reg_imm_shift(opcode))
                 }
             }
         };
     }
 
     macro_rules! generate_variations {
-        ($name:ident, $write:expr, $([$variation:ident, $($args:tt)*]),+) => {
+        ($name:ident, $write:expr, $([$variation:ident, $write_back:expr, $($args:tt)*]),+) => {
             $(
-                generate_variation!($name, $write, $variation, $($args)*);
+                generate_variation!($name, $write, $write_back, $variation, $($args)*);
             )*
         };
     }
@@ -236,18 +236,18 @@ mod transfer_delegations {
             generate_variations!(
                 $name,
                 $write,
-                [ofim, imm_h, mem_transfer_imm],
-                [ofip, imm_h, mem_transfer_imm],
-                [prim, imm_h, mem_transfer_imm],
-                [prip, imm_h, mem_transfer_imm],
-                [ptim, imm_h, mem_transfer_imm],
-                [ptip, imm_h, mem_transfer_imm],
-                [ofrm, mem_transfer_reg],
-                [ofrp, mem_transfer_reg],
-                [prrm, mem_transfer_reg],
-                [prrp, mem_transfer_reg],
-                [ptrm, mem_transfer_reg],
-                [ptrp, mem_transfer_reg]
+                [ofim, false, imm_h, mem_transfer_imm],
+                [ofip, false, imm_h, mem_transfer_imm],
+                [prim, true, imm_h, mem_transfer_imm],
+                [prip, true, imm_h, mem_transfer_imm],
+                [ptim, true, imm_h, mem_transfer_imm],
+                [ptip, true, imm_h, mem_transfer_imm],
+                [ofrm, false, mem_transfer_reg],
+                [ofrp, false, mem_transfer_reg],
+                [prrm, true, mem_transfer_reg],
+                [prrp, true, mem_transfer_reg],
+                [ptrm, true, mem_transfer_reg],
+                [ptrp, true, mem_transfer_reg]
             );
         };
     }
@@ -257,36 +257,36 @@ mod transfer_delegations {
             generate_variations!(
                 $name,
                 $write,
-                [ofim, imm, mem_transfer_imm],
-                [ofip, imm, mem_transfer_imm],
-                [prim, imm, mem_transfer_imm],
-                [prip, imm, mem_transfer_imm],
-                [ptim, imm, mem_transfer_imm],
-                [ptip, imm, mem_transfer_imm],
-                [ofrmll, mem_transfer_reg_shift, Lsl],
-                [ofrmlr, mem_transfer_reg_shift, Lsr],
-                [ofrmar, mem_transfer_reg_shift, Asr],
-                [ofrmrr, mem_transfer_reg_shift, Ror],
-                [ofrpll, mem_transfer_reg_shift, Lsl],
-                [ofrplr, mem_transfer_reg_shift, Lsr],
-                [ofrpar, mem_transfer_reg_shift, Asr],
-                [ofrprr, mem_transfer_reg_shift, Ror],
-                [prrmll, mem_transfer_reg_shift, Lsl],
-                [prrmlr, mem_transfer_reg_shift, Lsr],
-                [prrmar, mem_transfer_reg_shift, Asr],
-                [prrmrr, mem_transfer_reg_shift, Ror],
-                [prrpll, mem_transfer_reg_shift, Lsl],
-                [prrplr, mem_transfer_reg_shift, Lsr],
-                [prrpar, mem_transfer_reg_shift, Asr],
-                [prrprr, mem_transfer_reg_shift, Ror],
-                [ptrmll, mem_transfer_reg_shift, Lsl],
-                [ptrmlr, mem_transfer_reg_shift, Lsr],
-                [ptrmar, mem_transfer_reg_shift, Asr],
-                [ptrmrr, mem_transfer_reg_shift, Ror],
-                [ptrpll, mem_transfer_reg_shift, Lsl],
-                [ptrplr, mem_transfer_reg_shift, Lsr],
-                [ptrpar, mem_transfer_reg_shift, Asr],
-                [ptrprr, mem_transfer_reg_shift, Ror]
+                [ofim, false, imm, mem_transfer_imm],
+                [ofip, false, imm, mem_transfer_imm],
+                [prim, true, imm, mem_transfer_imm],
+                [prip, true, imm, mem_transfer_imm],
+                [ptim, true, imm, mem_transfer_imm],
+                [ptip, true, imm, mem_transfer_imm],
+                [ofrmll, false, mem_transfer_reg_shift, Lsl],
+                [ofrmlr, false, mem_transfer_reg_shift, Lsr],
+                [ofrmar, false, mem_transfer_reg_shift, Asr],
+                [ofrmrr, false, mem_transfer_reg_shift, Ror],
+                [ofrpll, false, mem_transfer_reg_shift, Lsl],
+                [ofrplr, false, mem_transfer_reg_shift, Lsr],
+                [ofrpar, false, mem_transfer_reg_shift, Asr],
+                [ofrprr, false, mem_transfer_reg_shift, Ror],
+                [prrmll, true, mem_transfer_reg_shift, Lsl],
+                [prrmlr, true, mem_transfer_reg_shift, Lsr],
+                [prrmar, true, mem_transfer_reg_shift, Asr],
+                [prrmrr, true, mem_transfer_reg_shift, Ror],
+                [prrpll, true, mem_transfer_reg_shift, Lsl],
+                [prrplr, true, mem_transfer_reg_shift, Lsr],
+                [prrpar, true, mem_transfer_reg_shift, Asr],
+                [prrprr, true, mem_transfer_reg_shift, Ror],
+                [ptrmll, true, mem_transfer_reg_shift, Lsl],
+                [ptrmlr, true, mem_transfer_reg_shift, Lsr],
+                [ptrmar, true, mem_transfer_reg_shift, Asr],
+                [ptrmrr, true, mem_transfer_reg_shift, Ror],
+                [ptrpll, true, mem_transfer_reg_shift, Lsl],
+                [ptrplr, true, mem_transfer_reg_shift, Lsr],
+                [ptrpar, true, mem_transfer_reg_shift, Asr],
+                [ptrprr, true, mem_transfer_reg_shift, Ror]
             );
         };
     }

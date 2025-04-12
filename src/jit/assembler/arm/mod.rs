@@ -3,7 +3,6 @@ use bilge::prelude::*;
 pub mod alu_assembler;
 pub mod branch_assembler;
 pub mod transfer_assembler;
-pub mod vixl;
 
 #[bitsize(32)]
 #[derive(FromBits)]

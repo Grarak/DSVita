@@ -241,6 +241,8 @@ fn main() {
                         rust_type = "Cond".to_string();
                     } else if t == "Register" {
                         rust_type = "Reg".to_string();
+                    } else if t == "RegisterList" {
+                        rust_type = "RegReserve".to_string();
                     }
 
                     let has_ptr_inner = t == "DOperand" || t == "QOperand" || t == "SOperand" || t == "RawLiteral" || t == "Label";
@@ -258,6 +260,8 @@ fn main() {
                         delegate_params += &format!("Condition::from({name}), ");
                     } else if t == "Register" {
                         delegate_params += &format!("Register::from({name}), ");
+                    } else if t == "RegisterList" {
+                        delegate_params += &format!("RegisterList::from({name}), ");
                     } else {
                         delegate_params += &format!("{name}, ");
                     }
@@ -306,7 +310,7 @@ fn main() {
                 if !generic_types.is_empty() {
                     writeln!(
                         vixl_inst_wrapper_file,
-                        r"impl Masm{fun_name}{}<{generic_types}> for MarcoAssembler {{
+                        r"impl Masm{fun_name}{}<{generic_types}> for MacroAssembler {{
     fn {}{}(&mut self, {fun_params}) {{
         unsafe {{ masm_{}{}(self.inner, {delegate_params}) }}
     }}
@@ -322,7 +326,7 @@ fn main() {
                 } else {
                     writeln!(
                         vixl_inst_wrapper_file,
-                        r"impl Masm{fun_name} for MarcoAssembler {{
+                        r"impl Masm{fun_name} for MacroAssembler {{
     fn {}0(&mut self) {{
         unsafe {{ masm_{}{}(self.inner) }}
     }}

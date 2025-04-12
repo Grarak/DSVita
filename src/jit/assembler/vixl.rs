@@ -1,4 +1,4 @@
-use crate::jit::reg::Reg;
+use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::Cond;
 use std::pin::Pin;
 use std::{ptr, slice};
@@ -81,17 +81,47 @@ impl From<Cond> for Condition {
 
 impl From<Reg> for Operand {
     fn from(value: Reg) -> Self {
-        unsafe { Operand::new(value.into()) }
+        unsafe { Operand::new2(value.into()) }
     }
 }
 
-pub struct MarcoAssembler {
+impl From<u32> for Operand {
+    fn from(value: u32) -> Self {
+        unsafe { Operand::new(value) }
+    }
+}
+
+impl From<i32> for Operand {
+    fn from(value: i32) -> Self {
+        unsafe { Operand::new1(value) }
+    }
+}
+
+impl MemOperand {
+    pub fn reg_offset(reg: Reg, offset: i32) -> Self {
+        unsafe { MemOperand::new1(reg.into(), offset, AddrMode_Offset) }
+    }
+}
+
+impl From<RegReserve> for RegisterList {
+    fn from(value: RegReserve) -> Self {
+        RegisterList { list_: value.0 }
+    }
+}
+
+impl From<u32> for MaskedSpecialRegister {
+    fn from(value: u32) -> Self {
+        unsafe { MaskedSpecialRegister::new(value) }
+    }
+}
+
+pub struct MacroAssembler {
     inner: *mut Aarch32MacroAssembler,
 }
 
-impl MarcoAssembler {
+impl MacroAssembler {
     pub fn new() -> Self {
-        MarcoAssembler {
+        MacroAssembler {
             inner: unsafe { create_aarch32_masm() },
         }
     }
@@ -111,15 +141,17 @@ impl MarcoAssembler {
     }
 }
 
-impl Drop for MarcoAssembler {
+impl Drop for MacroAssembler {
     fn drop(&mut self) {
-        unsafe { destroy_aarch32_masm(self.inner) };
+        if !self.inner.is_null() {
+            unsafe { destroy_aarch32_masm(self.inner) };
+        }
     }
 }
 
 include!(concat!(env!("OUT_DIR"), "/vixl_inst_wrapper.rs"));
 
-impl MasmLdr2<Reg, u32> for MarcoAssembler {
+impl MasmLdr2<Reg, u32> for MacroAssembler {
     fn ldr2(&mut self, reg: Reg, v: u32) {
         self.ldr3(Cond::AL, reg, v)
     }

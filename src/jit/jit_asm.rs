@@ -2,8 +2,9 @@ use crate::core::emu::Emu;
 use crate::core::hle::bios;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
-use crate::jit::assembler::block_asm::{BlockAsm, BLOCK_LOG};
-use crate::jit::assembler::{BasicBlocksCache, BlockAsmBuf};
+use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::vixl;
+use crate::jit::assembler::vixl::{MasmBlx1, MasmLdr2};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_branch_handler::call_jit_fun;
@@ -17,6 +18,7 @@ use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBU
 use std::arch::{asm, naked_asm};
 use std::intrinsics::unlikely;
 use std::{mem, ptr};
+use vixl::MacroAssembler;
 
 pub struct JitBuf {
     pub insts: Vec<InstInfo>,
@@ -299,17 +301,22 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
     }
 
     let (jit_entry, flushed) = {
-        // println!("{CPU:?} {thumb} emit code block {guest_pc:x}");
+        debug_println!("{CPU:?} {thumb} emit code block {guest_pc:x}");
         // unsafe { BLOCK_LOG = guest_pc == 0x200675e };
 
         let guest_regs_ptr = asm.emu.thread_get_reg_mut_ptr(CPU);
         let host_sp_ptr = ptr::addr_of_mut!(asm.runtime_data.host_sp);
-        let mut block_asm = unsafe { BlockAsm::new(guest_regs_ptr, host_sp_ptr, mem::transmute(&mut asm.basic_blocks_cache), mem::transmute(&mut asm.block_asm_buf), thumb) };
+
+        let mut block_asm = BlockAsm::new();
+        block_asm.init(guest_regs_ptr);
 
         if BRANCH_LOG {
-            block_asm.call1(debug_enter_block::<CPU> as *const (), guest_pc | (thumb as u32));
-            block_asm.restore_reg(Reg::CPSR);
+            block_asm.spill_regs_for_call();
+            block_asm.ldr2(Reg::R0, guest_pc | (thumb as u32));
+            block_asm.call(debug_enter_block::<CPU> as _);
         }
+
+        block_asm.restore_nzcv();
 
         let emit_func = if thumb { JitAsm::emit_thumb } else { JitAsm::emit };
 
@@ -324,29 +331,24 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
 
             emit_func(asm, &mut block_asm);
 
-            if DEBUG_LOG {
-                block_asm.save_context();
-                block_asm.call2(debug_after_exec_op::<CPU> as *const (), asm.jit_buf.current_pc, asm.jit_buf.current_inst().opcode);
-                block_asm.restore_reg(Reg::CPSR);
-            }
+            if DEBUG_LOG {}
         }
 
         if last_inst_branch {
-            block_asm.force_end();
         } else {
-            let next_pc = guest_pc + pc_offset + if thumb { 3 } else { 4 };
-            asm.emit_branch_external_label(&mut block_asm, next_pc, false, thumb);
         }
 
-        block_asm.emit_opcodes();
-        let opcodes = block_asm.finalize();
-        if IS_DEBUG && unsafe { BLOCK_LOG } {
+        block_asm.finalize();
+        let opcodes = block_asm.get_code_buffer();
+
+        if IS_DEBUG {
             for &opcode in opcodes {
                 println!("0x{opcode:x},");
             }
             todo!()
         }
-        let (insert_entry, flushed) = asm.emu.jit_insert_block(opcodes, guest_pc, CPU);
+        let opcodes = [0];
+        let (insert_entry, flushed) = asm.emu.jit_insert_block(&opcodes, guest_pc, CPU);
         let jit_entry: extern "C" fn() = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {
@@ -363,7 +365,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
 }
 
 #[naked]
-unsafe extern "C" fn call_jit_entry(_: *const fn(), _: *mut usize) {
+unsafe extern "C" fn call_jit_entry(_entry: *const fn(), _host_sp: *mut usize) {
     #[rustfmt::skip]
     naked_asm!(
         "push {{r4-r12,lr}}",
@@ -437,8 +439,6 @@ pub struct JitAsm<'a, const CPU: CpuType> {
     pub jit_buf: JitBuf,
     pub runtime_data: JitRuntimeData,
     pub jit_common_funs: JitAsmCommonFuns<CPU>,
-    basic_blocks_cache: BasicBlocksCache,
-    block_asm_buf: BlockAsmBuf,
 }
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
@@ -449,8 +449,6 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             jit_buf: JitBuf::new(),
             runtime_data: JitRuntimeData::new(),
             jit_common_funs: JitAsmCommonFuns::default(),
-            basic_blocks_cache: BasicBlocksCache::new(),
-            block_asm_buf: BlockAsmBuf::default(),
         }
     }
 

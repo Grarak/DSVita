@@ -25,6 +25,7 @@ use crate::core::spu::SoundSampler;
 use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::{JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_memory::JitMemory;
+use crate::jit::op::Op;
 use crate::logging::debug_println;
 use crate::mmap::register_abort_handler;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};

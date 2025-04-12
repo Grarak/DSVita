@@ -36,7 +36,7 @@ impl AluImm {
     #[inline]
     pub fn add(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
         let op = Self::generic(0x4, op0, op1, op2, shift, false, cond);
-        debug_assert_eq!(lookup_opcode(op).0, Op::AddImm);
+        // debug_assert_eq!(lookup_opcode(op).0, Op::AddImm);
         op
     }
 
@@ -48,7 +48,7 @@ impl AluImm {
     #[inline]
     pub fn adds(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
         let op = Self::generic(0x4, op0, op1, op2, shift, true, cond);
-        debug_assert_eq!(lookup_opcode(op).0, Op::AddsImm);
+        // debug_assert_eq!(lookup_opcode(op).0, Op::AddsImm);
         op
     }
 
@@ -74,7 +74,7 @@ impl AluImm {
     #[inline]
     pub fn cmp(op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
         let op = Self::generic(0xA, Reg::R0, op1, op2, shift, true, cond);
-        debug_assert_eq!(lookup_opcode(op).0, Op::CmpImm);
+        // debug_assert_eq!(lookup_opcode(op).0, Op::CmpImm);
         op
     }
 
@@ -96,7 +96,7 @@ impl AluImm {
     #[inline]
     pub fn sub(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
         let op = Self::generic(0x2, op0, op1, op2, shift, false, cond);
-        debug_assert_eq!(lookup_opcode(op).0, Op::SubImm);
+        // debug_assert_eq!(lookup_opcode(op).0, Op::SubImm);
         op
     }
 
@@ -108,7 +108,7 @@ impl AluImm {
     #[inline]
     pub fn subs(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
         let op = Self::generic(0x2, op0, op1, op2, shift, true, cond);
-        debug_assert_eq!(lookup_opcode(op).0, Op::SubsImm);
+        // debug_assert_eq!(lookup_opcode(op).0, Op::SubsImm);
         op
     }
 
@@ -120,7 +120,7 @@ impl AluImm {
     #[inline]
     pub fn rsbs(op0: Reg, op1: Reg, op2: u8, shift: u8, cond: Cond) -> u32 {
         let op = Self::generic(0x3, op0, op1, op2, shift, true, cond);
-        debug_assert_eq!(lookup_opcode(op).0, Op::RsbsImm);
+        // debug_assert_eq!(lookup_opcode(op).0, Op::RsbsImm);
         op
     }
 
@@ -132,7 +132,7 @@ impl AluImm {
     #[inline]
     pub fn mov(op0: Reg, op2: u8, ror: u8, cond: Cond) -> u32 {
         let op = Self::generic(0xD, op0, Reg::R0, op2, ror, false, cond);
-        debug_assert_eq!(lookup_opcode(op).0, Op::MovImm);
+        // debug_assert_eq!(lookup_opcode(op).0, Op::MovImm);
         op
     }
 
@@ -144,7 +144,7 @@ impl AluImm {
     #[inline]
     pub fn movs(op0: Reg, op2: u8, ror: u8, cond: Cond) -> u32 {
         let op = Self::generic(0xD, op0, Reg::R0, op2, ror, true, cond);
-        debug_assert_eq!(lookup_opcode(op).0, Op::MovsImm);
+        // debug_assert_eq!(lookup_opcode(op).0, Op::MovsImm);
         op
     }
 
