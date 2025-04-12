@@ -1,4 +1,4 @@
-use crate::mmap::{MemRegion, VirtualMemMap};
+use crate::mmap::{ArmContext, MemRegion, VirtualMemMap};
 use libc::*;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
@@ -287,7 +287,7 @@ impl AsMut<[u8]> for VirtualMem {
     }
 }
 
-static mut DELEGATE_FUN: *const fn(usize, &mut usize) -> bool = ptr::null();
+static mut DELEGATE_FUN: *const fn(usize, &mut usize, &ArmContext) -> bool = ptr::null();
 static mut NEXT_SEGV_HANDLER: sigaction = unsafe { mem::zeroed::<sigaction>() };
 
 unsafe extern "C" fn sigsegv_handler(sig: i32, si: *mut siginfo_t, segfault_ctx: *mut c_void) {
@@ -295,9 +295,10 @@ unsafe extern "C" fn sigsegv_handler(sig: i32, si: *mut siginfo_t, segfault_ctx:
     let context = segfault_ctx as *mut ucontext_t;
     let context = &mut (*context).uc_mcontext;
 
-    let delegate_fun: fn(usize, &mut usize) -> bool = mem::transmute(DELEGATE_FUN);
+    let delegate_fun: fn(usize, &mut usize, &ArmContext) -> bool = mem::transmute(DELEGATE_FUN);
+    let arm_context: &ArmContext = unsafe { mem::transmute(&context.arm_r0) };
     let mut pc = context.arm_pc as usize;
-    if delegate_fun(si_addr as usize, &mut pc) {
+    if delegate_fun(si_addr as usize, &mut pc, arm_context) {
         context.arm_pc = pc as _;
         return;
     }
@@ -310,7 +311,7 @@ unsafe extern "C" fn sigsegv_handler(sig: i32, si: *mut siginfo_t, segfault_ctx:
     }
 }
 
-pub unsafe fn register_abort_handler(delegate: fn(usize, &mut usize) -> bool) -> io::Result<()> {
+pub unsafe fn register_abort_handler(delegate: fn(usize, &mut usize, &ArmContext) -> bool) -> io::Result<()> {
     DELEGATE_FUN = delegate as *const _;
     let mut sa = mem::zeroed::<sigaction>();
     sa.sa_flags = SA_SIGINFO;

@@ -20,10 +20,10 @@ mod handler {
     use crate::logging::debug_println;
     use bilge::prelude::u5;
 
-    pub fn handle<const CPU: CpuType, const THUMB: bool>(emu: &mut Emu, opcode: u32, vector: ExceptionVector) {
+    pub fn handle<const CPU: CpuType, const THUMB: bool>(emu: &mut Emu, comment: u8, vector: ExceptionVector) {
         if CPU == CpuType::ARM7 || emu.cp15.exception_addr != 0 {
             match vector {
-                ExceptionVector::SoftwareInterrupt => bios::swi::<CPU>(((opcode >> if THUMB { 0 } else { 16 }) & 0xFF) as u8, emu),
+                ExceptionVector::SoftwareInterrupt => bios::swi::<CPU>(comment, emu),
                 ExceptionVector::NormalInterrupt => bios::interrupt::<CPU>(emu),
                 _ => todo!(),
             }

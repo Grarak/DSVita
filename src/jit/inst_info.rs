@@ -1,8 +1,6 @@
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluReg, AluShiftImm, Clz, MulReg, QAddSub};
 use crate::jit::inst_info_thumb::InstInfoThumb;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, Op, ShiftType};
-use bilge::prelude::*;
 use std::fmt::{Debug, Formatter};
 
 #[derive(Clone)]
@@ -17,11 +15,15 @@ pub struct InstInfo {
 }
 
 impl InstInfo {
-    pub fn new(opcode: u32, op: Op, operands: Operands, src_regs: RegReserve, out_regs: RegReserve, cycle: u8) -> Self {
+    pub fn new(opcode: u32, op: Op, operands: Operands, mut src_regs: RegReserve, out_regs: RegReserve, cycle: u8) -> Self {
+        let cond = Cond::from((opcode >> 28) as u8);
+        if cond != Cond::AL {
+            src_regs += Reg::CPSR;
+        }
         InstInfo {
             opcode,
             op,
-            cond: Cond::from((opcode >> 28) as u8),
+            cond,
             operands,
             src_regs,
             out_regs,
@@ -42,173 +44,37 @@ impl InstInfo {
         self.opcode = (self.opcode & !(0xF << 28)) | ((cond as u32) << 28);
     }
 
-    pub fn assemble(&self) -> u32 {
-        let operands = self.operands();
-        match self.op {
-            op if op.is_alu3_imm() || op.is_alu2_op0_imm() => {
-                let mut opcode = AluImm::from(self.opcode);
-                let reg0 = operands[0].as_reg_no_shift().unwrap();
-                let reg1 = operands[1].as_reg_no_shift();
-                opcode.set_rd(u4::new(*reg0 as u8));
-                if let Some(reg1) = reg1 {
-                    opcode.set_rn(u4::new(*reg1 as u8));
-                }
-                u32::from(opcode)
-            }
-            op if op.is_alu3_imm_shift() || op.is_alu2_op0_imm_shift() => {
-                let mut opcode = AluShiftImm::from(self.opcode);
-                let reg0 = operands[0].as_reg_no_shift().unwrap();
-                let (reg1, (reg2, shift_2)) = if operands.len() == 3 {
-                    (operands[1].as_reg_no_shift(), operands[2].as_reg().unwrap())
-                } else {
-                    (None, operands[1].as_reg().unwrap())
-                };
-                opcode.set_rm(u4::new(*reg2 as u8));
-                if let Some(reg1) = reg1 {
-                    opcode.set_rn(u4::new(*reg1 as u8));
-                }
-                opcode.set_rd(u4::new(*reg0 as u8));
-                match shift_2 {
-                    Some(shift) => {
-                        let (shift_type, value) = (*shift).into();
-                        opcode.set_shift_type(u2::new(shift_type as u8));
-                        opcode.set_shift_imm(u5::new(value.as_imm().unwrap()))
-                    }
-                    None => opcode.set_shift_imm(u5::new(0)),
-                }
-                u32::from(opcode)
-            }
-            op if op.is_alu3_reg_shift() || op.is_alu2_op0_reg_shift() => {
-                let mut opcode = AluReg::from(self.opcode);
-                let reg0 = operands[0].as_reg_no_shift().unwrap();
-                let (reg1, (reg2, shift_2)) = if operands.len() == 3 {
-                    (operands[1].as_reg_no_shift(), operands[2].as_reg().unwrap())
-                } else {
-                    (None, operands[1].as_reg().unwrap())
-                };
-                opcode.set_rm(u4::new(*reg2 as u8));
-                if let Some(reg1) = reg1 {
-                    opcode.set_rn(u4::new(*reg1 as u8));
-                }
-                opcode.set_rd(u4::new(*reg0 as u8));
-                if let Some(shift) = shift_2 {
-                    let (shift_type, value) = (*shift).into();
-                    opcode.set_shift_type(u2::new(shift_type as u8));
-                    opcode.set_rs(u4::new(value.as_reg().unwrap() as u8))
-                }
-                u32::from(opcode)
-            }
-            op if op.is_alu2_op1_imm() => {
-                let mut opcode = AluImm::from(self.opcode);
-                let reg0 = operands[0].as_reg_no_shift().unwrap();
-                opcode.set_rn(u4::new(*reg0 as u8));
-                u32::from(opcode)
-            }
-            op if op.is_alu2_op1_imm_shift() => {
-                let mut opcode = AluShiftImm::from(self.opcode);
-                let reg1 = operands[0].as_reg_no_shift().unwrap();
-                let (reg2, shift_2) = operands[1].as_reg().unwrap();
-                opcode.set_rm(u4::new(*reg2 as u8));
-                opcode.set_rn(u4::new(*reg1 as u8));
-                match shift_2 {
-                    Some(shift) => {
-                        let (shift_type, value) = (*shift).into();
-                        opcode.set_shift_type(u2::new(shift_type as u8));
-                        opcode.set_shift_imm(u5::new(value.as_imm().unwrap()))
-                    }
-                    None => opcode.set_shift_imm(u5::new(0)),
-                }
-
-                u32::from(opcode)
-            }
-            op if op.is_alu2_op1_reg_shift() => {
-                let mut opcode = AluReg::from(self.opcode);
-                let reg1 = operands[0].as_reg_no_shift().unwrap();
-                let (reg2, shift_2) = operands[1].as_reg().unwrap();
-                opcode.set_rm(u4::new(*reg2 as u8));
-                opcode.set_rn(u4::new(*reg1 as u8));
-                if let Some(shift) = shift_2 {
-                    let (shift_type, value) = (*shift).into();
-                    opcode.set_shift_type(u2::new(shift_type as u8));
-                    opcode.set_rs(u4::new(value.as_reg().unwrap() as u8))
-                }
-                u32::from(opcode)
-            }
-            Op::Mul
-            | Op::Muls
-            | Op::Mla
-            | Op::Mlas
-            | Op::Smulbb
-            | Op::Smulwb
-            | Op::Smlabb
-            | Op::Smlatb
-            | Op::Smlawb
-            | Op::Smlawt
-            | Op::Smlabt
-            | Op::Smlatt
-            | Op::Smlaltt
-            | Op::Smultt
-            | Op::Smulwt
-            | Op::Smulbt
-            | Op::Smultb
-            | Op::Smlalbb
-            | Op::Smlaltb
-            | Op::Smlalbt => {
-                let mut opcode = MulReg::from(self.opcode);
-                let reg0 = *operands[0].as_reg_no_shift().unwrap();
-                let reg1 = *operands[1].as_reg_no_shift().unwrap();
-                let reg2 = *operands[2].as_reg_no_shift().unwrap();
-                opcode.set_rd(u4::new(reg0 as u8));
-                opcode.set_rm(u4::new(reg1 as u8));
-                opcode.set_rs(u4::new(reg2 as u8));
-                if operands.len() == 4 {
-                    let reg3 = *operands[3].as_reg_no_shift().unwrap();
-                    opcode.set_rn(u4::new(reg3 as u8));
-                }
-                u32::from(opcode)
-            }
-            Op::Smull | Op::Smulls | Op::Smlal | Op::Smlals | Op::Umull | Op::Umulls | Op::Umlal | Op::Umlals => {
-                let mut opcode = MulReg::from(self.opcode);
-                let reg0 = *operands[0].as_reg_no_shift().unwrap();
-                let reg1 = *operands[1].as_reg_no_shift().unwrap();
-                let reg2 = *operands[2].as_reg_no_shift().unwrap();
-                let reg3 = *operands[3].as_reg_no_shift().unwrap();
-                opcode.set_rn(u4::new(reg0 as u8));
-                opcode.set_rd(u4::new(reg1 as u8));
-                opcode.set_rm(u4::new(reg2 as u8));
-                opcode.set_rs(u4::new(reg3 as u8));
-                u32::from(opcode)
-            }
-            Op::Qadd | Op::Qsub | Op::Qdadd | Op::Qdsub => {
-                let mut opcode = QAddSub::from(self.opcode);
-                let reg0 = *operands[0].as_reg_no_shift().unwrap();
-                let reg1 = *operands[1].as_reg_no_shift().unwrap();
-                let reg2 = *operands[2].as_reg_no_shift().unwrap();
-                opcode.set_rd(u4::new(reg0 as u8));
-                opcode.set_rm(u4::new(reg1 as u8));
-                opcode.set_rn(u4::new(reg2 as u8));
-                u32::from(opcode)
-            }
-            Op::Clz => {
-                let mut opcode = Clz::from(self.opcode);
-                let reg0 = *operands[0].as_reg_no_shift().unwrap();
-                let reg1 = *operands[1].as_reg_no_shift().unwrap();
-                opcode.set_rd(u4::new(reg0 as u8));
-                opcode.set_rm(u4::new(reg1 as u8));
-                u32::from(opcode)
-            }
-            _ => {
-                todo!("{:?}", self)
-            }
-        }
-    }
-
     pub fn is_branch(&self) -> bool {
         self.out_regs.is_reserved(Reg::PC) || self.op.is_branch()
     }
 
     pub fn is_uncond_branch(&self) -> bool {
-        self.cond == Cond::AL && (self.out_regs.is_reserved(Reg::PC) || self.op.is_uncond_branch())
+        if self.op.is_branch() {
+            self.get_branch_cond() == Cond::AL
+        } else {
+            self.cond == Cond::AL && self.out_regs.is_reserved(Reg::PC)
+        }
+    }
+
+    pub fn get_branch_cond(&self) -> Cond {
+        debug_assert!(self.op.is_branch());
+        match self.op {
+            Op::BeqT => Cond::EQ,
+            Op::BneT => Cond::NE,
+            Op::BcsT => Cond::HS,
+            Op::BccT => Cond::LO,
+            Op::BmiT => Cond::MI,
+            Op::BplT => Cond::PL,
+            Op::BvsT => Cond::VS,
+            Op::BvcT => Cond::VC,
+            Op::BhiT => Cond::HI,
+            Op::BlsT => Cond::LS,
+            Op::BgeT => Cond::GE,
+            Op::BltT => Cond::LT,
+            Op::BgtT => Cond::GT,
+            Op::BleT => Cond::LE,
+            _ => self.cond,
+        }
     }
 }
 
@@ -290,6 +156,7 @@ impl Debug for Operands {
 pub enum Operand {
     Reg { reg: Reg, shift: Option<Shift> },
     Imm(u32),
+    RegList(RegReserve),
     None,
 }
 
@@ -328,14 +195,18 @@ impl Operand {
         Operand::Imm(imm)
     }
 
-    pub fn as_reg(&self) -> Option<(&Reg, &Option<Shift>)> {
+    pub fn reg_list(reg: RegReserve) -> Self {
+        Operand::RegList(reg)
+    }
+
+    pub fn as_reg(&self) -> Option<(Reg, Option<Shift>)> {
         match self {
-            Operand::Reg { reg, shift } => Some((reg, shift)),
+            Operand::Reg { reg, shift } => Some((*reg, *shift)),
             _ => None,
         }
     }
 
-    pub fn as_reg_no_shift(&self) -> Option<&Reg> {
+    pub fn as_reg_no_shift(&self) -> Option<Reg> {
         match self.as_reg() {
             None => None,
             Some((reg, shift)) => match shift {
@@ -345,9 +216,16 @@ impl Operand {
         }
     }
 
-    pub fn as_imm(&self) -> Option<&u32> {
+    pub fn as_imm(&self) -> Option<u32> {
         match self {
-            Operand::Imm(imm) => Some(imm),
+            Operand::Imm(imm) => Some(*imm),
+            _ => None,
+        }
+    }
+
+    pub fn as_reg_list(&self) -> Option<RegReserve> {
+        match self {
+            Operand::RegList(list) => Some(*list),
             _ => None,
         }
     }
@@ -361,6 +239,7 @@ impl Debug for Operand {
                 Some(shift) => write!(f, "Reg {{ {reg:?} {shift:?} }}"),
             },
             Operand::Imm(imm) => write!(f, "Imm({imm:x})"),
+            Operand::RegList(reg) => write!(f, "RegList({reg:?})"),
             Operand::None => write!(f, "None"),
         }
     }

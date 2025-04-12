@@ -3,7 +3,7 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
@@ -62,9 +62,12 @@ fn main() {
             vixl_build.include(vixl_path.join("src")).compiler("clang").cpp(true);
 
             if let Ok(vitasdk_path) = &vitasdk_path {
-                vixl_build
-                    .include(vitasdk_path.join("arm-vita-eabi").join("include/c++/13.3.0").to_str().unwrap())
-                    .include(vitasdk_path.join("arm-vita-eabi").join("include/c++/13.3.0/arm-vita-eabi").to_str().unwrap());
+                let cpp_include_path = vitasdk_path.join("arm-vita-eabi").join("include/c++");
+                let dir = fs::read_dir(cpp_include_path).unwrap();
+                let version = dir.into_iter().next().unwrap().unwrap();
+                let cpp_include_path = version.path();
+
+                vixl_build.include(cpp_include_path.to_str().unwrap()).include(cpp_include_path.join("arm-vita-eabi").to_str().unwrap());
             }
 
             for flag in vixl_flags {
@@ -89,7 +92,10 @@ fn main() {
         let vixl_masm_file = out_path.join("vixl_masm.cpp");
         File::create(&vixl_masm_file).unwrap().write_all(&out).unwrap();
 
-        let clang_format_output = Command::new("clang-format").arg("-style").arg("{ColumnLimit: 99999}").arg(vixl_masm_file).output().unwrap();
+        let clang_format_output = match Command::new("clang-format").arg("-style").arg("{ColumnLimit: 99999}").arg(vixl_masm_file).output() {
+            Ok(output) => output,
+            Err(err) => panic!("Failed to run clang-format: {err}"),
+        };
         assert!(clang_format_output.status.success(), "{clang_format_output:?}");
 
         let output = String::from_utf8(clang_format_output.stdout).unwrap();
@@ -239,6 +245,8 @@ fn main() {
                         rust_type = "Cond".to_string();
                     } else if t == "Register" {
                         rust_type = "Reg".to_string();
+                    } else if t == "RegisterList" {
+                        rust_type = "RegReserve".to_string();
                     }
 
                     let has_ptr_inner = t == "DOperand" || t == "QOperand" || t == "SOperand" || t == "RawLiteral" || t == "Label";
@@ -256,6 +264,8 @@ fn main() {
                         delegate_params += &format!("Condition::from({name}), ");
                     } else if t == "Register" {
                         delegate_params += &format!("Register::from({name}), ");
+                    } else if t == "RegisterList" {
+                        delegate_params += &format!("RegisterList::from({name}), ");
                     } else {
                         delegate_params += &format!("{name}, ");
                     }
@@ -304,7 +314,7 @@ fn main() {
                 if !generic_types.is_empty() {
                     writeln!(
                         vixl_inst_wrapper_file,
-                        r"impl Masm{fun_name}{}<{generic_types}> for MarcoAssembler {{
+                        r"impl Masm{fun_name}{}<{generic_types}> for MacroAssembler {{
     fn {}{}(&mut self, {fun_params}) {{
         unsafe {{ masm_{}{}(self.inner, {delegate_params}) }}
     }}
@@ -320,7 +330,7 @@ fn main() {
                 } else {
                     writeln!(
                         vixl_inst_wrapper_file,
-                        r"impl Masm{fun_name} for MarcoAssembler {{
+                        r"impl Masm{fun_name} for MacroAssembler {{
     fn {}0(&mut self) {{
         unsafe {{ masm_{}{}(self.inner) }}
     }}

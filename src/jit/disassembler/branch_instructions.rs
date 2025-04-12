@@ -6,19 +6,19 @@ mod branch_ops {
     #[inline]
     pub fn bx(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from((opcode & 0xF) as u8);
-        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), reg_reserve!(Reg::CPSR), 1)
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), reg_reserve!(Reg::PC), 1)
     }
 
     #[inline]
     pub fn blx_reg(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from((opcode & 0xF) as u8);
-        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), reg_reserve!(Reg::LR, Reg::CPSR), 1)
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(op0), reg_reserve!(Reg::LR, Reg::PC), 1)
     }
 
     #[inline]
     pub fn b(opcode: u32, op: Op) -> InstInfo {
         let op0 = ((opcode << 8) as i32) >> 6; // * 4 (in steps of 4)
-        let inst = InstInfo::new(opcode, op, Operands::new_1(Operand::imm(op0 as u32)), reg_reserve!(), reg_reserve!(), 1);
+        let inst = InstInfo::new(opcode, op, Operands::new_1(Operand::imm(op0 as u32)), reg_reserve!(), reg_reserve!(Reg::PC), 1);
         // blx label
         if inst.cond == Cond::NV {
             let op0 = (((opcode << 8) as i32) >> 6) | ((opcode & (1 << 24)) >> 23) as i32;
@@ -27,7 +27,7 @@ mod branch_ops {
                 Op::Blx,
                 Operands::new_1(Operand::imm(op0 as u32)),
                 reg_reserve!(),
-                reg_reserve!(Reg::LR, Reg::CPSR),
+                reg_reserve!(),
                 1,
             )
         } else {
@@ -38,7 +38,7 @@ mod branch_ops {
     #[inline]
     pub fn bl(opcode: u32, op: Op) -> InstInfo {
         let op0 = ((opcode << 8) as i32) >> 6; // * 4 (in steps of 4)
-        let inst = InstInfo::new(opcode, op, Operands::new_1(Operand::imm(op0 as u32)), reg_reserve!(), reg_reserve!(Reg::LR), 1);
+        let inst = InstInfo::new(opcode, op, Operands::new_1(Operand::imm(op0 as u32)), reg_reserve!(), reg_reserve!(Reg::LR, Reg::PC), 1);
         // blx label
         if inst.cond == Cond::NV {
             let op0 = (((opcode << 8) as i32) >> 6) | ((opcode & (1 << 24)) >> 23) as i32;
@@ -47,7 +47,7 @@ mod branch_ops {
                 Op::Blx,
                 Operands::new_1(Operand::imm(op0 as u32)),
                 reg_reserve!(),
-                reg_reserve!(Reg::LR, Reg::CPSR),
+                reg_reserve!(Reg::PC),
                 1,
             )
         } else {

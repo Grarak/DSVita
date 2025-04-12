@@ -22,6 +22,24 @@ macro_rules! branch_println {
 }
 pub(crate) use branch_println;
 
+macro_rules! block_asm_print {
+    ($($args:tt)*) => {
+        if crate::DEBUG_LOG {
+            print!($($args)*);
+        }
+    };
+}
+pub(crate) use block_asm_print;
+
+macro_rules! block_asm_println {
+    ($($args:tt)*) => {
+        if crate::DEBUG_LOG {
+            println!($($args)*);
+        }
+    };
+}
+pub(crate) use block_asm_println;
+
 macro_rules! debug_panic {
     ($($args:tt)*) => {
         if crate::IS_DEBUG {

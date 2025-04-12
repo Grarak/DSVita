@@ -79,89 +79,74 @@ impl RegReserve {
         RegReserve(GP_REGS_BITMASK)
     }
 
-    pub fn gp_thumb() -> Self {
-        RegReserve(GP_THUMB_REGS_BITMASK)
+    pub const fn all() -> Self {
+        RegReserve(0xFFFF)
     }
 
-    pub fn caller_saved_gp() -> Self {
-        reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12)
+    pub fn gp_thumb() -> Self {
+        RegReserve(GP_THUMB_REGS_BITMASK)
     }
 
     pub const fn reserve(&mut self, reg: Reg) {
         self.0 |= 1 << (reg as u8);
     }
 
-    pub fn is_reserved(&self, reg: Reg) -> bool {
+    pub fn is_reserved(self, reg: Reg) -> bool {
         (self.0 >> reg as u8) & 1 == 1
     }
 
-    pub fn next_free(&self) -> Option<Reg> {
-        for i in Reg::R0 as u8..Reg::SPSR as u8 {
-            let reg = Reg::from(i);
-            if !self.is_reserved(reg) {
-                return Some(reg);
-            }
+    pub fn next_gp_free(self) -> Option<Reg> {
+        let count = self.0.trailing_ones();
+        if count >= Reg::SP as u32 {
+            None
+        } else {
+            Some(Reg::from(count as u8))
         }
-        None
     }
 
-    pub const fn len(&self) -> usize {
+    pub fn peek_gp(self) -> Option<Reg> {
+        let count = self.0.trailing_zeros();
+        if count >= Reg::SP as u32 {
+            None
+        } else {
+            Some(Reg::from(count as u8))
+        }
+    }
+
+    pub fn peek(self) -> Option<Reg> {
+        let count = self.0.trailing_zeros();
+        if count >= Reg::CPSR as u32 {
+            None
+        } else {
+            Some(Reg::from(count as u8))
+        }
+    }
+
+    pub const fn len(self) -> usize {
         u32::count_ones(self.0) as _
     }
 
-    pub const fn is_empty(&self) -> bool {
+    pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
 
-    pub fn get_gp_regs(&self) -> RegReserve {
+    pub fn get_gp_regs(self) -> RegReserve {
         RegReserve(self.0 & GP_REGS_BITMASK)
     }
 
-    pub fn get_gp_lr_regs(&self) -> RegReserve {
+    pub const fn get_gp_lr_regs(self) -> RegReserve {
         RegReserve(self.0 & GP_LR_REGS_BITMASK)
-    }
-
-    pub fn peek(&self) -> Option<Reg> {
-        for i in Reg::R0 as u8..Reg::SPSR as u8 {
-            let reg = Reg::from(i);
-            if self.is_reserved(reg) {
-                return Some(reg);
-            }
-        }
-        None
-    }
-
-    pub fn pop(&mut self) -> Option<Reg> {
-        for i in Reg::R0 as u8..Reg::SPSR as u8 {
-            let reg = Reg::from(i);
-            if self.is_reserved(reg) {
-                self.0 &= !(1 << i);
-                return Some(reg);
-            }
-        }
-        None
-    }
-
-    pub fn pop_rev(&mut self) -> Option<Reg> {
-        for i in (Reg::R0 as u8..Reg::SPSR as u8).rev() {
-            let reg = Reg::from(i);
-            if self.is_reserved(reg) {
-                self.0 &= !(1 << i);
-                return Some(reg);
-            }
-        }
-        None
     }
 
     pub fn clear(&mut self) {
         self.0 = 0;
     }
 
-    pub fn get_highest_reg(&self) -> Reg {
+    pub fn get_highest_reg(self) -> Reg {
         Reg::from(32 - self.0.leading_zeros() as u8 - 1)
     }
 
-    pub fn get_lowest_reg(&self) -> Reg {
+    pub fn get_lowest_reg(self) -> Reg {
         Reg::from(self.0.trailing_zeros() as u8)
     }
 }
@@ -323,5 +308,15 @@ impl Iterator for RegReserveIter {
             self.reserve &= !(0x80000000 >> zeros);
             Some(reg)
         }
+    }
+}
+
+impl FromIterator<Reg> for RegReserve {
+    fn from_iter<T: IntoIterator<Item = Reg>>(iter: T) -> Self {
+        let mut reg_reserve = RegReserve::new();
+        for reg in iter {
+            reg_reserve += reg;
+        }
+        reg_reserve
     }
 }

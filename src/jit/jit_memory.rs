@@ -1,25 +1,26 @@
 use crate::core::emu::Emu;
 use crate::core::memory::{regions, vram};
 use crate::core::CpuType;
-use crate::jit::assembler::arm::alu_assembler::{AluImm, AluShiftImm};
-use crate::jit::assembler::arm::branch_assembler::B;
-use crate::jit::disassembler::lookup_table::lookup_opcode;
-use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
-use crate::jit::inst_mem_handler::{inst_mem_handler_multiple_write_gx_fifo, inst_mem_handler_write_gx_fifo};
+use crate::jit::assembler::block_asm::GuestInstMetadata;
+use crate::jit::assembler::thumb;
+use crate::jit::assembler::thumb::{BlxReg, Mov};
+use crate::jit::inst_mem_handler::{inst_mem_handler_multiple, inst_read64_mem_handler, inst_read_mem_handler, inst_write_mem_handler, InstMemMultipleParams};
 use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt};
 use crate::jit::jit_memory_map::JitMemoryMap;
-use crate::jit::op::Op;
+use crate::jit::op::{MultipleTransfer, Op, SingleTransfer};
 use crate::jit::reg::Reg;
-use crate::jit::{Cond, MemoryAmount};
+use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
-use crate::mmap::{flush_icache, Mmap, PAGE_SHIFT, PAGE_SIZE};
+use crate::mmap::{flush_icache, ArmContext, Mmap, PAGE_SHIFT, PAGE_SIZE};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils;
 use crate::utils::{HeapMem, HeapMemU8};
+use bilge::prelude::{u4, u6};
 use std::collections::VecDeque;
+use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 use std::ops::Deref;
-use std::ptr;
+use std::{mem, ptr, slice};
 use CpuType::{ARM7, ARM9};
 
 const JIT_MEMORY_SIZE: usize = 24 * 1024 * 1024;
@@ -27,6 +28,10 @@ pub const JIT_LIVE_RANGE_PAGE_SIZE_SHIFT: u32 = 8;
 const JIT_LIVE_RANGE_PAGE_SIZE: u32 = 1 << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
 const JIT_ARM9_MEMORY_SIZE: usize = 20 * 1024 * 1024;
 const JIT_ARM7_MEMORY_SIZE: usize = JIT_MEMORY_SIZE - JIT_ARM9_MEMORY_SIZE;
+
+pub const SLOW_MEM_SINGLE_WRITE_LENGTH: usize = 18;
+pub const SLOW_MEM_SINGLE_READ_LENGTH: usize = 10;
+pub const SLOW_MEM_MULTIPLE_LENGTH: usize = 26;
 
 #[derive(Copy, Clone)]
 pub struct JitEntry(pub *const extern "C" fn());
@@ -159,10 +164,11 @@ pub struct JitMemory {
     jit_live_ranges: JitLiveRanges,
     pub jit_memory_map: JitMemoryMap,
     jit_perf_map_record: JitPerfMapRecord,
+    guest_inst_metadata: HeapMem<Vec<GuestInstMetadata>, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
 }
 
 impl Emu {
-    pub fn jit_insert_block(&mut self, opcodes: &[u32], guest_pc: u32, cpu_type: CpuType) -> (*const extern "C" fn(), bool) {
+    pub fn jit_insert_block(&mut self, opcodes: &[u8], guest_inst_metadata: &[(u16, GuestInstMetadata)], guest_pc: u32, cpu_type: CpuType) -> (*const extern "C" fn(), bool) {
         macro_rules! insert {
             ($entries:expr, $live_ranges:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
                 let ret = insert!($entries, $live_ranges);
@@ -173,9 +179,9 @@ impl Emu {
             }};
 
             ($entries:expr, $live_ranges:expr) => {{
-                let (allocated_offset_addr, aligned_size, flushed) = self.jit.insert(opcodes, cpu_type);
+                let (allocated_offset_addr, aligned_size, flushed) = self.jit.insert(opcodes, guest_inst_metadata, cpu_type);
 
-                let jit_entry_addr = (allocated_offset_addr + self.jit.mem.as_ptr() as usize) as *const extern "C" fn();
+                let jit_entry_addr = ((allocated_offset_addr + self.jit.mem.as_ptr() as usize) | 1) as *const extern "C" fn();
 
                 let entries_index = (guest_pc >> 1) as usize;
                 let entries_index = entries_index % $entries.len();
@@ -211,7 +217,12 @@ impl Emu {
                     if guest_pc & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
                         insert!(self.jit.jit_entries.wram_arm7, self.jit.jit_live_ranges.wram_arm7, regions::ARM7_WRAM_REGION, [ARM7])
                     } else {
-                        insert!(self.jit.jit_entries.shared_wram_arm7, self.jit.jit_live_ranges.shared_wram_arm7, regions::SHARED_WRAM_ARM7_REGION, [ARM7])
+                        insert!(
+                            self.jit.jit_entries.shared_wram_arm7,
+                            self.jit.jit_live_ranges.shared_wram_arm7,
+                            regions::SHARED_WRAM_ARM7_REGION,
+                            [ARM7]
+                        )
                     }
                 }
                 regions::VRAM_OFFSET => insert!(self.jit.jit_entries.vram, self.jit.jit_live_ranges.vram),
@@ -242,6 +253,7 @@ impl JitMemory {
             jit_live_ranges,
             jit_memory_map,
             jit_perf_map_record: JitPerfMapRecord::new(),
+            guest_inst_metadata: HeapMem::new(),
         }
     }
 
@@ -253,26 +265,36 @@ impl JitMemory {
     }
 
     fn reset_blocks(&mut self, cpu_type: CpuType) {
-        // self.jit_perf_map_record.reset();
+        self.jit_perf_map_record.reset();
 
-        let jit_data = self.get_jit_data(cpu_type);
-
-        let (jit_entry, addr_offset_start, addr_offset_end) = jit_data.jit_funcs.pop_front().unwrap();
+        let (jit_entry, addr_offset_start, addr_offset_end) = self.get_jit_data(cpu_type).jit_funcs.pop_front().unwrap();
         let jit_entry = jit_entry as *mut JitEntry;
+
         unsafe { *jit_entry = DEFAULT_JIT_ENTRY };
-        let freed_start = addr_offset_start;
-        let mut freed_end = addr_offset_end;
-        while (freed_end - freed_start) < (jit_data.size / 4 / PAGE_SIZE) as u16 {
-            let (jit_entry, _, addr_offset_end) = jit_data.jit_funcs.front().unwrap();
-            if *addr_offset_end < freed_start {
-                break;
-            }
-            let jit_entry = *jit_entry as *mut JitEntry;
-            unsafe { *jit_entry = DEFAULT_JIT_ENTRY };
-            freed_end = *addr_offset_end;
-            jit_data.jit_funcs.pop_front().unwrap();
+        for i in addr_offset_start..addr_offset_end {
+            self.guest_inst_metadata[i as usize].clear();
         }
 
+        let jit_size = self.get_jit_data(cpu_type).size;
+        let freed_start = addr_offset_start;
+        let mut freed_end = addr_offset_end;
+        while (freed_end - freed_start) < (jit_size / 4 / PAGE_SIZE) as u16 {
+            let &(jit_entry, addr_offset_start, addr_offset_end) = self.get_jit_data(cpu_type).jit_funcs.front().unwrap();
+            if addr_offset_end < freed_start {
+                break;
+            }
+            let jit_entry = jit_entry as *mut JitEntry;
+
+            unsafe { *jit_entry = DEFAULT_JIT_ENTRY };
+            for i in addr_offset_start..addr_offset_end {
+                self.guest_inst_metadata[i as usize].clear();
+            }
+
+            freed_end = addr_offset_end;
+            self.get_jit_data(cpu_type).jit_funcs.pop_front().unwrap();
+        }
+
+        let jit_data = self.get_jit_data(cpu_type);
         jit_data.start = (freed_start as usize) << PAGE_SHIFT;
         jit_data.end = (freed_end as usize) << PAGE_SHIFT;
 
@@ -299,12 +321,17 @@ impl JitMemory {
         (addr, flushed)
     }
 
-    fn insert(&mut self, opcodes: &[u32], cpu_type: CpuType) -> (usize, usize, bool) {
-        let aligned_size = utils::align_up(size_of_val(opcodes), PAGE_SIZE);
+    fn insert(&mut self, opcodes: &[u8], guest_inst_metadata: &[(u16, GuestInstMetadata)], cpu_type: CpuType) -> (usize, usize, bool) {
+        let aligned_size = utils::align_up(opcodes.len(), PAGE_SIZE);
         let (allocated_offset_addr, flushed) = self.allocate_block(aligned_size, cpu_type);
 
         utils::write_to_mem_slice(&mut self.mem, allocated_offset_addr, opcodes);
         unsafe { flush_icache(self.mem.as_ptr().add(allocated_offset_addr), aligned_size) };
+
+        let block_page = allocated_offset_addr >> PAGE_SHIFT;
+        for (block_offset, metadata) in guest_inst_metadata {
+            self.guest_inst_metadata[block_page + *block_offset as usize].push(metadata.clone());
+        }
 
         (allocated_offset_addr, aligned_size, flushed)
     }
@@ -355,167 +382,182 @@ impl JitMemory {
         }
     }
 
-    pub fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType) -> bool {
+    fn get_inst_mem_handler_fun<const CPU: CpuType>(is_write: bool, transfer: SingleTransfer) -> *const () {
+        match (is_write, transfer.size()) {
+            (true, 0) => inst_write_mem_handler::<CPU, { MemoryAmount::Byte }> as _,
+            (true, 1) => inst_write_mem_handler::<CPU, { MemoryAmount::Half }> as _,
+            (true, 2) => inst_write_mem_handler::<CPU, { MemoryAmount::Word }> as _,
+            (true, 3) => inst_write_mem_handler::<CPU, { MemoryAmount::Double }> as _,
+            (false, 0) => {
+                if transfer.signed() {
+                    inst_read_mem_handler::<CPU, { MemoryAmount::Byte }, true> as _
+                } else {
+                    inst_read_mem_handler::<CPU, { MemoryAmount::Byte }, false> as _
+                }
+            }
+            (false, 1) => {
+                if transfer.signed() {
+                    inst_read_mem_handler::<CPU, { MemoryAmount::Half }, true> as _
+                } else {
+                    inst_read_mem_handler::<CPU, { MemoryAmount::Half }, false> as _
+                }
+            }
+            (false, 2) => inst_read_mem_handler::<CPU, { MemoryAmount::Word }, false> as _,
+            (false, 3) => inst_read64_mem_handler::<CPU> as _,
+            _ => unsafe { unreachable_unchecked() },
+        }
+    }
+
+    fn get_inst_mem_multiple_handler_fun<const CPU: CpuType>(is_write: bool, transfer: MultipleTransfer) -> *const () {
+        match (is_write, transfer.write_back(), !transfer.add()) {
+            (false, false, false) => inst_mem_handler_multiple::<CPU, false, false, false> as _,
+            (false, false, true) => inst_mem_handler_multiple::<CPU, false, false, true> as _,
+            (false, true, false) => inst_mem_handler_multiple::<CPU, false, true, false> as _,
+            (false, true, true) => inst_mem_handler_multiple::<CPU, false, true, true> as _,
+            (true, false, false) => inst_mem_handler_multiple::<CPU, true, false, false> as _,
+            (true, false, true) => inst_mem_handler_multiple::<CPU, true, false, true> as _,
+            (true, true, false) => inst_mem_handler_multiple::<CPU, true, true, false> as _,
+            (true, true, true) => inst_mem_handler_multiple::<CPU, true, true, true> as _,
+        }
+    }
+
+    pub fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType, arm_context: &ArmContext) -> bool {
         if *host_pc < self.mem.as_ptr() as usize || *host_pc >= self.mem.as_ptr() as usize + JIT_MEMORY_SIZE {
             debug_println!("Segfault outside of guest context");
             return false;
         }
 
-        let nop_opcode = AluShiftImm::mov_al(Reg::R0, Reg::R0);
-        for pc_offset in (4..256).step_by(4) {
-            let ptr = (*host_pc + pc_offset) as *mut u32;
-            let opcode = unsafe { ptr.read() };
-            if opcode == nop_opcode {
-                // Already patched, double transfers
-                *host_pc += 4;
-                return true;
-            } else {
-                let (op, _) = lookup_opcode(opcode);
-                if *op == Op::B {
-                    break;
-                }
-            }
-        }
+        let metadata_entry = arm_context.gp_regs[12];
+        let jit_mem_offset = *host_pc - self.mem.as_mut_ptr() as usize;
+        let metadata_block_page = jit_mem_offset >> PAGE_SHIFT;
+        let guest_inst_metadata = &self.guest_inst_metadata[metadata_block_page][metadata_entry];
 
-        let mut fast_mem_begin = *host_pc - 4;
+        let mut fast_mem_start = *host_pc - 2;
         let mut found = false;
-        while *host_pc - fast_mem_begin < 256 {
-            let ptr = fast_mem_begin as *const u32;
-            if unsafe { ptr.read() } == nop_opcode {
+        while *host_pc - fast_mem_start < 256 {
+            let ptr = fast_mem_start as *const u16;
+            if unsafe { ptr.read() } == thumb::NOP {
                 found = true;
                 break;
             }
-            fast_mem_begin -= 4;
+            fast_mem_start -= 2;
         }
         if !found {
             return false;
         }
-        let mut fast_mem_end = *host_pc + 4;
+        let mut fast_mem_end = *host_pc + 2;
         found = false;
         while fast_mem_end - *host_pc < 256 {
-            let ptr = fast_mem_end as *const u32;
-            let (op, _) = lookup_opcode(unsafe { ptr.read() });
-            if *op == Op::B {
+            let ptr = fast_mem_end as *const u16;
+            if unsafe { ptr.read() } == thumb::NOP {
                 found = true;
                 break;
             }
-            fast_mem_end += 4;
+            fast_mem_end += 2;
         }
         if !found {
             return false;
         }
 
-        let slow_mem_branch = fast_mem_end + 4;
-        let slow_mem_branch_ptr = slow_mem_branch as *const u32;
-        let slow_mem_branch_opcode = unsafe { slow_mem_branch_ptr.read() };
-        let (op, fun) = lookup_opcode(slow_mem_branch_opcode);
-        if *op != Op::B {
-            return false;
-        }
-        let slow_mem_branch_inst_info = fun(slow_mem_branch_opcode, *op);
-        let slow_mem_relative_pc = *slow_mem_branch_inst_info.operands()[0].as_imm().unwrap() + 8;
-        let slow_mem_begin = (slow_mem_branch as i32 + slow_mem_relative_pc as i32) as usize;
+        let fast_mem_length = fast_mem_end - fast_mem_start + 2;
+        let fast_mem_slice = unsafe { slice::from_raw_parts_mut(fast_mem_start as *mut u8, fast_mem_length) };
+        let mut slow_mem_length = 0;
 
-        if cpu == ARM9 && guest_memory_addr >= 0x4000400 && guest_memory_addr < 0x4000440 {
-            let (fault_op, _) = lookup_opcode(unsafe { (*host_pc as *const u32).read() });
-            if fault_op.mem_is_write() {
-                let mut slow_mem_end = slow_mem_begin + 4;
-                found = false;
-                while slow_mem_end - slow_mem_begin < 256 {
-                    let ptr = slow_mem_end as *const u32;
-                    let (op, _) = lookup_opcode(unsafe { ptr.read() });
-                    if *op == Op::B {
-                        found = true;
-                        break;
-                    }
-                    slow_mem_end += 4;
-                }
+        if guest_inst_metadata.op.is_single_mem_transfer() {
+            let transfer = match guest_inst_metadata.op {
+                Op::Ldr(transfer) | Op::LdrT(transfer) | Op::Str(transfer) | Op::StrT(transfer) => transfer,
+                _ => unsafe { unreachable_unchecked() },
+            };
 
-                if !found {
-                    return false;
-                }
+            let inst_mem_func = match cpu {
+                ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(guest_inst_metadata.op.is_write_mem_transfer(), transfer),
+                ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(guest_inst_metadata.op.is_write_mem_transfer(), transfer),
+            };
 
-                let guest_op_ptr = (slow_mem_end + 4) as *const u32;
-                let guest_op = unsafe { guest_op_ptr.read() };
-                let op = if guest_op == guest_op & 0xFFFF {
-                    lookup_thumb_opcode(guest_op as u16).0
-                } else {
-                    lookup_opcode(guest_op).0
-                };
+            let (opcodes, length) = Mov::mov32(Reg::R12, inst_mem_func as u32);
+            let opcodes: [u8; 2 * size_of::<u32>()] = unsafe { mem::transmute(opcodes) };
+            let length = length * size_of::<u32>();
+            fast_mem_slice[..length].copy_from_slice(&opcodes[..length]);
+            slow_mem_length = length;
 
-                if (op.is_single_mem_transfer() && MemoryAmount::from(op) == MemoryAmount::Word) || op.is_multiple_mem_transfer() {
-                    let mut blx_opcode_pc = slow_mem_begin + 4;
-                    let mut blx_reg = Reg::R0;
-                    found = false;
-                    while blx_opcode_pc - slow_mem_begin < 256 {
-                        let ptr = blx_opcode_pc as *const u32;
-                        let opcode = unsafe { ptr.read() };
-                        let (op, fun) = lookup_opcode(opcode);
-                        if *op == Op::BlxReg {
-                            found = true;
-                            let inst_info = fun(opcode, *op);
-                            blx_reg = *inst_info.operands()[0].as_reg_no_shift().unwrap();
-                            break;
-                        }
-                        blx_opcode_pc += 4;
-                    }
-
-                    if !found {
-                        return false;
-                    }
-
-                    const MOV_MASK: u32 = 0xFFF0F000;
-                    let mov16_op = AluImm::mov16_al(blx_reg, 0) & MOV_MASK;
-                    let mov_t_op = AluImm::mov_t_al(blx_reg, 0) & MOV_MASK;
-
-                    found = false;
-
-                    let mut mov_reg_pc = blx_opcode_pc - 4;
-                    while blx_opcode_pc - mov_reg_pc < 256 {
-                        let mov_16_ptr = (mov_reg_pc - 4) as *const u32;
-                        let mov_t_ptr = mov_reg_pc as *const u32;
-                        mov_reg_pc -= 4;
-                        if unsafe { mov_16_ptr.read() } & MOV_MASK == mov16_op && unsafe { mov_t_ptr.read() } & MOV_MASK == mov_t_op {
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if !found {
-                        return false;
-                    }
-
-                    let func = if op.is_single_mem_transfer() {
-                        inst_mem_handler_write_gx_fifo as *const ()
-                    } else {
-                        match (op.mem_transfer_pre(), op.mem_transfer_write_back(), op.mem_transfer_decrement()) {
-                            (false, false, false) => inst_mem_handler_multiple_write_gx_fifo::<false, false, false> as _,
-                            (false, false, true) => inst_mem_handler_multiple_write_gx_fifo::<false, false, true> as _,
-                            (false, true, false) => inst_mem_handler_multiple_write_gx_fifo::<false, true, false> as _,
-                            (false, true, true) => inst_mem_handler_multiple_write_gx_fifo::<false, true, true> as _,
-                            (true, false, false) => inst_mem_handler_multiple_write_gx_fifo::<true, false, false> as _,
-                            (true, false, true) => inst_mem_handler_multiple_write_gx_fifo::<true, false, true> as _,
-                            (true, true, false) => inst_mem_handler_multiple_write_gx_fifo::<true, true, false> as _,
-                            (true, true, true) => inst_mem_handler_multiple_write_gx_fifo::<true, true, true> as _,
-                        }
-                    };
-
-                    let (mov_opcodes, mov_length) = AluImm::mov32(blx_reg, func as u32);
-                    debug_assert_eq!(mov_length, 2);
-                    unsafe { (mov_reg_pc as *mut u32).write(mov_opcodes[0]) };
-                    unsafe { ((mov_reg_pc + 4) as *mut u32).write(mov_opcodes[1]) };
-                    unsafe { flush_icache(mov_reg_pc as _, 8) };
-                }
+            if guest_inst_metadata.op.is_write_mem_transfer() {
+                let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
+                let (opcodes, length) = Mov::mov32(Reg::R3, guest_inst_metadata_ptr as u32);
+                let opcodes: [u8; 2 * size_of::<u32>()] = unsafe { mem::transmute(opcodes) };
+                let length = length * size_of::<u32>();
+                fast_mem_slice[slow_mem_length..slow_mem_length + length].copy_from_slice(&opcodes[..length]);
+                slow_mem_length += length;
             }
+
+            let opcode = BlxReg::blx_reg(Reg::R12);
+            fast_mem_slice[slow_mem_length] = opcode as u8;
+            fast_mem_slice[slow_mem_length + 1] = (opcode >> 8) as u8;
+            slow_mem_length += 2;
+
+            if guest_inst_metadata.op.is_write_mem_transfer() {
+                debug_assert!(slow_mem_length <= SLOW_MEM_SINGLE_WRITE_LENGTH, "{slow_mem_length} < {SLOW_MEM_SINGLE_WRITE_LENGTH}");
+            } else {
+                debug_assert!(slow_mem_length <= SLOW_MEM_SINGLE_READ_LENGTH, "{slow_mem_length} < {SLOW_MEM_SINGLE_READ_LENGTH}");
+            }
+        } else {
+            let transfer = match guest_inst_metadata.op {
+                Op::Ldm(transfer) | Op::LdmT(transfer) | Op::Stm(transfer) | Op::StmT(transfer) => transfer,
+                _ => unsafe { unreachable_unchecked() },
+            };
+
+            let inst_mem_func = match cpu {
+                ARM9 => Self::get_inst_mem_multiple_handler_fun::<{ ARM9 }>(guest_inst_metadata.op.is_write_mem_transfer(), transfer),
+                ARM7 => Self::get_inst_mem_multiple_handler_fun::<{ ARM7 }>(guest_inst_metadata.op.is_write_mem_transfer(), transfer),
+            };
+
+            let mut pre = transfer.pre();
+            if !transfer.add() {
+                pre = !pre;
+            }
+            let params = InstMemMultipleParams::new(
+                guest_inst_metadata.rlist,
+                u4::new(guest_inst_metadata.rlist.count_ones() as u8),
+                u4::new(guest_inst_metadata.op0 as u8),
+                pre,
+                transfer.user(),
+                u6::new(0),
+            );
+
+            let (opcodes, length) = Mov::mov32(Reg::R12, inst_mem_func as u32);
+            let opcodes: [u8; 2 * size_of::<u32>()] = unsafe { mem::transmute(opcodes) };
+            let length = length * size_of::<u32>();
+            fast_mem_slice[..length].copy_from_slice(&opcodes[..length]);
+            slow_mem_length = length;
+
+            let (opcodes, length) = Mov::mov32(Reg::R0, u32::from(params));
+            let opcodes: [u8; 2 * size_of::<u32>()] = unsafe { mem::transmute(opcodes) };
+            let length = length * size_of::<u32>();
+            fast_mem_slice[slow_mem_length..slow_mem_length + length].copy_from_slice(&opcodes[..length]);
+            slow_mem_length += length;
+
+            let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
+            let (opcodes, length) = Mov::mov32(Reg::R1, guest_inst_metadata_ptr as u32);
+            let opcodes: [u8; 2 * size_of::<u32>()] = unsafe { mem::transmute(opcodes) };
+            let length = length * size_of::<u32>();
+            fast_mem_slice[slow_mem_length..slow_mem_length + length].copy_from_slice(&opcodes[..length]);
+            slow_mem_length += length;
+
+            let opcode = BlxReg::blx_reg(Reg::R12);
+            fast_mem_slice[slow_mem_length] = opcode as u8;
+            fast_mem_slice[slow_mem_length + 1] = (opcode >> 8) as u8;
+            slow_mem_length += 2;
+
+            debug_assert!(slow_mem_length <= SLOW_MEM_MULTIPLE_LENGTH, "{slow_mem_length} < {SLOW_MEM_SINGLE_WRITE_LENGTH}");
         }
 
-        let diff = (slow_mem_begin - fast_mem_begin) >> 2;
-        unsafe {
-            (fast_mem_begin as *mut u32).write(B::b(diff as i32 - 2, Cond::AL));
-            (fast_mem_end as *mut u32).write(nop_opcode);
+        debug_assert!(slow_mem_length <= fast_mem_length);
+        for i in (slow_mem_length..fast_mem_length).step_by(2) {
+            fast_mem_slice[i] = thumb::NOP as u8;
+            fast_mem_slice[i + 1] = (thumb::NOP >> 8) as u8;
         }
-        *host_pc += 4;
-        unsafe { flush_icache(fast_mem_begin as _, fast_mem_end - fast_mem_begin + 4) }
+
+        *host_pc = fast_mem_start;
+        unsafe { flush_icache(fast_mem_start as _, fast_mem_length) };
         true
     }
 }

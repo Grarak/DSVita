@@ -1,584 +1,228 @@
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::{BlockOperand, BlockReg};
-use crate::jit::inst_info::Operand;
-use crate::jit::inst_mem_handler::{inst_mem_handler, inst_mem_handler_multiple, InstMemMultipleParams};
+use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, MemOperand, WriteBack};
+use crate::jit::assembler::vixl::{
+    MacroAssembler, MasmAdd3, MasmAdd5, MasmAnd5, MasmBic3, MasmLdm3, MasmLdmda3, MasmLdmdb3, MasmLdmib3, MasmLdr2, MasmLdrb2, MasmLdrh2, MasmLsl5, MasmMov2, MasmMov4, MasmMovs2, MasmNop, MasmRor5,
+    MasmStm3, MasmStmda3, MasmStmdb3, MasmStmib3, MasmStr2, MasmStrb2, MasmStrh2, MasmSub3, MasmSub5,
+};
 use crate::jit::jit_asm::JitAsm;
+use crate::jit::jit_memory::{SLOW_MEM_MULTIPLE_LENGTH, SLOW_MEM_SINGLE_READ_LENGTH, SLOW_MEM_SINGLE_WRITE_LENGTH};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
-use crate::jit::{Cond, MemoryAmount, ShiftType};
-use bilge::prelude::*;
+use crate::jit::Cond;
+use std::cmp::min;
 
 impl<const CPU: CpuType> JitAsm<'_, CPU> {
-    fn get_inst_mem_handler_func<const WRITE: bool>(signed: bool, amount: MemoryAmount) -> *const () {
-        match amount {
-            MemoryAmount::Byte => {
-                if signed {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, true> as *const _
-                } else {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Byte }, false> as *const _
-                }
-            }
-            MemoryAmount::Half => {
-                if signed {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, true> as *const _
-                } else {
-                    inst_mem_handler::<CPU, WRITE, { MemoryAmount::Half }, false> as *const _
-                }
-            }
-            MemoryAmount::Word => inst_mem_handler::<CPU, WRITE, { MemoryAmount::Word }, false> as *const _,
-            MemoryAmount::Double => inst_mem_handler::<CPU, WRITE, { MemoryAmount::Double }, false> as *const _,
-        }
-    }
-
-    pub fn emit_single_transfer<const WRITE: bool>(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount, thumb: bool) {
-        if WRITE {
-            self.emit_single_transfer_write(block_asm, pre, write_back, amount, thumb)
-        } else {
-            self.emit_single_transfer_read(block_asm, pre, write_back, amount, thumb)
-        }
-    }
-
-    fn emit_single_transfer_write(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount, thumb: bool) {
-        let (op, op0, op1, op2) = {
-            let inst_info = self.jit_buf.current_inst();
-            let operands = inst_info.operands();
-            (inst_info.op, *operands[0].as_reg_no_shift().unwrap(), *operands[1].as_reg_no_shift().unwrap(), &operands[2])
-        };
-
-        let post_addr_reg = block_asm.new_reg();
-        match op2 {
-            Operand::Reg { reg, shift } => {
-                if op.mem_transfer_single_sub() {
-                    block_asm.sub(post_addr_reg, op1, (*reg, *shift))
-                } else {
-                    block_asm.add(post_addr_reg, op1, (*reg, *shift))
-                }
-            }
-            Operand::Imm(imm) => {
-                if op.mem_transfer_single_sub() {
-                    block_asm.sub(post_addr_reg, op1, *imm)
-                } else {
-                    block_asm.add(post_addr_reg, op1, *imm)
-                }
-            }
-            Operand::None => {}
-        }
-
-        let addr_reg = if pre {
-            post_addr_reg
-        } else {
-            let reg = block_asm.new_reg();
-            block_asm.mov(reg, op1);
-            reg
-        };
-
-        let value_reg = block_asm.new_reg();
-        block_asm.mov(value_reg, op0);
-
-        if write_back {
-            block_asm.mov(op1, post_addr_reg);
-        }
-
-        self.emit_write(op0, value_reg, addr_reg, block_asm, amount, thumb);
-
-        block_asm.free_reg(value_reg);
-        block_asm.free_reg(addr_reg);
-        block_asm.free_reg(post_addr_reg);
-    }
-
-    fn emit_write(&mut self, op0: Reg, value_reg: BlockReg, addr_reg: BlockReg, block_asm: &mut BlockAsm, amount: MemoryAmount, thumb: bool) {
-        let fast_write_value_reg = block_asm.new_reg();
-        let fast_write_next_addr_reg = block_asm.new_reg();
-        let fast_write_addr_masked_reg = block_asm.new_reg();
-
-        let slow_write_label = block_asm.new_label();
-        let continue_label = block_asm.new_label();
-
-        if !thumb && op0 == Reg::PC {
-            // When op0 is PC, it's read as PC+12
-            // Don't need to restore it, since breakouts only happen when PC was written to
-            block_asm.add(value_reg, value_reg, 4);
-        }
-
-        block_asm.branch(slow_write_label, Cond::NV);
-
-        let base_ptr = self.emu.mmu_get_base_tcm_ptr::<CPU>();
-        let size = if amount == MemoryAmount::Double { MemoryAmount::Word.size() } else { amount.size() };
-        block_asm.bic(fast_write_addr_masked_reg, addr_reg, 0xF0000000 | (size as u32 - 1));
-        block_asm.transfer_write(
-            value_reg,
-            fast_write_addr_masked_reg,
-            base_ptr as u32,
-            false,
-            if amount == MemoryAmount::Double { MemoryAmount::Word } else { amount },
-        );
-        if amount == MemoryAmount::Double {
-            let op0 = Reg::from(op0 as u8 + 1);
-            block_asm.add(fast_write_next_addr_reg, addr_reg, 4);
-            block_asm.bic(fast_write_addr_masked_reg, fast_write_next_addr_reg, 0xF0000000 | (size as u32 - 1));
-            block_asm.transfer_write(op0, fast_write_addr_masked_reg, base_ptr as u32, false, MemoryAmount::Word);
-        }
-
-        block_asm.branch_fallthrough(continue_label, Cond::AL);
-        block_asm.branch(slow_write_label, Cond::AL);
-
-        block_asm.label_unlikely(slow_write_label);
-
-        block_asm.save_context();
-
-        let func_addr = Self::get_inst_mem_handler_func::<true>(false, amount);
-        block_asm.call4(
-            func_addr,
-            addr_reg,
-            value_reg,
-            self.jit_buf.current_pc | (thumb as u32),
-            (self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32) | ((op0 as u32) << 16),
-        );
-        block_asm.restore_reg(Reg::CPSR);
-
-        match CPU {
-            CpuType::ARM9 => {
-                block_asm.branch_fallthrough(continue_label, Cond::AL);
-                block_asm.generic_data(self.jit_buf.current_inst().opcode);
-                block_asm.force_end();
-            }
-            CpuType::ARM7 => block_asm.branch(continue_label, Cond::AL),
-        }
-
-        block_asm.label(continue_label);
-
-        block_asm.free_reg(fast_write_addr_masked_reg);
-        block_asm.free_reg(fast_write_next_addr_reg);
-        block_asm.free_reg(fast_write_value_reg);
-    }
-
-    fn emit_single_transfer_read(&mut self, block_asm: &mut BlockAsm, pre: bool, write_back: bool, amount: MemoryAmount, thumb: bool) {
-        let (op, op0, op1, op2) = {
-            let inst_info = self.jit_buf.current_inst();
-            let operands = inst_info.operands();
-            (inst_info.op, *operands[0].as_reg_no_shift().unwrap(), *operands[1].as_reg_no_shift().unwrap(), &operands[2])
-        };
-
-        let post_addr_reg = block_asm.new_reg();
-        match op2 {
-            Operand::Reg { reg, shift } => {
-                if op.mem_transfer_single_sub() {
-                    block_asm.sub(post_addr_reg, op1, (*reg, *shift))
-                } else {
-                    block_asm.add(post_addr_reg, op1, (*reg, *shift))
-                }
-            }
-            Operand::Imm(imm) => {
-                if op.mem_transfer_single_sub() {
-                    block_asm.sub(post_addr_reg, op1, *imm)
-                } else {
-                    block_asm.add(post_addr_reg, op1, *imm)
-                }
-            }
-            Operand::None => {}
-        }
-
-        if op == Op::LdrPcT {
-            block_asm.bic(post_addr_reg, post_addr_reg, 0x3);
-        }
-
-        let addr_reg = if pre {
-            post_addr_reg
-        } else {
-            let reg = block_asm.new_reg();
-            block_asm.mov(reg, op1);
-            reg
-        };
-
-        if write_back && op0 != op1 {
-            block_asm.mov(op1, post_addr_reg);
-        }
-
-        self.emit_read(op0, addr_reg, block_asm, op.mem_transfer_single_signed(), amount, thumb);
-
-        block_asm.free_reg(addr_reg);
-        block_asm.free_reg(post_addr_reg);
-    }
-
-    fn emit_read(&mut self, op0: Reg, addr_reg: BlockReg, block_asm: &mut BlockAsm, signed: bool, amount: MemoryAmount, thumb: bool) {
-        let fast_read_value_reg = block_asm.new_reg();
-        let fast_read_next_addr_reg = block_asm.new_reg();
-        let fast_read_addr_masked_reg = block_asm.new_reg();
-
-        let slow_read_label = block_asm.new_label();
-        let fast_mem_mark_dirty_label = block_asm.new_label();
-        let continue_label = block_asm.new_label();
-
-        block_asm.branch(slow_read_label, Cond::NV);
-
-        let base_ptr = self.emu.mmu_get_base_tcm_ptr::<CPU>();
-        let size = if amount == MemoryAmount::Double { MemoryAmount::Word.size() } else { amount.size() };
-        block_asm.bic(fast_read_addr_masked_reg, addr_reg, 0xF0000000 | (size as u32 - 1));
-        let needs_ror = amount == MemoryAmount::Word || amount == MemoryAmount::Double;
-        block_asm.transfer_read(
-            if needs_ror { fast_read_value_reg } else { op0.into() },
-            fast_read_addr_masked_reg,
-            base_ptr as u32,
-            signed,
-            if amount == MemoryAmount::Double { MemoryAmount::Word } else { amount },
-        );
-        if needs_ror {
-            block_asm.mov(fast_read_addr_masked_reg, (addr_reg.into(), ShiftType::Lsl, BlockOperand::from(3)));
-            block_asm.mov(op0, (fast_read_value_reg, ShiftType::Ror, fast_read_addr_masked_reg));
-        }
-        if amount == MemoryAmount::Double {
-            let op0 = Reg::from(op0 as u8 + 1);
-            block_asm.add(fast_read_next_addr_reg, addr_reg, 4);
-            block_asm.bic(fast_read_addr_masked_reg, fast_read_next_addr_reg, 0xF0000000 | (size as u32 - 1));
-            block_asm.transfer_read(fast_read_value_reg, fast_read_addr_masked_reg, base_ptr as u32, false, MemoryAmount::Word);
-            block_asm.mov(fast_read_addr_masked_reg, (fast_read_next_addr_reg.into(), ShiftType::Lsl, BlockOperand::from(3)));
-            block_asm.mov(op0, (fast_read_value_reg, ShiftType::Ror, fast_read_addr_masked_reg));
-        }
-
-        block_asm.mark_reg_dirty(op0, false);
-        if amount == MemoryAmount::Double {
-            block_asm.mark_reg_dirty(Reg::from(op0 as u8 + 1), false);
-        }
-        block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
-        block_asm.branch(slow_read_label, Cond::AL);
-
-        block_asm.label_unlikely(slow_read_label);
-
-        block_asm.restore_reg(op0);
-        if amount == MemoryAmount::Double {
-            block_asm.restore_reg(Reg::from(op0 as u8 + 1));
-        }
-
-        block_asm.save_context();
-
-        let op0_addr = self.emu.thread_get_reg(CPU, op0) as *const _ as u32;
-        let op0_addr_reg = block_asm.new_reg();
-        block_asm.mov(op0_addr_reg, op0_addr);
-
-        let func_addr = Self::get_inst_mem_handler_func::<false>(signed, amount);
-        block_asm.call4(
-            func_addr,
-            addr_reg,
-            op0_addr_reg,
-            self.jit_buf.current_pc | (thumb as u32),
-            self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32,
-        );
-        block_asm.restore_reg(op0);
-        if amount == MemoryAmount::Double {
-            block_asm.restore_reg(Reg::from(op0 as u8 + 1));
-        }
-        block_asm.restore_reg(Reg::CPSR);
-
-        block_asm.branch(continue_label, Cond::AL);
-
-        block_asm.label(fast_mem_mark_dirty_label);
-        block_asm.mark_reg_dirty(op0, true);
-        if amount == MemoryAmount::Double {
-            block_asm.mark_reg_dirty(Reg::from(op0 as u8 + 1), true);
-        }
-
-        block_asm.label(continue_label);
-
-        block_asm.free_reg(fast_read_addr_masked_reg);
-        block_asm.free_reg(fast_read_next_addr_reg);
-        block_asm.free_reg(fast_read_value_reg);
-        block_asm.free_reg(op0_addr_reg);
-    }
-
-    pub fn emit_single_write(&mut self, block_asm: &mut BlockAsm) {
-        let op = self.jit_buf.current_inst().op;
-        self.emit_single_transfer::<true>(block_asm, op.mem_transfer_pre(), op.mem_transfer_write_back(), MemoryAmount::from(op), false);
-    }
-
-    pub fn emit_single_read(&mut self, block_asm: &mut BlockAsm) {
-        let op = self.jit_buf.current_inst().op;
-        self.emit_single_transfer::<false>(block_asm, op.mem_transfer_pre(), op.mem_transfer_write_back(), MemoryAmount::from(op), false);
-    }
-
-    pub fn emit_multiple_transfer(&mut self, block_asm: &mut BlockAsm, thumb: bool) {
-        let inst_info = self.jit_buf.current_inst();
-
-        let mut rlist = RegReserve::from(inst_info.opcode & if thumb { 0xFF } else { 0xFFFF });
-        if inst_info.op == Op::PushLrT {
-            rlist += Reg::LR;
-        } else if inst_info.op == Op::PopPcT {
-            rlist += Reg::PC;
-        }
-
-        let mut pre = inst_info.op.mem_transfer_pre();
-        let decrement = inst_info.op.mem_transfer_decrement();
-        let write_back = inst_info.op.mem_transfer_write_back();
-
-        let op0 = *inst_info.operands()[0].as_reg_no_shift().unwrap();
-
-        let slow_label = block_asm.new_label();
-        let fast_mem_mark_dirty_label = block_asm.new_label();
-        let continue_label = block_asm.new_label();
-
-        let cpsr_backup_reg = block_asm.new_reg();
-
-        let assemble_rlist = |rlist: RegReserve| {
-            if rlist.is_empty() {
-                return (reg_reserve!(), reg_reserve!(), Vec::new());
-            }
-
-            let mut gp_regs = rlist.get_gp_regs();
-            let mut free_gp_regs = if gp_regs.is_empty() {
-                RegReserve::gp()
-            } else {
-                let highest_gp_reg = gp_regs.get_highest_reg();
-                RegReserve::from(!((1 << (highest_gp_reg as u8 + 1)) - 1)).get_gp_regs()
-            };
-            let mut non_gp_regs = rlist - gp_regs;
-
-            while free_gp_regs.len() < non_gp_regs.len() {
-                let highest_gp_reg = gp_regs.get_highest_reg();
-                gp_regs -= highest_gp_reg;
-                non_gp_regs += highest_gp_reg;
-                free_gp_regs = if gp_regs.is_empty() {
-                    RegReserve::gp()
-                } else {
-                    RegReserve::from(!((1 << (gp_regs.get_highest_reg() as u8 + 1)) - 1)).get_gp_regs()
-                };
-            }
-
-            let mut non_gp_regs_mappings = Vec::with_capacity(non_gp_regs.len());
-            let mut fixed_regs = RegReserve::new();
-            while !free_gp_regs.is_empty() && !non_gp_regs.is_empty() {
-                let fixed_reg = free_gp_regs.pop().unwrap();
-                fixed_regs += fixed_reg;
-                non_gp_regs_mappings.push((non_gp_regs.pop().unwrap(), fixed_reg));
-            }
-
-            debug_assert!(non_gp_regs.is_empty());
-
-            (gp_regs, fixed_regs, non_gp_regs_mappings)
-        };
-
-        let use_fast_mem = !inst_info.op.mem_transfer_user() && !rlist.is_empty() && (!write_back || !rlist.is_reserved(op0));
-        if use_fast_mem {
-            let needs_rlist_split = rlist.len() >= (RegReserve::gp() + Reg::LR).len() - 2 && !inst_info.op.mem_transfer_user();
-
-            let mut regs = rlist;
-
-            if needs_rlist_split {
-                for _ in 0..regs.len() / 2 {
-                    regs.pop_rev();
-                }
-            }
-
-            let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(regs);
-
-            block_asm.branch(slow_label, Cond::NV);
-
-            let base_reg = block_asm.new_reg();
-            let base_reg_out = block_asm.new_reg();
-            let base_ptr = self.emu.mmu_get_base_tcm_ptr::<CPU>();
-            block_asm.bic(base_reg, op0, 0xF0000003);
-            block_asm.add(base_reg, base_reg, base_ptr as u32);
-
-            if inst_info.op.mem_is_write() {
-                if needs_rlist_split || inst_info.op.mem_transfer_user() {
-                    if decrement {
-                        {
-                            let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
-
-                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                                block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
-                            }
-                            block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, true, pre, false);
-                        }
-
-                        if !gp_regs.is_empty() {
-                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                                block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
-                            }
-                            block_asm.guest_transfer_write_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, false);
-                        }
-                    } else {
-                        if !gp_regs.is_empty() {
-                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                                block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
-                            }
-                            block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, true, pre, true);
-                        }
-
-                        let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
-
-                        for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                            block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
-                        }
-                        block_asm.guest_transfer_write_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, true);
-                    }
-                } else {
-                    for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                        block_asm.mov(BlockReg::Fixed(fixed_reg), guest_reg);
-                    }
-                    block_asm.guest_transfer_write_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
-                }
-
-                if write_back {
-                    block_asm.sub(base_reg, base_reg_out, base_reg);
-                    block_asm.add(op0, op0, base_reg);
-                }
-
-                block_asm.branch_fallthrough(continue_label, Cond::AL);
-                block_asm.branch(slow_label, Cond::AL);
-            } else {
-                if needs_rlist_split || inst_info.op.mem_transfer_user() {
-                    if decrement {
-                        {
-                            let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
-
-                            block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, true, pre, false);
-                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                                block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
-                            }
-                        }
-
-                        if !gp_regs.is_empty() {
-                            block_asm.guest_transfer_read_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, false);
-                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                                block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
-                            }
-                        }
-                    } else {
-                        if !gp_regs.is_empty() {
-                            block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, true, pre, true);
-                            for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                                block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
-                            }
-                        }
-
-                        let (gp_regs, fixed_regs, non_gp_regs_mappings) = assemble_rlist(rlist - regs);
-
-                        block_asm.guest_transfer_read_multiple(base_reg_out, base_reg_out, gp_regs, fixed_regs, write_back, pre, true);
-                        for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                            block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
-                        }
-                    }
-                } else {
-                    block_asm.guest_transfer_read_multiple(base_reg, base_reg_out, gp_regs, fixed_regs, write_back, pre, !decrement);
-
-                    for (guest_reg, fixed_reg) in non_gp_regs_mappings {
-                        block_asm.mov(guest_reg, BlockReg::Fixed(fixed_reg));
-                    }
-                }
-
-                if write_back {
-                    block_asm.sub(base_reg, base_reg_out, base_reg);
-                    block_asm.add(op0, base_reg, op0);
-                }
-
-                for guest_reg in rlist {
-                    block_asm.mark_reg_dirty(guest_reg, false);
-                }
-
-                block_asm.branch_fallthrough(fast_mem_mark_dirty_label, Cond::AL);
-                block_asm.branch(slow_label, Cond::AL);
-            }
-
-            block_asm.free_reg(base_reg_out);
-            block_asm.free_reg(base_reg);
-        }
-
-        if decrement {
-            pre = !pre;
-        }
-        let func_addr: *const () = match (inst_info.op.mem_is_write(), write_back, decrement) {
-            (false, false, false) => inst_mem_handler_multiple::<CPU, false, false, false> as _,
-            (false, false, true) => inst_mem_handler_multiple::<CPU, false, false, true> as _,
-            (false, true, false) => inst_mem_handler_multiple::<CPU, false, true, false> as _,
-            (false, true, true) => inst_mem_handler_multiple::<CPU, false, true, true> as _,
-            (true, false, false) => inst_mem_handler_multiple::<CPU, true, false, false> as _,
-            (true, false, true) => inst_mem_handler_multiple::<CPU, true, false, true> as _,
-            (true, true, false) => inst_mem_handler_multiple::<CPU, true, true, false> as _,
-            (true, true, true) => inst_mem_handler_multiple::<CPU, true, true, true> as _,
-        };
-
-        if use_fast_mem {
-            block_asm.label_unlikely(slow_label);
-        }
-        block_asm.save_context();
-        block_asm.call3(
-            func_addr,
-            u32::from(InstMemMultipleParams::new(
-                rlist.0 as u16,
-                u4::new(rlist.len() as u8),
-                u4::new(op0 as u8),
-                pre,
-                inst_info.op.mem_transfer_user(),
-                u6::new(0),
-            )),
-            self.jit_buf.current_pc | (thumb as u32),
-            self.jit_buf.insts_cycle_counts[self.jit_buf.current_index] as u32,
-        );
-
-        let mut restore_regs = RegReserve::new();
-        if write_back {
-            restore_regs += op0;
-        }
-        if !inst_info.op.mem_is_write() {
-            restore_regs += rlist;
-        }
-        for reg in restore_regs {
-            block_asm.restore_reg(reg);
-        }
-        block_asm.restore_reg(Reg::CPSR);
-
-        if use_fast_mem {
-            match CPU {
-                CpuType::ARM9 => {
-                    block_asm.branch_fallthrough(continue_label, Cond::AL);
-                    block_asm.generic_data(self.jit_buf.current_inst().opcode);
-                    block_asm.force_end();
-                }
-                CpuType::ARM7 => block_asm.branch(continue_label, Cond::AL),
-            }
-
-            if !inst_info.op.mem_is_write() {
-                block_asm.label(fast_mem_mark_dirty_label);
-                for guest_reg in rlist {
-                    block_asm.mark_reg_dirty(guest_reg, true);
-                }
-            }
-
-            block_asm.label(continue_label);
-        }
-
-        block_asm.free_reg(cpsr_backup_reg);
-    }
-
-    pub fn emit_swp(&mut self, block_asm: &mut BlockAsm) {
-        let inst_info = self.jit_buf.current_inst();
-        let operands = inst_info.operands();
-        let op = inst_info.op;
-
-        let op0 = *operands[0].as_reg_no_shift().unwrap();
-        let op1 = *operands[1].as_reg_no_shift().unwrap();
-        let op2 = *operands[2].as_reg_no_shift().unwrap();
-
-        let amount = match op {
-            Op::Swp => MemoryAmount::Word,
-            Op::Swpb => MemoryAmount::Byte,
+    pub fn emit_single_transfer(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
+        let inst = &self.jit_buf.insts[inst_index];
+
+        let transfer = match inst.op {
+            Op::Ldr(transfer) | Op::LdrT(transfer) | Op::Str(transfer) | Op::StrT(transfer) => transfer,
             _ => unreachable!(),
         };
 
-        let read_reg = block_asm.new_reg();
-        let value_reg = block_asm.new_reg();
-        let addr_reg = block_asm.new_reg();
-        block_asm.mov(value_reg, op1);
-        block_asm.mov(addr_reg, op2);
+        let op0 = inst.operands()[0].as_reg_no_shift().unwrap();
+        let op1 = inst.operands()[1].as_reg_no_shift().unwrap();
+        let op2 = &inst.operands()[2];
 
-        self.emit_read(op0, addr_reg, block_asm, false, amount, false);
-        block_asm.mov(read_reg, op0);
-        block_asm.mov(op1, value_reg);
-        self.emit_write(op1, value_reg, addr_reg, block_asm, amount, false);
-        block_asm.mov(op0, read_reg);
+        let op0_mapped = block_asm.get_guest_map(op0);
+        let op1_mapped = block_asm.get_guest_map(op1);
+        let op2_mapped = block_asm.get_guest_operand_map(op2);
 
-        block_asm.free_reg(addr_reg);
-        block_asm.free_reg(value_reg);
-        block_asm.free_reg(read_reg);
+        if transfer.add() {
+            block_asm.add3(Reg::R3, op1_mapped, &op2_mapped);
+        } else {
+            block_asm.sub3(Reg::R3, op1_mapped, &op2_mapped);
+        }
+
+        if inst.op == Op::LdrT(transfer) && op1 == Reg::PC {
+            block_asm.bic3(Reg::R3, Reg::R3, &0x3.into());
+        }
+
+        if transfer.pre() {
+            block_asm.mov2(Reg::R2, &Reg::R3.into());
+        } else {
+            block_asm.mov2(Reg::R2, &op1_mapped.into());
+        }
+
+        let size = 1 << transfer.size();
+        let is_64bit = size == 8;
+        let size = if is_64bit { 4 } else { size } as u32;
+
+        if inst.op.is_write_mem_transfer() {
+            block_asm.mov2(Reg::R0, &op0_mapped.into());
+            if is_64bit {
+                let next_reg = block_asm.get_guest_map(Reg::from(op0 as u8 + 1));
+                block_asm.mov2(Reg::R1, &next_reg.into());
+            }
+        } else {
+            block_asm.movs2(Reg::R0, &(op0 as u8).into());
+        }
+
+        if transfer.write_back() && (inst.op.is_write_mem_transfer() || op0 != op1) {
+            block_asm.mov2(op1_mapped, &Reg::R3.into());
+            block_asm.add_dirty_guest_regs(reg_reserve!(op1));
+        }
+        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+
+        let fast_mem_start = block_asm.get_cursor_offset();
+        block_asm.nop0();
+
+        block_asm.ldr2(Reg::R3, !(0xF0000000 | (size - 1)));
+        block_asm.and5(FlagsUpdate_DontCare, Cond::AL, Reg::R3, Reg::R3, &Reg::R2.into());
+
+        let func = if inst.op.is_write_mem_transfer() {
+            match size {
+                1 => <MacroAssembler as MasmStrb2<Reg, &MemOperand>>::strb2,
+                2 => <MacroAssembler as MasmStrh2<_, _>>::strh2,
+                4 | 8 => <MacroAssembler as MasmStr2<_, _>>::str2,
+                _ => unreachable!(),
+            }
+        } else {
+            match size {
+                1 => <MacroAssembler as MasmLdrb2<Reg, &MemOperand>>::ldrb2,
+                2 => <MacroAssembler as MasmLdrh2<_, _>>::ldrh2,
+                4 | 8 => <MacroAssembler as MasmLdr2<_, _>>::ldr2,
+                _ => unreachable!(),
+            }
+        };
+
+        let block_offset = block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, RegReserve::new()) as u32;
+        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &block_offset.into());
+        block_asm.load_mmu_offset(Reg::LR);
+        let mem_operand = MemOperand::reg_offset2(Reg::R3, Reg::LR);
+        func(block_asm, Reg::R0, &mem_operand);
+        if !inst.op.is_write_mem_transfer() && size == 4 {
+            block_asm.lsl5(FlagsUpdate_DontCare, Cond::AL, Reg::R1, Reg::R2, &3.into());
+            block_asm.ror5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &Reg::R1.into());
+        }
+        if is_64bit {
+            block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R2, Reg::R2, &4.into());
+            block_asm.ldr2(Reg::R3, !0xF0000003);
+            block_asm.and5(FlagsUpdate_DontCare, Cond::AL, Reg::R3, Reg::R3, &Reg::R2.into());
+
+            func(block_asm, Reg::R1, &mem_operand);
+            if !inst.op.is_write_mem_transfer() {
+                block_asm.lsl5(FlagsUpdate_DontCare, Cond::AL, Reg::R2, Reg::R2, &3.into());
+                block_asm.ror5(FlagsUpdate_DontCare, Cond::AL, Reg::R1, Reg::R1, &Reg::R2.into());
+            }
+        }
+
+        block_asm.nop0();
+        let fast_mem_end = block_asm.get_cursor_offset();
+        let fast_mem_size = fast_mem_end - fast_mem_start;
+
+        let slow_mem_length = if inst.op.is_write_mem_transfer() {
+            SLOW_MEM_SINGLE_WRITE_LENGTH
+        } else {
+            SLOW_MEM_SINGLE_READ_LENGTH
+        };
+
+        for _ in (fast_mem_size as usize..slow_mem_length).step_by(2) {
+            block_asm.nop0();
+        }
+
+        if !inst.op.is_write_mem_transfer() {
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, op0_mapped, &Reg::R0.into());
+            if is_64bit {
+                let next_reg = block_asm.get_guest_map(Reg::from(op0 as u8 + 1));
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, next_reg, &Reg::R1.into());
+            }
+        }
+
+        let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+        block_asm.restore_tmp_regs(next_live_regs);
+    }
+
+    pub fn emit_multiple_transfer(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
+        let inst = &self.jit_buf.insts[inst_index];
+        let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+
+        let transfer = match inst.op {
+            Op::Ldm(transfer) | Op::LdmT(transfer) | Op::Stm(transfer) | Op::StmT(transfer) => transfer,
+            _ => unreachable!(),
+        };
+
+        let op0 = inst.operands()[0].as_reg_no_shift().unwrap();
+        let mut op1 = inst.operands()[1].as_reg_list().unwrap();
+
+        block_asm.alloc_guest_regs(reg_reserve!(op0), RegReserve::new(), next_live_regs);
+
+        let op0_mapped = block_asm.get_guest_map(op0);
+        let op1_len = op1.len();
+
+        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+
+        let use_fast_mem = !transfer.user() && !op1.is_empty() && (!transfer.write_back() || !op1.is_reserved(op0));
+        if use_fast_mem {
+            let fast_mem_start = block_asm.get_cursor_offset();
+            block_asm.nop0();
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &op0_mapped.into());
+            block_asm.load_mmu_offset(Reg::R1);
+            block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &Reg::R1.into());
+
+            const USABLE_REGS: RegReserve = reg_reserve!(Reg::R2, Reg::R3, Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::LR);
+            let mut remaining_op1 = op1_len;
+            while remaining_op1 != 0 {
+                let len = min(remaining_op1, USABLE_REGS.len());
+                let guest_regs = op1.into_iter().take(len).collect::<RegReserve>();
+                let usable_regs = USABLE_REGS.into_iter().take(len).collect::<RegReserve>();
+                if inst.op.is_write_mem_transfer() {
+                    for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
+                        block_asm.load_guest_reg(usable_reg, guest_reg);
+                    }
+
+                    let block_offset = block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, op1) as u32;
+                    block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &block_offset.into());
+
+                    let func = match (transfer.pre(), transfer.add()) {
+                        (false, false) => <MacroAssembler as MasmStmda3<Reg, WriteBack, RegReserve>>::stmda3,
+                        (false, true) => <MacroAssembler as MasmStm3<_, _, _>>::stm3,
+                        (true, false) => <MacroAssembler as MasmStmdb3<_, _, _>>::stmdb3,
+                        (true, true) => <MacroAssembler as MasmStmib3<_, _, _>>::stmib3,
+                    };
+                    func(block_asm, Reg::R0, WriteBack::yes(), usable_regs);
+
+                    block_asm.restore_guest_regs_ptr();
+                } else {
+                    let block_offset = block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, op1) as u32;
+                    block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &block_offset.into());
+
+                    let func = match (transfer.pre(), transfer.add()) {
+                        (false, false) => <MacroAssembler as MasmLdmda3<Reg, WriteBack, RegReserve>>::ldmda3,
+                        (false, true) => <MacroAssembler as MasmLdm3<_, _, _>>::ldm3,
+                        (true, false) => <MacroAssembler as MasmLdmdb3<_, _, _>>::ldmdb3,
+                        (true, true) => <MacroAssembler as MasmLdmib3<_, _, _>>::ldmib3,
+                    };
+                    func(block_asm, Reg::R0, WriteBack::yes(), usable_regs);
+
+                    block_asm.restore_guest_regs_ptr();
+                    for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
+                        block_asm.store_guest_reg(usable_reg, guest_reg);
+                    }
+                }
+                op1 -= guest_regs;
+                remaining_op1 -= len;
+            }
+            debug_assert!(op1.is_empty());
+
+            if transfer.write_back() {
+                block_asm.sub5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &Reg::R1.into());
+                block_asm.store_guest_reg(Reg::R0, op0);
+            }
+
+            block_asm.nop0();
+            let fast_mem_end = block_asm.get_cursor_offset();
+            let fast_mem_size = fast_mem_end - fast_mem_start;
+
+            for _ in (fast_mem_size as usize..SLOW_MEM_MULTIPLE_LENGTH).step_by(2) {
+                block_asm.nop0();
+            }
+
+            block_asm.restore_tmp_regs(next_live_regs);
+            block_asm.reload_active_guest_regs();
+        } else {
+            todo!()
+        }
     }
 }

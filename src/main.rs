@@ -25,7 +25,7 @@ use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::{JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_memory::JitMemory;
 use crate::logging::debug_println;
-use crate::mmap::register_abort_handler;
+use crate::mmap::{register_abort_handler, ArmContext};
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils::{const_str_equal, set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
@@ -215,24 +215,25 @@ pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a, CPU> 
     }
 }
 
-fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize) -> bool {
+fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize, arm_context: &ArmContext) -> bool {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
     let base_ptr = asm.emu.mmu_get_base_tcm_ptr::<CPU>();
 
+    debug_println!("fault at {host_pc:x} {mem_addr:x}");
     if mem_addr < base_ptr as usize {
         return false;
     }
 
     let guest_mem_addr = (mem_addr - base_ptr as usize) as u32;
-    debug_println!("fault at {host_pc:x} {mem_addr:x} to guest {guest_mem_addr:x}");
-    asm.emu.jit.patch_slow_mem(host_pc, guest_mem_addr, CPU)
+    debug_println!("guest fault at {host_pc:x} {mem_addr:x} to guest {guest_mem_addr:x}");
+    asm.emu.jit.patch_slow_mem(host_pc, guest_mem_addr, CPU, arm_context)
 }
 
 #[cold]
-fn fault_handler(mem_addr: usize, host_pc: &mut usize) -> bool {
+fn fault_handler(mem_addr: usize, host_pc: &mut usize, arm_context: &ArmContext) -> bool {
     match unsafe { CURRENT_RUNNING_CPU } {
-        ARM9 => process_fault::<{ ARM9 }>(mem_addr, host_pc),
-        ARM7 => process_fault::<{ ARM7 }>(mem_addr, host_pc),
+        ARM9 => process_fault::<{ ARM9 }>(mem_addr, host_pc, arm_context),
+        ARM7 => process_fault::<{ ARM7 }>(mem_addr, host_pc, arm_context),
     }
 }
 

@@ -2,8 +2,9 @@ use crate::core::emu::Emu;
 use crate::core::hle::bios;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
-use crate::jit::assembler::block_asm::{BlockAsm, BLOCK_LOG};
-use crate::jit::assembler::{BasicBlocksCache, BlockAsmBuf};
+use crate::jit::analyzer::asm_analyzer::AsmAnalyzer;
+use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::vixl::{MasmLdr2, MasmMov2};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_branch_handler::call_jit_fun;
@@ -16,36 +17,76 @@ use crate::logging::{branch_println, debug_println};
 use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
 use std::arch::{asm, naked_asm};
 use std::intrinsics::unlikely;
-use std::{mem, ptr};
+use std::mem;
+
+#[derive(Default)]
+#[cfg(debug_assertions)]
+pub struct JitDebugInfo {
+    pub inst_offsets: Vec<usize>,
+    pub block_offsets: Vec<usize>,
+}
+
+#[cfg(debug_assertions)]
+impl JitDebugInfo {
+    pub fn resize(&mut self, basic_blocks_size: usize, insts_size: usize) {
+        self.inst_offsets.resize(insts_size + 1, 0);
+        self.block_offsets.resize(basic_blocks_size, 0);
+    }
+
+    pub fn record_basic_block_offset(&mut self, basic_block_index: usize, offset: usize) {
+        self.block_offsets[basic_block_index] = offset;
+    }
+
+    pub fn record_inst_offset(&mut self, inst_index: usize, offset: usize) {
+        self.inst_offsets[inst_index] = offset;
+    }
+
+    fn print_info(&self, start_pc: u32, thumb: bool) {
+        println!("basic block offsets:");
+        for (i, offset) in self.block_offsets.iter().enumerate() {
+            print!("({i}, 0x{offset:x}),");
+        }
+        println!();
+        println!("insts offsets:");
+        for (i, offset) in self.inst_offsets.iter().enumerate() {
+            print!("(0x{:x}, 0x{offset:x}),", start_pc + (i << if thumb { 1 } else { 2 }) as u32);
+        }
+        println!();
+    }
+}
+
+#[derive(Default)]
+#[cfg(not(debug_assertions))]
+pub struct JitDebugInfo {}
+
+#[cfg(not(debug_assertions))]
+impl JitDebugInfo {
+    pub fn resize(&mut self, basic_blocks_size: usize, insts_size: usize) {}
+    pub fn record_basic_block_offset(&mut self, basic_block_index: usize, offset: usize) {}
+    pub fn record_inst_offset(&mut self, inst_index: usize, offset: usize) {}
+    fn print_info(&self, start_pc: u32, thumb: bool) {}
+}
 
 pub struct JitBuf {
+    pub guest_pc_start: u32,
     pub insts: Vec<InstInfo>,
     pub insts_cycle_counts: Vec<u16>,
-    pub current_index: usize,
-    pub current_pc: u32,
+    pub debug_info: JitDebugInfo,
 }
 
 impl JitBuf {
     fn new() -> Self {
         JitBuf {
+            guest_pc_start: 0,
             insts: Vec::new(),
             insts_cycle_counts: Vec::new(),
-            current_index: 0,
-            current_pc: 0,
+            debug_info: JitDebugInfo::default(),
         }
     }
 
     fn clear_all(&mut self) {
         self.insts.clear();
         self.insts_cycle_counts.clear();
-    }
-
-    pub fn current_inst(&self) -> &InstInfo {
-        unsafe { self.insts.get_unchecked(self.current_index) }
-    }
-
-    pub fn current_inst_mut(&mut self) -> &mut InstInfo {
-        unsafe { self.insts.get_unchecked_mut(self.current_index) }
     }
 }
 
@@ -257,10 +298,12 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
             func(opcode, *op)
         }
     };
+
     let pc_step = if thumb { 2 } else { 4 };
     let pc_shift = pc_step >> 1;
     let mut heavy_inst_count = 0;
     let mut last_inst_branch = false;
+
     loop {
         let inst_info = get_inst_info(asm, guest_pc + pc_offset);
 
@@ -287,7 +330,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         }
         asm.jit_buf.insts.push(inst_info);
 
-        if is_unreturnable_branch || uncond_branch_count == 4 {
+        if is_unreturnable_branch || uncond_branch_count == 8 {
             last_inst_branch = true;
             break;
         }
@@ -299,54 +342,46 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
     }
 
     let (jit_entry, flushed) = {
-        // println!("{CPU:?} {thumb} emit code block {guest_pc:x}");
+        debug_println!("{CPU:?} {thumb} emit code block {guest_pc:x}");
         // unsafe { BLOCK_LOG = guest_pc == 0x200675e };
 
+        asm.analyzer.analyze(guest_pc, &asm.jit_buf.insts, thumb);
+        asm.jit_buf.guest_pc_start = guest_pc;
+        asm.jit_buf.debug_info.resize(asm.analyzer.basic_blocks.len(), asm.jit_buf.insts.len());
+
         let guest_regs_ptr = asm.emu.thread_get_reg_mut_ptr(CPU);
-        let host_sp_ptr = ptr::addr_of_mut!(asm.runtime_data.host_sp);
-        let mut block_asm = unsafe { BlockAsm::new(guest_regs_ptr, host_sp_ptr, mem::transmute(&mut asm.basic_blocks_cache), mem::transmute(&mut asm.block_asm_buf), thumb) };
+        let mmu_offset = asm.emu.mmu_get_base_tcm_ptr::<CPU>();
+
+        let mut block_asm = BlockAsm::new(thumb);
+        block_asm.prologue(guest_regs_ptr, mmu_offset, asm.analyzer.basic_blocks.len());
 
         if BRANCH_LOG {
-            block_asm.call1(debug_enter_block::<CPU> as *const (), guest_pc | (thumb as u32));
-            block_asm.restore_reg(Reg::CPSR);
+            block_asm.mov2(Reg::R0, &(guest_pc | (thumb as u32)).into());
+            block_asm.call(debug_enter_block::<CPU> as _);
         }
 
-        let emit_func = if thumb { JitAsm::emit_thumb } else { JitAsm::emit };
+        asm.emit(&mut block_asm, thumb);
 
-        for i in 0..asm.jit_buf.insts.len() {
-            asm.jit_buf.current_index = i;
-            asm.jit_buf.current_pc = guest_pc + (i << pc_shift) as u32;
-            debug_println!("{CPU:?} emitting {:?} at pc: {:x}", asm.jit_buf.current_inst(), asm.jit_buf.current_pc);
-
-            // if asm.jit_buf.current_pc == 0x207616c {
-            //     block_asm.bkpt(1);
-            // }
-
-            emit_func(asm, &mut block_asm);
-
-            if DEBUG_LOG {
-                block_asm.save_context();
-                block_asm.call2(debug_after_exec_op::<CPU> as *const (), asm.jit_buf.current_pc, asm.jit_buf.current_inst().opcode);
-                block_asm.restore_reg(Reg::CPSR);
-            }
-        }
-
-        if last_inst_branch {
-            block_asm.force_end();
-        } else {
+        if !last_inst_branch {
+            block_asm.save_dirty_guest_regs(true, true);
             let next_pc = guest_pc + pc_offset + if thumb { 3 } else { 4 };
-            asm.emit_branch_external_label(&mut block_asm, next_pc, false, thumb);
+            block_asm.ldr2(Reg::R0, next_pc);
+            block_asm.store_guest_reg(Reg::R0, Reg::PC);
+            asm.emit_branch_external_label(asm.jit_buf.insts.len() - 1, asm.analyzer.basic_blocks.len() - 1, next_pc, false, &mut block_asm);
         }
 
-        block_asm.emit_opcodes();
-        let opcodes = block_asm.finalize();
-        if IS_DEBUG && unsafe { BLOCK_LOG } {
-            for &opcode in opcodes {
-                println!("0x{opcode:x},");
-            }
-            todo!()
-        }
-        let (insert_entry, flushed) = asm.emu.jit_insert_block(opcodes, guest_pc, CPU);
+        block_asm.finalize();
+
+        let opcodes = block_asm.get_code_buffer();
+        // if IS_DEBUG && guest_pc == 0x23801a4 {
+        //     asm.jit_buf.debug_info.print_info(guest_pc, thumb);
+        //     for &opcode in opcodes {
+        //         print!("0x{opcode:x},");
+        //     }
+        //     println!();
+        //     todo!()
+        // }
+        let (insert_entry, flushed) = asm.emu.jit_insert_block(&opcodes, &block_asm.guest_inst_metadata, guest_pc, CPU);
         let jit_entry: extern "C" fn() = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {
@@ -363,7 +398,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
 }
 
 #[unsafe(naked)]
-unsafe extern "C" fn call_jit_entry(_: *const fn(), _: *mut usize) {
+unsafe extern "C" fn call_jit_entry(_entry: *const fn(), _host_sp: *mut usize) {
     #[rustfmt::skip]
     naked_asm!(
         "push {{r4-r12,lr}}",
@@ -426,7 +461,7 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
             let (op, func) = lookup_opcode(opcode);
             func(opcode, *op)
         };
-        debug_inst_info::<CPU>(asm.emu, asm.runtime_data.get_branch_out_pc(), &format!("breakout\n\t{:?} {:?}", CPU, inst_info));
+        debug_inst_info::<CPU>(asm.emu, asm.runtime_data.get_branch_out_pc(), &format!("breakout\n\t{CPU:?} {inst_info:?}"));
     }
 
     asm.runtime_data.accumulated_cycles
@@ -437,8 +472,7 @@ pub struct JitAsm<'a, const CPU: CpuType> {
     pub jit_buf: JitBuf,
     pub runtime_data: JitRuntimeData,
     pub jit_common_funs: JitAsmCommonFuns<CPU>,
-    basic_blocks_cache: BasicBlocksCache,
-    block_asm_buf: BlockAsmBuf,
+    pub analyzer: AsmAnalyzer,
 }
 
 impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
@@ -449,8 +483,7 @@ impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
             jit_buf: JitBuf::new(),
             runtime_data: JitRuntimeData::new(),
             jit_common_funs: JitAsmCommonFuns::default(),
-            basic_blocks_cache: BasicBlocksCache::new(),
-            block_asm_buf: BlockAsmBuf::default(),
+            analyzer: AsmAnalyzer::default(),
         }
     }
 
@@ -470,13 +503,13 @@ fn debug_inst_info<const CPU: CpuType>(emu: &Emu, pc: u32, append: &str) {
 
     for reg in reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR, Reg::SPSR) + RegReserve::gp() {
         let value = if reg != Reg::PC { *emu.thread_get_reg(CPU, reg) } else { pc };
-        output += &format!("{:?}: {:x}, ", reg, value);
+        output += &format!("{reg:?}: {value:x}, ");
     }
 
-    println!("{:?} {}{}", CPU, output, append);
+    println!("{CPU:?} {output}{append}");
 }
 
-unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(pc: u32, opcode: u32) {
+pub unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(pc: u32, opcode: u32) {
     let asm = get_jit_asm_ptr::<CPU>();
     let inst_info = {
         if (*asm).emu.thread_is_thumb(CPU) {
@@ -488,7 +521,7 @@ unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(pc: u32, opcode: u3
         }
     };
 
-    debug_inst_info::<CPU>((*asm).emu, pc, &format!("\n\t{:?} {:?}", CPU, inst_info));
+    debug_inst_info::<CPU>((*asm).emu, pc, &format!("\n\t{CPU:?} {inst_info:?}"));
 }
 
 extern "C" fn debug_enter_block<const CPU: CpuType>(pc: u32) {

@@ -1,54 +1,42 @@
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::{BlockOperand, BlockReg};
+use crate::jit::assembler::vixl::vixl::FlagsUpdate_DontCare;
+use crate::jit::assembler::vixl::MasmMov4;
 use crate::jit::inst_info::Operand;
 use crate::jit::inst_thread_regs_handler::{register_set_cpsr_checked, register_set_spsr_checked};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
-use crate::jit::reg::Reg;
+use crate::jit::reg::{reg_reserve, Reg, RegReserve};
+use crate::jit::Cond;
 
 impl<const CPU: CpuType> JitAsm<'_, CPU> {
-    pub fn emit_msr(&mut self, block_asm: &mut BlockAsm) {
-        let inst_info = self.jit_buf.current_inst();
+    pub fn emit_msr(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
+        let inst = &self.jit_buf.insts[inst_index];
 
-        let flags = (inst_info.opcode >> 16) & 0xF;
+        let flags = (inst.opcode >> 16) & 0xF;
 
-        let func = match inst_info.op {
+        let func = match inst.op {
             Op::MsrRc | Op::MsrIc => register_set_cpsr_checked::<CPU> as *const (),
             Op::MsrRs | Op::MsrIs => register_set_spsr_checked::<CPU> as *const (),
             _ => unreachable!(),
         };
 
-        block_asm.save_context();
-        block_asm.call2(
-            func,
-            match inst_info.operands()[0] {
-                Operand::Reg { reg, shift: None } => BlockOperand::from(reg),
-                Operand::Imm(imm) => BlockOperand::from(imm),
-                _ => unreachable!(),
-            },
-            flags,
-        );
-        block_asm.msr_cpsr(BlockReg::Fixed(Reg::R0));
-        block_asm.restore_reg(Reg::R8);
-        block_asm.restore_reg(Reg::R9);
-        block_asm.restore_reg(Reg::R10);
-        block_asm.restore_reg(Reg::R11);
-        block_asm.restore_reg(Reg::R12);
-        block_asm.restore_reg(Reg::SP);
-        block_asm.restore_reg(Reg::LR);
-    }
+        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        match inst.operands()[0] {
+            Operand::Reg { reg, shift: None } => {
+                let reg = block_asm.get_guest_map(reg);
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &reg.into());
+            }
+            Operand::Imm(imm) => block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &imm.into()),
+            _ => unreachable!(),
+        }
+        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &flags.into());
+        block_asm.call(func);
 
-    pub fn emit_mrs(&mut self, block_asm: &mut BlockAsm) {
-        let op = self.jit_buf.current_inst().op;
-        let op0 = self.jit_buf.current_inst().operands()[0].as_reg_no_shift().unwrap();
-        block_asm.mov(
-            *op0,
-            match op {
-                Op::MrsRc => Reg::CPSR,
-                Op::MrsRs => Reg::SPSR,
-                _ => todo!(),
-            },
-        );
+        let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+        block_asm.restore_tmp_regs(next_live_regs);
+
+        const REG_TO_RESTORE: RegReserve = reg_reserve!(Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::R12, Reg::SP, Reg::LR);
+        block_asm.unload_active_guest_regs(REG_TO_RESTORE);
     }
 }
