@@ -113,8 +113,8 @@ impl GpuRenderer {
                     gl::BlitFramebuffer(
                         0,
                         0,
-                        DISPLAY_WIDTH as _,
                         DISPLAY_HEIGHT as _,
+                        DISPLAY_WIDTH as _,
                         screen.x as _,
                         screen.y as _,
                         (screen.x + screen.width) as _,
@@ -133,7 +133,7 @@ impl GpuRenderer {
                 self.common.mem_buf.read_2d(self.renderer_2d.has_vram_display[0]);
                 self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color);
                 blit_fb(
-                    self.renderer_2d.common.blend_fbo.fbo,
+                    self.renderer_2d.common.rotate_fbo.fbo,
                     if self.common.pow_cnt1.display_swap() {
                         &PRESENTER_SUB_TOP_SCREEN
                     } else {
@@ -142,7 +142,7 @@ impl GpuRenderer {
                 );
                 self.renderer_2d.render::<{ B }>(&self.common, 0);
                 blit_fb(
-                    self.renderer_2d.common.blend_fbo.fbo,
+                    self.renderer_2d.common.rotate_fbo.fbo,
                     if self.common.pow_cnt1.display_swap() {
                         &PRESENTER_SUB_BOTTOM_SCREEN
                     } else {
