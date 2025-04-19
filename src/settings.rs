@@ -99,6 +99,8 @@ impl Setting {
 
 pub const DEFAULT_SETTINGS: Settings = Settings {
     values: [
+        Setting::new("Rotate Screens", "Will simulate vertical holding, \n\
+        for games like Brain Age", SettingValue::Bool(false)),
         Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true)),
         Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true)),
         Setting::new(
@@ -115,35 +117,43 @@ pub const DEFAULT_SETTINGS: Settings = Settings {
 
 #[derive(Clone)]
 pub struct Settings {
-    values: [Setting; 3],
+    values: [Setting; 4],
 }
 
 impl Settings {
-    pub fn framelimit(&self) -> bool {
+    pub fn rotate_screens(&self) -> bool {
         unsafe { self.values[0].value.as_bool().unwrap_unchecked() }
     }
 
-    pub fn audio(&self) -> bool {
+    pub fn framelimit(&self) -> bool {
         unsafe { self.values[1].value.as_bool().unwrap_unchecked() }
     }
 
-    pub fn arm7_hle(&self) -> Arm7Emu {
-        unsafe { self.values[2].value.as_arm7_emu().unwrap_unchecked() }
+    pub fn audio(&self) -> bool {
+        unsafe { self.values[2].value.as_bool().unwrap_unchecked() }
     }
 
-    pub fn setting_framelimit_mut(&mut self) -> &mut Setting {
+    pub fn arm7_hle(&self) -> Arm7Emu {
+        unsafe { self.values[3].value.as_arm7_emu().unwrap_unchecked() }
+    }
+
+    pub fn setting_rotate_screens(&mut self) -> &mut Setting {
         &mut self.values[0]
     }
-
-    pub fn setting_audio_mut(&mut self) -> &mut Setting {
+    
+    pub fn setting_framelimit_mut(&mut self) -> &mut Setting {
         &mut self.values[1]
     }
 
-    pub fn setting_arm7_hle_mut(&mut self) -> &mut Setting {
+    pub fn setting_audio_mut(&mut self) -> &mut Setting {
         &mut self.values[2]
     }
 
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 3] {
+    pub fn setting_arm7_hle_mut(&mut self) -> &mut Setting {
+        &mut self.values[3]
+    }
+
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 4] {
         &mut self.values
     }
 }

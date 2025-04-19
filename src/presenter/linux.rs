@@ -109,6 +109,7 @@ impl Presenter {
 
     pub fn present_ui(&self) -> (CartridgeIo, Settings) {
         let matches = command!()
+            .arg(arg!(rotate: -r "Rotate screens").required(false).action(ArgAction::SetTrue))
             .arg(arg!(framelimit: -f "Enable framelimit").required(false).action(ArgAction::SetTrue))
             .arg(arg!(audio: -a "Enable audio").required(false).action(ArgAction::SetTrue))
             .arg(
@@ -125,6 +126,7 @@ impl Presenter {
         settings.setting_framelimit_mut().value = SettingValue::Bool(matches.get_flag("framelimit"));
         settings.setting_audio_mut().value = SettingValue::Bool(matches.get_flag("audio"));
         settings.setting_arm7_hle_mut().value = SettingValue::Arm7Emu(Arm7Emu::from(*matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
+        settings.setting_rotate_screens_mut().value = SettingValue::Bool(matches.get_flag("rotate"));
 
         let file_path = PathBuf::from(matches.get_one::<String>("nds_rom").unwrap());
         let file_name = file_path.file_name().unwrap().to_str().unwrap();

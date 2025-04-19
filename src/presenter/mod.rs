@@ -1,8 +1,9 @@
 pub use self::platform::*;
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::settings::Settings;
 
 #[cfg(target_os = "linux")]
-#[path = "linux.rs"]
+#[path = "vita.rs"]
 mod platform;
 
 #[cfg(target_os = "vita")]
@@ -11,8 +12,6 @@ mod platform;
 
 pub const PRESENTER_SCREEN_WIDTH: u32 = 960;
 pub const PRESENTER_SCREEN_HEIGHT: u32 = 544;
-pub const PRESENTER_SUB_SCREEN_WIDTH: u32 = PRESENTER_SCREEN_WIDTH / 2;
-pub const PRESENTER_SUB_SCREEN_HEIGHT: u32 = DISPLAY_HEIGHT as u32 * PRESENTER_SUB_SCREEN_WIDTH / DISPLAY_WIDTH as u32;
 
 pub enum PresentEvent {
     Inputs { keymap: u32, touch: Option<(u8, u8)> },
@@ -30,7 +29,7 @@ pub struct PresenterScreen {
 }
 
 impl PresenterScreen {
-    const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
+    pub const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
         PresenterScreen { x, y, width, height }
     }
 
@@ -43,6 +42,8 @@ impl PresenterScreen {
     }
 }
 
+pub const PRESENTER_SUB_SCREEN_WIDTH: u32 = PRESENTER_SCREEN_WIDTH / 2;
+pub const PRESENTER_SUB_SCREEN_HEIGHT: u32 = DISPLAY_HEIGHT as u32 * PRESENTER_SUB_SCREEN_WIDTH / DISPLAY_WIDTH as u32;
 pub const PRESENTER_SUB_TOP_SCREEN: PresenterScreen = PresenterScreen::new(0, (PRESENTER_SCREEN_HEIGHT - PRESENTER_SUB_SCREEN_HEIGHT) / 2, PRESENTER_SUB_SCREEN_WIDTH, PRESENTER_SUB_SCREEN_HEIGHT);
 pub const PRESENTER_SUB_BOTTOM_SCREEN: PresenterScreen = PresenterScreen::new(
     PRESENTER_SUB_SCREEN_WIDTH,
@@ -50,3 +51,15 @@ pub const PRESENTER_SUB_BOTTOM_SCREEN: PresenterScreen = PresenterScreen::new(
     PRESENTER_SUB_SCREEN_WIDTH,
     PRESENTER_SUB_SCREEN_HEIGHT,
 );
+
+pub const PRESENTER_SUB_ROTATED_SCREEN_HEIGHT: u32 = DISPLAY_WIDTH as u32 * (PRESENTER_SCREEN_HEIGHT / DISPLAY_WIDTH as u32);
+pub const PRESENTER_SUB_ROTATED_SCREEN_WIDTH: u32 = DISPLAY_HEIGHT as u32 * PRESENTER_SUB_ROTATED_SCREEN_HEIGHT / DISPLAY_WIDTH as u32;
+pub const PRESENTER_SUB_ROTATED_TOP_SCREEN: PresenterScreen = PresenterScreen::new((PRESENTER_SCREEN_WIDTH - 2 * PRESENTER_SUB_ROTATED_SCREEN_WIDTH) / 2, (PRESENTER_SCREEN_HEIGHT - PRESENTER_SUB_ROTATED_SCREEN_HEIGHT) / 2, PRESENTER_SUB_ROTATED_SCREEN_WIDTH, PRESENTER_SUB_ROTATED_SCREEN_HEIGHT);
+pub const PRESENTER_SUB_ROTATED_BOTTOM_SCREEN: PresenterScreen = PresenterScreen::new(
+    PRESENTER_SCREEN_WIDTH / 2,
+    (PRESENTER_SCREEN_HEIGHT - PRESENTER_SUB_ROTATED_SCREEN_HEIGHT) / 2,
+    PRESENTER_SUB_ROTATED_SCREEN_WIDTH,
+    PRESENTER_SUB_ROTATED_SCREEN_HEIGHT,
+);
+
+pub static mut SETTINGS_ROTATE_SCREEN: bool = false;
