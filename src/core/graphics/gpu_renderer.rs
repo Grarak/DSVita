@@ -7,7 +7,7 @@ use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
-use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN};
+use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_TOP_SCREEN, SETTINGS_ROTATE_SCREEN};
 use crate::settings::Settings;
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
@@ -101,20 +101,27 @@ impl GpuRenderer {
         let render_time_start = Instant::now();
 
         unsafe {
+            SETTINGS_ROTATE_SCREEN = settings.rotate_screens();
+            let used_sub_bottom_screen = if SETTINGS_ROTATE_SCREEN { PRESENTER_SUB_ROTATED_BOTTOM_SCREEN } else { PRESENTER_SUB_BOTTOM_SCREEN };
+            let used_sub_top_screen = if SETTINGS_ROTATE_SCREEN { PRESENTER_SUB_ROTATED_TOP_SCREEN } else { PRESENTER_SUB_TOP_SCREEN };
+            let used_fbo = if SETTINGS_ROTATE_SCREEN { self.renderer_2d.common.rotate_fbo.fbo } else { self.renderer_2d.common.blend_fbo.fbo };
+            let src_x1 = if SETTINGS_ROTATE_SCREEN { DISPLAY_HEIGHT } else { DISPLAY_WIDTH };
+            let src_y1 = if SETTINGS_ROTATE_SCREEN { DISPLAY_WIDTH } else { DISPLAY_HEIGHT };
+
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
             gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
             gl::ClearColor(0f32, 0f32, 0f32, 1f32);
             gl::Clear(gl::COLOR_BUFFER_BIT);
 
             if self.common.pow_cnt1.enable() {
-                let blit_fb = |fbo: GLuint, screen: &PresenterScreen| {
+                let blit_fb = |fbo: GLuint, screen: &PresenterScreen, src_x1: usize, src_y1: usize| {
                     gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
                     gl::BindFramebuffer(gl::READ_FRAMEBUFFER, fbo);
                     gl::BlitFramebuffer(
                         0,
                         0,
-                        DISPLAY_HEIGHT as _,
-                        DISPLAY_WIDTH as _,
+                        src_x1 as _,
+                        src_y1 as _,
                         screen.x as _,
                         screen.y as _,
                         (screen.x + screen.width) as _,
@@ -124,6 +131,7 @@ impl GpuRenderer {
                     );
                 };
 
+
                 self.common.mem_buf.rebuild_vram_maps();
                 if self.rendering_3d {
                     self.rendering_3d = false;
@@ -131,23 +139,25 @@ impl GpuRenderer {
                     self.renderer_3d.render(&self.common);
                 }
                 self.common.mem_buf.read_2d(self.renderer_2d.has_vram_display[0]);
-                self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color);
+                self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color, SETTINGS_ROTATE_SCREEN);
                 blit_fb(
-                    self.renderer_2d.common.rotate_fbo.fbo,
+                    used_fbo,
                     if self.common.pow_cnt1.display_swap() {
-                        &PRESENTER_SUB_TOP_SCREEN
+                        &used_sub_top_screen
                     } else {
-                        &PRESENTER_SUB_BOTTOM_SCREEN
+                        &used_sub_bottom_screen
                     },
+                    src_x1, src_y1
                 );
-                self.renderer_2d.render::<{ B }>(&self.common, 0);
+                self.renderer_2d.render::<{ B }>(&self.common, 0, SETTINGS_ROTATE_SCREEN);
                 blit_fb(
-                    self.renderer_2d.common.rotate_fbo.fbo,
+                    used_fbo,
                     if self.common.pow_cnt1.display_swap() {
-                        &PRESENTER_SUB_BOTTOM_SCREEN
+                        &used_sub_bottom_screen
                     } else {
-                        &PRESENTER_SUB_TOP_SCREEN
+                        &used_sub_top_screen
                     },
+                    src_x1, src_y1
                 );
             }
         }
