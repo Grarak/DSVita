@@ -172,9 +172,9 @@ impl Presenter {
                 let y = report.y as u32 * PRESENTER_SCREEN_HEIGHT / 1080;
                 if PRESENTER_SUB_BOTTOM_SCREEN.is_within(x, y) {
                     let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x, y);
-                    let x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
-                    let y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height) as u8;
-                    touch = Some((x, y));
+                    let screen_x = (DISPLAY_WIDTH as u32 - (DISPLAY_WIDTH as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height)) as u8;
+                    let screen_y = (DISPLAY_HEIGHT as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
+                    touch = Some((screen_x, screen_y));
                     self.keymap &= !(1 << 16);
                 }
             } else {
