@@ -10,7 +10,7 @@ use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
 use crate::core::memory::regions;
-use crate::settings::{self, Settings};
+use crate::settings::{self, Settings, ScreenMode, SETTINGS_SCREENMODE};
 use crate::utils;
 use crate::utils::rgb5_to_float8;
 use gl::types::{GLint, GLuint};
@@ -888,7 +888,7 @@ impl Gpu2DProgram {
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
     }
 
-    unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, fb_tex_3d: GLuint, lcdc_pal: GLuint, vram_display_program: &Gpu2DVramDisplayProgram, rotate_screens: bool) {
+    unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, fb_tex_3d: GLuint, lcdc_pal: GLuint, vram_display_program: &Gpu2DVramDisplayProgram) {
         macro_rules! draw_scanlines {
             ($draw_fn:expr, $draw_vram_display:expr) => {{
                 let mut line = 0;
@@ -1026,7 +1026,7 @@ impl Gpu2DProgram {
 
         self.blend_fbos(common, regs, &mem);
 
-        if rotate_screens == true {
+        if SETTINGS_SCREENMODE == ScreenMode::Rotated {
             self.rotate(common);
         }
 
@@ -1169,7 +1169,7 @@ impl Gpu2DRenderer {
         self.has_vram_display[1] = false;
     }
 
-    pub unsafe fn render<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon, fb_tex_3d: GLuint, rotate_screens: bool) {
+    pub unsafe fn render<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon, fb_tex_3d: GLuint) {
         match ENGINE {
             A => {
                 self.program_a.draw(
@@ -1180,7 +1180,6 @@ impl Gpu2DRenderer {
                     fb_tex_3d,
                     if self.has_vram_display[0] { self.lcdc_pal } else { 0 },
                     &self.vram_display_program,
-                    rotate_screens,
                 );
             }
             B => self.program_b.draw(&self.common,
@@ -1190,7 +1189,6 @@ impl Gpu2DRenderer {
                     0, 
                     0, 
                     &self.vram_display_program,
-                    rotate_screens,
                 ),
         }
     }

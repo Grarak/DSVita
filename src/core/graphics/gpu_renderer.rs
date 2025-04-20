@@ -7,8 +7,8 @@ use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
-use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_TOP_SCREEN, SETTINGS_ROTATE_SCREEN};
-use crate::settings::Settings;
+use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_TOP_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_TOP_SCREEN};
+use crate::settings::{Settings, ScreenMode, SETTINGS_SCREENMODE};
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -101,12 +101,29 @@ impl GpuRenderer {
         let render_time_start = Instant::now();
 
         unsafe {
-            SETTINGS_ROTATE_SCREEN = settings.rotate_screens();
-            let used_sub_bottom_screen = if SETTINGS_ROTATE_SCREEN { PRESENTER_SUB_ROTATED_BOTTOM_SCREEN } else { PRESENTER_SUB_BOTTOM_SCREEN };
-            let used_sub_top_screen = if SETTINGS_ROTATE_SCREEN { PRESENTER_SUB_ROTATED_TOP_SCREEN } else { PRESENTER_SUB_TOP_SCREEN };
-            let used_fbo = if SETTINGS_ROTATE_SCREEN { self.renderer_2d.common.rotate_fbo.fbo } else { self.renderer_2d.common.blend_fbo.fbo };
-            let src_x1 = if SETTINGS_ROTATE_SCREEN { DISPLAY_HEIGHT } else { DISPLAY_WIDTH };
-            let src_y1 = if SETTINGS_ROTATE_SCREEN { DISPLAY_WIDTH } else { DISPLAY_HEIGHT };
+            SETTINGS_SCREENMODE = settings.screenmode();
+            let used_sub_bottom_screen = match SETTINGS_SCREENMODE {
+                ScreenMode::Regular => { PRESENTER_SUB_BOTTOM_SCREEN }
+                ScreenMode::Rotated => { PRESENTER_SUB_ROTATED_BOTTOM_SCREEN }
+                ScreenMode::Resized => { PRESENTER_SUB_RESIZED_BOTTOM_SCREEN }
+            };
+            let used_sub_top_screen = match SETTINGS_SCREENMODE {
+                ScreenMode::Regular => { PRESENTER_SUB_TOP_SCREEN }
+                ScreenMode::Rotated => { PRESENTER_SUB_ROTATED_TOP_SCREEN }
+                ScreenMode::Resized => { PRESENTER_SUB_RESIZED_TOP_SCREEN }
+            };
+            let used_fbo = match SETTINGS_SCREENMODE {
+                ScreenMode::Regular | ScreenMode::Resized => { self.renderer_2d.common.blend_fbo.fbo }
+                ScreenMode::Rotated => { self.renderer_2d.common.rotate_fbo.fbo }
+            };
+            let src_x1 = match SETTINGS_SCREENMODE {
+                ScreenMode::Regular | ScreenMode::Resized => { DISPLAY_WIDTH }
+                ScreenMode::Rotated => { DISPLAY_HEIGHT }
+            };
+            let src_y1 = match SETTINGS_SCREENMODE {
+                ScreenMode::Regular | ScreenMode::Resized => { DISPLAY_HEIGHT }
+                ScreenMode::Rotated => { DISPLAY_WIDTH }
+            };
 
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
             gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
@@ -139,7 +156,7 @@ impl GpuRenderer {
                     self.renderer_3d.render(&self.common);
                 }
                 self.common.mem_buf.read_2d(self.renderer_2d.has_vram_display[0]);
-                self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color, SETTINGS_ROTATE_SCREEN);
+                self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color);
                 blit_fb(
                     used_fbo,
                     if self.common.pow_cnt1.display_swap() {
@@ -149,7 +166,7 @@ impl GpuRenderer {
                     },
                     src_x1, src_y1
                 );
-                self.renderer_2d.render::<{ B }>(&self.common, 0, SETTINGS_ROTATE_SCREEN);
+                self.renderer_2d.render::<{ B }>(&self.common, 0);
                 blit_fb(
                     used_fbo,
                     if self.common.pow_cnt1.display_swap() {

@@ -3,6 +3,31 @@ use std::fmt::{Debug, Display, Formatter};
 use std::path::PathBuf;
 use std::str::FromStr;
 use strum_macros::{EnumIter, EnumString, IntoStaticStr};
+use crate::presenter::{ PresenterScreen, PRESENTER_SUB_TOP_SCREEN, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_TOP_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_TOP_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN};
+
+struct ScreenTopology {
+    top: PresenterScreen,
+    bottom: PresenterScreen,
+    mode: ScreenMode,
+}
+
+pub const PRESENTER_SUB_REGULAR: ScreenTopology = ScreenTopology {
+    top: PRESENTER_SUB_TOP_SCREEN,
+    bottom: PRESENTER_SUB_BOTTOM_SCREEN,
+    mode: ScreenMode::Regular,
+};
+
+pub const PRESENTER_SUB_ROTATED: ScreenTopology = ScreenTopology {
+    top: PRESENTER_SUB_ROTATED_TOP_SCREEN,
+    bottom: PRESENTER_SUB_ROTATED_BOTTOM_SCREEN,
+    mode: ScreenMode::Rotated,
+};
+
+pub const PRESENTER_SUB_RESIZED: ScreenTopology = ScreenTopology {
+    top: PRESENTER_SUB_RESIZED_TOP_SCREEN,
+    bottom: PRESENTER_SUB_RESIZED_BOTTOM_SCREEN,
+    mode: ScreenMode::Resized,
+};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
@@ -20,10 +45,27 @@ impl From<u8> for Arm7Emu {
     }
 }
 
+#[derive(Copy, Clone, Debug, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
+pub enum ScreenMode {
+    Regular,
+    Rotated,
+    Resized
+}
+
+impl From<u8> for ScreenMode {
+    fn from(value: u8) -> Self {
+        debug_assert!(value <= ScreenMode::Regular as u8);
+        unsafe { std::mem::transmute(value) }
+    }
+}
+
+pub static mut SETTINGS_SCREENMODE: ScreenMode = ScreenMode::Regular;
+
 #[derive(Clone)]
 pub enum SettingValue {
     Bool(bool),
     Arm7Emu(Arm7Emu),
+    ScreenMode(ScreenMode)
 }
 
 impl SettingValue {
@@ -31,12 +73,20 @@ impl SettingValue {
         *self = match self {
             SettingValue::Bool(value) => SettingValue::Bool(!*value),
             SettingValue::Arm7Emu(value) => SettingValue::Arm7Emu(Arm7Emu::from((value.clone() as u8 + 1) % (Arm7Emu::Hle as u8 + 1))),
+            SettingValue::ScreenMode(value) => SettingValue::ScreenMode(ScreenMode::from((value.clone() as u8 + 1) % (ScreenMode::Resized as u8 + 1))),
         }
     }
 
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             SettingValue::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub fn as_screenmode(&self) -> Option<ScreenMode> {
+        match self {
+            SettingValue::ScreenMode(value) => Some(value.clone()),
             _ => None,
         }
     }
@@ -52,6 +102,7 @@ impl SettingValue {
         match self {
             SettingValue::Bool(value) => *value = bool::from_str(str).unwrap_or(false),
             SettingValue::Arm7Emu(value) => *value = Arm7Emu::from_str(str).unwrap_or(Arm7Emu::AccurateLle),
+            SettingValue::ScreenMode(value) => *value = ScreenMode::from_str(str).unwrap_or(ScreenMode::Regular),
         }
     }
 
@@ -59,6 +110,7 @@ impl SettingValue {
         match self {
             SettingValue::Bool(value) => value.to_string(),
             SettingValue::Arm7Emu(value) => Into::<&str>::into(value).to_string(),
+            SettingValue::ScreenMode(value) => Into::<&str>::into(value).to_string(),
         }
     }
 }
@@ -77,6 +129,9 @@ impl Display for SettingValue {
                     }
                 }
                 SettingValue::Arm7Emu(value) => {
+                    value.into()
+                }
+                SettingValue::ScreenMode(value) => {
                     value.into()
                 }
             }
@@ -99,8 +154,8 @@ impl Setting {
 
 pub const DEFAULT_SETTINGS: Settings = Settings {
     values: [
-        Setting::new("Rotate Screens", "Will simulate vertical holding, \n\
-        for games like Brain Age", SettingValue::Bool(false)),
+        Setting::new("Screen Mode", "Can be used to simulate vertical holding, \n\
+        for games like Brain Age", SettingValue::ScreenMode(ScreenMode::Regular)),
         Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true)),
         Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true)),
         Setting::new(
@@ -121,8 +176,8 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn rotate_screens(&self) -> bool {
-        unsafe { self.values[0].value.as_bool().unwrap_unchecked() }
+    pub fn screenmode(&self) -> ScreenMode {
+        unsafe { self.values[0].value.as_screenmode().unwrap_unchecked() }
     }
 
     pub fn framelimit(&self) -> bool {
@@ -137,7 +192,7 @@ impl Settings {
         unsafe { self.values[3].value.as_arm7_emu().unwrap_unchecked() }
     }
 
-    pub fn setting_rotate_screens(&mut self) -> &mut Setting {
+    pub fn setting_screenmode_mut(&mut self) -> &mut Setting {
         &mut self.values[0]
     }
     

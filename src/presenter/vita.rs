@@ -12,8 +12,8 @@ use crate::presenter::platform::imgui::{
     ImGui_PopID, ImGui_PopItemFlag, ImGui_PopStyleVar, ImGui_PushID3, ImGui_PushItemFlag, ImGui_PushStyleVar, ImGui_PushStyleVar1, ImGui_Render, ImGui_SameLine, ImGui_Selectable, ImGui_SetCursorPosX,
     ImGui_SetItemDefaultFocus, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
 };
-use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN};
-use crate::settings::{Arm7Emu, SettingValue, Settings, SettingsConfig};
+use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN};
+use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, SettingsConfig, SETTINGS_SCREENMODE};
 use gl::types::{GLboolean, GLenum, GLuint};
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
@@ -22,8 +22,6 @@ use std::str::FromStr;
 use std::{fs, mem, ptr};
 use strum::IntoEnumIterator;
 use vitasdk_sys::*;
-
-use super::SETTINGS_ROTATE_SCREEN;
 
 mod imgui {
     #![allow(warnings, unused)]
@@ -172,19 +170,26 @@ impl Presenter {
                 let report = touch_report.report.first().unwrap();
                 let x = report.x as u32 * PRESENTER_SCREEN_WIDTH / 1920;
                 let y = report.y as u32 * PRESENTER_SCREEN_HEIGHT / 1080;
-                if SETTINGS_ROTATE_SCREEN {
-                    if PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.is_within(x, y) {
-                        let (x, y) = PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.normalize(x, y);
-                        let screen_x = (DISPLAY_WIDTH as u32 - (DISPLAY_WIDTH as u32 * y / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.height)) as u8;
-                        let screen_y = (DISPLAY_HEIGHT as u32 * x / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.width) as u8;
-                        touch = Some((screen_x, screen_y));
-                    }
-                }
-                else {
-                    if PRESENTER_SUB_BOTTOM_SCREEN.is_within(x, y) {
+                
+                match SETTINGS_SCREENMODE {
+                    ScreenMode::Regular => {
                         let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x, y);
                         let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
                         let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height) as u8;
+                        touch = Some((screen_x, screen_y));
+                    }
+                    ScreenMode::Rotated => {
+                        if PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.is_within(x, y) {
+                            let (x, y) = PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.normalize(x, y);
+                            let screen_x = (DISPLAY_WIDTH as u32 - (DISPLAY_WIDTH as u32 * y / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.height)) as u8;
+                            let screen_y = (DISPLAY_HEIGHT as u32 * x / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.width) as u8;
+                            touch = Some((screen_x, screen_y));
+                        }
+                    }
+                    ScreenMode::Resized => {
+                        let (x, y) = PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.normalize(x, y);
+                        let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.width) as u8;
+                        let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.height) as u8;
                         touch = Some((screen_x, screen_y));
                     }
                 }
@@ -413,6 +418,28 @@ impl Presenter {
                                         let size = ImVec2 { x: 0f32, y: 0f32 };
                                         if ImGui_Selectable(value_cstr.as_ptr() as _, is_selected, 0, &size) {
                                             setting.value = SettingValue::Arm7Emu(value);
+                                            settings_config.dirty = true;
+                                        }
+                                        if is_selected {
+                                            ImGui_SetItemDefaultFocus();
+                                        }
+                                    }
+                                    ImGui_EndCombo();
+                                }
+                            }
+                            SettingValue::ScreenMode(_) => {
+                                let value = CString::new(setting.value.to_string()).unwrap();
+
+                                ImGui_SetCursorPosX(ImGui_GetCursorPosX() + ImGui_GetContentRegionAvail().x - 125f32);
+
+                                if ImGui_BeginCombo(c"##screenmode".as_ptr() as _, value.as_ptr() as _, 0) {
+                                    for value in ScreenMode::iter() {
+                                        let is_selected = setting.value.as_screenmode() == Some(value);
+                                        let value_str: &str = value.into();
+                                        let value_cstr = CString::from_str(value_str).unwrap();
+                                        let size = ImVec2 { x: 0f32, y: 0f32 };
+                                        if ImGui_Selectable(value_cstr.as_ptr() as _, is_selected, 0, &size) {
+                                            setting.value = SettingValue::ScreenMode(value);
                                             settings_config.dirty = true;
                                         }
                                         if is_selected {
