@@ -3,31 +3,6 @@ use std::fmt::{Debug, Display, Formatter};
 use std::path::PathBuf;
 use std::str::FromStr;
 use strum_macros::{EnumIter, EnumString, IntoStaticStr};
-use crate::presenter::{ PresenterScreen, PRESENTER_SUB_TOP_SCREEN, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_TOP_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_TOP_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN};
-
-struct ScreenTopology {
-    top: PresenterScreen,
-    bottom: PresenterScreen,
-    mode: ScreenMode,
-}
-
-pub const PRESENTER_SUB_REGULAR: ScreenTopology = ScreenTopology {
-    top: PRESENTER_SUB_TOP_SCREEN,
-    bottom: PRESENTER_SUB_BOTTOM_SCREEN,
-    mode: ScreenMode::Regular,
-};
-
-pub const PRESENTER_SUB_ROTATED: ScreenTopology = ScreenTopology {
-    top: PRESENTER_SUB_ROTATED_TOP_SCREEN,
-    bottom: PRESENTER_SUB_ROTATED_BOTTOM_SCREEN,
-    mode: ScreenMode::Rotated,
-};
-
-pub const PRESENTER_SUB_RESIZED: ScreenTopology = ScreenTopology {
-    top: PRESENTER_SUB_RESIZED_TOP_SCREEN,
-    bottom: PRESENTER_SUB_RESIZED_BOTTOM_SCREEN,
-    mode: ScreenMode::Resized,
-};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
@@ -58,8 +33,6 @@ impl From<u8> for ScreenMode {
         unsafe { std::mem::transmute(value) }
     }
 }
-
-pub static mut SETTINGS_SCREENMODE: ScreenMode = ScreenMode::Regular;
 
 #[derive(Clone)]
 pub enum SettingValue {

@@ -13,7 +13,7 @@ use crate::presenter::platform::imgui::{
     ImGui_SetItemDefaultFocus, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
 };
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN};
-use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, SettingsConfig, SETTINGS_SCREENMODE};
+use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, SettingsConfig};
 use gl::types::{GLboolean, GLenum, GLuint};
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
@@ -146,7 +146,7 @@ impl Presenter {
         }
     }
 
-    pub fn poll_event(&mut self) -> PresentEvent {
+    pub fn poll_event(&mut self, screenmode: ScreenMode) -> PresentEvent {
         let mut touch = None;
 
         unsafe {
@@ -170,8 +170,8 @@ impl Presenter {
                 let report = touch_report.report.first().unwrap();
                 let x = report.x as u32 * PRESENTER_SCREEN_WIDTH / 1920;
                 let y = report.y as u32 * PRESENTER_SCREEN_HEIGHT / 1080;
-                
-                match SETTINGS_SCREENMODE {
+
+                match screenmode {
                     ScreenMode::Regular => {
                         let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x, y);
                         let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;

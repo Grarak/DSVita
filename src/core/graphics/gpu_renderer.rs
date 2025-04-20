@@ -7,13 +7,19 @@ use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
-use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_TOP_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_TOP_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_TOP_SCREEN};
-use crate::settings::{Settings, ScreenMode, SETTINGS_SCREENMODE};
+use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_ROTATED, PRESENTER_SUB_RESIZED};
+use crate::settings::{Settings, ScreenMode};
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
+
+pub struct ScreenTopology {
+    pub top: PresenterScreen,
+    pub bottom: PresenterScreen,
+    pub mode: ScreenMode,
+}
 
 pub struct GpuRendererCommon {
     pub mem_buf: GpuMemBuf,
@@ -101,28 +107,18 @@ impl GpuRenderer {
         let render_time_start = Instant::now();
 
         unsafe {
-            SETTINGS_SCREENMODE = settings.screenmode();
-            let used_sub_bottom_screen = match SETTINGS_SCREENMODE {
-                ScreenMode::Regular => { PRESENTER_SUB_BOTTOM_SCREEN }
-                ScreenMode::Rotated => { PRESENTER_SUB_ROTATED_BOTTOM_SCREEN }
-                ScreenMode::Resized => { PRESENTER_SUB_RESIZED_BOTTOM_SCREEN }
+            let screen_topology = match settings.screenmode() {
+                ScreenMode::Regular => { PRESENTER_SUB_REGULAR }
+                ScreenMode::Rotated => { PRESENTER_SUB_ROTATED }
+                ScreenMode::Resized => { PRESENTER_SUB_RESIZED }
             };
-            let used_sub_top_screen = match SETTINGS_SCREENMODE {
-                ScreenMode::Regular => { PRESENTER_SUB_TOP_SCREEN }
-                ScreenMode::Rotated => { PRESENTER_SUB_ROTATED_TOP_SCREEN }
-                ScreenMode::Resized => { PRESENTER_SUB_RESIZED_TOP_SCREEN }
-            };
-            let used_fbo = match SETTINGS_SCREENMODE {
+            let used_fbo = match screen_topology.mode {
                 ScreenMode::Regular | ScreenMode::Resized => { self.renderer_2d.common.blend_fbo.fbo }
                 ScreenMode::Rotated => { self.renderer_2d.common.rotate_fbo.fbo }
             };
-            let src_x1 = match SETTINGS_SCREENMODE {
-                ScreenMode::Regular | ScreenMode::Resized => { DISPLAY_WIDTH }
-                ScreenMode::Rotated => { DISPLAY_HEIGHT }
-            };
-            let src_y1 = match SETTINGS_SCREENMODE {
-                ScreenMode::Regular | ScreenMode::Resized => { DISPLAY_HEIGHT }
-                ScreenMode::Rotated => { DISPLAY_WIDTH }
+            let src_coords = match screen_topology.mode {
+                ScreenMode::Regular | ScreenMode::Resized => { (DISPLAY_WIDTH, DISPLAY_HEIGHT) }
+                ScreenMode::Rotated => { (DISPLAY_HEIGHT, DISPLAY_WIDTH) }
             };
 
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
@@ -156,25 +152,25 @@ impl GpuRenderer {
                     self.renderer_3d.render(&self.common);
                 }
                 self.common.mem_buf.read_2d(self.renderer_2d.has_vram_display[0]);
-                self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color);
+                self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color, screen_topology.mode == ScreenMode::Rotated);
                 blit_fb(
                     used_fbo,
                     if self.common.pow_cnt1.display_swap() {
-                        &used_sub_top_screen
+                        &screen_topology.top
                     } else {
-                        &used_sub_bottom_screen
+                        &screen_topology.bottom
                     },
-                    src_x1, src_y1
+                    src_coords.0, src_coords.1
                 );
-                self.renderer_2d.render::<{ B }>(&self.common, 0);
+                self.renderer_2d.render::<{ B }>(&self.common, 0, screen_topology.mode == ScreenMode::Rotated);
                 blit_fb(
                     used_fbo,
                     if self.common.pow_cnt1.display_swap() {
-                        &used_sub_bottom_screen
+                        &screen_topology.bottom
                     } else {
-                        &used_sub_top_screen
+                        &screen_topology.top
                     },
-                    src_x1, src_y1
+                    src_coords.0, src_coords.1
                 );
             }
         }

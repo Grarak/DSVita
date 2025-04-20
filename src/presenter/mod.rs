@@ -1,5 +1,7 @@
 pub use self::platform::*;
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::graphics::gpu_renderer::{ScreenTopology};
+use crate::settings::{ScreenMode};
 
 #[cfg(target_os = "linux")]
 #[path = "linux.rs"]
@@ -76,3 +78,21 @@ pub const PRESENTER_SUB_RESIZED_BOTTOM_SCREEN: PresenterScreen = PresenterScreen
     PRESENTER_SUB_RESIZED_SCREEN_WIDTH_BOT,
     PRESENTER_SUB_RESIZED_SCREEN_HEIGHT_BOT,
 );
+
+pub const PRESENTER_SUB_REGULAR: ScreenTopology = ScreenTopology {
+    top: PRESENTER_SUB_TOP_SCREEN,
+    bottom: PRESENTER_SUB_BOTTOM_SCREEN,
+    mode: ScreenMode::Regular,
+};
+
+pub const PRESENTER_SUB_ROTATED: ScreenTopology = ScreenTopology {
+    top: PRESENTER_SUB_ROTATED_TOP_SCREEN,
+    bottom: PRESENTER_SUB_ROTATED_BOTTOM_SCREEN,
+    mode: ScreenMode::Rotated,
+};
+
+pub const PRESENTER_SUB_RESIZED: ScreenTopology = ScreenTopology {
+    top: PRESENTER_SUB_RESIZED_TOP_SCREEN,
+    bottom: PRESENTER_SUB_RESIZED_BOTTOM_SCREEN,
+    mode: ScreenMode::Resized,
+};
