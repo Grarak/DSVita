@@ -20,10 +20,25 @@ impl From<u8> for Arm7Emu {
     }
 }
 
+#[derive(Copy, Clone, Debug, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
+pub enum ScreenMode {
+    Regular,
+    Rotated,
+    Resized
+}
+
+impl From<u8> for ScreenMode {
+    fn from(value: u8) -> Self {
+        debug_assert!(value <= ScreenMode::Regular as u8);
+        unsafe { std::mem::transmute(value) }
+    }
+}
+
 #[derive(Clone)]
 pub enum SettingValue {
     Bool(bool),
     Arm7Emu(Arm7Emu),
+    ScreenMode(ScreenMode)
 }
 
 impl SettingValue {
@@ -31,12 +46,20 @@ impl SettingValue {
         *self = match self {
             SettingValue::Bool(value) => SettingValue::Bool(!*value),
             SettingValue::Arm7Emu(value) => SettingValue::Arm7Emu(Arm7Emu::from((value.clone() as u8 + 1) % (Arm7Emu::Hle as u8 + 1))),
+            SettingValue::ScreenMode(value) => SettingValue::ScreenMode(ScreenMode::from((value.clone() as u8 + 1) % (ScreenMode::Resized as u8 + 1))),
         }
     }
 
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             SettingValue::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub fn as_screenmode(&self) -> Option<ScreenMode> {
+        match self {
+            SettingValue::ScreenMode(value) => Some(value.clone()),
             _ => None,
         }
     }
@@ -52,6 +75,7 @@ impl SettingValue {
         match self {
             SettingValue::Bool(value) => *value = bool::from_str(str).unwrap_or(false),
             SettingValue::Arm7Emu(value) => *value = Arm7Emu::from_str(str).unwrap_or(Arm7Emu::AccurateLle),
+            SettingValue::ScreenMode(value) => *value = ScreenMode::from_str(str).unwrap_or(ScreenMode::Regular),
         }
     }
 
@@ -59,6 +83,7 @@ impl SettingValue {
         match self {
             SettingValue::Bool(value) => value.to_string(),
             SettingValue::Arm7Emu(value) => Into::<&str>::into(value).to_string(),
+            SettingValue::ScreenMode(value) => Into::<&str>::into(value).to_string(),
         }
     }
 }
@@ -77,6 +102,9 @@ impl Display for SettingValue {
                     }
                 }
                 SettingValue::Arm7Emu(value) => {
+                    value.into()
+                }
+                SettingValue::ScreenMode(value) => {
                     value.into()
                 }
             }
@@ -99,6 +127,8 @@ impl Setting {
 
 pub const DEFAULT_SETTINGS: Settings = Settings {
     values: [
+        Setting::new("Screen Mode", "Can be used to simulate vertical holding, \n\
+        for games like Brain Age", SettingValue::ScreenMode(ScreenMode::Regular)),
         Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true)),
         Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true)),
         Setting::new(
@@ -115,35 +145,43 @@ pub const DEFAULT_SETTINGS: Settings = Settings {
 
 #[derive(Clone)]
 pub struct Settings {
-    values: [Setting; 3],
+    values: [Setting; 4],
 }
 
 impl Settings {
-    pub fn framelimit(&self) -> bool {
-        unsafe { self.values[0].value.as_bool().unwrap_unchecked() }
+    pub fn screenmode(&self) -> ScreenMode {
+        unsafe { self.values[0].value.as_screenmode().unwrap_unchecked() }
     }
 
-    pub fn audio(&self) -> bool {
+    pub fn framelimit(&self) -> bool {
         unsafe { self.values[1].value.as_bool().unwrap_unchecked() }
     }
 
-    pub fn arm7_hle(&self) -> Arm7Emu {
-        unsafe { self.values[2].value.as_arm7_emu().unwrap_unchecked() }
+    pub fn audio(&self) -> bool {
+        unsafe { self.values[2].value.as_bool().unwrap_unchecked() }
     }
 
-    pub fn setting_framelimit_mut(&mut self) -> &mut Setting {
+    pub fn arm7_hle(&self) -> Arm7Emu {
+        unsafe { self.values[3].value.as_arm7_emu().unwrap_unchecked() }
+    }
+
+    pub fn setting_screenmode_mut(&mut self) -> &mut Setting {
         &mut self.values[0]
     }
-
-    pub fn setting_audio_mut(&mut self) -> &mut Setting {
+    
+    pub fn setting_framelimit_mut(&mut self) -> &mut Setting {
         &mut self.values[1]
     }
 
-    pub fn setting_arm7_hle_mut(&mut self) -> &mut Setting {
+    pub fn setting_audio_mut(&mut self) -> &mut Setting {
         &mut self.values[2]
     }
 
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 3] {
+    pub fn setting_arm7_hle_mut(&mut self) -> &mut Setting {
+        &mut self.values[3]
+    }
+
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 4] {
         &mut self.values
     }
 }
