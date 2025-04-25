@@ -362,7 +362,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
     }
 }
 
-#[naked]
+#[unsafe(naked)]
 unsafe extern "C" fn call_jit_entry(_: *const fn(), _: *mut usize) {
     #[rustfmt::skip]
     naked_asm!(

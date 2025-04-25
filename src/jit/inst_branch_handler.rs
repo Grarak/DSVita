@@ -60,7 +60,7 @@ fn run_scheduler_idle_loop<const ARM7_HLE: bool>(asm: &mut JitAsm<{ ARM9 }>) {
     asm.emu.regs_3d_run_cmds(asm.emu.cm.get_cycles());
 }
 
-#[naked]
+#[unsafe(naked)]
 unsafe extern "C" fn call_interrupt(_: *const fn(), _: *mut usize) {
     #[rustfmt::skip]
     naked_asm!(
