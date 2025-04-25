@@ -7,8 +7,8 @@ use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
-use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_ROTATED, PRESENTER_SUB_RESIZED};
-use crate::settings::{Settings, ScreenMode};
+use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_ROTATED};
+use crate::settings::{ScreenMode, Settings};
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -108,17 +108,17 @@ impl GpuRenderer {
 
         unsafe {
             let screen_topology = match settings.screenmode() {
-                ScreenMode::Regular => { PRESENTER_SUB_REGULAR }
-                ScreenMode::Rotated => { PRESENTER_SUB_ROTATED }
-                ScreenMode::Resized => { PRESENTER_SUB_RESIZED }
+                ScreenMode::Regular => PRESENTER_SUB_REGULAR,
+                ScreenMode::Rotated => PRESENTER_SUB_ROTATED,
+                ScreenMode::Resized => PRESENTER_SUB_RESIZED,
             };
             let used_fbo = match screen_topology.mode {
-                ScreenMode::Regular | ScreenMode::Resized => { self.renderer_2d.common.blend_fbo.fbo }
-                ScreenMode::Rotated => { self.renderer_2d.common.rotate_fbo.fbo }
+                ScreenMode::Regular | ScreenMode::Resized => self.renderer_2d.common.blend_fbo.fbo,
+                ScreenMode::Rotated => self.renderer_2d.common.rotate_fbo.fbo,
             };
             let src_coords = match screen_topology.mode {
-                ScreenMode::Regular | ScreenMode::Resized => { (DISPLAY_WIDTH, DISPLAY_HEIGHT) }
-                ScreenMode::Rotated => { (DISPLAY_HEIGHT, DISPLAY_WIDTH) }
+                ScreenMode::Regular | ScreenMode::Resized => (DISPLAY_WIDTH, DISPLAY_HEIGHT),
+                ScreenMode::Rotated => (DISPLAY_HEIGHT, DISPLAY_WIDTH),
             };
 
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
@@ -144,7 +144,6 @@ impl GpuRenderer {
                     );
                 };
 
-
                 self.common.mem_buf.rebuild_vram_maps();
                 if self.rendering_3d {
                     self.rendering_3d = false;
@@ -152,25 +151,20 @@ impl GpuRenderer {
                     self.renderer_3d.render(&self.common);
                 }
                 self.common.mem_buf.read_2d(self.renderer_2d.has_vram_display[0]);
-                self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color, screen_topology.mode == ScreenMode::Rotated);
+                self.renderer_2d
+                    .render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color, screen_topology.mode == ScreenMode::Rotated);
                 blit_fb(
                     used_fbo,
-                    if self.common.pow_cnt1.display_swap() {
-                        &screen_topology.top
-                    } else {
-                        &screen_topology.bottom
-                    },
-                    src_coords.0, src_coords.1
+                    if self.common.pow_cnt1.display_swap() { &screen_topology.top } else { &screen_topology.bottom },
+                    src_coords.0,
+                    src_coords.1,
                 );
                 self.renderer_2d.render::<{ B }>(&self.common, 0, screen_topology.mode == ScreenMode::Rotated);
                 blit_fb(
                     used_fbo,
-                    if self.common.pow_cnt1.display_swap() {
-                        &screen_topology.bottom
-                    } else {
-                        &screen_topology.top
-                    },
-                    src_coords.0, src_coords.1
+                    if self.common.pow_cnt1.display_swap() { &screen_topology.bottom } else { &screen_topology.top },
+                    src_coords.0,
+                    src_coords.1,
                 );
             }
         }

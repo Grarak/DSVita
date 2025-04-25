@@ -24,7 +24,7 @@ impl From<u8> for Arm7Emu {
 pub enum ScreenMode {
     Regular,
     Rotated,
-    Resized
+    Resized,
 }
 
 impl From<u8> for ScreenMode {
@@ -38,7 +38,7 @@ impl From<u8> for ScreenMode {
 pub enum SettingValue {
     Bool(bool),
     Arm7Emu(Arm7Emu),
-    ScreenMode(ScreenMode)
+    ScreenMode(ScreenMode),
 }
 
 impl SettingValue {
@@ -127,8 +127,12 @@ impl Setting {
 
 pub const DEFAULT_SETTINGS: Settings = Settings {
     values: [
-        Setting::new("Screen Mode", "Can be used to simulate vertical holding, \n\
-        for games like Brain Age", SettingValue::ScreenMode(ScreenMode::Regular)),
+        Setting::new(
+            "Screen Mode",
+            "Can be used to simulate vertical holding,\n\
+        for games like Brain Age",
+            SettingValue::ScreenMode(ScreenMode::Regular),
+        ),
         Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true)),
         Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true)),
         Setting::new(
@@ -168,7 +172,7 @@ impl Settings {
     pub fn setting_screenmode_mut(&mut self) -> &mut Setting {
         &mut self.values[0]
     }
-    
+
     pub fn setting_framelimit_mut(&mut self) -> &mut Setting {
         &mut self.values[1]
     }
