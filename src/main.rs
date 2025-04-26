@@ -428,7 +428,7 @@ pub fn actual_main() {
         .unwrap();
 
     let gpu_renderer = unsafe { gpu_renderer.get().as_mut().unwrap() };
-    while let PresentEvent::Inputs { keymap, touch } = presenter.poll_event() {
+    while let PresentEvent::Inputs { keymap, touch } = presenter.poll_event(settings.screenmode()) {
         if let Some((x, y)) = touch {
             touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
         }

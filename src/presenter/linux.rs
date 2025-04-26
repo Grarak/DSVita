@@ -2,7 +2,7 @@ use crate::cartridge_io::{CartridgeIo, CartridgePreview};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::input;
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
-use crate::settings::{Arm7Emu, SettingValue, Settings, DEFAULT_SETTINGS};
+use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
 use clap::{arg, command, value_parser, ArgAction};
 use gl::types::GLuint;
@@ -135,7 +135,7 @@ impl Presenter {
 
     pub fn destroy_ui(&self) {}
 
-    pub fn poll_event(&mut self) -> PresentEvent {
+    pub fn poll_event(&mut self, _: ScreenMode) -> PresentEvent {
         let mut touch = None;
 
         let mut sample_touch_points = |x, y| {
