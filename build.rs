@@ -1,7 +1,7 @@
 use bindgen::Formatter;
 use std::fs::File;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::{env, fs};
 
@@ -20,9 +20,7 @@ fn main() {
             println!("cargo:rustc-link-arg=--sysroot={sysroot}");
         }
         let mut cache_build = cc::Build::new();
-        if Path::new("/usr/bin/arm-linux-gnu-gcc").exists() {
-            cache_build.compiler("/usr/bin/arm-linux-gnu-gcc");
-        }
+        cache_build.compiler("clang");
         // Running IDE on anything other than linux will fail, so ignore compile error
         let _ = cache_build.file("builtins/cache.c").try_compile("cache").ok();
     }
