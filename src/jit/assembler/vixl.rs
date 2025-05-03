@@ -175,9 +175,9 @@ pub struct MacroAssembler {
 }
 
 impl MacroAssembler {
-    pub fn new() -> Self {
+    pub fn new(isa: InstructionSet) -> Self {
         MacroAssembler {
-            inner: unsafe { create_aarch32_masm() },
+            inner: unsafe { create_aarch32_masm(isa) },
         }
     }
 

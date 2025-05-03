@@ -44,6 +44,8 @@ fn main() {
             "-Wshadow",
             "-Wno-missing-noreturn",
             "-DVIXL_CODE_BUFFER_MALLOC=1",
+            "-DVIXL_INCLUDE_TARGET_A32=1",
+            "-DVIXL_INCLUDE_TARGET_T32=1",
             if build_profile_name == "release" { "" } else { "-DVIXL_DEBUG=1" },
             "-std=c++17",
             "--target=armv7-unknown-linux-gnueabihf",

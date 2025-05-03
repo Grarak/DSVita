@@ -1,3 +1,4 @@
+pub mod arm;
 pub mod block_asm;
 mod reg_alloc;
 pub mod thumb;

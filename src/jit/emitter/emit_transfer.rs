@@ -7,7 +7,10 @@ use crate::jit::assembler::vixl::{
 };
 use crate::jit::inst_mem_handler::{inst_mem_handler_multiple_slow, InstMemMultipleParams};
 use crate::jit::jit_asm::JitAsm;
-use crate::jit::jit_memory::{SLOW_MEM_MULTIPLE_LENGTH, SLOW_MEM_SINGLE_READ_LENGTH, SLOW_MEM_SINGLE_WRITE_LENGTH};
+use crate::jit::jit_memory::{
+    SLOW_MEM_MULTIPLE_LENGTH_ARM, SLOW_MEM_MULTIPLE_LENGTH_THUMB, SLOW_MEM_SINGLE_READ_LENGTH_ARM, SLOW_MEM_SINGLE_READ_LENGTH_THUMB, SLOW_MEM_SINGLE_WRITE_LENGTH_ARM,
+    SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB,
+};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
@@ -116,13 +119,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let fast_mem_end = block_asm.get_cursor_offset();
         let fast_mem_size = fast_mem_end - fast_mem_start;
 
-        let slow_mem_length = if inst.op.is_write_mem_transfer() {
-            SLOW_MEM_SINGLE_WRITE_LENGTH
-        } else {
-            SLOW_MEM_SINGLE_READ_LENGTH
+        let (slow_mem_length, step_size) = match (inst.op.is_write_mem_transfer(), block_asm.thumb) {
+            (false, false) => (SLOW_MEM_SINGLE_READ_LENGTH_ARM, 4),
+            (false, true) => (SLOW_MEM_SINGLE_READ_LENGTH_THUMB, 2),
+            (true, false) => (SLOW_MEM_SINGLE_WRITE_LENGTH_ARM, 4),
+            (true, true) => (SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB, 2),
         };
-
-        for _ in (fast_mem_size as usize..slow_mem_length).step_by(2) {
+        for _ in (fast_mem_size as usize..slow_mem_length).step_by(step_size) {
             block_asm.nop0();
         }
 
@@ -233,7 +236,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let fast_mem_end = block_asm.get_cursor_offset();
             let fast_mem_size = fast_mem_end - fast_mem_start;
 
-            for _ in (fast_mem_size as usize..SLOW_MEM_MULTIPLE_LENGTH).step_by(2) {
+            let (slow_mem_length, step_size) = if block_asm.thumb {
+                (SLOW_MEM_MULTIPLE_LENGTH_THUMB, 2)
+            } else {
+                (SLOW_MEM_MULTIPLE_LENGTH_ARM, 4)
+            };
+            for _ in (fast_mem_size as usize..slow_mem_length).step_by(step_size) {
                 block_asm.nop0();
             }
         } else {

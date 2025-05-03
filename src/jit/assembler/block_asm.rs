@@ -1,6 +1,7 @@
 use crate::jit::assembler::reg_alloc::RegAlloc;
 use crate::jit::assembler::vixl::vixl::{
-    BranchHint_kNear, FlagsUpdate_DontCare, MaskedSpecialRegisterType_CPSR_f, MemOperand, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR, SpecialRegisterType_CPSR,
+    BranchHint_kNear, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, MaskedSpecialRegisterType_CPSR_f, MemOperand, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR,
+    SpecialRegisterType_CPSR,
 };
 use crate::jit::assembler::vixl::{
     vixl, Label, MacroAssembler, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmMrs2, MasmMsr2, MasmPop1, MasmPush1, MasmStr2, MasmStrb2, MasmStrd3, MasmSub5,
@@ -64,7 +65,7 @@ pub struct BlockAsm {
 impl BlockAsm {
     pub fn new(thumb: bool) -> Self {
         BlockAsm {
-            masm: MacroAssembler::new(),
+            masm: MacroAssembler::new(if thumb { InstructionSet_T32 } else { InstructionSet_A32 }),
             reg_alloc: RegAlloc::new(),
             current_pc: 0,
             thumb,

@@ -242,9 +242,9 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
                     asm.emu.thread_set_thumb(CPU, asm.emu.thread[CPU].pc & 1 == 1);
                     unsafe {
                         std::arch::asm!(
-                            "mov sp, {}",
-                            "pop {{r4-r12,pc}}",
-                            in(reg) asm.runtime_data.interrupt_sp
+                        "mov sp, {}",
+                        "pop {{r4-r12,pc}}",
+                        in(reg) asm.runtime_data.interrupt_sp
                         );
                         std::hint::unreachable_unchecked();
                     }
@@ -380,7 +380,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         //     println!();
         //     todo!()
         // }
-        let (insert_entry, flushed) = asm.emu.jit_insert_block(&opcodes, &block_asm.guest_inst_metadata, guest_pc, CPU);
+        let (insert_entry, flushed) = asm.emu.jit_insert_block(&opcodes, &block_asm.guest_inst_metadata, guest_pc, thumb, CPU);
         let jit_entry: extern "C" fn() = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {
