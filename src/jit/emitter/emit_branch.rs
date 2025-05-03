@@ -107,7 +107,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
                 block_asm.restore_guest_regs_ptr();
                 block_asm.restore_stack();
-                self.emit_call_jit_addr_imm(block_asm.current_pc + 4, false, block_asm);
+                let lr = if block_asm.thumb { block_asm.current_pc + 3 } else { block_asm.current_pc + 4 };
+                self.emit_call_jit_addr_imm(lr, false, block_asm);
                 return;
             }
 
@@ -132,7 +133,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
                 block_asm.restore_guest_regs_ptr();
                 block_asm.restore_stack();
-                self.emit_call_jit_addr_imm(block_asm.current_pc + 4, false, block_asm);
+                let lr = if block_asm.thumb { block_asm.current_pc + 3 } else { block_asm.current_pc + 4 };
+                self.emit_call_jit_addr_imm(lr, false, block_asm);
                 return;
             }
 
@@ -157,51 +159,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.bx1(Reg::R12);
     }
 
-    pub fn emit_blx(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
-        let inst = &self.jit_buf.insts[inst_index];
-        let op0 = inst.operands()[0].as_reg_no_shift().unwrap();
-        let op0_mapped = block_asm.get_guest_map(op0);
-
-        let pc_reg = block_asm.get_guest_map(Reg::PC);
-        block_asm.mov2(pc_reg, &op0_mapped.into());
-
-        let lr_reg = block_asm.get_guest_map(Reg::LR);
-        let pc = block_asm.current_pc;
-        block_asm.ldr2(lr_reg, pc + 4);
-
-        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::LR, Reg::PC));
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
-
-        self.emit_branch_reg(inst_index, basic_block_index, pc_reg, true, block_asm);
-    }
-
-    pub fn emit_bl(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
-        let inst = &self.jit_buf.insts[inst_index];
-        let relative_pc = inst.operands()[0].as_imm().unwrap() as i32 + 8;
-        let target_pc = (block_asm.current_pc as i32 + relative_pc) as u32;
-
-        let pc_reg = block_asm.get_guest_map(Reg::PC);
-        block_asm.ldr2(pc_reg, target_pc);
-
-        let lr_reg = block_asm.get_guest_map(Reg::LR);
-        let pc = block_asm.current_pc;
-        block_asm.mov2(lr_reg, &(pc + 4).into());
-        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::LR, Reg::PC));
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
-
-        self.emit_branch_external_label(inst_index, basic_block_index, target_pc, true, block_asm);
-    }
-
-    pub fn emit_b(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
-        let inst = &self.jit_buf.insts[inst_index];
-        let relative_pc = inst.operands()[0].as_imm().unwrap() as i32 + 8;
-        let target_pc = (block_asm.current_pc as i32 + relative_pc) as u32;
-
-        let pc_reg = block_asm.get_guest_map(Reg::PC);
-        block_asm.ldr2(pc_reg, target_pc);
-
-        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::PC));
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+    pub fn emit_branch_label(&mut self, inst_index: usize, basic_block_index: usize, target_pc: u32, pc_reg: Reg, block_asm: &mut BlockAsm) {
+        let thumb = target_pc & 1 == 1;
+        let aligned_target_pc = target_pc & !1;
+        let pc_shift = if thumb { 1 } else { 2 };
 
         let metadata = self.analyzer.insts_metadata[inst_index];
         if metadata.idle_loop() {
@@ -214,7 +175,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             match CPU {
                 ARM9 => {
-                    let jump_to_index = inst_index - ((block_asm.current_pc - target_pc) >> 2) as usize;
+                    let jump_to_index = inst_index - ((block_asm.current_pc - aligned_target_pc) >> pc_shift) as usize;
                     let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
                     block_asm.ldr2(Reg::R0, self as *mut _ as u32);
                     block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pre_cycle_count_sum.into());
@@ -242,7 +203,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         } else if metadata.external_branch() {
             self.emit_branch_external_label(inst_index, basic_block_index, target_pc, false, block_asm);
         } else {
-            let jump_to_index = inst_index - ((block_asm.current_pc - target_pc) >> 2) as usize;
+            let jump_to_index = (inst_index as isize + ((aligned_target_pc as isize - block_asm.current_pc as isize) >> pc_shift)) as usize;
             let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
 
             block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
@@ -255,6 +216,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.b3(Cond::HS, &mut cycles_exceed_label, BranchHint_kFar);
 
             block_asm.bind(&mut continue_label);
+            block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pre_cycle_count_sum.into());
             block_asm.strh2(Reg::R1, &MemOperand::reg_offset(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32));
 
@@ -304,6 +266,55 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 }
             }
         }
+    }
+
+    pub fn emit_blx(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
+        let inst = &self.jit_buf.insts[inst_index];
+        let op0 = inst.operands()[0].as_reg_no_shift().unwrap();
+        let op0_mapped = block_asm.get_guest_map(op0);
+
+        let pc_reg = block_asm.get_guest_map(Reg::PC);
+        block_asm.mov2(pc_reg, &op0_mapped.into());
+
+        let lr_reg = block_asm.get_guest_map(Reg::LR);
+        let pc = block_asm.current_pc;
+        block_asm.ldr2(lr_reg, pc + 4);
+
+        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::LR, Reg::PC));
+        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+
+        self.emit_branch_reg(inst_index, basic_block_index, pc_reg, true, block_asm);
+    }
+
+    pub fn emit_bl(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
+        let inst = &self.jit_buf.insts[inst_index];
+        let relative_pc = inst.operands()[0].as_imm().unwrap() as i32 + 8;
+        let target_pc = (block_asm.current_pc as i32 + relative_pc) as u32;
+
+        let pc_reg = block_asm.get_guest_map(Reg::PC);
+        block_asm.ldr2(pc_reg, target_pc);
+
+        let lr_reg = block_asm.get_guest_map(Reg::LR);
+        let pc = block_asm.current_pc;
+        block_asm.mov2(lr_reg, &(pc + 4).into());
+        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::LR, Reg::PC));
+        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+
+        self.emit_branch_external_label(inst_index, basic_block_index, target_pc, true, block_asm);
+    }
+
+    pub fn emit_b(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
+        let inst = &self.jit_buf.insts[inst_index];
+        let relative_pc = inst.operands()[0].as_imm().unwrap() as i32 + 8;
+        let target_pc = (block_asm.current_pc as i32 + relative_pc) as u32;
+
+        let pc_reg = block_asm.get_guest_map(Reg::PC);
+        block_asm.ldr2(pc_reg, target_pc);
+
+        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::PC));
+        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+
+        self.emit_branch_label(inst_index, basic_block_index, target_pc, pc_reg, block_asm);
     }
 
     pub fn emit_bx(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {

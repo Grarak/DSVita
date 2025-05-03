@@ -1,6 +1,6 @@
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::vixl::vixl;
+use crate::jit::assembler::vixl::{vixl, MasmMov2, MasmMul3, MasmMuls3};
 use crate::jit::assembler::vixl::{
     MacroAssembler, MasmAdc4, MasmAdcs4, MasmAdd4, MasmAdds4, MasmAnd4, MasmAnds4, MasmBic4, MasmBics4, MasmCmn3, MasmCmp3, MasmEor4, MasmEors4, MasmMov3, MasmMovs3, MasmMvn3, MasmOrr4, MasmOrrs4,
     MasmRsb4, MasmRsbs4, MasmRsc4, MasmRscs4, MasmSbc4, MasmSbcs4, MasmSub4, MasmSubs4, MasmTeq3, MasmTst3,
@@ -15,7 +15,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let inst = &self.jit_buf.insts[inst_index];
 
         let operands = inst.operands();
-        match inst.operands().len() {
+        match operands.len() {
             2 => {
                 let func = match inst.op {
                     Op::Tst => <MacroAssembler as MasmTst3<Cond, Reg, &vixl::Operand>>::tst3,
@@ -70,5 +70,26 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             }
             _ => unreachable!(),
         }
+    }
+
+    pub fn emit_mul(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
+        let inst = &self.jit_buf.insts[inst_index];
+
+        let operands = inst.operands();
+        let op0 = operands[0].as_reg_no_shift().unwrap();
+        let op0_mapped = block_asm.get_guest_map(op0);
+        let op1 = operands[1].as_reg_no_shift().unwrap();
+        let op1_mapped = block_asm.get_guest_map(op1);
+        let op2 = operands[2].as_reg_no_shift().unwrap();
+        let op2_mapped = block_asm.get_guest_map(op2);
+
+        block_asm.mov2(Reg::R0, &op1_mapped.into());
+        block_asm.mov2(Reg::R1, &op2_mapped.into());
+        if inst.out_regs.is_reserved(Reg::CPSR) {
+            block_asm.muls3(Reg::R0, Reg::R1, Reg::R0);
+        } else {
+            block_asm.mul3(Reg::R0, Reg::R1, Reg::R0);
+        }
+        block_asm.mov2(op0_mapped, &Reg::R0.into());
     }
 }

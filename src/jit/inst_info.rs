@@ -49,14 +49,10 @@ impl InstInfo {
     }
 
     pub fn is_uncond_branch(&self) -> bool {
-        if self.op.is_branch() {
-            self.get_branch_cond() == Cond::AL
-        } else {
-            self.cond == Cond::AL && self.out_regs.is_reserved(Reg::PC)
-        }
+        self.cond == Cond::AL && self.out_regs.is_reserved(Reg::PC)
     }
 
-    pub fn get_branch_cond(&self) -> Cond {
+    fn get_branch_cond(&self) -> Cond {
         debug_assert!(self.op.is_branch());
         match self.op {
             Op::BeqT => Cond::EQ,
@@ -90,7 +86,7 @@ impl Debug for InstInfo {
 
 impl From<InstInfoThumb> for InstInfo {
     fn from(value: InstInfoThumb) -> Self {
-        InstInfo {
+        let mut info = InstInfo {
             opcode: value.opcode as u32,
             op: value.op,
             cond: Cond::AL,
@@ -98,7 +94,11 @@ impl From<InstInfoThumb> for InstInfo {
             src_regs: value.src_regs,
             out_regs: value.out_regs,
             cycle: value.cycle,
+        };
+        if info.op.is_branch() {
+            info.cond = info.get_branch_cond();
         }
+        info
     }
 }
 

@@ -363,7 +363,6 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         asm.emit(&mut block_asm, thumb);
 
         if !last_inst_branch {
-            block_asm.save_dirty_guest_regs(true, true);
             let next_pc = guest_pc + pc_offset + if thumb { 3 } else { 4 };
             block_asm.ldr2(Reg::R0, next_pc);
             block_asm.store_guest_reg(Reg::R0, Reg::PC);
@@ -373,7 +372,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         block_asm.finalize();
 
         let opcodes = block_asm.get_code_buffer();
-        // if IS_DEBUG && guest_pc == 0x23801a4 {
+        // if IS_DEBUG && guest_pc == 0x2002864 {
         //     asm.jit_buf.debug_info.print_info(guest_pc, thumb);
         //     for &opcode in opcodes {
         //         print!("0x{opcode:x},");

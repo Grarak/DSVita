@@ -443,7 +443,7 @@ mod transfer_ops {
     #[inline]
     pub fn mrs_rs(opcode: u32, op: Op) -> InstInfo {
         let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
-        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(Reg::SPSR), reg_reserve!(op0), 1)
+        InstInfo::new(opcode, op, Operands::new_1(Operand::reg(op0)), reg_reserve!(), reg_reserve!(op0), 1)
     }
 
     #[inline]

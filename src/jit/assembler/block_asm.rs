@@ -53,8 +53,8 @@ pub struct BlockAsm {
     masm: MacroAssembler,
     reg_alloc: RegAlloc,
     pub current_pc: u32,
-    thumb: bool,
-    dirty_guest_regs: RegReserve,
+    pub thumb: bool,
+    pub dirty_guest_regs: RegReserve,
     guest_inst_metadata_current_block: u16,
     guest_inst_metadata_count: usize,
     pub guest_inst_metadata: Vec<(u16, GuestInstMetadata)>,
@@ -103,6 +103,8 @@ impl BlockAsm {
     }
 
     pub fn init_guest_regs(&mut self, guest_regs: RegReserve) {
+        self.reg_alloc = RegAlloc::new();
+
         self.ldr2(GUEST_REGS_PTR_REG, &MemOperand::reg_offset(Reg::SP, GUEST_REGS_PTR_STACK_OFFSET as i32));
 
         if guest_regs.is_reserved(Reg::CPSR) {
@@ -252,11 +254,20 @@ impl BlockAsm {
         }
         let block_offset = self.guest_inst_metadata_count;
         self.guest_inst_metadata_count += 1;
-        self.guest_inst_metadata.push((
-            page_num,
-            GuestInstMetadata::new(self.current_pc, total_cycles_reg, inst.op, inst.operands()[0].as_reg_no_shift().unwrap(), rlist),
-        ));
+        let mut pc = self.current_pc;
+        if self.thumb {
+            pc |= 1;
+        }
+        self.guest_inst_metadata
+            .push((page_num, GuestInstMetadata::new(pc, total_cycles_reg, inst.op, inst.operands()[0].as_reg_no_shift().unwrap(), rlist)));
         block_offset
+    }
+
+    pub fn bind_basic_block(&mut self, basic_block_index: usize) {
+        match &mut self.guest_basic_block_labels[basic_block_index] {
+            None => unreachable!(),
+            Some(label) => self.masm.bind(label),
+        }
     }
 
     pub fn b_basic_block(&mut self, basic_block_index: usize) {

@@ -251,6 +251,15 @@ pub unsafe extern "C" fn inst_mem_handler_multiple<const CPU: CpuType, const WRI
     }
 }
 
+pub unsafe extern "C" fn inst_mem_handler_multiple_slow<const CPU: CpuType, const WRITE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(params: u32, pc: u32, total_cycle_count: u16) {
+    let asm = get_jit_asm_ptr::<CPU>();
+    let params = InstMemMultipleParams::from(params);
+    handle_multiple_request::<CPU, WRITE, WRITE_BACK, DECREMENT, false>(pc, params.rlist(), u8::from(params.rlist_len()), u8::from(params.op0()), params.pre(), params.user(), (*asm).emu);
+    if WRITE && unlikely((*asm).emu.breakout_imm) {
+        imm_breakout!(CPU, (*asm), pc, total_cycle_count);
+    }
+}
+
 pub unsafe extern "C" fn inst_mem_handler_write_gx_fifo(value0: u32, value1: u32, addr: u32, metadata: *const GuestInstMetadata) {
     if likely(addr >= 0x4000400 && addr < 0x4000440) {
         let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();

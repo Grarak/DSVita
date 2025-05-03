@@ -101,7 +101,7 @@ mod branch_thumb_ops {
     #[inline]
     pub fn bl_setup_t(opcode: u16, op: Op) -> InstInfoThumb {
         let op0 = ((opcode as u32) << 21) as i32 >> 9;
-        InstInfoThumb::new(opcode, op, Operands::new_1(Operand::imm(op0 as u32)), reg_reserve!(), reg_reserve!(Reg::LR), 1)
+        InstInfoThumb::new(opcode, op, Operands::new_1(Operand::imm(op0 as u32)), reg_reserve!(), reg_reserve!(), 1)
     }
 
     #[inline]

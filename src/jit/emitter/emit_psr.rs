@@ -1,7 +1,7 @@
 use crate::core::CpuType;
-use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::vixl::vixl::FlagsUpdate_DontCare;
-use crate::jit::assembler::vixl::MasmMov4;
+use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG};
+use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, SpecialRegisterType_CPSR};
+use crate::jit::assembler::vixl::{MasmAnd3, MasmBic3, MasmMov4, MasmMrs2, MasmOrr3};
 use crate::jit::inst_info::Operand;
 use crate::jit::inst_thread_regs_handler::{register_set_cpsr_checked, register_set_spsr_checked};
 use crate::jit::jit_asm::JitAsm;
@@ -38,5 +38,23 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         const REG_TO_RESTORE: RegReserve = reg_reserve!(Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::R12, Reg::SP, Reg::LR);
         block_asm.unload_active_guest_regs(REG_TO_RESTORE);
+    }
+
+    pub fn emit_mrs(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
+        let inst = &self.jit_buf.insts[inst_index];
+        let op0 = inst.operands()[0].as_reg_no_shift().unwrap();
+        let op0_mapped = block_asm.get_guest_map(op0);
+
+        match inst.op {
+            Op::MrsRc => {
+                block_asm.load_guest_reg(Reg::R1, Reg::CPSR);
+                block_asm.mrs2(CPSR_TMP_REG, SpecialRegisterType_CPSR.into());
+                block_asm.bic3(Reg::R1, Reg::R1, &0xFF000000u32.into());
+                block_asm.and3(CPSR_TMP_REG, CPSR_TMP_REG, &0xFF000000u32.into());
+                block_asm.orr3(op0_mapped, Reg::R1, &CPSR_TMP_REG.into());
+            }
+            Op::MrsRs => block_asm.load_guest_reg(op0_mapped, Reg::SPSR),
+            _ => unreachable!(),
+        }
     }
 }

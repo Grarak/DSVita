@@ -86,12 +86,11 @@ impl AsmAnalyzer {
         let pc_shift = if thumb { 1 } else { 2 };
         for i in 0..insts.len() {
             if insts[i].op.is_labelled_branch() && !insts[i].out_regs.is_reserved(Reg::LR) {
-                let cond = insts[i].get_branch_cond();
                 let pc = start_pc + ((i as u32) << pc_shift);
                 let relative_pc = insts[i].operands()[0].as_imm().unwrap() as i32 + (2 << pc_shift);
                 let target_pc = (pc as i32 + relative_pc) as u32;
 
-                match analyze_branch_label(insts, thumb, i, cond, pc, target_pc) {
+                match analyze_branch_label(insts, thumb, i, insts[i].cond, pc, target_pc) {
                     JitBranchInfo::Idle(target_index) => {
                         self.insts_metadata[i].set_idle_loop(true);
                         self.insts_metadata[target_index].set_local_branch_entry(true);

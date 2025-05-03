@@ -1,15 +1,17 @@
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, MemOperand, WriteBack};
+use crate::jit::assembler::vixl::vixl::{AddrMode_PostIndex, AddrMode_PreIndex, FlagsUpdate_DontCare, MemOperand, WriteBack};
 use crate::jit::assembler::vixl::{
     MacroAssembler, MasmAdd3, MasmAdd5, MasmAnd5, MasmBic3, MasmLdm3, MasmLdmda3, MasmLdmdb3, MasmLdmib3, MasmLdr2, MasmLdrb2, MasmLdrh2, MasmLsl5, MasmMov2, MasmMov4, MasmMovs2, MasmNop, MasmRor5,
     MasmStm3, MasmStmda3, MasmStmdb3, MasmStmib3, MasmStr2, MasmStrb2, MasmStrh2, MasmSub3, MasmSub5,
 };
+use crate::jit::inst_mem_handler::{inst_mem_handler_multiple_slow, InstMemMultipleParams};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::jit_memory::{SLOW_MEM_MULTIPLE_LENGTH, SLOW_MEM_SINGLE_READ_LENGTH, SLOW_MEM_SINGLE_WRITE_LENGTH};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
+use bilge::arbitrary_int::{u4, u6};
 use std::cmp::min;
 
 impl<const CPU: CpuType> JitAsm<'_, CPU> {
@@ -49,6 +51,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let is_64bit = size == 8;
         let size = if is_64bit { 4 } else { size } as u32;
 
+        block_asm.save_dirty_guest_cpsr(inst.cond == Cond::AL);
+
         if inst.op.is_write_mem_transfer() {
             block_asm.mov2(Reg::R0, &op0_mapped.into());
             if is_64bit {
@@ -63,7 +67,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov2(op1_mapped, &Reg::R3.into());
             block_asm.add_dirty_guest_regs(reg_reserve!(op1));
         }
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        block_asm.save_dirty_guest_regs(false, inst.cond == Cond::AL);
 
         let fast_mem_start = block_asm.get_cursor_offset();
         block_asm.nop0();
@@ -146,7 +150,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let op0 = inst.operands()[0].as_reg_no_shift().unwrap();
         let mut op1 = inst.operands()[1].as_reg_list().unwrap();
 
-        block_asm.alloc_guest_regs(reg_reserve!(op0), RegReserve::new(), next_live_regs);
+        block_asm.alloc_guest_regs(reg_reserve!(op0), op1 & Reg::PC, next_live_regs);
 
         let op0_mapped = block_asm.get_guest_map(op0);
         let op1_len = op1.len();
@@ -175,26 +179,40 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     let block_offset = block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, op1) as u32;
                     block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &block_offset.into());
 
-                    let func = match (transfer.pre(), transfer.add()) {
-                        (false, false) => <MacroAssembler as MasmStmda3<Reg, WriteBack, RegReserve>>::stmda3,
-                        (false, true) => <MacroAssembler as MasmStm3<_, _, _>>::stm3,
-                        (true, false) => <MacroAssembler as MasmStmdb3<_, _, _>>::stmdb3,
-                        (true, true) => <MacroAssembler as MasmStmib3<_, _, _>>::stmib3,
-                    };
-                    func(block_asm, Reg::R0, WriteBack::yes(), usable_regs);
+                    if remaining_op1 == 1 {
+                        let usable_reg = USABLE_REGS.peek().unwrap();
+                        block_asm.str2(usable_reg, unsafe {
+                            &MemOperand::new1(Reg::R0.into(), if transfer.add() { 4 } else { -4 }, if transfer.pre() { AddrMode_PreIndex } else { AddrMode_PostIndex })
+                        });
+                    } else {
+                        let func = match (transfer.pre(), transfer.add()) {
+                            (false, false) => <MacroAssembler as MasmStmda3<Reg, WriteBack, RegReserve>>::stmda3,
+                            (false, true) => <MacroAssembler as MasmStm3<_, _, _>>::stm3,
+                            (true, false) => <MacroAssembler as MasmStmdb3<_, _, _>>::stmdb3,
+                            (true, true) => <MacroAssembler as MasmStmib3<_, _, _>>::stmib3,
+                        };
+                        func(block_asm, Reg::R0, WriteBack::yes(), usable_regs);
+                    }
 
                     block_asm.restore_guest_regs_ptr();
                 } else {
                     let block_offset = block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, op1) as u32;
                     block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &block_offset.into());
 
-                    let func = match (transfer.pre(), transfer.add()) {
-                        (false, false) => <MacroAssembler as MasmLdmda3<Reg, WriteBack, RegReserve>>::ldmda3,
-                        (false, true) => <MacroAssembler as MasmLdm3<_, _, _>>::ldm3,
-                        (true, false) => <MacroAssembler as MasmLdmdb3<_, _, _>>::ldmdb3,
-                        (true, true) => <MacroAssembler as MasmLdmib3<_, _, _>>::ldmib3,
-                    };
-                    func(block_asm, Reg::R0, WriteBack::yes(), usable_regs);
+                    if remaining_op1 == 1 {
+                        let usable_reg = USABLE_REGS.peek().unwrap();
+                        block_asm.ldr2(usable_reg, unsafe {
+                            &MemOperand::new1(Reg::R0.into(), if transfer.add() { 4 } else { -4 }, if transfer.pre() { AddrMode_PreIndex } else { AddrMode_PostIndex })
+                        });
+                    } else {
+                        let func = match (transfer.pre(), transfer.add()) {
+                            (false, false) => <MacroAssembler as MasmLdmda3<Reg, WriteBack, RegReserve>>::ldmda3,
+                            (false, true) => <MacroAssembler as MasmLdm3<_, _, _>>::ldm3,
+                            (true, false) => <MacroAssembler as MasmLdmdb3<_, _, _>>::ldmdb3,
+                            (true, true) => <MacroAssembler as MasmLdmib3<_, _, _>>::ldmib3,
+                        };
+                        func(block_asm, Reg::R0, WriteBack::yes(), usable_regs);
+                    }
 
                     block_asm.restore_guest_regs_ptr();
                     for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
@@ -218,11 +236,37 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             for _ in (fast_mem_size as usize..SLOW_MEM_MULTIPLE_LENGTH).step_by(2) {
                 block_asm.nop0();
             }
-
-            block_asm.restore_tmp_regs(next_live_regs);
-            block_asm.reload_active_guest_regs();
         } else {
-            todo!()
+            let mut pre = transfer.pre();
+            if !transfer.add() {
+                pre = !pre;
+            }
+
+            let func = match (inst.op.is_write_mem_transfer(), transfer.write_back(), !transfer.add()) {
+                (false, false, false) => inst_mem_handler_multiple_slow::<CPU, false, false, false> as *const (),
+                (false, false, true) => inst_mem_handler_multiple_slow::<CPU, false, false, true> as _,
+                (false, true, false) => inst_mem_handler_multiple_slow::<CPU, false, true, false> as _,
+                (false, true, true) => inst_mem_handler_multiple_slow::<CPU, false, true, true> as _,
+                (true, false, false) => inst_mem_handler_multiple_slow::<CPU, true, false, false> as _,
+                (true, false, true) => inst_mem_handler_multiple_slow::<CPU, true, false, true> as _,
+                (true, true, false) => inst_mem_handler_multiple_slow::<CPU, true, true, false> as _,
+                (true, true, true) => inst_mem_handler_multiple_slow::<CPU, true, true, true> as _,
+            };
+
+            let params = InstMemMultipleParams::new(op1.0 as u16, u4::new(op1.len() as u8), u4::new(op0 as u8), pre, transfer.user(), u6::new(0));
+
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &u32::from(params).into());
+            let mut pc = block_asm.current_pc;
+            if block_asm.thumb {
+                pc |= 1;
+            }
+            block_asm.ldr2(Reg::R1, pc);
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &self.jit_buf.insts_cycle_counts[inst_index].into());
+
+            block_asm.call(func);
         }
+
+        block_asm.restore_tmp_regs(next_live_regs);
+        block_asm.reload_active_guest_regs();
     }
 }

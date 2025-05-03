@@ -175,12 +175,12 @@ mod alu_delegations {
     generate_alu3!(rsbs, false, true);
     generate_alu3!(add, false);
     generate_alu3!(adds, false, true);
-    generate_alu3!(adc, false);
-    generate_alu3!(adcs, false, true);
-    generate_alu3!(sbc, false);
-    generate_alu3!(sbcs, false, true);
-    generate_alu3!(rsc, false);
-    generate_alu3!(rscs, false, true);
+    generate_alu3!(adc, true, false);
+    generate_alu3!(adcs, true, true);
+    generate_alu3!(sbc, true, false);
+    generate_alu3!(sbcs, true, true);
+    generate_alu3!(rsc, true, false);
+    generate_alu3!(rscs, true, true);
     generate_alu3!(orr, false);
     generate_alu3!(orrs, true, true);
     generate_alu3!(bic, false);
