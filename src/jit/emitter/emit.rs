@@ -135,11 +135,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
             let mut label = Label::new();
-            if !inst.op.is_alu() && !inst.op.is_mul() && inst.cond != Cond::AL {
+            let needs_cond_jump = !matches!(inst.op, Op::Clz | Op::Qadd | Op::Qsub | Op::Qdadd | Op::Qdsub) && !inst.op.is_alu() && !inst.op.is_mul();
+            if inst.cond != Cond::AL && needs_cond_jump {
                 block_asm.b3(!inst.cond, &mut label, BranchHint_kNear);
             }
 
-            // if block_asm.current_pc == 0x200138c {
+            // if block_asm.current_pc == 0x20046c4 {
             //     block_asm.bkpt1(0);
             // }
 
@@ -168,6 +169,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     Op::Bx => self.emit_bx(i, basic_block_index, block_asm),
                     Op::Swi => self.emit_swi(i, basic_block_index, false, block_asm),
                     Op::Swp | Op::Swpb => self.emit_swp(i, basic_block_index, block_asm),
+                    Op::Clz => self.emit_clz(i, block_asm),
+                    Op::Qadd | Op::Qsub | Op::Qdadd | Op::Qdsub => self.emit_q_op(i, block_asm),
                     op if op.is_mul() => self.emit_mul(i, block_asm),
                     op if op.is_alu() => self.emit_alu(i, block_asm),
                     op if op.is_single_mem_transfer() => self.emit_single_transfer(i, basic_block_index, block_asm),

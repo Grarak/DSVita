@@ -626,7 +626,7 @@ impl JitMemory {
             } else {
                 debug_assert!(slow_mem_length <= SLOW_MEM_SINGLE_READ_LENGTH_ARM, "{slow_mem_length} < {SLOW_MEM_SINGLE_READ_LENGTH_ARM}");
             }
-        } else {
+        } else if guest_inst_metadata.op.is_multiple_mem_transfer() {
             let transfer = match guest_inst_metadata.op {
                 Op::Ldm(transfer) | Op::Stm(transfer) => transfer,
                 _ => unsafe { unreachable_unchecked() },
@@ -674,6 +674,10 @@ impl JitMemory {
             slow_mem_length += 4;
 
             debug_assert!(slow_mem_length <= SLOW_MEM_MULTIPLE_LENGTH_ARM, "{slow_mem_length} < {SLOW_MEM_MULTIPLE_LENGTH_ARM}");
+        } else if matches!(guest_inst_metadata.op, Op::Swpb | Op::Swp) {
+            todo!()
+        } else {
+            unsafe { unreachable_unchecked() }
         }
 
         debug_assert!(slow_mem_length <= fast_mem_length);

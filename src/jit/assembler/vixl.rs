@@ -170,6 +170,16 @@ impl WriteBack {
     }
 }
 
+impl CPURegister {
+    pub fn get_type(self) -> CPURegister_RegisterType {
+        (self.value_ & 0x1E0) >> 5
+    }
+
+    pub fn get_code(self) -> u32 {
+        self.value_ & 0x1F
+    }
+}
+
 pub struct MacroAssembler {
     inner: *mut Aarch32MacroAssembler,
 }

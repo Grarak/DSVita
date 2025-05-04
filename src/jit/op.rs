@@ -185,6 +185,8 @@ pub enum Op {
     NegT,
     MulT,
 
+    AddPcT,
+    AddSpT,
     AddSpImmT,
     AddHT,
     CmpHT,
@@ -323,6 +325,8 @@ impl Op {
                 | Op::MvnT
                 | Op::NegT
                 | Op::MulT
+                | Op::AddPcT
+                | Op::AddSpT
                 | Op::AddSpImmT
                 | Op::AddHT
                 | Op::CmpHT
@@ -345,7 +349,34 @@ impl Op {
     pub const fn is_mul(self) -> bool {
         matches!(
             self,
-            Op::Mul | Op::Muls | Op::Mla | Op::Mlas | Op::Smull | Op::Smulls | Op::Smlal | Op::Smlals | Op::Umull | Op::Umulls | Op::Umlal | Op::Umlals
+            Op::Mul
+                | Op::Muls
+                | Op::Mla
+                | Op::Mlas
+                | Op::Smlabb
+                | Op::Smlabt
+                | Op::Smlal
+                | Op::Smlalbb
+                | Op::Smlalbt
+                | Op::Smlals
+                | Op::Smlaltb
+                | Op::Smlaltt
+                | Op::Smlatb
+                | Op::Smlatt
+                | Op::Smlawb
+                | Op::Smlawt
+                | Op::Smulbb
+                | Op::Smulbt
+                | Op::Smull
+                | Op::Smulls
+                | Op::Smultb
+                | Op::Smultt
+                | Op::Smulwb
+                | Op::Smulwt
+                | Op::Umull
+                | Op::Umulls
+                | Op::Umlal
+                | Op::Umlals
         )
     }
 }

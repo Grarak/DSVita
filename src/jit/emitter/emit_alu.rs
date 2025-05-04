@@ -1,7 +1,9 @@
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::{
-    vixl, MasmMla5, MasmMlas5, MasmMov2, MasmMul3, MasmMul4, MasmMuls3, MasmMuls4, MasmSmlal5, MasmSmlals5, MasmSmull5, MasmSmulls5, MasmUmlal5, MasmUmlals5, MasmUmull5, MasmUmulls5,
+    vixl, MasmClz3, MasmMla5, MasmMlas5, MasmMul4, MasmMuls4, MasmQadd4, MasmQdadd4, MasmQdsub4, MasmQsub4, MasmSmlabb5, MasmSmlabt5, MasmSmlal5, MasmSmlalbb5, MasmSmlalbt5, MasmSmlals5,
+    MasmSmlaltb5, MasmSmlaltt5, MasmSmlatb5, MasmSmlatt5, MasmSmlawb5, MasmSmlawt5, MasmSmulbb4, MasmSmulbt4, MasmSmull5, MasmSmulls5, MasmSmultb4, MasmSmultt4, MasmSmulwb4, MasmSmulwt4, MasmUmlal5,
+    MasmUmlals5, MasmUmull5, MasmUmulls5,
 };
 use crate::jit::assembler::vixl::{
     MacroAssembler, MasmAdc4, MasmAdcs4, MasmAdd4, MasmAdds4, MasmAnd4, MasmAnds4, MasmBic4, MasmBics4, MasmCmn3, MasmCmp3, MasmEor4, MasmEors4, MasmMov3, MasmMovs3, MasmMvn3, MasmOrr4, MasmOrrs4,
@@ -31,8 +33,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     _ => unreachable!(),
                 };
 
-                let op0 = operands[0].as_reg_no_shift().unwrap();
-                let op0_mapped = block_asm.get_guest_map(op0);
+                let op0_mapped = block_asm.get_guest_map(operands[0].as_reg_no_shift().unwrap());
                 let op1_operand = block_asm.get_guest_operand_map(&operands[1]);
 
                 func(block_asm, inst.cond, op0_mapped, &op1_operand);
@@ -62,10 +63,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     _ => unreachable!(),
                 };
 
-                let op0 = operands[0].as_reg_no_shift().unwrap();
-                let op0_mapped = block_asm.get_guest_map(op0);
-                let op1 = operands[1].as_reg_no_shift().unwrap();
-                let op1_mapped = block_asm.get_guest_map(op1);
+                let op0_mapped = block_asm.get_guest_map(operands[0].as_reg_no_shift().unwrap());
+                let op1_mapped = block_asm.get_guest_map(operands[1].as_reg_no_shift().unwrap());
                 let op2_operand = block_asm.get_guest_operand_map(&operands[2]);
 
                 func(block_asm, inst.cond, op0_mapped, op1_mapped, &op2_operand);
@@ -87,6 +86,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let func = match inst.op {
                     Op::Mul => <MacroAssembler as MasmMul4<Cond, Reg, Reg, Reg>>::mul4,
                     Op::Muls => <MacroAssembler as MasmMuls4<_, _, _, _>>::muls4,
+                    Op::Smulwb => <MacroAssembler as MasmSmulwb4<_, _, _, _>>::smulwb4,
+                    Op::Smulwt => <MacroAssembler as MasmSmulwt4<_, _, _, _>>::smulwt4,
+                    Op::Smulbb => <MacroAssembler as MasmSmulbb4<_, _, _, _>>::smulbb4,
+                    Op::Smulbt => <MacroAssembler as MasmSmulbt4<_, _, _, _>>::smulbt4,
+                    Op::Smultb => <MacroAssembler as MasmSmultb4<_, _, _, _>>::smultb4,
+                    Op::Smultt => <MacroAssembler as MasmSmultt4<_, _, _, _>>::smultt4,
                     _ => unreachable!(),
                 };
                 func(block_asm, inst.cond, op0_mapped, op1_mapped, op2_mapped);
@@ -100,6 +105,16 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     Op::Smulls => <MacroAssembler as MasmSmulls5<_, _, _, _, _>>::smulls5,
                     Op::Smlal => <MacroAssembler as MasmSmlal5<_, _, _, _, _>>::smlal5,
                     Op::Smlals => <MacroAssembler as MasmSmlals5<_, _, _, _, _>>::smlals5,
+                    Op::Smlalbb => <MacroAssembler as MasmSmlalbb5<_, _, _, _, _>>::smlalbb5,
+                    Op::Smlalbt => <MacroAssembler as MasmSmlalbt5<_, _, _, _, _>>::smlalbt5,
+                    Op::Smlaltb => <MacroAssembler as MasmSmlaltb5<_, _, _, _, _>>::smlaltb5,
+                    Op::Smlaltt => <MacroAssembler as MasmSmlaltt5<_, _, _, _, _>>::smlaltt5,
+                    Op::Smlabb => <MacroAssembler as MasmSmlabb5<_, _, _, _, _>>::smlabb5,
+                    Op::Smlabt => <MacroAssembler as MasmSmlabt5<_, _, _, _, _>>::smlabt5,
+                    Op::Smlatb => <MacroAssembler as MasmSmlatb5<_, _, _, _, _>>::smlatb5,
+                    Op::Smlatt => <MacroAssembler as MasmSmlatt5<_, _, _, _, _>>::smlatt5,
+                    Op::Smlawb => <MacroAssembler as MasmSmlawb5<_, _, _, _, _>>::smlawb5,
+                    Op::Smlawt => <MacroAssembler as MasmSmlawt5<_, _, _, _, _>>::smlawt5,
                     Op::Umull => <MacroAssembler as MasmUmull5<_, _, _, _, _>>::umull5,
                     Op::Umulls => <MacroAssembler as MasmUmulls5<_, _, _, _, _>>::umulls5,
                     Op::Umlal => <MacroAssembler as MasmUmlal5<_, _, _, _, _>>::umlal5,
@@ -110,5 +125,34 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             }
             _ => unreachable!(),
         }
+    }
+
+    pub fn emit_clz(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
+        let inst = &self.jit_buf.insts[inst_index];
+
+        let operands = inst.operands();
+        let op0_mapped = block_asm.get_guest_map(operands[0].as_reg_no_shift().unwrap());
+        let op1_mapped = block_asm.get_guest_map(operands[1].as_reg_no_shift().unwrap());
+
+        block_asm.clz3(inst.cond, op0_mapped, op1_mapped);
+    }
+
+    pub fn emit_q_op(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
+        let inst = &self.jit_buf.insts[inst_index];
+
+        let operands = inst.operands();
+        let op0_mapped = block_asm.get_guest_map(operands[0].as_reg_no_shift().unwrap());
+        let op1_mapped = block_asm.get_guest_map(operands[1].as_reg_no_shift().unwrap());
+        let op2_mapped = block_asm.get_guest_map(operands[2].as_reg_no_shift().unwrap());
+
+        let func = match inst.op {
+            Op::Qadd => <MacroAssembler as MasmQadd4<Cond, Reg, Reg, Reg>>::qadd4,
+            Op::Qsub => <MacroAssembler as MasmQsub4<_, _, _, _>>::qsub4,
+            Op::Qdadd => <MacroAssembler as MasmQdadd4<Cond, Reg, Reg, Reg>>::qdadd4,
+            Op::Qdsub => <MacroAssembler as MasmQdsub4<Cond, Reg, Reg, Reg>>::qdsub4,
+            _ => unreachable!(),
+        };
+
+        func(block_asm, inst.cond, op0_mapped, op1_mapped, op2_mapped);
     }
 }
