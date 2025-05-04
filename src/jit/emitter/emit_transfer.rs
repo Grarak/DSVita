@@ -277,4 +277,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.restore_tmp_regs(next_live_regs);
         block_asm.reload_active_guest_regs();
     }
+
+    pub fn emit_swp(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
+        todo!()
+    }
 }

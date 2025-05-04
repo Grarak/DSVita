@@ -2,7 +2,7 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::vixl::{BranchHint_kNear, FlagsUpdate_DontCare, MemOperand};
-use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmB3, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
+use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmB3, MasmBkpt1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
 use crate::jit::inst_branch_handler::branch_any_reg;
 use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode, set_pc_thumb_mode};
 use crate::jit::jit_asm::{debug_after_exec_op, JitAsm, JitRuntimeData};
@@ -135,11 +135,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
             let mut label = Label::new();
-            if !inst.op.is_alu() && inst.cond != Cond::AL {
+            if !inst.op.is_alu() && !inst.op.is_mul() && inst.cond != Cond::AL {
                 block_asm.b3(!inst.cond, &mut label, BranchHint_kNear);
             }
 
-            // if block_asm.current_pc == 0x3800594 {
+            // if block_asm.current_pc == 0x200138c {
             //     block_asm.bkpt1(0);
             // }
 
@@ -167,7 +167,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     Op::B => self.emit_b(i, basic_block_index, block_asm),
                     Op::Bx => self.emit_bx(i, basic_block_index, block_asm),
                     Op::Swi => self.emit_swi(i, basic_block_index, false, block_asm),
-                    Op::Mul | Op::Muls => self.emit_mul(i, block_asm),
+                    Op::Swp | Op::Swpb => self.emit_swp(i, basic_block_index, block_asm),
+                    op if op.is_mul() => self.emit_mul(i, block_asm),
                     op if op.is_alu() => self.emit_alu(i, block_asm),
                     op if op.is_single_mem_transfer() => self.emit_single_transfer(i, basic_block_index, block_asm),
                     op if op.is_multiple_mem_transfer() => self.emit_multiple_transfer(i, basic_block_index, block_asm),

@@ -341,4 +341,11 @@ impl Op {
     pub const fn is_mov(self) -> bool {
         matches!(self, Op::Mov | Op::Movs | Op::MovT | Op::MovHT)
     }
+
+    pub const fn is_mul(self) -> bool {
+        matches!(
+            self,
+            Op::Mul | Op::Muls | Op::Mla | Op::Mlas | Op::Smull | Op::Smulls | Op::Smlal | Op::Smlals | Op::Umull | Op::Umulls | Op::Umlal | Op::Umlals
+        )
+    }
 }

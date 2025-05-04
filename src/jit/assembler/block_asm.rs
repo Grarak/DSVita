@@ -141,8 +141,17 @@ impl BlockAsm {
             } else {
                 let mut pc = self.current_pc + 8;
                 if inst.op.is_alu() {
-                    if let Some(inst_info::Operand::Reg { reg: Reg::PC, .. }) = inst.operands().last() {
-                        pc += 4;
+                    if let Some(inst_info::Operand::Reg { reg: op2_reg, shift: Some(shift) }) = inst.operands().last() {
+                        if let ShiftValue::Reg(_) = match shift {
+                            Shift::Lsl(value) => value,
+                            Shift::Lsr(value) => value,
+                            Shift::Asr(value) => value,
+                            Shift::Ror(value) => value,
+                        } {
+                            if *op2_reg == Reg::PC || (inst.operands().len() == 3 && inst.operands()[1].as_reg_no_shift().unwrap() == Reg::PC) {
+                                pc += 4;
+                            }
+                        }
                     }
                 } else if inst.op.is_single_mem_transfer() && inst.op.is_write_mem_transfer() {
                     if let Some(inst_info::Operand::Reg { reg: Reg::PC, shift: None }) = inst.operands().first() {
@@ -216,7 +225,13 @@ impl BlockAsm {
                         };
                         match value {
                             ShiftValue::Reg(shift_reg) => unsafe { vixl::Operand::new5(map_reg, shift_type.into(), self.reg_alloc.get_guest_map(*shift_reg).into()) },
-                            ShiftValue::Imm(shift_imm) => unsafe { vixl::Operand::new4(map_reg, shift_type.into(), *shift_imm as u32) },
+                            ShiftValue::Imm(shift_imm) => {
+                                let mut shift_imm = *shift_imm;
+                                if shift_imm == 0 && shift_type != ShiftType_LSL {
+                                    shift_imm = 32;
+                                }
+                                unsafe { vixl::Operand::new4(map_reg, shift_type.into(), shift_imm as u32) }
+                            }
                         }
                     }
                 }
