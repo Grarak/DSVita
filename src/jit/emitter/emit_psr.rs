@@ -1,7 +1,7 @@
 use crate::core::CpuType;
-use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG};
-use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, SpecialRegisterType_CPSR};
-use crate::jit::assembler::vixl::{MasmAnd3, MasmBic3, MasmMov4, MasmMrs2, MasmOrr3};
+use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG, GUEST_REGS_PTR_REG};
+use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, MaskedSpecialRegisterType_CPSR_f, MemOperand, SpecialRegisterType_CPSR};
+use crate::jit::assembler::vixl::{MasmAnd3, MasmLdrh2, MasmMov4, MasmMrs2, MasmMsr2, MasmOrr3};
 use crate::jit::inst_info::Operand;
 use crate::jit::inst_thread_regs_handler::{register_set_cpsr_checked, register_set_spsr_checked};
 use crate::jit::jit_asm::JitAsm;
@@ -33,6 +33,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &flags.into());
         block_asm.call(func);
 
+        block_asm.msr2(MaskedSpecialRegisterType_CPSR_f.into(), &Reg::R0.into());
+
         let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
         block_asm.restore_tmp_regs(next_live_regs);
 
@@ -47,10 +49,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         match inst.op {
             Op::MrsRc => {
-                block_asm.load_guest_reg(Reg::R1, Reg::CPSR);
+                block_asm.ldrh2(Reg::R1, &MemOperand::reg_offset(GUEST_REGS_PTR_REG, Reg::CPSR as i32 * 4));
                 block_asm.mrs2(CPSR_TMP_REG, SpecialRegisterType_CPSR.into());
-                block_asm.bic3(Reg::R1, Reg::R1, &0xFF000000u32.into());
-                block_asm.and3(CPSR_TMP_REG, CPSR_TMP_REG, &0xFF000000u32.into());
+                block_asm.and3(CPSR_TMP_REG, CPSR_TMP_REG, &0xF8000000u32.into());
                 block_asm.orr3(op0_mapped, Reg::R1, &CPSR_TMP_REG.into());
             }
             Op::MrsRs => block_asm.load_guest_reg(op0_mapped, Reg::SPSR),

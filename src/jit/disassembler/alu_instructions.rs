@@ -379,10 +379,10 @@ mod alu_ops {
 
     #[inline]
     pub fn smlalbb(opcode: u32, op: Op) -> InstInfo {
-        let op0 = Reg::from(((opcode >> 16) & 0xF) as u8);
-        let op1 = Reg::from((opcode & 0xF) as u8);
-        let op2 = Reg::from(((opcode >> 8) & 0xF) as u8);
-        let op3 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op0 = Reg::from(((opcode >> 12) & 0xF) as u8);
+        let op1 = Reg::from(((opcode >> 16) & 0xF) as u8);
+        let op2 = Reg::from((opcode & 0xF) as u8);
+        let op3 = Reg::from(((opcode >> 8) & 0xF) as u8);
         InstInfo::new(
             opcode,
             op,
@@ -417,7 +417,7 @@ mod alu_ops {
             opcode,
             op,
             Operands::new_3(Operand::reg(op0), Operand::reg(op1), Operand::reg(op2)),
-            reg_reserve!(op1, op2),
+            reg_reserve!(op1, op2, Reg::CPSR),
             reg_reserve!(op0, Reg::CPSR),
             1,
         )

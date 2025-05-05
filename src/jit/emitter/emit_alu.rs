@@ -1,4 +1,5 @@
 use crate::core::CpuType;
+use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::{
     vixl, MasmClz3, MasmMla5, MasmMlas5, MasmMul4, MasmMuls4, MasmQadd4, MasmQdadd4, MasmQdsub4, MasmQsub4, MasmSmlabb5, MasmSmlabt5, MasmSmlal5, MasmSmlalbb5, MasmSmlalbt5, MasmSmlals5,
@@ -128,6 +129,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
     }
 
     pub fn emit_clz(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
+        if CPU != ARM9 {
+            return;
+        }
+
         let inst = &self.jit_buf.insts[inst_index];
 
         let operands = inst.operands();
@@ -138,6 +143,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
     }
 
     pub fn emit_q_op(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
+        if CPU != ARM9 {
+            return;
+        }
+
         let inst = &self.jit_buf.insts[inst_index];
 
         let operands = inst.operands();
@@ -148,8 +157,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let func = match inst.op {
             Op::Qadd => <MacroAssembler as MasmQadd4<Cond, Reg, Reg, Reg>>::qadd4,
             Op::Qsub => <MacroAssembler as MasmQsub4<_, _, _, _>>::qsub4,
-            Op::Qdadd => <MacroAssembler as MasmQdadd4<Cond, Reg, Reg, Reg>>::qdadd4,
-            Op::Qdsub => <MacroAssembler as MasmQdsub4<Cond, Reg, Reg, Reg>>::qdsub4,
+            Op::Qdadd => <MacroAssembler as MasmQdadd4<_, _, _, _>>::qdadd4,
+            Op::Qdsub => <MacroAssembler as MasmQdsub4<_, _, _, _>>::qdsub4,
             _ => unreachable!(),
         };
 

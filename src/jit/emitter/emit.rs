@@ -7,7 +7,7 @@ use crate::jit::inst_branch_handler::branch_any_reg;
 use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode, set_pc_thumb_mode};
 use crate::jit::jit_asm::{debug_after_exec_op, JitAsm, JitRuntimeData};
 use crate::jit::op::Op;
-use crate::jit::reg::Reg;
+use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::Cond;
 use crate::logging::debug_println;
 use crate::{DEBUG_LOG, IS_DEBUG};
@@ -127,22 +127,28 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.current_pc = start_pc + (((i - start_index) as u32) << pc_shift);
             self.jit_buf.debug_info.record_inst_offset(i, block_asm.get_cursor_offset() as usize);
 
-            if !self.jit_buf.insts[i].op.is_multiple_mem_transfer() {
+            let inst = &self.jit_buf.insts[i];
+            if inst.op.is_multiple_mem_transfer() {
+                let op0 = inst.operands()[0].as_reg_no_shift().unwrap();
+                let op1 = inst.operands()[1].as_reg_list().unwrap();
+                let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, i);
+                block_asm.alloc_guest_regs(reg_reserve!(op0), op1 & Reg::PC, next_live_regs);
+            } else {
                 self.emit_guest_regs_alloc(i, basic_block_index, block_asm);
             }
 
             let inst = &self.jit_buf.insts[i];
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
+            // if block_asm.current_pc == 0x20076d4 {
+            //     block_asm.bkpt1(0);
+            // }
+
             let mut label = Label::new();
             let needs_cond_jump = !matches!(inst.op, Op::Clz | Op::Qadd | Op::Qsub | Op::Qdadd | Op::Qdsub) && !inst.op.is_alu() && !inst.op.is_mul();
             if inst.cond != Cond::AL && needs_cond_jump {
                 block_asm.b3(!inst.cond, &mut label, BranchHint_kNear);
             }
-
-            // if block_asm.current_pc == 0x20046c4 {
-            //     block_asm.bkpt1(0);
-            // }
 
             if thumb {
                 match inst.op {
@@ -163,10 +169,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     Op::Mcr | Op::Mrc => self.emit_cp15(i, basic_block_index, block_asm),
                     Op::MsrRc | Op::MsrIc | Op::MsrRs | Op::MsrIs => self.emit_msr(i, basic_block_index, block_asm),
                     Op::MrsRc | Op::MrsRs => self.emit_mrs(i, block_asm),
-                    Op::BlxReg => self.emit_blx(i, basic_block_index, block_asm),
+                    Op::BlxReg => self.emit_blx_reg(i, basic_block_index, block_asm),
                     Op::Bl => self.emit_bl(i, basic_block_index, block_asm),
                     Op::B => self.emit_b(i, basic_block_index, block_asm),
                     Op::Bx => self.emit_bx(i, basic_block_index, block_asm),
+                    Op::Blx => self.emit_blx(i, basic_block_index, block_asm),
                     Op::Swi => self.emit_swi(i, basic_block_index, false, block_asm),
                     Op::Swp | Op::Swpb => self.emit_swp(i, basic_block_index, block_asm),
                     Op::Clz => self.emit_clz(i, block_asm),

@@ -27,7 +27,7 @@ mod branch_ops {
                 Op::Blx,
                 Operands::new_1(Operand::imm(op0 as u32)),
                 reg_reserve!(),
-                reg_reserve!(),
+                reg_reserve!(Reg::LR, Reg::PC),
                 1,
             )
         } else {
@@ -47,7 +47,7 @@ mod branch_ops {
                 Op::Blx,
                 Operands::new_1(Operand::imm(op0 as u32)),
                 reg_reserve!(),
-                reg_reserve!(Reg::PC),
+                reg_reserve!(Reg::LR, Reg::PC),
                 1,
             )
         } else {

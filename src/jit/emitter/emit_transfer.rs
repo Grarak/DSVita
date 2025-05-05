@@ -166,7 +166,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
     pub fn emit_multiple_transfer(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
         let inst = &self.jit_buf.insts[inst_index];
-        let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
 
         let transfer = match inst.op {
             Op::Ldm(transfer) | Op::LdmT(transfer) | Op::Stm(transfer) | Op::StmT(transfer) => transfer,
@@ -175,8 +174,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let op0 = inst.operands()[0].as_reg_no_shift().unwrap();
         let mut op1 = inst.operands()[1].as_reg_list().unwrap();
-
-        block_asm.alloc_guest_regs(reg_reserve!(op0), op1 & Reg::PC, next_live_regs);
 
         let op0_mapped = block_asm.get_guest_map(op0);
         let op1_len = op1.len();
@@ -188,6 +185,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let fast_mem_start = block_asm.get_cursor_offset();
             block_asm.nop0();
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &op0_mapped.into());
+            block_asm.ldr2(Reg::R2, !0xF0000003);
+            block_asm.and5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &Reg::R2.into());
             block_asm.load_mmu_offset(Reg::R1);
             block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &Reg::R1.into());
 
@@ -297,6 +296,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.call(func);
         }
 
+        let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
         block_asm.restore_tmp_regs(next_live_regs);
         block_asm.reload_active_guest_regs();
     }
