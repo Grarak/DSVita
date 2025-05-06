@@ -39,7 +39,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.restore_tmp_regs(next_live_regs);
 
         const REG_TO_RESTORE: RegReserve = reg_reserve!(Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::R12, Reg::SP, Reg::LR);
-        block_asm.unload_active_guest_regs(REG_TO_RESTORE);
+        block_asm.reload_active_guest_regs(REG_TO_RESTORE);
     }
 
     pub fn emit_mrs(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {

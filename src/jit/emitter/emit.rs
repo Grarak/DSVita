@@ -140,12 +140,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let inst = &self.jit_buf.insts[i];
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
-            // if block_asm.current_pc == 0x20076d4 {
+            // if block_asm.current_pc == 0x20d28d0 {
             //     block_asm.bkpt1(0);
             // }
 
             let mut label = Label::new();
-            let needs_cond_jump = !matches!(inst.op, Op::Clz | Op::Qadd | Op::Qsub | Op::Qdadd | Op::Qdsub) && !inst.op.is_alu() && !inst.op.is_mul();
+            let needs_cond_jump = inst.out_regs.is_reserved(Reg::PC) || (!matches!(inst.op, Op::Clz | Op::Qadd | Op::Qsub | Op::Qdadd | Op::Qdsub) && !inst.op.is_alu() && !inst.op.is_mul());
             if inst.cond != Cond::AL && needs_cond_jump {
                 block_asm.b3(!inst.cond, &mut label, BranchHint_kNear);
             }
@@ -187,7 +187,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             }
 
             let inst = &self.jit_buf.insts[i];
-            block_asm.add_dirty_guest_regs(inst.out_regs);
+            if !inst.op.is_branch() {
+                block_asm.add_dirty_guest_regs(inst.out_regs);
+            }
 
             if (inst.op.is_alu() || inst.op.is_single_mem_transfer() || inst.op.is_multiple_mem_transfer()) && inst.out_regs.is_reserved(Reg::PC) {
                 if thumb {

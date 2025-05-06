@@ -697,7 +697,7 @@ impl JitMemory {
         }
 
         let metadata_entry = arm_context.gp_regs[12];
-        let jit_mem_offset = *host_pc - self.mem.as_mut_ptr() as usize;
+        let jit_mem_offset = *host_pc - 4 - self.mem.as_mut_ptr() as usize;
         let metadata_block_page = jit_mem_offset >> PAGE_SHIFT;
         let thumb = self.guest_inst_metadata[metadata_block_page][metadata_entry].pc & 1 == 1;
 

@@ -77,6 +77,14 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let mut op2_operand = block_asm.get_guest_operand_map(&operands[2]);
 
                 match inst.op {
+                    Op::LslT => {
+                        if let Operand::Imm(imm) = operands[2] {
+                            if imm == 0 {
+                                block_asm.movs2(op0_mapped, &op1_mapped.into());
+                                return;
+                            }
+                        }
+                    }
                     Op::LsrT | Op::AsrT => {
                         if let Operand::Imm(imm) = operands[2] {
                             if imm == 0 {

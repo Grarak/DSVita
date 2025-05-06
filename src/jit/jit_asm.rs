@@ -13,6 +13,7 @@ use crate::jit::jit_asm_common_funs::{exit_guest_context, JitAsmCommonFuns};
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
+use crate::jit::Cond;
 use crate::logging::{branch_println, debug_println};
 use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
 use std::arch::{asm, naked_asm};
@@ -307,7 +308,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
     loop {
         let inst_info = get_inst_info(asm, guest_pc + pc_offset);
 
-        if inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb {
+        if inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb || inst_info.cond == Cond::NV {
             break;
         }
 
@@ -330,7 +331,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         }
         asm.jit_buf.insts.push(inst_info);
 
-        if is_unreturnable_branch || uncond_branch_count == 8 {
+        if is_unreturnable_branch || uncond_branch_count == 4 {
             last_inst_branch = true;
             break;
         }
@@ -372,7 +373,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         block_asm.finalize();
 
         let opcodes = block_asm.get_code_buffer();
-        // if IS_DEBUG && guest_pc == 0x2002864 {
+        // if IS_DEBUG && guest_pc == 0x20d4818 {
         //     asm.jit_buf.debug_info.print_info(guest_pc, thumb);
         //     for &opcode in opcodes {
         //         print!("0x{opcode:x},");
@@ -523,6 +524,8 @@ pub unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(pc: u32, opcode
     debug_inst_info::<CPU>((*asm).emu, pc, &format!("\n\t{CPU:?} {inst_info:?}"));
 }
 
-extern "C" fn debug_enter_block<const CPU: CpuType>(pc: u32) {
+unsafe extern "C" fn debug_enter_block<const CPU: CpuType>(pc: u32) {
     branch_println!("{CPU:?} execute {pc:x}");
+    let asm = get_jit_asm_ptr::<CPU>();
+    debug_inst_info::<CPU>((*asm).emu, pc, "enter block");
 }

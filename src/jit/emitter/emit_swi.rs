@@ -26,6 +26,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.restore_tmp_regs(next_live_regs);
 
         const REG_TO_RESTORE: RegReserve = reg_reserve!(Reg::R0, Reg::R1, Reg::R3);
-        block_asm.unload_active_guest_regs(REG_TO_RESTORE);
+        block_asm.reload_active_guest_regs(REG_TO_RESTORE);
     }
 }

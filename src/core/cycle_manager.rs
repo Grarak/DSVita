@@ -121,7 +121,7 @@ impl CycleManager {
     }
 
     pub fn jump_to_next_event(&mut self) {
-        self.cycle_count = LinkedList::<_, CycleEventsListAllocator>::deref(self.events.root).value.cycle_count
+        self.cycle_count = LinkedList::<_, CycleEventsListAllocator>::deref(self.events.root).value.cycle_count;
     }
 }
 

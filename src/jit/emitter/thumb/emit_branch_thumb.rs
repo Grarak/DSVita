@@ -1,7 +1,7 @@
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::{MasmLdr2, MasmMov2};
-use crate::jit::jit_asm::JitAsm;
+use crate::jit::jit_asm::{align_guest_pc, JitAsm};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::Cond;
@@ -27,16 +27,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         } else {
             target_pc |= 1;
         }
+        let is_thumb = target_pc & 1 == 1;
+        target_pc = align_guest_pc(target_pc) | is_thumb as u32;
 
         let pc_reg = block_asm.get_guest_map(Reg::PC);
-        block_asm.ldr2(pc_reg, target_pc | 1);
+        block_asm.ldr2(pc_reg, target_pc);
 
         let lr_reg = block_asm.get_guest_map(Reg::LR);
         let pc = block_asm.current_pc;
         block_asm.mov2(lr_reg, &(pc + 3).into());
 
-        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::LR, Reg::PC));
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::LR, Reg::PC));
 
         self.emit_branch_external_label(inst_index, basic_block_index, target_pc, true, block_asm);
     }
@@ -50,8 +51,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let pc_reg = block_asm.get_guest_map(Reg::PC);
         block_asm.ldr2(pc_reg, target_pc | 1);
 
-        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::PC));
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::PC));
 
         self.emit_branch_label(inst_index, basic_block_index, target_pc | 1, pc_reg, block_asm);
     }
@@ -68,8 +68,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let pc = block_asm.current_pc;
         block_asm.ldr2(lr_reg, pc + 3);
 
-        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::LR, Reg::PC));
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::LR, Reg::PC));
 
         self.emit_branch_reg(inst_index, basic_block_index, pc_reg, true, block_asm);
     }

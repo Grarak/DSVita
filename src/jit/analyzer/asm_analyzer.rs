@@ -18,14 +18,17 @@ fn is_idle_loop(insts: &[InstInfo]) -> bool {
     let mut regs_disallowed_to_write = RegReserve::new();
     for (i, inst) in insts.iter().enumerate() {
         if (inst.is_branch() && i < insts.len() - 1)
-            || matches!(inst.op, Op::Swi | Op::SwiT | Op::Mcr | Op::Mrc | Op::MrsRc | Op::MrsRs | Op::MsrIc | Op::MsrIs | Op::MsrRc | Op::MsrRs)
+            || matches!(
+                inst.op,
+                Op::Swi | Op::SwiT | Op::Mcr | Op::Mrc | Op::MrsRc | Op::MrsRs | Op::MsrIc | Op::MsrIs | Op::MsrRc | Op::MsrRs | Op::Swp | Op::Swpb
+            )
             || inst.op.is_write_mem_transfer()
         {
             return false;
         }
 
-        let src_regs = inst.src_regs & !reg_reserve!(Reg::PC);
-        let out_regs = inst.out_regs & !reg_reserve!(Reg::PC);
+        let src_regs = inst.src_regs - reg_reserve!(Reg::PC, Reg::CPSR);
+        let out_regs = inst.out_regs - reg_reserve!(Reg::PC);
         regs_disallowed_to_write |= src_regs & !regs_written_to;
 
         if !(out_regs & regs_disallowed_to_write).is_empty() {

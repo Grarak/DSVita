@@ -39,13 +39,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
     }
 
     pub fn emit_call_branch_imm_no_return(&mut self, inst_index: usize, target_pc: u32, block_asm: &mut BlockAsm) {
-        if BRANCH_LOG {
-            let pc = block_asm.current_pc;
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pc.into());
-            block_asm.call(JitAsmCommonFuns::<CPU>::debug_branch_imm as _);
-        }
-
         block_asm.ldr2(Reg::R0, self as *mut _ as u32);
         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &self.jit_buf.insts_cycle_counts[inst_index].into());
         if IS_DEBUG {
@@ -53,6 +46,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R3, &pc.into());
         }
         block_asm.call(pre_branch::<CPU, false> as _);
+
+        if BRANCH_LOG {
+            let pc = block_asm.current_pc;
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pc.into());
+            block_asm.call(JitAsmCommonFuns::<CPU>::debug_branch_imm as _);
+        }
 
         block_asm.restore_guest_regs_ptr();
         block_asm.restore_stack();
@@ -112,11 +112,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 return;
             }
 
-            let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+            let mut next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+            if self.jit_buf.insts[inst_index].cond != Cond::AL {
+                next_live_regs += Reg::CPSR;
+            }
             block_asm.restore_tmp_regs(next_live_regs);
 
-            const REG_TO_RESTORE: RegReserve = reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR);
-            block_asm.unload_active_guest_regs(REG_TO_RESTORE);
+            block_asm.reload_active_guest_regs_all();
         } else {
             self.emit_call_branch_imm_no_return(inst_index, target_pc, block_asm);
         }
@@ -138,11 +140,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 return;
             }
 
-            let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+            let mut next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+            if self.jit_buf.insts[inst_index].cond != Cond::AL {
+                next_live_regs += Reg::CPSR;
+            }
             block_asm.restore_tmp_regs(next_live_regs);
 
-            const REG_TO_RESTORE: RegReserve = reg_reserve!(Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR);
-            block_asm.unload_active_guest_regs(REG_TO_RESTORE);
+            block_asm.reload_active_guest_regs_all();
         }
     }
 
@@ -280,8 +284,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let pc = block_asm.current_pc;
         block_asm.ldr2(lr_reg, pc + 4);
 
-        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::LR, Reg::PC));
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::LR, Reg::PC));
 
         self.emit_branch_reg(inst_index, basic_block_index, pc_reg, true, block_asm);
     }
@@ -297,8 +300,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let lr_reg = block_asm.get_guest_map(Reg::LR);
         let pc = block_asm.current_pc;
         block_asm.mov2(lr_reg, &(pc + 4).into());
-        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::LR, Reg::PC));
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::LR, Reg::PC));
 
         self.emit_branch_external_label(inst_index, basic_block_index, target_pc, true, block_asm);
     }
@@ -311,8 +313,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let pc_reg = block_asm.get_guest_map(Reg::PC);
         block_asm.ldr2(pc_reg, target_pc);
 
-        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::PC));
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::PC));
 
         self.emit_branch_label(inst_index, basic_block_index, target_pc, pc_reg, block_asm);
     }
@@ -324,8 +325,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let pc_reg = block_asm.get_guest_map(Reg::PC);
         block_asm.mov2(pc_reg, &op0_mapped.into());
-        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::PC));
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::PC));
 
         if op0 == Reg::LR {
             self.emit_branch_return_stack(inst_index, pc_reg, block_asm);
@@ -349,8 +349,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let lr_reg = block_asm.get_guest_map(Reg::LR);
         let pc = block_asm.current_pc;
         block_asm.mov2(lr_reg, &(pc + 4).into());
-        block_asm.add_dirty_guest_regs(reg_reserve!(Reg::LR, Reg::PC));
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::LR, Reg::PC));
 
         self.emit_branch_external_label(inst_index, basic_block_index, target_pc | 1, true, block_asm);
     }

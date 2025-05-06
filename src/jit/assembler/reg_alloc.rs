@@ -105,21 +105,11 @@ impl RegAlloc {
         }
     }
 
-    pub fn unload_active_guest_regs(&mut self, guest_regs: RegReserve) {
+    pub fn reload_active_guest_regs(&mut self, guest_regs: RegReserve, masm: &mut MacroAssembler) {
         for guest_reg in guest_regs {
             let mapped_reg = self.guest_regs_mapping[guest_reg as usize];
             if mapped_reg != Reg::None {
-                self.guest_regs_mapping[guest_reg as usize] = Reg::None;
-                self.free_regs += mapped_reg;
-            }
-        }
-    }
-
-    pub fn reload_active_guest_regs(&mut self, masm: &mut MacroAssembler) {
-        for reg in 0..self.guest_regs_mapping.len() {
-            let mapped_reg = self.guest_regs_mapping[reg];
-            if mapped_reg != Reg::None {
-                self.restore_guest_reg(Reg::from(reg as u8), mapped_reg, masm);
+                self.restore_guest_reg(guest_reg, mapped_reg, masm);
             }
         }
     }

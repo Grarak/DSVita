@@ -1,7 +1,7 @@
 use crate::jit::assembler::reg_alloc::RegAlloc;
 use crate::jit::assembler::vixl::vixl::{
     BranchHint_kNear, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, MaskedSpecialRegisterType_CPSR_f, MemOperand, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR,
-    SpecialRegisterType_CPSR,
+    ShiftType_RRX, SpecialRegisterType_CPSR,
 };
 use crate::jit::assembler::vixl::{
     vixl, Label, MacroAssembler, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmMrs2, MasmMsr2, MasmPop1, MasmPush1, MasmStr2, MasmStrb2, MasmStrd3, MasmSub5,
@@ -153,10 +153,6 @@ impl BlockAsm {
                             }
                         }
                     }
-                } else if inst.op.is_single_mem_transfer() && inst.op.is_write_mem_transfer() {
-                    if let Some(inst_info::Operand::Reg { reg: Reg::PC, shift: None }) = inst.operands().first() {
-                        pc += 4;
-                    }
                 }
                 pc
             };
@@ -193,7 +189,11 @@ impl BlockAsm {
     }
 
     pub fn save_dirty_guest_regs(&mut self, cpsr: bool, clear: bool) {
-        self.reg_alloc.save_active_guest_regs(self.dirty_guest_regs - Reg::CPSR, &mut self.masm);
+        self.save_dirty_guest_regs_additional(cpsr, clear, RegReserve::new());
+    }
+
+    pub fn save_dirty_guest_regs_additional(&mut self, cpsr: bool, clear: bool, additional_guest_regs: RegReserve) {
+        self.reg_alloc.save_active_guest_regs(self.dirty_guest_regs - Reg::CPSR + additional_guest_regs, &mut self.masm);
         if cpsr {
             self.save_dirty_guest_cpsr(clear);
         }
@@ -217,7 +217,7 @@ impl BlockAsm {
                 match shift {
                     None => unsafe { vixl::Operand::new2(map_reg) },
                     Some(shift) => {
-                        let (shift_type, value) = match shift {
+                        let (mut shift_type, value) = match shift {
                             Shift::Lsl(value) => (ShiftType_LSL, value),
                             Shift::Lsr(value) => (ShiftType_LSR, value),
                             Shift::Asr(value) => (ShiftType_ASR, value),
@@ -227,8 +227,12 @@ impl BlockAsm {
                             ShiftValue::Reg(shift_reg) => unsafe { vixl::Operand::new5(map_reg, shift_type.into(), self.reg_alloc.get_guest_map(*shift_reg).into()) },
                             ShiftValue::Imm(shift_imm) => {
                                 let mut shift_imm = *shift_imm;
-                                if shift_imm == 0 && shift_type != ShiftType_LSL {
-                                    shift_imm = 32;
+                                if shift_imm == 0 {
+                                    match shift_type {
+                                        ShiftType_LSR | ShiftType_ASR => shift_imm = 32,
+                                        ShiftType_ROR => return unsafe { vixl::Operand::new3(map_reg, ShiftType_RRX.into()) },
+                                        _ => {}
+                                    }
                                 }
                                 unsafe { vixl::Operand::new4(map_reg, shift_type.into(), shift_imm as u32) }
                             }
@@ -253,12 +257,12 @@ impl BlockAsm {
         }
     }
 
-    pub fn unload_active_guest_regs(&mut self, guest_regs: RegReserve) {
-        self.reg_alloc.unload_active_guest_regs(guest_regs);
+    pub fn reload_active_guest_regs(&mut self, guest_regs: RegReserve) {
+        self.reg_alloc.reload_active_guest_regs(guest_regs, &mut self.masm);
     }
 
-    pub fn reload_active_guest_regs(&mut self) {
-        self.reg_alloc.reload_active_guest_regs(&mut self.masm);
+    pub fn reload_active_guest_regs_all(&mut self) {
+        self.reg_alloc.reload_active_guest_regs(RegReserve::all(), &mut self.masm);
     }
 
     pub fn guest_inst_metadata(&mut self, total_cycles_reg: u16, inst: &InstInfo, rlist: RegReserve) -> usize {

@@ -114,6 +114,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         if inst.op.is_write_mem_transfer() {
             block_asm.mov2(Reg::R0, &op0_mapped.into());
+            if !block_asm.thumb && op0 == Reg::PC {
+                // When op0 is PC, it's read as PC+12
+                block_asm.add3(Reg::R0, Reg::R0, &4.into());
+            }
             if is_64bit {
                 let next_reg = block_asm.get_guest_map(Reg::from(op0 as u8 + 1));
                 block_asm.mov2(Reg::R1, &next_reg.into());
@@ -132,7 +136,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.nop0();
 
         let block_offset = block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, RegReserve::new()) as u32;
-        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &block_offset.into());
+        block_asm.mov2(Reg::R12, &block_offset.into());
 
         self.emit_fast_single_transfer(size, transfer.signed(), inst.op.is_write_mem_transfer(), block_asm);
 
@@ -160,7 +164,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             }
         }
 
-        let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+        let mut next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+        if inst.cond != Cond::AL {
+            next_live_regs += Reg::CPSR;
+        }
         block_asm.restore_tmp_regs(next_live_regs);
     }
 
@@ -184,25 +191,38 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         if use_fast_mem {
             let fast_mem_start = block_asm.get_cursor_offset();
             block_asm.nop0();
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &op0_mapped.into());
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &op0_mapped.into());
             block_asm.ldr2(Reg::R2, !0xF0000003);
-            block_asm.and5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &Reg::R2.into());
-            block_asm.load_mmu_offset(Reg::R1);
-            block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &Reg::R1.into());
+            block_asm.and5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R1, &Reg::R2.into());
+            block_asm.load_mmu_offset(Reg::LR);
+            block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &Reg::LR.into());
 
             const USABLE_REGS: RegReserve = reg_reserve!(Reg::R2, Reg::R3, Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::LR);
             let mut remaining_op1 = op1_len;
             while remaining_op1 != 0 {
                 let len = min(remaining_op1, USABLE_REGS.len());
-                let guest_regs = op1.into_iter().take(len).collect::<RegReserve>();
+                let mut guest_regs = op1;
+                for _ in 0..remaining_op1 - len {
+                    let reg_to_remove = if transfer.add() { guest_regs.get_highest_reg() } else { guest_regs.get_lowest_reg() };
+                    guest_regs -= reg_to_remove;
+                }
                 let usable_regs = USABLE_REGS.into_iter().take(len).collect::<RegReserve>();
                 if inst.op.is_write_mem_transfer() {
                     for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
-                        block_asm.load_guest_reg(usable_reg, guest_reg);
+                        if guest_reg == Reg::PC {
+                            let pc = block_asm.current_pc;
+                            if block_asm.thumb {
+                                block_asm.ldr2(usable_reg, pc + 4);
+                            } else {
+                                block_asm.ldr2(usable_reg, pc + 8);
+                            }
+                        } else {
+                            block_asm.load_guest_reg(usable_reg, guest_reg);
+                        }
                     }
 
                     let block_offset = block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, op1) as u32;
-                    block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &block_offset.into());
+                    block_asm.mov2(Reg::R12, &block_offset.into());
 
                     if remaining_op1 == 1 {
                         let usable_reg = USABLE_REGS.peek().unwrap();
@@ -222,7 +242,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     block_asm.restore_guest_regs_ptr();
                 } else {
                     let block_offset = block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, op1) as u32;
-                    block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &block_offset.into());
+                    block_asm.mov2(Reg::R12, &block_offset.into());
 
                     if remaining_op1 == 1 {
                         let usable_reg = USABLE_REGS.peek().unwrap();
@@ -250,7 +270,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             debug_assert!(op1.is_empty());
 
             if transfer.write_back() {
-                block_asm.sub5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &Reg::R1.into());
+                if transfer.add() {
+                    block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R1, &(op1_len as u32 * 4).into());
+                } else {
+                    block_asm.sub5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R1, &(op1_len as u32 * 4).into());
+                }
                 block_asm.store_guest_reg(Reg::R0, op0);
             }
 
@@ -296,9 +320,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.call(func);
         }
 
-        let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+        let mut next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+        if inst.cond != Cond::AL {
+            next_live_regs += Reg::CPSR;
+        }
         block_asm.restore_tmp_regs(next_live_regs);
-        block_asm.reload_active_guest_regs();
+        block_asm.reload_active_guest_regs_all();
     }
 
     pub fn emit_swp(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
@@ -317,7 +344,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.nop0();
 
         let block_offset = block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, RegReserve::new()) as u32;
-        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &block_offset.into());
+        block_asm.mov2(Reg::R12, &block_offset.into());
 
         let size = if inst.op == Op::Swpb { 1 } else { 4 };
         self.emit_fast_single_transfer(size, false, false, block_asm);
@@ -330,12 +357,15 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let inst = &self.jit_buf.insts[inst_index];
         let block_offset = block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, reg_reserve!(Reg::R0)) as u32;
-        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &block_offset.into());
+        block_asm.mov2(Reg::R12, &block_offset.into());
 
         self.emit_fast_single_transfer(size, false, true, block_asm);
         block_asm.nop0();
 
-        let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+        let mut next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+        if self.jit_buf.insts[inst_index].cond != Cond::AL {
+            next_live_regs += Reg::CPSR;
+        }
         block_asm.restore_tmp_regs(next_live_regs);
     }
 }

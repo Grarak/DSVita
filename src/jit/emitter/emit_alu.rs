@@ -2,7 +2,7 @@ use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::{
-    vixl, MasmClz3, MasmMla5, MasmMlas5, MasmMul4, MasmMuls4, MasmQadd4, MasmQdadd4, MasmQdsub4, MasmQsub4, MasmSmlabb5, MasmSmlabt5, MasmSmlal5, MasmSmlalbb5, MasmSmlalbt5, MasmSmlals5,
+    vixl, MasmClz3, MasmMla5, MasmMlas5, MasmMul4, MasmMuls4, MasmMvns3, MasmQadd4, MasmQdadd4, MasmQdsub4, MasmQsub4, MasmSmlabb5, MasmSmlabt5, MasmSmlal5, MasmSmlalbb5, MasmSmlalbt5, MasmSmlals5,
     MasmSmlaltb5, MasmSmlaltt5, MasmSmlatb5, MasmSmlatt5, MasmSmlawb5, MasmSmlawt5, MasmSmulbb4, MasmSmulbt4, MasmSmull5, MasmSmulls5, MasmSmultb4, MasmSmultt4, MasmSmulwb4, MasmSmulwt4, MasmUmlal5,
     MasmUmlals5, MasmUmull5, MasmUmulls5,
 };
@@ -18,6 +18,10 @@ use crate::jit::Cond;
 impl<const CPU: CpuType> JitAsm<'_, CPU> {
     pub fn emit_alu(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
         let inst = &self.jit_buf.insts[inst_index];
+        let mut cond = inst.cond;
+        if inst.out_regs.is_reserved(Reg::PC) {
+            cond = Cond::AL;
+        }
 
         let operands = inst.operands();
         match operands.len() {
@@ -30,14 +34,14 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     Op::Mov => <MacroAssembler as MasmMov3<_, _, _>>::mov3,
                     Op::Mvn => <MacroAssembler as MasmMvn3<_, _, _>>::mvn3,
                     Op::Movs => <MacroAssembler as MasmMovs3<_, _, _>>::movs3,
-                    Op::Mvns => <MacroAssembler as MasmMvn3<_, _, _>>::mvn3,
+                    Op::Mvns => <MacroAssembler as MasmMvns3<_, _, _>>::mvns3,
                     _ => unreachable!(),
                 };
 
                 let op0_mapped = block_asm.get_guest_map(operands[0].as_reg_no_shift().unwrap());
                 let op1_operand = block_asm.get_guest_operand_map(&operands[1]);
 
-                func(block_asm, inst.cond, op0_mapped, &op1_operand);
+                func(block_asm, cond, op0_mapped, &op1_operand);
             }
             3 => {
                 let func = match inst.op {
@@ -68,7 +72,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let op1_mapped = block_asm.get_guest_map(operands[1].as_reg_no_shift().unwrap());
                 let op2_operand = block_asm.get_guest_operand_map(&operands[2]);
 
-                func(block_asm, inst.cond, op0_mapped, op1_mapped, &op2_operand);
+                func(block_asm, cond, op0_mapped, op1_mapped, &op2_operand);
             }
             _ => unreachable!(),
         }
