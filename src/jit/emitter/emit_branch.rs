@@ -6,7 +6,7 @@ use crate::jit::assembler::vixl::{Label, MasmB2, MasmB3, MasmBic5, MasmBlx1, Mas
 use crate::jit::inst_branch_handler::{branch_imm, branch_lr, branch_reg, handle_idle_loop, handle_interrupt, pre_branch};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::jit_asm_common_funs::{get_max_loop_cycle_count, JitAsmCommonFuns};
-use crate::jit::reg::{reg_reserve, Reg, RegReserve};
+use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::{inst_branch_handler, Cond};
 use crate::logging::branch_println;
 use crate::settings::Arm7Emu;

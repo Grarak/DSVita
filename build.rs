@@ -16,7 +16,8 @@ fn main() {
     File::create(build_profile_name_file).unwrap().write_all(build_profile_name.as_bytes()).unwrap();
 
     let target = env::var("TARGET").unwrap();
-    if target != "armv7-sony-vita-newlibeabihf" {
+    let is_target_vita = target == "armv7-sony-vita-newlibeabihf";
+    if !is_target_vita {
         println!("cargo:rerun-if-env-changed=SYSROOT");
         if let Ok(sysroot) = env::var("SYSROOT") {
             println!("cargo:rustc-link-arg=--sysroot={sysroot}");
@@ -33,35 +34,46 @@ fn main() {
     println!("cargo:rerun-if-env-changed=VITASDK");
 
     {
-        let vixl_flags: &[&str] = &[
-            "-Wall",
-            "-fdiagnostics-show-option",
-            "-Wextra",
-            "-Wredundant-decls",
-            "-pedantic",
-            "-Wwrite-strings",
-            "-Wunused",
-            "-Wshadow",
-            "-Wno-missing-noreturn",
-            "-DVIXL_CODE_BUFFER_MALLOC=1",
-            "-DVIXL_INCLUDE_TARGET_A32=1",
-            "-DVIXL_INCLUDE_TARGET_T32=1",
-            if build_profile_name == "release" { "" } else { "-DVIXL_DEBUG=1" },
-            "-std=c++17",
-            "--target=armv7-unknown-linux-gnueabihf",
-            if let Ok(vitasdk_path) = &vitasdk_path {
-                &format!("--sysroot={}", vitasdk_path.join("arm-vita-eabi").to_str().unwrap())
-            } else {
-                ""
-            },
+        let mut vixl_flags = vec![
+            "-Wall".to_string(),
+            "-fdiagnostics-show-option".to_string(),
+            "-Wextra".to_string(),
+            "-Wredundant-decls".to_string(),
+            "-pedantic".to_string(),
+            "-Wwrite-strings".to_string(),
+            "-Wunused".to_string(),
+            "-Wshadow".to_string(),
+            "-Wno-missing-noreturn".to_string(),
+            "-DVIXL_CODE_BUFFER_MALLOC=1".to_string(),
+            "-DVIXL_INCLUDE_TARGET_A32=1".to_string(),
+            "-DVIXL_INCLUDE_TARGET_T32=1".to_string(),
+            "-std=c++17".to_string(),
         ];
+        if build_profile_name != "release" {
+            vixl_flags.push("-DVIXL_DEBUG=1".to_string());
+        }
+        if !is_target_vita {
+            vixl_flags.push("--target=armv7-unknown-linux-gnueabihf".to_string());
+        }
+        if let Ok(vitasdk_path) = &vitasdk_path {
+            vixl_flags.push(format!("--sysroot={}", vitasdk_path.join("arm-vita-eabi").to_str().unwrap()));
+        }
 
         let vixl_path = Path::new("vixl");
         println!("cargo:rerun-if-changed={}", vixl_path.to_str().unwrap());
 
         let create_vixl_build = |src_files: &[&str]| {
             let mut vixl_build = cc::Build::new();
-            vixl_build.include(vixl_path.join("src")).compiler("clang").cpp(true);
+            vixl_build.include(vixl_path.join("src")).cpp(true);
+            if is_target_vita {
+                vixl_build
+                    .compiler(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-g++"))
+                    .archiver(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-gcc-ar"))
+                    .ranlib(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-gcc-ranlib"))
+                    .pic(false);
+            } else {
+                vixl_build.compiler("clang++");
+            }
 
             if let Ok(vitasdk_path) = &vitasdk_path {
                 let cpp_include_path = vitasdk_path.join("arm-vita-eabi").join("include/c++");
@@ -72,7 +84,7 @@ fn main() {
                 vixl_build.include(cpp_include_path.to_str().unwrap()).include(cpp_include_path.join("arm-vita-eabi").to_str().unwrap());
             }
 
-            for flag in vixl_flags {
+            for flag in &vixl_flags {
                 vixl_build.flag(flag);
             }
 
@@ -181,11 +193,12 @@ fn main() {
         let mut bindings = bindgen::Builder::default()
             .clang_args(["-x", "c++"])
             .clang_args(["-I", vixl_path.join("src").to_str().unwrap()])
+            .clang_args(["-target", "armv7-unknown-linux-gnueabihf"])
             .formatter(Formatter::Prettyplease)
             .header(vixl_bindings_header_path.to_str().unwrap());
 
-        for flag in vixl_flags {
-            bindings = bindings.clang_arg(*flag);
+        for flag in &vixl_flags {
+            bindings = bindings.clang_arg(flag);
         }
 
         bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
@@ -378,7 +391,7 @@ fn main() {
         bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
 
         println!("cargo:rustc-link-search=native={}", vitasdk_lib_path.to_str().unwrap());
-        if target == "armv7-sony-vita-newlibeabihf" {
+        if is_target_vita {
             println!("cargo:rustc-link-lib=static=imgui");
         }
     }
@@ -402,7 +415,7 @@ fn main() {
         bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
     }
 
-    if target != "armv7-sony-vita-newlibeabihf" {
+    if !is_target_vita {
         return;
     }
 
@@ -434,7 +447,11 @@ fn main() {
     }
 
     {
-        let kubridge_dst_path = cmake::Config::new(&kubridge_path).build_target("libkubridge_stub.a").build().join("build");
+        let kubridge_dst_path = cmake::Config::new(&kubridge_path)
+            .configure_arg("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
+            .build_target("libkubridge_stub.a")
+            .build()
+            .join("build");
         let kubridge_lib_path = kubridge_dst_path.join("libkubridge_stub.a");
         let kubridge_lib_new_path = kubridge_dst_path.join("libkubridge_stub_dsvita.a");
         fs::rename(kubridge_lib_path, kubridge_lib_new_path).unwrap();

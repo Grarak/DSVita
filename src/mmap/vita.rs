@@ -2,7 +2,7 @@ use crate::mmap::platform::kubridge::{
     kuKernelAllocMemBlock, kuKernelFlushCaches, kuKernelMemCommit, kuKernelMemDecommit, kuKernelMemProtect, kuKernelMemReserve, kuKernelRegisterAbortHandler, KuKernelAbortContext,
     KuKernelAbortHandler, KuKernelMemCommitOpt, KU_KERNEL_MEM_COMMIT_ATTR_HAS_BASE, KU_KERNEL_PROT_EXEC, KU_KERNEL_PROT_NONE, KU_KERNEL_PROT_READ, KU_KERNEL_PROT_WRITE,
 };
-use crate::mmap::{MemRegion, VirtualMemMap, PAGE_SIZE};
+use crate::mmap::{ArmContext, MemRegion, VirtualMemMap, PAGE_SIZE};
 use crate::utils;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
@@ -340,15 +340,16 @@ impl AsMut<[u8]> for VirtualMem {
     }
 }
 
-static mut DELEGATE_FUN: *const fn(usize, &mut usize) -> bool = ptr::null();
+static mut DELEGATE_FUN: *const fn(usize, &mut usize, &ArmContext) -> bool = ptr::null();
 static mut NEXT_ABORT_HANDLER: KuKernelAbortHandler = None;
 
 unsafe extern "C" fn abort_handler(abort_context: *mut KuKernelAbortContext) {
     let context = &mut (*abort_context);
 
-    let delegate_fun: fn(usize, &mut usize) -> bool = mem::transmute(DELEGATE_FUN);
+    let delegate_fun: fn(usize, &mut usize, &ArmContext) -> bool = mem::transmute(DELEGATE_FUN);
+    let arm_context: &ArmContext = unsafe { mem::transmute(&context.r0) };
     let mut pc = context.pc as usize;
-    if delegate_fun(context.FAR as usize, &mut pc) {
+    if delegate_fun(context.FAR as usize, &mut pc, arm_context) {
         context.pc = pc as _;
         return;
     }
@@ -360,7 +361,7 @@ unsafe extern "C" fn abort_handler(abort_context: *mut KuKernelAbortContext) {
     }
 }
 
-pub unsafe fn register_abort_handler(delegate: fn(usize, &mut usize) -> bool) -> io::Result<()> {
+pub unsafe fn register_abort_handler(delegate: fn(usize, &mut usize, &ArmContext) -> bool) -> io::Result<()> {
     DELEGATE_FUN = delegate as *const _;
     if kuKernelRegisterAbortHandler(Some(abort_handler), ptr::addr_of_mut!(NEXT_ABORT_HANDLER), ptr::null_mut()) != 0 {
         Err(Error::from(ErrorKind::Other))
