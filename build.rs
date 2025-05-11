@@ -219,7 +219,10 @@ fn main() {
             vixl_bindings_impl_path.to_str().unwrap(),
         ];
 
-        let vixl_build = create_vixl_build(vixl_files);
+        let mut vixl_build = create_vixl_build(vixl_files);
+        if build_profile_name == "release" {
+            vixl_build.flag("-flto").flag("-ffat-lto-objects").opt_level_str("fast");
+        }
         vixl_build.compile("vixl");
 
         let vixl_inst_wrapper_path = out_path.join("vixl_inst_wrapper.rs");
