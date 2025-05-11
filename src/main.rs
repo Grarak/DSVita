@@ -215,7 +215,7 @@ pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a, CPU> 
     }
 }
 
-fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize, arm_context: &ArmContext) -> bool {
+unsafe fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize, arm_context: &ArmContext) -> bool {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
     let base_ptr = asm.emu.mmu_get_base_tcm_ptr::<CPU>();
 
@@ -231,9 +231,11 @@ fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize, arm_c
 
 #[cold]
 fn fault_handler(mem_addr: usize, host_pc: &mut usize, arm_context: &ArmContext) -> bool {
-    match unsafe { CURRENT_RUNNING_CPU } {
-        ARM9 => process_fault::<{ ARM9 }>(mem_addr, host_pc, arm_context),
-        ARM7 => process_fault::<{ ARM7 }>(mem_addr, host_pc, arm_context),
+    unsafe {
+        match CURRENT_RUNNING_CPU {
+            ARM9 => process_fault::<{ ARM9 }>(mem_addr, host_pc, arm_context),
+            ARM7 => process_fault::<{ ARM7 }>(mem_addr, host_pc, arm_context),
+        }
     }
 }
 
