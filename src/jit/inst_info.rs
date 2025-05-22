@@ -8,7 +8,7 @@ pub struct InstInfo {
     pub opcode: u32,
     pub op: Op,
     pub cond: Cond,
-    operands: Operands,
+    pub operands: Operands,
     pub src_regs: RegReserve,
     pub out_regs: RegReserve,
     pub cycle: u8,
@@ -104,7 +104,7 @@ impl From<InstInfoThumb> for InstInfo {
 
 #[derive(Copy, Clone)]
 pub struct Operands {
-    values: [Operand; 4],
+    pub values: [Operand; 4],
     num: u8,
 }
 

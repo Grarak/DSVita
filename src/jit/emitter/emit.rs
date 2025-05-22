@@ -132,7 +132,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let op0 = inst.operands()[0].as_reg_no_shift().unwrap();
                 let op1 = inst.operands()[1].as_reg_list().unwrap();
                 let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, i);
-                block_asm.alloc_guest_regs(reg_reserve!(op0), op1 & Reg::PC, next_live_regs);
+                block_asm.alloc_guest_regs(reg_reserve!(op0), op1 & Reg::PC, inst.cond, next_live_regs);
             } else {
                 self.emit_guest_regs_alloc(i, basic_block_index, block_asm);
             }
@@ -140,7 +140,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let inst = &self.jit_buf.insts[i];
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
-            // if block_asm.current_pc == 0x20d28d0 {
+            // if block_asm.current_pc == 0x208ff60 {
             //     block_asm.bkpt1(0);
             // }
 

@@ -4,12 +4,12 @@ use crate::jit::assembler::vixl::{MacroAssembler, MasmLdr2, MasmStr2};
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::logging::debug_panic;
 
-const GUEST_REG_ALLOCATIONS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11);
-const GUEST_REGS_LENGTH: usize = Reg::PC as usize + 1;
+pub const GUEST_REG_ALLOCATIONS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11);
+pub const GUEST_REGS_LENGTH: usize = Reg::PC as usize + 1;
 
 pub struct RegAlloc {
     free_regs: RegReserve,
-    guest_regs_mapping: [Reg; GUEST_REGS_LENGTH],
+    pub guest_regs_mapping: [Reg; GUEST_REGS_LENGTH],
 }
 
 impl RegAlloc {
@@ -28,7 +28,7 @@ impl RegAlloc {
         masm.str2(src_reg, &MemOperand::reg_offset(GUEST_REGS_PTR_REG, guest_reg as i32 * 4));
     }
 
-    fn alloc_guest_reg(&mut self, guest_reg: Reg, is_input: bool, used_regs: RegReserve, next_live_regs: RegReserve, masm: &mut MacroAssembler) -> Reg {
+    fn alloc_guest_reg(&mut self, guest_reg: Reg, is_input: bool, used_regs: RegReserve, next_live_regs: RegReserve, masm: &mut MacroAssembler) -> (Reg, Reg) {
         if !self.free_regs.is_empty() {
             let reg = self.free_regs.peek_gp().unwrap();
             self.guest_regs_mapping[guest_reg as usize] = reg;
@@ -36,7 +36,7 @@ impl RegAlloc {
             if is_input && guest_reg != Reg::PC {
                 self.restore_guest_reg(guest_reg, reg, masm);
             }
-            return reg;
+            return (reg, Reg::None);
         }
 
         for reg in 0..self.guest_regs_mapping.len() {
@@ -49,7 +49,7 @@ impl RegAlloc {
                 if is_input && guest_reg != Reg::PC {
                     self.restore_guest_reg(guest_reg, mapped_reg, masm);
                 }
-                return mapped_reg;
+                return (mapped_reg, reg);
             }
         }
 
@@ -63,7 +63,7 @@ impl RegAlloc {
                 if is_input && guest_reg != Reg::PC {
                     self.restore_guest_reg(guest_reg, mapped_reg, masm);
                 }
-                return mapped_reg;
+                return (mapped_reg, reg);
             }
         }
 
@@ -77,19 +77,28 @@ impl RegAlloc {
         debug_panic!("No free regs available for allocating guest mapping, used regs: {used_regs:?} mapped guest regs: {mapped_regs:?}");
     }
 
-    pub fn alloc_guest_regs(&mut self, input_regs: RegReserve, output_regs: RegReserve, next_live_regs: RegReserve, masm: &mut MacroAssembler) {
+    pub fn alloc_guest_regs(&mut self, input_regs: RegReserve, output_regs: RegReserve, next_live_regs: RegReserve, masm: &mut MacroAssembler) -> RegReserve {
+        let mut spilled_regs = RegReserve::new();
         let used_regs = input_regs + output_regs;
         for input_reg in input_regs {
             if self.guest_regs_mapping[input_reg as usize] == Reg::None {
-                self.alloc_guest_reg(input_reg, true, used_regs, next_live_regs, masm);
+                let (_, spilled_reg) = self.alloc_guest_reg(input_reg, true, used_regs, next_live_regs, masm);
+                if spilled_reg != Reg::None {
+                    spilled_regs += spilled_regs;
+                }
             }
         }
 
         for output_reg in output_regs {
             if self.guest_regs_mapping[output_reg as usize] == Reg::None {
-                self.alloc_guest_reg(output_reg, false, used_regs, next_live_regs, masm);
+                let (_, spilled_reg) = self.alloc_guest_reg(output_reg, false, used_regs, next_live_regs, masm);
+                if spilled_reg != Reg::None {
+                    spilled_regs += spilled_regs;
+                }
             }
         }
+
+        spilled_regs
     }
 
     pub fn get_guest_map(&self, reg: Reg) -> Reg {

@@ -301,7 +301,6 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
     };
 
     let pc_step = if thumb { 2 } else { 4 };
-    let pc_shift = pc_step >> 1;
     let mut heavy_inst_count = 0;
     let mut last_inst_branch = false;
 
@@ -381,7 +380,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         //     println!();
         //     todo!()
         // }
-        let (insert_entry, flushed) = asm.emu.jit_insert_block(&opcodes, &block_asm.guest_inst_metadata, guest_pc, thumb, CPU);
+        let (insert_entry, flushed) = asm.emu.jit_insert_block(opcodes, &block_asm.guest_inst_metadata, guest_pc, thumb, CPU);
         let jit_entry: extern "C" fn() = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {

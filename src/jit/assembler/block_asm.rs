@@ -1,4 +1,4 @@
-use crate::jit::assembler::reg_alloc::RegAlloc;
+use crate::jit::assembler::reg_alloc::{RegAlloc, GUEST_REGS_LENGTH};
 use crate::jit::assembler::vixl::vixl::{
     BranchHint_kNear, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, MaskedSpecialRegisterType_CPSR_f, MemOperand, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR,
     ShiftType_RRX, SpecialRegisterType_CPSR,
@@ -6,12 +6,11 @@ use crate::jit::assembler::vixl::vixl::{
 use crate::jit::assembler::vixl::{
     vixl, Label, MacroAssembler, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmMrs2, MasmMsr2, MasmPop1, MasmPush1, MasmStr2, MasmStrb2, MasmStrd3, MasmSub5,
 };
-use crate::jit::inst_info::{InstInfo, Shift, ShiftValue};
+use crate::jit::inst_info::{InstInfo, Operands, Shift, ShiftValue};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{inst_info, Cond};
 use crate::mmap::PAGE_SHIFT;
-use std::fmt::{Debug, Formatter};
 use std::ops::{Deref, DerefMut};
 
 pub const GUEST_REGS_PTR_REG: Reg = Reg::R12; // Also used for function calls
@@ -24,29 +23,23 @@ pub struct GuestInstMetadata {
     pub pc: u32,
     pub total_cycle_count: u16,
     pub op: Op,
+    pub operands: Operands,
     pub op0: Reg,
-    pub rlist: u16,
+    pub dirty_guest_regs: RegReserve,
+    pub mapped_guest_regs: [Reg; GUEST_REGS_LENGTH],
 }
 
 impl GuestInstMetadata {
-    pub fn new(pc: u32, total_cycle_count: u16, op: Op, op0: Reg, rlist: RegReserve) -> Self {
+    pub fn new(pc: u32, total_cycle_count: u16, op: Op, operands: Operands, op0: Reg, dirty_guest_regs: RegReserve, mapped_guest_regs: [Reg; GUEST_REGS_LENGTH]) -> Self {
         GuestInstMetadata {
             pc,
             total_cycle_count,
             op,
+            operands,
             op0,
-            rlist: rlist.0 as u16,
+            dirty_guest_regs,
+            mapped_guest_regs,
         }
-    }
-}
-
-impl Debug for GuestInstMetadata {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "GuestInstMetadata {{ pc: {:x}, total_cycle_count: {}, op: {:?}, rlist: {:?} }}",
-            self.pc, self.total_cycle_count, self.op, self.rlist
-        )
     }
 }
 
@@ -128,7 +121,7 @@ impl BlockAsm {
             input_regs += output_regs;
         }
 
-        self.alloc_guest_regs(input_regs, output_regs, next_live_regs);
+        self.alloc_guest_regs(input_regs, output_regs, inst.cond, next_live_regs);
 
         if inst.src_regs.is_reserved(Reg::PC) {
             let pc_reg = self.reg_alloc.get_guest_map(Reg::PC);
@@ -161,8 +154,11 @@ impl BlockAsm {
         }
     }
 
-    pub fn alloc_guest_regs(&mut self, input_regs: RegReserve, output_regs: RegReserve, next_live_regs: RegReserve) {
-        self.reg_alloc.alloc_guest_regs(input_regs - Reg::CPSR, output_regs - Reg::CPSR, next_live_regs, &mut self.masm);
+    pub fn alloc_guest_regs(&mut self, input_regs: RegReserve, output_regs: RegReserve, cond: Cond, next_live_regs: RegReserve) {
+        let spilled_guest_regs = self.reg_alloc.alloc_guest_regs(input_regs - Reg::CPSR, output_regs - Reg::CPSR, next_live_regs, &mut self.masm);
+        if cond == Cond::AL {
+            self.dirty_guest_regs -= spilled_guest_regs;
+        }
     }
 
     pub fn load_mmu_offset(&mut self, dest_reg: Reg) {
@@ -202,6 +198,10 @@ impl BlockAsm {
         }
     }
 
+    pub fn get_dirty_guest_regs(&self) -> RegReserve {
+        self.dirty_guest_regs
+    }
+
     pub fn add_dirty_guest_regs(&mut self, guest_regs: RegReserve) {
         self.dirty_guest_regs += guest_regs;
     }
@@ -217,7 +217,7 @@ impl BlockAsm {
                 match shift {
                     None => unsafe { vixl::Operand::new2(map_reg) },
                     Some(shift) => {
-                        let (mut shift_type, value) = match shift {
+                        let (shift_type, value) = match shift {
                             Shift::Lsl(value) => (ShiftType_LSL, value),
                             Shift::Lsr(value) => (ShiftType_LSR, value),
                             Shift::Asr(value) => (ShiftType_ASR, value),
@@ -265,7 +265,7 @@ impl BlockAsm {
         self.reg_alloc.reload_active_guest_regs(RegReserve::all(), &mut self.masm);
     }
 
-    pub fn guest_inst_metadata(&mut self, total_cycles_reg: u16, inst: &InstInfo, rlist: RegReserve) -> usize {
+    pub fn guest_inst_metadata(&mut self, total_cycles_reg: u16, inst: &InstInfo, op0: Reg, dirty_guest_regs: RegReserve) -> usize {
         let offset = self.get_cursor_offset();
         let page_num = (offset >> PAGE_SHIFT) as u16;
         if page_num != self.guest_inst_metadata_current_block {
@@ -278,8 +278,10 @@ impl BlockAsm {
         if self.thumb {
             pc |= 1;
         }
-        self.guest_inst_metadata
-            .push((page_num, GuestInstMetadata::new(pc, total_cycles_reg, inst.op, inst.operands()[0].as_reg_no_shift().unwrap(), rlist)));
+        self.guest_inst_metadata.push((
+            page_num,
+            GuestInstMetadata::new(pc, total_cycles_reg, inst.op, inst.operands, op0, dirty_guest_regs, self.reg_alloc.guest_regs_mapping),
+        ));
         block_offset
     }
 

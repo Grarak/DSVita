@@ -69,6 +69,22 @@ impl Mov {
 
 #[bitsize(16)]
 #[derive(FromBits)]
+pub struct MovReg {
+    rd: u3,
+    rm: u4,
+    msb_rd: u1,
+    opcode: u2,
+    id: u6,
+}
+
+impl MovReg {
+    pub fn mov(rd: Reg, rm: Reg) -> u16 {
+        u16::from(MovReg::new(u3::new((rd as u8) & 0x7), u4::new(rm as u8), u1::new((rd as u8) >> 3), u2::new(2), u6::new(0b010001)))
+    }
+}
+
+#[bitsize(16)]
+#[derive(FromBits)]
 pub struct BlxReg {
     id2: u3,
     rm: u4,
