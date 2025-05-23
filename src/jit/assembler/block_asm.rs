@@ -10,7 +10,7 @@ use crate::jit::inst_info::{InstInfo, Operands, Shift, ShiftValue};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{inst_info, Cond};
-use crate::mmap::PAGE_SHIFT;
+use crate::mmap::{PAGE_SHIFT, PAGE_SIZE};
 use std::ops::{Deref, DerefMut};
 
 pub const GUEST_REGS_PTR_REG: Reg = Reg::R12; // Also used for function calls
@@ -20,6 +20,7 @@ pub const CPSR_TMP_REG: Reg = Reg::R0;
 
 #[derive(Clone)]
 pub struct GuestInstMetadata {
+    pub opcode_offset: usize,
     pub pc: u32,
     pub total_cycle_count: u16,
     pub op: Op,
@@ -30,8 +31,9 @@ pub struct GuestInstMetadata {
 }
 
 impl GuestInstMetadata {
-    pub fn new(pc: u32, total_cycle_count: u16, op: Op, operands: Operands, op0: Reg, dirty_guest_regs: RegReserve, mapped_guest_regs: [Reg; GUEST_REGS_LENGTH]) -> Self {
+    pub fn new(opcode_offset: usize, pc: u32, total_cycle_count: u16, op: Op, operands: Operands, op0: Reg, dirty_guest_regs: RegReserve, mapped_guest_regs: [Reg; GUEST_REGS_LENGTH]) -> Self {
         GuestInstMetadata {
+            opcode_offset,
             pc,
             total_cycle_count,
             op,
@@ -49,8 +51,6 @@ pub struct BlockAsm {
     pub current_pc: u32,
     pub thumb: bool,
     pub dirty_guest_regs: RegReserve,
-    guest_inst_metadata_current_block: u16,
-    guest_inst_metadata_count: usize,
     pub guest_inst_metadata: Vec<(u16, GuestInstMetadata)>,
     pub guest_basic_block_labels: Vec<Option<Label>>,
 }
@@ -63,8 +63,6 @@ impl BlockAsm {
             current_pc: 0,
             thumb,
             dirty_guest_regs: RegReserve::new(),
-            guest_inst_metadata_current_block: 0,
-            guest_inst_metadata_count: 0,
             guest_inst_metadata: Vec::new(),
             guest_basic_block_labels: Vec::new(),
         }
@@ -265,24 +263,26 @@ impl BlockAsm {
         self.reg_alloc.reload_active_guest_regs(RegReserve::all(), &mut self.masm);
     }
 
-    pub fn guest_inst_metadata(&mut self, total_cycles_reg: u16, inst: &InstInfo, op0: Reg, dirty_guest_regs: RegReserve) -> usize {
+    pub fn guest_inst_metadata(&mut self, total_cycles_reg: u16, inst: &InstInfo, op0: Reg, dirty_guest_regs: RegReserve) {
         let offset = self.get_cursor_offset();
         let page_num = (offset >> PAGE_SHIFT) as u16;
-        if page_num != self.guest_inst_metadata_current_block {
-            self.guest_inst_metadata_count = 0;
-            self.guest_inst_metadata_current_block = page_num;
-        }
-        let block_offset = self.guest_inst_metadata_count;
-        self.guest_inst_metadata_count += 1;
         let mut pc = self.current_pc;
         if self.thumb {
             pc |= 1;
         }
         self.guest_inst_metadata.push((
             page_num,
-            GuestInstMetadata::new(pc, total_cycles_reg, inst.op, inst.operands, op0, dirty_guest_regs, self.reg_alloc.guest_regs_mapping),
+            GuestInstMetadata::new(
+                offset as usize & (PAGE_SIZE - 1),
+                pc,
+                total_cycles_reg,
+                inst.op,
+                inst.operands,
+                op0,
+                dirty_guest_regs,
+                self.reg_alloc.guest_regs_mapping,
+            ),
         ));
-        block_offset
     }
 
     pub fn bind_basic_block(&mut self, basic_block_index: usize) {

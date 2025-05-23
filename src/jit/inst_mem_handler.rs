@@ -261,7 +261,8 @@ pub unsafe extern "C" fn inst_write_mem_handler<const CPU: CpuType, const AMOUNT
         "push {{lr}}",
         "bl {}",
         "cmp r0, 0",
-        "it eq",
+        "itt eq",
+        "ldreq r12, [sp, 4]",
         "popeq {{pc}}",
         "push {{r4-r11}}",
         "mov r1, sp",
@@ -271,7 +272,7 @@ pub unsafe extern "C" fn inst_write_mem_handler<const CPU: CpuType, const AMOUNT
     );
 }
 
-pub unsafe extern "C" fn inst_read_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(op0: u8, _: u32, addr: u32) -> u32 {
+pub unsafe extern "C" fn _inst_read_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(op0: u8, _: u32, addr: u32) -> u32 {
     if AMOUNT == MemoryAmount::Double || (AMOUNT == MemoryAmount::Word && SIGNED) {
         unreachable_unchecked();
     }
@@ -281,12 +282,36 @@ pub unsafe extern "C" fn inst_read_mem_handler<const CPU: CpuType, const AMOUNT:
     *(*asm).emu.thread_get_reg(CPU, Reg::from(op0))
 }
 
-pub unsafe extern "C" fn inst_read64_mem_handler<const CPU: CpuType>(op0: u8, _: u32, addr: u32) -> u64 {
+pub unsafe extern "C" fn _inst_read64_mem_handler<const CPU: CpuType>(op0: u8, _: u32, addr: u32) -> u64 {
     let asm = get_jit_asm_ptr::<CPU>();
     handle_request_read::<CPU, { MemoryAmount::Double }, false>(Reg::from(op0), addr, (*asm).emu);
     let value0 = *(*asm).emu.thread_get_reg(CPU, Reg::from(op0));
     let value1 = *(*asm).emu.thread_get_reg(CPU, Reg::from(op0 + 1));
     (value0 as u64) | ((value1 as u64) << 32)
+}
+
+#[unsafe(naked)]
+pub unsafe extern "C" fn inst_read_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(op0: u8, _: u32, addr: u32) {
+    #[rustfmt::skip]
+    naked_asm!(
+        "push {{lr}}",
+        "bl {}",
+        "ldr r12, [sp, 4]",
+        "pop {{pc}}",
+        sym _inst_read_mem_handler::<CPU, AMOUNT, SIGNED>,
+    );
+}
+
+#[unsafe(naked)]
+pub unsafe extern "C" fn inst_read64_mem_handler<const CPU: CpuType>(op0: u8, _: u32, addr: u32) {
+    #[rustfmt::skip]
+    naked_asm!(
+        "push {{lr}}",
+        "bl {}",
+        "ldr r12, [sp, 4]",
+        "pop {{pc}}",
+        sym inst_read64_mem_handler::<CPU>,
+    );
 }
 
 #[unsafe(naked)]

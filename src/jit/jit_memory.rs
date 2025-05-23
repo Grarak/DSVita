@@ -651,13 +651,17 @@ impl JitMemory {
         let mut fast_mem_end = ptr::null_mut();
         for i in 1..64 {
             let pc = pc.add(i << pc_shift);
+            let mut found = false;
             if THUMB {
                 if (pc as *mut u16).read() == thumb::NOP {
                     fast_mem_end = pc;
-                    break;
+                    found = true;
                 }
             } else if (pc as *mut u32).read() == arm::NOP {
                 fast_mem_end = pc;
+                found = true;
+            }
+            if !found && !fast_mem_end.is_null() {
                 break;
             }
         }
@@ -667,34 +671,44 @@ impl JitMemory {
         (fast_mem_start, fast_mem_end as usize - fast_mem_start as usize + (1 << pc_shift))
     }
 
-    pub unsafe fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType, arm_context: &ArmContext) -> bool {
+    pub unsafe fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType, _: &ArmContext) -> bool {
         if *host_pc < self.mem.as_ptr() as usize || *host_pc >= self.mem.as_ptr() as usize + JIT_MEMORY_SIZE {
             debug_println!("Segfault outside of guest context");
             return false;
         }
 
-        let metadata_entry = arm_context.gp_regs[12];
-        let jit_mem_offset = *host_pc - 4 - self.mem.as_mut_ptr() as usize;
+        let jit_mem_offset = *host_pc - self.mem.as_mut_ptr() as usize;
         let metadata_block_page = jit_mem_offset >> PAGE_SHIFT;
-        let guest_inst_metadata = &self.guest_inst_metadata[metadata_block_page][metadata_entry];
-        let thumb = guest_inst_metadata.pc & 1 == 1;
+        let opcode_offset = jit_mem_offset & (PAGE_SIZE - 1);
+        let guest_inst_metadata_list = &self.guest_inst_metadata[metadata_block_page];
 
-        let (fast_mem_start, fast_mem_size) = if thumb {
-            Self::find_fast_mem::<true>(*host_pc as _)
-        } else {
-            Self::find_fast_mem::<false>(*host_pc as _)
-        };
+        for metadata in guest_inst_metadata_list {
+            if metadata.opcode_offset == opcode_offset {
+                let thumb = metadata.pc & 1 == 1;
 
-        if fast_mem_start.is_null() {
-            return false;
+                let (fast_mem_start, fast_mem_size) = if thumb {
+                    Self::find_fast_mem::<true>(*host_pc as _)
+                } else {
+                    Self::find_fast_mem::<false>(*host_pc as _)
+                };
+
+                if fast_mem_start.is_null() {
+                    debug_println!("Can't find fast mem range");
+                    return false;
+                }
+
+                let fast_mem = slice::from_raw_parts_mut(fast_mem_start, fast_mem_size);
+                if thumb {
+                    Self::execute_patch_slow_mem::<true>(host_pc, guest_memory_addr, fast_mem, metadata, cpu);
+                } else {
+                    Self::execute_patch_slow_mem::<false>(host_pc, guest_memory_addr, fast_mem, metadata, cpu);
+                }
+
+                return true;
+            }
         }
 
-        let fast_mem = slice::from_raw_parts_mut(fast_mem_start, fast_mem_size);
-        if thumb {
-            Self::execute_patch_slow_mem::<true>(host_pc, guest_memory_addr, fast_mem, guest_inst_metadata, cpu);
-        } else {
-            Self::execute_patch_slow_mem::<false>(host_pc, guest_memory_addr, fast_mem, guest_inst_metadata, cpu);
-        }
-        true
+        debug_println!("Can't find guest inst metadata");
+        false
     }
 }
