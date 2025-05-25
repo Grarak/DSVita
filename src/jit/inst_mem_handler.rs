@@ -3,7 +3,7 @@ use crate::core::CpuType::ARM9;
 use crate::get_jit_asm_ptr;
 use crate::jit::assembler::block_asm::GuestInstMetadata;
 use crate::jit::assembler::reg_alloc::GUEST_REG_ALLOCATIONS;
-use crate::jit::reg::Reg;
+use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
 use bilge::prelude::*;
@@ -206,11 +206,7 @@ unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(metadata: *const G
     debug_println!("{CPU:?} breakout after write");
     for dirty_guest_reg in (*metadata).dirty_guest_regs - Reg::CPSR {
         let mapped_reg = *(*metadata).mapped_guest_regs.get_unchecked(dirty_guest_reg as usize);
-        if mapped_reg == Reg::None {
-            continue;
-        }
-        unsafe { assert_unchecked(mapped_reg >= Reg::R4 && mapped_reg <= Reg::R11) };
-        let value = host_regs[mapped_reg as usize - 4] as u32;
+        let value = *host_regs.get_unchecked(mapped_reg as usize - 4) as u32;
         debug_println!("{CPU:?} save {dirty_guest_reg:?} as {value:x} from host {mapped_reg:?}");
         *asm.emu.thread_get_reg_mut(CPU, dirty_guest_reg) = value;
     }
@@ -227,50 +223,59 @@ unsafe extern "C" fn _inst_write_mem_handler<const CPU: CpuType, const AMOUNT: M
     }
 }
 
-#[unsafe(naked)]
-pub unsafe extern "C" fn inst_write_mem_handler_with_cpsr<const CPU: CpuType, const AMOUNT: MemoryAmount>(_value0: u32, _value1: u32, _addr: u32, _metadata: *const GuestInstMetadata) {
-    #[rustfmt::skip]
-    naked_asm!(
-        "push {{lr}}",
-        "mrs lr, cpsr",
-        "lsrs lr, lr, 24",
-        "ldr r12, [sp, 4]",
-        "strb lr, [r12, {cpsr_bits}]",
-        "bl {handler}",
-        "cmp r0, 0",
-        "bne 1f",
-        "ldr r12, [sp, 4]",
-        "ldr lr, [r12, {cpsr}]",
-        "msr cpsr, lr",
-        "pop {{pc}}",
-        "1:",
-        "push {{r4-r11}}",
-        "mov r1, sp",
-        "b {breakout}",
-        cpsr_bits = const Reg::CPSR as usize * 4 + 3,
-        handler = sym _inst_write_mem_handler::<CPU, AMOUNT>,
-        cpsr = const Reg::CPSR as usize * 4,
-        breakout = sym breakout_after_write::<CPU>,
-    );
+macro_rules! write_mem_handler_cpsr {
+    ($name:ident, $inst_fun:ident) => {
+        #[unsafe(naked)]
+        pub unsafe extern "C" fn $name<const CPU: CpuType, const AMOUNT: MemoryAmount>(_value0: u32, _value1: u32, _addr: u32, _metadata: *const GuestInstMetadata) {
+            #[rustfmt::skip]
+            naked_asm!(
+                "push {{r12, lr}}",
+                "mrs lr, cpsr",
+                "lsrs lr, lr, 24",
+                "strb lr, [r12, {cpsr_bits}]",
+                "bl {handler}",
+                "cmp r0, 0",
+                "bne 1f",
+                "pop {{r12, lr}}",
+                "ldr r2, [r12, {cpsr}]",
+                "msr cpsr, r2",
+                "bx lr",
+                "1:",
+                "push {{r4-r11}}",
+                "mov r1, sp",
+                "b {breakout}",
+                cpsr_bits = const Reg::CPSR as usize * 4 + 3,
+                handler = sym $inst_fun::<CPU, AMOUNT>,
+                cpsr = const Reg::CPSR as usize * 4,
+                breakout = sym breakout_after_write::<CPU>,
+            );
+        }
+    };
 }
 
-#[unsafe(naked)]
-pub unsafe extern "C" fn inst_write_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(_value0: u32, _value1: u32, _addr: u32, _metadata: *const GuestInstMetadata) {
-    #[rustfmt::skip]
-    naked_asm!(
-        "push {{lr}}",
-        "bl {}",
-        "cmp r0, 0",
-        "itt eq",
-        "ldreq r12, [sp, 4]",
-        "popeq {{pc}}",
-        "push {{r4-r11}}",
-        "mov r1, sp",
-        "b {}",
-        sym _inst_write_mem_handler::<CPU, AMOUNT>,
-        sym breakout_after_write::<CPU>,
-    );
+macro_rules! write_mem_handler {
+    ($name:ident, $inst_fun:ident) => {
+        #[unsafe(naked)]
+        pub unsafe extern "C" fn $name<const CPU: CpuType, const AMOUNT: MemoryAmount>(_value0: u32, _value1: u32, _addr: u32, _metadata: *const GuestInstMetadata) {
+            #[rustfmt::skip]
+            naked_asm!(
+                "push {{r12, lr}}",
+                "bl {}",
+                "cmp r0, 0",
+                "it eq",
+                "popeq {{r12, pc}}",
+                "push {{r4-r11}}",
+                "mov r1, sp",
+                "b {}",
+                sym $inst_fun::<CPU, AMOUNT>,
+                sym breakout_after_write::<CPU>,
+            );
+        }
+    };
 }
+
+write_mem_handler_cpsr!(inst_write_mem_handler_with_cpsr, _inst_write_mem_handler);
+write_mem_handler!(inst_write_mem_handler, _inst_write_mem_handler);
 
 pub unsafe extern "C" fn _inst_read_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(op0: u8, _: u32, addr: u32) -> u32 {
     if AMOUNT == MemoryAmount::Double || (AMOUNT == MemoryAmount::Word && SIGNED) {
@@ -291,13 +296,12 @@ pub unsafe extern "C" fn _inst_read64_mem_handler<const CPU: CpuType>(op0: u8, _
 }
 
 #[unsafe(naked)]
-pub unsafe extern "C" fn inst_read_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(op0: u8, _: u32, addr: u32) {
+pub unsafe extern "C" fn inst_read_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: u8, _: u32, _: u32) {
     #[rustfmt::skip]
     naked_asm!(
-        "push {{lr}}",
+        "push {{r12, lr}}",
         "bl {}",
-        "ldr r12, [sp, 4]",
-        "pop {{pc}}",
+        "pop {{r12, pc}}",
         sym _inst_read_mem_handler::<CPU, AMOUNT, SIGNED>,
     );
 }
@@ -306,10 +310,9 @@ pub unsafe extern "C" fn inst_read_mem_handler<const CPU: CpuType, const AMOUNT:
 pub unsafe extern "C" fn inst_read64_mem_handler<const CPU: CpuType>(op0: u8, _: u32, addr: u32) {
     #[rustfmt::skip]
     naked_asm!(
-        "push {{lr}}",
+        "push {{r12, lr}}",
         "bl {}",
-        "ldr r12, [sp, 4]",
-        "pop {{pc}}",
+        "pop {{r12, pc}}",
         sym inst_read64_mem_handler::<CPU>,
     );
 }
@@ -318,16 +321,15 @@ pub unsafe extern "C" fn inst_read64_mem_handler<const CPU: CpuType>(op0: u8, _:
 pub unsafe extern "C" fn inst_read_mem_handler_with_cpsr<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: u8, _: u32, _: u32) {
     #[rustfmt::skip]
     naked_asm!(
-        "push {{lr}}",
-        "mrs r1, cpsr",
-        "lsrs r1, r1, 24",
-        "ldr r12, [sp, 4]",
-        "strb r1, [r12, {cpsr_bits}]",
+        "push {{r12, lr}}",
+        "mrs lr, cpsr",
+        "lsrs lr, lr, 24",
+        "strb lr, [r12, {cpsr_bits}]",
         "bl {handler}",
-        "ldr r12, [sp, 4]",
-        "ldr r1, [r12, {cpsr}]",
-        "msr cpsr, r1",
-        "pop {{pc}}",
+        "pop {{r12, lr}}",
+        "ldr r2, [r12, {cpsr}]",
+        "msr cpsr, r2",
+        "bx lr",
         cpsr_bits = const Reg::CPSR as usize * 4 + 3,
         handler = sym inst_read_mem_handler::<CPU, AMOUNT, SIGNED>,
         cpsr = const Reg::CPSR as usize * 4,
@@ -338,16 +340,15 @@ pub unsafe extern "C" fn inst_read_mem_handler_with_cpsr<const CPU: CpuType, con
 pub unsafe extern "C" fn inst_read64_mem_handler_with_cpsr<const CPU: CpuType>(_: u8, _: u32, _: u32) {
     #[rustfmt::skip]
     naked_asm!(
-        "push {{lr}}",
-        "mrs r1, cpsr",
-        "lsrs r1, r1, 24",
-        "ldr r12, [sp, 4]",
-        "strb r1, [r12, {cpsr_bits}]",
+        "push {{r12, lr}}",
+        "mrs lr, cpsr",
+        "lsrs lr, lr, 24",
+        "strb lr, [r12, {cpsr_bits}]",
         "bl {handler}",
-        "ldr r12, [sp, 4]",
+        "pop {{r12, lr}}",
         "ldr r2, [r12, {cpsr}]",
         "msr cpsr, r2",
-        "pop {{pc}}",
+        "bx lr",
         cpsr_bits = const Reg::CPSR as usize * 4 + 3,
         handler = sym inst_read64_mem_handler::<CPU>,
         cpsr = const Reg::CPSR as usize * 4,
@@ -365,21 +366,126 @@ pub struct InstMemMultipleParams {
     unused: u6,
 }
 
-pub unsafe extern "C" fn inst_mem_handler_multiple<const CPU: CpuType, const WRITE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(params: u32, metadata: *const GuestInstMetadata) {
-    let asm = get_jit_asm_ptr::<CPU>();
+pub unsafe extern "C" fn _inst_mem_handler_multiple<const CPU: CpuType, const WRITE: bool, const WRITE_BACK: bool, const DECREMENT: bool, const GX_FIFO: bool>(
+    params: u32,
+    metadata: *const GuestInstMetadata,
+    host_regs: &mut [usize; GUEST_REG_ALLOCATIONS.len()],
+) {
+    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
+    let metadata = metadata.as_ref_unchecked();
     let params = InstMemMultipleParams::from(params);
-    handle_multiple_request::<CPU, WRITE, WRITE_BACK, DECREMENT, false>(
-        (*metadata).pc,
-        params.rlist(),
-        u8::from(params.rlist_len()),
-        u8::from(params.op0()),
-        params.pre(),
-        params.user(),
-        (*asm).emu,
-    );
-    if WRITE && unlikely((*asm).emu.breakout_imm) {
-        imm_breakout!(CPU, (*asm), (*metadata).pc, (*metadata).total_cycle_count);
+
+    if WRITE {
+        for dirty_guest_reg in metadata.dirty_guest_regs - Reg::CPSR {
+            let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(dirty_guest_reg as usize);
+            let value = *host_regs.get_unchecked(mapped_reg as usize - 4) as u32;
+            *asm.emu.thread_get_reg_mut(CPU, dirty_guest_reg) = value;
+        }
+    } else {
+        let op0 = Reg::from(u8::from(params.op0()));
+        if metadata.dirty_guest_regs.is_reserved(op0) {
+            let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(op0 as usize);
+            let value = *host_regs.get_unchecked(mapped_reg as usize - 4) as u32;
+            *asm.emu.thread_get_reg_mut(CPU, op0) = value;
+        }
     }
+
+    handle_multiple_request::<CPU, WRITE, WRITE_BACK, DECREMENT, GX_FIFO>(metadata.pc, params.rlist(), u8::from(params.rlist_len()), u8::from(params.op0()), params.pre(), params.user(), asm.emu);
+
+    if WRITE && unlikely(asm.emu.breakout_imm) {
+        imm_breakout!(CPU, asm, metadata.pc, metadata.total_cycle_count);
+    } else {
+        if WRITE_BACK {
+            let op0 = Reg::from(u8::from(params.op0()));
+            let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(op0 as usize);
+            *host_regs.get_unchecked_mut(mapped_reg as usize - 4) = *asm.emu.thread_get_reg(CPU, op0) as usize;
+        }
+
+        if !WRITE {
+            let rlist = RegReserve::from(params.rlist() as u32);
+            for reg in rlist {
+                let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(reg as usize);
+                if mapped_reg != Reg::None {
+                    *host_regs.get_unchecked_mut(mapped_reg as usize - 4) = *asm.emu.thread_get_reg(CPU, reg) as usize;
+                }
+            }
+        }
+    }
+}
+
+macro_rules! write_mem_handler_multiple_cpsr {
+    ($name:ident, $inst_func:ident, $gx_fifo:expr) => {
+        #[unsafe(naked)]
+        pub unsafe extern "C" fn $name<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool>(_: u32, _: *const GuestInstMetadata) {
+            #[rustfmt::skip]
+            naked_asm!(
+                "push {{r4-r12,lr}}",
+                "mrs lr, cpsr",
+                "lsrs lr, lr, 24",
+                "strb lr, [r12, {cpsr_bits}]",
+                "mov r2, sp",
+                "bl {handler}",
+                "pop {{r4-r12,lr}}",
+                "ldr r2, [r12, {cpsr}]",
+                "msr cpsr, r2",
+                "bx lr",
+                cpsr_bits = const Reg::CPSR as usize * 4 + 3,
+                handler = sym $inst_func::<CPU, true, WRITE_BACK, DECREMENT, $gx_fifo>,
+                cpsr = const Reg::CPSR as usize * 4,
+            );
+        }
+    };
+}
+
+macro_rules! write_mem_handler_multiple {
+    ($name:ident, $inst_func:ident, $gx_fifo:expr) => {
+        #[unsafe(naked)]
+        pub unsafe extern "C" fn $name<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool>(_: u32, _: *const GuestInstMetadata) {
+            #[rustfmt::skip]
+            naked_asm!(
+                "push {{r4-r12,lr}}",
+                "mov r2, sp",
+                "bl {handler}",
+                "pop {{r4-r12,pc}}",
+                handler = sym $inst_func::<CPU, true, WRITE_BACK, DECREMENT, $gx_fifo>,
+            );
+        }
+    };
+}
+
+write_mem_handler_multiple_cpsr!(inst_write_mem_handler_multiple_with_cpsr, _inst_mem_handler_multiple, false);
+write_mem_handler_multiple!(inst_write_mem_handler_multiple, _inst_mem_handler_multiple, false);
+
+#[unsafe(naked)]
+pub unsafe extern "C" fn inst_read_mem_handler_multiple_with_cpsr<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool>(_: u32, _: *const GuestInstMetadata) {
+    #[rustfmt::skip]
+    naked_asm!(
+        "push {{r4-r12,lr}}",
+        "mrs lr, cpsr",
+        "lsrs lr, lr, 24",
+        "strb lr, [r12, {cpsr_bits}]",
+        "mov r2, sp",
+        "bl {handler}",
+        "pop {{r4-r12,lr}}",
+        "ldr r2, [r12, {cpsr}]",
+        "msr cpsr, r2",
+        "bx lr",
+        cpsr_bits = const Reg::CPSR as usize * 4 + 3,
+        handler = sym _inst_mem_handler_multiple::<CPU, false, WRITE_BACK, DECREMENT, false>,
+        cpsr = const Reg::CPSR as usize * 4,
+    );
+}
+
+#[unsafe(naked)]
+pub unsafe extern "C" fn inst_read_mem_handler_multiple<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool>(_: u32, _: *const GuestInstMetadata) {
+    #[rustfmt::skip]
+    naked_asm!(
+        "push {{r4-r12,lr}}",
+        "mov r2, sp",
+        "bl {handler}",
+        "pop {{r4-r12,pc}}",
+        handler = sym _inst_mem_handler_multiple::<CPU, false, WRITE_BACK, DECREMENT, false>,
+    );
 }
 
 pub unsafe extern "C" fn inst_mem_handler_multiple_slow<const CPU: CpuType, const WRITE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(params: u32, pc: u32, total_cycle_count: u16) {
@@ -391,31 +497,28 @@ pub unsafe extern "C" fn inst_mem_handler_multiple_slow<const CPU: CpuType, cons
     }
 }
 
-pub unsafe extern "C" fn inst_mem_handler_write_gx_fifo(value0: u32, value1: u32, addr: u32, metadata: *const GuestInstMetadata) {
+unsafe extern "C" fn _inst_mem_handler_write_gx_fifo<const CPU: CpuType, const AMOUNT: MemoryAmount>(
+    value0: u32,
+    value1: u32,
+    addr: u32,
+    metadata: *const GuestInstMetadata,
+) -> *const GuestInstMetadata {
+    unsafe { assert_unchecked(CPU == ARM9 && AMOUNT == MemoryAmount::Word) };
+
     if likely(addr >= 0x4000400 && addr < 0x4000440) {
         let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
         asm.emu.regs_3d_set_gx_fifo(0xFFFFFFFF, value0);
         if unlikely(asm.emu.breakout_imm) {
-            imm_breakout!(ARM9, (*asm), (*metadata).pc, (*metadata).total_cycle_count);
+            metadata
+        } else {
+            ptr::null()
         }
     } else {
-        inst_write_mem_handler::<{ ARM9 }, { MemoryAmount::Word }>(value0, value1, addr, metadata);
+        _inst_write_mem_handler::<{ ARM9 }, { MemoryAmount::Word }>(value0, value1, addr, metadata)
     }
 }
 
-pub unsafe extern "C" fn inst_mem_handler_multiple_write_gx_fifo<const PRE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(params: u32, metadata: *const GuestInstMetadata) {
-    let asm = get_jit_asm_ptr::<{ ARM9 }>();
-    let params = InstMemMultipleParams::from(params);
-    handle_multiple_request::<{ ARM9 }, true, WRITE_BACK, DECREMENT, true>(
-        (*metadata).pc,
-        params.rlist(),
-        u8::from(params.rlist_len()),
-        u8::from(params.op0()),
-        params.pre(),
-        params.user(),
-        (*asm).emu,
-    );
-    if unlikely((*asm).emu.breakout_imm) {
-        imm_breakout!(ARM9, (*asm), (*metadata).pc, (*metadata).total_cycle_count);
-    }
-}
+write_mem_handler_cpsr!(inst_write_mem_handler_gxfifo_with_cpsr, _inst_mem_handler_write_gx_fifo);
+write_mem_handler!(inst_write_mem_handler_gxfifo, _inst_mem_handler_write_gx_fifo);
+write_mem_handler_multiple_cpsr!(inst_write_mem_handler_multiple_gxfifo_with_cpsr, _inst_mem_handler_multiple, true);
+write_mem_handler_multiple!(inst_write_mem_handler_multiple_gxfifo, _inst_mem_handler_multiple, true);

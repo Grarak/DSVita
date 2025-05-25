@@ -4,8 +4,9 @@ use crate::core::CpuType;
 use crate::jit::assembler::block_asm::GuestInstMetadata;
 use crate::jit::assembler::{arm, thumb};
 use crate::jit::inst_mem_handler::{
-    inst_mem_handler_multiple, inst_read64_mem_handler, inst_read64_mem_handler_with_cpsr, inst_read_mem_handler, inst_read_mem_handler_with_cpsr, inst_write_mem_handler,
-    inst_write_mem_handler_with_cpsr, InstMemMultipleParams,
+    inst_read64_mem_handler, inst_read64_mem_handler_with_cpsr, inst_read_mem_handler, inst_read_mem_handler_multiple, inst_read_mem_handler_multiple_with_cpsr, inst_read_mem_handler_with_cpsr,
+    inst_write_mem_handler, inst_write_mem_handler_gxfifo, inst_write_mem_handler_gxfifo_with_cpsr, inst_write_mem_handler_multiple, inst_write_mem_handler_multiple_gxfifo,
+    inst_write_mem_handler_multiple_gxfifo_with_cpsr, inst_write_mem_handler_multiple_with_cpsr, inst_write_mem_handler_with_cpsr, InstMemMultipleParams,
 };
 use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt};
 use crate::jit::jit_memory_map::JitMemoryMap;
@@ -240,34 +241,6 @@ impl Emu {
     }
 }
 
-macro_rules! _get_inst_mem_handler_fun {
-    ($is_write:expr, $size:expr, $signed:expr, $write_func:ident, $read_func:ident, $read_func_64:ident) => {
-        match ($is_write, $size) {
-            (true, 0) => $write_func::<CPU, { MemoryAmount::Byte }> as _,
-            (true, 1) => $write_func::<CPU, { MemoryAmount::Half }> as _,
-            (true, 2) => $write_func::<CPU, { MemoryAmount::Word }> as _,
-            (true, 3) => $write_func::<CPU, { MemoryAmount::Double }> as _,
-            (false, 0) => {
-                if $signed {
-                    $read_func::<CPU, { MemoryAmount::Byte }, true> as _
-                } else {
-                    $read_func::<CPU, { MemoryAmount::Byte }, false> as _
-                }
-            }
-            (false, 1) => {
-                if $signed {
-                    $read_func::<CPU, { MemoryAmount::Half }, true> as _
-                } else {
-                    $read_func::<CPU, { MemoryAmount::Half }, false> as _
-                }
-            }
-            (false, 2) => $read_func::<CPU, { MemoryAmount::Word }, false> as _,
-            (false, 3) => $read_func_64::<CPU> as _,
-            _ => unsafe { unreachable_unchecked() },
-        }
-    };
-}
-
 impl JitMemory {
     pub fn new(settings: &Settings) -> Self {
         let jit_entries = JitEntries::new();
@@ -418,8 +391,56 @@ impl JitMemory {
         }
     }
 
-    fn get_inst_mem_handler_fun<const CPU: CpuType>(is_write: bool, transfer: SingleTransfer, cpsr_dirty: bool) -> *const () {
-        if cpsr_dirty {
+    fn get_inst_mem_handler_fun<const CPU: CpuType>(is_write: bool, transfer: SingleTransfer, guest_memory_addr: u32, cpsr_dirty: bool) -> *const () {
+        macro_rules! _get_inst_mem_handler_fun {
+            ($is_write:expr, $size:expr, $signed:expr, $write_func:ident, $read_func:ident, $read_func_64:ident) => {
+                match ($is_write, $size) {
+                    (true, 0) => $write_func::<CPU, { MemoryAmount::Byte }> as _,
+                    (true, 1) => $write_func::<CPU, { MemoryAmount::Half }> as _,
+                    (true, 2) => $write_func::<CPU, { MemoryAmount::Word }> as _,
+                    (true, 3) => $write_func::<CPU, { MemoryAmount::Double }> as _,
+                    (false, 0) => {
+                        if $signed {
+                            $read_func::<CPU, { MemoryAmount::Byte }, true> as _
+                        } else {
+                            $read_func::<CPU, { MemoryAmount::Byte }, false> as _
+                        }
+                    }
+                    (false, 1) => {
+                        if $signed {
+                            $read_func::<CPU, { MemoryAmount::Half }, true> as _
+                        } else {
+                            $read_func::<CPU, { MemoryAmount::Half }, false> as _
+                        }
+                    }
+                    (false, 2) => $read_func::<CPU, { MemoryAmount::Word }, false> as _,
+                    (false, 3) => $read_func_64::<CPU> as _,
+                    _ => unsafe { unreachable_unchecked() },
+                }
+            };
+        }
+
+        if CPU == ARM9 && is_write && guest_memory_addr >= 0x4000400 && guest_memory_addr < 0x4000440 && transfer.size() == 2 {
+            if cpsr_dirty {
+                _get_inst_mem_handler_fun!(
+                    is_write,
+                    transfer.size(),
+                    transfer.signed(),
+                    inst_write_mem_handler_gxfifo_with_cpsr,
+                    inst_read_mem_handler_with_cpsr,
+                    inst_read64_mem_handler_with_cpsr
+                )
+            } else {
+                _get_inst_mem_handler_fun!(
+                    is_write,
+                    transfer.size(),
+                    transfer.signed(),
+                    inst_write_mem_handler_gxfifo,
+                    inst_read_mem_handler,
+                    inst_read64_mem_handler
+                )
+            }
+        } else if cpsr_dirty {
             _get_inst_mem_handler_fun!(
                 is_write,
                 transfer.size(),
@@ -433,16 +454,32 @@ impl JitMemory {
         }
     }
 
-    fn get_inst_mem_multiple_handler_fun<const CPU: CpuType>(is_write: bool, transfer: MultipleTransfer) -> *const () {
-        match (is_write, transfer.write_back(), !transfer.add()) {
-            (false, false, false) => inst_mem_handler_multiple::<CPU, false, false, false> as _,
-            (false, false, true) => inst_mem_handler_multiple::<CPU, false, false, true> as _,
-            (false, true, false) => inst_mem_handler_multiple::<CPU, false, true, false> as _,
-            (false, true, true) => inst_mem_handler_multiple::<CPU, false, true, true> as _,
-            (true, false, false) => inst_mem_handler_multiple::<CPU, true, false, false> as _,
-            (true, false, true) => inst_mem_handler_multiple::<CPU, true, false, true> as _,
-            (true, true, false) => inst_mem_handler_multiple::<CPU, true, true, false> as _,
-            (true, true, true) => inst_mem_handler_multiple::<CPU, true, true, true> as _,
+    fn get_inst_mem_multiple_handler_fun<const CPU: CpuType>(is_write: bool, transfer: MultipleTransfer, guest_memory_addr: u32, cpsr_dirty: bool) -> *const () {
+        macro_rules! _get_inst_mem_multiple_handler_fun {
+            ($write_fun:ident, $read_func:ident) => {
+                match (is_write, transfer.write_back(), !transfer.add()) {
+                    (false, false, false) => $read_func::<CPU, false, false> as _,
+                    (false, false, true) => $read_func::<CPU, false, true> as _,
+                    (false, true, false) => $read_func::<CPU, true, false> as _,
+                    (false, true, true) => $read_func::<CPU, true, true> as _,
+                    (true, false, false) => $write_fun::<CPU, false, false> as _,
+                    (true, false, true) => $write_fun::<CPU, false, true> as _,
+                    (true, true, false) => $write_fun::<CPU, true, false> as _,
+                    (true, true, true) => $write_fun::<CPU, true, true> as _,
+                }
+            };
+        }
+
+        if CPU == ARM9 && is_write && guest_memory_addr >= 0x4000400 && guest_memory_addr < 0x4000440 {
+            if cpsr_dirty {
+                _get_inst_mem_multiple_handler_fun!(inst_write_mem_handler_multiple_gxfifo_with_cpsr, inst_read_mem_handler_multiple_with_cpsr)
+            } else {
+                _get_inst_mem_multiple_handler_fun!(inst_write_mem_handler_multiple_gxfifo, inst_read_mem_handler_multiple)
+            }
+        } else if cpsr_dirty {
+            _get_inst_mem_multiple_handler_fun!(inst_write_mem_handler_multiple_with_cpsr, inst_read_mem_handler_multiple_with_cpsr)
+        } else {
+            _get_inst_mem_multiple_handler_fun!(inst_write_mem_handler_multiple, inst_read_mem_handler_multiple)
         }
     }
 
@@ -519,13 +556,15 @@ impl JitMemory {
                 _ => unreachable_unchecked(),
             };
 
-            let inst_mem_func = match cpu {
-                ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(guest_inst_metadata.op.is_write_mem_transfer(), transfer, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
-                ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(guest_inst_metadata.op.is_write_mem_transfer(), transfer, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
-            };
-            Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, inst_mem_func as u32);
+            let is_write = guest_inst_metadata.op.is_write_mem_transfer();
 
-            if guest_inst_metadata.op.is_write_mem_transfer() {
+            let inst_mem_func = match cpu {
+                ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
+                ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
+            };
+            Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
+
+            if is_write {
                 let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
                 Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R3, guest_inst_metadata_ptr as u32);
 
@@ -545,9 +584,9 @@ impl JitMemory {
                 );
             }
 
-            Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12);
+            Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
 
-            if !guest_inst_metadata.op.is_write_mem_transfer() {
+            if !is_write {
                 Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, guest_inst_metadata.op0, Reg::R0);
                 if transfer.size() == 3 {
                     let mapped_next = guest_inst_metadata.mapped_guest_regs[guest_inst_metadata.operands.values[0].as_reg_no_shift().unwrap_unchecked() as usize + 1];
@@ -563,9 +602,11 @@ impl JitMemory {
                 _ => unreachable_unchecked(),
             };
 
+            let is_write = guest_inst_metadata.op.is_write_mem_transfer();
+
             let inst_mem_func = match cpu {
-                ARM9 => Self::get_inst_mem_multiple_handler_fun::<{ ARM9 }>(guest_inst_metadata.op.is_write_mem_transfer(), transfer),
-                ARM7 => Self::get_inst_mem_multiple_handler_fun::<{ ARM7 }>(guest_inst_metadata.op.is_write_mem_transfer(), transfer),
+                ARM9 => Self::get_inst_mem_multiple_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
+                ARM7 => Self::get_inst_mem_multiple_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
             };
 
             let mut pre = transfer.pre();
@@ -576,14 +617,14 @@ impl JitMemory {
             let op1 = guest_inst_metadata.operands.values[1].as_reg_list().unwrap_unchecked();
             let params = InstMemMultipleParams::new(op1.0 as u16, u4::new(op1.len() as u8), u4::new(guest_inst_metadata.op0 as u8), pre, transfer.user(), u6::new(0));
 
-            Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, inst_mem_func as u32);
+            Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
 
             Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, u32::from(params));
 
             let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
             Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R1, guest_inst_metadata_ptr as u32);
 
-            Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12);
+            Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
 
             let max_length = Self::get_slow_mem_length(guest_inst_metadata.op);
             debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} < {max_length}");
@@ -597,17 +638,17 @@ impl JitMemory {
             };
             let transfer = SingleTransfer::new(false, false, false, false, size);
             let inst_mem_func = match cpu {
-                ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(is_write, transfer, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
-                ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
+                ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
+                ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
             };
-            Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, inst_mem_func as u32);
+            Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
 
             if is_write {
                 let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
                 Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R3, guest_inst_metadata_ptr as u32);
             }
 
-            Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12);
+            Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
 
             let max_length = if is_write { SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM } else { SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM };
             debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} < {max_length}");

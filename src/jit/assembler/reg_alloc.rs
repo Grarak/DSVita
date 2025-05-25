@@ -8,7 +8,7 @@ pub const GUEST_REG_ALLOCATIONS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg
 pub const GUEST_REGS_LENGTH: usize = Reg::PC as usize + 1;
 
 pub struct RegAlloc {
-    free_regs: RegReserve,
+    pub free_regs: RegReserve,
     pub guest_regs_mapping: [Reg; GUEST_REGS_LENGTH],
 }
 

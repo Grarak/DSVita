@@ -208,6 +208,10 @@ impl BlockAsm {
         self.reg_alloc.get_guest_map(guest_reg)
     }
 
+    pub fn get_free_host_regs(&self) -> RegReserve {
+        self.reg_alloc.free_regs
+    }
+
     pub fn get_guest_operand_map(&mut self, guest_operand: &inst_info::Operand) -> vixl::Operand {
         match guest_operand {
             inst_info::Operand::Reg { reg, shift } => {
@@ -263,12 +267,17 @@ impl BlockAsm {
         self.reg_alloc.reload_active_guest_regs(RegReserve::all(), &mut self.masm);
     }
 
-    pub fn guest_inst_metadata(&mut self, total_cycles_reg: u16, inst: &InstInfo, op0: Reg, dirty_guest_regs: RegReserve) {
+    pub fn guest_inst_metadata(&mut self, total_cycles_reg: u16, inst: &InstInfo, op0: Reg, mut dirty_guest_regs: RegReserve) {
         let offset = self.get_cursor_offset();
         let page_num = (offset >> PAGE_SHIFT) as u16;
         let mut pc = self.current_pc;
         if self.thumb {
             pc |= 1;
+        }
+        for guest_reg in dirty_guest_regs - Reg::CPSR {
+            if self.get_guest_map(guest_reg) == Reg::None {
+                dirty_guest_regs -= guest_reg;
+            }
         }
         self.guest_inst_metadata.push((
             page_num,
