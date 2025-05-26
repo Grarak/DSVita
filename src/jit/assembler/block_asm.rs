@@ -119,6 +119,21 @@ impl BlockAsm {
             input_regs += output_regs;
         }
 
+        if inst.op.is_single_mem_transfer() && !inst.op.is_write_mem_transfer() {
+            let op1 = inst.operands()[1].as_reg_no_shift().unwrap();
+            let op2 = inst.operands()[2].as_imm();
+
+            let transfer = match inst.op {
+                Op::Ldr(transfer) | Op::LdrT(transfer) => transfer,
+                _ => unreachable!(),
+            };
+
+            if op1 == Reg::PC && op2.is_some() && !transfer.write_back() {
+                self.alloc_guest_regs(input_regs - Reg::PC, output_regs, inst.cond, next_live_regs);
+                return;
+            }
+        }
+
         self.alloc_guest_regs(input_regs, output_regs, inst.cond, next_live_regs);
 
         if inst.src_regs.is_reserved(Reg::PC) {

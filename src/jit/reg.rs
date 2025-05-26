@@ -42,6 +42,10 @@ impl Reg {
     pub const fn is_call_preserved(self) -> bool {
         (self as u8 >= Reg::R4 as u8 && self as u8 <= Reg::R11 as u8) || self as u8 == Reg::SP as u8
     }
+
+    pub const fn is_low(self) -> bool {
+        self as u8 <= Reg::R7 as u8
+    }
 }
 
 impl<'a> iter::Sum<&'a Reg> for RegReserve {

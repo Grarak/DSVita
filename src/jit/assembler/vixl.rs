@@ -182,12 +182,14 @@ impl CPURegister {
 
 pub struct MacroAssembler {
     inner: *mut Aarch32MacroAssembler,
+    isa: InstructionSet,
 }
 
 impl MacroAssembler {
     pub fn new(isa: InstructionSet) -> Self {
         MacroAssembler {
             inner: unsafe { create_aarch32_masm(isa) },
+            isa,
         }
     }
 
@@ -222,6 +224,10 @@ include!(concat!(env!("OUT_DIR"), "/vixl_inst_wrapper.rs"));
 
 impl MasmLdr2<Reg, u32> for MacroAssembler {
     fn ldr2(&mut self, reg: Reg, v: u32) {
-        self.ldr3(Cond::AL, reg, v)
+        if self.isa == InstructionSet_T32 && reg.is_low() {
+            self.ldr3(Cond::AL, reg, v)
+        } else {
+            self.mov4(FlagsUpdate_LeaveFlags, Cond::AL, reg, &v.into());
+        }
     }
 }

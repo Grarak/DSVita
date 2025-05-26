@@ -35,7 +35,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let lr_reg = block_asm.get_guest_map(Reg::LR);
         let pc = block_asm.current_pc;
-        block_asm.mov2(lr_reg, &(pc + 3).into());
+        block_asm.ldr2(lr_reg, pc + 3);
 
         block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::LR, Reg::PC));
 
