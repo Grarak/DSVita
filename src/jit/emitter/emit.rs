@@ -201,11 +201,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             block_asm.bind(&mut label);
 
-            let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, i);
-            if block_asm.dirty_guest_regs.is_reserved(Reg::CPSR) && !next_live_regs.is_reserved(Reg::CPSR) {
-                block_asm.save_dirty_guest_cpsr(true);
-            }
-
             if DEBUG_LOG {
                 block_asm.save_dirty_guest_regs(false, false);
                 block_asm.save_dirty_guest_cpsr(true);

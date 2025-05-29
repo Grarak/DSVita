@@ -10,13 +10,15 @@ pub const GUEST_REGS_LENGTH: usize = Reg::PC as usize + 1;
 pub struct RegAlloc {
     pub free_regs: RegReserve,
     pub guest_regs_mapping: [Reg; GUEST_REGS_LENGTH],
+    thumb: bool,
 }
 
 impl RegAlloc {
-    pub fn new() -> Self {
+    pub fn new(thumb: bool) -> Self {
         RegAlloc {
             free_regs: GUEST_REG_ALLOCATIONS,
             guest_regs_mapping: [Reg::None; GUEST_REGS_LENGTH],
+            thumb,
         }
     }
 
@@ -29,8 +31,10 @@ impl RegAlloc {
     }
 
     fn alloc_guest_reg(&mut self, guest_reg: Reg, is_input: bool, used_regs: RegReserve, next_live_regs: RegReserve, masm: &mut MacroAssembler) -> (Reg, Reg) {
-        if !self.free_regs.is_empty() {
-            let reg = self.free_regs.peek_gp().unwrap();
+        for reg in self.free_regs {
+            if self.thumb && reg.is_low() != guest_reg.is_low() {
+                continue;
+            }
             self.guest_regs_mapping[guest_reg as usize] = reg;
             self.free_regs -= reg;
             if is_input && guest_reg != Reg::PC {
@@ -42,7 +46,7 @@ impl RegAlloc {
         for reg in 0..self.guest_regs_mapping.len() {
             let mapped_reg = self.guest_regs_mapping[reg];
             let reg = Reg::from(reg as u8);
-            if mapped_reg != Reg::None && !next_live_regs.is_reserved(reg) && !used_regs.is_reserved(reg) {
+            if mapped_reg != Reg::None && !next_live_regs.is_reserved(reg) && !used_regs.is_reserved(reg) && (!self.thumb || reg.is_low() == guest_reg.is_low()) {
                 self.guest_regs_mapping[guest_reg as usize] = mapped_reg;
                 self.guest_regs_mapping[reg as usize] = Reg::None;
                 self.spill_guest_reg(reg, mapped_reg, masm);
@@ -56,7 +60,7 @@ impl RegAlloc {
         for reg in 0..self.guest_regs_mapping.len() {
             let mapped_reg = self.guest_regs_mapping[reg];
             let reg = Reg::from(reg as u8);
-            if mapped_reg != Reg::None && !used_regs.is_reserved(reg) {
+            if mapped_reg != Reg::None && !used_regs.is_reserved(reg) && (!self.thumb || reg.is_low() == guest_reg.is_low()) {
                 self.guest_regs_mapping[guest_reg as usize] = mapped_reg;
                 self.guest_regs_mapping[reg as usize] = Reg::None;
                 self.spill_guest_reg(reg, mapped_reg, masm);

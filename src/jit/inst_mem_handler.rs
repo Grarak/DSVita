@@ -131,7 +131,7 @@ mod handler {
 
         let mem_addr = addr + ((pre as u32) << 2);
 
-        let get_reg_mut = if unlikely(user && !rlist.is_reserved(Reg::PC)) {
+        let get_reg_mut = if unlikely(user && !rlist.is_reserved(Reg::PC) && !emu.thread_is_user_mode(CPU)) {
             if unlikely(emu.thread_is_fiq_mode(CPU)) {
                 get_reg_usr_mut::<true>
             } else {
@@ -229,15 +229,16 @@ macro_rules! write_mem_handler_cpsr {
         pub unsafe extern "C" fn $name<const CPU: CpuType, const AMOUNT: MemoryAmount>(_value0: u32, _value1: u32, _addr: u32, _metadata: *const GuestInstMetadata) {
             #[rustfmt::skip]
             naked_asm!(
-                "push {{r12, lr}}",
+                "push {{r3, lr}}",
                 "mrs lr, cpsr",
                 "lsrs lr, lr, 24",
-                "strb lr, [r12, {cpsr_bits}]",
+                "strb lr, [r3, {cpsr_bits}]",
+                "mov r3, r12",
                 "bl {handler}",
                 "cmp r0, 0",
                 "bne 1f",
-                "pop {{r12, lr}}",
-                "ldr r2, [r12, {cpsr}]",
+                "pop {{r3, lr}}",
+                "ldr r2, [r3, {cpsr}]",
                 "msr cpsr, r2",
                 "bx lr",
                 "1:",
@@ -259,11 +260,12 @@ macro_rules! write_mem_handler {
         pub unsafe extern "C" fn $name<const CPU: CpuType, const AMOUNT: MemoryAmount>(_value0: u32, _value1: u32, _addr: u32, _metadata: *const GuestInstMetadata) {
             #[rustfmt::skip]
             naked_asm!(
-                "push {{r12, lr}}",
+                "push {{r3, lr}}",
+                "mov r3, r12",
                 "bl {}",
                 "cmp r0, 0",
                 "it eq",
-                "popeq {{r12, pc}}",
+                "popeq {{r3, pc}}",
                 "push {{r4-r11}}",
                 "mov r1, sp",
                 "b {}",
@@ -299,9 +301,9 @@ pub unsafe extern "C" fn _inst_read64_mem_handler<const CPU: CpuType>(op0: u8, _
 pub unsafe extern "C" fn inst_read_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: u8, _: u32, _: u32) {
     #[rustfmt::skip]
     naked_asm!(
-        "push {{r12, lr}}",
+        "push {{r3, lr}}",
         "bl {}",
-        "pop {{r12, pc}}",
+        "pop {{r3, pc}}",
         sym _inst_read_mem_handler::<CPU, AMOUNT, SIGNED>,
     );
 }
@@ -310,10 +312,10 @@ pub unsafe extern "C" fn inst_read_mem_handler<const CPU: CpuType, const AMOUNT:
 pub unsafe extern "C" fn inst_read64_mem_handler<const CPU: CpuType>(op0: u8, _: u32, addr: u32) {
     #[rustfmt::skip]
     naked_asm!(
-        "push {{r12, lr}}",
+        "push {{r3, lr}}",
         "bl {}",
-        "pop {{r12, pc}}",
-        sym inst_read64_mem_handler::<CPU>,
+        "pop {{r3, pc}}",
+        sym _inst_read64_mem_handler::<CPU>,
     );
 }
 
@@ -321,17 +323,17 @@ pub unsafe extern "C" fn inst_read64_mem_handler<const CPU: CpuType>(op0: u8, _:
 pub unsafe extern "C" fn inst_read_mem_handler_with_cpsr<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: u8, _: u32, _: u32) {
     #[rustfmt::skip]
     naked_asm!(
-        "push {{r12, lr}}",
+        "push {{r3, lr}}",
         "mrs lr, cpsr",
         "lsrs lr, lr, 24",
-        "strb lr, [r12, {cpsr_bits}]",
+        "strb lr, [r3, {cpsr_bits}]",
         "bl {handler}",
-        "pop {{r12, lr}}",
-        "ldr r2, [r12, {cpsr}]",
+        "pop {{r3, lr}}",
+        "ldr r2, [r3, {cpsr}]",
         "msr cpsr, r2",
         "bx lr",
         cpsr_bits = const Reg::CPSR as usize * 4 + 3,
-        handler = sym inst_read_mem_handler::<CPU, AMOUNT, SIGNED>,
+        handler = sym _inst_read_mem_handler::<CPU, AMOUNT, SIGNED>,
         cpsr = const Reg::CPSR as usize * 4,
     );
 }
@@ -340,17 +342,17 @@ pub unsafe extern "C" fn inst_read_mem_handler_with_cpsr<const CPU: CpuType, con
 pub unsafe extern "C" fn inst_read64_mem_handler_with_cpsr<const CPU: CpuType>(_: u8, _: u32, _: u32) {
     #[rustfmt::skip]
     naked_asm!(
-        "push {{r12, lr}}",
+        "push {{r3, lr}}",
         "mrs lr, cpsr",
         "lsrs lr, lr, 24",
-        "strb lr, [r12, {cpsr_bits}]",
+        "strb lr, [r3, {cpsr_bits}]",
         "bl {handler}",
-        "pop {{r12, lr}}",
-        "ldr r2, [r12, {cpsr}]",
+        "pop {{r3, lr}}",
+        "ldr r2, [r3, {cpsr}]",
         "msr cpsr, r2",
         "bx lr",
         cpsr_bits = const Reg::CPSR as usize * 4 + 3,
-        handler = sym inst_read64_mem_handler::<CPU>,
+        handler = sym _inst_read64_mem_handler::<CPU>,
         cpsr = const Reg::CPSR as usize * 4,
     );
 }
@@ -419,14 +421,14 @@ macro_rules! write_mem_handler_multiple_cpsr {
         pub unsafe extern "C" fn $name<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool>(_: u32, _: *const GuestInstMetadata) {
             #[rustfmt::skip]
             naked_asm!(
-                "push {{r4-r12,lr}}",
+                "push {{r3-r11,lr}}",
                 "mrs lr, cpsr",
                 "lsrs lr, lr, 24",
-                "strb lr, [r12, {cpsr_bits}]",
-                "mov r2, sp",
+                "strb lr, [r3, {cpsr_bits}]",
+                "add r2, sp, 4",
                 "bl {handler}",
-                "pop {{r4-r12,lr}}",
-                "ldr r2, [r12, {cpsr}]",
+                "pop {{r3-r11,lr}}",
+                "ldr r2, [r3, {cpsr}]",
                 "msr cpsr, r2",
                 "bx lr",
                 cpsr_bits = const Reg::CPSR as usize * 4 + 3,
@@ -443,10 +445,10 @@ macro_rules! write_mem_handler_multiple {
         pub unsafe extern "C" fn $name<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool>(_: u32, _: *const GuestInstMetadata) {
             #[rustfmt::skip]
             naked_asm!(
-                "push {{r4-r12,lr}}",
-                "mov r2, sp",
+                "push {{r3-r11,lr}}",
+                "add r2, sp, 4",
                 "bl {handler}",
-                "pop {{r4-r12,pc}}",
+                "pop {{r3-r11,pc}}",
                 handler = sym $inst_func::<CPU, true, WRITE_BACK, DECREMENT, $gx_fifo>,
             );
         }
@@ -460,14 +462,14 @@ write_mem_handler_multiple!(inst_write_mem_handler_multiple, _inst_mem_handler_m
 pub unsafe extern "C" fn inst_read_mem_handler_multiple_with_cpsr<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool>(_: u32, _: *const GuestInstMetadata) {
     #[rustfmt::skip]
     naked_asm!(
-        "push {{r4-r12,lr}}",
+        "push {{r3-r11,lr}}",
         "mrs lr, cpsr",
         "lsrs lr, lr, 24",
-        "strb lr, [r12, {cpsr_bits}]",
-        "mov r2, sp",
+        "strb lr, [r3, {cpsr_bits}]",
+        "add r2, sp, 4",
         "bl {handler}",
-        "pop {{r4-r12,lr}}",
-        "ldr r2, [r12, {cpsr}]",
+        "pop {{r3-r11,lr}}",
+        "ldr r2, [r3, {cpsr}]",
         "msr cpsr, r2",
         "bx lr",
         cpsr_bits = const Reg::CPSR as usize * 4 + 3,
@@ -480,10 +482,10 @@ pub unsafe extern "C" fn inst_read_mem_handler_multiple_with_cpsr<const CPU: Cpu
 pub unsafe extern "C" fn inst_read_mem_handler_multiple<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool>(_: u32, _: *const GuestInstMetadata) {
     #[rustfmt::skip]
     naked_asm!(
-        "push {{r4-r12,lr}}",
-        "mov r2, sp",
+        "push {{r3-r11,lr}}",
+        "add r2, sp, 4",
         "bl {handler}",
-        "pop {{r4-r12,pc}}",
+        "pop {{r3-r11,pc}}",
         handler = sym _inst_mem_handler_multiple::<CPU, false, WRITE_BACK, DECREMENT, false>,
     );
 }

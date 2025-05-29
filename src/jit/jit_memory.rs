@@ -26,10 +26,10 @@ use std::ops::Deref;
 use std::{ptr, slice};
 use CpuType::{ARM7, ARM9};
 
-const JIT_MEMORY_SIZE: usize = 24 * 1024 * 1024;
+const JIT_MEMORY_SIZE: usize = 32 * 1024 * 1024;
 pub const JIT_LIVE_RANGE_PAGE_SIZE_SHIFT: u32 = 8;
 const JIT_LIVE_RANGE_PAGE_SIZE: u32 = 1 << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
-const JIT_ARM9_MEMORY_SIZE: usize = 20 * 1024 * 1024;
+const JIT_ARM9_MEMORY_SIZE: usize = 28 * 1024 * 1024;
 const JIT_ARM7_MEMORY_SIZE: usize = JIT_MEMORY_SIZE - JIT_ARM9_MEMORY_SIZE;
 
 const SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB: usize = 22;
@@ -566,14 +566,15 @@ impl JitMemory {
 
             if is_write {
                 let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
-                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R3, guest_inst_metadata_ptr as u32);
+                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, guest_inst_metadata_ptr as u32);
 
                 if guest_inst_metadata.op0 != Reg::R0 {
                     Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, guest_inst_metadata.op0);
-                    if transfer.size() == 3 {
-                        let mapped_next = guest_inst_metadata.mapped_guest_regs[guest_inst_metadata.operands.values[0].as_reg_no_shift().unwrap_unchecked() as usize + 1];
-                        Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, mapped_next);
-                    }
+                }
+
+                if transfer.size() == 3 {
+                    let mapped_next = guest_inst_metadata.mapped_guest_regs[guest_inst_metadata.operands.values[0].as_reg_no_shift().unwrap_unchecked() as usize + 1];
+                    Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, mapped_next);
                 }
             } else {
                 Self::fast_mem_mov::<THUMB>(
@@ -645,7 +646,7 @@ impl JitMemory {
 
             if is_write {
                 let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
-                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R3, guest_inst_metadata_ptr as u32);
+                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, guest_inst_metadata_ptr as u32);
             }
 
             Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);

@@ -53,11 +53,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
     }
 
-    fn emit_fast_single_write_transfer<F: FnOnce(&Self, &mut BlockAsm)>(&mut self, flag_update: u32, op0: Reg, op0_next: Reg, size: u8, metadata_emitter: F, block_asm: &mut BlockAsm) {
+    fn emit_fast_single_write_transfer<F: FnOnce(&Self, &mut BlockAsm)>(&mut self, flag_update: u32, op0: Reg, op0_next: Reg, tmp_reg: Reg, size: u8, metadata_emitter: F, block_asm: &mut BlockAsm) {
         let is_64bit = size == 8;
         let size = if is_64bit { 4 } else { size };
 
-        Self::emit_align_addr(flag_update, Reg::R3, Reg::R2, size, block_asm);
+        Self::emit_align_addr(flag_update, tmp_reg, Reg::R2, size, block_asm);
 
         let func = match size {
             1 => <MacroAssembler as MasmStrb2<Reg, &MemOperand>>::strb2,
@@ -70,23 +70,33 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         metadata_emitter(self, block_asm);
 
-        let mem_operand = MemOperand::reg_offset2(Reg::R3, Reg::LR);
+        let mem_operand = MemOperand::reg_offset2(tmp_reg, Reg::LR);
         func(block_asm, op0, &mem_operand);
         if is_64bit {
             block_asm.add5(flag_update, Cond::AL, Reg::R2, Reg::R2, &4.into());
-            Self::emit_align_addr(flag_update, Reg::R3, Reg::R2, 4, block_asm);
+            Self::emit_align_addr(flag_update, tmp_reg, Reg::R2, 4, block_asm);
 
             func(block_asm, op0_next, &mem_operand);
         }
     }
 
-    fn emit_fast_single_read_transfer<F: FnOnce(&Self, &mut BlockAsm)>(&mut self, flag_update: u32, op0: Reg, op0_next: Reg, size: u8, signed: bool, metadata_emitter: F, block_asm: &mut BlockAsm) {
+    fn emit_fast_single_read_transfer<F: FnOnce(&Self, &mut BlockAsm)>(
+        &mut self,
+        flag_update: u32,
+        op0: Reg,
+        op0_next: Reg,
+        tmp_reg: Reg,
+        size: u8,
+        signed: bool,
+        metadata_emitter: F,
+        block_asm: &mut BlockAsm,
+    ) {
         debug_assert!(!signed || size == 1 || size == 2);
 
         let is_64bit = size == 8;
         let size = if is_64bit { 4 } else { size };
 
-        Self::emit_align_addr(flag_update, Reg::R3, Reg::R2, size, block_asm);
+        Self::emit_align_addr(flag_update, tmp_reg, Reg::R2, size, block_asm);
 
         let func = get_read_func!(size, signed);
 
@@ -94,19 +104,19 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         metadata_emitter(self, block_asm);
 
-        let mem_operand = MemOperand::reg_offset2(Reg::R3, Reg::LR);
+        let mem_operand = MemOperand::reg_offset2(tmp_reg, Reg::LR);
         func(block_asm, op0, &mem_operand);
         if size == 4 {
-            block_asm.lsl5(flag_update, Cond::AL, Reg::R3, Reg::R2, &3.into());
-            block_asm.ror5(flag_update, Cond::AL, op0, op0, &Reg::R3.into());
+            block_asm.lsl5(flag_update, Cond::AL, tmp_reg, Reg::R2, &3.into());
+            block_asm.ror5(flag_update, Cond::AL, op0, op0, &tmp_reg.into());
         }
         if is_64bit {
             block_asm.add5(flag_update, Cond::AL, Reg::R2, Reg::R2, &4.into());
-            Self::emit_align_addr(flag_update, Reg::R3, Reg::R2, 4, block_asm);
+            Self::emit_align_addr(flag_update, tmp_reg, Reg::R2, 4, block_asm);
 
             func(block_asm, op0_next, &mem_operand);
-            block_asm.lsl5(flag_update, Cond::AL, Reg::R3, Reg::R2, &3.into());
-            block_asm.ror5(flag_update, Cond::AL, op0_next, op0_next, &Reg::R3.into());
+            block_asm.lsl5(flag_update, Cond::AL, tmp_reg, Reg::R2, &3.into());
+            block_asm.ror5(flag_update, Cond::AL, op0_next, op0_next, &tmp_reg.into());
         }
     }
 
@@ -129,7 +139,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let is_64bit = size == 8;
 
         let mut value_reg = op0_mapped;
-        let mut next_value_reg = if is_64bit { block_asm.get_guest_map(Reg::from(op0 as u8 + 1)) } else { Reg::None };
+        let next_value_reg = if is_64bit { block_asm.get_guest_map(Reg::from(op0 as u8 + 1)) } else { Reg::None };
 
         let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
         let save_cpsr = block_asm.dirty_guest_regs.is_reserved(Reg::CPSR) || next_live_regs.is_reserved(Reg::CPSR);
@@ -175,17 +185,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let op2_mapped = block_asm.get_guest_operand_map(op2);
 
             if transfer.add() {
-                block_asm.add5(flag_update, Cond::AL, Reg::R3, op1_mapped, &op2_mapped);
+                block_asm.add5(flag_update, Cond::AL, Reg::R1, op1_mapped, &op2_mapped);
             } else {
-                block_asm.sub5(flag_update, Cond::AL, Reg::R3, op1_mapped, &op2_mapped);
-            }
-
-            if inst.op == Op::LdrT(transfer) && op1 == Reg::PC {
-                block_asm.bic5(flag_update, Cond::AL, Reg::R3, Reg::R3, &0x3.into());
+                block_asm.sub5(flag_update, Cond::AL, Reg::R1, op1_mapped, &op2_mapped);
             }
 
             if transfer.pre() {
-                block_asm.mov4(flag_update, Cond::AL, Reg::R2, &Reg::R3.into());
+                block_asm.mov4(flag_update, Cond::AL, Reg::R2, &Reg::R1.into());
             } else {
                 block_asm.mov4(flag_update, Cond::AL, Reg::R2, &op1_mapped.into());
             }
@@ -200,12 +206,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 if inst.op.is_write_mem_transfer() && value_reg != Reg::R0 {
                     block_asm.mov4(flag_update, Cond::AL, Reg::R0, &value_reg.into());
                     value_reg = Reg::R0;
-                    if is_64bit {
-                        block_asm.mov4(flag_update, Cond::AL, Reg::R1, &next_value_reg.into());
-                        next_value_reg = Reg::R1;
-                    }
                 }
-                block_asm.mov4(flag_update, Cond::AL, op1_mapped, &Reg::R3.into());
+                block_asm.mov4(flag_update, Cond::AL, op1_mapped, &Reg::R1.into());
                 dirty_guest_regs += op1;
             }
 
@@ -216,9 +218,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 |asm: &Self, block_asm: &mut BlockAsm| block_asm.guest_inst_metadata(asm.jit_buf.insts_cycle_counts[inst_index], &asm.jit_buf.insts[inst_index], value_reg, dirty_guest_regs);
 
             if inst.op.is_write_mem_transfer() {
-                self.emit_fast_single_write_transfer(flag_update, value_reg, next_value_reg, size, metadata_emitter, block_asm);
+                self.emit_fast_single_write_transfer(flag_update, value_reg, next_value_reg, Reg::R1, size, metadata_emitter, block_asm);
             } else {
-                self.emit_fast_single_read_transfer(flag_update, value_reg, next_value_reg, size, transfer.signed(), metadata_emitter, block_asm);
+                self.emit_fast_single_read_transfer(flag_update, value_reg, next_value_reg, Reg::R1, size, transfer.signed(), metadata_emitter, block_asm);
             }
 
             fast_mem_start
@@ -257,7 +259,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.load_mmu_offset(Reg::R1);
         block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &Reg::R1.into());
 
-        let usable_regs = reg_reserve!(Reg::R1, Reg::R2, Reg::R3, Reg::LR) + block_asm.get_free_host_regs();
+        let usable_regs = reg_reserve!(Reg::R1, Reg::R2, Reg::R12, Reg::LR) + block_asm.get_free_host_regs();
 
         let mut remaining_op1 = op1_len;
         while remaining_op1 != 0 {
@@ -432,6 +434,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             flag_update,
             Reg::R0,
             Reg::None,
+            Reg::R12,
             size,
             false,
             |asm, block_asm| block_asm.guest_inst_metadata(asm.jit_buf.insts_cycle_counts[inst_index], &asm.jit_buf.insts[inst_index], Reg::R0, dirty_guest_regs),
@@ -456,6 +459,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             flag_update,
             Reg::R1,
             Reg::None,
+            Reg::R12,
             size,
             |asm, block_asm| block_asm.guest_inst_metadata(asm.jit_buf.insts_cycle_counts[inst_index], &asm.jit_buf.insts[inst_index], Reg::R1, dirty_guest_regs),
             block_asm,

@@ -1,6 +1,5 @@
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::vixl::vixl::CPURegister_RegisterType_kNoRegister;
 use crate::jit::assembler::vixl::{
     vixl, MacroAssembler, MasmAdcs3, MasmAdd3, MasmAdds3, MasmAnds3, MasmAsrs3, MasmBics3, MasmCmp2, MasmEors3, MasmLsls3, MasmLsrs3, MasmMov2, MasmMovs2, MasmMuls3, MasmMvns2, MasmOrrs3, MasmRors3,
     MasmRsbs3, MasmSbcs3, MasmSub3, MasmSubs3, MasmTst2,
@@ -20,11 +19,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 Op::MulT => {
                     let op0_mapped = block_asm.get_guest_map(operands[0].as_reg_no_shift().unwrap());
                     let op1_mapped = block_asm.get_guest_map(operands[1].as_reg_no_shift().unwrap());
-
-                    block_asm.mov2(Reg::R0, &op0_mapped.into());
-                    block_asm.mov2(Reg::R1, &op1_mapped.into());
-                    block_asm.muls3(Reg::R0, Reg::R1, Reg::R0);
-                    block_asm.mov2(op0_mapped, &Reg::R0.into());
+                    block_asm.muls3(op0_mapped, op1_mapped, op0_mapped);
                 }
                 _ => {
                     let func = match inst.op {
@@ -70,8 +65,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     _ => todo!("{inst:?}"),
                 };
 
-                let needs_low_regs = matches!(inst.op, Op::AsrT);
-
                 let op0_mapped = block_asm.get_guest_map(operands[0].as_reg_no_shift().unwrap());
                 let op1_mapped = block_asm.get_guest_map(operands[1].as_reg_no_shift().unwrap());
                 let mut op2_operand = block_asm.get_guest_operand_map(&operands[2]);
@@ -95,25 +88,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     _ => {}
                 }
 
-                if needs_low_regs {
-                    block_asm.mov2(Reg::R0, &op0_mapped.into());
-                    block_asm.mov2(Reg::R1, &op1_mapped.into());
-
-                    if op2_operand.rm_._base.get_type() != CPURegister_RegisterType_kNoRegister {
-                        block_asm.mov2(Reg::R2, &Reg::from(op2_operand.rm_._base.get_code() as u8).into());
-                        op2_operand.rm_ = Reg::R2.into();
-                    }
-
-                    if op2_operand.rs_._base.get_type() != CPURegister_RegisterType_kNoRegister {
-                        block_asm.mov2(Reg::R3, &Reg::from(op2_operand.rs_._base.get_code() as u8).into());
-                        op2_operand.rm_ = Reg::R3.into();
-                    }
-
-                    func(block_asm, Reg::R0, Reg::R1, &op2_operand);
-                    block_asm.mov2(op0_mapped, &Reg::R0.into());
-                } else {
-                    func(block_asm, op0_mapped, op1_mapped, &op2_operand);
-                }
+                func(block_asm, op0_mapped, op1_mapped, &op2_operand);
             }
             _ => unreachable!(),
         }

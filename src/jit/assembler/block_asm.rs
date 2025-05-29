@@ -3,9 +3,7 @@ use crate::jit::assembler::vixl::vixl::{
     BranchHint_kNear, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, MaskedSpecialRegisterType_CPSR_f, MemOperand, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR,
     ShiftType_RRX, SpecialRegisterType_CPSR,
 };
-use crate::jit::assembler::vixl::{
-    vixl, Label, MacroAssembler, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmMrs2, MasmMsr2, MasmPop1, MasmPush1, MasmStr2, MasmStrb2, MasmStrd3, MasmSub5,
-};
+use crate::jit::assembler::vixl::{vixl, Label, MacroAssembler, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMrs2, MasmMsr2, MasmPop1, MasmPush1, MasmStr2, MasmStrb2, MasmStrd3, MasmSub5};
 use crate::jit::inst_info::{InstInfo, Operands, Shift, ShiftValue};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
@@ -13,7 +11,7 @@ use crate::jit::{inst_info, Cond};
 use crate::mmap::{PAGE_SHIFT, PAGE_SIZE};
 use std::ops::{Deref, DerefMut};
 
-pub const GUEST_REGS_PTR_REG: Reg = Reg::R12; // Also used for function calls
+pub const GUEST_REGS_PTR_REG: Reg = Reg::R3;
 pub const GUEST_REGS_PTR_STACK_OFFSET: u32 = 0;
 pub const MMU_OFFSET_STACK_OFFSET: u32 = 4;
 pub const CPSR_TMP_REG: Reg = Reg::R0;
@@ -59,7 +57,7 @@ impl BlockAsm {
     pub fn new(thumb: bool) -> Self {
         BlockAsm {
             masm: MacroAssembler::new(if thumb { InstructionSet_T32 } else { InstructionSet_A32 }),
-            reg_alloc: RegAlloc::new(),
+            reg_alloc: RegAlloc::new(thumb),
             current_pc: 0,
             thumb,
             dirty_guest_regs: RegReserve::new(),
@@ -71,8 +69,8 @@ impl BlockAsm {
     pub fn prologue(&mut self, guest_regs_ptr: *mut u32, mmu_offset: *mut u8, basic_block_len: usize) {
         self.push1(reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::LR));
         self.sub5(FlagsUpdate_DontCare, Cond::AL, Reg::SP, Reg::SP, &(3 * 4).into());
-        self.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &(guest_regs_ptr as u32).into());
-        self.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &(mmu_offset as u32).into());
+        self.ldr2(Reg::R0, guest_regs_ptr as u32);
+        self.ldr2(Reg::R1, mmu_offset as u32);
         self.strd3(Reg::R0, Reg::R1, &MemOperand::reg_offset(Reg::SP, GUEST_REGS_PTR_STACK_OFFSET as i32));
 
         self.guest_basic_block_labels.resize_with(basic_block_len, || None);
@@ -95,7 +93,7 @@ impl BlockAsm {
     }
 
     pub fn init_guest_regs(&mut self, guest_regs: RegReserve) {
-        self.reg_alloc = RegAlloc::new();
+        self.reg_alloc = RegAlloc::new(self.thumb);
 
         self.ldr2(GUEST_REGS_PTR_REG, &MemOperand::reg_offset(Reg::SP, GUEST_REGS_PTR_STACK_OFFSET as i32));
 
