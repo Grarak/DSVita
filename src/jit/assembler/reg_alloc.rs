@@ -30,7 +30,7 @@ impl RegAlloc {
         masm.str2(src_reg, &MemOperand::reg_offset(GUEST_REGS_PTR_REG, guest_reg as i32 * 4));
     }
 
-    fn alloc_guest_reg(&mut self, guest_reg: Reg, is_input: bool, used_regs: RegReserve, next_live_regs: RegReserve, masm: &mut MacroAssembler) -> (Reg, Reg) {
+    fn alloc_guest_reg(&mut self, guest_reg: Reg, is_input: bool, used_regs: RegReserve, next_live_regs: RegReserve, dirty_guest_regs: RegReserve, masm: &mut MacroAssembler) -> (Reg, Reg) {
         for reg in self.free_regs {
             if self.thumb && reg.is_low() != guest_reg.is_low() {
                 continue;
@@ -49,7 +49,9 @@ impl RegAlloc {
             if mapped_reg != Reg::None && !next_live_regs.is_reserved(reg) && !used_regs.is_reserved(reg) && (!self.thumb || reg.is_low() == guest_reg.is_low()) {
                 self.guest_regs_mapping[guest_reg as usize] = mapped_reg;
                 self.guest_regs_mapping[reg as usize] = Reg::None;
-                self.spill_guest_reg(reg, mapped_reg, masm);
+                if dirty_guest_regs.is_reserved(reg) {
+                    self.spill_guest_reg(reg, mapped_reg, masm);
+                }
                 if is_input && guest_reg != Reg::PC {
                     self.restore_guest_reg(guest_reg, mapped_reg, masm);
                 }
@@ -63,7 +65,9 @@ impl RegAlloc {
             if mapped_reg != Reg::None && !used_regs.is_reserved(reg) && (!self.thumb || reg.is_low() == guest_reg.is_low()) {
                 self.guest_regs_mapping[guest_reg as usize] = mapped_reg;
                 self.guest_regs_mapping[reg as usize] = Reg::None;
-                self.spill_guest_reg(reg, mapped_reg, masm);
+                if dirty_guest_regs.is_reserved(reg) {
+                    self.spill_guest_reg(reg, mapped_reg, masm);
+                }
                 if is_input && guest_reg != Reg::PC {
                     self.restore_guest_reg(guest_reg, mapped_reg, masm);
                 }
@@ -81,23 +85,23 @@ impl RegAlloc {
         debug_panic!("No free regs available for allocating guest mapping, used regs: {used_regs:?} mapped guest regs: {mapped_regs:?}");
     }
 
-    pub fn alloc_guest_regs(&mut self, input_regs: RegReserve, output_regs: RegReserve, next_live_regs: RegReserve, masm: &mut MacroAssembler) -> RegReserve {
+    pub fn alloc_guest_regs(&mut self, input_regs: RegReserve, output_regs: RegReserve, next_live_regs: RegReserve, dirty_guest_regs: RegReserve, masm: &mut MacroAssembler) -> RegReserve {
         let mut spilled_regs = RegReserve::new();
         let used_regs = input_regs + output_regs;
         for input_reg in input_regs {
             if self.guest_regs_mapping[input_reg as usize] == Reg::None {
-                let (_, spilled_reg) = self.alloc_guest_reg(input_reg, true, used_regs, next_live_regs, masm);
+                let (_, spilled_reg) = self.alloc_guest_reg(input_reg, true, used_regs, next_live_regs, dirty_guest_regs, masm);
                 if spilled_reg != Reg::None {
-                    spilled_regs += spilled_regs;
+                    spilled_regs += spilled_reg;
                 }
             }
         }
 
         for output_reg in output_regs {
             if self.guest_regs_mapping[output_reg as usize] == Reg::None {
-                let (_, spilled_reg) = self.alloc_guest_reg(output_reg, false, used_regs, next_live_regs, masm);
+                let (_, spilled_reg) = self.alloc_guest_reg(output_reg, false, used_regs, next_live_regs, dirty_guest_regs, masm);
                 if spilled_reg != Reg::None {
-                    spilled_regs += spilled_regs;
+                    spilled_regs += spilled_reg;
                 }
             }
         }

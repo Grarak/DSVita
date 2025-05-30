@@ -166,7 +166,9 @@ impl BlockAsm {
     }
 
     pub fn alloc_guest_regs(&mut self, input_regs: RegReserve, output_regs: RegReserve, cond: Cond, next_live_regs: RegReserve) {
-        let spilled_guest_regs = self.reg_alloc.alloc_guest_regs(input_regs - Reg::CPSR, output_regs - Reg::CPSR, next_live_regs, &mut self.masm);
+        let spilled_guest_regs = self
+            .reg_alloc
+            .alloc_guest_regs(input_regs - Reg::CPSR, output_regs - Reg::CPSR, next_live_regs, self.dirty_guest_regs, &mut self.masm);
         if cond == Cond::AL {
             self.dirty_guest_regs -= spilled_guest_regs;
         }
