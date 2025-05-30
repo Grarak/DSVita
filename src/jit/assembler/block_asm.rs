@@ -18,6 +18,8 @@ pub const CPSR_TMP_REG: Reg = Reg::R0;
 
 #[derive(Clone)]
 pub struct GuestInstMetadata {
+    pub fast_mem_start_offset: u16,
+    pub fast_mem_size: u16,
     pub opcode_offset: usize,
     pub pc: u32,
     pub total_cycle_count: u16,
@@ -29,8 +31,21 @@ pub struct GuestInstMetadata {
 }
 
 impl GuestInstMetadata {
-    pub fn new(opcode_offset: usize, pc: u32, total_cycle_count: u16, op: Op, operands: Operands, op0: Reg, dirty_guest_regs: RegReserve, mapped_guest_regs: [Reg; GUEST_REGS_LENGTH]) -> Self {
+    pub fn new(
+        fast_mem_start_offset: u16,
+        fast_mem_size: u16,
+        opcode_offset: usize,
+        pc: u32,
+        total_cycle_count: u16,
+        op: Op,
+        operands: Operands,
+        op0: Reg,
+        dirty_guest_regs: RegReserve,
+        mapped_guest_regs: [Reg; GUEST_REGS_LENGTH],
+    ) -> Self {
         GuestInstMetadata {
+            fast_mem_start_offset,
+            fast_mem_size,
             opcode_offset,
             pc,
             total_cycle_count,
@@ -282,7 +297,11 @@ impl BlockAsm {
         self.reg_alloc.reload_active_guest_regs(RegReserve::all(), &mut self.masm);
     }
 
-    pub fn guest_inst_metadata(&mut self, total_cycles_reg: u16, inst: &InstInfo, op0: Reg, mut dirty_guest_regs: RegReserve) {
+    pub fn get_guest_inst_metadata_len(&self) -> usize {
+        self.guest_inst_metadata.len()
+    }
+
+    pub fn guest_inst_metadata(&mut self, total_cycles_reg: u16, inst: &InstInfo, fast_mem_start: u32, op0: Reg, mut dirty_guest_regs: RegReserve) {
         let offset = self.get_cursor_offset();
         let page_num = (offset >> PAGE_SHIFT) as u16;
         let mut pc = self.current_pc;
@@ -297,6 +316,8 @@ impl BlockAsm {
         self.guest_inst_metadata.push((
             page_num,
             GuestInstMetadata::new(
+                (offset - fast_mem_start) as u16,
+                0,
                 offset as usize & (PAGE_SIZE - 1),
                 pc,
                 total_cycles_reg,
@@ -307,6 +328,16 @@ impl BlockAsm {
                 self.reg_alloc.guest_regs_mapping,
             ),
         ));
+    }
+
+    pub fn set_fast_mem_size(&mut self, start: usize, size: u16) {
+        for i in start..self.guest_inst_metadata.len() {
+            self.guest_inst_metadata[i].1.fast_mem_size = size;
+        }
+    }
+
+    pub fn set_fast_mem_size_last(&mut self, size: u16) {
+        self.guest_inst_metadata.last_mut().unwrap().1.fast_mem_size = size;
     }
 
     pub fn bind_basic_block(&mut self, basic_block_index: usize) {

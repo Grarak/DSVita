@@ -672,47 +672,6 @@ impl JitMemory {
         flush_icache(fast_mem.as_ptr(), fast_mem.len());
     }
 
-    unsafe fn find_fast_mem<const THUMB: bool>(pc: *mut u8) -> (*mut u8, usize) {
-        let pc_shift = if THUMB { 1 } else { 2 };
-        let mut fast_mem_start = ptr::null_mut();
-        for i in 1..64 {
-            let pc = pc.sub(i << pc_shift);
-            if THUMB {
-                if (pc as *mut u16).read() == thumb::NOP {
-                    fast_mem_start = pc;
-                    break;
-                }
-            } else if (pc as *mut u32).read() == arm::NOP {
-                fast_mem_start = pc;
-                break;
-            }
-        }
-        if fast_mem_start.is_null() {
-            return (ptr::null_mut(), 0);
-        }
-        let mut fast_mem_end = ptr::null_mut();
-        for i in 1..64 {
-            let pc = pc.add(i << pc_shift);
-            let mut found = false;
-            if THUMB {
-                if (pc as *mut u16).read() == thumb::NOP {
-                    fast_mem_end = pc;
-                    found = true;
-                }
-            } else if (pc as *mut u32).read() == arm::NOP {
-                fast_mem_end = pc;
-                found = true;
-            }
-            if !found && !fast_mem_end.is_null() {
-                break;
-            }
-        }
-        if fast_mem_end.is_null() {
-            return (ptr::null_mut(), 0);
-        }
-        (fast_mem_start, fast_mem_end as usize - fast_mem_start as usize + (1 << pc_shift))
-    }
-
     pub unsafe fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType, _: &ArmContext) -> bool {
         if *host_pc < self.mem.as_ptr() as usize || *host_pc >= self.mem.as_ptr() as usize + JIT_MEMORY_SIZE {
             debug_println!("Segfault outside of guest context");
@@ -727,19 +686,9 @@ impl JitMemory {
         for metadata in guest_inst_metadata_list {
             if metadata.opcode_offset == opcode_offset {
                 let thumb = metadata.pc & 1 == 1;
+                let fast_mem_start = (*host_pc - metadata.fast_mem_start_offset as usize) as *mut u8;
 
-                let (fast_mem_start, fast_mem_size) = if thumb {
-                    Self::find_fast_mem::<true>(*host_pc as _)
-                } else {
-                    Self::find_fast_mem::<false>(*host_pc as _)
-                };
-
-                if fast_mem_start.is_null() {
-                    debug_println!("Can't find fast mem range");
-                    return false;
-                }
-
-                let fast_mem = slice::from_raw_parts_mut(fast_mem_start, fast_mem_size);
+                let fast_mem = slice::from_raw_parts_mut(fast_mem_start, metadata.fast_mem_size as usize);
                 if thumb {
                     Self::execute_patch_slow_mem::<true>(host_pc, guest_memory_addr, fast_mem, metadata, cpu);
                 } else {

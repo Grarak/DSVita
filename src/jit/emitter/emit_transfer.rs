@@ -12,7 +12,7 @@ use crate::jit::op::{MultipleTransfer, Op};
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use bilge::arbitrary_int::{u4, u6};
-use std::cmp::min;
+use std::cmp::{max, min};
 
 macro_rules! get_read_func {
     ($size:expr, $signed:expr) => {
@@ -164,11 +164,16 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let func = get_read_func!(size, transfer.signed());
 
             let fast_mem_start = block_asm.get_cursor_offset();
-            block_asm.nop0();
 
             block_asm.ldr2(Reg::R1, (imm_addr & !(0xF0000000 | (size as u32 - 1))) + self.emu.mmu_get_base_tcm_ptr::<CPU>() as u32);
 
-            block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], &self.jit_buf.insts[inst_index], value_reg, dirty_guest_regs);
+            block_asm.guest_inst_metadata(
+                self.jit_buf.insts_cycle_counts[inst_index],
+                &self.jit_buf.insts[inst_index],
+                fast_mem_start,
+                value_reg,
+                dirty_guest_regs,
+            );
             let mem_operand = MemOperand::reg(Reg::R1);
             func(block_asm, value_reg, &mem_operand);
             let shift = (imm_addr & 0x3) << 3;
@@ -212,10 +217,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             }
 
             let fast_mem_start = block_asm.get_cursor_offset();
-            block_asm.nop0();
 
-            let metadata_emitter =
-                |asm: &Self, block_asm: &mut BlockAsm| block_asm.guest_inst_metadata(asm.jit_buf.insts_cycle_counts[inst_index], &asm.jit_buf.insts[inst_index], value_reg, dirty_guest_regs);
+            let metadata_emitter = |asm: &Self, block_asm: &mut BlockAsm| {
+                block_asm.guest_inst_metadata(asm.jit_buf.insts_cycle_counts[inst_index], &asm.jit_buf.insts[inst_index], fast_mem_start, value_reg, dirty_guest_regs)
+            };
 
             if inst.op.is_write_mem_transfer() {
                 self.emit_fast_single_write_transfer(flag_update, value_reg, next_value_reg, Reg::R1, size, metadata_emitter, block_asm);
@@ -226,12 +231,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             fast_mem_start
         };
 
-        block_asm.nop0();
         let fast_mem_end = block_asm.get_cursor_offset();
         let fast_mem_size = fast_mem_end - fast_mem_start;
-
-        let inst = &self.jit_buf.insts[inst_index];
-        Self::pad_nop(fast_mem_size as usize, JitMemory::get_slow_mem_length(inst.op), block_asm);
+        let slow_mem_size = JitMemory::get_slow_mem_length(self.jit_buf.insts[inst_index].op);
+        Self::pad_nop(fast_mem_size as usize, slow_mem_size, block_asm);
+        block_asm.set_fast_mem_size_last(max(fast_mem_size, slow_mem_size as u32) as u16);
     }
 
     fn emit_multiple_transfer_load_store_guest_regs(flag_update: FlagsUpdate, guest_regs: RegReserve, usable_regs: RegReserve, is_write: bool, block_asm: &mut BlockAsm) {
@@ -308,7 +312,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
 
         let fast_mem_start = block_asm.get_cursor_offset();
-        block_asm.nop0();
+        let guest_inst_metadata_start = block_asm.get_guest_inst_metadata_len();
+
         Self::emit_align_addr(flag_update, Reg::R0, op0_mapped, 4, block_asm);
 
         block_asm.load_mmu_offset(Reg::R1);
@@ -346,7 +351,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 }
                 Self::emit_multiple_transfer_load_store_guest_regs(flag_update, guest_regs_multiple_load_store, usable_regs_multiple_load_store, true, block_asm);
 
-                block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, op0, dirty_guest_regs);
+                block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, fast_mem_start, op0, dirty_guest_regs);
 
                 if remaining_op1_len == 1 {
                     let usable_reg = usable_regs.peek().unwrap();
@@ -363,7 +368,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     func(block_asm, Reg::R0, WriteBack::yes(), usable_regs);
                 }
             } else {
-                block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, op0, dirty_guest_regs);
+                block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, fast_mem_start, op0, dirty_guest_regs);
 
                 if remaining_op1_len == 1 {
                     let usable_reg = usable_regs.peek().unwrap();
@@ -406,10 +411,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         block_asm.restore_guest_regs_ptr();
 
-        block_asm.nop0();
         let fast_mem_end = block_asm.get_cursor_offset();
         let fast_mem_size = fast_mem_end - fast_mem_start;
-        Self::pad_nop(fast_mem_size as usize, JitMemory::get_slow_mem_length(inst.op), block_asm);
+        let slow_mem_size = JitMemory::get_slow_mem_length(inst.op);
+        Self::pad_nop(fast_mem_size as usize, slow_mem_size, block_asm);
+        block_asm.set_fast_mem_size(guest_inst_metadata_start, max(fast_mem_size, slow_mem_size as u32) as u16);
     }
 
     pub fn emit_multiple_transfer(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
@@ -489,7 +495,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.mov4(flag_update, Cond::AL, Reg::R2, &addr_reg.into());
 
         let fast_mem_start = block_asm.get_cursor_offset();
-        block_asm.nop0();
 
         let size = if inst.op == Op::Swpb { 1 } else { 4 };
         self.emit_fast_single_read_transfer(
@@ -499,14 +504,14 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             Reg::R12,
             size,
             false,
-            |asm, block_asm| block_asm.guest_inst_metadata(asm.jit_buf.insts_cycle_counts[inst_index], &asm.jit_buf.insts[inst_index], Reg::R0, dirty_guest_regs),
+            |asm, block_asm| block_asm.guest_inst_metadata(asm.jit_buf.insts_cycle_counts[inst_index], &asm.jit_buf.insts[inst_index], fast_mem_start, Reg::R0, dirty_guest_regs),
             block_asm,
         );
 
-        block_asm.nop0();
         let fast_mem_end = block_asm.get_cursor_offset();
         let fast_mem_size = fast_mem_end - fast_mem_start;
         Self::pad_nop(fast_mem_size as usize, SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM, block_asm);
+        block_asm.set_fast_mem_size_last(max(fast_mem_size, SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM as u32) as u16);
 
         block_asm.mov4(flag_update, Cond::AL, Reg::R1, &value_reg.into());
         block_asm.mov4(flag_update, Cond::AL, Reg::R2, &addr_reg.into());
@@ -515,7 +520,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.mov4(flag_update, Cond::AL, Reg::R0, &Reg::R1.into());
 
         let fast_mem_start = block_asm.get_cursor_offset();
-        block_asm.nop0();
 
         self.emit_fast_single_write_transfer(
             flag_update,
@@ -523,12 +527,12 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             Reg::None,
             Reg::R12,
             size,
-            |asm, block_asm| block_asm.guest_inst_metadata(asm.jit_buf.insts_cycle_counts[inst_index], &asm.jit_buf.insts[inst_index], Reg::R1, dirty_guest_regs),
+            |asm, block_asm| block_asm.guest_inst_metadata(asm.jit_buf.insts_cycle_counts[inst_index], &asm.jit_buf.insts[inst_index], fast_mem_start, Reg::R1, dirty_guest_regs),
             block_asm,
         );
-        block_asm.nop0();
         let fast_mem_end = block_asm.get_cursor_offset();
         let fast_mem_size = fast_mem_end - fast_mem_start;
         Self::pad_nop(fast_mem_size as usize, SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM, block_asm);
+        block_asm.set_fast_mem_size_last(max(fast_mem_size, SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM as u32) as u16);
     }
 }
