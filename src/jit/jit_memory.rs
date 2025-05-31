@@ -1,7 +1,7 @@
 use crate::core::emu::Emu;
 use crate::core::memory::{regions, vram};
 use crate::core::CpuType;
-use crate::jit::assembler::block_asm::GuestInstMetadata;
+use crate::jit::assembler::block_asm::{BlockAsm, GuestInstMetadata, GuestInstOffset};
 use crate::jit::assembler::{arm, thumb};
 use crate::jit::inst_mem_handler::{
     inst_read64_mem_handler, inst_read64_mem_handler_with_cpsr, inst_read_mem_handler, inst_read_mem_handler_multiple, inst_read_mem_handler_multiple_with_cpsr, inst_read_mem_handler_with_cpsr,
@@ -26,7 +26,7 @@ use std::ops::Deref;
 use std::{ptr, slice};
 use CpuType::{ARM7, ARM9};
 
-const JIT_MEMORY_SIZE: usize = 32 * 1024 * 1024;
+pub const JIT_MEMORY_SIZE: usize = 32 * 1024 * 1024;
 pub const JIT_LIVE_RANGE_PAGE_SIZE_SHIFT: u32 = 8;
 const JIT_LIVE_RANGE_PAGE_SIZE: u32 = 1 << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
 const JIT_ARM9_MEMORY_SIZE: usize = 28 * 1024 * 1024;
@@ -43,7 +43,7 @@ pub const SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 20;
 pub const SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM: usize = 12;
 
 #[derive(Copy, Clone)]
-pub struct JitEntry(pub *const extern "C" fn());
+pub struct JitEntry(pub *const extern "C" fn(u32));
 
 unsafe impl Sync for JitEntry {}
 
@@ -145,12 +145,30 @@ impl JitPerfMapRecord {
     fn reset(&mut self) {}
 }
 
+struct JitBlockMetadata {
+    guest_pc: u32,
+    guest_pc_end: u32,
+    addr_offset_start: u16,
+    addr_offset_end: u16,
+}
+
+impl JitBlockMetadata {
+    fn new(guest_pc: u32, guest_pc_end: u32, addr_offset_start: u16, addr_offset_end: u16) -> Self {
+        JitBlockMetadata {
+            guest_pc,
+            guest_pc_end,
+            addr_offset_start,
+            addr_offset_end,
+        }
+    }
+}
+
 struct JitMemoryMetadata {
     size: usize,
     start: usize,
     end: usize,
     max_end: usize,
-    jit_funcs: VecDeque<(usize, u16, u16)>,
+    jit_funcs: VecDeque<JitBlockMetadata>,
 }
 
 impl JitMemoryMetadata {
@@ -166,18 +184,19 @@ impl JitMemoryMetadata {
 }
 
 pub struct JitMemory {
-    mem: Mmap,
+    pub mem: Mmap,
     arm9_data: JitMemoryMetadata,
     arm7_data: JitMemoryMetadata,
     jit_entries: JitEntries,
     jit_live_ranges: JitLiveRanges,
     pub jit_memory_map: JitMemoryMap,
     jit_perf_map_record: JitPerfMapRecord,
+    pub guest_inst_offsets: HeapMem<Vec<GuestInstOffset>, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
     guest_inst_metadata: HeapMem<Vec<GuestInstMetadata>, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
 }
 
 impl Emu {
-    pub fn jit_insert_block(&mut self, opcodes: &[u8], guest_inst_metadata: &[(u16, GuestInstMetadata)], guest_pc: u32, thumb: bool, cpu_type: CpuType) -> (*const extern "C" fn(), bool) {
+    pub fn jit_insert_block(&mut self, block_asm: BlockAsm, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu_type: CpuType) -> (*const extern "C" fn(u32), bool) {
         macro_rules! insert {
             ($entries:expr, $live_ranges:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
                 let ret = insert!($entries, $live_ranges);
@@ -188,24 +207,27 @@ impl Emu {
             }};
 
             ($entries:expr, $live_ranges:expr) => {{
-                let (allocated_offset_addr, aligned_size, flushed) = self.jit.insert(opcodes, guest_inst_metadata, cpu_type);
+                let (allocated_offset_addr, aligned_size, flushed) = self.jit.insert(block_asm, cpu_type);
 
-                let jit_entry_addr = ((allocated_offset_addr + self.jit.mem.as_ptr() as usize) | (thumb as usize)) as *const extern "C" fn();
+                let jit_entry_addr = ((allocated_offset_addr + self.jit.mem.as_ptr() as usize) | (thumb as usize)) as *const extern "C" fn(u32);
 
-                let entries_index = (guest_pc >> 1) as usize;
-                let entries_index = entries_index % $entries.len();
-                $entries[entries_index] = JitEntry(jit_entry_addr);
-                assert_eq!(ptr::addr_of!($entries[entries_index]), self.jit.jit_memory_map.get_jit_entry(guest_pc), "jit memory mapping {guest_pc:x}");
+                let guest_block_size = (guest_pc_end - guest_pc) as usize;
+                debug_assert!(guest_block_size < PAGE_SIZE);
+                self.jit.jit_memory_map.write_jit_entries(guest_pc, guest_block_size, JitEntry(jit_entry_addr));
 
-                let entry_addr = ptr::addr_of!($entries[entries_index]) as usize;
-                self.jit.get_jit_data(cpu_type).jit_funcs.push_back((entry_addr, (allocated_offset_addr >> PAGE_SHIFT) as u16, ((allocated_offset_addr + aligned_size) >> PAGE_SHIFT) as u16));
+                let metadata = JitBlockMetadata::new(guest_pc | (thumb as u32), guest_pc_end | (thumb as u32), (allocated_offset_addr >> PAGE_SHIFT) as u16, ((allocated_offset_addr + aligned_size) >> PAGE_SHIFT) as u16);
+                self.jit.get_jit_data(cpu_type).jit_funcs.push_back(metadata);
 
                 // >> 3 for u8 (each bit represents a page)
                 let live_ranges_index = ((guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) >> 3) as usize;
                 let live_ranges_index = live_ranges_index % $live_ranges.len();
                 let live_ranges_bit = (guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
                 $live_ranges[live_ranges_index] |= 1 << live_ranges_bit;
-                assert_eq!(ptr::addr_of!($live_ranges[live_ranges_index]), self.jit.jit_memory_map.get_live_range(guest_pc), "jit live ranges mapping {guest_pc:x}");
+                debug_assert_eq!(ptr::addr_of!($live_ranges[live_ranges_index]), self.jit.jit_memory_map.get_live_range(guest_pc), "jit live ranges mapping {guest_pc:x}");
+
+                let guest_pc_end = guest_pc_end - if thumb { 2 } else { 4 };
+                let live_ranges_bit = (guest_pc_end >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
+                unsafe { *self.jit.jit_memory_map.get_live_range(guest_pc_end) |= 1 << live_ranges_bit };
 
                 self.jit.jit_perf_map_record.record(jit_entry_addr as usize, aligned_size, guest_pc, cpu_type);
 
@@ -262,6 +284,7 @@ impl JitMemory {
             jit_live_ranges,
             jit_memory_map,
             jit_perf_map_record: JitPerfMapRecord::new(),
+            guest_inst_offsets: HeapMem::new(),
             guest_inst_metadata: HeapMem::new(),
         }
     }
@@ -276,25 +299,28 @@ impl JitMemory {
     fn reset_blocks(&mut self, cpu_type: CpuType) {
         self.jit_perf_map_record.reset();
 
-        let (jit_entry, addr_offset_start, addr_offset_end) = self.get_jit_data(cpu_type).jit_funcs.pop_front().unwrap();
-        let jit_entry = jit_entry as *mut JitEntry;
-
-        unsafe { *jit_entry = DEFAULT_JIT_ENTRY };
-        for i in addr_offset_start..addr_offset_end {
+        let block_metadata = self.get_jit_data(cpu_type).jit_funcs.pop_front().unwrap();
+        self.jit_memory_map
+            .write_jit_entries(block_metadata.guest_pc, (block_metadata.guest_pc_end - block_metadata.guest_pc) as usize, DEFAULT_JIT_ENTRY);
+        for i in block_metadata.addr_offset_start..block_metadata.addr_offset_end {
             self.guest_inst_metadata[i as usize].clear();
         }
 
         let jit_size = self.get_jit_data(cpu_type).size;
-        let freed_start = addr_offset_start;
-        let mut freed_end = addr_offset_end;
+        let freed_start = block_metadata.addr_offset_start;
+        let mut freed_end = block_metadata.addr_offset_end;
         while (freed_end - freed_start) < (jit_size / 4 / PAGE_SIZE) as u16 {
-            let &(jit_entry, addr_offset_start, addr_offset_end) = self.get_jit_data(cpu_type).jit_funcs.front().unwrap();
-            if addr_offset_end < freed_start {
+            let block_metadata = self.get_jit_data(cpu_type).jit_funcs.front().unwrap();
+            if block_metadata.addr_offset_end < freed_start {
                 break;
             }
-            let jit_entry = jit_entry as *mut JitEntry;
 
-            unsafe { *jit_entry = DEFAULT_JIT_ENTRY };
+            let addr_offset_start = block_metadata.addr_offset_start;
+            let addr_offset_end = block_metadata.addr_offset_end;
+            let guest_pc = block_metadata.guest_pc;
+            let guest_block_size = (block_metadata.guest_pc_end - block_metadata.guest_pc) as usize;
+
+            self.jit_memory_map.write_jit_entries(guest_pc, guest_block_size, DEFAULT_JIT_ENTRY);
             for i in addr_offset_start..addr_offset_end {
                 self.guest_inst_metadata[i as usize].clear();
             }
@@ -315,8 +341,8 @@ impl JitMemory {
         let jit_data = self.get_jit_data(cpu_type);
         if jit_data.start + required_size > jit_data.end {
             if jit_data.start + required_size > jit_data.max_end {
-                let (_, _, last_addr_end) = jit_data.jit_funcs.back_mut().unwrap();
-                *last_addr_end = (jit_data.max_end >> PAGE_SHIFT) as u16;
+                let block_metadata = jit_data.jit_funcs.back_mut().unwrap();
+                block_metadata.addr_offset_end = (jit_data.max_end >> PAGE_SHIFT) as u16;
             }
             self.reset_blocks(cpu_type);
             let jit_data = self.get_jit_data(cpu_type);
@@ -330,7 +356,8 @@ impl JitMemory {
         (addr, flushed)
     }
 
-    fn insert(&mut self, opcodes: &[u8], guest_inst_metadata: &[(u16, GuestInstMetadata)], cpu_type: CpuType) -> (usize, usize, bool) {
+    fn insert(&mut self, block_asm: BlockAsm, cpu_type: CpuType) -> (usize, usize, bool) {
+        let opcodes = block_asm.get_code_buffer();
         let aligned_size = utils::align_up(opcodes.len(), PAGE_SIZE);
         let (allocated_offset_addr, flushed) = self.allocate_block(aligned_size, cpu_type);
 
@@ -338,14 +365,15 @@ impl JitMemory {
         unsafe { flush_icache(self.mem.as_ptr().add(allocated_offset_addr), aligned_size) };
 
         let block_page = allocated_offset_addr >> PAGE_SHIFT;
-        for (block_offset, metadata) in guest_inst_metadata {
-            self.guest_inst_metadata[block_page + *block_offset as usize].push(metadata.clone());
+        self.guest_inst_offsets[block_page] = block_asm.guest_inst_offsets;
+        for (block_offset, metadata) in block_asm.guest_inst_metadata {
+            self.guest_inst_metadata[block_page + block_offset as usize].push(metadata);
         }
 
         (allocated_offset_addr, aligned_size, flushed)
     }
 
-    pub fn get_jit_start_addr(&self, guest_pc: u32) -> *const extern "C" fn() {
+    pub fn get_jit_start_addr(&self, guest_pc: u32) -> *const extern "C" fn(u32) {
         unsafe { (*self.jit_memory_map.get_jit_entry(guest_pc)).0 }
     }
 

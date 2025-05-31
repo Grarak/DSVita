@@ -29,8 +29,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         self.emit_set_cpsr_thumb_bit_imm(target_pc & 1 == 1, block_asm);
 
         let jit_entry_addr = self.emu.jit.jit_memory_map.get_jit_entry(target_pc);
-        block_asm.ldr2(Reg::R0, jit_entry_addr as u32);
-        block_asm.ldr2(Reg::R12, &MemOperand::reg(Reg::R0));
+        block_asm.ldr2(Reg::R0, target_pc);
+        block_asm.ldr2(Reg::R1, jit_entry_addr as u32);
+        block_asm.ldr2(Reg::R12, &MemOperand::reg(Reg::R1));
         if has_return {
             block_asm.blx1(Reg::R12);
         } else {

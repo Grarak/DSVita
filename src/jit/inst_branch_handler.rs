@@ -1,12 +1,11 @@
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
-use crate::jit::jit_asm::{align_guest_pc, JitAsm, MAX_STACK_DEPTH_SIZE};
+use crate::jit::jit_asm::{align_guest_pc, call_jit_entry, JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_asm_common_funs::{exit_guest_context, get_max_loop_cycle_count, JitAsmCommonFuns};
 use crate::jit::jit_memory::JitEntry;
 use crate::logging::debug_println;
 use crate::settings::Arm7Emu;
 use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, IS_DEBUG};
-use std::arch::naked_asm;
 use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
 use std::mem;
@@ -60,17 +59,6 @@ fn run_scheduler_idle_loop<const ARM7_HLE: bool>(asm: &mut JitAsm<{ ARM9 }>) {
     asm.emu.regs_3d_run_cmds(asm.emu.cm.get_cycles());
 }
 
-#[unsafe(naked)]
-unsafe extern "C" fn call_interrupt(_: *const fn(), _: *mut usize) {
-    #[rustfmt::skip]
-    naked_asm!(
-        "push {{r4-r12,lr}}",
-        "str sp, [r1]",
-        "blx r0",
-        "pop {{r4-r12,pc}}",
-    );
-}
-
 #[inline(always)]
 fn check_stack_depth(asm: &mut JitAsm<{ ARM9 }>, current_pc: u32) {
     let sp_depth_size = asm.runtime_data.get_sp_depth_size();
@@ -96,9 +84,11 @@ pub extern "C" fn handle_interrupt(asm: *mut JitAsm<{ ARM9 }>, target_pc: u32, c
     asm.runtime_data.pre_cycle_count_sum = 0;
     asm.runtime_data.set_in_interrupt(true);
     asm.runtime_data.push_return_stack(target_pc);
-    asm.emu.thread_set_thumb(ARM9, pc & 1 == 1);
-    let jit_entry = asm.emu.jit.get_jit_start_addr(align_guest_pc(pc));
-    unsafe { call_interrupt(jit_entry as _, &mut asm.runtime_data.interrupt_sp) };
+    let thumb = pc & 1 == 1;
+    let pc = align_guest_pc(pc);
+    asm.emu.thread_set_thumb(ARM9, thumb);
+    let jit_entry = asm.emu.jit.get_jit_start_addr(pc);
+    unsafe { call_jit_entry(pc | (thumb as u32), jit_entry as _, &mut asm.runtime_data.interrupt_sp) };
     debug_println!("return from interrupt");
     asm.runtime_data.set_in_interrupt(false);
 }
@@ -136,11 +126,13 @@ fn check_scheduler<const CPU: CpuType>(asm: &mut JitAsm<CPU>, current_pc: u32) {
 }
 
 pub unsafe extern "C" fn call_jit_fun<const CPU: CpuType>(asm: &mut JitAsm<CPU>, target_pc: u32) {
-    asm.emu.thread_set_thumb(CPU, target_pc & 1 == 1);
+    let thumb = target_pc & 1 == 1;
+    let target_pc = align_guest_pc(target_pc);
+    asm.emu.thread_set_thumb(CPU, thumb);
 
-    let jit_entry = asm.emu.jit.get_jit_start_addr(align_guest_pc(target_pc));
-    let jit_entry: extern "C" fn() = mem::transmute(jit_entry);
-    jit_entry();
+    let jit_entry = asm.emu.jit.get_jit_start_addr(target_pc);
+    let jit_entry: extern "C" fn(u32) = mem::transmute(jit_entry);
+    jit_entry(target_pc | (thumb as u32));
 }
 
 #[inline(always)]
@@ -200,8 +192,8 @@ pub unsafe extern "C" fn branch_imm<const CPU: CpuType, const THUMB: bool>(total
 
     asm.emu.thread_set_thumb(CPU, THUMB);
     let entry = (*target_entry).0;
-    let entry: extern "C" fn() = mem::transmute(entry);
-    entry();
+    let entry: extern "C" fn(u32) = mem::transmute(entry);
+    entry(asm.emu.thread[CPU].pc);
 
     asm.runtime_data.pre_cycle_count_sum = total_cycles;
 }

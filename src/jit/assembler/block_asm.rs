@@ -1,4 +1,4 @@
-use crate::jit::assembler::reg_alloc::{RegAlloc, GUEST_REGS_LENGTH};
+use crate::jit::assembler::reg_alloc::{RegAlloc, GUEST_REGS_LENGTH, GUEST_REG_ALLOCATIONS};
 use crate::jit::assembler::vixl::vixl::{
     BranchHint_kNear, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, MaskedSpecialRegisterType_CPSR_f, MemOperand, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR,
     ShiftType_RRX, SpecialRegisterType_CPSR,
@@ -58,6 +58,24 @@ impl GuestInstMetadata {
     }
 }
 
+pub struct GuestInstOffset {
+    pub offset: u16,
+    pub mapping: [Reg; GUEST_REG_ALLOCATIONS.len()],
+    pub pre_cycle_count_sum: u16,
+    pub pc: u32,
+}
+
+impl GuestInstOffset {
+    fn new(offset: u16, mapping: [Reg; GUEST_REG_ALLOCATIONS.len()], pre_cycle_count_sum: u16, pc: u32) -> Self {
+        GuestInstOffset {
+            offset,
+            mapping,
+            pre_cycle_count_sum,
+            pc,
+        }
+    }
+}
+
 pub struct BlockAsm {
     masm: MacroAssembler,
     reg_alloc: RegAlloc,
@@ -65,7 +83,10 @@ pub struct BlockAsm {
     pub thumb: bool,
     pub dirty_guest_regs: RegReserve,
     pub guest_inst_metadata: Vec<(u16, GuestInstMetadata)>,
+    guest_start: usize,
+    pub guest_inst_offsets: Vec<GuestInstOffset>,
     pub guest_basic_block_labels: Vec<Option<Label>>,
+    last_pc_value: u32,
 }
 
 impl BlockAsm {
@@ -77,16 +98,19 @@ impl BlockAsm {
             thumb,
             dirty_guest_regs: RegReserve::new(),
             guest_inst_metadata: Vec::new(),
+            guest_start: 0,
+            guest_inst_offsets: Vec::new(),
             guest_basic_block_labels: Vec::new(),
+            last_pc_value: 0,
         }
     }
 
     pub fn prologue(&mut self, guest_regs_ptr: *mut u32, mmu_offset: *mut u8, basic_block_len: usize) {
         self.push1(reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::LR));
         self.sub5(FlagsUpdate_DontCare, Cond::AL, Reg::SP, Reg::SP, &(3 * 4).into());
-        self.ldr2(Reg::R0, guest_regs_ptr as u32);
-        self.ldr2(Reg::R1, mmu_offset as u32);
-        self.strd3(Reg::R0, Reg::R1, &MemOperand::reg_offset(Reg::SP, GUEST_REGS_PTR_STACK_OFFSET as i32));
+        self.ldr2(Reg::R2, guest_regs_ptr as u32);
+        self.ldr2(Reg::R3, mmu_offset as u32);
+        self.strd3(Reg::R2, Reg::R3, &MemOperand::reg_offset(Reg::SP, GUEST_REGS_PTR_STACK_OFFSET as i32));
 
         self.guest_basic_block_labels.resize_with(basic_block_len, || None);
     }
@@ -110,7 +134,7 @@ impl BlockAsm {
     pub fn init_guest_regs(&mut self, guest_regs: RegReserve) {
         self.reg_alloc = RegAlloc::new(self.thumb);
 
-        self.ldr2(GUEST_REGS_PTR_REG, &MemOperand::reg_offset(Reg::SP, GUEST_REGS_PTR_STACK_OFFSET as i32));
+        self.restore_guest_regs_ptr();
 
         if guest_regs.is_reserved(Reg::CPSR) {
             self.load_guest_reg(CPSR_TMP_REG, Reg::CPSR);
@@ -118,6 +142,16 @@ impl BlockAsm {
         }
 
         self.dirty_guest_regs.clear();
+    }
+
+    pub fn set_guest_start(&mut self) {
+        self.guest_start = self.get_cursor_offset() as usize;
+    }
+
+    pub fn guest_offset(&mut self, pre_cycle_count_sum: u16) {
+        let offset = self.get_cursor_offset() as usize - self.guest_start;
+        self.guest_inst_offsets
+            .push(GuestInstOffset::new((offset >> 1) as u16, self.reg_alloc.host_regs_mapping, pre_cycle_count_sum, self.last_pc_value))
     }
 
     pub fn call(&mut self, fun: *const ()) {
@@ -176,6 +210,7 @@ impl BlockAsm {
                 pc
             };
 
+            self.last_pc_value = pc;
             self.ldr2(pc_reg, pc);
         }
     }
