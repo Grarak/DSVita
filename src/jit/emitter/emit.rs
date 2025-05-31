@@ -2,7 +2,7 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::vixl::{BranchHint_kNear, FlagsUpdate_DontCare, MemOperand};
-use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmB3, MasmBkpt1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
+use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmB3, MasmBkpt1, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
 use crate::jit::inst_branch_handler::branch_any_reg;
 use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode, set_pc_thumb_mode};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
@@ -82,7 +82,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let pc = block_asm.current_pc;
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
             }
-            block_asm.call(branch_any_reg as _);
+            block_asm.restore_stack();
+            block_asm.ldr2(Reg::R12, branch_any_reg as *const () as u32);
+            block_asm.bx1(Reg::R12);
         } else {
             self.emit_branch_out_metadata(inst_index, true, block_asm);
             block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
@@ -111,7 +113,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let pc = block_asm.current_pc;
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
             }
-            block_asm.call(branch_any_reg as _);
+            block_asm.restore_stack();
+            block_asm.ldr2(Reg::R12, branch_any_reg as *const () as u32);
+            block_asm.bx1(Reg::R12);
         } else {
             self.emit_branch_out_metadata(inst_index, true, block_asm);
             block_asm.exit_guest_context(&mut self.runtime_data.host_sp);

@@ -241,5 +241,4 @@ pub unsafe extern "C" fn branch_any_reg(total_cycles: u16, current_pc: u32) {
 
     asm.runtime_data.pre_cycle_count_sum = 0;
     call_jit_fun(asm, asm.emu.thread[ARM9].pc);
-    exit_guest_context!(asm);
 }
