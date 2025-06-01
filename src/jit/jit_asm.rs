@@ -283,11 +283,12 @@ unsafe extern "C" fn _jump_to_other_guest_pc<const CPU: CpuType, const THUMB: bo
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     debug_assert!(return_lr >= asm.emu.jit.mem.as_ptr() as usize && return_lr < asm.emu.jit.mem.as_ptr() as usize + JIT_MEMORY_SIZE);
     debug_assert_eq!(target_pc & 1 == 1, THUMB);
+    debug_assert!(target_pc > block_pc, "{CPU:?} can't jump from {block_pc:x} to {target_pc:x}");
+
+    debug_println!("{CPU:?} jump from {block_pc:x} to {target_pc:x}");
 
     let diff = target_pc - block_pc;
     let diff = diff >> if THUMB { 1 } else { 2 };
-
-    debug_println!("{CPU:?} jump from {block_pc:x} to {target_pc:x}");
 
     host_regs[GUEST_REG_ALLOCATIONS.len() + 1] = return_lr;
     let return_lr = return_lr - asm.emu.jit.mem.as_ptr() as usize;

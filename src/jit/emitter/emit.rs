@@ -5,12 +5,12 @@ use crate::jit::assembler::vixl::vixl::{BranchHint_kNear, FlagsUpdate_DontCare, 
 use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmB3, MasmBkpt1, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
 use crate::jit::inst_branch_handler::branch_any_reg;
 use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode, set_pc_thumb_mode};
-use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
+use crate::jit::jit_asm::{debug_after_exec_op, JitAsm, JitRuntimeData};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::Cond;
 use crate::logging::debug_println;
-use crate::IS_DEBUG;
+use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
 
 impl<const CPU: CpuType> JitAsm<'_, CPU> {
@@ -210,17 +210,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             block_asm.bind(&mut label);
 
-            // if DEBUG_LOG {
-            //     block_asm.save_dirty_guest_regs(false, false);
-            //     block_asm.save_dirty_guest_cpsr(true);
-            //     let current_pc = block_asm.current_pc;
-            //     block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &current_pc.into());
-            //     block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &self.jit_buf.insts[i].opcode.into());
-            //     block_asm.call(debug_after_exec_op::<CPU> as _);
-            //
-            //     let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, i);
-            //     block_asm.restore_tmp_regs(next_live_regs);
-            // }
+            if DEBUG_LOG {
+                block_asm.save_dirty_guest_regs(false, false);
+                block_asm.save_dirty_guest_cpsr(true);
+                let current_pc = block_asm.current_pc;
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &current_pc.into());
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &self.jit_buf.insts[i].opcode.into());
+                block_asm.call(debug_after_exec_op::<CPU> as _);
+
+                let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, i);
+                block_asm.restore_tmp_regs(next_live_regs);
+            }
         }
 
         block_asm.save_dirty_guest_regs(true, true);

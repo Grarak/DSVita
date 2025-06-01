@@ -216,11 +216,25 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             let mut cycles_exceed_label = Label::new();
             let mut continue_label = Label::new();
+            let mut exit_label = Label::new();
 
             block_asm.cmp2(Reg::R3, &get_max_loop_cycle_count::<CPU>().into());
             block_asm.b3(Cond::HS, &mut cycles_exceed_label, BranchHint_kFar);
 
             block_asm.bind(&mut continue_label);
+
+            let current_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(block_asm.current_pc);
+            let target_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(aligned_target_pc);
+
+            if jump_to_index > inst_index {
+                block_asm.ldr2(Reg::R0, current_pc_jit_entry as u32);
+                block_asm.ldr2(Reg::R1, target_pc_jit_entry as u32);
+                block_asm.ldr2(Reg::R0, &MemOperand::reg(Reg::R0));
+                block_asm.ldr2(Reg::R1, &MemOperand::reg(Reg::R1));
+                block_asm.cmp2(Reg::R0, &Reg::R1.into());
+                block_asm.b3(Cond::NE, &mut exit_label, BranchHint_kFar);
+            }
+
             block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pre_cycle_count_sum.into());
             block_asm.strh2(Reg::R1, &MemOperand::reg_offset(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32));
@@ -264,8 +278,15 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     }
                     block_asm.call(handle_interrupt as _);
                     block_asm.b2(&mut continue_label, BranchHint_kFar);
+
+                    if jump_to_index > inst_index {
+                        block_asm.bind(&mut exit_label);
+                        self.emit_branch_out_metadata(inst_index, false, block_asm);
+                        block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
+                    }
                 }
                 ARM7 => {
+                    block_asm.bind(&mut exit_label);
                     self.emit_branch_out_metadata(inst_index, false, block_asm);
                     block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
                 }
