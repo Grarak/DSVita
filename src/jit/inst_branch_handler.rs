@@ -36,6 +36,7 @@ pub extern "C" fn run_scheduler<const ARM7_HLE: bool>(asm: *mut JitAsm<{ ARM9 }>
         jit_asm_arm7.runtime_data.set_idle_loop(false);
     }
     asm.emu.regs_3d_run_cmds(asm.emu.cm.get_cycles());
+    asm.emu.breakout_imm = false;
 }
 
 fn run_scheduler_idle_loop<const ARM7_HLE: bool>(asm: &mut JitAsm<{ ARM9 }>) {

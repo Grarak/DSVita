@@ -198,7 +198,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 }
                 ARM7 => {
                     self.emit_branch_out_metadata(inst_index, true, block_asm);
-                    let mem_operand = MemOperand::reg_offset(Reg::R0, JitRuntimeData::get_idle_loop_in_interrupt_return_stack_ptr_offset() as i32);
+                    let mem_operand = MemOperand::reg_offset(Reg::R0, JitRuntimeData::get_data_packed_offset() as i32 + 3);
                     block_asm.ldrb2(Reg::R1, &mem_operand);
                     block_asm.orr5(FlagsUpdate_DontCare, Cond::AL, Reg::R1, Reg::R1, &0x80.into());
                     block_asm.strb2(Reg::R1, &mem_operand);

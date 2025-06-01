@@ -20,6 +20,7 @@ use crate::jit::Cond;
 use crate::logging::{branch_println, debug_println};
 use crate::mmap::PAGE_SHIFT;
 use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
+use bilge::prelude::*;
 use std::arch::{asm, naked_asm};
 use std::intrinsics::unlikely;
 use std::mem;
@@ -95,15 +96,23 @@ impl JitBuf {
     }
 }
 
-pub const RETURN_STACK_SIZE: usize = 32;
+pub const RETURN_STACK_SIZE: usize = 64;
 pub const MAX_STACK_DEPTH_SIZE: usize = 9 * 1024 * 1024;
+
+#[bitsize(32)]
+#[derive(FromBits)]
+struct JitRuntimeDataPacked {
+    return_stack_ptr: u30,
+    in_interrupt: bool,
+    idle_loop: bool,
+}
 
 #[repr(C, align(32))]
 pub struct JitRuntimeData {
     pub pre_cycle_count_sum: u16,
     pub accumulated_cycles: u16,
     pub host_sp: usize,
-    pub idle_loop_in_interrupt_return_stack_ptr: u8,
+    data_packed: JitRuntimeDataPacked,
     pub return_stack: [u32; RETURN_STACK_SIZE],
     pub interrupt_sp: usize,
     #[cfg(debug_assertions)]
@@ -112,18 +121,16 @@ pub struct JitRuntimeData {
 
 impl JitRuntimeData {
     fn new() -> Self {
-        let instance = JitRuntimeData {
+        JitRuntimeData {
             pre_cycle_count_sum: 0,
             accumulated_cycles: 0,
             host_sp: 0,
-            idle_loop_in_interrupt_return_stack_ptr: 0,
+            data_packed: JitRuntimeDataPacked::from(0),
             return_stack: [0; RETURN_STACK_SIZE],
             interrupt_sp: 0,
             #[cfg(debug_assertions)]
             branch_out_pc: u32::MAX,
-        };
-        assert_eq!(size_of_val(&instance.return_stack), RETURN_STACK_SIZE * 4);
-        instance
+        }
     }
 
     #[cfg(debug_assertions)]
@@ -168,8 +175,8 @@ impl JitRuntimeData {
         mem::offset_of!(JitRuntimeData, host_sp)
     }
 
-    pub const fn get_idle_loop_in_interrupt_return_stack_ptr_offset() -> usize {
-        mem::offset_of!(JitRuntimeData, idle_loop_in_interrupt_return_stack_ptr)
+    pub const fn get_data_packed_offset() -> usize {
+        mem::offset_of!(JitRuntimeData, data_packed)
     }
 
     pub const fn get_return_stack_offset() -> usize {
@@ -177,39 +184,39 @@ impl JitRuntimeData {
     }
 
     pub fn is_idle_loop(&self) -> bool {
-        self.idle_loop_in_interrupt_return_stack_ptr & 0x80 != 0
+        self.data_packed.idle_loop()
     }
 
     pub fn set_idle_loop(&mut self, idle_loop: bool) {
-        self.idle_loop_in_interrupt_return_stack_ptr = (self.idle_loop_in_interrupt_return_stack_ptr & !0x80) | ((idle_loop as u8) << 7)
+        self.data_packed.set_idle_loop(idle_loop);
     }
 
     pub fn is_in_interrupt(&self) -> bool {
-        self.idle_loop_in_interrupt_return_stack_ptr & 0x40 != 0
+        self.data_packed.in_interrupt()
     }
 
     pub fn set_in_interrupt(&mut self, in_interrupt: bool) {
-        self.idle_loop_in_interrupt_return_stack_ptr = (self.idle_loop_in_interrupt_return_stack_ptr & !0x40) | ((in_interrupt as u8) << 6)
+        self.data_packed.set_in_interrupt(in_interrupt);
     }
 
-    pub fn get_return_stack_ptr(&self) -> u8 {
-        self.idle_loop_in_interrupt_return_stack_ptr & 0x3F
+    pub fn get_return_stack_ptr(&self) -> usize {
+        u32::from(self.data_packed.return_stack_ptr()) as usize
     }
 
     pub fn push_return_stack(&mut self, value: u32) {
         let mut return_stack_ptr = self.get_return_stack_ptr();
-        unsafe { *self.return_stack.get_unchecked_mut(return_stack_ptr as usize) = value };
+        unsafe { *self.return_stack.get_unchecked_mut(return_stack_ptr) = value };
         return_stack_ptr += 1;
-        return_stack_ptr &= RETURN_STACK_SIZE as u8 - 1;
-        self.idle_loop_in_interrupt_return_stack_ptr = (self.idle_loop_in_interrupt_return_stack_ptr & 0xC0) | return_stack_ptr;
+        return_stack_ptr &= RETURN_STACK_SIZE - 1;
+        self.data_packed.set_return_stack_ptr(u30::new(return_stack_ptr as u32));
     }
 
     pub fn pop_return_stack(&mut self) -> u32 {
         let mut return_stack_ptr = self.get_return_stack_ptr();
         return_stack_ptr = return_stack_ptr.wrapping_sub(1);
-        return_stack_ptr &= RETURN_STACK_SIZE as u8 - 1;
-        self.idle_loop_in_interrupt_return_stack_ptr = (self.idle_loop_in_interrupt_return_stack_ptr & 0xC0) | return_stack_ptr;
-        unsafe { *self.return_stack.get_unchecked(return_stack_ptr as usize) }
+        return_stack_ptr &= RETURN_STACK_SIZE - 1;
+        self.data_packed.set_return_stack_ptr(u30::new(return_stack_ptr as u32));
+        unsafe { *self.return_stack.get_unchecked(return_stack_ptr) }
     }
 
     pub fn get_sp_depth_size(&self) -> usize {
@@ -219,7 +226,7 @@ impl JitRuntimeData {
     }
 
     pub fn clear_return_stack_ptr(&mut self) {
-        self.idle_loop_in_interrupt_return_stack_ptr &= 0xC0;
+        self.data_packed.set_return_stack_ptr(u30::new(0));
         self.return_stack[RETURN_STACK_SIZE - 1] = 0;
     }
 }
@@ -379,12 +386,12 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         }
         asm.jit_buf.insts.push(inst_info);
 
-        if is_unreturnable_branch || uncond_branch_count == 4 {
+        if is_unreturnable_branch || uncond_branch_count == 20 {
             last_inst_branch = true;
             break;
         }
 
-        if heavy_inst_count > 10 && op != Op::BlSetupT {
+        if heavy_inst_count > 50 && op != Op::BlSetupT {
             break;
         }
         pc_offset += pc_step;
@@ -496,7 +503,8 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
         asm.runtime_data.pre_cycle_count_sum = 0;
         asm.runtime_data.accumulated_cycles = 0;
         asm.runtime_data.clear_return_stack_ptr();
-        asm.runtime_data.idle_loop_in_interrupt_return_stack_ptr = 0;
+        asm.runtime_data.data_packed = JitRuntimeDataPacked::from(0);
+        asm.emu.breakout_imm = false;
         jit_entry
     };
 

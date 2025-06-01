@@ -37,7 +37,7 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
         JitAsmCommonFuns {}
     }
 
-    pub extern "C" fn debug_push_return_stack(current_pc: u32, lr_pc: u32, stack_size: u8) {
+    pub extern "C" fn debug_push_return_stack(current_pc: u32, lr_pc: u32, stack_size: usize) {
         branch_println!("{CPU:?} push {lr_pc:x} to return stack with size {stack_size} at {current_pc:x}")
     }
 

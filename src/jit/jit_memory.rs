@@ -1,4 +1,5 @@
 use crate::core::emu::Emu;
+use crate::core::memory::mmu::MMU_PAGE_SHIFT;
 use crate::core::memory::{regions, vram};
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::{BlockAsm, GuestInstMetadata, GuestInstOffset};
@@ -201,7 +202,12 @@ impl Emu {
             ($entries:expr, $live_ranges:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
                 let ret = insert!($entries, $live_ranges);
                 $(
-                    self.mmu_remove_write::<{ $cpu_entry }>(guest_pc, &$region);
+                    let guest_pc_end = guest_pc_end - if thumb { 2 } else { 4 };
+                    let begin = guest_pc >> MMU_PAGE_SHIFT;
+                    let end = guest_pc_end >> MMU_PAGE_SHIFT;
+                    for i in begin..=end {
+                        self.mmu_remove_write::<{ $cpu_entry }>(i << MMU_PAGE_SHIFT, &$region);
+                    }
                 )*
                 ret
             }};
@@ -219,15 +225,13 @@ impl Emu {
                 self.jit.get_jit_data(cpu_type).jit_funcs.push_back(metadata);
 
                 // >> 3 for u8 (each bit represents a page)
-                let live_ranges_index = ((guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) >> 3) as usize;
-                let live_ranges_index = live_ranges_index % $live_ranges.len();
-                let live_ranges_bit = (guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
-                $live_ranges[live_ranges_index] |= 1 << live_ranges_bit;
-                debug_assert_eq!(ptr::addr_of!($live_ranges[live_ranges_index]), self.jit.jit_memory_map.get_live_range(guest_pc), "jit live ranges mapping {guest_pc:x}");
-
                 let guest_pc_end = guest_pc_end - if thumb { 2 } else { 4 };
-                let live_ranges_bit = (guest_pc_end >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
-                unsafe { *self.jit.jit_memory_map.get_live_range(guest_pc_end) |= 1 << live_ranges_bit };
+                let live_range_begin = guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
+                let live_range_end = guest_pc_end >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
+                for i in live_range_begin..=live_range_end {
+                    let live_ranges_bit = i & 0x7;
+                    unsafe { *self.jit.jit_memory_map.get_live_range(i << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) |= 1 << live_ranges_bit };
+                }
 
                 self.jit.jit_perf_map_record.record(jit_entry_addr as usize, aligned_size, guest_pc, cpu_type);
 
