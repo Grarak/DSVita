@@ -20,7 +20,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let pc = block_asm.current_pc;
         block_asm.ldr2(Reg::R2, pc);
         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R3, &self.jit_buf.insts_cycle_counts[inst_index].into());
-        block_asm.call(if thumb { exception_handler::<CPU, true> as _ } else { exception_handler::<CPU, false> as _ });
+        block_asm.bl(if thumb { exception_handler::<CPU, true> as _ } else { exception_handler::<CPU, false> as _ });
 
         let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
         block_asm.restore_tmp_regs(next_live_regs);

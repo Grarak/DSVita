@@ -50,13 +50,13 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let pc = block_asm.current_pc;
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R3, &pc.into());
         }
-        block_asm.call(if has_return { pre_branch::<CPU, true> as _ } else { pre_branch::<CPU, false> as _ });
+        block_asm.bl(if has_return { pre_branch::<CPU, true> as _ } else { pre_branch::<CPU, false> as _ });
 
         if BRANCH_LOG {
             let pc = block_asm.current_pc;
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pc.into());
-            block_asm.call(JitAsmCommonFuns::<CPU>::debug_branch_imm as _);
+            block_asm.bl(JitAsmCommonFuns::<CPU>::debug_branch_imm as _);
         }
 
         block_asm.restore_guest_regs_ptr();
@@ -79,11 +79,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
 
         if has_return {
-            block_asm.call(branch_reg::<CPU, true> as _);
+            block_asm.bl(branch_reg::<CPU, true> as _);
         } else {
             block_asm.restore_stack();
-            block_asm.ldr2(Reg::R12, branch_reg::<CPU, false> as *const () as u32);
-            block_asm.bx1(Reg::R12);
+            block_asm.b(branch_reg::<CPU, false> as _);
         }
     }
 
@@ -153,8 +152,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
 
         block_asm.restore_stack();
-        block_asm.ldr2(Reg::R12, branch_lr::<CPU> as *const () as u32);
-        block_asm.bx1(Reg::R12);
+        block_asm.b(branch_lr::<CPU> as _);
     }
 
     pub fn emit_branch_label(&mut self, inst_index: usize, basic_block_index: usize, target_pc: u32, pc_reg: Reg, block_asm: &mut BlockAsm) {
@@ -168,7 +166,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let pc = block_asm.current_pc;
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc_reg.into());
-                block_asm.call(Self::debug_idle_loop as _);
+                block_asm.bl(Self::debug_idle_loop as _);
             }
 
             match CPU {
@@ -182,9 +180,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &pc.into());
                     }
                     if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
-                        block_asm.call(handle_idle_loop::<true> as _);
+                        block_asm.bl(handle_idle_loop::<true> as _);
                     } else {
-                        block_asm.call(handle_idle_loop::<false> as _);
+                        block_asm.bl(handle_idle_loop::<false> as _);
                     }
                     let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
                     block_asm.b_basic_block(basic_block_index);
@@ -236,7 +234,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let pc = block_asm.current_pc;
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc_reg.into());
-                block_asm.call(Self::debug_branch_label as _);
+                block_asm.bl(Self::debug_branch_label as _);
             }
 
             let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
@@ -252,9 +250,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
                     }
                     if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
-                        block_asm.call(inst_branch_handler::run_scheduler::<true> as _);
+                        block_asm.bl(inst_branch_handler::run_scheduler::<true> as _);
                     } else {
-                        block_asm.call(inst_branch_handler::run_scheduler::<false> as _);
+                        block_asm.bl(inst_branch_handler::run_scheduler::<false> as _);
                     };
 
                     block_asm.restore_guest_regs_ptr();
@@ -269,7 +267,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                         let pc = block_asm.current_pc;
                         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &pc.into());
                     }
-                    block_asm.call(handle_interrupt as _);
+                    block_asm.bl(handle_interrupt as _);
                     block_asm.b2(&mut continue_label, BranchHint_kFar);
 
                     if jump_to_index > inst_index {

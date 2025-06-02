@@ -16,8 +16,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let flags = (inst.opcode >> 16) & 0xF;
 
         let func = match inst.op {
-            Op::MsrRc | Op::MsrIc => register_set_cpsr_checked::<CPU> as *const (),
-            Op::MsrRs | Op::MsrIs => register_set_spsr_checked::<CPU> as *const (),
+            Op::MsrRc | Op::MsrIc => register_set_cpsr_checked::<CPU> as *const fn(),
+            Op::MsrRs | Op::MsrIs => register_set_spsr_checked::<CPU> as *const fn(),
             _ => unreachable!(),
         };
 
@@ -31,7 +31,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             _ => unreachable!(),
         }
         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &flags.into());
-        block_asm.call(func);
+        block_asm.bl(func);
 
         block_asm.msr2(MaskedSpecialRegisterType_CPSR_f.into(), &Reg::R0.into());
 
