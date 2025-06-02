@@ -210,6 +210,10 @@ impl MacroAssembler {
     pub fn get_cursor_offset(&self) -> u32 {
         unsafe { masm_get_cursor_offset(self.inner) }
     }
+
+    pub fn ensure_emit_for(&mut self, size: u32) {
+        unsafe { masm_ensure_emit_for(self.inner, size) }
+    }
 }
 
 impl Drop for MacroAssembler {

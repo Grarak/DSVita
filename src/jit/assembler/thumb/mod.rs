@@ -96,3 +96,48 @@ impl BlxReg {
         u16::from(BlxReg::new(u3::new(0b000), u4::new(rm as u8), u9::new(0b010001111)))
     }
 }
+
+#[bitsize(32)]
+#[derive(FromBits)]
+pub struct Branch {
+    imm10_msb: u10,
+    s: bool,
+    id: u5,
+    imm11_lsb: u11,
+    j2: u1,
+    id2: u1,
+    j1: u1,
+    id3: u2,
+}
+
+impl Branch {
+    pub fn b(imm: i32) -> u32 {
+        let imm = imm >> 1;
+        let s = (imm >> 31) & 1;
+        u32::from(Branch::new(
+            u10::new(((imm >> 11) & 0x3FF) as u16),
+            s == 1,
+            u5::new(0b11110),
+            u11::new((imm & 0x7FF) as u16),
+            u1::new((((imm >> 21) & 1) ^ (!s & 1)) as u8),
+            u1::new(1),
+            u1::new((((imm >> 22) & 1) ^ (!s & 1)) as u8),
+            u2::new(0b10),
+        ))
+    }
+
+    pub fn bl(imm: i32) -> u32 {
+        let imm = imm >> 1;
+        let s = (imm >> 31) & 1;
+        u32::from(Branch::new(
+            u10::new(((imm >> 11) & 0x3FF) as u16),
+            s == 1,
+            u5::new(0b11110),
+            u11::new((imm & 0x7FF) as u16),
+            u1::new((((imm >> 21) & 1) ^ (!s & 1)) as u8),
+            u1::new(1),
+            u1::new((((imm >> 22) & 1) ^ (!s & 1)) as u8),
+            u2::new(0b11),
+        ))
+    }
+}

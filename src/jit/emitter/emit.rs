@@ -2,7 +2,7 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::vixl::{BranchHint_kNear, FlagsUpdate_DontCare, MemOperand};
-use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmB3, MasmBkpt1, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
+use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmB3, MasmBkpt1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
 use crate::jit::inst_branch_handler::branch_any_reg;
 use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode, set_pc_thumb_mode};
 use crate::jit::jit_asm::{debug_after_exec_op, JitAsm, JitRuntimeData};
@@ -45,17 +45,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let restore_spsr = inst.out_regs.is_reserved(Reg::CPSR) && inst.op.is_alu();
         if restore_spsr {
-            block_asm.call(register_restore_spsr::<CPU> as _);
+            block_asm.bl(register_restore_spsr::<CPU> as _);
         }
 
         if CPU == ARM7 || (!inst.op.is_single_mem_transfer() && !inst.op.is_multiple_mem_transfer()) {
             if restore_spsr {
-                block_asm.call(restore_thumb_after_restore_spsr::<CPU> as _);
+                block_asm.bl(restore_thumb_after_restore_spsr::<CPU> as _);
             } else {
-                block_asm.call(set_pc_arm_mode::<CPU> as _);
+                block_asm.bl(set_pc_arm_mode::<CPU> as _);
             }
         } else if restore_spsr {
-            block_asm.call(restore_thumb_after_restore_spsr::<CPU> as _);
+            block_asm.bl(restore_thumb_after_restore_spsr::<CPU> as _);
         }
 
         if (inst.op.is_mov() && inst.src_regs.is_reserved(Reg::LR) && !inst.out_regs.is_reserved(Reg::CPSR))
@@ -65,9 +65,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             match inst.op {
                 Op::Ldm(transfer) | Op::Stm(transfer) => {
                     if transfer.user() {
-                        block_asm.call(register_restore_spsr::<CPU> as _);
+                        block_asm.bl(register_restore_spsr::<CPU> as _);
                         if CPU == ARM7 {
-                            block_asm.call(set_pc_arm_mode::<CPU> as _);
+                            block_asm.bl(set_pc_arm_mode::<CPU> as _);
                         }
                     }
                 }
@@ -83,8 +83,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
             }
             block_asm.restore_stack();
-            block_asm.ldr2(Reg::R12, branch_any_reg as *const () as u32);
-            block_asm.bx1(Reg::R12);
+            block_asm.b(branch_any_reg as _);
         } else {
             self.emit_branch_out_metadata(inst_index, true, block_asm);
             block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
@@ -97,7 +96,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
 
         if CPU == ARM7 || !inst.op.is_multiple_mem_transfer() {
-            block_asm.call(set_pc_thumb_mode::<CPU> as _);
+            block_asm.bl(set_pc_thumb_mode::<CPU> as _);
         }
 
         // R9 can be used as a substitution for SP for branch prediction
@@ -114,8 +113,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
             }
             block_asm.restore_stack();
-            block_asm.ldr2(Reg::R12, branch_any_reg as *const () as u32);
-            block_asm.bx1(Reg::R12);
+            block_asm.b(branch_any_reg as _);
         } else {
             self.emit_branch_out_metadata(inst_index, true, block_asm);
             block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
@@ -149,7 +147,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             }
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
-            // if block_asm.current_pc == 0x37f812c {
+            // if block_asm.current_pc == 0x2002164 {
             //     block_asm.bkpt1(0);
             // }
 
@@ -216,7 +214,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let current_pc = block_asm.current_pc;
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &current_pc.into());
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &self.jit_buf.insts[i].opcode.into());
-                block_asm.call(debug_after_exec_op::<CPU> as _);
+                block_asm.bl(debug_after_exec_op::<CPU> as _);
 
                 let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, i);
                 block_asm.restore_tmp_regs(next_live_regs);

@@ -6,7 +6,7 @@ use crate::jit::analyzer::asm_analyzer::AsmAnalyzer;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::reg_alloc::GUEST_REG_ALLOCATIONS;
 use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags};
-use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmBl2, MasmBlx1, MasmCmp2, MasmLdr2, MasmMov4};
+use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmBl2, MasmCmp2, MasmLdr2, MasmMov4};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_branch_handler::call_jit_fun;
@@ -414,7 +414,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
 
         if BRANCH_LOG {
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
-            block_asm.call(debug_enter_block::<CPU> as _);
+            block_asm.bl(debug_enter_block::<CPU> as _);
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &Reg::R4.into());
         }
 
@@ -424,15 +424,11 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         block_asm.ldr2(Reg::R1, pc);
         block_asm.cmp2(Reg::R1, &Reg::R0.into());
         block_asm.bl2(Cond::EQ, &mut default_pc_label);
-        block_asm.ldr2(
-            Reg::R12,
-            if thumb {
-                jump_to_other_guest_pc::<CPU, true> as *const ()
-            } else {
-                jump_to_other_guest_pc::<CPU, false> as *const ()
-            } as u32,
-        );
-        block_asm.blx1(Reg::R12);
+        block_asm.bl(if thumb {
+            jump_to_other_guest_pc::<CPU, true> as _
+        } else {
+            jump_to_other_guest_pc::<CPU, false> as _
+        });
         block_asm.add5(FlagsUpdate_LeaveFlags, Cond::AL, Reg::PC, Reg::PC, &Reg::R0.into());
 
         block_asm.bind(&mut default_pc_label);
@@ -449,13 +445,13 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         block_asm.finalize();
 
         // let opcodes = block_asm.get_code_buffer();
-        // if IS_DEBUG && guest_pc == 0x2020618 {
+        // if IS_DEBUG {
         //     asm.jit_buf.debug_info.print_info(guest_pc, thumb);
         //     for &opcode in opcodes {
         //         print!("0x{opcode:x},");
         //     }
         //     println!();
-        //     todo!()
+        //     // todo!()
         // }
         let (insert_entry, flushed) = asm.emu.jit_insert_block(block_asm, guest_pc, guest_pc + pc_offset + pc_step, CPU);
         let jit_entry: extern "C" fn(u32) = unsafe { mem::transmute(insert_entry) };
