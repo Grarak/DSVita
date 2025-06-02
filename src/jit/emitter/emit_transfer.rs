@@ -451,7 +451,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             }
 
             let func = match (inst.op.is_write_mem_transfer(), transfer.write_back(), !transfer.add()) {
-                (false, false, false) => inst_mem_handler_multiple_slow::<CPU, false, false, false> as *const (),
+                (false, false, false) => inst_mem_handler_multiple_slow::<CPU, false, false, false> as *const fn(),
                 (false, false, true) => inst_mem_handler_multiple_slow::<CPU, false, false, true> as _,
                 (false, true, false) => inst_mem_handler_multiple_slow::<CPU, false, true, false> as _,
                 (false, true, true) => inst_mem_handler_multiple_slow::<CPU, false, true, true> as _,
@@ -471,7 +471,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.ldr2(Reg::R1, pc);
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &self.jit_buf.insts_cycle_counts[inst_index].into());
 
-            block_asm.call(func);
+            block_asm.bl(func);
 
             let mut next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
             if inst.cond != Cond::AL {

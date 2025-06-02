@@ -23,6 +23,7 @@ pub unsafe extern "C" fn restore_thumb_after_restore_spsr<const CPU: CpuType>() 
     asm.emu.thread_restore_thumb_mode(CPU);
 }
 
+#[link_section = ".text"]
 pub unsafe extern "C" fn set_pc_arm_mode<const CPU: CpuType>() {
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     asm.emu.thread_force_pc_arm_mode(CPU)

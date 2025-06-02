@@ -3,7 +3,9 @@ use crate::jit::assembler::vixl::vixl::{
     BranchHint_kNear, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, MaskedSpecialRegisterType_CPSR_f, MemOperand, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR,
     ShiftType_RRX, SpecialRegisterType_CPSR,
 };
-use crate::jit::assembler::vixl::{vixl, Label, MacroAssembler, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMrs2, MasmMsr2, MasmPop1, MasmPush1, MasmStr2, MasmStrb2, MasmStrd3, MasmSub5};
+use crate::jit::assembler::vixl::{
+    vixl, Label, MacroAssembler, MasmAdd5, MasmB2, MasmBx1, MasmLdr2, MasmLsr5, MasmMrs2, MasmMsr2, MasmNop, MasmPop1, MasmPush1, MasmStr2, MasmStrb2, MasmStrd3, MasmSub5,
+};
 use crate::jit::inst_info::{InstInfo, Operands, Shift, ShiftValue};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
@@ -76,6 +78,11 @@ impl GuestInstOffset {
     }
 }
 
+pub enum DirectBranch {
+    B(usize, *const fn()),
+    Bl(usize, *const fn()),
+}
+
 pub struct BlockAsm {
     masm: MacroAssembler,
     reg_alloc: RegAlloc,
@@ -87,6 +94,7 @@ pub struct BlockAsm {
     pub guest_inst_offsets: Vec<GuestInstOffset>,
     pub guest_basic_block_labels: Vec<Option<Label>>,
     last_pc_value: u32,
+    pub direct_branches: Vec<DirectBranch>,
 }
 
 impl BlockAsm {
@@ -102,6 +110,7 @@ impl BlockAsm {
             guest_inst_offsets: Vec::new(),
             guest_basic_block_labels: Vec::new(),
             last_pc_value: 0,
+            direct_branches: Vec::new(),
         }
     }
 
@@ -154,9 +163,25 @@ impl BlockAsm {
             .push(GuestInstOffset::new((offset >> 1) as u16, self.reg_alloc.host_regs_mapping, pre_cycle_count_sum, self.last_pc_value))
     }
 
-    pub fn call(&mut self, fun: *const ()) {
-        self.ldr2(Reg::R12, fun as u32);
-        self.blx1(Reg::R12);
+    pub fn b(&mut self, fun: *const fn()) {
+        if self.thumb {
+            self.ensure_emit_for(64);
+            self.direct_branches.push(DirectBranch::B(self.get_cursor_offset() as usize, fun));
+            self.nop0();
+            self.nop0();
+        } else {
+            self.ldr2(Reg::R12, fun as u32);
+            self.bx1(Reg::R12);
+        }
+    }
+
+    pub fn bl(&mut self, fun: *const fn()) {
+        self.ensure_emit_for(64);
+        self.direct_branches.push(DirectBranch::Bl(self.get_cursor_offset() as usize, fun));
+        self.nop0();
+        if self.thumb {
+            self.nop0();
+        }
     }
 
     pub fn alloc_guest_inst(&mut self, inst: &InstInfo, next_live_regs: RegReserve) {

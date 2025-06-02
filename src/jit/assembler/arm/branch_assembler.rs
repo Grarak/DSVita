@@ -12,24 +12,8 @@ pub struct B {
 }
 
 impl B {
-    pub fn b(imm: i32, cond: Cond) -> u32 {
-        u32::from(B::new(
-            // Extract first 24 bits, also keep msb
-            u24::new((((imm << 8) >> 8) & 0xFFFFFF) as u32),
-            u1::new(0),
-            u3::new(0b101),
-            u4::new(cond as u8),
-        ))
-    }
-
-    pub fn bl(imm: i32, cond: Cond) -> u32 {
-        u32::from(B::new(
-            // Extract first 24 bits, also keep msb
-            u24::new((((imm << 8) >> 8) & 0xFFFFFF) as u32),
-            u1::new(1),
-            u3::new(0b101),
-            u4::new(cond as u8),
-        ))
+    pub fn blx(imm: i32) -> u32 {
+        u32::from(B::new(u24::new(((imm >> 2) & 0xFFFFFF) as u32), u1::new(((imm >> 1) & 1) as u8), u3::new(0b101), u4::new(0xF)))
     }
 }
 

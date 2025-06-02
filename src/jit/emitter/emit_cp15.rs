@@ -30,7 +30,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let pc = block_asm.current_pc;
             block_asm.ldr2(Reg::R1, pc + 4);
             block_asm.store_guest_reg(Reg::R1, Reg::PC);
-            block_asm.call(cpu_regs_halt::<CPU> as _);
+            block_asm.bl(cpu_regs_halt::<CPU> as _);
             self.emit_branch_out_metadata(inst_index, true, block_asm);
             block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
         } else {
@@ -39,11 +39,11 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 Op::Mcr => {
                     block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &cp15_reg.into());
                     block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &op0_mapped.into());
-                    block_asm.call(cp15_write as _);
+                    block_asm.bl(cp15_write as _);
                 }
                 Op::Mrc => {
                     block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &cp15_reg.into());
-                    block_asm.call(cp15_read as _);
+                    block_asm.bl(cp15_read as _);
                     block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, op0_mapped, &Reg::R0.into());
                 }
                 _ => unreachable!(),

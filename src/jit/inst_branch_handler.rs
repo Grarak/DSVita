@@ -223,6 +223,11 @@ pub unsafe extern "C" fn branch_any_reg(total_cycles: u16, current_pc: u32) {
     check_stack_depth(asm, current_pc);
     check_scheduler(asm, current_pc);
 
+    let lr = asm.emu.thread[ARM9].lr;
+
     asm.runtime_data.pre_cycle_count_sum = 0;
     call_jit_fun(asm, asm.emu.thread[ARM9].pc);
+    if lr != asm.emu.thread[ARM9].pc {
+        exit_guest_context!(asm);
+    }
 }
