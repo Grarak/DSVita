@@ -12,7 +12,7 @@ use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_branch_handler::call_jit_fun;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm_common_funs::{exit_guest_context, JitAsmCommonFuns};
-use crate::jit::jit_memory::JIT_MEMORY_SIZE;
+use crate::jit::jit_memory::{JIT_CACHE, JIT_MEMORY_SIZE};
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
@@ -282,7 +282,7 @@ unsafe extern "C" fn _jump_to_other_guest_pc<const CPU: CpuType, const THUMB: bo
     host_regs: &mut [usize; GUEST_REG_ALLOCATIONS.len() + 2],
 ) -> usize {
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
-    debug_assert!(return_lr >= asm.emu.jit.mem.as_ptr() as usize && return_lr < asm.emu.jit.mem.as_ptr() as usize + JIT_MEMORY_SIZE);
+    debug_assert!(return_lr >= JIT_CACHE.as_ptr() as usize && return_lr < JIT_CACHE.as_ptr() as usize + JIT_MEMORY_SIZE);
     debug_assert_eq!(target_pc & 1 == 1, THUMB);
     debug_assert!(target_pc > block_pc, "{CPU:?} can't jump from {block_pc:x} to {target_pc:x}");
 
@@ -292,7 +292,7 @@ unsafe extern "C" fn _jump_to_other_guest_pc<const CPU: CpuType, const THUMB: bo
     let diff = diff >> if THUMB { 1 } else { 2 };
 
     host_regs[GUEST_REG_ALLOCATIONS.len() + 1] = return_lr;
-    let return_lr = return_lr - asm.emu.jit.mem.as_ptr() as usize;
+    let return_lr = return_lr - JIT_CACHE.as_ptr() as usize;
     let page = return_lr >> PAGE_SHIFT;
     let metadata = asm.emu.jit.guest_inst_offsets.get_unchecked(page).get_unchecked(diff as usize - 1);
     for (host_reg, &guest_reg) in metadata.mapping.iter().enumerate() {
@@ -458,7 +458,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         //     println!();
         //     todo!()
         // }
-        let (insert_entry, flushed) = asm.emu.jit_insert_block(block_asm, guest_pc, guest_pc + pc_offset + pc_step, thumb, CPU);
+        let (insert_entry, flushed) = asm.emu.jit_insert_block(block_asm, guest_pc, guest_pc + pc_offset + pc_step, CPU);
         let jit_entry: extern "C" fn(u32) = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {

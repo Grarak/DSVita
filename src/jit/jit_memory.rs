@@ -15,7 +15,7 @@ use crate::jit::op::{MultipleTransfer, Op, SingleTransfer};
 use crate::jit::reg::Reg;
 use crate::jit::{Cond, MemoryAmount};
 use crate::logging::debug_println;
-use crate::mmap::{flush_icache, ArmContext, Mmap, PAGE_SHIFT, PAGE_SIZE};
+use crate::mmap::{flush_icache, set_protection, ArmContext, PAGE_SHIFT, PAGE_SIZE};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils;
 use crate::utils::{HeapMem, HeapMemU8};
@@ -23,15 +23,37 @@ use bilge::prelude::{u4, u6};
 use std::collections::VecDeque;
 use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::{ptr, slice};
 use CpuType::{ARM7, ARM9};
 
-pub const JIT_MEMORY_SIZE: usize = 32 * 1024 * 1024;
+pub const JIT_MEMORY_SIZE: usize = 12 * 1024 * 1024;
 pub const JIT_LIVE_RANGE_PAGE_SIZE_SHIFT: u32 = 8;
 const JIT_LIVE_RANGE_PAGE_SIZE: u32 = 1 << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
-const JIT_ARM9_MEMORY_SIZE: usize = 28 * 1024 * 1024;
+const JIT_ARM9_MEMORY_SIZE: usize = 9 * 1024 * 1024;
 const JIT_ARM7_MEMORY_SIZE: usize = JIT_MEMORY_SIZE - JIT_ARM9_MEMORY_SIZE;
+
+#[repr(align(4096))]
+pub struct JitCache([u8; JIT_MEMORY_SIZE]);
+
+impl Deref for JitCache {
+    type Target = [u8; JIT_MEMORY_SIZE];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for JitCache {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[used]
+#[link_section = ".text"]
+#[no_mangle]
+pub static mut JIT_CACHE: JitCache = JitCache([0; JIT_MEMORY_SIZE]);
 
 const SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB: usize = 22;
 const SLOW_MEM_SINGLE_READ_LENGTH_THUMB: usize = 18;
@@ -185,7 +207,6 @@ impl JitMemoryMetadata {
 }
 
 pub struct JitMemory {
-    pub mem: Mmap,
     arm9_data: JitMemoryMetadata,
     arm7_data: JitMemoryMetadata,
     jit_entries: JitEntries,
@@ -197,7 +218,8 @@ pub struct JitMemory {
 }
 
 impl Emu {
-    pub fn jit_insert_block(&mut self, block_asm: BlockAsm, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu_type: CpuType) -> (*const extern "C" fn(u32), bool) {
+    pub fn jit_insert_block(&mut self, block_asm: BlockAsm, guest_pc: u32, guest_pc_end: u32, cpu_type: CpuType) -> (*const extern "C" fn(u32), bool) {
+        let thumb = block_asm.thumb;
         macro_rules! insert {
             ($entries:expr, $live_ranges:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
                 let ret = insert!($entries, $live_ranges);
@@ -215,7 +237,7 @@ impl Emu {
             ($entries:expr, $live_ranges:expr) => {{
                 let (allocated_offset_addr, aligned_size, flushed) = self.jit.insert(block_asm, cpu_type);
 
-                let jit_entry_addr = ((allocated_offset_addr + self.jit.mem.as_ptr() as usize) | (thumb as usize)) as *const extern "C" fn(u32);
+                let jit_entry_addr = unsafe { ((allocated_offset_addr + JIT_CACHE.as_ptr() as usize) | (thumb as usize)) as *const extern "C" fn(u32) };
 
                 let guest_block_size = (guest_pc_end - guest_pc) as usize;
                 debug_assert!(guest_block_size < PAGE_SIZE);
@@ -269,11 +291,12 @@ impl Emu {
 
 impl JitMemory {
     pub fn new(settings: &Settings) -> Self {
+        unsafe { set_protection(JIT_CACHE.as_mut_ptr(), JIT_CACHE.len(), true, true, true) };
+
         let jit_entries = JitEntries::new();
         let jit_live_ranges = JitLiveRanges::default();
         let jit_memory_map = JitMemoryMap::new(&jit_entries, &jit_live_ranges);
         JitMemory {
-            mem: Mmap::executable("jit", JIT_MEMORY_SIZE).unwrap(),
             arm9_data: if settings.arm7_hle() == Arm7Emu::Hle {
                 JitMemoryMetadata::new(JIT_MEMORY_SIZE, 0, JIT_MEMORY_SIZE)
             } else {
@@ -365,8 +388,10 @@ impl JitMemory {
         let aligned_size = utils::align_up(opcodes.len(), PAGE_SIZE);
         let (allocated_offset_addr, flushed) = self.allocate_block(aligned_size, cpu_type);
 
-        utils::write_to_mem_slice(&mut self.mem, allocated_offset_addr, opcodes);
-        unsafe { flush_icache(self.mem.as_ptr().add(allocated_offset_addr), aligned_size) };
+        unsafe {
+            utils::write_to_mem_slice(JIT_CACHE.as_mut(), allocated_offset_addr, opcodes);
+            flush_icache(JIT_CACHE.as_mut_ptr().add(allocated_offset_addr), aligned_size);
+        }
 
         let block_page = allocated_offset_addr >> PAGE_SHIFT;
         self.guest_inst_offsets[block_page] = block_asm.guest_inst_offsets;
@@ -705,12 +730,12 @@ impl JitMemory {
     }
 
     pub unsafe fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType, _: &ArmContext) -> bool {
-        if *host_pc < self.mem.as_ptr() as usize || *host_pc >= self.mem.as_ptr() as usize + JIT_MEMORY_SIZE {
+        if *host_pc < JIT_CACHE.as_ptr() as usize || *host_pc >= JIT_CACHE.as_ptr() as usize + JIT_MEMORY_SIZE {
             debug_println!("Segfault outside of guest context");
             return false;
         }
 
-        let jit_mem_offset = *host_pc - self.mem.as_mut_ptr() as usize;
+        let jit_mem_offset = *host_pc - JIT_CACHE.as_mut_ptr() as usize;
         let metadata_block_page = jit_mem_offset >> PAGE_SHIFT;
         let opcode_offset = jit_mem_offset & (PAGE_SIZE - 1);
         let guest_inst_metadata_list = &self.guest_inst_metadata[metadata_block_page];
