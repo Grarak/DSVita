@@ -427,18 +427,20 @@ fn main() {
         let vita_gl_lib_path = vita_gl_path.join("libvitaGL.a");
         let vita_gl_lib_new_path = vita_gl_path.join("libvitaGL_dsvita.a");
 
+        Command::new("make").current_dir("vitaGL").arg("clean").status().unwrap();
         Command::new("make")
             .current_dir("vitaGL")
             .args(["-j", &num_jobs])
             .envs([
                 ("HAVE_UNFLIPPED_FBOS", "1"),
                 ("NO_TEX_COMBINER", "1"),
-                ("NO_DEBUG", "1"),
-                ("SHADER_COMPILER_SPEEDHACK", "1"),
                 ("MATH_SPEEDHACK", "1"),
                 ("HAVE_SHADER_CACHE", "1"),
+                ("SINGLE_THREADED_GC", "1"),
+                ("NO_DEBUG", "1"),
                 // ("HAVE_SHARK_LOG", "1"),
-                // ("LOG_ERRORS", "1"),
+                // ("LOG_ERRORS", "2"),
+                // ("HAVE_PROFILING", "1"),
                 // ("HAVE_RAZOR", "1"),
             ])
             .status()
@@ -459,6 +461,7 @@ fn main() {
         let kubridge_lib_new_path = kubridge_dst_path.join("libkubridge_stub_dsvita.a");
         fs::rename(kubridge_lib_path, kubridge_lib_new_path).unwrap();
 
+        println!("cargo:rerun-if-changed={}", kubridge_path.to_str().unwrap());
         println!("cargo:rustc-link-search=native={}", fs::canonicalize(kubridge_dst_path).unwrap().to_str().unwrap());
         println!("cargo:rustc-link-lib=static=kubridge_stub_dsvita");
     }
