@@ -126,7 +126,7 @@ impl JitRuntimeData {
             accumulated_cycles: 0,
             host_sp: 0,
             data_packed: JitRuntimeDataPacked::from(0),
-            return_stack: [0; RETURN_STACK_SIZE],
+            return_stack: [u32::MAX; RETURN_STACK_SIZE],
             interrupt_sp: 0,
             #[cfg(debug_assertions)]
             branch_out_pc: u32::MAX,
@@ -208,6 +208,7 @@ impl JitRuntimeData {
         unsafe { *self.return_stack.get_unchecked_mut(return_stack_ptr) = value };
         return_stack_ptr += 1;
         return_stack_ptr &= RETURN_STACK_SIZE - 1;
+        unsafe { *self.return_stack.get_unchecked_mut(return_stack_ptr) = u32::MAX };
         self.data_packed.set_return_stack_ptr(u30::new(return_stack_ptr as u32));
     }
 
@@ -227,7 +228,7 @@ impl JitRuntimeData {
 
     pub fn clear_return_stack_ptr(&mut self) {
         self.data_packed.set_return_stack_ptr(u30::new(0));
-        self.return_stack[RETURN_STACK_SIZE - 1] = 0;
+        self.return_stack[RETURN_STACK_SIZE - 1] = u32::MAX;
     }
 }
 

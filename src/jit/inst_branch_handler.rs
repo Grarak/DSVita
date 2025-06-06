@@ -2,7 +2,6 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::jit_asm::{align_guest_pc, call_jit_entry, JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_asm_common_funs::{exit_guest_context, get_max_loop_cycle_count, JitAsmCommonFuns};
-use crate::jit::jit_memory::JitEntry;
 use crate::logging::debug_println;
 use crate::settings::Arm7Emu;
 use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, IS_DEBUG};
@@ -181,22 +180,6 @@ pub unsafe extern "C" fn branch_reg<const CPU: CpuType, const HAS_LR_RETURN: boo
     if HAS_LR_RETURN {
         asm.runtime_data.pre_cycle_count_sum = total_cycles;
     }
-}
-
-pub unsafe extern "C" fn branch_imm<const CPU: CpuType, const THUMB: bool>(total_cycles: u16, target_entry: *const JitEntry, lr: u32, current_pc: u32) {
-    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
-    pre_branch::<CPU, true>(asm, total_cycles, lr, current_pc);
-
-    if BRANCH_LOG {
-        JitAsmCommonFuns::<CPU>::debug_branch_imm(current_pc, asm.emu.thread[CPU].pc);
-    }
-
-    asm.emu.thread_set_thumb(CPU, THUMB);
-    let entry = (*target_entry).0;
-    let entry: extern "C" fn(u32) = mem::transmute(entry);
-    entry(asm.emu.thread[CPU].pc);
-
-    asm.runtime_data.pre_cycle_count_sum = total_cycles;
 }
 
 pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target_pc: u32, current_pc: u32) {

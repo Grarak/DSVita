@@ -628,7 +628,7 @@ impl JitMemory {
             }
 
             let max_length = Self::get_slow_mem_length(guest_inst_metadata.op);
-            debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} < {max_length}");
+            debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
         } else if guest_inst_metadata.op.is_multiple_mem_transfer() {
             let transfer = match guest_inst_metadata.op {
                 Op::Ldm(transfer) | Op::LdmT(transfer) | Op::Stm(transfer) | Op::StmT(transfer) => transfer,
@@ -660,7 +660,7 @@ impl JitMemory {
             Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
 
             let max_length = Self::get_slow_mem_length(guest_inst_metadata.op);
-            debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} < {max_length}");
+            debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
         } else if !THUMB && matches!(guest_inst_metadata.op, Op::Swpb | Op::Swp) {
             let is_write = guest_inst_metadata.op0 == Reg::R1;
 
@@ -684,7 +684,7 @@ impl JitMemory {
             Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
 
             let max_length = if is_write { SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM } else { SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM };
-            debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} < {max_length}");
+            debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
         } else {
             unreachable_unchecked()
         }

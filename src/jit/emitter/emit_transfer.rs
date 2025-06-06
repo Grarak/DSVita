@@ -150,6 +150,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             dirty_guest_regs += Reg::CPSR;
         }
 
+        block_asm.ensure_emit_for(64);
         let fast_mem_start = if !inst.op.is_write_mem_transfer() && op1 == Reg::PC && !transfer.write_back() && op2.as_imm().is_some() {
             let imm = op2.as_imm().unwrap();
             let pc = if block_asm.thumb { block_asm.current_pc + 4 } else { block_asm.current_pc + 8 };
@@ -163,6 +164,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             let func = get_read_func!(size, transfer.signed());
 
+            block_asm.ensure_emit_for(64);
             let fast_mem_start = block_asm.get_cursor_offset();
 
             block_asm.ldr2(Reg::R1, (imm_addr & !(0xF0000000 | (size as u32 - 1))) + self.emu.mmu_get_base_tcm_ptr::<CPU>() as u32);
@@ -216,6 +218,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 dirty_guest_regs += op1;
             }
 
+            block_asm.ensure_emit_for(64);
             let fast_mem_start = block_asm.get_cursor_offset();
 
             let metadata_emitter = |asm: &Self, block_asm: &mut BlockAsm| {
@@ -311,6 +314,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             dirty_guest_regs += Reg::CPSR;
         }
 
+        block_asm.ensure_emit_for(64);
         let fast_mem_start = block_asm.get_cursor_offset();
         let guest_inst_metadata_start = block_asm.get_guest_inst_metadata_len();
 
@@ -494,6 +498,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.mov4(flag_update, Cond::AL, Reg::R1, &value_reg.into());
         block_asm.mov4(flag_update, Cond::AL, Reg::R2, &addr_reg.into());
 
+        block_asm.ensure_emit_for(64);
         let fast_mem_start = block_asm.get_cursor_offset();
 
         let size = if inst.op == Op::Swpb { 1 } else { 4 };
@@ -519,6 +524,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.store_guest_reg(read_reg, op0);
         block_asm.mov4(flag_update, Cond::AL, Reg::R0, &Reg::R1.into());
 
+        block_asm.ensure_emit_for(64);
         let fast_mem_start = block_asm.get_cursor_offset();
 
         self.emit_fast_single_write_transfer(
