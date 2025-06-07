@@ -4,62 +4,135 @@ use crate::core::CpuType::ARM7;
 use crate::presenter::{PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE};
 use crate::utils::HeapMemU32;
 use bilge::prelude::*;
-use std::cmp::min;
-use std::collections::VecDeque;
+use std::cmp::{max, min};
+use std::fs::File;
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::{likely, unlikely};
-use std::mem;
+use std::io::Write;
+use std::ops::DerefMut;
+use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::thread::Thread;
+use std::{mem, thread};
 
 pub const CHANNEL_COUNT: usize = 16;
 const SAMPLE_RATE: usize = 32768;
-const SAMPLE_BUFFER_SIZE: usize = SAMPLE_RATE * PRESENTER_AUDIO_BUF_SIZE / PRESENTER_AUDIO_SAMPLE_RATE;
+pub const SAMPLE_BUFFER_SIZE: usize = SAMPLE_RATE * PRESENTER_AUDIO_BUF_SIZE / PRESENTER_AUDIO_SAMPLE_RATE;
 
 pub struct SoundSampler {
-    samples: Mutex<VecDeque<HeapMemU32<{ SAMPLE_BUFFER_SIZE }>>>,
-    cond_var: Condvar,
+    queues: [(HeapMemU32<SAMPLE_BUFFER_SIZE>, u16); 2],
+    busy_queue: usize,
+    ready_queue: usize,
+    waiting: bool,
+    busy: AtomicBool,
     framelimit: bool,
+    last_sample: u32,
+    sample_file: File,
 }
 
 impl SoundSampler {
     pub fn new(framelimit: bool) -> SoundSampler {
         SoundSampler {
-            samples: Mutex::new(VecDeque::new()),
-            cond_var: Condvar::new(),
+            queues: [(HeapMemU32::new(), 0), (HeapMemU32::new(), 0)],
+            busy_queue: 0,
+            ready_queue: 0,
+            waiting: false,
+            busy: AtomicBool::new(false),
             framelimit,
+            last_sample: 0,
+            sample_file: File::create("samples.wav").unwrap(),
         }
     }
 
-    fn push(&self, samples: &[u32]) {
-        {
-            let mut queue = self.samples.lock().unwrap();
-            let mut queue = if queue.len() == 4 {
-                if self.framelimit {
-                    self.cond_var.wait_while(queue, |queue| queue.len() == 4).unwrap()
-                } else {
-                    queue.pop_front();
-                    queue
-                }
+    fn push(&mut self, sample: u32) {
+        while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
+
+        let (queue, size) = &mut self.queues[self.busy_queue];
+        queue[*size as usize] = sample;
+        *size += 1;
+        if *size == SAMPLE_BUFFER_SIZE as u16 {
+            let (_, other_size) = &mut self.queues[self.busy_queue ^ 1];
+            if self.framelimit {
+                self.waiting = true;
+                self.busy.store(false, Ordering::SeqCst);
+                thread::park();
+                return;
             } else {
-                queue
-            };
-            let mut s = HeapMemU32::new();
-            s.copy_from_slice(samples);
-            queue.push_back(s);
+                *other_size = 0;
+                self.ready_queue = self.busy_queue;
+                self.busy_queue ^= 1;
+            }
         }
-        self.cond_var.notify_one();
+
+        self.busy.store(false, Ordering::SeqCst);
     }
 
-    pub fn consume(&self, ret: &mut [u32; PRESENTER_AUDIO_BUF_SIZE]) {
-        let samples = {
-            let samples = self.samples.lock().unwrap();
-            let mut samples = self.cond_var.wait_while(samples, |samples| samples.is_empty()).unwrap();
-            samples.pop_front().unwrap()
-        };
-        self.cond_var.notify_one();
-        for i in 0..PRESENTER_AUDIO_BUF_SIZE {
-            ret[i] = samples[i * SAMPLE_BUFFER_SIZE / PRESENTER_AUDIO_BUF_SIZE];
+    pub fn consume(&mut self, cpu_thread: &Thread, buf: &mut [u32; SAMPLE_BUFFER_SIZE], buf_tmp: &mut [u32; SAMPLE_BUFFER_SIZE], ret: &mut [u32; PRESENTER_AUDIO_BUF_SIZE]) -> bool {
+        while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
+
+        let ready_queue = self.ready_queue;
+        let (queue, queue_size) = &mut self.queues[ready_queue];
+        println!("sample from {ready_queue} {queue_size}");
+        let mut size = *queue_size as usize;
+        *queue_size = 0;
+        buf_tmp[..size].copy_from_slice(&queue[..size]);
+        self.ready_queue = self.busy_queue;
+
+        if self.waiting {
+            self.waiting = false;
+            self.busy_queue = ready_queue;
+            cpu_thread.unpark();
         }
+
+        self.busy.store(false, Ordering::SeqCst);
+
+        if size == 0 {
+            ret.fill(self.last_sample);
+            let (_, samples, _) = unsafe { ret.align_to() };
+            self.sample_file.write_all(samples).unwrap();
+            return false;
+        }
+
+        for i in 0..size {
+            let sample = buf_tmp[i];
+
+            // let sample_left = (sample & 0xFFFF) as i16 as i32 * SAMPLE_BUFFER_SIZE as i32 / size as i32;
+            // let sample_right = ((sample >> 16) & 0xFFFF) as i16 as i32 * SAMPLE_BUFFER_SIZE as i32 / size as i32;
+
+            let sample_left = (sample & 0xFFFF) as i16;
+            let sample_right = ((sample >> 16) & 0xFFFF) as i16;
+
+            let last_sample_left = (self.last_sample & 0xFFFF) as i16;
+            let last_sample_right = ((self.last_sample >> 16) & 0xFFFF) as i16;
+
+            println!("sample {sample_left} {sample_right} last sample {last_sample_left} {last_sample_right}");
+
+            let left_diff = sample_left - last_sample_left;
+            let right_diff = sample_right - last_sample_right;
+
+            let buf_start = i * SAMPLE_BUFFER_SIZE / size;
+            let buf_end = (i + 1) * SAMPLE_BUFFER_SIZE / size;
+
+            let buf_len = buf_end - buf_start;
+            for i in 0..buf_len {
+                let buf_left = last_sample_left + ((i as i32 + 1) * left_diff as i32 / buf_len as i32) as i16;
+                let buf_right = last_sample_right + ((i as i32 + 1) * right_diff as i32 / buf_len as i32) as i16;
+                buf[buf_start + i] = ((buf_right as u32 & 0xFFFF) << 16) | ((buf_left as u32) & 0xFFFF);
+                println!("ret {} to {buf_left} {buf_right}", buf_start + i);
+            }
+
+            self.last_sample = sample;
+        }
+
+        for i in 0..PRESENTER_AUDIO_BUF_SIZE {
+            ret[i] = buf[i * SAMPLE_BUFFER_SIZE / PRESENTER_AUDIO_BUF_SIZE];
+        }
+
+        let (_, samples, _) = unsafe { ret.align_to() };
+        self.sample_file.write_all(samples).unwrap();
+
+        true
     }
 }
 
@@ -229,12 +302,11 @@ pub struct Spu {
     sound_bias: u16,
     duty_cycles: [i32; 6],
     noise_values: [u16; 2],
-    samples_buffer: Vec<u32>,
-    sound_sampler: Arc<SoundSampler>,
+    sound_sampler: NonNull<SoundSampler>,
 }
 
 impl Spu {
-    pub fn new(sound_sampler: Arc<SoundSampler>) -> Self {
+    pub fn new(sound_sampler: NonNull<SoundSampler>) -> Self {
         Spu {
             audio_enabled: false,
             channels: [SpuChannel::default(); CHANNEL_COUNT],
@@ -243,7 +315,6 @@ impl Spu {
             sound_bias: 0,
             duty_cycles: [0; 6],
             noise_values: [0; 2],
-            samples_buffer: Vec::with_capacity(SAMPLE_BUFFER_SIZE),
             sound_sampler,
         }
     }
@@ -433,11 +504,7 @@ impl Emu {
             for i in 0..2 {
                 self.spu.sound_cap_channels[i].cnt.set_start_status(false);
             }
-            self.spu.samples_buffer.push(0);
-            if unlikely(self.spu.samples_buffer.len() == SAMPLE_BUFFER_SIZE) {
-                self.spu.sound_sampler.push(self.spu.samples_buffer.as_slice());
-                self.spu.samples_buffer.clear();
-            }
+            unsafe { self.spu.sound_sampler.as_mut().push(0) };
             self.cm.schedule(512 * 2, EventType::SpuSample, 0);
             return;
         }
@@ -609,15 +676,7 @@ impl Emu {
         let sample_left = ((sample_left - 0x200) << 5) as u32;
         let sample_right = ((sample_right - 0x200) << 5) as u32;
 
-        unsafe {
-            assert_unchecked(self.spu.samples_buffer.len() < self.spu.samples_buffer.capacity());
-            self.spu.samples_buffer.push_within_capacity((sample_right << 16) | (sample_left & 0xFFFF)).unwrap_unchecked();
-        }
-        if unlikely(self.spu.samples_buffer.len() == SAMPLE_BUFFER_SIZE) {
-            self.spu.sound_sampler.push(self.spu.samples_buffer.as_slice());
-            self.spu.samples_buffer.clear();
-        }
-
+        unsafe { self.spu.sound_sampler.as_mut().push(((sample_right << 16) & 0xFFFF0000) | (sample_left & 0xFFFF)) };
         self.cm.schedule(512 * 2, EventType::SpuSample, 0);
     }
 }

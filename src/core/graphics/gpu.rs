@@ -15,7 +15,8 @@ use std::intrinsics::unlikely;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub const DISPLAY_WIDTH: usize = 256;
 pub const DISPLAY_HEIGHT: usize = 192;
@@ -42,9 +43,12 @@ impl FrameRateCounter {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
             // #[cfg(target_os = "linux")]
             eprintln!("{}", self.frame_counter);
+            println!("{}", self.frame_counter);
             self.frame_counter = 0;
             self.last_update = now;
         }
+        
+        thread::sleep(Duration::from_millis(30));
     }
 }
 

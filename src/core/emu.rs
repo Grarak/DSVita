@@ -18,6 +18,7 @@ use crate::core::timers::Timers;
 use crate::core::wifi::Wifi;
 use crate::jit::jit_memory::JitMemory;
 use crate::settings::Settings;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, AtomicU32};
 use std::sync::Arc;
 
@@ -45,7 +46,15 @@ pub struct Emu {
 }
 
 impl Emu {
-    pub fn new(cartridge_io: CartridgeIo, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>, jit: JitMemory, settings: Settings) -> Self {
+    pub fn new(
+        cartridge_io: CartridgeIo,
+        fps: Arc<AtomicU16>,
+        key_map: Arc<AtomicU32>,
+        touch_points: Arc<AtomicU16>,
+        sound_sampler: NonNull<SoundSampler>,
+        jit: JitMemory,
+        settings: Settings,
+    ) -> Self {
         Emu {
             ipc: Ipc::new(&settings),
             cartridge: Cartridge::new(cartridge_io),

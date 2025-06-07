@@ -20,7 +20,7 @@ use crate::cartridge_io::CartridgeIo;
 use crate::core::emu::Emu;
 use crate::core::graphics::gpu::Gpu;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
-use crate::core::spu::SoundSampler;
+use crate::core::spu::{SoundSampler, SAMPLE_BUFFER_SIZE};
 use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::{JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_memory::JitMemory;
@@ -36,6 +36,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::Thread;
 use std::time::{Duration, Instant};
 use std::{mem, ptr, thread};
 use CpuType::{ARM7, ARM9};
@@ -64,7 +65,7 @@ fn run_cpu(
     fps: Arc<AtomicU16>,
     key_map: Arc<AtomicU32>,
     touch_points: Arc<AtomicU16>,
-    sound_sampler: Arc<SoundSampler>,
+    sound_sampler: NonNull<SoundSampler>,
     settings: Settings,
     gpu_renderer: NonNull<GpuRenderer>,
     last_save_time: Arc<Mutex<Option<(Instant, bool)>>>,
@@ -387,24 +388,13 @@ pub fn actual_main() {
     let touch_points = Arc::new(AtomicU16::new(0));
     let touch_points_clone = touch_points.clone();
 
-    let sound_sampler = Arc::new(SoundSampler::new(settings.framelimit()));
-    let sound_sampler_clone = sound_sampler.clone();
+    let sound_sampler = UnsafeCell::new(SoundSampler::new(settings.framelimit()));
+    let sound_sampler_ptr = sound_sampler.get() as usize;
 
     let presenter_audio = presenter.get_presenter_audio();
-    let audio_thread = thread::Builder::new()
-        .name("audio".to_owned())
-        .spawn(move || {
-            set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
-            let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_BUF_SIZE }>::new();
-            loop {
-                sound_sampler.consume(audio_buffer.deref_mut());
-                presenter_audio.play(audio_buffer.deref());
-            }
-        })
-        .unwrap();
 
     let gpu_renderer = UnsafeCell::new(GpuRenderer::new());
-    let gpu_renderer_ptr = gpu_renderer.get() as u32;
+    let gpu_renderer_ptr = gpu_renderer.get() as usize;
 
     let last_save_time = Arc::new(Mutex::new(None));
     let last_save_time_clone = last_save_time.clone();
@@ -422,11 +412,28 @@ pub fn actual_main() {
                 fps_clone,
                 key_map_clone,
                 touch_points_clone,
-                sound_sampler_clone,
+                NonNull::new(sound_sampler_ptr as *mut SoundSampler).unwrap(),
                 settings_clone,
                 NonNull::new(gpu_renderer_ptr as *mut GpuRenderer).unwrap(),
                 last_save_time_clone,
             );
+        })
+        .unwrap();
+
+    let cpu_thread_ptr = cpu_thread.thread() as *const _ as usize;
+    let audio_thread = thread::Builder::new()
+        .name("audio".to_owned())
+        .spawn(move || {
+            set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
+            let mut guest_buffer = HeapMemU32::<{ SAMPLE_BUFFER_SIZE }>::new();
+            let mut guest_buffer_tmp = HeapMemU32::<{ SAMPLE_BUFFER_SIZE }>::new();
+            let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_BUF_SIZE }>::new();
+            let sound_sampler = unsafe { (sound_sampler_ptr as *mut SoundSampler).as_mut_unchecked() };
+            let cpu_thread = unsafe { (cpu_thread_ptr as *const Thread).as_ref_unchecked() };
+            loop {
+                sound_sampler.consume(cpu_thread, &mut guest_buffer, &mut guest_buffer_tmp, &mut audio_buffer);
+                presenter_audio.play(&audio_buffer);
+            }
         })
         .unwrap();
 
