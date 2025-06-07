@@ -29,7 +29,7 @@ impl PresenterAudio {
     }
 
     pub fn play(&self, buffer: &[u32; PRESENTER_AUDIO_BUF_SIZE]) {
-        let raw = unsafe { slice::from_raw_parts(buffer.as_slice().as_ptr() as *const i16, PRESENTER_AUDIO_BUF_SIZE * 2) };
+        let raw = unsafe { slice::from_raw_parts(buffer.as_ptr() as *const i16, PRESENTER_AUDIO_BUF_SIZE * 2) };
         self.audio_queue.queue_audio(raw).unwrap();
         while self.audio_queue.size() != 0 {
             thread::yield_now();

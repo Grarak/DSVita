@@ -2,63 +2,145 @@ use crate::core::cycle_manager::EventType;
 use crate::core::emu::Emu;
 use crate::core::CpuType::ARM7;
 use crate::presenter::{PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE};
+use crate::soundtouch::SoundTouch;
 use crate::utils::HeapMemU32;
 use bilge::prelude::*;
 use std::cmp::min;
-use std::collections::VecDeque;
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::{likely, unlikely};
-use std::mem;
-use std::sync::{Arc, Condvar, Mutex};
+use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::Thread;
+use std::{mem, slice, thread};
 
 pub const CHANNEL_COUNT: usize = 16;
 const SAMPLE_RATE: usize = 32768;
-const SAMPLE_BUFFER_SIZE: usize = SAMPLE_RATE * PRESENTER_AUDIO_BUF_SIZE / PRESENTER_AUDIO_SAMPLE_RATE;
+pub const SAMPLE_BUFFER_SIZE: usize = SAMPLE_RATE * PRESENTER_AUDIO_BUF_SIZE / PRESENTER_AUDIO_SAMPLE_RATE;
 
 pub struct SoundSampler {
-    samples: Mutex<VecDeque<HeapMemU32<{ SAMPLE_BUFFER_SIZE }>>>,
-    cond_var: Condvar,
+    queues: [(HeapMemU32<SAMPLE_BUFFER_SIZE>, u16); 2],
+    busy_queue: usize,
+    ready_queue: usize,
+    waiting: bool,
+    busy: AtomicBool,
     framelimit: bool,
+    sound_touch: SoundTouch,
+    last_sample: u32,
+    stretch_ratio: f32,
+    average_size: usize,
+    size_count: usize,
 }
 
 impl SoundSampler {
     pub fn new(framelimit: bool) -> SoundSampler {
+        let mut sound_touch = SoundTouch::new();
+        sound_touch.set_channels(2);
+        sound_touch.set_sample_rate(SAMPLE_RATE);
+        sound_touch.set_pitch(1.0);
+        sound_touch.set_tempo(1.0);
         SoundSampler {
-            samples: Mutex::new(VecDeque::new()),
-            cond_var: Condvar::new(),
+            queues: [(HeapMemU32::new(), 0), (HeapMemU32::new(), 0)],
+            busy_queue: 0,
+            ready_queue: 0,
+            waiting: false,
+            busy: AtomicBool::new(false),
             framelimit,
+            sound_touch,
+            last_sample: 0,
+            stretch_ratio: 1.0,
+            average_size: 0,
+            size_count: 0,
         }
     }
 
-    fn push(&self, samples: &[u32]) {
-        {
-            let mut queue = self.samples.lock().unwrap();
-            let mut queue = if queue.len() == 4 {
-                if self.framelimit {
-                    self.cond_var.wait_while(queue, |queue| queue.len() == 4).unwrap()
-                } else {
-                    queue.pop_front();
-                    queue
-                }
+    fn push(&mut self, sample: u32) {
+        while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
+
+        let (queue, size) = &mut self.queues[self.busy_queue];
+        queue[*size as usize] = sample;
+        *size += 1;
+        if *size == SAMPLE_BUFFER_SIZE as u16 {
+            let (_, other_size) = &mut self.queues[self.busy_queue ^ 1];
+            if self.framelimit {
+                self.waiting = true;
+                self.busy.store(false, Ordering::SeqCst);
+                thread::park();
+                return;
             } else {
-                queue
-            };
-            let mut s = HeapMemU32::new();
-            s.copy_from_slice(samples);
-            queue.push_back(s);
+                *other_size = 0;
+                self.ready_queue = self.busy_queue;
+                self.busy_queue ^= 1;
+            }
         }
-        self.cond_var.notify_one();
+
+        self.busy.store(false, Ordering::SeqCst);
     }
 
-    pub fn consume(&self, ret: &mut [u32; PRESENTER_AUDIO_BUF_SIZE]) {
-        let samples = {
-            let samples = self.samples.lock().unwrap();
-            let mut samples = self.cond_var.wait_while(samples, |samples| samples.is_empty()).unwrap();
-            samples.pop_front().unwrap()
-        };
-        self.cond_var.notify_one();
+    pub fn consume(&mut self, cpu_thread: &Thread, buf: &mut [u32; SAMPLE_BUFFER_SIZE], ret: &mut [u32; PRESENTER_AUDIO_BUF_SIZE]) {
+        while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
+
+        let ready_queue = self.ready_queue;
+        let (queue, queue_size) = &mut self.queues[ready_queue];
+        let mut size = *queue_size as usize;
+        *queue_size = 0;
+        buf[..size].copy_from_slice(&queue[..size]);
+        self.ready_queue = self.busy_queue;
+
+        if self.waiting {
+            self.waiting = false;
+            self.busy_queue = ready_queue;
+            cpu_thread.unpark();
+        }
+
+        self.busy.store(false, Ordering::SeqCst);
+
+        // Taken from https://github.com/dolphin-emu/dolphin/blob/b5be399fd4175eb6c4ba83201bd4866b357b3200/Source/Core/AudioCommon/AudioStretcher.cpp#L28-L65
+        // Take an average ratio so tempo doesn't change abruptly
+        self.average_size += size;
+        self.size_count += 1;
+        let ratio = self.average_size as f32 / self.size_count as f32 / SAMPLE_BUFFER_SIZE as f32;
+        if self.size_count >= 15 {
+            self.size_count = 0;
+            self.average_size = 0;
+        }
+        // 80ms latency
+        let max_backlog = SAMPLE_RATE as f32 * 80.0 / 1000.0;
+        let backlog_fullness = self.sound_touch.num_of_samples() as f32 / max_backlog;
+        if backlog_fullness > 5.0 {
+            size = 0;
+        }
+
+        // Plot the function for understanding
+        // In a nutshell backlog is not at 50% => slow down
+        // More aggressive slow down when sample size is small
+        let tweak = 1.0 + 2.0 * (backlog_fullness - 0.5) * (1.0 - ratio);
+        let mut current_ratio = ratio * tweak;
+
+        // The fever samples we, the smaller the lpf gain
+        // Most likely the next audio frame will have more samples
+        // Thus don't let it influence the ratio too much
+        const LPF_TIME_SCALE: f32 = 1.0;
+        let lpf_gain = 1.0 - (-ratio / LPF_TIME_SCALE).exp();
+        self.stretch_ratio += lpf_gain * (current_ratio - self.stretch_ratio);
+
+        if self.stretch_ratio < 0.05 {
+            self.stretch_ratio = 0.05;
+        }
+        self.sound_touch.set_tempo(self.stretch_ratio as f64);
+
+        let sound_touch_buf = unsafe { slice::from_raw_parts(buf.as_ptr() as *const i16, size << 1) };
+        self.sound_touch.put_samples(sound_touch_buf, size);
+        let sound_touch_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut i16, SAMPLE_BUFFER_SIZE << 1) };
+        let num_samples = self.sound_touch.receive_samples(sound_touch_buf, SAMPLE_BUFFER_SIZE);
+        if num_samples == 0 {
+            buf.fill(self.last_sample);
+        } else if num_samples != SAMPLE_BUFFER_SIZE {
+            self.last_sample = buf[num_samples - 1];
+            buf[num_samples..].fill(self.last_sample);
+        }
+
         for i in 0..PRESENTER_AUDIO_BUF_SIZE {
-            ret[i] = samples[i * SAMPLE_BUFFER_SIZE / PRESENTER_AUDIO_BUF_SIZE];
+            ret[i] = buf[i * SAMPLE_BUFFER_SIZE / PRESENTER_AUDIO_BUF_SIZE];
         }
     }
 }
@@ -229,12 +311,11 @@ pub struct Spu {
     sound_bias: u16,
     duty_cycles: [i32; 6],
     noise_values: [u16; 2],
-    samples_buffer: Vec<u32>,
-    sound_sampler: Arc<SoundSampler>,
+    sound_sampler: NonNull<SoundSampler>,
 }
 
 impl Spu {
-    pub fn new(sound_sampler: Arc<SoundSampler>) -> Self {
+    pub fn new(sound_sampler: NonNull<SoundSampler>) -> Self {
         Spu {
             audio_enabled: false,
             channels: [SpuChannel::default(); CHANNEL_COUNT],
@@ -243,7 +324,6 @@ impl Spu {
             sound_bias: 0,
             duty_cycles: [0; 6],
             noise_values: [0; 2],
-            samples_buffer: Vec::with_capacity(SAMPLE_BUFFER_SIZE),
             sound_sampler,
         }
     }
@@ -433,11 +513,7 @@ impl Emu {
             for i in 0..2 {
                 self.spu.sound_cap_channels[i].cnt.set_start_status(false);
             }
-            self.spu.samples_buffer.push(0);
-            if unlikely(self.spu.samples_buffer.len() == SAMPLE_BUFFER_SIZE) {
-                self.spu.sound_sampler.push(self.spu.samples_buffer.as_slice());
-                self.spu.samples_buffer.clear();
-            }
+            unsafe { self.spu.sound_sampler.as_mut().push(0) };
             self.cm.schedule(512 * 2, EventType::SpuSample, 0);
             return;
         }
@@ -609,15 +685,7 @@ impl Emu {
         let sample_left = ((sample_left - 0x200) << 5) as u32;
         let sample_right = ((sample_right - 0x200) << 5) as u32;
 
-        unsafe {
-            assert_unchecked(self.spu.samples_buffer.len() < self.spu.samples_buffer.capacity());
-            self.spu.samples_buffer.push_within_capacity((sample_right << 16) | (sample_left & 0xFFFF)).unwrap_unchecked();
-        }
-        if unlikely(self.spu.samples_buffer.len() == SAMPLE_BUFFER_SIZE) {
-            self.spu.sound_sampler.push(self.spu.samples_buffer.as_slice());
-            self.spu.samples_buffer.clear();
-        }
-
+        unsafe { self.spu.sound_sampler.as_mut().push(((sample_right << 16) & 0xFFFF0000) | (sample_left & 0xFFFF)) };
         self.cm.schedule(512 * 2, EventType::SpuSample, 0);
     }
 }

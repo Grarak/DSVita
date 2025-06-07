@@ -32,15 +32,15 @@ libc = "0.2.153"
 sdl2 = "0.35.0"
 affinity = "0.1.2"
 backtrace = "0.3.74"
-tracy-client = { version = "0.18.2", default-features = false, features = [
-    "enable",
-    "system-tracing",
-    "context-switch-tracing",
-    "sampling",
-    "code-transfer",
-    "broadcast",
-    "callstack-inlines",
-], optional = true }
+#tracy-client = { version = "0.18.2", default-features = false, features = [
+#    "enable",
+#    "system-tracing",
+#    "context-switch-tracing",
+#    "sampling",
+#    "code-transfer",
+#    "broadcast",
+#    "callstack-inlines",
+#], optional = true }
 
 [build-dependencies]
 bindgen = "0.71.1"
@@ -70,8 +70,8 @@ vitasdk-sys = { version = "0.3.2", features = [
     #    "SceRazorCapture_stub",
 ] }
 
-[features]
-profiling = ["dep:tracy-client"]
+#[features]
+#profiling = ["dep:tracy-client"]
 
 [profile.release-debug]
 inherits = "dev"

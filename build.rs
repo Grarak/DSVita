@@ -50,6 +50,8 @@ fn main() {
             "-DVIXL_INCLUDE_TARGET_A32=1".to_string(),
             "-DVIXL_INCLUDE_TARGET_T32=1".to_string(),
             "-std=c++17".to_string(),
+            "-mtune=cortex-a9".to_string(),
+            "-mfpu=neon".to_string(),
         ];
         if build_profile_name != "release" {
             vixl_flags.push("-DVIXL_DEBUG=1".to_string());
@@ -370,6 +372,133 @@ fn main() {
                 variant_i += 1;
             }
         }
+    }
+
+    {
+        const SOUNDTOUCH_FILES: [&str; 14] = [
+            "AAFilter.cpp",
+            "BPMDetect.cpp",
+            "cpu_detect_x86.cpp",
+            "FIFOSampleBuffer.cpp",
+            "FIRFilter.cpp",
+            "InterpolateCubic.cpp",
+            "InterpolateLinear.cpp",
+            "InterpolateShannon.cpp",
+            "mmx_optimized.cpp",
+            "PeakFinder.cpp",
+            "RateTransposer.cpp",
+            "SoundTouch.cpp",
+            "sse_optimized.cpp",
+            "TDStretch.cpp",
+        ];
+
+        let soundtouch_path = Path::new("soundtouch");
+        let mut soundtouch_includes = vec![
+            soundtouch_path.join("include").to_str().unwrap().to_string(),
+            soundtouch_path.join("source").join("SoundTouch").to_str().unwrap().to_string(),
+        ];
+
+        let mut soundtouch_flags = vec![
+            "-DSOUNDTOUCH_INTEGER_SAMPLES=1".to_string(),
+            "-std=c++17".to_string(),
+            "-DST_NO_EXCEPTION_HANDLING=1".to_string(),
+            "-mtune=cortex-a9".to_string(),
+            "-mfpu=neon".to_string(),
+            "-DM_PI=3.14159265358979323846".to_string(),
+        ];
+
+        if !is_target_vita {
+            soundtouch_flags.push("--target=armv7-unknown-linux-gnueabihf".to_string());
+        }
+
+        if let Ok(vitasdk_path) = &vitasdk_path {
+            if is_target_vita || !is_host_linux {
+                let cpp_include_path = vitasdk_path.join("arm-vita-eabi").join("include/c++");
+                let dir = fs::read_dir(cpp_include_path).unwrap();
+                let version = dir.into_iter().next().unwrap().unwrap();
+                let cpp_include_path = version.path();
+
+                soundtouch_includes.push(cpp_include_path.to_str().unwrap().to_string());
+                soundtouch_includes.push(cpp_include_path.join("arm-vita-eabi").to_str().unwrap().to_string());
+                soundtouch_flags.push(format!("--sysroot={}", vitasdk_path.join("arm-vita-eabi").to_str().unwrap()));
+            }
+        }
+
+        let mut soundtouch_build = cc::Build::new();
+        soundtouch_build.cpp(true);
+        if is_target_vita {
+            soundtouch_build
+                .compiler(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-g++"))
+                .archiver(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-gcc-ar"))
+                .ranlib(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-gcc-ranlib"))
+                .pic(false);
+        } else {
+            soundtouch_build.compiler("clang++");
+        }
+        for file in SOUNDTOUCH_FILES {
+            let path = soundtouch_path.join("source").join("SoundTouch").join(file);
+            println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
+            soundtouch_build.file(path);
+        }
+        for include in &soundtouch_includes {
+            println!("cargo:rerun-if-changed={include}");
+            soundtouch_build.include(include);
+        }
+        for flag in &soundtouch_flags {
+            soundtouch_build.flag(flag);
+        }
+
+        let soundtouch_wrapper_path = out_path.join("soundtouch_wrapper.cpp");
+        let mut soundtouch_wrapper = File::create(&soundtouch_wrapper_path).unwrap();
+        writeln!(soundtouch_wrapper, "#include <SoundTouch.h>").unwrap();
+        writeln!(soundtouch_wrapper, "namespace soundtouch {{").unwrap();
+        writeln!(
+            soundtouch_wrapper,
+            "uint FIFOProcessor_numSamples(const FIFOProcessor* processor) {{ return processor->numSamples(); }}"
+        )
+        .unwrap();
+        writeln!(soundtouch_wrapper, "}}").unwrap();
+        soundtouch_build.file(soundtouch_wrapper_path);
+
+        if build_profile_name == "release" {
+            soundtouch_build.flag("-flto").flag("-ffat-lto-objects").opt_level_str("fast");
+        }
+        soundtouch_build.compile("soundtouch");
+
+        let bindings_file = out_path.join("soundtouch_bindings.rs");
+
+        let mut soundtouch_bindgen = bindgen::Builder::default().clang_args(["-x", "c++"]).clang_args(["-target", "armv7-unknown-linux-gnueabihf"]);
+        for include in &soundtouch_includes {
+            soundtouch_bindgen = soundtouch_bindgen.clang_arg(format!("-I{include}"));
+        }
+        for flag in &soundtouch_flags {
+            soundtouch_bindgen = soundtouch_bindgen.clang_arg(flag);
+        }
+        soundtouch_bindgen
+            .header("soundtouch_wrapper.h")
+            .formatter(Formatter::Prettyplease)
+            .generate_comments(true)
+            .layout_tests(false)
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+            .constified_enum_module("*")
+            .allowlist_type("soundtouch::SoundTouch")
+            .allowlist_type("soundtouch::FIFOProcessor")
+            .allowlist_type("soundtouch::FIFOSamplePipe")
+            .allowlist_type("soundtouch::SAMPLETYPE")
+            .allowlist_type("soundtouch::BPMDetect")
+            .allowlist_type("soundtouch::TDStretch")
+            .allowlist_type("soundtouch::RateTransposer")
+            .allowlist_function("soundtouch::FIFOProcessor_numSamples")
+            .opaque_type("std::.*")
+            .manually_drop_union(".*")
+            .default_non_copy_union_style(bindgen::NonCopyUnionStyle::ManuallyDrop)
+            .use_core()
+            .enable_cxx_namespaces()
+            .trust_clang_mangling(true)
+            .generate()
+            .unwrap()
+            .write_to_file(bindings_file)
+            .unwrap();
     }
 
     if vitasdk_path.is_err() {

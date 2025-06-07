@@ -7,3 +7,6 @@
 [submodule "vixl"]
 	path = vixl
 	url = https://github.com/Grarak/vixl.git
+[submodule "soundtouch"]
+	path = soundtouch
+	url = https://codeberg.org/soundtouch/soundtouch.git
