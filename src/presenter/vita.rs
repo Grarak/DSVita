@@ -15,7 +15,7 @@ use crate::presenter::platform::imgui::{
 };
 use crate::presenter::{
     PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN,
-    PRESENTER_SUB_ROTATED_BOTTOM_SCREEN,
+    PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_FOCUSED_BOTTOM_SCREEN
 };
 use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, SettingsConfig};
 use gl::types::{GLboolean, GLenum, GLuint};
@@ -207,6 +207,14 @@ impl Presenter {
                             let (x, y) = PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.normalize(x, y);
                             let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.width) as u8;
                             let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.height) as u8;
+                            touch = Some((screen_x, screen_y));
+                        }
+                    }
+                    ScreenMode::Focused => {
+                        if PRESENTER_SUB_FOCUSED_BOTTOM_SCREEN.is_within(x, y) {
+                            let (x, y) = PRESENTER_SUB_FOCUSED_BOTTOM_SCREEN.normalize(x, y);
+                            let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_FOCUSED_BOTTOM_SCREEN.width) as u8;
+                            let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_FOCUSED_BOTTOM_SCREEN.height) as u8;
                             touch = Some((screen_x, screen_y));
                         }
                     }
