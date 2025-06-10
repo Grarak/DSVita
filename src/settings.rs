@@ -25,6 +25,7 @@ pub enum ScreenMode {
     Regular,
     Rotated,
     Resized,
+    Focused
 }
 
 impl From<u8> for ScreenMode {

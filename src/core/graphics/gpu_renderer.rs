@@ -7,7 +7,7 @@ use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
-use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_ROTATED};
+use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_ROTATED, PRESENTER_SUB_FOCUSED};
 use crate::settings::{ScreenMode, Settings};
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
@@ -111,13 +111,14 @@ impl GpuRenderer {
                 ScreenMode::Regular => PRESENTER_SUB_REGULAR,
                 ScreenMode::Rotated => PRESENTER_SUB_ROTATED,
                 ScreenMode::Resized => PRESENTER_SUB_RESIZED,
+                ScreenMode::Focused => PRESENTER_SUB_FOCUSED
             };
             let used_fbo = match screen_topology.mode {
-                ScreenMode::Regular | ScreenMode::Resized => self.renderer_2d.common.blend_fbo.fbo,
+                ScreenMode::Regular | ScreenMode::Resized | ScreenMode::Focused => self.renderer_2d.common.blend_fbo.fbo,
                 ScreenMode::Rotated => self.renderer_2d.common.rotate_fbo.fbo,
             };
             let src_coords = match screen_topology.mode {
-                ScreenMode::Regular | ScreenMode::Resized => (DISPLAY_WIDTH, DISPLAY_HEIGHT),
+                ScreenMode::Regular | ScreenMode::Resized | ScreenMode::Focused => (DISPLAY_WIDTH, DISPLAY_HEIGHT),
                 ScreenMode::Rotated => (DISPLAY_HEIGHT, DISPLAY_WIDTH),
             };
 
