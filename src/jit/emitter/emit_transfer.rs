@@ -44,12 +44,16 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
     }
 
-    fn emit_align_addr(flag_update: u32, dest_reg: Reg, src_reg: Reg, size: u8, block_asm: &mut BlockAsm) {
-        if block_asm.thumb {
-            block_asm.ldr2(dest_reg, !(0xF0000000 | (size as u32 - 1)));
-            block_asm.and5(flag_update, Cond::AL, dest_reg, dest_reg, &src_reg.into());
+    fn emit_sanitize_addr(flag_update: u32, dest_reg: Reg, src_reg: Reg, size: u8, align_addr: bool, block_asm: &mut BlockAsm) {
+        if align_addr {
+            if block_asm.thumb {
+                block_asm.ldr2(dest_reg, !(0xF0000000 | (size as u32 - 1)));
+                block_asm.and5(flag_update, Cond::AL, dest_reg, dest_reg, &src_reg.into());
+            } else {
+                block_asm.bic5(flag_update, Cond::AL, dest_reg, src_reg, &(0xF0000000 | (size as u32 - 1)).into());
+            }
         } else {
-            block_asm.bic5(flag_update, Cond::AL, dest_reg, src_reg, &(0xF0000000 | (size as u32 - 1)).into());
+            block_asm.bic5(flag_update, Cond::AL, dest_reg, src_reg, &0xF0000000u32.into());
         }
     }
 
@@ -57,7 +61,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let is_64bit = size == 8;
         let size = if is_64bit { 4 } else { size };
 
-        Self::emit_align_addr(flag_update, tmp_reg, Reg::R2, size, block_asm);
+        Self::emit_sanitize_addr(flag_update, tmp_reg, Reg::R2, size, self.emu.settings.unaligned_mem(), block_asm);
 
         let func = match size {
             1 => <MacroAssembler as MasmStrb2<Reg, &MemOperand>>::strb2,
@@ -74,7 +78,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         func(block_asm, op0, &mem_operand);
         if is_64bit {
             block_asm.add5(flag_update, Cond::AL, Reg::R2, Reg::R2, &4.into());
-            Self::emit_align_addr(flag_update, tmp_reg, Reg::R2, 4, block_asm);
+            Self::emit_sanitize_addr(flag_update, tmp_reg, Reg::R2, 4, self.emu.settings.unaligned_mem(), block_asm);
 
             func(block_asm, op0_next, &mem_operand);
         }
@@ -96,7 +100,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let is_64bit = size == 8;
         let size = if is_64bit { 4 } else { size };
 
-        Self::emit_align_addr(flag_update, tmp_reg, Reg::R2, size, block_asm);
+        Self::emit_sanitize_addr(flag_update, tmp_reg, Reg::R2, size, self.emu.settings.unaligned_mem(), block_asm);
 
         let func = get_read_func!(size, signed);
 
@@ -106,17 +110,19 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let mem_operand = MemOperand::reg_offset2(tmp_reg, Reg::LR);
         func(block_asm, op0, &mem_operand);
-        if size == 4 {
+        if self.emu.settings.unaligned_mem() && size == 4 {
             block_asm.lsl5(flag_update, Cond::AL, tmp_reg, Reg::R2, &3.into());
             block_asm.ror5(flag_update, Cond::AL, op0, op0, &tmp_reg.into());
         }
         if is_64bit {
             block_asm.add5(flag_update, Cond::AL, Reg::R2, Reg::R2, &4.into());
-            Self::emit_align_addr(flag_update, tmp_reg, Reg::R2, 4, block_asm);
+            Self::emit_sanitize_addr(flag_update, tmp_reg, Reg::R2, 4, self.emu.settings.unaligned_mem(), block_asm);
 
             func(block_asm, op0_next, &mem_operand);
-            block_asm.lsl5(flag_update, Cond::AL, tmp_reg, Reg::R2, &3.into());
-            block_asm.ror5(flag_update, Cond::AL, op0_next, op0_next, &tmp_reg.into());
+            if self.emu.settings.unaligned_mem() {
+                block_asm.lsl5(flag_update, Cond::AL, tmp_reg, Reg::R2, &3.into());
+                block_asm.ror5(flag_update, Cond::AL, op0_next, op0_next, &tmp_reg.into());
+            }
         }
     }
 
@@ -318,7 +324,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let fast_mem_start = block_asm.get_cursor_offset();
         let guest_inst_metadata_start = block_asm.get_guest_inst_metadata_len();
 
-        Self::emit_align_addr(flag_update, Reg::R0, op0_mapped, 4, block_asm);
+        Self::emit_sanitize_addr(flag_update, Reg::R0, op0_mapped, 4, self.emu.settings.unaligned_mem(), block_asm);
 
         block_asm.load_mmu_offset(Reg::R1);
         block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &Reg::R1.into());
