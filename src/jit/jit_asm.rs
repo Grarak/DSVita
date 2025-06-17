@@ -400,7 +400,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
     }
 
     let (jit_entry, flushed) = {
-        debug_println!("{CPU:?} {thumb} emit code block {guest_pc:x}");
+        debug_println!("{CPU:?} {thumb} emit code block {guest_pc:x} - {:x}", guest_pc + pc_offset);
         // unsafe { BLOCK_LOG = guest_pc == 0x200675e };
 
         asm.analyzer.analyze(guest_pc, &asm.jit_buf.insts, thumb);

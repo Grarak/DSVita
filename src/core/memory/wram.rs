@@ -83,7 +83,12 @@ impl Wram {
 
 impl Emu {
     pub fn wram_set_cnt(&mut self, value: u8) {
-        self.mem.wram.cnt = value & 0x3;
+        let value = value & 0x3;
+        if value == self.mem.wram.cnt {
+            return;
+        }
+
+        self.mem.wram.cnt = value;
         self.mem.wram.init_maps();
 
         self.jit.invalidate_wram();
