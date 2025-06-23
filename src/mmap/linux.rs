@@ -11,13 +11,17 @@ pub struct Mmap {
 }
 
 impl Mmap {
-    pub fn executable(_: impl AsRef<str>, size: usize) -> io::Result<Self> {
-        Mmap::new(PROT_READ | PROT_WRITE | PROT_EXEC, size)
+    pub fn rw(_: impl AsRef<str>, addr: usize, size: usize) -> io::Result<Self> {
+        Mmap::new(PROT_READ | PROT_WRITE, addr, size)
     }
 
-    fn new(prot: i32, size: usize) -> io::Result<Self> {
-        let ptr = unsafe { mmap(ptr::null_mut(), size as _, prot, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
-        if ptr != MAP_FAILED {
+    pub fn executable(_: impl AsRef<str>, size: usize) -> io::Result<Self> {
+        Mmap::new(PROT_READ | PROT_WRITE | PROT_EXEC, 0, size)
+    }
+
+    fn new(prot: i32, addr: usize, size: usize) -> io::Result<Self> {
+        let ptr = unsafe { mmap(addr as _, size as _, prot, MAP_ANON | MAP_PRIVATE, -1, 0) };
+        if ptr != MAP_FAILED && (addr == 0 || ptr as usize == addr) {
             Ok(Mmap { ptr: ptr as _, size })
         } else {
             Err(Error::from(ErrorKind::AddrNotAvailable))
@@ -153,9 +157,9 @@ pub struct VirtualMem {
 }
 
 impl VirtualMem {
-    pub fn new(virtual_size: usize) -> io::Result<Self> {
-        let ptr = unsafe { mmap(ptr::null_mut(), virtual_size as _, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0) };
-        if ptr == MAP_FAILED {
+    pub fn new(virtual_size: usize, addr: usize) -> io::Result<Self> {
+        let ptr = unsafe { mmap(addr as _, virtual_size as _, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0) };
+        if ptr == MAP_FAILED || ptr as usize != addr {
             Err(Error::from(ErrorKind::AddrNotAvailable))
         } else {
             Ok(VirtualMem { ptr: ptr as _, size: virtual_size })

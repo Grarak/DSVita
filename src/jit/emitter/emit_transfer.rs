@@ -66,7 +66,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             _ => unreachable!(),
         };
 
-        block_asm.load_mmu_offset(Reg::LR);
+        block_asm.mov4(flag_update, Cond::AL, Reg::LR, &(CPU.mmu_tcm_addr() as u32).into());
 
         metadata_emitter(self, block_asm);
 
@@ -100,7 +100,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let func = get_read_func!(size, signed);
 
-        block_asm.load_mmu_offset(Reg::LR);
+        block_asm.mov4(flag_update, Cond::AL, Reg::LR, &(CPU.mmu_tcm_addr() as u32).into());
 
         metadata_emitter(self, block_asm);
 
@@ -167,7 +167,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.ensure_emit_for(64);
             let fast_mem_start = block_asm.get_cursor_offset();
 
-            block_asm.ldr2(Reg::R1, (imm_addr & !(0xF0000000 | (size as u32 - 1))) + self.emu.mmu_get_base_tcm_ptr::<CPU>() as u32);
+            block_asm.ldr2(Reg::R1, (imm_addr & !(0xF0000000 | (size as u32 - 1))) + CPU.mmu_tcm_addr() as u32);
 
             block_asm.guest_inst_metadata(
                 self.jit_buf.insts_cycle_counts[inst_index],
@@ -320,8 +320,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         Self::emit_align_addr(flag_update, Reg::R0, op0_mapped, 4, block_asm);
 
-        block_asm.load_mmu_offset(Reg::R1);
-        block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &Reg::R1.into());
+        block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &(CPU.mmu_tcm_addr() as u32).into());
 
         let usable_regs = reg_reserve!(Reg::R1, Reg::R2, Reg::R12, Reg::LR) + block_asm.get_free_host_regs();
 

@@ -314,13 +314,13 @@ unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType, const THUMB: boo
         "sub sp, sp, {}",
         "mov r3, sp",
         "bl {}",
-        "ldr r3, [sp, {}]",
+        "mov r3, {}",
         "ldr r2, [r3, {}]",
         "msr cpsr, r2",
         "pop {{r4-r12,pc}}",
         const (GUEST_REG_ALLOCATIONS.len() + 2) * 4,
         sym _jump_to_other_guest_pc::<CPU, THUMB>,
-        const (GUEST_REG_ALLOCATIONS.len() + 2) * 4,
+        const CPU.guest_regs_addr(),
         const Reg::CPSR as usize * 4,
     );
 }
@@ -407,11 +407,8 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         asm.jit_buf.guest_pc_start = guest_pc;
         asm.jit_buf.debug_info.resize(asm.analyzer.basic_blocks.len(), asm.jit_buf.insts.len());
 
-        let guest_regs_ptr = asm.emu.thread_get_reg_mut_ptr(CPU);
-        let mmu_offset = asm.emu.mmu_get_base_tcm_ptr::<CPU>();
-
-        let mut block_asm = BlockAsm::new(thumb);
-        block_asm.prologue(guest_regs_ptr, mmu_offset, asm.analyzer.basic_blocks.len());
+        let mut block_asm = BlockAsm::new(CPU.guest_regs_addr() as _, thumb);
+        block_asm.prologue(asm.analyzer.basic_blocks.len());
 
         if BRANCH_LOG {
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());

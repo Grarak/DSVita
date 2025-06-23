@@ -23,6 +23,24 @@ pub struct Mmap {
 }
 
 impl Mmap {
+    pub fn rw(name: impl AsRef<str>, addr: usize, size: usize) -> io::Result<Self> {
+        let c_name = CString::new(name.as_ref())?;
+
+        let block_uid = unsafe {
+            let mut opt = mem::zeroed::<kubridge::SceKernelAllocMemBlockKernelOpt>();
+            opt.size = size_of::<kubridge::SceKernelAllocMemBlockKernelOpt>() as _;
+            opt.attr = 0x1;
+            opt.field_C = addr as _;
+            kuKernelAllocMemBlock(c_name.as_ptr(), SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, size as u32, &mut opt)
+        };
+        let mmap = Mmap::new(block_uid, size)?;
+        if addr == 0 || addr == mmap.ptr as usize {
+            Ok(mmap)
+        } else {
+            Err(Error::from(ErrorKind::AddrNotAvailable))
+        }
+    }
+
     pub fn executable(name: impl AsRef<str>, size: usize) -> io::Result<Self> {
         let c_name = CString::new(name.as_ref())?;
 
@@ -177,10 +195,10 @@ pub struct VirtualMem {
 }
 
 impl VirtualMem {
-    pub fn new(virtual_size: usize) -> io::Result<Self> {
-        let mut ptr = ptr::null_mut();
+    pub fn new(virtual_size: usize, addr: usize) -> io::Result<Self> {
+        let mut ptr = addr as *mut c_void;
         let vmem_block = unsafe { kuKernelMemReserve(&mut ptr, virtual_size as _, SCE_KERNEL_MEMBLOCK_TYPE_USER_RW) };
-        if vmem_block >= 0 {
+        if vmem_block >= 0 && ptr as usize == addr {
             Ok(VirtualMem {
                 ptr: ptr as _,
                 vmem_block,

@@ -82,10 +82,6 @@ impl ThreadRegs {
 }
 
 impl Emu {
-    pub fn thread_get_reg_mut_ptr(&mut self, cpu: CpuType) -> *mut u32 {
-        self.thread[cpu].gp_regs.as_mut_ptr()
-    }
-
     pub fn thread_get_reg(&self, cpu: CpuType, reg: Reg) -> &u32 {
         debug_assert_ne!(reg, Reg::None);
         let base_ptr = ptr::addr_of!(self.thread[cpu].gp_regs[0]);

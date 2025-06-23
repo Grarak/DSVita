@@ -26,7 +26,7 @@ pub struct Emu {
     pub cartridge: Cartridge,
     pub gpu: Gpu,
     pub cm: CycleManager,
-    pub thread: [ThreadRegs; 2],
+    pub thread: [&'static mut ThreadRegs; 2],
     pub cpu: [CpuRegs; 2],
     pub cp15: Cp15,
     pub input: Input,
@@ -45,13 +45,22 @@ pub struct Emu {
 }
 
 impl Emu {
-    pub fn new(cartridge_io: CartridgeIo, fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: Arc<SoundSampler>, jit: JitMemory, settings: Settings) -> Self {
+    pub fn new(
+        thread_regs: [&'static mut ThreadRegs; 2],
+        cartridge_io: CartridgeIo,
+        fps: Arc<AtomicU16>,
+        key_map: Arc<AtomicU32>,
+        touch_points: Arc<AtomicU16>,
+        sound_sampler: Arc<SoundSampler>,
+        jit: JitMemory,
+        settings: Settings,
+    ) -> Self {
         Emu {
             ipc: Ipc::new(&settings),
             cartridge: Cartridge::new(cartridge_io),
             gpu: Gpu::new(fps),
             cm: CycleManager::new(),
-            thread: [ThreadRegs::new(), ThreadRegs::new()],
+            thread: thread_regs,
             cpu: [CpuRegs::new(), CpuRegs::new()],
             cp15: Cp15::new(),
             input: Input::new(key_map),

@@ -21,11 +21,12 @@ use crate::core::emu::Emu;
 use crate::core::graphics::gpu::Gpu;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::spu::SoundSampler;
+use crate::core::thread_regs::ThreadRegs;
 use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::{JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_memory::JitMemory;
 use crate::logging::debug_println;
-use crate::mmap::{register_abort_handler, ArmContext};
+use crate::mmap::{register_abort_handler, ArmContext, Mmap, PAGE_SIZE};
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils::{const_str_equal, set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
@@ -74,10 +75,26 @@ fn run_cpu(
     let arm7_ram_addr = cartridge_io.header.arm7_values.ram_address;
     let arm7_entry_addr = cartridge_io.header.arm7_values.entry_address;
 
+    let mut arm9_thread_regs = Mmap::rw("arm9_thread_regs", ARM9.guest_regs_addr(), utils::align_up(size_of::<ThreadRegs>(), PAGE_SIZE)).unwrap();
+    let mut arm7_thread_regs = Mmap::rw("arm7_thread_regs", ARM7.guest_regs_addr(), utils::align_up(size_of::<ThreadRegs>(), PAGE_SIZE)).unwrap();
+    let arm9_thread_regs: &'static mut ThreadRegs = unsafe { mem::transmute(arm9_thread_regs.as_mut_ptr()) };
+    let arm7_thread_regs: &'static mut ThreadRegs = unsafe { mem::transmute(arm7_thread_regs.as_mut_ptr()) };
+    *arm9_thread_regs = ThreadRegs::new();
+    *arm7_thread_regs = ThreadRegs::new();
+
     // Initializing jit mem inside of emu, breaks kubridge for some reason
     // Might be caused by initialize shared mem? Initialize here and pass it to emu
     let jit_mem = JitMemory::new(&settings);
-    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_io, fps, key_map, touch_points, sound_sampler, jit_mem, settings));
+    let mut emu_unsafe = UnsafeCell::new(Emu::new(
+        [arm9_thread_regs, arm7_thread_regs],
+        cartridge_io,
+        fps,
+        key_map,
+        touch_points,
+        sound_sampler,
+        jit_mem,
+        settings,
+    ));
     let emu_ptr = emu_unsafe.get() as u32;
     let emu = emu_unsafe.get_mut();
 
@@ -94,7 +111,7 @@ fn run_cpu(
     {
         debug_println!("Copying cartridge header to main");
         let cartridge_header: &[u8; cartridge_io::HEADER_IN_RAM_SIZE] = unsafe { mem::transmute(&emu.cartridge.io.header) };
-        unsafe { emu.mmu_get_base_ptr::<{ ARM9 }>().add(0x27FFE00).copy_from(cartridge_header.as_ptr(), cartridge_header.len()) };
+        emu.mem_write_multiple_slice::<{ ARM9 }, false, _>(0x27FFE00, cartridge_header);
 
         emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FF850, 0x5835u16); // ARM7 BIOS CRC
         emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FF880, 0x0007u16); // Message from ARM9 to ARM7
@@ -109,7 +126,7 @@ fn run_cpu(
 
         // User settings
         let user_settings = &spi::SPI_FIRMWARE[spi::USER_SETTINGS_1_ADDR..spi::USER_SETTINGS_1_ADDR + 0x70];
-        unsafe { emu.mmu_get_base_ptr::<{ ARM9 }>().add(0x27FFC80).copy_from(user_settings.as_ptr(), user_settings.len()) };
+        emu.mem_write_multiple_slice::<{ ARM9 }, false, _>(0x27FFC80, user_settings);
     }
 
     // unsafe {
@@ -217,14 +234,13 @@ pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a, CPU> 
 
 unsafe fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize, arm_context: &ArmContext) -> bool {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
-    let base_ptr = asm.emu.mmu_get_base_tcm_ptr::<CPU>();
 
     debug_println!("fault at {host_pc:x} {mem_addr:x}");
-    if mem_addr < base_ptr as usize {
+    if mem_addr < CPU.mmu_tcm_addr() {
         return false;
     }
 
-    let guest_mem_addr = (mem_addr - base_ptr as usize) as u32;
+    let guest_mem_addr = (mem_addr - CPU.mmu_tcm_addr()) as u32;
     debug_println!("guest fault at {host_pc:x} {mem_addr:x} to guest {guest_mem_addr:x}");
     asm.emu.jit.patch_slow_mem(host_pc, guest_mem_addr, CPU, arm_context)
 }

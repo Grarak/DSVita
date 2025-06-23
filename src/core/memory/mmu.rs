@@ -13,7 +13,7 @@ use std::cmp::max;
 pub const MMU_PAGE_SHIFT: usize = 14;
 pub const MMU_PAGE_SIZE: usize = 1 << MMU_PAGE_SHIFT;
 
-fn remove_mmu_write_entry(addr: u32, region: &MemRegion, mmu: &mut [usize], vmem: &mut VirtualMem) {
+fn remove_mmu_write_entry(addr: u32, region: &MemRegion, mmu: &mut [usize], vmem: Option<&mut VirtualMem>) {
     if mmu[(addr >> MMU_PAGE_SHIFT) as usize] == 0 {
         return;
     }
@@ -22,14 +22,15 @@ fn remove_mmu_write_entry(addr: u32, region: &MemRegion, mmu: &mut [usize], vmem
     for addr_offset in (region.start as u32 + base_offset..region.end as u32).step_by(region.size) {
         mmu[(addr_offset >> MMU_PAGE_SHIFT) as usize] = 0;
     }
-    vmem.set_region_protection(addr as usize & !(MMU_PAGE_SIZE - 1), MMU_PAGE_SIZE, region, true, false, false);
+    if let Some(vmem) = vmem {
+        vmem.set_region_protection(addr as usize & !(MMU_PAGE_SIZE - 1), MMU_PAGE_SIZE, region, true, false, false);
+    }
 }
 
 impl MmuArm9 {
     pub fn new() -> Self {
         MmuArm9 {
-            vmem: VirtualMem::new(V_MEM_ARM9_RANGE as _).unwrap(),
-            vmem_tcm: VirtualMem::new(V_MEM_ARM9_RANGE as _).unwrap(),
+            vmem_tcm: VirtualMem::new(V_MEM_ARM9_RANGE as _, ARM9.mmu_tcm_addr()).unwrap(),
             mmu_read: HeapMemUsize::new(),
             mmu_write: HeapMemUsize::new(),
             mmu_read_tcm: HeapMemUsize::new(),
@@ -42,7 +43,6 @@ impl MmuArm9 {
 }
 
 pub struct MmuArm9 {
-    vmem: VirtualMem,
     vmem_tcm: VirtualMem,
     mmu_read: HeapMemUsize<{ V_MEM_ARM9_RANGE as usize / MMU_PAGE_SIZE }>,
     mmu_write: HeapMemUsize<{ V_MEM_ARM9_RANGE as usize / MMU_PAGE_SIZE }>,
@@ -56,8 +56,6 @@ pub struct MmuArm9 {
 impl Emu {
     fn update_all_no_tcm_arm9(&mut self) {
         for addr in (MAIN_OFFSET..SHARED_WRAM_OFFSET).step_by(MMU_PAGE_SIZE) {
-            self.mem.mmu_arm9.vmem.destroy_map(addr as usize, MMU_PAGE_SIZE);
-
             let mmu_read = &mut self.mem.mmu_arm9.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mem.mmu_arm9.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
             *mmu_read = 0;
@@ -75,38 +73,21 @@ impl Emu {
             }
         }
 
-        self.mem.mmu_arm9.vmem.destroy_region_map(&MAIN_REGION);
-        self.mem.mmu_arm9.vmem.create_region_map(&self.mem.shm, &MAIN_REGION).unwrap();
-
-        // self.vmem.destroy_region_map(&GBA_ROM_REGION);
-        // self.vmem.create_region_map(shm, &GBA_ROM_REGION).unwrap();
-        //
-        // self.vmem.destroy_region_map(&GBA_RAM_REGION);
-        // self.vmem.create_region_map(shm, &GBA_RAM_REGION).unwrap();
-        //
-        // self.vmem.destroy_region_map(&ARM9_BIOS_REGION);
-        // self.vmem.create_region_map(shm, &ARM9_BIOS_REGION).unwrap();
-
         self.update_wram_no_tcm_arm9();
     }
 
     fn update_wram_no_tcm_arm9(&mut self) {
-        let shm = &self.mem.shm;
         let wram = &self.mem.wram;
 
         for addr in (SHARED_WRAM_OFFSET..IO_PORTS_OFFSET).step_by(MMU_PAGE_SIZE) {
-            self.mem.mmu_arm9.vmem.destroy_map(addr as usize, MMU_PAGE_SIZE);
-
             let mmu_read = &mut self.mem.mmu_arm9.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mem.mmu_arm9.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
 
             let shm_offset = wram.get_shm_offset::<{ ARM9 }>(addr);
             if shm_offset != usize::MAX {
-                self.mem.mmu_arm9.vmem.create_map(shm, shm_offset, addr as usize, MMU_PAGE_SIZE, true, true, false).unwrap();
                 *mmu_read = shm_offset;
                 *mmu_write = shm_offset;
             } else {
-                self.mem.mmu_arm9.vmem.create_map(shm, 0, addr as usize, MMU_PAGE_SIZE, false, false, false).unwrap();
                 *mmu_read = 0;
                 *mmu_write = 0;
             }
@@ -236,7 +217,7 @@ pub struct MmuArm7 {
 impl MmuArm7 {
     pub fn new() -> Self {
         MmuArm7 {
-            vmem: VirtualMem::new(V_MEM_ARM7_RANGE as usize).unwrap(),
+            vmem: VirtualMem::new(V_MEM_ARM7_RANGE as usize, ARM7.mmu_tcm_addr()).unwrap(),
             mmu_read: HeapMemUsize::new(),
             mmu_write: HeapMemUsize::new(),
         }
@@ -350,20 +331,6 @@ impl Emu {
         }
     }
 
-    pub fn mmu_get_base_ptr<const CPU: CpuType>(&mut self) -> *mut u8 {
-        match CPU {
-            ARM9 => self.mem.mmu_arm9.vmem.as_mut_ptr(),
-            ARM7 => self.mem.mmu_arm7.vmem.as_mut_ptr(),
-        }
-    }
-
-    pub fn mmu_get_base_tcm_ptr<const CPU: CpuType>(&mut self) -> *mut u8 {
-        match CPU {
-            ARM9 => self.mem.mmu_arm9.vmem_tcm.as_mut_ptr(),
-            ARM7 => self.mem.mmu_arm7.vmem.as_mut_ptr(),
-        }
-    }
-
     pub fn mmu_get_read<const CPU: CpuType>(&self) -> &[usize] {
         match CPU {
             ARM9 => self.mem.mmu_arm9.mmu_read.as_ref(),
@@ -395,10 +362,10 @@ impl Emu {
     pub fn mmu_remove_write<const CPU: CpuType>(&mut self, addr: u32, region: &MemRegion) {
         match CPU {
             ARM9 => {
-                remove_mmu_write_entry(addr, region, self.mem.mmu_arm9.mmu_write.as_mut(), &mut self.mem.mmu_arm9.vmem);
-                remove_mmu_write_entry(addr, region, self.mem.mmu_arm9.mmu_write_tcm.as_mut(), &mut self.mem.mmu_arm9.vmem_tcm);
+                remove_mmu_write_entry(addr, region, self.mem.mmu_arm9.mmu_write.as_mut(), None);
+                remove_mmu_write_entry(addr, region, self.mem.mmu_arm9.mmu_write_tcm.as_mut(), Some(&mut self.mem.mmu_arm9.vmem_tcm));
             }
-            ARM7 => remove_mmu_write_entry(addr, region, self.mem.mmu_arm7.mmu_write.as_mut(), &mut self.mem.mmu_arm7.vmem),
+            ARM7 => remove_mmu_write_entry(addr, region, self.mem.mmu_arm7.mmu_write.as_mut(), Some(&mut self.mem.mmu_arm7.vmem)),
         }
     }
 }
