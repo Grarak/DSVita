@@ -11,8 +11,16 @@ env:
 
 jobs:
   build:
+    strategy:
+      matrix:
+        include:
+          - flavor: release-debug
+          - flavor: release
+            env: RUSTFLAGS="-Zlocation-detail=none -Zfmt-debug=none"
 
     runs-on: ubuntu-latest
+
+    name: Build ${{ matrix.flavor }}
 
     steps:
       - uses: actions/checkout@v4
@@ -44,20 +52,19 @@ jobs:
         env:
           VITASDK: /usr/local/vitasdk
 
-      - name: Build release
-        run: cargo vita build vpk --release
+      - name: Build
+        run: ${{ matrix.env }} cargo vita build vpk --profile ${{ matrix.flavor }}
         env:
           VITASDK: /usr/local/vitasdk
-          RUSTFLAGS: -Zlocation-detail=none -Zfmt-debug=none
 
       - name: Upload vpk
         uses: actions/upload-artifact@v4
         with:
-          name: dsvita-vpk
-          path: target/armv7-sony-vita-newlibeabihf/release/dsvita.vpk
+          name: dsvita-${{ matrix.flavor }}-vpk
+          path: target/armv7-sony-vita-newlibeabihf/${{ matrix.flavor }}/dsvita.vpk
 
       - name: Upload elf
         uses: actions/upload-artifact@v4
         with:
-          name: dsvita-elf
-          path: target/armv7-sony-vita-newlibeabihf/release/dsvita.elf
+          name: dsvita-${{ matrix.flavor }}-elf
+          path: target/armv7-sony-vita-newlibeabihf/${{ matrix.flavor }}/dsvita.elf

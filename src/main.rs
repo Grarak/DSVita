@@ -25,7 +25,7 @@ use crate::core::thread_regs::ThreadRegs;
 use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::{JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_memory::JitMemory;
-use crate::logging::debug_println;
+use crate::logging::{debug_println, info_println};
 use crate::mmap::{register_abort_handler, ArmContext, Mmap, PAGE_SIZE};
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
 use crate::settings::{Arm7Emu, Settings};
@@ -98,7 +98,7 @@ fn run_cpu(
     let emu_ptr = emu_unsafe.get() as u32;
     let emu = emu_unsafe.get_mut();
 
-    debug_println!("Initialize mmu");
+    info_println!("Initialize mmu");
     emu.mmu_update_all::<{ ARM9 }>();
     emu.mmu_update_all::<{ ARM7 }>();
 
@@ -109,7 +109,7 @@ fn run_cpu(
     }
 
     {
-        debug_println!("Copying cartridge header to main");
+        info_println!("Copying cartridge header to main");
         let cartridge_header: &[u8; cartridge_io::HEADER_IN_RAM_SIZE] = unsafe { mem::transmute(&emu.cartridge.io.header) };
         emu.mem_write_multiple_slice::<{ ARM9 }, false, _>(0x27FFE00, cartridge_header);
 
@@ -176,12 +176,12 @@ fn run_cpu(
         let arm9_code = emu.cartridge.io.read_arm9_code();
         let arm7_code = emu.cartridge.io.read_arm7_code();
 
-        debug_println!("write ARM9 code at {:x}", arm9_ram_addr);
+        info_println!("write ARM9 code at {:x}", arm9_ram_addr);
         for (i, value) in arm9_code.iter().enumerate() {
             emu.mem_write::<{ ARM9 }, _>(arm9_ram_addr + i as u32, *value);
         }
 
-        debug_println!("write ARM7 code at {:x}", arm7_ram_addr);
+        info_println!("write ARM7 code at {:x}", arm7_ram_addr);
         for (i, value) in arm7_code.iter().enumerate() {
             emu.mem_write::<{ ARM7 }, _>(arm7_ram_addr + i as u32, *value);
         }
@@ -336,6 +336,8 @@ pub fn actual_main() {
         set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core1);
     }
 
+    info_println!("Starting DSVita");
+
     if IS_DEBUG {
         std::env::set_var("RUST_BACKTRACE", "1");
         #[cfg(target_os = "linux")]
@@ -387,12 +389,31 @@ pub fn actual_main() {
             );
             eprintln!();
         }));
+
+        #[cfg(target_os = "vita")]
+        {
+            let default_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                let location = info.location().unwrap();
+
+                let msg = match info.payload().downcast_ref::<&'static str>() {
+                    Some(s) => *s,
+                    None => match info.payload().downcast_ref::<String>() {
+                        Some(s) => &s[..],
+                        None => "Box<Any>",
+                    },
+                };
+                info_println!("panicked at {location}: '{msg}'");
+
+                default_hook(info);
+            }));
+        }
     }
 
     let mut presenter = Presenter::new();
     let (cartridge_io, settings) = presenter.present_ui();
     presenter.destroy_ui();
-    eprintln!("{} Settings: {settings:?}", cartridge_io.file_name);
+    info_println!("{} Settings: {settings:?}", cartridge_io.file_name);
 
     let fps = Arc::new(AtomicU16::new(0));
     let fps_clone = fps.clone();
@@ -432,7 +453,7 @@ pub fn actual_main() {
         .stack_size(MAX_STACK_DEPTH_SIZE + 1024 * 1024) // Add 1MB headroom to stack
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
-            println!("Start cpu {:?}", thread::current().id());
+            info_println!("Start cpu {:?}", thread::current().id());
             run_cpu(
                 cartridge_io,
                 fps_clone,

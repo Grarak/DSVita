@@ -1,3 +1,11 @@
+#[cfg(all(target_os = "vita", debug_assertions))]
+lazy_static::lazy_static! {
+    pub static ref LOG_FILE: std::sync::Mutex<std::fs::File> = {
+        let _ = std::fs::create_dir(crate::presenter::LOG_PATH);
+        std::sync::Mutex::new(std::fs::File::create(crate::presenter::LOG_FILE).unwrap())
+    };
+}
+
 macro_rules! debug_println {
     ($($args:tt)*) => {
         if crate::DEBUG_LOG {
@@ -8,7 +16,25 @@ macro_rules! debug_println {
         }
     };
 }
+
 pub(crate) use debug_println;
+
+macro_rules! info_println {
+    ($($args:tt)*) => {
+        let log = format!($($args)*);
+        let current_thread = std::thread::current();
+        let thread_name = current_thread.name().unwrap();
+        let value = format!("[{}] {}", thread_name, log);
+        println!("{value}");
+        #[cfg(all(target_os = "vita", debug_assertions))]
+        {
+            let mut log_file = crate::logging::LOG_FILE.lock().unwrap();
+            std::io::Write::write(&mut *log_file, value.as_bytes()).unwrap();
+            std::io::Write::write_all(&mut *log_file, "\n".as_bytes()).unwrap();
+        }
+    };
+}
+pub(crate) use info_println;
 
 macro_rules! branch_println {
     ($($args:tt)*) => {

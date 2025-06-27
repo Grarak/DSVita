@@ -16,6 +16,7 @@ macro_rules! shader_source {
     }};
 }
 
+use crate::logging::info_println;
 pub(in crate::core::graphics) use shader_source;
 
 pub unsafe fn create_shader(name: impl Into<String>, shader_src: &str, typ: GLenum) -> Result<GLuint, StrErr> {
@@ -24,7 +25,7 @@ pub unsafe fn create_shader(name: impl Into<String>, shader_src: &str, typ: GLen
         gl::VERTEX_SHADER => "vertex shader",
         _ => return Err(StrErr::new("unknown shader")),
     };
-    println!("Compiling {} as {shader_name}", name.into());
+    info_println!("Compiling {} as {shader_name}", name.into());
 
     let shader = gl::CreateShader(typ);
     if shader == 0 {

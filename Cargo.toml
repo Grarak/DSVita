@@ -22,7 +22,6 @@ rust-ini = "0.21.1"
 static_assertions = "1.1.0"
 paste = "1.0.15"
 enum_dispatch = "0.3.13"
-bit-set = "0.8.0"
 strum = "0.27.1"
 strum_macros = "0.27.1"
 
@@ -40,6 +39,7 @@ cmake = "0.1.54"
 regex = "1.11.1"
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]
+lazy_static = "1.5.0"
 vitasdk-sys = { version = "0.3.2", features = [
     "SceAppMgr_stub",
     "SceAppUtil_stub",

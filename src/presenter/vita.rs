@@ -1,6 +1,7 @@
 use crate::cartridge_io::{CartridgeIo, CartridgePreview};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::input::Keycode;
+use crate::logging::info_println;
 use crate::presenter::platform::imgui::{
     vglGetProcAddress, ImFontAtlas_AddFontFromMemoryTTF, ImFontAtlas_GetGlyphRangesDefault, ImFontConfig, ImFontConfig_ImFontConfig, ImGuiCond__ImGuiSetCond_Always,
     ImGuiFocusedFlags__ImGuiFocusedFlags_ChildWindows, ImGuiHoveredFlags__ImGuiHoveredFlags_Default, ImGuiItemFlags__ImGuiItemFlags_Disabled, ImGuiNavInput__ImGuiNavInput_Cancel,
@@ -12,7 +13,10 @@ use crate::presenter::platform::imgui::{
     ImGui_PopID, ImGui_PopItemFlag, ImGui_PopStyleVar, ImGui_PushID3, ImGui_PushItemFlag, ImGui_PushStyleVar, ImGui_PushStyleVar1, ImGui_Render, ImGui_SameLine, ImGui_Selectable, ImGui_SetCursorPosX,
     ImGui_SetItemDefaultFocus, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
 };
-use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN};
+use crate::presenter::{
+    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN,
+    PRESENTER_SUB_ROTATED_BOTTOM_SCREEN,
+};
 use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, SettingsConfig};
 use gl::types::{GLboolean, GLenum, GLuint};
 use std::ffi::{CStr, CString};
@@ -31,6 +35,8 @@ mod imgui {
 const ROM_PATH: &str = "ux0:data/dsvita";
 const SAVES_PATH: &str = "ux0:data/dsvita/saves";
 const SETTINGS_PATH: &str = "ux0:data/dsvita/settings";
+pub const LOG_PATH: &str = "ux0:data/dsvita/log";
+pub const LOG_FILE: &str = "ux0:data/dsvita/log/log.txt";
 
 #[repr(u8)]
 pub enum SharkOpt {
@@ -173,10 +179,12 @@ impl Presenter {
 
                 match screenmode {
                     ScreenMode::Regular => {
-                        let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x, y);
-                        let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
-                        let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height) as u8;
-                        touch = Some((screen_x, screen_y));
+                        if PRESENTER_SUB_BOTTOM_SCREEN.is_within(x, y) {
+                            let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x, y);
+                            let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
+                            let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height) as u8;
+                            touch = Some((screen_x, screen_y));
+                        }
                     }
                     ScreenMode::Rotated => {
                         if PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.is_within(x, y) {
@@ -187,10 +195,12 @@ impl Presenter {
                         }
                     }
                     ScreenMode::Resized => {
-                        let (x, y) = PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.normalize(x, y);
-                        let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.width) as u8;
-                        let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.height) as u8;
-                        touch = Some((screen_x, screen_y));
+                        if PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.is_within(x, y) {
+                            let (x, y) = PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.normalize(x, y);
+                            let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.width) as u8;
+                            let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.height) as u8;
+                            touch = Some((screen_x, screen_y));
+                        }
                     }
                 }
                 self.keymap &= !(1 << 16);
@@ -214,6 +224,7 @@ impl Presenter {
                         if params.contains("psgm:play") {
                             if let Some(pos) = params.find("&param=") {
                                 let path = PathBuf::from(&params[pos + 7..]);
+                                info_println!("Launching from app param {}", path.to_str().unwrap());
                                 let name = path.file_name().unwrap().to_str().unwrap();
                                 let save_file = PathBuf::from(SAVES_PATH).join(format!("{name}.sav"));
                                 let settings_file = PathBuf::from(SETTINGS_PATH).join(format!("{name}.ini"));
@@ -233,6 +244,8 @@ impl Presenter {
                         let path = entry.path();
                         let name = path.file_name().unwrap().to_str().unwrap();
                         if name.to_lowercase().ends_with(".nds") {
+                            info_println!("Found rom {}", path.to_str().unwrap());
+
                             // I mistyped the save file extension in 0.3.0
                             // Add migration step
                             let old_save_file = PathBuf::from(SAVES_PATH).join(format!("{name}.nds"));
