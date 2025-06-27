@@ -177,20 +177,23 @@ impl GpuRenderer {
             let per = fps * 100 / 60;
 
             let last_time_saved = *last_save_time.lock().unwrap();
-            let info_text = match last_time_saved {
-                None => "",
-                Some((last_time_saved, success)) => {
-                    if Instant::now().duration_since(last_time_saved).as_secs() < 3 {
-                        if success {
-                            "Written to save file"
-                        } else {
-                            "Failed to save"
-                        }
+            let mut info_text = {
+                #[cfg(target_os = "vita")]
+                {
+                    format!("CPU: {}MHz", vitasdk_sys::scePowerGetArmClockFrequency())
+                }
+                #[cfg(target_os = "linux")]
+                "".to_string()
+            };
+            if let Some((last_time_saved, success)) = last_time_saved {
+                if Instant::now().duration_since(last_time_saved).as_secs() < 3 {
+                    if success {
+                        info_text = "Written to save file".to_string();
                     } else {
-                        ""
+                        info_text = "Failed to save".to_string();
                     }
                 }
-            };
+            }
 
             let arm7_emu: &str = settings.arm7_hle().into();
             self.gl_glyph.draw(format!("{}ms {arm7_emu}\n{per}% ({fps}fps)\n{info_text}", self.average_render_time));
