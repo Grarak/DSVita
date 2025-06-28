@@ -126,7 +126,7 @@ impl Emu {
     pub fn thread_set_cpsr_with_flags(&mut self, cpu: CpuType, value: u32, flags: u8) {
         if flags & 1 == 1 {
             let mask = if u8::from(Cpsr::from(self.thread[cpu].cpsr).mode()) == 0x10 { 0xE0 } else { 0xFF };
-            self.thread_set_cpsr::<false>(cpu, (self.thread[cpu].cpsr & !mask) | (value & mask));
+            self.thread_set_cpsr(cpu, (self.thread[cpu].cpsr & !mask) | (value & mask), false);
         }
 
         for i in 1..4 {
@@ -157,7 +157,7 @@ impl Emu {
     #[inline]
     pub fn thread_restore_spsr(&mut self, cpu: CpuType) {
         if !self.thread_is_user_mode(cpu) {
-            self.thread_set_cpsr::<false>(cpu, self.thread[cpu].spsr);
+            self.thread_set_cpsr(cpu, self.thread[cpu].spsr, false);
         }
     }
 
@@ -175,7 +175,7 @@ impl Emu {
         self.thread[cpu].pc |= 1;
     }
 
-    pub fn thread_set_cpsr<const SAVE: bool>(&mut self, cpu: CpuType, value: u32) {
+    pub fn thread_set_cpsr(&mut self, cpu: CpuType, value: u32, save: bool) {
         let regs = &mut self.thread[cpu];
         let current_cpsr = Cpsr::from(regs.cpsr);
         let new_cpsr = Cpsr::from(value);
@@ -278,7 +278,7 @@ impl Emu {
             }
         }
 
-        if SAVE {
+        if save {
             regs.spsr = regs.cpsr;
         }
         regs.cpsr = value;

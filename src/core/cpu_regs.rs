@@ -170,12 +170,8 @@ impl Emu {
         self.cpu[cpu].halt_cnt = value & 0xC0;
 
         match self.cpu[cpu].halt_cnt {
-            1 => {
-                todo!("gba mode")
-            }
-            2 => {
-                todo!("halt")
-            }
+            1 => todo!("gba mode"),
+            2 => todo!("halt"),
             _ => {}
         }
     }
@@ -186,6 +182,13 @@ impl Emu {
             let interrupt = cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && !Cpsr::from(self.thread[CPU].cpsr).irq_disable();
             if interrupt {
                 debug_println!("{CPU:?} interrupt {:?}", InterruptFlags(cpu_regs.ie & cpu_regs.irf));
+            } else {
+                debug_println!(
+                    "{CPU:?} can't interrupt {:x} {:?} {}",
+                    cpu_regs.ime,
+                    InterruptFlags(cpu_regs.ie & cpu_regs.irf),
+                    !Cpsr::from(self.thread[CPU].cpsr).irq_disable()
+                );
             }
             interrupt
         };

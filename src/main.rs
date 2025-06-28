@@ -152,7 +152,7 @@ fn run_cpu(
         regs.svc.sp = 0x3003FC0;
         regs.user.lr = arm9_entry_addr;
         regs.pc = arm9_entry_addr;
-        emu.thread_set_cpsr::<false>(ARM9, 0x000000DF);
+        emu.thread_set_cpsr(ARM9, 0x000000DF, false);
     }
 
     {
@@ -169,7 +169,7 @@ fn run_cpu(
         regs.user.sp = 0x380FFC0;
         regs.user.lr = arm7_entry_addr;
         regs.pc = arm7_entry_addr;
-        emu.thread_set_cpsr::<false>(ARM7, 0x000000DF);
+        emu.thread_set_cpsr(ARM7, 0x000000DF, false);
     }
 
     {

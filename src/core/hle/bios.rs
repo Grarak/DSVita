@@ -24,10 +24,11 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
 
     let regs = &mut emu.thread[CPU];
     let mut cpsr = Cpsr::from(regs.cpsr);
+
     cpsr.set_irq_disable(true);
     cpsr.set_thumb(false);
     cpsr.set_mode(u5::new(0x12));
-    emu.thread_set_cpsr::<true>(CPU, u32::from(cpsr));
+    emu.thread_set_cpsr(CPU, u32::from(cpsr), true);
 
     let regs = &mut emu.thread[CPU];
     let is_thumb = (regs.pc & 1) == 1;
@@ -80,7 +81,10 @@ pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
 
     let spsr = regs.spsr;
     regs.pc = (regs.pc & !1) | Cpsr::from(spsr).thumb() as u32;
-    emu.thread_set_cpsr::<false>(CPU, spsr);
+    emu.thread_set_cpsr(CPU, spsr, false);
+
+    let regs = &mut emu.thread[CPU];
+    let cpsr = Cpsr::from(regs.cpsr);
 }
 
 pub fn bit_unpack<const CPU: CpuType>(emu: &mut Emu) {

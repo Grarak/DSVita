@@ -39,7 +39,7 @@ mod handler {
             new_cpsr.set_thumb(false);
             new_cpsr.set_fiq_disable(true);
             new_cpsr.set_irq_disable(true);
-            emu.thread_set_cpsr::<true>(CPU, new_cpsr.into());
+            emu.thread_set_cpsr(CPU, new_cpsr.into(), true);
 
             let regs = &mut emu.thread[CPU];
             // Interrupt handler will subtract 4 from lr, offset this

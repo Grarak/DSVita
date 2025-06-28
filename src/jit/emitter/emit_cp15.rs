@@ -30,7 +30,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let pc = block_asm.current_pc;
             block_asm.ldr2(Reg::R1, pc + 4);
             block_asm.store_guest_reg(Reg::R1, Reg::PC);
-            block_asm.call(cpu_regs_halt::<CPU> as _);
+            block_asm.call(cpu_regs_halt as _);
             self.emit_branch_out_metadata(inst_index, true, block_asm);
             block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
         } else {
