@@ -667,6 +667,7 @@ impl Emu {
                 }
 
                 debug_println!("gx: {} {cmd:x} {count}", unsafe { FUNC_NAME_LUT.get_unchecked(cmd) });
+
                 for i in 0..count {
                     unsafe { *params.get_unchecked_mut(i as usize) = *regs_3d.cmd_fifo.front() };
                     regs_3d.cmd_fifo.pop_front();
@@ -708,6 +709,9 @@ impl Emu {
         if !regs_3d.skip && regs_3d.flushed {
             regs_3d.pow_cnt1 = regs_3d.current_pow_cnt1;
         }
+
+        #[cfg(feature = "profiling")]
+        let _zone = tracy_client::secondary_frame_mark!("Execute gpu register 3d cmds");
     }
 
     fn regs_3d_post_queue_entry(&mut self) {

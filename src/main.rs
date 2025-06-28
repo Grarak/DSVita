@@ -28,6 +28,7 @@ use crate::jit::jit_memory::JitMemory;
 use crate::logging::{debug_println, info_println};
 use crate::mmap::{register_abort_handler, ArmContext, Mmap, PAGE_SIZE};
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
+use crate::profiling::{profiling_init, profiling_set_thread_name};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils::{const_str_equal, set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
@@ -52,6 +53,7 @@ mod logging;
 mod math;
 mod mmap;
 mod presenter;
+mod profiling;
 mod settings;
 mod utils;
 
@@ -201,6 +203,7 @@ fn run_cpu(
         .name("save".to_owned())
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core1);
+            profiling_set_thread_name!("save");
             let last_save_time = last_save_time;
             let emu = unsafe { (emu_ptr as *mut Emu).as_mut().unwrap_unchecked() };
             loop {
@@ -336,6 +339,9 @@ pub fn actual_main() {
         set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core1);
     }
 
+    profiling_init!();
+    profiling_set_thread_name!("main");
+
     info_println!("Starting DSVita");
 
     if IS_DEBUG {
@@ -432,6 +438,7 @@ pub fn actual_main() {
         .name("audio".to_owned())
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
+            profiling_set_thread_name!("audio");
             let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_BUF_SIZE }>::new();
             loop {
                 sound_sampler.consume(audio_buffer.deref_mut());
@@ -453,6 +460,7 @@ pub fn actual_main() {
         .stack_size(MAX_STACK_DEPTH_SIZE + 1024 * 1024) // Add 1MB headroom to stack
         .spawn(move || {
             set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
+            profiling_set_thread_name!("cpu");
             info_println!("Start cpu {:?}", thread::current().id());
             run_cpu(
                 cartridge_io,

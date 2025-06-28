@@ -9,6 +9,7 @@ use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
+use crate::profiling::profiling_frame_mark;
 use crate::settings::Arm7Emu;
 use bilge::prelude::*;
 use std::intrinsics::unlikely;
@@ -224,6 +225,8 @@ impl Emu {
                 if self.settings.arm7_hle() == Arm7Emu::Hle {
                     self.arm7_hle_on_frame();
                 }
+
+                profiling_frame_mark!();
             }
             _ => {}
         }
