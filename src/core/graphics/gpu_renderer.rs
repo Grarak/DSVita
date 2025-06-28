@@ -9,6 +9,7 @@ use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
 use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_ROTATED};
 use crate::settings::{ScreenMode, Settings};
+use crate::utils::HeapMemU8;
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -49,6 +50,9 @@ pub struct GpuRenderer {
     render_time_measure_count: u8,
     render_time_sum: u32,
     average_render_time: u16,
+
+    #[cfg(feature = "profiling")]
+    frame_capture: HeapMemU8<{ (PRESENTER_SCREEN_WIDTH * PRESENTER_SCREEN_HEIGHT * 4) as usize }>,
 }
 
 impl GpuRenderer {
@@ -67,6 +71,9 @@ impl GpuRenderer {
             render_time_measure_count: 0,
             render_time_sum: 0,
             average_render_time: 0,
+
+            #[cfg(feature = "profiling")]
+            frame_capture: HeapMemU8::new(),
         }
     }
 
@@ -167,9 +174,7 @@ impl GpuRenderer {
                     src_coords.1,
                 );
             }
-        }
 
-        unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
             gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
 
@@ -198,7 +203,21 @@ impl GpuRenderer {
             let arm7_emu: &str = settings.arm7_hle().into();
             self.gl_glyph.draw(format!("{}ms {arm7_emu}\n{per}% ({fps}fps)\n{info_text}", self.average_render_time));
 
+            #[cfg(feature = "profiling")]
+            gl::ReadPixels(
+                0,
+                0,
+                PRESENTER_SCREEN_WIDTH as _,
+                PRESENTER_SCREEN_HEIGHT as _,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                self.frame_capture.as_mut_ptr() as _,
+            );
+
             presenter.gl_swap_window();
+
+            #[cfg(feature = "profiling")]
+            tracy_client::frame_image(self.frame_capture.as_ref(), PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, 0, true);
         }
 
         let render_time_diff = Instant::now().duration_since(render_time_start);

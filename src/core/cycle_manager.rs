@@ -127,6 +127,9 @@ impl CycleManager {
 
 impl Emu {
     pub fn cm_check_events(&mut self) -> bool {
+        #[cfg(feature = "profiling")]
+        let _frame = tracy_client::secondary_frame_mark!("Cycle manager check events");
+
         static LUT: [fn(&mut Emu, u16); EventType::WifiScanHle as usize + 1] = [
             Emu::cpu_on_interrupt_event::<{ ARM9 }>,
             Emu::cpu_on_interrupt_event::<{ ARM7 }>,
