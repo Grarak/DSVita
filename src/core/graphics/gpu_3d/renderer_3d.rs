@@ -247,16 +247,6 @@ impl Gpu3DRenderer {
     fn add_vertices(&mut self, polygon_index: usize) {
         let polygon = &self.content.polygons[polygon_index];
 
-        if u8::from(polygon.tex_image_param.format()) != 0
-            && u8::from(polygon.tex_image_param.format()) != 1
-            && u8::from(polygon.tex_image_param.format()) != 2
-            && u8::from(polygon.tex_image_param.format()) != 3
-            && u8::from(polygon.tex_image_param.format()) != 6
-            && u8::from(polygon.tex_image_param.format()) != 7
-        {
-            // todo!("{}", u8::from(polygon.tex_image_param.format()))
-        }
-
         // println!(
         //     "renderer: polygon {polygon_index} type {:?} pal addr {:x} tex image param {:?} attr {:?}",
         //     polygon.polygon_type,
@@ -337,7 +327,7 @@ impl Gpu3DRenderer {
             }
 
             let w = coords[3] as f32 / 4096f32;
-            self.vertices_buf.push(Gpu3DVertex {
+            let gpu_vertex = Gpu3DVertex {
                 coords: [
                     (vertex_x as f32 * 2f32 / 255f32 - 1f32) * w,
                     (1f32 - vertex_y as f32 * 2f32 / 191f32) * w,
@@ -346,15 +336,20 @@ impl Gpu3DRenderer {
                 ],
                 color: [c.0, c.1, c.2, polygon_index as f32],
                 tex_coords: [tex_coords[0] as f32 / 16f32, tex_coords[1] as f32 / 16f32],
-            });
+            };
 
             // println!(
-            //     "vertex {j} s {} t {} s_norm {} t_norm {}",
+            //     "vertex {j} x {} y {} z {} s {} t {} s_norm {} t_norm {}",
+            //     gpu_vertex.coords[0],
+            //     gpu_vertex.coords[1],
+            //     gpu_vertex.coords[2],
             //     self.content.vertices[polygon.vertices_index as usize + j as usize].tex_coords[0],
             //     self.content.vertices[polygon.vertices_index as usize + j as usize].tex_coords[1],
-            //     self.vertices_buf[self.vertices_buf.len() - 1].tex_coords[0],
-            //     self.vertices_buf[self.vertices_buf.len() - 1].tex_coords[1],
-            // )
+            //     gpu_vertex.tex_coords[0],
+            //     gpu_vertex.tex_coords[1],
+            // );
+
+            self.vertices_buf.push(gpu_vertex);
         }
 
         self.polygon_attrs[polygon_index].tex_image_param = u32::from(polygon.tex_image_param);

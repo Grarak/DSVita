@@ -274,7 +274,7 @@ pub struct Gpu2DCommon {
     blend_ubo: GLuint,
     pub blend_fbo: GpuFbo,
     rotate_program: GLuint,
-    pub rotate_fbo: GpuFbo
+    pub rotate_fbo: GpuFbo,
 }
 
 impl Gpu2DCommon {
@@ -289,16 +289,16 @@ impl Gpu2DCommon {
 
                 gl::UseProgram(program);
 
-                gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
+                gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
 
-                let disp_cnt_loc = gl::GetUniformLocation(program, "dispCnt\0".as_ptr() as _);
+                let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCnt".as_ptr() as _);
 
                 let mut ubo = 0;
                 gl::GenBuffers(1, &mut ubo);
                 gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
 
                 if cfg!(target_os = "linux") {
-                    gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "WinBgUbo\0".as_ptr() as _), 0);
+                    gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"WinBgUbo".as_ptr() as _), 0);
                 }
 
                 gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
@@ -318,22 +318,22 @@ impl Gpu2DCommon {
 
                 gl::UseProgram(program);
 
-                gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
+                gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
 
-                gl::Uniform1i(gl::GetUniformLocation(program, "bg0Tex\0".as_ptr() as _), 0);
-                gl::Uniform1i(gl::GetUniformLocation(program, "bg1Tex\0".as_ptr() as _), 1);
-                gl::Uniform1i(gl::GetUniformLocation(program, "bg2Tex\0".as_ptr() as _), 2);
-                gl::Uniform1i(gl::GetUniformLocation(program, "bg3Tex\0".as_ptr() as _), 3);
-                gl::Uniform1i(gl::GetUniformLocation(program, "objTex\0".as_ptr() as _), 4);
-                gl::Uniform1i(gl::GetUniformLocation(program, "objDepthTex\0".as_ptr() as _), 5);
-                gl::Uniform1i(gl::GetUniformLocation(program, "winTex\0".as_ptr() as _), 6);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"bg0Tex".as_ptr() as _), 0);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"bg1Tex".as_ptr() as _), 1);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"bg2Tex".as_ptr() as _), 2);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"bg3Tex".as_ptr() as _), 3);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"objTex".as_ptr() as _), 4);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"objDepthTex".as_ptr() as _), 5);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"winTex".as_ptr() as _), 6);
 
                 let mut ubo = 0;
                 gl::GenBuffers(1, &mut ubo);
                 gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
 
                 if cfg!(target_os = "linux") {
-                    gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "BlendUbo\0".as_ptr() as _), 0);
+                    gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"BlendUbo".as_ptr() as _), 0);
                 }
 
                 gl::UseProgram(0);
@@ -352,11 +352,11 @@ impl Gpu2DCommon {
 
                 gl::UseProgram(program);
 
-                gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
-                gl::Uniform1i(gl::GetUniformLocation(program, "tex\0".as_ptr() as _), 0);
+                gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
 
                 gl::UseProgram(0);
-                
+
                 let fbo = GpuFbo::new(DISPLAY_HEIGHT as u32, DISPLAY_WIDTH as u32, false).unwrap();
 
                 (program, fbo)
@@ -378,7 +378,7 @@ impl Gpu2DCommon {
                 blend_ubo,
                 blend_fbo,
                 rotate_program,
-                rotate_fbo
+                rotate_fbo,
             }
         }
     }
@@ -411,11 +411,11 @@ impl Gpu2DVramDisplayProgram {
 
             gl::UseProgram(program);
 
-            gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
+            gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
 
-            let disp_cnt_loc = gl::GetUniformLocation(program, "dispCnt\0".as_ptr() as _);
+            let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCnt".as_ptr() as _);
 
-            gl::Uniform1i(gl::GetUniformLocation(program, "lcdcPalTex\0".as_ptr() as _), 0);
+            gl::Uniform1i(gl::GetUniformLocation(program, c"lcdcPalTex".as_ptr() as _), 0);
 
             gl::UseProgram(0);
 
@@ -513,23 +513,23 @@ impl Gpu2DProgram {
                 gl::BindVertexArray(0);
                 gl::BindBuffer(gl::ARRAY_BUFFER, 0);
 
-                gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
-                gl::BindAttribLocation(program, 1, "oamIndex\0".as_ptr() as _);
+                gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
+                gl::BindAttribLocation(program, 1, c"oamIndex".as_ptr() as _);
 
-                gl::Uniform1i(gl::GetUniformLocation(program, "oamTex\0".as_ptr() as _), 0);
-                gl::Uniform1i(gl::GetUniformLocation(program, "objTex\0".as_ptr() as _), 1);
-                gl::Uniform1i(gl::GetUniformLocation(program, "palTex\0".as_ptr() as _), 2);
-                gl::Uniform1i(gl::GetUniformLocation(program, "extPalTex\0".as_ptr() as _), 3);
-                gl::Uniform1i(gl::GetUniformLocation(program, "winTex\0".as_ptr() as _), 4);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"oamTex".as_ptr() as _), 0);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"objTex".as_ptr() as _), 1);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 2);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"extPalTex".as_ptr() as _), 3);
+                gl::Uniform1i(gl::GetUniformLocation(program, c"winTex".as_ptr() as _), 4);
 
-                let disp_cnt_loc = gl::GetUniformLocation(program, "dispCnt\0".as_ptr() as _);
+                let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCnt".as_ptr() as _);
 
                 let mut ubo = 0;
                 gl::GenBuffers(1, &mut ubo);
                 gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
 
                 if cfg!(target_os = "linux") {
-                    gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "ObjUbo\0".as_ptr() as _), 0);
+                    gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"ObjUbo".as_ptr() as _), 0);
                 }
 
                 gl::UseProgram(0);
@@ -573,19 +573,19 @@ impl Gpu2DProgram {
                 let init_program = |program: GLuint, has_ubo: bool| {
                     gl::UseProgram(program);
 
-                    gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
+                    gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
 
-                    let disp_cnt_loc = gl::GetUniformLocation(program, "dispCnt\0".as_ptr() as _);
-                    let cnt_loc = gl::GetUniformLocation(program, "bgCnt\0".as_ptr() as _);
+                    let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCnt".as_ptr() as _);
+                    let cnt_loc = gl::GetUniformLocation(program, c"bgCnt".as_ptr() as _);
 
-                    gl::Uniform1i(gl::GetUniformLocation(program, "bgTex\0".as_ptr() as _), 0);
-                    gl::Uniform1i(gl::GetUniformLocation(program, "palTex\0".as_ptr() as _), 1);
-                    gl::Uniform1i(gl::GetUniformLocation(program, "extPalTex\0".as_ptr() as _), 2);
-                    gl::Uniform1i(gl::GetUniformLocation(program, "winTex\0".as_ptr() as _), 3);
-                    gl::Uniform1i(gl::GetUniformLocation(program, "display3dTex\0".as_ptr() as _), 4);
+                    gl::Uniform1i(gl::GetUniformLocation(program, c"bgTex".as_ptr() as _), 0);
+                    gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 1);
+                    gl::Uniform1i(gl::GetUniformLocation(program, c"extPalTex".as_ptr() as _), 2);
+                    gl::Uniform1i(gl::GetUniformLocation(program, c"winTex".as_ptr() as _), 3);
+                    gl::Uniform1i(gl::GetUniformLocation(program, c"display3dTex".as_ptr() as _), 4);
 
                     if cfg!(target_os = "linux") && has_ubo {
-                        gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, "BgUbo\0".as_ptr() as _), 0);
+                        gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"BgUbo".as_ptr() as _), 0);
                     }
 
                     gl::UseProgram(0);
@@ -609,10 +609,7 @@ impl Gpu2DProgram {
             };
 
             let rotate_vao = {
-                const VERTICES: [f32; 2 * 2 * 4] = [-1f32, -1f32, 0f32, 1f32,
-                                                     1f32, -1f32, 0f32, 0f32,
-                                                     1f32,  1f32, 1f32, 0f32,
-                                                    -1f32,  1f32, 1f32, 1f32];
+                const VERTICES: [f32; 2 * 2 * 4] = [-1f32, -1f32, 0f32, 1f32, 1f32, -1f32, 0f32, 0f32, 1f32, 1f32, 1f32, 0f32, -1f32, 1f32, 1f32, 1f32];
 
                 let mut vao = 0;
                 let mut vbo = 0;
@@ -649,7 +646,7 @@ impl Gpu2DProgram {
                 bg_text_4bpp_program,
                 bg_text_8bpp_program,
                 bg_ubo,
-                rotate_vao
+                rotate_vao,
             }
         }
     }
@@ -861,7 +858,6 @@ impl Gpu2DProgram {
     }
 
     unsafe fn rotate(&self, common: &Gpu2DCommon) {
-
         let depth_test_enabled = gl::IsEnabled(gl::DEPTH_TEST);
 
         // --- Configure Render Target ---
@@ -876,7 +872,7 @@ impl Gpu2DProgram {
         }
 
         gl::BindVertexArray(self.rotate_vao);
-        gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);      
+        gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
         if depth_test_enabled > 0 {
             gl::Enable(gl::DEPTH_TEST);
         }
@@ -887,7 +883,17 @@ impl Gpu2DProgram {
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
     }
 
-    unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, fb_tex_3d: GLuint, lcdc_pal: GLuint, vram_display_program: &Gpu2DVramDisplayProgram, rotate_screen: bool) {
+    unsafe fn draw(
+        &mut self,
+        common: &Gpu2DCommon,
+        regs: &Gpu2DRenderRegs,
+        texs: &Gpu2DTextures,
+        mem: Gpu2DMem,
+        fb_tex_3d: GLuint,
+        lcdc_pal: GLuint,
+        vram_display_program: &Gpu2DVramDisplayProgram,
+        rotate_screen: bool,
+    ) {
         macro_rules! draw_scanlines {
             ($draw_fn:expr, $draw_vram_display:expr) => {{
                 let mut line = 0;
@@ -1179,18 +1185,19 @@ impl Gpu2DRenderer {
                     fb_tex_3d,
                     if self.has_vram_display[0] { self.lcdc_pal } else { 0 },
                     &self.vram_display_program,
-                    rotate_screen
+                    rotate_screen,
                 );
             }
-            B => self.program_b.draw(&self.common,
-                    &self.regs_b[0],
-                    &self.tex_b, 
-                    Gpu2DMem::new::<{ B }>(&common.mem_buf), 
-                    0, 
-                    0, 
-                    &self.vram_display_program,
-                    rotate_screen
-                ),
+            B => self.program_b.draw(
+                &self.common,
+                &self.regs_b[0],
+                &self.tex_b,
+                Gpu2DMem::new::<{ B }>(&common.mem_buf),
+                0,
+                0,
+                &self.vram_display_program,
+                rotate_screen,
+            ),
         }
     }
 }

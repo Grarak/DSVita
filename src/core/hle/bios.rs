@@ -82,9 +82,6 @@ pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
     let spsr = regs.spsr;
     regs.pc = (regs.pc & !1) | Cpsr::from(spsr).thumb() as u32;
     emu.thread_set_cpsr(CPU, spsr, false);
-
-    let regs = &mut emu.thread[CPU];
-    let cpsr = Cpsr::from(regs.cpsr);
 }
 
 pub fn bit_unpack<const CPU: CpuType>(emu: &mut Emu) {
@@ -238,7 +235,33 @@ pub fn lz77_uncomp<const CPU: CpuType>(emu: &mut Emu) {
 }
 
 pub fn runlen_uncomp<const CPU: CpuType>(emu: &mut Emu) {
-    todo!()
+    let src_addr = *emu.thread_get_reg(CPU, Reg::R0);
+    let dst_addr = *emu.thread_get_reg(CPU, Reg::R1);
+    let size = emu.mem_read::<CPU, u32>(src_addr) >> 8;
+
+    let mut src = 4;
+    let mut dst = 0;
+
+    while dst < size {
+        let flags = emu.mem_read::<CPU, u8>(src_addr + src);
+        src += 1;
+
+        if flags & (1 << 7) != 0 {
+            let value = emu.mem_read::<CPU, u8>(src_addr + src);
+            src += 1;
+            let length = (flags & 0x7F) + 3;
+            emu.mem_write_multiple_memset::<CPU, true, u8>(dst_addr + dst, value, length as usize);
+            dst += length as u32;
+        } else {
+            let length = (flags & 0x7F) + 1;
+            for i in 0..length {
+                let value = emu.mem_read::<CPU, u8>(src_addr + src + i as u32);
+                emu.mem_write::<CPU, u8>(dst_addr + dst + i as u32, value);
+            }
+            src += length as u32;
+            dst += length as u32;
+        }
+    }
 }
 
 pub fn square_root<const CPU: CpuType>(emu: &mut Emu) {

@@ -62,7 +62,7 @@ impl Default for Viewport {
 }
 
 #[bitsize(32)]
-#[derive(Copy, Clone, Default, FromBits)]
+#[derive(Copy, Clone, DebugBits, Default, FromBits)]
 pub struct TexImageParam {
     pub vram_offset: u16,
     pub repeat_s: bool,
@@ -137,7 +137,7 @@ struct Shininess {
 }
 
 #[bitsize(32)]
-#[derive(Copy, Clone, Default, FromBits)]
+#[derive(Copy, Clone, DebugBits, Default, FromBits)]
 pub struct PolygonAttr {
     pub enable_lights: u4,
     pub mode: u2,
@@ -438,9 +438,9 @@ const FUNC_NAME_LUT: [&str; 128] = [
     "exe_empty",
 ];
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
 #[repr(u8)]
-enum PolygonMode {
+pub enum PolygonMode {
     #[default]
     Modulation = 0,
     Decal = 1,
