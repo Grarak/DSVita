@@ -1,3 +1,5 @@
+use crate::core::emu::Emu;
+use crate::core::CpuType;
 use crate::jit::assembler::reg_alloc::{RegAlloc, GUEST_REGS_LENGTH, GUEST_REG_ALLOCATIONS};
 use crate::jit::assembler::vixl::vixl::{
     BranchHint_kNear, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, MaskedSpecialRegisterType_CPSR_f, MemOperand, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR,
@@ -10,6 +12,7 @@ use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{inst_info, Cond};
 use crate::mmap::{PAGE_SHIFT, PAGE_SIZE};
 use std::ops::{Deref, DerefMut};
+use std::ptr;
 
 pub const GUEST_REGS_PTR_REG: Reg = Reg::R3;
 pub const GUEST_REGS_PTR_STACK_OFFSET: u32 = 0;
@@ -58,18 +61,19 @@ impl GuestInstMetadata {
     }
 }
 
+#[repr(C)]
 pub struct GuestInstOffset {
     pub offset: u16,
-    pub mapping: [Reg; GUEST_REG_ALLOCATIONS.len()],
     pub pre_cycle_count_sum: u16,
+    pub mapping: [*const u32; GUEST_REG_ALLOCATIONS.len()],
     pub pc: u32,
 }
 
 impl GuestInstOffset {
-    fn new(offset: u16, mapping: [Reg; GUEST_REG_ALLOCATIONS.len()], pre_cycle_count_sum: u16, pc: u32) -> Self {
+    fn new(offset: u16, pre_cycle_count_sum: u16, pc: u32) -> Self {
         GuestInstOffset {
             offset,
-            mapping,
+            mapping: [ptr::null(); GUEST_REG_ALLOCATIONS.len()],
             pre_cycle_count_sum,
             pc,
         }
@@ -142,10 +146,18 @@ impl BlockAsm {
         self.guest_start = self.get_cursor_offset() as usize;
     }
 
-    pub fn guest_offset(&mut self, pre_cycle_count_sum: u16) {
+    pub fn guest_offset(&mut self, pre_cycle_count_sum: u16, cpu: CpuType, emu: &Emu) {
         let offset = self.get_cursor_offset() as usize - self.guest_start;
-        self.guest_inst_offsets
-            .push(GuestInstOffset::new((offset >> 1) as u16, self.reg_alloc.host_regs_mapping, pre_cycle_count_sum, self.last_pc_value))
+        let offset = offset - if self.thumb { 2 } else { 4 };
+        debug_assert!(offset <= u16::MAX as usize);
+        self.guest_inst_offsets.push(GuestInstOffset::new(offset as u16, pre_cycle_count_sum, self.last_pc_value));
+        let inst_offset = self.guest_inst_offsets.last_mut().unwrap();
+        for (i, guest_reg) in self.reg_alloc.host_regs_mapping.iter().enumerate() {
+            match guest_reg {
+                Reg::PC | Reg::None => inst_offset.mapping[i] = &inst_offset.pc,
+                _ => inst_offset.mapping[i] = emu.thread_get_reg(cpu, *guest_reg) as _,
+            }
+        }
     }
 
     pub fn call(&mut self, fun: *const ()) {

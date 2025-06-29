@@ -122,7 +122,7 @@ impl Emu {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn thread_set_cpsr_with_flags(&mut self, cpu: CpuType, value: u32, flags: u8) {
         if flags & 1 == 1 {
             let mask = if u8::from(Cpsr::from(self.thread[cpu].cpsr).mode()) == 0x10 { 0xE0 } else { 0xFF };
@@ -175,6 +175,94 @@ impl Emu {
         self.thread[cpu].pc |= 1;
     }
 
+    #[inline(never)]
+    fn thread_set_cpsr_mode_slow(&mut self, cpu: CpuType, current_mode: u8, new_mode: u8) {
+        let regs = &mut self.thread[cpu];
+        match current_mode {
+            // User | System
+            0x10 | 0x1F => unsafe { regs.user.gp_regs.as_mut_ptr().copy_from(regs.gp_regs.as_ptr().add(8), 7) },
+            // FIQ
+            0x11 => {
+                unsafe { regs.fiq.gp_regs.as_mut_ptr().copy_from(regs.gp_regs.as_ptr().add(8), 7) };
+                regs.fiq.spsr = regs.spsr;
+            }
+            // IRQ
+            0x12 => {
+                regs.user.gp_regs.copy_from_slice(&regs.gp_regs[8..13]);
+                regs.irq.sp = regs.sp;
+                regs.irq.lr = regs.lr;
+                regs.irq.spsr = regs.spsr;
+            }
+            // Supervisor
+            0x13 => {
+                regs.user.gp_regs.copy_from_slice(&regs.gp_regs[8..13]);
+                regs.svc.sp = regs.sp;
+                regs.svc.lr = regs.lr;
+                regs.svc.spsr = regs.spsr;
+            }
+            // Abort
+            0x17 => {
+                regs.user.gp_regs.copy_from_slice(&regs.gp_regs[8..13]);
+                regs.abt.sp = regs.sp;
+                regs.abt.lr = regs.lr;
+                regs.abt.spsr = regs.spsr;
+            }
+            // Undefined
+            0x1B => {
+                regs.user.gp_regs.copy_from_slice(&regs.gp_regs[8..13]);
+                regs.und.sp = regs.sp;
+                regs.und.lr = regs.lr;
+                regs.und.spsr = regs.spsr;
+            }
+            _ => debug_println!("Unknown old cpsr mode {:x}", new_mode),
+        }
+
+        match new_mode {
+            // User | System
+            0x10 | 0x1F => {
+                unsafe { regs.gp_regs.as_mut_ptr().add(8).copy_from(regs.user.gp_regs.as_ptr(), 7) };
+                if DEBUG_LOG {
+                    regs.spsr = 0;
+                }
+            }
+            // FIQ
+            0x11 => {
+                unsafe { regs.gp_regs.as_mut_ptr().add(8).copy_from(regs.fiq.gp_regs.as_ptr(), 7) };
+                regs.spsr = regs.fiq.spsr;
+            }
+            // IRQ
+            0x12 => {
+                regs.gp_regs[8..13].copy_from_slice(&regs.user.gp_regs);
+                regs.sp = regs.irq.sp;
+                regs.lr = regs.irq.lr;
+                regs.spsr = regs.irq.spsr;
+            }
+            // Supervisor
+            0x13 => {
+                regs.gp_regs[8..13].copy_from_slice(&regs.user.gp_regs);
+                regs.sp = regs.svc.sp;
+                regs.lr = regs.svc.lr;
+                regs.spsr = regs.svc.spsr;
+            }
+            // Abort
+            0x17 => {
+                regs.gp_regs[8..13].copy_from_slice(&regs.user.gp_regs);
+                regs.sp = regs.abt.sp;
+                regs.lr = regs.abt.lr;
+                regs.spsr = regs.abt.spsr;
+            }
+            // Undefined
+            0x1B => {
+                regs.gp_regs[8..13].copy_from_slice(&regs.user.gp_regs);
+                regs.sp = regs.und.sp;
+                regs.lr = regs.und.lr;
+                regs.spsr = regs.und.spsr;
+            }
+            _ => debug_println!("Unknown new cpsr mode {:x}", new_mode),
+        }
+    }
+
+    #[inline]
     pub fn thread_set_cpsr(&mut self, cpu: CpuType, value: u32, save: bool) {
         let regs = &mut self.thread[cpu];
         let current_cpsr = Cpsr::from(regs.cpsr);
@@ -184,100 +272,24 @@ impl Emu {
         let new_mode = u8::from(new_cpsr.mode());
         debug_println!("{cpu:?} set cpsr from mode {current_mode:x} to {new_mode:x}");
         if current_mode != new_mode {
-            match current_mode {
-                // User | System
-                0x10 | 0x1F => {
-                    regs.user.gp_regs.copy_from_slice(&regs.gp_regs[8..13]);
-                    regs.user.sp = regs.sp;
-                    regs.user.lr = regs.lr;
-                }
-                // FIQ
-                0x11 => {
-                    regs.fiq.gp_regs.copy_from_slice(&regs.gp_regs[8..13]);
-                    regs.fiq.sp = regs.sp;
-                    regs.fiq.lr = regs.lr;
-                    regs.fiq.spsr = regs.spsr;
-                }
-                // IRQ
-                0x12 => {
-                    regs.user.gp_regs.copy_from_slice(&regs.gp_regs[8..13]);
-                    regs.irq.sp = regs.sp;
-                    regs.irq.lr = regs.lr;
-                    regs.irq.spsr = regs.spsr;
-                }
-                // Supervisor
-                0x13 => {
-                    regs.user.gp_regs.copy_from_slice(&regs.gp_regs[8..13]);
-                    regs.svc.sp = regs.sp;
-                    regs.svc.lr = regs.lr;
-                    regs.svc.spsr = regs.spsr;
-                }
-                // Abort
-                0x17 => {
-                    regs.user.gp_regs.copy_from_slice(&regs.gp_regs[8..13]);
-                    regs.abt.sp = regs.sp;
-                    regs.abt.lr = regs.lr;
-                    regs.abt.spsr = regs.spsr;
-                }
-                // Undefined
-                0x1B => {
-                    regs.user.gp_regs.copy_from_slice(&regs.gp_regs[8..13]);
-                    regs.und.sp = regs.sp;
-                    regs.und.lr = regs.lr;
-                    regs.und.spsr = regs.spsr;
-                }
-                _ => debug_println!("Unknown old cpsr mode {:x}", new_mode),
-            }
-
-            match new_mode {
-                // User | System
-                0x10 | 0x1F => {
-                    regs.gp_regs[8..13].copy_from_slice(&regs.user.gp_regs);
-                    regs.sp = regs.user.sp;
-                    regs.lr = regs.user.lr;
-                    if DEBUG_LOG {
-                        regs.spsr = 0;
-                    }
-                }
-                // FIQ
-                0x11 => {
-                    regs.gp_regs[8..13].copy_from_slice(&regs.fiq.gp_regs);
-                    regs.sp = regs.fiq.sp;
-                    regs.lr = regs.fiq.lr;
-                    regs.spsr = regs.fiq.spsr;
-                }
-                // IRQ
-                0x12 => {
-                    regs.gp_regs[8..13].copy_from_slice(&regs.user.gp_regs);
-                    regs.sp = regs.irq.sp;
-                    regs.lr = regs.irq.lr;
-                    regs.spsr = regs.irq.spsr;
-                }
-                // Supervisor
-                0x13 => {
-                    regs.gp_regs[8..13].copy_from_slice(&regs.user.gp_regs);
-                    regs.sp = regs.svc.sp;
-                    regs.lr = regs.svc.lr;
-                    regs.spsr = regs.svc.spsr;
-                }
-                // Abort
-                0x17 => {
-                    regs.gp_regs[8..13].copy_from_slice(&regs.user.gp_regs);
-                    regs.sp = regs.abt.sp;
-                    regs.lr = regs.abt.lr;
-                    regs.spsr = regs.abt.spsr;
-                }
-                // Undefined
-                0x1B => {
-                    regs.gp_regs[8..13].copy_from_slice(&regs.user.gp_regs);
-                    regs.sp = regs.und.sp;
-                    regs.lr = regs.und.lr;
-                    regs.spsr = regs.und.spsr;
-                }
-                _ => debug_println!("Unknown new cpsr mode {:x}", new_mode),
+            let is_current_mode_user = current_mode == 0x10 || current_mode == 0x1F;
+            let is_new_mode_user = new_mode == 0x10 || new_mode == 0x1F;
+            if is_current_mode_user && new_mode == 0x12 {
+                regs.user.sp = regs.sp;
+                regs.user.lr = regs.lr;
+                regs.sp = regs.irq.sp;
+                regs.lr = regs.irq.lr;
+            } else if current_mode == 0x12 && is_new_mode_user {
+                regs.irq.sp = regs.sp;
+                regs.irq.lr = regs.lr;
+                regs.sp = regs.user.sp;
+                regs.lr = regs.user.lr;
+            } else {
+                self.thread_set_cpsr_mode_slow(cpu, current_mode, new_mode);
             }
         }
 
+        let regs = &mut self.thread[cpu];
         if save {
             regs.spsr = regs.cpsr;
         }

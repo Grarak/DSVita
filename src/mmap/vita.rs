@@ -18,7 +18,7 @@ mod kubridge {
 
 pub struct Mmap {
     pub block_uid: SceUID,
-    ptr: *mut c_void,
+    pub ptr: *mut c_void,
     size: usize,
 }
 

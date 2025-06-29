@@ -8,7 +8,7 @@ pub unsafe extern "C" fn cpu_regs_halt() {
     // Force enable irq, this is a hack and should get properly fixed
     let mut cpsr = Cpsr::from(asm.emu.thread[ARM9].cpsr);
     cpsr.set_irq_disable(false);
-    asm.emu.thread_set_cpsr(ARM9, u32::from(cpsr), false);
+    asm.emu.thread[ARM9].cpsr = u32::from(cpsr);
 
     asm.emu.cpu_halt(ARM9, 0);
 }

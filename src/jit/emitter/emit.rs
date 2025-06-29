@@ -145,7 +145,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             let inst = &self.jit_buf.insts[i];
             if i != 0 {
-                block_asm.guest_offset(self.jit_buf.insts_cycle_counts[i] - inst.cycle as u16);
+                block_asm.guest_offset(self.jit_buf.insts_cycle_counts[i] - inst.cycle as u16, CPU, self.emu);
             }
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 

@@ -6,7 +6,7 @@ use std::ops::{Deref, DerefMut};
 use std::{io, mem, ptr, slice};
 
 pub struct Mmap {
-    ptr: *mut u8,
+    pub ptr: *mut u8,
     size: usize,
 }
 
