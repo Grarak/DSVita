@@ -30,6 +30,8 @@ fn main() {
 
     let num_jobs = env::var("NUM_JOBS").unwrap();
 
+    let is_host_linux = cfg!(unix) && fs::exists("/proc").unwrap();
+
     let vitasdk_path = env::var("VITASDK").map(PathBuf::from);
     println!("cargo:rerun-if-env-changed=VITASDK");
 
@@ -56,7 +58,9 @@ fn main() {
             vixl_flags.push("--target=armv7-unknown-linux-gnueabihf".to_string());
         }
         if let Ok(vitasdk_path) = &vitasdk_path {
-            vixl_flags.push(format!("--sysroot={}", vitasdk_path.join("arm-vita-eabi").to_str().unwrap()));
+            if is_target_vita || !is_host_linux {
+                vixl_flags.push(format!("--sysroot={}", vitasdk_path.join("arm-vita-eabi").to_str().unwrap()));
+            }
         }
 
         let vixl_path = Path::new("vixl");
@@ -76,12 +80,14 @@ fn main() {
             }
 
             if let Ok(vitasdk_path) = &vitasdk_path {
-                let cpp_include_path = vitasdk_path.join("arm-vita-eabi").join("include/c++");
-                let dir = fs::read_dir(cpp_include_path).unwrap();
-                let version = dir.into_iter().next().unwrap().unwrap();
-                let cpp_include_path = version.path();
+                if is_target_vita || !is_host_linux {
+                    let cpp_include_path = vitasdk_path.join("arm-vita-eabi").join("include/c++");
+                    let dir = fs::read_dir(cpp_include_path).unwrap();
+                    let version = dir.into_iter().next().unwrap().unwrap();
+                    let cpp_include_path = version.path();
 
-                vixl_build.include(cpp_include_path.to_str().unwrap()).include(cpp_include_path.join("arm-vita-eabi").to_str().unwrap());
+                    vixl_build.include(cpp_include_path.to_str().unwrap()).include(cpp_include_path.join("arm-vita-eabi").to_str().unwrap());
+                }
             }
 
             for flag in &vixl_flags {
@@ -393,8 +399,8 @@ fn main() {
         }
         bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
 
-        println!("cargo:rustc-link-search=native={}", vitasdk_lib_path.to_str().unwrap());
         if is_target_vita {
+            println!("cargo:rustc-link-search=native={}", vitasdk_lib_path.to_str().unwrap());
             println!("cargo:rustc-link-lib=static=imgui");
         }
     }
