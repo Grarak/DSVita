@@ -1,5 +1,6 @@
 use crate::core::emu::Emu;
 use crate::core::hle::bios;
+use crate::core::memory::regions;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::analyzer::asm_analyzer::AsmAnalyzer;
@@ -24,7 +25,8 @@ use bilge::prelude::*;
 use static_assertions::const_assert_eq;
 use std::arch::{asm, naked_asm};
 use std::intrinsics::unlikely;
-use std::mem;
+use std::{mem, slice};
+use xxhash_rust::xxh32::xxh32;
 
 #[derive(Default)]
 #[cfg(debug_assertions)]
@@ -276,6 +278,31 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
     }
 }
 
+extern "C" fn guest_block_invalid(guest_pc: u32) {
+    println!("Guest block hash mismatch {guest_pc:x}");
+    emit_code_block(guest_pc);
+}
+
+#[unsafe(naked)]
+unsafe extern "C" fn validate_guest_block_hash() {
+    #[rustfmt::skip]
+    naked_asm!(
+        "mov r7, lr",
+        "mov r2, 0",
+        "bl {xxh32}",
+        "cmp r0, r5",
+        "mov r0, r4",
+        "itt eq",
+        "moveq lr, r7",
+        "bxeq lr",
+        "add sp, sp, 4",
+        "pop {{r4-r11,lr}}",
+        "b {guest_block_invalid}",
+        xxh32 = sym xxh32,
+        guest_block_invalid = sym guest_block_invalid,
+    );
+}
+
 const_assert_eq!(size_of::<Vec<GuestInstOffset>>(), 12);
 const_assert_eq!(size_of::<GuestInstOffset>(), 40);
 
@@ -407,6 +434,18 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
 
         let mut block_asm = BlockAsm::new(CPU.guest_regs_addr() as _, thumb);
         block_asm.prologue(asm.analyzer.basic_blocks.len());
+
+        if CPU == ARM7 && guest_pc & 0xFF000000 != regions::VRAM_OFFSET {
+            let guest_ptr = ARM7.mmu_tcm_addr() + (guest_pc as usize & 0xFFFFFFF);
+            let size = (pc_offset + pc_step) as usize;
+            let hash = xxh32(unsafe { slice::from_raw_parts(guest_ptr as _, size) }, 0);
+
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
+            block_asm.ldr2(Reg::R0, guest_ptr as u32);
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &(size as u32).into());
+            block_asm.ldr2(Reg::R5, hash);
+            block_asm.call(validate_guest_block_hash as _);
+        }
 
         if BRANCH_LOG {
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());

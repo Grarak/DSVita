@@ -247,17 +247,12 @@ impl Emu {
                 _ => todo!("{:x}", guest_pc),
             },
             ARM7 => match guest_pc & 0xFF000000 {
-                regions::MAIN_OFFSET => insert!(self.jit.jit_entries.main, self.jit.jit_live_ranges.main, regions::MAIN_REGION, [ARM9, ARM7]),
+                regions::MAIN_OFFSET => insert!(self.jit.jit_entries.main, self.jit.jit_live_ranges.main),
                 regions::SHARED_WRAM_OFFSET => {
                     if guest_pc & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
-                        insert!(self.jit.jit_entries.wram_arm7, self.jit.jit_live_ranges.wram_arm7, regions::ARM7_WRAM_REGION, [ARM7])
+                        insert!(self.jit.jit_entries.wram_arm7, self.jit.jit_live_ranges.wram_arm7)
                     } else {
-                        insert!(
-                            self.jit.jit_entries.shared_wram_arm7,
-                            self.jit.jit_live_ranges.shared_wram_arm7,
-                            regions::SHARED_WRAM_ARM7_REGION,
-                            [ARM7]
-                        )
+                        insert!(self.jit.jit_entries.shared_wram_arm7, self.jit.jit_live_ranges.shared_wram_arm7)
                     }
                 }
                 regions::VRAM_OFFSET => insert!(self.jit.jit_entries.vram, self.jit.jit_live_ranges.vram),

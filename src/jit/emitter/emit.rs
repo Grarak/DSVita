@@ -149,7 +149,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             }
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
-            // if block_asm.current_pc == 0x23801b4 {
+            // if block_asm.current_pc == 0x38022ec {
             //     block_asm.bkpt1(0);
             // }
 
