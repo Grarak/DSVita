@@ -105,14 +105,17 @@ impl Presenter {
     #[cold]
     pub fn new() -> Self {
         unsafe {
+            info_println!("Set clocks");
             scePowerSetArmClockFrequency(444);
             scePowerSetGpuClockFrequency(222);
             scePowerSetBusClockFrequency(222);
             scePowerSetGpuXbarClockFrequency(166);
 
+            info_println!("Set shader compiler arguments");
             vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe as _, 1, 0, 1);
+            info_println!("Initialize vitaGL");
             // Disable multisampling for depth texture
-            vglInitExtended(0, 960, 544, 74 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
+            vglInitExtended(0, 960, 544, 50 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
             gl::load_with(|name| {
                 let name = CString::new(name).unwrap();
                 vglGetProcAddress(name.as_ptr())
@@ -120,6 +123,7 @@ impl Presenter {
 
             sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_STOP);
 
+            info_println!("Initialize ImGui");
             ImGui_CreateContext(ptr::null_mut());
 
             ImGui_ImplVitaGL_Init();
