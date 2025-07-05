@@ -13,6 +13,7 @@ use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use bilge::arbitrary_int::{u4, u6};
 use std::cmp::{max, min};
+use CpuType::{ARM7, ARM9};
 
 macro_rules! get_read_func {
     ($size:expr, $signed:expr) => {
@@ -324,6 +325,42 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let usable_regs = reg_reserve!(Reg::R1, Reg::R2, Reg::R12, Reg::LR) + block_asm.get_free_host_regs();
 
+        let mut write_back = transfer.write_back();
+        let mut use_r0_for_write_back = false;
+        if write_back && op1.is_reserved(op0) {
+            match CPU {
+                ARM9 => {
+                    if inst.op.is_write_mem_transfer() {
+                        // always store OLD base
+                    } else {
+                        // writeback if Rb is “the ONLY register, or NOT the LAST register” in Rlist
+                        if op1.len() > 1 && op1.get_highest_reg() == op0 {
+                            write_back = false;
+                        } else {
+                            use_r0_for_write_back = true;
+                        }
+                    }
+                }
+                ARM7 => {
+                    if inst.op.is_write_mem_transfer() {
+                        // Store OLD base if Rb is FIRST entry in Rlist, otherwise store NEW base
+                        if op1.get_lowest_reg() != op0 {
+                            let func = if transfer.add() {
+                                <MacroAssembler as MasmAdd5<FlagsUpdate, Cond, Reg, Reg, &vixl::Operand>>::add5
+                            } else {
+                                <MacroAssembler as MasmSub5<FlagsUpdate, Cond, Reg, Reg, &vixl::Operand>>::sub5
+                            };
+                            func(block_asm, flag_update, Cond::AL, op0_mapped, op0_mapped, &(op1_len as u32 * 4).into());
+                            write_back = false;
+                        }
+                    } else {
+                        // no writeback
+                        write_back = false;
+                    }
+                }
+            }
+        }
+
         let mut remaining_op1 = op1;
         let mut remaining_op1_len = op1_len;
         while remaining_op1_len != 0 {
@@ -403,13 +440,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
         debug_assert!(remaining_op1.is_empty());
 
-        if transfer.write_back() {
-            let func = if transfer.add() {
-                <MacroAssembler as MasmAdd5<FlagsUpdate, Cond, Reg, Reg, &vixl::Operand>>::add5
+        if write_back {
+            if use_r0_for_write_back {
+                block_asm.sub5(flag_update, Cond::AL, op0_mapped, Reg::R0, &(CPU.mmu_tcm_addr() as u32).into());
             } else {
-                <MacroAssembler as MasmSub5<FlagsUpdate, Cond, Reg, Reg, &vixl::Operand>>::sub5
-            };
-            func(block_asm, flag_update, Cond::AL, op0_mapped, op0_mapped, &(op1_len as u32 * 4).into());
+                let func = if transfer.add() {
+                    <MacroAssembler as MasmAdd5<FlagsUpdate, Cond, Reg, Reg, &vixl::Operand>>::add5
+                } else {
+                    <MacroAssembler as MasmSub5<FlagsUpdate, Cond, Reg, Reg, &vixl::Operand>>::sub5
+                };
+                func(block_asm, flag_update, Cond::AL, op0_mapped, op0_mapped, &(op1_len as u32 * 4).into());
+            }
         }
 
         block_asm.restore_guest_regs_ptr();
@@ -432,7 +473,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             _ => unreachable!(),
         };
 
-        let use_fast_mem = !transfer.user() && !op1.is_empty() && (!transfer.write_back() || !op1.is_reserved(op0));
+        let use_fast_mem = !transfer.user() && !op1.is_empty();
         if use_fast_mem {
             self.emit_multiple_transfer_fast(inst_index, basic_block_index, transfer, block_asm);
         } else {
