@@ -435,7 +435,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         let mut block_asm = BlockAsm::new(CPU.guest_regs_addr() as _, thumb);
         block_asm.prologue(asm.analyzer.basic_blocks.len());
 
-        if CPU == ARM7 && guest_pc & 0xFF000000 != regions::VRAM_OFFSET {
+        if CPU == ARM7 && guest_pc & 0xFF000000 != regions::VRAM_OFFSET && asm.emu.settings.arm7_block_validation() {
             let guest_ptr = ARM7.mmu_tcm_addr() + (guest_pc as usize & 0xFFFFFFF);
             let size = (pc_offset + pc_step) as usize;
             let hash = xxh32(unsafe { slice::from_raw_parts(guest_ptr as _, size) }, 0);

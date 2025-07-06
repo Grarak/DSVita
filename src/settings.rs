@@ -144,12 +144,21 @@ pub const DEFAULT_SETTINGS: Settings = Settings {
         Use AccurateLle if game crashes, gets stuck or\nbugs occur.",
             SettingValue::Arm7Emu(Arm7Emu::AccurateLle),
         ),
+        Setting::new(
+            "Arm7 jit block validation",
+            "Check whether jit blocks of Arm7 are valid on\n\
+        every execution. Disabling it can give a\n\
+        performance boost, however might lead to\n\
+        crashes. Most commercial games do not\n\
+        need to have this enabled.",
+            SettingValue::Bool(true),
+        ),
     ],
 };
 
 #[derive(Clone)]
 pub struct Settings {
-    values: [Setting; 4],
+    values: [Setting; 5],
 }
 
 impl Settings {
@@ -169,6 +178,10 @@ impl Settings {
         unsafe { self.values[3].value.as_arm7_emu().unwrap_unchecked() }
     }
 
+    pub fn arm7_block_validation(&self) -> bool {
+        unsafe { self.values[4].value.as_bool().unwrap_unchecked() }
+    }
+
     pub fn setting_screenmode_mut(&mut self) -> &mut Setting {
         &mut self.values[0]
     }
@@ -185,7 +198,11 @@ impl Settings {
         &mut self.values[3]
     }
 
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 4] {
+    pub fn setting_arm7_block_validation_mut(&mut self) -> &mut Setting {
+        &mut self.values[4]
+    }
+
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 5] {
         &mut self.values
     }
 }

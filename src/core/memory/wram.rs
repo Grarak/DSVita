@@ -91,8 +91,6 @@ impl Emu {
         self.mem.wram.cnt = value;
         self.mem.wram.init_maps();
 
-        self.jit.invalidate_wram();
-
         self.mmu_update_wram::<{ ARM9 }>();
         self.mmu_update_wram::<{ ARM7 }>();
     }

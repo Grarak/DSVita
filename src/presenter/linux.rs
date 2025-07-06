@@ -118,6 +118,7 @@ impl Presenter {
                     .default_value("0")
                     .value_parser(value_parser!(u8)),
             )
+            .arg(arg!(disable_arm7_block_validation: -b "Disable arm7 block validation").required(false).action(ArgAction::SetTrue))
             .arg(arg!([nds_rom] "NDS rom to run").num_args(1).required(true).value_parser(value_parser!(String)))
             .get_matches();
 
@@ -125,6 +126,7 @@ impl Presenter {
         settings.setting_framelimit_mut().value = SettingValue::Bool(matches.get_flag("framelimit"));
         settings.setting_audio_mut().value = SettingValue::Bool(matches.get_flag("audio"));
         settings.setting_arm7_hle_mut().value = SettingValue::Arm7Emu(Arm7Emu::from(*matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
+        settings.setting_arm7_block_validation_mut().value = SettingValue::Bool(!matches.get_flag("disable_arm7_block_validation"));
 
         let file_path = PathBuf::from(matches.get_one::<String>("nds_rom").unwrap());
         let file_name = file_path.file_name().unwrap().to_str().unwrap();

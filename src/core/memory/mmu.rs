@@ -281,13 +281,10 @@ impl Emu {
             let mmu_read = &mut self.mem.mmu_arm7.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mem.mmu_arm7.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
 
-            let write = !self.jit.jit_memory_map.has_jit_block(addr);
             let shm_offset = self.mem.wram.get_shm_offset::<{ ARM7 }>(addr);
             *mmu_read = shm_offset;
-            if write {
-                *mmu_write = shm_offset;
-            }
-            self.mem.mmu_arm7.vmem.create_map(&self.mem.shm, shm_offset, addr as usize, MMU_PAGE_SIZE, true, write, false).unwrap();
+            *mmu_write = shm_offset;
+            self.mem.mmu_arm7.vmem.create_map(&self.mem.shm, shm_offset, addr as usize, MMU_PAGE_SIZE, true, true, false).unwrap();
         }
     }
 }

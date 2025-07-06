@@ -68,13 +68,6 @@ impl JitMemoryMap {
             match (addr as u32) & 0xFF000000 {
                 0 | regions::ITCM_OFFSET2 => *map_ptr = get_ptr!(i, live_ranges.itcm),
                 regions::MAIN_OFFSET => *map_ptr = get_ptr!(i, live_ranges.main),
-                regions::SHARED_WRAM_OFFSET => {
-                    if (addr as u32) & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
-                        *map_ptr = get_ptr!(i, live_ranges.wram_arm7)
-                    } else {
-                        *map_ptr = get_ptr!(i, live_ranges.shared_wram_arm7)
-                    }
-                }
                 regions::VRAM_OFFSET => *map_ptr = get_ptr!(i, live_ranges.vram),
                 _ => {}
             }
@@ -108,6 +101,9 @@ impl JitMemoryMap {
 
     pub fn has_jit_block(&self, addr: u32) -> bool {
         let live_range = self.get_live_range(addr);
+        if live_range.is_null() {
+            return false;
+        }
         let bit = (addr >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
         unsafe { *live_range & (1 << bit) != 0 }
     }
