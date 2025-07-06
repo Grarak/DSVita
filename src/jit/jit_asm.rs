@@ -279,7 +279,7 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
 }
 
 extern "C" fn guest_block_invalid(guest_pc: u32) {
-    println!("Guest block hash mismatch {guest_pc:x}");
+    debug_println!("Guest block hash mismatch {guest_pc:x}");
     emit_code_block(guest_pc);
 }
 

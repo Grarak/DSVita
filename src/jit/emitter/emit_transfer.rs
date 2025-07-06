@@ -1,9 +1,11 @@
+use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
-use crate::jit::assembler::block_asm::{BlockAsm, GUEST_REGS_PTR_REG};
+use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG, GUEST_REGS_PTR_REG};
+use crate::jit::assembler::reg_alloc::GUEST_REG_ALLOCATIONS;
 use crate::jit::assembler::vixl::vixl::{AddrMode_PostIndex, AddrMode_PreIndex, FlagsUpdate, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, MemOperand, WriteBack};
 use crate::jit::assembler::vixl::{
-    vixl, MacroAssembler, MasmAdd5, MasmAnd5, MasmBic5, MasmLdm3, MasmLdmda3, MasmLdmdb3, MasmLdmib3, MasmLdr2, MasmLdrb2, MasmLdrh2, MasmLdrsb2, MasmLdrsh2, MasmLsl5, MasmMov4, MasmNop, MasmRor5,
-    MasmStm3, MasmStmda3, MasmStmdb3, MasmStmib3, MasmStr2, MasmStrb2, MasmStrh2, MasmSub5,
+    vixl, MacroAssembler, MasmAdd5, MasmAnd5, MasmBic5, MasmCmp2, MasmCmp3, MasmLdm3, MasmLdmda3, MasmLdmdb3, MasmLdmib3, MasmLdr2, MasmLdr3, MasmLdrb2, MasmLdrh2, MasmLdrsb2, MasmLdrsh2, MasmLsl5,
+    MasmMov4, MasmNop, MasmPop1, MasmPush1, MasmRor5, MasmStm3, MasmStmda3, MasmStmdb3, MasmStmib3, MasmStr2, MasmStr3, MasmStrb2, MasmStrh2, MasmSub5,
 };
 use crate::jit::inst_mem_handler::{inst_mem_handler_multiple_slow, InstMemMultipleParams};
 use crate::jit::jit_asm::JitAsm;
@@ -13,6 +15,7 @@ use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use bilge::arbitrary_int::{u4, u6};
 use std::cmp::{max, min};
+use std::mem;
 use CpuType::{ARM7, ARM9};
 
 macro_rules! get_read_func {
@@ -308,12 +311,20 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
         let save_cpsr = block_asm.dirty_guest_regs.is_reserved(Reg::CPSR) || next_live_regs.is_reserved(Reg::CPSR);
-        let flag_update = if save_cpsr { FlagsUpdate_LeaveFlags } else { FlagsUpdate_DontCare };
+        let mut flag_update = if save_cpsr { FlagsUpdate_LeaveFlags } else { FlagsUpdate_DontCare };
+        let user = transfer.user() && !op1.is_reserved(Reg::PC);
 
         let mut dirty_guest_regs = block_asm.get_dirty_guest_regs();
         if save_cpsr {
-            dirty_guest_regs += Reg::CPSR;
+            if user {
+                block_asm.store_guest_cpsr_reg(CPSR_TMP_REG);
+                flag_update = FlagsUpdate_DontCare;
+            } else {
+                dirty_guest_regs += Reg::CPSR;
+            }
         }
+
+        block_asm.push1(GUEST_REG_ALLOCATIONS);
 
         block_asm.ensure_emit_for(64);
         let fast_mem_start = block_asm.get_cursor_offset();
@@ -321,12 +332,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         Self::emit_align_addr(flag_update, Reg::R0, op0_mapped, 4, block_asm);
 
-        block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &(CPU.mmu_tcm_addr() as u32).into());
-
-        let usable_regs = reg_reserve!(Reg::R1, Reg::R2, Reg::R12, Reg::LR) + block_asm.get_free_host_regs();
-
         let mut write_back = transfer.write_back();
-        let mut use_r0_for_write_back = false;
         if write_back && op1.is_reserved(op0) {
             match CPU {
                 ARM9 => {
@@ -336,8 +342,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                         // writeback if Rb is “the ONLY register, or NOT the LAST register” in Rlist
                         if op1.len() > 1 && op1.get_highest_reg() == op0 {
                             write_back = false;
-                        } else {
-                            use_r0_for_write_back = true;
                         }
                     }
                 }
@@ -351,6 +355,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                                 <MacroAssembler as MasmSub5<FlagsUpdate, Cond, Reg, Reg, &vixl::Operand>>::sub5
                             };
                             func(block_asm, flag_update, Cond::AL, op0_mapped, op0_mapped, &(op1_len as u32 * 4).into());
+                            block_asm.str2(op0_mapped, &MemOperand::reg_offset(Reg::SP, (op0_mapped as i32 - 4) * 4));
                             write_back = false;
                         }
                     } else {
@@ -360,6 +365,15 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 }
             }
         }
+
+        if user {
+            block_asm.load_guest_reg(Reg::R1, Reg::CPSR);
+            block_asm.and5(flag_update, Cond::AL, Reg::R1, Reg::R1, &0x1F.into());
+        }
+
+        block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &(CPU.mmu_tcm_addr() as u32).into());
+
+        let usable_regs = reg_reserve!(Reg::R2, Reg::R12, Reg::LR) + GUEST_REG_ALLOCATIONS;
 
         let mut remaining_op1 = op1;
         let mut remaining_op1_len = op1_len;
@@ -374,22 +388,69 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let mut guest_regs_multiple_load_store = guest_regs;
             let mut usable_regs_multiple_load_store = usable_regs;
             if inst.op.is_write_mem_transfer() {
-                for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
-                    if guest_reg == Reg::PC {
-                        let pc = block_asm.current_pc + (4 << (!block_asm.thumb as u32));
-                        block_asm.ldr2(usable_reg, pc);
-                        guest_regs_multiple_load_store -= Reg::PC;
-                        usable_regs_multiple_load_store -= usable_reg;
-                    } else {
-                        let mapped_reg = block_asm.get_guest_map(guest_reg);
-                        if mapped_reg != Reg::None {
-                            block_asm.mov4(flag_update, Cond::AL, usable_reg, &mapped_reg.into());
-                            guest_regs_multiple_load_store -= guest_reg;
-                            usable_regs_multiple_load_store -= usable_reg;
+                if user {
+                    for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
+                        match guest_reg {
+                            Reg::R8 | Reg::R9 | Reg::R10 | Reg::R11 | Reg::R12 => {
+                                let mapped_reg = block_asm.get_guest_map(guest_reg);
+
+                                // FIQ mode
+                                block_asm.cmp2(Reg::R1, &0x11.into());
+                                block_asm.ldr3(
+                                    Cond::EQ,
+                                    usable_reg,
+                                    &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
+                                );
+                                if mapped_reg != Reg::None {
+                                    block_asm.ldr3(Cond::NE, usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                } else {
+                                    block_asm.load_guest_reg_cond(Cond::NE, usable_reg, guest_reg);
+                                }
+                            }
+                            Reg::SP | Reg::LR => {
+                                let mapped_reg = block_asm.get_guest_map(guest_reg);
+
+                                block_asm.cmp2(Reg::R1, &0x1F.into());
+                                block_asm.cmp3(Cond::NE, Reg::R1, &0x10.into());
+                                block_asm.ldr3(
+                                    Cond::NE,
+                                    usable_reg,
+                                    &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
+                                );
+                                if mapped_reg != Reg::None {
+                                    block_asm.ldr3(Cond::EQ, usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                } else {
+                                    block_asm.load_guest_reg_cond(Cond::EQ, usable_reg, guest_reg);
+                                }
+                            }
+                            _ => {
+                                let mapped_reg = block_asm.get_guest_map(guest_reg);
+                                if mapped_reg != Reg::None {
+                                    block_asm.ldr2(usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                } else {
+                                    block_asm.load_guest_reg(usable_reg, guest_reg);
+                                }
+                            }
                         }
                     }
+                } else {
+                    for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
+                        if guest_reg == Reg::PC {
+                            let pc = block_asm.current_pc + (4 << (!block_asm.thumb as u32));
+                            block_asm.ldr2(usable_reg, pc);
+                            guest_regs_multiple_load_store -= Reg::PC;
+                            usable_regs_multiple_load_store -= usable_reg;
+                        } else {
+                            let mapped_reg = block_asm.get_guest_map(guest_reg);
+                            if mapped_reg != Reg::None {
+                                block_asm.ldr2(usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                guest_regs_multiple_load_store -= guest_reg;
+                                usable_regs_multiple_load_store -= usable_reg;
+                            }
+                        }
+                    }
+                    Self::emit_multiple_transfer_load_store_guest_regs(flag_update, guest_regs_multiple_load_store, usable_regs_multiple_load_store, true, block_asm);
                 }
-                Self::emit_multiple_transfer_load_store_guest_regs(flag_update, guest_regs_multiple_load_store, usable_regs_multiple_load_store, true, block_asm);
 
                 block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, fast_mem_start, op0, dirty_guest_regs);
 
@@ -425,41 +486,80 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     func(block_asm, Reg::R0, WriteBack::yes(), usable_regs);
                 }
 
-                for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
-                    let mapped_reg = block_asm.get_guest_map(guest_reg);
-                    if mapped_reg != Reg::None {
-                        block_asm.mov4(flag_update, Cond::AL, mapped_reg, &usable_reg.into());
-                        guest_regs_multiple_load_store -= guest_reg;
-                        usable_regs_multiple_load_store -= usable_reg;
+                if user {
+                    for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
+                        match guest_reg {
+                            Reg::R8 | Reg::R9 | Reg::R10 | Reg::R11 | Reg::R12 => {
+                                let mapped_reg = block_asm.get_guest_map(guest_reg);
+
+                                // FIQ mode
+                                block_asm.cmp2(Reg::R1, &0x11.into());
+                                block_asm.str3(
+                                    Cond::EQ,
+                                    usable_reg,
+                                    &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
+                                );
+                                if mapped_reg != Reg::None {
+                                    block_asm.str3(Cond::NE, usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                }
+                                block_asm.store_guest_reg_cond(Cond::NE, usable_reg, guest_reg);
+                            }
+                            Reg::SP | Reg::LR => {
+                                let mapped_reg = block_asm.get_guest_map(guest_reg);
+
+                                block_asm.cmp2(Reg::R1, &0x1F.into());
+                                block_asm.cmp3(Cond::NE, Reg::R1, &0x10.into());
+                                block_asm.str3(
+                                    Cond::NE,
+                                    usable_reg,
+                                    &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
+                                );
+                                if mapped_reg != Reg::None {
+                                    block_asm.str3(Cond::EQ, usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                }
+                                block_asm.store_guest_reg_cond(Cond::EQ, usable_reg, guest_reg);
+                            }
+                            _ => {
+                                let mapped_reg = block_asm.get_guest_map(guest_reg);
+                                if mapped_reg != Reg::None {
+                                    block_asm.str2(usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                }
+                                block_asm.store_guest_reg(usable_reg, guest_reg);
+                            }
+                        }
                     }
+                } else {
+                    for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
+                        let mapped_reg = block_asm.get_guest_map(guest_reg);
+                        if mapped_reg != Reg::None {
+                            block_asm.str2(usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                            guest_regs_multiple_load_store -= guest_reg;
+                            usable_regs_multiple_load_store -= usable_reg;
+                        }
+                    }
+                    Self::emit_multiple_transfer_load_store_guest_regs(flag_update, guest_regs_multiple_load_store, usable_regs_multiple_load_store, false, block_asm);
                 }
-                Self::emit_multiple_transfer_load_store_guest_regs(flag_update, guest_regs_multiple_load_store, usable_regs_multiple_load_store, false, block_asm);
             }
             remaining_op1 -= guest_regs;
             remaining_op1_len -= len;
         }
         debug_assert!(remaining_op1.is_empty());
 
-        if write_back {
-            if use_r0_for_write_back {
-                block_asm.sub5(flag_update, Cond::AL, op0_mapped, Reg::R0, &(CPU.mmu_tcm_addr() as u32).into());
-            } else {
-                let func = if transfer.add() {
-                    <MacroAssembler as MasmAdd5<FlagsUpdate, Cond, Reg, Reg, &vixl::Operand>>::add5
-                } else {
-                    <MacroAssembler as MasmSub5<FlagsUpdate, Cond, Reg, Reg, &vixl::Operand>>::sub5
-                };
-                func(block_asm, flag_update, Cond::AL, op0_mapped, op0_mapped, &(op1_len as u32 * 4).into());
-            }
-        }
+        block_asm.pop1(GUEST_REG_ALLOCATIONS);
 
-        block_asm.restore_guest_regs_ptr();
+        if write_back {
+            block_asm.sub5(flag_update, Cond::AL, op0_mapped, Reg::R0, &(CPU.mmu_tcm_addr() as u32).into());
+        }
 
         let fast_mem_end = block_asm.get_cursor_offset();
         let fast_mem_size = fast_mem_end - fast_mem_start;
         let slow_mem_size = JitMemory::get_slow_mem_length(inst.op);
         Self::pad_nop(fast_mem_size as usize, slow_mem_size, block_asm);
         block_asm.set_fast_mem_size(guest_inst_metadata_start, max(fast_mem_size, slow_mem_size as u32) as u16);
+
+        if save_cpsr && user {
+            block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
+        }
     }
 
     pub fn emit_multiple_transfer(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
@@ -473,7 +573,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             _ => unreachable!(),
         };
 
-        let use_fast_mem = !transfer.user() && !op1.is_empty();
+        let use_fast_mem = !op1.is_empty();
         if use_fast_mem {
             self.emit_multiple_transfer_fast(inst_index, basic_block_index, transfer, block_asm);
         } else {
