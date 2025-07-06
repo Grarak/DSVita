@@ -7,13 +7,11 @@ use crate::jit::assembler::vixl::{
     vixl, MacroAssembler, MasmAdd5, MasmAnd5, MasmBic5, MasmCmp2, MasmCmp3, MasmLdm3, MasmLdmda3, MasmLdmdb3, MasmLdmib3, MasmLdr2, MasmLdr3, MasmLdrb2, MasmLdrh2, MasmLdrsb2, MasmLdrsh2, MasmLsl5,
     MasmMov4, MasmNop, MasmPop1, MasmPush1, MasmRor5, MasmStm3, MasmStmda3, MasmStmdb3, MasmStmib3, MasmStr2, MasmStr3, MasmStrb2, MasmStrh2, MasmSub5,
 };
-use crate::jit::inst_mem_handler::{inst_mem_handler_multiple_slow, InstMemMultipleParams};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::jit_memory::{JitMemory, SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM, SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM};
 use crate::jit::op::{MultipleTransfer, Op};
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
-use bilge::arbitrary_int::{u4, u6};
 use std::cmp::{max, min};
 use std::mem;
 use CpuType::{ARM7, ARM9};
@@ -573,47 +571,22 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             _ => unreachable!(),
         };
 
-        let use_fast_mem = !op1.is_empty();
-        if use_fast_mem {
-            self.emit_multiple_transfer_fast(inst_index, basic_block_index, transfer, block_asm);
+        if op1.is_empty() {
+            if CPU == ARM7 {
+                todo!()
+            }
+            let op0_mapped = block_asm.get_guest_map(op0);
+            let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+            let save_cpsr = block_asm.dirty_guest_regs.is_reserved(Reg::CPSR) || next_live_regs.is_reserved(Reg::CPSR);
+            let flag_update = if save_cpsr { FlagsUpdate_LeaveFlags } else { FlagsUpdate_DontCare };
+
+            if inst.op.is_write_mem_transfer() {
+                block_asm.sub5(flag_update, Cond::AL, op0_mapped, op0_mapped, &0x40.into());
+            } else {
+                block_asm.add5(flag_update, Cond::AL, op0_mapped, op0_mapped, &0x40.into());
+            }
         } else {
-            block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
-
-            let mut pre = transfer.pre();
-            if !transfer.add() {
-                pre = !pre;
-            }
-
-            let func = match (inst.op.is_write_mem_transfer(), transfer.write_back(), !transfer.add()) {
-                (false, false, false) => inst_mem_handler_multiple_slow::<CPU, false, false, false> as *const (),
-                (false, false, true) => inst_mem_handler_multiple_slow::<CPU, false, false, true> as _,
-                (false, true, false) => inst_mem_handler_multiple_slow::<CPU, false, true, false> as _,
-                (false, true, true) => inst_mem_handler_multiple_slow::<CPU, false, true, true> as _,
-                (true, false, false) => inst_mem_handler_multiple_slow::<CPU, true, false, false> as _,
-                (true, false, true) => inst_mem_handler_multiple_slow::<CPU, true, false, true> as _,
-                (true, true, false) => inst_mem_handler_multiple_slow::<CPU, true, true, false> as _,
-                (true, true, true) => inst_mem_handler_multiple_slow::<CPU, true, true, true> as _,
-            };
-
-            let params = InstMemMultipleParams::new(op1.0 as u16, u4::new(op1.len() as u8), u4::new(op0 as u8), pre, transfer.user(), u6::new(0));
-
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &u32::from(params).into());
-            let mut pc = block_asm.current_pc;
-            if block_asm.thumb {
-                pc |= 1;
-            }
-            block_asm.ldr2(Reg::R1, pc);
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &self.jit_buf.insts_cycle_counts[inst_index].into());
-
-            block_asm.call(func);
-
-            let mut next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
-            if inst.cond != Cond::AL {
-                next_live_regs += Reg::CPSR;
-            }
-
-            block_asm.restore_tmp_regs(next_live_regs);
-            block_asm.reload_active_guest_regs_all();
+            self.emit_multiple_transfer_fast(inst_index, basic_block_index, transfer, block_asm);
         }
     }
 

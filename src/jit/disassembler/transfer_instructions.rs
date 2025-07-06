@@ -175,7 +175,7 @@ mod transfer_ops {
             op,
             Operands::new_2(Operand::reg(op0), Operand::reg_list(rlist)),
             reg_reserve!(op0),
-            rlist,
+            rlist + if rlist.is_empty() { reg_reserve!(op0) } else { reg_reserve!() },
             rlist.len() as u8 + 2,
         )
     }
@@ -189,7 +189,7 @@ mod transfer_ops {
             op,
             Operands::new_2(Operand::reg(op0), Operand::reg_list(rlist)),
             rlist + op0,
-            reg_reserve!(),
+            if rlist.is_empty() { reg_reserve!(op0) } else { reg_reserve!() },
             rlist.len() as u8 + 1,
         )
     }
@@ -291,7 +291,7 @@ mod transfer_ops {
             op,
             Operands::new_2(Operand::reg(op0), Operand::reg_list(rlist)),
             reg_reserve!(op0),
-            rlist & Reg::PC,
+            (rlist & Reg::PC) + if rlist.is_empty() { reg_reserve!(op0) } else { reg_reserve!() },
             rlist.len() as u8 + 2,
         )
     }
@@ -305,7 +305,7 @@ mod transfer_ops {
             op,
             Operands::new_2(Operand::reg(op0), Operand::reg_list(rlist)),
             rlist + op0,
-            reg_reserve!(),
+            if rlist.is_empty() { reg_reserve!(op0) } else { reg_reserve!() },
             rlist.len() as u8 + 1,
         )
     }

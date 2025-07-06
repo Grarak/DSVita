@@ -97,17 +97,7 @@ mod handler {
         let rlist = RegReserve::from(rlist as u32);
         let op0 = Reg::from(op0);
 
-        if unlikely(rlist_len == 0) {
-            if WRITE {
-                *emu.thread_get_reg_mut(CPU, op0) -= 0x40;
-            } else {
-                *emu.thread_get_reg_mut(CPU, op0) += 0x40;
-            }
-            if CPU == CpuType::ARM7 {
-                unsafe { unreachable_unchecked() }
-            }
-            return;
-        }
+        debug_assert_ne!(rlist_len, 0);
 
         if WRITE && unlikely(rlist.is_reserved(Reg::PC) || op0 == Reg::PC) {
             let pc_offset = 4 << (!is_thumb as u8);
@@ -494,15 +484,6 @@ pub unsafe extern "C" fn inst_read_mem_handler_multiple<const CPU: CpuType, cons
         "bx lr",
         handler = sym _inst_mem_handler_multiple::<CPU, false, WRITE_BACK, DECREMENT, false>,
     );
-}
-
-pub unsafe extern "C" fn inst_mem_handler_multiple_slow<const CPU: CpuType, const WRITE: bool, const WRITE_BACK: bool, const DECREMENT: bool>(params: u32, pc: u32, total_cycle_count: u16) {
-    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
-    let params = InstMemMultipleParams::from(params);
-    handle_multiple_request::<CPU, WRITE, WRITE_BACK, DECREMENT, false>(pc, params.rlist(), u8::from(params.rlist_len()), u8::from(params.op0()), params.pre(), params.user(), (*asm).emu);
-    if WRITE && unlikely(asm.emu.breakout_imm) {
-        imm_breakout!(CPU, asm, pc, total_cycle_count);
-    }
 }
 
 unsafe extern "C" fn _inst_mem_handler_write_gx_fifo<const CPU: CpuType, const AMOUNT: MemoryAmount>(
