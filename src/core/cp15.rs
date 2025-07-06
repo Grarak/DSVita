@@ -64,7 +64,7 @@ pub struct Cp15 {
     proc_id: u32,
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum TcmState {
     Disabled = 0,
@@ -108,11 +108,21 @@ impl Emu {
         let control_reg = Cp15ControlReg::from(self.cp15.control);
 
         self.cp15.exception_addr = if bool::from(control_reg.exception_vectors()) { 0xFFFF0000 } else { 0x00000000 };
-        self.cp15.dtcm_state = TcmState::from(u8::from(control_reg.dtcm_enable()) + u8::from(control_reg.dtcm_load_mode()));
-        self.cp15.itcm_state = TcmState::from(u8::from(control_reg.itcm_enable()) + u8::from(control_reg.itcm_load_mode()));
 
-        self.mmu_update_itcm::<{ ARM9 }>();
-        self.mmu_update_dtcm::<{ ARM9 }>();
+        let new_itcm_state = TcmState::from(u8::from(control_reg.itcm_enable()) + u8::from(control_reg.itcm_load_mode()));
+        let new_dtcm_state = TcmState::from(u8::from(control_reg.dtcm_enable()) + u8::from(control_reg.dtcm_load_mode()));
+
+        if self.cp15.itcm_state != new_itcm_state {
+            self.cp15.itcm_state = new_itcm_state;
+            self.mmu_update_itcm::<{ ARM9 }>();
+        }
+
+        if self.cp15.dtcm_state != new_dtcm_state {
+            self.cp15.dtcm_state = new_dtcm_state;
+            self.mmu_update_dtcm::<{ ARM9 }>();
+        }
+
+        debug_println!("{ARM9:?} Set dtcm state to {:?} itcm state to {:?}", self.cp15.dtcm_state, self.cp15.itcm_state);
     }
 
     fn cp15_set_dtcm(&mut self, value: u32) {

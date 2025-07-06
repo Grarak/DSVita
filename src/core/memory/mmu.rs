@@ -7,7 +7,7 @@ use crate::core::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
 use crate::mmap::{MemRegion, VirtualMem};
 use crate::utils::HeapMemUsize;
-use regions::{IO_PORTS_OFFSET, MAIN_OFFSET, MAIN_REGION, SHARED_WRAM_OFFSET, V_MEM_ARM9_RANGE};
+use regions::{IO_PORTS_OFFSET, MAIN_OFFSET, MAIN_REGION, SHARED_WRAM_OFFSET, VRAM_OFFSET, V_MEM_ARM9_RANGE};
 use std::cmp::max;
 
 pub const MMU_PAGE_SHIFT: usize = 14;
@@ -184,6 +184,7 @@ impl Emu {
                 }
             } else if addr >= self.cp15.dtcm_addr && addr < self.cp15.dtcm_addr + self.cp15.dtcm_size {
                 if self.cp15.dtcm_state == TcmState::RW {
+                    println!("Map dtcm {addr:x}");
                     let base_addr = addr - self.cp15.dtcm_addr;
                     let addr_offset = (base_addr as usize) & (DTCM_REGION.size - 1);
                     *mmu_read = DTCM_REGION.shm_offset + addr_offset;

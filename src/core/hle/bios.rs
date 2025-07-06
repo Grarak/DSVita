@@ -36,15 +36,7 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
     spsr.set_thumb(is_thumb);
     regs.spsr = u32::from(spsr);
 
-    let regs_to_push = [
-        *emu.thread_get_reg(CPU, Reg::R0),
-        *emu.thread_get_reg(CPU, Reg::R1),
-        *emu.thread_get_reg(CPU, Reg::R2),
-        *emu.thread_get_reg(CPU, Reg::R3),
-        *emu.thread_get_reg(CPU, Reg::R12),
-        *emu.thread_get_reg(CPU, Reg::PC) + 4,
-    ];
-    let regs = &mut emu.thread[CPU];
+    let regs_to_push = [regs.gp_regs[0], regs.gp_regs[1], regs.gp_regs[2], regs.gp_regs[3], regs.gp_regs[12], regs.pc + 4];
     regs.sp -= regs_to_push.len() as u32 * 4;
     let sp = regs.sp;
     emu.mem_write_multiple_slice::<CPU, true, _>(sp, &regs_to_push);
@@ -72,11 +64,14 @@ pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
     let mut reg_values = [0u32; 6];
     emu.mem_read_multiple_slice::<CPU, true, _>(emu.thread[CPU].sp, &mut reg_values);
 
-    emu.thread[CPU].sp += reg_values.len() as u32 * 4;
-    for (i, &reg) in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R12, Reg::LR].iter().enumerate() {
-        *emu.thread_get_reg_mut(CPU, reg) = reg_values[i];
-    }
     let regs = &mut emu.thread[CPU];
+    regs.gp_regs[0] = reg_values[0];
+    regs.gp_regs[1] = reg_values[1];
+    regs.gp_regs[2] = reg_values[2];
+    regs.gp_regs[3] = reg_values[3];
+    regs.gp_regs[12] = reg_values[4];
+    regs.sp += reg_values.len() as u32 * 4;
+    regs.lr = reg_values[5];
     regs.pc = regs.lr - 4;
 
     let spsr = regs.spsr;

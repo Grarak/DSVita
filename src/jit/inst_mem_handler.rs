@@ -92,10 +92,11 @@ mod handler {
 
         let is_thumb = pc & 1 == 1;
         let pc = pc & !1;
-        debug_println!("handle multiple request at {pc:x} thumb: {is_thumb} write: {WRITE}");
 
         let rlist = RegReserve::from(rlist as u32);
         let op0 = Reg::from(op0);
+
+        debug_println!("{CPU:?} handle multiple request at {pc:x} addr {:x} thumb: {is_thumb} write: {WRITE}", *emu.thread_get_reg(CPU, op0));
 
         debug_assert_ne!(rlist_len, 0);
 
@@ -204,6 +205,8 @@ unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(metadata: *const G
 }
 
 unsafe extern "C" fn _inst_write_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(value0: u32, value1: u32, addr: u32, metadata: *const GuestInstMetadata) -> *const GuestInstMetadata {
+    debug_println!("{CPU:?} handle write request at {:x} addr {addr:x}", (*metadata).pc);
+
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     handle_request_write::<CPU, AMOUNT>(value0, value1, addr, asm.emu);
     if unlikely(asm.emu.breakout_imm) {
@@ -274,12 +277,16 @@ pub unsafe extern "C" fn _inst_read_mem_handler<const CPU: CpuType, const AMOUNT
         unreachable_unchecked();
     }
 
+    debug_println!("{CPU:?} handle read request addr {addr:x}");
+
     let asm = get_jit_asm_ptr::<CPU>();
     handle_request_read::<CPU, AMOUNT, SIGNED>(Reg::from(op0), addr, (*asm).emu);
     *(*asm).emu.thread_get_reg(CPU, Reg::from(op0))
 }
 
 pub unsafe extern "C" fn _inst_read64_mem_handler<const CPU: CpuType>(op0: u8, _: u32, addr: u32) -> u64 {
+    debug_println!("{CPU:?} handle read64 request addr {addr:x}");
+
     let asm = get_jit_asm_ptr::<CPU>();
     handle_request_read::<CPU, { MemoryAmount::Double }, false>(Reg::from(op0), addr, (*asm).emu);
     let value0 = *(*asm).emu.thread_get_reg(CPU, Reg::from(op0));

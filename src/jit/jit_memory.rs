@@ -1,5 +1,5 @@
 use crate::core::emu::Emu;
-use crate::core::memory::mmu::MMU_PAGE_SHIFT;
+use crate::core::memory::mmu::{MMU_PAGE_SHIFT, MMU_PAGE_SIZE};
 use crate::core::memory::{regions, vram};
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::{BlockAsm, GuestInstMetadata, GuestInstOffset};
@@ -195,7 +195,7 @@ pub struct JitMemory {
 }
 
 impl Emu {
-    pub fn jit_insert_block(&mut self, block_asm: BlockAsm, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu_type: CpuType) -> (*const extern "C" fn(u32), bool) {
+    pub fn jit_insert_block(&mut self, block_asm: BlockAsm, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu: CpuType) -> (*const extern "C" fn(u32), bool) {
         macro_rules! insert {
             ($entries:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
                 let ret = insert!($entries);
@@ -211,7 +211,7 @@ impl Emu {
             }};
 
             ($entries:expr) => {{
-                let (allocated_offset_addr, aligned_size, flushed) = self.jit.insert(block_asm, cpu_type);
+                let (allocated_offset_addr, aligned_size, flushed) = self.jit.insert(block_asm, cpu);
 
                 let jit_entry_addr = ((allocated_offset_addr + self.jit.mem.as_ptr() as usize) | (thumb as usize)) as *const extern "C" fn(u32);
 
@@ -220,7 +220,7 @@ impl Emu {
                 self.jit.jit_memory_map.write_jit_entries(guest_pc, guest_block_size, JitEntry(jit_entry_addr));
 
                 let metadata = JitBlockMetadata::new(guest_pc | (thumb as u32), guest_pc_end | (thumb as u32), (allocated_offset_addr >> PAGE_SHIFT) as u16, ((allocated_offset_addr + aligned_size) >> PAGE_SHIFT) as u16);
-                self.jit.get_jit_data(cpu_type).jit_funcs.push_back(metadata);
+                self.jit.get_jit_data(cpu).jit_funcs.push_back(metadata);
 
                 // >> 3 for u8 (each bit represents a page)
                 let guest_pc_end = guest_pc_end - if thumb { 2 } else { 4 };
@@ -234,13 +234,13 @@ impl Emu {
                     }
                 }
 
-                self.jit.jit_perf_map_record.record(jit_entry_addr as usize, aligned_size, guest_pc, cpu_type);
+                self.jit.jit_perf_map_record.record(jit_entry_addr as usize, aligned_size, guest_pc, cpu);
 
                 (jit_entry_addr, flushed)
             }};
         }
 
-        match cpu_type {
+        match cpu {
             ARM9 => match guest_pc & 0xFF000000 {
                 regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit.jit_entries.itcm, regions::ITCM_REGION, [ARM9]),
                 regions::MAIN_OFFSET => insert!(self.jit.jit_entries.main, regions::MAIN_REGION, [ARM9, ARM7]),
