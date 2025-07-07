@@ -72,7 +72,7 @@ macro_rules! create_io_write_lut {
 macro_rules! read_dtcm {
     ($cpu:expr, $tcm:expr, $addr:expr, $emu:expr, $shm_offset:ident, $read:block) => {{
         if $cpu == ARM9 && $tcm {
-            if unlikely($addr >= $emu.cp15.dtcm_addr && $addr < $emu.cp15.dtcm_addr + $emu.cp15.dtcm_size && $emu.cp15.dtcm_state == TcmState::RW) {
+            if $addr >= $emu.cp15.dtcm_addr && $addr < $emu.cp15.dtcm_addr + $emu.cp15.dtcm_size && $emu.cp15.dtcm_state == TcmState::RW {
                 let dtcm_addr = $addr - $emu.cp15.dtcm_addr;
                 let $shm_offset = regions::DTCM_REGION.shm_offset as u32 + (dtcm_addr & (regions::DTCM_SIZE - 1));
                 return $read;
@@ -137,7 +137,7 @@ macro_rules! read_io_ports {
 macro_rules! write_dtcm {
     ($cpu:expr, $tcm:expr, $addr:expr, $emu:expr, $shm_offset:ident, $write:block) => {{
         if $cpu == ARM9 && $tcm {
-            if unlikely($addr >= $emu.cp15.dtcm_addr && $addr < $emu.cp15.dtcm_addr + $emu.cp15.dtcm_size && $emu.cp15.dtcm_state != TcmState::Disabled) {
+            if $addr >= $emu.cp15.dtcm_addr && $addr < $emu.cp15.dtcm_addr + $emu.cp15.dtcm_size && $emu.cp15.dtcm_state != TcmState::Disabled {
                 let dtcm_addr = $addr - $emu.cp15.dtcm_addr;
                 let $shm_offset = regions::DTCM_REGION.shm_offset as u32 + (dtcm_addr & (regions::DTCM_SIZE - 1));
                 $write;

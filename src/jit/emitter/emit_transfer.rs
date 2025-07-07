@@ -322,8 +322,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             }
         }
 
-        block_asm.push1(GUEST_REG_ALLOCATIONS);
-
         block_asm.ensure_emit_for(64);
         let fast_mem_start = block_asm.get_cursor_offset();
         let guest_inst_metadata_start = block_asm.get_guest_inst_metadata_len();
@@ -353,7 +351,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                                 <MacroAssembler as MasmSub5<FlagsUpdate, Cond, Reg, Reg, &vixl::Operand>>::sub5
                             };
                             func(block_asm, flag_update, Cond::AL, op0_mapped, op0_mapped, &(op1_len as u32 * 4).into());
-                            block_asm.str2(op0_mapped, &MemOperand::reg_offset(Reg::SP, (op0_mapped as i32 - 4) * 4));
                             write_back = false;
                         }
                     } else {
@@ -371,7 +368,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &(CPU.mmu_tcm_addr() as u32).into());
 
-        let usable_regs = reg_reserve!(Reg::R2, Reg::R12, Reg::LR) + GUEST_REG_ALLOCATIONS;
+        let mut usable_regs = reg_reserve!(Reg::R1, Reg::R2, Reg::R12, Reg::LR) + block_asm.get_free_host_regs();
+        if user {
+            usable_regs -= Reg::R1;
+        }
 
         let mut remaining_op1 = op1;
         let mut remaining_op1_len = op1_len;
@@ -400,7 +400,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                                     &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
                                 );
                                 if mapped_reg != Reg::None {
-                                    block_asm.ldr3(Cond::NE, usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                    block_asm.mov4(flag_update, Cond::NE, usable_reg, &mapped_reg.into());
                                 } else {
                                     block_asm.load_guest_reg_cond(Cond::NE, usable_reg, guest_reg);
                                 }
@@ -416,7 +416,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                                     &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
                                 );
                                 if mapped_reg != Reg::None {
-                                    block_asm.ldr3(Cond::EQ, usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                    block_asm.mov4(flag_update, Cond::EQ, usable_reg, &mapped_reg.into());
                                 } else {
                                     block_asm.load_guest_reg_cond(Cond::EQ, usable_reg, guest_reg);
                                 }
@@ -424,7 +424,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                             _ => {
                                 let mapped_reg = block_asm.get_guest_map(guest_reg);
                                 if mapped_reg != Reg::None {
-                                    block_asm.ldr2(usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                    block_asm.mov4(flag_update, Cond::AL, usable_reg, &mapped_reg.into());
                                 } else {
                                     block_asm.load_guest_reg(usable_reg, guest_reg);
                                 }
@@ -441,7 +441,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                         } else {
                             let mapped_reg = block_asm.get_guest_map(guest_reg);
                             if mapped_reg != Reg::None {
-                                block_asm.ldr2(usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                block_asm.mov4(flag_update, Cond::AL, usable_reg, &mapped_reg.into());
                                 guest_regs_multiple_load_store -= guest_reg;
                                 usable_regs_multiple_load_store -= usable_reg;
                             }
@@ -498,7 +498,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                                     &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
                                 );
                                 if mapped_reg != Reg::None {
-                                    block_asm.str3(Cond::NE, usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                    block_asm.mov4(flag_update, Cond::NE, mapped_reg, &usable_reg.into());
                                 }
                                 block_asm.store_guest_reg_cond(Cond::NE, usable_reg, guest_reg);
                             }
@@ -513,14 +513,14 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                                     &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
                                 );
                                 if mapped_reg != Reg::None {
-                                    block_asm.str3(Cond::EQ, usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                    block_asm.mov4(flag_update, Cond::EQ, mapped_reg, &usable_reg.into());
                                 }
                                 block_asm.store_guest_reg_cond(Cond::EQ, usable_reg, guest_reg);
                             }
                             _ => {
                                 let mapped_reg = block_asm.get_guest_map(guest_reg);
                                 if mapped_reg != Reg::None {
-                                    block_asm.str2(usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                                    block_asm.mov4(flag_update, Cond::AL, mapped_reg, &usable_reg.into());
                                 }
                                 block_asm.store_guest_reg(usable_reg, guest_reg);
                             }
@@ -530,7 +530,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                     for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
                         let mapped_reg = block_asm.get_guest_map(guest_reg);
                         if mapped_reg != Reg::None {
-                            block_asm.str2(usable_reg, &MemOperand::reg_offset(Reg::SP, (mapped_reg as i32 - 4) * 4));
+                            block_asm.mov4(flag_update, Cond::AL, mapped_reg, &usable_reg.into());
                             guest_regs_multiple_load_store -= guest_reg;
                             usable_regs_multiple_load_store -= usable_reg;
                         }
@@ -542,8 +542,6 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             remaining_op1_len -= len;
         }
         debug_assert!(remaining_op1.is_empty());
-
-        block_asm.pop1(GUEST_REG_ALLOCATIONS);
 
         if write_back {
             block_asm.sub5(flag_update, Cond::AL, op0_mapped, Reg::R0, &(CPU.mmu_tcm_addr() as u32).into());

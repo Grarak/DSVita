@@ -12,7 +12,7 @@ use crate::jit::inst_mem_handler::{
 use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt};
 use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::jit::op::{MultipleTransfer, Op, SingleTransfer};
-use crate::jit::reg::Reg;
+use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::{Cond, MemoryAmount};
 use crate::logging::debug_println;
 use crate::mmap::{flush_icache, ArmContext, Mmap, PAGE_SHIFT, PAGE_SIZE};
@@ -21,7 +21,7 @@ use crate::utils;
 use crate::utils::{HeapMem, HeapMemU8};
 use bilge::prelude::{u4, u6};
 use std::collections::VecDeque;
-use std::hint::unreachable_unchecked;
+use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::unlikely;
 use std::ops::Deref;
 use std::{ptr, slice};
@@ -470,23 +470,95 @@ impl JitMemory {
         }
     }
 
-    fn get_inst_mem_multiple_handler_fun<const CPU: CpuType>(is_write: bool, transfer: MultipleTransfer, guest_memory_addr: u32, cpsr_dirty: bool) -> *const () {
+    fn get_inst_mem_multiple_handler_fun<const CPU: CpuType>(
+        is_write: bool,
+        transfer: MultipleTransfer,
+        user: bool,
+        valid: bool,
+        needs_pc: bool,
+        guest_memory_addr: u32,
+        cpsr_dirty: bool,
+    ) -> *const () {
+        let is_gx_fifo = guest_memory_addr >= 0x4000400 && guest_memory_addr < 0x4000440;
+        unsafe {
+            assert_unchecked(transfer.write_back() || valid);
+            assert_unchecked(is_write || !needs_pc);
+            assert_unchecked(is_write || !is_gx_fifo);
+            assert_unchecked(!user || !needs_pc);
+        }
+
         macro_rules! _get_inst_mem_multiple_handler_fun {
-            ($write_fun:ident, $read_func:ident) => {
-                match (is_write, transfer.write_back(), !transfer.add()) {
-                    (false, false, false) => $read_func::<CPU, false, false> as _,
-                    (false, false, true) => $read_func::<CPU, false, true> as _,
-                    (false, true, false) => $read_func::<CPU, true, false> as _,
-                    (false, true, true) => $read_func::<CPU, true, true> as _,
-                    (true, false, false) => $write_fun::<CPU, false, false> as _,
-                    (true, false, true) => $write_fun::<CPU, false, true> as _,
-                    (true, true, false) => $write_fun::<CPU, true, false> as _,
-                    (true, true, true) => $write_fun::<CPU, true, true> as _,
+            ($write_func:ident, $read_func:ident) => {
+                match (is_write, transfer.write_back(), !transfer.add(), valid, user, needs_pc) {
+                    (false, false, false, false, false, false) => $read_func::<CPU, false, false, false, false, false> as _,
+                    (true, false, false, false, false, false) => $write_func::<CPU, false, false, false, false, false> as _,
+                    (false, true, false, false, false, false) => $read_func::<CPU, true, false, false, false, false> as _,
+                    (true, true, false, false, false, false) => $write_func::<CPU, true, false, false, false, false> as _,
+                    (false, false, true, false, false, false) => $read_func::<CPU, false, true, false, false, false> as _,
+                    (true, false, true, false, false, false) => $write_func::<CPU, false, true, false, false, false> as _,
+                    (false, true, true, false, false, false) => $read_func::<CPU, true, true, false, false, false> as _,
+                    (true, true, true, false, false, false) => $write_func::<CPU, true, true, false, false, false> as _,
+                    (false, false, false, true, false, false) => $read_func::<CPU, false, false, true, false, false> as _,
+                    (true, false, false, true, false, false) => $write_func::<CPU, false, false, true, false, false> as _,
+                    (false, true, false, true, false, false) => $read_func::<CPU, true, false, true, false, false> as _,
+                    (true, true, false, true, false, false) => $write_func::<CPU, true, false, true, false, false> as _,
+                    (false, false, true, true, false, false) => $read_func::<CPU, false, true, true, false, false> as _,
+                    (true, false, true, true, false, false) => $write_func::<CPU, false, true, true, false, false> as _,
+                    (false, true, true, true, false, false) => $read_func::<CPU, true, true, true, false, false> as _,
+                    (true, true, true, true, false, false) => $write_func::<CPU, true, true, true, false, false> as _,
+                    (false, false, false, false, true, false) => $read_func::<CPU, false, false, false, true, false> as _,
+                    (true, false, false, false, true, false) => $write_func::<CPU, false, false, false, true, false> as _,
+                    (false, true, false, false, true, false) => $read_func::<CPU, true, false, false, true, false> as _,
+                    (true, true, false, false, true, false) => $write_func::<CPU, true, false, false, true, false> as _,
+                    (false, false, true, false, true, false) => $read_func::<CPU, false, true, false, true, false> as _,
+                    (true, false, true, false, true, false) => $write_func::<CPU, false, true, false, true, false> as _,
+                    (false, true, true, false, true, false) => $read_func::<CPU, true, true, false, true, false> as _,
+                    (true, true, true, false, true, false) => $write_func::<CPU, true, true, false, true, false> as _,
+                    (false, false, false, true, true, false) => $read_func::<CPU, false, false, true, true, false> as _,
+                    (true, false, false, true, true, false) => $write_func::<CPU, false, false, true, true, false> as _,
+                    (false, true, false, true, true, false) => $read_func::<CPU, true, false, true, true, false> as _,
+                    (true, true, false, true, true, false) => $write_func::<CPU, true, false, true, true, false> as _,
+                    (false, false, true, true, true, false) => $read_func::<CPU, false, true, true, true, false> as _,
+                    (true, false, true, true, true, false) => $write_func::<CPU, false, true, true, true, false> as _,
+                    (false, true, true, true, true, false) => $read_func::<CPU, true, true, true, true, false> as _,
+                    (true, true, true, true, true, false) => $write_func::<CPU, true, true, true, true, false> as _,
+                    (false, false, false, false, false, true) => $read_func::<CPU, false, false, false, false, true> as _,
+                    (true, false, false, false, false, true) => $write_func::<CPU, false, false, false, false, true> as _,
+                    (false, true, false, false, false, true) => $read_func::<CPU, true, false, false, false, true> as _,
+                    (true, true, false, false, false, true) => $write_func::<CPU, true, false, false, false, true> as _,
+                    (false, false, true, false, false, true) => $read_func::<CPU, false, true, false, false, true> as _,
+                    (true, false, true, false, false, true) => $write_func::<CPU, false, true, false, false, true> as _,
+                    (false, true, true, false, false, true) => $read_func::<CPU, true, true, false, false, true> as _,
+                    (true, true, true, false, false, true) => $write_func::<CPU, true, true, false, false, true> as _,
+                    (false, false, false, true, false, true) => $read_func::<CPU, false, false, true, false, true> as _,
+                    (true, false, false, true, false, true) => $write_func::<CPU, false, false, true, false, true> as _,
+                    (false, true, false, true, false, true) => $read_func::<CPU, true, false, true, false, true> as _,
+                    (true, true, false, true, false, true) => $write_func::<CPU, true, false, true, false, true> as _,
+                    (false, false, true, true, false, true) => $read_func::<CPU, false, true, true, false, true> as _,
+                    (true, false, true, true, false, true) => $write_func::<CPU, false, true, true, false, true> as _,
+                    (false, true, true, true, false, true) => $read_func::<CPU, true, true, true, false, true> as _,
+                    (true, true, true, true, false, true) => $write_func::<CPU, true, true, true, false, true> as _,
+                    (false, false, false, false, true, true) => $read_func::<CPU, false, false, false, true, true> as _,
+                    (true, false, false, false, true, true) => $write_func::<CPU, false, false, false, true, true> as _,
+                    (false, true, false, false, true, true) => $read_func::<CPU, true, false, false, true, true> as _,
+                    (true, true, false, false, true, true) => $write_func::<CPU, true, false, false, true, true> as _,
+                    (false, false, true, false, true, true) => $read_func::<CPU, false, true, false, true, true> as _,
+                    (true, false, true, false, true, true) => $write_func::<CPU, false, true, false, true, true> as _,
+                    (false, true, true, false, true, true) => $read_func::<CPU, true, true, false, true, true> as _,
+                    (true, true, true, false, true, true) => $write_func::<CPU, true, true, false, true, true> as _,
+                    (false, false, false, true, true, true) => $read_func::<CPU, false, false, true, true, true> as _,
+                    (true, false, false, true, true, true) => $write_func::<CPU, false, false, true, true, true> as _,
+                    (false, true, false, true, true, true) => $read_func::<CPU, true, false, true, true, true> as _,
+                    (true, true, false, true, true, true) => $write_func::<CPU, true, false, true, true, true> as _,
+                    (false, false, true, true, true, true) => $read_func::<CPU, false, true, true, true, true> as _,
+                    (true, false, true, true, true, true) => $write_func::<CPU, false, true, true, true, true> as _,
+                    (false, true, true, true, true, true) => $read_func::<CPU, true, true, true, true, true> as _,
+                    (true, true, true, true, true, true) => $write_func::<CPU, true, true, true, true, true> as _,
                 }
             };
         }
 
-        if CPU == ARM9 && is_write && guest_memory_addr >= 0x4000400 && guest_memory_addr < 0x4000440 {
+        if CPU == ARM9 && is_write && is_gx_fifo {
             if cpsr_dirty {
                 _get_inst_mem_multiple_handler_fun!(inst_write_mem_handler_multiple_gxfifo_with_cpsr, inst_read_mem_handler_multiple_with_cpsr)
             } else {
@@ -620,10 +692,28 @@ impl JitMemory {
             };
 
             let is_write = guest_inst_metadata.op.is_write_mem_transfer();
+            let op1 = guest_inst_metadata.operands.values[1].as_reg_list().unwrap_unchecked();
+            let valid = !transfer.write_back() || !op1.is_reserved(guest_inst_metadata.op0);
 
             let inst_mem_func = match cpu {
-                ARM9 => Self::get_inst_mem_multiple_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
-                ARM7 => Self::get_inst_mem_multiple_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
+                ARM9 => Self::get_inst_mem_multiple_handler_fun::<{ ARM9 }>(
+                    is_write,
+                    transfer,
+                    transfer.user() && !op1.is_reserved(Reg::PC),
+                    valid,
+                    op1.is_reserved(Reg::PC),
+                    guest_memory_addr,
+                    guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR),
+                ),
+                ARM7 => Self::get_inst_mem_multiple_handler_fun::<{ ARM7 }>(
+                    is_write,
+                    transfer,
+                    transfer.user() && !op1.is_reserved(Reg::PC),
+                    valid,
+                    op1.is_reserved(Reg::PC),
+                    guest_memory_addr,
+                    guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR),
+                ),
             };
 
             let mut pre = transfer.pre();
@@ -631,7 +721,6 @@ impl JitMemory {
                 pre = !pre;
             }
 
-            let op1 = guest_inst_metadata.operands.values[1].as_reg_list().unwrap_unchecked();
             let params = InstMemMultipleParams::new(op1.0 as u16, u4::new(op1.len() as u8), u4::new(guest_inst_metadata.op0 as u8), pre, transfer.user(), u6::new(0));
 
             Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);

@@ -184,7 +184,6 @@ impl Emu {
                 }
             } else if addr >= self.cp15.dtcm_addr && addr < self.cp15.dtcm_addr + self.cp15.dtcm_size {
                 if self.cp15.dtcm_state == TcmState::RW {
-                    println!("Map dtcm {addr:x}");
                     let base_addr = addr - self.cp15.dtcm_addr;
                     let addr_offset = (base_addr as usize) & (DTCM_REGION.size - 1);
                     *mmu_read = DTCM_REGION.shm_offset + addr_offset;
