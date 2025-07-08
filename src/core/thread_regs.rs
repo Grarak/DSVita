@@ -4,6 +4,7 @@ use crate::jit::reg::Reg;
 use crate::logging::debug_println;
 use crate::{DEBUG_LOG, IS_DEBUG};
 use bilge::prelude::*;
+use std::intrinsics::likely;
 use std::ptr;
 
 #[bitsize(32)]
@@ -274,12 +275,12 @@ impl Emu {
         if current_mode != new_mode {
             let is_current_mode_user = current_mode == 0x10 || current_mode == 0x1F;
             let is_new_mode_user = new_mode == 0x10 || new_mode == 0x1F;
-            if is_current_mode_user && new_mode == 0x12 {
+            if likely(is_current_mode_user && new_mode == 0x12) {
                 regs.user.sp = regs.sp;
                 regs.user.lr = regs.lr;
                 regs.sp = regs.irq.sp;
                 regs.lr = regs.irq.lr;
-            } else if current_mode == 0x12 && is_new_mode_user {
+            } else if likely(current_mode == 0x12 && is_new_mode_user) {
                 regs.irq.sp = regs.sp;
                 regs.irq.lr = regs.lr;
                 regs.sp = regs.user.sp;

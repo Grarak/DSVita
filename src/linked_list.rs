@@ -126,6 +126,7 @@ impl<T, A: Default + LinkedListAllocator<T>> LinkedList<T, A> {
         new_entry
     }
 
+    #[inline]
     pub fn remove_begin(&mut self) -> T {
         self.size -= 1;
         let root = self.root;

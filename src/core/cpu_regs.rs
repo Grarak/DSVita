@@ -193,7 +193,7 @@ impl Emu {
             interrupt
         };
         if interrupted {
-            exception_handler::handle::<CPU, false>(self, 0, ExceptionVector::NormalInterrupt);
+            exception_handler::handle::<CPU>(self, 0, ExceptionVector::NormalInterrupt);
             self.cpu_unhalt(CPU, 0);
         }
     }

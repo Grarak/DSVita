@@ -1,5 +1,5 @@
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ExceptionVector {
     Reset = 0x0,
     UndefinedInstruction = 0x4,
@@ -17,15 +17,16 @@ mod handler {
     use crate::core::hle::bios;
     use crate::core::thread_regs::Cpsr;
     use crate::core::CpuType;
-    use crate::logging::debug_println;
+    use crate::logging::{debug_panic, debug_println};
     use bilge::prelude::u5;
+    use std::intrinsics::likely;
 
-    pub fn handle<const CPU: CpuType, const THUMB: bool>(emu: &mut Emu, comment: u8, vector: ExceptionVector) {
-        if CPU == CpuType::ARM7 || emu.cp15.exception_addr != 0 {
+    pub fn handle<const CPU: CpuType>(emu: &mut Emu, comment: u8, vector: ExceptionVector) {
+        if CPU == CpuType::ARM7 || likely(emu.cp15.exception_addr != 0) {
             match vector {
                 ExceptionVector::SoftwareInterrupt => bios::swi::<CPU>(comment, emu),
                 ExceptionVector::NormalInterrupt => bios::interrupt::<CPU>(emu),
-                _ => todo!(),
+                _ => debug_panic!("unhandled exception vector: {vector:?}"),
             }
         } else {
             debug_println!("{CPU:?} handle exception");

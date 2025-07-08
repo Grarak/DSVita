@@ -150,7 +150,7 @@ impl Emu {
         self.cm.imm_events_swap.clear();
         mem::swap(&mut self.cm.imm_events, &mut self.cm.imm_events_swap);
         for i in 0..self.cm.imm_events_swap.len() {
-            let event_type_entry = &self.cm.imm_events_swap[i];
+            let event_type_entry = unsafe { self.cm.imm_events_swap.get_unchecked(i) };
             let func = unsafe { LUT.get_unchecked(u8::from(event_type_entry.event_type()) as usize) };
             func(self, u16::from(event_type_entry.arg()));
         }
