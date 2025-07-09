@@ -1,7 +1,7 @@
-use crate::core::CpuType;
 use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG, GUEST_REGS_PTR_REG};
 use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, MaskedSpecialRegisterType_CPSR_f, MemOperand, SpecialRegisterType_CPSR};
 use crate::jit::assembler::vixl::{MasmAnd3, MasmLdrh2, MasmMov4, MasmMrs2, MasmMsr2, MasmOrr3};
+use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_info::Operand;
 use crate::jit::inst_thread_regs_handler::{register_set_cpsr_checked, register_set_spsr_checked};
 use crate::jit::jit_asm::JitAsm;
@@ -9,15 +9,15 @@ use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 
-impl<const CPU: CpuType> JitAsm<'_, CPU> {
+impl JitAsm<'_> {
     pub fn emit_msr(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
         let inst = &self.jit_buf.insts[inst_index];
 
         let flags = (inst.opcode >> 16) & 0xF;
 
         let func = match inst.op {
-            Op::MsrRc | Op::MsrIc => register_set_cpsr_checked::<CPU> as *const (),
-            Op::MsrRs | Op::MsrIs => register_set_spsr_checked::<CPU> as *const (),
+            Op::MsrRc | Op::MsrIc => map_fun_cpu!(self.cpu, register_set_cpsr_checked),
+            Op::MsrRs | Op::MsrIs => map_fun_cpu!(self.cpu, register_set_spsr_checked),
             _ => unreachable!(),
         };
 

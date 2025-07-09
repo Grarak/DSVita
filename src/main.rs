@@ -224,14 +224,14 @@ fn run_cpu(
     save_thread.join().unwrap();
 }
 
-pub static mut JIT_ASM_ARM9_PTR: *mut JitAsm<{ ARM9 }> = ptr::null_mut();
-pub static mut JIT_ASM_ARM7_PTR: *mut JitAsm<{ ARM7 }> = ptr::null_mut();
+pub static mut JIT_ASM_ARM9_PTR: *mut JitAsm = ptr::null_mut();
+pub static mut JIT_ASM_ARM7_PTR: *mut JitAsm = ptr::null_mut();
 pub static mut CURRENT_RUNNING_CPU: CpuType = ARM9;
 
-pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a, CPU> {
+pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a> {
     match CPU {
-        ARM9 => JIT_ASM_ARM9_PTR as usize as *mut JitAsm<'a, CPU>,
-        ARM7 => JIT_ASM_ARM7_PTR as usize as *mut JitAsm<'a, CPU>,
+        ARM9 => JIT_ASM_ARM9_PTR as usize as *mut JitAsm<'a>,
+        ARM7 => JIT_ASM_ARM7_PTR as usize as *mut JitAsm<'a>,
     }
 }
 
@@ -260,13 +260,10 @@ fn fault_handler(mem_addr: usize, host_pc: &mut usize, arm_context: &ArmContext)
 
 #[inline(never)]
 fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
-    let mut jit_asm_arm9 = JitAsm::<{ ARM9 }>::new(unsafe { emu.get().as_mut().unwrap() });
-    let mut jit_asm_arm7 = JitAsm::<{ ARM7 }>::new(unsafe { emu.get().as_mut().unwrap() });
+    let mut jit_asm_arm9 = JitAsm::new(ARM9, unsafe { emu.get().as_mut().unwrap() });
+    let mut jit_asm_arm7 = JitAsm::new(ARM7, unsafe { emu.get().as_mut().unwrap() });
 
     let emu = emu.get_mut();
-
-    jit_asm_arm9.init_common_funs();
-    jit_asm_arm7.init_common_funs();
 
     unsafe {
         JIT_ASM_ARM9_PTR = &mut jit_asm_arm9;
@@ -276,7 +273,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     loop {
         let arm9_cycles = if likely(!emu.cpu_is_halted(ARM9)) {
             unsafe { CURRENT_RUNNING_CPU = ARM9 };
-            (jit_asm_arm9.execute() + 1) >> 1
+            (jit_asm_arm9.execute::<{ ARM9 }>() + 1) >> 1
         } else {
             0
         };
@@ -290,7 +287,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
         } else {
             let arm7_cycles = if likely(!emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop()) {
                 unsafe { CURRENT_RUNNING_CPU = ARM7 };
-                jit_asm_arm7.execute()
+                jit_asm_arm7.execute::<{ ARM7 }>()
             } else {
                 0
             };

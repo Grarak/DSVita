@@ -1,4 +1,3 @@
-use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::{MasmLdr2, MasmMov2};
 use crate::jit::jit_asm::{align_guest_pc, JitAsm};
@@ -6,7 +5,7 @@ use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::Cond;
 
-impl<const CPU: CpuType> JitAsm<'_, CPU> {
+impl JitAsm<'_> {
     pub fn emit_bl_thumb(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
         let previous_inst_info = &self.jit_buf.insts[inst_index - 1];
         let relative_pc = if previous_inst_info.op != Op::BlSetupT {

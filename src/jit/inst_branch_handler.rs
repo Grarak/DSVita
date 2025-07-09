@@ -1,7 +1,7 @@
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::jit_asm::{align_guest_pc, call_jit_entry, JitAsm, MAX_STACK_DEPTH_SIZE};
-use crate::jit::jit_asm_common_funs::{exit_guest_context, get_max_loop_cycle_count, JitAsmCommonFuns};
+use crate::jit::jit_asm_common_funs::{exit_guest_context, JitAsmCommonFuns};
 use crate::logging::debug_println;
 use crate::settings::Arm7Emu;
 use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, IS_DEBUG};
@@ -9,7 +9,7 @@ use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
 use std::mem;
 
-pub extern "C" fn run_scheduler<const ARM7_HLE: bool>(asm: *mut JitAsm<{ ARM9 }>, current_pc: u32) {
+pub extern "C" fn run_scheduler<const ARM7_HLE: bool>(asm: *mut JitAsm, current_pc: u32) {
     let asm = unsafe { asm.as_mut_unchecked() };
     debug_println!("{ARM9:?} run scheduler at {current_pc:x} target pc {:x}", asm.emu.thread[ARM9].pc);
 
@@ -20,7 +20,7 @@ pub extern "C" fn run_scheduler<const ARM7_HLE: bool>(asm: *mut JitAsm<{ ARM9 }>
         let jit_asm_arm7 = unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() };
         let arm7_cycles = if likely(!asm.emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop()) {
             unsafe { CURRENT_RUNNING_CPU = ARM7 };
-            jit_asm_arm7.execute()
+            jit_asm_arm7.execute::<{ ARM7 }>()
         } else {
             0
         };
@@ -38,14 +38,14 @@ pub extern "C" fn run_scheduler<const ARM7_HLE: bool>(asm: *mut JitAsm<{ ARM9 }>
     asm.emu.breakout_imm = false;
 }
 
-fn run_scheduler_idle_loop<const ARM7_HLE: bool>(asm: &mut JitAsm<{ ARM9 }>) {
+fn run_scheduler_idle_loop<const ARM7_HLE: bool>(asm: &mut JitAsm) {
     if ARM7_HLE {
         asm.emu.cm.jump_to_next_event();
     } else {
         let jit_asm_arm7 = unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() };
         if likely(!asm.emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop()) {
             unsafe { CURRENT_RUNNING_CPU = ARM7 };
-            asm.emu.cm.add_cycles(jit_asm_arm7.execute());
+            asm.emu.cm.add_cycles(jit_asm_arm7.execute::<{ ARM7 }>());
         } else {
             asm.emu.cm.jump_to_next_event();
         };
@@ -60,7 +60,7 @@ fn run_scheduler_idle_loop<const ARM7_HLE: bool>(asm: &mut JitAsm<{ ARM9 }>) {
 }
 
 #[inline(always)]
-fn check_stack_depth(asm: &mut JitAsm<{ ARM9 }>, current_pc: u32) {
+fn check_stack_depth(asm: &mut JitAsm, current_pc: u32) {
     let sp_depth_size = asm.runtime_data.get_sp_depth_size();
     if unlikely(sp_depth_size >= MAX_STACK_DEPTH_SIZE) {
         if IS_DEBUG {
@@ -73,7 +73,7 @@ fn check_stack_depth(asm: &mut JitAsm<{ ARM9 }>, current_pc: u32) {
     }
 }
 
-pub extern "C" fn handle_interrupt(asm: *mut JitAsm<{ ARM9 }>, target_pc: u32, current_pc: u32) {
+pub extern "C" fn handle_interrupt(asm: *mut JitAsm, target_pc: u32, current_pc: u32) {
     let asm = unsafe { asm.as_mut_unchecked() };
     check_stack_depth(asm, current_pc);
 
@@ -93,25 +93,25 @@ pub extern "C" fn handle_interrupt(asm: *mut JitAsm<{ ARM9 }>, target_pc: u32, c
     asm.runtime_data.set_in_interrupt(false);
 }
 
-fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm<CPU>, total_cycles: u16, current_pc: u32) {
+fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm, total_cycles: u16, current_pc: u32) {
     asm.runtime_data.accumulated_cycles += total_cycles + 2 - asm.runtime_data.pre_cycle_count_sum;
     debug_println!("{CPU:?} flush cycles {} at {current_pc:x}", asm.runtime_data.accumulated_cycles);
 }
 
 #[inline(always)]
-fn check_scheduler<const CPU: CpuType>(asm: &mut JitAsm<CPU>, current_pc: u32) {
-    if unlikely(asm.runtime_data.accumulated_cycles >= get_max_loop_cycle_count::<CPU>() as u16) {
+fn check_scheduler<const CPU: CpuType>(asm: &mut JitAsm, current_pc: u32) {
+    if unlikely(asm.runtime_data.accumulated_cycles >= CPU.max_loop_cycle_count() as u16) {
         match CPU {
             ARM9 => {
                 let pc_og = asm.emu.thread[ARM9].pc;
                 if asm.emu.settings.arm7_hle() == Arm7Emu::Hle {
-                    run_scheduler::<true>(unsafe { mem::transmute(asm as *mut JitAsm<CPU>) }, current_pc);
+                    run_scheduler::<true>(asm, current_pc);
                 } else {
-                    run_scheduler::<false>(unsafe { mem::transmute(asm as *mut JitAsm<CPU>) }, current_pc);
+                    run_scheduler::<false>(asm, current_pc);
                 }
 
                 if unlikely(asm.emu.thread[ARM9].pc != pc_og) {
-                    handle_interrupt(unsafe { mem::transmute(asm as *mut JitAsm<CPU>) }, pc_og, current_pc);
+                    handle_interrupt(asm, pc_og, current_pc);
                 }
             }
             ARM7 => {
@@ -125,7 +125,7 @@ fn check_scheduler<const CPU: CpuType>(asm: &mut JitAsm<CPU>, current_pc: u32) {
     }
 }
 
-pub unsafe extern "C" fn call_jit_fun<const CPU: CpuType>(asm: &mut JitAsm<CPU>, target_pc: u32) {
+pub unsafe fn call_jit_fun<const CPU: CpuType>(asm: &mut JitAsm, target_pc: u32) {
     let thumb = target_pc & 1 == 1;
     let target_pc = align_guest_pc(target_pc);
     asm.emu.thread_set_thumb(CPU, thumb);
@@ -136,14 +136,14 @@ pub unsafe extern "C" fn call_jit_fun<const CPU: CpuType>(asm: &mut JitAsm<CPU>,
 }
 
 #[inline(always)]
-pub extern "C" fn pre_branch<const CPU: CpuType, const HAS_LR_RETURN: bool>(asm: &mut JitAsm<CPU>, total_cycles: u16, lr: u32, current_pc: u32) {
-    flush_cycles(asm, total_cycles, current_pc);
+pub extern "C" fn pre_branch<const CPU: CpuType, const HAS_LR_RETURN: bool>(asm: &mut JitAsm, total_cycles: u16, lr: u32, current_pc: u32) {
+    flush_cycles::<CPU>(asm, total_cycles, current_pc);
 
     if CPU == ARM9 && HAS_LR_RETURN {
-        check_stack_depth(unsafe { mem::transmute(asm as *mut JitAsm<CPU>) }, current_pc);
+        check_stack_depth(unsafe { mem::transmute(asm as *mut JitAsm) }, current_pc);
     }
 
-    check_scheduler(asm, current_pc);
+    check_scheduler::<CPU>(asm, current_pc);
 
     asm.runtime_data.pre_cycle_count_sum = 0;
     if HAS_LR_RETURN {
@@ -154,7 +154,7 @@ pub extern "C" fn pre_branch<const CPU: CpuType, const HAS_LR_RETURN: bool>(asm:
     }
 }
 
-pub extern "C" fn handle_idle_loop<const ARM7_HLE: bool>(asm: *mut JitAsm<{ ARM9 }>, target_pre_cycle_count_sum: u16, current_pc: u32) {
+pub extern "C" fn handle_idle_loop<const ARM7_HLE: bool>(asm: *mut JitAsm, target_pre_cycle_count_sum: u16, current_pc: u32) {
     let asm = unsafe { asm.as_mut_unchecked() };
 
     let pc_og = asm.emu.thread[ARM9].pc;
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn branch_reg<const CPU: CpuType, const HAS_LR_RETURN: boo
         JitAsmCommonFuns::<CPU>::debug_branch_reg(current_pc, target_pc);
     }
 
-    call_jit_fun(asm, target_pc);
+    call_jit_fun::<CPU>(asm, target_pc);
     if HAS_LR_RETURN {
         asm.runtime_data.pre_cycle_count_sum = total_cycles;
     }
@@ -185,8 +185,8 @@ pub unsafe extern "C" fn branch_reg<const CPU: CpuType, const HAS_LR_RETURN: boo
 pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target_pc: u32, current_pc: u32) {
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
 
-    flush_cycles(asm, total_cycles, current_pc);
-    check_scheduler(asm, current_pc);
+    flush_cycles::<CPU>(asm, total_cycles, current_pc);
+    check_scheduler::<CPU>(asm, current_pc);
 
     if IS_DEBUG {
         asm.runtime_data.set_branch_out_pc(current_pc);
@@ -207,7 +207,7 @@ pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target
             if likely(sp_depth_size < MAX_STACK_DEPTH_SIZE) {
                 asm.runtime_data.pre_cycle_count_sum = 0;
                 asm.runtime_data.push_return_stack(desired_lr);
-                unsafe { call_jit_fun(asm, target_pc) };
+                unsafe { call_jit_fun::<CPU>(asm, target_pc) };
             } else if BRANCH_LOG {
                 JitAsmCommonFuns::<CPU>::debug_stack_depth_too_big(sp_depth_size, current_pc);
             }
@@ -219,10 +219,10 @@ pub unsafe extern "C" fn branch_lr<const CPU: CpuType>(total_cycles: u16, target
 pub unsafe extern "C" fn branch_any_reg(total_cycles: u16, current_pc: u32) {
     let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
 
-    flush_cycles(asm, total_cycles, current_pc);
+    flush_cycles::<{ ARM9 }>(asm, total_cycles, current_pc);
     check_stack_depth(asm, current_pc);
-    check_scheduler(asm, current_pc);
+    check_scheduler::<{ ARM9 }>(asm, current_pc);
 
     asm.runtime_data.pre_cycle_count_sum = 0;
-    call_jit_fun(asm, asm.emu.thread[ARM9].pc);
+    call_jit_fun::<{ ARM9 }>(asm, asm.emu.thread[ARM9].pc);
 }

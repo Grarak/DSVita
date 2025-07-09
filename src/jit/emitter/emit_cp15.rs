@@ -1,4 +1,3 @@
-use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::vixl::FlagsUpdate_DontCare;
@@ -10,9 +9,9 @@ use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
 
-impl<const CPU: CpuType> JitAsm<'_, CPU> {
+impl JitAsm<'_> {
     pub fn emit_cp15(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
-        if CPU != ARM9 {
+        if self.cpu != ARM9 {
             return;
         }
 

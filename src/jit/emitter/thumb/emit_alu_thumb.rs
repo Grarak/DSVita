@@ -1,4 +1,3 @@
-use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::{
     vixl, MacroAssembler, MasmAdcs3, MasmAdd3, MasmAdds3, MasmAnds3, MasmAsrs3, MasmBics3, MasmCmp2, MasmEors3, MasmLsls3, MasmLsrs3, MasmMov2, MasmMovs2, MasmMuls3, MasmMvns2, MasmOrrs3, MasmRors3,
@@ -9,7 +8,7 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 
-impl<const CPU: CpuType> JitAsm<'_, CPU> {
+impl JitAsm<'_> {
     pub fn emit_alu_thumb(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
         let inst = &self.jit_buf.insts[inst_index];
 

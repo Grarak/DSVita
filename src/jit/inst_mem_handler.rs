@@ -17,11 +17,10 @@ mod handler {
     use crate::core::emu::Emu;
     use crate::core::CpuType;
     use crate::jit::assembler::block_asm::GuestInstMetadata;
-    use crate::jit::assembler::reg_alloc::GUEST_REG_ALLOCATIONS;
     use crate::jit::reg::{Reg, RegReserve};
     use crate::jit::MemoryAmount;
     use crate::logging::debug_println;
-    use std::hint::{assert_unchecked, unreachable_unchecked};
+    use std::hint::assert_unchecked;
     use std::intrinsics::{likely, unlikely};
     use std::mem::MaybeUninit;
     use std::slice;

@@ -13,30 +13,11 @@ macro_rules! exit_guest_context {
 pub(crate) use exit_guest_context;
 
 use crate::core::CpuType;
-use crate::core::CpuType::{ARM7, ARM9};
-use crate::jit::jit_asm::JitAsm;
 use crate::logging::branch_println;
 
-pub const fn get_max_loop_cycle_count<const CPU: CpuType>() -> u32 {
-    match CPU {
-        ARM9 => 256,
-        ARM7 => 128,
-    }
-}
-
-pub struct JitAsmCommonFuns<const CPU: CpuType> {}
-
-impl<const CPU: CpuType> Default for JitAsmCommonFuns<CPU> {
-    fn default() -> Self {
-        JitAsmCommonFuns {}
-    }
-}
+pub struct JitAsmCommonFuns<const CPU: CpuType>;
 
 impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
-    pub fn new(asm: &mut JitAsm<CPU>) -> Self {
-        JitAsmCommonFuns {}
-    }
-
     pub extern "C" fn debug_push_return_stack(current_pc: u32, lr_pc: u32, stack_size: usize) {
         branch_println!("{CPU:?} push {lr_pc:x} to return stack with size {stack_size} at {current_pc:x}")
     }
@@ -59,9 +40,5 @@ impl<const CPU: CpuType> JitAsmCommonFuns<CPU> {
 
     pub extern "C" fn debug_return_stack_empty(current_pc: u32, target_pc: u32) {
         branch_println!("{CPU:?} empty return stack {current_pc:x} to {target_pc:x}")
-    }
-
-    pub extern "C" fn debug_branch_imm(current_pc: u32, target_pc: u32) {
-        branch_println!("{CPU:?} branch imm from {current_pc:x} to {target_pc:x}");
     }
 }

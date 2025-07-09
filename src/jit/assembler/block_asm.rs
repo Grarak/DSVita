@@ -97,7 +97,7 @@ pub struct BlockAsm {
 }
 
 impl BlockAsm {
-    pub fn new(guest_regs_ptr: *mut u32, thumb: bool) -> Self {
+    pub fn new(cpu: CpuType, thumb: bool) -> Self {
         BlockAsm {
             masm: MacroAssembler::new(if thumb { InstructionSet_T32 } else { InstructionSet_A32 }),
             reg_alloc: RegAlloc::new(thumb),
@@ -109,7 +109,7 @@ impl BlockAsm {
             guest_inst_offsets: Vec::new(),
             guest_basic_block_labels: Vec::new(),
             last_pc_value: 0,
-            guest_regs_ptr,
+            guest_regs_ptr: cpu.guest_regs_addr() as _,
         }
     }
 

@@ -9,9 +9,10 @@ use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, FlagsUpdate_LeaveF
 use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmBl2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
+use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::call_jit_fun;
 use crate::jit::inst_info::InstInfo;
-use crate::jit::jit_asm_common_funs::{exit_guest_context, JitAsmCommonFuns};
+use crate::jit::jit_asm_common_funs::exit_guest_context;
 use crate::jit::jit_memory::JitMemory;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
@@ -267,12 +268,12 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
                 } else {
                     debug_println!("{CPU:?} uninterrupt return lr doesn't match pc");
                     asm.runtime_data.clear_return_stack_ptr();
-                    unsafe { call_jit_fun(asm, asm.emu.thread[CPU].pc) };
+                    unsafe { call_jit_fun::<CPU>(asm, asm.emu.thread[CPU].pc) };
                 }
             }
             ARM7 => {
                 asm.runtime_data.clear_return_stack_ptr();
-                unsafe { call_jit_fun(asm, asm.emu.thread[CPU].pc) };
+                unsafe { call_jit_fun::<CPU>(asm, asm.emu.thread[CPU].pc) };
             }
         }
     }
@@ -340,11 +341,11 @@ unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) 
         "msr cpsr, r2",
         "ldr r11, [r11]",
         "bx lr",
-        emu_offset = const mem::offset_of!(JitAsm::<CPU>, emu),
+        emu_offset = const mem::offset_of!(JitAsm, emu),
         jit_mem_mmap_offset = const mem::offset_of!(Emu, jit) + mem::offset_of!(JitMemory, mem) + mem::offset_of!(Mmap, ptr),
         page_shift = const PAGE_SHIFT,
         jit_guest_inst_offset = const mem::offset_of!(Emu, jit) + mem::offset_of!(JitMemory, guest_inst_offsets),
-        pre_cycle_count_sum_offset = const mem::offset_of!(JitAsm::<CPU>, runtime_data) + mem::offset_of!(JitRuntimeData, pre_cycle_count_sum),
+        pre_cycle_count_sum_offset = const mem::offset_of!(JitAsm, runtime_data) + mem::offset_of!(JitRuntimeData, pre_cycle_count_sum),
         guest_regs_offset = const CPU.guest_regs_addr(),
         cpsr_offset = const Reg::CPSR as usize * 4,
     );
@@ -353,31 +354,32 @@ unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) 
 #[cold]
 pub extern "C" fn emit_code_block(guest_pc: u32) {
     let thumb = (guest_pc & 1) == 1;
-    match unsafe { CURRENT_RUNNING_CPU } {
-        ARM9 => {
-            let asm = unsafe { get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked() };
-            emit_code_block_internal::<{ ARM9 }>(asm, guest_pc & !1, thumb)
-        }
-        ARM7 => {
-            let asm = unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() };
-            let thumb = (guest_pc & 1) == 1;
-            emit_code_block_internal::<{ ARM7 }>(asm, guest_pc & !1, thumb)
-        }
-    }
+    let cpu = unsafe { CURRENT_RUNNING_CPU };
+    let asm = match cpu {
+        ARM9 => unsafe { get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked() },
+        ARM7 => unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() },
+    };
+    emit_code_block_internal(cpu, asm, guest_pc & !1, thumb);
 }
 
-fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc: u32, thumb: bool) {
+fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     let mut uncond_branch_count = 0;
     let mut pc_offset = 0;
     let get_inst_info = if thumb {
-        |asm: &mut JitAsm<CPU>, pc| {
-            let opcode = asm.emu.mem_read::<CPU, u16>(pc);
+        |cpu: CpuType, asm: &mut JitAsm, pc| {
+            let opcode = match cpu {
+                ARM9 => asm.emu.mem_read::<{ ARM9 }, u16>(pc),
+                ARM7 => asm.emu.mem_read::<{ ARM7 }, u16>(pc),
+            };
             let (op, func) = lookup_thumb_opcode(opcode);
             InstInfo::from(func(opcode, *op))
         }
     } else {
-        |asm: &mut JitAsm<CPU>, pc| {
-            let opcode = asm.emu.mem_read::<CPU, u32>(pc);
+        |cpu: CpuType, asm: &mut JitAsm, pc| {
+            let opcode = match cpu {
+                ARM9 => asm.emu.mem_read::<{ ARM9 }, u32>(pc),
+                ARM7 => asm.emu.mem_read::<{ ARM7 }, u32>(pc),
+            };
             let (op, func) = lookup_opcode(opcode);
             func(opcode, *op)
         }
@@ -388,18 +390,18 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
     let mut last_inst_branch = false;
 
     loop {
-        let inst_info = get_inst_info(asm, guest_pc + pc_offset);
+        let inst_info = get_inst_info(cpu, asm, guest_pc + pc_offset);
 
         if inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb || inst_info.cond == Cond::NV {
             break;
         }
 
         if let Some(last) = asm.jit_buf.insts_cycle_counts.last() {
-            debug_assert!(u16::MAX - last >= inst_info.cycle as u16, "{CPU:?} {guest_pc:x} {inst_info:?}");
+            debug_assert!(u16::MAX - last >= inst_info.cycle as u16, "{cpu:?} {guest_pc:x} {inst_info:?}");
             asm.jit_buf.insts_cycle_counts.push(last + inst_info.cycle as u16);
         } else {
             asm.jit_buf.insts_cycle_counts.push(inst_info.cycle as u16);
-            debug_assert!(asm.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{CPU:?} {guest_pc:x} {inst_info:?}")
+            debug_assert!(asm.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{cpu:?} {guest_pc:x} {inst_info:?}")
         }
 
         let is_uncond_branch = inst_info.is_uncond_branch();
@@ -425,17 +427,17 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
     }
 
     let (jit_entry, flushed) = {
-        debug_println!("{CPU:?} {thumb} emit code block {guest_pc:x} - {:x}", guest_pc + pc_offset);
+        debug_println!("{cpu:?} {thumb} emit code block {guest_pc:x} - {:x}", guest_pc + pc_offset);
         // unsafe { BLOCK_LOG = guest_pc == 0x200675e };
 
         asm.analyzer.analyze(guest_pc, &asm.jit_buf.insts, thumb);
         asm.jit_buf.guest_pc_start = guest_pc;
         asm.jit_buf.debug_info.resize(asm.analyzer.basic_blocks.len(), asm.jit_buf.insts.len());
 
-        let mut block_asm = BlockAsm::new(CPU.guest_regs_addr() as _, thumb);
+        let mut block_asm = BlockAsm::new(cpu, thumb);
         block_asm.prologue(asm.analyzer.basic_blocks.len());
 
-        if CPU == ARM7 && guest_pc & 0xFF000000 != regions::VRAM_OFFSET && asm.emu.settings.arm7_block_validation() {
+        if cpu == ARM7 && guest_pc & 0xFF000000 != regions::VRAM_OFFSET && asm.emu.settings.arm7_block_validation() {
             let guest_ptr = ARM7.mmu_tcm_addr() + (guest_pc as usize & 0xFFFFFFF);
             let size = (pc_offset + pc_step) as usize;
             let hash = xxh32(unsafe { slice::from_raw_parts(guest_ptr as _, size) }, 0);
@@ -449,7 +451,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
 
         if BRANCH_LOG {
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
-            block_asm.call(debug_enter_block::<CPU> as _);
+            block_asm.call(map_fun_cpu!(cpu, debug_enter_block));
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &Reg::R4.into());
         }
 
@@ -463,7 +465,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
             block_asm.lsr5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &1.into());
         }
         block_asm.ldr2(Reg::R1, asm as *mut _ as u32);
-        block_asm.ldr2(Reg::R3, jump_to_other_guest_pc::<CPU> as *const () as u32);
+        block_asm.ldr2(Reg::R3, map_fun_cpu!(cpu, jump_to_other_guest_pc) as u32);
         block_asm.blx1(Reg::R3);
         block_asm.add5(FlagsUpdate_LeaveFlags, Cond::AL, Reg::PC, Reg::PC, &Reg::R0.into());
 
@@ -489,7 +491,7 @@ fn emit_code_block_internal<const CPU: CpuType>(asm: &mut JitAsm<CPU>, guest_pc:
         //     println!();
         //     todo!()
         // }
-        let (insert_entry, flushed) = asm.emu.jit_insert_block(block_asm, guest_pc, guest_pc + pc_offset + pc_step, thumb, CPU);
+        let (insert_entry, flushed) = asm.emu.jit_insert_block(block_asm, guest_pc, guest_pc + pc_offset + pc_step, thumb, cpu);
         let jit_entry: extern "C" fn(u32) = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {
@@ -577,32 +579,27 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
     asm.runtime_data.accumulated_cycles
 }
 
-pub struct JitAsm<'a, const CPU: CpuType> {
+pub struct JitAsm<'a> {
+    pub cpu: CpuType,
     pub emu: &'a mut Emu,
     pub jit_buf: JitBuf,
     pub runtime_data: JitRuntimeData,
-    pub jit_common_funs: JitAsmCommonFuns<CPU>,
     pub analyzer: AsmAnalyzer,
 }
 
-impl<'a, const CPU: CpuType> JitAsm<'a, CPU> {
+impl<'a> JitAsm<'a> {
     #[inline(never)]
-    pub fn new(emu: &'a mut Emu) -> Self {
+    pub fn new(cpu: CpuType, emu: &'a mut Emu) -> Self {
         JitAsm {
+            cpu,
             emu,
             jit_buf: JitBuf::new(),
             runtime_data: JitRuntimeData::new(),
-            jit_common_funs: JitAsmCommonFuns::default(),
             analyzer: AsmAnalyzer::default(),
         }
     }
 
-    #[inline(never)]
-    pub fn init_common_funs(&mut self) {
-        self.jit_common_funs = JitAsmCommonFuns::new(self);
-    }
-
-    pub fn execute(&mut self) -> u16 {
+    pub fn execute<const CPU: CpuType>(&mut self) -> u16 {
         let entry = self.emu.thread[CPU].pc;
         execute_internal::<CPU>(entry)
     }

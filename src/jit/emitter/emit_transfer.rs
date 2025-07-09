@@ -1,11 +1,10 @@
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG, GUEST_REGS_PTR_REG};
-use crate::jit::assembler::reg_alloc::GUEST_REG_ALLOCATIONS;
 use crate::jit::assembler::vixl::vixl::{AddrMode_PostIndex, AddrMode_PreIndex, FlagsUpdate, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, MemOperand, WriteBack};
 use crate::jit::assembler::vixl::{
     vixl, MacroAssembler, MasmAdd5, MasmAnd5, MasmBic5, MasmCmp2, MasmCmp3, MasmLdm3, MasmLdmda3, MasmLdmdb3, MasmLdmib3, MasmLdr2, MasmLdr3, MasmLdrb2, MasmLdrh2, MasmLdrsb2, MasmLdrsh2, MasmLsl5,
-    MasmMov4, MasmNop, MasmPop1, MasmPush1, MasmRor5, MasmStm3, MasmStmda3, MasmStmdb3, MasmStmib3, MasmStr2, MasmStr3, MasmStrb2, MasmStrh2, MasmSub5,
+    MasmMov4, MasmNop, MasmRor5, MasmStm3, MasmStmda3, MasmStmdb3, MasmStmib3, MasmStr2, MasmStr3, MasmStrb2, MasmStrh2, MasmSub5,
 };
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::jit_memory::{JitMemory, SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM, SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM};
@@ -39,7 +38,7 @@ macro_rules! get_read_func {
     };
 }
 
-impl<const CPU: CpuType> JitAsm<'_, CPU> {
+impl JitAsm<'_> {
     fn pad_nop(current_length: usize, max_length: usize, block_asm: &mut BlockAsm) {
         for _ in (current_length..max_length).step_by(if block_asm.thumb { 2 } else { 4 }) {
             block_asm.nop0();
@@ -68,7 +67,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             _ => unreachable!(),
         };
 
-        block_asm.mov4(flag_update, Cond::AL, Reg::LR, &(CPU.mmu_tcm_addr() as u32).into());
+        block_asm.mov4(flag_update, Cond::AL, Reg::LR, &(self.cpu.mmu_tcm_addr() as u32).into());
 
         metadata_emitter(self, block_asm);
 
@@ -102,7 +101,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let func = get_read_func!(size, signed);
 
-        block_asm.mov4(flag_update, Cond::AL, Reg::LR, &(CPU.mmu_tcm_addr() as u32).into());
+        block_asm.mov4(flag_update, Cond::AL, Reg::LR, &(self.cpu.mmu_tcm_addr() as u32).into());
 
         metadata_emitter(self, block_asm);
 
@@ -169,7 +168,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.ensure_emit_for(64);
             let fast_mem_start = block_asm.get_cursor_offset();
 
-            block_asm.ldr2(Reg::R1, (imm_addr & !(0xF0000000 | (size as u32 - 1))) + CPU.mmu_tcm_addr() as u32);
+            block_asm.ldr2(Reg::R1, (imm_addr & !(0xF0000000 | (size as u32 - 1))) + self.cpu.mmu_tcm_addr() as u32);
 
             block_asm.guest_inst_metadata(
                 self.jit_buf.insts_cycle_counts[inst_index],
@@ -330,7 +329,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let mut write_back = transfer.write_back();
         if write_back && op1.is_reserved(op0) {
-            match CPU {
+            match self.cpu {
                 ARM9 => {
                     if inst.op.is_write_mem_transfer() {
                         // always store OLD base
@@ -366,7 +365,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             block_asm.and5(flag_update, Cond::AL, Reg::R1, Reg::R1, &0x1F.into());
         }
 
-        block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &(CPU.mmu_tcm_addr() as u32).into());
+        block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &(self.cpu.mmu_tcm_addr() as u32).into());
 
         let mut usable_regs = reg_reserve!(Reg::R1, Reg::R2, Reg::R12, Reg::LR) + block_asm.get_free_host_regs();
         if user {
@@ -544,7 +543,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         debug_assert!(remaining_op1.is_empty());
 
         if write_back {
-            block_asm.sub5(flag_update, Cond::AL, op0_mapped, Reg::R0, &(CPU.mmu_tcm_addr() as u32).into());
+            block_asm.sub5(flag_update, Cond::AL, op0_mapped, Reg::R0, &(self.cpu.mmu_tcm_addr() as u32).into());
         }
 
         let fast_mem_end = block_asm.get_cursor_offset();
@@ -570,7 +569,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         };
 
         if op1.is_empty() {
-            if CPU == ARM7 {
+            if self.cpu == ARM7 {
                 todo!()
             }
             let op0_mapped = block_asm.get_guest_map(op0);

@@ -3,9 +3,9 @@ use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::vixl::{BranchHint_kFar, FlagsUpdate_DontCare, MemOperand};
 use crate::jit::assembler::vixl::{Label, MasmB2, MasmB3, MasmBic5, MasmBlx1, MasmBx1, MasmCmp2, MasmLdr2, MasmLdrb2, MasmMov2, MasmMov4, MasmOrr5, MasmStrb2, MasmStrh2};
+use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::{branch_lr, branch_reg, handle_idle_loop, handle_interrupt, pre_branch};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
-use crate::jit::jit_asm_common_funs::{get_max_loop_cycle_count, JitAsmCommonFuns};
 use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::{inst_branch_handler, Cond};
 use crate::logging::branch_println;
@@ -14,7 +14,23 @@ use crate::{BRANCH_LOG, IS_DEBUG};
 use std::ptr;
 use CpuType::ARM7;
 
-impl<const CPU: CpuType> JitAsm<'_, CPU> {
+extern "C" fn debug_branch_label<const CPU: CpuType>(current_pc: u32, target_pc: u32) {
+    branch_println!("{CPU:?} branch label from {current_pc:x} to {target_pc:x}")
+}
+
+extern "C" fn debug_branch_reg<const CPU: CpuType>(current_pc: u32, target_pc: u32) {
+    branch_println!("{CPU:?} branch reg from {current_pc:x} to {target_pc:x}")
+}
+
+extern "C" fn debug_idle_loop<const CPU: CpuType>(current_pc: u32, target_pc: u32) {
+    branch_println!("{CPU:?} detected idle loop {current_pc:x} to {target_pc:x}")
+}
+
+extern "C" fn debug_branch_imm<const CPU: CpuType>(current_pc: u32, target_pc: u32) {
+    branch_println!("{CPU:?} branch imm from {current_pc:x} to {target_pc:x}");
+}
+
+impl JitAsm<'_> {
     fn emit_set_cpsr_thumb_bit_imm(&mut self, thumb: bool, block_asm: &mut BlockAsm) {
         block_asm.load_guest_reg(Reg::R0, Reg::CPSR);
         if thumb {
@@ -50,13 +66,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let pc = block_asm.current_pc;
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R3, &pc.into());
         }
-        block_asm.call(if has_return { pre_branch::<CPU, true> as _ } else { pre_branch::<CPU, false> as _ });
+        block_asm.call(if has_return {
+            map_fun_cpu!(self.cpu, pre_branch, true)
+        } else {
+            map_fun_cpu!(self.cpu, pre_branch, false)
+        });
 
         if BRANCH_LOG {
             let pc = block_asm.current_pc;
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pc.into());
-            block_asm.call(JitAsmCommonFuns::<CPU>::debug_branch_imm as _);
+            block_asm.call(map_fun_cpu!(self.cpu, debug_branch_imm));
         }
 
         block_asm.restore_guest_regs_ptr();
@@ -79,10 +99,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
 
         if has_return {
-            block_asm.call(branch_reg::<CPU, true> as _);
+            block_asm.call(map_fun_cpu!(self.cpu, branch_reg, true));
         } else {
             block_asm.restore_stack();
-            block_asm.ldr2(Reg::R12, branch_reg::<CPU, false> as *const () as u32);
+            block_asm.ldr2(Reg::R12, map_fun_cpu!(self.cpu, branch_reg, false) as u32);
             block_asm.bx1(Reg::R12);
         }
     }
@@ -153,7 +173,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         }
 
         block_asm.restore_stack();
-        block_asm.ldr2(Reg::R12, branch_lr::<CPU> as *const () as u32);
+        block_asm.ldr2(Reg::R12, map_fun_cpu!(self.cpu, branch_lr) as u32);
         block_asm.bx1(Reg::R12);
     }
 
@@ -168,10 +188,10 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let pc = block_asm.current_pc;
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc_reg.into());
-                block_asm.call(Self::debug_idle_loop as _);
+                block_asm.call(map_fun_cpu!(self.cpu, debug_idle_loop));
             }
 
-            match CPU {
+            match self.cpu {
                 ARM9 => {
                     let jump_to_index = inst_index - ((block_asm.current_pc - aligned_target_pc) >> pc_shift) as usize;
                     let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
@@ -211,7 +231,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             let mut continue_label = Label::new();
             let mut exit_label = Label::new();
 
-            block_asm.cmp2(Reg::R3, &get_max_loop_cycle_count::<CPU>().into());
+            block_asm.cmp2(Reg::R3, &self.cpu.max_loop_cycle_count().into());
             block_asm.b3(Cond::HS, &mut cycles_exceed_label, BranchHint_kFar);
 
             block_asm.bind(&mut continue_label);
@@ -236,7 +256,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let pc = block_asm.current_pc;
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc_reg.into());
-                block_asm.call(Self::debug_branch_label as _);
+                block_asm.call(map_fun_cpu!(self.cpu, debug_branch_label));
             }
 
             let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
@@ -244,7 +264,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             block_asm.bind(&mut cycles_exceed_label);
 
-            match CPU {
+            match self.cpu {
                 ARM9 => {
                     block_asm.ldr2(Reg::R0, self as *mut _ as u32);
                     if IS_DEBUG {
@@ -350,7 +370,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
     }
 
     pub fn emit_blx(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
-        if CPU != ARM9 {
+        if self.cpu != ARM9 {
             return;
         }
 
@@ -367,17 +387,5 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::LR, Reg::PC));
 
         self.emit_branch_external_label(inst_index, basic_block_index, target_pc | 1, true, block_asm);
-    }
-
-    extern "C" fn debug_branch_label(current_pc: u32, target_pc: u32) {
-        branch_println!("{CPU:?} branch label from {current_pc:x} to {target_pc:x}")
-    }
-
-    extern "C" fn debug_branch_reg(current_pc: u32, target_pc: u32) {
-        branch_println!("{CPU:?} branch reg from {current_pc:x} to {target_pc:x}")
-    }
-
-    extern "C" fn debug_idle_loop(current_pc: u32, target_pc: u32) {
-        branch_println!("{CPU:?} detected idle loop {current_pc:x} to {target_pc:x}")
     }
 }

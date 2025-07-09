@@ -1,8 +1,8 @@
-use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::vixl::{BranchHint_kNear, FlagsUpdate_DontCare, MemOperand};
 use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmB3, MasmBkpt1, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
+use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::branch_any_reg;
 use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode, set_pc_thumb_mode};
 use crate::jit::jit_asm::{debug_after_exec_op, JitAsm, JitRuntimeData};
@@ -13,7 +13,7 @@ use crate::logging::debug_println;
 use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
 
-impl<const CPU: CpuType> JitAsm<'_, CPU> {
+impl JitAsm<'_> {
     pub fn emit(&mut self, block_asm: &mut BlockAsm, thumb: bool) {
         block_asm.guest_inst_offsets.reserve(self.jit_buf.insts.len() - 1);
 
@@ -45,17 +45,17 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         let restore_spsr = inst.out_regs.is_reserved(Reg::CPSR) && inst.op.is_alu();
         if restore_spsr {
-            block_asm.call(register_restore_spsr::<CPU> as _);
+            block_asm.call(map_fun_cpu!(self.cpu, register_restore_spsr));
         }
 
-        if CPU == ARM7 || (!inst.op.is_single_mem_transfer() && !inst.op.is_multiple_mem_transfer()) {
+        if self.cpu == ARM7 || (!inst.op.is_single_mem_transfer() && !inst.op.is_multiple_mem_transfer()) {
             if restore_spsr {
-                block_asm.call(restore_thumb_after_restore_spsr::<CPU> as _);
+                block_asm.call(map_fun_cpu!(self.cpu, restore_thumb_after_restore_spsr));
             } else {
-                block_asm.call(set_pc_arm_mode::<CPU> as _);
+                block_asm.call(map_fun_cpu!(self.cpu, set_pc_arm_mode));
             }
         } else if restore_spsr {
-            block_asm.call(restore_thumb_after_restore_spsr::<CPU> as _);
+            block_asm.call(map_fun_cpu!(self.cpu, restore_thumb_after_restore_spsr));
         }
 
         if (inst.op.is_mov() && inst.src_regs.is_reserved(Reg::LR) && !inst.out_regs.is_reserved(Reg::CPSR))
@@ -65,9 +65,9 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
             match inst.op {
                 Op::Ldm(transfer) | Op::Stm(transfer) => {
                     if transfer.user() {
-                        block_asm.call(register_restore_spsr::<CPU> as _);
-                        if CPU == ARM7 {
-                            block_asm.call(set_pc_arm_mode::<CPU> as _);
+                        block_asm.call(map_fun_cpu!(self.cpu, register_restore_spsr));
+                        if self.cpu == ARM7 {
+                            block_asm.call(set_pc_arm_mode::<{ ARM7 }> as _);
                         }
                     }
                 }
@@ -76,7 +76,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             let pc_reg = block_asm.get_guest_map(Reg::PC);
             self.emit_branch_return_stack(inst_index, pc_reg, block_asm);
-        } else if CPU == ARM9 {
+        } else if self.cpu == ARM9 {
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &self.jit_buf.insts_cycle_counts[inst_index].into());
             if IS_DEBUG {
                 let pc = block_asm.current_pc;
@@ -96,8 +96,8 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
         block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
 
-        if CPU == ARM7 || !inst.op.is_multiple_mem_transfer() {
-            block_asm.call(set_pc_thumb_mode::<CPU> as _);
+        if self.cpu == ARM7 || !inst.op.is_multiple_mem_transfer() {
+            block_asm.call(map_fun_cpu!(self.cpu, set_pc_thumb_mode));
         }
 
         // R9 can be used as a substitution for SP for branch prediction
@@ -107,7 +107,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         {
             let pc_reg = block_asm.get_guest_map(Reg::PC);
             self.emit_branch_return_stack(inst_index, pc_reg, block_asm);
-        } else if CPU == ARM9 {
+        } else if self.cpu == ARM9 {
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &self.jit_buf.insts_cycle_counts[inst_index].into());
             if IS_DEBUG {
                 let pc = block_asm.current_pc;
@@ -145,7 +145,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
 
             let inst = &self.jit_buf.insts[i];
             if i != 0 {
-                block_asm.guest_offset(self.jit_buf.insts_cycle_counts[i] - inst.cycle as u16, CPU, self.emu);
+                block_asm.guest_offset(self.jit_buf.insts_cycle_counts[i] - inst.cycle as u16, self.cpu, self.emu);
             }
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
@@ -216,7 +216,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
                 let current_pc = block_asm.current_pc;
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &current_pc.into());
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &self.jit_buf.insts[i].opcode.into());
-                block_asm.call(debug_after_exec_op::<CPU> as _);
+                block_asm.call(map_fun_cpu!(self.cpu, debug_after_exec_op));
 
                 let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, i);
                 block_asm.restore_tmp_regs(next_live_regs);

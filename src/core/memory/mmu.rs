@@ -7,7 +7,7 @@ use crate::core::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
 use crate::mmap::{MemRegion, VirtualMem};
 use crate::utils::HeapMemUsize;
-use regions::{IO_PORTS_OFFSET, MAIN_OFFSET, MAIN_REGION, SHARED_WRAM_OFFSET, VRAM_OFFSET, V_MEM_ARM9_RANGE};
+use regions::{IO_PORTS_OFFSET, MAIN_OFFSET, MAIN_REGION, SHARED_WRAM_OFFSET, V_MEM_ARM9_RANGE};
 use std::cmp::max;
 
 pub const MMU_PAGE_SHIFT: usize = 14;

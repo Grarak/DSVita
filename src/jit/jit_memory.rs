@@ -1,5 +1,5 @@
 use crate::core::emu::Emu;
-use crate::core::memory::mmu::{MMU_PAGE_SHIFT, MMU_PAGE_SIZE};
+use crate::core::memory::mmu::MMU_PAGE_SHIFT;
 use crate::core::memory::{regions, vram};
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::{BlockAsm, GuestInstMetadata, GuestInstOffset};
@@ -12,7 +12,7 @@ use crate::jit::inst_mem_handler::{
 use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt};
 use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::jit::op::{MultipleTransfer, Op, SingleTransfer};
-use crate::jit::reg::{Reg, RegReserve};
+use crate::jit::reg::Reg;
 use crate::jit::{Cond, MemoryAmount};
 use crate::logging::debug_println;
 use crate::mmap::{flush_icache, ArmContext, Mmap, PAGE_SHIFT, PAGE_SIZE};

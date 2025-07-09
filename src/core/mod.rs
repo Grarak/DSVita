@@ -55,6 +55,13 @@ impl CpuType {
             ARM7 => MMU_TCM_ARM7_ADDR,
         }
     }
+
+    pub const fn max_loop_cycle_count(self) -> u32 {
+        match self {
+            ARM9 => 256,
+            ARM7 => 128,
+        }
+    }
 }
 
 impl From<bool> for CpuType {

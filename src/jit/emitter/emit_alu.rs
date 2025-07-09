@@ -1,4 +1,3 @@
-use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::{
@@ -15,7 +14,7 @@ use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
 
-impl<const CPU: CpuType> JitAsm<'_, CPU> {
+impl JitAsm<'_> {
     pub fn emit_alu(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
         let inst = &self.jit_buf.insts[inst_index];
         let mut cond = inst.cond;
@@ -133,7 +132,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
     }
 
     pub fn emit_clz(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
-        if CPU != ARM9 {
+        if self.cpu != ARM9 {
             return;
         }
 
@@ -147,7 +146,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
     }
 
     pub fn emit_q_op(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
-        if CPU != ARM9 {
+        if self.cpu != ARM9 {
             return;
         }
 

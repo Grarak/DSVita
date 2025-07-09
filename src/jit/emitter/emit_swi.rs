@@ -1,14 +1,13 @@
-use crate::core::exception_handler::ExceptionVector;
-use crate::core::CpuType;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::assembler::vixl::vixl::FlagsUpdate_DontCare;
 use crate::jit::assembler::vixl::{MasmLdr2, MasmMov4};
+use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_exception_handler::software_interrupt_handler;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 
-impl<const CPU: CpuType> JitAsm<'_, CPU> {
+impl JitAsm<'_> {
     pub fn emit_swi(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
         let inst = &self.jit_buf.insts[inst_index];
         let thumb = block_asm.thumb;
@@ -20,7 +19,7 @@ impl<const CPU: CpuType> JitAsm<'_, CPU> {
         let pc = block_asm.current_pc;
         block_asm.ldr2(Reg::R1, pc | thumb as u32);
         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &self.jit_buf.insts_cycle_counts[inst_index].into());
-        block_asm.call(software_interrupt_handler::<CPU> as _);
+        block_asm.call(map_fun_cpu!(self.cpu, software_interrupt_handler));
 
         let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
         block_asm.restore_tmp_regs(next_live_regs);
