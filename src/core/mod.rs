@@ -24,6 +24,9 @@ mod wifi;
 const GUEST_REGS_ARM9_ADDR: usize = 0xA0000000;
 const GUEST_REGS_ARM7_ADDR: usize = 0xA8000000;
 
+const JIT_ASM_ARM9_ADDR: usize = 0xA1000000;
+const JIT_ASM_ARM7_ADDR: usize = 0xA2000000;
+
 const MMU_TCM_ARM9_ADDR: usize = 0xB0000000;
 const MMU_TCM_ARM7_ADDR: usize = if cfg!(target_os = "linux") && cfg!(feature = "profiling") { 0x90000000 } else { 0xC0000000 };
 
@@ -46,6 +49,13 @@ impl CpuType {
         match self {
             ARM9 => GUEST_REGS_ARM9_ADDR,
             ARM7 => GUEST_REGS_ARM7_ADDR,
+        }
+    }
+
+    pub const fn jit_asm_addr(self) -> usize {
+        match self {
+            ARM9 => JIT_ASM_ARM9_ADDR,
+            ARM7 => JIT_ASM_ARM7_ADDR,
         }
     }
 

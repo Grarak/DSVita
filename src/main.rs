@@ -224,14 +224,12 @@ fn run_cpu(
     save_thread.join().unwrap();
 }
 
-pub static mut JIT_ASM_ARM9_PTR: *mut JitAsm = ptr::null_mut();
-pub static mut JIT_ASM_ARM7_PTR: *mut JitAsm = ptr::null_mut();
 pub static mut CURRENT_RUNNING_CPU: CpuType = ARM9;
 
 pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a> {
     match CPU {
-        ARM9 => JIT_ASM_ARM9_PTR as usize as *mut JitAsm<'a>,
-        ARM7 => JIT_ASM_ARM7_PTR as usize as *mut JitAsm<'a>,
+        ARM9 => CPU.jit_asm_addr() as *mut JitAsm<'a>,
+        ARM7 => CPU.jit_asm_addr() as *mut JitAsm<'a>,
     }
 }
 
@@ -260,15 +258,14 @@ fn fault_handler(mem_addr: usize, host_pc: &mut usize, arm_context: &ArmContext)
 
 #[inline(never)]
 fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
-    let mut jit_asm_arm9 = JitAsm::new(ARM9, unsafe { emu.get().as_mut().unwrap() });
-    let mut jit_asm_arm7 = JitAsm::new(ARM7, unsafe { emu.get().as_mut().unwrap() });
+    let mut jit_asm_arm9 = Mmap::rw("arm9_jit_asm", ARM9.jit_asm_addr(), utils::align_up(size_of::<JitAsm>(), PAGE_SIZE)).unwrap();
+    let mut jit_asm_arm7 = Mmap::rw("arm7_jit_asm", ARM7.jit_asm_addr(), utils::align_up(size_of::<JitAsm>(), PAGE_SIZE)).unwrap();
+    let jit_asm_arm9: &'static mut JitAsm = unsafe { mem::transmute(jit_asm_arm9.as_mut_ptr()) };
+    let jit_asm_arm7: &'static mut JitAsm = unsafe { mem::transmute(jit_asm_arm7.as_mut_ptr()) };
+    *jit_asm_arm9 = JitAsm::new(ARM9, unsafe { emu.get().as_mut().unwrap() });
+    *jit_asm_arm7 = JitAsm::new(ARM7, unsafe { emu.get().as_mut().unwrap() });
 
     let emu = emu.get_mut();
-
-    unsafe {
-        JIT_ASM_ARM9_PTR = &mut jit_asm_arm9;
-        JIT_ASM_ARM7_PTR = &mut jit_asm_arm7;
-    }
 
     loop {
         let arm9_cycles = if likely(!emu.cpu_is_halted(ARM9)) {

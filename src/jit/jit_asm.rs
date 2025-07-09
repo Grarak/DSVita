@@ -311,6 +311,7 @@ const_assert_eq!(size_of::<GuestInstOffset>(), 40);
 unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) {
     #[rustfmt::skip]
     naked_asm!(
+        "mov r1, {jit_asm_ptr}",
         "lsrs r0, r0, 1", // r0 = diff >> 1
         "subs r0, r0, 1", // r0 = r0 - 1
         "ldr r2, [r1, {emu_offset}]", // r2 = asm.emu
@@ -341,6 +342,7 @@ unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) 
         "msr cpsr, r2",
         "ldr r11, [r11]",
         "bx lr",
+        jit_asm_ptr = const CPU.jit_asm_addr(),
         emu_offset = const mem::offset_of!(JitAsm, emu),
         jit_mem_mmap_offset = const mem::offset_of!(Emu, jit) + mem::offset_of!(JitMemory, mem) + mem::offset_of!(Mmap, ptr),
         page_shift = const PAGE_SHIFT,
@@ -464,7 +466,6 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
         if !thumb {
             block_asm.lsr5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &1.into());
         }
-        block_asm.ldr2(Reg::R1, asm as *mut _ as u32);
         block_asm.ldr2(Reg::R3, map_fun_cpu!(cpu, jump_to_other_guest_pc) as u32);
         block_asm.blx1(Reg::R3);
         block_asm.add5(FlagsUpdate_LeaveFlags, Cond::AL, Reg::PC, Reg::PC, &Reg::R0.into());
