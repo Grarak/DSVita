@@ -39,7 +39,7 @@ use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::{mem, ptr, thread};
+use std::{mem, thread};
 use CpuType::{ARM7, ARM9};
 
 mod bitset;

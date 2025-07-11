@@ -11,7 +11,7 @@ use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRES
 use crate::settings::{ScreenMode, Settings};
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
@@ -23,14 +23,14 @@ pub struct ScreenTopology {
 
 pub struct GpuRendererCommon {
     pub mem_buf: GpuMemBuf,
-    pub pow_cnt1: PowCnt1,
+    pub pow_cnt1: [PowCnt1; 2],
 }
 
 impl GpuRendererCommon {
     fn new() -> Self {
         GpuRendererCommon {
             mem_buf: GpuMemBuf::default(),
-            pow_cnt1: PowCnt1::from(0),
+            pow_cnt1: [PowCnt1::from(0), PowCnt1::from(0)],
         }
     }
 }
@@ -45,6 +45,10 @@ pub struct GpuRenderer {
     rendering: Mutex<bool>,
     rendering_condvar: Condvar,
     rendering_3d: bool,
+
+    frame_submitted: AtomicBool,
+    sample_2d: bool,
+    ready_2d: bool,
 
     render_time_measure_count: u8,
     render_time_sum: u32,
@@ -67,6 +71,10 @@ impl GpuRenderer {
             rendering_condvar: Condvar::new(),
             rendering_3d: false,
 
+            frame_submitted: AtomicBool::new(false),
+            sample_2d: true,
+            ready_2d: false,
+
             render_time_measure_count: 0,
             render_time_sum: 0,
             average_render_time: 0,
@@ -77,31 +85,45 @@ impl GpuRenderer {
     }
 
     pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters, inner_b: &mut Gpu2DRegisters, line: u8) {
-        self.renderer_2d.on_scanline(inner_a, inner_b, line);
+        if self.sample_2d {
+            self.renderer_2d.on_scanline(inner_a, inner_b, line);
+        }
     }
 
     pub fn on_scanline_finish(&mut self, mem: &mut Memory, pow_cnt1: PowCnt1, registers_3d: &mut Gpu3DRegisters) {
-        let mut rendering = self.rendering.lock().unwrap();
-
-        if !*rendering {
-            self.common.pow_cnt1 = pow_cnt1;
-            self.renderer_2d.on_scanline_finish();
-
+        if self.sample_2d {
             self.common.mem_buf.read_vram(&mut mem.vram);
             self.common.mem_buf.read_palettes_oam(mem);
+            self.common.pow_cnt1[1] = pow_cnt1;
+            self.sample_2d = false;
+            self.ready_2d = true;
+        } else if !self.ready_2d && self.frame_submitted.load(Ordering::SeqCst) {
+            self.sample_2d = true;
+        }
+
+        let mut rendering = self.rendering.lock().unwrap();
+
+        if !*rendering && self.ready_2d {
+            self.common.pow_cnt1[0] = self.common.pow_cnt1[1];
+            self.renderer_2d.on_scanline_finish();
+
             if self.renderer_3d.dirty {
                 self.renderer_3d.finish_scanline(registers_3d);
                 self.renderer_3d.dirty = false;
                 self.rendering_3d = true;
             }
 
+            self.ready_2d = false;
+            self.frame_submitted.store(false, Ordering::SeqCst);
             *rendering = true;
             self.rendering_condvar.notify_one();
         }
     }
 
     pub fn reload_registers(&mut self) {
-        self.renderer_2d.reload_registers();
+        if self.sample_2d {
+            self.renderer_2d.reload_registers();
+        }
     }
 
     pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, settings: &Settings) {
@@ -132,7 +154,7 @@ impl GpuRenderer {
             gl::ClearColor(0f32, 0f32, 0f32, 1f32);
             gl::Clear(gl::COLOR_BUFFER_BIT);
 
-            if self.common.pow_cnt1.enable() {
+            if self.common.pow_cnt1[0].enable() {
                 let blit_fb = |fbo: GLuint, screen: &PresenterScreen, src_x1: usize, src_y1: usize| {
                     gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
                     gl::BindFramebuffer(gl::READ_FRAMEBUFFER, fbo);
@@ -161,14 +183,14 @@ impl GpuRenderer {
                     .render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color, screen_topology.mode == ScreenMode::Rotated);
                 blit_fb(
                     used_fbo,
-                    if self.common.pow_cnt1.display_swap() { &screen_topology.top } else { &screen_topology.bottom },
+                    if self.common.pow_cnt1[0].display_swap() { &screen_topology.top } else { &screen_topology.bottom },
                     src_coords.0,
                     src_coords.1,
                 );
                 self.renderer_2d.render::<{ B }>(&self.common, 0, screen_topology.mode == ScreenMode::Rotated);
                 blit_fb(
                     used_fbo,
-                    if self.common.pow_cnt1.display_swap() { &screen_topology.bottom } else { &screen_topology.top },
+                    if self.common.pow_cnt1[0].display_swap() { &screen_topology.bottom } else { &screen_topology.top },
                     src_coords.0,
                     src_coords.1,
                 );
@@ -213,6 +235,7 @@ impl GpuRenderer {
                 self.frame_capture.as_mut_ptr() as _,
             );
 
+            self.frame_submitted.store(true, Ordering::SeqCst);
             presenter.gl_swap_window();
 
             #[cfg(feature = "profiling")]

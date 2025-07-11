@@ -239,8 +239,8 @@ impl Gpu3DRenderer {
         self.inners[0] = self.inners[1].clone();
 
         if registers.consume {
-            registers.consume = false;
             registers.swap_to_renderer(&mut self.content);
+            registers.consume = false;
         }
     }
 
@@ -367,7 +367,7 @@ impl Gpu3DRenderer {
 
         gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
 
-        if self.content.pow_cnt1 != u16::from(common.pow_cnt1) {
+        if self.content.pow_cnt1 != u16::from(common.pow_cnt1[0]) {
             return;
         }
 

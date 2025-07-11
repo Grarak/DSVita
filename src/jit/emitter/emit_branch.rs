@@ -66,10 +66,11 @@ impl JitAsm<'_> {
             let pc = block_asm.current_pc;
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R3, &pc.into());
         }
-        block_asm.call(if has_return {
-            map_fun_cpu!(self.cpu, pre_branch, true)
-        } else {
-            map_fun_cpu!(self.cpu, pre_branch, false)
+        block_asm.call(match (has_return, self.emu.settings.arm7_hle() == Arm7Emu::Hle) {
+            (false, false) => map_fun_cpu!(self.cpu, pre_branch, false, false),
+            (true, false) => map_fun_cpu!(self.cpu, pre_branch, true, false),
+            (false, true) => map_fun_cpu!(self.cpu, pre_branch, false, true),
+            (true, true) => map_fun_cpu!(self.cpu, pre_branch, true, true),
         });
 
         if BRANCH_LOG {
@@ -99,10 +100,21 @@ impl JitAsm<'_> {
         }
 
         if has_return {
-            block_asm.call(map_fun_cpu!(self.cpu, branch_reg, true));
+            block_asm.call(if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+                map_fun_cpu!(self.cpu, branch_reg, true, true)
+            } else {
+                map_fun_cpu!(self.cpu, branch_reg, true, false)
+            });
         } else {
             block_asm.restore_stack();
-            block_asm.ldr2(Reg::R12, map_fun_cpu!(self.cpu, branch_reg, false) as u32);
+            block_asm.ldr2(
+                Reg::R12,
+                if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+                    map_fun_cpu!(self.cpu, branch_reg, false, true)
+                } else {
+                    map_fun_cpu!(self.cpu, branch_reg, false, false)
+                } as u32,
+            );
             block_asm.bx1(Reg::R12);
         }
     }
@@ -173,7 +185,14 @@ impl JitAsm<'_> {
         }
 
         block_asm.restore_stack();
-        block_asm.ldr2(Reg::R12, map_fun_cpu!(self.cpu, branch_lr) as u32);
+        block_asm.ldr2(
+            Reg::R12,
+            if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+                map_fun_cpu!(self.cpu, branch_lr, true)
+            } else {
+                map_fun_cpu!(self.cpu, branch_lr, false)
+            } as u32,
+        );
         block_asm.bx1(Reg::R12);
     }
 
