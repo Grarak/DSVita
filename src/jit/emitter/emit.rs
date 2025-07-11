@@ -10,6 +10,7 @@ use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::Cond;
 use crate::logging::debug_println;
+use crate::settings::Arm7Emu;
 use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
 
@@ -83,7 +84,14 @@ impl JitAsm<'_> {
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
             }
             block_asm.restore_stack();
-            block_asm.ldr2(Reg::R12, branch_any_reg as *const () as u32);
+            block_asm.ldr2(
+                Reg::R12,
+                if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+                    branch_any_reg::<true> as *const ()
+                } else {
+                    branch_any_reg::<false> as *const ()
+                } as u32,
+            );
             block_asm.bx1(Reg::R12);
         } else {
             self.emit_branch_out_metadata(inst_index, true, block_asm);
@@ -114,7 +122,14 @@ impl JitAsm<'_> {
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
             }
             block_asm.restore_stack();
-            block_asm.ldr2(Reg::R12, branch_any_reg as *const () as u32);
+            block_asm.ldr2(
+                Reg::R12,
+                if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+                    branch_any_reg::<true> as *const ()
+                } else {
+                    branch_any_reg::<false> as *const ()
+                } as u32,
+            );
             block_asm.bx1(Reg::R12);
         } else {
             self.emit_branch_out_metadata(inst_index, true, block_asm);

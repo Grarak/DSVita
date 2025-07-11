@@ -14,7 +14,7 @@ macro_rules! map_fun_cpu {
             crate::core::CpuType::ARM7 => $fun::<{ crate::core::CpuType::ARM7 }> as *const (),
         }
     }};
-    ($cpu:expr, $fun:ident, $($args:expr)*) => {{
+    ($cpu:expr, $fun:ident, $($args:tt)*) => {{
         match $cpu {
             crate::core::CpuType::ARM9 => $fun::<{ crate::core::CpuType::ARM9 }, $($args)*> as *const (),
             crate::core::CpuType::ARM7 => $fun::<{ crate::core::CpuType::ARM7 }, $($args)*> as *const (),

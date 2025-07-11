@@ -43,6 +43,11 @@ impl<T, const SIZE: usize> FixedFifo<T, SIZE> {
         self.len -= 1;
     }
 
+    pub fn pop_front_multiple(&mut self, count: usize) {
+        self.start = (self.start + count) % SIZE;
+        self.len -= count;
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

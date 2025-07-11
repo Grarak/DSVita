@@ -220,11 +220,10 @@ impl Emu {
             }
             263 => {
                 self.gpu.v_count = 0;
-                self.gpu.get_renderer_mut().reload_registers();
-
                 if self.settings.arm7_hle() == Arm7Emu::Hle {
                     self.arm7_hle_on_frame();
                 }
+                self.gpu.get_renderer_mut().reload_registers();
 
                 profiling_frame_mark!();
             }

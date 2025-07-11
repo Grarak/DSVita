@@ -99,10 +99,10 @@ impl<const SIZE: usize, const MAX_OVERLAP: usize> OverlapSection<SIZE, MAX_OVERL
         T::from(ret)
     }
 
-    fn read_all(&mut self, index: u32, buf: &mut [u8; SIZE], vram: &[u8; TOTAL_SIZE]) {
+    fn read_all(&self, index: u32, buf: &mut [u8; SIZE], vram: &[u8; TOTAL_SIZE]) {
         unsafe { assert_unchecked((self.count as usize) <= MAX_OVERLAP) };
         if self.count == 1 {
-            let map = &mut self.overlaps[0];
+            let map = &self.overlaps[0];
             if !map.is_null() {
                 utils::read_from_mem_slice(map.as_ref(vram), index, buf);
             } else {
@@ -111,7 +111,7 @@ impl<const SIZE: usize, const MAX_OVERLAP: usize> OverlapSection<SIZE, MAX_OVERL
         } else {
             buf.fill(0);
             for i in 0..self.count as usize {
-                let map = &mut self.overlaps[i];
+                let map = &self.overlaps[i];
                 if !map.is_null() {
                     utils::read_from_mem_slice(map.as_ref(vram), index, unsafe { &mut OVERLAP_READ_BUF[..SIZE] });
                     for i in 0..SIZE {
@@ -183,7 +183,7 @@ where
         self.sections[section_index].read(section_offset as u32, vram)
     }
 
-    fn read_all(&mut self, mut addr: u32, buf: &mut [u8; SIZE], vram: &[u8; TOTAL_SIZE]) {
+    fn read_all(&self, mut addr: u32, buf: &mut [u8; SIZE], vram: &[u8; TOTAL_SIZE]) {
         addr %= SIZE as u32;
         for chunk_addr in (addr..addr + SIZE as u32).step_by(CHUNK_SIZE) {
             let section_index = chunk_addr as usize / CHUNK_SIZE;
@@ -347,21 +347,21 @@ impl VramMaps {
         self.obj_ext_palette_b = VramMap::default();
     }
 
-    pub fn read_all_lcdc(&mut self, buf: &mut [u8; TOTAL_SIZE], vram: &[u8; TOTAL_SIZE]) {
+    pub fn read_all_lcdc(&self, buf: &mut [u8; TOTAL_SIZE], vram: &[u8; TOTAL_SIZE]) {
         self.lcdc.read_all(0, buf, vram)
     }
 
-    pub fn read_all_bg_a(&mut self, buf: &mut [u8; BG_A_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
+    pub fn read_all_bg_a(&self, buf: &mut [u8; BG_A_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
         self.bg_a.read_all(0, buf, vram)
     }
 
-    pub fn read_all_obj_a(&mut self, buf: &mut [u8; OBJ_A_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
+    pub fn read_all_obj_a(&self, buf: &mut [u8; OBJ_A_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
         self.obj_a.read_all(0, buf, vram)
     }
 
-    pub fn read_all_bg_a_ext_palette(&mut self, buf: &mut [u8; BG_EXT_PAL_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
+    pub fn read_all_bg_a_ext_palette(&self, buf: &mut [u8; BG_EXT_PAL_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
         for i in 0..self.bg_ext_palette_a.len() {
-            let map = &mut self.bg_ext_palette_a[i];
+            let map = &self.bg_ext_palette_a[i];
             let buf = &mut buf[i << 13..(i << 13) + 8 * 1024];
             if !map.is_null() {
                 buf.copy_from_slice(map.as_ref(vram));
@@ -371,7 +371,7 @@ impl VramMaps {
         }
     }
 
-    pub fn read_all_obj_a_ext_palette(&mut self, buf: &mut [u8; OBJ_EXT_PAL_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
+    pub fn read_all_obj_a_ext_palette(&self, buf: &mut [u8; OBJ_EXT_PAL_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
         if !self.obj_ext_palette_a.is_null() {
             buf.copy_from_slice(self.obj_ext_palette_a.as_ref(vram));
         } else {
@@ -379,17 +379,17 @@ impl VramMaps {
         }
     }
 
-    pub fn read_bg_b(&mut self, buf: &mut [u8; BG_B_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
+    pub fn read_bg_b(&self, buf: &mut [u8; BG_B_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
         self.bg_b.read_all(0, buf, vram)
     }
 
-    pub fn read_all_obj_b(&mut self, buf: &mut [u8; OBJ_B_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
+    pub fn read_all_obj_b(&self, buf: &mut [u8; OBJ_B_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
         self.obj_b.read_all(0, buf, vram)
     }
 
-    pub fn read_all_bg_b_ext_palette(&mut self, buf: &mut [u8; BG_EXT_PAL_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
+    pub fn read_all_bg_b_ext_palette(&self, buf: &mut [u8; BG_EXT_PAL_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
         for i in 0..self.bg_ext_palette_b.len() {
-            let map = &mut self.bg_ext_palette_b[i];
+            let map = &self.bg_ext_palette_b[i];
             let buf = &mut buf[i << 13..(i << 13) + 8 * 1024];
             if !map.is_null() {
                 buf.copy_from_slice(map.as_ref(vram));
@@ -399,7 +399,7 @@ impl VramMaps {
         }
     }
 
-    pub fn read_all_obj_b_ext_palette(&mut self, buf: &mut [u8; OBJ_EXT_PAL_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
+    pub fn read_all_obj_b_ext_palette(&self, buf: &mut [u8; OBJ_EXT_PAL_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
         if !self.obj_ext_palette_b.is_null() {
             buf.copy_from_slice(self.obj_ext_palette_b.as_ref(vram));
         } else {
@@ -407,9 +407,9 @@ impl VramMaps {
         }
     }
 
-    pub fn read_all_tex_rear_plane_img(&mut self, buf: &mut [u8; TEX_REAR_PLANE_IMAGE_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
+    pub fn read_all_tex_rear_plane_img(&self, buf: &mut [u8; TEX_REAR_PLANE_IMAGE_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
         for i in 0..self.tex_rear_plane_img.len() {
-            let map = &mut self.tex_rear_plane_img[i];
+            let map = &self.tex_rear_plane_img[i];
             let buf = &mut buf[i << 17..(i << 17) + 128 * 1024];
             if !map.is_null() {
                 buf.copy_from_slice(map.as_ref(vram));
@@ -419,9 +419,9 @@ impl VramMaps {
         }
     }
 
-    pub fn read_all_tex_palette(&mut self, buf: &mut [u8; TEX_PAL_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
+    pub fn read_all_tex_palette(&self, buf: &mut [u8; TEX_PAL_SIZE as usize], vram: &[u8; TOTAL_SIZE]) {
         for i in 0..self.tex_palette.len() {
-            let map = &mut self.tex_palette[i];
+            let map = &self.tex_palette[i];
             let buf = &mut buf[i << 14..(i << 14) + 16 * 1024];
             if !map.is_null() {
                 buf.copy_from_slice(map.as_ref(vram));
