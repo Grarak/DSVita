@@ -41,7 +41,7 @@ const SLOW_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 28;
 const SLOW_MEM_SINGLE_READ_LENGTH_ARM: usize = 24;
 const SLOW_MEM_MULTIPLE_LENGTH_ARM: usize = 28;
 pub const SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 20;
-pub const SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM: usize = 12;
+pub const SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM: usize = 16;
 
 #[derive(Copy, Clone)]
 pub struct JitEntry(pub *const extern "C" fn(u32));
@@ -752,6 +752,13 @@ impl JitMemory {
             if is_write {
                 let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
                 Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, guest_inst_metadata_ptr as u32);
+            } else {
+                Self::fast_mem_mov::<THUMB>(
+                    fast_mem,
+                    &mut slow_mem_length,
+                    Reg::R0,
+                    guest_inst_metadata.operands.values[0].as_reg_no_shift().unwrap_unchecked() as u32,
+                );
             }
 
             Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
