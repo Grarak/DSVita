@@ -558,28 +558,29 @@ fn main() {
     }
 
     {
+        let mut vita_gl_envs = vec![
+            ("HAVE_UNFLIPPED_FBOS", "1"),
+            ("NO_TEX_COMBINER", "1"),
+            ("MATH_SPEEDHACK", "1"),
+            ("HAVE_SHADER_CACHE", "1"),
+            ("SINGLE_THREADED_GC", "1"),
+        ];
+
+        if build_profile_name == "release" {
+            vita_gl_envs.push(("NO_DEBUG", "1"));
+        } else {
+            vita_gl_envs.push(("HAVE_SHARK_LOG", "1"));
+            vita_gl_envs.push(("LOG_ERRORS", "2"));
+            vita_gl_envs.push(("HAVE_PROFILING", "1"));
+            // vita_gl_envs.push(("HAVE_RAZOR", "1"));
+        }
+
         let vita_gl_path = PathBuf::from("vitaGL");
         let vita_gl_lib_path = vita_gl_path.join("libvitaGL.a");
         let vita_gl_lib_new_path = vita_gl_path.join("libvitaGL_dsvita.a");
 
         Command::new("make").current_dir("vitaGL").arg("clean").status().unwrap();
-        Command::new("make")
-            .current_dir("vitaGL")
-            .args(["-j", &num_jobs])
-            .envs([
-                ("HAVE_UNFLIPPED_FBOS", "1"),
-                ("NO_TEX_COMBINER", "1"),
-                ("MATH_SPEEDHACK", "1"),
-                ("HAVE_SHADER_CACHE", "1"),
-                ("SINGLE_THREADED_GC", "1"),
-                ("NO_DEBUG", "1"),
-                // ("HAVE_SHARK_LOG", "1"),
-                // ("LOG_ERRORS", "2"),
-                // ("HAVE_PROFILING", "1"),
-                // ("HAVE_RAZOR", "1"),
-            ])
-            .status()
-            .unwrap();
+        Command::new("make").current_dir("vitaGL").args(["-j", &num_jobs]).envs(vita_gl_envs).status().unwrap();
 
         fs::rename(vita_gl_lib_path, vita_gl_lib_new_path).unwrap();
         println!("cargo:rustc-link-search=native={}", fs::canonicalize(vita_gl_path).unwrap().to_str().unwrap());
