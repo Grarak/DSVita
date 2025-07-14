@@ -24,7 +24,7 @@ use std::collections::VecDeque;
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::unlikely;
 use std::ops::Deref;
-use std::{ptr, slice};
+use std::{mem, ptr, slice};
 use CpuType::{ARM7, ARM9};
 
 pub const JIT_MEMORY_SIZE: usize = 32 * 1024 * 1024;
@@ -608,7 +608,8 @@ impl JitMemory {
     }
 
     fn write_to_fast_mem<T>(fast_mem: &mut [u8], offset: &mut usize, value: T) {
-        utils::write_to_mem(fast_mem, *offset as u32, value);
+        let ptr: &u8 = unsafe { mem::transmute(&value) };
+        utils::write_to_mem_slice(fast_mem, *offset, unsafe { slice::from_raw_parts(ptr, size_of::<T>()) });
         *offset += size_of::<T>();
     }
 
