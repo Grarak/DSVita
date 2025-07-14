@@ -61,7 +61,7 @@ impl SoundSampler {
         *size += 1;
         if *size == SAMPLE_BUFFER_SIZE as u16 {
             let (_, other_size) = &mut self.queues[self.busy_queue ^ 1];
-            if self.framelimit {
+            if self.framelimit && *other_size == SAMPLE_BUFFER_SIZE as u16 {
                 self.waiting = true;
                 self.busy.store(false, Ordering::SeqCst);
                 thread::park();
