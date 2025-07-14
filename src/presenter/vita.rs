@@ -126,7 +126,10 @@ impl Presenter {
             info_println!("Initialize ImGui");
             ImGui_CreateContext(ptr::null_mut());
 
+            info_println!("Initialize ImGui for vitaGL");
             ImGui_ImplVitaGL_Init();
+
+            info_println!("Set font for ImGui");
             let font = include_bytes!("../../font/OpenSans-Regular.ttf");
             let mut config: ImFontConfig = mem::zeroed();
             ImFontConfig_ImFontConfig(&mut config);
@@ -140,6 +143,7 @@ impl Presenter {
                 ImFontAtlas_GetGlyphRangesDefault((*ImGui_GetIO()).Fonts),
             );
 
+            info_println!("Set style for ImGui");
             let vec = ImVec2 { x: 0f32, y: 2f32 };
             ImGui_PushStyleVar1(ImGuiStyleVar__ImGuiStyleVar_ItemSpacing as _, &vec);
             ImGui_PushStyleVar(ImGuiStyleVar__ImGuiStyleVar_WindowRounding as _, 0f32);
