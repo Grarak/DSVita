@@ -27,8 +27,8 @@ const GUEST_REGS_ARM7_ADDR: usize = 0xA8000000;
 const JIT_ASM_ARM9_ADDR: usize = 0xA1000000;
 const JIT_ASM_ARM7_ADDR: usize = 0xA2000000;
 
-const MMU_TCM_ARM9_ADDR: usize = 0xB0000000;
-const MMU_TCM_ARM7_ADDR: usize = if cfg!(target_os = "linux") && cfg!(feature = "profiling") { 0x90000000 } else { 0xC0000000 };
+const MMU_TCM_ARM9_ADDR: usize = if cfg!(target_os = "vita") { 0xB0000000 } else { 0x80000000 };
+const MMU_TCM_ARM7_ADDR: usize = if cfg!(target_os = "vita") { 0xC0000000 } else { 0x90000000 };
 
 #[derive(ConstParamTy, Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]

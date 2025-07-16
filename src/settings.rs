@@ -151,7 +151,7 @@ pub const DEFAULT_SETTINGS: Settings = Settings {
         performance boost, however might lead to\n\
         crashes. Most commercial games do not\n\
         need to have this enabled.",
-            SettingValue::Bool(true),
+            SettingValue::Bool(false),
         ),
     ],
 };
