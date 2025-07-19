@@ -9,6 +9,7 @@ use crate::core::hle::sound_hle::SoundHle;
 use crate::core::hle::touchscreen_hle::TouchscreenHle;
 use crate::core::hle::wifi_hle::WifiHle;
 use crate::core::CpuType::{ARM7, ARM9};
+use crate::logging::debug_println;
 use bilge::prelude::*;
 use std::cmp::Ordering;
 use std::mem;
@@ -87,6 +88,7 @@ impl Emu {
     }
 
     pub fn arm7_hle_send_ipc_fifo(&mut self, tag: IpcFifoTag, data: u32, err: bool) {
+        debug_println!("hle ipc arm7 response {tag:?} {data:x} {err}");
         let fifo = &mut self.ipc.fifo[ARM7];
         if fifo.queue.len() == 16 {
             fifo.cnt.set_err(true);

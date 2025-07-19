@@ -1,6 +1,7 @@
 use crate::core::cycle_manager::EventType;
 use crate::core::emu::Emu;
 use crate::core::CpuType::ARM7;
+use crate::logging::debug_println;
 use crate::presenter::{PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE};
 use crate::soundtouch::SoundTouch;
 use crate::utils::HeapMemU32;
@@ -114,7 +115,7 @@ impl SoundSampler {
         // In a nutshell backlog is not at 50% => slow down
         // More aggressive slow down when sample size is small
         let tweak = 1.0 + 2.0 * (backlog_fullness - 0.5) * (1.0 - ratio);
-        let mut current_ratio = ratio * tweak;
+        let current_ratio = ratio * tweak;
 
         // The fever samples we, the smaller the lpf gain
         // Most likely the next audio frame will have more samples
@@ -200,7 +201,6 @@ const fn calculate_adpcm_index_table() -> [[u8; 8]; 89] {
     table
 }
 const ADPCM_INDEX_TABLE: [[u8; 8]; 89] = calculate_adpcm_index_table();
-// const ADPCM_INDEX_TABLE: [i8; 8] = [-1, -1, -1, -1, 2, 4, 6, 8];
 
 #[bitsize(32)]
 #[derive(Copy, Clone, Default, FromBits)]
@@ -225,18 +225,13 @@ impl SoundCnt {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum SoundChannelFormat {
+    #[default]
     Pcm8 = 0,
     Pcm16 = 1,
     ImaAdpcm = 2,
     PsgNoise = 3,
-}
-
-impl Default for SoundChannelFormat {
-    fn default() -> Self {
-        SoundChannelFormat::Pcm8
-    }
 }
 
 impl From<u8> for SoundChannelFormat {
@@ -353,6 +348,8 @@ impl Emu {
         mask &= 0xFF7F837F;
         channel.cnt = ((u32::from(channel.cnt) & !mask) | (value & mask)).into();
 
+        debug_println!("spu set cnt {channel_num} {:x}", u32::from(channel.cnt));
+
         if was_disabled && channel.cnt.start_status() && self.spu.main_sound_cnt.master_enable() && (channel.sad != 0 || channel.cnt.get_format() == SoundChannelFormat::PsgNoise) {
             self.spu_start_channel(channel_num);
         } else if !channel.cnt.start_status() {
@@ -365,6 +362,8 @@ impl Emu {
         mask &= 0x07FFFFFC;
         channel.sad = (channel.sad & !mask) | (value & mask);
 
+        debug_println!("spu set sad {channel_num} {:x}", channel.sad);
+
         if channel.cnt.get_format() != SoundChannelFormat::PsgNoise {
             if channel.sad != 0 && (self.spu.main_sound_cnt.master_enable() && channel.cnt.start_status()) {
                 self.spu_start_channel(channel_num);
@@ -376,15 +375,18 @@ impl Emu {
 
     pub fn spu_set_tmr(&mut self, channel_num: usize, mask: u16, value: u16) {
         self.spu.channels[channel_num].tmr = (self.spu.channels[channel_num].tmr & !mask) | (value & mask);
+        debug_println!("spu set tmr {channel_num} {:x}", self.spu.channels[channel_num].tmr);
     }
 
     pub fn spu_set_pnt(&mut self, channel_num: usize, mask: u16, value: u16) {
         self.spu.channels[channel_num].pnt = (self.spu.channels[channel_num].pnt & !mask) | (value & mask);
+        debug_println!("spu set pnt {channel_num} {:x}", self.spu.channels[channel_num].pnt);
     }
 
     pub fn spu_set_len(&mut self, channel_num: usize, mut mask: u32, value: u32) {
         mask &= 0x003FFFFF;
         self.spu.channels[channel_num].len = (self.spu.channels[channel_num].len & !mask) | (value & mask);
+        debug_println!("spu set len {channel_num} {:x}", self.spu.channels[channel_num].len);
     }
 
     pub fn spu_set_main_sound_cnt(&mut self, mut mask: u16, value: u16) {
@@ -392,6 +394,8 @@ impl Emu {
 
         mask &= 0xBF7F;
         self.spu.main_sound_cnt = ((u16::from(self.spu.main_sound_cnt) & !mask) | (value & mask)).into();
+
+        debug_println!("spu set main sound cnt {:x}", u16::from(self.spu.main_sound_cnt));
 
         if was_disabled && self.spu.main_sound_cnt.master_enable() {
             for i in 0..CHANNEL_COUNT {
@@ -409,6 +413,7 @@ impl Emu {
     pub fn spu_set_sound_bias(&mut self, mut mask: u16, value: u16) {
         mask &= 0x03FF;
         self.spu.sound_bias = (self.spu.sound_bias & !mask) | (value & mask);
+        debug_println!("spu set sound bias {:x}", self.spu.sound_bias);
     }
 
     pub fn spu_set_snd_cap_cnt(&mut self, channel_num: usize, value: u8) {
@@ -420,6 +425,8 @@ impl Emu {
         }
 
         cap_channel.cnt = cnt;
+
+        debug_println!("spu set snd cap cnt {:x}", u8::from(cap_channel.cnt));
     }
 
     pub fn spu_set_snd_cap_dad(&mut self, channel_num: usize, mut mask: u32, value: u32) {
@@ -429,14 +436,18 @@ impl Emu {
 
         cap_channel.dad_current = cap_channel.dad;
         cap_channel.tmr_current = self.spu.channels[(channel_num << 1) + 1].tmr as u32;
+
+        debug_println!("spu set snd cap cnt {:x}", u8::from(cap_channel.cnt));
     }
 
-    pub fn spu_set_snd_cap_len(&mut self, channel: usize, mask: u16, value: u16) {
-        let cap_channel = &mut self.spu.sound_cap_channels[channel];
+    pub fn spu_set_snd_cap_len(&mut self, channel_num: usize, mask: u16, value: u16) {
+        let cap_channel = &mut self.spu.sound_cap_channels[channel_num];
         cap_channel.len = (cap_channel.len & !mask) | (value & mask);
+        debug_println!("spu set snd cap len {:x}", cap_channel.len);
     }
 
     fn spu_start_channel(&mut self, channel_num: usize) {
+        debug_println!("spu start channel {channel_num}");
         self.spu.channels[channel_num].sad_current = self.spu.channels[channel_num].sad;
         self.spu.channels[channel_num].tmr_current = self.spu.channels[channel_num].tmr as u32;
 
