@@ -6,7 +6,7 @@ use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::analyzer::asm_analyzer::AsmAnalyzer;
 use crate::jit::assembler::block_asm::{BlockAsm, GuestInstOffset};
 use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags};
-use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmBl2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
+use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmBl2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmPush1, MasmSubs3};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::emitter::map_fun_cpu;
@@ -288,13 +288,13 @@ extern "C" fn guest_block_invalid(guest_pc: u32) {
 unsafe extern "C" fn validate_guest_block_hash() {
     #[rustfmt::skip]
     naked_asm!(
-        "mov r7, lr",
+        "mov r6, lr",
         "mov r2, 0",
         "bl {xxh32}",
         "cmp r0, r5",
         "mov r0, r4",
         "itt eq",
-        "moveq lr, r7",
+        "moveq lr, r6",
         "bxeq lr",
         "add sp, sp, 4",
         "pop {{r4-r11,lr}}",

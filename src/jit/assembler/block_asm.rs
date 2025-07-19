@@ -17,8 +17,6 @@ use std::ops::{Deref, DerefMut};
 use std::ptr;
 
 pub const GUEST_REGS_PTR_REG: Reg = Reg::R3;
-pub const GUEST_REGS_PTR_STACK_OFFSET: u32 = 0;
-pub const MMU_OFFSET_STACK_OFFSET: u32 = 4;
 pub const CPSR_TMP_REG: Reg = Reg::R0;
 
 #[derive(Clone)]
