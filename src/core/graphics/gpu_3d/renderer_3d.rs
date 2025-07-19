@@ -8,6 +8,7 @@ use crate::utils::{rgb5_to_float8, HeapMem};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
+use std::intrinsics::{fdiv_fast, fmul_fast, fsub_fast, unchecked_div};
 use std::mem::MaybeUninit;
 use std::ptr;
 
@@ -291,8 +292,12 @@ impl Gpu3DRenderer {
             let coords = &transformed_coords[j as usize];
             let c = rgb5_to_float8(vertex.color);
 
-            let vertex_x = ((coords[0] as i64 + coords[3] as i64) * w as i64 / (coords[3] as i64 * 2) + x as i64) as i32;
-            let vertex_y = ((-coords[1] as i64 + coords[3] as i64) * h as i64 / (coords[3] as i64 * 2) + y as i64) as i32;
+            let (vertex_x, vertex_y) = unsafe {
+                (
+                    (unchecked_div((coords[0] as i64 + coords[3] as i64) * w as i64, coords[3] as i64 * 2) + x as i64) as i32,
+                    (unchecked_div((-coords[1] as i64 + coords[3] as i64) * h as i64, coords[3] as i64 * 2) + y as i64) as i32,
+                )
+            };
 
             let mut tex_coords = vertex.tex_coords;
             if (vertex.tex_matrix_index as usize) < self.content.tex_matrices.len() {
@@ -326,16 +331,29 @@ impl Gpu3DRenderer {
                 }
             }
 
-            let w = coords[3] as f32 / 4096f32;
-            let gpu_vertex = Gpu3DVertex {
-                coords: [
-                    (vertex_x as f32 * 2f32 / 255f32 - 1f32) * w,
-                    (1f32 - vertex_y as f32 * 2f32 / 191f32) * w,
-                    coords[2] as f32 / 4096f32,
-                    w,
-                ],
-                color: [c.0, c.1, c.2, polygon_index as f32],
-                tex_coords: [tex_coords[0] as f32 / 16f32, tex_coords[1] as f32 / 16f32],
+            let gpu_vertex = unsafe {
+                let w = fdiv_fast(coords[3] as f32, 4096.0);
+
+                let x = fmul_fast(vertex_x as f32, 2.0);
+                let x = fdiv_fast(x, 255.0);
+                let x = fsub_fast(x, 1.0);
+                let x = fmul_fast(x, w);
+
+                let y = fmul_fast(vertex_y as f32, 2.0);
+                let y = fdiv_fast(y, 191.0);
+                let y = fsub_fast(1.0, y);
+                let y = fmul_fast(y, w);
+
+                let z = fdiv_fast(coords[2] as f32, 4096.0);
+
+                let s = fdiv_fast(tex_coords[0] as f32, 16.0);
+                let t = fdiv_fast(tex_coords[1] as f32, 16.0);
+
+                Gpu3DVertex {
+                    coords: [x, y, z, w],
+                    color: [c.0, c.1, c.2, polygon_index as f32],
+                    tex_coords: [s, t],
+                }
             };
 
             // println!(
