@@ -17,7 +17,7 @@ pub extern "C" fn run_scheduler<const ARM7_HLE: bool>(asm: *mut JitAsm, current_
     } else {
         let arm9_cycles = (asm.runtime_data.accumulated_cycles + 1) >> 1;
         let jit_asm_arm7 = unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() };
-        let arm7_cycles = if likely(!asm.emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop()) {
+        let arm7_cycles = if !asm.emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop() {
             unsafe { CURRENT_RUNNING_CPU = ARM7 };
             jit_asm_arm7.execute::<{ ARM7 }>()
         } else {
@@ -42,7 +42,7 @@ fn run_scheduler_idle_loop<const ARM7_HLE: bool>(asm: &mut JitAsm) {
         asm.emu.cm.jump_to_next_event();
     } else {
         let jit_asm_arm7 = unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() };
-        if likely(!asm.emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop()) {
+        if !asm.emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop() {
             unsafe { CURRENT_RUNNING_CPU = ARM7 };
             asm.emu.cm.add_cycles(jit_asm_arm7.execute::<{ ARM7 }>());
         } else {

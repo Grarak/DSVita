@@ -218,6 +218,7 @@ impl Emu {
         self.dma[cpu].channels[channel_num].fill = (self.dma[cpu].channels[channel_num].fill & !mask) | (value & mask);
     }
 
+    #[inline(never)]
     pub fn dma_trigger_all(&mut self, cpu: CpuType, mode: DmaTransferMode) {
         self.dma_trigger(cpu, mode, 0xF);
     }

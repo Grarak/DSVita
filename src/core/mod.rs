@@ -22,11 +22,11 @@ pub mod thread_regs;
 pub mod timers;
 mod wifi;
 
-const GUEST_REGS_ARM9_ADDR: usize = 0xA0000000;
-const GUEST_REGS_ARM7_ADDR: usize = 0xA8000000;
+const GUEST_REGS_ARM9_ADDR: usize = if cfg!(target_os = "vita") { 0xA0000000 } else { 0x60000000 };
+const GUEST_REGS_ARM7_ADDR: usize = if cfg!(target_os = "vita") { 0xA8000000 } else { 0x61000000 };
 
-const JIT_ASM_ARM9_ADDR: usize = 0xA1000000;
-const JIT_ASM_ARM7_ADDR: usize = 0xA2000000;
+const JIT_ASM_ARM9_ADDR: usize = if cfg!(target_os = "vita") { 0xA1000000 } else { 0x70000000 };
+const JIT_ASM_ARM7_ADDR: usize = if cfg!(target_os = "vita") { 0xA2000000 } else { 0x71000000 };
 
 const MMU_TCM_ARM9_ADDR: usize = if cfg!(target_os = "vita") { 0xB0000000 } else { 0x80000000 };
 const MMU_TCM_ARM7_ADDR: usize = if cfg!(target_os = "vita") { 0xC0000000 } else { 0x90000000 };

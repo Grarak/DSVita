@@ -8,7 +8,7 @@ use crate::utils::HeapMemU32;
 use bilge::prelude::*;
 use std::cmp::min;
 use std::hint::{assert_unchecked, unreachable_unchecked};
-use std::intrinsics::{likely, unlikely};
+use std::intrinsics::unlikely;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::Thread;
@@ -509,11 +509,29 @@ impl Emu {
         let diff = unsafe { *ADPCM_DIFF_TABLE.get_unchecked(channel.adpcm_index as usize).get_unchecked(adpcm_data as usize) };
         channel.adpcm_value = (channel.adpcm_value as i32 + diff).clamp(-0x8000, 0x7FFF) as i16;
 
-        channel.adpcm_index = ADPCM_INDEX_TABLE[channel.adpcm_index as usize][(adpcm_data & 0x7) as usize];
+        channel.adpcm_index = unsafe { ADPCM_INDEX_TABLE.get_unchecked(channel.adpcm_index as usize)[(adpcm_data & 0x7) as usize] };
 
+        channel.sad_current += channel.adpcm_toggle as u32;
         channel.adpcm_toggle = !channel.adpcm_toggle;
-        if !channel.adpcm_toggle {
-            channel.sad_current += 1;
+    }
+
+    fn spu_sample_psg_noise(&self, channel_num: usize) -> i32 {
+        unsafe { assert_unchecked(channel_num < CHANNEL_COUNT) };
+        if channel_num >= 8 && channel_num <= 13 {
+            let duty = 7 - u8::from(self.spu.channels[channel_num].cnt.wave_duty());
+            if self.spu.duty_cycles[channel_num - 8] < duty as i32 {
+                -0x7FFF
+            } else {
+                0x7FFF
+            }
+        } else if channel_num >= 14 {
+            if (self.spu.noise_values[channel_num - 14] & (1 << 15)) != 0 {
+                -0x7FFF
+            } else {
+                0x7FFF
+            }
+        } else {
+            0
         }
     }
 
@@ -536,7 +554,7 @@ impl Emu {
         let mut channels_right = [0; 2];
 
         for i in 0..CHANNEL_COUNT {
-            if likely(!self.spu.channels[i].active) {
+            if !self.spu.channels[i].active {
                 continue;
             }
 
@@ -548,24 +566,7 @@ impl Emu {
                 SoundChannelFormat::Pcm8 => (self.mem_read::<{ ARM7 }, u8>(sad_current) as i8 as i32) << 8,
                 SoundChannelFormat::Pcm16 => self.mem_read::<{ ARM7 }, u16>(sad_current) as i16 as i32,
                 SoundChannelFormat::ImaAdpcm => channel.adpcm_value as i32,
-                SoundChannelFormat::PsgNoise => {
-                    if i >= 8 && i <= 13 {
-                        let duty = 7 - u8::from(channel.cnt.wave_duty());
-                        if self.spu.duty_cycles[i - 8] < duty as i32 {
-                            -0x7FFF
-                        } else {
-                            0x7FFF
-                        }
-                    } else if i >= 14 {
-                        if (self.spu.noise_values[i - 14] & (1 << 15)) != 0 {
-                            -0x7FFF
-                        } else {
-                            0x7FFF
-                        }
-                    } else {
-                        0
-                    }
-                }
+                SoundChannelFormat::PsgNoise => self.spu_sample_psg_noise(i),
             };
 
             let channel = &mut self.spu.channels[i];

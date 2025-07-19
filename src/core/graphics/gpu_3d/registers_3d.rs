@@ -12,9 +12,9 @@ use paste::paste;
 use std::arch::arm::{int32x4_t, vld1q_s32, vld1q_s32_x3, vsetq_lane_s32};
 use std::cmp::{max, min};
 use std::hint::assert_unchecked;
-use std::intrinsics::unlikely;
-use std::mem;
+use std::intrinsics::{likely, unlikely};
 use std::mem::MaybeUninit;
+use std::{mem, ptr};
 
 pub const POLYGON_LIMIT: usize = 8192;
 pub const VERTEX_LIMIT: usize = POLYGON_LIMIT * 4;
@@ -270,7 +270,7 @@ impl From<u8> for PrimitiveType {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
 enum MtxMode {
     #[default]
@@ -287,15 +287,16 @@ impl From<u8> for MtxMode {
     }
 }
 
+#[repr(C)]
 #[derive(Default)]
 struct Matrices {
     proj: Matrix,
-    proj_stack: Matrix,
     coord: Matrix,
-    coord_stack: [Matrix; 32],
     dir: Matrix,
-    dir_stack: [Matrix; 32],
     tex: Matrix,
+    proj_stack: Matrix,
+    coord_stack: [Matrix; 32],
+    dir_stack: [Matrix; 32],
     tex_stack: Matrix,
 }
 
@@ -318,6 +319,25 @@ pub struct Polygon {
     pub polygon_type: PrimitiveType,
     pub vertices_index: u16,
     pub viewport: Viewport,
+}
+
+#[bitsize(8)]
+#[derive(Copy, Clone, Default, FromBits)]
+struct MatrixFlags {
+    clip_dirty: u2,
+    tex_push: bool,
+    clip_push: bool,
+    unused: u4,
+}
+
+impl MatrixFlags {
+    fn is_clip_dirty(self) -> bool {
+        u8::from(self.clip_dirty()) != 0
+    }
+
+    fn set_clip_dirty_bool(&mut self, dirty: bool) {
+        self.set_clip_dirty(u2::new(dirty as u8));
+    }
 }
 
 #[derive(Default)]
@@ -352,9 +372,7 @@ pub struct Gpu3DRegisters {
     clip_matrix: Matrix,
     clip_matrices: Vec<Matrix>,
     tex_matrices: Vec<Matrix>,
-    clip_mtx_dirty: bool,
-    clip_mtx_push: bool,
-    tex_mtx_push: bool,
+    mtx_flags: MatrixFlags,
 
     cur_polygon_attr: PolygonAttr,
 
@@ -383,7 +401,7 @@ macro_rules! unpacked_cmd {
 impl Emu {
     pub fn regs_3d_run_cmds(&mut self, total_cycles: u64) {
         let regs_3d = &mut self.gpu.gpu_3d_regs;
-        if regs_3d.cmd_fifo.is_empty() || regs_3d.flushed {
+        if unlikely(regs_3d.cmd_fifo.is_empty() || regs_3d.flushed) {
             regs_3d.last_total_cycles = total_cycles;
             return;
         }
@@ -414,7 +432,7 @@ impl Emu {
                 }
 
                 let skippable = param_count & (1 << 6) != 0;
-                if !skippable || !regs_3d.skip {
+                if !regs_3d.skip || likely(!skippable) {
                     for i in 0..count {
                         unsafe { *params.get_unchecked_mut(i) = *regs_3d.cmd_fifo.front() };
                         regs_3d.cmd_fifo.pop_front();
@@ -427,7 +445,7 @@ impl Emu {
                 }
 
                 executed_cycles += 4;
-                if unlikely(executed_cycles >= cycle_diff || cmd == 0x50) {
+                if executed_cycles >= cycle_diff || cmd == 0x50 {
                     let remaining_cmds = value.unbounded_shr((i + 1) << 3);
                     if remaining_cmds != 0 {
                         regs_3d.cmd_fifo.push_front(remaining_cmds);
@@ -541,7 +559,7 @@ impl Emu {
                 regs_3d.cmd_fifo.push_back(value);
             }
 
-            if unlikely(consumed >= values.len()) {
+            if consumed >= values.len() {
                 break;
             }
 
@@ -628,9 +646,11 @@ impl Emu {
 
 impl Gpu3DRegisters {
     pub fn new() -> Self {
+        let mut mtx_flags = MatrixFlags::from(0);
+        mtx_flags.set_clip_push(true);
+        mtx_flags.set_tex_push(true);
         Gpu3DRegisters {
-            clip_mtx_push: true,
-            tex_mtx_push: true,
+            mtx_flags,
             ..Gpu3DRegisters::default()
         }
     }
@@ -652,9 +672,9 @@ impl Gpu3DRegisters {
     }
 
     fn get_clip_matrix(&mut self) -> &Matrix {
-        if unlikely(self.clip_mtx_dirty) {
-            self.clip_mtx_dirty = false;
-            self.clip_mtx_push = true;
+        if unlikely(self.mtx_flags.is_clip_dirty()) {
+            self.mtx_flags.set_clip_dirty_bool(false);
+            self.mtx_flags.set_clip_push(true);
             unsafe { vmult_mat4(self.matrices.coord.vld(), self.matrices.proj.vld(), &mut self.clip_matrix.0) };
         }
         &self.clip_matrix
@@ -764,12 +784,14 @@ impl Gpu3DRegisters {
     }
 
     fn exe_mtx_pop(&mut self, params: &[u32; 32]) {
+        let mode = self.mtx_mode as u8 + 1; // Overflows to 4 when mode is texture, which sets the appropriate flags
+        self.mtx_flags.value |= mode;
+
         match self.mtx_mode {
             MtxMode::Projection => {
                 if u8::from(self.gx_stat.proj_mtx_stack_lvl()) == 1 {
                     self.matrices.proj = self.matrices.proj_stack;
                     self.gx_stat.set_proj_mtx_stack_lvl(u1::new(0));
-                    self.clip_mtx_dirty = true;
                 } else {
                     self.gx_stat.set_mtx_stack_overflow_underflow_err(true);
                 }
@@ -784,13 +806,9 @@ impl Gpu3DRegisters {
                     self.gx_stat.set_pos_vec_mtx_stack_lvl(u5::new(ptr));
                     self.matrices.coord = self.matrices.coord_stack[ptr as usize];
                     self.matrices.dir = self.matrices.dir_stack[ptr as usize];
-                    self.clip_mtx_dirty = true;
                 }
             }
-            MtxMode::Texture => {
-                self.matrices.tex = self.matrices.tex_stack;
-                self.tex_mtx_push = true;
-            }
+            MtxMode::Texture => self.matrices.tex = self.matrices.tex_stack,
         }
     }
 
@@ -812,11 +830,11 @@ impl Gpu3DRegisters {
     }
 
     fn exe_mtx_restore(&mut self, params: &[u32; 32]) {
+        let mode = self.mtx_mode as u8 + 1;
+        self.mtx_flags.value |= mode;
+
         match self.mtx_mode {
-            MtxMode::Projection => {
-                self.matrices.proj = self.matrices.proj_stack;
-                self.clip_mtx_dirty = true;
-            }
+            MtxMode::Projection => self.matrices.proj = self.matrices.proj_stack,
             MtxMode::ModelView | MtxMode::ModelViewVec => {
                 let addr = params[0] & 0x1F;
 
@@ -826,62 +844,40 @@ impl Gpu3DRegisters {
 
                 self.matrices.coord = self.matrices.coord_stack[addr as usize];
                 self.matrices.dir = self.matrices.dir_stack[addr as usize];
-                self.clip_mtx_dirty = true;
             }
-            MtxMode::Texture => {
-                self.matrices.tex = self.matrices.tex_stack;
-                self.tex_mtx_push = true;
-            }
+            MtxMode::Texture => self.matrices.tex = self.matrices.tex_stack,
         }
     }
 
     fn exe_mtx_identity(&mut self, _: &[u32; 32]) {
-        match self.mtx_mode {
-            MtxMode::Projection => {
-                self.matrices.proj = Matrix::default();
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::ModelView => {
-                self.matrices.coord = Matrix::default();
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::ModelViewVec => {
-                self.matrices.coord = Matrix::default();
-                self.matrices.dir = Matrix::default();
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::Texture => {
-                self.matrices.tex = Matrix::default();
-                self.tex_mtx_push = true;
-            }
+        let mode = self.mtx_mode as u8 + 1;
+        self.mtx_flags.value |= mode;
+
+        let dst = unsafe { ptr::addr_of_mut!(self.matrices.proj).add(self.mtx_mode as usize).as_mut_unchecked() };
+        *dst = Matrix::default();
+        if self.mtx_mode == MtxMode::ModelViewVec {
+            self.matrices.coord = Matrix::default();
         }
     }
 
     fn exe_mtx_load44(&mut self, params: &[u32; 32]) {
+        let mode = self.mtx_mode as u8 + 1;
+        self.mtx_flags.value |= mode;
+
         let params: &[u32; 16] = unsafe { mem::transmute(params) };
         let mtx: &Matrix = unsafe { mem::transmute(params) };
-        match self.mtx_mode {
-            MtxMode::Projection => {
-                self.matrices.proj = *mtx;
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::ModelView => {
-                self.matrices.coord = *mtx;
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::ModelViewVec => {
-                self.matrices.coord = *mtx;
-                self.matrices.dir = *mtx;
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::Texture => {
-                self.matrices.tex = *mtx;
-                self.tex_mtx_push = true;
-            }
+
+        let dst = unsafe { ptr::addr_of_mut!(self.matrices.proj).add(self.mtx_mode as usize).as_mut_unchecked() };
+        *dst = *mtx;
+        if self.mtx_mode == MtxMode::ModelViewVec {
+            self.matrices.coord = *mtx;
         }
     }
 
     fn exe_mtx_load43(&mut self, params: &[u32; 32]) {
+        let mode = self.mtx_mode as u8 + 1;
+        self.mtx_flags.value |= mode;
+
         let load = |mtx: &mut Matrix| {
             for i in 0..4 {
                 mtx.as_mut()[i * 4..i * 4 + 3].copy_from_slice(unsafe { mem::transmute(&params[i * 3..i * 3 + 3]) });
@@ -891,49 +887,23 @@ impl Gpu3DRegisters {
             mtx[11] = 0;
             mtx[15] = 1 << 12;
         };
-        match self.mtx_mode {
-            MtxMode::Projection => {
-                load(&mut self.matrices.proj);
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::ModelView => {
-                load(&mut self.matrices.coord);
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::ModelViewVec => {
-                load(&mut self.matrices.coord);
-                load(&mut self.matrices.dir);
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::Texture => {
-                load(&mut self.matrices.tex);
-                self.tex_mtx_push = true;
-            }
+
+        let dst = unsafe { ptr::addr_of_mut!(self.matrices.proj).add(self.mtx_mode as usize).as_mut_unchecked() };
+        load(dst);
+        if self.mtx_mode == MtxMode::ModelViewVec {
+            load(&mut self.matrices.coord);
         }
     }
 
     #[inline(always)]
     fn mtx_mult(&mut self, mtx: [int32x4_t; 4]) {
-        match self.mtx_mode {
-            MtxMode::Projection => {
-                unsafe { vmult_mat4(mtx, self.matrices.proj.vld(), &mut self.matrices.proj.0) };
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::ModelView => {
-                unsafe { vmult_mat4(mtx, self.matrices.coord.vld(), &mut self.matrices.coord.0) };
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::ModelViewVec => {
-                unsafe {
-                    vmult_mat4(mtx, self.matrices.coord.vld(), &mut self.matrices.coord.0);
-                    vmult_mat4(mtx, self.matrices.dir.vld(), &mut self.matrices.dir.0);
-                }
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::Texture => {
-                unsafe { vmult_mat4(mtx, self.matrices.tex.vld(), &mut self.matrices.tex.0) };
-                self.tex_mtx_push = true;
-            }
+        let mode = self.mtx_mode as u8 + 1;
+        self.mtx_flags.value |= mode;
+
+        let dst = unsafe { ptr::addr_of_mut!(self.matrices.proj).add(self.mtx_mode as usize).as_mut_unchecked() };
+        unsafe { vmult_mat4(mtx, dst.vld(), &mut dst.0) };
+        if self.mtx_mode == MtxMode::ModelViewVec {
+            unsafe { vmult_mat4(mtx, self.matrices.coord.vld(), &mut self.matrices.coord.0) };
         }
     }
 
@@ -970,6 +940,9 @@ impl Gpu3DRegisters {
     }
 
     fn exe_mtx_scale(&mut self, params: &[u32; 32]) {
+        let mode = self.mtx_mode as u8 + 1;
+        self.mtx_flags.value |= mode;
+
         let mtx = Matrix::default();
         let mut mtx = unsafe { mtx.vld() };
         unsafe {
@@ -977,19 +950,11 @@ impl Gpu3DRegisters {
             mtx[1] = vsetq_lane_s32::<1>(params[1] as i32, mtx[1]);
             mtx[2] = vsetq_lane_s32::<2>(params[2] as i32, mtx[2]);
         }
-        match self.mtx_mode {
-            MtxMode::Projection => {
-                unsafe { vmult_mat4(mtx, self.matrices.proj.vld(), &mut self.matrices.proj.0) };
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::ModelView | MtxMode::ModelViewVec => {
-                unsafe { vmult_mat4(mtx, self.matrices.coord.vld(), &mut self.matrices.coord.0) };
-                self.clip_mtx_dirty = true;
-            }
-            MtxMode::Texture => {
-                unsafe { vmult_mat4(mtx, self.matrices.tex.vld(), &mut self.matrices.tex.0) };
-                self.tex_mtx_push = true;
-            }
+        if self.mtx_mode == MtxMode::ModelViewVec {
+            unsafe { vmult_mat4(mtx, self.matrices.coord.vld(), &mut self.matrices.coord.0) };
+        } else {
+            let dst = unsafe { ptr::addr_of_mut!(self.matrices.proj).add(self.mtx_mode as usize).as_mut_unchecked() };
+            unsafe { vmult_mat4(mtx, dst.vld(), &mut dst.0) };
         }
     }
 
@@ -1013,9 +978,9 @@ impl Gpu3DRegisters {
         self.cur_polygon.normal[1] = ((u16::from(normal_vector_param.y()) << 6) as i16) >> 3;
         self.cur_polygon.normal[2] = ((u16::from(normal_vector_param.z()) << 6) as i16) >> 3;
 
-        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Normal && self.tex_mtx_push {
+        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Normal && self.mtx_flags.tex_push() {
             self.tex_matrices.push(self.matrices.tex);
-            self.tex_mtx_push = false;
+            self.mtx_flags.set_tex_push(false);
         }
         self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
     }
@@ -1025,9 +990,9 @@ impl Gpu3DRegisters {
         self.cur_vtx.tex_coords[0] = tex_coord.s() as i16;
         self.cur_vtx.tex_coords[1] = tex_coord.t() as i16;
 
-        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::TexCoord && self.tex_mtx_push {
+        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::TexCoord && self.mtx_flags.tex_push() {
             self.tex_matrices.push(self.matrices.tex);
-            self.tex_mtx_push = false;
+            self.mtx_flags.set_tex_push(false);
         }
         self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
     }
@@ -1191,11 +1156,11 @@ impl Gpu3DRegisters {
 
         mem::swap(&mut self.clip_matrices, &mut content.clip_matrices);
         self.clip_matrices.clear();
-        self.clip_mtx_push = true;
+        self.mtx_flags.set_clip_push(true);
 
         mem::swap(&mut self.tex_matrices, &mut content.tex_matrices);
         self.tex_matrices.clear();
-        self.tex_mtx_push = true;
+        self.mtx_flags.set_tex_push(true);
 
         content.swap_buffers = self.swap_buffers;
         content.pow_cnt1 = self.pow_cnt1;
@@ -1207,14 +1172,14 @@ impl Gpu3DRegisters {
         }
 
         self.get_clip_matrix();
-        if unlikely(self.clip_mtx_push) {
+        if unlikely(self.mtx_flags.clip_push()) {
             self.clip_matrices.push(self.clip_matrix);
-            self.clip_mtx_push = false;
+            self.mtx_flags.set_clip_push(false);
         }
 
-        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Vertex && unlikely(self.tex_mtx_push) {
+        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Vertex && unlikely(self.mtx_flags.tex_push()) {
             self.tex_matrices.push(self.matrices.tex);
-            self.tex_mtx_push = false;
+            self.mtx_flags.set_tex_push(false);
         }
         self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
 

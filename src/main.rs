@@ -33,7 +33,7 @@ use crate::settings::{Arm7Emu, Settings};
 use crate::utils::{const_str_equal, set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
-use std::intrinsics::{likely, unlikely};
+use std::intrinsics::unlikely;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -60,7 +60,7 @@ mod utils;
 
 const BUILD_PROFILE_NAME: &str = include_str!(concat!(env!("OUT_DIR"), "/build_profile_name"));
 pub const DEBUG_LOG: bool = const_str_equal(BUILD_PROFILE_NAME, "debug");
-pub const IS_DEBUG: bool = !const_str_equal(BUILD_PROFILE_NAME, "release");
+pub const IS_DEBUG: bool = DEBUG_LOG || const_str_equal(BUILD_PROFILE_NAME, "release-debug");
 pub const BRANCH_LOG: bool = DEBUG_LOG;
 
 fn run_cpu(
@@ -80,10 +80,12 @@ fn run_cpu(
 
     let mut arm9_thread_regs = Mmap::rw("arm9_thread_regs", ARM9.guest_regs_addr(), utils::align_up(size_of::<ThreadRegs>(), PAGE_SIZE)).unwrap();
     let mut arm7_thread_regs = Mmap::rw("arm7_thread_regs", ARM7.guest_regs_addr(), utils::align_up(size_of::<ThreadRegs>(), PAGE_SIZE)).unwrap();
-    let arm9_thread_regs: &'static mut ThreadRegs = unsafe { mem::transmute(arm9_thread_regs.as_mut_ptr()) };
-    let arm7_thread_regs: &'static mut ThreadRegs = unsafe { mem::transmute(arm7_thread_regs.as_mut_ptr()) };
-    *arm9_thread_regs = ThreadRegs::new();
-    *arm7_thread_regs = ThreadRegs::new();
+    let arm9_thread_regs = arm9_thread_regs.as_mut_ptr() as *mut ThreadRegs;
+    let arm7_thread_regs = arm7_thread_regs.as_mut_ptr() as *mut ThreadRegs;
+    unsafe {
+        *arm9_thread_regs = ThreadRegs::new();
+        *arm7_thread_regs = ThreadRegs::new();
+    }
 
     // Initializing jit mem inside of emu, breaks kubridge for some reason
     // Might be caused by initialize shared mem? Initialize here and pass it to emu
@@ -260,7 +262,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     let emu = emu.get_mut();
 
     loop {
-        let arm9_cycles = if likely(!emu.cpu_is_halted(ARM9)) {
+        let arm9_cycles = if !emu.cpu_is_halted(ARM9) {
             unsafe { CURRENT_RUNNING_CPU = ARM9 };
             (jit_asm_arm9.execute::<{ ARM9 }>() + 1) >> 1
         } else {
@@ -274,7 +276,7 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
                 emu.cm.add_cycles(arm9_cycles);
             }
         } else {
-            let arm7_cycles = if likely(!emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop()) {
+            let arm7_cycles = if !emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop() {
                 unsafe { CURRENT_RUNNING_CPU = ARM7 };
                 jit_asm_arm7.execute::<{ ARM7 }>()
             } else {

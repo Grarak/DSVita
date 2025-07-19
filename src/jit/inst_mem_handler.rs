@@ -416,7 +416,7 @@ pub unsafe extern "C" fn _inst_mem_handler_multiple<
 
         if !WRITE {
             let mut rlist = rlist.0.reverse_bits();
-            for i in 0..rlist_len {
+            for _ in 0..rlist_len {
                 let zeros = rlist.leading_zeros();
                 let reg = Reg::from(zeros as u8);
                 rlist &= !(0x80000000 >> zeros);

@@ -145,6 +145,7 @@ impl Emu {
         self.cpu[cpu].halt != 0
     }
 
+    #[inline(never)]
     pub fn cpu_send_interrupt(&mut self, cpu: CpuType, flag: InterruptFlag) {
         let cpu_regs = &mut self.cpu[cpu];
         cpu_regs.irf |= 1 << flag as u8;
