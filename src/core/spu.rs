@@ -57,7 +57,9 @@ impl SoundSampler {
     fn push(&mut self, sample: u32) {
         while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
 
+        unsafe { assert_unchecked(self.busy_queue <= 1) };
         let (queue, size) = &mut self.queues[self.busy_queue];
+        unsafe { assert_unchecked((*size as usize) < queue.len()) };
         queue[*size as usize] = sample;
         *size += 1;
         if *size == SAMPLE_BUFFER_SIZE as u16 {
@@ -492,7 +494,6 @@ impl Emu {
 
     fn spu_next_sample_adpcm(&mut self, channel_num: usize) {
         let channel = &mut self.spu.channels[channel_num];
-        unsafe { assert_unchecked(channel.adpcm_index < 89) };
 
         if channel.sad_current == channel.sad + ((channel.pnt as u32) << 2) && !channel.adpcm_toggle {
             channel.adpcm_loop_value = channel.adpcm_value;
@@ -505,7 +506,7 @@ impl Emu {
         let channel = &mut self.spu.channels[channel_num];
         let adpcm_data = if channel.adpcm_toggle { adpcm_data >> 4 } else { adpcm_data & 0xF };
 
-        let diff = ADPCM_DIFF_TABLE[channel.adpcm_index as usize][adpcm_data as usize];
+        let diff = unsafe { *ADPCM_DIFF_TABLE.get_unchecked(channel.adpcm_index as usize).get_unchecked(adpcm_data as usize) };
         channel.adpcm_value = (channel.adpcm_value as i32 + diff).clamp(-0x8000, 0x7FFF) as i16;
 
         channel.adpcm_index = ADPCM_INDEX_TABLE[channel.adpcm_index as usize][(adpcm_data & 0x7) as usize];
