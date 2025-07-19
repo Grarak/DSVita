@@ -509,7 +509,7 @@ impl Emu {
         let diff = unsafe { *ADPCM_DIFF_TABLE.get_unchecked(channel.adpcm_index as usize).get_unchecked(adpcm_data as usize) };
         channel.adpcm_value = (channel.adpcm_value as i32 + diff).clamp(-0x8000, 0x7FFF) as i16;
 
-        channel.adpcm_index = ADPCM_INDEX_TABLE[channel.adpcm_index as usize][(adpcm_data & 0x7) as usize];
+        channel.adpcm_index = unsafe { ADPCM_INDEX_TABLE.get_unchecked(channel.adpcm_index as usize)[(adpcm_data & 0x7) as usize] };
 
         channel.adpcm_toggle = !channel.adpcm_toggle;
         if !channel.adpcm_toggle {

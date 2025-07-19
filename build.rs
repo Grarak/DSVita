@@ -14,6 +14,7 @@ fn main() {
     let build_profile_name = out_path.to_str().unwrap().split(std::path::MAIN_SEPARATOR).nth_back(3).unwrap();
     let build_profile_name_file = out_path.join("build_profile_name");
     File::create(build_profile_name_file).unwrap().write_all(build_profile_name.as_bytes()).unwrap();
+    let is_release = build_profile_name == "release" || build_profile_name == "release-profiling";
 
     let target = env::var("TARGET").unwrap();
     let is_target_vita = target == "armv7-sony-vita-newlibeabihf";
@@ -53,7 +54,7 @@ fn main() {
             "-mtune=cortex-a9".to_string(),
             "-mfpu=neon".to_string(),
         ];
-        if build_profile_name != "release" {
+        if !is_release {
             vixl_flags.push("-DVIXL_DEBUG=1".to_string());
         }
         if !is_target_vita {
@@ -228,7 +229,7 @@ fn main() {
         ];
 
         let mut vixl_build = create_vixl_build(vixl_files);
-        if build_profile_name == "release" {
+        if is_release {
             vixl_build.flag("-flto").flag("-ffat-lto-objects").opt_level_str("fast");
         }
         vixl_build.compile("vixl");
@@ -460,7 +461,7 @@ fn main() {
         writeln!(soundtouch_wrapper, "}}").unwrap();
         soundtouch_build.file(soundtouch_wrapper_path);
 
-        if build_profile_name == "release" {
+        if is_release {
             soundtouch_build.flag("-flto").flag("-ffat-lto-objects").opt_level_str("fast");
         }
         soundtouch_build.compile("soundtouch");
@@ -566,7 +567,7 @@ fn main() {
             ("SINGLE_THREADED_GC", "1"),
         ];
 
-        if build_profile_name == "release" {
+        if is_release {
             vita_gl_envs.push(("NO_DEBUG", "1"));
         } else {
             vita_gl_envs.push(("HAVE_SHARK_LOG", "1"));

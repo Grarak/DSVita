@@ -13,12 +13,11 @@ use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::{inst_info, Cond};
 use crate::mmap::{PAGE_SHIFT, PAGE_SIZE};
+use crate::KEEP_FRAME_POINTER;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
 pub const GUEST_REGS_PTR_REG: Reg = Reg::R3;
-pub const GUEST_REGS_PTR_STACK_OFFSET: u32 = 0;
-pub const MMU_OFFSET_STACK_OFFSET: u32 = 4;
 pub const CPSR_TMP_REG: Reg = Reg::R0;
 
 #[derive(Clone)]
@@ -115,6 +114,10 @@ impl BlockAsm {
 
     pub fn prologue(&mut self, basic_block_len: usize) {
         self.push1(reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::LR));
+        if KEEP_FRAME_POINTER {
+            let thumb = self.thumb;
+            self.add5(FlagsUpdate_DontCare, Cond::AL, if thumb { Reg::R7 } else { Reg::R11 }, Reg::SP, &28.into());
+        }
         self.sub5(FlagsUpdate_DontCare, Cond::AL, Reg::SP, Reg::SP, &4.into());
 
         self.guest_basic_block_labels.resize_with(basic_block_len, || None);

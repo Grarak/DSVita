@@ -6,7 +6,7 @@ use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::analyzer::asm_analyzer::AsmAnalyzer;
 use crate::jit::assembler::block_asm::{BlockAsm, GuestInstOffset};
 use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags};
-use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmBl2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
+use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmBl2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmPop1, MasmPush1, MasmSubs3};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::emitter::map_fun_cpu;
@@ -21,7 +21,7 @@ use crate::jit::Cond;
 use crate::logging::{branch_println, debug_println};
 use crate::mmap::Mmap;
 use crate::mmap::PAGE_SHIFT;
-use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
+use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG, KEEP_FRAME_POINTER};
 use bilge::prelude::*;
 use static_assertions::const_assert_eq;
 use std::arch::{asm, naked_asm};
@@ -288,13 +288,13 @@ extern "C" fn guest_block_invalid(guest_pc: u32) {
 unsafe extern "C" fn validate_guest_block_hash() {
     #[rustfmt::skip]
     naked_asm!(
-        "mov r7, lr",
+        "mov r6, lr",
         "mov r2, 0",
         "bl {xxh32}",
         "cmp r0, r5",
         "mov r0, r4",
         "itt eq",
-        "moveq lr, r7",
+        "moveq lr, r6",
         "bxeq lr",
         "add sp, sp, 4",
         "pop {{r4-r11,lr}}",
@@ -466,8 +466,14 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
         if !thumb {
             block_asm.lsr5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &1.into());
         }
+        if KEEP_FRAME_POINTER {
+            block_asm.push1(reg_reserve!(Reg::R7, Reg::R11));
+        }
         block_asm.ldr2(Reg::R3, map_fun_cpu!(cpu, jump_to_other_guest_pc) as u32);
         block_asm.blx1(Reg::R3);
+        if KEEP_FRAME_POINTER {
+            block_asm.pop1(reg_reserve!(Reg::R7, Reg::R11));
+        }
         block_asm.add5(FlagsUpdate_LeaveFlags, Cond::AL, Reg::PC, Reg::PC, &Reg::R0.into());
 
         block_asm.bind(&mut default_pc_label);

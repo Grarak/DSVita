@@ -3,6 +3,7 @@ use crate::jit::assembler::vixl::vixl::MemOperand;
 use crate::jit::assembler::vixl::{MacroAssembler, MasmLdr2, MasmStr2};
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::logging::debug_panic;
+use crate::KEEP_FRAME_POINTER;
 
 pub const GUEST_REG_ALLOCATIONS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11);
 pub const GUEST_REGS_LENGTH: usize = Reg::PC as usize + 1;
@@ -17,7 +18,7 @@ pub struct RegAlloc {
 impl RegAlloc {
     pub fn new(thumb: bool) -> Self {
         RegAlloc {
-            free_regs: GUEST_REG_ALLOCATIONS,
+            free_regs: GUEST_REG_ALLOCATIONS - if KEEP_FRAME_POINTER { reg_reserve!(Reg::R7, Reg::R11) } else { reg_reserve!() },
             guest_regs_mapping: [Reg::None; GUEST_REGS_LENGTH],
             host_regs_mapping: [Reg::None; GUEST_REG_ALLOCATIONS.len()],
             thumb,

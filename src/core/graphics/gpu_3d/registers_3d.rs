@@ -12,7 +12,7 @@ use paste::paste;
 use std::arch::arm::{int32x4_t, vld1q_s32, vld1q_s32_x3, vsetq_lane_s32};
 use std::cmp::{max, min};
 use std::hint::assert_unchecked;
-use std::intrinsics::unlikely;
+use std::intrinsics::{likely, unlikely};
 use std::mem;
 use std::mem::MaybeUninit;
 
@@ -383,7 +383,7 @@ macro_rules! unpacked_cmd {
 impl Emu {
     pub fn regs_3d_run_cmds(&mut self, total_cycles: u64) {
         let regs_3d = &mut self.gpu.gpu_3d_regs;
-        if regs_3d.cmd_fifo.is_empty() || regs_3d.flushed {
+        if unlikely(regs_3d.cmd_fifo.is_empty() || regs_3d.flushed) {
             regs_3d.last_total_cycles = total_cycles;
             return;
         }
@@ -414,7 +414,7 @@ impl Emu {
                 }
 
                 let skippable = param_count & (1 << 6) != 0;
-                if !skippable || !regs_3d.skip {
+                if !regs_3d.skip || likely(!skippable) {
                     for i in 0..count {
                         unsafe { *params.get_unchecked_mut(i) = *regs_3d.cmd_fifo.front() };
                         regs_3d.cmd_fifo.pop_front();
@@ -429,7 +429,7 @@ impl Emu {
                 executed_cycles += 4;
                 if unlikely(executed_cycles >= cycle_diff || cmd == 0x50) {
                     let remaining_cmds = value.unbounded_shr((i + 1) << 3);
-                    if remaining_cmds != 0 {
+                    if unlikely(remaining_cmds != 0) {
                         regs_3d.cmd_fifo.push_front(remaining_cmds);
                     }
                     break 'outer;
