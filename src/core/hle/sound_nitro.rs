@@ -57,13 +57,40 @@ impl From<u8> for SndCmd {
     }
 }
 
+#[bitsize(8)]
+#[derive(Default, FromBits)]
+pub struct ChannelStatus {
+    active: bool,
+    start: bool,
+    auto_sweep: bool,
+    sync_start: bool,
+    sync_stop: bool,
+    sync_timer: bool,
+    sync_volume: bool,
+    sync_pan: bool,
+}
+
+impl ChannelStatus {
+    fn wipe_sync(&mut self) {
+        self.set_sync_start(false);
+        self.set_sync_stop(false);
+        self.set_sync_timer(false);
+        self.set_sync_volume(false);
+        self.set_sync_pan(false);
+    }
+
+    fn has_sync(&self) -> bool {
+        self.sync_start() || self.sync_stop() || self.sync_timer() || self.sync_volume() || self.sync_pan()
+    }
+}
+
 #[derive(Default)]
 #[repr(C)]
 struct Channel {
     id: u8,
     typ: u8,
     vol_ramp_phase: u8,
-    status_flags: u8,
+    status_flags: ChannelStatus,
     pan_base1: u8,
     freq_base1: u8,
     vol_base1: i16,
@@ -107,10 +134,19 @@ struct Channel {
 
 const_assert_eq!(size_of::<Channel>(), 0x54);
 
+#[bitsize(8)]
+#[derive(Default, FromBits)]
+pub struct SequenceStatus {
+    active: bool,
+    prepared: bool,
+    paused: bool,
+    unused: u5,
+}
+
 #[derive(Default)]
 #[repr(C)]
 struct Sequence {
-    status_flags: u8,
+    status_flags: SequenceStatus,
     id: u8,
     seq_unk02: u8,
     seq_unk03: u8,
@@ -128,10 +164,23 @@ struct Sequence {
 
 const_assert_eq!(size_of::<Sequence>(), 0x24);
 
+#[bitsize(8)]
+#[derive(Default, FromBits)]
+pub struct TrackStatus {
+    active: bool,
+    note_wait: bool,
+    muted: bool,
+    tie: bool,
+    note_finish_wait: bool,
+    portamento: bool,
+    cmp: bool,
+    channel_mask: bool,
+}
+
 #[derive(Default)]
 #[repr(C)]
 struct Track {
-    status_flags: u8,
+    status_flags: TrackStatus,
     track_unk01: u8,
     instr_index: u16,
     volume: u8,
@@ -173,8 +222,13 @@ impl Track {
         self.note_buffer = 0;
         self.cur_note_addr = 0;
 
-        self.status_flags |= 0x42;
-        self.status_flags &= !0xBC;
+        self.status_flags.set_note_wait(true);
+        self.status_flags.set_cmp(true);
+        self.status_flags.set_muted(false);
+        self.status_flags.set_tie(false);
+        self.status_flags.set_note_finish_wait(false);
+        self.status_flags.set_portamento(false);
+        self.status_flags.set_channel_mask(false);
 
         self.loop_level = 0;
         self.instr_index = 0;
@@ -279,17 +333,18 @@ impl Emu {
         sound_nitro.weak_locked_channel_mask = 0;
 
         for (i, chan) in sound_nitro.channels.iter_mut().enumerate() {
-            chan.status_flags &= !0xF9;
+            chan.status_flags.set_active(false);
+            chan.status_flags.wipe_sync();
             chan.id = i as u8;
         }
 
         for (i, seq) in sound_nitro.sequences.iter_mut().enumerate() {
-            seq.status_flags &= !1;
+            seq.status_flags.set_active(false);
             seq.id = i as u8;
         }
 
         for track in &mut sound_nitro.tracks {
-            track.status_flags &= !1;
+            track.status_flags.set_active(false);
         }
 
         let game_code = &self.cartridge.io.header.game_code[..3];
@@ -532,16 +587,16 @@ impl Emu {
     fn sound_nitro_update_hardware_channels(&mut self) {
         for i in 0..CHANNEL_COUNT {
             let chan = &self.hle.sound.nitro.channels[i];
-            if self.hle.sound.nitro.channels[i].status_flags & 0xF8 == 0 {
+            if !self.hle.sound.nitro.channels[i].status_flags.has_sync() {
                 continue;
             }
 
-            if chan.status_flags & (1 << 4) != 0 {
+            if chan.status_flags.sync_stop() {
                 self.sound_nitro_stop_channel(i, false);
             }
 
             let chan = &self.hle.sound.nitro.channels[i];
-            if chan.status_flags & (1 << 3) != 0 {
+            if chan.status_flags.sync_start() {
                 match chan.typ {
                     0 => self.sound_nitro_setup_channel_wave(
                         i,
@@ -564,34 +619,34 @@ impl Emu {
             }
 
             let chan = &self.hle.sound.nitro.channels[i];
-            if chan.status_flags & (1 << 5) != 0 {
+            if chan.status_flags.sync_timer() {
                 self.sound_nitro_set_channel_frequency(i, chan.frequency);
             }
 
             let chan = &self.hle.sound.nitro.channels[i];
-            if chan.status_flags & (1 << 6) != 0 {
+            if chan.status_flags.sync_volume() {
                 self.sound_nitro_set_channel_volume(i, chan.volume as i32, chan.volume_div);
             }
 
             let chan = &self.hle.sound.nitro.channels[i];
-            if chan.status_flags & (1 << 7) != 0 {
+            if chan.status_flags.sync_pan() {
                 self.sound_nitro_set_channel_pan(i, chan.pan as i32);
             }
         }
 
         for i in 0..CHANNEL_COUNT {
             let chan = &self.hle.sound.nitro.channels[i];
-            if chan.status_flags & 0xF8 == 0 {
+            if !chan.status_flags.has_sync() {
                 continue;
             }
 
-            if chan.status_flags & (1 << 3) != 0 {
+            if chan.status_flags.sync_start() {
                 let mut cnt = SoundCnt::from(self.spu_get_cnt(i));
                 cnt.set_start_status(true);
                 self.spu_set_cnt(i, !0, u32::from(cnt));
             }
 
-            self.hle.sound.nitro.channels[i].status_flags &= !0xF8;
+            self.hle.sound.nitro.channels[i].status_flags.wipe_sync();
         }
     }
 
@@ -647,7 +702,7 @@ impl Emu {
 
         let mut chan_id = self.hle.sound.nitro.tracks[track_id as usize].chan_list;
         while let Some(id) = chan_id {
-            if self.hle.sound.nitro.channels[id as usize].status_flags & 1 != 0 {
+            if self.hle.sound.nitro.channels[id as usize].status_flags.active() {
                 if rate >= 0 {
                     self.sound_nitro_set_channel_release_rate(id as u8, rate & 0xFF);
                 }
@@ -674,8 +729,8 @@ impl Emu {
 
     fn sound_nitro_allocate_free_track(&mut self) -> Option<u8> {
         for (i, track) in self.hle.sound.nitro.tracks.iter_mut().enumerate() {
-            if track.status_flags & 1 == 0 {
-                track.status_flags |= 1;
+            if !track.status_flags.active() {
+                track.status_flags.set_active(true);
                 return Some(i as u8);
             }
         }
@@ -701,7 +756,7 @@ impl Emu {
             self.sound_nitro_finish_track(track_id, seq_id, -1);
             self.sound_nitro_unlink_track_channels(track_id);
 
-            self.hle.sound.nitro.tracks[track_id as usize].status_flags &= !1;
+            self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_active(false);
             self.hle.sound.nitro.sequences[seq_id as usize].tracks[id as usize] = 0xFF;
         }
     }
@@ -710,7 +765,7 @@ impl Emu {
         let sound_nitro = &mut self.hle.sound.nitro;
         let seq = &mut sound_nitro.sequences[seq_id as usize];
 
-        seq.status_flags &= !(1 << 2);
+        seq.status_flags.set_paused(false);
 
         seq.sbnk_addr = sbnk;
         seq.tempo = 0x78;
@@ -738,13 +793,13 @@ impl Emu {
             self.sound_nitro_finish_sequence_track(seq_id, i);
         }
 
-        self.hle.sound.nitro.sequences[seq_id as usize].status_flags &= !1;
+        self.hle.sound.nitro.sequences[seq_id as usize].status_flags.set_active(false);
     }
 
     fn sound_nitro_prepare_sequence(&mut self, seq_id: u8, notedata: u32, noteoffset: u32, sbnk: u32) {
         debug_println!("sound_nitro_prepare_sequence {seq_id}");
 
-        if self.hle.sound.nitro.sequences[seq_id as usize].status_flags & 1 != 0 {
+        if self.hle.sound.nitro.sequences[seq_id as usize].status_flags.active() {
             self.sound_nitro_finish_sequence(seq_id);
         }
 
@@ -779,8 +834,8 @@ impl Emu {
                 }
             }
 
-            self.hle.sound.nitro.sequences[seq_id as usize].status_flags |= 1;
-            self.hle.sound.nitro.sequences[seq_id as usize].status_flags &= !(1 << 1);
+            self.hle.sound.nitro.sequences[seq_id as usize].status_flags.set_active(true);
+            self.hle.sound.nitro.sequences[seq_id as usize].status_flags.set_prepared(false);
 
             if self.hle.sound.nitro.shared_mem != 0 {
                 let mut mask = self.mem_read::<{ ARM7 }, u32>(self.hle.sound.nitro.shared_mem + 4);
@@ -792,12 +847,11 @@ impl Emu {
 
     fn sound_nitro_start_sequence(&mut self, seq_id: u8) {
         debug_println!("sound_nitro_start_sequence {seq_id}");
-        self.hle.sound.nitro.sequences[seq_id as usize].status_flags |= 1 << 1;
+        self.hle.sound.nitro.sequences[seq_id as usize].status_flags.set_prepared(true);
     }
 
     fn sound_nitro_pause_sequence(&mut self, seq_id: u8, paused: bool) {
-        let status_flag = self.hle.sound.nitro.sequences[seq_id as usize].status_flags;
-        self.hle.sound.nitro.sequences[seq_id as usize].status_flags = (status_flag & !(1 << 2)) | ((paused as u8) << 2);
+        self.hle.sound.nitro.sequences[seq_id as usize].status_flags.set_paused(paused);
 
         if paused {
             for i in 0..16 {
@@ -825,8 +879,8 @@ impl Emu {
 
             self.sound_nitro_stop_channel(i, false);
             self.hle.sound.nitro.channels[i].priority = 0;
-            self.hle.sound.nitro.channels[i].status_flags &= 0x7;
-            self.hle.sound.nitro.channels[i].status_flags &= !1;
+            self.hle.sound.nitro.channels[i].status_flags.wipe_sync();
+            self.hle.sound.nitro.channels[i].status_flags.set_active(false);
         }
 
         if weak {
@@ -884,7 +938,7 @@ impl Emu {
                     }
                     SndCmd::StopSeq => {
                         let seq_id = args[0] as u8;
-                        if self.hle.sound.nitro.sequences[seq_id as usize].status_flags & 1 != 0 {
+                        if self.hle.sound.nitro.sequences[seq_id as usize].status_flags.active() {
                             self.sound_nitro_finish_sequence(seq_id);
 
                             if self.hle.sound.nitro.shared_mem != 0 {
@@ -959,7 +1013,7 @@ impl Emu {
                             }
                             if let Some(track_id) = self.sound_nitro_get_sequence_track_id(seq_id, i) {
                                 self.hle.sound.nitro.tracks[track_id as usize].channel_mask = chanmask;
-                                self.hle.sound.nitro.tracks[track_id as usize].status_flags |= 1 << 7;
+                                self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_channel_mask(true);
                             }
                         }
                     }
@@ -1184,7 +1238,7 @@ impl Emu {
                         let start = args[0];
                         let end = args[1];
                         for i in 0..16 {
-                            if self.hle.sound.nitro.sequences[i].status_flags & 1 == 0 {
+                            if !self.hle.sound.nitro.sequences[i].status_flags.active() {
                                 continue;
                             }
 
@@ -1203,7 +1257,7 @@ impl Emu {
                         let start = args[0];
                         let end = args[1];
                         for i in 0..16 {
-                            if self.hle.sound.nitro.sequences[i].status_flags & 1 != 0 && start <= self.hle.sound.nitro.sequences[i].sbnk_addr && self.hle.sound.nitro.sequences[i].sbnk_addr <= end {
+                            if self.hle.sound.nitro.sequences[i].status_flags.active() && start <= self.hle.sound.nitro.sequences[i].sbnk_addr && self.hle.sound.nitro.sequences[i].sbnk_addr <= end {
                                 self.sound_nitro_finish_sequence(i as u8);
                             }
                         }
@@ -1212,12 +1266,12 @@ impl Emu {
                         let start = args[0];
                         let end = args[1];
                         for i in 0..16 {
-                            if self.hle.sound.nitro.channels[i].status_flags & 1 != 0
+                            if self.hle.sound.nitro.channels[i].status_flags.active()
                                 && self.hle.sound.nitro.channels[i].typ == 0
                                 && start <= self.hle.sound.nitro.channels[i].data_addr_duty_cycle
                                 && self.hle.sound.nitro.channels[i].data_addr_duty_cycle <= end
                             {
-                                self.hle.sound.nitro.channels[i].status_flags &= !(1 << 1);
+                                self.hle.sound.nitro.channels[i].status_flags.set_start(false);
                                 self.sound_nitro_stop_channel(i, false);
                             }
                         }
@@ -1320,7 +1374,8 @@ impl Emu {
         chan.note_length = len;
         chan.modulation_count1 = 0;
         chan.modulation_count2 = 0;
-        chan.status_flags |= 0x03;
+        chan.status_flags.set_active(true);
+        chan.status_flags.set_start(true);
     }
 
     fn sound_nitro_setup_instrument(&mut self, chan_id: u8, tune: u8, speed: u8, mut len: i32, sbnk: u32, data: &[u8; 16]) -> bool {
@@ -1462,8 +1517,8 @@ impl Emu {
 
         let ret_chan = &mut self.hle.sound.nitro.channels[ret.unwrap() as usize];
 
-        ret_chan.status_flags &= !0xF9;
-        ret_chan.status_flags |= 1 << 4;
+        ret_chan.status_flags.set_sync_stop(true);
+        ret_chan.status_flags.set_active(false);
 
         ret_chan.next = None;
         ret_chan.linked_track = Some(track_id as usize);
@@ -1471,8 +1526,8 @@ impl Emu {
         ret_chan.priority = prio;
         ret_chan.volume = 127;
         ret_chan.volume_div = 0;
-        ret_chan.status_flags &= !(1 << 1);
-        ret_chan.status_flags |= 1 << 2;
+        ret_chan.status_flags.set_start(false);
+        ret_chan.status_flags.set_auto_sweep(true);
         ret_chan.freq_base2 = 60;
         ret_chan.freq_base1 = 60;
         ret_chan.vol_base2 = 127;
@@ -1503,7 +1558,7 @@ impl Emu {
 
     fn sound_nitro_track_key_on(&mut self, track_id: u8, seq_id: u8, tune: u8, speed: u8, len: i32) {
         let mut chan_id = None;
-        if self.hle.sound.nitro.tracks[track_id as usize].status_flags & (1 << 3) != 0 {
+        if self.hle.sound.nitro.tracks[track_id as usize].status_flags.tie() {
             chan_id = self.hle.sound.nitro.tracks[track_id as usize].chan_list;
             if let Some(chan_id) = chan_id {
                 self.hle.sound.nitro.channels[chan_id as usize].freq_base2 = tune;
@@ -1533,7 +1588,7 @@ impl Emu {
             match self.sound_nitro_allocate_channel(
                 chanmask,
                 self.hle.sound.nitro.tracks[track_id as usize].priority,
-                self.hle.sound.nitro.tracks[track_id as usize].status_flags & (1 << 7) != 0,
+                self.hle.sound.nitro.tracks[track_id as usize].status_flags.channel_mask(),
                 track_id,
             ) {
                 None => {
@@ -1541,7 +1596,7 @@ impl Emu {
                 }
                 Some(id) => {
                     chan_id = Some(id as u16);
-                    let len = if self.hle.sound.nitro.tracks[track_id as usize].status_flags & (1 << 3) != 0 { -1 } else { len };
+                    let len = if self.hle.sound.nitro.tracks[track_id as usize].status_flags.tie() { -1 } else { len };
 
                     if !self.sound_nitro_setup_instrument(id, tune, speed, len, self.hle.sound.nitro.sequences[seq_id as usize].sbnk_addr, &instrdata) {
                         let sound_nitro = &mut self.hle.sound.nitro;
@@ -1574,13 +1629,13 @@ impl Emu {
         let sound_nitro = &mut self.hle.sound.nitro;
         let chan = &mut sound_nitro.channels[chan_id as usize];
         chan.freq_ramp_target = sound_nitro.tracks[track_id as usize].sweep_pitch;
-        if sound_nitro.tracks[track_id as usize].status_flags & (1 << 5) != 0 {
+        if sound_nitro.tracks[track_id as usize].status_flags.portamento() {
             chan.freq_ramp_target += (((sound_nitro.tracks[track_id as usize].track_unk14 as i32 - tune as i32) << 22) >> 16) as i16;
         }
 
         if sound_nitro.tracks[track_id as usize].portamento_time == 0 {
             chan.freq_ramp_len = len;
-            chan.status_flags &= !(1 << 2);
+            chan.status_flags.set_auto_sweep(false);
         } else {
             let mut time = sound_nitro.tracks[track_id as usize].portamento_time as i32;
             time *= time;
@@ -1677,18 +1732,18 @@ impl Emu {
                 chan.note_length -= 1;
             }
 
-            if chan.status_flags & (1 << 2) == 0 && chan.freq_ramp_pos < chan.freq_ramp_len {
+            if !chan.status_flags.auto_sweep() && chan.freq_ramp_pos < chan.freq_ramp_len {
                 chan.freq_ramp_pos += 1;
             }
 
             chan_id = chan.next;
         }
 
-        if self.hle.sound.nitro.tracks[track_id as usize].status_flags & (1 << 4) != 0 {
+        if self.hle.sound.nitro.tracks[track_id as usize].status_flags.note_finish_wait() {
             if self.hle.sound.nitro.tracks[track_id as usize].chan_list.is_some() {
                 return 0;
             }
-            self.hle.sound.nitro.tracks[track_id as usize].status_flags &= !(1 << 4);
+            self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_note_finish_wait(false);
         }
 
         if self.hle.sound.nitro.tracks[track_id as usize].rest_counter > 0 {
@@ -1698,11 +1753,7 @@ impl Emu {
             }
         }
 
-        while self.hle.sound.nitro.tracks[track_id as usize].rest_counter == 0 {
-            if self.hle.sound.nitro.tracks[track_id as usize].status_flags & (1 << 4) != 0 {
-                break;
-            }
-
+        while self.hle.sound.nitro.tracks[track_id as usize].rest_counter == 0 && !self.hle.sound.nitro.tracks[track_id as usize].status_flags.note_finish_wait() {
             let mut cond = true;
             let mut paramtype = 2;
 
@@ -1711,7 +1762,7 @@ impl Emu {
             if note_op == 0xA2 {
                 note_op = self.mem_read::<{ ARM7 }, u8>(self.hle.sound.nitro.tracks[track_id as usize].cur_note_addr);
                 self.hle.sound.nitro.tracks[track_id as usize].cur_note_addr += 1;
-                cond = self.hle.sound.nitro.tracks[track_id as usize].status_flags & (1 << 6) != 0;
+                cond = self.hle.sound.nitro.tracks[track_id as usize].status_flags.cmp();
             }
             if note_op == 0xA0 {
                 note_op = self.mem_read::<{ ARM7 }, u8>(self.hle.sound.nitro.tracks[track_id as usize].cur_note_addr);
@@ -1735,15 +1786,15 @@ impl Emu {
 
                 let tune = tune.clamp(0, 127) as u8;
 
-                if self.hle.sound.nitro.tracks[track_id as usize].status_flags & (1 << 2) == 0 && process {
+                if !self.hle.sound.nitro.tracks[track_id as usize].status_flags.muted() && process {
                     self.sound_nitro_track_key_on(track_id, seq_id, tune, speed, if len <= 0 { -1 } else { len });
                 }
 
                 self.hle.sound.nitro.tracks[track_id as usize].track_unk14 = tune;
-                if self.hle.sound.nitro.tracks[track_id as usize].status_flags & (1 << 1) != 0 {
+                if self.hle.sound.nitro.tracks[track_id as usize].status_flags.note_wait() {
                     self.hle.sound.nitro.tracks[track_id as usize].rest_counter = len;
                     if len == 0 {
-                        self.hle.sound.nitro.tracks[track_id as usize].status_flags |= 1 << 4;
+                        self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_note_finish_wait(true);
                     }
                 }
             } else {
@@ -1860,40 +1911,28 @@ impl Emu {
                                     self.mem_write::<{ ARM7 }, _>(paramaddr, val as u16);
                                 }
                                 0xB8 => {
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags &= !(1 << 6);
-                                    if self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16 == param {
-                                        self.hle.sound.nitro.tracks[track_id as usize].status_flags |= 1 << 6;
-                                    }
+                                    let cmp = self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16 == param;
+                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_cmp(cmp);
                                 }
                                 0xB9 => {
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags &= !(1 << 6);
-                                    if self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16 >= param {
-                                        self.hle.sound.nitro.tracks[track_id as usize].status_flags |= 1 << 6;
-                                    }
+                                    let cmp = self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16 >= param;
+                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_cmp(cmp);
                                 }
                                 0xBA => {
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags &= !(1 << 6);
-                                    if self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16 > param {
-                                        self.hle.sound.nitro.tracks[track_id as usize].status_flags |= 1 << 6;
-                                    }
+                                    let cmp = self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16 > param;
+                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_cmp(cmp);
                                 }
                                 0xBB => {
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags &= !(1 << 6);
-                                    if self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16 <= param {
-                                        self.hle.sound.nitro.tracks[track_id as usize].status_flags |= 1 << 6;
-                                    }
+                                    let cmp = self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16 <= param;
+                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_cmp(cmp);
                                 }
                                 0xBC => {
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags &= !(1 << 6);
-                                    if (self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16) < param {
-                                        self.hle.sound.nitro.tracks[track_id as usize].status_flags |= 1 << 6;
-                                    }
+                                    let cmp = (self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16) < param;
+                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_cmp(cmp);
                                 }
                                 0xBD => {
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags &= !(1 << 6);
-                                    if self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16 != param {
-                                        self.hle.sound.nitro.tracks[track_id as usize].status_flags |= 1 << 6;
-                                    }
+                                    let cmp = self.mem_read::<{ ARM7 }, u16>(paramaddr) as i16 != param;
+                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_cmp(cmp);
                                 }
                                 _ => {}
                             }
@@ -1913,28 +1952,21 @@ impl Emu {
                                 0xC4 => self.hle.sound.nitro.tracks[track_id as usize].pitch_bend = param as i8,
                                 0xC5 => self.hle.sound.nitro.tracks[track_id as usize].pitch_bend_range = param,
                                 0xC6 => self.hle.sound.nitro.tracks[track_id as usize].priority = param,
-                                0xC7 => {
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags &= !(1 << 1);
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags |= (param & 0x1) << 1;
-                                }
+                                0xC7 => self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_note_wait(param & 0x1 == 1),
                                 0xC8 => {
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags &= !(1 << 3);
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags |= (param & 0x1) << 3;
+                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_tie(param & 0x1 == 1);
                                     self.sound_nitro_finish_track(track_id, seq_id, -1);
                                     self.sound_nitro_unlink_track_channels(track_id);
                                 }
                                 0xC9 => {
                                     self.hle.sound.nitro.tracks[track_id as usize].track_unk14 = (param as i8).wrapping_add(self.hle.sound.nitro.tracks[track_id as usize].transpose) as u8;
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags |= 1 << 5;
+                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_portamento(true);
                                 }
                                 0xCA => self.hle.sound.nitro.tracks[track_id as usize].modulation_depth = param,
                                 0xCB => self.hle.sound.nitro.tracks[track_id as usize].modulation_speed = param,
                                 0xCC => self.hle.sound.nitro.tracks[track_id as usize].modulation_type = param,
                                 0xCD => self.hle.sound.nitro.tracks[track_id as usize].modulation_range = param,
-                                0xCE => {
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags &= !(1 << 5);
-                                    self.hle.sound.nitro.tracks[track_id as usize].status_flags |= (param & 0x1) << 5;
-                                }
+                                0xCE => self.hle.sound.nitro.tracks[track_id as usize].status_flags.set_portamento(param & 0x1 == 1),
                                 0xCF => self.hle.sound.nitro.tracks[track_id as usize].portamento_time = param,
                                 0xD0 => self.hle.sound.nitro.tracks[track_id as usize].attack_rate = param,
                                 0xD1 => self.hle.sound.nitro.tracks[track_id as usize].decay_rate = param,
@@ -2064,12 +2096,12 @@ impl Emu {
         let mut activemask = 0;
 
         for i in 0..16 {
-            if self.hle.sound.nitro.sequences[i].status_flags & (1 << 0) == 0 {
+            if !self.hle.sound.nitro.sequences[i].status_flags.active() {
                 continue;
             }
 
-            if self.hle.sound.nitro.sequences[i].status_flags & (1 << 1) != 0 {
-                if update && self.hle.sound.nitro.sequences[i].status_flags & (1 << 2) == 0 {
+            if self.hle.sound.nitro.sequences[i].status_flags.prepared() {
+                if update && !self.hle.sound.nitro.sequences[i].status_flags.paused() {
                     self.sound_nitro_update_sequence(i as u8);
                 }
 
@@ -2081,7 +2113,7 @@ impl Emu {
                 }
             }
 
-            if self.hle.sound.nitro.sequences[i].status_flags & (1 << 0) != 0 {
+            if self.hle.sound.nitro.sequences[i].status_flags.active() {
                 activemask |= 1 << i;
             }
         }
@@ -2156,7 +2188,7 @@ impl Emu {
         let tmp = chan.freq_ramp_target as i64 * (chan.freq_ramp_len - chan.freq_ramp_pos) as i64;
         let ret = tmp / chan.freq_ramp_len as i64;
 
-        if update && chan.status_flags & (1 << 2) != 0 {
+        if update && chan.status_flags.auto_sweep() {
             chan.freq_ramp_pos += 1;
         }
 
@@ -2266,13 +2298,13 @@ impl Emu {
 
     fn sound_nitro_update_channels(&mut self, update_ramps: bool) {
         for i in 0..CHANNEL_COUNT {
-            if self.hle.sound.nitro.channels[i].status_flags & (1 << 0) == 0 {
+            if !self.hle.sound.nitro.channels[i].status_flags.active() {
                 continue;
             }
 
-            if self.hle.sound.nitro.channels[i].status_flags & (1 << 1) != 0 {
-                self.hle.sound.nitro.channels[i].status_flags |= 1 << 3;
-                self.hle.sound.nitro.channels[i].status_flags &= !(1 << 1);
+            if self.hle.sound.nitro.channels[i].status_flags.start() {
+                self.hle.sound.nitro.channels[i].status_flags.set_sync_start(true);
+                self.hle.sound.nitro.channels[i].status_flags.set_start(false);
             } else if !self.sound_nitro_is_channel_playing(i) {
                 if self.hle.sound.nitro.channels[i].linked_track.is_some() {
                     self.sound_nitro_unlink_channel(i as u8, true);
@@ -2282,7 +2314,7 @@ impl Emu {
 
                 self.hle.sound.nitro.channels[i].volume = 0;
                 self.hle.sound.nitro.channels[i].volume_div = 0;
-                self.hle.sound.nitro.channels[i].status_flags &= !(1 << 0);
+                self.hle.sound.nitro.channels[i].status_flags.set_active(false);
                 continue;
             }
 
@@ -2315,8 +2347,8 @@ impl Emu {
             pan += self.hle.sound.nitro.channels[i].pan_base3 as i32;
 
             if self.hle.sound.nitro.channels[i].vol_ramp_phase == 3 && vol <= -0x2D3 {
-                self.hle.sound.nitro.channels[i].status_flags &= !0xF8;
-                self.hle.sound.nitro.channels[i].status_flags |= 1 << 4;
+                self.hle.sound.nitro.channels[i].status_flags.wipe_sync();
+                self.hle.sound.nitro.channels[i].status_flags.set_sync_stop(true);
 
                 if self.hle.sound.nitro.channels[i].linked_track.is_some() {
                     self.sound_nitro_unlink_channel(i as u8, true);
@@ -2326,7 +2358,7 @@ impl Emu {
 
                 self.hle.sound.nitro.channels[i].volume = 0;
                 self.hle.sound.nitro.channels[i].volume_div = 0;
-                self.hle.sound.nitro.channels[i].status_flags &= !(1 << 0);
+                self.hle.sound.nitro.channels[i].status_flags.set_active(false);
                 continue;
             }
 
@@ -2343,17 +2375,17 @@ impl Emu {
             if finalvol != (self.hle.sound.nitro.channels[i].volume as u16 | (self.hle.sound.nitro.channels[i].volume_div as u16) << 8) {
                 self.hle.sound.nitro.channels[i].volume = finalvol as u8;
                 self.hle.sound.nitro.channels[i].volume_div = (finalvol >> 8) as u8;
-                self.hle.sound.nitro.channels[i].status_flags |= 1 << 6;
+                self.hle.sound.nitro.channels[i].status_flags.set_sync_volume(true);
             }
 
             if finalfreq != self.hle.sound.nitro.channels[i].frequency {
                 self.hle.sound.nitro.channels[i].frequency = finalfreq;
-                self.hle.sound.nitro.channels[i].status_flags |= 1 << 5;
+                self.hle.sound.nitro.channels[i].status_flags.set_sync_timer(true);
             }
 
             if pan != self.hle.sound.nitro.channels[i].pan {
                 self.hle.sound.nitro.channels[i].pan = pan;
-                self.hle.sound.nitro.channels[i].status_flags |= 1 << 7;
+                self.hle.sound.nitro.channels[i].status_flags.set_sync_pan(true);
             }
         }
     }
