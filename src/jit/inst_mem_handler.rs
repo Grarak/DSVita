@@ -184,7 +184,7 @@ macro_rules! imm_breakout {
         }
         $asm.runtime_data.accumulated_cycles += $total_cycles - $asm.runtime_data.pre_cycle_count_sum;
         let next_pc_offset = (1 << (!is_thumb as u8)) + 2;
-        $asm.emu.thread[$cpu].pc = pc + next_pc_offset;
+        $cpu.thread_regs().pc = pc + next_pc_offset;
         $asm.emu.breakout_imm = false;
         crate::jit::jit_asm_common_funs::exit_guest_context!($asm);
     }};

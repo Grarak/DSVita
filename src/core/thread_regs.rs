@@ -85,26 +85,26 @@ impl ThreadRegs {
 impl Emu {
     pub fn thread_get_reg(&self, cpu: CpuType, reg: Reg) -> &u32 {
         debug_assert_ne!(reg, Reg::None);
-        let base_ptr = ptr::addr_of!(self.thread[cpu].gp_regs[0]);
+        let base_ptr = ptr::addr_of!(cpu.thread_regs().gp_regs[0]);
         unsafe { base_ptr.offset(reg as _).as_ref().unwrap_unchecked() }
     }
 
     pub fn thread_get_reg_mut(&mut self, cpu: CpuType, reg: Reg) -> &mut u32 {
         debug_assert_ne!(reg, Reg::None);
-        let base_ptr = ptr::addr_of_mut!(self.thread[cpu].gp_regs[0]);
+        let base_ptr = ptr::addr_of_mut!(cpu.thread_regs().gp_regs[0]);
         unsafe { base_ptr.offset(reg as _).as_mut().unwrap_unchecked() }
     }
 
     pub fn thread_get_reg_usr(&self, cpu: CpuType, reg: Reg) -> &u32 {
         debug_assert_ne!(reg, Reg::None);
         match reg {
-            Reg::R8 => &self.thread[cpu].user.gp_regs[0],
-            Reg::R9 => &self.thread[cpu].user.gp_regs[1],
-            Reg::R10 => &self.thread[cpu].user.gp_regs[2],
-            Reg::R11 => &self.thread[cpu].user.gp_regs[3],
-            Reg::R12 => &self.thread[cpu].user.gp_regs[4],
-            Reg::SP => &self.thread[cpu].user.sp,
-            Reg::LR => &self.thread[cpu].user.lr,
+            Reg::R8 => &cpu.thread_regs().user.gp_regs[0],
+            Reg::R9 => &cpu.thread_regs().user.gp_regs[1],
+            Reg::R10 => &cpu.thread_regs().user.gp_regs[2],
+            Reg::R11 => &cpu.thread_regs().user.gp_regs[3],
+            Reg::R12 => &cpu.thread_regs().user.gp_regs[4],
+            Reg::SP => &cpu.thread_regs().user.sp,
+            Reg::LR => &cpu.thread_regs().user.lr,
             _ => self.thread_get_reg(cpu, reg),
         }
     }
@@ -112,13 +112,13 @@ impl Emu {
     pub fn thread_get_reg_usr_mut(&mut self, cpu: CpuType, reg: Reg) -> &mut u32 {
         debug_assert_ne!(reg, Reg::None);
         match reg {
-            Reg::R8 => &mut self.thread[cpu].user.gp_regs[0],
-            Reg::R9 => &mut self.thread[cpu].user.gp_regs[1],
-            Reg::R10 => &mut self.thread[cpu].user.gp_regs[2],
-            Reg::R11 => &mut self.thread[cpu].user.gp_regs[3],
-            Reg::R12 => &mut self.thread[cpu].user.gp_regs[4],
-            Reg::SP => &mut self.thread[cpu].user.sp,
-            Reg::LR => &mut self.thread[cpu].user.lr,
+            Reg::R8 => &mut cpu.thread_regs().user.gp_regs[0],
+            Reg::R9 => &mut cpu.thread_regs().user.gp_regs[1],
+            Reg::R10 => &mut cpu.thread_regs().user.gp_regs[2],
+            Reg::R11 => &mut cpu.thread_regs().user.gp_regs[3],
+            Reg::R12 => &mut cpu.thread_regs().user.gp_regs[4],
+            Reg::SP => &mut cpu.thread_regs().user.sp,
+            Reg::LR => &mut cpu.thread_regs().user.lr,
             _ => self.thread_get_reg_mut(cpu, reg),
         }
     }
@@ -126,21 +126,21 @@ impl Emu {
     #[inline(always)]
     pub fn thread_set_cpsr_with_flags(&mut self, cpu: CpuType, value: u32, flags: u8) {
         if flags & 1 == 1 {
-            let mask = if u8::from(Cpsr::from(self.thread[cpu].cpsr).mode()) == 0x10 { 0xE0 } else { 0xFF };
-            self.thread_set_cpsr(cpu, (self.thread[cpu].cpsr & !mask) | (value & mask), false);
+            let mask = if u8::from(Cpsr::from(cpu.thread_regs().cpsr).mode()) == 0x10 { 0xE0 } else { 0xFF };
+            self.thread_set_cpsr(cpu, (cpu.thread_regs().cpsr & !mask) | (value & mask), false);
         }
 
         for i in 1..4 {
             if (flags & (1 << i)) != 0 {
                 let mask = 0xFF << (i << 3);
-                self.thread[cpu].cpsr = (self.thread[cpu].cpsr & !mask) | (value & mask);
+                cpu.thread_regs().cpsr = (cpu.thread_regs().cpsr & !mask) | (value & mask);
             }
         }
     }
 
     #[inline]
     pub fn thread_set_spsr_with_flags(&mut self, cpu: CpuType, value: u32, flags: u8) {
-        let regs = &mut self.thread[cpu];
+        let regs = &mut cpu.thread_regs();
         if IS_DEBUG {
             let mode = u8::from(Cpsr::from(regs.cpsr).mode());
             debug_assert_ne!(mode, 0x10);
@@ -158,27 +158,27 @@ impl Emu {
     #[inline]
     pub fn thread_restore_spsr(&mut self, cpu: CpuType) {
         if !self.thread_is_user_mode(cpu) {
-            self.thread_set_cpsr(cpu, self.thread[cpu].spsr, false);
+            self.thread_set_cpsr(cpu, cpu.thread_regs().spsr, false);
         }
     }
 
     pub fn thread_restore_thumb_mode(&mut self, cpu: CpuType) {
-        let regs = &mut self.thread[cpu];
+        let regs = &mut cpu.thread_regs();
         regs.pc &= !1;
         regs.pc |= Cpsr::from(regs.cpsr).thumb() as u32;
     }
 
     pub fn thread_force_pc_arm_mode(&mut self, cpu: CpuType) {
-        self.thread[cpu].pc &= !1;
+        cpu.thread_regs().pc &= !1;
     }
 
     pub fn thread_force_pc_thumb_mode(&mut self, cpu: CpuType) {
-        self.thread[cpu].pc |= 1;
+        cpu.thread_regs().pc |= 1;
     }
 
     #[inline(never)]
     fn thread_set_cpsr_mode_slow(&mut self, cpu: CpuType, current_mode: u8, new_mode: u8) {
-        let regs = &mut self.thread[cpu];
+        let regs = &mut cpu.thread_regs();
         match current_mode {
             // User | System
             0x10 | 0x1F => unsafe { regs.user.gp_regs.as_mut_ptr().copy_from(regs.gp_regs.as_ptr().add(8), 7) },
@@ -265,7 +265,7 @@ impl Emu {
 
     #[inline]
     pub fn thread_set_cpsr(&mut self, cpu: CpuType, value: u32, save: bool) {
-        let regs = &mut self.thread[cpu];
+        let regs = &mut cpu.thread_regs();
         let current_cpsr = Cpsr::from(regs.cpsr);
         let new_cpsr = Cpsr::from(value);
 
@@ -290,7 +290,7 @@ impl Emu {
             }
         }
 
-        let regs = &mut self.thread[cpu];
+        let regs = &mut cpu.thread_regs();
         if save {
             regs.spsr = regs.cpsr;
         }
@@ -299,20 +299,20 @@ impl Emu {
     }
 
     pub fn thread_set_thumb(&mut self, cpu: CpuType, thumb: bool) {
-        let regs = &mut self.thread[cpu];
+        let regs = &mut cpu.thread_regs();
         regs.cpsr = (regs.cpsr & !(1 << 5)) | ((thumb as u32) << 5);
     }
 
     pub fn thread_is_thumb(&self, cpu: CpuType) -> bool {
-        Cpsr::from(self.thread[cpu].cpsr).thumb()
+        Cpsr::from(cpu.thread_regs().cpsr).thumb()
     }
 
     pub fn thread_is_user_mode(&self, cpu: CpuType) -> bool {
-        let mode = u8::from(Cpsr::from(self.thread[cpu].cpsr).mode());
+        let mode = u8::from(Cpsr::from(cpu.thread_regs().cpsr).mode());
         mode == 0x10 || mode == 0x1F
     }
 
     pub fn thread_is_fiq_mode(&self, cpu: CpuType) -> bool {
-        u8::from(Cpsr::from(self.thread[cpu].cpsr).mode()) == 0x11
+        u8::from(Cpsr::from(cpu.thread_regs().cpsr).mode()) == 0x11
     }
 }

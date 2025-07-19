@@ -22,7 +22,7 @@ pub fn swi<const CPU: CpuType>(comment: u8, emu: &mut Emu) {
 pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
     debug_println!("{CPU:?} interrupt");
 
-    let regs = &mut emu.thread[CPU];
+    let regs = CPU.thread_regs();
     let mut cpsr = Cpsr::from(regs.cpsr);
 
     cpsr.set_irq_disable(true);
@@ -30,7 +30,7 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
     cpsr.set_mode(u5::new(0x12));
     emu.thread_set_cpsr(CPU, u32::from(cpsr), true);
 
-    let regs = &mut emu.thread[CPU];
+    let regs = CPU.thread_regs();
     let is_thumb = (regs.pc & 1) == 1;
     let mut spsr = Cpsr::from(regs.spsr);
     spsr.set_thumb(is_thumb);
@@ -44,12 +44,12 @@ pub fn interrupt<const CPU: CpuType>(emu: &mut Emu) {
     match CPU {
         ARM9 => {
             let pc_addr = emu.cp15.dtcm_addr + 0x3FFC;
-            emu.thread[CPU].lr = 0xFFFF0000;
-            emu.thread[CPU].pc = emu.mem_read::<CPU, _>(pc_addr);
+            CPU.thread_regs().lr = 0xFFFF0000;
+            CPU.thread_regs().pc = emu.mem_read::<CPU, _>(pc_addr);
         }
         ARM7 => {
-            emu.thread[CPU].lr = 0xFFF00000;
-            emu.thread[CPU].pc = emu.mem_read::<CPU, _>(0x3FFFFFC);
+            CPU.thread_regs().lr = 0xFFF00000;
+            CPU.thread_regs().pc = emu.mem_read::<CPU, _>(0x3FFFFFC);
         }
     }
 }
@@ -62,9 +62,9 @@ pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
     }
 
     let mut reg_values = [0u32; 6];
-    emu.mem_read_multiple_slice::<CPU, true, _>(emu.thread[CPU].sp, &mut reg_values);
+    emu.mem_read_multiple_slice::<CPU, true, _>(CPU.thread_regs().sp, &mut reg_values);
 
-    let regs = &mut emu.thread[CPU];
+    let regs = CPU.thread_regs();
     regs.gp_regs[0] = reg_values[0];
     regs.gp_regs[1] = reg_values[1];
     regs.gp_regs[2] = reg_values[2];

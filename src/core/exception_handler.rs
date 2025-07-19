@@ -33,7 +33,7 @@ mod handler {
             debug_assert!(vector != ExceptionVector::SoftwareInterrupt);
 
             const MODES: [u8; 8] = [0x13, 0x1B, 0x13, 0x17, 0x17, 0x13, 0x12, 0x11];
-            let regs = &mut emu.thread[CPU];
+            let regs = CPU.thread_regs();
 
             let mut new_cpsr = Cpsr::from(regs.cpsr);
             new_cpsr.set_mode(u5::new(MODES[(vector as usize) >> 2]));
@@ -42,7 +42,7 @@ mod handler {
             new_cpsr.set_irq_disable(true);
             emu.thread_set_cpsr(CPU, new_cpsr.into(), true);
 
-            let regs = &mut emu.thread[CPU];
+            let regs = CPU.thread_regs();
             // Interrupt handler will subtract 4 from lr, offset this
             regs.lr = regs.pc + 4;
             regs.pc = vector as u32;

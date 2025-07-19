@@ -244,7 +244,7 @@ pub fn align_guest_pc(guest_pc: u32) -> u32 {
 
 pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
-    let current_pc = asm.emu.thread[CPU].pc;
+    let current_pc = CPU.thread_regs().pc;
     asm.runtime_data.accumulated_cycles += 3;
     bios::uninterrupt::<CPU>(asm.emu);
     if unlikely(asm.emu.cpu_is_halted(CPU)) {
@@ -255,8 +255,8 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
     } else {
         match CPU {
             ARM9 => {
-                if unlikely(asm.runtime_data.is_in_interrupt() && asm.runtime_data.pop_return_stack() == asm.emu.thread[CPU].pc) {
-                    asm.emu.thread_set_thumb(CPU, asm.emu.thread[CPU].pc & 1 == 1);
+                if unlikely(asm.runtime_data.is_in_interrupt() && asm.runtime_data.pop_return_stack() == CPU.thread_regs().pc) {
+                    asm.emu.thread_set_thumb(CPU, CPU.thread_regs().pc & 1 == 1);
                     unsafe {
                         std::arch::asm!(
                         "mov sp, {}",
@@ -268,12 +268,12 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
                 } else {
                     debug_println!("{CPU:?} uninterrupt return lr doesn't match pc");
                     asm.runtime_data.clear_return_stack_ptr();
-                    unsafe { call_jit_fun::<CPU>(asm, asm.emu.thread[CPU].pc) };
+                    unsafe { call_jit_fun::<CPU>(asm, CPU.thread_regs().pc) };
                 }
             }
             ARM7 => {
                 asm.runtime_data.clear_return_stack_ptr();
-                unsafe { call_jit_fun::<CPU>(asm, asm.emu.thread[CPU].pc) };
+                unsafe { call_jit_fun::<CPU>(asm, CPU.thread_regs().pc) };
             }
         }
     }
@@ -601,7 +601,7 @@ impl<'a> JitAsm<'a> {
     }
 
     pub fn execute<const CPU: CpuType>(&mut self) -> u16 {
-        let entry = self.emu.thread[CPU].pc;
+        let entry = CPU.thread_regs().pc;
         execute_internal::<CPU>(entry)
     }
 }

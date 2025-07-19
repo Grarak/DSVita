@@ -4,13 +4,13 @@ use crate::get_jit_asm_ptr;
 pub unsafe extern "C" fn register_set_cpsr_checked<const CPU: CpuType>(value: u32, flags: u8) -> u32 {
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     asm.emu.thread_set_cpsr_with_flags(CPU, value, flags);
-    asm.emu.thread[CPU].cpsr
+    CPU.thread_regs().cpsr
 }
 
 pub unsafe extern "C" fn register_set_spsr_checked<const CPU: CpuType>(value: u32, flags: u8) -> u32 {
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     asm.emu.thread_set_spsr_with_flags(CPU, value, flags);
-    asm.emu.thread[CPU].cpsr
+    CPU.thread_regs().cpsr
 }
 
 pub unsafe extern "C" fn register_restore_spsr<const CPU: CpuType>() {

@@ -6,9 +6,9 @@ pub unsafe extern "C" fn cpu_regs_halt() {
     let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
 
     // Force enable irq, this is a hack and should get properly fixed
-    let mut cpsr = Cpsr::from(asm.emu.thread[ARM9].cpsr);
+    let mut cpsr = Cpsr::from(ARM9.thread_regs().cpsr);
     cpsr.set_irq_disable(false);
-    asm.emu.thread[ARM9].cpsr = u32::from(cpsr);
+    ARM9.thread_regs().cpsr = u32::from(cpsr);
 
     asm.emu.cpu_halt(ARM9, 0);
 }

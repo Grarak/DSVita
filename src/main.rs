@@ -88,16 +88,7 @@ fn run_cpu(
     // Initializing jit mem inside of emu, breaks kubridge for some reason
     // Might be caused by initialize shared mem? Initialize here and pass it to emu
     let jit_mem = JitMemory::new(&settings);
-    let mut emu_unsafe = UnsafeCell::new(Emu::new(
-        [arm9_thread_regs, arm7_thread_regs],
-        cartridge_io,
-        fps,
-        key_map,
-        touch_points,
-        sound_sampler,
-        jit_mem,
-        settings,
-    ));
+    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_io, fps, key_map, touch_points, sound_sampler, jit_mem, settings));
     let emu_ptr = emu_unsafe.get() as u32;
     let emu = emu_unsafe.get_mut();
 
@@ -148,7 +139,7 @@ fn run_cpu(
     }
 
     {
-        let regs = &mut emu.thread[ARM9];
+        let regs = ARM9.thread_regs();
         regs.user.gp_regs[4] = arm9_entry_addr; // R12
         regs.user.sp = 0x3002F7C;
         regs.irq.sp = 0x3003F80;
@@ -165,7 +156,7 @@ fn run_cpu(
     }
 
     {
-        let regs = &mut emu.thread[ARM7];
+        let regs = ARM7.thread_regs();
         regs.user.gp_regs[4] = arm7_entry_addr; // R12
         regs.user.sp = 0x380FD80;
         regs.irq.sp = 0x380FF80;

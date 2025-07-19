@@ -1,3 +1,4 @@
+use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType::{ARM7, ARM9};
 use std::marker::ConstParamTy;
 use std::ops;
@@ -50,6 +51,10 @@ impl CpuType {
             ARM9 => GUEST_REGS_ARM9_ADDR,
             ARM7 => GUEST_REGS_ARM7_ADDR,
         }
+    }
+
+    pub fn thread_regs(self) -> &'static mut ThreadRegs {
+        unsafe { (self.guest_regs_addr() as *mut ThreadRegs).as_mut_unchecked() }
     }
 
     pub const fn jit_asm_addr(self) -> usize {

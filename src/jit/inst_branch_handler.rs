@@ -10,7 +10,7 @@ use std::mem;
 
 pub extern "C" fn run_scheduler<const ARM7_HLE: bool>(asm: *mut JitAsm, current_pc: u32) {
     let asm = unsafe { asm.as_mut_unchecked() };
-    debug_println!("{ARM9:?} run scheduler at {current_pc:x} target pc {:x}", asm.emu.thread[ARM9].pc);
+    debug_println!("{ARM9:?} run scheduler at {current_pc:x} target pc {:x}", ARM9.thread_regs().pc);
 
     let cycles = if ARM7_HLE {
         (asm.runtime_data.accumulated_cycles + 1) >> 1
@@ -76,7 +76,7 @@ pub extern "C" fn handle_interrupt(asm: *mut JitAsm, target_pc: u32, current_pc:
     let asm = unsafe { asm.as_mut_unchecked() };
     check_stack_depth(asm, current_pc);
 
-    let pc = asm.emu.thread[ARM9].pc;
+    let pc = ARM9.thread_regs().pc;
 
     debug_println!("handle interrupt at {current_pc:x} return to {target_pc:x}");
 
@@ -102,10 +102,10 @@ fn check_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, c
     if unlikely(asm.runtime_data.accumulated_cycles >= CPU.max_loop_cycle_count() as u16) {
         match CPU {
             ARM9 => {
-                let pc_og = asm.emu.thread[ARM9].pc;
+                let pc_og = ARM9.thread_regs().pc;
                 run_scheduler::<ARM7_HLE>(asm, current_pc);
 
-                if unlikely(asm.emu.thread[ARM9].pc != pc_og) {
+                if unlikely(ARM9.thread_regs().pc != pc_og) {
                     handle_interrupt(asm, pc_og, current_pc);
                 }
             }
@@ -153,9 +153,9 @@ pub extern "C" fn pre_branch<const CPU: CpuType, const HAS_LR_RETURN: bool, cons
 pub extern "C" fn handle_idle_loop<const ARM7_HLE: bool>(asm: *mut JitAsm, target_pre_cycle_count_sum: u16, current_pc: u32) {
     let asm = unsafe { asm.as_mut_unchecked() };
 
-    let pc_og = asm.emu.thread[ARM9].pc;
+    let pc_og = ARM9.thread_regs().pc;
     run_scheduler_idle_loop::<ARM7_HLE>(asm);
-    if unlikely(asm.emu.thread[ARM9].pc != pc_og) {
+    if unlikely(ARM9.thread_regs().pc != pc_og) {
         handle_interrupt(asm, pc_og, current_pc);
     }
 
@@ -220,5 +220,5 @@ pub unsafe extern "C" fn branch_any_reg<const ARM7_HLE: bool>(total_cycles: u16,
     check_scheduler::<{ ARM9 }, ARM7_HLE>(asm, current_pc);
 
     asm.runtime_data.pre_cycle_count_sum = 0;
-    call_jit_fun::<{ ARM9 }>(asm, asm.emu.thread[ARM9].pc);
+    call_jit_fun::<{ ARM9 }>(asm, ARM9.thread_regs().pc);
 }

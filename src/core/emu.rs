@@ -13,7 +13,6 @@ use crate::core::memory::mem::Memory;
 use crate::core::rtc::Rtc;
 use crate::core::spi::Spi;
 use crate::core::spu::{SoundSampler, Spu};
-use crate::core::thread_regs::ThreadRegs;
 use crate::core::timers::Timers;
 use crate::core::wifi::Wifi;
 use crate::jit::jit_memory::JitMemory;
@@ -27,7 +26,6 @@ pub struct Emu {
     pub cartridge: Cartridge,
     pub gpu: Gpu,
     pub cm: CycleManager,
-    pub thread: [&'static mut ThreadRegs; 2],
     pub cpu: [CpuRegs; 2],
     pub cp15: Cp15,
     pub input: Input,
@@ -47,7 +45,6 @@ pub struct Emu {
 
 impl Emu {
     pub fn new(
-        thread_regs: [&'static mut ThreadRegs; 2],
         cartridge_io: CartridgeIo,
         fps: Arc<AtomicU16>,
         key_map: Arc<AtomicU32>,
@@ -61,7 +58,6 @@ impl Emu {
             cartridge: Cartridge::new(cartridge_io),
             gpu: Gpu::new(fps),
             cm: CycleManager::new(),
-            thread: thread_regs,
             cpu: [CpuRegs::new(), CpuRegs::new()],
             cp15: Cp15::new(),
             input: Input::new(key_map),

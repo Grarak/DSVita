@@ -103,7 +103,7 @@ impl Emu {
 
     pub fn cpu_check_for_interrupt(&mut self, cpu: CpuType) {
         let cpu_regs = &self.cpu[cpu];
-        if cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && !Cpsr::from(self.thread[cpu].cpsr).irq_disable() {
+        if cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && !Cpsr::from(cpu.thread_regs().cpsr).irq_disable() {
             self.cpu_schedule_interrupt(cpu);
         }
     }
@@ -153,10 +153,10 @@ impl Emu {
             InterruptFlags(cpu_regs.ie),
             InterruptFlags(cpu_regs.irf),
             cpu_regs.ime,
-            !Cpsr::from(self.thread[cpu].cpsr).irq_disable()
+            !Cpsr::from(cpu.thread_regs().cpsr).irq_disable()
         );
         if (cpu_regs.ie & cpu_regs.irf) != 0 {
-            if cpu_regs.ime != 0 && !Cpsr::from(self.thread[cpu].cpsr).irq_disable() {
+            if cpu_regs.ime != 0 && !Cpsr::from(cpu.thread_regs().cpsr).irq_disable() {
                 debug_println!("{cpu:?} schedule send interrupt {flag:?}");
                 self.cpu_schedule_interrupt(cpu);
             } else if cpu == ARM7 || cpu_regs.ime != 0 {
@@ -179,7 +179,7 @@ impl Emu {
     pub fn cpu_on_interrupt_event<const CPU: CpuType>(&mut self, _: u16) {
         let cpu_regs = &self.cpu[CPU];
         let interrupted = {
-            let interrupt = cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && !Cpsr::from(self.thread[CPU].cpsr).irq_disable();
+            let interrupt = cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && !Cpsr::from(CPU.thread_regs().cpsr).irq_disable();
             if interrupt {
                 debug_println!("{CPU:?} interrupt {:?}", InterruptFlags(cpu_regs.ie & cpu_regs.irf));
             } else {
@@ -187,7 +187,7 @@ impl Emu {
                     "{CPU:?} can't interrupt {:x} {:?} {}",
                     cpu_regs.ime,
                     InterruptFlags(cpu_regs.ie & cpu_regs.irf),
-                    !Cpsr::from(self.thread[CPU].cpsr).irq_disable()
+                    !Cpsr::from(CPU.thread_regs().cpsr).irq_disable()
                 );
             }
             interrupt
