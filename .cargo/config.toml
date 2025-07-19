@@ -1,3 +1,3 @@
 [target.armv7-unknown-linux-gnueabihf]
-linker = "/usr/bin/clang"
-rustflags = ["-C", "link-args=-target armv7-unknown-linux-gnueabihf -fuse-ld=lld", "-C", "target-feature=+neon,+thumb-mode,+thumb2,+v5te,+v6,+v6k,+v6t2,+v7,+vfp2,+vfp3", "-Clink-arg=-Wl,--no-rosegment"]
+linker = "clang"
+rustflags = ["-C", "link-args=-target armv7-unknown-linux-gnueabihf -fuse-ld=lld", "-C", "target-feature=+v7,+neon,+vfp3,+thumb2,+thumb-mode", "-Clink-arg=-Wl,--no-rosegment"]
