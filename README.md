@@ -6,7 +6,7 @@ Fast NDS Emulator for ARM32/PSVita
 
 ## Status
 
-[![DSVita Mario Kart](http://img.youtube.com/vi/en2EX8GLauk/0.jpg)](https://www.youtube.com/watch?v=en2EX8GLauk "DSVita Mario Kart")
+[![DSVita Pokemon Black](http://img.youtube.com/vi/hlUOiNKZm4g/0.jpg)](https://www.youtube.com/watch?v=hlUOiNKZm4g "DSVita Pokemon Black")
 
 This runs most games, however consider:
 
