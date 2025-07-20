@@ -44,6 +44,7 @@ pub unsafe fn vmulq_s64(ab: int64x2_t, cd: int64x2_t) -> int64x2_t {
     vreinterpretq_s64_u64(vmulq_u64(vreinterpretq_u64_s64(ab), vreinterpretq_u64_s64(cd)))
 }
 
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Matrix(pub [i32; 16]);
 

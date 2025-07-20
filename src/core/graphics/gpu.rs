@@ -196,7 +196,7 @@ impl Emu {
                 let pow_cnt1 = PowCnt1::from(self.gpu.pow_cnt1);
                 self.gpu.get_renderer_mut().on_scanline_finish(&mut self.mem, pow_cnt1, &mut self.gpu.gpu_3d_regs);
 
-                if self.gpu.gpu_3d_regs.flushed {
+                if self.gpu.gpu_3d_regs.flags.flushed() {
                     self.gpu.gpu_3d_regs.swap_buffers();
                     self.gpu.get_renderer_mut().renderer_3d.invalidate();
                 }

@@ -239,9 +239,9 @@ impl Gpu3DRenderer {
     pub fn finish_scanline(&mut self, registers: &mut Gpu3DRegisters) {
         self.inners[0] = self.inners[1].clone();
 
-        if registers.consume {
+        if registers.flags.consume() {
             registers.swap_to_renderer(&mut self.content);
-            registers.consume = false;
+            registers.flags.set_consume(false);
         }
     }
 

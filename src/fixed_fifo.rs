@@ -1,17 +1,19 @@
 use crate::utils::HeapMem;
 use std::fmt::{Debug, Formatter};
+use std::mem;
 
+#[repr(C)]
 pub struct FixedFifo<T, const SIZE: usize> {
-    fifo: HeapMem<T, SIZE>,
-    len: usize,
     start: usize,
+    len: usize,
     end: usize,
+    fifo: [T; SIZE],
 }
 
 impl<T, const SIZE: usize> FixedFifo<T, SIZE> {
     pub fn new() -> Self {
         FixedFifo {
-            fifo: unsafe { HeapMem::zeroed() },
+            fifo: unsafe { mem::zeroed() },
             len: 0,
             start: 0,
             end: 0,
@@ -65,12 +67,7 @@ impl<T, const SIZE: usize> FixedFifo<T, SIZE> {
 
 impl<T: Default, const SIZE: usize> Default for FixedFifo<T, SIZE> {
     fn default() -> Self {
-        FixedFifo {
-            fifo: HeapMem::default(),
-            len: 0,
-            start: 0,
-            end: 0,
-        }
+        FixedFifo::new()
     }
 }
 
