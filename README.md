@@ -32,6 +32,10 @@ This runs most games, however consider:
 - Create the folder ux0:data/dsvita and put your roms there
   - They must have the file extensions `*.nds`
 
+## Bug reporting
+Feel free to create an issue if you run into problems, however please make sure before reporting anything the game you are
+having issues with exhibits the same behavior with the `AccurateLle` setting enabled. 
+
 ## Building
 1. Install [Vitasdk](https://vitasdk.org/)
 2. Install [cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html)
@@ -39,7 +43,6 @@ This runs most games, however consider:
 4. `RUSTFLAGS="-Zlocation-detail=none -Zfmt-debug=none" cargo vita build vpk -- --release`
 
 ## Credits
-
 - [NooDS](https://github.com/Hydr8gon/NooDS) was used as reference. A lot of code was taken from there.
 - [melonDS](https://github.com/melonDS-emu/melonDS) for ARM7 HLE implementation and jit optimizations.
 - [DesmumePSPExperimental](https://github.com/Xiro28/DesmumePSPExperimental) for ARM7 HLE implementation.
@@ -50,3 +53,4 @@ This runs most games, however consider:
 - [GBATEK](http://problemkaputt.de/gbatek-index.htm) GBA/NDS documentation
 - [kubridge](https://github.com/bythos14/kubridge) For fastmem implementation
 - @TheIronUniverse for livearea assets
+- [dolphin](https://github.com/dolphin-emu/dolphin) For audio stretching code
