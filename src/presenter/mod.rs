@@ -13,6 +13,7 @@ mod platform;
 
 pub const PRESENTER_SCREEN_WIDTH: u32 = 960;
 pub const PRESENTER_SCREEN_HEIGHT: u32 = 544;
+pub const SWAP_ZONE: u32 = 72;
 
 pub enum PresentEvent {
     Inputs { keymap: u32, ds_touch: Option<(u8, u8)>, raw_touch: Option<(u16, u16)> },

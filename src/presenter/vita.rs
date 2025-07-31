@@ -14,7 +14,7 @@ use crate::presenter::platform::imgui::{
     ImGui_SetItemDefaultFocus, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
 };
 use crate::presenter::{
-    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH,
+    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_WIDTH, PRESENTER_SCREEN_HEIGHT, SWAP_ZONE,
     PRESENTER_SUB_TOP_SCREEN, PRESENTER_SUB_RESIZED_TOP_SCREEN, PRESENTER_SUB_ROTATED_TOP_SCREEN, PRESENTER_SUB_RESIZED_2_5X_TOP_SCREEN,
     PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN,
 };
@@ -38,7 +38,6 @@ const SAVES_PATH: &str = "ux0:data/dsvita/saves";
 const SETTINGS_PATH: &str = "ux0:data/dsvita/settings";
 pub const LOG_PATH: &str = "ux0:data/dsvita/log";
 pub const LOG_FILE: &str = "ux0:data/dsvita/log/log.txt";
-pub const SWAP_ZONE: u32 = 72;
 
 #[repr(u8)]
 pub enum SharkOpt {
