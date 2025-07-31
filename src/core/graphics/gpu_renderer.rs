@@ -7,7 +7,7 @@ use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
-use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_ROTATED};
+use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_RESIZED_INV, PRESENTER_SUB_ROTATED};
 use crate::settings::{ScreenMode, Settings};
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
@@ -128,7 +128,7 @@ impl GpuRenderer {
         }
     }
 
-    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, settings: &Settings) {
+    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, settings: &Settings, swap_sizes: bool) {
         {
             let rendering = self.rendering.lock().unwrap();
             let _drawing = self.rendering_condvar.wait_while(rendering, |rendering| !*rendering).unwrap();
@@ -177,7 +177,7 @@ impl GpuRenderer {
                 let screen_topology = match settings.screenmode() {
                     ScreenMode::Regular => PRESENTER_SUB_REGULAR,
                     ScreenMode::Rotated => PRESENTER_SUB_ROTATED,
-                    ScreenMode::Resized => PRESENTER_SUB_RESIZED,
+                    ScreenMode::Resized => if swap_sizes { PRESENTER_SUB_RESIZED } else { PRESENTER_SUB_RESIZED_INV },
                 };
                 let used_fbo = match screen_topology.mode {
                     ScreenMode::Regular | ScreenMode::Resized => self.renderer_2d.common.blend_fbo.fbo,

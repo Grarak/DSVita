@@ -27,9 +27,9 @@ use crate::jit::jit_asm::{JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_memory::JitMemory;
 use crate::logging::{debug_println, info_println};
 use crate::mmap::{register_abort_handler, ArmContext, Mmap, PAGE_SIZE};
-use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
+use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_SUB_RESIZED, PRESENTER_SCREEN_WIDTH, SWAP_ZONE_WIDTH, SWAP_ZONE_HEIGHT};
 use crate::profiling::{profiling_init, profiling_set_thread_name};
-use crate::settings::{Arm7Emu, Settings};
+use crate::settings::{Arm7Emu, ScreenMode, Settings};
 use crate::utils::{const_str_equal, set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
@@ -299,6 +299,25 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     }
 }
 
+fn handle_touch_swap(
+    swap_sizes: &mut bool,
+    raw_touch: Option<(u16, u16)>,
+    prev_swap_touch: &mut bool,
+) {
+    if let Some((tx, ty)) = raw_touch {
+        let (x, y) = (tx as u32, ty as u32);
+        let in_zone = x >= (PRESENTER_SCREEN_WIDTH as u32).saturating_sub(SWAP_ZONE_WIDTH) && y < SWAP_ZONE_HEIGHT;
+
+        if in_zone && !*prev_swap_touch {
+            *swap_sizes = !*swap_sizes;
+        }
+
+        *prev_swap_touch = in_zone;
+    } else {
+        *prev_swap_touch = false;
+    }
+}
+
 #[used]
 #[export_name = "_newlib_heap_size_user"]
 pub static _NEWLIB_HEAP_SIZE_USER: u32 = 256 * 1024 * 1024; // 256 MiB
@@ -468,13 +487,22 @@ pub fn actual_main() {
         .unwrap();
 
     let gpu_renderer = unsafe { gpu_renderer.get().as_mut().unwrap() };
-    while let PresentEvent::Inputs { keymap, touch } = presenter.poll_event(settings.screenmode()) {
+
+    // Bottom screen on the right bigger by default
+    let mut swap_sizes = true;
+    let mut prev_swap_touch = false;
+
+    while let PresentEvent::Inputs { keymap, touch, raw_touch } = presenter.poll_event(settings.screenmode(), swap_sizes) {
         if let Some((x, y)) = touch {
             touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
         }
         key_map.store(keymap, Ordering::Relaxed);
 
-        gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &settings);
+        if settings.screenmode() == ScreenMode::Resized {
+            handle_touch_swap(&mut swap_sizes, raw_touch, &mut prev_swap_touch);
+        }
+
+        gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &settings, swap_sizes);
     }
 
     audio_thread.join().unwrap();
