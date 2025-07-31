@@ -31,7 +31,7 @@ use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
 use crate::profiling::{profiling_init, profiling_set_thread_name};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils::{const_str_equal, set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
-use crate::presenter::{PRESENTER_SCREEN_WIDTH};
+use crate::presenter::{PRESENTER_SCREEN_WIDTH, SWAP_ZONE};
 use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::intrinsics::unlikely;
@@ -300,7 +300,6 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     }
 }
 
-const SWAP_ZONE: u32 = 100;
 fn handle_touch_swap(
     top_to_left: &mut bool,
     raw_touch: Option<(u16, u16)>,
@@ -490,14 +489,14 @@ pub fn actual_main() {
 
     let gpu_renderer = unsafe { gpu_renderer.get().as_mut().unwrap() };
 
-    let mut top_to_left = false;
+    let mut top_to_left = true;
     let mut prev_swap_touch = false;
 
-    while let PresentEvent::Inputs { keymap, ds_touch, raw_touch } = presenter.poll_event(settings.screenmode()) {
+    while let PresentEvent::Inputs { keymap, ds_touch, raw_touch } = presenter.poll_event(settings.screenmode(), top_to_left) {
         if let Some((x, y)) = ds_touch {
             touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
         } else {
-            touch_points.store(0, Ordering::Relaxed);
+            touch_points.store(0xFFFF, Ordering::Relaxed);
         }
         key_map.store(keymap, Ordering::Relaxed);
 

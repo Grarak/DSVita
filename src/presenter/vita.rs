@@ -15,6 +15,7 @@ use crate::presenter::platform::imgui::{
 };
 use crate::presenter::{
     PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH,
+    PRESENTER_SUB_TOP_SCREEN, PRESENTER_SUB_RESIZED_TOP_SCREEN, PRESENTER_SUB_ROTATED_TOP_SCREEN, PRESENTER_SUB_RESIZED_2_5X_TOP_SCREEN,
     PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN,
 };
 use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, SettingsConfig};
@@ -37,6 +38,7 @@ const SAVES_PATH: &str = "ux0:data/dsvita/saves";
 const SETTINGS_PATH: &str = "ux0:data/dsvita/settings";
 pub const LOG_PATH: &str = "ux0:data/dsvita/log";
 pub const LOG_FILE: &str = "ux0:data/dsvita/log/log.txt";
+pub const SWAP_ZONE: u32 = 72;
 
 #[repr(u8)]
 pub enum SharkOpt {
@@ -160,7 +162,7 @@ impl Presenter {
         }
     }
 
-    pub fn poll_event(&mut self, screenmode: ScreenMode) -> PresentEvent {
+    pub fn poll_event(&mut self, screenmode: ScreenMode, top_to_left: bool) -> PresentEvent {
         let mut raw_touch: Option<(u16, u16)> = None;
         let mut ds_touch:  Option<(u8,  u8)>  = None;
 
@@ -185,39 +187,46 @@ impl Presenter {
                 let report = touch_report.report.first().unwrap();
                 let x = report.x as u32 * PRESENTER_SCREEN_WIDTH / 1920;
                 let y = report.y as u32 * PRESENTER_SCREEN_HEIGHT / 1080;
+                let in_swap_zone = x >= PRESENTER_SCREEN_WIDTH - SWAP_ZONE && y < SWAP_ZONE;
                 raw_touch = Some((x as u16, y as u16));
 
-                match screenmode {
-                    ScreenMode::Regular => {
-                        if PRESENTER_SUB_BOTTOM_SCREEN.is_within(x, y) {
-                            let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x, y);
-                            let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
-                            let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height) as u8;
-                            ds_touch = Some((screen_x, screen_y));
+                if !in_swap_zone {
+                    match screenmode {
+                        ScreenMode::Regular => {
+                            let rect = if top_to_left { &PRESENTER_SUB_BOTTOM_SCREEN } else { &PRESENTER_SUB_TOP_SCREEN };
+                            if rect.is_within(x, y) {
+                                let (nx, ny) = rect.normalize(x, y);
+                                let sx = (DISPLAY_WIDTH  as u32 * nx / rect.width ) as u8;
+                                let sy = (DISPLAY_HEIGHT as u32 * ny / rect.height) as u8;
+                                ds_touch = Some((sx, sy));
+                            }
                         }
-                    }
-                    ScreenMode::Rotated => {
-                        if PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.is_within(x, y) {
-                            let (x, y) = PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.normalize(x, y);
-                            let screen_x = (DISPLAY_WIDTH as u32 - (DISPLAY_WIDTH as u32 * y / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.height)) as u8;
-                            let screen_y = (DISPLAY_HEIGHT as u32 * x / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.width) as u8;
-                            ds_touch = Some((screen_x, screen_y));
+                        ScreenMode::Rotated => {
+                            let rect = if top_to_left { &PRESENTER_SUB_ROTATED_BOTTOM_SCREEN } else { &PRESENTER_SUB_ROTATED_TOP_SCREEN };
+                            if rect.is_within(x, y) {
+                                let (nx, ny) = rect.normalize(x, y);
+                                let sx = (DISPLAY_WIDTH  as u32 - (DISPLAY_WIDTH  as u32 * ny / rect.height)) as u8;
+                                let sy = (DISPLAY_HEIGHT as u32 * nx / rect.width )               as u8;
+                                ds_touch = Some((sx, sy));
+                            }
                         }
-                    }
-                    ScreenMode::Resized => {
-                        if PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.is_within(x, y) {
-                            let (x, y) = PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.normalize(x, y);
-                            let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.width) as u8;
-                            let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.height) as u8;
-                            ds_touch = Some((screen_x, screen_y));
+                        ScreenMode::Resized => {
+                            let rect = if top_to_left { &PRESENTER_SUB_RESIZED_BOTTOM_SCREEN } else { &PRESENTER_SUB_RESIZED_TOP_SCREEN };
+                            if rect.is_within(x, y) {
+                                let (nx, ny) = rect.normalize(x, y);
+                                let sx = (DISPLAY_WIDTH  as u32 * nx / rect.width ) as u8;
+                                let sy = (DISPLAY_HEIGHT as u32 * ny / rect.height) as u8;
+                                ds_touch = Some((sx, sy));
+                            }
                         }
-                    }
-                    ScreenMode::Resized_2_5x => {
-                        if PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN.is_within(x, y) {
-                            let (x, y) = PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN.normalize(x, y);
-                            let screen_x = (DISPLAY_WIDTH  as u32 * x / PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN.width)  as u8;
-                            let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN.height) as u8;
-                            ds_touch = Some((screen_x, screen_y));
+                        ScreenMode::Resized_2_5x => {
+                            let rect = if top_to_left { &PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN } else { &PRESENTER_SUB_RESIZED_2_5X_TOP_SCREEN };
+                            if rect.is_within(x, y) {
+                                let (nx, ny) = rect.normalize(x, y);
+                                let sx = (DISPLAY_WIDTH  as u32 * nx / rect.width ) as u8;
+                                let sy = (DISPLAY_HEIGHT as u32 * ny / rect.height) as u8;
+                                ds_touch = Some((sx, sy));
+                            }
                         }
                     }
                 }

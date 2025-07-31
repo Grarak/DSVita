@@ -194,9 +194,9 @@ impl GpuRenderer {
                 };
 
                 let (ds_top, ds_bottom) = if self.common.pow_cnt1[0].display_swap() {
-                    (&screen_topology.bottom, &screen_topology.top)
-                } else {
                     (&screen_topology.top, &screen_topology.bottom)
+                } else {
+                    (&screen_topology.bottom, &screen_topology.top)
                 };
                 let (left_screen, right_screen) = if top_to_left {
                     (ds_top, ds_bottom)
