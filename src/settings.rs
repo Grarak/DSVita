@@ -25,7 +25,7 @@ pub enum ScreenMode {
     Regular,
     Rotated,
     Resized,
-    Resized_2_5X,
+    Resized_2_5x,
 }
 
 impl From<u8> for ScreenMode {
@@ -156,7 +156,7 @@ pub const DEFAULT_SETTINGS: Settings = Settings {
         ),
         Setting::new(
             "Top-right touch to swap screens",
-            "Tap the top-right corner to swap the two DS screens.",
+            "Tap the top-right corner to swap the two screens.",
             SettingValue::Bool(true),
         ),
     ],
@@ -186,6 +186,10 @@ impl Settings {
 
     pub fn arm7_block_validation(&self) -> bool {
         unsafe { self.values[4].value.as_bool().unwrap_unchecked() }
+    }
+
+    pub fn touch_swap(&self) -> bool {
+        unsafe { self.values[5].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn setting_screenmode_mut(&mut self) -> &mut Setting {

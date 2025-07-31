@@ -178,18 +178,18 @@ impl GpuRenderer {
                     ScreenMode::Regular => PRESENTER_SUB_REGULAR,
                     ScreenMode::Rotated => PRESENTER_SUB_ROTATED,
                     ScreenMode::Resized => PRESENTER_SUB_RESIZED,
-                    ScreenMode::Resized_2_5X => PRESENTER_SUB_RESIZED_2_5X,
+                    ScreenMode::Resized_2_5x => PRESENTER_SUB_RESIZED_2_5X,
                 };
                 let used_fbo = match screen_topology.mode {
                     ScreenMode::Regular
                     | ScreenMode::Resized
-                    | ScreenMode::Resized_2_5X => self.renderer_2d.common.blend_fbo.fbo,
+                    | ScreenMode::Resized_2_5x => self.renderer_2d.common.blend_fbo.fbo,
                     ScreenMode::Rotated => self.renderer_2d.common.rotate_fbo.fbo,
                 };
                 let src_coords = match screen_topology.mode {
                     ScreenMode::Regular
                     | ScreenMode::Resized
-                    | ScreenMode::Resized_2_5X => (DISPLAY_WIDTH, DISPLAY_HEIGHT),
+                    | ScreenMode::Resized_2_5x => (DISPLAY_WIDTH, DISPLAY_HEIGHT),
                     ScreenMode::Rotated => (DISPLAY_HEIGHT, DISPLAY_WIDTH),
                 };
 

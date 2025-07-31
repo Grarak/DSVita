@@ -212,7 +212,7 @@ impl Presenter {
                             ds_touch = Some((screen_x, screen_y));
                         }
                     }
-                    ScreenMode::Resized_2_5X => {
+                    ScreenMode::Resized_2_5x => {
                         if PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN.is_within(x, y) {
                             let (x, y) = PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN.normalize(x, y);
                             let screen_x = (DISPLAY_WIDTH  as u32 * x / PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN.width)  as u8;
