@@ -14,8 +14,8 @@ use crate::presenter::platform::imgui::{
     ImGui_SetItemDefaultFocus, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
 };
 use crate::presenter::{
-    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN,
-    PRESENTER_SUB_ROTATED_BOTTOM_SCREEN,
+    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH,
+    PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN,
 };
 use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, SettingsConfig};
 use gl::types::{GLboolean, GLenum, GLuint};
@@ -161,7 +161,8 @@ impl Presenter {
     }
 
     pub fn poll_event(&mut self, screenmode: ScreenMode) -> PresentEvent {
-        let mut touch = None;
+        let mut raw_touch: Option<(u16, u16)> = None;
+        let mut ds_touch:  Option<(u8,  u8)>  = None;
 
         unsafe {
             let pressed = MaybeUninit::<SceCtrlData>::uninit();
@@ -184,6 +185,7 @@ impl Presenter {
                 let report = touch_report.report.first().unwrap();
                 let x = report.x as u32 * PRESENTER_SCREEN_WIDTH / 1920;
                 let y = report.y as u32 * PRESENTER_SCREEN_HEIGHT / 1080;
+                raw_touch = Some((x as u16, y as u16));
 
                 match screenmode {
                     ScreenMode::Regular => {
@@ -191,7 +193,7 @@ impl Presenter {
                             let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x, y);
                             let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
                             let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height) as u8;
-                            touch = Some((screen_x, screen_y));
+                            ds_touch = Some((screen_x, screen_y));
                         }
                     }
                     ScreenMode::Rotated => {
@@ -199,7 +201,7 @@ impl Presenter {
                             let (x, y) = PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.normalize(x, y);
                             let screen_x = (DISPLAY_WIDTH as u32 - (DISPLAY_WIDTH as u32 * y / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.height)) as u8;
                             let screen_y = (DISPLAY_HEIGHT as u32 * x / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.width) as u8;
-                            touch = Some((screen_x, screen_y));
+                            ds_touch = Some((screen_x, screen_y));
                         }
                     }
                     ScreenMode::Resized => {
@@ -207,7 +209,15 @@ impl Presenter {
                             let (x, y) = PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.normalize(x, y);
                             let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.width) as u8;
                             let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.height) as u8;
-                            touch = Some((screen_x, screen_y));
+                            ds_touch = Some((screen_x, screen_y));
+                        }
+                    }
+                    ScreenMode::Resized_2_5X => {
+                        if PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN.is_within(x, y) {
+                            let (x, y) = PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN.normalize(x, y);
+                            let screen_x = (DISPLAY_WIDTH  as u32 * x / PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN.width)  as u8;
+                            let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_RESIZED_2_5X_BOTTOM_SCREEN.height) as u8;
+                            ds_touch = Some((screen_x, screen_y));
                         }
                     }
                 }
@@ -216,7 +226,7 @@ impl Presenter {
                 self.keymap |= 1 << 16;
             }
         }
-        PresentEvent::Inputs { keymap: self.keymap, touch }
+        PresentEvent::Inputs { keymap: self.keymap, ds_touch, raw_touch }
     }
 
     pub fn present_ui(&self) -> (CartridgeIo, Settings) {

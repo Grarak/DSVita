@@ -25,6 +25,7 @@ pub enum ScreenMode {
     Regular,
     Rotated,
     Resized,
+    Resized_2_5X,
 }
 
 impl From<u8> for ScreenMode {
@@ -153,12 +154,17 @@ pub const DEFAULT_SETTINGS: Settings = Settings {
         need to have this enabled.",
             SettingValue::Bool(false),
         ),
+        Setting::new(
+            "Top-right touch to swap screens",
+            "Tap the top-right corner to swap the two DS screens.",
+            SettingValue::Bool(true),
+        ),
     ],
 };
 
 #[derive(Clone)]
 pub struct Settings {
-    values: [Setting; 5],
+    values: [Setting; 6],
 }
 
 impl Settings {
@@ -202,7 +208,11 @@ impl Settings {
         &mut self.values[4]
     }
 
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 5] {
+    pub fn setting_touch_swap_mut(&mut self) -> &mut Setting {
+        &mut self.values[5]
+    }
+
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 6] {
         &mut self.values
     }
 }

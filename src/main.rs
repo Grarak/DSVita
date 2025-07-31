@@ -31,6 +31,7 @@ use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
 use crate::profiling::{profiling_init, profiling_set_thread_name};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils::{const_str_equal, set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
+use crate::presenter::{PRESENTER_SCREEN_WIDTH};
 use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::intrinsics::unlikely;
@@ -299,6 +300,26 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
     }
 }
 
+const SWAP_ZONE: u32 = 100;
+fn handle_touch_swap(
+    top_to_left: &mut bool,
+    raw_touch: Option<(u16, u16)>,
+    prev_swap_touch: &mut bool,
+) {
+    if let Some((tx, ty)) = raw_touch {
+        let (x, y) = (tx as u32, ty as u32);
+        let in_zone = x >= (PRESENTER_SCREEN_WIDTH as u32).saturating_sub(SWAP_ZONE) && y < SWAP_ZONE;
+
+        if in_zone && !*prev_swap_touch {
+            *top_to_left = !*top_to_left;
+        }
+
+        *prev_swap_touch = in_zone;
+    } else {
+        *prev_swap_touch = false;
+    }
+}
+
 #[used]
 #[export_name = "_newlib_heap_size_user"]
 pub static _NEWLIB_HEAP_SIZE_USER: u32 = 256 * 1024 * 1024; // 256 MiB
@@ -468,13 +489,23 @@ pub fn actual_main() {
         .unwrap();
 
     let gpu_renderer = unsafe { gpu_renderer.get().as_mut().unwrap() };
-    while let PresentEvent::Inputs { keymap, touch } = presenter.poll_event(settings.screenmode()) {
-        if let Some((x, y)) = touch {
+
+    let mut top_to_left = false;
+    let mut prev_swap_touch = false;
+
+    while let PresentEvent::Inputs { keymap, ds_touch, raw_touch } = presenter.poll_event(settings.screenmode()) {
+        if let Some((x, y)) = ds_touch {
             touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
+        } else {
+            touch_points.store(0, Ordering::Relaxed);
         }
         key_map.store(keymap, Ordering::Relaxed);
 
-        gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &settings);
+        if settings.touch_swap() {
+            handle_touch_swap(&mut top_to_left, raw_touch, &mut prev_swap_touch);
+        }
+
+        gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &settings, top_to_left);
     }
 
     audio_thread.join().unwrap();

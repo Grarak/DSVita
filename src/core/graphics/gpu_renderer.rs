@@ -7,7 +7,7 @@ use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
-use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_ROTATED};
+use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_ROTATED, PRESENTER_SUB_RESIZED_2_5X};
 use crate::settings::{ScreenMode, Settings};
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
@@ -128,7 +128,7 @@ impl GpuRenderer {
         }
     }
 
-    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, settings: &Settings) {
+    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, settings: &Settings, top_to_left: bool) {
         {
             let rendering = self.rendering.lock().unwrap();
             let _drawing = self.rendering_condvar.wait_while(rendering, |rendering| !*rendering).unwrap();
@@ -178,31 +178,40 @@ impl GpuRenderer {
                     ScreenMode::Regular => PRESENTER_SUB_REGULAR,
                     ScreenMode::Rotated => PRESENTER_SUB_ROTATED,
                     ScreenMode::Resized => PRESENTER_SUB_RESIZED,
+                    ScreenMode::Resized_2_5X => PRESENTER_SUB_RESIZED_2_5X,
                 };
                 let used_fbo = match screen_topology.mode {
-                    ScreenMode::Regular | ScreenMode::Resized => self.renderer_2d.common.blend_fbo.fbo,
+                    ScreenMode::Regular
+                    | ScreenMode::Resized
+                    | ScreenMode::Resized_2_5X => self.renderer_2d.common.blend_fbo.fbo,
                     ScreenMode::Rotated => self.renderer_2d.common.rotate_fbo.fbo,
                 };
                 let src_coords = match screen_topology.mode {
-                    ScreenMode::Regular | ScreenMode::Resized => (DISPLAY_WIDTH, DISPLAY_HEIGHT),
+                    ScreenMode::Regular
+                    | ScreenMode::Resized
+                    | ScreenMode::Resized_2_5X => (DISPLAY_WIDTH, DISPLAY_HEIGHT),
                     ScreenMode::Rotated => (DISPLAY_HEIGHT, DISPLAY_WIDTH),
                 };
 
+                let (ds_top, ds_bottom) = if self.common.pow_cnt1[0].display_swap() {
+                    (&screen_topology.bottom, &screen_topology.top)
+                } else {
+                    (&screen_topology.top, &screen_topology.bottom)
+                };
+                let (left_screen, right_screen) = if top_to_left {
+                    (ds_top, ds_bottom)
+                } else {
+                    (ds_bottom, ds_top)
+                };
+
                 self.renderer_2d
-                    .render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color, screen_topology.mode == ScreenMode::Rotated);
-                blit_fb(
-                    used_fbo,
-                    if self.common.pow_cnt1[0].display_swap() { &screen_topology.top } else { &screen_topology.bottom },
-                    src_coords.0,
-                    src_coords.1,
-                );
-                self.renderer_2d.render::<{ B }>(&self.common, 0, screen_topology.mode == ScreenMode::Rotated);
-                blit_fb(
-                    used_fbo,
-                    if self.common.pow_cnt1[0].display_swap() { &screen_topology.bottom } else { &screen_topology.top },
-                    src_coords.0,
-                    src_coords.1,
-                );
+                    .render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color,
+                                    screen_topology.mode == ScreenMode::Rotated);
+                blit_fb(used_fbo, left_screen,  src_coords.0, src_coords.1);
+                self.renderer_2d
+                    .render::<{ B }>(&self.common, 0,
+                                    screen_topology.mode == ScreenMode::Rotated);
+                blit_fb(used_fbo, right_screen, src_coords.0, src_coords.1);
             }
 
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
