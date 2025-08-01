@@ -1,0 +1,12 @@
+float4 out gl_Position : POSITION;
+float2 out block : TEXCOORD0;
+
+void main(float2 position) {
+    float x = position.x;
+    short xInt = short(x);
+    short xBlock = xInt & 0xF8;
+    short yBlock = short(position.y) & 0xF8;
+    block.x = float(xBlock);
+    block.y = float(yBlock);
+    gl_Position = float4(x / 255.0 * 2.0 - 1.0, 1.0 - position.y / 191.0 * 2.0, 0.0, 1.0);
+}

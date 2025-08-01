@@ -1,0 +1,5 @@
+float2 in block : TEXCOORD0;
+
+void main(out float4 color : COLOR) {
+    color = float4(block / 255.0, 0.0, 1.0);
+}

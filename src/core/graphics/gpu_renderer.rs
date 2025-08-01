@@ -261,6 +261,7 @@ impl GpuRenderer {
         if unlikely(self.render_time_measure_count == 30) {
             self.render_time_measure_count = 0;
             self.average_render_time = (self.render_time_sum / 30) as u16;
+            eprintln!("{}ms", self.average_render_time);
             self.render_time_sum = 0;
         }
     }

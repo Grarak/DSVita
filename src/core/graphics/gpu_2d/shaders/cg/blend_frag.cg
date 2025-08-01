@@ -36,6 +36,8 @@ void sortObjPrio() {
 
 void sortBgPrio(short num, sampler2D bgTex) {
     float4 texColor = tex2D(bgTex, screenPos);
+    topColor = texColor;
+    return;
     if (texColor.a < topPrio) {
         bottomNum = topNum;
         bottomPrio = topPrio;
@@ -61,12 +63,13 @@ float4 alphaBlend(int bldAlpha) {
 }
 
 void main(out float4 color : COLOR) {
-    sortObjPrio();
-    sortBgPrio(0, bg0Tex);
-    sortBgPrio(1, bg1Tex);
-    sortBgPrio(2, bg2Tex);
+    //sortObjPrio();
+    //sortBgPrio(0, bg0Tex);
+    //sortBgPrio(1, bg1Tex);
+    //sortBgPrio(2, bg2Tex);
     sortBgPrio(3, bg3Tex);
-
+    color = float4(topColor.rgb, 1.0);
+    return;
     if (topNum == 5) {
         discard;
     }

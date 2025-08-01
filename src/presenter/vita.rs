@@ -112,7 +112,7 @@ impl Presenter {
             scePowerSetGpuXbarClockFrequency(166);
 
             info_println!("Set shader compiler arguments");
-            vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe as _, 1, 0, 1);
+            // vglSetupRuntimeShaderCompiler(SharkOpt::Fast as _, 1, 0, 1);
             info_println!("Initialize vitaGL");
             // Disable multisampling for depth texture
             vglInitExtended(0, 960, 544, 50 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);

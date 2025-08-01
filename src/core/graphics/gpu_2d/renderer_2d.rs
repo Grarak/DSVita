@@ -90,16 +90,12 @@ pub struct Gpu2DRenderRegs {
     win_bg_ubo: WinBgUbo,
     bg_ubo: BgUbo,
     blend_ubo: BlendUbo,
-    batch_counts: [u8; DISPLAY_HEIGHT],
-    current_batch_count_index: usize,
 }
 
 impl Gpu2DRenderRegs {
     fn reset(&mut self) {
         self.disp_cnts = unsafe { mem::zeroed() };
         self.bg_cnts = unsafe { mem::zeroed() };
-        self.batch_counts = unsafe { mem::zeroed() };
-        self.current_batch_count_index = 0;
     }
 }
 
@@ -112,20 +108,10 @@ impl Default for Gpu2DRenderRegs {
 impl Gpu2DRenderRegs {
     fn on_scanline(&mut self, inner: &mut Gpu2DRegisters, line: u8) {
         let line = line as usize;
-        unsafe { assert_unchecked(self.current_batch_count_index < DISPLAY_HEIGHT && line < DISPLAY_HEIGHT) };
-        let mut updated = self.disp_cnts[self.current_batch_count_index] != u32::from(inner.disp_cnt);
-        for i in 0..4 {
-            updated |= self.bg_cnts[self.current_batch_count_index * 4 + i] != u16::from(inner.bg_cnt[i]);
-        }
 
-        if updated {
-            self.disp_cnts[line] = u32::from(inner.disp_cnt);
-            for i in 0..4 {
-                self.bg_cnts[line * 4 + i] = u16::from(inner.bg_cnt[i]);
-            }
-            self.current_batch_count_index = line;
-        } else {
-            self.batch_counts[self.current_batch_count_index] += 1;
+        self.disp_cnts[line] = u32::from(inner.disp_cnt);
+        for i in 0..4 {
+            self.bg_cnts[line * 4 + i] = u16::from(inner.bg_cnt[i]);
         }
 
         for i in 0..2 {
@@ -206,6 +192,27 @@ const fn generate_oam_indices() -> [u8; 128 * 4] {
 }
 
 const OBJ_OAM_INDICES: [u8; 128 * 4] = generate_oam_indices();
+
+const BG_BLOCK_WIDTH: usize = 32;
+const fn generate_bg_vertices() -> [f32; DISPLAY_HEIGHT * BG_BLOCK_WIDTH * 4] {
+    let mut vertices: [f32; DISPLAY_HEIGHT * BG_BLOCK_WIDTH * 4] = unsafe { mem::zeroed() };
+    let mut y = 0;
+    while y < DISPLAY_HEIGHT {
+        let mut x = 0;
+        while x < BG_BLOCK_WIDTH {
+            let index = y * BG_BLOCK_WIDTH * 4 + x * 4;
+            vertices[index] = x as f32 * 8.0;
+            vertices[index + 1] = y as f32;
+            vertices[index + 2] = x as f32 * 8.0 + 7.0;
+            vertices[index + 3] = y as f32;
+            x += 1;
+        }
+        y += 1;
+    }
+    vertices
+}
+
+const BG_VERTICES: [f32; DISPLAY_HEIGHT * BG_BLOCK_WIDTH * 4] = generate_bg_vertices();
 
 #[repr(C)]
 struct ObjUbo {
@@ -444,9 +451,9 @@ impl Gpu2DVramDisplayProgram {
 
 struct Gpu2DBgProgram {
     program: GLuint,
-    disp_cnt_loc: GLint,
-    cnt_loc: GLint,
-    has_ubo: bool,
+    // disp_cnt_loc: GLint,
+    // cnt_loc: GLint,
+    // has_ubo: bool,
 }
 
 struct Gpu2DProgram {
@@ -457,18 +464,18 @@ struct Gpu2DProgram {
     obj_disp_cnt_loc: GLint,
     obj_ubo: GLuint,
 
-    bg_affine_extended_program: Gpu2DBgProgram,
-    bg_bitmap_program: Gpu2DBgProgram,
-    bg_display_3d_program: Gpu2DBgProgram,
+    // bg_affine_extended_program: Gpu2DBgProgram,
+    // bg_bitmap_program: Gpu2DBgProgram,
+    // bg_display_3d_program: Gpu2DBgProgram,
     bg_text_4bpp_program: Gpu2DBgProgram,
-    bg_text_8bpp_program: Gpu2DBgProgram,
+    // bg_text_8bpp_program: Gpu2DBgProgram,
     bg_ubo: GLuint,
 
     rotate_vao: GLuint,
 }
 
 impl Gpu2DProgram {
-    fn new<const ENGINE: Gpu2DEngine>(obj_vert_shader: GLuint, bg_vert_shader: GLuint, bg_vert_affine_extended_shader: GLuint, bg_vert_bitmap_shader: GLuint) -> Self {
+    fn new<const ENGINE: Gpu2DEngine>(obj_vert_shader: GLuint, bg_vert_shader: GLuint /*bg_vert_affine_extended_shader: GLuint, bg_vert_bitmap_shader: GLuint*/) -> Self {
         unsafe {
             let (obj_program, obj_vao, obj_disp_cnt_loc, obj_ubo) = {
                 let frag_shader_src = shader_source!("obj_frag").replace(
@@ -537,7 +544,7 @@ impl Gpu2DProgram {
                 (program, vao, disp_cnt_loc, ubo)
             };
 
-            let (bg_affine_extended_program, bg_bitmap_program, bg_display_3d_program, bg_text_4bpp_program, bg_text_8bpp_program, bg_ubo) = {
+            let (/*bg_affine_extended_program, bg_bitmap_program, bg_display_3d_program,*/ bg_text_4bpp_program, /*bg_text_8bpp_program,*/ bg_ubo) = {
                 let frag_common_shader_src = shader_source!("bg_frag_common").replace(
                     "BG_TEX_HEIGHT",
                     &format!(
@@ -549,23 +556,23 @@ impl Gpu2DProgram {
                     ),
                 );
 
-                let frag_affine_extended_shader = create_shader("bg affine extended", &(frag_common_shader_src.clone() + shader_source!("bg_frag_affine_extended")), gl::FRAGMENT_SHADER).unwrap();
-                let frag_bitmap_shader = create_shader("bg bitmap", &(frag_common_shader_src.clone() + shader_source!("bg_frag_bitmap")), gl::FRAGMENT_SHADER).unwrap();
-                let frag_display_3d_shader = create_shader("bg display 3d", &(frag_common_shader_src.clone() + shader_source!("bg_frag_display_3d")), gl::FRAGMENT_SHADER).unwrap();
-                let frag_text_4bpp_shader = create_shader("bg text 4bpp", &(frag_common_shader_src.clone() + shader_source!("bg_frag_text_4bpp")), gl::FRAGMENT_SHADER).unwrap();
-                let frag_text_8bpp_shader = create_shader("bg text 8bpp", &(frag_common_shader_src + shader_source!("bg_frag_text_8bpp")), gl::FRAGMENT_SHADER).unwrap();
+                // let frag_affine_extended_shader = create_shader("bg affine extended", &(frag_common_shader_src.clone() + shader_source!("bg_frag_affine_extended")), gl::FRAGMENT_SHADER).unwrap();
+                // let frag_bitmap_shader = create_shader("bg bitmap", &(frag_common_shader_src.clone() + shader_source!("bg_frag_bitmap")), gl::FRAGMENT_SHADER).unwrap();
+                // let frag_display_3d_shader = create_shader("bg display 3d", &(frag_common_shader_src.clone() + shader_source!("bg_frag_display_3d")), gl::FRAGMENT_SHADER).unwrap();
+                let frag_text_4bpp_shader = create_shader("bg text 4bpp", &(shader_source!("bg_new_frag_text_4bpp")), gl::FRAGMENT_SHADER).unwrap();
+                // let frag_text_8bpp_shader = create_shader("bg text 8bpp", &(frag_common_shader_src + shader_source!("bg_frag_text_8bpp")), gl::FRAGMENT_SHADER).unwrap();
 
-                let affine_extended_program = create_program(&[bg_vert_affine_extended_shader, frag_affine_extended_shader]).unwrap();
-                let bitmap_program = create_program(&[bg_vert_bitmap_shader, frag_bitmap_shader]).unwrap();
-                let display_3d_program = create_program(&[bg_vert_shader, frag_display_3d_shader]).unwrap();
+                // let affine_extended_program = create_program(&[bg_vert_affine_extended_shader, frag_affine_extended_shader]).unwrap();
+                // let bitmap_program = create_program(&[bg_vert_bitmap_shader, frag_bitmap_shader]).unwrap();
+                // let display_3d_program = create_program(&[bg_vert_shader, frag_display_3d_shader]).unwrap();
                 let text_4bpp_program = create_program(&[bg_vert_shader, frag_text_4bpp_shader]).unwrap();
-                let text_8bpp_program = create_program(&[bg_vert_shader, frag_text_8bpp_shader]).unwrap();
+                // let text_8bpp_program = create_program(&[bg_vert_shader, frag_text_8bpp_shader]).unwrap();
 
-                gl::DeleteShader(frag_affine_extended_shader);
-                gl::DeleteShader(frag_bitmap_shader);
-                gl::DeleteShader(frag_display_3d_shader);
+                // gl::DeleteShader(frag_affine_extended_shader);
+                // gl::DeleteShader(frag_bitmap_shader);
+                // gl::DeleteShader(frag_display_3d_shader);
                 gl::DeleteShader(frag_text_4bpp_shader);
-                gl::DeleteShader(frag_text_8bpp_shader);
+                // gl::DeleteShader(frag_text_8bpp_shader);
 
                 let mut ubo = 0;
                 gl::GenBuffers(1, &mut ubo);
@@ -575,35 +582,35 @@ impl Gpu2DProgram {
 
                     gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
 
-                    let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCnt".as_ptr() as _);
-                    let cnt_loc = gl::GetUniformLocation(program, c"bgCnt".as_ptr() as _);
+                    // let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCnt".as_ptr() as _);
+                    // let cnt_loc = gl::GetUniformLocation(program, c"bgCnt".as_ptr() as _);
 
-                    gl::Uniform1i(gl::GetUniformLocation(program, c"bgTex".as_ptr() as _), 0);
-                    gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 1);
-                    gl::Uniform1i(gl::GetUniformLocation(program, c"extPalTex".as_ptr() as _), 2);
-                    gl::Uniform1i(gl::GetUniformLocation(program, c"winTex".as_ptr() as _), 3);
-                    gl::Uniform1i(gl::GetUniformLocation(program, c"display3dTex".as_ptr() as _), 4);
+                    // gl::Uniform1i(gl::GetUniformLocation(program, c"bgTex".as_ptr() as _), 0);
+                    // gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 1);
+                    // gl::Uniform1i(gl::GetUniformLocation(program, c"extPalTex".as_ptr() as _), 2);
+                    // gl::Uniform1i(gl::GetUniformLocation(program, c"winTex".as_ptr() as _), 3);
+                    // gl::Uniform1i(gl::GetUniformLocation(program, c"display3dTex".as_ptr() as _), 4);
 
-                    if cfg!(target_os = "linux") && has_ubo {
-                        gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"BgUbo".as_ptr() as _), 0);
-                    }
+                    // if cfg!(target_os = "linux") && has_ubo {
+                    //     gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"BgUbo".as_ptr() as _), 0);
+                    // }
 
                     gl::UseProgram(0);
 
                     Gpu2DBgProgram {
                         program,
-                        disp_cnt_loc,
-                        cnt_loc,
-                        has_ubo,
+                        // disp_cnt_loc,
+                        // cnt_loc,
+                        // has_ubo,
                     }
                 };
 
                 (
-                    init_program(affine_extended_program, true),
-                    init_program(bitmap_program, true),
-                    init_program(display_3d_program, false),
+                    // init_program(affine_extended_program, true),
+                    // init_program(bitmap_program, true),
+                    // init_program(display_3d_program, false),
                     init_program(text_4bpp_program, true),
-                    init_program(text_8bpp_program, true),
+                    // init_program(text_8bpp_program, true),
                     ubo,
                 )
             };
@@ -640,11 +647,11 @@ impl Gpu2DProgram {
                 obj_ubo_data: ObjUbo::default(),
                 obj_disp_cnt_loc,
                 obj_ubo,
-                bg_affine_extended_program,
-                bg_bitmap_program,
-                bg_display_3d_program,
+                // bg_affine_extended_program,
+                // bg_bitmap_program,
+                // bg_display_3d_program,
                 bg_text_4bpp_program,
-                bg_text_8bpp_program,
+                // bg_text_8bpp_program,
                 bg_ubo,
                 rotate_vao,
             }
@@ -700,117 +707,131 @@ impl Gpu2DProgram {
         gl::DrawElements(gl::TRIANGLES, (6 * self.obj_oam_indices.len()) as _, gl::UNSIGNED_SHORT, self.obj_oam_indices.as_ptr() as _);
     }
 
-    unsafe fn draw_bg(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, fb_tex_3d: GLuint, from_line: u8, to_line: u8) {
-        let disp_cnt = regs.disp_cnts[from_line as usize];
-
-        gl::BindBuffer(gl::UNIFORM_BUFFER, self.bg_ubo);
-        gl::BufferData(gl::UNIFORM_BUFFER, size_of::<BgUbo>() as _, ptr::addr_of!(regs.bg_ubo) as _, gl::DYNAMIC_DRAW);
+    unsafe fn draw_bg(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, fb_tex_3d: GLuint) {
+        // gl::BindBuffer(gl::UNIFORM_BUFFER, self.bg_ubo);
+        // gl::BufferData(gl::UNIFORM_BUFFER, size_of::<BgUbo>() as _, ptr::addr_of!(regs.bg_ubo) as _, gl::DYNAMIC_DRAW);
 
         let draw_call = |bg_num: u8, bg_mode: BgMode| {
-            if bg_mode == BgMode::Affine || bg_mode == BgMode::Large {
-                // todo!("{bg_mode:?}")
-            }
+            // if bg_mode == BgMode::Affine || bg_mode == BgMode::Large {
+            //     // todo!("{bg_mode:?}")
+            // }
 
-            let bg_cnt = regs.bg_cnts[from_line as usize * 4 + bg_num as usize];
-            let bg_cnt = BgCnt::from(bg_cnt);
-            let program = match bg_mode {
-                BgMode::Text => {
-                    if bg_cnt.color_256_palettes() {
-                        &self.bg_text_8bpp_program
-                    } else {
-                        &self.bg_text_4bpp_program
-                    }
-                }
-                BgMode::Affine => {
-                    // TODO
-                    &self.bg_affine_extended_program
-                }
-                BgMode::Extended => {
-                    if bg_cnt.color_256_palettes() {
-                        &self.bg_bitmap_program
-                    } else {
-                        &self.bg_affine_extended_program
-                    }
-                }
-                BgMode::Large => {
-                    // TODO
-                    &self.bg_affine_extended_program
-                }
-                BgMode::Display3d => &self.bg_display_3d_program,
-            };
+            // let bg_cnt = regs.bg_cnts[from_line as usize * 4 + bg_num as usize];
+            // let bg_cnt = BgCnt::from(bg_cnt);
+            // let program = match bg_mode {
+            //     BgMode::Text => {
+            //         if bg_cnt.color_256_palettes() {
+            //             &self.bg_text_8bpp_program
+            //         } else {
+            //             &self.bg_text_4bpp_program
+            //         }
+            //     }
+            //     BgMode::Affine => {
+            //         // TODO
+            //         &self.bg_affine_extended_program
+            //     }
+            //     BgMode::Extended => {
+            //         if bg_cnt.color_256_palettes() {
+            //             &self.bg_bitmap_program
+            //         } else {
+            //             &self.bg_affine_extended_program
+            //         }
+            //     }
+            //     BgMode::Large => {
+            //         // TODO
+            //         &self.bg_affine_extended_program
+            //     }
+            //     BgMode::Display3d => &self.bg_display_3d_program,
+            // };
+            let program = &self.bg_text_4bpp_program;
 
             gl::UseProgram(program.program);
 
             gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[bg_num as usize].fbo);
 
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, texs.bg);
+            // gl::ActiveTexture(gl::TEXTURE0);
+            // gl::BindTexture(gl::TEXTURE_2D, texs.bg);
+            //
+            // gl::ActiveTexture(gl::TEXTURE1);
+            // gl::BindTexture(gl::TEXTURE_2D, texs.pal);
+            //
+            // gl::ActiveTexture(gl::TEXTURE2);
+            // gl::BindTexture(gl::TEXTURE_2D, texs.bg_ext_pal);
+            //
+            // gl::ActiveTexture(gl::TEXTURE3);
+            // gl::BindTexture(gl::TEXTURE_2D, common.win_bg_fbo.color);
+            //
+            // gl::ActiveTexture(gl::TEXTURE4);
+            // gl::BindTexture(gl::TEXTURE_2D, fb_tex_3d);
 
-            gl::ActiveTexture(gl::TEXTURE1);
-            gl::BindTexture(gl::TEXTURE_2D, texs.pal);
+            // if program.has_ubo {
+            //     gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, self.bg_ubo);
+            // }
 
-            gl::ActiveTexture(gl::TEXTURE2);
-            gl::BindTexture(gl::TEXTURE_2D, texs.bg_ext_pal);
+            // gl::Uniform1i(program.disp_cnt_loc, disp_cnt as _);
+            // gl::Uniform1i(program.cnt_loc, u16::from(bg_cnt) as _);
 
-            gl::ActiveTexture(gl::TEXTURE3);
-            gl::BindTexture(gl::TEXTURE_2D, common.win_bg_fbo.color);
+            // #[rustfmt::skip]
+            // let vertices = [
+            //     0f32, 0.0,
+            //     255.0, 0.0,
+            //     255.0, 191.0,
+            //     0.0, 191.0,
+            // ];
 
-            gl::ActiveTexture(gl::TEXTURE4);
-            gl::BindTexture(gl::TEXTURE_2D, fb_tex_3d);
-
-            if program.has_ubo {
-                gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, self.bg_ubo);
-            }
-
-            gl::Uniform1i(program.disp_cnt_loc, disp_cnt as _);
-            gl::Uniform1i(program.cnt_loc, u16::from(bg_cnt) as _);
-
-            #[rustfmt::skip]
-            let vertices = [
-                -1f32, from_line as f32, bg_num as f32,
-                1f32, from_line as f32, bg_num as f32,
-                1f32, to_line as f32, bg_num as f32,
-                -1f32, to_line as f32, bg_num as f32,
-            ];
+            // #[rustfmt::skip]
+            // let vertices = [
+            //     0.0f32, 0.0,
+            //     128.0, 0.0,
+            //     0.0, 50.0,
+            //     128.0, 50.0,
+            //     0.0, 170.0,
+            //     128.0, 170.0,
+            // ];
 
             gl::EnableVertexAttribArray(0);
-            gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, 0, vertices.as_ptr() as _);
-            gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+            gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 0, BG_VERTICES.as_ptr() as _);
+            gl::DrawArrays(gl::LINE_STRIP, 0, (BG_VERTICES.len() / 2) as _);
         };
 
-        let disp_cnt = DispCnt::from(disp_cnt);
-        macro_rules! draw {
-            ($bg3mode:expr, $bg2mode:expr, $bg1mode:expr, $bg0mode:expr) => {{
-                if disp_cnt.screen_display_bg3() {
-                    draw_call(3, $bg3mode);
-                }
-                if disp_cnt.screen_display_bg2() {
-                    draw_call(2, $bg2mode);
-                }
-                if disp_cnt.screen_display_bg1() {
-                    draw_call(1, $bg1mode);
-                }
-                if disp_cnt.screen_display_bg0() {
-                    draw_call(0, if disp_cnt.bg0_3d() { BgMode::Display3d } else { $bg0mode });
-                }
-            }};
-        }
+        // let disp_cnt = DispCnt::from(disp_cnt);
+        // macro_rules! draw {
+        //     ($bg3mode:expr, $bg2mode:expr, $bg1mode:expr, $bg0mode:expr) => {{
+        //         if disp_cnt.screen_display_bg3() {
+        //             draw_call(3, $bg3mode);
+        //         }
+        //         if disp_cnt.screen_display_bg2() {
+        //             draw_call(2, $bg2mode);
+        //         }
+        //         if disp_cnt.screen_display_bg1() {
+        //             draw_call(1, $bg1mode);
+        //         }
+        //         if disp_cnt.screen_display_bg0() {
+        //             draw_call(0, if disp_cnt.bg0_3d() { BgMode::Display3d } else { $bg0mode });
+        //         }
+        //     }};
+        // }
+        //
+        // match u8::from(disp_cnt.bg_mode()) {
+        //     0 => draw!(BgMode::Text, BgMode::Text, BgMode::Text, BgMode::Text),
+        //     1 => draw!(BgMode::Affine, BgMode::Text, BgMode::Text, BgMode::Text),
+        //     2 => draw!(BgMode::Affine, BgMode::Affine, BgMode::Text, BgMode::Text),
+        //     3 => draw!(BgMode::Extended, BgMode::Text, BgMode::Text, BgMode::Text),
+        //     4 => draw!(BgMode::Extended, BgMode::Affine, BgMode::Text, BgMode::Text),
+        //     5 => draw!(BgMode::Extended, BgMode::Extended, BgMode::Text, BgMode::Text),
+        //     6 => {
+        //         if disp_cnt.screen_display_bg2() {
+        //             draw_call(2, BgMode::Large);
+        //         }
+        //     }
+        //     7 => {}
+        //     _ => unreachable_unchecked(),
+        // }
 
-        match u8::from(disp_cnt.bg_mode()) {
-            0 => draw!(BgMode::Text, BgMode::Text, BgMode::Text, BgMode::Text),
-            1 => draw!(BgMode::Affine, BgMode::Text, BgMode::Text, BgMode::Text),
-            2 => draw!(BgMode::Affine, BgMode::Affine, BgMode::Text, BgMode::Text),
-            3 => draw!(BgMode::Extended, BgMode::Text, BgMode::Text, BgMode::Text),
-            4 => draw!(BgMode::Extended, BgMode::Affine, BgMode::Text, BgMode::Text),
-            5 => draw!(BgMode::Extended, BgMode::Extended, BgMode::Text, BgMode::Text),
-            6 => {
-                if disp_cnt.screen_display_bg2() {
-                    draw_call(2, BgMode::Large);
-                }
-            }
-            7 => {}
-            _ => unreachable_unchecked(),
-        }
+        draw_call(0, BgMode::Text);
+        draw_call(1, BgMode::Text);
+        draw_call(2, BgMode::Text);
+        draw_call(3, BgMode::Text);
 
         gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
@@ -916,82 +937,82 @@ impl Gpu2DProgram {
             }};
         }
 
-        {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, common.win_bg_fbo.fbo);
-            gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
-            gl::ClearColor(1f32, 0f32, 0f32, 1f32);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
+        // {
+        //     gl::BindFramebuffer(gl::FRAMEBUFFER, common.win_bg_fbo.fbo);
+        //     gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+        //     gl::ClearColor(1f32, 0f32, 0f32, 1f32);
+        //     gl::Clear(gl::COLOR_BUFFER_BIT);
+        //
+        //     gl::UseProgram(common.win_bg_program);
+        //
+        //     gl::BindBuffer(gl::UNIFORM_BUFFER, common.win_bg_ubo);
+        //     gl::BufferData(gl::UNIFORM_BUFFER, size_of::<WinBgUbo>() as _, ptr::addr_of!(regs.win_bg_ubo) as _, gl::DYNAMIC_DRAW);
+        //     gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, common.win_bg_ubo);
+        //
+        //     let draw_windows = |from_line, to_line| self.draw_windows(common, regs, from_line, to_line);
+        //     draw_scanlines!(draw_windows, false);
+        //
+        //     gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
+        //     gl::UseProgram(0);
+        //     gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        // }
 
-            gl::UseProgram(common.win_bg_program);
+        // gl::BindTexture(gl::TEXTURE_2D, texs.oam);
+        // sub_mem_texture1d(regions::OAM_SIZE / 2, mem.oam_ptr);
+        //
+        // gl::BindTexture(gl::TEXTURE_2D, texs.obj);
+        // sub_mem_texture2d(texs.obj_width, texs.obj_height, mem.obj_ptr);
+        //
+        // gl::BindTexture(gl::TEXTURE_2D, texs.pal);
+        // sub_pal_texture1d(regions::STANDARD_PALETTES_SIZE / 2, mem.pal_ptr);
+        //
+        // gl::BindTexture(gl::TEXTURE_2D, texs.obj_ext_pal);
+        // sub_pal_texture2d(1024, 8, mem.obj_ext_pal_ptr);
+        //
+        // gl::BindTexture(gl::TEXTURE_2D, 0);
 
-            gl::BindBuffer(gl::UNIFORM_BUFFER, common.win_bg_ubo);
-            gl::BufferData(gl::UNIFORM_BUFFER, size_of::<WinBgUbo>() as _, ptr::addr_of!(regs.win_bg_ubo) as _, gl::DYNAMIC_DRAW);
-            gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, common.win_bg_ubo);
+        // {
+        //     gl::UseProgram(self.obj_program);
+        //
+        //     gl::BindVertexArray(self.obj_vao);
+        //
+        //     gl::ActiveTexture(gl::TEXTURE0);
+        //     gl::BindTexture(gl::TEXTURE_2D, texs.oam);
+        //
+        //     gl::ActiveTexture(gl::TEXTURE1);
+        //     gl::BindTexture(gl::TEXTURE_2D, texs.obj);
+        //
+        //     gl::ActiveTexture(gl::TEXTURE2);
+        //     gl::BindTexture(gl::TEXTURE_2D, texs.pal);
+        //
+        //     gl::ActiveTexture(gl::TEXTURE3);
+        //     gl::BindTexture(gl::TEXTURE_2D, texs.obj_ext_pal);
+        //
+        //     gl::ActiveTexture(gl::TEXTURE4);
+        //     gl::BindTexture(gl::TEXTURE_2D, common.win_bg_fbo.color);
+        //
+        //     gl::BindFramebuffer(gl::FRAMEBUFFER, common.obj_fbo.fbo);
+        //     gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+        //     gl::ClearColor(0f32, 0f32, 0f32, 1f32);
+        //     gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+        //
+        //     gl::Enable(gl::DEPTH_TEST);
+        //     gl::DepthFunc(gl::LESS);
+        //
+        //     let mut draw_objects = |from_line, to_line| self.draw_objects(regs, &mem, from_line, to_line);
+        //     draw_scanlines!(draw_objects, false);
+        //
+        //     gl::Disable(gl::DEPTH_TEST);
+        //     gl::BindTexture(gl::TEXTURE_2D, 0);
+        //     gl::BindVertexArray(0);
+        //     gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        // }
 
-            let draw_windows = |from_line, to_line| self.draw_windows(common, regs, from_line, to_line);
-            draw_scanlines!(draw_windows, false);
-
-            gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
-            gl::UseProgram(0);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-        }
-
-        gl::BindTexture(gl::TEXTURE_2D, texs.oam);
-        sub_mem_texture1d(regions::OAM_SIZE / 2, mem.oam_ptr);
-
-        gl::BindTexture(gl::TEXTURE_2D, texs.obj);
-        sub_mem_texture2d(texs.obj_width, texs.obj_height, mem.obj_ptr);
-
-        gl::BindTexture(gl::TEXTURE_2D, texs.pal);
-        sub_pal_texture1d(regions::STANDARD_PALETTES_SIZE / 2, mem.pal_ptr);
-
-        gl::BindTexture(gl::TEXTURE_2D, texs.obj_ext_pal);
-        sub_pal_texture2d(1024, 8, mem.obj_ext_pal_ptr);
-
-        gl::BindTexture(gl::TEXTURE_2D, 0);
-
-        {
-            gl::UseProgram(self.obj_program);
-
-            gl::BindVertexArray(self.obj_vao);
-
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, texs.oam);
-
-            gl::ActiveTexture(gl::TEXTURE1);
-            gl::BindTexture(gl::TEXTURE_2D, texs.obj);
-
-            gl::ActiveTexture(gl::TEXTURE2);
-            gl::BindTexture(gl::TEXTURE_2D, texs.pal);
-
-            gl::ActiveTexture(gl::TEXTURE3);
-            gl::BindTexture(gl::TEXTURE_2D, texs.obj_ext_pal);
-
-            gl::ActiveTexture(gl::TEXTURE4);
-            gl::BindTexture(gl::TEXTURE_2D, common.win_bg_fbo.color);
-
-            gl::BindFramebuffer(gl::FRAMEBUFFER, common.obj_fbo.fbo);
-            gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
-            gl::ClearColor(0f32, 0f32, 0f32, 1f32);
-            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-
-            gl::Enable(gl::DEPTH_TEST);
-            gl::DepthFunc(gl::LESS);
-
-            let mut draw_objects = |from_line, to_line| self.draw_objects(regs, &mem, from_line, to_line);
-            draw_scanlines!(draw_objects, false);
-
-            gl::Disable(gl::DEPTH_TEST);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::BindVertexArray(0);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-        }
-
-        gl::BindTexture(gl::TEXTURE_2D, texs.bg);
-        sub_mem_texture2d(texs.bg_width, texs.bg_height, mem.bg_ptr);
-
-        gl::BindTexture(gl::TEXTURE_2D, texs.bg_ext_pal);
-        sub_pal_texture2d(1024, 32, mem.bg_ext_pal_ptr);
+        // gl::BindTexture(gl::TEXTURE_2D, texs.bg);
+        // sub_mem_texture2d(texs.bg_width, texs.bg_height, mem.bg_ptr);
+        //
+        // gl::BindTexture(gl::TEXTURE_2D, texs.bg_ext_pal);
+        // sub_pal_texture2d(1024, 32, mem.bg_ext_pal_ptr);
 
         {
             for i in 0..4 {
@@ -1001,37 +1022,37 @@ impl Gpu2DProgram {
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             }
 
-            let draw_bg = |from_line, to_line| self.draw_bg(common, regs, texs, fb_tex_3d, from_line, to_line);
-            draw_scanlines!(draw_bg, false);
+            self.draw_bg(common, regs, texs, fb_tex_3d);
+            // draw_scanlines!(draw_bg, false);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
 
-        if lcdc_pal != 0 {
-            gl::BindTexture(gl::TEXTURE_2D, lcdc_pal);
-            sub_pal_texture2d(1024, 656, mem.lcdc_ptr);
-
-            gl::UseProgram(vram_display_program.program);
-
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, lcdc_pal);
-
-            // Use any of the bg fbos to draw the vram into
-            // At this point all other fbo won't contain any pixels for blending
-            gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[0].fbo);
-            gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
-
-            let draw_vram_display = |from_line, to_line| vram_display_program.draw(regs, from_line, to_line);
-            draw_scanlines!(draw_vram_display, true);
-
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-            gl::UseProgram(0);
-        }
+        // if lcdc_pal != 0 {
+        //     gl::BindTexture(gl::TEXTURE_2D, lcdc_pal);
+        //     sub_pal_texture2d(1024, 656, mem.lcdc_ptr);
+        //
+        //     gl::UseProgram(vram_display_program.program);
+        //
+        //     gl::ActiveTexture(gl::TEXTURE0);
+        //     gl::BindTexture(gl::TEXTURE_2D, lcdc_pal);
+        //
+        //     // Use any of the bg fbos to draw the vram into
+        //     // At this point all other fbo won't contain any pixels for blending
+        //     gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[0].fbo);
+        //     gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+        //
+        //     let draw_vram_display = |from_line, to_line| vram_display_program.draw(regs, from_line, to_line);
+        //     draw_scanlines!(draw_vram_display, true);
+        //
+        //     gl::BindTexture(gl::TEXTURE_2D, 0);
+        //     gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        //     gl::UseProgram(0);
+        // }
 
         self.blend_fbos(common, regs, &mem);
 
-        if rotate_screen == true {
+        if rotate_screen {
             self.rotate(common);
         }
 
@@ -1128,9 +1149,9 @@ impl Gpu2DRenderer {
     pub fn new() -> Self {
         unsafe {
             let obj_vert_shader = create_shader("obj", shader_source!("obj_vert"), gl::VERTEX_SHADER).unwrap();
-            let bg_vert_shader = create_shader("bg", shader_source!("bg_vert"), gl::VERTEX_SHADER).unwrap();
-            let bg_vert_affine_extended_shader = create_shader("bg affine extended", shader_source!("bg_vert_affine_extended"), gl::VERTEX_SHADER).unwrap();
-            let bg_vert_bitmap_shader = create_shader("bg bitmap", shader_source!("bg_vert_bitmap"), gl::VERTEX_SHADER).unwrap();
+            let bg_vert_shader = create_shader("bg", shader_source!("bg_new_vert"), gl::VERTEX_SHADER).unwrap();
+            // let bg_vert_affine_extended_shader = create_shader("bg affine extended", shader_source!("bg_vert_affine_extended"), gl::VERTEX_SHADER).unwrap();
+            // let bg_vert_bitmap_shader = create_shader("bg bitmap", shader_source!("bg_vert_bitmap"), gl::VERTEX_SHADER).unwrap();
 
             let instance = Gpu2DRenderer {
                 regs_a: [Box::new(Gpu2DRenderRegs::default()), Box::new(Gpu2DRenderRegs::default())],
@@ -1141,14 +1162,14 @@ impl Gpu2DRenderer {
                 tex_a: Gpu2DTextures::new(1024, OBJ_A_TEX_HEIGHT, 1024, BG_A_TEX_HEIGHT),
                 tex_b: Gpu2DTextures::new(1024, OBJ_B_TEX_HEIGHT, 1024, BG_B_TEX_HEIGHT),
                 common: Gpu2DCommon::new(),
-                program_a: Gpu2DProgram::new::<{ A }>(obj_vert_shader, bg_vert_shader, bg_vert_affine_extended_shader, bg_vert_bitmap_shader),
-                program_b: Gpu2DProgram::new::<{ B }>(obj_vert_shader, bg_vert_shader, bg_vert_affine_extended_shader, bg_vert_bitmap_shader),
+                program_a: Gpu2DProgram::new::<{ A }>(obj_vert_shader, bg_vert_shader /*bg_vert_affine_extended_shader, bg_vert_bitmap_shader*/),
+                program_b: Gpu2DProgram::new::<{ B }>(obj_vert_shader, bg_vert_shader /*bg_vert_affine_extended_shader, bg_vert_bitmap_shader*/),
             };
 
             gl::DeleteShader(obj_vert_shader);
             gl::DeleteShader(bg_vert_shader);
-            gl::DeleteShader(bg_vert_affine_extended_shader);
-            gl::DeleteShader(bg_vert_bitmap_shader);
+            // gl::DeleteShader(bg_vert_affine_extended_shader);
+            // gl::DeleteShader(bg_vert_bitmap_shader);
 
             instance
         }

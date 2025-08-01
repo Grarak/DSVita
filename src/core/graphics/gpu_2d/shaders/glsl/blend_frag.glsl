@@ -42,19 +42,20 @@ void sortObjPrio() {
 
 void sortBgPrio(int num, sampler2D bgTex) {
     vec4 texColor = texture(bgTex, screenPos);
-    if (texColor.a < topPrio) {
-        bottomNum = topNum;
-        bottomPrio = topPrio;
-        bottomColor = topColor;
-
-        topNum = num;
-        topPrio = texColor.a;
-        topColor = texColor;
-    } else if (texColor.a < bottomPrio) {
-        bottomNum = num;
-        bottomPrio = texColor.a;
-        bottomColor = texColor;
-    }
+    topColor = texColor;
+//    if (texColor.a < topPrio) {
+//        bottomNum = topNum;
+//        bottomPrio = topPrio;
+//        bottomColor = topColor;
+//
+//        topNum = num;
+//        topPrio = texColor.a;
+//        topColor = texColor;
+//    } else if (texColor.a < bottomPrio) {
+//        bottomNum = num;
+//        bottomPrio = texColor.a;
+//        bottomColor = texColor;
+//    }
 }
 
 vec4 alphaBlend(int bldAlpha) {
@@ -67,11 +68,13 @@ vec4 alphaBlend(int bldAlpha) {
 }
 
 void main() {
-    sortObjPrio();
-    sortBgPrio(0, bg0Tex);
-    sortBgPrio(1, bg1Tex);
-    sortBgPrio(2, bg2Tex);
+//    sortObjPrio();
+//    sortBgPrio(0, bg0Tex);
+//    sortBgPrio(1, bg1Tex);
+//    sortBgPrio(2, bg2Tex);
     sortBgPrio(3, bg3Tex);
+    color = vec4(topColor.rgb, 1.0);
+    return;
 
     if (topNum == 5) {
         discard;
