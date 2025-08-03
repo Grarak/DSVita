@@ -495,8 +495,6 @@ pub fn actual_main() {
     while let PresentEvent::Inputs { keymap, ds_touch, raw_touch } = presenter.poll_event(settings.screenmode(), top_to_left) {
         if let Some((x, y)) = ds_touch {
             touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
-        } else {
-            touch_points.store(0xFFFF, Ordering::Relaxed);
         }
         key_map.store(keymap, Ordering::Relaxed);
 
