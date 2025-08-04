@@ -2,6 +2,12 @@ pub use self::platform::*;
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_renderer::ScreenTopology;
 use crate::settings::ScreenMode;
+pub mod ui;
+
+pub(crate) mod imgui {
+    #![allow(warnings, unused)]
+    include!(concat!(env!("OUT_DIR"), "/imgui_bindings.rs"));
+}
 
 #[cfg(target_os = "linux")]
 #[path = "linux.rs"]
@@ -16,6 +22,7 @@ pub const PRESENTER_SCREEN_HEIGHT: u32 = 544;
 
 pub enum PresentEvent {
     Inputs { keymap: u32, touch: Option<(u8, u8)> },
+    Pause,
     Quit,
 }
 

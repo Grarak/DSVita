@@ -148,6 +148,14 @@ impl Spi {
         }
     }
 
+    pub fn init(&mut self) {
+        self.cnt = 0;
+        self.data = 0;
+        self.write_count = 0;
+        self.cmd = 0;
+        self.addr = 0;
+    }
+
     pub fn set_cnt(&mut self, mut mask: u16, value: u16) {
         mask &= 0xCF03;
         self.cnt = (self.cnt & !mask) | (value & mask);

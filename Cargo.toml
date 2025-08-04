@@ -11,6 +11,7 @@ title_id = "DSVITA000"
 title_name = "DSVita"
 build_std = "std,panic_abort"
 assets = "./static"
+vita_make_fself_flags = ["-a", "0x2800000000000001"]
 
 [dependencies]
 bilge = { git = "https://github.com/Grarak/bilge.git" }
@@ -45,7 +46,6 @@ backtrace = "0.3.74"
 [build-dependencies]
 bindgen = "0.71.1"
 cc = { version = "1.2.18", features = ["parallel"] }
-cmake = "0.1.54"
 regex = "1.11.1"
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]
@@ -60,6 +60,7 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceGxm_stub",
     "SceKernelThreadMgr_stub",
     "SceLibKernel_stub",
+    "SceShellSvc_stub",
     "SceSysmem_stub",
     "SceTouch_stub",
     "ScePgf_stub",

@@ -703,6 +703,15 @@ impl Memory {
             mmu_arm7: MmuArm7::new(),
         }
     }
+
+    pub fn init(&mut self) {
+        self.shm.fill(0);
+        self.wram = Wram::new();
+        self.wifi = Wifi::new();
+        self.palettes = Palettes::new();
+        self.vram = Vram::default();
+        self.oam = Oam::new();
+    }
 }
 
 impl Emu {

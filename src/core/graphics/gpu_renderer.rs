@@ -1,4 +1,5 @@
 use crate::core::graphics::gl_glyph::GlGlyph;
+use crate::core::graphics::gl_utils::GpuFbo;
 use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::renderer_2d::Gpu2DRenderer;
@@ -13,6 +14,8 @@ use gl::types::GLuint;
 use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
+use std::thread::Thread;
 use std::time::Instant;
 
 pub struct ScreenTopology {
@@ -40,11 +43,14 @@ pub struct GpuRenderer {
     pub renderer_3d: Gpu3DRenderer,
 
     common: GpuRendererCommon,
+    final_fbo: GpuFbo,
     gl_glyph: GlGlyph,
 
     rendering: Mutex<bool>,
     rendering_condvar: Condvar,
     rendering_3d: bool,
+    pause: bool,
+    pub quit: bool,
 
     vram_read: AtomicBool,
     sample_2d: bool,
@@ -52,7 +58,7 @@ pub struct GpuRenderer {
 
     render_time_measure_count: u8,
     render_time_sum: u32,
-    average_render_time: u16,
+    average_render_time: u32,
 
     #[cfg(feature = "profiling")]
     frame_capture: HeapMemU8<{ (PRESENTER_SCREEN_WIDTH * PRESENTER_SCREEN_HEIGHT * 4) as usize }>,
@@ -65,11 +71,14 @@ impl GpuRenderer {
             renderer_3d: Gpu3DRenderer::default(),
 
             common: GpuRendererCommon::new(),
+            final_fbo: GpuFbo::new(PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, false).unwrap(),
             gl_glyph: GlGlyph::new(),
 
             rendering: Mutex::new(false),
             rendering_condvar: Condvar::new(),
             rendering_3d: false,
+            pause: false,
+            quit: false,
 
             vram_read: AtomicBool::new(false),
             sample_2d: true,
@@ -84,13 +93,24 @@ impl GpuRenderer {
         }
     }
 
+    pub fn init(&mut self) {
+        self.renderer_2d.init();
+        self.renderer_3d.init();
+        self.common.mem_buf.init();
+        self.common.pow_cnt1[0] = PowCnt1::from(0);
+        self.vram_read.store(false, Ordering::SeqCst);
+        self.sample_2d = true;
+        self.ready_2d = false;
+        self.rendering_3d = false;
+    }
+
     pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters, inner_b: &mut Gpu2DRegisters, line: u8) {
         if self.sample_2d {
             self.renderer_2d.on_scanline(inner_a, inner_b, line);
         }
     }
 
-    pub fn on_scanline_finish(&mut self, mem: &mut Memory, pow_cnt1: PowCnt1, registers_3d: &mut Gpu3DRegisters) {
+    pub fn on_scanline_finish(&mut self, mem: &mut Memory, pow_cnt1: PowCnt1, registers_3d: &mut Gpu3DRegisters, breakout_imm: &mut bool) {
         if self.sample_2d {
             self.common.mem_buf.read_vram(&mut mem.vram);
             self.common.mem_buf.read_palettes_oam(mem);
@@ -102,6 +122,13 @@ impl GpuRenderer {
         let mut rendering = self.rendering.lock().unwrap();
 
         if !*rendering && self.ready_2d {
+            if unlikely(self.pause) {
+                thread::park();
+                if self.quit {
+                    *breakout_imm = true;
+                    return;
+                }
+            }
             self.common.pow_cnt1[0] = self.common.pow_cnt1[1];
             self.renderer_2d.on_scanline_finish();
 
@@ -128,7 +155,7 @@ impl GpuRenderer {
         }
     }
 
-    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, settings: &Settings) {
+    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, settings: &Settings, pause: bool) {
         {
             let rendering = self.rendering.lock().unwrap();
             let _drawing = self.rendering_condvar.wait_while(rendering, |rendering| !*rendering).unwrap();
@@ -146,14 +173,14 @@ impl GpuRenderer {
         self.vram_read.store(true, Ordering::SeqCst);
 
         unsafe {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, self.final_fbo.fbo);
             gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
             gl::ClearColor(0f32, 0f32, 0f32, 1f32);
             gl::Clear(gl::COLOR_BUFFER_BIT);
 
             if self.common.pow_cnt1[0].enable() {
                 let blit_fb = |fbo: GLuint, screen: &PresenterScreen, src_x1: usize, src_y1: usize| {
-                    gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
+                    gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, self.final_fbo.fbo);
                     gl::BindFramebuffer(gl::READ_FRAMEBUFFER, fbo);
                     gl::BlitFramebuffer(
                         0,
@@ -205,7 +232,7 @@ impl GpuRenderer {
                 );
             }
 
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, self.final_fbo.fbo);
             gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
 
             let fps = fps.load(Ordering::Relaxed) as u32;
@@ -231,7 +258,11 @@ impl GpuRenderer {
             }
 
             let arm7_emu: &str = settings.arm7_hle().into();
-            self.gl_glyph.draw(format!("{}ms {arm7_emu}\n{per}% ({fps}fps)\n{info_text}", self.average_render_time));
+            self.gl_glyph.draw(format!(
+                "{}ms ({}fps) {arm7_emu}\n{per}% ({fps}/60)\n{info_text}",
+                self.average_render_time / 1000,
+                if self.average_render_time == 0 { 0 } else { 1000000 / self.average_render_time }
+            ));
 
             #[cfg(feature = "profiling")]
             gl::ReadPixels(
@@ -244,9 +275,17 @@ impl GpuRenderer {
                 self.frame_capture.as_mut_ptr() as _,
             );
 
-            presenter.gl_swap_window();
+            if !pause {
+                gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+                gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
+                gl::ClearColor(0f32, 0f32, 0f32, 1f32);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+                self.blit_main_framebuffer();
+                presenter.gl_swap_window();
+            }
 
             {
+                self.pause = pause;
                 let mut rendering = self.rendering.lock().unwrap();
                 *rendering = false;
             }
@@ -256,12 +295,36 @@ impl GpuRenderer {
         }
 
         let render_time_diff = Instant::now().duration_since(render_time_start);
-        self.render_time_sum += render_time_diff.as_millis() as u32;
+        self.render_time_sum += render_time_diff.as_micros() as u32;
         self.render_time_measure_count += 1;
         if unlikely(self.render_time_measure_count == 30) {
             self.render_time_measure_count = 0;
-            self.average_render_time = (self.render_time_sum / 30) as u16;
+            self.average_render_time = self.render_time_sum / 30;
             self.render_time_sum = 0;
+        }
+    }
+
+    pub fn unpause(&mut self, cpu_thread: &Thread) {
+        self.pause = false;
+        cpu_thread.unpark();
+    }
+
+    pub fn blit_main_framebuffer(&self) {
+        unsafe {
+            gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
+            gl::BindFramebuffer(gl::READ_FRAMEBUFFER, self.final_fbo.fbo);
+            gl::BlitFramebuffer(
+                0,
+                0,
+                PRESENTER_SCREEN_WIDTH as _,
+                PRESENTER_SCREEN_HEIGHT as _,
+                0,
+                0,
+                PRESENTER_SCREEN_WIDTH as _,
+                PRESENTER_SCREEN_HEIGHT as _,
+                gl::COLOR_BUFFER_BIT,
+                gl::NEAREST,
+            );
         }
     }
 }

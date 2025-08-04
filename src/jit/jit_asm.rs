@@ -391,6 +391,8 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
     let mut heavy_inst_count = 0;
     let mut last_inst_branch = false;
 
+    asm.jit_buf.clear_all();
+
     loop {
         let inst_info = get_inst_info(cpu, asm, guest_pc + pc_offset);
 
@@ -498,7 +500,6 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
         if DEBUG_LOG {
             // println!("{CPU:?} Mapping {guest_pc:#010x} to {:#010x}", jit_entry as *const fn() as usize);
         }
-        asm.jit_buf.clear_all();
         (jit_entry, flushed)
     };
 

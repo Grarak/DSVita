@@ -10,3 +10,6 @@
 [submodule "soundtouch"]
 	path = soundtouch
 	url = https://codeberg.org/soundtouch/soundtouch.git
+[submodule "imgui"]
+	path = imgui
+	url = https://github.com/ocornut/imgui.git

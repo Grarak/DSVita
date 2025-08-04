@@ -9,7 +9,7 @@ use crate::logging::debug_println;
 use crate::utils;
 use crate::utils::HeapMemU8;
 use bilge::prelude::*;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
@@ -80,21 +80,41 @@ struct CartridgeInner {
     bus_cmd_out: u64,
 }
 
+pub struct CartridgeIoWrapper(Option<CartridgeIo>);
+
+impl Deref for CartridgeIoWrapper {
+    type Target = CartridgeIo;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.0.as_ref().unwrap_unchecked() }
+    }
+}
+
+impl DerefMut for CartridgeIoWrapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.0.as_mut().unwrap_unchecked() }
+    }
+}
+
 pub struct Cartridge {
-    pub io: CartridgeIo,
+    pub io: CartridgeIoWrapper,
     cmd_mode: CmdMode,
     inner: [CartridgeInner; 2],
     read_buf: HeapMemU8<{ 16 * 1024 }>,
 }
 
 impl Cartridge {
-    pub fn new(cartridge_io: CartridgeIo) -> Self {
+    pub fn new() -> Self {
         Cartridge {
-            io: cartridge_io,
+            io: CartridgeIoWrapper(None),
             inner: [CartridgeInner::default(), CartridgeInner::default()],
             cmd_mode: CmdMode::None,
             read_buf: HeapMemU8::new(),
         }
+    }
+
+    pub fn set_cartridge_io(&mut self, io: CartridgeIo) {
+        self.io.0 = Some(io);
     }
 }
 

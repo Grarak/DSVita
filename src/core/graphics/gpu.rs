@@ -13,6 +13,7 @@ use crate::profiling::profiling_frame_mark;
 use crate::settings::Arm7Emu;
 use bilge::prelude::*;
 use std::intrinsics::unlikely;
+use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
@@ -95,6 +96,22 @@ struct DispCapCnt {
     capture_enabled: bool,
 }
 
+pub struct GpuRendererWrapper(Option<NonNull<GpuRenderer>>);
+
+impl Deref for GpuRendererWrapper {
+    type Target = GpuRenderer;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.0.as_ref().unwrap_unchecked().as_ref() }
+    }
+}
+
+impl DerefMut for GpuRendererWrapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.0.as_mut().unwrap_unchecked().as_mut() }
+    }
+}
+
 pub struct Gpu {
     disp_stat: [DispStat; 2],
     pub pow_cnt1: u16,
@@ -104,7 +121,7 @@ pub struct Gpu {
     pub gpu_2d_regs_a: Gpu2DRegisters,
     pub gpu_2d_regs_b: Gpu2DRegisters,
     pub gpu_3d_regs: Gpu3DRegisters,
-    pub gpu_renderer: Option<NonNull<GpuRenderer>>,
+    pub renderer: GpuRendererWrapper,
 }
 
 impl Gpu {
@@ -118,8 +135,23 @@ impl Gpu {
             gpu_2d_regs_a: Gpu2DRegisters::new(A),
             gpu_2d_regs_b: Gpu2DRegisters::new(B),
             gpu_3d_regs: Gpu3DRegisters::new(),
-            gpu_renderer: None,
+            renderer: GpuRendererWrapper(None),
         }
+    }
+
+    pub fn init(&mut self) {
+        self.disp_stat = [DispStat::from(0); 2];
+        self.pow_cnt1 = 0;
+        self.disp_cap_cnt = DispCapCnt::from(0);
+        self.v_count = 0;
+        self.gpu_2d_regs_a = Gpu2DRegisters::new(A);
+        self.gpu_2d_regs_b = Gpu2DRegisters::new(B);
+        self.gpu_3d_regs = Gpu3DRegisters::new();
+        self.renderer.init();
+    }
+
+    pub fn set_gpu_renderer(&mut self, gpu_renderer: NonNull<GpuRenderer>) {
+        self.renderer = GpuRendererWrapper(Some(gpu_renderer));
     }
 
     pub fn initialize_schedule(cm: &mut CycleManager) {
@@ -129,14 +161,6 @@ impl Gpu {
             EventType::GpuScanline256,
             0,
         );
-    }
-
-    pub fn get_renderer(&self) -> &GpuRenderer {
-        unsafe { self.gpu_renderer.unwrap().as_ref() }
-    }
-
-    pub fn get_renderer_mut(&mut self) -> &'static mut GpuRenderer {
-        unsafe { self.gpu_renderer.unwrap().as_mut() }
     }
 
     pub fn get_disp_stat(&self, cpu: CpuType) -> u16 {
@@ -166,13 +190,7 @@ impl Gpu {
 impl Emu {
     pub fn gpu_on_scanline256_event(&mut self, _: u16) {
         if self.gpu.v_count < 192 {
-            unsafe {
-                self.gpu
-                    .gpu_renderer
-                    .unwrap_unchecked()
-                    .as_mut()
-                    .on_scanline(&mut self.gpu.gpu_2d_regs_a, &mut self.gpu.gpu_2d_regs_b, self.gpu.v_count as u8)
-            }
+            self.gpu.renderer.on_scanline(&mut self.gpu.gpu_2d_regs_a, &mut self.gpu.gpu_2d_regs_b, self.gpu.v_count as u8);
             self.dma_trigger_all(ARM9, DmaTransferMode::StartAtHBlank);
         }
 
@@ -194,11 +212,11 @@ impl Emu {
                 self.gpu.gpu_3d_regs.current_pow_cnt1 = self.gpu.pow_cnt1;
 
                 let pow_cnt1 = PowCnt1::from(self.gpu.pow_cnt1);
-                self.gpu.get_renderer_mut().on_scanline_finish(&mut self.mem, pow_cnt1, &mut self.gpu.gpu_3d_regs);
+                self.gpu.renderer.on_scanline_finish(&mut self.mem, pow_cnt1, &mut self.gpu.gpu_3d_regs, &mut self.breakout_imm);
 
                 if self.gpu.gpu_3d_regs.flushed {
                     self.gpu.gpu_3d_regs.swap_buffers();
-                    self.gpu.get_renderer_mut().renderer_3d.invalidate();
+                    self.gpu.renderer.renderer_3d.invalidate();
                 }
 
                 for i in 0..2 {
@@ -223,7 +241,7 @@ impl Emu {
                 if self.settings.arm7_hle() == Arm7Emu::Hle {
                     self.arm7_hle_on_frame();
                 }
-                self.gpu.get_renderer_mut().reload_registers();
+                self.gpu.renderer.reload_registers();
 
                 profiling_frame_mark!();
             }

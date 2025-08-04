@@ -858,24 +858,14 @@ impl Gpu2DProgram {
     }
 
     unsafe fn rotate(&self, common: &Gpu2DCommon) {
-        let depth_test_enabled = gl::IsEnabled(gl::DEPTH_TEST);
-
-        // --- Configure Render Target ---
         gl::BindFramebuffer(gl::FRAMEBUFFER, common.rotate_fbo.fbo);
         gl::Viewport(0, 0, DISPLAY_HEIGHT as _, DISPLAY_WIDTH as _);
         gl::UseProgram(common.rotate_program);
         gl::ActiveTexture(gl::TEXTURE0);
         gl::BindTexture(gl::TEXTURE_2D, common.blend_fbo.color);
 
-        if depth_test_enabled > 0 {
-            gl::Disable(gl::DEPTH_TEST);
-        }
-
         gl::BindVertexArray(self.rotate_vao);
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
-        if depth_test_enabled > 0 {
-            gl::Enable(gl::DEPTH_TEST);
-        }
 
         gl::BindVertexArray(0);
         gl::UseProgram(0);
@@ -1031,7 +1021,7 @@ impl Gpu2DProgram {
 
         self.blend_fbos(common, regs, &mem);
 
-        if rotate_screen == true {
+        if rotate_screen {
             self.rotate(common);
         }
 
@@ -1152,6 +1142,13 @@ impl Gpu2DRenderer {
 
             instance
         }
+    }
+
+    pub fn init(&mut self) {
+        self.regs_a[0].reset();
+        self.regs_b[0].reset();
+        self.has_vram_display[0] = false;
+        self.reload_registers();
     }
 
     pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters, inner_b: &mut Gpu2DRegisters, line: u8) {

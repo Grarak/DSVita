@@ -23,7 +23,7 @@ use bilge::prelude::{u4, u6};
 use std::collections::VecDeque;
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::unlikely;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::{mem, ptr, slice};
 use CpuType::{ARM7, ARM9};
 
@@ -162,6 +162,7 @@ impl JitBlockMetadata {
     }
 }
 
+#[derive(Default)]
 struct JitMemoryMetadata {
     size: usize,
     start: usize,
@@ -264,28 +265,44 @@ impl Emu {
 }
 
 impl JitMemory {
-    pub fn new(settings: &Settings) -> Self {
+    pub fn new() -> Self {
         let jit_entries = JitEntries::new();
         let jit_live_ranges = JitLiveRanges::default();
         let jit_memory_map = JitMemoryMap::new(&jit_entries, &jit_live_ranges);
         JitMemory {
             mem: Mmap::executable("jit", JIT_MEMORY_SIZE).unwrap(),
-            arm9_data: if settings.arm7_hle() == Arm7Emu::Hle {
-                JitMemoryMetadata::new(JIT_MEMORY_SIZE, 0, JIT_MEMORY_SIZE)
-            } else {
-                JitMemoryMetadata::new(JIT_ARM9_MEMORY_SIZE, 0, JIT_ARM9_MEMORY_SIZE)
-            },
-            arm7_data: if settings.arm7_hle() == Arm7Emu::Hle {
-                JitMemoryMetadata::new(0, 0, 0)
-            } else {
-                JitMemoryMetadata::new(JIT_ARM7_MEMORY_SIZE, JIT_ARM9_MEMORY_SIZE, JIT_MEMORY_SIZE)
-            },
+            arm9_data: JitMemoryMetadata::default(),
+            arm7_data: JitMemoryMetadata::default(),
             jit_entries,
             jit_live_ranges,
             jit_memory_map,
             jit_perf_map_record: JitPerfMapRecord::new(),
             guest_inst_offsets: HeapMem::new(),
             guest_inst_metadata: HeapMem::new(),
+        }
+    }
+
+    pub fn init(&mut self, settings: &Settings) {
+        self.arm9_data = if settings.arm7_hle() == Arm7Emu::Hle {
+            JitMemoryMetadata::new(JIT_MEMORY_SIZE, 0, JIT_MEMORY_SIZE)
+        } else {
+            JitMemoryMetadata::new(JIT_ARM9_MEMORY_SIZE, 0, JIT_ARM9_MEMORY_SIZE)
+        };
+        self.arm7_data = if settings.arm7_hle() == Arm7Emu::Hle {
+            JitMemoryMetadata::new(0, 0, 0)
+        } else {
+            JitMemoryMetadata::new(JIT_ARM7_MEMORY_SIZE, JIT_ARM9_MEMORY_SIZE, JIT_MEMORY_SIZE)
+        };
+        self.jit_entries.reset();
+        self.jit_live_ranges.itcm.fill(0);
+        self.jit_live_ranges.main.fill(0);
+        self.jit_live_ranges.vram.fill(0);
+        self.jit_memory_map = JitMemoryMap::new(&self.jit_entries, &self.jit_live_ranges);
+        for vec in self.guest_inst_offsets.deref_mut() {
+            vec.clear();
+        }
+        for vec in self.guest_inst_metadata.deref_mut() {
+            vec.clear();
         }
     }
 

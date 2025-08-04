@@ -149,6 +149,15 @@ pub struct Gpu3DRenderer {
 }
 
 impl Gpu3DRenderer {
+    pub fn init(&mut self) {
+        self.dirty = false;
+        self.inners[0] = Gpu3DRendererInner::default();
+        self.inners[1] = Gpu3DRendererInner::default();
+        self.content.vertices_size = 0;
+        self.content.polygons_size = 0;
+        self.content.pow_cnt1 = 0;
+    }
+
     pub fn invalidate(&mut self) {
         self.dirty = true;
     }

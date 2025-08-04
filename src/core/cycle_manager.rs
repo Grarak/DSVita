@@ -93,6 +93,13 @@ impl CycleManager {
         }
     }
 
+    pub fn init(&mut self) {
+        self.cycle_count = 0;
+        self.events.clear();
+        self.imm_events.clear();
+        self.imm_events_swap.clear();
+    }
+
     pub fn add_cycles(&mut self, cycle_count: u16) {
         self.cycle_count += cycle_count as u64;
     }

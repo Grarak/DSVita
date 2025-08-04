@@ -8,9 +8,8 @@ use strum_macros::{EnumIter, EnumString, IntoStaticStr};
 #[derive(Copy, Clone, Debug, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
 pub enum Arm7Emu {
     AccurateLle = 0,
-    PartialHle = 1,
-    PartialSoundHle = 2,
-    Hle = 3,
+    SoundHle = 1,
+    Hle = 2,
 }
 
 impl From<u8> for Arm7Emu {
@@ -117,11 +116,12 @@ pub struct Setting {
     pub title: &'static str,
     pub description: &'static str,
     pub value: SettingValue,
+    pub runtime: bool,
 }
 
 impl Setting {
-    const fn new(title: &'static str, description: &'static str, value: SettingValue) -> Self {
-        Setting { title, description, value }
+    const fn new(title: &'static str, description: &'static str, value: SettingValue, runtime: bool) -> Self {
+        Setting { title, description, value, runtime }
     }
 }
 
@@ -129,29 +129,23 @@ pub const DEFAULT_SETTINGS: Settings = Settings {
     values: [
         Setting::new(
             "Screen Mode",
-            "Can be used to simulate vertical holding,\n\
-        for games like Brain Age",
+            "Can be used to simulate vertical holding, for games like Brain Age",
             SettingValue::ScreenMode(ScreenMode::Regular),
+            true,
         ),
-        Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true)),
-        Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true)),
+        Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true), true),
+        Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true), true),
         Setting::new(
             "Arm7 Emulation",
-            "AccurateLle: Slowest, best compatibility\n\
-        PartialHle: Slightly faster, similar compatibility\nto AccurateLle\n\
-        PartialSoundHle: ~10%% faster, reduced\ncompatibility\n\
-        Hle: ~15-20%% faster, worst compatibility\n\
-        Use AccurateLle if game crashes, gets stuck or\nbugs occur.",
+            "AccurateLle: Slowest, best compatibility, PartialSoundHle: ~10%% faster, reduced compatibility,\nHle: ~15-20%% faster, worst compatibility. Use AccurateLle if game crashes, gets stuck or bugs occur.",
             SettingValue::Arm7Emu(Arm7Emu::AccurateLle),
+            false,
         ),
         Setting::new(
             "Arm7 jit block validation",
-            "Check whether jit blocks of Arm7 are valid on\n\
-        every execution. Disabling it can give a\n\
-        performance boost, however might lead to\n\
-        crashes. Most commercial games do not\n\
-        need to have this enabled.",
+            "Only needed for nds homebrew. Commercial games usually don't need to have this enabled.",
             SettingValue::Bool(false),
+            false,
         ),
     ],
 };
@@ -221,6 +215,16 @@ pub struct SettingsConfig {
     pub settings: Settings,
     pub settings_file_path: PathBuf,
     pub dirty: bool,
+}
+
+impl From<Settings> for SettingsConfig {
+    fn from(value: Settings) -> Self {
+        SettingsConfig {
+            settings: value,
+            settings_file_path: PathBuf::new(),
+            dirty: false,
+        }
+    }
 }
 
 impl SettingsConfig {

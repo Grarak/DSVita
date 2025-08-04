@@ -16,7 +16,6 @@
 #![feature(stmt_expr_attributes)]
 #![feature(vec_push_within_capacity)]
 
-use crate::cartridge_io::CartridgeIo;
 use crate::core::emu::Emu;
 use crate::core::graphics::gpu::Gpu;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
@@ -27,18 +26,19 @@ use crate::jit::jit_asm::{JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_memory::JitMemory;
 use crate::logging::{debug_println, info_println};
 use crate::mmap::{register_abort_handler, ArmContext, Mmap, PAGE_SIZE};
+use crate::presenter::ui::UiPauseMenuReturn;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
 use crate::profiling::{profiling_init, profiling_set_thread_name};
-use crate::settings::{Arm7Emu, Settings};
+use crate::settings::Arm7Emu;
 use crate::utils::{const_str_equal, set_thread_prio_affinity, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::intrinsics::unlikely;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::Thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{mem, thread};
 use CpuType::{ARM7, ARM9};
 
@@ -63,36 +63,13 @@ pub const DEBUG_LOG: bool = const_str_equal(BUILD_PROFILE_NAME, "debug");
 pub const IS_DEBUG: bool = DEBUG_LOG || const_str_equal(BUILD_PROFILE_NAME, "release-debug");
 pub const BRANCH_LOG: bool = DEBUG_LOG;
 
-fn run_cpu(
-    cartridge_io: CartridgeIo,
-    fps: Arc<AtomicU16>,
-    key_map: Arc<AtomicU32>,
-    touch_points: Arc<AtomicU16>,
-    sound_sampler: NonNull<SoundSampler>,
-    settings: Settings,
-    gpu_renderer: NonNull<GpuRenderer>,
-    last_save_time: Arc<Mutex<Option<(Instant, bool)>>>,
-) {
-    let arm9_ram_addr = cartridge_io.header.arm9_values.ram_address;
-    let arm9_entry_addr = cartridge_io.header.arm9_values.entry_address;
-    let arm7_ram_addr = cartridge_io.header.arm7_values.ram_address;
-    let arm7_entry_addr = cartridge_io.header.arm7_values.entry_address;
+fn run_cpu(emu: &mut Emu) {
+    let arm9_ram_addr = emu.cartridge.io.header.arm9_values.ram_address;
+    let arm9_entry_addr = emu.cartridge.io.header.arm9_values.entry_address;
+    let arm7_ram_addr = emu.cartridge.io.header.arm7_values.ram_address;
+    let arm7_entry_addr = emu.cartridge.io.header.arm7_values.entry_address;
 
-    let mut arm9_thread_regs = Mmap::rw("arm9_thread_regs", ARM9.guest_regs_addr(), utils::align_up(size_of::<ThreadRegs>(), PAGE_SIZE)).unwrap();
-    let mut arm7_thread_regs = Mmap::rw("arm7_thread_regs", ARM7.guest_regs_addr(), utils::align_up(size_of::<ThreadRegs>(), PAGE_SIZE)).unwrap();
-    let arm9_thread_regs = arm9_thread_regs.as_mut_ptr() as *mut ThreadRegs;
-    let arm7_thread_regs = arm7_thread_regs.as_mut_ptr() as *mut ThreadRegs;
-    unsafe {
-        *arm9_thread_regs = ThreadRegs::new();
-        *arm7_thread_regs = ThreadRegs::new();
-    }
-
-    // Initializing jit mem inside of emu, breaks kubridge for some reason
-    // Might be caused by initialize shared mem? Initialize here and pass it to emu
-    let jit_mem = JitMemory::new(&settings);
-    let mut emu_unsafe = UnsafeCell::new(Emu::new(cartridge_io, fps, key_map, touch_points, sound_sampler, jit_mem, settings));
-    let emu_ptr = emu_unsafe.get() as u32;
-    let emu = emu_unsafe.get_mut();
+    emu.reset();
 
     info_println!("Initialize mmu");
     emu.mmu_update_all::<{ ARM9 }>();
@@ -184,38 +161,22 @@ fn run_cpu(
     }
 
     Gpu::initialize_schedule(&mut emu.cm);
-    emu.gpu.gpu_renderer = Some(gpu_renderer);
-
-    emu.spu.audio_enabled = emu.settings.audio();
     emu.spu_initialize_schedule();
 
     if emu.settings.arm7_hle() == Arm7Emu::Hle {
         emu.arm7_hle_initialize();
     }
 
-    let save_thread = thread::Builder::new()
-        .name("save".to_owned())
-        .spawn(move || {
-            set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core0);
-            profiling_set_thread_name!("save");
-            let last_save_time = last_save_time;
-            let emu = unsafe { (emu_ptr as *mut Emu).as_mut().unwrap_unchecked() };
-            loop {
-                emu.cartridge.io.flush_save_buf(&last_save_time);
-                thread::sleep(Duration::from_secs(3));
-            }
-        })
-        .unwrap();
-
     unsafe { register_abort_handler(fault_handler).unwrap() };
 
-    if emu.settings.arm7_hle() == Arm7Emu::Hle {
-        execute_jit::<true>(&mut emu_unsafe);
-    } else {
-        execute_jit::<false>(&mut emu_unsafe);
-    }
+    let jit_asm_arm9 = unsafe { (ARM9.jit_asm_addr() as *mut JitAsm).as_mut_unchecked() };
+    let jit_asm_arm7 = unsafe { (ARM7.jit_asm_addr() as *mut JitAsm).as_mut_unchecked() };
 
-    save_thread.join().unwrap();
+    if emu.settings.arm7_hle() == Arm7Emu::Hle {
+        execute_jit::<true>(jit_asm_arm9, jit_asm_arm7);
+    } else {
+        execute_jit::<false>(jit_asm_arm9, jit_asm_arm7);
+    }
 }
 
 pub static mut CURRENT_RUNNING_CPU: CpuType = ARM9;
@@ -251,18 +212,9 @@ fn fault_handler(mem_addr: usize, host_pc: &mut usize, arm_context: &ArmContext)
 }
 
 #[inline(never)]
-fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
-    let mut jit_asm_arm9 = Mmap::rw("arm9_jit_asm", ARM9.jit_asm_addr(), utils::align_up(size_of::<JitAsm>(), PAGE_SIZE)).unwrap();
-    let mut jit_asm_arm7 = Mmap::rw("arm7_jit_asm", ARM7.jit_asm_addr(), utils::align_up(size_of::<JitAsm>(), PAGE_SIZE)).unwrap();
-    let jit_asm_arm9: &'static mut JitAsm = unsafe { mem::transmute(jit_asm_arm9.as_mut_ptr()) };
-    let jit_asm_arm7: &'static mut JitAsm = unsafe { mem::transmute(jit_asm_arm7.as_mut_ptr()) };
-    *jit_asm_arm9 = JitAsm::new(ARM9, unsafe { emu.get().as_mut().unwrap() });
-    *jit_asm_arm7 = JitAsm::new(ARM7, unsafe { emu.get().as_mut().unwrap() });
-
-    let emu = emu.get_mut();
-
+fn execute_jit<const ARM7_HLE: bool>(jit_asm_arm9: &mut JitAsm, jit_asm_arm7: &mut JitAsm) {
     loop {
-        let arm9_cycles = if !emu.cpu_is_halted(ARM9) {
+        let arm9_cycles = if !jit_asm_arm9.emu.cpu_is_halted(ARM9) {
             unsafe { CURRENT_RUNNING_CPU = ARM9 };
             (jit_asm_arm9.execute::<{ ARM9 }>() + 1) >> 1
         } else {
@@ -270,13 +222,13 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
         };
 
         if ARM7_HLE {
-            if unlikely(emu.cpu_is_halted(ARM9)) {
-                emu.cm.jump_to_next_event();
+            if unlikely(jit_asm_arm9.emu.cpu_is_halted(ARM9)) {
+                jit_asm_arm9.emu.cm.jump_to_next_event();
             } else {
-                emu.cm.add_cycles(arm9_cycles);
+                jit_asm_arm9.emu.cm.add_cycles(arm9_cycles);
             }
         } else {
-            let arm7_cycles = if !emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop() {
+            let arm7_cycles = if !jit_asm_arm9.emu.cpu_is_halted(ARM7) && !jit_asm_arm7.runtime_data.is_idle_loop() {
                 unsafe { CURRENT_RUNNING_CPU = ARM7 };
                 jit_asm_arm7.execute::<{ ARM7 }>()
             } else {
@@ -285,17 +237,21 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
 
             let cycles = min(arm9_cycles.wrapping_sub(1), arm7_cycles.wrapping_sub(1)).wrapping_add(1);
             if unlikely(cycles == 0) {
-                emu.cm.jump_to_next_event();
+                jit_asm_arm9.emu.cm.jump_to_next_event();
             } else {
-                emu.cm.add_cycles(cycles);
+                jit_asm_arm9.emu.cm.add_cycles(cycles);
             }
         }
 
-        if emu.cm_check_events() && !ARM7_HLE {
+        if jit_asm_arm9.emu.cm_check_events() && !ARM7_HLE {
             jit_asm_arm7.runtime_data.set_idle_loop(false);
         }
 
-        emu.regs_3d_run_cmds(emu.cm.get_cycles());
+        jit_asm_arm9.emu.regs_3d_run_cmds(jit_asm_arm9.emu.cm.get_cycles());
+
+        if unlikely(jit_asm_arm9.emu.gpu.renderer.quit) {
+            break;
+        }
     }
 }
 
@@ -405,78 +361,163 @@ pub fn actual_main() {
     }
 
     let mut presenter = Presenter::new();
-    let (cartridge_io, settings) = presenter.present_ui();
-    presenter.destroy_ui();
-    info_println!("{} Settings: {settings:?}", cartridge_io.file_name);
 
     let fps = Arc::new(AtomicU16::new(0));
-    let fps_clone = fps.clone();
-
     let key_map = Arc::new(AtomicU32::new(0xFFFFFFFF));
-    let key_map_clone = key_map.clone();
-
     let touch_points = Arc::new(AtomicU16::new(0));
-    let touch_points_clone = touch_points.clone();
+    let mut sound_sampler = UnsafeCell::new(SoundSampler::new());
+    let mut gpu_renderer = None;
 
-    let sound_sampler = UnsafeCell::new(SoundSampler::new(settings.framelimit()));
+    let fps_clone = fps.clone();
+    let key_map_clone = key_map.clone();
+    let touch_points_clone = touch_points.clone();
     let sound_sampler_ptr = sound_sampler.get() as usize;
 
-    let presenter_audio = presenter.get_presenter_audio();
-
-    let gpu_renderer = UnsafeCell::new(GpuRenderer::new());
-    let gpu_renderer_ptr = gpu_renderer.get() as usize;
-
-    let last_save_time = Arc::new(Mutex::new(None));
-    let last_save_time_clone = last_save_time.clone();
-
-    let settings_clone = settings.clone();
-
-    let cpu_thread = thread::Builder::new()
-        .name("cpu".to_owned())
-        .stack_size(MAX_STACK_DEPTH_SIZE + 1024 * 1024) // Add 1MB headroom to stack
-        .spawn(move || {
-            set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
-            profiling_set_thread_name!("cpu");
-            info_println!("Start cpu {:?}", thread::current().id());
-            run_cpu(
-                cartridge_io,
-                fps_clone,
-                key_map_clone,
-                touch_points_clone,
-                NonNull::new(sound_sampler_ptr as *mut SoundSampler).unwrap(),
-                settings_clone,
-                NonNull::new(gpu_renderer_ptr as *mut GpuRenderer).unwrap(),
-                last_save_time_clone,
-            );
-        })
-        .unwrap();
-
-    let cpu_thread_ptr = cpu_thread.thread() as *const _ as usize;
-    let audio_thread = thread::Builder::new()
-        .name("audio".to_owned())
-        .spawn(move || {
-            set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
-            let mut guest_buffer = HeapMemU32::<{ SAMPLE_BUFFER_SIZE }>::new();
-            let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_BUF_SIZE }>::new();
-            let sound_sampler = unsafe { (sound_sampler_ptr as *mut SoundSampler).as_mut_unchecked() };
-            let cpu_thread = unsafe { (cpu_thread_ptr as *const Thread).as_ref_unchecked() };
-            loop {
-                sound_sampler.consume(cpu_thread, &mut guest_buffer, &mut audio_buffer);
-                presenter_audio.play(&audio_buffer);
-            }
-        })
-        .unwrap();
-
-    let gpu_renderer = unsafe { gpu_renderer.get().as_mut().unwrap() };
-    while let PresentEvent::Inputs { keymap, touch } = presenter.poll_event(settings.screenmode()) {
-        if let Some((x, y)) = touch {
-            touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
-        }
-        key_map.store(keymap, Ordering::Relaxed);
-
-        gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &settings);
+    let mut arm9_thread_regs = Mmap::rw("arm9_thread_regs", ARM9.guest_regs_addr(), utils::align_up(size_of::<ThreadRegs>(), PAGE_SIZE)).unwrap();
+    let mut arm7_thread_regs = Mmap::rw("arm7_thread_regs", ARM7.guest_regs_addr(), utils::align_up(size_of::<ThreadRegs>(), PAGE_SIZE)).unwrap();
+    let arm9_thread_regs = arm9_thread_regs.as_mut_ptr() as *mut ThreadRegs;
+    let arm7_thread_regs = arm7_thread_regs.as_mut_ptr() as *mut ThreadRegs;
+    unsafe {
+        *arm9_thread_regs = ThreadRegs::default();
+        *arm7_thread_regs = ThreadRegs::default();
     }
 
-    audio_thread.join().unwrap();
-    cpu_thread.join().unwrap();
+    // Initializing jit mem inside of emu, breaks kubridge for some reason
+    // Might be caused by initialize shared mem? Initialize here and pass it to emu
+    let jit_mem = JitMemory::new();
+    let mut emu_unsafe = UnsafeCell::new(Emu::new(fps_clone, key_map_clone, touch_points_clone, NonNull::from(sound_sampler.get_mut()), jit_mem));
+    let emu_ptr = emu_unsafe.get() as usize;
+
+    let mut jit_asm_arm9 = Mmap::rw("arm9_jit_asm", ARM9.jit_asm_addr(), utils::align_up(size_of::<JitAsm>(), PAGE_SIZE)).unwrap();
+    let mut jit_asm_arm7 = Mmap::rw("arm7_jit_asm", ARM7.jit_asm_addr(), utils::align_up(size_of::<JitAsm>(), PAGE_SIZE)).unwrap();
+    let jit_asm_arm9: &'static mut JitAsm = unsafe { mem::transmute(jit_asm_arm9.as_mut_ptr()) };
+    let jit_asm_arm7: &'static mut JitAsm = unsafe { mem::transmute(jit_asm_arm7.as_mut_ptr()) };
+    *jit_asm_arm9 = JitAsm::new(ARM9, unsafe { emu_unsafe.get().as_mut().unwrap() });
+    *jit_asm_arm7 = JitAsm::new(ARM7, unsafe { emu_unsafe.get().as_mut().unwrap() });
+
+    let cpu_active = Arc::new(AtomicBool::new(true));
+
+    let mut running = true;
+    while running {
+        let (cartridge_io, settings) = match presenter.present_ui() {
+            Some((cartridge_io, settings)) => (cartridge_io, settings),
+            None => return,
+        };
+        info_println!("{} Settings: {settings:?}", cartridge_io.file_name);
+        presenter.on_game_launched();
+
+        if gpu_renderer.is_none() {
+            gpu_renderer = Some(GpuRenderer::new());
+            emu_unsafe.get_mut().gpu.set_gpu_renderer(NonNull::from(gpu_renderer.as_mut().unwrap()));
+        }
+
+        let presenter_audio = presenter.get_presenter_audio();
+
+        let last_save_time = Arc::new(Mutex::new(None));
+        let last_save_time_clone = last_save_time.clone();
+
+        emu_unsafe.get_mut().cartridge.set_cartridge_io(cartridge_io);
+        emu_unsafe.get_mut().settings = settings;
+
+        sound_sampler.get_mut().init();
+
+        let cpu_thread = thread::Builder::new()
+            .name("cpu".to_owned())
+            .stack_size(MAX_STACK_DEPTH_SIZE + 1024 * 1024) // Add 1MB headroom to stack
+            .spawn(move || {
+                set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
+                profiling_set_thread_name!("cpu");
+                info_println!("Start cpu {:?}", thread::current().id());
+                let emu = emu_ptr as *mut Emu;
+                run_cpu(unsafe { emu.as_mut_unchecked() });
+            })
+            .unwrap();
+
+        let cpu_thread_ptr = cpu_thread.thread() as *const _ as usize;
+        cpu_active.store(true, Ordering::SeqCst);
+        let cpu_active_clone = cpu_active.clone();
+        let audio_thread = thread::Builder::new()
+            .name("audio".to_owned())
+            .spawn(move || {
+                set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
+                let mut guest_buffer = HeapMemU32::<{ SAMPLE_BUFFER_SIZE }>::new();
+                let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_BUF_SIZE }>::new();
+                let sound_sampler = unsafe { (sound_sampler_ptr as *mut SoundSampler).as_mut_unchecked() };
+                let cpu_thread = unsafe { (cpu_thread_ptr as *const Thread).as_ref_unchecked() };
+                let cpu_active = cpu_active_clone;
+                while cpu_active.load(Ordering::Relaxed) {
+                    sound_sampler.consume(cpu_thread, &mut guest_buffer, &mut audio_buffer);
+                    presenter_audio.play(&audio_buffer);
+                }
+            })
+            .unwrap();
+
+        let cpu_active_clone = cpu_active.clone();
+        let save_thread = thread::Builder::new()
+            .name("save".to_owned())
+            .spawn(move || {
+                set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core0);
+                profiling_set_thread_name!("save");
+                let last_save_time = last_save_time_clone;
+                let emu = unsafe { (emu_ptr as *mut Emu).as_mut().unwrap_unchecked() };
+                let cpu_active = cpu_active_clone;
+                'outer: loop {
+                    for _ in 0..6 {
+                        if !cpu_active.load(Ordering::Relaxed) {
+                            break 'outer;
+                        }
+                        thread::sleep(Duration::from_millis(500));
+                    }
+                    emu.cartridge.io.flush_save_buf(&last_save_time);
+                }
+            })
+            .unwrap();
+
+        let gpu_renderer = gpu_renderer.as_mut().unwrap();
+        loop {
+            let pause = match presenter.poll_event(emu_unsafe.get_mut().settings.screenmode()) {
+                PresentEvent::Inputs { keymap, touch } => {
+                    if let Some((x, y)) = touch {
+                        touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
+                    }
+                    key_map.store(keymap, Ordering::Relaxed);
+                    false
+                }
+                PresentEvent::Pause => true,
+                PresentEvent::Quit => {
+                    running = false;
+                    true
+                }
+            };
+
+            gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &emu_unsafe.get_mut().settings, pause);
+
+            if unlikely(!running) {
+                gpu_renderer.quit = true;
+                gpu_renderer.unpause(cpu_thread.thread());
+                break;
+            } else if unlikely(pause) {
+                match presenter.present_pause(gpu_renderer, &mut emu_unsafe.get_mut().settings) {
+                    UiPauseMenuReturn::Resume => gpu_renderer.unpause(cpu_thread.thread()),
+                    UiPauseMenuReturn::Quit => {
+                        gpu_renderer.quit = true;
+                        gpu_renderer.unpause(cpu_thread.thread());
+                        break;
+                    }
+                    UiPauseMenuReturn::QuitApp => {
+                        running = false;
+                        gpu_renderer.quit = true;
+                        gpu_renderer.unpause(cpu_thread.thread());
+                        break;
+                    }
+                }
+            }
+        }
+
+        cpu_thread.join().unwrap();
+        cpu_active.store(false, Ordering::SeqCst);
+        gpu_renderer.quit = false;
+        audio_thread.join().unwrap();
+        save_thread.join().unwrap();
+    }
 }

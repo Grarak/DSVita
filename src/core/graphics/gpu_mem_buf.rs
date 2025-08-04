@@ -31,6 +31,29 @@ pub struct GpuMemBuf {
 }
 
 impl GpuMemBuf {
+    pub fn init(&mut self) {
+        self.vram = Vram::default();
+        self.lcdc.fill(0);
+        self.bg_a.fill(0);
+        self.obj_a.fill(0);
+        self.bg_a_ext_palette.fill(0);
+        self.obj_a_ext_palette.fill(0);
+        self.bg_b.fill(0);
+        self.obj_b.fill(0);
+        self.bg_b_ext_palette.fill(0);
+        self.obj_b_ext_palette.fill(0);
+        self.pal_a[0].fill(0);
+        self.pal_a[1].fill(0);
+        self.pal_b[0].fill(0);
+        self.pal_b[1].fill(0);
+        self.oam_a[0].fill(0);
+        self.oam_a[1].fill(0);
+        self.oam_b[0].fill(0);
+        self.oam_b[1].fill(0);
+        self.tex_rear_plane_image.fill(0);
+        self.tex_pal.fill(0);
+    }
+
     pub fn read_vram(&mut self, vram: &mut Vram) {
         self.vram.cnt = vram.cnt;
         vram.banks.copy_dirty_sections(&mut self.vram.banks);

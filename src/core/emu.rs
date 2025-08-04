@@ -1,4 +1,3 @@
-use crate::cartridge_io::CartridgeIo;
 use crate::core::cp15::Cp15;
 use crate::core::cpu_regs::CpuRegs;
 use crate::core::cycle_manager::CycleManager;
@@ -13,10 +12,12 @@ use crate::core::memory::mem::Memory;
 use crate::core::rtc::Rtc;
 use crate::core::spi::Spi;
 use crate::core::spu::{SoundSampler, Spu};
+use crate::core::thread_regs::ThreadRegs;
 use crate::core::timers::Timers;
 use crate::core::wifi::Wifi;
+use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::jit_memory::JitMemory;
-use crate::settings::Settings;
+use crate::settings::{Settings, DEFAULT_SETTINGS};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, AtomicU32};
 use std::sync::Arc;
@@ -39,23 +40,16 @@ pub struct Emu {
     pub timers: [Timers; 2],
     pub wifi: Wifi,
     pub jit: JitMemory,
-    pub breakout_imm: bool,
     pub settings: Settings,
+    pub breakout_imm: bool,
+    initialized: bool,
 }
 
 impl Emu {
-    pub fn new(
-        cartridge_io: CartridgeIo,
-        fps: Arc<AtomicU16>,
-        key_map: Arc<AtomicU32>,
-        touch_points: Arc<AtomicU16>,
-        sound_sampler: NonNull<SoundSampler>,
-        jit: JitMemory,
-        settings: Settings,
-    ) -> Self {
+    pub fn new(fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: NonNull<SoundSampler>, jit: JitMemory) -> Self {
         Emu {
-            ipc: Ipc::new(&settings),
-            cartridge: Cartridge::new(cartridge_io),
+            ipc: Ipc::new(),
+            cartridge: Cartridge::new(),
             gpu: Gpu::new(fps),
             cm: CycleManager::new(),
             cpu: [CpuRegs::new(), CpuRegs::new()],
@@ -71,8 +65,32 @@ impl Emu {
             timers: [Timers::new(), Timers::new()],
             wifi: Wifi::new(),
             jit,
+            settings: DEFAULT_SETTINGS,
             breakout_imm: false,
-            settings,
+            initialized: true,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.jit.init(&self.settings);
+        self.ipc.init(&self.settings);
+        if !self.initialized {
+            *ARM9.thread_regs() = ThreadRegs::default();
+            *ARM7.thread_regs() = ThreadRegs::default();
+            self.gpu.init();
+            self.cm.init();
+            self.cpu = [CpuRegs::new(), CpuRegs::new()];
+            self.cp15 = Cp15::new();
+            self.mem.init();
+            self.hle = Arm7Hle::new();
+            self.div_sqrt = DivSqrt::new();
+            self.spi.init();
+            self.rtc = Rtc::new();
+            self.spu.init();
+            self.dma = [Dma::new(), Dma::new()];
+            self.timers = [Timers::new(), Timers::new()];
+            self.wifi = Wifi::new();
+        }
+        self.initialized = false;
     }
 }

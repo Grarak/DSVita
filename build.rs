@@ -7,18 +7,106 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
-fn main() {
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-    println!("cargo:rerun-if-env-changed=OUT_DIR");
+const COMMON_C_FLAGS: &[&str] = &["-mtune=cortex-a9", "-mfloat-abi=hard", "-mfpu=neon", "-mthumb"];
 
-    let build_profile_name = out_path.to_str().unwrap().split(std::path::MAIN_SEPARATOR).nth_back(3).unwrap();
-    let build_profile_name_file = out_path.join("build_profile_name");
-    File::create(build_profile_name_file).unwrap().write_all(build_profile_name.as_bytes()).unwrap();
-    let is_release = build_profile_name == "release" || build_profile_name == "release-profiling";
+fn get_out_path() -> PathBuf {
+    PathBuf::from(env::var("OUT_DIR").unwrap())
+}
 
+fn get_profile_name() -> String {
+    get_out_path().to_str().unwrap().split(std::path::MAIN_SEPARATOR).nth_back(3).unwrap().to_string()
+}
+
+fn is_release() -> bool {
+    let profile_name = get_profile_name();
+    profile_name == "release" || profile_name == "release-profiling"
+}
+
+fn get_vitasdk_path() -> Option<PathBuf> {
+    env::var("VITASDK").ok().map(PathBuf::from)
+}
+
+fn is_host_linux() -> bool {
+    cfg!(unix) && fs::exists("/proc").unwrap()
+}
+
+fn is_target_vita() -> bool {
     let target = env::var("TARGET").unwrap();
-    let is_target_vita = target == "armv7-sony-vita-newlibeabihf";
-    if !is_target_vita {
+    target == "armv7-sony-vita-newlibeabihf"
+}
+
+fn get_common_c_flags() -> Vec<String> {
+    let mut flags = COMMON_C_FLAGS.to_vec().iter().map(|flag| flag.to_string()).collect::<Vec<_>>();
+    if !is_target_vita() {
+        flags.push("--target=armv7-unknown-linux-gnueabihf".to_string());
+    }
+    if let Some(vitasdk_path) = get_vitasdk_path() {
+        if is_target_vita() || !is_host_linux() {
+            flags.push(format!("--sysroot={}", vitasdk_path.join("arm-vita-eabi").to_str().unwrap()))
+        }
+    }
+    flags
+}
+
+fn create_cc_build() -> cc::Build {
+    let mut build = cc::Build::new();
+    if is_target_vita() {
+        if let Some(vitasdk_path) = get_vitasdk_path() {
+            build
+                .compiler(vitasdk_path.join("bin").join("arm-vita-eabi-g++"))
+                .archiver(vitasdk_path.join("bin").join("arm-vita-eabi-gcc-ar"))
+                .ranlib(vitasdk_path.join("bin").join("arm-vita-eabi-gcc-ranlib"))
+                .pic(false);
+        }
+    } else {
+        build.compiler("clang++");
+    }
+
+    if let Some(vitasdk_path) = get_vitasdk_path() {
+        if is_target_vita() || !is_host_linux() {
+            let cpp_include_path = vitasdk_path.join("arm-vita-eabi").join("include/c++");
+            let dir = fs::read_dir(cpp_include_path).unwrap();
+            let version = dir.into_iter().next().unwrap().unwrap();
+            let cpp_include_path = version.path();
+
+            build.include(cpp_include_path.to_str().unwrap()).include(cpp_include_path.join("arm-vita-eabi").to_str().unwrap());
+        }
+    }
+
+    if is_release() {
+        build.flag("-flto").flag("-ffat-lto-objects").opt_level_str("fast");
+    }
+    build
+}
+
+fn generate_linux_imgui_bindings(sysroot: Option<PathBuf>) {
+    let bindings_file = get_out_path().join("imgui_bindings.rs");
+    let mut bindings = bindgen::Builder::default()
+        .header("imgui_wrapper.h")
+        .clang_args(["-x", "c++"])
+        .clang_args(["-std=c++17"])
+        .clang_args(["-target", "armv7-unknown-linux-gnueabihf"])
+        .clang_arg("-Iimgui")
+        .formatter(Formatter::Prettyplease)
+        .allowlist_item("ImGui.*")
+        .opaque_type("std::.*")
+        .use_core()
+        .enable_cxx_namespaces()
+        .trust_clang_mangling(true);
+    if let Some(sysroot) = sysroot {
+        bindings = bindings.clang_arg(format!("--sysroot={}", sysroot.to_str().unwrap()));
+    }
+    bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
+}
+
+fn main() {
+    println!("cargo:rerun-if-env-changed=OUT_DIR");
+    let out_path = get_out_path();
+
+    let build_profile_name_file = out_path.join("build_profile_name");
+    File::create(build_profile_name_file).unwrap().write_all(get_profile_name().as_bytes()).unwrap();
+
+    if !is_target_vita() {
         println!("cargo:rerun-if-env-changed=SYSROOT");
         if let Ok(sysroot) = env::var("SYSROOT") {
             println!("cargo:rustc-link-arg=--sysroot={sysroot}");
@@ -28,10 +116,6 @@ fn main() {
         // Running IDE on anything other than linux will fail, so ignore compile error
         let _ = cache_build.file("builtins/cache.c").try_compile("cache").ok();
     }
-
-    let num_jobs = env::var("NUM_JOBS").unwrap();
-
-    let is_host_linux = cfg!(unix) && fs::exists("/proc").unwrap();
 
     let vitasdk_path = env::var("VITASDK").map(PathBuf::from);
     println!("cargo:rerun-if-env-changed=VITASDK");
@@ -51,49 +135,18 @@ fn main() {
             "-DVIXL_INCLUDE_TARGET_A32=1".to_string(),
             "-DVIXL_INCLUDE_TARGET_T32=1".to_string(),
             "-std=c++17".to_string(),
-            "-mtune=cortex-a9".to_string(),
-            "-mfloat-abi=hard".to_string(),
-            "-mfpu=neon".to_string(),
-            "-mthumb".to_string(),
         ];
-        if !is_release {
+        vixl_flags.extend(get_common_c_flags());
+        if !is_release() {
             vixl_flags.push("-DVIXL_DEBUG=1".to_string());
-        }
-        if !is_target_vita {
-            vixl_flags.push("--target=armv7-unknown-linux-gnueabihf".to_string());
-        }
-        if let Ok(vitasdk_path) = &vitasdk_path {
-            if is_target_vita || !is_host_linux {
-                vixl_flags.push(format!("--sysroot={}", vitasdk_path.join("arm-vita-eabi").to_str().unwrap()));
-            }
         }
 
         let vixl_path = Path::new("vixl");
         println!("cargo:rerun-if-changed={}", vixl_path.to_str().unwrap());
 
         let create_vixl_build = |src_files: &[&str]| {
-            let mut vixl_build = cc::Build::new();
+            let mut vixl_build = create_cc_build();
             vixl_build.include(vixl_path.join("src")).cpp(true);
-            if is_target_vita {
-                vixl_build
-                    .compiler(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-g++"))
-                    .archiver(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-gcc-ar"))
-                    .ranlib(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-gcc-ranlib"))
-                    .pic(false);
-            } else {
-                vixl_build.compiler("clang++");
-            }
-
-            if let Ok(vitasdk_path) = &vitasdk_path {
-                if is_target_vita || !is_host_linux {
-                    let cpp_include_path = vitasdk_path.join("arm-vita-eabi").join("include/c++");
-                    let dir = fs::read_dir(cpp_include_path).unwrap();
-                    let version = dir.into_iter().next().unwrap().unwrap();
-                    let cpp_include_path = version.path();
-
-                    vixl_build.include(cpp_include_path.to_str().unwrap()).include(cpp_include_path.join("arm-vita-eabi").to_str().unwrap());
-                }
-            }
 
             for flag in &vixl_flags {
                 vixl_build.flag(flag);
@@ -230,10 +283,7 @@ fn main() {
             vixl_bindings_impl_path.to_str().unwrap(),
         ];
 
-        let mut vixl_build = create_vixl_build(vixl_files);
-        if is_release {
-            vixl_build.flag("-flto").flag("-ffat-lto-objects").opt_level_str("fast");
-        }
+        let vixl_build = create_vixl_build(vixl_files);
         vixl_build.compile("vixl");
 
         let vixl_inst_wrapper_path = out_path.join("vixl_inst_wrapper.rs");
@@ -396,7 +446,7 @@ fn main() {
         ];
 
         let soundtouch_path = Path::new("soundtouch");
-        let mut soundtouch_includes = vec![
+        let soundtouch_includes = vec![
             soundtouch_path.join("include").to_str().unwrap().to_string(),
             soundtouch_path.join("source").join("SoundTouch").to_str().unwrap().to_string(),
         ];
@@ -406,40 +456,11 @@ fn main() {
             "-std=c++17".to_string(),
             "-DST_NO_EXCEPTION_HANDLING=1".to_string(),
             "-DM_PI=3.14159265358979323846".to_string(),
-            "-mtune=cortex-a9".to_string(),
-            "-mfloat-abi=hard".to_string(),
-            "-mfpu=neon".to_string(),
-            "-mthumb".to_string(),
         ];
+        soundtouch_flags.extend(get_common_c_flags());
 
-        if !is_target_vita {
-            soundtouch_flags.push("--target=armv7-unknown-linux-gnueabihf".to_string());
-        }
-
-        if let Ok(vitasdk_path) = &vitasdk_path {
-            if is_target_vita || !is_host_linux {
-                let cpp_include_path = vitasdk_path.join("arm-vita-eabi").join("include/c++");
-                let dir = fs::read_dir(cpp_include_path).unwrap();
-                let version = dir.into_iter().next().unwrap().unwrap();
-                let cpp_include_path = version.path();
-
-                soundtouch_includes.push(cpp_include_path.to_str().unwrap().to_string());
-                soundtouch_includes.push(cpp_include_path.join("arm-vita-eabi").to_str().unwrap().to_string());
-                soundtouch_flags.push(format!("--sysroot={}", vitasdk_path.join("arm-vita-eabi").to_str().unwrap()));
-            }
-        }
-
-        let mut soundtouch_build = cc::Build::new();
+        let mut soundtouch_build = create_cc_build();
         soundtouch_build.cpp(true);
-        if is_target_vita {
-            soundtouch_build
-                .compiler(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-g++"))
-                .archiver(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-gcc-ar"))
-                .ranlib(vitasdk_path.as_ref().unwrap().join("bin").join("arm-vita-eabi-gcc-ranlib"))
-                .pic(false);
-        } else {
-            soundtouch_build.compiler("clang++");
-        }
         for file in SOUNDTOUCH_FILES {
             let path = soundtouch_path.join("source").join("SoundTouch").join(file);
             println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
@@ -464,10 +485,6 @@ fn main() {
         .unwrap();
         writeln!(soundtouch_wrapper, "}}").unwrap();
         soundtouch_build.file(soundtouch_wrapper_path);
-
-        if is_release {
-            soundtouch_build.flag("-flto").flag("-ffat-lto-objects").opt_level_str("fast");
-        }
         soundtouch_build.compile("soundtouch");
 
         let bindings_file = out_path.join("soundtouch_bindings.rs");
@@ -506,6 +523,31 @@ fn main() {
             .unwrap();
     }
 
+    if !is_target_vita() && is_host_linux() {
+        const IMGUI_FILES: &[&str] = &["imgui.cpp", "imgui_draw.cpp"];
+
+        let imgui_path = PathBuf::from("imgui");
+
+        let mut imgui_build = create_cc_build();
+        imgui_build
+            .cpp(true)
+            .include(&imgui_path)
+            .include(imgui_path.join("examples").join("sdl_opengl3_example"))
+            .file("imgui_impl_sdl_gl3.cpp");
+        println!("cargo:rerun-if-changed=imgui_impl_sdl_gl3.cpp");
+        for file in IMGUI_FILES {
+            let path = imgui_path.join(file);
+            println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
+            imgui_build.file(path);
+        }
+
+        imgui_build.compile("imgui");
+
+        generate_linux_imgui_bindings(None);
+
+        println!("cargo:rustc-link-lib=GL");
+    }
+
     if vitasdk_path.is_err() {
         return;
     }
@@ -516,7 +558,7 @@ fn main() {
 
     let kubridge_path = PathBuf::from("kubridge");
 
-    {
+    if is_target_vita() {
         let bindings_file = out_path.join("imgui_bindings.rs");
 
         const IMGUI_HEADERS: [&str; 3] = ["imgui.h", "imgui_internal.h", "imgui_impl_vitagl.h"];
@@ -525,7 +567,12 @@ fn main() {
             .clang_args(["-std=c++17"])
             .clang_args(["-target", "armv7-unknown-linux-gnueabihf"])
             .clang_args(["--sysroot", vitasdk_sysroot.to_str().unwrap()])
-            .formatter(Formatter::Prettyplease);
+            .formatter(Formatter::Prettyplease)
+            .allowlist_item("ImGui.*")
+            .opaque_type("std::.*")
+            .use_core()
+            .enable_cxx_namespaces()
+            .trust_clang_mangling(true);
         for header in IMGUI_HEADERS {
             let header_path = vitasdk_include_path.join(header);
             println!("cargo:rerun-if-changed={}", header_path.to_str().unwrap());
@@ -533,10 +580,10 @@ fn main() {
         }
         bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
 
-        if is_target_vita {
-            println!("cargo:rustc-link-search=native={}", vitasdk_lib_path.to_str().unwrap());
-            println!("cargo:rustc-link-lib=static=imgui");
-        }
+        println!("cargo:rustc-link-search=native={}", vitasdk_lib_path.to_str().unwrap());
+        println!("cargo:rustc-link-lib=static=imgui");
+    } else if !is_host_linux() {
+        generate_linux_imgui_bindings(Some(vitasdk_sysroot.clone()));
     }
 
     {
@@ -558,7 +605,7 @@ fn main() {
         bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
     }
 
-    if !is_target_vita {
+    if !is_target_vita() {
         return;
     }
 
@@ -571,7 +618,7 @@ fn main() {
             ("SINGLE_THREADED_GC", "1"),
         ];
 
-        if is_release {
+        if is_release() {
             vita_gl_envs.push(("NO_DEBUG", "1"));
         } else {
             vita_gl_envs.push(("HAVE_SHARK_LOG", "1"));
@@ -584,6 +631,7 @@ fn main() {
         let vita_gl_lib_path = vita_gl_path.join("libvitaGL.a");
         let vita_gl_lib_new_path = vita_gl_path.join("libvitaGL_dsvita.a");
 
+        let num_jobs = env::var("NUM_JOBS").unwrap();
         Command::new("make").current_dir("vitaGL").arg("clean").status().unwrap();
         Command::new("make").current_dir("vitaGL").args(["-j", &num_jobs]).envs(vita_gl_envs).status().unwrap();
 
@@ -593,17 +641,22 @@ fn main() {
     }
 
     {
-        let kubridge_dst_path = cmake::Config::new(&kubridge_path)
-            .configure_arg("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
-            .build_target("libkubridge_stub.a")
-            .build()
-            .join("build");
-        let kubridge_lib_path = kubridge_dst_path.join("libkubridge_stub.a");
-        let kubridge_lib_new_path = kubridge_dst_path.join("libkubridge_stub_dsvita.a");
+        let kubridge_out = out_path.join("kubridge");
+        Command::new("cmake")
+            .arg("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
+            .arg("-B")
+            .arg(&kubridge_out)
+            .arg("-S")
+            .arg("kubridge")
+            .status()
+            .unwrap();
+        Command::new("cmake").arg("--build").arg(&kubridge_out).status().unwrap();
+        let kubridge_lib_path = kubridge_out.join("libkubridge_stub.a");
+        let kubridge_lib_new_path = kubridge_out.join("libkubridge_stub_dsvita.a");
         fs::rename(kubridge_lib_path, kubridge_lib_new_path).unwrap();
 
         println!("cargo:rerun-if-changed={}", kubridge_path.to_str().unwrap());
-        println!("cargo:rustc-link-search=native={}", fs::canonicalize(kubridge_dst_path).unwrap().to_str().unwrap());
+        println!("cargo:rustc-link-search=native={}", fs::canonicalize(kubridge_out).unwrap().to_str().unwrap());
         println!("cargo:rustc-link-lib=static=kubridge_stub_dsvita");
     }
 }

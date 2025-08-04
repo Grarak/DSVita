@@ -1,20 +1,26 @@
 use crate::cartridge_io::{CartridgeIo, CartridgePreview};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::input;
+use crate::presenter::imgui::root::{
+    ImDrawData, ImGui, ImGuiConfigFlags__ImGuiConfigFlags_NavEnableKeyboard, ImGui_ImplSdlGL3_Init, ImGui_ImplSdlGL3_NewFrame, ImGui_ImplSdlGL3_ProcessEvent, ImGui_ImplSdlGL3_RenderDrawData,
+};
+use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, UiBackend, UiPauseMenuReturn};
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
 use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
-use clap::{arg, command, value_parser, ArgAction};
+use clap::{arg, command, value_parser, ArgAction, ArgMatches};
 use gl::types::GLuint;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
-use sdl2::event::Event;
+use sdl2::event::{Event, EventType};
 use sdl2::mouse::MouseButton;
 use sdl2::video::{GLContext, GLProfile, Window};
 use sdl2::{keyboard, EventPump};
 use std::collections::HashMap;
+use std::ops::BitOrAssign;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::{slice, thread};
+use std::{mem, ptr, slice, thread};
 
 #[derive(Clone)]
 pub struct PresenterAudio {
@@ -38,6 +44,7 @@ impl PresenterAudio {
 }
 
 pub struct Presenter {
+    arg_matches: ArgMatches,
     presenter_audio: PresenterAudio,
     window: Window,
     _gl_ctx: GLContext,
@@ -51,6 +58,21 @@ pub struct Presenter {
 impl Presenter {
     #[cold]
     pub fn new() -> Self {
+        let arg_matches = command!()
+            .arg(arg!(framelimit: -f "Enable framelimit").required(false).action(ArgAction::SetTrue))
+            .arg(arg!(audio: -a "Enable audio").required(false).action(ArgAction::SetTrue))
+            .arg(
+                arg!(-e <arm7_emu> "0: Accurate, 1: Partial, 2: Partial with Sound, 3: Hle")
+                    .num_args(1)
+                    .required(false)
+                    .default_value("0")
+                    .value_parser(value_parser!(u8)),
+            )
+            .arg(arg!(enable_arm7_block_validation: -b "Enable arm7 block validation").required(false).action(ArgAction::SetTrue))
+            .arg(arg!(ui: --ui "Use UI").required(false).action(ArgAction::SetTrue))
+            .arg(arg!([nds_rom] "NDS rom to run").num_args(1).required(true).value_parser(value_parser!(String)))
+            .get_matches();
+
         sdl2::hint::set("SDL_NO_SIGNAL_HANDLERS", "1");
         let sdl = sdl2::init().unwrap();
         let sdl_video = sdl.video().unwrap();
@@ -95,7 +117,8 @@ impl Presenter {
         key_code_mapping.insert(keyboard::Keycode::Num8, input::Keycode::TriggerL);
         key_code_mapping.insert(keyboard::Keycode::Num9, input::Keycode::TriggerR);
 
-        Presenter {
+        let mut instance = Presenter {
+            arg_matches,
             presenter_audio: PresenterAudio::new(audio_queue),
             window,
             _gl_ctx: gl_ctx,
@@ -104,38 +127,42 @@ impl Presenter {
             mouse_pressed: false,
             mouse_id: None,
             keymap: 0xFFFFFFFF,
+        };
+
+        init_ui(&mut instance);
+        instance
+    }
+
+    pub fn present_ui(&mut self) -> Option<(CartridgeIo, Settings)> {
+        let file_path = PathBuf::from(self.arg_matches.get_one::<String>("nds_rom").unwrap());
+        if self.arg_matches.get_flag("ui") {
+            if file_path.exists() && file_path.is_file() {
+                eprintln!("When using ui mode then <nds_rom> must point to a directory");
+                std::process::exit(1);
+            }
+
+            show_main_menu(file_path, self)
+        } else {
+            let mut settings = DEFAULT_SETTINGS.clone();
+            settings.setting_framelimit_mut().value = SettingValue::Bool(self.arg_matches.get_flag("framelimit"));
+            settings.setting_audio_mut().value = SettingValue::Bool(self.arg_matches.get_flag("audio"));
+            settings.setting_arm7_hle_mut().value = SettingValue::Arm7Emu(Arm7Emu::from(*self.arg_matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
+            settings.setting_arm7_block_validation_mut().value = SettingValue::Bool(self.arg_matches.get_flag("enable_arm7_block_validation"));
+
+            let file_name = file_path.file_name().unwrap().to_str().unwrap();
+            let save_path = file_path.parent().unwrap().join(format!("{file_name}.sav"));
+            let preview = CartridgePreview::new(file_path).unwrap();
+            Some((CartridgeIo::from_preview(preview, save_path).unwrap(), settings))
         }
     }
 
-    pub fn present_ui(&self) -> (CartridgeIo, Settings) {
-        let matches = command!()
-            .arg(arg!(framelimit: -f "Enable framelimit").required(false).action(ArgAction::SetTrue))
-            .arg(arg!(audio: -a "Enable audio").required(false).action(ArgAction::SetTrue))
-            .arg(
-                arg!(-e <arm7_emu> "0: Accurate, 1: Partial, 2: Partial with Sound, 3: Hle")
-                    .num_args(1)
-                    .required(false)
-                    .default_value("0")
-                    .value_parser(value_parser!(u8)),
-            )
-            .arg(arg!(enable_arm7_block_validation: -b "Enable arm7 block validation").required(false).action(ArgAction::SetTrue))
-            .arg(arg!([nds_rom] "NDS rom to run").num_args(1).required(true).value_parser(value_parser!(String)))
-            .get_matches();
-
-        let mut settings = DEFAULT_SETTINGS.clone();
-        settings.setting_framelimit_mut().value = SettingValue::Bool(matches.get_flag("framelimit"));
-        settings.setting_audio_mut().value = SettingValue::Bool(matches.get_flag("audio"));
-        settings.setting_arm7_hle_mut().value = SettingValue::Arm7Emu(Arm7Emu::from(*matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
-        settings.setting_arm7_block_validation_mut().value = SettingValue::Bool(matches.get_flag("enable_arm7_block_validation"));
-
-        let file_path = PathBuf::from(matches.get_one::<String>("nds_rom").unwrap());
-        let file_name = file_path.file_name().unwrap().to_str().unwrap();
-        let save_path = file_path.parent().unwrap().join(format!("{file_name}.sav"));
-        let preview = CartridgePreview::new(file_path).unwrap();
-        (CartridgeIo::from_preview(preview, save_path).unwrap(), settings)
-    }
-
     pub fn destroy_ui(&self) {}
+
+    pub fn on_game_launched(&self) {}
+
+    pub fn present_pause(&mut self, gpu_renderer: &GpuRenderer, settings: &mut Settings) -> UiPauseMenuReturn {
+        show_pause_menu(self, gpu_renderer, settings)
+    }
 
     pub fn poll_event(&mut self, _: ScreenMode) -> PresentEvent {
         let mut touch = None;
@@ -149,6 +176,10 @@ impl Presenter {
 
         for event in self.event_pump.poll_iter() {
             match event {
+                Event::KeyDown {
+                    keycode: Some(keyboard::Keycode::Escape),
+                    ..
+                } => return PresentEvent::Pause,
                 Event::KeyDown { keycode: Some(code), .. } => {
                     if let Some(code) = self.key_code_mapping.get(&code) {
                         self.keymap &= !(1 << *code as u8);
@@ -203,5 +234,39 @@ impl Presenter {
 
     pub fn gl_create_depth_tex() -> GLuint {
         0
+    }
+}
+
+impl UiBackend for Presenter {
+    fn init(&mut self) {
+        unsafe {
+            (*ImGui::GetIO()).ConfigFlags.bitor_assign(ImGuiConfigFlags__ImGuiConfigFlags_NavEnableKeyboard as i32);
+            ImGui_ImplSdlGL3_Init(self.window.raw() as _, ptr::null())
+        };
+    }
+
+    fn new_frame(&mut self) -> bool {
+        unsafe {
+            let mut event: sdl2::sys::SDL_Event = mem::zeroed();
+            while sdl2::sys::SDL_PollEvent(&mut event) != 0 {
+                if let Ok(event) = EventType::try_from(event.type_) {
+                    if event == EventType::Quit {
+                        return false;
+                    }
+                }
+                ImGui_ImplSdlGL3_ProcessEvent(ptr::addr_of_mut!(event) as _);
+            }
+
+            ImGui_ImplSdlGL3_NewFrame(self.window.raw() as _);
+            true
+        }
+    }
+
+    fn render_draw_data(&mut self, draw_data: *mut ImDrawData) {
+        unsafe { ImGui_ImplSdlGL3_RenderDrawData(draw_data) };
+    }
+
+    fn swap_window(&mut self) {
+        self.gl_swap_window();
     }
 }

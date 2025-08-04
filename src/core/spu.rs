@@ -24,7 +24,6 @@ pub struct SoundSampler {
     ready_queue: usize,
     waiting: bool,
     busy: AtomicBool,
-    framelimit: bool,
     sound_touch: SoundTouch,
     last_sample: u32,
     stretch_ratio: f32,
@@ -33,7 +32,7 @@ pub struct SoundSampler {
 }
 
 impl SoundSampler {
-    pub fn new(framelimit: bool) -> SoundSampler {
+    pub fn new() -> SoundSampler {
         let mut sound_touch = SoundTouch::new();
         sound_touch.set_channels(2);
         sound_touch.set_sample_rate(SAMPLE_RATE);
@@ -45,7 +44,6 @@ impl SoundSampler {
             ready_queue: 0,
             waiting: false,
             busy: AtomicBool::new(false),
-            framelimit,
             sound_touch,
             last_sample: 0,
             stretch_ratio: 1.0,
@@ -54,7 +52,19 @@ impl SoundSampler {
         }
     }
 
-    fn push(&mut self, sample: u32) {
+    pub fn init(&mut self) {
+        self.busy_queue = 0;
+        self.ready_queue = 0;
+        self.waiting = false;
+        self.busy.store(false, Ordering::SeqCst);
+        self.sound_touch.clear();
+        self.last_sample = 0;
+        self.stretch_ratio = 1.0;
+        self.average_size = 0;
+        self.size_count = 0;
+    }
+
+    fn push(&mut self, framelimit: bool, sample: u32) {
         while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
 
         unsafe { assert_unchecked(self.busy_queue <= 1) };
@@ -64,7 +74,7 @@ impl SoundSampler {
         *size += 1;
         if *size == SAMPLE_BUFFER_SIZE as u16 {
             let (_, other_size) = &mut self.queues[self.busy_queue ^ 1];
-            if self.framelimit && *other_size == SAMPLE_BUFFER_SIZE as u16 {
+            if framelimit && *other_size == SAMPLE_BUFFER_SIZE as u16 {
                 self.waiting = true;
                 self.busy.store(false, Ordering::SeqCst);
                 thread::park();
@@ -301,7 +311,6 @@ struct SoundCapChannel {
 }
 
 pub struct Spu {
-    pub audio_enabled: bool,
     channels: [SpuChannel; CHANNEL_COUNT],
     sound_cap_channels: [SoundCapChannel; 2],
     main_sound_cnt: MainSoundCnt,
@@ -314,7 +323,6 @@ pub struct Spu {
 impl Spu {
     pub fn new(sound_sampler: NonNull<SoundSampler>) -> Self {
         Spu {
-            audio_enabled: false,
             channels: [SpuChannel::default(); CHANNEL_COUNT],
             sound_cap_channels: [SoundCapChannel::default(); 2],
             main_sound_cnt: MainSoundCnt::from(0),
@@ -323,6 +331,15 @@ impl Spu {
             noise_values: [0; 2],
             sound_sampler,
         }
+    }
+
+    pub fn init(&mut self) {
+        self.channels = [SpuChannel::default(); CHANNEL_COUNT];
+        self.sound_cap_channels = [SoundCapChannel::default(); 2];
+        self.main_sound_cnt = MainSoundCnt::from(0);
+        self.sound_bias = 0;
+        self.duty_cycles = [0; 6];
+        self.noise_values = [0; 2];
     }
 }
 
@@ -536,14 +553,14 @@ impl Emu {
     }
 
     pub fn spu_on_sample_event(&mut self, _: u16) {
-        if unlikely(!self.spu.audio_enabled) {
+        if unlikely(!self.settings.audio()) {
             for i in 0..CHANNEL_COUNT {
                 self.spu.channels[i].cnt.set_start_status(false);
             }
             for i in 0..2 {
                 self.spu.sound_cap_channels[i].cnt.set_start_status(false);
             }
-            unsafe { self.spu.sound_sampler.as_mut().push(0) };
+            unsafe { self.spu.sound_sampler.as_mut().push(self.settings.framelimit(), 0) };
             self.cm.schedule(512 * 2, EventType::SpuSample, 0);
             return;
         }
@@ -698,7 +715,12 @@ impl Emu {
         let sample_left = ((sample_left - 0x200) << 5) as u32;
         let sample_right = ((sample_right - 0x200) << 5) as u32;
 
-        unsafe { self.spu.sound_sampler.as_mut().push(((sample_right << 16) & 0xFFFF0000) | (sample_left & 0xFFFF)) };
+        unsafe {
+            self.spu
+                .sound_sampler
+                .as_mut()
+                .push(self.settings.framelimit(), ((sample_right << 16) & 0xFFFF0000) | (sample_left & 0xFFFF))
+        };
         self.cm.schedule(512 * 2, EventType::SpuSample, 0);
     }
 }

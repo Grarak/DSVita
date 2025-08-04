@@ -47,6 +47,7 @@ pub struct OtherModeRegs {
     pub spsr: u32,
 }
 
+#[derive(Default)]
 #[repr(C, align(32))]
 pub struct ThreadRegs {
     pub gp_regs: [u32; 13],
@@ -61,25 +62,6 @@ pub struct ThreadRegs {
     pub abt: OtherModeRegs,
     pub irq: OtherModeRegs,
     pub und: OtherModeRegs,
-}
-
-impl ThreadRegs {
-    pub fn new() -> Self {
-        ThreadRegs {
-            gp_regs: [0u32; 13],
-            sp: 0,
-            lr: 0,
-            pc: 0,
-            cpsr: 0,
-            spsr: 0,
-            user: UserRegs::default(),
-            fiq: FiqRegs::default(),
-            svc: OtherModeRegs::default(),
-            abt: OtherModeRegs::default(),
-            irq: OtherModeRegs::default(),
-            und: OtherModeRegs::default(),
-        }
-    }
 }
 
 impl Emu {

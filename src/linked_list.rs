@@ -158,7 +158,7 @@ impl<T, A: Default + LinkedListAllocator<T>> LinkedList<T, A> {
         self.allocator.deallocate(entry);
     }
 
-    pub fn iter(&self) -> LinkedListIter<T> {
+    pub fn iter(&self) -> LinkedListIter<'_, T> {
         LinkedListIter {
             entry: self.root,
             size: self.size,
@@ -166,7 +166,7 @@ impl<T, A: Default + LinkedListAllocator<T>> LinkedList<T, A> {
         }
     }
 
-    pub fn iter_rev(&self) -> LinkedListListRevIter<T> {
+    pub fn iter_rev(&self) -> LinkedListListRevIter<'_, T> {
         LinkedListListRevIter {
             entry: self.end,
             size: self.size,
@@ -187,8 +187,8 @@ impl<T, A: Default + LinkedListAllocator<T>> LinkedList<T, A> {
     }
 }
 
-impl<T, A: LinkedListAllocator<T>> Drop for LinkedList<T, A> {
-    fn drop(&mut self) {
+impl<T, A: LinkedListAllocator<T>> LinkedList<T, A> {
+    pub fn clear(&mut self) {
         let mut current = self.root;
         let mut freed_count = 0;
         while !current.is_null() {
@@ -197,7 +197,16 @@ impl<T, A: LinkedListAllocator<T>> Drop for LinkedList<T, A> {
             current = next;
             freed_count += 1;
         }
-        assert_eq!(self.size, freed_count);
+        debug_assert_eq!(self.size, freed_count);
+        self.size = 0;
+        self.root = ptr::null_mut();
+        self.end = ptr::null_mut();
+    }
+}
+
+impl<T, A: LinkedListAllocator<T>> Drop for LinkedList<T, A> {
+    fn drop(&mut self) {
+        self.clear();
     }
 }
 

@@ -104,19 +104,11 @@ impl IpcTrait for IpcLle {
                 debug_println!("{cpu:?} ipc send {:x} {:x} {}", u8::from(message.tag()), u32::from(message.data()), message.err());
                 if cpu == ARM9 {
                     match self.0 {
-                        Arm7Emu::PartialHle | Arm7Emu::PartialSoundHle => {
+                        Arm7Emu::SoundHle => {
                             let message = IpcFifoMessage::from(value & mask);
                             match IpcFifoTag::from(u8::from(message.tag())) {
-                                IpcFifoTag::Sound if self.0 == Arm7Emu::PartialSoundHle => {
+                                IpcFifoTag::Sound => {
                                     emu.sound_hle_ipc_recv(u32::from(message.data()));
-                                    return;
-                                }
-                                IpcFifoTag::Touchpanel if !message.err() => {
-                                    emu.touchscreen_hle_ipc_recv(u32::from(message.data()));
-                                    return;
-                                }
-                                IpcFifoTag::Rtc if !message.err() => {
-                                    emu.rtc_hle_ipc_recv(u32::from(message.data()));
                                     return;
                                 }
                                 _ => {}
@@ -202,15 +194,21 @@ impl IpcTrait for IpcHle {
 }
 
 impl Ipc {
-    pub fn new(settings: &Settings) -> Self {
+    pub fn new() -> Self {
         Ipc {
             sync_regs: [IpcSyncCnt::from(0); 2],
             fifo: [Fifo::new(), Fifo::new()],
-            ipc_type: match settings.arm7_hle() {
-                Arm7Emu::AccurateLle | Arm7Emu::PartialHle | Arm7Emu::PartialSoundHle => IpcLle(settings.arm7_hle()).into(),
-                Arm7Emu::Hle => IpcHle.into(),
-            },
+            ipc_type: IpcLle(Arm7Emu::AccurateLle).into(),
         }
+    }
+
+    pub fn init(&mut self, settings: &Settings) {
+        self.sync_regs = [IpcSyncCnt::from(0); 2];
+        self.fifo = [Fifo::new(), Fifo::new()];
+        self.ipc_type = match settings.arm7_hle() {
+            Arm7Emu::AccurateLle | Arm7Emu::SoundHle => IpcLle(settings.arm7_hle()).into(),
+            Arm7Emu::Hle => IpcHle.into(),
+        };
     }
 }
 
