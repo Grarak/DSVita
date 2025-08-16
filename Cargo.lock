@@ -395,13 +395,14 @@ dependencies = [
  "lazy_static",
  "libc",
  "paste",
- "regex",
  "rust-ini",
  "sdl2",
  "static_assertions",
  "strum",
  "strum_macros",
+ "vitabuild",
  "vitasdk-sys",
+ "vixl",
  "xxhash-rust",
 ]
 
@@ -1035,10 +1036,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vitabuild"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "vitasdk-sys"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "665d8a491ad572e0ebc103846c4a51e66b641c942391b7241f91c413a3a301a9"
+
+[[package]]
+name = "vixl"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
+ "cc",
+ "regex",
+ "vitabuild",
+]
 
 [[package]]
 name = "wasi"

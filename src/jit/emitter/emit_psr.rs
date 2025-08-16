@@ -1,6 +1,4 @@
 use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG, GUEST_REGS_PTR_REG};
-use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, MaskedSpecialRegisterType_CPSR_f, MemOperand, SpecialRegisterType_CPSR};
-use crate::jit::assembler::vixl::{MasmAnd3, MasmLdrh2, MasmMov4, MasmMrs2, MasmMsr2, MasmOrr3};
 use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_info::Operand;
 use crate::jit::inst_thread_regs_handler::{register_set_cpsr_checked, register_set_spsr_checked};
@@ -8,6 +6,7 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
+use vixl::{FlagsUpdate_DontCare, MaskedSpecialRegisterType_CPSR_f, MasmAnd3, MasmLdrh2, MasmMov4, MasmMrs2, MasmMsr2, MasmOrr3, SpecialRegisterType_CPSR};
 
 impl JitAsm<'_> {
     pub fn emit_msr(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
@@ -49,7 +48,7 @@ impl JitAsm<'_> {
 
         match inst.op {
             Op::MrsRc => {
-                block_asm.ldrh2(Reg::R1, &MemOperand::reg_offset(GUEST_REGS_PTR_REG, Reg::CPSR as i32 * 4));
+                block_asm.ldrh2(Reg::R1, &(GUEST_REGS_PTR_REG, Reg::CPSR as i32 * 4).into());
                 block_asm.mrs2(CPSR_TMP_REG, SpecialRegisterType_CPSR.into());
                 block_asm.and3(CPSR_TMP_REG, CPSR_TMP_REG, &0xF8000000u32.into());
                 block_asm.orr3(op0_mapped, Reg::R1, &CPSR_TMP_REG.into());

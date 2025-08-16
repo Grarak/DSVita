@@ -1,13 +1,6 @@
 use crate::core::emu::Emu;
 use crate::core::CpuType;
 use crate::jit::assembler::reg_alloc::{RegAlloc, GUEST_REGS_LENGTH, GUEST_REG_ALLOCATIONS};
-use crate::jit::assembler::vixl::vixl::{
-    BranchHint_kNear, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, MaskedSpecialRegisterType_CPSR_f, MemOperand, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR,
-    ShiftType_RRX, SpecialRegisterType_CPSR,
-};
-use crate::jit::assembler::vixl::{
-    vixl, Label, MacroAssembler, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2, MasmLdr3, MasmLsr5, MasmMov2, MasmMrs2, MasmMsr2, MasmPop1, MasmPush1, MasmStr3, MasmStrb2, MasmSub5,
-};
 use crate::jit::inst_info::{InstInfo, Operands, Shift, ShiftValue};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
@@ -15,6 +8,10 @@ use crate::jit::{inst_info, Cond};
 use crate::mmap::{PAGE_SHIFT, PAGE_SIZE};
 use std::ops::{Deref, DerefMut};
 use std::ptr;
+use vixl::{
+    BranchHint_kNear, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, Label, MacroAssembler, MaskedSpecialRegisterType_CPSR_f, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2, MasmLdr3, MasmLsr5,
+    MasmMov2, MasmMrs2, MasmMsr2, MasmPop1, MasmPush1, MasmStr3, MasmStrb2, MasmSub5, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR, ShiftType_RRX, SpecialRegisterType_CPSR,
+};
 
 pub const GUEST_REGS_PTR_REG: Reg = Reg::R3;
 pub const CPSR_TMP_REG: Reg = Reg::R0;
@@ -125,7 +122,7 @@ impl BlockAsm {
 
     pub fn exit_guest_context(&mut self, host_sp_ptr: *mut usize) {
         self.ldr2(Reg::R0, host_sp_ptr as u32);
-        self.ldr2(Reg::SP, &MemOperand::reg(Reg::R0));
+        self.ldr2(Reg::SP, &Reg::R0.into());
         self.pop1(reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::R12, Reg::PC));
     }
 
@@ -231,7 +228,7 @@ impl BlockAsm {
     }
 
     pub fn load_guest_reg_cond(&mut self, cond: Cond, dest_reg: Reg, guest_reg: Reg) {
-        self.ldr3(cond, dest_reg, &MemOperand::reg_offset(GUEST_REGS_PTR_REG, guest_reg as i32 * 4));
+        self.ldr3(cond, dest_reg, &(GUEST_REGS_PTR_REG, guest_reg as i32 * 4).into());
     }
 
     pub fn load_guest_reg(&mut self, dest_reg: Reg, guest_reg: Reg) {
@@ -239,7 +236,7 @@ impl BlockAsm {
     }
 
     pub fn store_guest_reg_cond(&mut self, cond: Cond, src_reg: Reg, guest_reg: Reg) {
-        self.str3(cond, src_reg, &MemOperand::reg_offset(GUEST_REGS_PTR_REG, guest_reg as i32 * 4));
+        self.str3(cond, src_reg, &(GUEST_REGS_PTR_REG, guest_reg as i32 * 4).into());
     }
 
     pub fn store_guest_reg(&mut self, src_reg: Reg, guest_reg: Reg) {
@@ -254,7 +251,7 @@ impl BlockAsm {
     pub fn store_guest_cpsr_reg(&mut self, tmp_reg: Reg) {
         self.mrs2(tmp_reg, SpecialRegisterType_CPSR.into());
         self.lsr5(FlagsUpdate_DontCare, Cond::AL, tmp_reg, tmp_reg, &24.into());
-        self.strb2(tmp_reg, &MemOperand::reg_offset(GUEST_REGS_PTR_REG, Reg::CPSR as i32 * 4 + 3));
+        self.strb2(tmp_reg, &(GUEST_REGS_PTR_REG, Reg::CPSR as i32 * 4 + 3).into());
     }
 
     pub fn save_dirty_guest_cpsr(&mut self, clear: bool) {

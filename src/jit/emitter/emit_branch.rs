@@ -1,8 +1,6 @@
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::vixl::vixl::{BranchHint_kFar, FlagsUpdate_DontCare, MemOperand};
-use crate::jit::assembler::vixl::{Label, MasmB2, MasmB3, MasmBic5, MasmBlx1, MasmBx1, MasmCmp2, MasmLdr2, MasmLdrb2, MasmMov2, MasmMov4, MasmOrr5, MasmStrb2, MasmStrh2};
 use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::{branch_lr, branch_reg, handle_idle_loop, handle_interrupt, pre_branch};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
@@ -12,6 +10,7 @@ use crate::logging::branch_println;
 use crate::settings::Arm7Emu;
 use crate::{BRANCH_LOG, IS_DEBUG};
 use std::ptr;
+use vixl::{BranchHint_kFar, FlagsUpdate_DontCare, Label, MasmB2, MasmB3, MasmBic5, MasmBlx1, MasmBx1, MasmCmp2, MasmLdr2, MasmLdrb2, MasmMov2, MasmMov4, MasmOrr5, MasmStrb2, MasmStrh2};
 use CpuType::ARM7;
 
 extern "C" fn debug_branch_label<const CPU: CpuType>(current_pc: u32, target_pc: u32) {
@@ -47,7 +46,7 @@ impl JitAsm<'_> {
         let jit_entry_addr = self.emu.jit.jit_memory_map.get_jit_entry(target_pc);
         block_asm.ldr2(Reg::R0, target_pc);
         block_asm.ldr2(Reg::R1, jit_entry_addr as u32);
-        block_asm.ldr2(Reg::R3, &MemOperand::reg(Reg::R1));
+        block_asm.ldr2(Reg::R3, &Reg::R1.into());
         if has_return {
             block_asm.blx1(Reg::R3);
         } else {
@@ -126,7 +125,7 @@ impl JitAsm<'_> {
 
             if inst_index == self.jit_buf.insts.len() - 1 {
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &0.into());
-                block_asm.strh2(Reg::R0, &MemOperand::reg_offset(Reg::R1, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32));
+                block_asm.strh2(Reg::R0, &(Reg::R1, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
 
                 block_asm.restore_guest_regs_ptr();
                 block_asm.restore_stack();
@@ -136,7 +135,7 @@ impl JitAsm<'_> {
             }
 
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &self.jit_buf.insts_cycle_counts[inst_index].into());
-            block_asm.strh2(Reg::R0, &MemOperand::reg_offset(Reg::R1, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32));
+            block_asm.strh2(Reg::R0, &(Reg::R1, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
 
             let mut next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
             if self.jit_buf.insts[inst_index].cond != Cond::AL {
@@ -157,7 +156,7 @@ impl JitAsm<'_> {
             if inst_index == self.jit_buf.insts.len() - 1 {
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &0.into());
                 block_asm.ldr2(Reg::R1, ptr::addr_of_mut!(self.runtime_data) as u32);
-                block_asm.strh2(Reg::R0, &MemOperand::reg_offset(Reg::R1, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32));
+                block_asm.strh2(Reg::R0, &(Reg::R1, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
 
                 block_asm.restore_guest_regs_ptr();
                 block_asm.restore_stack();
@@ -230,7 +229,7 @@ impl JitAsm<'_> {
                 }
                 ARM7 => {
                     self.emit_branch_out_metadata(inst_index, true, block_asm);
-                    let mem_operand = MemOperand::reg_offset(Reg::R0, JitRuntimeData::get_data_packed_offset() as i32 + 3);
+                    let mem_operand = (Reg::R0, JitRuntimeData::get_data_packed_offset() as i32 + 3).into();
                     block_asm.ldrb2(Reg::R1, &mem_operand);
                     block_asm.orr5(FlagsUpdate_DontCare, Cond::AL, Reg::R1, Reg::R1, &0x80.into());
                     block_asm.strb2(Reg::R1, &mem_operand);
@@ -261,15 +260,15 @@ impl JitAsm<'_> {
             if jump_to_index > inst_index {
                 block_asm.ldr2(Reg::R0, current_pc_jit_entry as u32);
                 block_asm.ldr2(Reg::R1, target_pc_jit_entry as u32);
-                block_asm.ldr2(Reg::R0, &MemOperand::reg(Reg::R0));
-                block_asm.ldr2(Reg::R1, &MemOperand::reg(Reg::R1));
+                block_asm.ldr2(Reg::R0, &Reg::R0.into());
+                block_asm.ldr2(Reg::R1, &Reg::R1.into());
                 block_asm.cmp2(Reg::R0, &Reg::R1.into());
                 block_asm.b3(Cond::NE, &mut exit_label, BranchHint_kFar);
             }
 
             block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pre_cycle_count_sum.into());
-            block_asm.strh2(Reg::R1, &MemOperand::reg_offset(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32));
+            block_asm.strh2(Reg::R1, &(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
 
             if BRANCH_LOG {
                 let pc = block_asm.current_pc;

@@ -1,11 +1,6 @@
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG, GUEST_REGS_PTR_REG};
-use crate::jit::assembler::vixl::vixl::{AddrMode_PostIndex, AddrMode_PreIndex, FlagsUpdate, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, MemOperand, WriteBack};
-use crate::jit::assembler::vixl::{
-    vixl, MacroAssembler, MasmAdd5, MasmAnd5, MasmBic5, MasmCmp2, MasmCmp3, MasmLdm3, MasmLdmda3, MasmLdmdb3, MasmLdmib3, MasmLdr2, MasmLdr3, MasmLdrb2, MasmLdrh2, MasmLdrsb2, MasmLdrsh2, MasmLsl5,
-    MasmMov4, MasmNop, MasmRor5, MasmStm3, MasmStmda3, MasmStmdb3, MasmStmib3, MasmStr2, MasmStr3, MasmStrb2, MasmStrh2, MasmSub5,
-};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::jit_memory::{JitMemory, SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM, SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM};
 use crate::jit::op::{MultipleTransfer, Op};
@@ -13,6 +8,11 @@ use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use std::cmp::{max, min};
 use std::mem;
+use vixl::{
+    AddrMode_PostIndex, AddrMode_PreIndex, FlagsUpdate, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, MacroAssembler, MasmAdd5, MasmAnd5, MasmBic5, MasmCmp2, MasmCmp3, MasmLdm3, MasmLdmda3,
+    MasmLdmdb3, MasmLdmib3, MasmLdr2, MasmLdr3, MasmLdrb2, MasmLdrh2, MasmLdrsb2, MasmLdrsh2, MasmLsl5, MasmMov4, MasmNop, MasmRor5, MasmStm3, MasmStmda3, MasmStmdb3, MasmStmib3, MasmStr2, MasmStr3,
+    MasmStrb2, MasmStrh2, MasmSub5, MemOperand, WriteBack,
+};
 use CpuType::{ARM7, ARM9};
 
 macro_rules! get_read_func {
@@ -71,7 +71,7 @@ impl JitAsm<'_> {
 
         metadata_emitter(self, block_asm);
 
-        let mem_operand = MemOperand::reg_offset2(tmp_reg, Reg::LR);
+        let mem_operand = (tmp_reg, Reg::LR).into();
         func(block_asm, op0, &mem_operand);
         if is_64bit {
             block_asm.add5(flag_update, Cond::AL, Reg::R2, Reg::R2, &4.into());
@@ -105,7 +105,7 @@ impl JitAsm<'_> {
 
         metadata_emitter(self, block_asm);
 
-        let mem_operand = MemOperand::reg_offset2(tmp_reg, Reg::LR);
+        let mem_operand = (tmp_reg, Reg::LR).into();
         func(block_asm, op0, &mem_operand);
         if size == 4 {
             block_asm.lsl5(flag_update, Cond::AL, tmp_reg, Reg::R2, &3.into());
@@ -177,14 +177,14 @@ impl JitAsm<'_> {
                 value_reg,
                 dirty_guest_regs,
             );
-            let mem_operand = MemOperand::reg(Reg::R1);
+            let mem_operand = Reg::R1.into();
             func(block_asm, value_reg, &mem_operand);
             let shift = (imm_addr & 0x3) << 3;
             if !is_64bit && size == 4 && shift != 0 {
                 block_asm.ror5(flag_update, Cond::AL, value_reg, value_reg, &shift.into());
             }
             if is_64bit {
-                func(block_asm, next_value_reg, &MemOperand::reg_offset(Reg::R1, 4));
+                func(block_asm, next_value_reg, &(Reg::R1, 4).into());
             }
 
             fast_mem_start
@@ -396,7 +396,7 @@ impl JitAsm<'_> {
                                 block_asm.ldr3(
                                     Cond::EQ,
                                     usable_reg,
-                                    &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
+                                    &(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4).into(),
                                 );
                                 if mapped_reg != Reg::None {
                                     block_asm.mov4(flag_update, Cond::NE, usable_reg, &mapped_reg.into());
@@ -412,7 +412,7 @@ impl JitAsm<'_> {
                                 block_asm.ldr3(
                                     Cond::NE,
                                     usable_reg,
-                                    &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
+                                    &(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4).into(),
                                 );
                                 if mapped_reg != Reg::None {
                                     block_asm.mov4(flag_update, Cond::EQ, usable_reg, &mapped_reg.into());
@@ -494,7 +494,7 @@ impl JitAsm<'_> {
                                 block_asm.str3(
                                     Cond::EQ,
                                     usable_reg,
-                                    &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
+                                    &(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4).into(),
                                 );
                                 if mapped_reg != Reg::None {
                                     block_asm.mov4(flag_update, Cond::NE, mapped_reg, &usable_reg.into());
@@ -509,7 +509,7 @@ impl JitAsm<'_> {
                                 block_asm.str3(
                                     Cond::NE,
                                     usable_reg,
-                                    &MemOperand::reg_offset(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4),
+                                    &(GUEST_REGS_PTR_REG, mem::offset_of!(ThreadRegs, user) as i32 + (guest_reg as i32 - 8) * 4).into(),
                                 );
                                 if mapped_reg != Reg::None {
                                     block_asm.mov4(flag_update, Cond::EQ, mapped_reg, &usable_reg.into());

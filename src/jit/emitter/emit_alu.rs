@@ -1,18 +1,15 @@
 use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::vixl::{
-    vixl, MasmClz3, MasmMla5, MasmMlas5, MasmMul4, MasmMuls4, MasmMvns3, MasmQadd4, MasmQdadd4, MasmQdsub4, MasmQsub4, MasmSmlabb5, MasmSmlabt5, MasmSmlal5, MasmSmlalbb5, MasmSmlalbt5, MasmSmlals5,
-    MasmSmlaltb5, MasmSmlaltt5, MasmSmlatb5, MasmSmlatt5, MasmSmlawb5, MasmSmlawt5, MasmSmulbb4, MasmSmulbt4, MasmSmull5, MasmSmulls5, MasmSmultb4, MasmSmultt4, MasmSmulwb4, MasmSmulwt4, MasmUmlal5,
-    MasmUmlals5, MasmUmull5, MasmUmulls5,
-};
-use crate::jit::assembler::vixl::{
-    MacroAssembler, MasmAdc4, MasmAdcs4, MasmAdd4, MasmAdds4, MasmAnd4, MasmAnds4, MasmBic4, MasmBics4, MasmCmn3, MasmCmp3, MasmEor4, MasmEors4, MasmMov3, MasmMovs3, MasmMvn3, MasmOrr4, MasmOrrs4,
-    MasmRsb4, MasmRsbs4, MasmRsc4, MasmRscs4, MasmSbc4, MasmSbcs4, MasmSub4, MasmSubs4, MasmTeq3, MasmTst3,
-};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
+use vixl::{
+    MacroAssembler, MasmAdc4, MasmAdcs4, MasmAdd4, MasmAdds4, MasmAnd4, MasmAnds4, MasmBic4, MasmBics4, MasmClz3, MasmCmn3, MasmCmp3, MasmEor4, MasmEors4, MasmMla5, MasmMlas5, MasmMov3, MasmMovs3,
+    MasmMul4, MasmMuls4, MasmMvn3, MasmMvns3, MasmOrr4, MasmOrrs4, MasmQadd4, MasmQdadd4, MasmQdsub4, MasmQsub4, MasmRsb4, MasmRsbs4, MasmRsc4, MasmRscs4, MasmSbc4, MasmSbcs4, MasmSmlabb5,
+    MasmSmlabt5, MasmSmlal5, MasmSmlalbb5, MasmSmlalbt5, MasmSmlals5, MasmSmlaltb5, MasmSmlaltt5, MasmSmlatb5, MasmSmlatt5, MasmSmlawb5, MasmSmlawt5, MasmSmulbb4, MasmSmulbt4, MasmSmull5,
+    MasmSmulls5, MasmSmultb4, MasmSmultt4, MasmSmulwb4, MasmSmulwt4, MasmSub4, MasmSubs4, MasmTeq3, MasmTst3, MasmUmlal5, MasmUmlals5, MasmUmull5, MasmUmulls5,
+};
 
 impl JitAsm<'_> {
     pub fn emit_alu(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {

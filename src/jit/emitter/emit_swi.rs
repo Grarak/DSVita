@@ -1,11 +1,10 @@
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::vixl::vixl::FlagsUpdate_DontCare;
-use crate::jit::assembler::vixl::{MasmLdr2, MasmMov4};
 use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_exception_handler::software_interrupt_handler;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
+use vixl::{FlagsUpdate_DontCare, MasmLdr2, MasmMov4};
 
 impl JitAsm<'_> {
     pub fn emit_swi(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {

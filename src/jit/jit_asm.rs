@@ -5,8 +5,6 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::analyzer::asm_analyzer::AsmAnalyzer;
 use crate::jit::assembler::block_asm::{BlockAsm, GuestInstOffset};
-use crate::jit::assembler::vixl::vixl::{FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags};
-use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmBl2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::emitter::map_fun_cpu;
@@ -27,6 +25,7 @@ use static_assertions::const_assert_eq;
 use std::arch::{asm, naked_asm};
 use std::intrinsics::unlikely;
 use std::{mem, slice};
+use vixl::{FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmBl2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
 use xxhash_rust::xxh32::xxh32;
 
 #[derive(Default)]

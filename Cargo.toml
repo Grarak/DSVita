@@ -1,4 +1,4 @@
-workspace = { members = ["macros"] }
+workspace = { members = ["macros", "vitabuild", "vixl"] }
 [package]
 name = "dsvita"
 version = "0.8.0"
@@ -17,14 +17,15 @@ vita_make_fself_flags = ["-a", "0x2800000000000001"]
 bilge = { git = "https://github.com/Grarak/bilge.git" }
 chrono = "0.4.40"
 dsvita_macros = { path = "macros" }
+enum_dispatch = "0.3.13"
 gl = { git = "https://github.com/bjz/gl-rs" }
 glyph_brush = "0.7.12"
+paste = "1.0.15"
 rust-ini = "0.21.1"
 static_assertions = "1.1.0"
-paste = "1.0.15"
-enum_dispatch = "0.3.13"
 strum = "0.27.1"
 strum_macros = "0.27.1"
+vixl = { path = "vixl" }
 xxhash-rust = { version = "0.8.15", features = ["xxh32"] }
 
 [target.armv7-unknown-linux-gnueabihf.dependencies]
@@ -46,7 +47,7 @@ backtrace = "0.3.74"
 [build-dependencies]
 bindgen = "0.71.1"
 cc = { version = "1.2.18", features = ["parallel"] }
-regex = "1.11.1"
+vitabuild = { path = "vitabuild" }
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]
 lazy_static = "1.5.0"

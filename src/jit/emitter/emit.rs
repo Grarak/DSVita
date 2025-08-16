@@ -1,7 +1,5 @@
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::vixl::vixl::{BranchHint_kNear, FlagsUpdate_DontCare, MemOperand};
-use crate::jit::assembler::vixl::{Label, MasmAdd5, MasmB3, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
 use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::branch_any_reg;
 use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode, set_pc_thumb_mode};
@@ -13,6 +11,7 @@ use crate::logging::debug_println;
 use crate::settings::Arm7Emu;
 use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
+use vixl::{BranchHint_kNear, FlagsUpdate_DontCare, Label, MasmAdd5, MasmB3, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
 
 impl JitAsm<'_> {
     pub fn emit(&mut self, block_asm: &mut BlockAsm, thumb: bool) {
@@ -242,14 +241,14 @@ impl JitAsm<'_> {
     }
 
     pub fn emit_count_cycles(&mut self, total_cycle_count: u16, block_asm: &mut BlockAsm) {
-        block_asm.ldrh2(Reg::R1, &MemOperand::reg_offset(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32));
-        block_asm.ldrh2(Reg::R2, &MemOperand::reg_offset(Reg::R0, JitRuntimeData::get_accumulated_cycles_offset() as i32));
+        block_asm.ldrh2(Reg::R1, &(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
+        block_asm.ldrh2(Reg::R2, &(Reg::R0, JitRuntimeData::get_accumulated_cycles_offset() as i32).into());
 
         // +2 for branching
         block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R3, Reg::R2, &(total_cycle_count as u32 + 2).into());
         block_asm.sub5(FlagsUpdate_DontCare, Cond::AL, Reg::R3, Reg::R3, &Reg::R1.into());
 
-        block_asm.strh2(Reg::R3, &MemOperand::reg_offset(Reg::R0, JitRuntimeData::get_accumulated_cycles_offset() as i32));
+        block_asm.strh2(Reg::R3, &(Reg::R0, JitRuntimeData::get_accumulated_cycles_offset() as i32).into());
     }
 
     pub fn emit_guest_regs_alloc(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
@@ -266,7 +265,7 @@ impl JitAsm<'_> {
         if IS_DEBUG {
             let pc = block_asm.current_pc;
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
-            block_asm.str2(Reg::R1, &MemOperand::reg_offset(Reg::R0, JitRuntimeData::get_branch_out_pc_offset() as i32));
+            block_asm.str2(Reg::R1, &(Reg::R0, JitRuntimeData::get_branch_out_pc_offset() as i32).into());
         }
 
         if count_cycles {

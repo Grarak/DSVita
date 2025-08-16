@@ -1,13 +1,12 @@
 use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::vixl::vixl::FlagsUpdate_DontCare;
-use crate::jit::assembler::vixl::{MasmLdr2, MasmMov4};
 use crate::jit::inst_cp15_handler::{cp15_read, cp15_write};
 use crate::jit::inst_cpu_regs_handler::cpu_regs_halt;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
+use vixl::{FlagsUpdate_DontCare, MasmLdr2, MasmMov4};
 
 impl JitAsm<'_> {
     pub fn emit_cp15(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {

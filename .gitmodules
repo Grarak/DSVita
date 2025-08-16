@@ -5,7 +5,7 @@
 	path = kubridge
 	url = https://github.com/bythos14/kubridge.git
 [submodule "vixl"]
-	path = vixl
+	path = vixl/vixl_src
 	url = https://github.com/Grarak/vixl.git
 [submodule "soundtouch"]
 	path = soundtouch

@@ -1,8 +1,7 @@
 use crate::jit::assembler::block_asm::GUEST_REGS_PTR_REG;
-use crate::jit::assembler::vixl::vixl::MemOperand;
-use crate::jit::assembler::vixl::{MacroAssembler, MasmLdr2, MasmStr2};
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::logging::debug_panic;
+use vixl::{MacroAssembler, MasmLdr2, MasmStr2};
 
 pub const GUEST_REG_ALLOCATIONS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11);
 pub const GUEST_REGS_LENGTH: usize = Reg::PC as usize + 1;
@@ -35,11 +34,11 @@ impl RegAlloc {
     }
 
     fn restore_guest_reg(&mut self, guest_reg: Reg, dest_reg: Reg, masm: &mut MacroAssembler) {
-        masm.ldr2(dest_reg, &MemOperand::reg_offset(GUEST_REGS_PTR_REG, guest_reg as i32 * 4));
+        masm.ldr2(dest_reg, &(GUEST_REGS_PTR_REG, guest_reg as i32 * 4).into());
     }
 
     fn spill_guest_reg(&mut self, guest_reg: Reg, src_reg: Reg, masm: &mut MacroAssembler) {
-        masm.str2(src_reg, &MemOperand::reg_offset(GUEST_REGS_PTR_REG, guest_reg as i32 * 4));
+        masm.str2(src_reg, &(GUEST_REGS_PTR_REG, guest_reg as i32 * 4).into());
     }
 
     fn alloc_guest_reg(&mut self, guest_reg: Reg, is_input: bool, used_regs: RegReserve, next_live_regs: RegReserve, dirty_guest_regs: RegReserve, masm: &mut MacroAssembler) -> (Reg, Reg) {
@@ -128,7 +127,7 @@ impl RegAlloc {
         for guest_reg in guest_regs {
             let mapped_reg = self.guest_regs_mapping[guest_reg as usize];
             if mapped_reg != Reg::None {
-                masm.str2(mapped_reg, &MemOperand::reg_offset(GUEST_REGS_PTR_REG, guest_reg as i32 * 4));
+                masm.str2(mapped_reg, &(GUEST_REGS_PTR_REG, guest_reg as i32 * 4).into());
             }
         }
     }

@@ -1,12 +1,12 @@
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::vixl::{
-    vixl, MacroAssembler, MasmAdcs3, MasmAdd3, MasmAdds3, MasmAnds3, MasmAsrs3, MasmBics3, MasmCmp2, MasmEors3, MasmLsls3, MasmLsrs3, MasmMov2, MasmMovs2, MasmMuls3, MasmMvns2, MasmOrrs3, MasmRors3,
-    MasmRsbs3, MasmSbcs3, MasmSub3, MasmSubs3, MasmTst2,
-};
 use crate::jit::inst_info::Operand;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
+use vixl::{
+    MacroAssembler, MasmAdcs3, MasmAdd3, MasmAdds3, MasmAnds3, MasmAsrs3, MasmBics3, MasmCmp2, MasmEors3, MasmLsls3, MasmLsrs3, MasmMov2, MasmMovs2, MasmMuls3, MasmMvns2, MasmOrrs3, MasmRors3,
+    MasmRsbs3, MasmSbcs3, MasmSub3, MasmSubs3, MasmTst2,
+};
 
 impl JitAsm<'_> {
     pub fn emit_alu_thumb(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
