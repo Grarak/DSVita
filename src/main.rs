@@ -16,6 +16,7 @@
 #![feature(stmt_expr_attributes)]
 #![feature(vec_push_within_capacity)]
 
+use crate::core::cycle_manager::EventType;
 use crate::core::emu::Emu;
 use crate::core::graphics::gpu::Gpu;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
@@ -68,6 +69,7 @@ fn run_cpu(emu: &mut Emu) {
     let arm7_entry_addr = emu.cartridge.io.header.arm7_values.entry_address;
 
     emu.reset();
+    emu.cm.schedule(0x7FFFFFFF, EventType::Overflow, 0);
 
     info_println!("Initialize mmu");
     emu.mmu_update_all::<{ ARM9 }>();

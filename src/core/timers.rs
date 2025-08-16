@@ -12,27 +12,27 @@ const TIME_OVERFLOW: u32 = 0x10000;
 #[derive(FromBits)]
 struct TimerCntH {
     prescaler: u2,
-    count_up: u1,
+    count_up: bool,
     not_used: u3,
-    irq_enable: u1,
-    start: u1,
+    irq_enable: bool,
+    start: bool,
     not_used1: u8,
 }
 
 impl TimerCntH {
     fn is_count_up(&self, channel_num: usize) -> bool {
-        channel_num != 0 && bool::from(self.count_up())
+        channel_num != 0 && self.count_up()
     }
 }
 
 #[derive(Copy, Clone, Default)]
-struct TimerChannel {
+pub struct TimerChannel {
     cnt_l: u16,
     cnt_h: u16,
     current_value: u16,
     current_shift: u8,
     id: u16,
-    scheduled_cycle: u64,
+    pub scheduled_cycle: u32,
 }
 
 impl TimerChannel {
@@ -43,7 +43,7 @@ impl TimerChannel {
 }
 
 pub struct Timers {
-    channels: [TimerChannel; CHANNEL_COUNT],
+    pub channels: [TimerChannel; CHANNEL_COUNT],
 }
 
 impl Timers {
@@ -59,10 +59,10 @@ impl Emu {
         let timers = &mut self.timers[cpu];
         let channel = &mut timers.channels[channel_num];
         let cnt = TimerCntH::from(channel.cnt_h);
-        if bool::from(cnt.start()) && !cnt.is_count_up(channel_num) {
+        if cnt.start() && !cnt.is_count_up(channel_num) {
             let current_cycle_count = self.cm.get_cycles();
             let diff = channel.scheduled_cycle.wrapping_sub(current_cycle_count);
-            channel.current_value = (TIME_OVERFLOW - (diff >> channel.current_shift) as u32) as u16;
+            channel.current_value = (TIME_OVERFLOW - (diff >> channel.current_shift)) as u16;
         }
         channel.current_value
     }
@@ -85,7 +85,7 @@ impl Emu {
         channel.cnt_h = (channel.cnt_h & !mask) | (value & mask);
         let cnt = TimerCntH::from(channel.cnt_h);
 
-        let mut update = if !bool::from(current_cnt.start()) && bool::from(cnt.start()) {
+        let mut update = if !current_cnt.start() && cnt.start() {
             channel.current_value = channel.cnt_l;
             true
         } else {
@@ -104,9 +104,9 @@ impl Emu {
             }
         }
 
-        if update && bool::from(cnt.start()) && !cnt.is_count_up(channel_num) {
+        if update && cnt.start() && !cnt.is_count_up(channel_num) {
             let remaining_cycles = (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
-            channel.scheduled_cycle = self.cm.get_cycles() + remaining_cycles as u64;
+            channel.scheduled_cycle = self.cm.get_cycles() + remaining_cycles;
             channel.increment_id();
             self.cm.schedule(
                 remaining_cycles,
@@ -123,13 +123,13 @@ impl Emu {
         {
             let channel = &mut self.timers[cpu].channels[channel_num];
             let cnt = TimerCntH::from(channel.cnt_h);
-            if !bool::from(cnt.start()) {
+            if !cnt.start() {
                 return;
             }
             channel.current_value = channel.cnt_l;
             if !cnt.is_count_up(channel_num) {
                 let remaining_cycles = (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
-                channel.scheduled_cycle = self.cm.get_cycles() + remaining_cycles as u64;
+                channel.scheduled_cycle = self.cm.get_cycles() + remaining_cycles;
                 channel.increment_id();
                 self.cm.schedule(
                     remaining_cycles,
@@ -141,7 +141,7 @@ impl Emu {
                 )
             }
 
-            if bool::from(cnt.irq_enable()) {
+            if cnt.irq_enable() {
                 self.cpu_send_interrupt(cpu, InterruptFlag::from(InterruptFlag::Timer0Overflow as u8 + channel_num as u8));
             }
         }
@@ -150,7 +150,7 @@ impl Emu {
             {
                 let channel = &mut self.timers[cpu].channels[channel_num];
                 let cnt = TimerCntH::from(channel.cnt_h);
-                if bool::from(cnt.count_up()) {
+                if cnt.count_up() {
                     channel.current_value += 1;
                     overflow = channel.current_value == 0;
                 }

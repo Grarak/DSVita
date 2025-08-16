@@ -18,8 +18,6 @@ use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::ptr;
-use std::str::FromStr;
-use strum::IntoEnumIterator;
 use vitasdk_sys::*;
 
 mod imgui {

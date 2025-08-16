@@ -22,11 +22,11 @@ impl EventTypeEntry {
 
 struct CycleEventEntry {
     event_type_entry: EventTypeEntry,
-    cycle_count: u64,
+    cycle_count: u32,
 }
 
 impl CycleEventEntry {
-    fn new(event_type: EventType, arg: u16, cycle_count: u64) -> Self {
+    fn new(event_type: EventType, arg: u16, cycle_count: u32) -> Self {
         CycleEventEntry {
             event_type_entry: EventTypeEntry::create(event_type, arg),
             cycle_count,
@@ -74,10 +74,11 @@ pub enum EventType {
     TimerArm9 = 11,
     TimerArm7 = 12,
     WifiScanHle = 13,
+    Overflow = 14,
 }
 
 pub struct CycleManager {
-    cycle_count: u64,
+    cycle_count: u32,
     events: LinkedList<CycleEventEntry, CycleEventsListAllocator>,
     imm_events: Vec<EventTypeEntry>,
     imm_events_swap: Vec<EventTypeEntry>,
@@ -101,10 +102,10 @@ impl CycleManager {
     }
 
     pub fn add_cycles(&mut self, cycle_count: u16) {
-        self.cycle_count += cycle_count as u64;
+        self.cycle_count += cycle_count as u32;
     }
 
-    pub fn get_cycles(&self) -> u64 {
+    pub fn get_cycles(&self) -> u32 {
         self.cycle_count
     }
 
@@ -113,7 +114,7 @@ impl CycleManager {
     }
 
     pub fn schedule(&mut self, in_cycles: u32, event_type: EventType, arg: u16) {
-        let event_cycle = self.cycle_count + max(in_cycles, 1) as u64;
+        let event_cycle = self.cycle_count + max(in_cycles, 1);
 
         let mut current_node = self.events.root;
         while !current_node.is_null() {
@@ -134,10 +135,7 @@ impl CycleManager {
 
 impl Emu {
     pub fn cm_check_events(&mut self) -> bool {
-        #[cfg(feature = "profiling")]
-        let _frame = tracy_client::secondary_frame_mark!("Cycle manager check events");
-
-        static LUT: [fn(&mut Emu, u16); EventType::WifiScanHle as usize + 1] = [
+        static LUT: [fn(&mut Emu, u16); EventType::Overflow as usize + 1] = [
             Emu::cpu_on_interrupt_event::<{ ARM9 }>,
             Emu::cpu_on_interrupt_event::<{ ARM7 }>,
             Emu::gpu_on_scanline256_event,
@@ -152,6 +150,7 @@ impl Emu {
             Emu::timers_on_overflow_event::<{ ARM9 }>,
             Emu::timers_on_overflow_event::<{ ARM7 }>,
             Emu::wifi_hle_on_scan_event,
+            Emu::cm_on_overflow_event,
         ];
 
         self.cm.imm_events_swap.clear();
@@ -162,11 +161,10 @@ impl Emu {
             func(self, u16::from(event_type_entry.arg()));
         }
 
-        let cycle_count = self.cm.cycle_count;
         let mut event_triggered = false;
         while {
             let entry = &LinkedList::<_, CycleEventsListAllocator>::deref(self.cm.events.root).value;
-            unlikely(entry.cycle_count <= cycle_count)
+            unlikely(entry.cycle_count <= self.cm.cycle_count)
         } {
             event_triggered = true;
             let entry = self.cm.events.remove_begin();
@@ -174,5 +172,30 @@ impl Emu {
             func(self, u16::from(entry.event_type_entry.arg()));
         }
         event_triggered
+    }
+
+    fn cm_on_overflow_event(&mut self, _: u16) {
+        let mut current_node = self.cm.events.root;
+        while !current_node.is_null() {
+            let entry = LinkedList::<_, CycleEventsListAllocator>::deref(current_node);
+            entry.value.cycle_count -= self.cm.cycle_count;
+            current_node = entry.next;
+        }
+        for timer in &mut self.timers {
+            for channel in &mut timer.channels {
+                if channel.scheduled_cycle < self.cm.cycle_count {
+                    channel.scheduled_cycle = 0;
+                } else {
+                    channel.scheduled_cycle -= self.cm.cycle_count;
+                }
+            }
+        }
+        if self.gpu.gpu_3d_regs.last_total_cycles < self.cm.cycle_count {
+            self.gpu.gpu_3d_regs.last_total_cycles = 0;
+        } else {
+            self.gpu.gpu_3d_regs.last_total_cycles -= self.cm.cycle_count;
+        }
+        self.cm.cycle_count = 0;
+        self.cm.schedule(0x7FFFFFFF, EventType::Overflow, 0);
     }
 }

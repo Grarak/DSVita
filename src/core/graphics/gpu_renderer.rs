@@ -59,9 +59,6 @@ pub struct GpuRenderer {
     render_time_measure_count: u8,
     render_time_sum: u32,
     average_render_time: u32,
-
-    #[cfg(feature = "profiling")]
-    frame_capture: HeapMemU8<{ (PRESENTER_SCREEN_WIDTH * PRESENTER_SCREEN_HEIGHT * 4) as usize }>,
 }
 
 impl GpuRenderer {
@@ -87,9 +84,6 @@ impl GpuRenderer {
             render_time_measure_count: 0,
             render_time_sum: 0,
             average_render_time: 0,
-
-            #[cfg(feature = "profiling")]
-            frame_capture: HeapMemU8::new(),
         }
     }
 
@@ -264,17 +258,6 @@ impl GpuRenderer {
                 if self.average_render_time == 0 { 0 } else { 1000000 / self.average_render_time }
             ));
 
-            #[cfg(feature = "profiling")]
-            gl::ReadPixels(
-                0,
-                0,
-                PRESENTER_SCREEN_WIDTH as _,
-                PRESENTER_SCREEN_HEIGHT as _,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                self.frame_capture.as_mut_ptr() as _,
-            );
-
             if !pause {
                 gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
                 gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
@@ -289,9 +272,6 @@ impl GpuRenderer {
                 let mut rendering = self.rendering.lock().unwrap();
                 *rendering = false;
             }
-
-            #[cfg(feature = "profiling")]
-            tracy_client::frame_image(self.frame_capture.as_ref(), PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, 0, true);
         }
 
         let render_time_diff = Instant::now().duration_since(render_time_start);

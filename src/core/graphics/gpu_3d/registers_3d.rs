@@ -347,7 +347,7 @@ pub struct Gpu3DRegisters {
 
     test_queue: u8,
 
-    last_total_cycles: u64,
+    pub last_total_cycles: u32,
     pub flushed: bool,
     swap_buffers: SwapBuffers,
 
@@ -399,7 +399,7 @@ macro_rules! unpacked_cmd {
 }
 
 impl Emu {
-    pub fn regs_3d_run_cmds(&mut self, total_cycles: u64) {
+    pub fn regs_3d_run_cmds(&mut self, total_cycles: u32) {
         let regs_3d = &mut self.gpu.gpu_3d_regs;
         if unlikely(regs_3d.cmd_fifo.is_empty() || regs_3d.flushed) {
             regs_3d.last_total_cycles = total_cycles;
@@ -408,7 +408,7 @@ impl Emu {
 
         let is_cmd_fifo_half_full = regs_3d.is_cmd_fifo_half_full();
 
-        let cycle_diff = (total_cycles - regs_3d.last_total_cycles) as u32;
+        let cycle_diff = total_cycles - regs_3d.last_total_cycles;
         regs_3d.last_total_cycles = total_cycles;
         let mut executed_cycles = 0;
 
@@ -474,9 +474,6 @@ impl Emu {
         if !regs_3d.skip && regs_3d.flushed {
             regs_3d.pow_cnt1 = regs_3d.current_pow_cnt1;
         }
-
-        #[cfg(feature = "profiling")]
-        let _zone = tracy_client::secondary_frame_mark!("Execute gpu register 3d cmds");
     }
 
     #[inline(always)]
