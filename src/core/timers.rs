@@ -2,7 +2,6 @@ use crate::core::cpu_regs::InterruptFlag;
 use crate::core::cycle_manager::EventType;
 use crate::core::emu::Emu;
 use crate::core::CpuType;
-use crate::core::CpuType::{ARM7, ARM9};
 use bilge::prelude::*;
 
 const CHANNEL_COUNT: usize = 4;
@@ -31,15 +30,7 @@ pub struct TimerChannel {
     cnt_h: u16,
     current_value: u16,
     current_shift: u8,
-    id: u16,
     pub scheduled_cycle: u32,
-}
-
-impl TimerChannel {
-    fn increment_id(&mut self) {
-        self.id += 1;
-        self.id &= 0x3FF;
-    }
 }
 
 pub struct Timers {
@@ -107,15 +98,7 @@ impl Emu {
         if update && cnt.start() && !cnt.is_count_up(channel_num) {
             let remaining_cycles = (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
             channel.scheduled_cycle = self.cm.get_cycles() + remaining_cycles;
-            channel.increment_id();
-            self.cm.schedule(
-                remaining_cycles,
-                match cpu {
-                    ARM9 => EventType::TimerArm9,
-                    ARM7 => EventType::TimerArm7,
-                },
-                (channel.id << 2) | channel_num as u16,
-            )
+            self.cm.schedule(remaining_cycles, EventType::timer(cpu, channel_num as u8))
         }
     }
 
@@ -130,15 +113,7 @@ impl Emu {
             if !cnt.is_count_up(channel_num) {
                 let remaining_cycles = (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
                 channel.scheduled_cycle = self.cm.get_cycles() + remaining_cycles;
-                channel.increment_id();
-                self.cm.schedule(
-                    remaining_cycles,
-                    match cpu {
-                        ARM9 => EventType::TimerArm9,
-                        ARM7 => EventType::TimerArm7,
-                    },
-                    (channel.id << 2) | channel_num as u16,
-                )
+                self.cm.schedule(remaining_cycles, EventType::timer(cpu, channel_num as u8))
             }
 
             if cnt.irq_enable() {
@@ -161,11 +136,7 @@ impl Emu {
         }
     }
 
-    pub fn timers_on_overflow_event<const CPU: CpuType>(&mut self, id_channel_num: u16) {
-        let channel_num = id_channel_num & 0x3;
-        let id = id_channel_num >> 2;
-        if id == self.timers[CPU].channels[channel_num as usize].id {
-            self.timers_overflow(channel_num as usize, CPU);
-        }
+    pub fn timers_on_overflow_event<const CPU: CpuType, const CHANNEL_NUM: u8>(&mut self) {
+        self.timers_overflow(CHANNEL_NUM as usize, CPU);
     }
 }

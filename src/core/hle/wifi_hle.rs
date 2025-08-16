@@ -163,7 +163,7 @@ impl Emu {
                     self.mem_write_struct::<{ ARM7 }, true, _>(self.hle.wifi.status_ptr, &status);
 
                     const MS_CYCLES: u32 = 34418;
-                    self.cm.schedule(req.max_channel_time as u32 * MS_CYCLES * 1024, EventType::WifiScanHle, 0);
+                    self.cm.schedule(req.max_channel_time as u32 * MS_CYCLES * 1024, EventType::WifiScanHle);
                     return;
                 }
                 WMApiid::EndScan => {
@@ -184,7 +184,7 @@ impl Emu {
         self.mem_write::<{ ARM7 }, u16>(self.hle.wifi.msg_ptr, cmd | 0x8000);
     }
 
-    pub fn wifi_hle_on_scan_event(&mut self, _: u16) {
+    pub fn wifi_hle_on_scan_event(&mut self) {
         let callback = WMStartScanCallback {
             state: WmScanState::ParentNotFound as u16,
             channel: self.hle.wifi.scan_channel,

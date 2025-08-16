@@ -1,5 +1,5 @@
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::cycle_manager::EventType;
+use crate::core::cycle_manager::ImmEventType;
 use crate::core::emu::Emu;
 use crate::core::CpuType;
 use crate::logging::debug_println;
@@ -178,13 +178,7 @@ impl Emu {
 
             self.breakout_imm = true;
 
-            self.cm.schedule_imm(
-                match cpu {
-                    ARM9 => EventType::DmaArm9,
-                    ARM7 => EventType::DmaArm7,
-                },
-                channel_num as u16,
-            );
+            self.cm.schedule_imm(ImmEventType::dma(cpu, channel_num as u8));
         }
 
         if !was_enabled && dma_cnt.enable() {
@@ -203,13 +197,7 @@ impl Emu {
 
                 self.breakout_imm = true;
 
-                self.cm.schedule_imm(
-                    match cpu {
-                        ARM9 => EventType::DmaArm9,
-                        ARM7 => EventType::DmaArm7,
-                    },
-                    channel_num as u16,
-                );
+                self.cm.schedule_imm(ImmEventType::dma(cpu, channel_num as u8));
             }
         }
     }
@@ -234,13 +222,7 @@ impl Emu {
                     channel.current_src,
                     channel.current_count
                 );
-                self.cm.schedule_imm(
-                    match cpu {
-                        ARM9 => EventType::DmaArm9,
-                        ARM7 => EventType::DmaArm7,
-                    },
-                    index as u16,
-                );
+                self.cm.schedule_imm(ImmEventType::dma(cpu, index as u8));
             }
         }
     }
@@ -326,7 +308,23 @@ impl Emu {
         }
     }
 
-    pub fn dma_on_event<const CPU: CpuType>(&mut self, channel_num: u16) {
+    pub fn dma_on_event0<const CPU: CpuType>(&mut self) {
+        self.dma_on_event::<CPU>(0);
+    }
+
+    pub fn dma_on_event1<const CPU: CpuType>(&mut self) {
+        self.dma_on_event::<CPU>(1);
+    }
+
+    pub fn dma_on_event2<const CPU: CpuType>(&mut self) {
+        self.dma_on_event::<CPU>(2);
+    }
+
+    pub fn dma_on_event3<const CPU: CpuType>(&mut self) {
+        self.dma_on_event::<CPU>(3);
+    }
+
+    fn dma_on_event<const CPU: CpuType>(&mut self, channel_num: u16) {
         let channel_num = channel_num as usize;
         unsafe { assert_unchecked(channel_num < CHANNEL_COUNT) };
 
@@ -355,13 +353,7 @@ impl Emu {
         if mode == DmaTransferMode::GeometryCmdFifo && count > 112 {
             channel.current_count -= 112;
             if !self.gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
-                self.cm.schedule_imm(
-                    match CPU {
-                        ARM9 => EventType::DmaArm9,
-                        ARM7 => EventType::DmaArm7,
-                    },
-                    channel_num as u16,
-                );
+                self.cm.schedule_imm(ImmEventType::dma(CPU, channel_num as u8));
             }
             return;
         }
@@ -373,13 +365,7 @@ impl Emu {
             }
 
             if mode == DmaTransferMode::GeometryCmdFifo && !self.gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
-                self.cm.schedule_imm(
-                    match CPU {
-                        ARM9 => EventType::DmaArm9,
-                        ARM7 => EventType::DmaArm7,
-                    },
-                    channel_num as u16,
-                );
+                self.cm.schedule_imm(ImmEventType::dma(CPU, channel_num as u8));
             }
         } else {
             channel.cnt &= !(1 << 31);

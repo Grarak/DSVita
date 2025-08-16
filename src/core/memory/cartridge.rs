@@ -1,10 +1,9 @@
 use crate::cartridge_io::CartridgeIo;
 use crate::core::cpu_regs::InterruptFlag;
-use crate::core::cycle_manager::EventType;
+use crate::core::cycle_manager::ImmEventType;
 use crate::core::emu::Emu;
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
-use crate::core::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
 use crate::utils;
 use crate::utils::HeapMemU8;
@@ -156,13 +155,7 @@ impl Emu {
                 self.cpu_send_interrupt(cpu, InterruptFlag::NdsSlotTransferCompletion);
             }
         } else {
-            self.cm.schedule_imm(
-                match cpu {
-                    ARM9 => EventType::CartridgeWordReadArm9,
-                    ARM7 => EventType::CartridgeWordReadArm7,
-                },
-                0,
-            );
+            self.cm.schedule_imm(ImmEventType::cartridge_word_read(cpu));
         }
 
         let inner = &mut self.cartridge.inner[cpu];
@@ -385,17 +378,11 @@ impl Emu {
             }
         } else {
             inner.read_count = 0;
-            self.cm.schedule_imm(
-                match cpu {
-                    ARM9 => EventType::CartridgeWordReadArm9,
-                    ARM7 => EventType::CartridgeWordReadArm7,
-                },
-                0,
-            );
+            self.cm.schedule_imm(ImmEventType::cartridge_word_read(cpu));
         }
     }
 
-    pub fn cartridge_on_word_read_event<const CPU: CpuType>(&mut self, _: u16) {
+    pub fn cartridge_on_word_read_event<const CPU: CpuType>(&mut self) {
         self.cartridge.inner[CPU].rom_ctrl.set_data_word_status(true);
         self.dma_trigger_imm(CPU, DmaTransferMode::DsCartSlot, 0xF);
     }

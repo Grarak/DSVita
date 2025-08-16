@@ -48,7 +48,6 @@ mod cartridge_metadata;
 mod core;
 mod fixed_fifo;
 mod jit;
-mod linked_list;
 mod logging;
 mod math;
 mod mmap;
@@ -69,7 +68,7 @@ fn run_cpu(emu: &mut Emu) {
     let arm7_entry_addr = emu.cartridge.io.header.arm7_values.entry_address;
 
     emu.reset();
-    emu.cm.schedule(0x7FFFFFFF, EventType::Overflow, 0);
+    emu.cm.schedule(0x7FFFFFFF, EventType::Overflow);
 
     info_println!("Initialize mmu");
     emu.mmu_update_all::<{ ARM9 }>();

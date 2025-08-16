@@ -1,4 +1,4 @@
-use crate::core::cycle_manager::EventType;
+use crate::core::cycle_manager::ImmEventType;
 use crate::core::emu::Emu;
 use crate::core::exception_handler::ExceptionVector;
 use crate::core::thread_regs::Cpsr;
@@ -109,13 +109,7 @@ impl Emu {
     }
 
     fn cpu_schedule_interrupt(&mut self, cpu: CpuType) {
-        self.cm.schedule_imm(
-            match cpu {
-                ARM9 => EventType::CpuInterruptArm9,
-                ARM7 => EventType::CpuInterruptArm7,
-            },
-            0,
-        )
+        self.cm.schedule_imm(ImmEventType::cpu_interrupt(cpu));
     }
 
     pub fn cpu_set_irf(&mut self, cpu: CpuType, mask: u32, value: u32) {
@@ -177,7 +171,7 @@ impl Emu {
         }
     }
 
-    pub fn cpu_on_interrupt_event<const CPU: CpuType>(&mut self, _: u16) {
+    pub fn cpu_on_interrupt_event<const CPU: CpuType>(&mut self) {
         let cpu_regs = &self.cpu[CPU];
         let interrupted = {
             let interrupt = cpu_regs.ime != 0 && (cpu_regs.ie & cpu_regs.irf) != 0 && !Cpsr::from(CPU.thread_regs().cpsr).irq_disable();

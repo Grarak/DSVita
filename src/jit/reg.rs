@@ -1,5 +1,3 @@
-use std::fmt::Debug;
-
 pub type Reg = vixl::Reg;
 pub type RegReserve = vixl::RegReserve;
 

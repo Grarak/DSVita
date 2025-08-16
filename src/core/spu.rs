@@ -345,7 +345,7 @@ impl Spu {
 
 impl Emu {
     pub fn spu_initialize_schedule(&mut self) {
-        self.cm.schedule(512 * 2, EventType::SpuSample, 0);
+        self.cm.schedule(512 * 2, EventType::SpuSample);
     }
 
     pub fn spu_get_cnt(&self, channel_num: usize) -> u32 {
@@ -552,7 +552,7 @@ impl Emu {
         }
     }
 
-    pub fn spu_on_sample_event(&mut self, _: u16) {
+    pub fn spu_on_sample_event(&mut self) {
         if unlikely(!self.settings.audio()) {
             for i in 0..CHANNEL_COUNT {
                 self.spu.channels[i].cnt.set_start_status(false);
@@ -561,7 +561,7 @@ impl Emu {
                 self.spu.sound_cap_channels[i].cnt.set_start_status(false);
             }
             unsafe { self.spu.sound_sampler.as_mut().push(self.settings.framelimit(), 0) };
-            self.cm.schedule(512 * 2, EventType::SpuSample, 0);
+            self.cm.schedule(512 * 2, EventType::SpuSample);
             return;
         }
 
@@ -721,6 +721,6 @@ impl Emu {
                 .as_mut()
                 .push(self.settings.framelimit(), ((sample_right << 16) & 0xFFFF0000) | (sample_left & 0xFFFF))
         };
-        self.cm.schedule(512 * 2, EventType::SpuSample, 0);
+        self.cm.schedule(512 * 2, EventType::SpuSample);
     }
 }

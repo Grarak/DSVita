@@ -367,7 +367,7 @@ impl Emu {
         main_cnt.set_master_enable(true);
         self.spu_set_main_sound_cnt(!0, u16::from(main_cnt));
 
-        self.cm.schedule(174592, EventType::SoundCmdHle, 0);
+        self.cm.schedule(174592, EventType::SoundCmdHle);
     }
 
     fn sound_nitro_on_alarm(&mut self, alarm_index: usize) {
@@ -381,7 +381,7 @@ impl Emu {
         let alarm = &mut self.hle.sound.nitro.alarms[alarm_index];
         let delay = alarm.repeat;
         if delay != 0 {
-            self.cm.schedule(delay * 64, EventType::SoundAlarmHle, alarm_index as u16);
+            self.cm.schedule(delay * 64, EventType::sound_alarm_hle(alarm_index as u8));
         } else {
             alarm.active = false;
         }
@@ -1061,7 +1061,7 @@ impl Emu {
                                 delay = alarm.delay;
                             }
 
-                            self.cm.schedule(delay as u32 * 64, EventType::SoundAlarmHle, i as u16);
+                            self.cm.schedule(delay * 64, EventType::sound_alarm_hle(i as u8));
                         }
 
                         self.sound_nitro_report_hardware_status();
@@ -2422,7 +2422,7 @@ impl Emu {
 
     fn sound_nitro_process(&mut self, param: u32) {
         if param != 0 {
-            self.cm.schedule(174592, EventType::SoundCmdHle, 0);
+            self.cm.schedule(174592, EventType::SoundCmdHle);
         }
 
         self.sound_nitro_update_hardware_channels();
@@ -2441,11 +2441,11 @@ impl Emu {
         }
     }
 
-    pub fn sound_nitro_on_cmd_event(&mut self, _: u16) {
+    pub fn sound_nitro_on_cmd_event(&mut self) {
         self.sound_nitro_process(1);
     }
 
-    pub fn sound_nitro_on_alarm_event(&mut self, id: u16) {
-        self.sound_nitro_on_alarm(id as usize);
+    pub fn sound_nitro_on_alarm_event<const ID: u8>(&mut self) {
+        self.sound_nitro_on_alarm(ID as usize);
     }
 }

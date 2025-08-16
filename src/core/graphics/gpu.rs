@@ -158,7 +158,6 @@ impl Gpu {
             // 8 pixel delay according to https://melonds.kuribo64.net/board/thread.php?id=13
             (256 + 8) * 6,
             EventType::GpuScanline256,
-            0,
         );
     }
 
@@ -187,7 +186,7 @@ impl Gpu {
 }
 
 impl Emu {
-    pub fn gpu_on_scanline256_event(&mut self, _: u16) {
+    pub fn gpu_on_scanline256_event(&mut self) {
         if self.gpu.v_count < 192 {
             self.gpu.renderer.on_scanline(&mut self.gpu.gpu_2d_regs_a, &mut self.gpu.gpu_2d_regs_b, self.gpu.v_count as u8);
             self.dma_trigger_all(ARM9, DmaTransferMode::StartAtHBlank);
@@ -201,10 +200,10 @@ impl Emu {
             }
         }
 
-        self.cm.schedule((355 - 256) * 6, EventType::GpuScanline355, 0);
+        self.cm.schedule((355 - 256) * 6, EventType::GpuScanline355);
     }
 
-    pub fn gpu_on_scanline355_event(&mut self, _: u16) {
+    pub fn gpu_on_scanline355_event(&mut self) {
         self.gpu.v_count += 1;
         match self.gpu.v_count {
             192 => {
@@ -263,6 +262,6 @@ impl Emu {
             self.arm7_hle_on_scanline(self.gpu.v_count);
         }
 
-        self.cm.schedule(256 * 6, EventType::GpuScanline256, 0);
+        self.cm.schedule(256 * 6, EventType::GpuScanline256);
     }
 }
