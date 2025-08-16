@@ -137,7 +137,7 @@ pub const DEFAULT_SETTINGS: Settings = Settings {
         Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true), true),
         Setting::new(
             "Arm7 Emulation",
-            "AccurateLle: Slowest, best compatibility, PartialSoundHle: ~10%% faster, reduced compatibility,\nHle: ~15-20%% faster, worst compatibility. Use AccurateLle if game crashes, gets stuck or bugs occur.",
+            "AccurateLle: Slowest, best compatibility, SoundHle: ~10%% faster, reduced compatibility,\nHle: ~15-20%% faster, worst compatibility. Use AccurateLle if game crashes, gets stuck or bugs occur.",
             SettingValue::Arm7Emu(Arm7Emu::AccurateLle),
             false,
         ),

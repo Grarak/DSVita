@@ -381,7 +381,7 @@ impl Emu {
         let alarm = &mut self.hle.sound.nitro.alarms[alarm_index];
         let delay = alarm.repeat;
         if delay != 0 {
-            self.cm.schedule(delay as u32 * 64, EventType::SoundAlarmHle, alarm_index as u16);
+            self.cm.schedule(delay * 64, EventType::SoundAlarmHle, alarm_index as u16);
         } else {
             alarm.active = false;
         }

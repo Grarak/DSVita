@@ -5,7 +5,7 @@ use crate::core::input::Keycode;
 use crate::logging::info_println;
 use crate::presenter::imgui::root::{
     ImDrawData, ImGui, ImGuiStyleVar__ImGuiStyleVar_ItemSpacing, ImGuiStyleVar__ImGuiStyleVar_WindowRounding, ImGui_ImplVitaGL_GamepadUsage, ImGui_ImplVitaGL_Init, ImGui_ImplVitaGL_MouseStickUsage,
-    ImGui_ImplVitaGL_NewFrame, ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_Shutdown, ImGui_ImplVitaGL_TouchUsage, ImVec2,
+    ImGui_ImplVitaGL_NewFrame, ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImVec2,
 };
 use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, UiBackend, UiPauseMenuReturn};
 use crate::presenter::{
@@ -17,8 +17,8 @@ use gl::types::{GLboolean, GLenum, GLuint};
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
+use std::ptr;
 use std::str::FromStr;
-use std::{mem, ptr};
 use strum::IntoEnumIterator;
 use vitasdk_sys::*;
 

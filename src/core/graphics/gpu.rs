@@ -9,7 +9,6 @@ use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
-use crate::profiling::profiling_frame_mark;
 use crate::settings::Arm7Emu;
 use bilge::prelude::*;
 use std::intrinsics::unlikely;
@@ -42,7 +41,7 @@ impl FrameRateCounter {
         let now = Instant::now();
         if unlikely(now.duration_since(self.last_update).as_millis() >= 1000) {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
-            // #[cfg(target_os = "linux")]
+            #[cfg(target_os = "linux")]
             eprintln!("{}", self.frame_counter);
             self.frame_counter = 0;
             self.last_update = now;
@@ -242,8 +241,6 @@ impl Emu {
                     self.arm7_hle_on_frame();
                 }
                 self.gpu.renderer.reload_registers();
-
-                profiling_frame_mark!();
             }
             _ => {}
         }

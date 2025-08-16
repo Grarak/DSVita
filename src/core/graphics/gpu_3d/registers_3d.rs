@@ -479,6 +479,7 @@ impl Emu {
         let _zone = tracy_client::secondary_frame_mark!("Execute gpu register 3d cmds");
     }
 
+    #[inline(always)]
     fn regs_3d_post_queue_entry(&mut self) {
         if unlikely(self.gpu.gpu_3d_regs.is_cmd_fifo_full()) {
             self.breakout_imm = true;
@@ -517,6 +518,7 @@ impl Emu {
         self.gpu.gpu_3d_regs.vec_result[index] as u16
     }
 
+    #[inline(always)]
     fn regs_3d_queue_packed_value(&mut self, value: u32) {
         let regs_3d = &mut self.gpu.gpu_3d_regs;
         if regs_3d.cmd_remaining_params == 0 {
@@ -527,7 +529,7 @@ impl Emu {
                 }
                 let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) } & 0x3F;
                 regs_3d.cmd_remaining_params += params_count;
-                regs_3d.test_queue += (cmd >= 0x70 && cmd <= 0x72) as u8;
+                regs_3d.test_queue += ((cmd + 0x10) >> 7) as u8;
             }
         } else {
             regs_3d.cmd_remaining_params -= 1;
@@ -535,6 +537,7 @@ impl Emu {
         regs_3d.cmd_fifo.push_back(value);
     }
 
+    #[inline(always)]
     pub fn regs_3d_set_gx_fifo(&mut self, mask: u32, value: u32) {
         self.regs_3d_queue_packed_value(value & mask);
         self.regs_3d_post_queue_entry();
@@ -553,7 +556,7 @@ impl Emu {
                     }
                     let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) } & 0x3F;
                     regs_3d.cmd_remaining_params += params_count;
-                    regs_3d.test_queue += (cmd >= 0x70 && cmd <= 0x72) as u8;
+                    regs_3d.test_queue += ((cmd + 0x10) >> 7) as u8;
                 }
                 consumed += 1;
                 regs_3d.cmd_fifo.push_back(value);
@@ -746,6 +749,8 @@ impl Gpu3DRegisters {
             2 => self.exe_vec_test(params),
             _ => {}
         }
+
+        self.test_queue -= 1;
     }
 
     fn exe_empty_group(&mut self, _: usize, _: &[u32; 32]) {}
@@ -1074,7 +1079,7 @@ impl Gpu3DRegisters {
     }
 
     fn exe_begin_vtxs(&mut self, cmd: usize, params: &[u32; 32]) {
-        if cmd != 0 {
+        if unlikely(cmd != 0) {
             return;
         }
 
@@ -1089,7 +1094,7 @@ impl Gpu3DRegisters {
     }
 
     fn exe_swap_buffers(&mut self, cmd: usize, params: &[u32; 32]) {
-        if cmd != 0 {
+        if unlikely(cmd != 0) {
             return;
         }
 
@@ -1098,7 +1103,7 @@ impl Gpu3DRegisters {
     }
 
     fn exe_viewport(&mut self, cmd: usize, params: &[u32; 32]) {
-        if cmd != 0 {
+        if unlikely(cmd != 0) {
             return;
         }
 
@@ -1107,8 +1112,6 @@ impl Gpu3DRegisters {
 
     fn exe_box_test(&mut self, _: &[u32; 32]) {
         self.gx_stat.set_box_test_result(true);
-
-        self.test_queue -= 1;
     }
 
     fn exe_pos_test(&mut self, params: &[u32; 32]) {
@@ -1117,8 +1120,6 @@ impl Gpu3DRegisters {
         self.cur_vtx.coords[2] = params[1] as i16 as i32;
         self.cur_vtx.coords[3] = 1 << 12;
         self.pos_result = self.cur_vtx.coords * self.get_clip_matrix();
-
-        self.test_queue -= 1;
     }
 
     fn exe_vec_test(&mut self, params: &[u32; 32]) {
@@ -1132,8 +1133,6 @@ impl Gpu3DRegisters {
         self.vec_result[0] = ((vector[0] << 3) as i16) >> 3;
         self.vec_result[1] = ((vector[1] << 3) as i16) >> 3;
         self.vec_result[2] = ((vector[2] << 3) as i16) >> 3;
-
-        self.test_queue -= 1;
     }
 
     pub fn swap_buffers(&mut self) {

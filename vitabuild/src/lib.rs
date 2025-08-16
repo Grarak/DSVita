@@ -3,6 +3,14 @@ use std::{env, fs};
 
 const COMMON_C_FLAGS: &[&str] = &["-mtune=cortex-a9", "-mfloat-abi=hard", "-mfpu=neon", "-mthumb"];
 
+pub fn get_profile_name() -> String {
+    get_out_path().to_str().unwrap().split(std::path::MAIN_SEPARATOR).nth_back(3).unwrap().to_string()
+}
+
+pub fn is_profiling() -> bool {
+    get_profile_name() == "release-profiling"
+}
+
 pub fn get_out_path() -> PathBuf {
     PathBuf::from(env::var("OUT_DIR").unwrap())
 }
@@ -32,6 +40,9 @@ pub fn get_common_c_flags() -> Vec<String> {
     let mut flags = COMMON_C_FLAGS.to_vec().iter().map(|flag| flag.to_string()).collect::<Vec<_>>();
     if !is_target_vita() {
         flags.push("--target=armv7-unknown-linux-gnueabihf".to_string());
+    }
+    if is_profiling() {
+        flags.push("-pg".to_string());
     }
     if let Some(vitasdk_path) = get_vitasdk_path() {
         if is_target_vita() || !is_host_linux() {

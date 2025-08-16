@@ -4,11 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
-use vitabuild::{create_cc_build, get_common_c_flags, get_out_path, is_debug, is_host_linux, is_target_vita};
-
-fn get_profile_name() -> String {
-    get_out_path().to_str().unwrap().split(std::path::MAIN_SEPARATOR).nth_back(3).unwrap().to_string()
-}
+use vitabuild::{create_cc_build, get_common_c_flags, get_out_path, get_profile_name, is_debug, is_host_linux, is_profiling, is_target_vita};
 
 fn generate_linux_imgui_bindings(sysroot: Option<PathBuf>) {
     let bindings_file = get_out_path().join("imgui_bindings.rs");
@@ -31,6 +27,7 @@ fn generate_linux_imgui_bindings(sysroot: Option<PathBuf>) {
 }
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(profiling)");
     println!("cargo:rerun-if-env-changed=OUT_DIR");
     let out_path = get_out_path();
 
@@ -182,6 +179,12 @@ fn main() {
 
     let kubridge_path = PathBuf::from("kubridge");
 
+    if is_profiling() {
+        println!("cargo:rustc-link-arg=-pg");
+        println!("cargo::rustc-env=CC=-pg");
+        println!("cargo::rustc-cfg=profiling");
+    }
+
     if is_target_vita() {
         let bindings_file = out_path.join("imgui_bindings.rs");
 
@@ -271,7 +274,7 @@ fn main() {
             .arg("-B")
             .arg(&kubridge_out)
             .arg("-S")
-            .arg("kubridge")
+            .arg(&kubridge_path)
             .status()
             .unwrap();
         Command::new("cmake").arg("--build").arg(&kubridge_out).status().unwrap();
@@ -282,5 +285,22 @@ fn main() {
         println!("cargo:rerun-if-changed={}", kubridge_path.to_str().unwrap());
         println!("cargo:rustc-link-search=native={}", fs::canonicalize(kubridge_out).unwrap().to_str().unwrap());
         println!("cargo:rustc-link-lib=static=kubridge_stub_dsvita");
+    }
+
+    if is_profiling() {
+        let gprof_out = out_path.join("vita-gprof");
+        Command::new("cmake")
+            .arg("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
+            .arg("-B")
+            .arg(&gprof_out)
+            .arg("-S")
+            .arg("vita-gprof")
+            .status()
+            .unwrap();
+        Command::new("cmake").arg("--build").arg(&gprof_out).status().unwrap();
+
+        println!("cargo:rerun-if-changed=vita-gprof");
+        println!("cargo:rustc-link-search=native={}", fs::canonicalize(gprof_out).unwrap().to_str().unwrap());
+        println!("cargo:rustc-link-lib=static=vitagprof");
     }
 }

@@ -16,7 +16,7 @@ jobs:
         include:
           - flavor: release-debug
           - flavor: release
-            env: RUSTFLAGS="-Zlocation-detail=none -Zfmt-debug=none"
+            env: RUSTFLAGS="-Zlocation-detail=none -Zfmt-debug=none -Clto=fat -Zub-checks=no -Zsaturating-float-casts=no -Ztrap-unreachable=no -Zmir-opt-level=4"
 
     runs-on: ubuntu-latest
 

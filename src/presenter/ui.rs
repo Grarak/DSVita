@@ -374,6 +374,7 @@ pub enum UiPauseMenuReturn {
 pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRenderer, settings: &mut Settings) -> UiPauseMenuReturn {
     let mut pressed_settings = false;
     let mut pressed_quit = false;
+    let mut pressed_exit = false;
     let mut return_value = None;
     let mut settings_config = SettingsConfig::from(settings.clone());
     loop {
@@ -403,13 +404,18 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine(0.0, 5.0);
-                if ImGui::Button(c"Quit".as_ptr(), &vec) {
+                if ImGui::Button(c"Quit game".as_ptr(), &vec) {
                     pressed_quit = true;
                     ImGui::CloseCurrentPopup();
                 }
-                let vec = ImVec2 { x: 205.0, y: 50.0 };
+                let vec = ImVec2 { x: 100.0, y: 50.0 };
                 if ImGui::Button(c"Resume".as_ptr(), &vec) {
                     return_value = Some(UiPauseMenuReturn::Resume);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine(0.0, 5.0);
+                if ImGui::Button(c"Exit emu".as_ptr(), &vec) {
+                    pressed_exit = true;
                     ImGui::CloseCurrentPopup();
                 }
 
@@ -431,11 +437,12 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                 let vec = ImVec2 { x: text_width / 2.0, y: 50.0 };
                 if ImGui::Button(c"No".as_ptr(), &vec) {
                     pressed_quit = false;
+                    pressed_exit = false;
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine(0.0, 5.0);
                 if ImGui::Button(c"Yes".as_ptr(), &vec) {
-                    return_value = Some(UiPauseMenuReturn::Quit);
+                    return_value = if pressed_exit { Some(UiPauseMenuReturn::QuitApp) } else { Some(UiPauseMenuReturn::Quit) };
                     ImGui::CloseCurrentPopup();
                 }
 
@@ -464,7 +471,7 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                         }
                     }
                     ImGui::End();
-                } else if pressed_quit {
+                } else if pressed_quit || pressed_exit {
                     ImGui::OpenPopup(c"QuitPopup".as_ptr());
                 } else {
                     ImGui::OpenPopup(c"PausePopup".as_ptr());
