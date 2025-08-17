@@ -1,16 +1,18 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::graphics::gpu_3d::matrix_vec::MatrixVec;
 use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, SwapBuffers, TextureCoordTransMode, Vertex};
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
-use crate::math::{Matrix, Vectori32};
+use crate::math::{vmult_vec4_mat4, Vectori32};
 use crate::utils::{rgb5_to_float8, HeapMem};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
+use std::arch::arm::int32x4_t;
 use std::intrinsics::{fdiv_fast, fmul_fast, fsub_fast, unchecked_div};
 use std::mem::MaybeUninit;
-use std::ptr;
+use std::{mem, ptr};
 
 #[bitsize(32)]
 #[derive(FromBits)]
@@ -131,8 +133,8 @@ pub struct Gpu3DRendererContent {
     pub vertices_size: u16,
     pub polygons: HeapMem<Polygon, POLYGON_LIMIT>,
     pub polygons_size: u16,
-    pub clip_matrices: Vec<Matrix>,
-    pub tex_matrices: Vec<Matrix>,
+    pub clip_matrices: MatrixVec,
+    pub tex_matrices: MatrixVec,
     pub swap_buffers: SwapBuffers,
     pub pow_cnt1: u16,
 }
@@ -254,7 +256,7 @@ impl Gpu3DRenderer {
         }
     }
 
-    fn add_vertices(&mut self, polygon_index: usize) {
+    fn add_vertices(&mut self, polygon_index: usize, loaded_clip_mtx_index: &mut i32, loaded_tex_mtx_index: &mut i32, clip_mtx: &mut [int32x4_t; 4], tex_mtx: &mut [int32x4_t; 4]) {
         let polygon = &self.content.polygons[polygon_index];
 
         // println!(
@@ -269,7 +271,12 @@ impl Gpu3DRenderer {
         for j in 0..polygon.polygon_type.vertex_count() {
             let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
             vertex.coords[3] = 1 << 12;
-            transformed_coords[j as usize] = vertex.coords * &self.content.clip_matrices[vertex.clip_matrix_index as usize];
+            if *loaded_clip_mtx_index != vertex.clip_matrix_index as i32 {
+                *loaded_clip_mtx_index = vertex.clip_matrix_index as i32;
+                *clip_mtx = unsafe { mem::transmute(self.content.clip_matrices[vertex.clip_matrix_index as usize].vld()) };
+            }
+            unsafe { vmult_vec4_mat4(vertex.coords.vld(), *clip_mtx, &mut transformed_coords[j as usize].values) };
+
             if transformed_coords[j as usize][3] == 0 {
                 return;
             }
@@ -315,25 +322,33 @@ impl Gpu3DRenderer {
                     TextureCoordTransMode::None => {}
                     TextureCoordTransMode::TexCoord => {
                         let mut vector = Vectori32::<4>::new([(tex_coords[0] as i32) << 8, (tex_coords[1] as i32) << 8, 1 << 8, 1 << 8]);
-                        vector *= &self.content.tex_matrices[vertex.tex_matrix_index as usize];
+                        unsafe {
+                            if *loaded_tex_mtx_index != vertex.tex_matrix_index as i32 {
+                                *loaded_tex_mtx_index = vertex.tex_matrix_index as i32;
+                                *tex_mtx = mem::transmute(self.content.tex_matrices[vertex.tex_matrix_index as usize].vld());
+                            }
+                            vmult_vec4_mat4(vector.vld(), *tex_mtx, &mut vector.values);
+                        }
                         tex_coords[0] = (vector[0] >> 8) as i16;
                         tex_coords[1] = (vector[1] >> 8) as i16;
                     }
                     TextureCoordTransMode::Normal => {
-                        let normal = Vectori32::<4>::new([polygon.normal[0] as i32, polygon.normal[1] as i32, polygon.normal[2] as i32, 1 << 12]);
-                        let mut mtx = self.content.tex_matrices[vertex.tex_matrix_index as usize];
+                        let mut normal = Vectori32::<4>::new([polygon.normal[0] as i32, polygon.normal[1] as i32, polygon.normal[2] as i32, 1 << 12]);
+                        let mut mtx = self.content.tex_matrices[vertex.tex_matrix_index as usize].clone();
                         mtx[12] = (tex_coords[0] as i32) << 12;
                         mtx[13] = (tex_coords[1] as i32) << 12;
 
-                        let vector = normal * &mtx;
-                        tex_coords[0] = (vector[0] >> 12) as i16;
-                        tex_coords[1] = (vector[1] >> 12) as i16;
+                        unsafe { vmult_vec4_mat4(normal.vld(), mtx.vld(), &mut normal.values) };
+                        tex_coords[0] = (normal[0] >> 12) as i16;
+                        tex_coords[1] = (normal[1] >> 12) as i16;
                     }
                     TextureCoordTransMode::Vertex => {
-                        let mut mtx = self.content.tex_matrices[vertex.tex_matrix_index as usize];
+                        let mut mtx = self.content.tex_matrices[vertex.tex_matrix_index as usize].clone();
                         mtx[12] = (tex_coords[0] as i32) << 12;
                         mtx[13] = (tex_coords[1] as i32) << 12;
-                        let vector = vertex.coords * &mtx;
+
+                        let mut vector: Vectori32<4> = unsafe { MaybeUninit::uninit().assume_init() };
+                        unsafe { vmult_vec4_mat4(vertex.coords.vld(), mtx.vld(), &mut vector.values) };
                         tex_coords[0] = (vector[0] >> 12) as i16;
                         tex_coords[1] = (vector[1] >> 12) as i16;
                     }
@@ -401,15 +416,20 @@ impl Gpu3DRenderer {
         self.vertices_buf.clear();
         self.indices_buf.clear();
 
+        let mut loaded_clip_mtx_index = -1;
+        let mut loaded_tex_mtx_index = -1;
+        let mut clip_mtx: [int32x4_t; 4] = unsafe { MaybeUninit::uninit().assume_init() };
+        let mut tex_mtx: [int32x4_t; 4] = unsafe { MaybeUninit::uninit().assume_init() };
+
         for i in 0..self.content.polygons_size {
             if u8::from(self.content.polygons[i as usize].attr.alpha()) == 31 {
-                self.add_vertices(i as usize);
+                self.add_vertices(i as usize, &mut loaded_clip_mtx_index, &mut loaded_tex_mtx_index, &mut clip_mtx, &mut tex_mtx);
             }
         }
 
         for i in 0..self.content.polygons_size {
             if u8::from(self.content.polygons[i as usize].attr.alpha()) != 31 {
-                self.add_vertices(i as usize);
+                self.add_vertices(i as usize, &mut loaded_clip_mtx_index, &mut loaded_tex_mtx_index, &mut clip_mtx, &mut tex_mtx);
             }
         }
 
