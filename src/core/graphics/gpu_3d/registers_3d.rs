@@ -420,7 +420,7 @@ impl Emu {
 
             for i in 0..4 {
                 let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                if cmd == 0 {
+                if unlikely(cmd == 0) {
                     break;
                 }
                 let param_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
@@ -521,7 +521,7 @@ impl Emu {
         if regs_3d.cmd_remaining_params == 0 {
             for i in 0..4 {
                 let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                if cmd == 0 {
+                if unlikely(cmd == 0) {
                     break;
                 }
                 let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) } & 0x3F;
@@ -548,7 +548,7 @@ impl Emu {
                 let value = values[consumed];
                 for i in 0..4 {
                     let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                    if cmd == 0 {
+                    if unlikely(cmd == 0) {
                         break;
                     }
                     let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) } & 0x3F;

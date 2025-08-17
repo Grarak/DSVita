@@ -72,6 +72,7 @@ fn check_stack_depth(asm: &mut JitAsm, current_pc: u32) {
     }
 }
 
+#[inline(never)]
 pub extern "C" fn handle_interrupt(asm: *mut JitAsm, target_pc: u32, current_pc: u32) {
     let asm = unsafe { asm.as_mut_unchecked() };
     check_stack_depth(asm, current_pc);
