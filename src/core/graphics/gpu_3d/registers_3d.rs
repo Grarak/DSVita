@@ -6,6 +6,7 @@ use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRendererContent;
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
 use crate::fixed_fifo::FixedFifo;
+use crate::logging::debug_println;
 use crate::math::{vmult_mat4, Matrix, Vectori16, Vectori32, MTX_IDENTITY};
 use crate::utils::HeapMem;
 use bilge::prelude::*;
@@ -701,6 +702,25 @@ impl Gpu3DRegisters {
             Gpu3DRegisters::exe_empty,
             Gpu3DRegisters::exe_empty,
         ];
+        const FUNC_NAMES_LUT: [&str; 16] = [
+            "exe_mtx_mode",
+            "exe_mtx_push",
+            "exe_mtx_pop",
+            "exe_mtx_store",
+            "exe_mtx_restore",
+            "exe_mtx_identity",
+            "exe_mtx_load44",
+            "exe_mtx_load43",
+            "exe_mtx_mult44",
+            "exe_mtx_mult43",
+            "exe_mtx_mult33",
+            "exe_mtx_scale",
+            "exe_mtx_trans",
+            "exe_empty",
+            "exe_empty",
+            "exe_empty",
+        ];
+        debug_println!("execute mat group {cmd:x}: {}", FUNC_NAMES_LUT[cmd]);
         FUNC_LUT[cmd](self, params);
     }
 
@@ -724,28 +744,71 @@ impl Gpu3DRegisters {
             Gpu3DRegisters::exe_empty,
             Gpu3DRegisters::exe_empty,
         ];
+        const FUNC_NAMES_LUT: [&str; 16] = [
+            "exe_color",
+            "exe_normal",
+            "exe_tex_coord",
+            "exe_vtx16",
+            "exe_vtx10",
+            "exe_vtx_x_y",
+            "exe_vtx_x_z",
+            "exe_vtx_y_z",
+            "exe_vtx_diff",
+            "exe_polygon_attr",
+            "exe_tex_image_param",
+            "exe_pltt_base",
+            "exe_empty",
+            "exe_empty",
+            "exe_empty",
+            "exe_empty",
+        ];
+        debug_println!("execute vert group {cmd:x}: {}", FUNC_NAMES_LUT[cmd]);
         FUNC_LUT[cmd](self, params);
     }
 
     fn exe_attr_group(&mut self, cmd: usize, params: &[u32; 32]) {
         unsafe { assert_unchecked(cmd <= 0xF) };
         match cmd {
-            0 => self.exe_dif_amb(params),
-            1 => self.exe_spe_emi(params),
-            2 => self.exe_light_vector(params),
-            3 => self.exe_light_color(params),
-            4 => self.exe_shininess(params),
-            _ => {}
+            0 => {
+                debug_println!("execute attr group {cmd:x}: exe_dif_amb");
+                self.exe_dif_amb(params);
+            }
+            1 => {
+                debug_println!("execute attr group {cmd:x}: exe_spe_emi");
+                self.exe_spe_emi(params);
+            }
+            2 => {
+                debug_println!("execute attr group {cmd:x}: exe_light_vector");
+                self.exe_light_vector(params);
+            }
+            3 => {
+                debug_println!("execute attr group {cmd:x}: exe_light_color");
+                self.exe_light_color(params);
+            }
+            4 => {
+                debug_println!("execute attr group {cmd:x}: exe_shininess");
+                self.exe_shininess(params);
+            }
+            _ => debug_println!("execute attr group {cmd:x}: exe_empty"),
         }
     }
 
     fn exe_test_group(&mut self, cmd: usize, params: &[u32; 32]) {
         unsafe { assert_unchecked(cmd <= 0xF) };
         match cmd {
-            0 => self.exe_box_test(params),
-            1 => self.exe_pos_test(params),
-            2 => self.exe_vec_test(params),
-            _ => {}
+            0 => {
+                debug_println!("execute test group {cmd:x}: exe_box_test");
+                self.exe_box_test(params);
+            }
+            1 => {
+                debug_println!("execute test group {cmd:x}: exe_pos_test");
+                self.exe_pos_test(params);
+            }
+            2 => {
+                debug_println!("execute test group {cmd:x}: exe_vec_test");
+                self.exe_vec_test(params);
+            }
+            _ => debug_println!("execute test group {cmd:x}: exe_empty"),
         }
 
         self.test_queue -= 1;
@@ -1086,6 +1149,8 @@ impl Gpu3DRegisters {
             return;
         }
 
+        debug_println!("execute exe_begin_vtxs {cmd:x}");
+
         if self.vertex_list_size < self.vertex_list_primitive_type.vertex_count() as u16 {
             self.vertices_size -= self.vertex_list_size;
         }
@@ -1101,6 +1166,8 @@ impl Gpu3DRegisters {
             return;
         }
 
+        debug_println!("execute exe_swap_buffers {cmd:x}");
+
         self.flushed = true;
         self.swap_buffers = SwapBuffers::from(params[0] as u8)
     }
@@ -1109,6 +1176,8 @@ impl Gpu3DRegisters {
         if unlikely(cmd != 0) {
             return;
         }
+
+        debug_println!("execute exe_viewport {cmd:x}");
 
         self.cur_viewport = Viewport::from(params[0]);
     }
