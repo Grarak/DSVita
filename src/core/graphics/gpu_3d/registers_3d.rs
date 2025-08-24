@@ -850,14 +850,12 @@ impl Gpu3DRegisters {
     }
 
     fn exe_mtx_pop(&mut self, params: &[u32; 32]) {
-        let mode = self.mtx_mode as u8 + 1; // Overflows to 4 when mode is texture, which sets the appropriate flags
-        self.mtx_flags.value |= mode;
-
         match self.mtx_mode {
             MtxMode::Projection => {
                 if u8::from(self.gx_stat.proj_mtx_stack_lvl()) == 1 {
                     self.matrices.proj = self.matrices.proj_stack.clone();
                     self.gx_stat.set_proj_mtx_stack_lvl(u1::new(0));
+                    self.mtx_flags.set_clip_dirty_bool(true);
                 } else {
                     self.gx_stat.set_mtx_stack_overflow_underflow_err(true);
                 }
@@ -872,9 +870,13 @@ impl Gpu3DRegisters {
                     self.gx_stat.set_pos_vec_mtx_stack_lvl(u5::new(ptr));
                     self.matrices.coord = self.matrices.coord_stack[ptr as usize].clone();
                     self.matrices.dir = self.matrices.dir_stack[ptr as usize].clone();
+                    self.mtx_flags.set_clip_dirty_bool(true);
                 }
             }
-            MtxMode::Texture => self.matrices.tex = self.matrices.tex_stack.clone(),
+            MtxMode::Texture => {
+                self.matrices.tex = self.matrices.tex_stack.clone();
+                self.mtx_flags.set_tex_push(true);
+            }
         }
     }
 
@@ -897,7 +899,7 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_restore(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.mtx_flags.value |= mode;
+        self.mtx_flags.value |= mode; // Overflows to 4 when mode is texture, which sets the appropriate flags
 
         match self.mtx_mode {
             MtxMode::Projection => self.matrices.proj = self.matrices.proj_stack.clone(),
