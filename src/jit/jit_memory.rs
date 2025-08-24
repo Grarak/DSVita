@@ -680,7 +680,7 @@ impl JitMemory {
 
                 if transfer.size() == 3 {
                     let mapped_next = guest_inst_metadata.mapped_guest_regs[guest_inst_metadata.operands.values[0].as_reg_no_shift().unwrap_unchecked() as usize + 1];
-                    Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, mapped_next);
+                    Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R1, mapped_next);
                 }
             } else {
                 Self::fast_mem_mov::<THUMB>(
