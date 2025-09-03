@@ -427,6 +427,7 @@ pub fn actual_main() {
                 start_profiling();
                 run_cpu(unsafe { emu.as_mut_unchecked() });
                 stop_profiling();
+                info_println!("Stopped cpu {:?}", thread::current().id());
             })
             .unwrap();
 

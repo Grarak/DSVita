@@ -33,12 +33,22 @@ impl RegAlloc {
         }
     }
 
-    fn restore_guest_reg(&mut self, guest_reg: Reg, dest_reg: Reg, masm: &mut MacroAssembler) {
+    fn restore_guest_reg(guest_reg: Reg, dest_reg: Reg, masm: &mut MacroAssembler) {
         masm.ldr2(dest_reg, &(GUEST_REGS_PTR_REG, guest_reg as i32 * 4).into());
     }
 
-    fn spill_guest_reg(&mut self, guest_reg: Reg, src_reg: Reg, masm: &mut MacroAssembler) {
+    fn spill_guest_reg(guest_reg: Reg, src_reg: Reg, masm: &mut MacroAssembler) {
         masm.str2(src_reg, &(GUEST_REGS_PTR_REG, guest_reg as i32 * 4).into());
+    }
+
+    pub fn reserve_guest_regs(&mut self, guest_regs: RegReserve, masm: &mut MacroAssembler) -> RegReserve {
+        let mut reserved_regs = reg_reserve!();
+        for reg in guest_regs {
+            if self.alloc_guest_reg(reg, true, reg_reserve!(), reg_reserve!(), reg_reserve!(), masm).0 != Reg::None {
+                reserved_regs += reg;
+            }
+        }
+        reserved_regs
     }
 
     fn alloc_guest_reg(&mut self, guest_reg: Reg, is_input: bool, used_regs: RegReserve, next_live_regs: RegReserve, dirty_guest_regs: RegReserve, masm: &mut MacroAssembler) -> (Reg, Reg) {
@@ -49,7 +59,7 @@ impl RegAlloc {
             self.set_guest_reg_mapping(guest_reg, reg);
             self.free_regs -= reg;
             if is_input && guest_reg != Reg::PC {
-                self.restore_guest_reg(guest_reg, reg, masm);
+                Self::restore_guest_reg(guest_reg, reg, masm);
             }
             return (reg, Reg::None);
         }
@@ -61,10 +71,10 @@ impl RegAlloc {
                 self.set_guest_reg_mapping(reg, Reg::None);
                 self.set_guest_reg_mapping(guest_reg, mapped_reg);
                 if dirty_guest_regs.is_reserved(reg) {
-                    self.spill_guest_reg(reg, mapped_reg, masm);
+                    Self::spill_guest_reg(reg, mapped_reg, masm);
                 }
                 if is_input && guest_reg != Reg::PC {
-                    self.restore_guest_reg(guest_reg, mapped_reg, masm);
+                    Self::restore_guest_reg(guest_reg, mapped_reg, masm);
                 }
                 return (mapped_reg, reg);
             }
@@ -77,10 +87,10 @@ impl RegAlloc {
                 self.set_guest_reg_mapping(reg, Reg::None);
                 self.set_guest_reg_mapping(guest_reg, mapped_reg);
                 if dirty_guest_regs.is_reserved(reg) {
-                    self.spill_guest_reg(reg, mapped_reg, masm);
+                    Self::spill_guest_reg(reg, mapped_reg, masm);
                 }
                 if is_input && guest_reg != Reg::PC {
-                    self.restore_guest_reg(guest_reg, mapped_reg, masm);
+                    Self::restore_guest_reg(guest_reg, mapped_reg, masm);
                 }
                 return (mapped_reg, reg);
             }
@@ -123,20 +133,20 @@ impl RegAlloc {
         self.guest_regs_mapping[reg as usize]
     }
 
-    pub fn save_active_guest_regs(&mut self, guest_regs: RegReserve, masm: &mut MacroAssembler) {
+    pub fn save_active_guest_regs(&self, guest_regs: RegReserve, masm: &mut MacroAssembler) {
         for guest_reg in guest_regs {
             let mapped_reg = self.guest_regs_mapping[guest_reg as usize];
             if mapped_reg != Reg::None {
-                masm.str2(mapped_reg, &(GUEST_REGS_PTR_REG, guest_reg as i32 * 4).into());
+                Self::spill_guest_reg(guest_reg, mapped_reg, masm);
             }
         }
     }
 
-    pub fn reload_active_guest_regs(&mut self, guest_regs: RegReserve, masm: &mut MacroAssembler) {
+    pub fn reload_active_guest_regs(&self, guest_regs: RegReserve, masm: &mut MacroAssembler) {
         for guest_reg in guest_regs {
             let mapped_reg = self.guest_regs_mapping[guest_reg as usize];
             if mapped_reg != Reg::None {
-                self.restore_guest_reg(guest_reg, mapped_reg, masm);
+                Self::restore_guest_reg(guest_reg, mapped_reg, masm);
             }
         }
     }

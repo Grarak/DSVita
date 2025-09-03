@@ -165,17 +165,37 @@ pub struct SwapBuffers {
     not_used: u6,
 }
 
-// 6th bit indicates if cmd is skippable
+#[bitsize(8)]
+#[derive(Copy, Clone, Default, FromBits)]
+pub struct FifoParam {
+    param_count: u6,
+    is_test: bool,
+    can_skip: bool,
+}
+
+const fn count(c: u8) -> u8 {
+    assert!(c <= 32);
+    c
+}
+
+const fn skip(c: u8) -> u8 {
+    count(c) | (1 << 7)
+}
+
+const fn test(c: u8) -> u8 {
+    count(c) | (1 << 6)
+}
+
 #[rustfmt::skip]
 const FIFO_PARAM_COUNTS: [u8; 128] = [
-    0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), 0 | (1 << 6), // 0x00-0x0F
-    1, 0, 1, 1, 1, 0, 16, 12, 16, 12, 9, 3, 3, 0, 0, 0, // 0x10-0x1F
-    1, 1 | (1 << 6), 1 | (1 << 6), 2 | (1 << 6), 1 | (1 << 6), 1 | (1 << 6), 1 | (1 << 6), 1 | (1 << 6), 1 | (1 << 6), 1, 1, 1, 0, 0, 0, 0, // 0x20-0x2F
-    1, 1, 1, 1, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x30-0x3F
-    1 | (1 << 6), 0 | (1 << 6), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x40-0x4F
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x50-0x5F
-    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x60-0x6F
-    3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x70-0x7F
+    skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x00-0x0F
+    count(1), count(0), count(1), count(1), count(1), count(0), count(16), count(12), count(16), count(12), count(9), count(3), count(3), skip(0), skip(0), skip(0), // 0x10-0x1F
+    count(1), skip(1), skip(1), skip(2), skip(1), skip(1), skip(1), skip(1), skip(1), count(1), count(1), count(1), skip(0), skip(0), skip(0), skip(0), // 0x20-0x2F
+    count(1), count(1), count(1), count(1), count(32), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x30-0x3F
+    skip(1), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x40-0x4F
+    count(1), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x50-0x5F
+    count(1), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x60-0x6F
+    test(3), test(2), test(1), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x70-0x7F
 ];
 
 const FUNC_GROUP_LUT: [fn(&mut Gpu3DRegisters, cmd: usize, params: &[u32; 32]); 8] = [
@@ -344,7 +364,7 @@ impl MatrixFlags {
 
 #[derive(Default)]
 pub struct Gpu3DRegisters {
-    cmd_fifo: FixedFifo<u32, 512>,
+    cmd_fifo: FixedFifo<u32, 1024>,
     cmd_remaining_params: u8,
 
     test_queue: u8,
@@ -425,15 +445,15 @@ impl Emu {
                 if unlikely(cmd == 0) {
                     break;
                 }
-                let param_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
-                let count = (param_count & 0x3F) as usize;
+                let param_count = FifoParam::from(unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) });
+                let count = u8::from(param_count.param_count()) as usize;
 
                 if unlikely(count > regs_3d.cmd_fifo.len()) {
                     regs_3d.cmd_fifo.push_front(value >> (i << 3));
                     break 'outer;
                 }
 
-                let skippable = param_count & (1 << 6) != 0;
+                let skippable = param_count.can_skip();
                 if !regs_3d.skip || likely(!skippable) {
                     for i in 0..count {
                         unsafe { *params.get_unchecked_mut(i) = *regs_3d.cmd_fifo.front() };
@@ -518,69 +538,67 @@ impl Emu {
     }
 
     #[inline(always)]
-    fn regs_3d_queue_packed_value(&mut self, value: u32) {
+    pub fn regs_3d_set_gx_fifo(&mut self, mask: u32, value: u32) {
+        let value = value & mask;
         let regs_3d = &mut self.gpu.gpu_3d_regs;
-        if regs_3d.cmd_remaining_params == 0 {
+        let mut remaining_params = regs_3d.cmd_remaining_params;
+        let mut test_queue = regs_3d.test_queue;
+        if remaining_params == 0 {
             for i in 0..4 {
                 let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                if unlikely(cmd == 0) {
-                    break;
-                }
-                let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) } & 0x3F;
-                regs_3d.cmd_remaining_params += params_count;
-                regs_3d.test_queue += ((cmd + 0x10) >> 7) as u8;
+                let param = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
+                remaining_params += param & 0x3F;
+                test_queue += (param >> 6) & 1;
             }
         } else {
-            regs_3d.cmd_remaining_params -= 1;
+            remaining_params -= 1;
         }
+        regs_3d.cmd_remaining_params = remaining_params;
+        regs_3d.test_queue = test_queue;
         regs_3d.cmd_fifo.push_back(value);
-    }
-
-    #[inline(always)]
-    pub fn regs_3d_set_gx_fifo(&mut self, mask: u32, value: u32) {
-        self.regs_3d_queue_packed_value(value & mask);
         self.regs_3d_post_queue_entry();
     }
 
+    #[inline(always)]
     pub fn regs_3d_set_gx_fifo_multiple(&mut self, values: &[u32]) {
+        unsafe { assert_unchecked(!values.is_empty()) };
         let regs_3d = &mut self.gpu.gpu_3d_regs;
+        let mut remaining_params = regs_3d.cmd_remaining_params;
+        let mut test_queue = regs_3d.test_queue;
         let mut consumed = 0;
         while consumed < values.len() {
-            if regs_3d.cmd_remaining_params == 0 {
+            if remaining_params == 0 {
                 let value = values[consumed];
                 for i in 0..4 {
                     let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                    if unlikely(cmd == 0) {
-                        break;
-                    }
-                    let params_count = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) } & 0x3F;
-                    regs_3d.cmd_remaining_params += params_count;
-                    regs_3d.test_queue += ((cmd + 0x10) >> 7) as u8;
+                    let param = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
+                    remaining_params += param & 0x3F;
+                    test_queue += (param >> 6) & 1;
                 }
                 consumed += 1;
                 regs_3d.cmd_fifo.push_back(value);
             }
 
-            if consumed >= values.len() {
+            if unlikely(consumed >= values.len()) {
                 break;
             }
 
             let values = &values[consumed..];
 
-            let can_consume = min(regs_3d.cmd_remaining_params as usize, values.len());
-            for i in 0..can_consume {
-                regs_3d.cmd_fifo.push_back(values[i]);
-            }
-            regs_3d.cmd_remaining_params -= can_consume as u8;
+            let can_consume = min(remaining_params as usize, values.len());
+            regs_3d.cmd_fifo.push_back_multiple(&values[..can_consume]);
+            remaining_params -= can_consume as u8;
             consumed += can_consume;
         }
+        regs_3d.cmd_remaining_params = remaining_params;
+        regs_3d.test_queue = test_queue;
         self.regs_3d_post_queue_entry();
     }
 
     fn regs_3d_queue_unpacked_value<const CMD: u8>(&mut self, value: u32) {
         let regs_3d = &mut self.gpu.gpu_3d_regs;
         if regs_3d.cmd_remaining_params == 0 {
-            regs_3d.cmd_remaining_params = FIFO_PARAM_COUNTS[CMD as usize] & 0x3F;
+            regs_3d.cmd_remaining_params = u8::from(FifoParam::from(FIFO_PARAM_COUNTS[CMD as usize]).param_count());
             regs_3d.cmd_fifo.push_back(CMD as u32);
             if regs_3d.cmd_remaining_params > 0 {
                 regs_3d.cmd_remaining_params -= 1;
@@ -810,8 +828,6 @@ impl Gpu3DRegisters {
             }
             _ => debug_println!("execute test group {cmd:x}: exe_empty"),
         }
-
-        self.test_queue -= 1;
     }
 
     fn exe_empty_group(&mut self, _: usize, _: &[u32; 32]) {}
@@ -1186,6 +1202,8 @@ impl Gpu3DRegisters {
 
     fn exe_box_test(&mut self, _: &[u32; 32]) {
         self.gx_stat.set_box_test_result(true);
+
+        self.test_queue -= 1;
     }
 
     fn exe_pos_test(&mut self, params: &[u32; 32]) {
@@ -1194,6 +1212,8 @@ impl Gpu3DRegisters {
         self.cur_vtx.coords[2] = params[1] as i16 as i32;
         self.cur_vtx.coords[3] = 1 << 12;
         self.pos_result = self.cur_vtx.coords * self.get_clip_matrix();
+
+        self.test_queue -= 1;
     }
 
     fn exe_vec_test(&mut self, params: &[u32; 32]) {
@@ -1207,6 +1227,8 @@ impl Gpu3DRegisters {
         self.vec_result[0] = ((vector[0] << 3) as i16) >> 3;
         self.vec_result[1] = ((vector[1] << 3) as i16) >> 3;
         self.vec_result[2] = ((vector[2] << 3) as i16) >> 3;
+
+        self.test_queue -= 1;
     }
 
     pub fn swap_buffers(&mut self) {

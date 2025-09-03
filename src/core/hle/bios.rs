@@ -8,6 +8,8 @@ use crate::logging::debug_println;
 use crate::{get_jit_asm_ptr, utils};
 use bilge::prelude::*;
 use std::cmp::min;
+use std::intrinsics::likely;
+use std::mem;
 use CpuType::{ARM7, ARM9};
 
 pub fn swi<const CPU: CpuType>(comment: u8, emu: &mut Emu) {
@@ -61,10 +63,17 @@ pub fn uninterrupt<const CPU: CpuType>(emu: &mut Emu) {
         check_wait_flags::<CPU>(emu);
     }
 
-    let mut reg_values = [0u32; 6];
-    emu.mem_read_multiple_slice::<CPU, true, _>(CPU.thread_regs().sp, &mut reg_values);
-
+    let mut reg_values = &mut [0u32; 6];
     let regs = CPU.thread_regs();
+    let sp = regs.sp;
+    let aligned_addr = sp & !0x3;
+    let aligned_addr = aligned_addr & 0x0FFFFFFF;
+    let shm_offset = emu.get_shm_offset::<CPU, true, false>(aligned_addr);
+    if likely(shm_offset != 0) {
+        reg_values = unsafe { mem::transmute(emu.mem.shm.as_ptr().add(shm_offset)) };
+    } else {
+        emu.mem_read_multiple_slice::<CPU, true, false, _>(CPU.thread_regs().sp, reg_values);
+    }
     regs.gp_regs[0] = reg_values[0];
     regs.gp_regs[1] = reg_values[1];
     regs.gp_regs[2] = reg_values[2];

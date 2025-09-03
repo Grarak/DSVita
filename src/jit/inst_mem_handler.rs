@@ -23,7 +23,7 @@ mod handler {
     use std::hint::assert_unchecked;
     use std::intrinsics::{likely, unlikely};
     use std::mem::MaybeUninit;
-    use std::slice;
+    use std::{mem, slice};
 
     pub fn handle_request_write<const CPU: CpuType, const AMOUNT: MemoryAmount>(value0: u32, value1: u32, addr: u32, emu: &mut Emu) {
         match AMOUNT {
@@ -157,14 +157,21 @@ mod handler {
                 emu.mem_write_multiple_slice::<CPU, true, _>(mem_addr, slice);
             }
         } else {
-            let slice = unsafe { slice::from_raw_parts_mut(values.as_mut_ptr(), rlist_len) };
-            emu.mem_read_multiple_slice::<CPU, true, _>(mem_addr, slice);
+            let mut slice = &mut values;
+            let aligned_addr = mem_addr & !0x3;
+            let aligned_addr = aligned_addr & 0x0FFFFFFF;
+            let shm_offset = emu.get_shm_offset::<CPU, true, false>(aligned_addr);
+            if unlikely(shm_offset != 0) {
+                slice = unsafe { mem::transmute(emu.mem.shm.as_ptr().add(shm_offset)) };
+            } else {
+                emu.mem_read_multiple_slice::<CPU, true, false, _>(aligned_addr, &mut slice[..rlist_len]);
+            }
             let mut rlist = rlist.0.reverse_bits();
             for i in 0..rlist_len {
                 let zeros = rlist.leading_zeros();
                 let reg = Reg::from(zeros as u8);
                 rlist &= !(0x80000000 >> zeros);
-                unsafe { *get_reg_mut(emu, CPU, reg) = *values.get_unchecked(i) };
+                unsafe { *get_reg_mut(emu, CPU, reg) = *slice.get_unchecked(i) };
             }
         }
 

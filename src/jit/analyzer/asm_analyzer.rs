@@ -16,8 +16,8 @@ pub enum JitBranchInfo {
 fn is_idle_loop(insts: &[InstInfo]) -> bool {
     let mut regs_written_to = RegReserve::new();
     let mut regs_disallowed_to_write = RegReserve::new();
-    for (i, inst) in insts.iter().enumerate() {
-        if (inst.is_branch() && i < insts.len() - 1)
+    for inst in &insts[..insts.len() - 1] {
+        if inst.is_branch()
             || matches!(
                 inst.op,
                 Op::Swi | Op::SwiT | Op::Mcr | Op::Mrc | Op::MrsRc | Op::MrsRs | Op::MsrIc | Op::MsrIs | Op::MsrRc | Op::MsrRs | Op::Swp | Op::Swpb
@@ -29,12 +29,12 @@ fn is_idle_loop(insts: &[InstInfo]) -> bool {
 
         let src_regs = inst.src_regs - reg_reserve!(Reg::PC, Reg::CPSR);
         let out_regs = inst.out_regs - reg_reserve!(Reg::PC);
-        regs_disallowed_to_write |= src_regs & !regs_written_to;
+        regs_disallowed_to_write += src_regs - regs_written_to;
 
         if !(out_regs & regs_disallowed_to_write).is_empty() {
             return false;
         }
-        regs_written_to |= out_regs;
+        regs_written_to += out_regs;
     }
     true
 }
@@ -98,12 +98,8 @@ impl AsmAnalyzer {
                         self.insts_metadata[i].set_idle_loop(true);
                         self.insts_metadata[target_index].set_local_branch_entry(true);
                     }
-                    JitBranchInfo::Local(target_index) => {
-                        self.insts_metadata[target_index].set_local_branch_entry(true);
-                    }
-                    JitBranchInfo::None => {
-                        self.insts_metadata[i].set_external_branch(true);
-                    }
+                    JitBranchInfo::Local(target_index) => self.insts_metadata[target_index].set_local_branch_entry(true),
+                    JitBranchInfo::None => self.insts_metadata[i].set_external_branch(true),
                 }
             }
         }

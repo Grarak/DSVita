@@ -804,7 +804,7 @@ impl JitMemory {
 
     pub unsafe fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType, _: &ArmContext) -> bool {
         if *host_pc < self.mem.as_ptr() as usize || *host_pc >= self.mem.as_ptr() as usize + JIT_MEMORY_SIZE {
-            debug_println!("Segfault outside of guest context");
+            eprintln!("Segfault outside of guest context");
             return false;
         }
 
@@ -829,7 +829,7 @@ impl JitMemory {
             }
         }
 
-        debug_println!("Can't find guest inst metadata");
+        eprintln!("Can't find guest inst metadata");
         false
     }
 }

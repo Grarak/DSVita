@@ -166,7 +166,7 @@ impl BlockAsm {
         let mut input_regs = inst.src_regs;
         let output_regs = inst.out_regs;
         if inst.cond != Cond::AL {
-            input_regs += output_regs;
+            input_regs += output_regs - Reg::PC;
         }
 
         if inst.op.is_single_mem_transfer() && !inst.op.is_write_mem_transfer() {
@@ -245,7 +245,7 @@ impl BlockAsm {
 
     pub fn load_guest_cpsr_reg(&mut self, tmp_reg: Reg) {
         self.load_guest_reg(tmp_reg, Reg::CPSR);
-        self.msr2(MaskedSpecialRegisterType_CPSR_f.into(), &CPSR_TMP_REG.into());
+        self.msr2(MaskedSpecialRegisterType_CPSR_f.into(), &tmp_reg.into());
     }
 
     pub fn store_guest_cpsr_reg(&mut self, tmp_reg: Reg) {
@@ -275,6 +275,10 @@ impl BlockAsm {
         if clear {
             self.dirty_guest_regs.clear();
         }
+    }
+
+    pub fn save_guest_regs(&mut self, regs: RegReserve) {
+        self.reg_alloc.save_active_guest_regs(regs, &mut self.masm);
     }
 
     pub fn get_dirty_guest_regs(&self) -> RegReserve {
@@ -392,17 +396,11 @@ impl BlockAsm {
     }
 
     pub fn bind_basic_block(&mut self, basic_block_index: usize) {
-        match &mut self.guest_basic_block_labels[basic_block_index] {
-            None => unreachable!(),
-            Some(label) => self.masm.bind(label),
-        }
+        self.masm.bind(self.guest_basic_block_labels[basic_block_index].as_mut().unwrap());
     }
 
     pub fn b_basic_block(&mut self, basic_block_index: usize) {
-        match &mut self.guest_basic_block_labels[basic_block_index] {
-            None => unreachable!(),
-            Some(label) => self.masm.b2(label, BranchHint_kNear),
-        }
+        self.masm.b2(self.guest_basic_block_labels[basic_block_index].as_mut().unwrap(), BranchHint_kNear);
     }
 }
 

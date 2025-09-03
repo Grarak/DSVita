@@ -20,6 +20,7 @@ pub mod jit_memory;
 mod jit_memory_map;
 pub mod op;
 pub mod reg;
+mod inst_nitrosdk_handler;
 
 pub type Cond = vixl::Cond;
 

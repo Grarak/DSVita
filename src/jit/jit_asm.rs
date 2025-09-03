@@ -429,6 +429,10 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
         pc_offset += pc_step;
     }
 
+    if asm.emit_nitrosdk_func(guest_pc, thumb) {
+        return;
+    }
+
     let (jit_entry, flushed) = {
         debug_println!("{cpu:?} {thumb} emit code block {guest_pc:x} - {:x}", guest_pc + pc_offset);
         // unsafe { BLOCK_LOG = guest_pc == 0x200675e };

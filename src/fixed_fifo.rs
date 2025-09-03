@@ -64,6 +64,17 @@ impl<T, const SIZE: usize> FixedFifo<T, SIZE> {
     }
 }
 
+impl<T: Copy, const SIZE: usize> FixedFifo<T, SIZE> {
+    pub fn push_back_multiple(&mut self, values: &[T]) {
+        let end = self.end;
+        self.end = (end + values.len()) % SIZE;
+        self.len += values.len();
+        for i in 0..values.len() {
+            unsafe { *self.fifo.get_unchecked_mut((end + i) % SIZE) = values[i] };
+        }
+    }
+}
+
 impl<T: Default, const SIZE: usize> Default for FixedFifo<T, SIZE> {
     fn default() -> Self {
         FixedFifo::new()

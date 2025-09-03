@@ -249,7 +249,7 @@ impl JitAsm<'_> {
             let mut continue_label = Label::new();
             let mut exit_label = Label::new();
 
-            block_asm.cmp2(Reg::R3, &self.cpu.max_loop_cycle_count().into());
+            block_asm.cmp2(Reg::R2, &self.cpu.max_loop_cycle_count().into());
             block_asm.b3(Cond::HS, &mut cycles_exceed_label, BranchHint_kFar);
 
             block_asm.bind(&mut continue_label);
@@ -258,15 +258,14 @@ impl JitAsm<'_> {
             let target_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(aligned_target_pc);
 
             if jump_to_index > inst_index {
-                block_asm.ldr2(Reg::R0, current_pc_jit_entry as u32);
-                block_asm.ldr2(Reg::R1, target_pc_jit_entry as u32);
-                block_asm.ldr2(Reg::R0, &Reg::R0.into());
+                block_asm.ldr2(Reg::R1, current_pc_jit_entry as u32);
+                block_asm.ldr2(Reg::R2, target_pc_jit_entry as u32);
                 block_asm.ldr2(Reg::R1, &Reg::R1.into());
-                block_asm.cmp2(Reg::R0, &Reg::R1.into());
+                block_asm.ldr2(Reg::R2, &Reg::R2.into());
+                block_asm.cmp2(Reg::R1, &Reg::R2.into());
                 block_asm.b3(Cond::NE, &mut exit_label, BranchHint_kFar);
             }
 
-            block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pre_cycle_count_sum.into());
             block_asm.strh2(Reg::R1, &(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
 
@@ -299,6 +298,8 @@ impl JitAsm<'_> {
                     block_asm.load_guest_reg(Reg::R0, Reg::PC);
                     block_asm.cmp2(Reg::R0, &pc_reg.into());
 
+                    block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
+
                     block_asm.b3(Cond::EQ, &mut continue_label, BranchHint_kFar);
 
                     block_asm.ldr2(Reg::R0, self as *mut _ as u32);
@@ -308,6 +309,7 @@ impl JitAsm<'_> {
                         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &pc.into());
                     }
                     block_asm.call(handle_interrupt as _);
+                    block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
                     block_asm.b2(&mut continue_label, BranchHint_kFar);
 
                     if jump_to_index > inst_index {

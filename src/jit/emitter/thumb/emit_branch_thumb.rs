@@ -43,7 +43,6 @@ impl JitAsm<'_> {
 
     pub fn emit_b_thumb(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
         let inst = &self.jit_buf.insts[inst_index];
-
         let relative_pc = inst.operands()[0].as_imm().unwrap() as i32 + 4;
         let target_pc = (block_asm.current_pc as i32 + relative_pc) as u32;
 

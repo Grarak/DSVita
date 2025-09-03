@@ -764,17 +764,25 @@ impl Emu {
         ret
     }
 
-    pub fn mem_read_multiple_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, slice: &mut [T]) {
+    pub fn mem_read_multiple_slice<const CPU: CpuType, const TCM: bool, const SHM_MEMORY: bool, T: Convert>(&mut self, addr: u32, slice: &mut [T]) {
         debug_println!("{CPU:?} slice memory read at {addr:x} with size {}", size_of_val(slice));
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
-        let shm_offset = self.get_shm_offset::<CPU, TCM, false>(aligned_addr) as u32;
-        if shm_offset != 0 {
-            utils::read_from_mem_slice(&self.mem.shm, shm_offset, slice);
-        } else {
-            MemoryMultipleSliceIo::<CPU, TCM, T>::read(aligned_addr, slice, self);
+        if SHM_MEMORY {
+            let shm_offset = self.get_shm_offset::<CPU, TCM, false>(aligned_addr) as u32;
+            if shm_offset != 0 {
+                utils::read_from_mem_slice(&self.mem.shm, shm_offset, slice);
+                if DEBUG_LOG {
+                    for (i, &value) in slice.iter().enumerate() {
+                        debug_println!("{CPU:?} slice memory read at {:x} with value {:x}", aligned_addr as usize + i * size_of::<T>(), value.into());
+                    }
+                }
+                return;
+            }
         }
+
+        MemoryMultipleSliceIo::<CPU, TCM, T>::read(aligned_addr, slice, self);
 
         if DEBUG_LOG {
             for (i, &value) in slice.iter().enumerate() {
@@ -881,7 +889,7 @@ impl Emu {
         [(); size_of::<T>()]:,
     {
         let mut mem = [0; size_of::<T>()];
-        self.mem_read_multiple_slice::<CPU, TCM, u8>(addr, &mut mem);
+        self.mem_read_multiple_slice::<CPU, TCM, true, u8>(addr, &mut mem);
         unsafe { mem::transmute_copy(&mem) }
     }
 

@@ -192,15 +192,14 @@ impl JitAsm<'_> {
             let op1_mapped = block_asm.get_guest_map(op1);
             let op2_mapped = block_asm.get_guest_operand_map(op2);
 
+            let addr_reg = if transfer.pre() { Reg::R2 } else { Reg::R1 };
             if transfer.add() {
-                block_asm.add5(flag_update, Cond::AL, Reg::R1, op1_mapped, &op2_mapped);
+                block_asm.add5(flag_update, Cond::AL, addr_reg, op1_mapped, &op2_mapped);
             } else {
-                block_asm.sub5(flag_update, Cond::AL, Reg::R1, op1_mapped, &op2_mapped);
+                block_asm.sub5(flag_update, Cond::AL, addr_reg, op1_mapped, &op2_mapped);
             }
 
-            if transfer.pre() {
-                block_asm.mov4(flag_update, Cond::AL, Reg::R2, &Reg::R1.into());
-            } else {
+            if !transfer.pre() {
                 block_asm.mov4(flag_update, Cond::AL, Reg::R2, &op1_mapped.into());
             }
 
@@ -215,7 +214,7 @@ impl JitAsm<'_> {
                     block_asm.mov4(flag_update, Cond::AL, Reg::R0, &value_reg.into());
                     value_reg = Reg::R0;
                 }
-                block_asm.mov4(flag_update, Cond::AL, op1_mapped, &Reg::R1.into());
+                block_asm.mov4(flag_update, Cond::AL, op1_mapped, &addr_reg.into());
                 dirty_guest_regs += op1;
             }
 

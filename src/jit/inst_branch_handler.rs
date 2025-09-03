@@ -99,7 +99,7 @@ fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm, total_cycles: u16, current
 }
 
 #[inline(always)]
-fn check_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, current_pc: u32) {
+pub fn check_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, current_pc: u32) {
     if unlikely(asm.runtime_data.accumulated_cycles >= CPU.max_loop_cycle_count() as u16) {
         match CPU {
             ARM9 => {

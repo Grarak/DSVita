@@ -259,13 +259,21 @@ impl Emu {
         let dma = &mut self.dma[CPU];
         let total_size = count << (step_size >> 1);
         if dma.src_buf.len() < total_size as usize {
-            dma.src_buf.resize(total_size as usize, 0);
+            dma.src_buf.reserve(total_size as usize - dma.src_buf.len());
+            unsafe { dma.src_buf.set_len(total_size as usize) };
         }
 
         match (src_addr_ctrl, dest_addr_ctrl) {
             (DmaAddrCtrl::Increment, DmaAddrCtrl::Fixed) => {
-                let slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
-                self.mem_read_multiple_slice::<CPU, false, T>(*src_addr, slice);
+                let mut slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
+                let aligned_addr = *src_addr & !(size_of::<T>() as u32 - 1);
+                let aligned_addr = aligned_addr & 0x0FFFFFFF;
+                let shm_offset = self.get_shm_offset::<CPU, false, false>(aligned_addr);
+                if shm_offset != 0 {
+                    slice = unsafe { slice::from_raw_parts_mut(self.mem.shm.as_ptr().add(shm_offset) as *mut T, count as usize) };
+                } else {
+                    self.mem_read_multiple_slice::<CPU, false, false, T>(aligned_addr, slice);
+                }
                 if *dest_addr >= 0x4000400 && *dest_addr < 0x4000440 {
                     let slice = unsafe { slice::from_raw_parts(slice.as_ptr() as *const u32, (total_size as usize) >> 2) };
                     self.regs_3d_set_gx_fifo_multiple(slice);
@@ -276,7 +284,7 @@ impl Emu {
             }
             (DmaAddrCtrl::Increment, DmaAddrCtrl::Increment | DmaAddrCtrl::IncrementReload) => {
                 let slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
-                self.mem_read_multiple_slice::<CPU, false, T>(*src_addr, slice);
+                self.mem_read_multiple_slice::<CPU, false, true, T>(*src_addr, slice);
                 self.mem_write_multiple_slice::<CPU, false, T>(*dest_addr, slice);
                 *src_addr += total_size;
                 *dest_addr += total_size;

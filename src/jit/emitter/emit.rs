@@ -18,7 +18,8 @@ impl JitAsm<'_> {
         block_asm.guest_inst_offsets.reserve(self.jit_buf.insts.len() - 1);
 
         for i in 0..self.analyzer.basic_blocks.len() {
-            if self.analyzer.insts_metadata[self.analyzer.basic_blocks[i].start_index].local_branch_entry() {
+            let metadata = self.analyzer.insts_metadata[self.analyzer.basic_blocks[i].start_index];
+            if metadata.local_branch_entry() {
                 block_asm.guest_basic_block_labels[i] = Some(Label::new());
             }
         }
@@ -143,6 +144,8 @@ impl JitAsm<'_> {
         let start_pc = basic_block.start_pc;
         let pc_shift = if thumb { 1 } else { 2 };
 
+        debug_println!("{:?} emit basic block {basic_block_index}", self.cpu);
+
         for i in start_index..end_index + 1 {
             block_asm.current_pc = start_pc + (((i - start_index) as u32) << pc_shift);
             self.jit_buf.debug_info.record_inst_offset(i, block_asm.get_cursor_offset() as usize);
@@ -245,10 +248,10 @@ impl JitAsm<'_> {
         block_asm.ldrh2(Reg::R2, &(Reg::R0, JitRuntimeData::get_accumulated_cycles_offset() as i32).into());
 
         // +2 for branching
-        block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R3, Reg::R2, &(total_cycle_count as u32 + 2).into());
-        block_asm.sub5(FlagsUpdate_DontCare, Cond::AL, Reg::R3, Reg::R3, &Reg::R1.into());
+        block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R2, Reg::R2, &(total_cycle_count as u32 + 2).into());
+        block_asm.sub5(FlagsUpdate_DontCare, Cond::AL, Reg::R2, Reg::R2, &Reg::R1.into());
 
-        block_asm.strh2(Reg::R3, &(Reg::R0, JitRuntimeData::get_accumulated_cycles_offset() as i32).into());
+        block_asm.strh2(Reg::R2, &(Reg::R0, JitRuntimeData::get_accumulated_cycles_offset() as i32).into());
     }
 
     pub fn emit_guest_regs_alloc(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
