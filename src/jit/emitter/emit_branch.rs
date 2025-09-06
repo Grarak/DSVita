@@ -3,14 +3,14 @@ use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::{branch_lr, branch_reg, handle_idle_loop, handle_interrupt, pre_branch};
-use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
+use crate::jit::jit_asm::{JitAsm, JitRunSchedulerLabel, JitRuntimeData};
 use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::{inst_branch_handler, Cond};
 use crate::logging::branch_println;
 use crate::settings::Arm7Emu;
 use crate::{BRANCH_LOG, IS_DEBUG};
 use std::ptr;
-use vixl::{BranchHint_kFar, FlagsUpdate_DontCare, Label, MasmB2, MasmB3, MasmBic5, MasmBlx1, MasmBx1, MasmCmp2, MasmLdr2, MasmLdrb2, MasmMov2, MasmMov4, MasmOrr5, MasmStrb2, MasmStrh2};
+use vixl::{BranchHint_kFar, FlagsUpdate_DontCare, Label, MasmB2, MasmB3, MasmBic5, MasmBlx1, MasmBx1, MasmCmp2, MasmLdr2, MasmLdrb2, MasmMov2, MasmMov4, MasmOrr5, MasmStr2, MasmStrb2, MasmStrh2};
 use CpuType::ARM7;
 
 extern "C" fn debug_branch_label<const CPU: CpuType>(current_pc: u32, target_pc: u32) {
@@ -247,7 +247,7 @@ impl JitAsm<'_> {
 
             let mut cycles_exceed_label = Label::new();
             let mut continue_label = Label::new();
-            let mut exit_label = Label::new();
+            let mut exit_label = if self.cpu == ARM7 || jump_to_index > inst_index { Some(Label::new()) } else { None };
 
             block_asm.cmp2(Reg::R2, &self.cpu.max_loop_cycle_count().into());
             block_asm.b3(Cond::HS, &mut cycles_exceed_label, BranchHint_kFar);
@@ -263,7 +263,7 @@ impl JitAsm<'_> {
                 block_asm.ldr2(Reg::R1, &Reg::R1.into());
                 block_asm.ldr2(Reg::R2, &Reg::R2.into());
                 block_asm.cmp2(Reg::R1, &Reg::R2.into());
-                block_asm.b3(Cond::NE, &mut exit_label, BranchHint_kFar);
+                block_asm.b3(Cond::NE, exit_label.as_mut().unwrap(), BranchHint_kFar);
             }
 
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pre_cycle_count_sum.into());
@@ -279,51 +279,54 @@ impl JitAsm<'_> {
             let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
             block_asm.b_basic_block(basic_block_index);
 
-            block_asm.bind(&mut cycles_exceed_label);
+            self.jit_buf
+                .run_scheduler_labels
+                .push(JitRunSchedulerLabel::new(block_asm.current_pc, pc_reg, cycles_exceed_label, continue_label, exit_label));
+        }
+    }
 
-            match self.cpu {
-                ARM9 => {
-                    block_asm.ldr2(Reg::R0, self as *mut _ as u32);
-                    if IS_DEBUG {
-                        let pc = block_asm.current_pc;
-                        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
-                    }
-                    if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
-                        block_asm.call(inst_branch_handler::run_scheduler::<true> as _);
-                    } else {
-                        block_asm.call(inst_branch_handler::run_scheduler::<false> as _);
-                    };
+    pub fn emit_run_scheduler(&mut self, run_scheduler_label_index: usize, block_asm: &mut BlockAsm) {
+        let jit_asm_ptr = self as *mut _ as u32;
+        let run_scheduler_label = &mut self.jit_buf.run_scheduler_labels[run_scheduler_label_index];
+        block_asm.bind(&mut run_scheduler_label.bind_label);
 
-                    block_asm.restore_guest_regs_ptr();
-                    block_asm.load_guest_reg(Reg::R0, Reg::PC);
-                    block_asm.cmp2(Reg::R0, &pc_reg.into());
-
-                    block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
-
-                    block_asm.b3(Cond::EQ, &mut continue_label, BranchHint_kFar);
-
-                    block_asm.ldr2(Reg::R0, self as *mut _ as u32);
-                    block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc_reg.into());
-                    if IS_DEBUG {
-                        let pc = block_asm.current_pc;
-                        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &pc.into());
-                    }
-                    block_asm.call(handle_interrupt as _);
-                    block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
-                    block_asm.b2(&mut continue_label, BranchHint_kFar);
-
-                    if jump_to_index > inst_index {
-                        block_asm.bind(&mut exit_label);
-                        self.emit_branch_out_metadata(inst_index, false, block_asm);
-                        block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
-                    }
-                }
-                ARM7 => {
-                    block_asm.bind(&mut exit_label);
-                    self.emit_branch_out_metadata(inst_index, false, block_asm);
-                    block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
-                }
+        if self.cpu == ARM9 {
+            block_asm.ldr2(Reg::R0, jit_asm_ptr);
+            if IS_DEBUG {
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &run_scheduler_label.current_pc.into());
             }
+            if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+                block_asm.call(inst_branch_handler::run_scheduler::<true> as _);
+            } else {
+                block_asm.call(inst_branch_handler::run_scheduler::<false> as _);
+            };
+
+            block_asm.restore_guest_regs_ptr();
+            block_asm.load_guest_reg(Reg::R0, Reg::PC);
+            block_asm.cmp2(Reg::R0, &run_scheduler_label.target_pc_reg.into());
+
+            block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
+
+            block_asm.b3(Cond::EQ, &mut run_scheduler_label.continue_label, BranchHint_kFar);
+
+            block_asm.ldr2(Reg::R0, jit_asm_ptr);
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &run_scheduler_label.target_pc_reg.into());
+            if IS_DEBUG {
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &run_scheduler_label.current_pc.into());
+            }
+            block_asm.call(handle_interrupt as _);
+            block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
+            block_asm.b2(&mut run_scheduler_label.continue_label, BranchHint_kFar);
+        }
+
+        if let Some(exit_label) = &mut run_scheduler_label.exit_label {
+            block_asm.bind(exit_label);
+            if IS_DEBUG {
+                block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &run_scheduler_label.current_pc.into());
+                block_asm.str2(Reg::R1, &(Reg::R0, JitRuntimeData::get_branch_out_pc_offset() as i32).into());
+            }
+            block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
         }
     }
 

@@ -39,6 +39,12 @@ impl JitAsm<'_> {
         self.jit_buf.debug_info.record_inst_offset(self.jit_buf.insts.len(), block_asm.get_cursor_offset() as usize);
     }
 
+    pub fn emit_epilogue(&mut self, block_asm: &mut BlockAsm) {
+        for i in 0..self.jit_buf.run_scheduler_labels.len() {
+            self.emit_run_scheduler(i, block_asm);
+        }
+    }
+
     fn handle_indirect_branch(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
         let inst = &self.jit_buf.insts[inst_index];
 

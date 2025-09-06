@@ -76,10 +76,31 @@ impl JitDebugInfo {
     fn print_info(&self, start_pc: u32, thumb: bool) {}
 }
 
+pub struct JitRunSchedulerLabel {
+    pub current_pc: u32,
+    pub target_pc_reg: Reg,
+    pub bind_label: Label,
+    pub continue_label: Label,
+    pub exit_label: Option<Label>,
+}
+
+impl JitRunSchedulerLabel {
+    pub fn new(current_pc: u32, target_pc_reg: Reg, bind_label: Label, continue_label: Label, exit_label: Option<Label>) -> Self {
+        JitRunSchedulerLabel {
+            current_pc,
+            target_pc_reg,
+            bind_label,
+            continue_label,
+            exit_label,
+        }
+    }
+}
+
 pub struct JitBuf {
     pub guest_pc_start: u32,
     pub insts: Vec<InstInfo>,
     pub insts_cycle_counts: Vec<u16>,
+    pub run_scheduler_labels: Vec<JitRunSchedulerLabel>,
     pub debug_info: JitDebugInfo,
 }
 
@@ -89,6 +110,7 @@ impl JitBuf {
             guest_pc_start: 0,
             insts: Vec::new(),
             insts_cycle_counts: Vec::new(),
+            run_scheduler_labels: Vec::new(),
             debug_info: JitDebugInfo::default(),
         }
     }
@@ -96,6 +118,7 @@ impl JitBuf {
     fn clear_all(&mut self) {
         self.insts.clear();
         self.insts_cycle_counts.clear();
+        self.run_scheduler_labels.clear();
     }
 }
 
@@ -486,6 +509,7 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
             asm.emit_branch_external_label(asm.jit_buf.insts.len() - 1, asm.analyzer.basic_blocks.len() - 1, next_pc, false, &mut block_asm);
         }
 
+        asm.emit_epilogue(&mut block_asm);
         block_asm.finalize();
 
         // let opcodes = block_asm.get_code_buffer();
