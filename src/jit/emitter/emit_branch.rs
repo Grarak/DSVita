@@ -3,14 +3,17 @@ use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::{branch_lr, branch_reg, handle_idle_loop, handle_interrupt, pre_branch};
-use crate::jit::jit_asm::{JitAsm, JitRunSchedulerLabel, JitRuntimeData};
+use crate::jit::jit_asm::{JitAsm, JitForwardBranch, JitRunSchedulerLabel, JitRuntimeData};
 use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::{inst_branch_handler, Cond};
 use crate::logging::branch_println;
 use crate::settings::Arm7Emu;
 use crate::{BRANCH_LOG, IS_DEBUG};
 use std::ptr;
-use vixl::{BranchHint_kFar, FlagsUpdate_DontCare, Label, MasmB2, MasmB3, MasmBic5, MasmBlx1, MasmBx1, MasmCmp2, MasmLdr2, MasmLdrb2, MasmMov2, MasmMov4, MasmOrr5, MasmStr2, MasmStrb2, MasmStrh2};
+use vixl::{
+    BranchHint_kFar, BranchHint_kNear, FlagsUpdate_DontCare, Label, MasmB2, MasmB3, MasmBic5, MasmBlx1, MasmBx1, MasmCmp2, MasmLdr2, MasmLdrb2, MasmMov2, MasmMov4, MasmOrr5, MasmStr2, MasmStrb2,
+    MasmStrh2,
+};
 use CpuType::ARM7;
 
 extern "C" fn debug_branch_label<const CPU: CpuType>(current_pc: u32, target_pc: u32) {
@@ -195,17 +198,28 @@ impl JitAsm<'_> {
         block_asm.bx1(Reg::R12);
     }
 
-    pub fn emit_branch_label(&mut self, inst_index: usize, basic_block_index: usize, target_pc: u32, pc_reg: Reg, block_asm: &mut BlockAsm) {
+    pub fn emit_branch_label(&mut self, inst_index: usize, basic_block_index: usize, target_pc: u32, skip_label: &mut Label, block_asm: &mut BlockAsm) {
         let thumb = target_pc & 1 == 1;
         let aligned_target_pc = target_pc & !1;
         let pc_shift = if thumb { 1 } else { 2 };
-
+        let cond = self.jit_buf.insts[inst_index].cond;
         let metadata = self.analyzer.insts_metadata[inst_index];
+
+        if metadata.idle_loop() || metadata.external_branch() {
+            if cond != Cond::AL {
+                block_asm.b3(!cond, skip_label, BranchHint_kNear);
+            }
+
+            block_asm.ldr2(Reg::R1, target_pc);
+            block_asm.store_guest_reg(Reg::R1, Reg::PC);
+            block_asm.dirty_guest_regs -= Reg::PC;
+            block_asm.save_dirty_guest_regs_additional(true, cond == Cond::AL, reg_reserve!());
+        }
+
         if metadata.idle_loop() {
             if BRANCH_LOG {
                 let pc = block_asm.current_pc;
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
-                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc_reg.into());
                 block_asm.call(map_fun_cpu!(self.cpu, debug_idle_loop));
             }
 
@@ -239,6 +253,32 @@ impl JitAsm<'_> {
         } else if metadata.external_branch() {
             self.emit_branch_external_label(inst_index, basic_block_index, target_pc, false, block_asm);
         } else {
+            if target_pc > block_asm.current_pc {
+                let mut label = Label::new();
+                block_asm.b3(cond, &mut label, BranchHint_kFar);
+                self.jit_buf.forward_branches.push(JitForwardBranch::new(
+                    inst_index,
+                    block_asm.current_pc,
+                    target_pc,
+                    block_asm.dirty_guest_regs,
+                    block_asm.get_guest_regs_mapping(),
+                    label,
+                ));
+                if cond == Cond::AL {
+                    block_asm.dirty_guest_regs.clear();
+                }
+                return;
+            }
+
+            if cond != Cond::AL {
+                block_asm.b3(!cond, skip_label, BranchHint_kNear);
+            }
+
+            block_asm.ldr2(Reg::R1, target_pc);
+            block_asm.store_guest_reg(Reg::R1, Reg::PC);
+            block_asm.dirty_guest_regs -= Reg::PC;
+            block_asm.save_dirty_guest_regs_additional(true, cond == Cond::AL, reg_reserve!());
+
             let jump_to_index = (inst_index as isize + ((aligned_target_pc as isize - block_asm.current_pc as isize) >> pc_shift)) as usize;
             let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
 
@@ -247,24 +287,11 @@ impl JitAsm<'_> {
 
             let mut cycles_exceed_label = Label::new();
             let mut continue_label = Label::new();
-            let mut exit_label = if self.cpu == ARM7 || jump_to_index > inst_index { Some(Label::new()) } else { None };
 
             block_asm.cmp2(Reg::R2, &self.cpu.max_loop_cycle_count().into());
             block_asm.b3(Cond::HS, &mut cycles_exceed_label, BranchHint_kFar);
 
             block_asm.bind(&mut continue_label);
-
-            let current_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(block_asm.current_pc);
-            let target_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(aligned_target_pc);
-
-            if jump_to_index > inst_index {
-                block_asm.ldr2(Reg::R1, current_pc_jit_entry as u32);
-                block_asm.ldr2(Reg::R2, target_pc_jit_entry as u32);
-                block_asm.ldr2(Reg::R1, &Reg::R1.into());
-                block_asm.ldr2(Reg::R2, &Reg::R2.into());
-                block_asm.cmp2(Reg::R1, &Reg::R2.into());
-                block_asm.b3(Cond::NE, exit_label.as_mut().unwrap(), BranchHint_kFar);
-            }
 
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pre_cycle_count_sum.into());
             block_asm.strh2(Reg::R1, &(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
@@ -272,7 +299,7 @@ impl JitAsm<'_> {
             if BRANCH_LOG {
                 let pc = block_asm.current_pc;
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
-                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc_reg.into());
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pc.into());
                 block_asm.call(map_fun_cpu!(self.cpu, debug_branch_label));
             }
 
@@ -281,8 +308,69 @@ impl JitAsm<'_> {
 
             self.jit_buf
                 .run_scheduler_labels
-                .push(JitRunSchedulerLabel::new(block_asm.current_pc, pc_reg, cycles_exceed_label, continue_label, exit_label));
+                .push(JitRunSchedulerLabel::new(block_asm.current_pc, target_pc, cycles_exceed_label, continue_label, None));
         }
+    }
+
+    pub fn emit_forward_branch(&mut self, forward_branch_index: usize, block_asm: &mut BlockAsm) {
+        let forward_branch = &mut self.jit_buf.forward_branches[forward_branch_index];
+        block_asm.bind(&mut forward_branch.bind_label);
+
+        let inst_index = forward_branch.inst_index;
+        let thumb = forward_branch.target_pc & 1 == 1;
+        let aligned_target_pc = forward_branch.target_pc & !1;
+        let pc_shift = if thumb { 1 } else { 2 };
+
+        let jump_to_index = (inst_index as isize + ((aligned_target_pc as isize - forward_branch.current_pc as isize) >> pc_shift)) as usize;
+        let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
+
+        block_asm.ldr2(Reg::R1, forward_branch.target_pc);
+        block_asm.store_guest_reg(Reg::R1, Reg::PC);
+        block_asm.set_guest_regs_mapping(forward_branch.guest_regs_mapping);
+        block_asm.save_guest_regs(forward_branch.dirty_guest_regs - Reg::PC);
+
+        block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
+        self.emit_count_cycles(self.jit_buf.insts_cycle_counts[inst_index], block_asm);
+        let forward_branch = &mut self.jit_buf.forward_branches[forward_branch_index];
+
+        let mut cycles_exceed_label = Label::new();
+        let mut continue_label = Label::new();
+        let mut exit_label = Label::new();
+
+        block_asm.cmp2(Reg::R2, &self.cpu.max_loop_cycle_count().into());
+        block_asm.b3(Cond::HS, &mut cycles_exceed_label, BranchHint_kFar);
+
+        block_asm.bind(&mut continue_label);
+
+        let current_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(forward_branch.current_pc);
+        let target_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(aligned_target_pc);
+
+        block_asm.ldr2(Reg::R1, current_pc_jit_entry as u32);
+        block_asm.ldr2(Reg::R2, target_pc_jit_entry as u32);
+        block_asm.ldr2(Reg::R1, &Reg::R1.into());
+        block_asm.ldr2(Reg::R2, &Reg::R2.into());
+        block_asm.cmp2(Reg::R1, &Reg::R2.into());
+        block_asm.b3(Cond::NE, &mut exit_label, BranchHint_kFar);
+
+        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pre_cycle_count_sum.into());
+        block_asm.strh2(Reg::R1, &(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
+
+        if BRANCH_LOG {
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &forward_branch.current_pc.into());
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &forward_branch.target_pc.into());
+            block_asm.call(map_fun_cpu!(self.cpu, debug_branch_label));
+        }
+
+        let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
+        block_asm.b_basic_block(basic_block_index);
+
+        self.jit_buf.run_scheduler_labels.push(JitRunSchedulerLabel::new(
+            forward_branch.current_pc,
+            forward_branch.target_pc,
+            cycles_exceed_label,
+            continue_label,
+            Some(exit_label),
+        ));
     }
 
     pub fn emit_run_scheduler(&mut self, run_scheduler_label_index: usize, block_asm: &mut BlockAsm) {
@@ -303,14 +391,14 @@ impl JitAsm<'_> {
 
             block_asm.restore_guest_regs_ptr();
             block_asm.load_guest_reg(Reg::R0, Reg::PC);
-            block_asm.cmp2(Reg::R0, &run_scheduler_label.target_pc_reg.into());
+            block_asm.ldr2(Reg::R1, run_scheduler_label.target_pc);
+            block_asm.cmp2(Reg::R0, &Reg::R1.into());
 
             block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
 
             block_asm.b3(Cond::EQ, &mut run_scheduler_label.continue_label, BranchHint_kFar);
 
             block_asm.ldr2(Reg::R0, jit_asm_ptr);
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &run_scheduler_label.target_pc_reg.into());
             if IS_DEBUG {
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &run_scheduler_label.current_pc.into());
             }
@@ -321,6 +409,9 @@ impl JitAsm<'_> {
 
         if let Some(exit_label) = &mut run_scheduler_label.exit_label {
             block_asm.bind(exit_label);
+        }
+
+        if run_scheduler_label.exit_label.is_some() || self.cpu == ARM7 {
             if IS_DEBUG {
                 block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &run_scheduler_label.current_pc.into());
@@ -363,17 +454,12 @@ impl JitAsm<'_> {
         self.emit_branch_external_label(inst_index, basic_block_index, target_pc, true, block_asm);
     }
 
-    pub fn emit_b(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
+    pub fn emit_b(&mut self, inst_index: usize, basic_block_index: usize, skip_label: &mut Label, block_asm: &mut BlockAsm) {
         let inst = &self.jit_buf.insts[inst_index];
         let relative_pc = inst.operands()[0].as_imm().unwrap() as i32 + 8;
         let target_pc = (block_asm.current_pc as i32 + relative_pc) as u32;
 
-        let pc_reg = block_asm.get_guest_map(Reg::PC);
-        block_asm.ldr2(pc_reg, target_pc);
-
-        block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::PC));
-
-        self.emit_branch_label(inst_index, basic_block_index, target_pc, pc_reg, block_asm);
+        self.emit_branch_label(inst_index, basic_block_index, target_pc, skip_label, block_asm);
     }
 
     pub fn emit_bx(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {

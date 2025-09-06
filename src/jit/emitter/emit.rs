@@ -11,7 +11,7 @@ use crate::logging::debug_println;
 use crate::settings::Arm7Emu;
 use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
-use vixl::{BranchHint_kNear, FlagsUpdate_DontCare, Label, MasmAdd5, MasmB3, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
+use vixl::{BranchHint_kNear, FlagsUpdate_DontCare, Label, MasmAdd5, MasmB3, MasmBkpt1, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
 
 impl JitAsm<'_> {
     pub fn emit(&mut self, block_asm: &mut BlockAsm, thumb: bool) {
@@ -40,6 +40,10 @@ impl JitAsm<'_> {
     }
 
     pub fn emit_epilogue(&mut self, block_asm: &mut BlockAsm) {
+        for i in 0..self.jit_buf.forward_branches.len() {
+            self.emit_forward_branch(i, block_asm);
+        }
+
         for i in 0..self.jit_buf.run_scheduler_labels.len() {
             self.emit_run_scheduler(i, block_asm);
         }
@@ -162,7 +166,7 @@ impl JitAsm<'_> {
                 let op1 = inst.operands()[1].as_reg_list().unwrap();
                 let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, i);
                 block_asm.alloc_guest_regs(reg_reserve!(op0), op1 & Reg::PC, inst.cond, next_live_regs);
-            } else {
+            } else if !inst.op.is_labelled_branch() || inst.out_regs.is_reserved(Reg::LR) {
                 self.emit_guest_regs_alloc(i, basic_block_index, block_asm);
             }
 
@@ -172,12 +176,14 @@ impl JitAsm<'_> {
             }
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
-            // if block_asm.current_pc == 0x20cbbb0 {
+            // if block_asm.current_pc == 0x20ae7c4 {
             //     block_asm.bkpt1(0);
             // }
 
             let mut label = Label::new();
-            let needs_cond_jump = inst.out_regs.is_reserved(Reg::PC) || (!matches!(inst.op, Op::Clz | Op::Qadd | Op::Qsub | Op::Qdadd | Op::Qdsub) && !inst.op.is_alu() && !inst.op.is_mul());
+            let needs_cond_jump = !thumb
+                && !matches!(inst.op, Op::B)
+                && (inst.out_regs.is_reserved(Reg::PC) || (!matches!(inst.op, Op::Clz | Op::Qadd | Op::Qsub | Op::Qdadd | Op::Qdsub) && !inst.op.is_alu() && !inst.op.is_mul()));
             if inst.cond != Cond::AL && needs_cond_jump {
                 block_asm.b3(!inst.cond, &mut label, BranchHint_kNear);
             }
@@ -187,10 +193,10 @@ impl JitAsm<'_> {
                     Op::BlSetupT => {}
                     Op::BlOffT | Op::BlxOffT => self.emit_bl_thumb(i, basic_block_index, block_asm),
                     Op::BxRegT => self.emit_bx(i, basic_block_index, block_asm),
-                    Op::BT => self.emit_b_thumb(i, basic_block_index, block_asm),
+                    Op::BT => self.emit_b_thumb(i, basic_block_index, &mut label, block_asm),
                     Op::BlxRegT => self.emit_blx_thumb(i, basic_block_index, block_asm),
                     Op::SwiT => self.emit_swi(i, basic_block_index, block_asm),
-                    op if op.is_labelled_branch() && inst.cond != Cond::AL => self.emit_b_thumb(i, basic_block_index, block_asm),
+                    op if op.is_labelled_branch() && inst.cond != Cond::AL => self.emit_b_thumb(i, basic_block_index, &mut label, block_asm),
                     op if op.is_alu() => self.emit_alu_thumb(i, block_asm),
                     op if op.is_single_mem_transfer() => self.emit_single_transfer(i, basic_block_index, block_asm),
                     op if op.is_multiple_mem_transfer() => self.emit_multiple_transfer(i, basic_block_index, block_asm),
@@ -203,7 +209,7 @@ impl JitAsm<'_> {
                     Op::MrsRc | Op::MrsRs => self.emit_mrs(i, block_asm),
                     Op::BlxReg => self.emit_blx_reg(i, basic_block_index, block_asm),
                     Op::Bl => self.emit_bl(i, basic_block_index, block_asm),
-                    Op::B => self.emit_b(i, basic_block_index, block_asm),
+                    Op::B => self.emit_b(i, basic_block_index, &mut label, block_asm),
                     Op::Bx => self.emit_bx(i, basic_block_index, block_asm),
                     Op::Blx => self.emit_blx(i, basic_block_index, block_asm),
                     Op::Swi => self.emit_swi(i, basic_block_index, block_asm),

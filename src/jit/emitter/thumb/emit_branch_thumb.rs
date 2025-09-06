@@ -3,7 +3,7 @@ use crate::jit::jit_asm::{align_guest_pc, JitAsm};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::Cond;
-use vixl::{MasmLdr2, MasmMov2};
+use vixl::{Label, MasmLdr2, MasmMov2};
 
 impl JitAsm<'_> {
     pub fn emit_bl_thumb(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
@@ -41,17 +41,12 @@ impl JitAsm<'_> {
         self.emit_branch_external_label(inst_index, basic_block_index, target_pc, true, block_asm);
     }
 
-    pub fn emit_b_thumb(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
+    pub fn emit_b_thumb(&mut self, inst_index: usize, basic_block_index: usize, skip_label: &mut Label, block_asm: &mut BlockAsm) {
         let inst = &self.jit_buf.insts[inst_index];
         let relative_pc = inst.operands()[0].as_imm().unwrap() as i32 + 4;
         let target_pc = (block_asm.current_pc as i32 + relative_pc) as u32;
 
-        let pc_reg = block_asm.get_guest_map(Reg::PC);
-        block_asm.ldr2(pc_reg, target_pc | 1);
-
-        block_asm.save_dirty_guest_regs_additional(true, inst.cond == Cond::AL, reg_reserve!(Reg::PC));
-
-        self.emit_branch_label(inst_index, basic_block_index, target_pc | 1, pc_reg, block_asm);
+        self.emit_branch_label(inst_index, basic_block_index, target_pc | 1, skip_label, block_asm);
     }
 
     pub fn emit_blx_thumb(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {

@@ -277,8 +277,19 @@ impl BlockAsm {
         }
     }
 
+    pub fn set_guest_regs_mapping(&mut self, guest_regs_mapping: [Reg; GUEST_REGS_LENGTH]) {
+        self.reg_alloc.guest_regs_mapping = guest_regs_mapping;
+    }
+
+    pub fn get_guest_regs_mapping(&self) -> [Reg; GUEST_REGS_LENGTH] {
+        self.reg_alloc.guest_regs_mapping
+    }
+
     pub fn save_guest_regs(&mut self, regs: RegReserve) {
-        self.reg_alloc.save_active_guest_regs(regs, &mut self.masm);
+        self.reg_alloc.save_active_guest_regs(regs - Reg::CPSR, &mut self.masm);
+        if regs.is_reserved(Reg::CPSR) {
+            self.store_guest_cpsr_reg(CPSR_TMP_REG);
+        }
     }
 
     pub fn get_dirty_guest_regs(&self) -> RegReserve {
