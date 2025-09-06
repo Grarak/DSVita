@@ -380,7 +380,28 @@ impl JitAsm<'_> {
                 let reg_to_remove = if transfer.add() { guest_regs.get_highest_reg() } else { guest_regs.get_lowest_reg() };
                 guest_regs -= reg_to_remove;
             }
-            let usable_regs = usable_regs.into_iter().take(len).collect::<RegReserve>();
+
+            let mut direct_regs = false;
+            let mut usable_regs = usable_regs.into_iter().take(len).collect::<RegReserve>();
+            if !user {
+                let mut guest_regs_in_order = true;
+                let mut prev_mapped_reg = Reg::None;
+                let mut direct_usable_regs = reg_reserve!();
+                for guest_reg in guest_regs {
+                    let mapped_reg = block_asm.get_guest_map(guest_reg);
+                    if mapped_reg == Reg::None || (prev_mapped_reg != Reg::None && mapped_reg < prev_mapped_reg) {
+                        guest_regs_in_order = false;
+                        break;
+                    }
+                    direct_usable_regs += mapped_reg;
+                    prev_mapped_reg = mapped_reg;
+                }
+                if guest_regs_in_order {
+                    direct_regs = true;
+                    usable_regs = direct_usable_regs;
+                }
+            }
+
             let mut guest_regs_multiple_load_store = guest_regs;
             let mut usable_regs_multiple_load_store = usable_regs;
             if inst.op.is_write_mem_transfer() {
@@ -430,22 +451,29 @@ impl JitAsm<'_> {
                         }
                     }
                 } else {
-                    for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
-                        if guest_reg == Reg::PC {
-                            let pc = block_asm.current_pc + (4 << (!block_asm.thumb as u32));
-                            block_asm.ldr2(usable_reg, pc);
-                            guest_regs_multiple_load_store -= Reg::PC;
-                            usable_regs_multiple_load_store -= usable_reg;
-                        } else {
-                            let mapped_reg = block_asm.get_guest_map(guest_reg);
-                            if mapped_reg != Reg::None {
-                                block_asm.mov4(flag_update, Cond::AL, usable_reg, &mapped_reg.into());
-                                guest_regs_multiple_load_store -= guest_reg;
+                    let pc = block_asm.current_pc + (4 << (!block_asm.thumb as u32));
+                    if direct_regs {
+                        if guest_regs.is_reserved(Reg::PC) {
+                            let reg = block_asm.get_guest_map(Reg::PC);
+                            block_asm.ldr2(reg, pc);
+                        }
+                    } else {
+                        for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
+                            if guest_reg == Reg::PC {
+                                block_asm.ldr2(usable_reg, pc);
+                                guest_regs_multiple_load_store -= Reg::PC;
                                 usable_regs_multiple_load_store -= usable_reg;
+                            } else {
+                                let mapped_reg = block_asm.get_guest_map(guest_reg);
+                                if mapped_reg != Reg::None {
+                                    block_asm.mov4(flag_update, Cond::AL, usable_reg, &mapped_reg.into());
+                                    guest_regs_multiple_load_store -= guest_reg;
+                                    usable_regs_multiple_load_store -= usable_reg;
+                                }
                             }
                         }
+                        Self::emit_multiple_transfer_load_store_guest_regs(flag_update, guest_regs_multiple_load_store, usable_regs_multiple_load_store, true, block_asm);
                     }
-                    Self::emit_multiple_transfer_load_store_guest_regs(flag_update, guest_regs_multiple_load_store, usable_regs_multiple_load_store, true, block_asm);
                 }
 
                 block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, fast_mem_start, op0, dirty_guest_regs);
@@ -524,7 +552,7 @@ impl JitAsm<'_> {
                             }
                         }
                     }
-                } else {
+                } else if !direct_regs {
                     for (guest_reg, usable_reg) in guest_regs.into_iter().zip(usable_regs) {
                         let mapped_reg = block_asm.get_guest_map(guest_reg);
                         if mapped_reg != Reg::None {
