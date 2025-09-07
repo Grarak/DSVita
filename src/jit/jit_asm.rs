@@ -119,12 +119,33 @@ impl JitRunSchedulerLabel {
     }
 }
 
+pub struct JitCondIndirectBranch {
+    pub inst_index: usize,
+    pub current_pc: u32,
+    pub dirty_guest_regs: RegReserve,
+    pub guest_regs_mapping: [Reg; GUEST_REGS_LENGTH],
+    pub bind_label: Label,
+}
+
+impl JitCondIndirectBranch {
+    pub fn new(inst_index: usize, current_pc: u32, dirty_guest_regs: RegReserve, guest_regs_mapping: [Reg; GUEST_REGS_LENGTH], bind_label: Label) -> Self {
+        JitCondIndirectBranch {
+            inst_index,
+            current_pc,
+            dirty_guest_regs,
+            guest_regs_mapping,
+            bind_label,
+        }
+    }
+}
+
 pub struct JitBuf {
     pub guest_pc_start: u32,
     pub insts: Vec<InstInfo>,
     pub insts_cycle_counts: Vec<u16>,
     pub forward_branches: Vec<JitForwardBranch>,
     pub run_scheduler_labels: Vec<JitRunSchedulerLabel>,
+    pub cond_indirect_branches: Vec<JitCondIndirectBranch>,
     pub debug_info: JitDebugInfo,
 }
 
@@ -136,6 +157,7 @@ impl JitBuf {
             insts_cycle_counts: Vec::new(),
             forward_branches: Vec::new(),
             run_scheduler_labels: Vec::new(),
+            cond_indirect_branches: Vec::new(),
             debug_info: JitDebugInfo::default(),
         }
     }
@@ -145,6 +167,7 @@ impl JitBuf {
         self.insts_cycle_counts.clear();
         self.forward_branches.clear();
         self.run_scheduler_labels.clear();
+        self.cond_indirect_branches.clear();
     }
 }
 

@@ -3,7 +3,7 @@ use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::branch_any_reg;
 use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode, set_pc_thumb_mode};
-use crate::jit::jit_asm::{debug_after_exec_op, JitAsm, JitRuntimeData};
+use crate::jit::jit_asm::{debug_after_exec_op, JitAsm, JitCondIndirectBranch, JitRuntimeData};
 use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::Cond;
@@ -11,7 +11,7 @@ use crate::logging::debug_println;
 use crate::settings::Arm7Emu;
 use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
-use vixl::{BranchHint_kNear, FlagsUpdate_DontCare, Label, MasmAdd5, MasmB3, MasmBkpt1, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
+use vixl::{BranchHint_kFar, BranchHint_kNear, FlagsUpdate_DontCare, Label, MasmAdd5, MasmB2, MasmB3, MasmBkpt1, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
 
 impl JitAsm<'_> {
     pub fn emit(&mut self, block_asm: &mut BlockAsm, thumb: bool) {
@@ -43,10 +43,22 @@ impl JitAsm<'_> {
         for i in 0..self.jit_buf.forward_branches.len() {
             self.emit_forward_branch(i, block_asm);
         }
-
         for i in 0..self.jit_buf.run_scheduler_labels.len() {
             self.emit_run_scheduler(i, block_asm);
         }
+        for i in 0..self.jit_buf.cond_indirect_branches.len() {
+            self.emit_cond_indirect_branch(i, block_asm);
+        }
+    }
+
+    fn emit_cond_indirect_branch(&mut self, cond_indirect_branch_index: usize, block_asm: &mut BlockAsm) {
+        let cond_indirect_branch = &mut self.jit_buf.cond_indirect_branches[cond_indirect_branch_index];
+        block_asm.bind(&mut cond_indirect_branch.bind_label);
+        block_asm.current_pc = cond_indirect_branch.current_pc;
+        block_asm.dirty_guest_regs = cond_indirect_branch.dirty_guest_regs;
+        block_asm.set_guest_regs_mapping(cond_indirect_branch.guest_regs_mapping);
+        let inst_index = cond_indirect_branch.inst_index;
+        self.handle_indirect_branch(inst_index, block_asm);
     }
 
     fn handle_indirect_branch(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
@@ -176,7 +188,7 @@ impl JitAsm<'_> {
             }
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
-            // if block_asm.current_pc == 0x20ae7c4 {
+            // if block_asm.current_pc == 0x20cc414 {
             //     block_asm.bkpt1(0);
             // }
 
@@ -233,7 +245,19 @@ impl JitAsm<'_> {
                 if thumb {
                     self.handle_indirect_branch_thumb(i, block_asm);
                 } else {
-                    self.handle_indirect_branch(i, block_asm);
+                    if inst.cond != Cond::AL {
+                        let mut label = Label::new();
+                        block_asm.b2(&mut label, BranchHint_kFar);
+                        self.jit_buf.cond_indirect_branches.push(JitCondIndirectBranch::new(
+                            i,
+                            block_asm.current_pc,
+                            block_asm.dirty_guest_regs,
+                            block_asm.get_guest_regs_mapping(),
+                            label,
+                        ));
+                    } else {
+                        self.handle_indirect_branch(i, block_asm);
+                    }
                 }
             }
 
