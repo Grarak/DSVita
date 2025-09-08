@@ -87,6 +87,7 @@ pub struct BlockAsm {
     guest_start: usize,
     pub guest_inst_offsets: Vec<GuestInstOffset>,
     pub guest_basic_block_labels: Vec<Option<Label>>,
+    basic_blocks_guest_regs_mappings: Vec<(RegReserve, RegReserve, [Reg; GUEST_REGS_LENGTH])>,
     last_pc_value: u32,
     guest_regs_ptr: *mut u32,
 }
@@ -103,6 +104,7 @@ impl BlockAsm {
             guest_start: 0,
             guest_inst_offsets: Vec::new(),
             guest_basic_block_labels: Vec::new(),
+            basic_blocks_guest_regs_mappings: Vec::new(),
             last_pc_value: 0,
             guest_regs_ptr: cpu.guest_regs_addr() as _,
         }
@@ -113,6 +115,8 @@ impl BlockAsm {
         self.sub5(FlagsUpdate_DontCare, Cond::AL, Reg::SP, Reg::SP, &4.into());
 
         self.guest_basic_block_labels.resize_with(basic_block_len, || None);
+        self.basic_blocks_guest_regs_mappings
+            .resize_with(basic_block_len, || (reg_reserve!(), reg_reserve!(), [Reg::None; GUEST_REGS_LENGTH]));
     }
 
     pub fn restore_stack(&mut self) {
@@ -126,17 +130,26 @@ impl BlockAsm {
         self.pop1(reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::R12, Reg::PC));
     }
 
-    pub fn init_guest_regs(&mut self, guest_regs: RegReserve) {
+    pub fn init_guest_regs_mapping(&mut self, guest_regs: RegReserve, basic_block_index: usize) {
         self.reg_alloc = RegAlloc::new(self.thumb);
+        let dirty_guest_regs = self.reg_alloc.reserve_guest_regs(guest_regs - Reg::CPSR, false, &mut self.masm);
+        self.basic_blocks_guest_regs_mappings[basic_block_index] = (dirty_guest_regs, self.get_free_host_regs(), self.reg_alloc.guest_regs_mapping);
+    }
 
-        self.restore_guest_regs_ptr();
+    pub fn init_guest_regs(&mut self, guest_regs: RegReserve, basic_block_index: usize) {
+        let (dirty_guest_regs, free_regs, guest_regs_mapping) = self.basic_blocks_guest_regs_mappings[basic_block_index];
+        self.dirty_guest_regs = dirty_guest_regs;
+        self.set_guest_regs_mapping(guest_regs_mapping);
+        self.reg_alloc.free_regs = free_regs;
 
-        if guest_regs.is_reserved(Reg::CPSR) {
+        if basic_block_index == 0 {
+            self.restore_guest_regs_ptr();
+        }
+
+        if basic_block_index == 0 && guest_regs.is_reserved(Reg::CPSR) {
             self.load_guest_reg(CPSR_TMP_REG, Reg::CPSR);
             self.msr2(MaskedSpecialRegisterType_CPSR_f.into(), &CPSR_TMP_REG.into());
         }
-
-        self.dirty_guest_regs.clear();
     }
 
     pub fn set_guest_start(&mut self) {
@@ -278,7 +291,7 @@ impl BlockAsm {
     }
 
     pub fn set_guest_regs_mapping(&mut self, guest_regs_mapping: [Reg; GUEST_REGS_LENGTH]) {
-        self.reg_alloc.guest_regs_mapping = guest_regs_mapping;
+        self.reg_alloc.set_guest_regs_mappings(&guest_regs_mapping);
     }
 
     pub fn get_guest_regs_mapping(&self) -> [Reg; GUEST_REGS_LENGTH] {
@@ -412,6 +425,19 @@ impl BlockAsm {
 
     pub fn b_basic_block(&mut self, basic_block_index: usize) {
         self.masm.b2(self.guest_basic_block_labels[basic_block_index].as_mut().unwrap(), BranchHint_kNear);
+    }
+
+    pub fn init_basic_block_regs(&mut self, input_regs: RegReserve, basic_block_index: usize) {
+        self.reg_alloc.guest_regs_mapping = self.basic_blocks_guest_regs_mappings[basic_block_index].2;
+        self.reload_active_guest_regs_all();
+        if input_regs.is_reserved(Reg::CPSR) {
+            self.load_guest_cpsr_reg(CPSR_TMP_REG);
+        }
+    }
+
+    pub fn relocate_for_basic_block(&mut self, basic_block_index: usize) {
+        self.reg_alloc
+            .relocate_guest_regs(self.dirty_guest_regs - Reg::PC - Reg::CPSR, &self.basic_blocks_guest_regs_mappings[basic_block_index].2, &mut self.masm);
     }
 }
 

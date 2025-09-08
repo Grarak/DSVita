@@ -1,5 +1,5 @@
 use crate::core::CpuType::{ARM7, ARM9};
-use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG};
 use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::branch_any_reg;
 use crate::jit::inst_thread_regs_handler::{register_restore_spsr, restore_thumb_after_restore_spsr, set_pc_arm_mode, set_pc_thumb_mode};
@@ -22,17 +22,23 @@ impl JitAsm<'_> {
             if metadata.local_branch_entry() {
                 block_asm.guest_basic_block_labels[i] = Some(Label::new());
             }
+            let required_guest_regs = self.analyzer.basic_blocks[i].get_inputs() - Reg::PC;
+            block_asm.init_guest_regs_mapping(required_guest_regs, i);
         }
 
         for i in 0..self.analyzer.basic_blocks.len() {
             self.jit_buf.debug_info.record_basic_block_offset(i, block_asm.get_cursor_offset() as usize);
             let required_guest_regs = self.analyzer.basic_blocks[i].get_inputs() - Reg::PC;
 
+            block_asm.init_guest_regs(required_guest_regs, i);
+            if i == 0 {
+                block_asm.reload_active_guest_regs_all();
+            }
+
             if self.analyzer.insts_metadata[self.analyzer.basic_blocks[i].start_index].local_branch_entry() {
                 block_asm.bind_basic_block(i);
             }
 
-            block_asm.init_guest_regs(required_guest_regs);
             self.emit_basic_block(i, block_asm, thumb);
         }
 
@@ -188,7 +194,7 @@ impl JitAsm<'_> {
             }
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
-            // if block_asm.current_pc == 0x20cc414 {
+            // if block_asm.current_pc == 0x2380074 {
             //     block_asm.bkpt1(0);
             // }
 
@@ -244,20 +250,18 @@ impl JitAsm<'_> {
             if (inst.op.is_alu() || inst.op.is_single_mem_transfer() || inst.op.is_multiple_mem_transfer()) && inst.out_regs.is_reserved(Reg::PC) {
                 if thumb {
                     self.handle_indirect_branch_thumb(i, block_asm);
+                } else if inst.cond != Cond::AL {
+                    let mut label = Label::new();
+                    block_asm.b2(&mut label, BranchHint_kFar);
+                    self.jit_buf.cond_indirect_branches.push(JitCondIndirectBranch::new(
+                        i,
+                        block_asm.current_pc,
+                        block_asm.dirty_guest_regs,
+                        block_asm.get_guest_regs_mapping(),
+                        label,
+                    ));
                 } else {
-                    if inst.cond != Cond::AL {
-                        let mut label = Label::new();
-                        block_asm.b2(&mut label, BranchHint_kFar);
-                        self.jit_buf.cond_indirect_branches.push(JitCondIndirectBranch::new(
-                            i,
-                            block_asm.current_pc,
-                            block_asm.dirty_guest_regs,
-                            block_asm.get_guest_regs_mapping(),
-                            label,
-                        ));
-                    } else {
-                        self.handle_indirect_branch(i, block_asm);
-                    }
+                    self.handle_indirect_branch(i, block_asm);
                 }
             }
 
@@ -276,7 +280,15 @@ impl JitAsm<'_> {
             }
         }
 
-        block_asm.save_dirty_guest_regs(true, true);
+        if basic_block_index == self.analyzer.basic_blocks.len() - 1 {
+            block_asm.save_dirty_guest_regs(true, true);
+        } else {
+            block_asm.save_dirty_guest_cpsr(true);
+            block_asm.relocate_for_basic_block(basic_block_index + 1);
+            if !block_asm.dirty_guest_regs.is_reserved(Reg::CPSR) {
+                block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
+            }
+        }
     }
 
     pub fn emit_count_cycles(&mut self, total_cycle_count: u16, block_asm: &mut BlockAsm) {

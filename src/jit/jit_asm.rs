@@ -102,16 +102,28 @@ impl JitForwardBranch {
 pub struct JitRunSchedulerLabel {
     pub current_pc: u32,
     pub target_pc: u32,
+    pub dirty_guest_regs: RegReserve,
+    pub guest_regs_mapping: [Reg; GUEST_REGS_LENGTH],
     pub bind_label: Label,
     pub continue_label: Label,
     pub exit_label: Option<Label>,
 }
 
 impl JitRunSchedulerLabel {
-    pub fn new(current_pc: u32, target_pc: u32, bind_label: Label, continue_label: Label, exit_label: Option<Label>) -> Self {
+    pub fn new(
+        current_pc: u32,
+        target_pc: u32,
+        dirty_guest_regs: RegReserve,
+        guest_regs_mapping: [Reg; GUEST_REGS_LENGTH],
+        bind_label: Label,
+        continue_label: Label,
+        exit_label: Option<Label>,
+    ) -> Self {
         JitRunSchedulerLabel {
             current_pc,
             target_pc,
+            dirty_guest_regs,
+            guest_regs_mapping,
             bind_label,
             continue_label,
             exit_label,

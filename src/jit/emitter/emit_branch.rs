@@ -1,6 +1,6 @@
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
-use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG};
 use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::{branch_lr, branch_reg, handle_idle_loop, handle_interrupt, pre_branch};
 use crate::jit::jit_asm::{JitAsm, JitForwardBranch, JitRunSchedulerLabel, JitRuntimeData};
@@ -238,7 +238,12 @@ impl JitAsm<'_> {
                     } else {
                         block_asm.call(handle_idle_loop::<false> as _);
                     }
+                    block_asm.restore_guest_regs_ptr();
                     let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
+                    let basic_block_input_regs = self.analyzer.basic_blocks[basic_block_index].get_inputs();
+                    let guest_regs_mapping = block_asm.get_guest_regs_mapping();
+                    block_asm.init_basic_block_regs(basic_block_input_regs, basic_block_index);
+                    block_asm.set_guest_regs_mapping(guest_regs_mapping);
                     block_asm.b_basic_block(basic_block_index);
                 }
                 ARM7 => {
@@ -274,10 +279,7 @@ impl JitAsm<'_> {
                 block_asm.b3(!cond, skip_label, BranchHint_kNear);
             }
 
-            block_asm.ldr2(Reg::R1, target_pc);
-            block_asm.store_guest_reg(Reg::R1, Reg::PC);
-            block_asm.dirty_guest_regs -= Reg::PC;
-            block_asm.save_dirty_guest_regs_additional(true, cond == Cond::AL, reg_reserve!());
+            block_asm.save_dirty_guest_cpsr(false);
 
             let jump_to_index = (inst_index as isize + ((aligned_target_pc as isize - block_asm.current_pc as isize) >> pc_shift)) as usize;
             let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
@@ -301,19 +303,39 @@ impl JitAsm<'_> {
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pc.into());
                 block_asm.call(map_fun_cpu!(self.cpu, debug_branch_label));
+                block_asm.restore_guest_regs_ptr();
             }
 
             let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
+            block_asm.relocate_for_basic_block(basic_block_index);
+            let basic_block_input_regs = self.analyzer.basic_blocks[basic_block_index].get_inputs();
+            if basic_block_input_regs.is_reserved(Reg::CPSR) {
+                block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
+            }
             block_asm.b_basic_block(basic_block_index);
 
-            self.jit_buf
-                .run_scheduler_labels
-                .push(JitRunSchedulerLabel::new(block_asm.current_pc, target_pc, cycles_exceed_label, continue_label, None));
+            self.jit_buf.run_scheduler_labels.push(JitRunSchedulerLabel::new(
+                block_asm.current_pc,
+                target_pc,
+                block_asm.dirty_guest_regs,
+                block_asm.get_guest_regs_mapping(),
+                cycles_exceed_label,
+                continue_label,
+                None,
+            ));
+
+            if cond == Cond::AL {
+                block_asm.dirty_guest_regs.clear();
+            }
         }
     }
 
     pub fn emit_forward_branch(&mut self, forward_branch_index: usize, block_asm: &mut BlockAsm) {
         let forward_branch = &mut self.jit_buf.forward_branches[forward_branch_index];
+        block_asm.dirty_guest_regs = forward_branch.dirty_guest_regs;
+        block_asm.current_pc = forward_branch.current_pc;
+        block_asm.set_guest_regs_mapping(forward_branch.guest_regs_mapping);
+
         block_asm.bind(&mut forward_branch.bind_label);
 
         let inst_index = forward_branch.inst_index;
@@ -321,13 +343,10 @@ impl JitAsm<'_> {
         let aligned_target_pc = forward_branch.target_pc & !1;
         let pc_shift = if thumb { 1 } else { 2 };
 
-        let jump_to_index = (inst_index as isize + ((aligned_target_pc as isize - forward_branch.current_pc as isize) >> pc_shift)) as usize;
-        let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
+        block_asm.save_dirty_guest_cpsr(false);
 
-        block_asm.ldr2(Reg::R1, forward_branch.target_pc);
-        block_asm.store_guest_reg(Reg::R1, Reg::PC);
-        block_asm.set_guest_regs_mapping(forward_branch.guest_regs_mapping);
-        block_asm.save_guest_regs(forward_branch.dirty_guest_regs - Reg::PC);
+        let jump_to_index = (inst_index as isize + ((aligned_target_pc as isize - block_asm.current_pc as isize) >> pc_shift)) as usize;
+        let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
 
         block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
         self.emit_count_cycles(self.jit_buf.insts_cycle_counts[inst_index], block_asm);
@@ -342,7 +361,7 @@ impl JitAsm<'_> {
 
         block_asm.bind(&mut continue_label);
 
-        let current_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(forward_branch.current_pc);
+        let current_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(block_asm.current_pc);
         let target_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(aligned_target_pc);
 
         block_asm.ldr2(Reg::R1, current_pc_jit_entry as u32);
@@ -356,17 +375,26 @@ impl JitAsm<'_> {
         block_asm.strh2(Reg::R1, &(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
 
         if BRANCH_LOG {
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &forward_branch.current_pc.into());
+            let pc = block_asm.current_pc;
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &forward_branch.target_pc.into());
             block_asm.call(map_fun_cpu!(self.cpu, debug_branch_label));
+            block_asm.restore_guest_regs_ptr();
         }
 
         let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
+        block_asm.relocate_for_basic_block(basic_block_index);
+        let basic_block_input_regs = self.analyzer.basic_blocks[basic_block_index].get_inputs();
+        if basic_block_input_regs.is_reserved(Reg::CPSR) {
+            block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
+        }
         block_asm.b_basic_block(basic_block_index);
 
         self.jit_buf.run_scheduler_labels.push(JitRunSchedulerLabel::new(
-            forward_branch.current_pc,
+            block_asm.current_pc,
             forward_branch.target_pc,
+            block_asm.dirty_guest_regs,
+            block_asm.get_guest_regs_mapping(),
             cycles_exceed_label,
             continue_label,
             Some(exit_label),
@@ -378,10 +406,20 @@ impl JitAsm<'_> {
         let run_scheduler_label = &mut self.jit_buf.run_scheduler_labels[run_scheduler_label_index];
         block_asm.bind(&mut run_scheduler_label.bind_label);
 
+        block_asm.dirty_guest_regs = run_scheduler_label.dirty_guest_regs;
+        block_asm.current_pc = run_scheduler_label.current_pc;
+        block_asm.set_guest_regs_mapping(run_scheduler_label.guest_regs_mapping);
+
+        block_asm.ldr2(Reg::R1, run_scheduler_label.target_pc);
+        block_asm.store_guest_reg(Reg::R1, Reg::PC);
+        block_asm.dirty_guest_regs -= Reg::PC;
+        block_asm.save_dirty_guest_regs(false, false);
+
         if self.cpu == ARM9 {
             block_asm.ldr2(Reg::R0, jit_asm_ptr);
             if IS_DEBUG {
-                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &run_scheduler_label.current_pc.into());
+                let pc = block_asm.current_pc;
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
             }
             if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
                 block_asm.call(inst_branch_handler::run_scheduler::<true> as _);
@@ -400,21 +438,30 @@ impl JitAsm<'_> {
 
             block_asm.ldr2(Reg::R0, jit_asm_ptr);
             if IS_DEBUG {
-                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &run_scheduler_label.current_pc.into());
+                let pc = block_asm.current_pc;
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &pc.into());
             }
             block_asm.call(handle_interrupt as _);
+            block_asm.restore_guest_regs_ptr();
+            block_asm.reload_active_guest_regs_all();
             block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
             block_asm.b2(&mut run_scheduler_label.continue_label, BranchHint_kFar);
         }
 
         if let Some(exit_label) = &mut run_scheduler_label.exit_label {
             block_asm.bind(exit_label);
+            if self.cpu == ARM9 {
+                block_asm.ldr2(Reg::R1, run_scheduler_label.target_pc);
+                block_asm.store_guest_reg(Reg::R1, Reg::PC);
+                block_asm.save_dirty_guest_regs(false, false);
+            }
         }
 
         if run_scheduler_label.exit_label.is_some() || self.cpu == ARM7 {
             if IS_DEBUG {
+                let pc = block_asm.current_pc;
                 block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
-                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &run_scheduler_label.current_pc.into());
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
                 block_asm.str2(Reg::R1, &(Reg::R0, JitRuntimeData::get_branch_out_pc_offset() as i32).into());
             }
             block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
