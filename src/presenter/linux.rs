@@ -24,21 +24,23 @@ use std::{mem, ptr, slice, thread};
 
 #[derive(Clone)]
 pub struct PresenterAudio {
-    audio_queue: Rc<AudioQueue<i16>>,
+    audio_queue: Rc<Option<AudioQueue<i16>>>,
 }
 
 unsafe impl Send for PresenterAudio {}
 
 impl PresenterAudio {
-    fn new(audio_queue: AudioQueue<i16>) -> Self {
+    fn new(audio_queue: Option<AudioQueue<i16>>) -> Self {
         PresenterAudio { audio_queue: Rc::new(audio_queue) }
     }
 
     pub fn play(&self, buffer: &[u32; PRESENTER_AUDIO_BUF_SIZE]) {
         let raw = unsafe { slice::from_raw_parts(buffer.as_ptr() as *const i16, PRESENTER_AUDIO_BUF_SIZE * 2) };
-        self.audio_queue.queue_audio(raw).unwrap();
-        while self.audio_queue.size() != 0 {
-            thread::yield_now();
+        if let Some(audio_queue) = self.audio_queue.as_ref() {
+            audio_queue.queue_audio(raw).unwrap();
+            while audio_queue.size() != 0 {
+                thread::yield_now();
+            }
         }
     }
 }
@@ -76,18 +78,24 @@ impl Presenter {
         sdl2::hint::set("SDL_NO_SIGNAL_HANDLERS", "1");
         let sdl = sdl2::init().unwrap();
         let sdl_video = sdl.video().unwrap();
-        let sdl_audio = sdl.audio().unwrap();
-        let audio_queue = sdl_audio
-            .open_queue(
-                None,
-                &AudioSpecDesired {
-                    freq: Some(PRESENTER_AUDIO_SAMPLE_RATE as i32),
-                    channels: Some(2),
-                    samples: Some(PRESENTER_AUDIO_BUF_SIZE as u16),
-                },
-            )
-            .unwrap();
-        audio_queue.resume();
+        let audio_queue = sdl
+            .audio()
+            .and_then(|sdl_audio| {
+                sdl_audio
+                    .open_queue(
+                        None,
+                        &AudioSpecDesired {
+                            freq: Some(PRESENTER_AUDIO_SAMPLE_RATE as i32),
+                            channels: Some(2),
+                            samples: Some(PRESENTER_AUDIO_BUF_SIZE as u16),
+                        },
+                    )
+                    .and_then(|audio_queue| {
+                        audio_queue.resume();
+                        Ok(audio_queue)
+                    })
+            })
+            .ok();
 
         let gl_attr = sdl_video.gl_attr();
         gl_attr.set_context_profile(GLProfile::GLES);
