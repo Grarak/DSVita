@@ -76,24 +76,25 @@ impl Default for InstMetadata {
 
 #[derive(Default)]
 pub struct AsmAnalyzer {
+    thumb: bool,
     pub basic_blocks: Vec<BasicBlock>,
     pub insts_metadata: Vec<InstMetadata>,
 }
 
 impl AsmAnalyzer {
-    fn create_basic_blocks(&mut self, start_pc: u32, insts: &[InstInfo], thumb: bool) {
+    fn create_basic_blocks(&mut self, start_pc: u32, insts: &[InstInfo]) {
         self.basic_blocks.clear();
         self.insts_metadata.clear();
         self.insts_metadata.resize(insts.len(), InstMetadata::default());
 
-        let pc_shift = if thumb { 1 } else { 2 };
+        let pc_shift = if self.thumb { 1 } else { 2 };
         for i in 0..insts.len() {
             if insts[i].op.is_labelled_branch() && !insts[i].out_regs.is_reserved(Reg::LR) {
                 let pc = start_pc + ((i as u32) << pc_shift);
                 let relative_pc = insts[i].operands()[0].as_imm().unwrap() as i32 + (2 << pc_shift);
                 let target_pc = (pc as i32 + relative_pc) as u32;
 
-                match analyze_branch_label(insts, thumb, i, insts[i].cond, pc, target_pc) {
+                match analyze_branch_label(insts, self.thumb, i, insts[i].cond, pc, target_pc) {
                     JitBranchInfo::Idle(target_index) => {
                         self.insts_metadata[i].set_idle_loop(true);
                         self.insts_metadata[target_index].set_local_branch_entry(true);
@@ -145,8 +146,14 @@ impl AsmAnalyzer {
         unreachable!()
     }
 
+    pub fn get_pc_from_inst(&self, inst_index: usize) -> u32 {
+        let pc_shift = if self.thumb { 1 } else { 2 };
+        self.basic_blocks[0].start_pc + ((inst_index as u32) << pc_shift)
+    }
+
     pub fn analyze(&mut self, start_pc: u32, insts: &[InstInfo], thumb: bool) {
-        self.create_basic_blocks(start_pc, insts, thumb);
+        self.thumb = thumb;
+        self.create_basic_blocks(start_pc, insts);
 
         for (i, basic_block) in self.basic_blocks.iter().enumerate() {
             block_asm_println!("basic block {i} start inst {} - {}", basic_block.start_index, basic_block.end_index);

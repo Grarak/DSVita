@@ -261,14 +261,9 @@ impl JitAsm<'_> {
             if target_pc > block_asm.current_pc {
                 let mut label = Label::new();
                 block_asm.b3(cond, &mut label, BranchHint_kFar);
-                self.jit_buf.forward_branches.push(JitForwardBranch::new(
-                    inst_index,
-                    block_asm.current_pc,
-                    target_pc,
-                    block_asm.dirty_guest_regs,
-                    block_asm.get_guest_regs_mapping(),
-                    label,
-                ));
+                self.jit_buf
+                    .forward_branches
+                    .push(JitForwardBranch::new(inst_index, target_pc, block_asm.dirty_guest_regs, block_asm.get_guest_regs_mapping(), label));
                 if cond == Cond::AL {
                     block_asm.dirty_guest_regs.clear();
                 }
@@ -307,15 +302,16 @@ impl JitAsm<'_> {
             }
 
             let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
-            block_asm.relocate_for_basic_block(basic_block_index);
-            let basic_block_input_regs = self.analyzer.basic_blocks[basic_block_index].get_inputs();
+            let basic_block = &self.analyzer.basic_blocks[basic_block_index];
+            let basic_block_input_regs = basic_block.get_inputs();
+            block_asm.relocate_for_basic_block(basic_block.output_regs, basic_block_index);
             if basic_block_input_regs.is_reserved(Reg::CPSR) {
                 block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
             }
             block_asm.b_basic_block(basic_block_index);
 
             self.jit_buf.run_scheduler_labels.push(JitRunSchedulerLabel::new(
-                block_asm.current_pc,
+                inst_index,
                 target_pc,
                 block_asm.dirty_guest_regs,
                 block_asm.get_guest_regs_mapping(),
@@ -333,7 +329,7 @@ impl JitAsm<'_> {
     pub fn emit_forward_branch(&mut self, forward_branch_index: usize, block_asm: &mut BlockAsm) {
         let forward_branch = &mut self.jit_buf.forward_branches[forward_branch_index];
         block_asm.dirty_guest_regs = forward_branch.dirty_guest_regs;
-        block_asm.current_pc = forward_branch.current_pc;
+        block_asm.current_pc = self.analyzer.get_pc_from_inst(forward_branch.inst_index);
         block_asm.set_guest_regs_mapping(forward_branch.guest_regs_mapping);
 
         block_asm.bind(&mut forward_branch.bind_label);
@@ -383,15 +379,16 @@ impl JitAsm<'_> {
         }
 
         let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
-        block_asm.relocate_for_basic_block(basic_block_index);
-        let basic_block_input_regs = self.analyzer.basic_blocks[basic_block_index].get_inputs();
+        let basic_block = &self.analyzer.basic_blocks[basic_block_index];
+        let basic_block_input_regs = basic_block.get_inputs();
+        block_asm.relocate_for_basic_block(basic_block.output_regs, basic_block_index);
         if basic_block_input_regs.is_reserved(Reg::CPSR) {
             block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
         }
         block_asm.b_basic_block(basic_block_index);
 
         self.jit_buf.run_scheduler_labels.push(JitRunSchedulerLabel::new(
-            block_asm.current_pc,
+            forward_branch.inst_index,
             forward_branch.target_pc,
             block_asm.dirty_guest_regs,
             block_asm.get_guest_regs_mapping(),
@@ -407,7 +404,7 @@ impl JitAsm<'_> {
         block_asm.bind(&mut run_scheduler_label.bind_label);
 
         block_asm.dirty_guest_regs = run_scheduler_label.dirty_guest_regs;
-        block_asm.current_pc = run_scheduler_label.current_pc;
+        block_asm.current_pc = self.analyzer.get_pc_from_inst(run_scheduler_label.inst_index);
         block_asm.set_guest_regs_mapping(run_scheduler_label.guest_regs_mapping);
 
         block_asm.ldr2(Reg::R1, run_scheduler_label.target_pc);

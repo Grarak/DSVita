@@ -313,7 +313,7 @@ impl JitAsm<'_> {
         let mut dirty_guest_regs = block_asm.get_dirty_guest_regs();
         if save_cpsr {
             if user {
-                block_asm.store_guest_cpsr_reg(CPSR_TMP_REG);
+                block_asm.store_guest_cpsr_reg(FlagsUpdate_DontCare, CPSR_TMP_REG);
                 flag_update = FlagsUpdate_DontCare;
             } else {
                 dirty_guest_regs += Reg::CPSR;

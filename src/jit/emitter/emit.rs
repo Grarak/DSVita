@@ -11,23 +11,27 @@ use crate::logging::debug_println;
 use crate::settings::Arm7Emu;
 use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
-use vixl::{BranchHint_kFar, BranchHint_kNear, FlagsUpdate_DontCare, Label, MasmAdd5, MasmB2, MasmB3, MasmBkpt1, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
+use vixl::{
+    BranchHint_kFar, BranchHint_kNear, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmB2, MasmB3, MasmBkpt1, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5,
+};
 
 impl JitAsm<'_> {
     pub fn emit(&mut self, block_asm: &mut BlockAsm, thumb: bool) {
         block_asm.guest_inst_offsets.reserve(self.jit_buf.insts.len() - 1);
 
         for i in 0..self.analyzer.basic_blocks.len() {
-            let metadata = self.analyzer.insts_metadata[self.analyzer.basic_blocks[i].start_index];
+            let basic_block = &self.analyzer.basic_blocks[i];
+            let metadata = self.analyzer.insts_metadata[basic_block.start_index];
             if metadata.local_branch_entry() {
                 block_asm.guest_basic_block_labels[i] = Some(Label::new());
             }
-            let required_guest_regs = self.analyzer.basic_blocks[i].get_inputs() - Reg::PC;
-            block_asm.init_guest_regs_mapping(required_guest_regs, i);
+            let required_guest_regs = basic_block.get_inputs() - Reg::PC;
+            block_asm.init_guest_regs_mapping(required_guest_regs, basic_block.output_regs, i);
         }
 
         for i in 0..self.analyzer.basic_blocks.len() {
-            self.jit_buf.debug_info.record_basic_block_offset(i, block_asm.get_cursor_offset() as usize);
+            let cursor_start = block_asm.get_cursor_offset() as usize;
+            self.jit_buf.debug_info.record_basic_block_offset(i, cursor_start);
             let required_guest_regs = self.analyzer.basic_blocks[i].get_inputs() - Reg::PC;
 
             block_asm.init_guest_regs(required_guest_regs, i);
@@ -40,6 +44,9 @@ impl JitAsm<'_> {
             }
 
             self.emit_basic_block(i, block_asm, thumb);
+
+            let block_size = block_asm.get_cursor_offset() as usize - cursor_start;
+            self.jit_buf.debug_info.record_basic_block(self.analyzer.basic_blocks[i].start_pc, cursor_start, block_size);
         }
 
         self.jit_buf.debug_info.record_inst_offset(self.jit_buf.insts.len(), block_asm.get_cursor_offset() as usize);
@@ -47,20 +54,38 @@ impl JitAsm<'_> {
 
     pub fn emit_epilogue(&mut self, block_asm: &mut BlockAsm) {
         for i in 0..self.jit_buf.forward_branches.len() {
+            let basic_block_index = self.analyzer.get_basic_block_from_inst(self.jit_buf.forward_branches[i].inst_index);
+            let cursor_start = block_asm.get_cursor_offset() as usize;
             self.emit_forward_branch(i, block_asm);
+            let block_size = block_asm.get_cursor_offset() as usize - cursor_start;
+            self.jit_buf
+                .debug_info
+                .record_basic_block(self.analyzer.basic_blocks[basic_block_index].start_pc, cursor_start, block_size);
         }
         for i in 0..self.jit_buf.run_scheduler_labels.len() {
+            let basic_block_index = self.analyzer.get_basic_block_from_inst(self.jit_buf.run_scheduler_labels[i].inst_index);
+            let cursor_start = block_asm.get_cursor_offset() as usize;
             self.emit_run_scheduler(i, block_asm);
+            let block_size = block_asm.get_cursor_offset() as usize - cursor_start;
+            self.jit_buf
+                .debug_info
+                .record_basic_block(self.analyzer.basic_blocks[basic_block_index].start_pc, cursor_start, block_size);
         }
         for i in 0..self.jit_buf.cond_indirect_branches.len() {
+            let cursor_start = block_asm.get_cursor_offset() as usize;
+            let basic_block_index = self.analyzer.get_basic_block_from_inst(self.jit_buf.cond_indirect_branches[i].inst_index);
             self.emit_cond_indirect_branch(i, block_asm);
+            let block_size = block_asm.get_cursor_offset() as usize - cursor_start;
+            self.jit_buf
+                .debug_info
+                .record_basic_block(self.analyzer.basic_blocks[basic_block_index].start_pc, cursor_start, block_size);
         }
     }
 
     fn emit_cond_indirect_branch(&mut self, cond_indirect_branch_index: usize, block_asm: &mut BlockAsm) {
         let cond_indirect_branch = &mut self.jit_buf.cond_indirect_branches[cond_indirect_branch_index];
         block_asm.bind(&mut cond_indirect_branch.bind_label);
-        block_asm.current_pc = cond_indirect_branch.current_pc;
+        block_asm.current_pc = self.analyzer.get_pc_from_inst(cond_indirect_branch.inst_index);
         block_asm.dirty_guest_regs = cond_indirect_branch.dirty_guest_regs;
         block_asm.set_guest_regs_mapping(cond_indirect_branch.guest_regs_mapping);
         let inst_index = cond_indirect_branch.inst_index;
@@ -194,7 +219,7 @@ impl JitAsm<'_> {
             }
             debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
 
-            // if block_asm.current_pc == 0x2380074 {
+            // if block_asm.current_pc == 0x206a3b2 {
             //     block_asm.bkpt1(0);
             // }
 
@@ -253,13 +278,9 @@ impl JitAsm<'_> {
                 } else if inst.cond != Cond::AL {
                     let mut label = Label::new();
                     block_asm.b2(&mut label, BranchHint_kFar);
-                    self.jit_buf.cond_indirect_branches.push(JitCondIndirectBranch::new(
-                        i,
-                        block_asm.current_pc,
-                        block_asm.dirty_guest_regs,
-                        block_asm.get_guest_regs_mapping(),
-                        label,
-                    ));
+                    self.jit_buf
+                        .cond_indirect_branches
+                        .push(JitCondIndirectBranch::new(i, block_asm.dirty_guest_regs, block_asm.get_guest_regs_mapping(), label));
                 } else {
                     self.handle_indirect_branch(i, block_asm);
                 }
@@ -283,9 +304,13 @@ impl JitAsm<'_> {
         if basic_block_index == self.analyzer.basic_blocks.len() - 1 {
             block_asm.save_dirty_guest_regs(true, true);
         } else {
-            block_asm.save_dirty_guest_cpsr(true);
-            block_asm.relocate_for_basic_block(basic_block_index + 1);
-            if !block_asm.dirty_guest_regs.is_reserved(Reg::CPSR) {
+            let basic_block = &self.analyzer.basic_blocks[basic_block_index + 1];
+            let next_block_needs_cpsr = basic_block.get_inputs().is_reserved(Reg::CPSR);
+            if block_asm.dirty_guest_regs.is_reserved(Reg::CPSR) {
+                block_asm.store_guest_cpsr_reg(if next_block_needs_cpsr { FlagsUpdate_LeaveFlags } else { FlagsUpdate_DontCare }, CPSR_TMP_REG);
+            }
+            block_asm.relocate_for_basic_block(basic_block.output_regs, basic_block_index + 1);
+            if !block_asm.dirty_guest_regs.is_reserved(Reg::CPSR) && next_block_needs_cpsr {
                 block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
             }
         }

@@ -30,21 +30,27 @@ use vixl::{FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmBl
 use xxhash_rust::xxh32::xxh32;
 
 #[derive(Default)]
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, target_os = "linux"))]
 pub struct JitDebugInfo {
     pub inst_offsets: Vec<usize>,
     pub block_offsets: Vec<usize>,
+    pub blocks: Vec<(u32, usize, usize)>,
 }
 
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, target_os = "linux"))]
 impl JitDebugInfo {
     pub fn resize(&mut self, basic_blocks_size: usize, insts_size: usize) {
         self.inst_offsets.resize(insts_size + 1, 0);
         self.block_offsets.resize(basic_blocks_size, 0);
+        self.blocks.clear();
     }
 
     pub fn record_basic_block_offset(&mut self, basic_block_index: usize, offset: usize) {
         self.block_offsets[basic_block_index] = offset;
+    }
+
+    pub fn record_basic_block(&mut self, basic_block_start_pc: u32, offset: usize, size: usize) {
+        self.blocks.push((basic_block_start_pc, offset, size));
     }
 
     pub fn record_inst_offset(&mut self, inst_index: usize, offset: usize) {
@@ -66,20 +72,20 @@ impl JitDebugInfo {
 }
 
 #[derive(Default)]
-#[cfg(not(debug_assertions))]
+#[cfg(all(not(debug_assertions), not(target_os = "linux")))]
 pub struct JitDebugInfo {}
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(not(debug_assertions), not(target_os = "linux")))]
 impl JitDebugInfo {
     pub fn resize(&mut self, basic_blocks_size: usize, insts_size: usize) {}
     pub fn record_basic_block_offset(&mut self, basic_block_index: usize, offset: usize) {}
+    pub fn record_basic_block(&mut self, basic_block_start_pc: u32, offset: usize, size: usize) {}
     pub fn record_inst_offset(&mut self, inst_index: usize, offset: usize) {}
     fn print_info(&self, start_pc: u32, thumb: bool) {}
 }
 
 pub struct JitForwardBranch {
     pub inst_index: usize,
-    pub current_pc: u32,
     pub target_pc: u32,
     pub dirty_guest_regs: RegReserve,
     pub guest_regs_mapping: [Reg; GUEST_REGS_LENGTH],
@@ -87,10 +93,9 @@ pub struct JitForwardBranch {
 }
 
 impl JitForwardBranch {
-    pub fn new(inst_index: usize, current_pc: u32, target_pc: u32, dirty_guest_regs: RegReserve, guest_regs_mapping: [Reg; GUEST_REGS_LENGTH], bind_label: Label) -> Self {
+    pub fn new(inst_index: usize, target_pc: u32, dirty_guest_regs: RegReserve, guest_regs_mapping: [Reg; GUEST_REGS_LENGTH], bind_label: Label) -> Self {
         JitForwardBranch {
             inst_index,
-            current_pc,
             target_pc,
             dirty_guest_regs,
             guest_regs_mapping,
@@ -100,7 +105,7 @@ impl JitForwardBranch {
 }
 
 pub struct JitRunSchedulerLabel {
-    pub current_pc: u32,
+    pub inst_index: usize,
     pub target_pc: u32,
     pub dirty_guest_regs: RegReserve,
     pub guest_regs_mapping: [Reg; GUEST_REGS_LENGTH],
@@ -111,7 +116,7 @@ pub struct JitRunSchedulerLabel {
 
 impl JitRunSchedulerLabel {
     pub fn new(
-        current_pc: u32,
+        inst_index: usize,
         target_pc: u32,
         dirty_guest_regs: RegReserve,
         guest_regs_mapping: [Reg; GUEST_REGS_LENGTH],
@@ -120,7 +125,7 @@ impl JitRunSchedulerLabel {
         exit_label: Option<Label>,
     ) -> Self {
         JitRunSchedulerLabel {
-            current_pc,
+            inst_index,
             target_pc,
             dirty_guest_regs,
             guest_regs_mapping,
@@ -133,17 +138,15 @@ impl JitRunSchedulerLabel {
 
 pub struct JitCondIndirectBranch {
     pub inst_index: usize,
-    pub current_pc: u32,
     pub dirty_guest_regs: RegReserve,
     pub guest_regs_mapping: [Reg; GUEST_REGS_LENGTH],
     pub bind_label: Label,
 }
 
 impl JitCondIndirectBranch {
-    pub fn new(inst_index: usize, current_pc: u32, dirty_guest_regs: RegReserve, guest_regs_mapping: [Reg; GUEST_REGS_LENGTH], bind_label: Label) -> Self {
+    pub fn new(inst_index: usize, dirty_guest_regs: RegReserve, guest_regs_mapping: [Reg; GUEST_REGS_LENGTH], bind_label: Label) -> Self {
         JitCondIndirectBranch {
             inst_index,
-            current_pc,
             dirty_guest_regs,
             guest_regs_mapping,
             bind_label,
@@ -582,7 +585,7 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
         //     println!();
         //     todo!()
         // }
-        let (insert_entry, flushed) = asm.emu.jit_insert_block(block_asm, guest_pc, guest_pc + pc_offset + pc_step, thumb, cpu);
+        let (insert_entry, flushed) = asm.emu.jit_insert_block(block_asm, &asm.jit_buf.debug_info, guest_pc, guest_pc + pc_offset + pc_step, thumb, cpu);
         let jit_entry: extern "C" fn(u32) = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {

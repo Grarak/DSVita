@@ -169,20 +169,22 @@ impl RegAlloc {
         }
     }
 
-    pub fn relocate_guest_regs(&self, dirty_guest_regs: RegReserve, desired_guest_regs_mapping: &[Reg; GUEST_REGS_LENGTH], masm: &mut MacroAssembler) {
+    pub fn relocate_guest_regs(&self, dirty_guest_regs: RegReserve, basic_block_output_regs: RegReserve, desired_guest_regs_mapping: &[Reg; GUEST_REGS_LENGTH], masm: &mut MacroAssembler) {
         let mut regs_to_save = dirty_guest_regs;
         for (i, &mapped_reg) in desired_guest_regs_mapping.iter().enumerate() {
-            if mapped_reg != Reg::None {
-                regs_to_save -= Reg::from(i as u8);
+            let reg = Reg::from(i as u8);
+            if mapped_reg != Reg::None && basic_block_output_regs.is_reserved(reg) {
+                regs_to_save -= reg;
             }
         }
 
         self.save_active_guest_regs(regs_to_save, masm);
 
         for (i, &desired_mapping) in desired_guest_regs_mapping.iter().enumerate() {
+            let reg = Reg::from(i as u8);
             let current_mapping = self.guest_regs_mapping[i];
-            if current_mapping != Reg::None && current_mapping != desired_mapping {
-                Self::spill_guest_reg(Reg::from(i as u8), current_mapping, masm);
+            if current_mapping != Reg::None && current_mapping != desired_mapping && !regs_to_save.is_reserved(reg) {
+                Self::spill_guest_reg(reg, current_mapping, masm);
             }
         }
 

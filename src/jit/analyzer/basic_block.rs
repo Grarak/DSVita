@@ -1,5 +1,5 @@
 use crate::jit::inst_info::InstInfo;
-use crate::jit::reg::RegReserve;
+use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::jit::Cond;
 use std::fmt::{Debug, Formatter};
 
@@ -8,6 +8,7 @@ pub struct BasicBlock {
     pub start_index: usize,
     pub end_index: usize,
     pub live_regs: Vec<RegReserve>,
+    pub output_regs: RegReserve,
 }
 
 impl BasicBlock {
@@ -17,6 +18,7 @@ impl BasicBlock {
             start_index,
             end_index,
             live_regs: Vec::new(),
+            output_regs: reg_reserve!(),
         }
     }
 
@@ -38,6 +40,7 @@ impl BasicBlock {
             let mut previous_ranges = self.live_regs[i + 1];
             previous_ranges -= inst.out_regs;
             self.live_regs[i] = previous_ranges + inst.src_regs;
+            self.output_regs += inst.out_regs;
             if inst.cond != Cond::AL {
                 self.live_regs[i] += inst.out_regs;
             }

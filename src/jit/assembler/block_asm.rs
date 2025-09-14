@@ -9,8 +9,9 @@ use crate::mmap::{PAGE_SHIFT, PAGE_SIZE};
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 use vixl::{
-    BranchHint_kNear, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, Label, MacroAssembler, MaskedSpecialRegisterType_CPSR_f, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2, MasmLdr3, MasmLsr5,
-    MasmMov2, MasmMrs2, MasmMsr2, MasmPop1, MasmPush1, MasmStr3, MasmStrb2, MasmSub5, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR, ShiftType_RRX, SpecialRegisterType_CPSR,
+    BranchHint_kNear, FlagsUpdate, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, Label, MacroAssembler, MaskedSpecialRegisterType_CPSR_f, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2,
+    MasmLdr3, MasmLsr5, MasmMov2, MasmMrs2, MasmMsr2, MasmPop1, MasmPush1, MasmStr3, MasmStrb2, MasmSub5, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR, ShiftType_RRX,
+    SpecialRegisterType_CPSR,
 };
 
 pub const GUEST_REGS_PTR_REG: Reg = Reg::R3;
@@ -130,10 +131,10 @@ impl BlockAsm {
         self.pop1(reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::R12, Reg::PC));
     }
 
-    pub fn init_guest_regs_mapping(&mut self, guest_regs: RegReserve, basic_block_index: usize) {
+    pub fn init_guest_regs_mapping(&mut self, guest_regs: RegReserve, output_regs: RegReserve, basic_block_index: usize) {
         self.reg_alloc = RegAlloc::new(self.thumb);
         let dirty_guest_regs = self.reg_alloc.reserve_guest_regs(guest_regs - Reg::CPSR, false, &mut self.masm);
-        self.basic_blocks_guest_regs_mappings[basic_block_index] = (dirty_guest_regs, self.get_free_host_regs(), self.reg_alloc.guest_regs_mapping);
+        self.basic_blocks_guest_regs_mappings[basic_block_index] = (dirty_guest_regs & output_regs, self.get_free_host_regs(), self.reg_alloc.guest_regs_mapping);
     }
 
     pub fn init_guest_regs(&mut self, guest_regs: RegReserve, basic_block_index: usize) {
@@ -261,15 +262,15 @@ impl BlockAsm {
         self.msr2(MaskedSpecialRegisterType_CPSR_f.into(), &tmp_reg.into());
     }
 
-    pub fn store_guest_cpsr_reg(&mut self, tmp_reg: Reg) {
+    pub fn store_guest_cpsr_reg(&mut self, flags_update: FlagsUpdate, tmp_reg: Reg) {
         self.mrs2(tmp_reg, SpecialRegisterType_CPSR.into());
-        self.lsr5(FlagsUpdate_DontCare, Cond::AL, tmp_reg, tmp_reg, &24.into());
+        self.lsr5(flags_update, Cond::AL, tmp_reg, tmp_reg, &24.into());
         self.strb2(tmp_reg, &(GUEST_REGS_PTR_REG, Reg::CPSR as i32 * 4 + 3).into());
     }
 
     pub fn save_dirty_guest_cpsr(&mut self, clear: bool) {
         if self.dirty_guest_regs.is_reserved(Reg::CPSR) {
-            self.store_guest_cpsr_reg(CPSR_TMP_REG);
+            self.store_guest_cpsr_reg(FlagsUpdate_DontCare, CPSR_TMP_REG);
         }
         if clear {
             self.dirty_guest_regs -= Reg::CPSR;
@@ -301,7 +302,7 @@ impl BlockAsm {
     pub fn save_guest_regs(&mut self, regs: RegReserve) {
         self.reg_alloc.save_active_guest_regs(regs - Reg::CPSR, &mut self.masm);
         if regs.is_reserved(Reg::CPSR) {
-            self.store_guest_cpsr_reg(CPSR_TMP_REG);
+            self.store_guest_cpsr_reg(FlagsUpdate_DontCare, CPSR_TMP_REG);
         }
     }
 
@@ -373,7 +374,7 @@ impl BlockAsm {
     }
 
     pub fn reload_active_guest_regs_all(&mut self) {
-        self.reg_alloc.reload_active_guest_regs(RegReserve::all(), &mut self.masm);
+        self.reg_alloc.reload_active_guest_regs(RegReserve::all() - Reg::PC, &mut self.masm);
     }
 
     pub fn get_guest_inst_metadata_len(&self) -> usize {
@@ -435,9 +436,13 @@ impl BlockAsm {
         }
     }
 
-    pub fn relocate_for_basic_block(&mut self, basic_block_index: usize) {
-        self.reg_alloc
-            .relocate_guest_regs(self.dirty_guest_regs - Reg::PC - Reg::CPSR, &self.basic_blocks_guest_regs_mappings[basic_block_index].2, &mut self.masm);
+    pub fn relocate_for_basic_block(&mut self, basic_block_output_regs: RegReserve, basic_block_index: usize) {
+        self.reg_alloc.relocate_guest_regs(
+            self.dirty_guest_regs - Reg::PC - Reg::CPSR,
+            basic_block_output_regs,
+            &self.basic_blocks_guest_regs_mappings[basic_block_index].2,
+            &mut self.masm,
+        );
     }
 }
 

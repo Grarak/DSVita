@@ -9,7 +9,7 @@ use crate::jit::inst_mem_handler::{
     inst_write_mem_handler, inst_write_mem_handler_gxfifo, inst_write_mem_handler_gxfifo_with_cpsr, inst_write_mem_handler_multiple, inst_write_mem_handler_multiple_gxfifo,
     inst_write_mem_handler_multiple_gxfifo_with_cpsr, inst_write_mem_handler_multiple_with_cpsr, inst_write_mem_handler_with_cpsr, InstMemMultipleParams,
 };
-use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt};
+use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt, JitDebugInfo};
 use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::jit::op::{MultipleTransfer, Op, SingleTransfer};
 use crate::jit::reg::Reg;
@@ -196,7 +196,7 @@ pub struct JitMemory {
 }
 
 impl Emu {
-    pub fn jit_insert_block(&mut self, block_asm: BlockAsm, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu: CpuType) -> (*const extern "C" fn(u32), bool) {
+    pub fn jit_insert_block(&mut self, block_asm: BlockAsm, debug_info: &JitDebugInfo, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu: CpuType) -> (*const extern "C" fn(u32), bool) {
         macro_rules! insert {
             ($entries:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
                 let ret = insert!($entries);
@@ -235,7 +235,10 @@ impl Emu {
                     }
                 }
 
-                self.jit.jit_perf_map_record.record(jit_entry_addr as usize, aligned_size, guest_pc, cpu);
+                #[cfg(any(debug_assertions, target_os = "linux"))]
+                for &(pc, offset, size) in &debug_info.blocks {
+                    self.jit.jit_perf_map_record.record(jit_entry_addr as usize + offset, size, pc, cpu);
+                }
 
                 (jit_entry_addr, flushed)
             }};
