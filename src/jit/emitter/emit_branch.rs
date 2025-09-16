@@ -304,7 +304,7 @@ impl JitAsm<'_> {
             let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
             let basic_block = &self.analyzer.basic_blocks[basic_block_index];
             let basic_block_input_regs = basic_block.get_inputs();
-            block_asm.relocate_for_basic_block(basic_block.output_regs, basic_block_index);
+            block_asm.relocate_for_basic_block(FlagsUpdate_DontCare, basic_block.output_regs, basic_block_index);
             if basic_block_input_regs.is_reserved(Reg::CPSR) {
                 block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
             }
@@ -381,7 +381,7 @@ impl JitAsm<'_> {
         let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
         let basic_block = &self.analyzer.basic_blocks[basic_block_index];
         let basic_block_input_regs = basic_block.get_inputs();
-        block_asm.relocate_for_basic_block(basic_block.output_regs, basic_block_index);
+        block_asm.relocate_for_basic_block(FlagsUpdate_DontCare, basic_block.output_regs, basic_block_index);
         if basic_block_input_regs.is_reserved(Reg::CPSR) {
             block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
         }

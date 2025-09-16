@@ -26,8 +26,10 @@ use static_assertions::const_assert_eq;
 use std::arch::{asm, naked_asm};
 use std::intrinsics::unlikely;
 use std::{mem, slice};
-use vixl::{FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmBl2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
+use vixl::{BranchHint_kNear, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmB3, MasmBl2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
 use xxhash_rust::xxh32::xxh32;
+
+pub static mut BLOCK_LOG: bool = false;
 
 #[derive(Default)]
 #[cfg(any(debug_assertions, target_os = "linux"))]
@@ -522,7 +524,7 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
 
     let (jit_entry, flushed) = {
         debug_println!("{cpu:?} {thumb} emit code block {guest_pc:x} - {:x}", guest_pc + pc_offset);
-        // unsafe { BLOCK_LOG = guest_pc == 0x200675e };
+        // unsafe { BLOCK_LOG = guest_pc == 0x206a3a4 };
 
         asm.analyzer.analyze(guest_pc, &asm.jit_buf.insts, thumb);
         asm.jit_buf.guest_pc_start = guest_pc;
@@ -554,7 +556,7 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
         let pc = guest_pc | (thumb as u32);
         block_asm.ldr2(Reg::R1, pc);
         block_asm.subs3(Reg::R0, Reg::R0, &Reg::R1.into());
-        block_asm.bl2(Cond::EQ, &mut default_pc_label);
+        block_asm.b3(Cond::EQ, &mut default_pc_label, BranchHint_kNear);
         if !thumb {
             block_asm.lsr5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &1.into());
         }
@@ -576,8 +578,8 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
         asm.emit_epilogue(&mut block_asm);
         block_asm.finalize();
 
-        // let opcodes = block_asm.get_code_buffer();
-        // if IS_DEBUG && guest_pc == 0x2020618 {
+        let opcodes = block_asm.get_code_buffer();
+        // if IS_DEBUG && unsafe { BLOCK_LOG } {
         //     asm.jit_buf.debug_info.print_info(guest_pc, thumb);
         //     for &opcode in opcodes {
         //         print!("0x{opcode:x},");

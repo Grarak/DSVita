@@ -370,7 +370,7 @@ impl BlockAsm {
     }
 
     pub fn reload_active_guest_regs(&mut self, guest_regs: RegReserve) {
-        self.reg_alloc.reload_active_guest_regs(guest_regs, &mut self.masm);
+        self.reg_alloc.reload_active_guest_regs(guest_regs - Reg::CPSR, &mut self.masm);
     }
 
     pub fn reload_active_guest_regs_all(&mut self) {
@@ -436,8 +436,9 @@ impl BlockAsm {
         }
     }
 
-    pub fn relocate_for_basic_block(&mut self, basic_block_output_regs: RegReserve, basic_block_index: usize) {
+    pub fn relocate_for_basic_block(&mut self, flags_update: FlagsUpdate, basic_block_output_regs: RegReserve, basic_block_index: usize) {
         self.reg_alloc.relocate_guest_regs(
+            flags_update,
             self.dirty_guest_regs - Reg::PC - Reg::CPSR,
             basic_block_output_regs,
             &self.basic_blocks_guest_regs_mappings[basic_block_index].2,

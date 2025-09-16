@@ -11,9 +11,7 @@ use crate::logging::debug_println;
 use crate::settings::Arm7Emu;
 use crate::{DEBUG_LOG, IS_DEBUG};
 use std::ptr;
-use vixl::{
-    BranchHint_kFar, BranchHint_kNear, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmB2, MasmB3, MasmBkpt1, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5,
-};
+use vixl::{BranchHint_kFar, BranchHint_kNear, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmB2, MasmB3, MasmBx1, MasmLdr2, MasmLdrh2, MasmMov4, MasmStr2, MasmStrh2, MasmSub5};
 
 impl JitAsm<'_> {
     pub fn emit(&mut self, block_asm: &mut BlockAsm, thumb: bool) {
@@ -201,9 +199,19 @@ impl JitAsm<'_> {
 
         for i in start_index..end_index + 1 {
             block_asm.current_pc = start_pc + (((i - start_index) as u32) << pc_shift);
+            // if block_asm.current_pc == 0x20ce114 {
+            //     unsafe { BLOCK_LOG = true };
+            // }
             self.jit_buf.debug_info.record_inst_offset(i, block_asm.get_cursor_offset() as usize);
 
             let inst = &self.jit_buf.insts[i];
+
+            debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
+
+            // if block_asm.current_pc == 0x200254a {
+            //     block_asm.bkpt1(0);
+            // }
+
             if inst.op.is_multiple_mem_transfer() {
                 let op0 = inst.operands()[0].as_reg_no_shift().unwrap();
                 let op1 = inst.operands()[1].as_reg_list().unwrap();
@@ -217,11 +225,6 @@ impl JitAsm<'_> {
             if i != 0 {
                 block_asm.guest_offset(self.jit_buf.insts_cycle_counts[i] - inst.cycle as u16, self.cpu, self.emu);
             }
-            debug_println!("{:x}: block {basic_block_index}: emit {inst:?}", block_asm.current_pc);
-
-            // if block_asm.current_pc == 0x206a3b2 {
-            //     block_asm.bkpt1(0);
-            // }
 
             let mut label = Label::new();
             let needs_cond_jump = !thumb
@@ -309,8 +312,13 @@ impl JitAsm<'_> {
             if block_asm.dirty_guest_regs.is_reserved(Reg::CPSR) {
                 block_asm.store_guest_cpsr_reg(if next_block_needs_cpsr { FlagsUpdate_LeaveFlags } else { FlagsUpdate_DontCare }, CPSR_TMP_REG);
             }
-            block_asm.relocate_for_basic_block(basic_block.output_regs, basic_block_index + 1);
-            if !block_asm.dirty_guest_regs.is_reserved(Reg::CPSR) && next_block_needs_cpsr {
+            let load_cpsr = !block_asm.dirty_guest_regs.is_reserved(Reg::CPSR) && next_block_needs_cpsr;
+            block_asm.relocate_for_basic_block(
+                if load_cpsr || !next_block_needs_cpsr { FlagsUpdate_DontCare } else { FlagsUpdate_LeaveFlags },
+                basic_block.output_regs,
+                basic_block_index + 1,
+            );
+            if load_cpsr {
                 block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
             }
         }

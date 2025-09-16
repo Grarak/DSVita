@@ -1,7 +1,7 @@
 use crate::jit::assembler::block_asm::GUEST_REGS_PTR_REG;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::logging::debug_panic;
-use vixl::{MacroAssembler, MasmLdr2, MasmStr2};
+use vixl::{Cond, FlagsUpdate, MacroAssembler, MasmLdr2, MasmMov4, MasmStr2};
 
 pub const GUEST_REG_ALLOCATIONS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11);
 pub const GUEST_REGS_LENGTH: usize = Reg::PC as usize + 1;
@@ -169,22 +169,71 @@ impl RegAlloc {
         }
     }
 
-    pub fn relocate_guest_regs(&self, dirty_guest_regs: RegReserve, basic_block_output_regs: RegReserve, desired_guest_regs_mapping: &[Reg; GUEST_REGS_LENGTH], masm: &mut MacroAssembler) {
+    fn swap_guest_regs(
+        &mut self,
+        flags_update: FlagsUpdate,
+        root_guest_reg: Reg,
+        guest_reg: Reg,
+        desired_host_reg: Reg,
+        desired_guest_regs_mapping: &[Reg; GUEST_REGS_LENGTH],
+        masm: &mut MacroAssembler,
+    ) {
+        let current_host_reg = self.guest_regs_mapping[guest_reg as usize];
+        if current_host_reg == desired_host_reg {
+            return;
+        }
+
+        let current_host_used_by = self.host_regs_mapping[desired_host_reg as usize - 4];
+        if current_host_used_by != Reg::None {
+            let next_desired_host_reg = desired_guest_regs_mapping[current_host_used_by as usize];
+            if root_guest_reg == current_host_used_by {
+                masm.mov4(flags_update, Cond::AL, Reg::R2, &desired_host_reg.into());
+                self.guest_regs_mapping[current_host_used_by as usize] = Reg::R2;
+            } else if next_desired_host_reg != Reg::None {
+                self.swap_guest_regs(flags_update, root_guest_reg, current_host_used_by, next_desired_host_reg, desired_guest_regs_mapping, masm);
+            }
+        }
+
+        let current_host_reg = self.guest_regs_mapping[guest_reg as usize];
+        self.set_guest_reg_mapping(guest_reg, desired_host_reg);
+        masm.mov4(flags_update, Cond::AL, desired_host_reg, &current_host_reg.into());
+    }
+
+    pub fn relocate_guest_regs(
+        &mut self,
+        flags_update: FlagsUpdate,
+        dirty_guest_regs: RegReserve,
+        basic_block_output_regs: RegReserve,
+        desired_guest_regs_mapping: &[Reg; GUEST_REGS_LENGTH],
+        masm: &mut MacroAssembler,
+    ) {
+        let og_guest_regs_mapping = self.guest_regs_mapping;
         let mut regs_to_save = dirty_guest_regs;
+        let mut input_regs = reg_reserve!();
         for (i, &mapped_reg) in desired_guest_regs_mapping.iter().enumerate() {
             let reg = Reg::from(i as u8);
-            if mapped_reg != Reg::None && basic_block_output_regs.is_reserved(reg) {
-                regs_to_save -= reg;
+            if mapped_reg != Reg::None {
+                input_regs += reg;
+                if basic_block_output_regs.is_reserved(reg) {
+                    regs_to_save -= reg;
+                }
             }
         }
 
         self.save_active_guest_regs(regs_to_save, masm);
 
-        for (i, &desired_mapping) in desired_guest_regs_mapping.iter().enumerate() {
+        for reg in regs_to_save {
+            if desired_guest_regs_mapping[reg as usize] == Reg::None && self.guest_regs_mapping[reg as usize] != Reg::None {
+                self.set_guest_reg_mapping(reg, Reg::None);
+            }
+        }
+
+        for i in 0..desired_guest_regs_mapping.len() {
             let reg = Reg::from(i as u8);
+            let desired_mapping = desired_guest_regs_mapping[i];
             let current_mapping = self.guest_regs_mapping[i];
-            if current_mapping != Reg::None && current_mapping != desired_mapping && !regs_to_save.is_reserved(reg) {
-                Self::spill_guest_reg(reg, current_mapping, masm);
+            if current_mapping != Reg::None && desired_mapping != Reg::None && current_mapping != desired_mapping {
+                self.swap_guest_regs(flags_update, reg, reg, desired_mapping, desired_guest_regs_mapping, masm);
             }
         }
 
@@ -194,5 +243,7 @@ impl RegAlloc {
                 Self::restore_guest_reg(Reg::from(i as u8), desired_mapping, masm);
             }
         }
+
+        self.set_guest_regs_mappings(&og_guest_regs_mapping);
     }
 }
