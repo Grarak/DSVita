@@ -303,20 +303,20 @@ fn execute_jit<const ARM7_HLE: bool>(emu: &mut UnsafeCell<Emu>) {
 fn handle_touch_swap(
     top_to_left: &mut bool,
     raw_touch: Option<(u16, u16)>,
-    prev_swap_touch: &mut bool,
+    prev_touch_down: &mut bool,
 ) {
-    if let Some((tx, ty)) = raw_touch {
-        let (x, y) = (tx as u32, ty as u32);
-        let in_zone = x >= (PRESENTER_SCREEN_WIDTH as u32).saturating_sub(SWAP_ZONE) && y < SWAP_ZONE;
+    let touch_down = raw_touch.is_some();
 
-        if in_zone && !*prev_swap_touch {
-            *top_to_left = !*top_to_left;
+    if touch_down && !*prev_touch_down {
+        if let Some((tx, ty)) = raw_touch {
+            let (x, y) = (tx as u32, ty as u32);
+            if x >= (PRESENTER_SCREEN_WIDTH as u32).saturating_sub(SWAP_ZONE) && y < SWAP_ZONE {
+                *top_to_left = !*top_to_left;
+            }
         }
-
-        *prev_swap_touch = in_zone;
-    } else {
-        *prev_swap_touch = false;
     }
+
+    *prev_touch_down = touch_down;
 }
 
 #[used]
@@ -490,7 +490,7 @@ pub fn actual_main() {
     let gpu_renderer = unsafe { gpu_renderer.get().as_mut().unwrap() };
 
     let mut top_to_left = true;
-    let mut prev_swap_touch = false;
+    let mut prev_touch_down = false;
 
     while let PresentEvent::Inputs { keymap, ds_touch, raw_touch } = presenter.poll_event(settings.screenmode(), top_to_left) {
         if let Some((x, y)) = ds_touch {
@@ -499,7 +499,7 @@ pub fn actual_main() {
         key_map.store(keymap, Ordering::Relaxed);
 
         if settings.touch_swap() {
-            handle_touch_swap(&mut top_to_left, raw_touch, &mut prev_swap_touch);
+            handle_touch_swap(&mut top_to_left, raw_touch, &mut prev_touch_down);
         }
 
         gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &settings, top_to_left);
