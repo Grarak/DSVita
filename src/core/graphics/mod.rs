@@ -1,4 +1,5 @@
 mod gl_glyph;
+mod gl_rectangle;
 mod gl_utils;
 pub mod gpu;
 pub mod gpu_2d;
