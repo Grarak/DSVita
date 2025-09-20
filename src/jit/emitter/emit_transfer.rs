@@ -101,11 +101,11 @@ impl JitAsm<'_> {
 
         let func = get_read_func!(size, signed);
 
-        block_asm.mov4(flag_update, Cond::AL, Reg::LR, &(self.cpu.mmu_tcm_addr() as u32).into());
+        block_asm.mov4(flag_update, Cond::AL, Reg::R0, &(self.cpu.mmu_tcm_addr() as u32).into());
 
         metadata_emitter(self, block_asm);
 
-        let mem_operand = (tmp_reg, Reg::LR).into();
+        let mem_operand = (tmp_reg, Reg::R0).into();
         func(block_asm, op0, &mem_operand);
         if size == 4 {
             block_asm.lsl5(flag_update, Cond::AL, tmp_reg, Reg::R2, &3.into());

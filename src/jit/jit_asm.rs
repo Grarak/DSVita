@@ -26,7 +26,7 @@ use static_assertions::const_assert_eq;
 use std::arch::{asm, naked_asm};
 use std::intrinsics::unlikely;
 use std::{mem, slice};
-use vixl::{BranchHint_kNear, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmB3, MasmBl2, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
+use vixl::{BranchHint_kNear, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmB3, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
 use xxhash_rust::xxh32::xxh32;
 
 pub static mut BLOCK_LOG: bool = false;

@@ -33,15 +33,15 @@ const JIT_LIVE_RANGE_PAGE_SIZE: u32 = 1 << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
 const JIT_ARM9_MEMORY_SIZE: usize = 28 * 1024 * 1024;
 const JIT_ARM7_MEMORY_SIZE: usize = JIT_MEMORY_SIZE - JIT_ARM9_MEMORY_SIZE;
 
-const SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB: usize = 22;
-const SLOW_MEM_SINGLE_READ_LENGTH_THUMB: usize = 18;
+const SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB: usize = 14;
+const SLOW_MEM_SINGLE_READ_LENGTH_THUMB: usize = 14;
 const SLOW_MEM_MULTIPLE_LENGTH_THUMB: usize = 26;
 
-const SLOW_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 28;
-const SLOW_MEM_SINGLE_READ_LENGTH_ARM: usize = 24;
+const SLOW_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 20;
+const SLOW_MEM_SINGLE_READ_LENGTH_ARM: usize = 20;
 const SLOW_MEM_MULTIPLE_LENGTH_ARM: usize = 28;
-pub const SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 20;
-pub const SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM: usize = 16;
+pub const SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 12;
+pub const SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM: usize = 12;
 
 #[derive(Copy, Clone)]
 pub struct JitEntry(pub *const extern "C" fn(u32));
@@ -427,6 +427,21 @@ impl JitMemory {
         }
     }
 
+    pub fn find_guest_inst_metadata(&mut self, jit_pc: usize) -> &mut GuestInstMetadata {
+        let jit_mem_offset = jit_pc - self.mem.as_ptr() as usize;
+        let metadata_block_page = jit_mem_offset >> PAGE_SHIFT;
+        let opcode_offset = (jit_mem_offset & (PAGE_SIZE - 1)) & !1;
+        let guest_inst_metadata_list = unsafe { self.guest_inst_metadata.get_unchecked_mut(metadata_block_page) };
+
+        for guest_inst_metadata in guest_inst_metadata_list {
+            if opcode_offset == guest_inst_metadata.opcode_offset {
+                return guest_inst_metadata;
+            }
+        }
+
+        unsafe { unreachable_unchecked() }
+    }
+
     fn get_inst_mem_handler_fun<const CPU: CpuType>(is_write: bool, transfer: SingleTransfer, guest_memory_addr: u32, cpsr_dirty: bool) -> *const () {
         macro_rules! _get_inst_mem_handler_fun {
             ($is_write:expr, $size:expr, $signed:expr, $write_func:ident, $read_func:ident, $read_func_64:ident) => {
@@ -656,7 +671,7 @@ impl JitMemory {
         }
     }
 
-    unsafe fn execute_patch_slow_mem<const THUMB: bool>(host_pc: &mut usize, guest_memory_addr: u32, fast_mem: &mut [u8], guest_inst_metadata: &GuestInstMetadata, cpu: CpuType) {
+    unsafe fn execute_patch_slow_mem<const THUMB: bool>(host_pc: &mut usize, guest_memory_addr: u32, fast_mem: &mut [u8], guest_inst_metadata: &mut GuestInstMetadata, cpu: CpuType) {
         let mut slow_mem_length = 0;
 
         if guest_inst_metadata.op.is_single_mem_transfer() {
@@ -674,9 +689,6 @@ impl JitMemory {
             Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
 
             if is_write {
-                let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
-                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, guest_inst_metadata_ptr as u32);
-
                 if guest_inst_metadata.op0 != Reg::R0 {
                     Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, guest_inst_metadata.op0);
                 }
@@ -685,16 +697,14 @@ impl JitMemory {
                     let mapped_next = guest_inst_metadata.mapped_guest_regs[guest_inst_metadata.operands.values[0].as_reg_no_shift().unwrap_unchecked() as usize + 1];
                     Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R1, mapped_next);
                 }
-            } else {
-                Self::fast_mem_mov::<THUMB>(
-                    fast_mem,
-                    &mut slow_mem_length,
-                    Reg::R0,
-                    guest_inst_metadata.operands.values[0].as_reg_no_shift().unwrap_unchecked() as u32,
-                );
             }
 
             Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
+
+            let host_pc_page = *host_pc >> PAGE_SHIFT;
+            let slow_mem_return_page = (fast_mem.as_ptr() as usize + slow_mem_length) >> PAGE_SHIFT;
+            debug_assert_eq!(host_pc_page, slow_mem_return_page);
+            guest_inst_metadata.opcode_offset = guest_inst_metadata.opcode_offset - guest_inst_metadata.fast_mem_start_offset as usize + slow_mem_length;
 
             if !is_write {
                 Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, guest_inst_metadata.op0, Reg::R0);
@@ -770,19 +780,12 @@ impl JitMemory {
             };
             Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
 
-            if is_write {
-                let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
-                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, guest_inst_metadata_ptr as u32);
-            } else {
-                Self::fast_mem_mov::<THUMB>(
-                    fast_mem,
-                    &mut slow_mem_length,
-                    Reg::R0,
-                    guest_inst_metadata.operands.values[0].as_reg_no_shift().unwrap_unchecked() as u32,
-                );
-            }
-
             Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
+
+            let host_pc_page = *host_pc >> PAGE_SHIFT;
+            let slow_mem_return_page = (fast_mem.as_ptr() as usize + slow_mem_length) >> PAGE_SHIFT;
+            debug_assert_eq!(host_pc_page, slow_mem_return_page);
+            guest_inst_metadata.opcode_offset = guest_inst_metadata.opcode_offset - guest_inst_metadata.fast_mem_start_offset as usize + slow_mem_length;
 
             let max_length = if is_write { SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM } else { SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM };
             debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
@@ -801,7 +804,7 @@ impl JitMemory {
             }
         }
 
-        *host_pc = fast_mem.as_mut_ptr() as usize;
+        *host_pc = fast_mem.as_ptr() as usize;
         flush_icache(fast_mem.as_ptr(), fast_mem.len());
     }
 
@@ -811,28 +814,18 @@ impl JitMemory {
             return false;
         }
 
-        let jit_mem_offset = *host_pc - self.mem.as_mut_ptr() as usize;
-        let metadata_block_page = jit_mem_offset >> PAGE_SHIFT;
-        let opcode_offset = jit_mem_offset & (PAGE_SIZE - 1);
-        let guest_inst_metadata_list = &self.guest_inst_metadata[metadata_block_page];
+        let metadata = self.find_guest_inst_metadata(*host_pc);
 
-        for metadata in guest_inst_metadata_list {
-            if metadata.opcode_offset == opcode_offset {
-                let thumb = metadata.pc & 1 == 1;
-                let fast_mem_start = (*host_pc - metadata.fast_mem_start_offset as usize) as *mut u8;
+        let fast_mem_start = (*host_pc - metadata.fast_mem_start_offset as usize) as *mut u8;
+        let fast_mem = slice::from_raw_parts_mut(fast_mem_start, metadata.fast_mem_size as usize);
 
-                let fast_mem = slice::from_raw_parts_mut(fast_mem_start, metadata.fast_mem_size as usize);
-                if thumb {
-                    Self::execute_patch_slow_mem::<true>(host_pc, guest_memory_addr, fast_mem, metadata, cpu);
-                } else {
-                    Self::execute_patch_slow_mem::<false>(host_pc, guest_memory_addr, fast_mem, metadata, cpu);
-                }
-
-                return true;
-            }
+        let thumb = metadata.pc & 1 == 1;
+        if thumb {
+            Self::execute_patch_slow_mem::<true>(host_pc, guest_memory_addr, fast_mem, metadata, cpu);
+        } else {
+            Self::execute_patch_slow_mem::<false>(host_pc, guest_memory_addr, fast_mem, metadata, cpu);
         }
 
-        eprintln!("Can't find guest inst metadata");
-        false
+        true
     }
 }
