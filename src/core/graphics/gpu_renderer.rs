@@ -208,30 +208,33 @@ impl GpuRenderer {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
             gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
 
-            let fps = fps.load(Ordering::Relaxed) as u32;
-            let per = fps * 100 / 60;
+            // Draw info text only if setting is enabled
+            if settings.show_info_text() {
+                let fps = fps.load(Ordering::Relaxed) as u32;
+                let per = fps * 100 / 60;
 
-            let last_time_saved = *last_save_time.lock().unwrap();
-            let mut info_text = {
-                #[cfg(target_os = "vita")]
-                {
-                    format!("CPU: {}MHz", vitasdk_sys::scePowerGetArmClockFrequency())
-                }
-                #[cfg(target_os = "linux")]
-                "".to_string()
-            };
-            if let Some((last_time_saved, success)) = last_time_saved {
-                if Instant::now().duration_since(last_time_saved).as_secs() < 3 {
-                    if success {
-                        info_text = "Written to save file".to_string();
-                    } else {
-                        info_text = "Failed to save".to_string();
+                let last_time_saved = *last_save_time.lock().unwrap();
+                let mut info_text = {
+                    #[cfg(target_os = "vita")]
+                    {
+                        format!("CPU: {}MHz", vitasdk_sys::scePowerGetArmClockFrequency())
+                    }
+                    #[cfg(target_os = "linux")]
+                    "".to_string()
+                };
+                if let Some((last_time_saved, success)) = last_time_saved {
+                    if Instant::now().duration_since(last_time_saved).as_secs() < 3 {
+                        if success {
+                            info_text = "Written to save file".to_string();
+                        } else {
+                            info_text = "Failed to save".to_string();
+                        }
                     }
                 }
-            }
 
-            let arm7_emu: &str = settings.arm7_hle().into();
-            self.gl_glyph.draw(format!("{}ms {arm7_emu}\n{per}% ({fps}fps)\n{info_text}", self.average_render_time));
+                let arm7_emu: &str = settings.arm7_hle().into();
+                self.gl_glyph.draw(format!("{}ms {arm7_emu}\n{per}% ({fps}fps)\n{info_text}", self.average_render_time));
+            }
 
             #[cfg(feature = "profiling")]
             gl::ReadPixels(
