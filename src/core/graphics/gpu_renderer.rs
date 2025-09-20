@@ -8,6 +8,8 @@ use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
+use crate::core::memory::vram;
+use crate::core::memory::vram::Vram;
 use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_ROTATED};
 use crate::settings::{ScreenMode, Settings};
 use gl::types::GLuint;
@@ -59,6 +61,9 @@ pub struct GpuRenderer {
     render_time_measure_count: u8,
     render_time_sum: u32,
     average_render_time: u32,
+
+    read_vram: Mutex<()>,
+    read_vram_condvar: Condvar,
 }
 
 impl GpuRenderer {
@@ -84,6 +89,9 @@ impl GpuRenderer {
             render_time_measure_count: 0,
             render_time_sum: 0,
             average_render_time: 0,
+
+            read_vram: Mutex::new(()),
+            read_vram_condvar: Condvar::new(),
         }
     }
 
@@ -106,11 +114,12 @@ impl GpuRenderer {
 
     pub fn on_scanline_finish(&mut self, mem: &mut Memory, pow_cnt1: PowCnt1, registers_3d: &mut Gpu3DRegisters, breakout_imm: &mut bool) {
         if self.sample_2d {
-            self.common.mem_buf.read_vram(&mut mem.vram);
             self.common.mem_buf.read_palettes_oam(mem);
             self.common.pow_cnt1[1] = pow_cnt1;
             self.sample_2d = false;
             self.ready_2d = true;
+
+            let _guard = self.read_vram.lock().unwrap();
         }
 
         let mut rendering = self.rendering.lock().unwrap();
@@ -139,13 +148,15 @@ impl GpuRenderer {
         }
     }
 
-    pub fn reload_registers(&mut self) {
+    pub fn reload_registers(&mut self, vram: &Vram) {
         if !self.ready_2d && self.vram_read.load(Ordering::SeqCst) {
             self.sample_2d = true;
         }
 
         if self.sample_2d {
             self.renderer_2d.reload_registers();
+            self.common.mem_buf.set_vram_cnt(vram);
+            self.read_vram_condvar.notify_one();
         }
     }
 
@@ -287,6 +298,10 @@ impl GpuRenderer {
     pub fn unpause(&mut self, cpu_thread: &Thread) {
         self.pause = false;
         cpu_thread.unpark();
+
+        if self.quit {
+            self.read_vram_condvar.notify_one();
+        }
     }
 
     pub fn blit_main_framebuffer(&self) {
@@ -306,5 +321,16 @@ impl GpuRenderer {
                 gl::NEAREST,
             );
         }
+    }
+
+    pub fn read_vram(&mut self, vram: &[u8; vram::TOTAL_SIZE]) {
+        if self.quit {
+            return;
+        }
+
+        let read_vram = self.read_vram.lock().unwrap();
+        let _read_vram = self.read_vram_condvar.wait(read_vram).unwrap();
+
+        self.common.mem_buf.read_vram(vram);
     }
 }

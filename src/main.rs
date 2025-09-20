@@ -433,6 +433,21 @@ pub fn actual_main() {
 
         let cpu_thread_ptr = cpu_thread.thread() as *const _ as usize;
         cpu_active.store(true, Ordering::SeqCst);
+
+        let cpu_active_clone = cpu_active.clone();
+        let vram_read_thread = thread::Builder::new()
+            .name("vram_read".to_owned())
+            .spawn(move || {
+                set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core0);
+                let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
+                let cpu_active = cpu_active_clone;
+                let vram = emu.vram_get_mem();
+                while cpu_active.load(Ordering::Relaxed) {
+                    emu.gpu.renderer.read_vram(vram);
+                }
+            })
+            .unwrap();
+
         let cpu_active_clone = cpu_active.clone();
         let audio_thread = thread::Builder::new()
             .name("audio".to_owned())
@@ -515,6 +530,7 @@ pub fn actual_main() {
         cpu_active.store(false, Ordering::SeqCst);
         gpu_renderer.quit = false;
         audio_thread.join().unwrap();
+        vram_read_thread.join().unwrap();
         save_thread.join().unwrap();
     }
 }

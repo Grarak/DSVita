@@ -232,14 +232,14 @@ impl Emu {
                 for i in 0..2 {
                     self.gpu.disp_stat[i].set_v_blank_flag(false);
                 }
-                self.gpu.frame_rate_counter.on_frame_ready();
+                self.gpu.renderer.reload_registers(&self.mem.vram);
             }
             263 => {
+                self.gpu.frame_rate_counter.on_frame_ready();
                 self.gpu.v_count = 0;
                 if self.settings.arm7_hle() == Arm7Emu::Hle {
                     self.arm7_hle_on_frame();
                 }
-                self.gpu.renderer.reload_registers();
             }
             _ => {}
         }
