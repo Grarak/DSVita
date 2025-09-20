@@ -153,12 +153,17 @@ pub const DEFAULT_SETTINGS: Settings = Settings {
         need to have this enabled.",
             SettingValue::Bool(false),
         ),
+        Setting::new("Show Info Text", 
+            "Displays FPS, CPU and other information on the\n\
+            top-right corner of the screen.",
+            SettingValue::Bool(true)
+        ),
     ],
 };
 
 #[derive(Clone)]
 pub struct Settings {
-    values: [Setting; 5],
+    values: [Setting; 6],
 }
 
 impl Settings {
@@ -182,6 +187,10 @@ impl Settings {
         unsafe { self.values[4].value.as_bool().unwrap_unchecked() }
     }
 
+    pub fn show_info_text(&self) -> bool {
+        unsafe { self.values[5].value.as_bool().unwrap_unchecked() }
+    }
+
     pub fn setting_screenmode_mut(&mut self) -> &mut Setting {
         &mut self.values[0]
     }
@@ -202,7 +211,11 @@ impl Settings {
         &mut self.values[4]
     }
 
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 5] {
+    pub fn setting_show_info_text_mut(&mut self) -> &mut Setting {
+        &mut self.values[5]
+    }
+
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 6] {
         &mut self.values
     }
 }
