@@ -216,8 +216,8 @@ impl Presenter {
                             }
                         }
                     }
+                    self.keymap &= !(1 << 16);
                 }
-                self.keymap &= !(1 << 16);
             } else {
                 self.keymap |= 1 << 16;
             }
