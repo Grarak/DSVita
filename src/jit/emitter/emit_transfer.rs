@@ -1,3 +1,4 @@
+use crate::core::memory::regions::VRAM_OFFSET;
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
 use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG, GUEST_REGS_PTR_REG};
@@ -153,6 +154,8 @@ impl JitAsm<'_> {
 
         block_asm.ensure_emit_for(64);
         let fast_mem_start = if !inst.op.is_write_mem_transfer() && op1 == Reg::PC && !transfer.write_back() && op2.as_imm().is_some() {
+            let consider_slow_mem = block_asm.current_pc & 0xFF000000 == VRAM_OFFSET;
+
             let imm = op2.as_imm().unwrap();
             let pc = if block_asm.thumb { block_asm.current_pc + 4 } else { block_asm.current_pc + 8 };
             let mut imm_addr = if transfer.add() { pc + imm } else { pc - imm };
@@ -161,22 +164,26 @@ impl JitAsm<'_> {
                 imm_addr &= !0x3;
             }
 
-            block_asm.ldr2(Reg::R2, imm_addr);
+            if consider_slow_mem {
+                block_asm.ldr2(Reg::R2, imm_addr);
+                block_asm.ensure_emit_for(64);
+            }
 
             let func = get_read_func!(size, transfer.signed());
 
-            block_asm.ensure_emit_for(64);
             let fast_mem_start = block_asm.get_cursor_offset();
 
             block_asm.ldr2(Reg::R1, (imm_addr & !(0xF0000000 | (size as u32 - 1))) + self.cpu.mmu_tcm_addr() as u32);
 
-            block_asm.guest_inst_metadata(
-                self.jit_buf.insts_cycle_counts[inst_index],
-                &self.jit_buf.insts[inst_index],
-                fast_mem_start,
-                value_reg,
-                dirty_guest_regs,
-            );
+            if consider_slow_mem {
+                block_asm.guest_inst_metadata(
+                    self.jit_buf.insts_cycle_counts[inst_index],
+                    &self.jit_buf.insts[inst_index],
+                    fast_mem_start,
+                    value_reg,
+                    dirty_guest_regs,
+                );
+            }
             let mem_operand = Reg::R1.into();
             func(block_asm, value_reg, &mem_operand);
             let shift = (imm_addr & 0x3) << 3;
@@ -185,6 +192,10 @@ impl JitAsm<'_> {
             }
             if is_64bit {
                 func(block_asm, next_value_reg, &(Reg::R1, 4).into());
+            }
+
+            if !consider_slow_mem {
+                return;
             }
 
             fast_mem_start
