@@ -39,7 +39,7 @@ pub enum ScreenMode {
 
 impl From<u8> for ScreenMode {
     fn from(value: u8) -> Self {
-        debug_assert!(value <= ScreenMode::Regular as u8);
+        debug_assert!(value <= ScreenMode::Resized as u8);
         unsafe { std::mem::transmute(value) }
     }
 }
