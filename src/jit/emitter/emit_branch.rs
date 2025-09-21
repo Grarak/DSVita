@@ -68,7 +68,7 @@ impl JitAsm<'_> {
             let pc = block_asm.current_pc;
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R3, &pc.into());
         }
-        block_asm.call(match (has_return, self.emu.settings.arm7_hle() == Arm7Emu::Hle) {
+        block_asm.call(match (has_return, self.emu.settings.arm7_emu() == Arm7Emu::Hle) {
             (false, false) => map_fun_cpu!(self.cpu, pre_branch, false, false),
             (true, false) => map_fun_cpu!(self.cpu, pre_branch, true, false),
             (false, true) => map_fun_cpu!(self.cpu, pre_branch, false, true),
@@ -102,7 +102,7 @@ impl JitAsm<'_> {
         }
 
         if has_return {
-            block_asm.call(if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+            block_asm.call(if self.emu.settings.arm7_emu() == Arm7Emu::Hle {
                 map_fun_cpu!(self.cpu, branch_reg, true, true)
             } else {
                 map_fun_cpu!(self.cpu, branch_reg, true, false)
@@ -111,7 +111,7 @@ impl JitAsm<'_> {
             block_asm.restore_stack();
             block_asm.ldr2(
                 Reg::R12,
-                if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+                if self.emu.settings.arm7_emu() == Arm7Emu::Hle {
                     map_fun_cpu!(self.cpu, branch_reg, false, true)
                 } else {
                     map_fun_cpu!(self.cpu, branch_reg, false, false)
@@ -189,7 +189,7 @@ impl JitAsm<'_> {
         block_asm.restore_stack();
         block_asm.ldr2(
             Reg::R12,
-            if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+            if self.emu.settings.arm7_emu() == Arm7Emu::Hle {
                 map_fun_cpu!(self.cpu, branch_lr, true)
             } else {
                 map_fun_cpu!(self.cpu, branch_lr, false)
@@ -233,7 +233,7 @@ impl JitAsm<'_> {
                         let pc = block_asm.current_pc;
                         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &pc.into());
                     }
-                    if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+                    if self.emu.settings.arm7_emu() == Arm7Emu::Hle {
                         block_asm.call(handle_idle_loop::<true> as _);
                     } else {
                         block_asm.call(handle_idle_loop::<false> as _);
@@ -418,7 +418,7 @@ impl JitAsm<'_> {
                 let pc = block_asm.current_pc;
                 block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
             }
-            if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+            if self.emu.settings.arm7_emu() == Arm7Emu::Hle {
                 block_asm.call(inst_branch_handler::run_scheduler::<true> as _);
             } else {
                 block_asm.call(inst_branch_handler::run_scheduler::<false> as _);

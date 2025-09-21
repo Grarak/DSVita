@@ -139,7 +139,7 @@ impl JitAsm<'_> {
             block_asm.restore_stack();
             block_asm.ldr2(
                 Reg::R12,
-                if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+                if self.emu.settings.arm7_emu() == Arm7Emu::Hle {
                     branch_any_reg::<true> as *const ()
                 } else {
                     branch_any_reg::<false> as *const ()
@@ -177,7 +177,7 @@ impl JitAsm<'_> {
             block_asm.restore_stack();
             block_asm.ldr2(
                 Reg::R12,
-                if self.emu.settings.arm7_hle() == Arm7Emu::Hle {
+                if self.emu.settings.arm7_emu() == Arm7Emu::Hle {
                     branch_any_reg::<true> as *const ()
                 } else {
                     branch_any_reg::<false> as *const ()

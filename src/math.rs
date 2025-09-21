@@ -8,6 +8,11 @@ use std::intrinsics::simd::simd_add;
 use std::ops::{Index, IndexMut};
 use std::{mem, ops};
 
+pub mod neon {
+    #![allow(warnings, unused)]
+    include!(concat!(env!("OUT_DIR"), "/math_neon.rs"));
+}
+
 // Taken from https://github.com/awxkee/erydanos/blob/master/src/neon/general.rs
 #[inline]
 /// Multiplies u64 together and takes low part, do not care about overflowing

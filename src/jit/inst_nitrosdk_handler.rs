@@ -94,7 +94,7 @@ unsafe fn hle_post_function<const CPU: CpuType>(asm: &mut JitAsm, cycles: u32, g
     let desired_lr = asm.runtime_data.pop_return_stack();
     regs.pc = lr;
     asm.emu.thread_set_thumb(CPU, lr & 1 == 1);
-    if asm.emu.settings.arm7_hle() == Arm7Emu::Hle {
+    if asm.emu.settings.arm7_emu() == Arm7Emu::Hle {
         check_scheduler::<CPU, true>(asm, guest_pc);
     } else {
         check_scheduler::<CPU, false>(asm, guest_pc);

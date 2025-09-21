@@ -52,6 +52,29 @@ pub fn get_common_c_flags() -> Vec<String> {
     flags
 }
 
+pub fn create_c_build() -> cc::Build {
+    let mut build = cc::Build::new();
+    if is_target_vita() {
+        if let Some(vitasdk_path) = get_vitasdk_path() {
+            build
+                .compiler(vitasdk_path.join("bin").join("arm-vita-eabi-gcc"))
+                .archiver(vitasdk_path.join("bin").join("arm-vita-eabi-gcc-ar"))
+                .ranlib(vitasdk_path.join("bin").join("arm-vita-eabi-gcc-ranlib"))
+                .pic(false);
+        }
+    } else {
+        build.compiler("clang");
+    }
+
+    if !is_debug() && is_opt_build() {
+        build.flag("-flto").opt_level_str("fast");
+        if is_target_vita() {
+            build.flag("-ffat-lto-objects");
+        }
+    }
+    build
+}
+
 pub fn create_cc_build() -> cc::Build {
     let mut build = cc::Build::new();
     if is_target_vita() {

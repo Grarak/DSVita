@@ -1,5 +1,4 @@
 use crate::cartridge_io::{CartridgeIo, CartridgePreview};
-use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::input::Keycode;
 use crate::logging::info_println;
@@ -8,11 +7,8 @@ use crate::presenter::imgui::root::{
     ImGui_ImplVitaGL_NewFrame, ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImVec2,
 };
 use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, UiBackend, UiPauseMenuReturn};
-use crate::presenter::{
-    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN,
-    PRESENTER_SUB_ROTATED_BOTTOM_SCREEN,
-};
-use crate::settings::{ScreenMode, Settings, SettingsConfig};
+use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::settings::{Settings, SettingsConfig};
 use gl::types::{GLboolean, GLenum, GLuint};
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
@@ -90,6 +86,7 @@ unsafe impl Send for PresenterAudio {}
 
 pub struct Presenter {
     presenter_audio: PresenterAudio,
+    touch_points: Option<(i16, i16)>,
     keymap: u32,
     was_psn_btn_pressed: bool,
 }
@@ -120,6 +117,7 @@ impl Presenter {
 
             let mut instance = Presenter {
                 presenter_audio: PresenterAudio::new(),
+                touch_points: None,
                 keymap: 0xFFFFFFFF,
                 was_psn_btn_pressed: false,
             };
@@ -129,9 +127,7 @@ impl Presenter {
         }
     }
 
-    pub fn poll_event(&mut self, screenmode: ScreenMode) -> PresentEvent {
-        let mut touch = None;
-
+    pub fn poll_event(&mut self) -> PresentEvent {
         unsafe {
             let pressed = MaybeUninit::<SceCtrlData>::uninit();
             let mut pressed = pressed.assume_init();
@@ -160,39 +156,16 @@ impl Presenter {
                 let report = touch_report.report.first().unwrap();
                 let x = report.x as u32 * PRESENTER_SCREEN_WIDTH / 1920;
                 let y = report.y as u32 * PRESENTER_SCREEN_HEIGHT / 1080;
-
-                match screenmode {
-                    ScreenMode::Regular => {
-                        if PRESENTER_SUB_BOTTOM_SCREEN.is_within(x, y) {
-                            let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x, y);
-                            let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
-                            let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height) as u8;
-                            touch = Some((screen_x, screen_y));
-                        }
-                    }
-                    ScreenMode::Rotated => {
-                        if PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.is_within(x, y) {
-                            let (x, y) = PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.normalize(x, y);
-                            let screen_x = (DISPLAY_WIDTH as u32 - (DISPLAY_WIDTH as u32 * y / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.height)) as u8;
-                            let screen_y = (DISPLAY_HEIGHT as u32 * x / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.width) as u8;
-                            touch = Some((screen_x, screen_y));
-                        }
-                    }
-                    ScreenMode::Resized => {
-                        if PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.is_within(x, y) {
-                            let (x, y) = PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.normalize(x, y);
-                            let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.width) as u8;
-                            let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.height) as u8;
-                            touch = Some((screen_x, screen_y));
-                        }
-                    }
-                }
-                self.keymap &= !(1 << 16);
+                self.touch_points = Some((x as i16, y as i16));
             } else {
+                self.touch_points = None;
                 self.keymap |= 1 << 16;
             }
         }
-        PresentEvent::Inputs { keymap: self.keymap, touch }
+        PresentEvent::Inputs {
+            keymap: self.keymap,
+            touch: self.touch_points,
+        }
     }
 
     pub fn present_ui(&mut self) -> Option<(CartridgeIo, Settings)> {

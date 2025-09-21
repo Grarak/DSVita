@@ -1,4 +1,4 @@
-workspace = { members = ["macros", "vitabuild", "vixl"] }
+workspace = { members = ["screenlayouts", "macros", "vitabuild", "vixl"] }
 [package]
 name = "dsvita"
 version = "0.8.0"
@@ -23,6 +23,7 @@ glyph_brush = "0.7.12"
 lazy_static = "1.5.0"
 paste = "1.0.15"
 rust-ini = "0.21.1"
+screenlayouts = { path = "screenlayouts" }
 static_assertions = "1.1.0"
 strum = "0.27.1"
 strum_macros = "0.27.1"

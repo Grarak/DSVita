@@ -1,6 +1,6 @@
 use crate::core::graphics::gl_glyph::GlGlyph;
-use crate::core::graphics::gl_utils::GpuFbo;
-use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::graphics::gl_utils::{create_program, create_shader, shader_source, GpuFbo};
+use crate::core::graphics::gpu::PowCnt1;
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::renderer_2d::Gpu2DRenderer;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
@@ -10,8 +10,9 @@ use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
 use crate::core::memory::vram;
 use crate::core::memory::vram::Vram;
-use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_ROTATED};
-use crate::settings::{ScreenMode, Settings};
+use crate::presenter::{Presenter, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::screen_layouts::ScreenLayout;
+use crate::settings::Arm7Emu;
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
@@ -19,12 +20,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::Thread;
 use std::time::Instant;
-
-pub struct ScreenTopology {
-    pub top: PresenterScreen,
-    pub bottom: PresenterScreen,
-    pub mode: ScreenMode,
-}
 
 pub struct GpuRendererCommon {
     pub mem_buf: GpuMemBuf,
@@ -45,6 +40,7 @@ pub struct GpuRenderer {
     pub renderer_3d: Gpu3DRenderer,
 
     common: GpuRendererCommon,
+    merge_program: GLuint,
     final_fbo: GpuFbo,
     gl_glyph: GlGlyph,
 
@@ -68,11 +64,30 @@ pub struct GpuRenderer {
 
 impl GpuRenderer {
     pub fn new() -> Self {
+        let merge_program = unsafe {
+            let vert_shader = create_shader("merge", shader_source!("merge_vert"), gl::VERTEX_SHADER).unwrap();
+            let frag_shader = create_shader("merge", shader_source!("merge_frag"), gl::FRAGMENT_SHADER).unwrap();
+            let program = create_program(&[vert_shader, frag_shader]).unwrap();
+            gl::DeleteShader(vert_shader);
+            gl::DeleteShader(frag_shader);
+
+            gl::UseProgram(program);
+
+            gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
+
+            gl::Uniform1i(gl::GetUniformLocation(program, "tex\0".as_ptr() as _), 0);
+
+            gl::UseProgram(0);
+
+            program
+        };
+
         GpuRenderer {
             renderer_2d: Gpu2DRenderer::new(),
             renderer_3d: Gpu3DRenderer::default(),
 
             common: GpuRendererCommon::new(),
+            merge_program,
             final_fbo: GpuFbo::new(PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, false).unwrap(),
             gl_glyph: GlGlyph::new(),
 
@@ -160,7 +175,7 @@ impl GpuRenderer {
         }
     }
 
-    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, settings: &Settings, pause: bool) {
+    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, arm7_emu: Arm7Emu, screen_layout: &ScreenLayout, pause: bool) {
         {
             let rendering = self.rendering.lock().unwrap();
             let _drawing = self.rendering_condvar.wait_while(rendering, |rendering| !*rendering).unwrap();
@@ -184,21 +199,22 @@ impl GpuRenderer {
             gl::Clear(gl::COLOR_BUFFER_BIT);
 
             if self.common.pow_cnt1[0].enable() {
-                let blit_fb = |fbo: GLuint, screen: &PresenterScreen, src_x1: usize, src_y1: usize| {
-                    gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, self.final_fbo.fbo);
-                    gl::BindFramebuffer(gl::READ_FRAMEBUFFER, fbo);
-                    gl::BlitFramebuffer(
-                        0,
-                        0,
-                        src_x1 as _,
-                        src_y1 as _,
-                        screen.x as _,
-                        screen.y as _,
-                        (screen.x + screen.width) as _,
-                        (screen.y + screen.height) as _,
-                        gl::COLOR_BUFFER_BIT,
-                        gl::NEAREST,
-                    );
+                let blend_color = self.renderer_2d.common.blend_fbo.color;
+                let draw_screen = |vertices_with_tex_coords: &[f32; 16]| {
+                    gl::BindFramebuffer(gl::FRAMEBUFFER, self.final_fbo.fbo);
+                    gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
+
+                    gl::UseProgram(self.merge_program);
+
+                    gl::ActiveTexture(gl::TEXTURE0);
+                    gl::BindTexture(gl::TEXTURE_2D, blend_color);
+
+                    gl::EnableVertexAttribArray(0);
+                    gl::VertexAttribPointer(0, 4, gl::FLOAT, gl::FALSE, 0, vertices_with_tex_coords.as_ptr() as _);
+                    gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+
+                    gl::BindTexture(gl::TEXTURE_2D, 0);
+                    gl::UseProgram(0);
                 };
 
                 if self.rendering_3d {
@@ -206,35 +222,18 @@ impl GpuRenderer {
                     self.renderer_3d.render(&self.common);
                 }
 
-                let screen_topology = match settings.screenmode() {
-                    ScreenMode::Regular => PRESENTER_SUB_REGULAR,
-                    ScreenMode::Rotated => PRESENTER_SUB_ROTATED,
-                    ScreenMode::Resized => PRESENTER_SUB_RESIZED,
-                };
-                let used_fbo = match screen_topology.mode {
-                    ScreenMode::Regular | ScreenMode::Resized => self.renderer_2d.common.blend_fbo.fbo,
-                    ScreenMode::Rotated => self.renderer_2d.common.rotate_fbo.fbo,
-                };
-                let src_coords = match screen_topology.mode {
-                    ScreenMode::Regular | ScreenMode::Resized => (DISPLAY_WIDTH, DISPLAY_HEIGHT),
-                    ScreenMode::Rotated => (DISPLAY_HEIGHT, DISPLAY_WIDTH),
-                };
-
-                self.renderer_2d
-                    .render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color, screen_topology.mode == ScreenMode::Rotated);
-                blit_fb(
-                    used_fbo,
-                    if self.common.pow_cnt1[0].display_swap() { &screen_topology.top } else { &screen_topology.bottom },
-                    src_coords.0,
-                    src_coords.1,
-                );
-                self.renderer_2d.render::<{ B }>(&self.common, 0, screen_topology.mode == ScreenMode::Rotated);
-                blit_fb(
-                    used_fbo,
-                    if self.common.pow_cnt1[0].display_swap() { &screen_topology.bottom } else { &screen_topology.top },
-                    src_coords.0,
-                    src_coords.1,
-                );
+                self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color);
+                draw_screen(if self.common.pow_cnt1[0].display_swap() {
+                    &screen_layout.screen_top
+                } else {
+                    &screen_layout.screen_bottom
+                });
+                self.renderer_2d.render::<{ B }>(&self.common, 0);
+                draw_screen(if self.common.pow_cnt1[0].display_swap() {
+                    &screen_layout.screen_bottom
+                } else {
+                    &screen_layout.screen_top
+                });
             }
 
             gl::BindFramebuffer(gl::FRAMEBUFFER, self.final_fbo.fbo);
@@ -262,7 +261,7 @@ impl GpuRenderer {
                 }
             }
 
-            let arm7_emu: &str = settings.arm7_hle().into();
+            let arm7_emu: &str = arm7_emu.into();
             self.gl_glyph.draw(format!(
                 "{}ms ({}fps) {arm7_emu}\n{per}% ({fps}/60)\n{info_text}",
                 self.average_render_time / 1000,

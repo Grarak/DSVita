@@ -1,3 +1,4 @@
+use crate::screen_layouts::ScreenLayout;
 use ini::Ini;
 use lazy_static::lazy_static;
 use std::convert::Into;
@@ -30,27 +31,6 @@ impl From<Arm7Emu> for u8 {
 }
 
 #[derive(Copy, Clone, Debug, Default, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
-pub enum ScreenMode {
-    #[default]
-    Regular,
-    Rotated,
-    Resized,
-}
-
-impl From<u8> for ScreenMode {
-    fn from(value: u8) -> Self {
-        debug_assert!(value <= ScreenMode::Resized as u8);
-        unsafe { std::mem::transmute(value) }
-    }
-}
-
-impl From<ScreenMode> for u8 {
-    fn from(value: ScreenMode) -> Self {
-        value as u8
-    }
-}
-
-#[derive(Copy, Clone, Debug, Default, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
 #[repr(u8)]
 pub enum Language {
     Japanese = 0,
@@ -78,12 +58,12 @@ impl From<Language> for u8 {
 #[derive(Clone)]
 pub enum SettingValue {
     Bool(bool),
-    List(usize, Vec<&'static str>),
+    List(usize, Vec<String>),
 }
 
 impl<D: Default + Into<u8> + Sized + Into<&'static str>, T: Iterator<Item = D>> From<T> for SettingValue {
     fn from(value: T) -> Self {
-        SettingValue::List(Into::<u8>::into(D::default()) as usize, value.map(|d| d.into()).collect())
+        SettingValue::List(Into::<u8>::into(D::default()) as usize, value.map(|d| Into::<&'static str>::into(d).to_string()).collect())
     }
 }
 
@@ -109,14 +89,14 @@ impl SettingValue {
         }
     }
 
-    pub fn as_list(&self) -> Option<(usize, &Vec<&'static str>)> {
+    pub fn as_list(&self) -> Option<(usize, &Vec<String>)> {
         match self {
             SettingValue::List(selection, values) => Some((*selection, values)),
             _ => None,
         }
     }
 
-    pub fn as_list_mut(&mut self) -> Option<(&mut usize, &mut Vec<&'static str>)> {
+    pub fn as_list_mut(&mut self) -> Option<(&mut usize, &mut Vec<String>)> {
         match self {
             SettingValue::List(selection, values) => Some((selection, values)),
             _ => None,
@@ -127,7 +107,7 @@ impl SettingValue {
         match self {
             SettingValue::Bool(value) => *value = bool::from_str(str).unwrap_or(false),
             SettingValue::List(selection, values) => {
-                if let Some(index) = values.iter().position(|value| *value == str) {
+                if let Some(index) = values.iter().position(|value| value == str) {
                     *selection = index;
                 }
             }
@@ -178,12 +158,9 @@ impl Setting {
 lazy_static! {
     pub static ref DEFAULT_SETTINGS: Settings = Settings(
         [
-            Setting::new(
-                "Screen Mode",
-                "Can be used to simulate vertical holding, for games like Brain Age",
-                ScreenMode::iter().into(),
-                true,
-            ),
+            Setting::new("Screen Layout", "", ScreenLayout::settings_value(), true),
+            Setting::new("Swap screens", "", SettingValue::Bool(false), true),
+            Setting::new("Language", "Some ROMs only come with one language. Make sure yours is multilingual.", Language::iter().into(), false),
             Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true), true),
             Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true), true),
             Setting::new(
@@ -198,61 +175,68 @@ lazy_static! {
                 SettingValue::Bool(false),
                 false,
             ),
-            Setting::new(
-                "Language",
-                "Language of the game. Some ROMs only come with one language. Make sure yours is multilingual.",
-                Language::iter().into(),
-                false,
-            ),
         ],
     );
 }
 
 #[derive(Clone)]
-pub struct Settings([Setting; 6]);
+pub struct Settings([Setting; 7]);
+
+const SCREEN_LAYOUT_SETTING: usize = 0;
+const SWAP_SCREEN_SETTING: usize = 1;
+const LANGUAGE_SETTING: usize = 2;
+const FRAMELIMIT_SETTING: usize = 3;
+const AUDIO_SETTING: usize = 4;
+const ARM7_EMU_SETTING: usize = 5;
+const ARM7_BLOCK_VALIDATION_SETTING: usize = 6;
 
 impl Settings {
-    pub fn screenmode(&self) -> ScreenMode {
-        unsafe { ScreenMode::from(self.0[0].value.as_list().unwrap_unchecked().0 as u8) }
+    pub fn screen_layout(&self) -> ScreenLayout {
+        unsafe {
+            ScreenLayout::new(
+                self.0[SCREEN_LAYOUT_SETTING].value.as_list().unwrap_unchecked().0,
+                self.0[SWAP_SCREEN_SETTING].value.as_bool().unwrap_unchecked(),
+            )
+        }
     }
 
     pub fn framelimit(&self) -> bool {
-        unsafe { self.0[1].value.as_bool().unwrap_unchecked() }
+        unsafe { self.0[FRAMELIMIT_SETTING].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn audio(&self) -> bool {
-        unsafe { self.0[2].value.as_bool().unwrap_unchecked() }
+        unsafe { self.0[AUDIO_SETTING].value.as_bool().unwrap_unchecked() }
     }
 
-    pub fn arm7_hle(&self) -> Arm7Emu {
-        unsafe { Arm7Emu::from(self.0[3].value.as_list().unwrap_unchecked().0 as u8) }
+    pub fn arm7_emu(&self) -> Arm7Emu {
+        unsafe { Arm7Emu::from(self.0[ARM7_EMU_SETTING].value.as_list().unwrap_unchecked().0 as u8) }
     }
 
     pub fn arm7_block_validation(&self) -> bool {
-        unsafe { self.0[4].value.as_bool().unwrap_unchecked() }
+        unsafe { self.0[ARM7_BLOCK_VALIDATION_SETTING].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn language(&self) -> Language {
-        unsafe { Language::from(self.0[5].value.as_list().unwrap_unchecked().0 as u8) }
+        unsafe { Language::from(self.0[LANGUAGE_SETTING].value.as_list().unwrap_unchecked().0 as u8) }
     }
 
     pub fn set_framelimit(&mut self, value: bool) {
-        *self.0[1].value.as_bool_mut().unwrap() = value;
+        *self.0[FRAMELIMIT_SETTING].value.as_bool_mut().unwrap() = value;
     }
 
     pub fn set_audio(&mut self, value: bool) {
-        *self.0[2].value.as_bool_mut().unwrap() = value;
+        *self.0[AUDIO_SETTING].value.as_bool_mut().unwrap() = value;
     }
 
-    pub fn set_arm7(&mut self, value: Arm7Emu) {
-        *self.0[3].value.as_list_mut().unwrap().0 = value as usize
+    pub fn set_arm7_emu(&mut self, value: Arm7Emu) {
+        *self.0[ARM7_EMU_SETTING].value.as_list_mut().unwrap().0 = value as usize
     }
 
     pub fn set_arm7_block_validation(&mut self, value: bool) {
-        *self.0[4].value.as_bool_mut().unwrap() = value;
+        *self.0[ARM7_BLOCK_VALIDATION_SETTING].value.as_bool_mut().unwrap() = value;
     }
 
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 6] {
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 7] {
         &mut self.0
     }
 }

@@ -237,7 +237,7 @@ impl Emu {
             263 => {
                 self.gpu.frame_rate_counter.on_frame_ready();
                 self.gpu.v_count = 0;
-                if self.settings.arm7_hle() == Arm7Emu::Hle {
+                if self.settings.arm7_emu() == Arm7Emu::Hle {
                     self.arm7_hle_on_frame();
                 }
             }
@@ -258,7 +258,7 @@ impl Emu {
             self.gpu.disp_stat[i].set_h_blank_flag(false);
         }
 
-        if self.settings.arm7_hle() != Arm7Emu::AccurateLle {
+        if self.settings.arm7_emu() != Arm7Emu::AccurateLle {
             self.arm7_hle_on_scanline(self.gpu.v_count);
         }
 

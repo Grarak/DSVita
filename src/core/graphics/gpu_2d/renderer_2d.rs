@@ -273,8 +273,6 @@ pub struct Gpu2DCommon {
     blend_program: GLuint,
     blend_ubo: GLuint,
     pub blend_fbo: GpuFbo,
-    rotate_program: GLuint,
-    pub rotate_fbo: GpuFbo,
 }
 
 impl Gpu2DCommon {
@@ -343,25 +341,6 @@ impl Gpu2DCommon {
                 (program, ubo, fbo)
             };
 
-            let (rotate_program, rotate_fbo) = {
-                let vert_shader = create_shader("rotate", shader_source!("rotate_vert"), gl::VERTEX_SHADER).unwrap();
-                let frag_shader = create_shader("rotate", shader_source!("rotate_frag"), gl::FRAGMENT_SHADER).unwrap();
-                let program = create_program(&[vert_shader, frag_shader]).unwrap();
-                gl::DeleteShader(vert_shader);
-                gl::DeleteShader(frag_shader);
-
-                gl::UseProgram(program);
-
-                gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
-                gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
-
-                gl::UseProgram(0);
-
-                let fbo = GpuFbo::new(DISPLAY_HEIGHT as u32, DISPLAY_WIDTH as u32, false).unwrap();
-
-                (program, fbo)
-            };
-
             Gpu2DCommon {
                 win_bg_program,
                 win_bg_disp_cnt_loc,
@@ -377,8 +356,6 @@ impl Gpu2DCommon {
                 blend_program,
                 blend_ubo,
                 blend_fbo,
-                rotate_program,
-                rotate_fbo,
             }
         }
     }
@@ -857,33 +834,7 @@ impl Gpu2DProgram {
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
     }
 
-    unsafe fn rotate(&self, common: &Gpu2DCommon) {
-        gl::BindFramebuffer(gl::FRAMEBUFFER, common.rotate_fbo.fbo);
-        gl::Viewport(0, 0, DISPLAY_HEIGHT as _, DISPLAY_WIDTH as _);
-        gl::UseProgram(common.rotate_program);
-        gl::ActiveTexture(gl::TEXTURE0);
-        gl::BindTexture(gl::TEXTURE_2D, common.blend_fbo.color);
-
-        gl::BindVertexArray(self.rotate_vao);
-        gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
-
-        gl::BindVertexArray(0);
-        gl::UseProgram(0);
-        gl::BindTexture(gl::TEXTURE_2D, 0);
-        gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-    }
-
-    unsafe fn draw(
-        &mut self,
-        common: &Gpu2DCommon,
-        regs: &Gpu2DRenderRegs,
-        texs: &Gpu2DTextures,
-        mem: Gpu2DMem,
-        fb_tex_3d: GLuint,
-        lcdc_pal: GLuint,
-        vram_display_program: &Gpu2DVramDisplayProgram,
-        rotate_screen: bool,
-    ) {
+    unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, fb_tex_3d: GLuint, lcdc_pal: GLuint, vram_display_program: &Gpu2DVramDisplayProgram) {
         macro_rules! draw_scanlines {
             ($draw_fn:expr, $draw_vram_display:expr) => {{
                 let mut line = 0;
@@ -1020,10 +971,6 @@ impl Gpu2DProgram {
         }
 
         self.blend_fbos(common, regs, &mem);
-
-        if rotate_screen {
-            self.rotate(common);
-        }
 
         gl::UseProgram(0);
     }
@@ -1171,7 +1118,7 @@ impl Gpu2DRenderer {
         self.has_vram_display[1] = false;
     }
 
-    pub unsafe fn render<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon, fb_tex_3d: GLuint, rotate_screen: bool) {
+    pub unsafe fn render<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon, fb_tex_3d: GLuint) {
         match ENGINE {
             A => {
                 self.program_a.draw(
@@ -1182,19 +1129,11 @@ impl Gpu2DRenderer {
                     fb_tex_3d,
                     if self.has_vram_display[0] { self.lcdc_pal } else { 0 },
                     &self.vram_display_program,
-                    rotate_screen,
                 );
             }
-            B => self.program_b.draw(
-                &self.common,
-                &self.regs_b[0],
-                &self.tex_b,
-                Gpu2DMem::new::<{ B }>(&common.mem_buf),
-                0,
-                0,
-                &self.vram_display_program,
-                rotate_screen,
-            ),
+            B => self
+                .program_b
+                .draw(&self.common, &self.regs_b[0], &self.tex_b, Gpu2DMem::new::<{ B }>(&common.mem_buf), 0, 0, &self.vram_display_program),
         }
     }
 }

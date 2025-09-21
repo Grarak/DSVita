@@ -205,8 +205,8 @@ impl Ipc {
     pub fn init(&mut self, settings: &Settings) {
         self.sync_regs = [IpcSyncCnt::from(0); 2];
         self.fifo = [Fifo::new(), Fifo::new()];
-        self.ipc_type = match settings.arm7_hle() {
-            Arm7Emu::AccurateLle | Arm7Emu::SoundHle => IpcLle(settings.arm7_hle()).into(),
+        self.ipc_type = match settings.arm7_emu() {
+            Arm7Emu::AccurateLle | Arm7Emu::SoundHle => IpcLle(settings.arm7_emu()).into(),
             Arm7Emu::Hle => IpcHle.into(),
         };
     }

@@ -1,13 +1,12 @@
 use crate::cartridge_io::{CartridgeIo, CartridgePreview};
-use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::input;
 use crate::presenter::imgui::root::{
     ImDrawData, ImGui, ImGuiConfigFlags__ImGuiConfigFlags_NavEnableKeyboard, ImGui_ImplSdlGL3_Init, ImGui_ImplSdlGL3_NewFrame, ImGui_ImplSdlGL3_ProcessEvent, ImGui_ImplSdlGL3_RenderDrawData,
 };
 use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, UiBackend, UiPauseMenuReturn};
-use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
-use crate::settings::{Arm7Emu, ScreenMode, Settings, DEFAULT_SETTINGS};
+use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::settings::{Arm7Emu, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
 use clap::{arg, command, value_parser, ArgAction, ArgMatches};
 use gl::types::GLuint;
@@ -54,6 +53,7 @@ pub struct Presenter {
     event_pump: EventPump,
     mouse_pressed: bool,
     mouse_id: Option<u32>,
+    touch_points: Option<(i16, i16)>,
     keymap: u32,
 }
 
@@ -134,6 +134,7 @@ impl Presenter {
             event_pump,
             mouse_pressed: false,
             mouse_id: None,
+            touch_points: None,
             keymap: 0xFFFFFFFF,
         };
 
@@ -154,7 +155,7 @@ impl Presenter {
             let mut settings = DEFAULT_SETTINGS.clone();
             settings.set_framelimit(self.arg_matches.get_flag("framelimit"));
             settings.set_audio(self.arg_matches.get_flag("audio"));
-            settings.set_arm7(Arm7Emu::from(*self.arg_matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
+            settings.set_arm7_emu(Arm7Emu::from(*self.arg_matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
             settings.set_arm7_block_validation(self.arg_matches.get_flag("enable_arm7_block_validation"));
 
             let file_name = file_path.file_name().unwrap().to_str().unwrap();
@@ -172,16 +173,7 @@ impl Presenter {
         show_pause_menu(self, gpu_renderer, settings)
     }
 
-    pub fn poll_event(&mut self, _: ScreenMode) -> PresentEvent {
-        let mut touch = None;
-
-        let mut sample_touch_points = |x, y| {
-            let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x as _, y as _);
-            let x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
-            let y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height) as u8;
-            touch = Some((x, y));
-        };
-
+    pub fn poll_event(&mut self) -> PresentEvent {
         for event in self.event_pump.poll_iter() {
             match event {
                 Event::KeyDown {
@@ -200,7 +192,7 @@ impl Presenter {
                 }
                 Event::MouseButtonUp { mouse_btn: MouseButton::Left, .. } => {
                     self.mouse_pressed = false;
-                    self.keymap |= 1 << 16;
+                    self.touch_points = None;
                 }
                 Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
@@ -211,15 +203,12 @@ impl Presenter {
                 } => {
                     self.mouse_pressed = true;
                     self.mouse_id = Some(which);
-                    if PRESENTER_SUB_BOTTOM_SCREEN.is_within(x as _, y as _) {
-                        sample_touch_points(x, y);
-                        self.keymap &= !(1 << 16);
-                    }
+                    self.touch_points = Some((x as i16, y as i16));
                 }
                 Event::MouseMotion { which, x, y, .. } => {
                     if let Some(mouse_id) = self.mouse_id {
-                        if self.mouse_pressed && mouse_id == which && PRESENTER_SUB_BOTTOM_SCREEN.is_within(x as _, y as _) {
-                            sample_touch_points(x, y);
+                        if self.mouse_pressed && mouse_id == which {
+                            self.touch_points = Some((x as i16, y as i16));
                         }
                     }
                 }
@@ -227,7 +216,10 @@ impl Presenter {
                 _ => {}
             }
         }
-        PresentEvent::Inputs { keymap: self.keymap, touch }
+        PresentEvent::Inputs {
+            keymap: self.keymap,
+            touch: self.touch_points,
+        }
     }
 
     pub fn gl_swap_window(&self) {

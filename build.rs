@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
-use vitabuild::{create_cc_build, get_common_c_flags, get_out_path, get_profile_name, is_debug, is_host_linux, is_profiling, is_target_vita};
+use vitabuild::{create_c_build, create_cc_build, get_common_c_flags, get_out_path, get_profile_name, is_debug, is_host_linux, is_profiling, is_target_vita};
 
 fn generate_linux_imgui_bindings(sysroot: Option<PathBuf>) {
     let bindings_file = get_out_path().join("imgui_bindings.rs");
@@ -47,6 +47,81 @@ fn main() {
 
     let vitasdk_path = env::var("VITASDK").map(PathBuf::from);
     println!("cargo:rerun-if-env-changed=VITASDK");
+
+    {
+        const MATH_NEON_FILES: [&str; 31] = [
+            "math_acosf.c",
+            "math_asinf.c",
+            "math_atan2f.c",
+            "math_atanf.c",
+            "math_ceilf.c",
+            "math_cosf.c",
+            "math_coshf.c",
+            "math_expf.c",
+            // "math_fabsf.c",
+            "math_floorf.c",
+            "math_fmodf.c",
+            "math_invsqrtf.c",
+            "math_ldexpf.c",
+            "math_log10f.c",
+            "math_logf.c",
+            "math_mat2.c",
+            "math_mat3.c",
+            "math_mat4.c",
+            "math_modf.c",
+            "math_powf.c",
+            "math_runfast.c",
+            "math_sincosf.c",
+            "math_sinf.c",
+            "math_sinfv.c",
+            "math_sinhf.c",
+            "math_sqrtf.c",
+            "math_sqrtfv.c",
+            "math_tanf.c",
+            "math_tanhf.c",
+            "math_vec2.c",
+            "math_vec3.c",
+            "math_vec4.c",
+        ];
+
+        let math_neon_path = Path::new("math-neon/source");
+
+        let mut math_neon_flags = vec![];
+        math_neon_flags.extend(get_common_c_flags());
+
+        if !is_target_vita() {
+            let mut math_neon_build = create_c_build();
+            for file in MATH_NEON_FILES {
+                let path = math_neon_path.join(file);
+                println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
+                math_neon_build.file(path);
+            }
+            for flag in &math_neon_flags {
+                math_neon_build.flag(flag);
+            }
+            math_neon_build.compile("mathneon");
+        }
+
+        let mut math_neon_bindgen = bindgen::Builder::default().clang_args(["-target", "armv7-unknown-linux-gnueabihf"]);
+
+        for flag in &math_neon_flags {
+            math_neon_bindgen = math_neon_bindgen.clang_arg(flag);
+        }
+
+        let bindings_file = out_path.join("math_neon.rs");
+        math_neon_bindgen
+            .header(math_neon_path.join("math_neon.h").to_str().unwrap())
+            .formatter(Formatter::Prettyplease)
+            .generate_comments(true)
+            .layout_tests(false)
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+            .use_core()
+            .trust_clang_mangling(true)
+            .generate()
+            .unwrap()
+            .write_to_file(bindings_file)
+            .unwrap();
+    }
 
     {
         const SOUNDTOUCH_FILES: [&str; 14] = [

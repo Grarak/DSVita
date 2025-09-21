@@ -18,7 +18,7 @@
 
 use crate::core::cycle_manager::EventType;
 use crate::core::emu::Emu;
-use crate::core::graphics::gpu::Gpu;
+use crate::core::graphics::gpu::{Gpu, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::spu::{SoundSampler, SAMPLE_BUFFER_SIZE};
 use crate::core::thread_regs::ThreadRegs;
@@ -52,6 +52,7 @@ mod logging;
 mod math;
 mod mmap;
 mod presenter;
+mod screen_layouts;
 mod settings;
 mod soundtouch;
 mod utils;
@@ -162,7 +163,7 @@ fn run_cpu(emu: &mut Emu) {
     Gpu::initialize_schedule(&mut emu.cm);
     emu.spu_initialize_schedule();
 
-    if emu.settings.arm7_hle() == Arm7Emu::Hle {
+    if emu.settings.arm7_emu() == Arm7Emu::Hle {
         emu.arm7_hle_initialize();
     }
 
@@ -171,7 +172,7 @@ fn run_cpu(emu: &mut Emu) {
     let jit_asm_arm9 = unsafe { (ARM9.jit_asm_addr() as *mut JitAsm).as_mut_unchecked() };
     let jit_asm_arm7 = unsafe { (ARM7.jit_asm_addr() as *mut JitAsm).as_mut_unchecked() };
 
-    if emu.settings.arm7_hle() == Arm7Emu::Hle {
+    if emu.settings.arm7_emu() == Arm7Emu::Hle {
         execute_jit::<true>(jit_asm_arm9, jit_asm_arm7);
     } else {
         execute_jit::<false>(jit_asm_arm9, jit_asm_arm7);
@@ -486,11 +487,17 @@ pub fn actual_main() {
             .unwrap();
 
         let gpu_renderer = gpu_renderer.as_mut().unwrap();
+        let mut screen_layout = emu_unsafe.get_mut().settings.screen_layout();
+        let arm7_emu = emu_unsafe.get_mut().settings.arm7_emu();
         loop {
-            let pause = match presenter.poll_event(emu_unsafe.get_mut().settings.screenmode()) {
-                PresentEvent::Inputs { keymap, touch } => {
+            let pause = match presenter.poll_event() {
+                PresentEvent::Inputs { mut keymap, touch } => {
                     if let Some((x, y)) = touch {
-                        touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
+                        let (x_norm, y_norm) = screen_layout.normalize_touch_points(x, y);
+                        if x_norm >= 0 && x_norm < DISPLAY_WIDTH as i16 && y_norm >= 0 && y_norm < DISPLAY_HEIGHT as i16 {
+                            touch_points.store(((y_norm as u16) << 8) | (x_norm as u16), Ordering::Relaxed);
+                            keymap &= !(1 << 16);
+                        }
                     }
                     key_map.store(keymap, Ordering::Relaxed);
                     false
@@ -502,7 +509,7 @@ pub fn actual_main() {
                 }
             };
 
-            gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &emu_unsafe.get_mut().settings, pause);
+            gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, arm7_emu, &screen_layout, pause);
 
             if unlikely(!running) {
                 gpu_renderer.quit = true;
@@ -510,7 +517,10 @@ pub fn actual_main() {
                 break;
             } else if unlikely(pause) {
                 match presenter.present_pause(gpu_renderer, &mut emu_unsafe.get_mut().settings) {
-                    UiPauseMenuReturn::Resume => gpu_renderer.unpause(cpu_thread.thread()),
+                    UiPauseMenuReturn::Resume => {
+                        screen_layout = emu_unsafe.get_mut().settings.screen_layout();
+                        gpu_renderer.unpause(cpu_thread.thread());
+                    }
                     UiPauseMenuReturn::Quit => {
                         gpu_renderer.quit = true;
                         gpu_renderer.unpause(cpu_thread.thread());

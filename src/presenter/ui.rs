@@ -93,8 +93,10 @@ unsafe fn show_settings(settings_config: &mut SettingsConfig, only_runtime: bool
 
         ImGui::PopID();
 
-        let description = CString::new(setting.description).unwrap();
-        ImGui::Text(description.as_ptr() as _);
+        if !setting.description.is_empty() {
+            let description = CString::new(setting.description).unwrap();
+            ImGui::Text(description.as_ptr() as _);
+        }
 
         let vec = ImVec2 { x: 0f32, y: 10f32 };
         ImGui::Dummy(&vec);

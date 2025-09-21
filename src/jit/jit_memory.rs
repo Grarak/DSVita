@@ -286,12 +286,12 @@ impl JitMemory {
     }
 
     pub fn init(&mut self, settings: &Settings) {
-        self.arm9_data = if settings.arm7_hle() == Arm7Emu::Hle {
+        self.arm9_data = if settings.arm7_emu() == Arm7Emu::Hle {
             JitMemoryMetadata::new(JIT_MEMORY_SIZE, 0, JIT_MEMORY_SIZE)
         } else {
             JitMemoryMetadata::new(JIT_ARM9_MEMORY_SIZE, 0, JIT_ARM9_MEMORY_SIZE)
         };
-        self.arm7_data = if settings.arm7_hle() == Arm7Emu::Hle {
+        self.arm7_data = if settings.arm7_emu() == Arm7Emu::Hle {
             JitMemoryMetadata::new(0, 0, 0)
         } else {
             JitMemoryMetadata::new(JIT_ARM7_MEMORY_SIZE, JIT_ARM9_MEMORY_SIZE, JIT_MEMORY_SIZE)
