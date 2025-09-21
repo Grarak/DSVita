@@ -1,4 +1,5 @@
 use crate::core::graphics::gl_glyph::GlGlyph;
+use crate::core::graphics::gl_rectangle:: GlRectangle;
 use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::renderer_2d::Gpu2DRenderer;
@@ -7,7 +8,7 @@ use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::memory::mem::Memory;
-use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_ROTATED};
+use crate::presenter::{Presenter, PresenterScreen, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_REGULAR, PRESENTER_SUB_RESIZED, PRESENTER_SUB_RESIZED_INV, PRESENTER_SUB_ROTATED, SWAP_ZONE_WIDTH, SWAP_ZONE_HEIGHT};
 use crate::settings::{ScreenMode, Settings};
 use gl::types::GLuint;
 use std::intrinsics::unlikely;
@@ -41,6 +42,7 @@ pub struct GpuRenderer {
 
     common: GpuRendererCommon,
     gl_glyph: GlGlyph,
+    gl_rectangle: GlRectangle,
 
     rendering: Mutex<bool>,
     rendering_condvar: Condvar,
@@ -66,6 +68,7 @@ impl GpuRenderer {
 
             common: GpuRendererCommon::new(),
             gl_glyph: GlGlyph::new(),
+            gl_rectangle: GlRectangle::new(),
 
             rendering: Mutex::new(false),
             rendering_condvar: Condvar::new(),
@@ -128,7 +131,7 @@ impl GpuRenderer {
         }
     }
 
-    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, settings: &Settings) {
+    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, settings: &Settings, swap_sizes: bool) {
         {
             let rendering = self.rendering.lock().unwrap();
             let _drawing = self.rendering_condvar.wait_while(rendering, |rendering| !*rendering).unwrap();
@@ -177,7 +180,7 @@ impl GpuRenderer {
                 let screen_topology = match settings.screenmode() {
                     ScreenMode::Regular => PRESENTER_SUB_REGULAR,
                     ScreenMode::Rotated => PRESENTER_SUB_ROTATED,
-                    ScreenMode::Resized => PRESENTER_SUB_RESIZED,
+                    ScreenMode::Resized => if swap_sizes { PRESENTER_SUB_RESIZED } else { PRESENTER_SUB_RESIZED_INV },
                 };
                 let used_fbo = match screen_topology.mode {
                     ScreenMode::Regular | ScreenMode::Resized => self.renderer_2d.common.blend_fbo.fbo,
@@ -232,6 +235,15 @@ impl GpuRenderer {
 
             let arm7_emu: &str = settings.arm7_hle().into();
             self.gl_glyph.draw(format!("{}ms {arm7_emu}\n{per}% ({fps}fps)\n{info_text}", self.average_render_time));
+            
+            // Draw a UI element to represent the touch-region to swap screen sizes in resized screen mode
+            if settings.screenmode() == ScreenMode::Resized
+            {
+                let swap_zone_x = (PRESENTER_SCREEN_WIDTH - SWAP_ZONE_WIDTH - 4) as f32;
+                let swap_zone_y = 5 as f32;
+                self.gl_rectangle.draw_filled_stroke(swap_zone_x, swap_zone_y, (SWAP_ZONE_WIDTH) as f32, SWAP_ZONE_HEIGHT as f32,
+                                                     (0.31, 0.31, 0.31, 1.0), (0.66, 0.66, 0.66, 1.0), 1.0);
+            }
 
             #[cfg(feature = "profiling")]
             gl::ReadPixels(

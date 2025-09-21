@@ -14,8 +14,9 @@ use crate::presenter::platform::imgui::{
     ImGui_SetItemDefaultFocus, ImGui_SetNextWindowPos, ImGui_SetNextWindowSize, ImGui_SetWindowFocus, ImGui_StyleColorsDark, ImGui_Text, ImVec2, ImVec4,
 };
 use crate::presenter::{
-    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN,
-    PRESENTER_SUB_ROTATED_BOTTOM_SCREEN,
+    PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH,
+    PRESENTER_SUB_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_BOTTOM_SCREEN, PRESENTER_SUB_RESIZED_INV_BOTTOM_SCREEN, PRESENTER_SUB_ROTATED_BOTTOM_SCREEN,
+    SWAP_ZONE_WIDTH, SWAP_ZONE_HEIGHT
 };
 use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, SettingsConfig};
 use gl::types::{GLboolean, GLenum, GLuint};
@@ -160,8 +161,9 @@ impl Presenter {
         }
     }
 
-    pub fn poll_event(&mut self, screenmode: ScreenMode) -> PresentEvent {
-        let mut touch = None;
+    pub fn poll_event(&mut self, screenmode: ScreenMode, swap_sizes: bool) -> PresentEvent {
+        let mut raw_touch: Option<(u16, u16)> = None;
+        let mut touch:  Option<(u8,  u8)>  = None;
 
         unsafe {
             let pressed = MaybeUninit::<SceCtrlData>::uninit();
@@ -184,39 +186,43 @@ impl Presenter {
                 let report = touch_report.report.first().unwrap();
                 let x = report.x as u32 * PRESENTER_SCREEN_WIDTH / 1920;
                 let y = report.y as u32 * PRESENTER_SCREEN_HEIGHT / 1080;
+                raw_touch = Some((x as u16, y as u16));
+                let in_swap_zone = x >= PRESENTER_SCREEN_WIDTH - SWAP_ZONE_WIDTH && y < SWAP_ZONE_HEIGHT;
 
-                match screenmode {
-                    ScreenMode::Regular => {
-                        if PRESENTER_SUB_BOTTOM_SCREEN.is_within(x, y) {
-                            let (x, y) = PRESENTER_SUB_BOTTOM_SCREEN.normalize(x, y);
-                            let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_BOTTOM_SCREEN.width) as u8;
-                            let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_BOTTOM_SCREEN.height) as u8;
-                            touch = Some((screen_x, screen_y));
+                if !in_swap_zone || screenmode != ScreenMode::Resized {
+                    match screenmode {
+                        ScreenMode::Regular | ScreenMode::Resized  => {
+                            let rect = if screenmode == ScreenMode::Regular { 
+                                PRESENTER_SUB_BOTTOM_SCREEN
+                            } else if swap_sizes {
+                                PRESENTER_SUB_RESIZED_BOTTOM_SCREEN 
+                            } else {
+                                PRESENTER_SUB_RESIZED_INV_BOTTOM_SCREEN
+                            };
+                            if rect.is_within(x, y) {
+                                let (x, y) = rect.normalize(x, y);
+                                let screen_x = (DISPLAY_WIDTH as u32 * x / rect.width) as u8;
+                                let screen_y = (DISPLAY_HEIGHT as u32 * y / rect.height) as u8;
+                                touch = Some((screen_x, screen_y));
+                            }
+                        }
+                        ScreenMode::Rotated => {
+                            let rect = PRESENTER_SUB_ROTATED_BOTTOM_SCREEN;
+                            if rect.is_within(x, y) {
+                                let (x, y) = rect.normalize(x, y);
+                                let screen_x = (DISPLAY_WIDTH as u32 - (DISPLAY_WIDTH as u32 * y / rect.height)) as u8;
+                                let screen_y = (DISPLAY_HEIGHT as u32 * x / rect.width) as u8;
+                                touch = Some((screen_x, screen_y));
+                            }
                         }
                     }
-                    ScreenMode::Rotated => {
-                        if PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.is_within(x, y) {
-                            let (x, y) = PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.normalize(x, y);
-                            let screen_x = (DISPLAY_WIDTH as u32 - (DISPLAY_WIDTH as u32 * y / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.height)) as u8;
-                            let screen_y = (DISPLAY_HEIGHT as u32 * x / PRESENTER_SUB_ROTATED_BOTTOM_SCREEN.width) as u8;
-                            touch = Some((screen_x, screen_y));
-                        }
-                    }
-                    ScreenMode::Resized => {
-                        if PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.is_within(x, y) {
-                            let (x, y) = PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.normalize(x, y);
-                            let screen_x = (DISPLAY_WIDTH as u32 * x / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.width) as u8;
-                            let screen_y = (DISPLAY_HEIGHT as u32 * y / PRESENTER_SUB_RESIZED_BOTTOM_SCREEN.height) as u8;
-                            touch = Some((screen_x, screen_y));
-                        }
-                    }
+                    self.keymap &= !(1 << 16);
                 }
-                self.keymap &= !(1 << 16);
             } else {
                 self.keymap |= 1 << 16;
             }
         }
-        PresentEvent::Inputs { keymap: self.keymap, touch }
+        PresentEvent::Inputs { keymap: self.keymap, touch, raw_touch }
     }
 
     pub fn present_ui(&self) -> (CartridgeIo, Settings) {

@@ -1,0 +1,7 @@
+float4 out gl_Position : POSITION;
+float4 out fragColor : COLOR0;
+
+void main(float4 position, float4 color) {
+    fragColor = color;
+    gl_Position = float4(position.x / 480.0 - 1.0, -position.y / 272.0 + 1.0, 0.0, 1.0);
+}
