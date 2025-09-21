@@ -8,12 +8,11 @@ use crate::presenter::imgui::root::{
     ImVec2, ImVec4,
 };
 use crate::presenter::{PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
-use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, SettingsConfig};
+use crate::settings::{SettingValue, Settings, SettingsConfig};
 use std::ffi::CString;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{fs, mem, ptr};
-use strum::IntoEnumIterator;
 
 pub trait UiBackend {
     fn init(&mut self);
@@ -56,7 +55,7 @@ unsafe fn show_settings(settings_config: &mut SettingsConfig, only_runtime: bool
 
         ImGui::PushID3(i as _);
 
-        match setting.value {
+        match &mut setting.value {
             SettingValue::Bool(_) => {
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 50f32);
 
@@ -68,41 +67,19 @@ unsafe fn show_settings(settings_config: &mut SettingsConfig, only_runtime: bool
                     settings_config.dirty = true;
                 }
             }
-            SettingValue::Arm7Emu(_) => {
-                let value = CString::new(setting.value.to_string()).unwrap();
+            SettingValue::List(selection, values) => {
+                let value = CString::from_str(&values[*selection]).unwrap();
 
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 125f32);
 
-                if ImGui::BeginCombo(c"##arm7_emu".as_ptr() as _, value.as_ptr() as _, 0) {
-                    for value in Arm7Emu::iter() {
-                        let is_selected = setting.value.as_arm7_emu() == Some(value);
-                        let value_str: &str = value.into();
-                        let value_cstr = CString::from_str(value_str).unwrap();
+                let id = CString::new(format!("##{i}_list")).unwrap();
+                if ImGui::BeginCombo(id.as_ptr() as _, value.as_ptr() as _, 0) {
+                    for (i, value) in values.iter().enumerate() {
+                        let is_selected = i == *selection;
+                        let value_cstr = CString::from_str(value).unwrap();
                         let size = ImVec2 { x: 0f32, y: 0f32 };
                         if ImGui::Selectable(value_cstr.as_ptr() as _, is_selected, 0, &size) {
-                            setting.value = SettingValue::Arm7Emu(value);
-                            settings_config.dirty = true;
-                        }
-                        if is_selected {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-            }
-            SettingValue::ScreenMode(_) => {
-                let value = CString::new(setting.value.to_string()).unwrap();
-
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 125f32);
-
-                if ImGui::BeginCombo(c"##screenmode".as_ptr() as _, value.as_ptr() as _, 0) {
-                    for value in ScreenMode::iter() {
-                        let is_selected = setting.value.as_screenmode() == Some(value);
-                        let value_str: &str = value.into();
-                        let value_cstr = CString::from_str(value_str).unwrap();
-                        let size = ImVec2 { x: 0f32, y: 0f32 };
-                        if ImGui::Selectable(value_cstr.as_ptr() as _, is_selected, 0, &size) {
-                            setting.value = SettingValue::ScreenMode(value);
+                            *selection = i;
                             settings_config.dirty = true;
                         }
                         if is_selected {

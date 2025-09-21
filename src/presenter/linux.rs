@@ -7,7 +7,7 @@ use crate::presenter::imgui::root::{
 };
 use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, UiBackend, UiPauseMenuReturn};
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH, PRESENTER_SUB_BOTTOM_SCREEN};
-use crate::settings::{Arm7Emu, ScreenMode, SettingValue, Settings, DEFAULT_SETTINGS};
+use crate::settings::{Arm7Emu, ScreenMode, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
 use clap::{arg, command, value_parser, ArgAction, ArgMatches};
 use gl::types::GLuint;
@@ -152,10 +152,10 @@ impl Presenter {
             show_main_menu(file_path, self)
         } else {
             let mut settings = DEFAULT_SETTINGS.clone();
-            settings.setting_framelimit_mut().value = SettingValue::Bool(self.arg_matches.get_flag("framelimit"));
-            settings.setting_audio_mut().value = SettingValue::Bool(self.arg_matches.get_flag("audio"));
-            settings.setting_arm7_hle_mut().value = SettingValue::Arm7Emu(Arm7Emu::from(*self.arg_matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
-            settings.setting_arm7_block_validation_mut().value = SettingValue::Bool(self.arg_matches.get_flag("enable_arm7_block_validation"));
+            settings.set_framelimit(self.arg_matches.get_flag("framelimit"));
+            settings.set_audio(self.arg_matches.get_flag("audio"));
+            settings.set_arm7(Arm7Emu::from(*self.arg_matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
+            settings.set_arm7_block_validation(self.arg_matches.get_flag("enable_arm7_block_validation"));
 
             let file_name = file_path.file_name().unwrap().to_str().unwrap();
             let save_path = file_path.parent().unwrap().join(format!("{file_name}.sav"));

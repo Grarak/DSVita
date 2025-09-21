@@ -1,6 +1,5 @@
 use crate::core::emu::Emu;
 use crate::core::hle::arm7_hle::IpcFifoTag;
-use crate::core::spi;
 use crate::core::CpuType::ARM7;
 
 pub(super) struct FirmwareHle {
@@ -46,7 +45,7 @@ impl Emu {
                     let len = ((firmware.data[2] as u32) << 16) | firmware.data[3] as u32;
 
                     for i in 0..len {
-                        let val = spi::SPI_FIRMWARE[(src + i) as usize % spi::SPI_FIRMWARE.len()];
+                        let val = self.spi.firmware[(src + i) as usize % self.spi.firmware.len()];
                         self.mem_write::<{ ARM7 }, _>(addr + i, val);
                     }
 

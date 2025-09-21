@@ -39,7 +39,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::Thread;
 use std::time::Duration;
-use std::{mem, thread};
+use std::{mem, slice, thread};
 use CpuType::{ARM7, ARM9};
 
 mod bitset;
@@ -97,7 +97,7 @@ fn run_cpu(emu: &mut Emu) {
         emu.mem_write_no_tcm::<{ ARM9 }, _>(0x27FFC04, 0x00001FC2u32); // Copy of chip ID 2
 
         // User settings
-        let user_settings = &spi::SPI_FIRMWARE[spi::USER_SETTINGS_1_ADDR..spi::USER_SETTINGS_1_ADDR + 0x70];
+        let user_settings = unsafe { slice::from_raw_parts(emu.spi.firmware.as_ptr().add(spi::USER_SETTINGS_1_ADDR), 0x70) };
         emu.mem_write_multiple_slice::<{ ARM9 }, false, _>(0x27FFC80, user_settings);
     }
 

@@ -1,5 +1,7 @@
 use crate::logging::debug_println;
+use crate::settings::{Language, Settings};
 use crate::utils;
+use crate::utils::HeapMemU8;
 use bilge::prelude::*;
 use std::mem;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -8,17 +10,7 @@ use std::sync::Arc;
 const FIRMWARE_SIZE: usize = 128 * 1024;
 pub const USER_SETTINGS_1_ADDR: usize = 0x1FF00;
 
-#[repr(u8)]
-enum Language {
-    JAP = 0,
-    ENG = 1,
-    FR = 2,
-    GER = 3,
-    ITA = 4,
-    SPA = 5,
-}
-
-const fn get_firmware() -> [u8; FIRMWARE_SIZE] {
+const fn get_firmware(language: Language) -> [u8; FIRMWARE_SIZE] {
     let mut firmware = [0u8; FIRMWARE_SIZE];
 
     // Set some firmware header data
@@ -82,7 +74,7 @@ const fn get_firmware() -> [u8; FIRMWARE_SIZE] {
         firmware[addr + 0x63] = 0xBF; // SCR Y2
 
         // Set the language specified by the frontend
-        firmware[addr + 0x64] = Language::ENG as u8;
+        firmware[addr + 0x64] = language as u8;
 
         // Calculate the user settings CRC
         let crc = utils::crc16(0xFFFF, &firmware, addr, 0x70);
@@ -95,7 +87,7 @@ const fn get_firmware() -> [u8; FIRMWARE_SIZE] {
     firmware
 }
 
-pub const SPI_FIRMWARE: [u8; FIRMWARE_SIZE] = get_firmware();
+static DEFAULT_SPI_FIRMWARE: [u8; FIRMWARE_SIZE] = get_firmware(Language::English);
 
 #[repr(u8)]
 #[derive(Debug)]
@@ -134,6 +126,7 @@ pub struct Spi {
     cmd: u8,
     addr: u32,
     touch_points: Arc<AtomicU16>,
+    pub firmware: HeapMemU8<FIRMWARE_SIZE>,
 }
 
 impl Spi {
@@ -145,15 +138,17 @@ impl Spi {
             cmd: 0,
             addr: 0,
             touch_points,
+            firmware: HeapMemU8::new(),
         }
     }
 
-    pub fn init(&mut self) {
+    pub fn init(&mut self, settings: &Settings) {
         self.cnt = 0;
         self.data = 0;
         self.write_count = 0;
         self.cmd = 0;
         self.addr = 0;
+        self.firmware.copy_from_slice(&get_firmware(settings.language()));
     }
 
     pub fn set_cnt(&mut self, mut mask: u16, value: u16) {
@@ -181,7 +176,7 @@ impl Spi {
                             self.addr <<= 8;
                             self.addr |= value as u32;
                         } else {
-                            self.data = if self.addr < FIRMWARE_SIZE as u32 { SPI_FIRMWARE[self.addr as usize] } else { 0 };
+                            self.data = if self.addr < FIRMWARE_SIZE as u32 { self.firmware[self.addr as usize] } else { 0 };
                             self.addr += u32::from(cnt.transfer_size()) + 1;
                         }
                     } else {
@@ -230,14 +225,14 @@ impl Spi {
     }
 
     pub fn get_touch_coordinates(&self) -> (u16, u16) {
-        const ADC_X1: i32 = u16::from_le_bytes([SPI_FIRMWARE[FIRMWARE_SIZE - 0xA8], SPI_FIRMWARE[FIRMWARE_SIZE - 0xA7]]) as i32;
-        const ADC_Y1: i32 = u16::from_le_bytes([SPI_FIRMWARE[FIRMWARE_SIZE - 0xA6], SPI_FIRMWARE[FIRMWARE_SIZE - 0xA5]]) as i32;
-        const SCR_X1: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0xA4] as i32;
-        const SCR_Y1: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0xA3] as i32;
-        const ADC_X2: i32 = u16::from_le_bytes([SPI_FIRMWARE[FIRMWARE_SIZE - 0xA2], SPI_FIRMWARE[FIRMWARE_SIZE - 0xA1]]) as i32;
-        const ADC_Y2: i32 = u16::from_le_bytes([SPI_FIRMWARE[FIRMWARE_SIZE - 0xA0], SPI_FIRMWARE[FIRMWARE_SIZE - 0x9F]]) as i32;
-        const SCR_X2: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0x9E] as i32;
-        const SCR_Y2: i32 = SPI_FIRMWARE[FIRMWARE_SIZE - 0x9D] as i32;
+        const ADC_X1: i32 = u16::from_le_bytes([DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0xA8], DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0xA7]]) as i32;
+        const ADC_Y1: i32 = u16::from_le_bytes([DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0xA6], DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0xA5]]) as i32;
+        const SCR_X1: i32 = DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0xA4] as i32;
+        const SCR_Y1: i32 = DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0xA3] as i32;
+        const ADC_X2: i32 = u16::from_le_bytes([DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0xA2], DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0xA1]]) as i32;
+        const ADC_Y2: i32 = u16::from_le_bytes([DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0xA0], DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0x9F]]) as i32;
+        const SCR_X2: i32 = DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0x9E] as i32;
+        const SCR_Y2: i32 = DEFAULT_SPI_FIRMWARE[FIRMWARE_SIZE - 0x9D] as i32;
 
         let points = self.touch_points.load(Ordering::Relaxed);
         let x = points & 0xFF;

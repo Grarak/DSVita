@@ -65,7 +65,7 @@ impl Emu {
             timers: [Timers::new(), Timers::new()],
             wifi: Wifi::new(),
             jit,
-            settings: DEFAULT_SETTINGS,
+            settings: DEFAULT_SETTINGS.clone(),
             breakout_imm: false,
             initialized: true,
         }
@@ -74,6 +74,7 @@ impl Emu {
     pub fn reset(&mut self) {
         self.jit.init(&self.settings);
         self.ipc.init(&self.settings);
+        self.spi.init(&self.settings);
         if !self.initialized {
             *ARM9.thread_regs() = ThreadRegs::default();
             *ARM7.thread_regs() = ThreadRegs::default();
@@ -84,7 +85,6 @@ impl Emu {
             self.mem.init();
             self.hle = Arm7Hle::new();
             self.div_sqrt = DivSqrt::new();
-            self.spi.init();
             self.rtc = Rtc::new();
             self.spu.init();
             self.dma = [Dma::new(), Dma::new()];
