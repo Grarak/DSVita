@@ -15,12 +15,14 @@ pub fn get_screen_layouts() -> Vec<[[f32; 9]; 4]> {
     let mut layouts = Vec::new();
 
     {
-        let half_width = HOST_SCREEN_WIDTH as f32 / 2.0;
-        let half_width_scale = half_width / GUEST_SCREEN_WIDTH as f32;
-        let half_height = GUEST_SCREEN_HEIGHT as f32 * half_width_scale;
-        let half_height_space = HOST_SCREEN_HEIGHT as f32 - half_height;
-        let mtx = Matrix3::new_translation(&Vector2::new(0.0, half_height_space / 2.0)) * Matrix3::new_scaling(half_width_scale);
-        let b_trans = Matrix3::new_translation(&Vector2::new(half_width, 0.0));
+        let guest_width = HOST_SCREEN_WIDTH as f32 / 2.0;
+        let width_scale = guest_width / GUEST_SCREEN_WIDTH as f32;
+        let guest_height = GUEST_SCREEN_HEIGHT as f32 * width_scale;
+        let height_remaining_space = HOST_SCREEN_HEIGHT as f32 - guest_height;
+        let mtx = Matrix3::new_translation(&Vector2::new(0.0, height_remaining_space / 2.0))
+            * Matrix3::new_translation(&Vector2::new(guest_width / 2.0, guest_height / 2.0))
+            * Matrix3::new_scaling(width_scale);
+        let b_trans = Matrix3::new_translation(&Vector2::new(guest_width, 0.0));
 
         layouts.push([mtx, b_trans * mtx]);
     }
@@ -30,7 +32,9 @@ pub fn get_screen_layouts() -> Vec<[[f32; 9]; 4]> {
         let full_height_scale = HOST_SCREEN_HEIGHT as f32 / GUEST_SCREEN_WIDTH as f32;
         let guest_height = GUEST_SCREEN_HEIGHT as f32 * full_height_scale;
         let half_width_space = half_width - guest_height;
-        let mtx = Matrix3::new_translation(&Vector2::new(half_width_space, HOST_SCREEN_HEIGHT as f32)) * Matrix3::new_rotation(PI + PI / 2.0) * Matrix3::new_scaling(full_height_scale);
+        let mtx = Matrix3::new_translation(&Vector2::new(guest_height / 2.0 + half_width_space, HOST_SCREEN_HEIGHT as f32 / 2.0))
+            * Matrix3::new_rotation(PI + PI / 2.0)
+            * Matrix3::new_scaling(full_height_scale);
         let b_trans = Matrix3::new_translation(&Vector2::new(guest_height, 0.0));
 
         layouts.push([mtx, b_trans * mtx]);
@@ -43,8 +47,9 @@ pub fn get_screen_layouts() -> Vec<[[f32; 9]; 4]> {
         let guest_bottom_scale = width_remaining_space / GUEST_SCREEN_WIDTH as f32;
         let guest_bottom_height = GUEST_SCREEN_HEIGHT as f32 * guest_bottom_scale;
         let height_remaining_space = HOST_SCREEN_HEIGHT as f32 - guest_bottom_height;
-        let top_mtx = Matrix3::new_scaling(full_height_scale);
-        let bottom_mtx = Matrix3::new_translation(&Vector2::new(guest_top_width, height_remaining_space / 2.0)) * Matrix3::new_scaling(guest_bottom_scale);
+        let top_mtx = Matrix3::new_translation(&Vector2::new(guest_top_width / 2.0, HOST_SCREEN_HEIGHT as f32 / 2.0)) * Matrix3::new_scaling(full_height_scale);
+        let bottom_mtx =
+            Matrix3::new_translation(&Vector2::new(width_remaining_space / 2.0 + guest_top_width, guest_bottom_height / 2.0 + height_remaining_space / 2.0)) * Matrix3::new_scaling(guest_bottom_scale);
 
         layouts.push([top_mtx, bottom_mtx]);
     }
@@ -53,7 +58,7 @@ pub fn get_screen_layouts() -> Vec<[[f32; 9]; 4]> {
         let full_height_scale = HOST_SCREEN_HEIGHT as f32 / GUEST_SCREEN_HEIGHT as f32;
         let guest_top_width = GUEST_SCREEN_WIDTH as f32 * full_height_scale;
         let width_remaining_space = HOST_SCREEN_WIDTH as f32 - guest_top_width;
-        let top_mtx = Matrix3::new_translation(&Vector2::new(width_remaining_space / 2.0, 0.0)) * Matrix3::new_scaling(full_height_scale);
+        let top_mtx = Matrix3::new_translation(&Vector2::new(guest_top_width / 2.0 + width_remaining_space / 2.0, HOST_SCREEN_HEIGHT as f32 / 2.0)) * Matrix3::new_scaling(full_height_scale);
 
         layouts.push([top_mtx, Matrix3::zeros()]);
     }

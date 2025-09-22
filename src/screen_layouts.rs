@@ -18,10 +18,10 @@ impl ScreenLayout {
 
     pub fn new(index: usize, swap: bool) -> Self {
         const GUEST_DISPLAY_DIM_MTX: [[f32; 3]; 4] = [
-            [0.0, 0.0, 1.0],
-            [DISPLAY_WIDTH as f32, 0.0, 1.0],
-            [DISPLAY_WIDTH as f32, DISPLAY_HEIGHT as f32, 1.0],
-            [0.0, DISPLAY_HEIGHT as f32, 1.0],
+            [-(DISPLAY_WIDTH as f32 / 2.0), -(DISPLAY_HEIGHT as f32 / 2.0), 1.0],
+            [DISPLAY_WIDTH as f32 / 2.0, -(DISPLAY_HEIGHT as f32 / 2.0), 1.0],
+            [DISPLAY_WIDTH as f32 / 2.0, DISPLAY_HEIGHT as f32 / 2.0, 1.0],
+            [-(DISPLAY_WIDTH as f32 / 2.0), DISPLAY_HEIGHT as f32 / 2.0, 1.0],
         ];
         let a_mtx = &SCREEN_LAYOUTS[index][if swap { 1 } else { 0 }];
         let b_mtx = &SCREEN_LAYOUTS[index][if swap { 0 } else { 1 }];
@@ -87,6 +87,6 @@ impl ScreenLayout {
     pub fn normalize_touch_points(&self, x: i16, y: i16) -> (i16, i16) {
         let mut touch_points = [x as f32, y as f32, 1.0];
         unsafe { math::neon::matvec3_neon(self.get_bottom_inverse_mtx().as_ptr() as _, touch_points.as_ptr() as _, touch_points.as_mut_ptr() as _) };
-        (touch_points[0] as i16, touch_points[1] as i16)
+        (touch_points[0] as i16 + DISPLAY_WIDTH as i16 / 2, touch_points[1] as i16 + DISPLAY_HEIGHT as i16 / 2)
     }
 }
