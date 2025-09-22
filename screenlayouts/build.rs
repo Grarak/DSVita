@@ -60,19 +60,14 @@ pub fn get_screen_layouts() -> Vec<[[f32; 9]; 4]> {
         let width_remaining_space = HOST_SCREEN_WIDTH as f32 - guest_top_width;
         let top_mtx = Matrix3::new_translation(&Vector2::new(guest_top_width / 2.0 + width_remaining_space / 2.0, HOST_SCREEN_HEIGHT as f32 / 2.0)) * Matrix3::new_scaling(full_height_scale);
 
-        layouts.push([top_mtx, Matrix3::zeros()]);
+        layouts.push([top_mtx, Matrix3::new_translation(&Vector2::new(-(HOST_SCREEN_WIDTH as f32), -(HOST_SCREEN_HEIGHT as f32)))]);
     }
 
     layouts
         .iter()
         .map(|mtxs| {
             let flatten = |mtx: &Matrix3<f32>| [mtx[0], mtx[1], mtx[2], mtx[3], mtx[4], mtx[5], mtx[6], mtx[7], mtx[8]];
-            [
-                flatten(&mtxs[0]),
-                flatten(&mtxs[1]),
-                flatten(&mtxs[0].try_inverse().unwrap_or(Matrix3::zeros())),
-                flatten(&mtxs[1].try_inverse().unwrap_or(Matrix3::zeros())),
-            ]
+            [flatten(&mtxs[0]), flatten(&mtxs[1]), flatten(&mtxs[0].try_inverse().unwrap()), flatten(&mtxs[1].try_inverse().unwrap())]
         })
         .collect()
 }
