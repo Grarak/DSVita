@@ -1,9 +1,8 @@
 use crate::core::cp15::TcmState;
 use crate::core::emu::Emu;
 use crate::core::memory::mmu::{MmuArm7, MmuArm9, MMU_PAGE_SHIFT, MMU_PAGE_SIZE};
-use crate::core::memory::oam::Oam;
-use crate::core::memory::palettes::Palettes;
 use crate::core::memory::regions;
+use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram::Vram;
 use crate::core::memory::wifi::Wifi;
 use crate::core::memory::wram::Wram;
@@ -23,9 +22,7 @@ pub struct Memory {
     pub shm: Shm,
     pub wram: Wram,
     pub wifi: Wifi,
-    pub palettes: Palettes,
     pub vram: Vram,
-    pub oam: Oam,
     pub mmu_arm9: MmuArm9,
     pub mmu_arm7: MmuArm7,
 }
@@ -40,15 +37,6 @@ macro_rules! create_io_read_lut {
             Self::read_io_ports,
             Self::read_palettes,
             Self::read_vram,
-            Self::read_oam,
-            Self::read_gba,
-            Self::read_gba,
-            Self::read_gba,
-            Self::read_invalid,
-            Self::read_invalid,
-            Self::read_invalid,
-            Self::read_invalid,
-            Self::read_bios,
         ]
     };
 }
@@ -63,8 +51,6 @@ macro_rules! create_io_write_lut {
             Self::write_io_ports,
             Self::write_palettes,
             Self::write_vram,
-            Self::write_oam,
-            Self::write_gba,
         ]
     };
 }
@@ -210,12 +196,12 @@ struct MemoryIo<const CPU: CpuType, const TCM: bool, T: Convert> {
 }
 
 impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryIo<CPU, TCM, T> {
-    const READ_LUT: [fn(u32, &mut Emu) -> T; 16] = create_io_read_lut!();
-    const WRITE_LUT: [fn(u32, T, &mut Emu); 9] = create_io_write_lut!();
+    const READ_LUT: [fn(u32, &mut Emu) -> T; 7] = create_io_read_lut!();
+    const WRITE_LUT: [fn(u32, T, &mut Emu); 7] = create_io_write_lut!();
 
     fn read(addr: u32, emu: &mut Emu) -> T {
         read_dtcm!(CPU, TCM, addr, emu, shm_offset, { utils::read_from_mem(&emu.mem.shm, shm_offset) });
-        Self::READ_LUT[((addr >> 24) & 0xF) as usize](addr, emu)
+        unsafe { Self::READ_LUT.get_unchecked(((addr >> 24) & 0xF) as usize)(addr, emu) }
     }
 
     fn read_itcm(addr: u32, emu: &mut Emu) -> T {
@@ -245,31 +231,12 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryIo<CPU, TCM, T> {
         )
     }
 
-    fn read_palettes(addr: u32, emu: &mut Emu) -> T {
-        emu.mem.palettes.read(addr)
+    fn read_palettes(_: u32, _: &mut Emu) -> T {
+        unsafe { unreachable_unchecked() }
     }
 
     fn read_vram(addr: u32, emu: &mut Emu) -> T {
         emu.vram_read::<CPU, _>(addr)
-    }
-
-    fn read_oam(addr: u32, emu: &mut Emu) -> T {
-        emu.mem.oam.read(addr)
-    }
-
-    fn read_gba(_: u32, _: &mut Emu) -> T {
-        T::from(0xFFFFFFFF)
-    }
-
-    fn read_invalid(_: u32, _: &mut Emu) -> T {
-        unsafe { unreachable_unchecked() }
-    }
-
-    fn read_bios(_: u32, _: &mut Emu) -> T {
-        match CPU {
-            ARM9 => T::from(0),
-            ARM7 => unsafe { unreachable_unchecked() },
-        }
     }
 
     fn write(addr: u32, value: T, emu: &mut Emu) {
@@ -305,19 +272,13 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryIo<CPU, TCM, T> {
         );
     }
 
-    fn write_palettes(addr: u32, value: T, emu: &mut Emu) {
-        emu.mem.palettes.write(addr, value);
+    fn write_palettes(_: u32, _: T, _: &mut Emu) {
+        unsafe { unreachable_unchecked() }
     }
 
     fn write_vram(addr: u32, value: T, emu: &mut Emu) {
         write_vram!(addr, size_of::<T>(), emu, { emu.vram_write::<CPU, _>(addr, value) });
     }
-
-    fn write_oam(addr: u32, value: T, emu: &mut Emu) {
-        emu.mem.oam.write(addr, value);
-    }
-
-    fn write_gba(_: u32, _: T, _: &mut Emu) {}
 }
 
 struct MemoryMultipleSliceIo<const CPU: CpuType, const TCM: bool, T: Convert> {
@@ -325,14 +286,14 @@ struct MemoryMultipleSliceIo<const CPU: CpuType, const TCM: bool, T: Convert> {
 }
 
 impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU, TCM, T> {
-    const READ_LUT: [fn(u32, &mut [T], &mut Emu); 16] = create_io_read_lut!();
-    const WRITE_LUT: [fn(u32, &[T], &mut Emu); 9] = create_io_write_lut!();
+    const READ_LUT: [fn(u32, &mut [T], &mut Emu); 7] = create_io_read_lut!();
+    const WRITE_LUT: [fn(u32, &[T], &mut Emu); 7] = create_io_write_lut!();
 
     fn read(addr: u32, slice: &mut [T], emu: &mut Emu) {
         read_dtcm!(CPU, TCM, addr, emu, shm_offset, {
             utils::read_from_mem_slice(&emu.mem.shm, shm_offset, slice);
         });
-        Self::READ_LUT[((addr >> 24) & 0xF) as usize](addr, slice, emu);
+        unsafe { Self::READ_LUT.get_unchecked(((addr >> 24) & 0xF) as usize)(addr, slice, emu) };
     }
 
     fn read_itcm(addr: u32, slice: &mut [T], emu: &mut Emu) {
@@ -383,8 +344,8 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
         );
     }
 
-    fn read_palettes(addr: u32, slice: &mut [T], emu: &mut Emu) {
-        emu.mem.palettes.read_slice(addr, slice);
+    fn read_palettes(_: u32, _: &mut [T], _: &mut Emu) {
+        unsafe { unreachable_unchecked() }
     }
 
     fn read_vram(addr: u32, slice: &mut [T], emu: &mut Emu) {
@@ -392,22 +353,6 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
         for i in 0..slice.len() {
             slice[i] = emu.vram_read::<CPU, _>(addr + (i << read_shift) as u32);
         }
-    }
-
-    fn read_oam(addr: u32, slice: &mut [T], emu: &mut Emu) {
-        emu.mem.oam.read_slice(addr, slice);
-    }
-
-    fn read_gba(_: u32, slice: &mut [T], _: &mut Emu) {
-        slice.fill(T::from(0xFFFFFFFF));
-    }
-
-    fn read_invalid(_: u32, _: &mut [T], _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
-
-    fn read_bios(_: u32, slice: &mut [T], _: &mut Emu) {
-        slice.fill(T::from(0));
     }
 
     fn write(addr: u32, slice: &[T], emu: &mut Emu) {
@@ -456,20 +401,14 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
         )
     }
 
-    fn write_palettes(addr: u32, slice: &[T], emu: &mut Emu) {
-        emu.mem.palettes.write_slice(addr, slice);
+    fn write_palettes(_: u32, _: &[T], _: &mut Emu) {
+        unsafe { unreachable_unchecked() }
     }
 
     fn write_vram(addr: u32, slice: &[T], emu: &mut Emu) {
         emu.vram_write_slice::<CPU, _>(addr, slice);
         emu.jit.invalidate_block(addr, size_of_val(slice));
     }
-
-    fn write_oam(addr: u32, slice: &[T], emu: &mut Emu) {
-        emu.mem.oam.write_slice(addr, slice);
-    }
-
-    fn write_gba(_: u32, _: &[T], _: &mut Emu) {}
 }
 
 struct MemoryFixedSliceIo<const CPU: CpuType, const TCM: bool, T: Convert> {
@@ -477,14 +416,14 @@ struct MemoryFixedSliceIo<const CPU: CpuType, const TCM: bool, T: Convert> {
 }
 
 impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TCM, T> {
-    const READ_LUT: [fn(u32, &mut [T], &mut Emu); 16] = create_io_read_lut!();
-    const WRITE_LUT: [fn(u32, &[T], &mut Emu); 9] = create_io_write_lut!();
+    const READ_LUT: [fn(u32, &mut [T], &mut Emu); 7] = create_io_read_lut!();
+    const WRITE_LUT: [fn(u32, &[T], &mut Emu); 7] = create_io_write_lut!();
 
     fn read(addr: u32, slice: &mut [T], emu: &mut Emu) {
         read_dtcm!(CPU, TCM, addr, emu, shm_offset, {
             slice.fill(utils::read_from_mem(&emu.mem.shm, shm_offset));
         });
-        Self::READ_LUT[((addr >> 24) & 0xF) as usize](addr, slice, emu);
+        unsafe { Self::READ_LUT.get_unchecked(((addr >> 24) & 0xF) as usize)(addr, slice, emu) };
     }
 
     fn read_itcm(addr: u32, slice: &mut [T], emu: &mut Emu) {
@@ -534,28 +473,12 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TC
         )
     }
 
-    fn read_palettes(addr: u32, slice: &mut [T], emu: &mut Emu) {
-        slice.fill(emu.mem.palettes.read(addr));
+    fn read_palettes(_: u32, _: &mut [T], _: &mut Emu) {
+        unsafe { unreachable_unchecked() }
     }
 
     fn read_vram(addr: u32, slice: &mut [T], emu: &mut Emu) {
         slice.fill(emu.vram_read::<CPU, _>(addr));
-    }
-
-    fn read_oam(addr: u32, slice: &mut [T], emu: &mut Emu) {
-        slice.fill(emu.mem.oam.read(addr));
-    }
-
-    fn read_gba(_: u32, slice: &mut [T], _: &mut Emu) {
-        slice.fill(T::from(0xFFFFFFFF));
-    }
-
-    fn read_invalid(_: u32, _: &mut [T], _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
-
-    fn read_bios(_: u32, slice: &mut [T], _: &mut Emu) {
-        slice.fill(T::from(0));
     }
 
     fn write(addr: u32, slice: &[T], emu: &mut Emu) {
@@ -599,8 +522,8 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TC
         );
     }
 
-    fn write_palettes(addr: u32, slice: &[T], emu: &mut Emu) {
-        emu.mem.palettes.write(addr, unsafe { *slice.last().unwrap_unchecked() });
+    fn write_palettes(_: u32, _: &[T], _: &mut Emu) {
+        unsafe { unreachable_unchecked() }
     }
 
     fn write_vram(addr: u32, slice: &[T], emu: &mut Emu) {
@@ -608,12 +531,6 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TC
             emu.vram_write::<CPU, _>(addr, slice[i]);
         }
     }
-
-    fn write_oam(addr: u32, slice: &[T], emu: &mut Emu) {
-        emu.mem.oam.write(addr, unsafe { *slice.last().unwrap_unchecked() })
-    }
-
-    fn write_gba(_: u32, _: &[T], _: &mut Emu) {}
 }
 
 struct MemoryMultipleMemsetIo<const CPU: CpuType, const TCM: bool, T: Convert> {
@@ -621,7 +538,7 @@ struct MemoryMultipleMemsetIo<const CPU: CpuType, const TCM: bool, T: Convert> {
 }
 
 impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleMemsetIo<CPU, TCM, T> {
-    const WRITE_LUT: [fn(u32, T, usize, &mut Emu); 9] = create_io_write_lut!();
+    const WRITE_LUT: [fn(u32, T, usize, &mut Emu); 7] = create_io_write_lut!();
 
     fn write(addr: u32, value: T, size: usize, emu: &mut Emu) {
         write_dtcm!(CPU, TCM, addr, emu, shm_offset, {
@@ -672,8 +589,8 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleMemsetIo<CPU
         )
     }
 
-    fn write_palettes(addr: u32, value: T, size: usize, emu: &mut Emu) {
-        emu.mem.palettes.write_memset(addr, value, size);
+    fn write_palettes(_: u32, _: T, _: usize, _: &mut Emu) {
+        unsafe { unreachable_unchecked() }
     }
 
     fn write_vram(addr: u32, value: T, size: usize, emu: &mut Emu) {
@@ -682,12 +599,6 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleMemsetIo<CPU
             emu.vram_write::<CPU, _>(addr + (i << write_shift) as u32, value);
         }
     }
-
-    fn write_oam(addr: u32, value: T, size: usize, emu: &mut Emu) {
-        emu.mem.oam.write_memset(addr, value, size);
-    }
-
-    fn write_gba(_: u32, _: T, _: usize, _: &mut Emu) {}
 }
 
 impl Memory {
@@ -696,9 +607,7 @@ impl Memory {
             shm: Shm::new("physical", regions::TOTAL_MEM_SIZE as usize).unwrap(),
             wram: Wram::new(),
             wifi: Wifi::new(),
-            palettes: Palettes::new(),
             vram: Vram::default(),
-            oam: Oam::new(),
             mmu_arm9: MmuArm9::new(),
             mmu_arm7: MmuArm7::new(),
         }
@@ -708,13 +617,19 @@ impl Memory {
         self.shm.fill(0);
         self.wram = Wram::new();
         self.wifi = Wifi::new();
-        self.palettes = Palettes::new();
         self.vram = Vram::default();
-        self.oam = Oam::new();
     }
 }
 
 impl Emu {
+    pub fn mem_get_palettes(&self) -> &'static [u8; STANDARD_PALETTES_SIZE as usize] {
+        unsafe { mem::transmute(self.mem.shm.as_ptr().add(regions::PALETTES_REGION.shm_offset)) }
+    }
+
+    pub fn mem_get_oam(&self) -> &'static [u8; OAM_SIZE as usize] {
+        unsafe { mem::transmute(self.mem.shm.as_ptr().add(regions::OAM_REGION.shm_offset)) }
+    }
+
     pub fn get_shm_offset<const CPU: CpuType, const TCM: bool, const WRITE: bool>(&self, addr: u32) -> usize {
         let mmu = {
             if CPU == ARM9 && TCM {

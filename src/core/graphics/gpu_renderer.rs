@@ -7,7 +7,7 @@ use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
-use crate::core::memory::mem::Memory;
+use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram;
 use crate::core::memory::vram::Vram;
 use crate::presenter::{Presenter, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
@@ -127,9 +127,16 @@ impl GpuRenderer {
         }
     }
 
-    pub fn on_scanline_finish(&mut self, mem: &mut Memory, pow_cnt1: PowCnt1, registers_3d: &mut Gpu3DRegisters, breakout_imm: &mut bool) {
+    pub fn on_scanline_finish(
+        &mut self,
+        palettes: &[u8; STANDARD_PALETTES_SIZE as usize],
+        oam: &[u8; OAM_SIZE as usize],
+        pow_cnt1: PowCnt1,
+        registers_3d: &mut Gpu3DRegisters,
+        breakout_imm: &mut bool,
+    ) {
         if self.sample_2d {
-            self.common.mem_buf.read_palettes_oam(mem);
+            self.common.mem_buf.read_palettes_oam(palettes, oam);
             self.common.pow_cnt1[1] = pow_cnt1;
             self.sample_2d = false;
             self.ready_2d = true;

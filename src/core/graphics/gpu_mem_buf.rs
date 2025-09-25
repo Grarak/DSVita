@@ -1,4 +1,4 @@
-use crate::core::memory::mem::Memory;
+use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram::{Vram, VramBanks, VramCnt};
 use crate::core::memory::{regions, vram};
 use crate::utils::HeapMemU8;
@@ -67,17 +67,12 @@ impl GpuMemBuf {
         }
     }
 
-    pub fn read_palettes_oam(&mut self, mem: &mut Memory) {
-        if mem.palettes.dirty {
-            mem.palettes.dirty = false;
-            self.pal_a[1].copy_from_slice(&mem.palettes.mem[..mem.palettes.mem.len() / 2]);
-            self.pal_b[1].copy_from_slice(&mem.palettes.mem[mem.palettes.mem.len() / 2..]);
-        }
-        if mem.oam.dirty {
-            mem.oam.dirty = false;
-            self.oam_a[1].copy_from_slice(&mem.oam.mem[..mem.oam.mem.len() / 2]);
-            self.oam_b[1].copy_from_slice(&mem.oam.mem[mem.oam.mem.len() / 2..]);
-        }
+    pub fn read_palettes_oam(&mut self, palettes: &[u8; STANDARD_PALETTES_SIZE as usize], oam: &[u8; OAM_SIZE as usize]) {
+        self.pal_a[1].copy_from_slice(&palettes[..palettes.len() / 2]);
+        self.pal_b[1].copy_from_slice(&palettes[palettes.len() / 2..]);
+
+        self.oam_a[1].copy_from_slice(&oam[..oam.len() / 2]);
+        self.oam_b[1].copy_from_slice(&oam[oam.len() / 2..]);
     }
 
     pub fn rebuild_vram_maps(&mut self) {

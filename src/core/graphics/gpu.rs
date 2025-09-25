@@ -210,7 +210,10 @@ impl Emu {
                 self.gpu.gpu_3d_regs.current_pow_cnt1 = self.gpu.pow_cnt1;
 
                 let pow_cnt1 = PowCnt1::from(self.gpu.pow_cnt1);
-                self.gpu.renderer.on_scanline_finish(&mut self.mem, pow_cnt1, &mut self.gpu.gpu_3d_regs, &mut self.breakout_imm);
+                let palettes = self.mem_get_palettes();
+                let oam = self.mem_get_oam();
+
+                self.gpu.renderer.on_scanline_finish(palettes, oam, pow_cnt1, &mut self.gpu.gpu_3d_regs, &mut self.breakout_imm);
 
                 if self.gpu.gpu_3d_regs.flushed {
                     self.gpu.gpu_3d_regs.swap_buffers();

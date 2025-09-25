@@ -7,7 +7,6 @@ mod io_arm9_lut;
 pub mod mem;
 pub mod mmu;
 pub mod oam;
-pub mod palettes;
 pub mod regions;
 pub mod vram;
 mod wifi;
