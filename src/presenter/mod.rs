@@ -19,6 +19,7 @@ pub const PRESENTER_SCREEN_HEIGHT: u32 = 544;
 
 pub enum PresentEvent {
     Inputs { keymap: u32, touch: Option<(i16, i16)> },
+    CycleScreenLayout { offset: i8, swap: bool },
     Pause,
     Quit,
 }

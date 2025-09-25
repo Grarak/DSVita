@@ -80,6 +80,10 @@ impl ScreenLayout {
         }
     }
 
+    pub fn apply_settings_event(&self, offset: i8, swap: bool) -> ScreenLayout {
+        ScreenLayout::new((self.index as isize + offset as isize) as usize % SCREEN_LAYOUTS.len(), self.swap ^ swap)
+    }
+
     pub fn get_bottom_inverse_mtx(&self) -> &[f32; 9] {
         &SCREEN_LAYOUTS[self.index][if self.swap { 2 } else { 3 }]
     }

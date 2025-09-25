@@ -158,8 +158,8 @@ impl Setting {
 lazy_static! {
     pub static ref DEFAULT_SETTINGS: Settings = Settings(
         [
-            Setting::new("Screen Layout", "", ScreenLayout::settings_value(), true),
-            Setting::new("Swap screens", "", SettingValue::Bool(false), true),
+            Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", ScreenLayout::settings_value(), true),
+            Setting::new("Swap screens", "Press PS + X to swap screens in game.", SettingValue::Bool(false), true),
             Setting::new("Language", "Some ROMs only come with one language. Make sure yours is multilingual.", Language::iter().into(), false),
             Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true), true),
             Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true), true),

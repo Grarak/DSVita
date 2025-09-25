@@ -505,6 +505,10 @@ pub fn actual_main() {
                     key_map.store(keymap, Ordering::Relaxed);
                     false
                 }
+                PresentEvent::CycleScreenLayout { offset, swap } => {
+                    screen_layout = screen_layout.apply_settings_event(offset, swap);
+                    false
+                }
                 PresentEvent::Pause => true,
                 PresentEvent::Quit => {
                     running = false;

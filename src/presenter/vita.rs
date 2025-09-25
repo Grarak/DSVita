@@ -88,7 +88,8 @@ pub struct Presenter {
     presenter_audio: PresenterAudio,
     touch_points: Option<(i16, i16)>,
     keymap: u32,
-    was_psn_btn_pressed: bool,
+    pressed_btn: u32,
+    show_pause: bool,
 }
 
 impl Presenter {
@@ -119,7 +120,8 @@ impl Presenter {
                 presenter_audio: PresenterAudio::new(),
                 touch_points: None,
                 keymap: 0xFFFFFFFF,
-                was_psn_btn_pressed: false,
+                pressed_btn: 0,
+                show_pause: true,
             };
 
             init_ui(&mut instance);
@@ -133,11 +135,28 @@ impl Presenter {
             let mut pressed = pressed.assume_init();
             sceCtrlPeekBufferPositive(0, &mut pressed, 1);
 
+            let previous_pressed_btn = self.pressed_btn;
+            self.pressed_btn = pressed.buttons;
+
             if pressed.buttons & SCE_CTRL_PSBUTTON != 0 {
-                self.was_psn_btn_pressed = true;
-            } else if self.was_psn_btn_pressed {
-                self.was_psn_btn_pressed = false;
-                return PresentEvent::Pause;
+                const SHORTCUT_EVENTS: [(PresentEvent, SceCtrlButtons); 3] = [
+                    (PresentEvent::CycleScreenLayout { offset: -1, swap: false }, SCE_CTRL_LTRIGGER),
+                    (PresentEvent::CycleScreenLayout { offset: 1, swap: false }, SCE_CTRL_RTRIGGER),
+                    (PresentEvent::CycleScreenLayout { offset: 0, swap: true }, SCE_CTRL_CROSS),
+                ];
+
+                for (event, button) in SHORTCUT_EVENTS {
+                    if previous_pressed_btn & button != 0 && pressed.buttons & button == 0 {
+                        self.show_pause = false;
+                        return event;
+                    }
+                }
+            } else if previous_pressed_btn & SCE_CTRL_PSBUTTON != 0 {
+                if self.show_pause {
+                    return PresentEvent::Pause;
+                } else {
+                    self.show_pause = true;
+                }
             }
 
             for (host_key, guest_key) in KEY_CODE_MAPPING {
@@ -197,16 +216,17 @@ impl Presenter {
         }
     }
 
-    pub fn on_game_launched(&self) {
-        unsafe { sceShellUtilLock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2) };
+    pub fn on_game_launched(&mut self) {
+        self.show_pause = true;
+        unsafe { sceShellUtilLock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_QUICK_MENU | SCE_SHELL_UTIL_LOCK_TYPE_USB_CONNECTION | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2) };
     }
 
     pub fn present_pause(&mut self, gpu_renderer: &GpuRenderer, settings: &mut Settings) -> UiPauseMenuReturn {
-        unsafe { sceShellUtilUnlock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2) };
+        unsafe { sceShellUtilUnlock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_QUICK_MENU | SCE_SHELL_UTIL_LOCK_TYPE_USB_CONNECTION | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2) };
         let ret = show_pause_menu(self, gpu_renderer, settings);
         match ret {
             UiPauseMenuReturn::Resume => unsafe {
-                sceShellUtilLock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2);
+                sceShellUtilLock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_QUICK_MENU | SCE_SHELL_UTIL_LOCK_TYPE_USB_CONNECTION | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2);
             },
             _ => {}
         }
