@@ -129,7 +129,9 @@ impl Presenter {
         }
     }
 
-    pub fn poll_event(&mut self) -> PresentEvent {
+    pub fn poll_event(&mut self, settings: &Settings) -> PresentEvent {
+        let mut stick_keymap = 0xFFFFFFFF;
+
         unsafe {
             let pressed = MaybeUninit::<SceCtrlData>::uninit();
             let mut pressed = pressed.assume_init();
@@ -177,6 +179,21 @@ impl Presenter {
                 }
             }
 
+            if settings.joystick_as_dpad() {
+                let stick_x = (pressed.lx as f32 - 127.0) / 127.0;
+                let stick_y = (pressed.ly as f32 - 127.0) / 127.0;
+                let length_threshold = 0.8;
+                if stick_x * stick_x + stick_y * stick_y > length_threshold * length_threshold {
+                    const STICK_MAPPING: [((f32, f32), Keycode); 4] = [((-1.0, 0.0), Keycode::Left), ((0.0, -1.0), Keycode::Up), ((1.0, 0.0), Keycode::Right), ((0.0, 1.0), Keycode::Down)];
+                    for ((x, y), guest_key) in STICK_MAPPING {
+                        let dot = stick_x * x + stick_y * y;
+                        if dot > 0.5 {
+                            stick_keymap &= !(1 << guest_key as u8);
+                        }
+                    }
+                }
+            }
+
             let touch_report = MaybeUninit::<SceTouchData>::uninit();
             let mut touch_report = touch_report.assume_init();
             sceTouchPeek(SCE_TOUCH_PORT_FRONT, &mut touch_report, 1);
@@ -191,7 +208,7 @@ impl Presenter {
             }
         }
         PresentEvent::Inputs {
-            keymap: self.keymap,
+            keymap: self.keymap & stick_keymap,
             touch: self.touch_points,
         }
     }

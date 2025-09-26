@@ -493,7 +493,7 @@ pub fn actual_main() {
         let mut screen_layout = emu_unsafe.get_mut().settings.screen_layout();
         let arm7_emu = emu_unsafe.get_mut().settings.arm7_emu();
         loop {
-            let pause = match presenter.poll_event() {
+            let pause = match presenter.poll_event(&emu_unsafe.get_mut().settings) {
                 PresentEvent::Inputs { mut keymap, touch } => {
                     if let Some((x, y)) = touch {
                         let (x_norm, y_norm) = screen_layout.normalize_touch_points(x, y);

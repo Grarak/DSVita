@@ -173,7 +173,7 @@ impl Presenter {
         show_pause_menu(self, gpu_renderer, settings)
     }
 
-    pub fn poll_event(&mut self) -> PresentEvent {
+    pub fn poll_event(&mut self, _: &Settings) -> PresentEvent {
         for event in self.event_pump.poll_iter() {
             match event {
                 Event::KeyDown {

@@ -161,6 +161,7 @@ lazy_static! {
             Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", ScreenLayout::settings_value(), true),
             Setting::new("Swap screens", "Press PS + X to swap screens in game.", SettingValue::Bool(false), true),
             Setting::new("Language", "Some ROMs only come with one language. Make sure yours is multilingual.", Language::iter().into(), false),
+            Setting::new("Joystick as D-Pad", "", SettingValue::Bool(true), true),
             Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true), true),
             Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true), true),
             Setting::new(
@@ -180,15 +181,16 @@ lazy_static! {
 }
 
 #[derive(Clone)]
-pub struct Settings([Setting; 7]);
+pub struct Settings([Setting; 8]);
 
 const SCREEN_LAYOUT_SETTING: usize = 0;
 const SWAP_SCREEN_SETTING: usize = 1;
 const LANGUAGE_SETTING: usize = 2;
-const FRAMELIMIT_SETTING: usize = 3;
-const AUDIO_SETTING: usize = 4;
-const ARM7_EMU_SETTING: usize = 5;
-const ARM7_BLOCK_VALIDATION_SETTING: usize = 6;
+const JOYSTICK_AS_DPAD_SETTING: usize = 3;
+const FRAMELIMIT_SETTING: usize = 4;
+const AUDIO_SETTING: usize = 5;
+const ARM7_EMU_SETTING: usize = 6;
+const ARM7_BLOCK_VALIDATION_SETTING: usize = 7;
 
 impl Settings {
     pub fn screen_layout(&self) -> ScreenLayout {
@@ -198,6 +200,10 @@ impl Settings {
                 self.0[SWAP_SCREEN_SETTING].value.as_bool().unwrap_unchecked(),
             )
         }
+    }
+
+    pub fn joystick_as_dpad(&self) -> bool {
+        unsafe { self.0[JOYSTICK_AS_DPAD_SETTING].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn framelimit(&self) -> bool {
@@ -241,7 +247,7 @@ impl Settings {
         *self.0[ARM7_BLOCK_VALIDATION_SETTING].value.as_bool_mut().unwrap() = value;
     }
 
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 7] {
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 8] {
         &mut self.0
     }
 }
