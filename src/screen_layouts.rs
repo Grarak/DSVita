@@ -14,7 +14,7 @@ pub struct ScreenLayout {
 
 impl ScreenLayout {
     pub fn settings_value() -> SettingValue {
-        SettingValue::List(0, (0..SCREEN_LAYOUTS.len()).map(|i| i.to_string()).collect())
+        SettingValue::List(0, SCREEN_LAYOUTS.iter().map(|(name, _)| name.to_string()).collect())
     }
 
     pub fn new(index: usize, swap: bool) -> Self {
@@ -24,8 +24,8 @@ impl ScreenLayout {
             [DISPLAY_WIDTH as f32 / 2.0, DISPLAY_HEIGHT as f32 / 2.0, 1.0],
             [-(DISPLAY_WIDTH as f32 / 2.0), DISPLAY_HEIGHT as f32 / 2.0, 1.0],
         ];
-        let a_mtx = &SCREEN_LAYOUTS[index][0];
-        let b_mtx = &SCREEN_LAYOUTS[index][1];
+        let a_mtx = &SCREEN_LAYOUTS[index].1[0];
+        let b_mtx = &SCREEN_LAYOUTS[index].1[1];
         let mut screen_top = [[0.0; 3]; 4];
         let mut screen_bottom = [[0.0; 3]; 4];
         let overlap = unsafe {
@@ -103,7 +103,7 @@ impl ScreenLayout {
     }
 
     pub fn get_bottom_inverse_mtx(&self) -> &[f32; 9] {
-        &SCREEN_LAYOUTS[self.index][if self.swap { 2 } else { 3 }]
+        &SCREEN_LAYOUTS[self.index].1[if self.swap { 2 } else { 3 }]
     }
 
     pub fn normalize_touch_points(&self, x: i16, y: i16) -> (i16, i16) {

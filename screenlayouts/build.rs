@@ -11,7 +11,7 @@ pub const HOST_SCREEN_HEIGHT: usize = 544;
 pub const GUEST_SCREEN_WIDTH: usize = 256;
 pub const GUEST_SCREEN_HEIGHT: usize = 192;
 
-pub fn get_screen_layouts() -> Vec<[[f32; 9]; 4]> {
+pub fn get_screen_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
     let mut layouts = Vec::new();
 
     {
@@ -24,7 +24,7 @@ pub fn get_screen_layouts() -> Vec<[[f32; 9]; 4]> {
             * Matrix3::new_scaling(width_scale);
         let b_trans = Matrix3::new_translation(&Vector2::new(guest_width, 0.0));
 
-        layouts.push([mtx, b_trans * mtx]);
+        layouts.push(("Side by side", [mtx, b_trans * mtx]));
     }
 
     {
@@ -37,7 +37,16 @@ pub fn get_screen_layouts() -> Vec<[[f32; 9]; 4]> {
             * Matrix3::new_scaling(full_height_scale);
         let b_trans = Matrix3::new_translation(&Vector2::new(guest_height, 0.0));
 
-        layouts.push([mtx, b_trans * mtx]);
+        layouts.push(("Rotate", [mtx, b_trans * mtx]));
+    }
+
+    {
+        let full_height_scale = HOST_SCREEN_HEIGHT as f32 / GUEST_SCREEN_HEIGHT as f32;
+        let guest_top_width = GUEST_SCREEN_WIDTH as f32 * full_height_scale;
+        let width_remaining_space = HOST_SCREEN_WIDTH as f32 - guest_top_width;
+        let top_mtx = Matrix3::new_translation(&Vector2::new(guest_top_width / 2.0 + width_remaining_space / 2.0, HOST_SCREEN_HEIGHT as f32 / 2.0)) * Matrix3::new_scaling(full_height_scale);
+
+        layouts.push(("Single", [top_mtx, Matrix3::new_translation(&Vector2::new(-(HOST_SCREEN_WIDTH as f32), -(HOST_SCREEN_HEIGHT as f32)))]));
     }
 
     {
@@ -51,16 +60,7 @@ pub fn get_screen_layouts() -> Vec<[[f32; 9]; 4]> {
         let bottom_mtx =
             Matrix3::new_translation(&Vector2::new(width_remaining_space / 2.0 + guest_top_width, guest_bottom_height / 2.0 + height_remaining_space / 2.0)) * Matrix3::new_scaling(guest_bottom_scale);
 
-        layouts.push([top_mtx, bottom_mtx]);
-    }
-
-    {
-        let full_height_scale = HOST_SCREEN_HEIGHT as f32 / GUEST_SCREEN_HEIGHT as f32;
-        let guest_top_width = GUEST_SCREEN_WIDTH as f32 * full_height_scale;
-        let width_remaining_space = HOST_SCREEN_WIDTH as f32 - guest_top_width;
-        let top_mtx = Matrix3::new_translation(&Vector2::new(guest_top_width / 2.0 + width_remaining_space / 2.0, HOST_SCREEN_HEIGHT as f32 / 2.0)) * Matrix3::new_scaling(full_height_scale);
-
-        layouts.push([top_mtx, Matrix3::new_translation(&Vector2::new(-(HOST_SCREEN_WIDTH as f32), -(HOST_SCREEN_HEIGHT as f32)))]);
+        layouts.push(("Focus", [top_mtx, bottom_mtx]));
     }
 
     {
@@ -71,14 +71,17 @@ pub fn get_screen_layouts() -> Vec<[[f32; 9]; 4]> {
         let bottom_mtx = Matrix3::new_translation(&Vector2::new((HOST_SCREEN_WIDTH - GUEST_SCREEN_WIDTH) as f32, (HOST_SCREEN_HEIGHT - GUEST_SCREEN_HEIGHT) as f32))
             * Matrix3::new_translation(&Vector2::new(GUEST_SCREEN_WIDTH as f32 / 2.0, GUEST_SCREEN_HEIGHT as f32 / 2.0));
 
-        layouts.push([top_mtx, bottom_mtx]);
+        layouts.push(("Focus Overlap", [top_mtx, bottom_mtx]));
     }
 
     layouts
         .iter()
-        .map(|mtxs| {
+        .map(|(name, mtxs)| {
             let flatten = |mtx: &Matrix3<f32>| [mtx[0], mtx[1], mtx[2], mtx[3], mtx[4], mtx[5], mtx[6], mtx[7], mtx[8]];
-            [flatten(&mtxs[0]), flatten(&mtxs[1]), flatten(&mtxs[0].try_inverse().unwrap()), flatten(&mtxs[1].try_inverse().unwrap())]
+            (
+                *name,
+                [flatten(&mtxs[0]), flatten(&mtxs[1]), flatten(&mtxs[0].try_inverse().unwrap()), flatten(&mtxs[1].try_inverse().unwrap())],
+            )
         })
         .collect()
 }
@@ -87,14 +90,17 @@ pub fn main() {
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     let screen_layouts_file = out_path.join("screen_layouts.rs");
     let layouts = get_screen_layouts();
-    let mut code = format!("pub const SCREEN_LAYOUTS: [[[f32; 9]; 4]; {}] = [\n", layouts.len());
-    for layout in layouts {
-        code += "\t[\n";
-        code += &format!("\t\t{:?},\n", layout[0]);
-        code += &format!("\t\t{:?},\n", layout[1]);
-        code += &format!("\t\t{:?},\n", layout[2]);
-        code += &format!("\t\t{:?},\n", layout[3]);
-        code += "\t],\n";
+    let mut code = format!("pub const SCREEN_LAYOUTS: [(&'static str, [[f32; 9]; 4]); {}] = [\n", layouts.len());
+    for (name, mtxs) in layouts {
+        code += "\t(\n";
+        code += &format!("\t\t\"{name}\",\n");
+        code += "\t\t[\n";
+        code += &format!("\t\t\t{:?},\n", mtxs[0]);
+        code += &format!("\t\t\t{:?},\n", mtxs[1]);
+        code += &format!("\t\t\t{:?},\n", mtxs[2]);
+        code += &format!("\t\t\t{:?},\n", mtxs[3]);
+        code += "\t\t],\n";
+        code += "\t),\n";
     }
     code += "];\n";
     File::create(screen_layouts_file).unwrap().write_all(code.as_bytes()).unwrap();
