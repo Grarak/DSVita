@@ -159,7 +159,9 @@ lazy_static! {
     pub static ref DEFAULT_SETTINGS: Settings = Settings(
         [
             Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", ScreenLayout::settings_value(), true),
-            Setting::new("Swap screens", "Press PS + X to swap screens in game.", SettingValue::Bool(false), true),
+            Setting::new("Swap screens", "Press PS + Cross to swap screens in game.", SettingValue::Bool(false), true),
+            Setting::new("Top screen scale", "Press PS + Square to cycle screen sizes.", ScreenLayout::scale_settings_value(), true),
+            Setting::new("Bottom screen scale", "Press PS + Circle to cycle screen sizes", ScreenLayout::scale_settings_value(), true),
             Setting::new("Language", "Some ROMs only come with one language. Make sure yours is multilingual.", Language::iter().into(), false),
             Setting::new("Joystick as D-Pad", "", SettingValue::Bool(true), true),
             Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true), true),
@@ -181,16 +183,18 @@ lazy_static! {
 }
 
 #[derive(Clone)]
-pub struct Settings([Setting; 8]);
+pub struct Settings([Setting; 10]);
 
 const SCREEN_LAYOUT_SETTING: usize = 0;
 const SWAP_SCREEN_SETTING: usize = 1;
-const LANGUAGE_SETTING: usize = 2;
-const JOYSTICK_AS_DPAD_SETTING: usize = 3;
-const FRAMELIMIT_SETTING: usize = 4;
-const AUDIO_SETTING: usize = 5;
-const ARM7_EMU_SETTING: usize = 6;
-const ARM7_BLOCK_VALIDATION_SETTING: usize = 7;
+const TOP_SCREEN_SCALE_SETTING: usize = 2;
+const BOTTOM_SCREEN_SCALE_SETTING: usize = 3;
+const LANGUAGE_SETTING: usize = 4;
+const JOYSTICK_AS_DPAD_SETTING: usize = 5;
+const FRAMELIMIT_SETTING: usize = 6;
+const AUDIO_SETTING: usize = 7;
+const ARM7_EMU_SETTING: usize = 8;
+const ARM7_BLOCK_VALIDATION_SETTING: usize = 9;
 
 impl Settings {
     pub fn screen_layout(&self) -> ScreenLayout {
@@ -198,6 +202,8 @@ impl Settings {
             ScreenLayout::new(
                 self.0[SCREEN_LAYOUT_SETTING].value.as_list().unwrap_unchecked().0,
                 self.0[SWAP_SCREEN_SETTING].value.as_bool().unwrap_unchecked(),
+                self.0[TOP_SCREEN_SCALE_SETTING].value.as_list().unwrap_unchecked().0,
+                self.0[BOTTOM_SCREEN_SCALE_SETTING].value.as_list().unwrap_unchecked().0,
             )
         }
     }
@@ -247,7 +253,7 @@ impl Settings {
         *self.0[ARM7_BLOCK_VALIDATION_SETTING].value.as_bool_mut().unwrap() = value;
     }
 
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 8] {
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 10] {
         &mut self.0
     }
 }

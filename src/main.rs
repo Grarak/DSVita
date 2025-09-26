@@ -505,8 +505,13 @@ pub fn actual_main() {
                     key_map.store(keymap, Ordering::Relaxed);
                     false
                 }
-                PresentEvent::CycleScreenLayout { offset, swap } => {
-                    screen_layout = screen_layout.apply_settings_event(offset, swap);
+                PresentEvent::CycleScreenLayout {
+                    offset,
+                    swap,
+                    top_screen_scale_offset,
+                    bottom_screen_scale_offset,
+                } => {
+                    screen_layout = screen_layout.apply_settings_event(offset, swap, top_screen_scale_offset, bottom_screen_scale_offset);
                     false
                 }
                 PresentEvent::Pause => true,

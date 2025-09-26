@@ -141,10 +141,52 @@ impl Presenter {
             self.pressed_btn = pressed.buttons;
 
             if pressed.buttons & SCE_CTRL_PSBUTTON != 0 {
-                const SHORTCUT_EVENTS: [(PresentEvent, SceCtrlButtons); 3] = [
-                    (PresentEvent::CycleScreenLayout { offset: -1, swap: false }, SCE_CTRL_LTRIGGER),
-                    (PresentEvent::CycleScreenLayout { offset: 1, swap: false }, SCE_CTRL_RTRIGGER),
-                    (PresentEvent::CycleScreenLayout { offset: 0, swap: true }, SCE_CTRL_CROSS),
+                const SHORTCUT_EVENTS: [(PresentEvent, SceCtrlButtons); 5] = [
+                    (
+                        PresentEvent::CycleScreenLayout {
+                            offset: -1,
+                            swap: false,
+                            top_screen_scale_offset: 0,
+                            bottom_screen_scale_offset: 0,
+                        },
+                        SCE_CTRL_LTRIGGER,
+                    ),
+                    (
+                        PresentEvent::CycleScreenLayout {
+                            offset: 1,
+                            swap: false,
+                            top_screen_scale_offset: 0,
+                            bottom_screen_scale_offset: 0,
+                        },
+                        SCE_CTRL_RTRIGGER,
+                    ),
+                    (
+                        PresentEvent::CycleScreenLayout {
+                            offset: 0,
+                            swap: true,
+                            top_screen_scale_offset: 0,
+                            bottom_screen_scale_offset: 0,
+                        },
+                        SCE_CTRL_CROSS,
+                    ),
+                    (
+                        PresentEvent::CycleScreenLayout {
+                            offset: 0,
+                            swap: false,
+                            top_screen_scale_offset: 0,
+                            bottom_screen_scale_offset: 1,
+                        },
+                        SCE_CTRL_CIRCLE,
+                    ),
+                    (
+                        PresentEvent::CycleScreenLayout {
+                            offset: 0,
+                            swap: false,
+                            top_screen_scale_offset: 1,
+                            bottom_screen_scale_offset: 0,
+                        },
+                        SCE_CTRL_SQUARE,
+                    ),
                 ];
 
                 for (event, button) in SHORTCUT_EVENTS {
