@@ -13,7 +13,7 @@ use crate::core::memory::vram::Vram;
 use crate::presenter::{Presenter, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::screen_layouts::ScreenLayout;
 use crate::settings::Arm7Emu;
-use gl::types::GLuint;
+use gl::types::{GLint, GLuint};
 use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -41,6 +41,7 @@ pub struct GpuRenderer {
 
     common: GpuRendererCommon,
     merge_program: GLuint,
+    merge_alpha_uniform: GLint,
     final_fbo: GpuFbo,
     gl_glyph: GlGlyph,
 
@@ -64,7 +65,7 @@ pub struct GpuRenderer {
 
 impl GpuRenderer {
     pub fn new() -> Self {
-        let merge_program = unsafe {
+        let (merge_program, merge_alpha_uniform) = unsafe {
             let vert_shader = create_shader("merge", shader_source!("merge_vert"), gl::VERTEX_SHADER).unwrap();
             let frag_shader = create_shader("merge", shader_source!("merge_frag"), gl::FRAGMENT_SHADER).unwrap();
             let program = create_program(&[vert_shader, frag_shader]).unwrap();
@@ -73,13 +74,15 @@ impl GpuRenderer {
 
             gl::UseProgram(program);
 
-            gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
+            gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
 
-            gl::Uniform1i(gl::GetUniformLocation(program, "tex\0".as_ptr() as _), 0);
+            gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
+
+            let merge_alpha_uniform = gl::GetUniformLocation(program, c"alpha".as_ptr() as _);
 
             gl::UseProgram(0);
 
-            program
+            (program, merge_alpha_uniform)
         };
 
         GpuRenderer {
@@ -88,6 +91,7 @@ impl GpuRenderer {
 
             common: GpuRendererCommon::new(),
             merge_program,
+            merge_alpha_uniform,
             final_fbo: GpuFbo::new(PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, false).unwrap(),
             gl_glyph: GlGlyph::new(),
 
@@ -182,6 +186,39 @@ impl GpuRenderer {
         }
     }
 
+    unsafe fn merge_screens(&self, screens: [(GLuint, &[f32; 16], f32); 2], top_index: usize) {
+        let bottom_index = (top_index + 1) & 1;
+        let (top_fbo_color, top_vertices_coords, top_alpha) = screens[top_index];
+        let (bottom_fbo_color, bottom_vertices_coords, bottom_alpha) = screens[bottom_index];
+        if top_alpha < bottom_alpha {
+            return self.merge_screens(screens, bottom_index);
+        }
+
+        gl::BindFramebuffer(gl::FRAMEBUFFER, self.final_fbo.fbo);
+        gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
+
+        gl::UseProgram(self.merge_program);
+
+        gl::Enable(gl::BLEND);
+        gl::ActiveTexture(gl::TEXTURE0);
+
+        gl::Uniform1f(self.merge_alpha_uniform, top_alpha);
+        gl::BindTexture(gl::TEXTURE_2D, top_fbo_color);
+        gl::EnableVertexAttribArray(0);
+        gl::VertexAttribPointer(0, 4, gl::FLOAT, gl::FALSE, 0, top_vertices_coords.as_ptr() as _);
+        gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+
+        gl::Uniform1f(self.merge_alpha_uniform, bottom_alpha);
+        gl::BindTexture(gl::TEXTURE_2D, bottom_fbo_color);
+        gl::EnableVertexAttribArray(0);
+        gl::VertexAttribPointer(0, 4, gl::FLOAT, gl::FALSE, 0, bottom_vertices_coords.as_ptr() as _);
+        gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+
+        gl::BindTexture(gl::TEXTURE_2D, 0);
+        gl::Disable(gl::BLEND);
+        gl::UseProgram(0);
+    }
+
     pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, arm7_emu: Arm7Emu, screen_layout: &ScreenLayout, pause: bool) {
         {
             let rendering = self.rendering.lock().unwrap();
@@ -206,41 +243,26 @@ impl GpuRenderer {
             gl::Clear(gl::COLOR_BUFFER_BIT);
 
             if self.common.pow_cnt1[0].enable() {
-                let blend_color = self.renderer_2d.common.blend_fbo.color;
-                let draw_screen = |vertices_with_tex_coords: &[f32; 16]| {
-                    gl::BindFramebuffer(gl::FRAMEBUFFER, self.final_fbo.fbo);
-                    gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
-
-                    gl::UseProgram(self.merge_program);
-
-                    gl::ActiveTexture(gl::TEXTURE0);
-                    gl::BindTexture(gl::TEXTURE_2D, blend_color);
-
-                    gl::EnableVertexAttribArray(0);
-                    gl::VertexAttribPointer(0, 4, gl::FLOAT, gl::FALSE, 0, vertices_with_tex_coords.as_ptr() as _);
-                    gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
-
-                    gl::BindTexture(gl::TEXTURE_2D, 0);
-                    gl::UseProgram(0);
-                };
-
                 if self.rendering_3d {
                     self.rendering_3d = false;
                     self.renderer_3d.render(&self.common);
                 }
 
-                self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color);
-                draw_screen(if self.common.pow_cnt1[0].display_swap() {
-                    &screen_layout.screen_top
+                let a_fbo_color = self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color);
+                let b_fbo_color = self.renderer_2d.render::<{ B }>(&self.common, 0);
+                let top_screen = if self.common.pow_cnt1[0].display_swap() {
+                    screen_layout.get_screen_top()
                 } else {
-                    &screen_layout.screen_bottom
-                });
-                self.renderer_2d.render::<{ B }>(&self.common, 0);
-                draw_screen(if self.common.pow_cnt1[0].display_swap() {
-                    &screen_layout.screen_bottom
+                    screen_layout.get_screen_bottom()
+                };
+                let top_screen = (a_fbo_color, top_screen.0, top_screen.1);
+                let bottom_screen = if self.common.pow_cnt1[0].display_swap() {
+                    screen_layout.get_screen_bottom()
                 } else {
-                    &screen_layout.screen_top
-                });
+                    screen_layout.get_screen_top()
+                };
+                let bottom_screen = (b_fbo_color, bottom_screen.0, bottom_screen.1);
+                self.merge_screens([top_screen, bottom_screen], 0);
             }
 
             gl::BindFramebuffer(gl::FRAMEBUFFER, self.final_fbo.fbo);

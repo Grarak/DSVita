@@ -89,7 +89,7 @@ pub struct Presenter {
     touch_points: Option<(i16, i16)>,
     keymap: u32,
     pressed_btn: u32,
-    show_pause: bool,
+    do_nothing_until_all_btns_released: bool,
 }
 
 impl Presenter {
@@ -121,7 +121,7 @@ impl Presenter {
                 touch_points: None,
                 keymap: 0xFFFFFFFF,
                 pressed_btn: 0,
-                show_pause: true,
+                do_nothing_until_all_btns_released: false,
             };
 
             init_ui(&mut instance);
@@ -135,7 +135,7 @@ impl Presenter {
             let mut pressed = pressed.assume_init();
             sceCtrlPeekBufferPositive(0, &mut pressed, 1);
 
-            let previous_pressed_btn = self.pressed_btn;
+            let mut previous_pressed_btn = self.pressed_btn;
             self.pressed_btn = pressed.buttons;
 
             if pressed.buttons & SCE_CTRL_PSBUTTON != 0 {
@@ -146,17 +146,27 @@ impl Presenter {
                 ];
 
                 for (event, button) in SHORTCUT_EVENTS {
+                    if pressed.buttons & button != 0 {
+                        self.do_nothing_until_all_btns_released = true;
+                    }
                     if previous_pressed_btn & button != 0 && pressed.buttons & button == 0 {
-                        self.show_pause = false;
+                        self.do_nothing_until_all_btns_released = true;
                         return event;
                     }
                 }
-            } else if previous_pressed_btn & SCE_CTRL_PSBUTTON != 0 {
-                if self.show_pause {
-                    return PresentEvent::Pause;
+            }
+
+            if self.do_nothing_until_all_btns_released {
+                if pressed.buttons == 0 {
+                    previous_pressed_btn = 0;
+                    self.do_nothing_until_all_btns_released = false;
                 } else {
-                    self.show_pause = true;
+                    return PresentEvent::Inputs { keymap: 0xFFFFFFFF, touch: None };
                 }
+            }
+
+            if previous_pressed_btn & SCE_CTRL_PSBUTTON != 0 && pressed.buttons & SCE_CTRL_PSBUTTON == 0 {
+                return PresentEvent::Pause;
             }
 
             for (host_key, guest_key) in KEY_CODE_MAPPING {
@@ -178,7 +188,6 @@ impl Presenter {
                 self.touch_points = Some((x as i16, y as i16));
             } else {
                 self.touch_points = None;
-                self.keymap |= 1 << 16;
             }
         }
         PresentEvent::Inputs {
@@ -217,7 +226,6 @@ impl Presenter {
     }
 
     pub fn on_game_launched(&mut self) {
-        self.show_pause = true;
         unsafe { sceShellUtilLock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_QUICK_MENU | SCE_SHELL_UTIL_LOCK_TYPE_USB_CONNECTION | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2) };
     }
 

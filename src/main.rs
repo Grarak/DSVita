@@ -523,6 +523,7 @@ pub fn actual_main() {
                 gpu_renderer.unpause(cpu_thread.thread());
                 break;
             } else if unlikely(pause) {
+                emu_unsafe.get_mut().settings.set_screen_layout(&screen_layout);
                 match presenter.present_pause(gpu_renderer, &mut emu_unsafe.get_mut().settings) {
                     UiPauseMenuReturn::Resume => {
                         screen_layout = emu_unsafe.get_mut().settings.screen_layout();

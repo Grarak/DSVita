@@ -272,7 +272,6 @@ pub struct Gpu2DCommon {
     bg_fbos: [GpuFbo; 4],
     blend_program: GLuint,
     blend_ubo: GLuint,
-    pub blend_fbo: GpuFbo,
 }
 
 impl Gpu2DCommon {
@@ -307,7 +306,7 @@ impl Gpu2DCommon {
                 (program, disp_cnt_loc, ubo, fbo)
             };
 
-            let (blend_program, blend_ubo, blend_fbo) = {
+            let (blend_program, blend_ubo) = {
                 let vert_shader = create_shader("blend", shader_source!("blend_vert"), gl::VERTEX_SHADER).unwrap();
                 let frag_shader = create_shader("blend", shader_source!("blend_frag"), gl::FRAGMENT_SHADER).unwrap();
                 let program = create_program(&[vert_shader, frag_shader]).unwrap();
@@ -336,9 +335,7 @@ impl Gpu2DCommon {
 
                 gl::UseProgram(0);
 
-                let fbo = GpuFbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32, false).unwrap();
-
-                (program, ubo, fbo)
+                (program, ubo)
             };
 
             Gpu2DCommon {
@@ -355,7 +352,6 @@ impl Gpu2DCommon {
                 ],
                 blend_program,
                 blend_ubo,
-                blend_fbo,
             }
         }
     }
@@ -441,7 +437,7 @@ struct Gpu2DProgram {
     bg_text_8bpp_program: Gpu2DBgProgram,
     bg_ubo: GLuint,
 
-    rotate_vao: GLuint,
+    pub blend_fbo: GpuFbo,
 }
 
 impl Gpu2DProgram {
@@ -585,30 +581,7 @@ impl Gpu2DProgram {
                 )
             };
 
-            let rotate_vao = {
-                const VERTICES: [f32; 2 * 2 * 4] = [-1f32, -1f32, 0f32, 1f32, 1f32, -1f32, 0f32, 0f32, 1f32, 1f32, 1f32, 0f32, -1f32, 1f32, 1f32, 1f32];
-
-                let mut vao = 0;
-                let mut vbo = 0;
-                gl::GenVertexArrays(1, &mut vao);
-                gl::GenBuffers(1, &mut vbo);
-
-                gl::BindVertexArray(vao);
-
-                gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-                gl::BufferData(gl::ARRAY_BUFFER, (size_of::<f32>() * VERTICES.len()) as _, VERTICES.as_ptr() as _, gl::STATIC_DRAW);
-
-                gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, (4 * size_of::<f32>()) as _, ptr::null());
-                gl::EnableVertexAttribArray(0);
-
-                gl::VertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE, (4 * size_of::<f32>()) as _, (2 * size_of::<f32>()) as _);
-                gl::EnableVertexAttribArray(1);
-
-                gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-                gl::BindVertexArray(0);
-
-                vao
-            };
+            let blend_fbo = GpuFbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32, false).unwrap();
 
             Gpu2DProgram {
                 obj_program,
@@ -623,7 +596,7 @@ impl Gpu2DProgram {
                 bg_text_4bpp_program,
                 bg_text_8bpp_program,
                 bg_ubo,
-                rotate_vao,
+                blend_fbo,
             }
         }
     }
@@ -794,7 +767,7 @@ impl Gpu2DProgram {
     }
 
     unsafe fn blend_fbos(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, mem: &Gpu2DMem) {
-        gl::BindFramebuffer(gl::FRAMEBUFFER, common.blend_fbo.fbo);
+        gl::BindFramebuffer(gl::FRAMEBUFFER, self.blend_fbo.fbo);
         gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
         let pal_slice = slice::from_raw_parts(mem.pal_ptr, regions::STANDARD_PALETTES_SIZE as usize / 2);
@@ -834,7 +807,16 @@ impl Gpu2DProgram {
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
     }
 
-    unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, fb_tex_3d: GLuint, lcdc_pal: GLuint, vram_display_program: &Gpu2DVramDisplayProgram) {
+    unsafe fn draw(
+        &mut self,
+        common: &Gpu2DCommon,
+        regs: &Gpu2DRenderRegs,
+        texs: &Gpu2DTextures,
+        mem: Gpu2DMem,
+        fb_tex_3d: GLuint,
+        lcdc_pal: GLuint,
+        vram_display_program: &Gpu2DVramDisplayProgram,
+    ) -> GLuint {
         macro_rules! draw_scanlines {
             ($draw_fn:expr, $draw_vram_display:expr) => {{
                 let mut line = 0;
@@ -973,6 +955,8 @@ impl Gpu2DProgram {
         self.blend_fbos(common, regs, &mem);
 
         gl::UseProgram(0);
+
+        self.blend_fbo.color
     }
 
     fn assemble_oam<const OBJ_WINDOW: bool>(&mut self, mem: &Gpu2DMem, from_line: u8, to_line: u8, disp_cnt: DispCnt) {
@@ -1118,19 +1102,17 @@ impl Gpu2DRenderer {
         self.has_vram_display[1] = false;
     }
 
-    pub unsafe fn render<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon, fb_tex_3d: GLuint) {
+    pub unsafe fn render<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon, fb_tex_3d: GLuint) -> GLuint {
         match ENGINE {
-            A => {
-                self.program_a.draw(
-                    &self.common,
-                    &self.regs_a[0],
-                    &self.tex_a,
-                    Gpu2DMem::new::<{ A }>(&common.mem_buf),
-                    fb_tex_3d,
-                    if self.has_vram_display[0] { self.lcdc_pal } else { 0 },
-                    &self.vram_display_program,
-                );
-            }
+            A => self.program_a.draw(
+                &self.common,
+                &self.regs_a[0],
+                &self.tex_a,
+                Gpu2DMem::new::<{ A }>(&common.mem_buf),
+                fb_tex_3d,
+                if self.has_vram_display[0] { self.lcdc_pal } else { 0 },
+                &self.vram_display_program,
+            ),
             B => self
                 .program_b
                 .draw(&self.common, &self.regs_b[0], &self.tex_b, Gpu2DMem::new::<{ B }>(&common.mem_buf), 0, 0, &self.vram_display_program),

@@ -220,6 +220,11 @@ impl Settings {
         unsafe { Language::from(self.0[LANGUAGE_SETTING].value.as_list().unwrap_unchecked().0 as u8) }
     }
 
+    pub fn set_screen_layout(&mut self, screen_layout: &ScreenLayout) {
+        *self.0[SCREEN_LAYOUT_SETTING].value.as_list_mut().unwrap().0 = screen_layout.index;
+        *self.0[SWAP_SCREEN_SETTING].value.as_bool_mut().unwrap() = screen_layout.swap;
+    }
+
     pub fn set_framelimit(&mut self, value: bool) {
         *self.0[FRAMELIMIT_SETTING].value.as_bool_mut().unwrap() = value;
     }
