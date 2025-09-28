@@ -1,0 +1,48 @@
+// Project tasks configuration. See https://zed.dev/docs/tasks for documentation.
+//
+// Example:
+[
+    {
+        "label": "Linux build debug",
+        "command": "cargo",
+        "args": ["build", "--target", "armv7-unknown-linux-gnueabihf"]
+    },
+    {
+        "label": "Linux build release debug",
+        "command": "cargo",
+        "args": [
+            "build",
+            "--target",
+            "armv7-unknown-linux-gnueabihf",
+            "--profile",
+            "release-debug"
+        ]
+    },
+    {
+        "label": "Linux build release",
+        "command": "cargo",
+        "args": [
+            "build",
+            "--target",
+            "armv7-unknown-linux-gnueabihf",
+            "--release"
+        ]
+    },
+    {
+        "label": "Vita run release",
+        "command": "cargo",
+        "args": [
+            "vita",
+            "build",
+            "eboot",
+            "--update",
+            "--run",
+            "--",
+            "--release"
+        ],
+        "env": {
+            "VITA_IP": "192.168.0.14",
+            "RUSTFLAGS": "-Zlocation-detail=none -Zfmt-debug=none -Clto=fat -Zub-checks=no -Zsaturating-float-casts=no -Ztrap-unreachable=no -Zmir-opt-level=4"
+        }
+    }
+]
