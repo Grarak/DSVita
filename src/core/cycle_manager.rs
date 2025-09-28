@@ -69,7 +69,8 @@ pub enum EventType {
     SoundAlarm6Hle = 18,
     SoundAlarm7Hle = 19,
     WifiScanHle = 20,
-    Overflow = 21,
+    MicSampleHle = 21,
+    Overflow = 22,
 }
 
 impl EventType {
@@ -182,6 +183,7 @@ impl Emu {
             Emu::sound_nitro_on_alarm_event::<6>,
             Emu::sound_nitro_on_alarm_event::<7>,
             Emu::wifi_hle_on_scan_event,
+            Emu::mic_hle_sample_event,
             Emu::cm_on_overflow_event,
         ];
 
@@ -247,6 +249,11 @@ impl Emu {
             self.gpu.gpu_3d_regs.last_total_cycles = 0;
         } else {
             self.gpu.gpu_3d_regs.last_total_cycles -= self.cm.cycle_count;
+        }
+        if self.spi.mic_sample_cycle < self.cm.cycle_count {
+            self.spi.mic_sample_cycle = 0;
+        } else {
+            self.spi.mic_sample_cycle -= self.cm.cycle_count;
         }
         self.cm.cycle_count = 0;
         self.cm.schedule(0x7FFFFFFF, Overflow);

@@ -96,11 +96,11 @@ impl IpcTrait for IpcLle {
         }
     }
 
-    fn fifo_send(&self, cpu: CpuType, mask: u32, value: u32, emu: &mut Emu) {
+    fn fifo_send(&self, cpu: CpuType, mask: u32, mut value: u32, emu: &mut Emu) {
         if emu.ipc.fifo[cpu].cnt.enable() {
             let fifo_len = emu.ipc.fifo[cpu].queue.len();
             if fifo_len < 16 {
-                let message = IpcFifoMessage::from(value & mask);
+                let mut message = IpcFifoMessage::from(value & mask);
                 debug_println!("{cpu:?} ipc send {:x} {:x} {}", u8::from(message.tag()), u32::from(message.data()), message.err());
                 if cpu == ARM9 {
                     match self.0 {
@@ -177,7 +177,9 @@ impl IpcTrait for IpcHle {
             let fifo_len = emu.ipc.fifo[ARM9].queue.len();
             if fifo_len < 16 {
                 let message = IpcFifoMessage::from(value & mask);
-                debug_println!("hle ipc send {:x} {:x} {}", u8::from(message.tag()), u32::from(message.data()), message.err());
+                if u8::from(message.tag()) == IpcFifoTag::Mic as u8 {
+                    debug_println!("hle ipc send {:x} {:x} {}", u8::from(message.tag()), u32::from(message.data()), message.err());
+                }
                 emu.ipc.fifo[ARM9].queue.push_back(value & mask);
 
                 if fifo_len == 0 {

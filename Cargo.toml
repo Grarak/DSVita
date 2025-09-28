@@ -47,6 +47,7 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceAppMgr_stub",
     "SceAppUtil_stub",
     "SceAudio_stub",
+    "SceAudioIn_stub",
     "SceCommonDialog_stub",
     "SceCtrl_stub",
     "SceDisplay_stub",

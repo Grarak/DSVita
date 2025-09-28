@@ -7,7 +7,9 @@ use crate::presenter::imgui::root::{
     ImGui_ImplVitaGL_NewFrame, ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImVec2,
 };
 use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, UiBackend, UiPauseMenuReturn};
-use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::presenter::{
+    PresentEvent, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_IN_SAMPLE_RATE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH,
+};
 use crate::settings::{Settings, SettingsConfig};
 use gl::types::{GLboolean, GLenum, GLuint};
 use std::ffi::{CStr, CString};
@@ -64,28 +66,60 @@ const KEY_CODE_MAPPING: [(SceCtrlButtons, Keycode); 12] = [
 ];
 
 #[derive(Clone)]
-pub struct PresenterAudio {
+pub struct PresenterAudioOut {
     audio_port: c_int,
 }
 
-impl PresenterAudio {
+impl PresenterAudioOut {
     fn new() -> Self {
         unsafe {
-            PresenterAudio {
-                audio_port: sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, PRESENTER_AUDIO_BUF_SIZE as _, PRESENTER_AUDIO_SAMPLE_RATE as _, SCE_AUDIO_OUT_MODE_STEREO),
+            PresenterAudioOut {
+                audio_port: sceAudioOutOpenPort(
+                    SCE_AUDIO_OUT_PORT_TYPE_BGM,
+                    PRESENTER_AUDIO_OUT_BUF_SIZE as _,
+                    PRESENTER_AUDIO_OUT_SAMPLE_RATE as _,
+                    SCE_AUDIO_OUT_MODE_STEREO,
+                ),
             }
         }
     }
 
-    pub fn play(&self, buffer: &[u32; PRESENTER_AUDIO_BUF_SIZE]) {
-        unsafe { sceAudioOutOutput(self.audio_port, buffer.as_slice().as_ptr() as _) };
+    pub fn play(&self, buffer: &[u32; PRESENTER_AUDIO_OUT_BUF_SIZE]) {
+        unsafe { sceAudioOutOutput(self.audio_port, buffer.as_ptr() as _) };
     }
 }
 
-unsafe impl Send for PresenterAudio {}
+unsafe impl Send for PresenterAudioOut {}
+
+#[derive(Clone)]
+pub struct PresenterAudioIn {
+    audio_port: c_int,
+}
+
+impl PresenterAudioIn {
+    fn new() -> Self {
+        unsafe {
+            PresenterAudioIn {
+                audio_port: sceAudioInOpenPort(
+                    SCE_AUDIO_IN_PORT_TYPE_VOICE,
+                    PRESENTER_AUDIO_IN_BUF_SIZE as _,
+                    PRESENTER_AUDIO_IN_SAMPLE_RATE as _,
+                    SCE_AUDIO_IN_PARAM_FORMAT_S16_MONO,
+                ),
+            }
+        }
+    }
+
+    pub fn receive(&self, buffer: &mut [i16; PRESENTER_AUDIO_IN_BUF_SIZE]) {
+        unsafe { sceAudioInInput(self.audio_port, buffer.as_mut_ptr() as _) };
+    }
+}
+
+unsafe impl Send for PresenterAudioIn {}
 
 pub struct Presenter {
-    presenter_audio: PresenterAudio,
+    presenter_audio_out: PresenterAudioOut,
+    presenter_audio_in: PresenterAudioIn,
     touch_points: Option<(i16, i16)>,
     keymap: u32,
     pressed_btn: u32,
@@ -117,7 +151,8 @@ impl Presenter {
             sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_STOP);
 
             let mut instance = Presenter {
-                presenter_audio: PresenterAudio::new(),
+                presenter_audio_out: PresenterAudioOut::new(),
+                presenter_audio_in: PresenterAudioIn::new(),
                 touch_points: None,
                 keymap: 0xFFFFFFFF,
                 pressed_btn: 0,
@@ -300,8 +335,12 @@ impl Presenter {
         ret
     }
 
-    pub fn get_presenter_audio(&self) -> PresenterAudio {
-        self.presenter_audio.clone()
+    pub fn get_presenter_audio_out(&self) -> PresenterAudioOut {
+        self.presenter_audio_out.clone()
+    }
+
+    pub fn get_presenter_audio_in(&self) -> PresenterAudioIn {
+        self.presenter_audio_in.clone()
     }
 
     pub fn gl_swap_window(&self) {

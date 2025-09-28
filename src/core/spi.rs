@@ -1,11 +1,13 @@
+use crate::core::emu::Emu;
 use crate::logging::debug_println;
+use crate::presenter::{PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_IN_SAMPLE_RATE};
 use crate::settings::{Language, Settings};
 use crate::utils;
-use crate::utils::HeapMemU8;
+use crate::utils::{HeapMem, HeapMemU8};
 use bilge::prelude::*;
 use std::mem;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 const FIRMWARE_SIZE: usize = 128 * 1024;
 pub const USER_SETTINGS_1_ADDR: usize = 0x1FF00;
@@ -105,6 +107,8 @@ impl From<u8> for SpiDevice {
     }
 }
 
+pub const MIC_SAMPLE_CYCLES: u32 = 60 * 263 * 355 * 6 / PRESENTER_AUDIO_IN_SAMPLE_RATE as u32;
+
 #[bitsize(16)]
 #[derive(FromBits)]
 struct SpiCnt {
@@ -119,6 +123,29 @@ struct SpiCnt {
     spi_bus_enable: bool,
 }
 
+pub struct MicSampler {
+    data: [HeapMem<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>; 2],
+}
+
+impl MicSampler {
+    pub fn new() -> Self {
+        MicSampler {
+            data: [HeapMem::new(), HeapMem::new()],
+        }
+    }
+
+    pub fn push(&mut self, buf: &mut [i16; PRESENTER_AUDIO_IN_BUF_SIZE]) {
+        mem::swap(buf, &mut self.data[1]);
+    }
+
+    pub fn consume(&mut self, buf: &mut [i16; PRESENTER_AUDIO_IN_BUF_SIZE]) {
+        self.data.swap(0, 1);
+        self.data[1].fill(0);
+        mem::swap(buf, &mut self.data[0]);
+        self.data[0].fill(0);
+    }
+}
+
 pub struct Spi {
     pub cnt: u16,
     pub data: u8,
@@ -127,10 +154,14 @@ pub struct Spi {
     addr: u32,
     touch_points: Arc<AtomicU16>,
     pub firmware: HeapMemU8<FIRMWARE_SIZE>,
+    last_mic_sample: u16,
+    pub mic_sample_cycle: u32,
+    pub mic_samples: HeapMem<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>,
+    pub mic_sampler: Arc<Mutex<MicSampler>>,
 }
 
 impl Spi {
-    pub fn new(touch_points: Arc<AtomicU16>) -> Self {
+    pub fn new(touch_points: Arc<AtomicU16>, mic_sampler: Arc<Mutex<MicSampler>>) -> Self {
         Spi {
             cnt: 0,
             data: 0,
@@ -139,6 +170,10 @@ impl Spi {
             addr: 0,
             touch_points,
             firmware: HeapMemU8::new(),
+            last_mic_sample: 0,
+            mic_sample_cycle: 0,
+            mic_samples: HeapMem::new(),
+            mic_sampler,
         }
     }
 
@@ -149,79 +184,13 @@ impl Spi {
         self.cmd = 0;
         self.addr = 0;
         self.firmware.copy_from_slice(&get_firmware(settings.language()));
+        self.last_mic_sample = 0;
+        self.mic_sample_cycle = 0;
     }
 
     pub fn set_cnt(&mut self, mut mask: u16, value: u16) {
         mask &= 0xCF03;
         self.cnt = (self.cnt & !mask) | (value & mask);
-    }
-
-    pub fn set_data(&mut self, value: u8) {
-        let cnt = SpiCnt::from(self.cnt);
-        if !cnt.spi_bus_enable() {
-            self.data = 0;
-            return;
-        }
-
-        if self.write_count == 0 {
-            self.cmd = value;
-            self.addr = 0;
-            self.data = 0;
-        } else {
-            let device = SpiDevice::from(u8::from(cnt.device_select()));
-            match device {
-                SpiDevice::Firmware => {
-                    if self.cmd == 3 {
-                        if self.write_count < 4 {
-                            self.addr <<= 8;
-                            self.addr |= value as u32;
-                        } else {
-                            self.data = if self.addr < FIRMWARE_SIZE as u32 { self.firmware[self.addr as usize] } else { 0 };
-                            self.addr += u32::from(cnt.transfer_size()) + 1;
-                        }
-                    } else {
-                        debug_println!("Unknown spi {:?} command {:x}", device, self.cmd);
-                        self.data = 0;
-                    }
-                }
-                SpiDevice::Touchscreen => {
-                    self.data = match (self.cmd & 0x70) >> 4 {
-                        1 => {
-                            let y = self.get_touch_coordinates().1;
-                            if self.write_count & 1 != 0 {
-                                (y >> 5) as u8
-                            } else {
-                                (y << 3) as u8
-                            }
-                        }
-                        5 => {
-                            let x = self.get_touch_coordinates().0;
-                            if self.write_count & 1 != 0 {
-                                (x >> 5) as u8
-                            } else {
-                                (x << 3) as u8
-                            }
-                        }
-                        6 => 0,
-                        _ => 0,
-                    }
-                }
-                _ => {
-                    debug_println!("Unknown spi device {:?}", device);
-                    self.data = 0;
-                }
-            }
-        }
-
-        if cnt.chip_select_hold() {
-            self.write_count += 1;
-        } else {
-            self.write_count = 0;
-        }
-
-        if cnt.interrupt_request() {
-            todo!()
-        }
     }
 
     pub fn get_touch_coordinates(&self) -> (u16, u16) {
@@ -244,5 +213,97 @@ impl Spi {
         let touch_y = (y - SCR_Y1 + 1) * (ADC_Y2 - ADC_Y1) / (SCR_Y2 - SCR_Y1) + ADC_Y1;
 
         (touch_x as u16, touch_y as u16)
+    }
+}
+
+impl Emu {
+    pub fn spi_set_data(&mut self, value: u8) {
+        let cnt = SpiCnt::from(self.spi.cnt);
+        if !cnt.spi_bus_enable() {
+            self.spi.data = 0;
+            return;
+        }
+
+        if self.spi.write_count == 0 {
+            self.spi.cmd = value;
+            self.spi.addr = 0;
+            self.spi.data = 0;
+        } else {
+            let device = SpiDevice::from(u8::from(cnt.device_select()));
+            match device {
+                SpiDevice::Firmware => {
+                    if self.spi.cmd == 3 {
+                        if self.spi.write_count < 4 {
+                            self.spi.addr <<= 8;
+                            self.spi.addr |= value as u32;
+                        } else {
+                            self.spi.data = if self.spi.addr < FIRMWARE_SIZE as u32 { self.spi.firmware[self.spi.addr as usize] } else { 0 };
+                            self.spi.addr += u32::from(cnt.transfer_size()) + 1;
+                        }
+                    } else {
+                        debug_println!("Unknown spi {:?} command {:x}", device, self.spi.cmd);
+                        self.spi.data = 0;
+                    }
+                }
+                SpiDevice::Touchscreen => {
+                    self.spi.data = match (self.spi.cmd & 0x70) >> 4 {
+                        1 => {
+                            let y = self.spi.get_touch_coordinates().1;
+                            if self.spi.write_count & 1 != 0 {
+                                (y >> 5) as u8
+                            } else {
+                                (y << 3) as u8
+                            }
+                        }
+                        5 => {
+                            let x = self.spi.get_touch_coordinates().0;
+                            if self.spi.write_count & 1 != 0 {
+                                (x >> 5) as u8
+                            } else {
+                                (x << 3) as u8
+                            }
+                        }
+                        6 => {
+                            if self.spi.write_count & 1 != 0 {
+                                let sample = (self.spi_mic_sample() >> 4) + 0x800;
+                                self.spi.last_mic_sample = sample as u16;
+                                (self.spi.last_mic_sample >> 5) as u8
+                            } else {
+                                (self.spi.last_mic_sample << 3) as u8
+                            }
+                        }
+                        _ => 0,
+                    }
+                }
+                _ => {
+                    debug_println!("Unknown spi device {:?}", device);
+                    self.spi.data = 0;
+                }
+            }
+        }
+
+        if cnt.chip_select_hold() {
+            self.spi.write_count += 1;
+        } else {
+            self.spi.write_count = 0;
+        }
+
+        if cnt.interrupt_request() {
+            todo!()
+        }
+    }
+
+    pub fn spi_mic_sample(&mut self) -> i16 {
+        let cycle_diff = self.cm.get_cycles() - self.spi.mic_sample_cycle;
+        let mut index = (cycle_diff / MIC_SAMPLE_CYCLES) as usize;
+        if index >= self.spi.mic_samples.len() {
+            {
+                let mut mic_sampler = self.spi.mic_sampler.lock().unwrap();
+                mic_sampler.consume(&mut self.spi.mic_samples);
+            }
+            self.spi.mic_sample_cycle = self.cm.get_cycles();
+            index = 0;
+        }
+        self.spi.mic_samples[index]
     }
 }

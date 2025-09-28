@@ -21,6 +21,7 @@ use crate::core::emu::Emu;
 use crate::core::graphics::gpu::{Gpu, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::memory::regions;
+use crate::core::spi::MicSampler;
 use crate::core::spu::{SoundSampler, SAMPLE_BUFFER_SIZE};
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::{spi, CpuType};
@@ -29,9 +30,9 @@ use crate::jit::jit_memory::JitMemory;
 use crate::logging::{debug_println, info_println};
 use crate::mmap::{register_abort_handler, ArmContext, Mmap, PAGE_SIZE};
 use crate::presenter::ui::UiPauseMenuReturn;
-use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_BUF_SIZE};
+use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE};
 use crate::settings::Arm7Emu;
-use crate::utils::{const_str_equal, set_thread_prio_affinity, start_profiling, stop_profiling, HeapMemU32, ThreadAffinity, ThreadPriority};
+use crate::utils::{const_str_equal, set_thread_prio_affinity, start_profiling, stop_profiling, HeapMem, HeapMemU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::intrinsics::unlikely;
@@ -365,12 +366,14 @@ pub fn actual_main() {
     let fps = Arc::new(AtomicU16::new(0));
     let key_map = Arc::new(AtomicU32::new(0xFFFFFFFF));
     let touch_points = Arc::new(AtomicU16::new(0));
+    let mic_sampler = Arc::new(Mutex::new(MicSampler::new()));
     let mut sound_sampler = UnsafeCell::new(SoundSampler::new());
     let mut gpu_renderer = None;
 
     let fps_clone = fps.clone();
     let key_map_clone = key_map.clone();
     let touch_points_clone = touch_points.clone();
+    let mic_sampler_clone = mic_sampler.clone();
     let sound_sampler_ptr = sound_sampler.get() as usize;
 
     let mut arm9_thread_regs = Mmap::rw("arm9_thread_regs", ARM9.guest_regs_addr(), utils::align_up(size_of::<ThreadRegs>(), PAGE_SIZE)).unwrap();
@@ -385,7 +388,14 @@ pub fn actual_main() {
     // Initializing jit mem inside of emu, breaks kubridge for some reason
     // Might be caused by initialize shared mem? Initialize here and pass it to emu
     let jit_mem = JitMemory::new();
-    let mut emu_unsafe = UnsafeCell::new(Emu::new(fps_clone, key_map_clone, touch_points_clone, NonNull::from(sound_sampler.get_mut()), jit_mem));
+    let mut emu_unsafe = UnsafeCell::new(Emu::new(
+        fps_clone,
+        key_map_clone,
+        touch_points_clone,
+        mic_sampler_clone,
+        NonNull::from(sound_sampler.get_mut()),
+        jit_mem,
+    ));
     let emu_ptr = emu_unsafe.get() as usize;
 
     let mut jit_asm_arm9 = Mmap::rw("arm9_jit_asm", ARM9.jit_asm_addr(), utils::align_up(size_of::<JitAsm>(), PAGE_SIZE)).unwrap();
@@ -411,7 +421,8 @@ pub fn actual_main() {
             emu_unsafe.get_mut().gpu.set_gpu_renderer(NonNull::from(gpu_renderer.as_mut().unwrap()));
         }
 
-        let presenter_audio = presenter.get_presenter_audio();
+        let presenter_audio_out = presenter.get_presenter_audio_out();
+        let presenter_audio_in = presenter.get_presenter_audio_in();
 
         let last_save_time = Arc::new(Mutex::new(None));
         let last_save_time_clone = last_save_time.clone();
@@ -453,18 +464,37 @@ pub fn actual_main() {
             .unwrap();
 
         let cpu_active_clone = cpu_active.clone();
-        let audio_thread = thread::Builder::new()
-            .name("audio".to_owned())
+        let audio_out_thread = thread::Builder::new()
+            .name("audio_out".to_owned())
             .spawn(move || {
                 set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
                 let mut guest_buffer = HeapMemU32::<{ SAMPLE_BUFFER_SIZE }>::new();
-                let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_BUF_SIZE }>::new();
+                let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_OUT_BUF_SIZE }>::new();
                 let sound_sampler = unsafe { (sound_sampler_ptr as *mut SoundSampler).as_mut_unchecked() };
                 let cpu_thread = unsafe { (cpu_thread_ptr as *const Thread).as_ref_unchecked() };
                 let cpu_active = cpu_active_clone;
                 while cpu_active.load(Ordering::Relaxed) {
                     sound_sampler.consume(cpu_thread, &mut guest_buffer, &mut audio_buffer);
-                    presenter_audio.play(&audio_buffer);
+                    presenter_audio_out.play(&audio_buffer);
+                }
+            })
+            .unwrap();
+
+        let cpu_active_clone = cpu_active.clone();
+        let mic_sampler = mic_sampler.clone();
+        let audio_in_thread = thread::Builder::new()
+            .name("audio_in".to_owned())
+            .spawn(move || {
+                set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
+                let mut audio_buffer = HeapMem::<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>::new();
+                let cpu_active = cpu_active_clone;
+                while cpu_active.load(Ordering::Relaxed) {
+                    presenter_audio_in.receive(&mut audio_buffer);
+                    {
+                        let mut mic_sampler = mic_sampler.lock().unwrap();
+                        mic_sampler.push(&mut audio_buffer);
+                    }
+                    thread::sleep(Duration::from_millis(10));
                 }
             })
             .unwrap();
@@ -552,7 +582,8 @@ pub fn actual_main() {
         cpu_thread.join().unwrap();
         cpu_active.store(false, Ordering::SeqCst);
         gpu_renderer.quit = false;
-        audio_thread.join().unwrap();
+        audio_out_thread.join().unwrap();
+        audio_in_thread.join().unwrap();
         vram_read_thread.join().unwrap();
         save_thread.join().unwrap();
     }

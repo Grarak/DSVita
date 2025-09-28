@@ -2,7 +2,7 @@ use crate::core::cycle_manager::EventType;
 use crate::core::emu::Emu;
 use crate::core::CpuType::ARM7;
 use crate::logging::debug_println;
-use crate::presenter::{PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE};
+use crate::presenter::{PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE};
 use crate::soundtouch::SoundTouch;
 use crate::utils::HeapMemU32;
 use bilge::prelude::*;
@@ -16,7 +16,7 @@ use std::{mem, slice, thread};
 
 pub const CHANNEL_COUNT: usize = 16;
 const SAMPLE_RATE: usize = 32768;
-pub const SAMPLE_BUFFER_SIZE: usize = SAMPLE_RATE * PRESENTER_AUDIO_BUF_SIZE / PRESENTER_AUDIO_SAMPLE_RATE;
+pub const SAMPLE_BUFFER_SIZE: usize = SAMPLE_RATE * PRESENTER_AUDIO_OUT_BUF_SIZE / PRESENTER_AUDIO_OUT_SAMPLE_RATE;
 
 pub struct SoundSampler {
     queues: [(HeapMemU32<SAMPLE_BUFFER_SIZE>, u16); 2],
@@ -89,7 +89,7 @@ impl SoundSampler {
         self.busy.store(false, Ordering::SeqCst);
     }
 
-    pub fn consume(&mut self, cpu_thread: &Thread, buf: &mut [u32; SAMPLE_BUFFER_SIZE], ret: &mut [u32; PRESENTER_AUDIO_BUF_SIZE]) {
+    pub fn consume(&mut self, cpu_thread: &Thread, buf: &mut [u32; SAMPLE_BUFFER_SIZE], ret: &mut [u32; PRESENTER_AUDIO_OUT_BUF_SIZE]) {
         while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
 
         let ready_queue = self.ready_queue;
@@ -152,8 +152,8 @@ impl SoundSampler {
             buf[num_samples..].fill(self.last_sample);
         }
 
-        for i in 0..PRESENTER_AUDIO_BUF_SIZE {
-            ret[i] = buf[i * SAMPLE_BUFFER_SIZE / PRESENTER_AUDIO_BUF_SIZE];
+        for i in 0..PRESENTER_AUDIO_OUT_BUF_SIZE {
+            ret[i] = buf[i * SAMPLE_BUFFER_SIZE / PRESENTER_AUDIO_OUT_BUF_SIZE];
         }
     }
 }

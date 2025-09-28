@@ -32,5 +32,8 @@ pub enum PresentEvent {
     Quit,
 }
 
-pub const PRESENTER_AUDIO_SAMPLE_RATE: usize = 48000;
-pub const PRESENTER_AUDIO_BUF_SIZE: usize = 1024;
+pub const PRESENTER_AUDIO_OUT_SAMPLE_RATE: usize = 48000;
+pub const PRESENTER_AUDIO_OUT_BUF_SIZE: usize = 1024;
+
+pub const PRESENTER_AUDIO_IN_SAMPLE_RATE: usize = 16000;
+pub const PRESENTER_AUDIO_IN_BUF_SIZE: usize = 256;

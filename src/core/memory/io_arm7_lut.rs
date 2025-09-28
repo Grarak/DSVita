@@ -183,7 +183,7 @@ io_write!(
         (io32(0x1A8), |mask, value, emu| emu.cartridge_set_bus_cmd_out_l(ARM7, mask, value)),
         (io32(0x1AC), |mask, value, emu| emu.cartridge_set_bus_cmd_out_h(ARM7, mask, value)),
         (io16(0x1C0), |mask, value, emu| emu.spi.set_cnt(mask, value)),
-        (io8(0x1C2), |value, emu| emu.spi.set_data(value)),
+        (io8(0x1C2), |value, emu| emu.spi_set_data(value)),
         (io8(0x208), |value, emu| emu.cpu_set_ime(ARM7, value)),
         (io32(0x210), |mask, value, emu| emu.cpu_set_ie(ARM7, mask, value)),
         (io32(0x214), |mask, value, emu| emu.cpu_set_irf(ARM7, mask, value)),

@@ -5,7 +5,7 @@ use crate::presenter::imgui::root::{
     ImDrawData, ImGui, ImGuiConfigFlags__ImGuiConfigFlags_NavEnableKeyboard, ImGui_ImplSdlGL3_Init, ImGui_ImplSdlGL3_NewFrame, ImGui_ImplSdlGL3_ProcessEvent, ImGui_ImplSdlGL3_RenderDrawData,
 };
 use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, UiBackend, UiPauseMenuReturn};
-use crate::presenter::{PresentEvent, PRESENTER_AUDIO_BUF_SIZE, PRESENTER_AUDIO_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::presenter::{PresentEvent, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::settings::{Arm7Emu, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
 use clap::{arg, command, value_parser, ArgAction, ArgMatches};
@@ -22,19 +22,19 @@ use std::rc::Rc;
 use std::{mem, ptr, slice, thread};
 
 #[derive(Clone)]
-pub struct PresenterAudio {
+pub struct PresenterAudioOut {
     audio_queue: Rc<Option<AudioQueue<i16>>>,
 }
 
-unsafe impl Send for PresenterAudio {}
+unsafe impl Send for PresenterAudioOut {}
 
-impl PresenterAudio {
+impl PresenterAudioOut {
     fn new(audio_queue: Option<AudioQueue<i16>>) -> Self {
-        PresenterAudio { audio_queue: Rc::new(audio_queue) }
+        PresenterAudioOut { audio_queue: Rc::new(audio_queue) }
     }
 
-    pub fn play(&self, buffer: &[u32; PRESENTER_AUDIO_BUF_SIZE]) {
-        let raw = unsafe { slice::from_raw_parts(buffer.as_ptr() as *const i16, PRESENTER_AUDIO_BUF_SIZE * 2) };
+    pub fn play(&self, buffer: &[u32; PRESENTER_AUDIO_OUT_BUF_SIZE]) {
+        let raw = unsafe { slice::from_raw_parts(buffer.as_ptr() as *const i16, PRESENTER_AUDIO_OUT_BUF_SIZE * 2) };
         if let Some(audio_queue) = self.audio_queue.as_ref() {
             audio_queue.queue_audio(raw).unwrap();
             while audio_queue.size() != 0 {
@@ -44,9 +44,17 @@ impl PresenterAudio {
     }
 }
 
+pub struct PresenterAudioIn;
+
+unsafe impl Send for PresenterAudioIn {}
+
+impl PresenterAudioIn {
+    pub fn receive(&self, _: &mut [i16; PRESENTER_AUDIO_IN_BUF_SIZE]) {}
+}
+
 pub struct Presenter {
     arg_matches: ArgMatches,
-    presenter_audio: PresenterAudio,
+    presenter_audio_out: PresenterAudioOut,
     window: Window,
     _gl_ctx: GLContext,
     key_code_mapping: HashMap<keyboard::Keycode, input::Keycode, BuildNoHasher>,
@@ -85,9 +93,9 @@ impl Presenter {
                     .open_queue(
                         None,
                         &AudioSpecDesired {
-                            freq: Some(PRESENTER_AUDIO_SAMPLE_RATE as i32),
+                            freq: Some(PRESENTER_AUDIO_OUT_SAMPLE_RATE as i32),
                             channels: Some(2),
-                            samples: Some(PRESENTER_AUDIO_BUF_SIZE as u16),
+                            samples: Some(PRESENTER_AUDIO_OUT_BUF_SIZE as u16),
                         },
                     )
                     .and_then(|audio_queue| {
@@ -127,7 +135,7 @@ impl Presenter {
 
         let mut instance = Presenter {
             arg_matches,
-            presenter_audio: PresenterAudio::new(audio_queue),
+            presenter_audio_out: PresenterAudioOut::new(audio_queue),
             window,
             _gl_ctx: gl_ctx,
             key_code_mapping,
@@ -226,8 +234,12 @@ impl Presenter {
         self.window.gl_swap_window();
     }
 
-    pub fn get_presenter_audio(&self) -> PresenterAudio {
-        self.presenter_audio.clone()
+    pub fn get_presenter_audio_out(&self) -> PresenterAudioOut {
+        self.presenter_audio_out.clone()
+    }
+
+    pub fn get_presenter_audio_in(&self) -> PresenterAudioIn {
+        PresenterAudioIn
     }
 
     pub fn wait_vsync(&self) {}

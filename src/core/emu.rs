@@ -10,7 +10,7 @@ use crate::core::memory::cartridge::Cartridge;
 use crate::core::memory::dma::Dma;
 use crate::core::memory::mem::Memory;
 use crate::core::rtc::Rtc;
-use crate::core::spi::Spi;
+use crate::core::spi::{MicSampler, Spi};
 use crate::core::spu::{SoundSampler, Spu};
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::timers::Timers;
@@ -20,7 +20,7 @@ use crate::jit::jit_memory::JitMemory;
 use crate::settings::{Settings, DEFAULT_SETTINGS};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, AtomicU32};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct Emu {
     pub ipc: Ipc,
@@ -46,7 +46,7 @@ pub struct Emu {
 }
 
 impl Emu {
-    pub fn new(fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, sound_sampler: NonNull<SoundSampler>, jit: JitMemory) -> Self {
+    pub fn new(fps: Arc<AtomicU16>, key_map: Arc<AtomicU32>, touch_points: Arc<AtomicU16>, mic_sampler: Arc<Mutex<MicSampler>>, sound_sampler: NonNull<SoundSampler>, jit: JitMemory) -> Self {
         Emu {
             ipc: Ipc::new(),
             cartridge: Cartridge::new(),
@@ -58,7 +58,7 @@ impl Emu {
             mem: Memory::new(),
             hle: Arm7Hle::new(),
             div_sqrt: DivSqrt::new(),
-            spi: Spi::new(touch_points),
+            spi: Spi::new(touch_points, mic_sampler),
             rtc: Rtc::new(),
             spu: Spu::new(sound_sampler),
             dma: [Dma::new(), Dma::new()],
