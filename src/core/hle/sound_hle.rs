@@ -10,7 +10,7 @@ impl SoundHle {
     pub(super) fn new() -> Self {
         SoundHle {
             engine: -1,
-            nitro: SoundNitro::default(),
+            nitro: SoundNitro::new(),
         }
     }
 }

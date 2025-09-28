@@ -311,6 +311,15 @@ pub struct SoundNitro {
     cmd_translate: bool,
 }
 
+impl SoundNitro {
+    pub fn new() -> Self {
+        SoundNitro {
+            cmd_offset: u32::MAX,
+            ..Default::default()
+        }
+    }
+}
+
 impl Emu {
     pub fn sound_nitro_reset(&mut self) {
         let sound_nitro = &mut self.hle.sound.nitro;
@@ -347,19 +356,11 @@ impl Emu {
             track.status_flags.set_active(false);
         }
 
+        sound_nitro.cmd_offset = u32::MAX;
         let game_code = &self.cartridge.io.header.game_code[..3];
-        if game_code == [0x41, 0x43, 0x56] {
-            // Castlevania - Dawn of Sorrow
-            sound_nitro.cmd_offset = 2;
-        } else if game_code == [0x41, 0x55, 0x47] {
-            // Need for Speed - Underground 2
-            sound_nitro.cmd_offset = 3;
-        } else if game_code == [0x41, 0x53, 0x4D] {
+        if game_code == [0x41, 0x53, 0x4D] {
             // Super Mario 64 DS
             sound_nitro.cmd_translate = true;
-        } else if game_code == [0x41, 0x52, 0x59] {
-            // Rayman DS
-            sound_nitro.cmd_offset = 3;
         }
 
         let mut main_cnt = MainSoundCnt::from(0);
@@ -913,6 +914,9 @@ impl Emu {
                     ];
                     cmd = TRANSLATION[cmd as usize];
                 } else if cmd >= 2 {
+                    if self.hle.sound.nitro.cmd_offset == u32::MAX {
+                        self.hle.sound.nitro.cmd_offset = 0x1D - cmd;
+                    }
                     cmd += self.hle.sound.nitro.cmd_offset;
                 }
 
