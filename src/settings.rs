@@ -158,12 +158,6 @@ impl Setting {
 lazy_static! {
     pub static ref DEFAULT_SETTINGS: Settings = Settings(
         [
-            Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", ScreenLayout::settings_value(), true),
-            Setting::new("Swap screens", "Press PS + Cross to swap screens in game.", SettingValue::Bool(false), true),
-            Setting::new("Top screen scale", "Press PS + Square to cycle screen sizes.", ScreenLayout::scale_settings_value(), true),
-            Setting::new("Bottom screen scale", "Press PS + Circle to cycle screen sizes", ScreenLayout::scale_settings_value(), true),
-            Setting::new("Language", "Some ROMs only come with one language. Make sure yours is multilingual.", Language::iter().into(), false),
-            Setting::new("Joystick as D-Pad", "", SettingValue::Bool(true), true),
             Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true), true),
             Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true), true),
             Setting::new(
@@ -172,6 +166,12 @@ lazy_static! {
                 Arm7Emu::iter().into(),
                 false,
             ),
+            Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", ScreenLayout::settings_value(), true),
+            Setting::new("Swap screens", "Press PS + Cross to swap screens in game.", SettingValue::Bool(false), true),
+            Setting::new("Top screen scale", "Press PS + Square to cycle screen sizes.", ScreenLayout::scale_settings_value(), true),
+            Setting::new("Bottom screen scale", "Press PS + Circle to cycle screen sizes", ScreenLayout::scale_settings_value(), true),
+            Setting::new("Language", "Some ROMs only come with one language. Make sure yours is multilingual.", Language::iter().into(), false),
+            Setting::new("Joystick as D-Pad", "", SettingValue::Bool(true), true),
             Setting::new(
                 "Arm7 jit block validation",
                 "Only needed for nds homebrew. Commercial games usually don't need to have this enabled.",
@@ -185,15 +185,15 @@ lazy_static! {
 #[derive(Clone)]
 pub struct Settings([Setting; 10]);
 
-const SCREEN_LAYOUT_SETTING: usize = 0;
-const SWAP_SCREEN_SETTING: usize = 1;
-const TOP_SCREEN_SCALE_SETTING: usize = 2;
-const BOTTOM_SCREEN_SCALE_SETTING: usize = 3;
-const LANGUAGE_SETTING: usize = 4;
-const JOYSTICK_AS_DPAD_SETTING: usize = 5;
-const FRAMELIMIT_SETTING: usize = 6;
-const AUDIO_SETTING: usize = 7;
-const ARM7_EMU_SETTING: usize = 8;
+const FRAMELIMIT_SETTING: usize = 0;
+const AUDIO_SETTING: usize = 1;
+const ARM7_EMU_SETTING: usize = 2;
+const SCREEN_LAYOUT_SETTING: usize = 3;
+const SWAP_SCREEN_SETTING: usize = 4;
+const TOP_SCREEN_SCALE_SETTING: usize = 5;
+const BOTTOM_SCREEN_SCALE_SETTING: usize = 6;
+const LANGUAGE_SETTING: usize = 7;
+const JOYSTICK_AS_DPAD_SETTING: usize = 8;
 const ARM7_BLOCK_VALIDATION_SETTING: usize = 9;
 
 impl Settings {

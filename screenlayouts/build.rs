@@ -74,6 +74,51 @@ pub fn get_screen_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
         layouts.push(("Focus Overlap", [top_mtx, bottom_mtx]));
     }
 
+    {
+        let full_height_scale = HOST_SCREEN_HEIGHT as f32 / GUEST_SCREEN_HEIGHT as f32;
+        let full_width_scale = HOST_SCREEN_WIDTH as f32 / GUEST_SCREEN_WIDTH as f32;
+        let guest_top_width = GUEST_SCREEN_WIDTH as f32 * full_width_scale;
+        let guest_top_height = GUEST_SCREEN_HEIGHT as f32 * full_height_scale;
+        let top_mtx =
+            Matrix3::new_translation(&Vector2::new(guest_top_width / 2.0, guest_top_height as f32 / 2.0)) * Matrix3::new_nonuniform_scaling(&Vector2::new(full_width_scale, full_height_scale));
+        let bottom_mtx = Matrix3::new_translation(&Vector2::new((HOST_SCREEN_WIDTH - GUEST_SCREEN_WIDTH) as f32, (HOST_SCREEN_HEIGHT - GUEST_SCREEN_HEIGHT) as f32))
+            * Matrix3::new_translation(&Vector2::new(GUEST_SCREEN_WIDTH as f32 / 2.0, GUEST_SCREEN_HEIGHT as f32 / 2.0));
+
+        layouts.push(("Stretch Overlap", [top_mtx, bottom_mtx]));
+    }
+
+    {
+        let half_width = HOST_SCREEN_WIDTH as f32 / 2.0;
+        let full_height_scale = (HOST_SCREEN_HEIGHT as f32 / GUEST_SCREEN_WIDTH as f32).floor();
+        let guest_width = GUEST_SCREEN_WIDTH as f32 * full_height_scale;
+        let guest_height = GUEST_SCREEN_HEIGHT as f32 * full_height_scale;
+        let half_width_remaining_space = half_width - guest_height;
+        let height_remaining_space = HOST_SCREEN_HEIGHT as f32 - guest_width;
+        let mtx = Matrix3::new_translation(&Vector2::new(guest_height / 2.0 + half_width_remaining_space, guest_width as f32 / 2.0 + height_remaining_space / 2.0))
+            * Matrix3::new_rotation(PI + PI / 2.0)
+            * Matrix3::new_scaling(full_height_scale);
+        let b_trans = Matrix3::new_translation(&Vector2::new(guest_height, 0.0));
+
+        layouts.push(("Int Rotate", [mtx, b_trans * mtx]));
+    }
+
+    {
+        let full_height_scale = HOST_SCREEN_HEIGHT as f32 / GUEST_SCREEN_HEIGHT as f32;
+        let width_scale = 3.0;
+        let guest_top_width = GUEST_SCREEN_WIDTH as f32 * width_scale;
+        let guest_top_height = GUEST_SCREEN_HEIGHT as f32 * full_height_scale;
+        let width_remaining_space = HOST_SCREEN_WIDTH as f32 - guest_top_width;
+        let height_remaining_space = HOST_SCREEN_HEIGHT as f32 - guest_top_height;
+        let top_mtx = Matrix3::new_translation(&Vector2::new(
+            guest_top_width / 2.0 + width_remaining_space / 2.0,
+            guest_top_height as f32 / 2.0 + height_remaining_space / 2.0,
+        )) * Matrix3::new_nonuniform_scaling(&Vector2::new(width_scale, full_height_scale));
+        let bottom_mtx = Matrix3::new_translation(&Vector2::new((HOST_SCREEN_WIDTH - GUEST_SCREEN_WIDTH) as f32, (HOST_SCREEN_HEIGHT - GUEST_SCREEN_HEIGHT) as f32))
+            * Matrix3::new_translation(&Vector2::new(GUEST_SCREEN_WIDTH as f32 / 2.0, GUEST_SCREEN_HEIGHT as f32 / 2.0));
+
+        layouts.push(("Int Focus Overlap", [top_mtx, bottom_mtx]));
+    }
+
     layouts
         .iter()
         .map(|(name, mtxs)| {
