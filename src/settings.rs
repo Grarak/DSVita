@@ -158,14 +158,15 @@ impl Setting {
 lazy_static! {
     pub static ref DEFAULT_SETTINGS: Settings = Settings(
         [
-            Setting::new("Framelimit", "Limits gamespeed to 60fps", SettingValue::Bool(true), true),
-            Setting::new("Audio", "Disabling audio can give a performance boost", SettingValue::Bool(true), true),
+            Setting::new("Framelimit", "", SettingValue::Bool(true), true),
+            Setting::new("Audio", "Disabling audio can give a performance boost.", SettingValue::Bool(true), true),
             Setting::new(
                 "Arm7 Emulation",
                 "AccurateLle: Slowest, best compatibility, SoundHle: ~10%% faster, reduced compatibility,\nHle: ~15-20%% faster, worst compatibility. Use AccurateLle if game crashes, gets stuck or bugs occur.",
                 Arm7Emu::iter().into(),
                 false,
             ),
+            Setting::new("Audio stretching", "Enable if a games doesn't run at fullspeed, introduces latency.", SettingValue::Bool(true), true),
             Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", ScreenLayout::settings_value(), true),
             Setting::new("Swap screens", "Press PS + Cross to swap screens in game.", SettingValue::Bool(false), true),
             Setting::new("Top screen scale", "Press PS + Square to cycle screen sizes.", ScreenLayout::scale_settings_value(), true),
@@ -183,77 +184,85 @@ lazy_static! {
 }
 
 #[derive(Clone)]
-pub struct Settings([Setting; 10]);
+pub struct Settings([Setting; 11]);
 
-const FRAMELIMIT_SETTING: usize = 0;
-const AUDIO_SETTING: usize = 1;
-const ARM7_EMU_SETTING: usize = 2;
-const SCREEN_LAYOUT_SETTING: usize = 3;
-const SWAP_SCREEN_SETTING: usize = 4;
-const TOP_SCREEN_SCALE_SETTING: usize = 5;
-const BOTTOM_SCREEN_SCALE_SETTING: usize = 6;
-const LANGUAGE_SETTING: usize = 7;
-const JOYSTICK_AS_DPAD_SETTING: usize = 8;
-const ARM7_BLOCK_VALIDATION_SETTING: usize = 9;
+#[repr(u8)]
+enum SettingIndices {
+    Framelimit = 0,
+    Audio,
+    Arm7Emu,
+    AudioStretching,
+    ScreenLayout,
+    SwapScreen,
+    TopScreenScale,
+    BottomScreenScale,
+    Language,
+    JoystickAsDpad,
+    Arm7BlockValidation,
+}
 
 impl Settings {
     pub fn screen_layout(&self) -> ScreenLayout {
         unsafe {
             ScreenLayout::new(
-                self.0[SCREEN_LAYOUT_SETTING].value.as_list().unwrap_unchecked().0,
-                self.0[SWAP_SCREEN_SETTING].value.as_bool().unwrap_unchecked(),
-                self.0[TOP_SCREEN_SCALE_SETTING].value.as_list().unwrap_unchecked().0,
-                self.0[BOTTOM_SCREEN_SCALE_SETTING].value.as_list().unwrap_unchecked().0,
+                self.0[SettingIndices::ScreenLayout as usize].value.as_list().unwrap_unchecked().0,
+                self.0[SettingIndices::SwapScreen as usize].value.as_bool().unwrap_unchecked(),
+                self.0[SettingIndices::TopScreenScale as usize].value.as_list().unwrap_unchecked().0,
+                self.0[SettingIndices::BottomScreenScale as usize].value.as_list().unwrap_unchecked().0,
             )
         }
     }
 
     pub fn joystick_as_dpad(&self) -> bool {
-        unsafe { self.0[JOYSTICK_AS_DPAD_SETTING].value.as_bool().unwrap_unchecked() }
+        unsafe { self.0[SettingIndices::JoystickAsDpad as usize].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn framelimit(&self) -> bool {
-        unsafe { self.0[FRAMELIMIT_SETTING].value.as_bool().unwrap_unchecked() }
+        unsafe { self.0[SettingIndices::Framelimit as usize].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn audio(&self) -> bool {
-        unsafe { self.0[AUDIO_SETTING].value.as_bool().unwrap_unchecked() }
+        unsafe { self.0[SettingIndices::Audio as usize].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn arm7_emu(&self) -> Arm7Emu {
-        unsafe { Arm7Emu::from(self.0[ARM7_EMU_SETTING].value.as_list().unwrap_unchecked().0 as u8) }
+        unsafe { Arm7Emu::from(self.0[SettingIndices::Arm7Emu as usize].value.as_list().unwrap_unchecked().0 as u8) }
     }
 
     pub fn arm7_block_validation(&self) -> bool {
-        unsafe { self.0[ARM7_BLOCK_VALIDATION_SETTING].value.as_bool().unwrap_unchecked() }
+        unsafe { self.0[SettingIndices::Arm7BlockValidation as usize].value.as_bool().unwrap_unchecked() }
+    }
+
+    pub fn audio_stretching(&self) -> bool {
+        unsafe { self.0[SettingIndices::AudioStretching as usize].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn language(&self) -> Language {
-        unsafe { Language::from(self.0[LANGUAGE_SETTING].value.as_list().unwrap_unchecked().0 as u8) }
+        unsafe { Language::from(self.0[SettingIndices::Language as usize].value.as_list().unwrap_unchecked().0 as u8) }
     }
 
     pub fn set_screen_layout(&mut self, screen_layout: &ScreenLayout) {
-        *self.0[SCREEN_LAYOUT_SETTING].value.as_list_mut().unwrap().0 = screen_layout.index;
-        *self.0[SWAP_SCREEN_SETTING].value.as_bool_mut().unwrap() = screen_layout.swap;
+        *self.0[SettingIndices::ScreenLayout as usize].value.as_list_mut().unwrap().0 = screen_layout.index;
+        *self.0[SettingIndices::SwapScreen as usize].value.as_bool_mut().unwrap() = screen_layout.swap;
     }
 
     pub fn set_framelimit(&mut self, value: bool) {
-        *self.0[FRAMELIMIT_SETTING].value.as_bool_mut().unwrap() = value;
+        *self.0[SettingIndices::Framelimit as usize].value.as_bool_mut().unwrap() = value;
     }
 
     pub fn set_audio(&mut self, value: bool) {
-        *self.0[AUDIO_SETTING].value.as_bool_mut().unwrap() = value;
+        *self.0[SettingIndices::Audio as usize].value.as_bool_mut().unwrap() = value;
     }
 
     pub fn set_arm7_emu(&mut self, value: Arm7Emu) {
-        *self.0[ARM7_EMU_SETTING].value.as_list_mut().unwrap().0 = value as usize
+        *self.0[SettingIndices::Arm7Emu as usize].value.as_list_mut().unwrap().0 = value as usize
     }
 
     pub fn set_arm7_block_validation(&mut self, value: bool) {
-        *self.0[ARM7_BLOCK_VALIDATION_SETTING].value.as_bool_mut().unwrap() = value;
+        *self.0[SettingIndices::Arm7BlockValidation as usize].value.as_bool_mut().unwrap() = value;
     }
 
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 10] {
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 11] {
         &mut self.0
     }
 }

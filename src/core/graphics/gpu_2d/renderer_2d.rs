@@ -14,7 +14,7 @@ use crate::utils;
 use crate::utils::rgb5_to_float8;
 use gl::types::{GLint, GLuint};
 use static_assertions::const_assert;
-use std::hint::{assert_unchecked, unreachable_unchecked};
+use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 use std::{mem, ptr, slice};
 

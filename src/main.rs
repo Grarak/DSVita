@@ -470,11 +470,12 @@ pub fn actual_main() {
                 set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
                 let mut guest_buffer = HeapMemU32::<{ SAMPLE_BUFFER_SIZE }>::new();
                 let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_OUT_BUF_SIZE }>::new();
+                let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
                 let sound_sampler = unsafe { (sound_sampler_ptr as *mut SoundSampler).as_mut_unchecked() };
                 let cpu_thread = unsafe { (cpu_thread_ptr as *const Thread).as_ref_unchecked() };
                 let cpu_active = cpu_active_clone;
                 while cpu_active.load(Ordering::Relaxed) {
-                    sound_sampler.consume(cpu_thread, &mut guest_buffer, &mut audio_buffer);
+                    sound_sampler.consume(cpu_thread, &mut guest_buffer, &mut audio_buffer, emu.settings.audio_stretching());
                     presenter_audio_out.play(&audio_buffer);
                 }
             })

@@ -11,7 +11,9 @@ use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::unlikely;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Condvar, Mutex};
 use std::thread::Thread;
+use std::time::Duration;
 use std::{mem, slice, thread};
 
 pub const CHANNEL_COUNT: usize = 16;
@@ -29,6 +31,8 @@ pub struct SoundSampler {
     stretch_ratio: f32,
     average_size: usize,
     size_count: usize,
+    cond_mutex: Mutex<bool>,
+    condvar: Condvar,
 }
 
 impl SoundSampler {
@@ -49,6 +53,8 @@ impl SoundSampler {
             stretch_ratio: 1.0,
             average_size: 0,
             size_count: 0,
+            cond_mutex: Mutex::new(false),
+            condvar: Condvar::new(),
         }
     }
 
@@ -62,9 +68,10 @@ impl SoundSampler {
         self.stretch_ratio = 1.0;
         self.average_size = 0;
         self.size_count = 0;
+        *self.cond_mutex.lock().unwrap() = false;
     }
 
-    fn push(&mut self, framelimit: bool, sample: u32) {
+    fn push(&mut self, sample: u32, framelimit: bool, audio_stretching: bool) {
         while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
 
         unsafe { assert_unchecked(self.busy_queue <= 1) };
@@ -74,6 +81,13 @@ impl SoundSampler {
         *size += 1;
         if *size == SAMPLE_BUFFER_SIZE as u16 {
             let (_, other_size) = &mut self.queues[self.busy_queue ^ 1];
+
+            if !audio_stretching {
+                let mut can_sample = self.cond_mutex.lock().unwrap();
+                *can_sample = true;
+                self.condvar.notify_one();
+            }
+
             if framelimit && *other_size == SAMPLE_BUFFER_SIZE as u16 {
                 self.waiting = true;
                 self.busy.store(false, Ordering::SeqCst);
@@ -89,12 +103,23 @@ impl SoundSampler {
         self.busy.store(false, Ordering::SeqCst);
     }
 
-    pub fn consume(&mut self, cpu_thread: &Thread, buf: &mut [u32; SAMPLE_BUFFER_SIZE], ret: &mut [u32; PRESENTER_AUDIO_OUT_BUF_SIZE]) {
+    pub fn consume(&mut self, cpu_thread: &Thread, buf: &mut [u32; SAMPLE_BUFFER_SIZE], ret: &mut [u32; PRESENTER_AUDIO_OUT_BUF_SIZE], audio_stretching: bool) {
+        if !audio_stretching {
+            let can_sample = self.cond_mutex.lock().unwrap();
+            let (mut can_sample, timeout_result) = self.condvar.wait_timeout_while(can_sample, Duration::from_millis(500), |can_sample| !*can_sample).unwrap();
+            if timeout_result.timed_out() {
+                ret.fill(0);
+                return;
+            }
+            *can_sample = false;
+        }
+
         while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
 
         let ready_queue = self.ready_queue;
         let (queue, queue_size) = &mut self.queues[ready_queue];
         let mut size = *queue_size as usize;
+        debug_assert!(audio_stretching || size == SAMPLE_BUFFER_SIZE);
         *queue_size = 0;
         buf[..size].copy_from_slice(&queue[..size]);
         self.ready_queue = self.busy_queue;
@@ -107,49 +132,51 @@ impl SoundSampler {
 
         self.busy.store(false, Ordering::SeqCst);
 
-        // Taken from https://github.com/dolphin-emu/dolphin/blob/b5be399fd4175eb6c4ba83201bd4866b357b3200/Source/Core/AudioCommon/AudioStretcher.cpp#L28-L65
-        // Take an average ratio so tempo doesn't change abruptly
-        self.average_size += size;
-        self.size_count += 1;
-        let ratio = self.average_size as f32 / self.size_count as f32 / SAMPLE_BUFFER_SIZE as f32;
-        if self.size_count >= 15 {
-            self.size_count = 0;
-            self.average_size = 0;
-        }
-        // 80ms latency
-        let max_backlog = SAMPLE_RATE as f32 * 80.0 / 1000.0;
-        let backlog_fullness = self.sound_touch.num_of_samples() as f32 / max_backlog;
-        if backlog_fullness > 5.0 {
-            size = 0;
-        }
+        if audio_stretching {
+            // Taken from https://github.com/dolphin-emu/dolphin/blob/b5be399fd4175eb6c4ba83201bd4866b357b3200/Source/Core/AudioCommon/AudioStretcher.cpp#L28-L65
+            // Take an average ratio so tempo doesn't change abruptly
+            self.average_size += size;
+            self.size_count += 1;
+            let ratio = self.average_size as f32 / self.size_count as f32 / SAMPLE_BUFFER_SIZE as f32;
+            if self.size_count >= 15 {
+                self.size_count = 0;
+                self.average_size = 0;
+            }
+            // 80ms latency
+            let max_backlog = SAMPLE_RATE as f32 * 80.0 / 1000.0;
+            let backlog_fullness = self.sound_touch.num_of_samples() as f32 / max_backlog;
+            if backlog_fullness > 5.0 {
+                size = 0;
+            }
 
-        // Plot the function for understanding
-        // In a nutshell backlog is not at 50% => slow down
-        // More aggressive slow down when sample size is small
-        let tweak = 1.0 + 2.0 * (backlog_fullness - 0.5) * (1.0 - ratio);
-        let current_ratio = ratio * tweak;
+            // Plot the function for understanding
+            // In a nutshell backlog is not at 50% => slow down
+            // More aggressive slow down when sample size is small
+            let tweak = 1.0 + 2.0 * (backlog_fullness - 0.5) * (1.0 - ratio);
+            let current_ratio = ratio * tweak;
 
-        // The fever samples we, the smaller the lpf gain
-        // Most likely the next audio frame will have more samples
-        // Thus don't let it influence the ratio too much
-        const LPF_TIME_SCALE: f32 = 1.0;
-        let lpf_gain = 1.0 - (-ratio / LPF_TIME_SCALE).exp();
-        self.stretch_ratio += lpf_gain * (current_ratio - self.stretch_ratio);
+            // The fever samples we, the smaller the lpf gain
+            // Most likely the next audio frame will have more samples
+            // Thus don't let it influence the ratio too much
+            const LPF_TIME_SCALE: f32 = 1.0;
+            let lpf_gain = 1.0 - (-ratio / LPF_TIME_SCALE).exp();
+            self.stretch_ratio += lpf_gain * (current_ratio - self.stretch_ratio);
 
-        if self.stretch_ratio < 0.05 {
-            self.stretch_ratio = 0.05;
-        }
-        self.sound_touch.set_tempo(self.stretch_ratio as f64);
+            if self.stretch_ratio < 0.05 {
+                self.stretch_ratio = 0.05;
+            }
+            self.sound_touch.set_tempo(self.stretch_ratio as f64);
 
-        let sound_touch_buf = unsafe { slice::from_raw_parts(buf.as_ptr() as *const i16, size << 1) };
-        self.sound_touch.put_samples(sound_touch_buf, size);
-        let sound_touch_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut i16, SAMPLE_BUFFER_SIZE << 1) };
-        let num_samples = self.sound_touch.receive_samples(sound_touch_buf, SAMPLE_BUFFER_SIZE);
-        if num_samples == 0 {
-            buf.fill(self.last_sample);
-        } else if num_samples != SAMPLE_BUFFER_SIZE {
-            self.last_sample = buf[num_samples - 1];
-            buf[num_samples..].fill(self.last_sample);
+            let sound_touch_buf = unsafe { slice::from_raw_parts(buf.as_ptr() as *const i16, size << 1) };
+            self.sound_touch.put_samples(sound_touch_buf, size);
+            let sound_touch_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut i16, SAMPLE_BUFFER_SIZE << 1) };
+            let num_samples = self.sound_touch.receive_samples(sound_touch_buf, SAMPLE_BUFFER_SIZE);
+            if num_samples == 0 {
+                buf.fill(self.last_sample);
+            } else if num_samples != SAMPLE_BUFFER_SIZE {
+                self.last_sample = buf[num_samples - 1];
+                buf[num_samples..].fill(self.last_sample);
+            }
         }
 
         for i in 0..PRESENTER_AUDIO_OUT_BUF_SIZE {
@@ -560,7 +587,7 @@ impl Emu {
             for i in 0..2 {
                 self.spu.sound_cap_channels[i].cnt.set_start_status(false);
             }
-            unsafe { self.spu.sound_sampler.as_mut().push(self.settings.framelimit(), 0) };
+            unsafe { self.spu.sound_sampler.as_mut().push(0, self.settings.framelimit(), self.settings.audio_stretching()) };
             self.cm.schedule(512 * 2, EventType::SpuSample);
             return;
         }
@@ -716,10 +743,11 @@ impl Emu {
         let sample_right = ((sample_right - 0x200) << 5) as u32;
 
         unsafe {
-            self.spu
-                .sound_sampler
-                .as_mut()
-                .push(self.settings.framelimit(), ((sample_right << 16) & 0xFFFF0000) | (sample_left & 0xFFFF))
+            self.spu.sound_sampler.as_mut().push(
+                ((sample_right << 16) & 0xFFFF0000) | (sample_left & 0xFFFF),
+                self.settings.framelimit(),
+                self.settings.audio_stretching(),
+            )
         };
         self.cm.schedule(512 * 2, EventType::SpuSample);
     }
