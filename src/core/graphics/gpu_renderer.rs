@@ -243,13 +243,17 @@ impl GpuRenderer {
             gl::Clear(gl::COLOR_BUFFER_BIT);
 
             if self.common.pow_cnt1[0].enable() {
+                self.renderer_2d.draw::<{ B }>(&self.common);
+                let b_fbo_color = self.renderer_2d.blend::<{ B }>(&self.common, 0);
+
+                self.renderer_2d.draw::<{ A }>(&self.common);
+
                 if self.rendering_3d {
                     self.rendering_3d = false;
                     self.renderer_3d.render(&self.common);
                 }
 
-                let a_fbo_color = self.renderer_2d.render::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color);
-                let b_fbo_color = self.renderer_2d.render::<{ B }>(&self.common, 0);
+                let a_fbo_color = self.renderer_2d.blend::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color);
                 let top_screen = if self.common.pow_cnt1[0].display_swap() {
                     screen_layout.get_screen_top()
                 } else {

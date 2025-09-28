@@ -90,16 +90,12 @@ pub struct Gpu2DRenderRegs {
     win_bg_ubo: WinBgUbo,
     bg_ubo: BgUbo,
     blend_ubo: BlendUbo,
-    batch_counts: [u8; DISPLAY_HEIGHT],
-    current_batch_count_index: usize,
 }
 
 impl Gpu2DRenderRegs {
     fn reset(&mut self) {
         self.disp_cnts = unsafe { mem::zeroed() };
         self.bg_cnts = unsafe { mem::zeroed() };
-        self.batch_counts = unsafe { mem::zeroed() };
-        self.current_batch_count_index = 0;
     }
 }
 
@@ -112,20 +108,10 @@ impl Default for Gpu2DRenderRegs {
 impl Gpu2DRenderRegs {
     fn on_scanline(&mut self, inner: &mut Gpu2DRegisters, line: u8) {
         let line = line as usize;
-        unsafe { assert_unchecked(self.current_batch_count_index < DISPLAY_HEIGHT && line < DISPLAY_HEIGHT) };
-        let mut updated = self.disp_cnts[self.current_batch_count_index] != u32::from(inner.disp_cnt);
-        for i in 0..4 {
-            updated |= self.bg_cnts[self.current_batch_count_index * 4 + i] != u16::from(inner.bg_cnt[i]);
-        }
 
-        if updated {
-            self.disp_cnts[line] = u32::from(inner.disp_cnt);
-            for i in 0..4 {
-                self.bg_cnts[line * 4 + i] = u16::from(inner.bg_cnt[i]);
-            }
-            self.current_batch_count_index = line;
-        } else {
-            self.batch_counts[self.current_batch_count_index] += 1;
+        self.disp_cnts[line] = u32::from(inner.disp_cnt);
+        for i in 0..4 {
+            self.bg_cnts[line * 4 + i] = u16::from(inner.bg_cnt[i]);
         }
 
         for i in 0..2 {
@@ -440,6 +426,39 @@ struct Gpu2DProgram {
     pub blend_fbo: GpuFbo,
 }
 
+macro_rules! draw_scanlines {
+    ($regs:expr, $draw_fn:expr, $draw_vram_display:expr, $lcdc_pal:expr) => {{
+        let mut line = 0;
+        while line < DISPLAY_HEIGHT {
+            let from_line = line;
+            line += 1;
+            while line < DISPLAY_HEIGHT {
+                if $regs.disp_cnts[from_line] != $regs.disp_cnts[line] || {
+                    let mut diff = false;
+                    for i in 0..4 {
+                        diff |= $regs.bg_cnts[from_line * 4 + i] != $regs.bg_cnts[line * 4 + i];
+                    }
+                    diff
+                } {
+                    break;
+                }
+                line += 1;
+            }
+
+            if $lcdc_pal != 0 {
+                let disp_cnt = DispCnt::from($regs.disp_cnts[from_line]);
+                if u8::from(disp_cnt.display_mode()) == 2 {
+                    if $draw_vram_display {
+                        $draw_fn(from_line as u8, line as u8);
+                    }
+                    continue;
+                }
+            }
+            $draw_fn(from_line as u8, line as u8);
+        }
+    }};
+}
+
 impl Gpu2DProgram {
     fn new<const ENGINE: Gpu2DEngine>(obj_vert_shader: GLuint, bg_vert_shader: GLuint, bg_vert_affine_extended_shader: GLuint, bg_vert_bitmap_shader: GLuint) -> Self {
         unsafe {
@@ -650,98 +669,101 @@ impl Gpu2DProgram {
         gl::DrawElements(gl::TRIANGLES, (6 * self.obj_oam_indices.len()) as _, gl::UNSIGNED_SHORT, self.obj_oam_indices.as_ptr() as _);
     }
 
-    unsafe fn draw_bg(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, fb_tex_3d: GLuint, from_line: u8, to_line: u8) {
+    unsafe fn draw_bg_program(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, from_line: u8, to_line: u8, fb_tex_3d: GLuint, bg_num: u8, bg_mode: BgMode) {
+        if bg_mode == BgMode::Affine || bg_mode == BgMode::Large {
+            // todo!("{bg_mode:?}")
+        }
+
+        let bg_cnt = regs.bg_cnts[from_line as usize * 4 + bg_num as usize];
+        let bg_cnt = BgCnt::from(bg_cnt);
+        let program = match bg_mode {
+            BgMode::Text => {
+                if bg_cnt.color_256_palettes() {
+                    &self.bg_text_8bpp_program
+                } else {
+                    &self.bg_text_4bpp_program
+                }
+            }
+            BgMode::Affine => {
+                // TODO
+                &self.bg_affine_extended_program
+            }
+            BgMode::Extended => {
+                if bg_cnt.color_256_palettes() {
+                    &self.bg_bitmap_program
+                } else {
+                    &self.bg_affine_extended_program
+                }
+            }
+            BgMode::Large => {
+                // TODO
+                &self.bg_affine_extended_program
+            }
+            BgMode::Display3d => &self.bg_display_3d_program,
+        };
+
+        gl::UseProgram(program.program);
+
+        gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[bg_num as usize].fbo);
+
+        gl::ActiveTexture(gl::TEXTURE0);
+        gl::BindTexture(gl::TEXTURE_2D, texs.bg);
+
+        gl::ActiveTexture(gl::TEXTURE1);
+        gl::BindTexture(gl::TEXTURE_2D, texs.pal);
+
+        gl::ActiveTexture(gl::TEXTURE2);
+        gl::BindTexture(gl::TEXTURE_2D, texs.bg_ext_pal);
+
+        gl::ActiveTexture(gl::TEXTURE3);
+        gl::BindTexture(gl::TEXTURE_2D, common.win_bg_fbo.color);
+
+        if fb_tex_3d != 0 {
+            gl::ActiveTexture(gl::TEXTURE4);
+            gl::BindTexture(gl::TEXTURE_2D, fb_tex_3d);
+        }
+
+        if program.has_ubo {
+            gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, self.bg_ubo);
+        }
+
+        let disp_cnt = regs.disp_cnts[from_line as usize];
+        gl::Uniform1i(program.disp_cnt_loc, disp_cnt as _);
+        gl::Uniform1i(program.cnt_loc, u16::from(bg_cnt) as _);
+
+        #[rustfmt::skip]
+        let vertices = [
+            -1f32, from_line as f32, bg_num as f32,
+            1f32, from_line as f32, bg_num as f32,
+            1f32, to_line as f32, bg_num as f32,
+            -1f32, to_line as f32, bg_num as f32,
+        ];
+
+        gl::EnableVertexAttribArray(0);
+        gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, 0, vertices.as_ptr() as _);
+        gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+    }
+
+    unsafe fn draw_bg(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, from_line: u8, to_line: u8) {
         let disp_cnt = regs.disp_cnts[from_line as usize];
 
         gl::BindBuffer(gl::UNIFORM_BUFFER, self.bg_ubo);
         gl::BufferData(gl::UNIFORM_BUFFER, size_of::<BgUbo>() as _, ptr::addr_of!(regs.bg_ubo) as _, gl::DYNAMIC_DRAW);
 
-        let draw_call = |bg_num: u8, bg_mode: BgMode| {
-            if bg_mode == BgMode::Affine || bg_mode == BgMode::Large {
-                // todo!("{bg_mode:?}")
-            }
-
-            let bg_cnt = regs.bg_cnts[from_line as usize * 4 + bg_num as usize];
-            let bg_cnt = BgCnt::from(bg_cnt);
-            let program = match bg_mode {
-                BgMode::Text => {
-                    if bg_cnt.color_256_palettes() {
-                        &self.bg_text_8bpp_program
-                    } else {
-                        &self.bg_text_4bpp_program
-                    }
-                }
-                BgMode::Affine => {
-                    // TODO
-                    &self.bg_affine_extended_program
-                }
-                BgMode::Extended => {
-                    if bg_cnt.color_256_palettes() {
-                        &self.bg_bitmap_program
-                    } else {
-                        &self.bg_affine_extended_program
-                    }
-                }
-                BgMode::Large => {
-                    // TODO
-                    &self.bg_affine_extended_program
-                }
-                BgMode::Display3d => &self.bg_display_3d_program,
-            };
-
-            gl::UseProgram(program.program);
-
-            gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[bg_num as usize].fbo);
-
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, texs.bg);
-
-            gl::ActiveTexture(gl::TEXTURE1);
-            gl::BindTexture(gl::TEXTURE_2D, texs.pal);
-
-            gl::ActiveTexture(gl::TEXTURE2);
-            gl::BindTexture(gl::TEXTURE_2D, texs.bg_ext_pal);
-
-            gl::ActiveTexture(gl::TEXTURE3);
-            gl::BindTexture(gl::TEXTURE_2D, common.win_bg_fbo.color);
-
-            gl::ActiveTexture(gl::TEXTURE4);
-            gl::BindTexture(gl::TEXTURE_2D, fb_tex_3d);
-
-            if program.has_ubo {
-                gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, self.bg_ubo);
-            }
-
-            gl::Uniform1i(program.disp_cnt_loc, disp_cnt as _);
-            gl::Uniform1i(program.cnt_loc, u16::from(bg_cnt) as _);
-
-            #[rustfmt::skip]
-            let vertices = [
-                -1f32, from_line as f32, bg_num as f32,
-                1f32, from_line as f32, bg_num as f32,
-                1f32, to_line as f32, bg_num as f32,
-                -1f32, to_line as f32, bg_num as f32,
-            ];
-
-            gl::EnableVertexAttribArray(0);
-            gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, 0, vertices.as_ptr() as _);
-            gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
-        };
-
         let disp_cnt = DispCnt::from(disp_cnt);
         macro_rules! draw {
             ($bg3mode:expr, $bg2mode:expr, $bg1mode:expr, $bg0mode:expr) => {{
                 if disp_cnt.screen_display_bg3() {
-                    draw_call(3, $bg3mode);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, 3, $bg3mode);
                 }
                 if disp_cnt.screen_display_bg2() {
-                    draw_call(2, $bg2mode);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, 2, $bg2mode);
                 }
                 if disp_cnt.screen_display_bg1() {
-                    draw_call(1, $bg1mode);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, 1, $bg1mode);
                 }
-                if disp_cnt.screen_display_bg0() {
-                    draw_call(0, if disp_cnt.bg0_3d() { BgMode::Display3d } else { $bg0mode });
+                if disp_cnt.screen_display_bg0() && !disp_cnt.bg0_3d() {
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, 0, $bg0mode);
                 }
             }};
         }
@@ -755,7 +777,7 @@ impl Gpu2DProgram {
             5 => draw!(BgMode::Extended, BgMode::Extended, BgMode::Text, BgMode::Text),
             6 => {
                 if disp_cnt.screen_display_bg2() {
-                    draw_call(2, BgMode::Large);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, 2, BgMode::Large);
                 }
             }
             7 => {}
@@ -766,7 +788,26 @@ impl Gpu2DProgram {
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
     }
 
-    unsafe fn blend_fbos(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, mem: &Gpu2DMem) {
+    unsafe fn blend_fbos(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: &Gpu2DMem, fb_tex_3d: GLuint) -> GLuint {
+        if fb_tex_3d != 0 {
+            let draw_bg = |from_line, to_line| {
+                let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
+                match u8::from(disp_cnt.bg_mode()) {
+                    0..=5 => {
+                        if disp_cnt.screen_display_bg0() && disp_cnt.bg0_3d() {
+                            gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[0].fbo);
+                            gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+                            gl::ClearColor(0f32, 0f32, 0f32, 1f32);
+                            gl::Clear(gl::COLOR_BUFFER_BIT);
+                            self.draw_bg_program(common, regs, texs, from_line, to_line, fb_tex_3d, 0, BgMode::Display3d);
+                        }
+                    }
+                    _ => {}
+                }
+            };
+            draw_scanlines!(regs, draw_bg, false, 0);
+        }
+
         gl::BindFramebuffer(gl::FRAMEBUFFER, self.blend_fbo.fbo);
         gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
@@ -805,40 +846,11 @@ impl Gpu2DProgram {
         gl::BindTexture(gl::TEXTURE_2D, 0);
         gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+
+        self.blend_fbo.color
     }
 
-    unsafe fn draw(
-        &mut self,
-        common: &Gpu2DCommon,
-        regs: &Gpu2DRenderRegs,
-        texs: &Gpu2DTextures,
-        mem: Gpu2DMem,
-        fb_tex_3d: GLuint,
-        lcdc_pal: GLuint,
-        vram_display_program: &Gpu2DVramDisplayProgram,
-    ) -> GLuint {
-        macro_rules! draw_scanlines {
-            ($draw_fn:expr, $draw_vram_display:expr) => {{
-                let mut line = 0;
-                while line < DISPLAY_HEIGHT {
-                    let batch_count = regs.batch_counts[line];
-                    let from_line = line as u8;
-                    let to_line = line as u8 + batch_count as u8 + 1;
-                    line = to_line as usize;
-                    if lcdc_pal != 0 {
-                        let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
-                        if u8::from(disp_cnt.display_mode()) == 2 {
-                            if $draw_vram_display {
-                                $draw_fn(from_line, to_line);
-                            }
-                            continue;
-                        }
-                    }
-                    $draw_fn(from_line, to_line);
-                }
-            }};
-        }
-
+    unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, lcdc_pal: GLuint, vram_display_program: &Gpu2DVramDisplayProgram) {
         {
             gl::BindFramebuffer(gl::FRAMEBUFFER, common.win_bg_fbo.fbo);
             gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
@@ -852,7 +864,7 @@ impl Gpu2DProgram {
             gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, common.win_bg_ubo);
 
             let draw_windows = |from_line, to_line| self.draw_windows(common, regs, from_line, to_line);
-            draw_scanlines!(draw_windows, false);
+            draw_scanlines!(regs, draw_windows, false, lcdc_pal);
 
             gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
             gl::UseProgram(0);
@@ -902,7 +914,7 @@ impl Gpu2DProgram {
             gl::DepthFunc(gl::LESS);
 
             let mut draw_objects = |from_line, to_line| self.draw_objects(regs, &mem, from_line, to_line);
-            draw_scanlines!(draw_objects, false);
+            draw_scanlines!(regs, draw_objects, false, lcdc_pal);
 
             gl::Disable(gl::DEPTH_TEST);
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -924,8 +936,8 @@ impl Gpu2DProgram {
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             }
 
-            let draw_bg = |from_line, to_line| self.draw_bg(common, regs, texs, fb_tex_3d, from_line, to_line);
-            draw_scanlines!(draw_bg, false);
+            let draw_bg = |from_line, to_line| self.draw_bg(common, regs, texs, from_line, to_line);
+            draw_scanlines!(regs, draw_bg, false, lcdc_pal);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
@@ -945,18 +957,14 @@ impl Gpu2DProgram {
             gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
             let draw_vram_display = |from_line, to_line| vram_display_program.draw(regs, from_line, to_line);
-            draw_scanlines!(draw_vram_display, true);
+            draw_scanlines!(regs, draw_vram_display, true, lcdc_pal);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
             gl::UseProgram(0);
         }
 
-        self.blend_fbos(common, regs, &mem);
-
         gl::UseProgram(0);
-
-        self.blend_fbo.color
     }
 
     fn assemble_oam<const OBJ_WINDOW: bool>(&mut self, mem: &Gpu2DMem, from_line: u8, to_line: u8, disp_cnt: DispCnt) {
@@ -1102,20 +1110,28 @@ impl Gpu2DRenderer {
         self.has_vram_display[1] = false;
     }
 
-    pub unsafe fn render<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon, fb_tex_3d: GLuint) -> GLuint {
+    pub unsafe fn draw<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon) {
         match ENGINE {
             A => self.program_a.draw(
                 &self.common,
                 &self.regs_a[0],
                 &self.tex_a,
                 Gpu2DMem::new::<{ A }>(&common.mem_buf),
-                fb_tex_3d,
                 if self.has_vram_display[0] { self.lcdc_pal } else { 0 },
                 &self.vram_display_program,
             ),
             B => self
                 .program_b
-                .draw(&self.common, &self.regs_b[0], &self.tex_b, Gpu2DMem::new::<{ B }>(&common.mem_buf), 0, 0, &self.vram_display_program),
+                .draw(&self.common, &self.regs_b[0], &self.tex_b, Gpu2DMem::new::<{ B }>(&common.mem_buf), 0, &self.vram_display_program),
+        }
+    }
+
+    pub unsafe fn blend<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon, fb_tex_3d: GLuint) -> GLuint {
+        match ENGINE {
+            A => self
+                .program_a
+                .blend_fbos(&self.common, &self.regs_a[0], &self.tex_a, &Gpu2DMem::new::<{ A }>(&common.mem_buf), fb_tex_3d),
+            B => self.program_b.blend_fbos(&self.common, &self.regs_b[0], &self.tex_b, &Gpu2DMem::new::<{ B }>(&common.mem_buf), 0),
         }
     }
 }
