@@ -1,7 +1,7 @@
 workspace = { members = ["screenlayouts", "macros", "vitabuild", "vixl"] }
 [package]
 name = "dsvita"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
