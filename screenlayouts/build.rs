@@ -88,6 +88,15 @@ pub fn get_screen_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
     }
 
     {
+        let half_height = HOST_SCREEN_HEIGHT as f32 / 2.0;
+        let half_width = HOST_SCREEN_WIDTH as f32 / 2.0;
+        let half_height_scale = half_height / GUEST_SCREEN_HEIGHT as f32;
+        let mtx = Matrix3::new_translation(&Vector2::new(half_width, half_height / 2.0)) * Matrix3::new_scaling(half_height_scale);
+
+        layouts.push(("Vertical", [mtx, Matrix3::new_translation(&Vector2::new(0.0, half_height)) * mtx]));
+    }
+
+    {
         let half_width = HOST_SCREEN_WIDTH as f32 / 2.0;
         let full_height_scale = (HOST_SCREEN_HEIGHT as f32 / GUEST_SCREEN_WIDTH as f32).floor();
         let guest_width = GUEST_SCREEN_WIDTH as f32 * full_height_scale;
