@@ -96,7 +96,7 @@ impl IpcTrait for IpcLle {
         }
     }
 
-    fn fifo_send(&self, cpu: CpuType, mask: u32, mut value: u32, emu: &mut Emu) {
+    fn fifo_send(&self, cpu: CpuType, mask: u32, value: u32, emu: &mut Emu) {
         if emu.ipc.fifo[cpu].cnt.enable() {
             let fifo_len = emu.ipc.fifo[cpu].queue.len();
             if fifo_len < 16 {

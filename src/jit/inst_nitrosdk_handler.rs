@@ -357,7 +357,7 @@ unsafe extern "C" fn hle_gx_fifo_send128b(guest_pc: u32) {
 const FUNCTIONS_ARM9: &[Function] = &[
     Function::new(&MI_CPU_CLEAR32, "MI_CPU_CLEAR32", hle_mi_cpu_clear32::<{ ARM9 }>),
     Function::new(&MI_CPU_CLEAR16, "MI_CPU_CLEAR16", hle_mi_cpu_clear16::<{ ARM9 }>),
-    Function::new(&MI_CPU_COPY32, "MI_CPU_COPY32", hle_mi_cpu_copy32::<{ ARM9 }>),
+    // Function::new(&MI_CPU_COPY32, "MI_CPU_COPY32", hle_mi_cpu_copy32::<{ ARM9 }>),
     Function::new(&MI_CPU_SEND32, "MI_CPU_SEND32", hle_mi_cpu_send32::<{ ARM9 }>),
     Function::new(&MI_CPU_COPY16, "MI_CPU_COPY16", hle_mi_cpu_copy16::<{ ARM9 }>),
     Function::new(&GX_FIFO_SEND64B, "GX_FIFO_SEND64B", hle_gx_fifo_send64b),
