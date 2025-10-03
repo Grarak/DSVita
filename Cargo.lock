@@ -385,7 +385,7 @@ dependencies = [
 
 [[package]]
 name = "dsvita"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "affinity",
  "backtrace",

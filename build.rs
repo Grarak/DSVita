@@ -36,7 +36,7 @@ fn main() {
 
     if !is_target_vita() {
         println!("cargo:rerun-if-env-changed=SYSROOT");
-        if let Ok(sysroot) = env::var("SYSROOT") {
+        if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
             println!("cargo:rustc-link-arg=--sysroot={sysroot}");
         }
         let mut cache_build = cc::Build::new();
@@ -230,6 +230,11 @@ fn main() {
             .include(&imgui_path)
             .include(imgui_path.join("examples").join("sdl_opengl3_example"))
             .file("imgui_impl_sdl_gl3.cpp");
+
+        for flag in get_common_c_flags() {
+            imgui_build.flag(flag);
+        }
+
         println!("cargo:rerun-if-changed=imgui_impl_sdl_gl3.cpp");
         for file in IMGUI_FILES {
             let path = imgui_path.join(file);

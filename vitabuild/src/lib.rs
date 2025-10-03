@@ -40,6 +40,9 @@ pub fn get_common_c_flags() -> Vec<String> {
     let mut flags = COMMON_C_FLAGS.to_vec().iter().map(|flag| flag.to_string()).collect::<Vec<_>>();
     if !is_target_vita() {
         flags.push("--target=armv7-unknown-linux-gnueabihf".to_string());
+        if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
+            flags.push(format!("--sysroot={sysroot}"));
+        }
     }
     if is_profiling() {
         flags.push("-pg".to_string());
