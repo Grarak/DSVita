@@ -41,12 +41,6 @@ jobs:
         env:
           VITASDK: /usr/local/vitasdk
 
-      - name: Setup rust
-        run: |
-          rustup toolchain install nightly
-          rustup override set nightly
-          rustup component add rust-src --toolchain nightly
-
       - name: Install cargo-vita
         run: cargo +nightly install cargo-vita
         env:
