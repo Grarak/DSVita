@@ -453,7 +453,7 @@ pub extern "C" fn emit_code_block(guest_pc: u32) {
 
 fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     let pc_step = if thumb { 2 } else { 4 };
-    let guest_pc_end = asm.fill_jit_insts_buf(guest_pc, thumb);
+    let guest_pc_end = asm.fill_jit_insts_buf(guest_pc, thumb, false);
 
     if asm.emit_nitrosdk_func(guest_pc, thumb) {
         return;
@@ -637,7 +637,7 @@ impl<'a> JitAsm<'a> {
         execute_internal::<CPU>(entry)
     }
 
-    pub fn fill_jit_insts_buf(&mut self, guest_pc: u32, thumb: bool) -> u32 {
+    pub fn fill_jit_insts_buf(&mut self, guest_pc: u32, thumb: bool, until_bx: bool) -> u32 {
         let mut uncond_branch_count = 0;
         let mut pc_offset = 0;
         let get_inst_info = if thumb {
@@ -684,6 +684,7 @@ impl<'a> JitAsm<'a> {
             if is_uncond_branch {
                 uncond_branch_count += 1;
             }
+            let cond = inst_info.cond;
             let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && is_uncond_branch;
             let op = inst_info.op;
             if op.is_single_mem_transfer() || op.is_multiple_mem_transfer() || op.is_branch() {
@@ -691,13 +692,16 @@ impl<'a> JitAsm<'a> {
             }
             self.jit_buf.insts.push(inst_info);
 
-            if is_unreturnable_branch || uncond_branch_count == 20 {
+            if until_bx {
+                if matches!(op, Op::Bx | Op::BxRegT) && cond == Cond::AL {
+                    break;
+                } else if self.jit_buf.insts.len() >= 500 {
+                    break;
+                }
+            } else if (is_unreturnable_branch || uncond_branch_count == 20) || (heavy_inst_count > 50 && op != Op::BlSetupT) {
                 break;
             }
 
-            if heavy_inst_count > 50 && op != Op::BlSetupT {
-                break;
-            }
             pc_offset += pc_step;
         }
 

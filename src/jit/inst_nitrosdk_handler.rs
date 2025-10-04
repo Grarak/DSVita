@@ -386,11 +386,11 @@ const FUNCTIONS_ARM7: &[Function] = &[
 impl JitAsm<'_> {
     pub fn parse_nitrosdk_entry(&mut self) {
         let pc = self.cpu.thread_regs().pc;
-        println!("{:?} Parse entry function {pc:x}", self.cpu);
-        self.fill_jit_insts_buf(pc, false);
+        self.fill_jit_insts_buf(pc, false, true);
         if self.jit_buf.insts.len() < 3 {
             return;
         }
+
         let inst = &self.jit_buf.insts[0];
         match inst.op {
             Op::Mov => {
