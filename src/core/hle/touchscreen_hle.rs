@@ -89,7 +89,7 @@ impl Emu {
             }
             2 => {
                 if touchscreen.status != 2 {
-                    self.arm7_hle_send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008103, false);
+                    self.arm7_hle_send_ipc_fifo(IpcFifoTag::Touchpanel, 0x03008203, false);
                     return;
                 }
 
