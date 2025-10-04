@@ -12,8 +12,11 @@ use crate::utils::HeapMemUsize;
 use regions::{ARM7_BIOS_OFFSET, GBA_RAM_OFFSET, GBA_ROM_OFFSET, GBA_ROM_OFFSET2, IO_PORTS_OFFSET, MAIN_OFFSET, MAIN_REGION, SHARED_WRAM_OFFSET, V_MEM_ARM9_RANGE};
 use std::cmp::max;
 
-pub const MMU_PAGE_SHIFT: usize = 14;
+pub const MMU_PAGE_SHIFT: usize = 12;
 pub const MMU_PAGE_SIZE: usize = 1 << MMU_PAGE_SHIFT;
+
+const FAST_MEM_PAGE_SHIFT: usize = 14;
+pub const FAST_MEM_PAGE_SIZE: usize = 1 << FAST_MEM_PAGE_SHIFT;
 
 fn remove_mmu_write_entry(addr: u32, region: &MemRegion, mmu: &mut [usize], vmem: Option<&mut VirtualMem>) {
     if mmu[(addr >> MMU_PAGE_SHIFT) as usize] == 0 {
@@ -108,6 +111,14 @@ impl Emu {
         }
     }
 
+    fn initialize_tcm_arm9(&mut self) {
+        // mprotect is the only way in kubridge to merge pages
+        // Because with jit we are setting protection in 4kb pages
+        for addr in (0..SHARED_WRAM_OFFSET).step_by(FAST_MEM_PAGE_SIZE) {
+            self.mem.mmu_arm9.vmem_tcm.set_protection(addr as usize, FAST_MEM_PAGE_SIZE, false, false, false);
+        }
+    }
+
     fn update_tcm_arm9(&mut self, start: u32, end: u32) {
         debug_println!("update tcm arm9 {start:x} - {end:x}");
 
@@ -115,14 +126,11 @@ impl Emu {
         let jit_mmu = &self.jit.jit_memory_map;
 
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            self.mem.mmu_arm9.vmem_tcm.destroy_map(addr as usize, MMU_PAGE_SIZE);
-
             let mmu_read = &mut self.mem.mmu_arm9.mmu_read_tcm[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mem.mmu_arm9.mmu_write_tcm[(addr as usize) >> MMU_PAGE_SHIFT];
             *mmu_read = 0;
             *mmu_write = 0;
 
-            let base_addr = addr & !0xFF000000;
             match addr & 0x0F000000 {
                 MAIN_OFFSET => {
                     let addr_offset = (addr as usize) & (MAIN_REGION.size - 1);
@@ -131,24 +139,12 @@ impl Emu {
                     if write {
                         *mmu_write = MAIN_REGION.shm_offset + addr_offset;
                     }
-                    self.mem
-                        .mmu_arm9
-                        .vmem_tcm
-                        .create_page_map(shm, MAIN_REGION.shm_offset, base_addr as usize, MAIN_REGION.size, addr as usize, MMU_PAGE_SIZE, write)
-                        .unwrap();
                 }
                 SHARED_WRAM_OFFSET => {
                     let shm_offset = self.mem.wram.get_shm_offset::<{ ARM9 }>(addr);
                     if shm_offset != usize::MAX {
-                        self.mem
-                            .mmu_arm9
-                            .vmem_tcm
-                            .create_page_map(shm, shm_offset, 0, MMU_PAGE_SIZE, addr as usize, MMU_PAGE_SIZE, true)
-                            .unwrap();
                         *mmu_read = shm_offset;
                         *mmu_write = shm_offset;
-                    } else {
-                        self.mem.mmu_arm9.vmem_tcm.create_map(shm, 0, addr as usize, MMU_PAGE_SIZE, false, false, false).unwrap();
                     }
                 }
                 _ => {}
@@ -162,11 +158,6 @@ impl Emu {
                     if write {
                         *mmu_write = ITCM_REGION.shm_offset + addr_offset;
                     }
-                    self.mem
-                        .mmu_arm9
-                        .vmem_tcm
-                        .create_page_map(shm, ITCM_REGION.shm_offset, base_addr as usize, ITCM_REGION.size, addr as usize, MMU_PAGE_SIZE, write)
-                        .unwrap();
                 }
             } else if addr >= self.cp15.dtcm_addr && addr < self.cp15.dtcm_addr + self.cp15.dtcm_size {
                 if self.cp15.dtcm_state == TcmState::RW {
@@ -174,16 +165,64 @@ impl Emu {
                     let addr_offset = (base_addr as usize) & (DTCM_REGION.size - 1);
                     *mmu_read = DTCM_REGION.shm_offset + addr_offset;
                     *mmu_write = DTCM_REGION.shm_offset + addr_offset;
-                    self.mem.mmu_arm9.vmem_tcm.destroy_map(addr as usize, MMU_PAGE_SIZE);
-                    self.mem
-                        .mmu_arm9
-                        .vmem_tcm
-                        .create_page_map(shm, DTCM_REGION.shm_offset, addr_offset, DTCM_REGION.size, addr as usize, MMU_PAGE_SIZE, true)
-                        .unwrap();
                 } else if self.cp15.dtcm_state == TcmState::W {
                     *mmu_read = 0;
                     *mmu_write = 0;
-                    self.mem.mmu_arm9.vmem_tcm.destroy_map(addr as usize, MMU_PAGE_SIZE);
+                }
+            }
+        }
+
+        for addr in (start..end).step_by(FAST_MEM_PAGE_SIZE) {
+            self.mem.mmu_arm9.vmem_tcm.destroy_map(addr as usize, FAST_MEM_PAGE_SIZE);
+        }
+
+        for addr in (start..end).step_by(FAST_MEM_PAGE_SIZE) {
+            let base_addr = addr & !0xFF000000;
+            match addr & 0x0F000000 {
+                MAIN_OFFSET => {
+                    let write = !jit_mmu.has_jit_block(addr);
+                    self.mem
+                        .mmu_arm9
+                        .vmem_tcm
+                        .create_page_map(shm, MAIN_REGION.shm_offset, base_addr as usize, MAIN_REGION.size, addr as usize, FAST_MEM_PAGE_SIZE, write)
+                        .unwrap();
+                }
+                SHARED_WRAM_OFFSET => {
+                    let shm_offset = self.mem.wram.get_shm_offset::<{ ARM9 }>(addr);
+                    if shm_offset != usize::MAX {
+                        self.mem
+                            .mmu_arm9
+                            .vmem_tcm
+                            .create_page_map(shm, shm_offset, 0, FAST_MEM_PAGE_SIZE, addr as usize, FAST_MEM_PAGE_SIZE, true)
+                            .unwrap();
+                    } else {
+                        self.mem.mmu_arm9.vmem_tcm.create_map(shm, 0, addr as usize, FAST_MEM_PAGE_SIZE, false, false, false).unwrap();
+                    }
+                }
+                _ => {}
+            }
+
+            if addr < self.cp15.itcm_size {
+                if self.cp15.itcm_state == TcmState::RW {
+                    let write = !jit_mmu.has_jit_block(addr);
+                    self.mem
+                        .mmu_arm9
+                        .vmem_tcm
+                        .create_page_map(shm, ITCM_REGION.shm_offset, base_addr as usize, ITCM_REGION.size, addr as usize, FAST_MEM_PAGE_SIZE, write)
+                        .unwrap();
+                }
+            } else if addr >= self.cp15.dtcm_addr && addr < self.cp15.dtcm_addr + self.cp15.dtcm_size {
+                if self.cp15.dtcm_state == TcmState::RW {
+                    let base_addr = addr - self.cp15.dtcm_addr;
+                    let addr_offset = (base_addr as usize) & (DTCM_REGION.size - 1);
+                    self.mem.mmu_arm9.vmem_tcm.destroy_map(addr as usize, FAST_MEM_PAGE_SIZE);
+                    self.mem
+                        .mmu_arm9
+                        .vmem_tcm
+                        .create_page_map(shm, DTCM_REGION.shm_offset, addr_offset, DTCM_REGION.size, addr as usize, FAST_MEM_PAGE_SIZE, true)
+                        .unwrap();
+                } else if self.cp15.dtcm_state == TcmState::W {
+                    self.mem.mmu_arm9.vmem_tcm.destroy_map(addr as usize, FAST_MEM_PAGE_SIZE);
                 }
             }
         }
@@ -226,8 +265,6 @@ impl Emu {
         let start = start | VRAM_OFFSET;
         let end = end | VRAM_OFFSET;
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            // self.mem.mmu_arm9.vmem_tcm.destroy_map(addr as usize, MMU_PAGE_SIZE);
-
             let mmu_read = &mut self.mem.mmu_arm9.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mem.mmu_arm9.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_read_tcm = &mut self.mem.mmu_arm9.mmu_read_tcm[(addr as usize) >> MMU_PAGE_SHIFT];
@@ -243,22 +280,12 @@ impl Emu {
         let start = start | VRAM_OFFSET;
         let end = end | VRAM_OFFSET;
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            // self.mem.mmu_arm9.vmem_tcm.destroy_map(addr as usize, MMU_PAGE_SIZE);
-
             let mmu_read = &mut self.mem.mmu_arm9.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mem.mmu_arm9.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_read_tcm = &mut self.mem.mmu_arm9.mmu_read_tcm[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write_tcm = &mut self.mem.mmu_arm9.mmu_write_tcm[(addr as usize) >> MMU_PAGE_SHIFT];
 
             let shm_offset = self.mem.vram.get_shm_offset::<{ ARM9 }>(addr);
-
-            // if shm_offset != 0 {
-            //     self.mem
-            //         .mmu_arm9
-            //         .vmem_tcm
-            //         .create_page_map(&self.mem.shm, shm_offset, 0, MMU_PAGE_SIZE, addr as usize, MMU_PAGE_SIZE, true)
-            //         .unwrap();
-            // }
 
             *mmu_read = shm_offset;
             *mmu_write = shm_offset;
@@ -287,8 +314,6 @@ impl MmuArm7 {
 impl Emu {
     fn update_all_arm7(&mut self) {
         for addr in (0..V_MEM_ARM7_RANGE).step_by(MMU_PAGE_SIZE) {
-            self.mem.mmu_arm7.vmem.destroy_map(addr as usize, MMU_PAGE_SIZE);
-
             let mmu_read = &mut self.mem.mmu_arm7.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mem.mmu_arm7.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
             *mmu_read = 0;
@@ -309,8 +334,18 @@ impl Emu {
         // self.mem.mmu_arm7.vmem.destroy_region_map(&ARM7_BIOS_REGION);
         // self.mem.mmu_arm7.vmem.create_region_map(&self.mem.shm, &ARM7_BIOS_REGION).unwrap();
 
-        self.mem.mmu_arm7.vmem.destroy_region_map(&MAIN_REGION);
-        self.mem.mmu_arm7.vmem.create_region_map(&self.mem.shm, &MAIN_REGION).unwrap();
+        for addr in (MAIN_OFFSET..SHARED_WRAM_OFFSET).step_by(FAST_MEM_PAGE_SIZE) {
+            self.mem.mmu_arm7.vmem.set_protection(addr as usize, FAST_MEM_PAGE_SIZE, false, false, false);
+        }
+
+        for addr in (MAIN_OFFSET..SHARED_WRAM_OFFSET).step_by(FAST_MEM_PAGE_SIZE) {
+            let base_addr = addr & !0xFF000000;
+            self.mem
+                .mmu_arm7
+                .vmem
+                .create_page_map(&self.mem.shm, MAIN_REGION.shm_offset, base_addr as usize, MAIN_REGION.size, addr as usize, FAST_MEM_PAGE_SIZE, true)
+                .unwrap();
+        }
 
         // This aligns the underlying pages of the vita to 8kb for the wifi regions
         // Otherwise it will crash when cleaning them up
@@ -338,15 +373,22 @@ impl Emu {
 
     fn update_wram_arm7(&mut self) {
         for addr in (SHARED_WRAM_OFFSET..IO_PORTS_OFFSET).step_by(MMU_PAGE_SIZE) {
-            self.mem.mmu_arm7.vmem.destroy_map(addr as usize, MMU_PAGE_SIZE);
-
             let mmu_read = &mut self.mem.mmu_arm7.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mem.mmu_arm7.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
 
             let shm_offset = self.mem.wram.get_shm_offset::<{ ARM7 }>(addr);
             *mmu_read = shm_offset;
             *mmu_write = shm_offset;
-            self.mem.mmu_arm7.vmem.create_map(&self.mem.shm, shm_offset, addr as usize, MMU_PAGE_SIZE, true, true, false).unwrap();
+        }
+
+        for addr in (SHARED_WRAM_OFFSET..IO_PORTS_OFFSET).step_by(FAST_MEM_PAGE_SIZE) {
+            self.mem.mmu_arm7.vmem.destroy_map(addr as usize, FAST_MEM_PAGE_SIZE);
+            let shm_offset = self.mem.wram.get_shm_offset::<{ ARM7 }>(addr);
+            self.mem
+                .mmu_arm7
+                .vmem
+                .create_map(&self.mem.shm, shm_offset, addr as usize, FAST_MEM_PAGE_SIZE, true, true, false)
+                .unwrap();
         }
     }
 
@@ -354,8 +396,6 @@ impl Emu {
         let start = start | VRAM_OFFSET;
         let end = end | VRAM_OFFSET;
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            // self.mem.mmu_arm7.vmem.destroy_map(addr as usize, MMU_PAGE_SIZE);
-
             let mmu_read = &mut self.mem.mmu_arm7.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mem.mmu_arm7.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
             *mmu_read = 0;
@@ -367,20 +407,10 @@ impl Emu {
         let start = start | VRAM_OFFSET;
         let end = end | VRAM_OFFSET;
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            // self.mem.mmu_arm7.vmem.destroy_map(addr as usize, MMU_PAGE_SIZE);
-
             let mmu_read = &mut self.mem.mmu_arm7.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
             let mmu_write = &mut self.mem.mmu_arm7.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
 
             let shm_offset = self.mem.vram.get_shm_offset::<{ ARM7 }>(addr);
-
-            // if shm_offset != 0 {
-            //     self.mem
-            //         .mmu_arm7
-            //         .vmem
-            //         .create_page_map(&self.mem.shm, shm_offset, 0, MMU_PAGE_SIZE, addr as usize, MMU_PAGE_SIZE, true)
-            //         .unwrap();
-            // }
 
             *mmu_read = shm_offset;
             *mmu_write = shm_offset;
@@ -394,7 +424,8 @@ impl Emu {
         match CPU {
             ARM9 => {
                 self.update_all_no_tcm_arm9();
-                self.update_tcm_arm9(0, V_MEM_ARM9_RANGE);
+                self.initialize_tcm_arm9();
+                self.update_tcm_arm9(0, IO_PORTS_OFFSET);
                 self.initialize_tcm_misc_arm9();
             }
             ARM7 => self.update_all_arm7(),

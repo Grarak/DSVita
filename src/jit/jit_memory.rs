@@ -819,6 +819,8 @@ impl JitMemory {
         let fast_mem_start = (*host_pc - metadata.fast_mem_start_offset as usize) as *mut u8;
         let fast_mem = slice::from_raw_parts_mut(fast_mem_start, metadata.fast_mem_size as usize);
 
+        debug_println!("{cpu:?} slow mem patch at {:x} {:?} addr {guest_memory_addr:x}", metadata.pc, metadata.op);
+
         let thumb = metadata.pc & 1 == 1;
         if thumb {
             Self::execute_patch_slow_mem::<true>(host_pc, guest_memory_addr, fast_mem, metadata, cpu);

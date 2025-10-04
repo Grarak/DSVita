@@ -7,8 +7,6 @@
 #![feature(core_intrinsics)]
 #![feature(downcast_unchecked)]
 #![feature(generic_const_exprs)]
-#![feature(new_zeroed_alloc)]
-#![feature(panic_payload_as_str)]
 #![feature(ptr_as_ref_unchecked)]
 #![feature(seek_stream_len)]
 #![feature(slice_swap_unchecked)]

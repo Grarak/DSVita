@@ -228,6 +228,10 @@ impl VirtualMem {
         unsafe { munmap(self.ptr.add(start) as _, size as _) }
     }
 
+    pub fn set_protection(&mut self, start: usize, size: usize, read: bool, write: bool, exe: bool) {
+        unsafe { set_protection(self.ptr.add(start), size, read, write, exe) }
+    }
+
     pub fn set_region_protection(&mut self, start: usize, size: usize, mem_region: &MemRegion, read: bool, write: bool, exe: bool) {
         let base_offset = start - mem_region.start;
         let base_offset = base_offset & (mem_region.size - 1);
