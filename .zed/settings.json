@@ -9,8 +9,25 @@
                 "cargo": {
                     // "target": "armv7-sony-vita-newlibeabihf"
                     "target": "armv7-unknown-linux-gnueabihf"
+                },
+                "procMacro": {
+                    "enable": true
+                },
+                "rustfmt": {
+                    "extraArgs": ["+nightly"]
                 }
             }
+        }
+    },
+    "languages": {
+        "C": {
+            "enable_language_server": false
+        },
+        "C++": {
+            "enable_language_server": false
+        },
+        "JSONC": {
+            "enable_language_server": false
         }
     }
 }
