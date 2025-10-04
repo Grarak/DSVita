@@ -444,98 +444,35 @@ unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) 
 #[cold]
 pub extern "C" fn emit_code_block(guest_pc: u32) {
     let thumb = (guest_pc & 1) == 1;
-    let cpu = unsafe { CURRENT_RUNNING_CPU };
-    let asm = match cpu {
+    let asm = match unsafe { CURRENT_RUNNING_CPU } {
         ARM9 => unsafe { get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked() },
         ARM7 => unsafe { get_jit_asm_ptr::<{ ARM7 }>().as_mut_unchecked() },
     };
-    emit_code_block_internal(cpu, asm, guest_pc & !1, thumb);
+    emit_code_block_internal(asm, guest_pc & !1, thumb);
 }
 
-fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
-    let mut uncond_branch_count = 0;
-    let mut pc_offset = 0;
-    let get_inst_info = if thumb {
-        |cpu: CpuType, asm: &mut JitAsm, pc| {
-            let opcode = match cpu {
-                ARM9 => asm.emu.mem_read::<{ ARM9 }, u16>(pc),
-                ARM7 => asm.emu.mem_read::<{ ARM7 }, u16>(pc),
-            };
-            let (op, func) = lookup_thumb_opcode(opcode);
-            InstInfo::from(func(opcode, *op))
-        }
-    } else {
-        |cpu: CpuType, asm: &mut JitAsm, pc| {
-            let opcode = match cpu {
-                ARM9 => asm.emu.mem_read::<{ ARM9 }, u32>(pc),
-                ARM7 => asm.emu.mem_read::<{ ARM7 }, u32>(pc),
-            };
-            let (op, func) = lookup_opcode(opcode);
-            func(opcode, *op)
-        }
-    };
-
+fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     let pc_step = if thumb { 2 } else { 4 };
-    let mut heavy_inst_count = 0;
-    let mut last_inst_branch = false;
-
-    asm.jit_buf.clear_all();
-
-    loop {
-        let inst_info = get_inst_info(cpu, asm, guest_pc + pc_offset);
-
-        if inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb || inst_info.cond == Cond::NV {
-            break;
-        }
-
-        if let Some(last) = asm.jit_buf.insts_cycle_counts.last() {
-            debug_assert!(u16::MAX - last >= inst_info.cycle as u16, "{cpu:?} {guest_pc:x} {inst_info:?}");
-            asm.jit_buf.insts_cycle_counts.push(last + inst_info.cycle as u16);
-        } else {
-            asm.jit_buf.insts_cycle_counts.push(inst_info.cycle as u16);
-            debug_assert!(asm.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{cpu:?} {guest_pc:x} {inst_info:?}")
-        }
-
-        let is_uncond_branch = inst_info.is_uncond_branch();
-        if is_uncond_branch {
-            uncond_branch_count += 1;
-        }
-        let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && is_uncond_branch;
-        let op = inst_info.op;
-        if op.is_single_mem_transfer() || op.is_multiple_mem_transfer() || op.is_branch() {
-            heavy_inst_count += 1;
-        }
-        asm.jit_buf.insts.push(inst_info);
-
-        if is_unreturnable_branch || uncond_branch_count == 20 {
-            last_inst_branch = true;
-            break;
-        }
-
-        if heavy_inst_count > 50 && op != Op::BlSetupT {
-            break;
-        }
-        pc_offset += pc_step;
-    }
+    let guest_pc_end = asm.fill_jit_insts_buf(guest_pc, thumb);
 
     if asm.emit_nitrosdk_func(guest_pc, thumb) {
         return;
     }
 
     let (jit_entry, flushed) = {
-        debug_println!("{cpu:?} {thumb} emit code block {guest_pc:x} - {:x}", guest_pc + pc_offset);
+        debug_println!("{:?} {thumb} emit code block {guest_pc:x} - {guest_pc_end:x}", asm.cpu);
         // unsafe { BLOCK_LOG = guest_pc == 0x206a3a4 };
 
         asm.analyzer.analyze(guest_pc, &asm.jit_buf.insts, thumb);
         asm.jit_buf.guest_pc_start = guest_pc;
         asm.jit_buf.debug_info.resize(asm.analyzer.basic_blocks.len(), asm.jit_buf.insts.len());
 
-        let mut block_asm = BlockAsm::new(cpu, thumb);
+        let mut block_asm = BlockAsm::new(asm.cpu, thumb);
         block_asm.prologue(asm.analyzer.basic_blocks.len());
 
-        if cpu == ARM7 && guest_pc & 0xFF000000 != regions::VRAM_OFFSET && asm.emu.settings.arm7_block_validation() {
+        if asm.cpu == ARM7 && guest_pc & 0xFF000000 != regions::VRAM_OFFSET && asm.emu.settings.arm7_block_validation() {
             let guest_ptr = ARM7.mmu_tcm_addr() + (guest_pc as usize & 0xFFFFFFF);
-            let size = (pc_offset + pc_step) as usize;
+            let size = (guest_pc_end - guest_pc + pc_step) as usize;
             let hash = xxh32(unsafe { slice::from_raw_parts(guest_ptr as _, size) }, 0);
 
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
@@ -547,7 +484,7 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
 
         if BRANCH_LOG {
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
-            block_asm.call(map_fun_cpu!(cpu, debug_enter_block));
+            block_asm.call(map_fun_cpu!(asm.cpu, debug_enter_block));
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &Reg::R4.into());
         }
 
@@ -560,7 +497,7 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
         if !thumb {
             block_asm.lsr5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &1.into());
         }
-        block_asm.ldr2(Reg::R3, map_fun_cpu!(cpu, jump_to_other_guest_pc) as u32);
+        block_asm.ldr2(Reg::R3, map_fun_cpu!(asm.cpu, jump_to_other_guest_pc) as u32);
         block_asm.blx1(Reg::R3);
         block_asm.add5(FlagsUpdate_LeaveFlags, Cond::AL, Reg::PC, Reg::PC, &Reg::R0.into());
 
@@ -568,8 +505,9 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
         block_asm.set_guest_start();
         asm.emit(&mut block_asm, thumb);
 
-        if !last_inst_branch {
-            let next_pc = guest_pc + pc_offset + if thumb { 3 } else { 4 };
+        let last_inst = asm.jit_buf.insts.last().unwrap();
+        if !last_inst.is_uncond_branch() {
+            let next_pc = guest_pc_end + if thumb { 3 } else { 4 };
             block_asm.ldr2(Reg::R0, next_pc);
             block_asm.store_guest_reg(Reg::R0, Reg::PC);
             asm.emit_branch_external_label(asm.jit_buf.insts.len() - 1, asm.analyzer.basic_blocks.len() - 1, next_pc, false, &mut block_asm);
@@ -587,7 +525,7 @@ fn emit_code_block_internal(cpu: CpuType, asm: &mut JitAsm, guest_pc: u32, thumb
         //     println!();
         //     todo!()
         // }
-        let (insert_entry, flushed) = asm.emu.jit_insert_block(block_asm, &asm.jit_buf.debug_info, guest_pc, guest_pc + pc_offset + pc_step, thumb, cpu);
+        let (insert_entry, flushed) = asm.emu.jit_insert_block(block_asm, &asm.jit_buf.debug_info, guest_pc, guest_pc_end + pc_step, thumb, asm.cpu);
         let jit_entry: extern "C" fn(u32) = unsafe { mem::transmute(insert_entry) };
 
         if DEBUG_LOG {
@@ -697,6 +635,73 @@ impl<'a> JitAsm<'a> {
     pub fn execute<const CPU: CpuType>(&mut self) -> u16 {
         let entry = CPU.thread_regs().pc;
         execute_internal::<CPU>(entry)
+    }
+
+    pub fn fill_jit_insts_buf(&mut self, guest_pc: u32, thumb: bool) -> u32 {
+        let mut uncond_branch_count = 0;
+        let mut pc_offset = 0;
+        let get_inst_info = if thumb {
+            |cpu: CpuType, asm: &mut JitAsm, pc| {
+                let opcode = match cpu {
+                    ARM9 => asm.emu.mem_read::<{ ARM9 }, u16>(pc),
+                    ARM7 => asm.emu.mem_read::<{ ARM7 }, u16>(pc),
+                };
+                let (op, func) = lookup_thumb_opcode(opcode);
+                InstInfo::from(func(opcode, *op))
+            }
+        } else {
+            |cpu: CpuType, asm: &mut JitAsm, pc| {
+                let opcode = match cpu {
+                    ARM9 => asm.emu.mem_read::<{ ARM9 }, u32>(pc),
+                    ARM7 => asm.emu.mem_read::<{ ARM7 }, u32>(pc),
+                };
+                let (op, func) = lookup_opcode(opcode);
+                func(opcode, *op)
+            }
+        };
+
+        let pc_step = if thumb { 2 } else { 4 };
+        let mut heavy_inst_count = 0;
+
+        self.jit_buf.clear_all();
+
+        loop {
+            let inst_info = get_inst_info(self.cpu, self, guest_pc + pc_offset);
+
+            if inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb || inst_info.cond == Cond::NV {
+                break;
+            }
+
+            if let Some(last) = self.jit_buf.insts_cycle_counts.last() {
+                debug_assert!(u16::MAX - last >= inst_info.cycle as u16, "{:?} {guest_pc:x} {inst_info:?}", self.cpu);
+                self.jit_buf.insts_cycle_counts.push(last + inst_info.cycle as u16);
+            } else {
+                self.jit_buf.insts_cycle_counts.push(inst_info.cycle as u16);
+                debug_assert!(self.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{:?} {guest_pc:x} {inst_info:?}", self.cpu)
+            }
+
+            let is_uncond_branch = inst_info.is_uncond_branch();
+            if is_uncond_branch {
+                uncond_branch_count += 1;
+            }
+            let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && is_uncond_branch;
+            let op = inst_info.op;
+            if op.is_single_mem_transfer() || op.is_multiple_mem_transfer() || op.is_branch() {
+                heavy_inst_count += 1;
+            }
+            self.jit_buf.insts.push(inst_info);
+
+            if is_unreturnable_branch || uncond_branch_count == 20 {
+                break;
+            }
+
+            if heavy_inst_count > 50 && op != Op::BlSetupT {
+                break;
+            }
+            pc_offset += pc_step;
+        }
+
+        guest_pc + pc_offset
     }
 }
 

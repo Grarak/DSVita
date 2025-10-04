@@ -174,6 +174,8 @@ fn run_cpu(emu: &mut Emu) {
     let jit_asm_arm9 = unsafe { (ARM9.jit_asm_addr() as *mut JitAsm).as_mut_unchecked() };
     let jit_asm_arm7 = unsafe { (ARM7.jit_asm_addr() as *mut JitAsm).as_mut_unchecked() };
 
+    jit_asm_arm9.parse_nitrosdk_entry();
+
     if emu.settings.arm7_emu() == Arm7Emu::Hle {
         execute_jit::<true>(jit_asm_arm9, jit_asm_arm7);
     } else {

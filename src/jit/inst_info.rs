@@ -72,6 +72,18 @@ impl InstInfo {
             _ => self.cond,
         }
     }
+
+    pub fn is_imm_load(&self) -> bool {
+        match self.op {
+            Op::Ldr(transfer) | Op::LdrT(transfer) => {
+                !transfer.write_back() && {
+                    let operands = self.operands();
+                    operands[1].as_reg_no_shift() == Some(Reg::PC) && operands[2].as_imm().is_some()
+                }
+            }
+            _ => false,
+        }
+    }
 }
 
 impl Debug for InstInfo {

@@ -1,3 +1,4 @@
+use crate::core::memory::regions::OAM_OFFSET;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::jit::inst_branch_handler::check_scheduler;
@@ -5,7 +6,9 @@ use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::jit_asm_common_funs::exit_guest_context;
 use crate::jit::jit_memory::JitEntry;
-use crate::logging::debug_println;
+use crate::jit::op::Op;
+use crate::jit::reg::Reg;
+use crate::logging::{debug_println, info_println};
 use crate::settings::Arm7Emu;
 use crate::{get_jit_asm_ptr, IS_DEBUG};
 use std::cmp::min;
@@ -381,6 +384,85 @@ const FUNCTIONS_ARM7: &[Function] = &[
 ];
 
 impl JitAsm<'_> {
+    pub fn parse_nitrosdk_entry(&mut self) {
+        let pc = self.cpu.thread_regs().pc;
+        println!("{:?} Parse entry function {pc:x}", self.cpu);
+        self.fill_jit_insts_buf(pc, false);
+        if self.jit_buf.insts.len() < 3 {
+            return;
+        }
+        let inst = &self.jit_buf.insts[0];
+        match inst.op {
+            Op::Mov => {
+                if inst.operands()[0].as_reg_no_shift() != Some(Reg::R12) || inst.operands()[1].as_imm() != Some(0x4000000) {
+                    return;
+                }
+            }
+            _ => return,
+        }
+
+        let inst = &self.jit_buf.insts[1];
+        match inst.op {
+            Op::Str(transfer) => {
+                if !transfer.pre()
+                    || transfer.write_back()
+                    || !transfer.add()
+                    || transfer.size() != 2
+                    || inst.operands()[0].as_reg_no_shift() != Some(Reg::R12)
+                    || inst.operands()[1].as_reg_no_shift() != Some(Reg::R12)
+                    || inst.operands()[2].as_imm() != Some(0x208)
+                {
+                    return;
+                }
+            }
+            _ => return,
+        }
+
+        let mut start_module_params_addr = 0;
+        let mut oam_imm_load_found = false;
+        for (i, inst) in self.jit_buf.insts.iter().enumerate() {
+            if !inst.is_imm_load() {
+                continue;
+            }
+
+            if let Op::Ldr(transfer) = inst.op {
+                if transfer.size() != 2 {
+                    continue;
+                }
+
+                let current_pc = pc + ((i as u32) << 2);
+                let imm = inst.operands()[2].as_imm().unwrap();
+                let pc = current_pc + 8;
+                let imm_addr = if transfer.add() { pc + imm } else { pc - imm };
+                let imm_value = self.emu.mem_read::<{ ARM9 }, u32>(imm_addr);
+                if oam_imm_load_found {
+                    start_module_params_addr = imm_value;
+                    break;
+                } else if imm_value == OAM_OFFSET {
+                    oam_imm_load_found = true;
+                }
+            }
+        }
+
+        if start_module_params_addr == 0 {
+            return;
+        }
+
+        let mut buf = [0; 3];
+        self.emu.mem_read_multiple_slice::<{ ARM9 }, true, true, u32>(start_module_params_addr + 24, &mut buf);
+        let sdk_version_info = buf[0];
+        let sdk_nitro_code_be = buf[1];
+        let sdk_nitro_code_le = buf[2];
+
+        if sdk_nitro_code_le != u32::from_be(sdk_nitro_code_be) {
+            return;
+        }
+        let sdk_version_major = (sdk_version_info >> 24) & 0xFF;
+        let sdk_version_minor = (sdk_version_info >> 16) & 0xFF;
+        let sdk_version_relstep = sdk_version_info & 0xFFFF;
+        info_println!("Found Nitro SDK version {sdk_version_major}.{sdk_version_minor}.{sdk_version_relstep}");
+    }
+
     pub fn emit_nitrosdk_func(&mut self, guest_pc: u32, thumb: bool) -> bool {
         if thumb {
             return false;

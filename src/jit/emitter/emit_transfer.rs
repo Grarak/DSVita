@@ -153,7 +153,7 @@ impl JitAsm<'_> {
         }
 
         block_asm.ensure_emit_for(64);
-        let fast_mem_start = if !inst.op.is_write_mem_transfer() && op1 == Reg::PC && !transfer.write_back() && op2.as_imm().is_some() {
+        let fast_mem_start = if inst.is_imm_load() {
             let consider_slow_mem = block_asm.current_pc & 0xFF000000 == VRAM_OFFSET;
 
             let imm = op2.as_imm().unwrap();
