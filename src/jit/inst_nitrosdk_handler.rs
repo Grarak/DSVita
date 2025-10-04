@@ -372,7 +372,7 @@ const FUNCTIONS_ARM9: &[Function] = &[
 const FUNCTIONS_ARM7: &[Function] = &[
     Function::new(&MI_CPU_CLEAR32, "MI_CPU_CLEAR32", hle_mi_cpu_clear32::<{ ARM7 }>),
     Function::new(&MI_CPU_CLEAR16, "MI_CPU_CLEAR16", hle_mi_cpu_clear16::<{ ARM7 }>),
-    Function::new(&MI_CPU_COPY32, "MI_CPU_COPY32", hle_mi_cpu_copy32::<{ ARM7 }>),
+    // Function::new(&MI_CPU_COPY32, "MI_CPU_COPY32", hle_mi_cpu_copy32::<{ ARM7 }>),
     Function::new(&MI_CPU_SEND32, "MI_CPU_SEND32", hle_mi_cpu_send32::<{ ARM7 }>),
     Function::new(&MI_CPU_COPY16, "MI_CPU_COPY16", hle_mi_cpu_copy16::<{ ARM7 }>),
     Function::new(&MI_COPY64B, "MI_COPY64B", hle_mi_copy64b::<{ ARM7 }>),
