@@ -357,9 +357,8 @@ impl Emu {
         }
 
         sound_nitro.cmd_offset = u32::MAX;
-        let game_code = &self.cartridge.io.header.game_code[..3];
-        if game_code == [0x41, 0x53, 0x4D] {
-            // Super Mario 64 DS
+        if u32::from(self.nitro_sdk_version) == 0 {
+            // e.g. Super Mario 64 DS uses a very early nitro sdk which has different cmds
             sound_nitro.cmd_translate = true;
         }
 

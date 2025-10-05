@@ -1,3 +1,4 @@
+use crate::core::emu::NitroSdkVersion;
 use crate::core::memory::regions::OAM_OFFSET;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
@@ -457,10 +458,8 @@ impl JitAsm<'_> {
         if sdk_nitro_code_le != u32::from_be(sdk_nitro_code_be) {
             return;
         }
-        let sdk_version_major = (sdk_version_info >> 24) & 0xFF;
-        let sdk_version_minor = (sdk_version_info >> 16) & 0xFF;
-        let sdk_version_relstep = sdk_version_info & 0xFFFF;
-        info_println!("Found Nitro SDK version {sdk_version_major}.{sdk_version_minor}.{sdk_version_relstep}");
+        self.emu.nitro_sdk_version = NitroSdkVersion::from(sdk_version_info);
+        info_println!("Found Nitro SDK version {:?}", self.emu.nitro_sdk_version);
     }
 
     pub fn emit_nitrosdk_func(&mut self, guest_pc: u32, thumb: bool) -> bool {

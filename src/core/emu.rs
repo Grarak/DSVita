@@ -18,9 +18,18 @@ use crate::core::wifi::Wifi;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::jit_memory::JitMemory;
 use crate::settings::{Settings, DEFAULT_SETTINGS};
+use bilge::prelude::*;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, AtomicU32};
 use std::sync::{Arc, Mutex};
+
+#[bitsize(32)]
+#[derive(Copy, Clone, DebugBits, FromBits)]
+pub struct NitroSdkVersion {
+    relstep: u16,
+    minor: u8,
+    major: u8,
+}
 
 pub struct Emu {
     pub ipc: Ipc,
@@ -41,6 +50,7 @@ pub struct Emu {
     pub wifi: Wifi,
     pub jit: JitMemory,
     pub settings: Settings,
+    pub nitro_sdk_version: NitroSdkVersion,
     pub breakout_imm: bool,
     initialized: bool,
 }
@@ -66,6 +76,7 @@ impl Emu {
             wifi: Wifi::new(),
             jit,
             settings: DEFAULT_SETTINGS.clone(),
+            nitro_sdk_version: NitroSdkVersion::from(u32::MAX),
             breakout_imm: false,
             initialized: true,
         }
@@ -91,6 +102,7 @@ impl Emu {
             self.timers = [Timers::new(), Timers::new()];
             self.wifi = Wifi::new();
         }
+        self.nitro_sdk_version = NitroSdkVersion::from(u32::MAX);
         self.initialized = false;
     }
 }
