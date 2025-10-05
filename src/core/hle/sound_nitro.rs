@@ -128,7 +128,7 @@ struct Channel {
     loop_pos: u16,
     length: u32,
     data_addr_duty_cycle: u32,
-    linked_track: Option<usize>, // size 8, callback and data
+    linked_track: Option<u32>, // size 8, callback and data
     next: Option<u16>,           // size 4, ptr
 }
 
@@ -1524,7 +1524,7 @@ impl Emu {
         ret_chan.status_flags.set_active(false);
 
         ret_chan.next = None;
-        ret_chan.linked_track = Some(track_id as usize);
+        ret_chan.linked_track = Some(track_id as u32);
         ret_chan.note_length = 0;
         ret_chan.priority = prio;
         ret_chan.volume = 127;
@@ -2128,7 +2128,7 @@ impl Emu {
 
     fn sound_nitro_unlink_channel(&mut self, chan_id: u8, unlink: bool) {
         let sound_nitro = &mut self.hle.sound.nitro;
-        let track_id = sound_nitro.channels[chan_id as usize].linked_track.unwrap();
+        let track_id = sound_nitro.channels[chan_id as usize].linked_track.unwrap() as usize;
 
         if unlink {
             let chan = &mut sound_nitro.channels[chan_id as usize];
