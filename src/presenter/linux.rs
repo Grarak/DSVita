@@ -72,13 +72,12 @@ impl Presenter {
             .arg(arg!(framelimit: -f "Enable framelimit").required(false).action(ArgAction::SetTrue))
             .arg(arg!(audio: -a "Enable audio").required(false).action(ArgAction::SetTrue))
             .arg(
-                arg!(-e <arm7_emu> "0: Accurate, 1: Partial, 2: Partial with Sound, 3: Hle")
+                arg!(-e <arm7_emu> "0: Accurate, 1: SoundHle, 2: Hle")
                     .num_args(1)
                     .required(false)
                     .default_value("0")
                     .value_parser(value_parser!(u8)),
             )
-            .arg(arg!(enable_arm7_block_validation: -b "Enable arm7 block validation").required(false).action(ArgAction::SetTrue))
             .arg(arg!(ui: --ui "Use UI").required(false).action(ArgAction::SetTrue))
             .arg(arg!([nds_rom] "NDS rom to run").num_args(1).required(true).value_parser(value_parser!(String)))
             .get_matches();
@@ -164,7 +163,6 @@ impl Presenter {
             settings.set_framelimit(self.arg_matches.get_flag("framelimit"));
             settings.set_audio(self.arg_matches.get_flag("audio"));
             settings.set_arm7_emu(Arm7Emu::from(*self.arg_matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
-            settings.set_arm7_block_validation(self.arg_matches.get_flag("enable_arm7_block_validation"));
 
             let file_name = file_path.file_name().unwrap().to_str().unwrap();
             let save_path = file_path.parent().unwrap().join(format!("{file_name}.sav"));

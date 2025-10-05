@@ -31,6 +31,18 @@ pub struct NitroSdkVersion {
     major: u8,
 }
 
+impl NitroSdkVersion {
+    pub fn is_valid(self) -> bool {
+        u32::from(self) != u32::MAX
+    }
+}
+
+impl Default for NitroSdkVersion {
+    fn default() -> Self {
+        NitroSdkVersion::from(u32::MAX)
+    }
+}
+
 pub struct Emu {
     pub ipc: Ipc,
     pub cartridge: Cartridge,
@@ -76,7 +88,7 @@ impl Emu {
             wifi: Wifi::new(),
             jit,
             settings: DEFAULT_SETTINGS.clone(),
-            nitro_sdk_version: NitroSdkVersion::from(u32::MAX),
+            nitro_sdk_version: NitroSdkVersion::default(),
             breakout_imm: false,
             initialized: true,
         }
@@ -102,7 +114,7 @@ impl Emu {
             self.timers = [Timers::new(), Timers::new()];
             self.wifi = Wifi::new();
         }
-        self.nitro_sdk_version = NitroSdkVersion::from(u32::MAX);
+        self.nitro_sdk_version = NitroSdkVersion::default();
         self.initialized = false;
     }
 }

@@ -4,7 +4,7 @@ use crate::core::emu::Emu;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use std::cmp::max;
-use std::intrinsics::likely;
+use std::intrinsics::{likely, unlikely};
 use std::mem;
 
 #[repr(u8)]
@@ -130,7 +130,11 @@ impl CycleManager {
     }
 
     pub fn schedule(&mut self, in_cycles: u32, event_type: EventType) {
-        let event_cycle = self.cycle_count + max(in_cycles, 1);
+        let mut in_cycles = max(in_cycles, 1);
+        if unlikely(u32::MAX - in_cycles < self.cycle_count) {
+            in_cycles = u32::MAX - self.cycle_count;
+        }
+        let event_cycle = self.cycle_count + in_cycles;
         self.events[event_type as usize] = event_cycle;
         self.active_events |= 1 << (31 - event_type as u8);
         if event_cycle < self.next_event_cycle {

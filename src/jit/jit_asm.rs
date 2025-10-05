@@ -470,7 +470,7 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
         let mut block_asm = BlockAsm::new(asm.cpu, thumb);
         block_asm.prologue(asm.analyzer.basic_blocks.len());
 
-        if asm.cpu == ARM7 && guest_pc & 0xFF000000 != regions::VRAM_OFFSET && asm.emu.settings.arm7_block_validation() {
+        if asm.cpu == ARM7 && guest_pc & 0xFF000000 != regions::VRAM_OFFSET && !asm.emu.nitro_sdk_version.is_valid() {
             let guest_ptr = ARM7.mmu_tcm_addr() + (guest_pc as usize & 0xFFFFFFF);
             let size = (guest_pc_end - guest_pc + pc_step) as usize;
             let hash = xxh32(unsafe { slice::from_raw_parts(guest_ptr as _, size) }, 0);

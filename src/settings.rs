@@ -173,18 +173,12 @@ lazy_static! {
             Setting::new("Bottom screen scale", "Press PS + Circle to cycle screen sizes", ScreenLayout::scale_settings_value(), true),
             Setting::new("Language", "Some ROMs only come with one language. Make sure yours is multilingual.", Language::iter().into(), false),
             Setting::new("Joystick as D-Pad", "", SettingValue::Bool(true), true),
-            Setting::new(
-                "Arm7 jit block validation",
-                "Only needed for nds homebrew. Commercial games usually don't need to have this enabled.",
-                SettingValue::Bool(false),
-                false,
-            ),
         ],
     );
 }
 
 #[derive(Clone)]
-pub struct Settings([Setting; 11]);
+pub struct Settings([Setting; 10]);
 
 #[repr(u8)]
 enum SettingIndices {
@@ -198,7 +192,6 @@ enum SettingIndices {
     BottomScreenScale,
     Language,
     JoystickAsDpad,
-    Arm7BlockValidation,
 }
 
 impl Settings {
@@ -229,10 +222,6 @@ impl Settings {
         unsafe { Arm7Emu::from(self.0[SettingIndices::Arm7Emu as usize].value.as_list().unwrap_unchecked().0 as u8) }
     }
 
-    pub fn arm7_block_validation(&self) -> bool {
-        unsafe { self.0[SettingIndices::Arm7BlockValidation as usize].value.as_bool().unwrap_unchecked() }
-    }
-
     pub fn audio_stretching(&self) -> bool {
         unsafe { self.0[SettingIndices::AudioStretching as usize].value.as_bool().unwrap_unchecked() }
     }
@@ -258,11 +247,7 @@ impl Settings {
         *self.0[SettingIndices::Arm7Emu as usize].value.as_list_mut().unwrap().0 = value as usize
     }
 
-    pub fn set_arm7_block_validation(&mut self, value: bool) {
-        *self.0[SettingIndices::Arm7BlockValidation as usize].value.as_bool_mut().unwrap() = value;
-    }
-
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 11] {
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 10] {
         &mut self.0
     }
 }
