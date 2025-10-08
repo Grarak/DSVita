@@ -437,19 +437,21 @@ impl Emu {
         let mut params: [u32; 32] = unsafe { MaybeUninit::uninit().assume_init() };
 
         'outer: while !regs_3d.cmd_fifo.is_empty() {
-            let value = *regs_3d.cmd_fifo.front();
+            let mut value = *regs_3d.cmd_fifo.front();
             regs_3d.cmd_fifo.pop_front();
 
-            for i in 0..4 {
-                let cmd = ((value as usize) >> (i << 3)) & 0x7F;
+            while value != 0 {
+                let cmd = (value & 0x7F) as usize;
+                let current_value = value;
+                value >>= 8;
                 if unlikely(cmd == 0) {
-                    break;
+                    continue;
                 }
                 let param_count = FifoParam::from(unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) });
                 let count = u8::from(param_count.param_count()) as usize;
 
                 if unlikely(count > regs_3d.cmd_fifo.len()) {
-                    regs_3d.cmd_fifo.push_front(value >> (i << 3));
+                    regs_3d.cmd_fifo.push_front(current_value);
                     break 'outer;
                 }
 
@@ -468,9 +470,8 @@ impl Emu {
 
                 executed_cycles += 4;
                 if executed_cycles >= cycle_diff || cmd == 0x50 {
-                    let remaining_cmds = value.unbounded_shr((i + 1) << 3);
-                    if remaining_cmds != 0 {
-                        regs_3d.cmd_fifo.push_front(remaining_cmds);
+                    if value != 0 {
+                        regs_3d.cmd_fifo.push_front(value);
                     }
                     break 'outer;
                 }
