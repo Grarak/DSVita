@@ -286,6 +286,8 @@ pub fn show_main_menu(cartridge_path: PathBuf, ui_backend: &mut impl UiBackend) 
                     let vec = ImVec2 { x: 0f32, y: 10f32 };
                     ImGui::Dummy(&vec);
 
+                    ImGui::Text(c"First launch will take some time. Please do not exit or shutdown your vita!".as_ptr());
+
                     let vec = ImVec2 { x: -1f32, y: 0f32 };
                     if ImGui::Button(c"Launch game".as_ptr() as _, &vec) {
                         launched = true;
