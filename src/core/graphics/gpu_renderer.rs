@@ -7,6 +7,7 @@ use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
+use crate::core::memory::io_arm9_lut::Arm9Io;
 use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram;
 use crate::core::memory::vram::Vram;
@@ -125,9 +126,9 @@ impl GpuRenderer {
         self.rendering_3d = false;
     }
 
-    pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters, inner_b: &mut Gpu2DRegisters, line: u8) {
+    pub fn on_scanline(&mut self, inner: &mut [Gpu2DRegisters; 2], io_arm9: &mut Arm9Io::Memory, line: u8) {
         if self.sample_2d {
-            self.renderer_2d.on_scanline(inner_a, inner_b, line);
+            self.renderer_2d.on_scanline(inner, io_arm9, line);
         }
     }
 

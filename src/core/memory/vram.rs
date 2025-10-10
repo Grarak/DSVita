@@ -440,7 +440,6 @@ impl VramMaps {
 
 #[derive(Default)]
 pub struct Vram {
-    pub stat: u8,
     pub cnt: [u8; BANK_SIZE],
     pub maps: VramMaps,
     arm7: OverlapMapping<0x000000, { 128 * 2 * 1024 }, { ARM7_SIZE as usize }, 2>,
@@ -448,8 +447,7 @@ pub struct Vram {
 }
 
 impl Vram {
-    pub fn rebuild_maps(&mut self) {
-        self.stat = 0;
+    pub fn rebuild_maps(&mut self, stat: &mut u8) {
         self.maps.reset();
         self.arm7.reset();
         self.map_addrs.fill((0, 0));
@@ -520,7 +518,7 @@ impl Vram {
                     2 => {
                         let ofs = u8::from(cnt_c.ofs()) as usize;
                         self.arm7.add::<BANK_C_SIZE>(VramMap::new(VramBanks::get_c()), ofs & 1, &mut self.map_addrs[2]);
-                        self.stat |= 1;
+                        *stat |= 1;
                     }
                     3 => {
                         let ofs = u8::from(cnt_c.ofs()) as usize;
@@ -549,7 +547,7 @@ impl Vram {
                     2 => {
                         let ofs = u8::from(cnt_d.ofs()) as usize;
                         self.arm7.add::<BANK_D_SIZE>(VramMap::new(VramBanks::get_d()), ofs & 1, &mut self.map_addrs[3]);
-                        self.stat |= 2;
+                        *stat |= 2;
                     }
                     3 => {
                         let ofs = u8::from(cnt_d.ofs()) as usize;
@@ -799,9 +797,12 @@ impl Emu {
         };
     }
 
-    pub fn vram_set_cnt(&mut self, bank: usize, value: u8) {
+    pub fn vram_set_cnt(&mut self, bank: usize) {
         const MASKS: [u8; 9] = [0x9B, 0x9B, 0x9F, 0x9F, 0x87, 0x9F, 0x9F, 0x83, 0x83];
-        let value = value & MASKS[bank];
+
+        let value = self.mem.io.arm9().vram_cnt(bank);
+        *value &= MASKS[bank];
+        let value = *value;
         if self.mem.vram.cnt[bank] == value {
             return;
         }
@@ -811,7 +812,7 @@ impl Emu {
         if current_mapped_size != 0 {
             let start_addr = current_mapped_addr;
             let end_addr = current_mapped_addr + current_mapped_size as u32;
-            if unlikely(self.mem.vram.stat != 0 && (bank == 2 || bank == 3)) {
+            if unlikely(self.mem.io.arm7().vram_stat != 0 && (bank == 2 || bank == 3)) {
                 self.mmu_remove_vram::<{ ARM7 }>(start_addr, end_addr);
             } else {
                 self.mmu_remove_vram::<{ ARM9 }>(start_addr, end_addr);
@@ -820,7 +821,7 @@ impl Emu {
 
         debug_println!("Set vram cnt {bank:x} to {value:x}");
 
-        self.mem.vram.rebuild_maps();
+        self.mem.vram.rebuild_maps(&mut self.mem.io.arm7().vram_stat);
 
         self.jit.invalidate_vram();
 
@@ -828,7 +829,7 @@ impl Emu {
         if new_mapped_size != 0 {
             let start_addr = new_mapped_addr;
             let end_addr = new_mapped_addr + new_mapped_size as u32;
-            if unlikely(self.mem.vram.stat != 0 && (bank == 2 || bank == 3)) {
+            if unlikely(self.mem.io.arm7().vram_stat != 0 && (bank == 2 || bank == 3)) {
                 self.mmu_update_vram::<{ ARM7 }>(start_addr, end_addr);
             } else {
                 self.mmu_update_vram::<{ ARM9 }>(start_addr, end_addr);

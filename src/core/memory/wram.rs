@@ -26,7 +26,7 @@ impl Default for SharedWramMap {
 }
 
 pub struct Wram {
-    pub cnt: u8,
+    cnt: u8,
     arm9_map: SharedWramMap,
     arm7_map: SharedWramMap,
 }
@@ -82,12 +82,14 @@ impl Wram {
 }
 
 impl Emu {
-    pub fn wram_set_cnt(&mut self, value: u8) {
-        let value = value & 0x3;
+    pub fn wram_set_cnt(&mut self) {
+        self.mem.io.arm9().wram_cnt &= 0x3;
+        let value = self.mem.io.arm9().wram_cnt;
         if value == self.mem.wram.cnt {
             return;
         }
 
+        self.mem.io.arm7().wram_cnt = value;
         self.mem.wram.cnt = value;
         self.mem.wram.init_maps();
 

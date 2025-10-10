@@ -1,373 +1,253 @@
 #![feature(proc_macro_quote)]
+
 extern crate proc_macro;
-use core::panic;
-use proc_macro::TokenStream;
-use std::cmp;
+use proc_macro2::TokenStream;
 use std::collections::HashMap;
 use syn::__private::quote::{format_ident, quote};
-use syn::__private::ToTokens;
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
-use syn::{parse_macro_input, Expr, Lit, Pat};
+use syn::{parse_macro_input, Expr, ExprTuple, Ident, Lit, Pat};
 
-#[proc_macro]
-pub fn io_read(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item with Punctuated::<Expr, syn::Token![,]>::parse_terminated);
-    let name = input.first().unwrap().to_token_stream().to_string();
-    let io_ports = match input.last().unwrap() {
-        Expr::Array(array) => array,
-        _ => panic!(),
+fn create_lut(entries: &[(usize, usize, Ident, &Ident)], funcs: &HashMap<usize, (Ident, TokenStream)>) -> Vec<TokenStream> {
+    let mut lut_entries = Vec::<TokenStream>::new();
+    let mut last_offset = entries.first().unwrap().1;
+    let mut last_non_empty_offset = last_offset;
+    for (size, offset, _, _) in entries {
+        match funcs.get(offset) {
+            Some((func_name, _)) => {
+                let offset_diff = offset - last_offset;
+                if offset_diff > 0 {
+                    for i in (1..offset_diff + 1).rev() {
+                        lut_entries.push(
+                            quote! {
+                                (empty, #i),
+                            }
+                            .into(),
+                        );
+                    }
+                }
+                for i in (1..*size + 1).rev() {
+                    lut_entries.push(
+                        quote! {
+                            (#func_name, #i),
+                        }
+                        .into(),
+                    );
+                }
+
+                last_offset = *offset + *size;
+                last_non_empty_offset = *offset + *size;
+            }
+            None => last_offset = *offset,
+        }
+    }
+
+    let end_offset = {
+        let (size, offset, _, _) = entries.last().unwrap();
+        *size + *offset
     };
 
-    let mut min_addr = u32::MAX;
-    let mut max_addr = 0;
-    let mut exprs = HashMap::new();
-    let mut funcs = Vec::new();
-
-    for elem in &io_ports.elems {
-        let tuple = match elem {
-            Expr::Tuple(tuple) => tuple,
-            _ => panic!(),
-        };
-
-        let io_call = match &tuple.elems[0] {
-            Expr::Call(io_call) => io_call,
-            _ => panic!(),
-        };
-
-        let closure = match &tuple.elems[1] {
-            Expr::Closure(closure) => closure,
-            _ => panic!(),
-        };
-
-        let closure_arg = match closure.inputs.first().unwrap() {
-            Pat::Ident(ident) => ident,
-            _ => panic!(),
-        };
-
-        let io_call_path = match &io_call.func.as_ref() {
-            Expr::Path(path) => path,
-            _ => panic!(),
-        };
-
-        let io_call_lit = match &io_call.args[0] {
-            Expr::Lit(lit) => match &lit.lit {
-                Lit::Int(lit) => lit,
-                _ => panic!(),
-            },
-            _ => panic!(),
-        };
-
-        let segment = io_call_path.path.segments.first().unwrap();
-
-        let size = match segment.ident.to_string().as_str() {
-            "io8" => 1u8,
-            "io16" => 2u8,
-            "io32" => 4u8,
-            _ => panic!(),
-        };
-
-        let addr_str = io_call_lit.to_string();
-        let addr = u32::from_str_radix(addr_str.trim_start_matches("0x"), 16).unwrap();
-        min_addr = cmp::min(min_addr, addr);
-        max_addr = cmp::max(max_addr, addr + size as u32);
-
-        let func_name = format_ident!("_read_{addr_str}");
-        let func_arg = format_ident!("emu", span = closure_arg.span());
-        let body = closure.body.as_ref();
-        let func = quote!(
-            #[allow(unreachable_code)]
-            fn #func_name(#func_arg: &mut crate::core::emu::Emu) -> u32 {
-                #body as u32
+    let offset_diff = end_offset - last_non_empty_offset;
+    for i in (1..offset_diff + 1).rev() {
+        lut_entries.push(
+            quote! {
+                (empty, #i),
             }
+            .into(),
         );
-        exprs.insert(addr, (size, func_name));
-        funcs.push(func);
     }
 
-    funcs.push(quote!(
-        fn _read_empty(_: &mut crate::core::emu::Emu) -> u32 {
-            0
-        }
-    ));
+    lut_entries
+}
 
-    let mut lut_entries = Vec::new();
+fn create_mod<'a>(expr: &'a ExprTuple, all_entries: &mut Vec<(usize, usize, Ident, &'a Ident)>) -> TokenStream {
+    let mut entries = Vec::new();
+    let mut read_funcs = HashMap::new();
+    let mut write_funcs = HashMap::new();
 
-    if min_addr > 0 {
-        min_addr -= cmp::min(3, min_addr);
-    }
-    max_addr += 3;
+    let mut last_offset = -1;
 
-    let mut i = min_addr;
-    while i < max_addr {
-        if let Some((size, func_name)) = exprs.get(&i) {
-            for j in 0..*size {
-                let remaining = *size - j;
-                let offset = j << 3;
-                lut_entries.push(quote!(
-                    (Self::#func_name, #remaining, #offset),
-                ));
+    let (mod_name, mod_content) = match expr.elems.first().unwrap() {
+        Expr::Macro(m) => (&m.mac.path.segments.first().unwrap().ident, &m.mac.tokens),
+        _ => unreachable!(),
+    };
+
+    for io in expr.elems.iter().skip(1) {
+        let entry = match io {
+            Expr::Tuple(tuple) => tuple,
+            _ => unreachable!(),
+        };
+
+        let (size, offset, typ) = match entry.elems.first().unwrap() {
+            Expr::Call(call) => {
+                let size = match call.func.as_ref() {
+                    Expr::Path(path) => match path.path.segments.first().unwrap().ident.to_string().as_str() {
+                        "io8" => 1,
+                        "io16" => 2,
+                        "io32" => 4,
+                        _ => unreachable!(),
+                    },
+                    _ => unreachable!(),
+                } as usize;
+                (
+                    size,
+                    match call.args.first().unwrap() {
+                        Expr::Lit(lit) => match &lit.lit {
+                            Lit::Int(n) => n.base10_parse::<usize>().unwrap(),
+                            _ => unreachable!(),
+                        },
+                        _ => unreachable!(),
+                    },
+                    if call.args.len() > 1 {
+                        match &call.args[1] {
+                            Expr::Path(path) => path.path.segments.first().unwrap().ident.clone(),
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        format_ident!("u{}", size * 8)
+                    },
+                )
             }
-            i += *size as u32;
-        } else {
-            let mut j = i + 1;
-            while j < max_addr {
-                if exprs.contains_key(&j) {
-                    break;
+            _ => unreachable!(),
+        };
+
+        assert!(offset as isize > last_offset);
+        last_offset = offset as isize;
+
+        let name = match &entry.elems[1] {
+            Expr::Path(path) => &path.path.segments.first().unwrap().ident,
+            _ => unreachable!(),
+        };
+
+        entries.push((size, offset, typ, name));
+
+        let create_func = |expr: &Expr, prefix: &str| match expr {
+            Expr::Closure(closure) => {
+                if !closure.inputs.is_empty() {
+                    assert_eq!(closure.inputs.len(), 1);
+
+                    let func_arg = match closure.inputs.first().unwrap() {
+                        Pat::Ident(ident) => &ident.ident,
+                        _ => unreachable!(),
+                    };
+
+                    let func = closure.body.as_ref();
+
+                    let func_name = format_ident!("_{prefix}_{offset:x}", span = func.span());
+                    let func_arg = format_ident!("emu", span = func_arg.span());
+                    let func = quote! {
+                        #[allow(unreachable_code)]
+                        fn #func_name(#func_arg: &mut crate::core::emu::Emu) {
+                            #func;
+                        }
+                    }
+                    .into();
+                    Some((func_name, func))
+                } else {
+                    None
                 }
-                j += 1;
             }
-            let size = j - i;
-            for k in 0..size {
-                let remaining = cmp::min(4, size - k) as u8;
-                lut_entries.push(quote!(
-                    (Self::_read_empty, #remaining, 0),
-                ));
+            _ => unreachable!(),
+        };
+
+        if entry.elems.len() > 2 {
+            if let Some((func_name, func)) = create_func(&entry.elems[2], "read") {
+                read_funcs.insert(offset, (func_name, func));
             }
-            i = j;
+        }
+
+        if entry.elems.len() > 3 {
+            if let Some((func_name, func)) = create_func(&entry.elems[3], "write") {
+                write_funcs.insert(offset, (func_name, func));
+            }
         }
     }
 
-    let size = (max_addr - min_addr) as usize;
-    assert_eq!(lut_entries.len(), size);
+    all_entries.extend_from_slice(&entries);
 
-    let lut_tokens = quote!(
-        const _LUT: [(fn(&mut crate::core::emu::Emu) -> u32, u8, u8); #size] = [
-            #(#lut_entries)*
-        ];
-    );
+    let lut_read_entries = create_lut(&entries, &read_funcs);
+    let lut_write_entries = create_lut(&entries, &write_funcs);
+    let begin_addr = entries.first().unwrap().1;
+    let end_addr = entries.last().unwrap().0 + entries.last().unwrap().1;
 
-    let name = format_ident!("{name}");
-    let tokens = quote!(
-        pub struct #name;
+    let read_funcs = read_funcs.iter().map(|(_, (_, func))| func).collect::<Vec<_>>();
+    let write_funcs = write_funcs.iter().map(|(_, (_, func))| func).collect::<Vec<_>>();
 
-        impl #name {
-            #(#funcs)*
+    let lut_read_size = lut_read_entries.len();
+    let lut_write_size = lut_write_entries.len();
+    let tokens = quote! {
+        pub mod #mod_name {
+            #mod_content
 
-            #lut_tokens
+            pub const BEGIN_ADDR: usize = #begin_addr;
+            pub const END_ADDR: usize = #end_addr;
 
-            const MIN_ADDR: u32 = #min_addr;
-            const MAX_ADDR: u32 = #max_addr - 3;
+            static READ_LUT: [(fn(&mut crate::core::emu::Emu), usize); #lut_read_size] = [
+                #(#lut_read_entries)*
+            ];
 
-            pub fn is_in_range(addr: u32) -> bool {
-                (Self::MIN_ADDR..Self::MAX_ADDR).contains(&addr)
-            }
+            static WRITE_LUT: [(fn(&mut crate::core::emu::Emu), usize); #lut_write_size] = [
+                #(#lut_write_entries)*
+            ];
 
-            pub fn read(addr: u32, size: u8, emu: &mut crate::core::emu::Emu) -> u32 {
-                let addr = addr - Self::MIN_ADDR;
-                let mut ret = 0;
-                let mut read = 0;
-                while read < size {
-                    let (func, read_size, offset) = unsafe { Self::_LUT.get_unchecked(addr as usize + read as usize) };
-                    let value = func(emu) >> *offset;
-                    ret |= value << (read << 3);
-                    read += *read_size;
-                }
-                ret
+            #(#read_funcs)*
+
+            #(#write_funcs)*
+
+            #[allow(unreachable_code)]
+            fn empty(_: &mut crate::core::emu::Emu) {
             }
         }
-    );
-    tokens.into()
+    };
+    tokens
 }
 
 #[proc_macro]
-pub fn io_write(item: TokenStream) -> TokenStream {
+pub fn io(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(item with Punctuated::<Expr, syn::Token![,]>::parse_terminated);
-    let name = input.first().unwrap().to_token_stream().to_string();
-    let io_ports = match input.last().unwrap() {
-        Expr::Array(array) => array,
-        _ => panic!(),
-    };
+    let mut all_entries = Vec::new();
+    let mut mods = Vec::new();
 
-    let mut min_addr = u32::MAX;
-    let mut max_addr = 0;
-    let mut exprs = HashMap::new();
-    let mut funcs = Vec::new();
-
-    for elem in &io_ports.elems {
-        let tuple = match elem {
-            Expr::Tuple(tuple) => tuple,
-            _ => panic!(),
-        };
-
-        let io_call = match &tuple.elems[0] {
-            Expr::Call(io_call) => io_call,
-            _ => panic!(),
-        };
-
-        let closure = match &tuple.elems[1] {
-            Expr::Closure(closure) => closure,
-            _ => panic!(),
-        };
-
-        let io_call_path = match &io_call.func.as_ref() {
-            Expr::Path(path) => path,
-            _ => panic!(),
-        };
-
-        let io_call_lit = match &io_call.args[0] {
-            Expr::Lit(lit) => match &lit.lit {
-                Lit::Int(lit) => lit,
-                _ => panic!(),
-            },
-            _ => panic!(),
-        };
-
-        let segment = io_call_path.path.segments.first().unwrap();
-
-        let size = match segment.ident.to_string().as_str() {
-            "io8" => 1u8,
-            "io16" => 2u8,
-            "io32" => 4u8,
-            _ => panic!(),
-        };
-
-        let (closure_mask_arg, closure_value_arg, closure_emu_arg) = if size == 1 {
-            let closure_value_arg = match &closure.inputs[0] {
-                Pat::Ident(ident) => ident,
-                _ => panic!(),
-            };
-
-            let closure_emu_arg = match &closure.inputs[1] {
-                Pat::Ident(ident) => ident,
-                _ => panic!(),
-            };
-
-            (None, closure_value_arg, closure_emu_arg)
+    for entry in &input {
+        if let Expr::Tuple(tuple) = entry {
+            mods.push(create_mod(tuple, &mut all_entries));
         } else {
-            let closure_mask_arg = match &closure.inputs[0] {
-                Pat::Ident(ident) => ident,
-                _ => panic!(),
-            };
-
-            let closure_value_arg = match &closure.inputs[1] {
-                Pat::Ident(ident) => ident,
-                _ => panic!(),
-            };
-
-            let closure_emu_arg = match &closure.inputs[2] {
-                Pat::Ident(ident) => ident,
-                _ => panic!(),
-            };
-
-            (Some(closure_mask_arg), closure_value_arg, closure_emu_arg)
-        };
-
-        let addr_str = io_call_lit.to_string();
-        let addr = u32::from_str_radix(addr_str.trim_start_matches("0x"), 16).unwrap();
-        min_addr = cmp::min(min_addr, addr);
-        max_addr = cmp::max(max_addr, addr + size as u32);
-
-        let func_name = format_ident!("_write_{addr_str}");
-        let func_value_arg = format_ident!("value", span = closure_value_arg.span());
-        let func_emu_arg = format_ident!("emu", span = closure_emu_arg.span());
-        let body = closure.body.as_ref();
-        let u_type = format_ident!("u{}", size << 3);
-
-        let func = if size == 1 {
-            quote!(
-                #[allow(unreachable_code)]
-                fn #func_name(_: u32, value: u32, #func_emu_arg: &mut crate::core::emu::Emu) {
-                    let #func_value_arg = value as #u_type;
-                    #body
-                }
-            )
-        } else {
-            let func_mask_arg = format_ident!("mask", span = closure_mask_arg.unwrap().span());
-            quote!(
-                #[allow(unreachable_code)]
-                fn #func_name(mask: u32, value: u32, #func_emu_arg: &mut crate::core::emu::Emu) {
-                    let #func_mask_arg = mask as #u_type;
-                    let #func_value_arg = value as #u_type;
-                    #body
-                }
-            )
-        };
-        exprs.insert(addr, (size, func_name));
-        funcs.push(func);
-    }
-
-    funcs.push(quote!(
-        fn _write_empty(_: u32, _: u32, _: &mut crate::core::emu::Emu) {}
-    ));
-
-    let mut lut_entries = Vec::new();
-
-    if min_addr > 0 {
-        min_addr -= cmp::min(3, min_addr);
-    }
-    max_addr += 3;
-
-    let mut i = min_addr;
-    while i < max_addr {
-        if let Some((size, func_name)) = exprs.get(&i) {
-            for j in 0..*size {
-                let remaining = *size - j;
-                let offset = j << 3;
-                lut_entries.push(quote!(
-                    (Self::#func_name, #remaining, #offset),
-                ));
-            }
-            i += *size as u32;
-        } else {
-            let mut j = i + 1;
-            while j < max_addr {
-                if exprs.contains_key(&j) {
-                    break;
-                }
-                j += 1;
-            }
-            let size = j - i;
-            for k in 0..size {
-                let remaining = cmp::min(4, size - k) as u8;
-                lut_entries.push(quote!(
-                    (Self::_write_empty, #remaining, 0),
-                ));
-            }
-            i = j;
+            unreachable!();
         }
     }
 
-    let size = (max_addr - min_addr) as usize;
-    assert_eq!(lut_entries.len(), size);
+    let mut memory_struct = Vec::new();
+    let mut last_offset = 0;
+    for (size, offset, typ, name) in all_entries {
+        if offset - last_offset > 0 {
+            let padding_name = format_ident!("_padding{}", memory_struct.len());
+            let offset = offset - last_offset;
+            memory_struct.push(quote! {
+                #padding_name: Padding::<#offset>,
+            });
+        }
+        memory_struct.push(quote! {
+            pub #name: #typ,
+        });
+        last_offset = offset + size;
+    }
 
-    let lut_tokens = quote!(
-        const _LUT: [(fn(mask: u32, value: u32, &mut crate::core::emu::Emu), u8, u8); #size] = [
-            #(#lut_entries)*
-        ];
-    );
+    quote! {
+        struct Padding<const SIZE: usize>([u8; SIZE]);
 
-    let name = format_ident!("{name}");
-    let tokens = quote!(
-        pub struct #name;
-
-        impl #name {
-            #(#funcs)*
-
-            #lut_tokens
-
-            const MIN_ADDR: u32 = #min_addr;
-            const MAX_ADDR: u32 = #max_addr - 3;
-
-            pub fn is_in_range(addr: u32) -> bool {
-                (Self::MIN_ADDR..Self::MAX_ADDR).contains(&addr)
-            }
-
-            pub fn write(value: u32, addr: u32, size: u8, emu: &mut crate::core::emu::Emu) {
-                let addr = addr - Self::MIN_ADDR;
-                let mut written = 0;
-                let mask = 0xFFFFFFFF >> ((4 - size) << 3);
-                while written < size {
-                    let (func, write_size, offset) = unsafe { Self::_LUT.get_unchecked(addr as usize + written as usize) };
-                    let value = value >> (written << 3);
-                    let value = value << *offset;
-                    let mask = mask >> (written << 3);
-                    let mask = mask << *offset;
-                    func(mask, value, emu);
-                    written += *write_size;
-                }
+        impl<const SIZE: usize> Default for Padding<SIZE> {
+            fn default() -> Self {
+                unsafe { std::mem::zeroed() }
             }
         }
-    );
-    tokens.into()
+
+        #[derive(Default)]
+        #[repr(C)]
+        pub struct Memory {
+            #(#memory_struct)*
+        }
+
+        #(#mods)*
+    }
+    .into()
 }

@@ -76,7 +76,8 @@ impl GpuMemBuf {
     }
 
     pub fn rebuild_vram_maps(&mut self) {
-        self.vram.rebuild_maps();
+        let mut stat = 0;
+        self.vram.rebuild_maps(&mut stat);
     }
 
     pub fn read_2d(&mut self, read_lcdc: bool) {

@@ -129,7 +129,7 @@ struct Channel {
     length: u32,
     data_addr_duty_cycle: u32,
     linked_track: Option<u32>, // size 8, callback and data
-    next: Option<u16>,           // size 4, ptr
+    next: Option<u16>,         // size 4, ptr
 }
 
 const_assert_eq!(size_of::<Channel>(), 0x54);
@@ -365,7 +365,7 @@ impl Emu {
         let mut main_cnt = MainSoundCnt::from(0);
         main_cnt.set_master_volume(u7::new(0x7F));
         main_cnt.set_master_enable(true);
-        self.spu_set_main_sound_cnt(!0, u16::from(main_cnt));
+        self.spu_set_main_sound_cnt(u16::from(main_cnt));
 
         self.cm.schedule(174592, EventType::SoundCmdHle);
     }
@@ -398,7 +398,7 @@ impl Emu {
         if hold {
             cnt.set_hold(true);
         }
-        self.spu_set_cnt(chan_id, !0, u32::from(cnt));
+        self.spu_set_cnt(chan_id, u32::from(cnt));
     }
 
     fn sound_nitro_calc_channel_volume(&self, vol: i32, mut pan: i32) -> i32 {
@@ -440,11 +440,11 @@ impl Emu {
         cnt.set_volume_div(u2::new(vol_div));
         cnt.set_volume_mul(u7::new(vol as u8));
 
-        self.spu_set_cnt(chan_id, !0, u32::from(cnt));
-        self.spu_set_tmr(chan_id, !0, (0x10000 - freq as u32) as u16);
-        self.spu_set_pnt(chan_id, !0, pnt);
-        self.spu_set_len(chan_id, !0, len);
-        self.spu_set_sad(chan_id, !0, sad);
+        self.spu_set_cnt(chan_id, u32::from(cnt));
+        self.spu_set_tmr(chan_id, (0x10000 - freq as u32) as u16);
+        self.spu_set_pnt(chan_id, pnt);
+        self.spu_set_len(chan_id, len);
+        self.spu_set_sad(chan_id, sad);
     }
 
     fn sound_nitro_setup_channel_psg(&mut self, chan_id: usize, duty: u8, mut vol: i32, vol_div: u8, freq: u16, mut pan: i32) {
@@ -468,8 +468,8 @@ impl Emu {
         cnt.set_volume_div(u2::new(vol_div));
         cnt.set_volume_mul(u7::new(vol as u8));
 
-        self.spu_set_cnt(chan_id, !0, u32::from(cnt));
-        self.spu_set_tmr(chan_id, !0, (0x10000 - freq as u32) as u16);
+        self.spu_set_cnt(chan_id, u32::from(cnt));
+        self.spu_set_tmr(chan_id, (0x10000 - freq as u32) as u16);
     }
 
     fn sound_nitro_setup_channel_noise(&mut self, chan_id: usize, mut vol: i32, vol_div: u8, freq: u16, mut pan: i32) {
@@ -492,12 +492,12 @@ impl Emu {
         cnt.set_volume_div(u2::new(vol_div));
         cnt.set_volume_mul(u7::new(vol as u8));
 
-        self.spu_set_cnt(chan_id, !0, u32::from(cnt));
-        self.spu_set_tmr(chan_id, !0, (0x10000 - freq as u32) as u16);
+        self.spu_set_cnt(chan_id, u32::from(cnt));
+        self.spu_set_tmr(chan_id, (0x10000 - freq as u32) as u16);
     }
 
     fn sound_nitro_set_channel_frequency(&mut self, chan_id: usize, freq: u16) {
-        self.spu_set_tmr(chan_id, !0, (0x10000 - freq as u32) as u16);
+        self.spu_set_tmr(chan_id, (0x10000 - freq as u32) as u16);
     }
 
     fn sound_nitro_set_channel_volume(&mut self, chan_id: usize, mut vol: i32, vol_div: u8) {
@@ -514,7 +514,7 @@ impl Emu {
         cnt.set_volume_mul(u7::new(vol as u8));
         cnt.set_volume_div(u2::new(vol_div));
 
-        self.spu_set_cnt(chan_id, !0, u32::from(cnt));
+        self.spu_set_cnt(chan_id, u32::from(cnt));
     }
 
     fn sound_nitro_set_channel_pan(&mut self, chan_id: usize, mut pan: i32) {
@@ -529,14 +529,14 @@ impl Emu {
         let mut cnt = SoundCnt::from(self.spu_get_cnt(chan_id));
         cnt.set_panning(u7::new(pan as u8));
 
-        self.spu_set_cnt(chan_id, !0, u32::from(cnt));
+        self.spu_set_cnt(chan_id, u32::from(cnt));
 
         let sound_nitro = &self.hle.sound.nitro;
         if sound_nitro.surround_decay > 0 && chan_id != 1 && chan_id != 3 {
             let vol = self.sound_nitro_calc_channel_volume(sound_nitro.channel_vol[chan_id] as i32, pan);
             let mut cnt = SoundCnt::from(self.spu_get_cnt(chan_id));
             cnt.set_volume_mul(u7::new(vol as u8));
-            self.spu_set_cnt(chan_id, !0, u32::from(cnt));
+            self.spu_set_cnt(chan_id, u32::from(cnt));
         }
     }
 
@@ -643,7 +643,7 @@ impl Emu {
             if chan.status_flags.sync_start() {
                 let mut cnt = SoundCnt::from(self.spu_get_cnt(i));
                 cnt.set_start_status(true);
-                self.spu_set_cnt(i, !0, u32::from(cnt));
+                self.spu_set_cnt(i, u32::from(cnt));
             }
 
             self.hle.sound.nitro.channels[i].status_flags.wipe_sync();
@@ -1036,7 +1036,7 @@ impl Emu {
 
                             let mut cnt = SoundCnt::from(self.spu_get_cnt(i));
                             cnt.set_start_status(true);
-                            self.spu_set_cnt(i, !0, u32::from(cnt));
+                            self.spu_set_cnt(i, u32::from(cnt));
                         }
 
                         if mask_cap & 0x1 != 0 {
@@ -1157,8 +1157,8 @@ impl Emu {
                         cnt |= (args[2] >> 27) & 0x1;
 
                         self.spu_set_snd_cap_cnt(num as usize, cnt as u8);
-                        self.spu_set_snd_cap_dad(num as usize, !0, dstaddr);
-                        self.spu_set_snd_cap_len(num as usize, !0, len as u16);
+                        self.spu_set_snd_cap_dad(num as usize, dstaddr);
+                        self.spu_set_snd_cap_len(num as usize, len as u16);
                     }
                     SndCmd::SetupAlarm => {
                         let num = args[0];
@@ -1199,13 +1199,13 @@ impl Emu {
                             let pan = u8::from(cnt.panning());
                             let vol = self.sound_nitro_calc_channel_volume(self.hle.sound.nitro.channel_vol[i] as i32, pan as i32);
                             cnt.set_volume_mul(u7::new((vol & 0xFF) as u8));
-                            self.spu_set_cnt(i, !0, u32::from(cnt));
+                            self.spu_set_cnt(i, u32::from(cnt));
                         }
                     }
                     SndCmd::MasterVolume => {
                         let mut cnt = MainSoundCnt::from(self.spu_get_main_sound_cnt());
                         cnt.set_master_volume(u7::new(0x7F));
-                        self.spu_set_main_sound_cnt(!0, u16::from(cnt));
+                        self.spu_set_main_sound_cnt(u16::from(cnt));
                     }
                     SndCmd::MasterPan => {
                         self.hle.sound.nitro.master_pan = args[0] as i32;
@@ -1214,13 +1214,13 @@ impl Emu {
                             for i in 0..CHANNEL_COUNT {
                                 let mut cnt = SoundCnt::from(self.spu_get_cnt(i));
                                 cnt.set_panning(u7::new(pan));
-                                self.spu_set_cnt(i, !0, u32::from(cnt));
+                                self.spu_set_cnt(i, u32::from(cnt));
                             }
                         } else {
                             for i in 0..CHANNEL_COUNT {
                                 let mut cnt = SoundCnt::from(self.spu_get_cnt(i));
                                 cnt.set_panning(u7::new(self.hle.sound.nitro.channel_pan[i]));
-                                self.spu_set_cnt(i, !0, u32::from(cnt));
+                                self.spu_set_cnt(i, u32::from(cnt));
                             }
                         }
                     }
@@ -1235,7 +1235,7 @@ impl Emu {
                         cnt.set_left_output_from(u2::new((output_l & 0x3) as u8));
                         cnt.set_right_output_from(u2::new((output_r & 0x3) as u8));
                         cnt.set_output_ch_to_mixer(u2::new(((mixch3 as u8 & 0x1) << 1) | (mixch1 as u8 & 0x1)));
-                        self.spu_set_main_sound_cnt(!0, u16::from(cnt));
+                        self.spu_set_main_sound_cnt(u16::from(cnt));
                     }
                     SndCmd::InvalidateSeq => {
                         let start = args[0];

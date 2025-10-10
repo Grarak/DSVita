@@ -84,7 +84,7 @@ impl Emu {
     }
 
     fn arm7_hle_send_ipc_sync(&mut self, val: u8) {
-        self.ipc.sync_regs[ARM9].set_data_in(u4::new(val));
+        self.mem.io.ipc_sync_reg(ARM9).set_data_in(u4::new(val));
     }
 
     pub fn arm7_hle_send_ipc_fifo(&mut self, tag: IpcFifoTag, data: u32, err: bool) {
@@ -171,7 +171,7 @@ impl Emu {
     }
 
     pub fn arm7_hle_ipc_sync(&mut self) {
-        let data_in = u8::from(self.ipc.sync_regs[ARM7].data_in());
+        let data_in = u8::from(self.mem.io.ipc_sync_reg(ARM7).data_in());
         match data_in.cmp(&5) {
             Ordering::Less => self.arm7_hle_send_ipc_sync(data_in + 1),
             Ordering::Equal => {

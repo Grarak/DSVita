@@ -1,5 +1,6 @@
 use crate::core::cp15::TcmState;
 use crate::core::emu::Emu;
+use crate::core::memory::io::Io;
 use crate::core::memory::mmu::{MmuArm7, MmuArm9, MMU_PAGE_SHIFT, MMU_PAGE_SIZE};
 use crate::core::memory::regions;
 use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
@@ -23,6 +24,7 @@ pub struct Memory {
     pub wram: Wram,
     pub wifi: Wifi,
     pub vram: Vram,
+    pub io: Io,
     pub mmu_arm9: MmuArm9,
     pub mmu_arm7: MmuArm7,
 }
@@ -608,6 +610,7 @@ impl Memory {
             wram: Wram::new(),
             wifi: Wifi::new(),
             vram: Vram::default(),
+            io: Io::default(),
             mmu_arm9: MmuArm9::new(),
             mmu_arm7: MmuArm7::new(),
         }
@@ -618,6 +621,7 @@ impl Memory {
         self.wram = Wram::new();
         self.wifi = Wifi::new();
         self.vram = Vram::default();
+        self.io = Io::default();
     }
 }
 

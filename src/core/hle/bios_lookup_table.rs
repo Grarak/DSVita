@@ -46,7 +46,7 @@ pub const ARM7_SWI_LOOKUP_TABLE: [(&str, fn(&mut Emu)); 33] = [
     ("interrupt_wait", interrupt_wait::<{ ARM7 }>),
     ("v_blank_intr_wait", v_blank_intr_wait::<{ ARM7 }>),
     ("halt", halt::<{ ARM7 }>),
-    ("sleep", sleep::<{ ARM7 }>),
+    ("sleep", sleep_arm7),
     ("sound_bias", sound_bias::<{ ARM7 }>),
     ("divide", divide::<{ ARM7 }>),
     ("unknown", unknown::<{ ARM7 }>),

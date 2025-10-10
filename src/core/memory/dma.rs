@@ -96,9 +96,6 @@ impl From<u8> for DmaTransferMode {
 #[derive(Copy, Clone, Default)]
 struct DmaChannel {
     cnt: u32,
-    sad: u32,
-    dad: u32,
-    fill: u32,
     current_src: u32,
     current_dest: u32,
     current_count: u32,
@@ -119,39 +116,24 @@ impl Dma {
 }
 
 impl Emu {
-    pub fn dma_get_sad(&self, cpu: CpuType, channel_num: usize) -> u32 {
-        self.dma[cpu].channels[channel_num].sad
+    pub fn dma_set_sad(&mut self, cpu: CpuType, channel_num: usize) {
+        let mask = if cpu == ARM9 || channel_num != 0 { 0x0FFFFFFF } else { 0x07FFFFFF };
+        *self.mem.io.dma_sad(cpu, channel_num) &= mask;
     }
 
-    pub fn dma_get_dad(&self, cpu: CpuType, channel_num: usize) -> u32 {
-        self.dma[cpu].channels[channel_num].dad
+    pub fn dma_set_dad(&mut self, cpu: CpuType, channel_num: usize) {
+        let mask = if cpu == ARM9 || channel_num != 0 { 0x0FFFFFFF } else { 0x07FFFFFF };
+        *self.mem.io.dma_dad(cpu, channel_num) &= mask;
     }
 
-    pub fn dma_get_cnt(&self, cpu: CpuType, channel_num: usize) -> u32 {
-        self.dma[cpu].channels[channel_num].cnt
-    }
-
-    pub fn dma_get_fill(&self, cpu: CpuType, channel_num: usize) -> u32 {
-        self.dma[cpu].channels[channel_num].fill
-    }
-
-    pub fn dma_set_sad(&mut self, cpu: CpuType, channel_num: usize, mut mask: u32, value: u32) {
-        mask &= if cpu == ARM9 || channel_num != 0 { 0x0FFFFFFF } else { 0x07FFFFFF };
-        self.dma[cpu].channels[channel_num].sad = (self.dma[cpu].channels[channel_num].sad & !mask) | (value & mask);
-    }
-
-    pub fn dma_set_dad(&mut self, cpu: CpuType, channel_num: usize, mut mask: u32, value: u32) {
-        mask &= if cpu == ARM9 || channel_num != 0 { 0x0FFFFFFF } else { 0x07FFFFFF };
-        self.dma[cpu].channels[channel_num].dad = (self.dma[cpu].channels[channel_num].dad & !mask) | (value & mask);
-    }
-
-    pub fn dma_set_cnt(&mut self, cpu: CpuType, channel_num: usize, mut mask: u32, value: u32) {
+    pub fn dma_set_cnt(&mut self, cpu: CpuType, channel_num: usize) {
+        let new_value = *self.mem.io.dma_cnt(cpu, channel_num);
         let dma = &mut self.dma[cpu];
 
         let channel = &mut dma.channels[channel_num];
         let was_enabled = DmaCntArm9::from(channel.cnt).enable();
 
-        mask &= match cpu {
+        let mask = match cpu {
             ARM9 => 0xFFFFFFFF,
             ARM7 => {
                 if channel_num == 3 {
@@ -162,7 +144,7 @@ impl Emu {
             }
         };
 
-        channel.cnt = (channel.cnt & !mask) | value & mask;
+        channel.cnt = new_value & mask;
 
         let transfer_type = DmaTransferMode::from_cnt(cpu, channel.cnt, channel_num);
 
@@ -182,8 +164,11 @@ impl Emu {
         }
 
         if !was_enabled && dma_cnt.enable() {
-            channel.current_src = channel.sad;
-            channel.current_dest = channel.dad;
+            let sad = *self.mem.io.dma_sad(cpu, channel_num);
+            let dad = *self.mem.io.dma_dad(cpu, channel_num);
+
+            channel.current_src = sad;
+            channel.current_dest = dad;
             channel.current_count = u32::from(dma_cnt.word_count());
 
             if transfer_type == DmaTransferMode::StartImm {
@@ -200,10 +185,6 @@ impl Emu {
                 self.cm.schedule_imm(ImmEventType::dma(cpu, channel_num as u8));
             }
         }
-    }
-
-    pub fn dma_set_fill(&mut self, cpu: CpuType, channel_num: usize, mask: u32, value: u32) {
-        self.dma[cpu].channels[channel_num].fill = (self.dma[cpu].channels[channel_num].fill & !mask) | (value & mask);
     }
 
     #[inline(never)]
@@ -369,7 +350,8 @@ impl Emu {
         if cnt.repeat() && mode != DmaTransferMode::StartImm {
             channel.current_count = u32::from(DmaCntArm9::from(channel.cnt).word_count());
             if DmaAddrCtrl::from(u8::from(cnt.dest_addr_ctrl())) == DmaAddrCtrl::IncrementReload {
-                channel.current_dest = channel.dad;
+                let dad = *self.mem.io.dma_dad(CPU, channel_num);
+                channel.current_dest = dad;
             }
 
             if mode == DmaTransferMode::GeometryCmdFifo && !self.gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
@@ -377,6 +359,7 @@ impl Emu {
             }
         } else {
             channel.cnt &= !(1 << 31);
+            *self.mem.io.dma_cnt(CPU, channel_num) &= !(1 << 31);
         }
 
         if cnt.irq_at_end() {

@@ -110,8 +110,8 @@ impl From<u8> for SpiDevice {
 pub const MIC_SAMPLE_CYCLES: u32 = 60 * 263 * 355 * 6 / PRESENTER_AUDIO_IN_SAMPLE_RATE as u32;
 
 #[bitsize(16)]
-#[derive(FromBits)]
-struct SpiCnt {
+#[derive(Clone, Copy, FromBits)]
+pub struct SpiCnt {
     baudrate: u2,
     not_used: u5,
     busy_flag: bool,
@@ -121,6 +121,12 @@ struct SpiCnt {
     not_used1: u2,
     interrupt_request: bool,
     spi_bus_enable: bool,
+}
+
+impl Default for SpiCnt {
+    fn default() -> Self {
+        SpiCnt::from(0)
+    }
 }
 
 pub struct MicSampler {
@@ -147,8 +153,6 @@ impl MicSampler {
 }
 
 pub struct Spi {
-    pub cnt: u16,
-    pub data: u8,
     write_count: usize,
     cmd: u8,
     addr: u32,
@@ -160,11 +164,15 @@ pub struct Spi {
     pub mic_sampler: Arc<Mutex<MicSampler>>,
 }
 
+impl Emu {
+    pub fn spi_set_cnt(&mut self) {
+        self.mem.io.arm7().spi_cnt.value &= 0xCF03;
+    }
+}
+
 impl Spi {
     pub fn new(touch_points: Arc<AtomicU16>, mic_sampler: Arc<Mutex<MicSampler>>) -> Self {
         Spi {
-            cnt: 0,
-            data: 0,
             write_count: 0,
             cmd: 0,
             addr: 0,
@@ -178,19 +186,12 @@ impl Spi {
     }
 
     pub fn init(&mut self, settings: &Settings) {
-        self.cnt = 0;
-        self.data = 0;
         self.write_count = 0;
         self.cmd = 0;
         self.addr = 0;
         self.firmware.copy_from_slice(&get_firmware(settings.language()));
         self.last_mic_sample = 0;
         self.mic_sample_cycle = 0;
-    }
-
-    pub fn set_cnt(&mut self, mut mask: u16, value: u16) {
-        mask &= 0xCF03;
-        self.cnt = (self.cnt & !mask) | (value & mask);
     }
 
     pub fn get_touch_coordinates(&self) -> (u16, u16) {
@@ -217,17 +218,19 @@ impl Spi {
 }
 
 impl Emu {
-    pub fn spi_set_data(&mut self, value: u8) {
-        let cnt = SpiCnt::from(self.spi.cnt);
+    pub fn spi_set_data(&mut self) {
+        let cnt = self.mem.io.arm7().spi_cnt;
         if !cnt.spi_bus_enable() {
-            self.spi.data = 0;
+            self.mem.io.arm7().spi_data = 0;
             return;
         }
+
+        let value = self.mem.io.arm7().spi_data;
 
         if self.spi.write_count == 0 {
             self.spi.cmd = value;
             self.spi.addr = 0;
-            self.spi.data = 0;
+            self.mem.io.arm7().spi_data = 0;
         } else {
             let device = SpiDevice::from(u8::from(cnt.device_select()));
             match device {
@@ -237,16 +240,16 @@ impl Emu {
                             self.spi.addr <<= 8;
                             self.spi.addr |= value as u32;
                         } else {
-                            self.spi.data = if self.spi.addr < FIRMWARE_SIZE as u32 { self.spi.firmware[self.spi.addr as usize] } else { 0 };
+                            self.mem.io.arm7().spi_data = if self.spi.addr < FIRMWARE_SIZE as u32 { self.spi.firmware[self.spi.addr as usize] } else { 0 };
                             self.spi.addr += u32::from(cnt.transfer_size()) + 1;
                         }
                     } else {
                         debug_println!("Unknown spi {:?} command {:x}", device, self.spi.cmd);
-                        self.spi.data = 0;
+                        self.mem.io.arm7().spi_data = 0;
                     }
                 }
                 SpiDevice::Touchscreen => {
-                    self.spi.data = match (self.spi.cmd & 0x70) >> 4 {
+                    self.mem.io.arm7().spi_data = match (self.spi.cmd & 0x70) >> 4 {
                         1 => {
                             let y = self.spi.get_touch_coordinates().1;
                             if self.spi.write_count & 1 != 0 {
@@ -277,7 +280,7 @@ impl Emu {
                 }
                 _ => {
                     debug_println!("Unknown spi device {:?}", device);
-                    self.spi.data = 0;
+                    self.mem.io.arm7().spi_data = 0;
                 }
             }
         }

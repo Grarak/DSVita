@@ -95,17 +95,14 @@ impl Emu {
     }
 
     pub fn reset(&mut self) {
-        self.jit.init(&self.settings);
-        self.ipc.init(&self.settings);
-        self.spi.init(&self.settings);
         if !self.initialized {
+            self.mem.init();
             *ARM9.thread_regs() = ThreadRegs::default();
             *ARM7.thread_regs() = ThreadRegs::default();
             self.gpu.init();
             self.cm.init();
             self.cpu = [CpuRegs::new(), CpuRegs::new()];
             self.cp15 = Cp15::new();
-            self.mem.init();
             self.hle = Arm7Hle::new();
             self.div_sqrt = DivSqrt::new();
             self.rtc = Rtc::new();
@@ -114,6 +111,9 @@ impl Emu {
             self.timers = [Timers::new(), Timers::new()];
             self.wifi = Wifi::new();
         }
+        self.jit.init(&self.settings);
+        self.ipc.init(&self.settings);
+        self.spi.init(&self.settings);
         self.nitro_sdk_version = NitroSdkVersion::default();
         self.initialized = false;
     }

@@ -1,3 +1,4 @@
+use crate::core::emu::Emu;
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::matrix_vec::MatrixVec;
@@ -27,7 +28,7 @@ struct ClearColor {
 
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
-struct Disp3DCnt {
+pub struct Disp3DCnt {
     texture_mapping: bool,
     polygon_attr_shading: u1,
     alpha_test: bool,
@@ -150,6 +151,100 @@ pub struct Gpu3DRenderer {
     polygon_attrs: HeapMem<Gpu3dPolygonAttr, POLYGON_LIMIT>,
 }
 
+impl Emu {
+    pub fn gpu_3d_renderer_set_disp_cnt(&mut self) {
+        let new_cnt = self.mem.io.arm9().gpu_3d_renderer_disp_cnt;
+        let renderer_3d = &mut self.gpu.renderer.renderer_3d;
+        if new_cnt.color_buf_rdlines_underflow() {
+            renderer_3d.inners[1].disp_cnt.set_color_buf_rdlines_underflow(false);
+        }
+        if new_cnt.polygon_vertex_ram_overflow() {
+            renderer_3d.inners[1].disp_cnt.set_polygon_vertex_ram_overflow(false);
+        }
+
+        let mask = 0x4FFF;
+        let new_value = (u16::from(renderer_3d.inners[1].disp_cnt) & !mask) | (new_cnt.value & mask);
+        if u16::from(renderer_3d.inners[1].disp_cnt) != new_value {
+            renderer_3d.inners[1].disp_cnt = new_value.into();
+            renderer_3d.invalidate();
+        }
+        self.mem.io.arm9().gpu_3d_renderer_disp_cnt.value = new_value;
+    }
+
+    pub fn gpu_3d_renderer_set_edge_color(&mut self, index: usize) {
+        let value = self.mem.io.arm9().gpu_3d_renderer_edge_color(index);
+        *value &= 0x7FFF;
+        let value = *value;
+        if value == self.gpu.renderer.renderer_3d.inners[1].edge_colors[index] {
+            return;
+        }
+        self.gpu.renderer.renderer_3d.inners[1].edge_colors[index] = value;
+        self.gpu.renderer.renderer_3d.invalidate();
+    }
+
+    pub fn gpu_3d_renderer_set_clear_color(&mut self) {
+        self.mem.io.arm9().gpu_3d_renderer_clear_color &= 0x3F1FFFFF;
+        let value = self.mem.io.arm9().gpu_3d_renderer_clear_color;
+        if value == self.gpu.renderer.renderer_3d.inners[1].clear_color {
+            return;
+        }
+        self.gpu.renderer.renderer_3d.inners[1].clear_color = value;
+        self.gpu.renderer.renderer_3d.invalidate();
+    }
+
+    pub fn gpu_3d_renderer_set_clear_depth(&mut self) {
+        self.mem.io.arm9().gpu_3d_renderer_clear_depth &= 0x7FFF;
+        let value = self.mem.io.arm9().gpu_3d_renderer_clear_depth;
+        if value == self.gpu.renderer.renderer_3d.inners[1].clear_depth {
+            return;
+        }
+        self.gpu.renderer.renderer_3d.inners[1].clear_depth = value;
+        self.gpu.renderer.renderer_3d.invalidate();
+    }
+
+    pub fn gpu_3d_renderer_set_fog_color(&mut self) {
+        self.mem.io.arm9().gpu_3d_renderer_fog_color &= 0x001F7FFF;
+        let value = self.mem.io.arm9().gpu_3d_renderer_fog_color;
+        if value == self.gpu.renderer.renderer_3d.inners[1].fog_color {
+            return;
+        }
+        self.gpu.renderer.renderer_3d.inners[1].fog_color = value;
+        self.gpu.renderer.renderer_3d.invalidate();
+    }
+
+    pub fn gpu_3d_renderer_set_fog_offset(&mut self) {
+        self.mem.io.arm9().gpu_3d_renderer_fog_offset &= 0x7FFF;
+        let value = self.mem.io.arm9().gpu_3d_renderer_fog_offset;
+        if value == self.gpu.renderer.renderer_3d.inners[1].fog_offset {
+            return;
+        }
+        self.gpu.renderer.renderer_3d.inners[1].fog_offset = value;
+        self.gpu.renderer.renderer_3d.invalidate();
+    }
+
+    pub fn gpu_3d_renderer_set_fog_table(&mut self, index: usize) {
+        let value = self.mem.io.arm9().gpu_3d_renderer_fog_table(index);
+        *value &= 0x7F;
+        let value = *value;
+        if value == self.gpu.renderer.renderer_3d.inners[1].fog_table[index] {
+            return;
+        }
+        self.gpu.renderer.renderer_3d.inners[1].fog_table[index] = value;
+        self.gpu.renderer.renderer_3d.invalidate();
+    }
+
+    pub fn gpu_3d_renderer_set_toon_table(&mut self, index: usize) {
+        let value = self.mem.io.arm9().gpu_3d_renderer_toon_table(index);
+        *value &= 0x7FFF;
+        let value = *value;
+        if value == self.gpu.renderer.renderer_3d.inners[1].toon_table[index] {
+            return;
+        }
+        self.gpu.renderer.renderer_3d.inners[1].toon_table[index] = value;
+        self.gpu.renderer.renderer_3d.invalidate();
+    }
+}
+
 impl Gpu3DRenderer {
     pub fn init(&mut self) {
         self.dirty = false;
@@ -162,89 +257,6 @@ impl Gpu3DRenderer {
 
     pub fn invalidate(&mut self) {
         self.dirty = true;
-    }
-
-    pub fn get_disp_3d_cnt(&self) -> u16 {
-        self.inners[1].disp_cnt.into()
-    }
-
-    pub fn set_disp_3d_cnt(&mut self, mut mask: u16, value: u16) {
-        let new_cnt = Disp3DCnt::from(value);
-        if new_cnt.color_buf_rdlines_underflow() {
-            self.inners[1].disp_cnt.set_color_buf_rdlines_underflow(false);
-        }
-        if new_cnt.polygon_vertex_ram_overflow() {
-            self.inners[1].disp_cnt.set_polygon_vertex_ram_overflow(false);
-        }
-
-        mask &= 0x4FFF;
-        let new_value = (u16::from(self.inners[1].disp_cnt) & !mask) | (value & mask);
-        if u16::from(self.inners[1].disp_cnt) != new_value {
-            self.inners[1].disp_cnt = new_value.into();
-            self.invalidate();
-        }
-    }
-
-    pub fn set_edge_color(&mut self, index: usize, mut mask: u16, value: u16) {
-        mask &= 0x7FFF;
-        if value & mask == self.inners[1].edge_colors[index] & mask {
-            return;
-        }
-        self.inners[1].edge_colors[index] = (self.inners[1].edge_colors[index] & !mask) | (value & mask);
-        self.invalidate();
-    }
-
-    pub fn set_clear_color(&mut self, mut mask: u32, value: u32) {
-        mask &= 0x3F1FFFFF;
-        if value & mask == self.inners[1].clear_color & mask {
-            return;
-        }
-        self.inners[1].clear_color = (self.inners[1].clear_color & !mask) | (value & mask);
-        self.invalidate();
-    }
-
-    pub fn set_clear_depth(&mut self, mut mask: u16, value: u16) {
-        mask &= 0x7FFF;
-        if value & mask == self.inners[1].clear_depth & mask {
-            return;
-        }
-        self.inners[1].clear_depth = (self.inners[1].clear_depth & !mask) | (value & mask);
-        self.invalidate();
-    }
-
-    pub fn set_toon_table(&mut self, index: usize, mut mask: u16, value: u16) {
-        mask &= 0x7FFF;
-        if value & mask == self.inners[1].toon_table[index] & mask {
-            return;
-        }
-        self.inners[1].toon_table[index] = (self.inners[1].toon_table[index] & !mask) | (value & mask);
-        self.invalidate();
-    }
-
-    pub fn set_fog_color(&mut self, mut mask: u32, value: u32) {
-        mask &= 0x001F7FFF;
-        if value & mask == self.inners[1].fog_color & mask {
-            return;
-        }
-        self.inners[1].fog_color = (self.inners[1].fog_color & !mask) | (value & mask);
-        self.invalidate();
-    }
-
-    pub fn set_fog_offset(&mut self, mut mask: u16, value: u16) {
-        mask &= 0x7FFF;
-        if value & mask == self.inners[1].fog_offset & mask {
-            return;
-        }
-        self.inners[1].fog_offset = (self.inners[1].fog_offset & !mask) | (value & mask);
-        self.invalidate();
-    }
-
-    pub fn set_fog_table(&mut self, index: usize, value: u8) {
-        if value & 0x7F == self.inners[1].fog_table[index] & 0x7F {
-            return;
-        }
-        self.inners[1].fog_table[index] = value & 0x7F;
-        self.invalidate();
     }
 
     pub fn finish_scanline(&mut self, registers: &mut Gpu3DRegisters) {

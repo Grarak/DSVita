@@ -530,7 +530,7 @@ unsafe extern "C" fn _inst_mem_handler_write_gx_fifo<const CPU: CpuType, const A
 
     if likely(addr >= 0x4000400 && addr < 0x4000440) {
         let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
-        asm.emu.regs_3d_set_gx_fifo(value0, value0);
+        asm.emu.regs_3d_set_gx_fifo(value0);
         if unlikely(asm.emu.breakout_imm) {
             guest_context_lr
         } else {

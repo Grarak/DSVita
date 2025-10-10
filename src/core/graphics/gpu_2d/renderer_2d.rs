@@ -8,6 +8,7 @@ use crate::core::graphics::gpu_2d::Gpu2DEngine;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
+use crate::core::memory::io_arm9_lut::Arm9Io;
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
 use crate::core::memory::regions;
 use crate::utils;
@@ -106,29 +107,31 @@ impl Default for Gpu2DRenderRegs {
 }
 
 impl Gpu2DRenderRegs {
-    fn on_scanline(&mut self, inner: &mut Gpu2DRegisters, line: u8) {
+    fn on_scanline(&mut self, engine: Gpu2DEngine, inner: &mut Gpu2DRegisters, io_arm9: &mut Arm9Io::Memory, line: u8) {
         let line = line as usize;
 
-        self.disp_cnts[line] = u32::from(inner.disp_cnt);
+        self.disp_cnts[line] = u32::from(*io_arm9.gpu_2d_regs_disp_cnt(engine));
         for i in 0..4 {
-            self.bg_cnts[line * 4 + i] = u16::from(inner.bg_cnt[i]);
+            self.bg_cnts[line * 4 + i] = u16::from(*io_arm9.gpu_2d_regs_bg_cnt(engine, i));
         }
 
         for i in 0..2 {
-            self.win_bg_ubo.win_h[i * DISPLAY_HEIGHT + line] = inner.win_h[i] as u32;
-            self.win_bg_ubo.win_v[i * DISPLAY_HEIGHT + line] = inner.win_v[i] as u32;
+            self.win_bg_ubo.win_h[i * DISPLAY_HEIGHT + line] = *io_arm9.gpu_2d_regs_win_h(engine, i) as u32;
+            self.win_bg_ubo.win_v[i * DISPLAY_HEIGHT + line] = *io_arm9.gpu_2d_regs_win_v(engine, i) as u32;
         }
-        self.win_bg_ubo.win_in[line] = inner.win_in as u32;
-        self.win_bg_ubo.win_out[line] = inner.win_out as u32;
+        self.win_bg_ubo.win_in[line] = *io_arm9.gpu_2d_regs_win_in(engine) as u32;
+        self.win_bg_ubo.win_out[line] = *io_arm9.gpu_2d_regs_win_out(engine) as u32;
 
         for i in 0..4 {
-            self.bg_ubo.ofs[i * DISPLAY_HEIGHT + line] = (inner.bg_h_ofs[i] as u32) | ((inner.bg_v_ofs[i] as u32) << 16);
+            let bg_h_ofs = *io_arm9.gpu_2d_regs_bg_h_ofs(engine, i);
+            let bg_v_ofs = *io_arm9.gpu_2d_regs_bg_v_ofs(engine, i);
+            self.bg_ubo.ofs[i * DISPLAY_HEIGHT + line] = (bg_h_ofs as u32) | ((bg_v_ofs as u32) << 16);
         }
         for i in 0..2 {
-            self.bg_ubo.x[i * DISPLAY_HEIGHT + line] = inner.bg_x[i];
-            self.bg_ubo.y[i * DISPLAY_HEIGHT + line] = inner.bg_y[i];
-            self.bg_ubo.pa[i * DISPLAY_HEIGHT + line] = inner.bg_pa[i] as i32;
-            self.bg_ubo.pc[i * DISPLAY_HEIGHT + line] = inner.bg_pc[i] as i32;
+            self.bg_ubo.x[i * DISPLAY_HEIGHT + line] = *io_arm9.gpu_2d_regs_bg_x(engine, i) as i32;
+            self.bg_ubo.y[i * DISPLAY_HEIGHT + line] = *io_arm9.gpu_2d_regs_bg_y(engine, i) as i32;
+            self.bg_ubo.pa[i * DISPLAY_HEIGHT + line] = *io_arm9.gpu_2d_regs_bg_pa(engine, i) as i32;
+            self.bg_ubo.pc[i * DISPLAY_HEIGHT + line] = *io_arm9.gpu_2d_regs_bg_pc(engine, i) as i32;
         }
 
         if unlikely(line == 0) || inner.bg_x_dirty {
@@ -136,8 +139,10 @@ impl Gpu2DRenderRegs {
             self.bg_ubo.pb[DISPLAY_HEIGHT + line] = 0;
             inner.bg_x_dirty = false;
         } else {
-            self.bg_ubo.pb[line] = inner.bg_pb[0] as i32 + self.bg_ubo.pb[line - 1];
-            self.bg_ubo.pb[DISPLAY_HEIGHT + line] = inner.bg_pb[1] as i32 + self.bg_ubo.pb[DISPLAY_HEIGHT + line - 1];
+            let bg_pb_0 = *io_arm9.gpu_2d_regs_bg_pb(engine, 0);
+            let bg_pb_1 = *io_arm9.gpu_2d_regs_bg_pb(engine, 1);
+            self.bg_ubo.pb[line] = bg_pb_0 as i32 + self.bg_ubo.pb[line - 1];
+            self.bg_ubo.pb[DISPLAY_HEIGHT + line] = bg_pb_1 as i32 + self.bg_ubo.pb[DISPLAY_HEIGHT + line - 1];
         }
 
         if unlikely(line == 0) || inner.bg_y_dirty {
@@ -145,13 +150,15 @@ impl Gpu2DRenderRegs {
             self.bg_ubo.pd[DISPLAY_HEIGHT + line] = 0;
             inner.bg_y_dirty = false;
         } else {
-            self.bg_ubo.pd[line] = inner.bg_pd[0] as i32 + self.bg_ubo.pd[line - 1];
-            self.bg_ubo.pd[DISPLAY_HEIGHT + line] = inner.bg_pd[1] as i32 + self.bg_ubo.pd[DISPLAY_HEIGHT + line - 1];
+            let bg_pd_0 = *io_arm9.gpu_2d_regs_bg_pd(engine, 0);
+            let bg_pd_1 = *io_arm9.gpu_2d_regs_bg_pd(engine, 1);
+            self.bg_ubo.pd[line] = bg_pd_0 as i32 + self.bg_ubo.pd[line - 1];
+            self.bg_ubo.pd[DISPLAY_HEIGHT + line] = bg_pd_1 as i32 + self.bg_ubo.pd[DISPLAY_HEIGHT + line - 1];
         }
 
-        self.blend_ubo.bld_cnts[line] = inner.bld_cnt as u32;
-        self.blend_ubo.bld_alphas[line] = inner.bld_alpha as u32;
-        self.blend_ubo.bld_ys[line] = inner.bld_y as u32;
+        self.blend_ubo.bld_cnts[line] = *io_arm9.gpu_2d_regs_bld_cnt(engine) as u32;
+        self.blend_ubo.bld_alphas[line] = *io_arm9.gpu_2d_regs_bld_alpha(engine) as u32;
+        self.blend_ubo.bld_ys[line] = *io_arm9.gpu_2d_regs_bld_y(engine) as u32;
     }
 }
 
@@ -1090,9 +1097,9 @@ impl Gpu2DRenderer {
         self.reload_registers();
     }
 
-    pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters, inner_b: &mut Gpu2DRegisters, line: u8) {
-        self.regs_a[1].on_scanline(inner_a, line);
-        self.regs_b[1].on_scanline(inner_b, line);
+    pub fn on_scanline(&mut self, inner: &mut [Gpu2DRegisters; 2], io_arm9: &mut Arm9Io::Memory, line: u8) {
+        self.regs_a[1].on_scanline(A, &mut inner[A], io_arm9, line);
+        self.regs_b[1].on_scanline(B, &mut inner[B], io_arm9, line);
         if u8::from(DispCnt::from(self.regs_a[1].disp_cnts[line as usize]).display_mode()) == 2 {
             self.has_vram_display[1] = true;
         }

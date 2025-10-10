@@ -373,7 +373,7 @@ pub struct Gpu3DRegisters {
     pub flushed: bool,
     swap_buffers: SwapBuffers,
 
-    pub gx_stat: GxStat,
+    gx_stat: GxStat,
 
     mtx_mode: MtxMode,
     matrices: Matrices,
@@ -413,8 +413,10 @@ pub struct Gpu3DRegisters {
 macro_rules! unpacked_cmd {
     ($name:ident, $cmd:expr) => {
         paste! {
-            pub fn [<regs _ 3d _ set _ $name>](&mut self, mask: u32, value: u32) {
-                self.regs_3d_queue_unpacked_value::<$cmd>(value & mask);
+            pub fn [<regs _ 3d _ set _ $name>](&mut self) {
+                let value = self.mem.io.arm9().[<gpu _ 3d _ regs _ $name>];
+                self.mem.io.arm9().[<gpu _ 3d _ regs _ $name>] = 0;
+                self.regs_3d_queue_unpacked_value::<$cmd>(value);
             }
         }
     };
@@ -507,15 +509,17 @@ impl Emu {
         }
     }
 
-    pub fn regs_3d_get_clip_mtx_result(&mut self, index: usize) -> u32 {
-        self.gpu.gpu_3d_regs.get_clip_matrix()[index] as u32
+    pub fn regs_3d_get_clip_mtx_result(&mut self, index: usize) {
+        let ret = self.gpu.gpu_3d_regs.get_clip_matrix()[index] as u32;
+        *self.mem.io.arm9().gpu_3d_regs_clip_mtx_result(index) = ret;
     }
 
-    pub fn regs_3d_get_vec_mtx_result(&self, index: usize) -> u32 {
-        self.gpu.gpu_3d_regs.matrices.dir[(index / 3) * 4 + index % 3] as u32
+    pub fn regs_3d_get_vec_mtx_result(&mut self, index: usize) {
+        let ret = self.gpu.gpu_3d_regs.matrices.dir[(index / 3) * 4 + index % 3] as u32;
+        *self.mem.io.arm9().gpu_3d_regs_vec_mtx_result(index) = ret;
     }
 
-    pub fn regs_3d_get_gx_stat(&self) -> u32 {
+    pub fn regs_3d_get_gx_stat(&mut self) {
         let regs_3d = &self.gpu.gpu_3d_regs;
         let mut gx_stat = regs_3d.gx_stat;
         gx_stat.set_geometry_busy(!regs_3d.cmd_fifo.is_empty());
@@ -523,24 +527,33 @@ impl Emu {
         gx_stat.set_cmd_fifo_less_half_full(!regs_3d.is_cmd_fifo_half_full());
         gx_stat.set_cmd_fifo_empty(regs_3d.is_cmd_fifo_empty());
         gx_stat.set_box_pos_vec_test_busy(regs_3d.test_queue != 0);
-        u32::from(gx_stat)
+        self.mem.io.arm9().gpu_3d_regs_gx_stat = gx_stat;
     }
 
-    pub fn regs_3d_get_ram_count(&self) -> u32 {
-        ((self.gpu.gpu_3d_regs.vertices_size as u32) << 16) | (self.gpu.gpu_3d_regs.polygons_size as u32)
+    pub fn regs_3d_get_ram_count(&mut self) {
+        let count = ((self.gpu.gpu_3d_regs.vertices_size as u32) << 16) | (self.gpu.gpu_3d_regs.polygons_size as u32);
+        self.mem.io.arm9().gpu_3d_regs_ram_count = count;
     }
 
-    pub fn regs_3d_get_pos_result(&self, index: usize) -> u32 {
-        self.gpu.gpu_3d_regs.pos_result[index] as u32
+    pub fn regs_3d_get_pos_result(&mut self, index: usize) {
+        let ret = self.gpu.gpu_3d_regs.pos_result[index] as u32;
+        *self.mem.io.arm9().gpu_3d_regs_pos_result(index) = ret;
     }
 
-    pub fn regs_3d_get_vec_result(&self, index: usize) -> u16 {
-        self.gpu.gpu_3d_regs.vec_result[index] as u16
+    pub fn regs_3d_get_vec_result(&mut self, index: usize) {
+        let ret = self.gpu.gpu_3d_regs.vec_result[index] as u16;
+        *self.mem.io.arm9().gpu_3d_regs_vec_result(index) = ret;
+    }
+
+    pub fn regs_3d_set_io_gx_fifo(&mut self, index: usize) {
+        let value_ref = self.mem.io.arm9().gpu_3d_regs_gx_fifo(index);
+        let value = *value_ref;
+        *value_ref = 0;
+        self.regs_3d_set_gx_fifo(value);
     }
 
     #[inline(always)]
-    pub fn regs_3d_set_gx_fifo(&mut self, mask: u32, value: u32) {
-        let value = value & mask;
+    pub fn regs_3d_set_gx_fifo(&mut self, value: u32) {
         let regs_3d = &mut self.gpu.gpu_3d_regs;
         let mut remaining_params = regs_3d.cmd_remaining_params;
         let mut test_queue = regs_3d.test_queue;

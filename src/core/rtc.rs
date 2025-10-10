@@ -1,11 +1,11 @@
-use crate::logging::debug_println;
 use crate::IS_DEBUG;
+use crate::{core::emu::Emu, logging::debug_println};
 use bilge::prelude::*;
 use chrono::{Datelike, Timelike};
 
 #[bitsize(8)]
-#[derive(FromBits)]
-struct RtcReg {
+#[derive(Clone, Copy, FromBits)]
+pub struct RtcReg {
     data_io: bool,
     clock_out: bool,
     select_out: bool,
@@ -14,6 +14,12 @@ struct RtcReg {
     clock_dir_write: bool,
     select_dir_write: bool,
     not_used1: u1,
+}
+
+impl Default for RtcReg {
+    fn default() -> Self {
+        RtcReg::from(0)
+    }
 }
 
 #[derive(Default)]
@@ -28,36 +34,38 @@ pub struct Rtc {
     pub date_time: [u8; 7],
 }
 
-impl Rtc {
-    pub fn new() -> Self {
-        Rtc::default()
-    }
+impl Emu {
+    pub fn rtc_get(&mut self) {
+        let mut reg = RtcReg::from(self.rtc.rtc);
 
-    pub fn get_rtc(&self) -> u8 {
-        let mut reg = RtcReg::from(self.rtc);
-
-        let cs = self.select_out;
-        let sck = !reg.clock_dir_write() && self.clock_out;
-        let sio = !reg.data_dir_write() && self.data_io;
+        let cs = self.rtc.select_out;
+        let sck = !reg.clock_dir_write() && self.rtc.clock_out;
+        let sio = !reg.data_dir_write() && self.rtc.data_io;
 
         reg.set_select_out(cs);
         reg.set_clock_out(sck);
         reg.set_data_io(sio);
 
-        u8::from(reg)
+        self.mem.io.arm7().rtc = reg;
     }
 
-    pub fn set_rtc(&mut self, value: u8) {
-        self.rtc = value & !0x7;
+    pub fn rtc_set(&mut self) {
+        let data_reg = self.mem.io.arm7().rtc;
+        self.rtc.rtc = data_reg.value & !0x7;
 
-        let dir_reg = RtcReg::from(self.rtc);
-        let data_reg = RtcReg::from(value);
+        let dir_reg = RtcReg::from(self.rtc.rtc);
 
-        let cs = if dir_reg.select_dir_write() { data_reg.select_out() } else { self.select_out };
-        let sck = if dir_reg.clock_dir_write() { !data_reg.clock_out() } else { self.clock_out };
-        let sio = if dir_reg.data_dir_write() { data_reg.data_io() } else { self.data_io };
+        let cs = if dir_reg.select_dir_write() { data_reg.select_out() } else { self.rtc.select_out };
+        let sck = if dir_reg.clock_dir_write() { !data_reg.clock_out() } else { self.rtc.clock_out };
+        let sio = if dir_reg.data_dir_write() { data_reg.data_io() } else { self.rtc.data_io };
 
-        self.update_rtc(cs, sck, sio);
+        self.rtc.update_rtc(cs, sck, sio);
+    }
+}
+
+impl Rtc {
+    pub fn new() -> Self {
+        Rtc::default()
     }
 
     fn update_rtc(&mut self, select_out: bool, clock_out: bool, mut data_io: bool) {

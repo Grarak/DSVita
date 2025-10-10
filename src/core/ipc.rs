@@ -24,6 +24,12 @@ pub struct IpcSyncCnt {
     not_used2: u1,
 }
 
+impl Default for IpcSyncCnt {
+    fn default() -> Self {
+        IpcSyncCnt::from(0)
+    }
+}
+
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
 pub struct IpcFifoCnt {
@@ -40,6 +46,12 @@ pub struct IpcFifoCnt {
     pub enable: bool,
 }
 
+impl Default for IpcFifoCnt {
+    fn default() -> Self {
+        IpcFifoCnt::from(0x0101)
+    }
+}
+
 pub struct Fifo {
     pub cnt: IpcFifoCnt,
     pub queue: FixedFifo<u32, 16>,
@@ -49,7 +61,7 @@ pub struct Fifo {
 impl Fifo {
     fn new() -> Self {
         Fifo {
-            cnt: IpcFifoCnt::from(0x0101),
+            cnt: IpcFifoCnt::default(),
             queue: FixedFifo::new(),
             last_received: 0,
         }
@@ -57,7 +69,6 @@ impl Fifo {
 }
 
 pub struct Ipc {
-    pub sync_regs: [IpcSyncCnt; 2],
     pub fifo: [Fifo; 2],
     ipc_type: IpcType,
 }
@@ -77,8 +88,8 @@ enum IpcType {
 #[enum_dispatch(IpcType)]
 trait IpcTrait {
     fn get_fifo_cnt(&self, cpu: CpuType, emu: &Emu) -> u16;
-    fn set_sync_reg(&self, cpu: CpuType, mask: u16, value: u16, emu: &mut Emu);
-    fn fifo_send(&self, cpu: CpuType, mask: u32, value: u32, emu: &mut Emu);
+    fn set_sync_reg(&self, cpu: CpuType, cnt: IpcSyncCnt, remote_cnt: IpcSyncCnt, emu: &mut Emu);
+    fn fifo_send(&self, cpu: CpuType, value: u32, emu: &mut Emu);
 }
 
 impl IpcTrait for IpcLle {
@@ -86,26 +97,22 @@ impl IpcTrait for IpcLle {
         emu.ipc.fifo[cpu].cnt.into()
     }
 
-    fn set_sync_reg(&self, cpu: CpuType, mut mask: u16, value: u16, emu: &mut Emu) {
-        mask &= 0x4F00;
-        emu.ipc.sync_regs[cpu] = ((u16::from(emu.ipc.sync_regs[cpu]) & !mask) | (value & mask)).into();
-        emu.ipc.sync_regs[!cpu] = ((u16::from(emu.ipc.sync_regs[!cpu]) & !((mask >> 8) & 0xF)) | (((value & mask) >> 8) & 0xF)).into();
-
-        if IpcSyncCnt::from(value).send_irq() && emu.ipc.sync_regs[!cpu].enable_irq() {
+    fn set_sync_reg(&self, cpu: CpuType, cnt: IpcSyncCnt, remote_cnt: IpcSyncCnt, emu: &mut Emu) {
+        if cnt.send_irq() && remote_cnt.enable_irq() {
             emu.cpu_send_interrupt(!cpu, InterruptFlag::IpcSync);
         }
     }
 
-    fn fifo_send(&self, cpu: CpuType, mask: u32, value: u32, emu: &mut Emu) {
+    fn fifo_send(&self, cpu: CpuType, value: u32, emu: &mut Emu) {
         if emu.ipc.fifo[cpu].cnt.enable() {
             let fifo_len = emu.ipc.fifo[cpu].queue.len();
             if fifo_len < 16 {
-                let message = IpcFifoMessage::from(value & mask);
+                let message = IpcFifoMessage::from(value);
                 debug_println!("{cpu:?} ipc send {:x} {:x} {}", u8::from(message.tag()), u32::from(message.data()), message.err());
                 if cpu == ARM9 {
                     match self.0 {
                         Arm7Emu::SoundHle => {
-                            let message = IpcFifoMessage::from(value & mask);
+                            let message = IpcFifoMessage::from(value);
                             match IpcFifoTag::from(u8::from(message.tag())) {
                                 IpcFifoTag::Sound => {
                                     emu.sound_hle_ipc_recv(u32::from(message.data()));
@@ -119,7 +126,7 @@ impl IpcTrait for IpcLle {
                     }
                 }
 
-                emu.ipc.fifo[cpu].queue.push_back(value & mask);
+                emu.ipc.fifo[cpu].queue.push_back(value);
 
                 if fifo_len == 0 {
                     emu.ipc.fifo[cpu].cnt.set_send_empty_status(false);
@@ -164,21 +171,17 @@ impl IpcTrait for IpcHle {
         cnt.into()
     }
 
-    fn set_sync_reg(&self, _: CpuType, mut mask: u16, value: u16, emu: &mut Emu) {
-        mask &= 0x4F00;
-        emu.ipc.sync_regs[ARM9] = ((u16::from(emu.ipc.sync_regs[ARM9]) & !mask) | (value & mask)).into();
-        emu.ipc.sync_regs[ARM7] = ((u16::from(emu.ipc.sync_regs[ARM7]) & !((mask >> 8) & 0xF)) | (((value & mask) >> 8) & 0xF)).into();
-
+    fn set_sync_reg(&self, _: CpuType, _: IpcSyncCnt, _: IpcSyncCnt, emu: &mut Emu) {
         emu.arm7_hle_ipc_sync();
     }
 
-    fn fifo_send(&self, _: CpuType, mask: u32, value: u32, emu: &mut Emu) {
+    fn fifo_send(&self, _: CpuType, value: u32, emu: &mut Emu) {
         if emu.ipc.fifo[ARM9].cnt.enable() {
             let fifo_len = emu.ipc.fifo[ARM9].queue.len();
             if fifo_len < 16 {
-                let message = IpcFifoMessage::from(value & mask);
+                let message = IpcFifoMessage::from(value);
                 debug_println!("hle ipc send {:x} {:x} {}", u8::from(message.tag()), u32::from(message.data()), message.err());
-                emu.ipc.fifo[ARM9].queue.push_back(value & mask);
+                emu.ipc.fifo[ARM9].queue.push_back(value);
 
                 if fifo_len == 0 {
                     emu.ipc.fifo[ARM9].cnt.set_send_empty_status(false);
@@ -196,14 +199,12 @@ impl IpcTrait for IpcHle {
 impl Ipc {
     pub fn new() -> Self {
         Ipc {
-            sync_regs: [IpcSyncCnt::from(0); 2],
             fifo: [Fifo::new(), Fifo::new()],
             ipc_type: IpcLle(Arm7Emu::AccurateLle).into(),
         }
     }
 
     pub fn init(&mut self, settings: &Settings) {
-        self.sync_regs = [IpcSyncCnt::from(0); 2];
         self.fifo = [Fifo::new(), Fifo::new()];
         self.ipc_type = match settings.arm7_emu() {
             Arm7Emu::AccurateLle | Arm7Emu::SoundHle => IpcLle(settings.arm7_emu()).into(),
@@ -213,20 +214,25 @@ impl Ipc {
 }
 
 impl Emu {
-    pub fn ipc_get_sync_reg(&self, cpu: CpuType) -> u16 {
-        self.ipc.sync_regs[cpu].into()
+    pub fn ipc_get_fifo_cnt(&mut self, cpu: CpuType) {
+        let value = self.ipc.ipc_type.clone().get_fifo_cnt(cpu, self);
+        self.mem.io.ipc_fifo_cnt(cpu).value = value;
     }
 
-    pub fn ipc_get_fifo_cnt(&self, cpu: CpuType) -> u16 {
-        self.ipc.ipc_type.clone().get_fifo_cnt(cpu, self)
+    pub fn ipc_set_sync_reg(&mut self, cpu: CpuType) {
+        let sync_reg = self.mem.io.ipc_sync_reg(cpu);
+        let data_out = sync_reg.data_out();
+        let cnt = *sync_reg;
+        sync_reg.value &= 0x4F00;
+
+        let remote_sync_reg = self.mem.io.ipc_sync_reg(!cpu);
+        remote_sync_reg.set_data_in(data_out);
+
+        self.ipc.ipc_type.clone().set_sync_reg(cpu, cnt, *remote_sync_reg, self);
     }
 
-    pub fn ipc_set_sync_reg(&mut self, cpu: CpuType, mask: u16, value: u16) {
-        self.ipc.ipc_type.clone().set_sync_reg(cpu, mask, value, self);
-    }
-
-    pub fn ipc_set_fifo_cnt(&mut self, cpu: CpuType, mut mask: u16, value: u16) {
-        let new_fifo = IpcFifoCnt::from(value);
+    pub fn ipc_set_fifo_cnt(&mut self, cpu: CpuType) {
+        let new_fifo = *self.mem.io.ipc_fifo_cnt(cpu);
 
         if new_fifo.send_clear() && !self.ipc.fifo[cpu].queue.is_empty() {
             self.ipc.fifo[cpu].queue.clear();
@@ -255,12 +261,14 @@ impl Emu {
             self.ipc.fifo[cpu].cnt.set_err(false);
         }
 
-        mask &= 0x8404;
-        self.ipc.fifo[cpu].cnt = ((u16::from(self.ipc.fifo[cpu].cnt) & !mask) | (value & mask)).into();
+        let mask = 0x8404;
+        self.ipc.fifo[cpu].cnt = ((u16::from(self.ipc.fifo[cpu].cnt) & !mask) | (new_fifo.value & mask)).into();
     }
 
-    pub fn ipc_fifo_send(&mut self, cpu: CpuType, mask: u32, value: u32) {
-        self.ipc.ipc_type.clone().fifo_send(cpu, mask, value, self);
+    pub fn ipc_fifo_send(&mut self, cpu: CpuType) {
+        let value = *self.mem.io.ipc_fifo_send(cpu);
+        *self.mem.io.ipc_fifo_send(cpu) = 0;
+        self.ipc.ipc_type.clone().fifo_send(cpu, value, self);
     }
 
     pub fn ipc_fifo_recv(&mut self, cpu: CpuType) -> u32 {

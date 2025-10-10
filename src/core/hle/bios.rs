@@ -159,6 +159,7 @@ pub fn get_crc16<const CPU: CpuType>(emu: &mut Emu) {
 
 pub fn halt<const CPU: CpuType>(emu: &mut Emu) {
     emu.cpu_halt(CPU, 0);
+    emu.cpu_set_halt_cnt_arm7();
 }
 
 pub fn huff_uncomp<const CPU: CpuType>(emu: &mut Emu) {
@@ -290,8 +291,9 @@ pub fn wait_by_loop<const CPU: CpuType>(emu: &mut Emu) {
     *emu.thread_get_reg_mut(CPU, Reg::R0) = 0;
 }
 
-pub fn sleep<const CPU: CpuType>(emu: &mut Emu) {
-    emu.cpu_set_halt_cnt(CPU, 0xC0);
+pub fn sleep_arm7(emu: &mut Emu) {
+    emu.mem.io.arm7().halt_cnt = 0xC0;
+    emu.cpu_set_halt_cnt_arm7();
 }
 
 pub fn sound_bias<const CPU: CpuType>(emu: &mut Emu) {
