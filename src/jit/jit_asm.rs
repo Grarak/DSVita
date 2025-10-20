@@ -12,13 +12,11 @@ use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::call_jit_fun;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm_common_funs::exit_guest_context;
-use crate::jit::jit_memory::JitMemory;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::jit::Cond;
 use crate::logging::{branch_println, debug_println};
-use crate::mmap::Mmap;
 use crate::mmap::PAGE_SHIFT;
 use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
 use bilge::prelude::*;
@@ -432,10 +430,10 @@ unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) 
         "bx lr",
         jit_asm_ptr = const CPU.jit_asm_addr(),
         emu_offset = const mem::offset_of!(JitAsm, emu),
-        jit_mem_mmap_offset = const mem::offset_of!(Emu, jit) + mem::offset_of!(JitMemory, mem) + mem::offset_of!(Mmap, ptr),
+        jit_mem_mmap_offset = const mem::offset_of!(Emu, jit.mem.ptr),
         page_shift = const PAGE_SHIFT,
-        jit_guest_inst_offset = const mem::offset_of!(Emu, jit) + mem::offset_of!(JitMemory, guest_inst_offsets),
-        pre_cycle_count_sum_offset = const mem::offset_of!(JitAsm, runtime_data) + mem::offset_of!(JitRuntimeData, pre_cycle_count_sum),
+        jit_guest_inst_offset = const mem::offset_of!(Emu, jit.guest_inst_offsets),
+        pre_cycle_count_sum_offset = const mem::offset_of!(JitAsm, runtime_data.pre_cycle_count_sum),
         guest_regs_offset = const CPU.guest_regs_addr(),
         cpsr_offset = const Reg::CPSR as usize * 4,
     );

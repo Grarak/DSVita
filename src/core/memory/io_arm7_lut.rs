@@ -2,11 +2,13 @@ use crate::core::emu::Emu;
 use crate::core::wifi::PaketType;
 use crate::core::CpuType::ARM7;
 use crate::utils::Convert;
-use dsvita_macros::{io_read, io_write};
+use dsvita_macros::io_write;
 
-io_read!(
-    IoArm7ReadLut,
-    [
+pub mod io_arm7 {
+    use crate::core::CpuType::ARM7;
+    use dsvita_macros::io_read;
+    io_read!(
+        (io8(0x0), |emu| 0),
         (io16(0x4), |emu| emu.gpu.get_disp_stat(ARM7)),
         (io16(0x6), |emu| emu.gpu.v_count),
         (io32(0xB0), |emu| emu.dma_get_sad(ARM7, 0)),
@@ -68,14 +70,20 @@ io_read!(
         (io8(0x509), |emu| emu.spu_get_snd_cap_cnt(1)),
         (io32(0x510), |emu| todo!()),
         (io32(0x518), |emu| todo!()),
-    ]
-);
+    );
+}
 
-io_read!(IoArm7ReadLutUpper, [(io32(0x100000), |emu| emu.ipc_fifo_recv(ARM7)), (io32(0x100010), |emu| todo!())]);
+pub mod io_arm7_upper {
+    use crate::core::CpuType::ARM7;
+    use dsvita_macros::io_read;
+    io_read!((io32(0x100000), |emu| emu.ipc_fifo_recv(ARM7)), (io32(0x100010), |emu| todo!()));
+}
 
-io_read!(
-    IoArm7ReadLutWifi,
-    [
+pub mod io_arm7_wifi {
+    use crate::core::wifi::PaketType;
+    use dsvita_macros::io_read;
+    io_read!(
+        (io8(0x800000), |emu| 0),
         (io16(0x800006), |emu| emu.wifi.w_mode_wep),
         (io16(0x800008), |emu| emu.wifi.w_txstat_cnt),
         (io16(0x800010), |emu| emu.wifi.w_irf),
@@ -115,8 +123,8 @@ io_read!(
         (io16(0x8000B0), |emu| emu.wifi.w_txreq_read),
         (io16(0x8000B8), |emu| emu.wifi.w_txstat),
         (io16(0x8000E8), |emu| emu.wifi.w_us_countcnt),
-        (io16(0x8000EE), |emu| emu.wifi.w_cmd_countcnt),
         (io16(0x8000EA), |emu| emu.wifi.w_us_comparecnt),
+        (io16(0x8000EE), |emu| emu.wifi.w_cmd_countcnt),
         (io16(0x8000F0), |emu| emu.wifi_get_w_us_compare(0)),
         (io16(0x8000F2), |emu| emu.wifi_get_w_us_compare(1)),
         (io16(0x8000F4), |emu| emu.wifi_get_w_us_compare(2)),
@@ -146,12 +154,13 @@ io_read!(
         (io16(0x800154), |emu| emu.wifi.w_config[14]),
         (io16(0x80015C), |emu| emu.wifi.w_bb_read),
         (io16(0x800210), |emu| emu.wifi.w_tx_seqno),
-    ]
-);
+    );
+}
 
 io_write!(
     IoArm7WriteLut,
     [
+        (io8(0x0), |mask, value, emu| {}),
         (io16(0x4), |mask, value, emu| emu.gpu.set_disp_stat(ARM7, mask, value)),
         (io32(0xB0), |mask, value, emu| emu.dma_set_sad(ARM7, 0, mask, value)),
         (io32(0xB4), |mask, value, emu| emu.dma_set_dad(ARM7, 0, mask, value)),
@@ -283,6 +292,7 @@ io_write!(
 io_write!(
     IoArm7WriteLutWifi,
     [
+        (io16(0x800000), |mask, value, emu| {}),
         (io16(0x800006), |mask, value, emu| emu.wifi_set_w_mode_wep(mask, value)),
         (io16(0x800008), |mask, value, emu| emu.wifi_set_w_txstat_cnt(mask, value)),
         (io16(0x800010), |mask, value, emu| emu.wifi_set_w_irf(mask, value)),

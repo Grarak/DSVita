@@ -12,6 +12,7 @@ use crate::logging::debug_println;
 use crate::settings::Arm7Emu;
 use bilge::prelude::*;
 use std::intrinsics::unlikely;
+use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -78,7 +79,7 @@ pub struct PowCnt1 {
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
-struct DispCapCnt {
+pub struct DispCapCnt {
     eva: u5,
     not_used: u3,
     evb: u5,
@@ -114,7 +115,7 @@ impl DerefMut for GpuRendererWrapper {
 pub struct Gpu {
     disp_stat: [DispStat; 2],
     pub pow_cnt1: u16,
-    disp_cap_cnt: DispCapCnt,
+    pub disp_cap_cnt: DispCapCnt,
     frame_rate_counter: FrameRateCounter,
     pub v_count: u16,
     pub gpu_2d_regs_a: Gpu2DRegisters,
@@ -163,6 +164,10 @@ impl Gpu {
 
     pub fn get_disp_stat(&self, cpu: CpuType) -> u16 {
         self.disp_stat[cpu].into()
+    }
+
+    pub const fn get_disp_stat_offset(cpu: CpuType) -> usize {
+        mem::offset_of!(Emu, gpu.disp_stat) + cpu as usize * size_of::<DispStat>()
     }
 
     pub fn get_disp_cap_cnt(&self) -> u32 {
