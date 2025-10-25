@@ -365,9 +365,8 @@ pub fn io_write(item: TokenStream) -> TokenStream {
                         {i}:
                             lsrs r6, r6, {}
                             lsrs r4, r4, {}
-                            it eq
-                            popeq {{{{r4-r6,pc}}}}
-                            b {}f
+                            cbnz r4, {}f
+                            pop {{{{r4-r6,pc}}}}
                         ",
                         remaining_empty * 8,
                         remaining_empty * 8,
@@ -407,36 +406,26 @@ pub fn io_write(item: TokenStream) -> TokenStream {
                 )
             };
 
-            let (terminate_cond, always_terminate) = if last_entry {
-                ("".to_string(), false)
+            let terminate_cond = if last_entry {
+                "pop {{r4-r6,pc}}".to_string()
             } else {
                 let bytes_write = entry_end - i;
                 let next_entry = &entries[entry_index + 1];
                 let bytes_write = min(next_entry.offset - entry_end + bytes_write, 4);
 
                 if bytes_write == 4 || entry_offset & 1 == 1 {
-                    (format!("pop {{{{r4-r6,pc}}}}"), true)
+                    format!("pop {{{{r4-r6,pc}}}}")
                 } else {
-                    (
-                        format!(
-                            "lsrs r6, r6, {}
-                            lsrs r4, r4, {}
-                            it eq
-                            popeq {{{{r4-r6,pc}}}}",
-                            bytes_write * 8,
-                            bytes_write * 8
-                        ),
-                        false,
+                    format!(
+                        "lsrs r6, r6, {}
+                        lsrs r4, r4, {}
+                        cbnz r4, {}f
+                        pop {{{{r4-r6,pc}}}}",
+                        bytes_write * 8,
+                        bytes_write * 8,
+                        entry.offset + entry.size
                     )
                 }
-            };
-
-            let next_entry = if always_terminate {
-                "".to_string()
-            } else if entry.offset + entry.size == max_addr {
-                "pop {{r4-r6,pc}}".to_string()
-            } else {
-                format!("b {}f", entry.offset + entry.size)
             };
 
             asm.push_str(&format!(
@@ -446,7 +435,6 @@ pub fn io_write(item: TokenStream) -> TokenStream {
                     {value_mask}
                     bl {{func_{}}}
                     {terminate_cond}
-                    {next_entry}
                 ",
                 entry.offset
             ));
