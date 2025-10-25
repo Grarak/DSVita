@@ -1,10 +1,4 @@
-use crate::core::emu::Emu;
-use crate::core::wifi::PaketType;
-use crate::core::CpuType::ARM7;
-use crate::utils::Convert;
-use dsvita_macros::io_write;
-
-pub mod io_arm7 {
+pub mod io_arm7_read {
     use crate::core::CpuType::ARM7;
     use dsvita_macros::io_read;
     io_read!(
@@ -73,13 +67,13 @@ pub mod io_arm7 {
     );
 }
 
-pub mod io_arm7_upper {
+pub mod io_arm7_read_upper {
     use crate::core::CpuType::ARM7;
     use dsvita_macros::io_read;
     io_read!((io32(0x100000), |emu| emu.ipc_fifo_recv(ARM7)), (io32(0x100010), |emu| todo!()));
 }
 
-pub mod io_arm7_wifi {
+pub mod io_arm7_read_wifi {
     use crate::core::wifi::PaketType;
     use dsvita_macros::io_read;
     io_read!(
@@ -157,9 +151,11 @@ pub mod io_arm7_wifi {
     );
 }
 
-io_write!(
-    IoArm7WriteLut,
-    [
+pub mod io_arm7_write {
+    use crate::core::CpuType::ARM7;
+    use dsvita_macros::io_write;
+
+    io_write!(
         (io8(0x0), |mask, value, emu| {}),
         (io16(0x4), |mask, value, emu| emu.gpu.set_disp_stat(ARM7, mask, value)),
         (io32(0xB0), |mask, value, emu| emu.dma_set_sad(ARM7, 0, mask, value)),
@@ -286,12 +282,13 @@ io_write!(
         (io16(0x514), |mask, value, emu| emu.spu_set_snd_cap_len(0, mask, value)),
         (io32(0x518), |mask, value, emu| emu.spu_set_snd_cap_dad(1, mask, value)),
         (io16(0x51C), |mask, value, emu| emu.spu_set_snd_cap_len(1, mask, value)),
-    ]
-);
+    );
+}
 
-io_write!(
-    IoArm7WriteLutWifi,
-    [
+pub mod io_arm7_write_wifi {
+    use crate::core::wifi::PaketType;
+    use dsvita_macros::io_write;
+    io_write!(
         (io16(0x800000), |mask, value, emu| {}),
         (io16(0x800006), |mask, value, emu| emu.wifi_set_w_mode_wep(mask, value)),
         (io16(0x800008), |mask, value, emu| emu.wifi_set_w_txstat_cnt(mask, value)),
@@ -362,45 +359,5 @@ io_write!(
         (io16(0x800158), |mask, value, emu| emu.wifi_set_w_bb_cnt(mask, value)),
         (io16(0x80015A), |mask, value, emu| emu.wifi_set_w_bb_write(mask, value)),
         (io16(0x80021C), |mask, value, emu| emu.wifi_set_w_irf_set(mask, value)),
-    ]
-);
-
-impl IoArm7WriteLut {
-    pub fn write_fixed_slice<T: Convert>(addr: u32, slice: &[T], emu: &mut Emu) {
-        let lut_addr = addr - Self::MIN_ADDR;
-        let (func, write_size, offset) = unsafe { Self::_LUT.get_unchecked(lut_addr as usize) };
-
-        if *write_size < size_of::<T>() as u8 {
-            for value in slice {
-                Self::write((*value).into(), addr, size_of::<T>() as u8, emu);
-            }
-        } else {
-            let mask = 0xFFFFFFFF >> ((4 - size_of::<T>()) << 3);
-            let mask = mask << *offset;
-            for value in slice {
-                let value = (*value).into() << *offset;
-                func(mask, value, emu)
-            }
-        }
-    }
-}
-
-impl IoArm7WriteLutWifi {
-    pub fn write_fixed_slice<T: Convert>(addr: u32, slice: &[T], emu: &mut Emu) {
-        let lut_addr = addr - Self::MIN_ADDR;
-        let (func, write_size, offset) = unsafe { Self::_LUT.get_unchecked(lut_addr as usize) };
-
-        if *write_size < size_of::<T>() as u8 {
-            for value in slice {
-                Self::write((*value).into(), addr, size_of::<T>() as u8, emu);
-            }
-        } else {
-            let mask = 0xFFFFFFFF >> ((4 - size_of::<T>()) << 3);
-            let mask = mask << *offset;
-            for value in slice {
-                let value = (*value).into() << *offset;
-                func(mask, value, emu)
-            }
-        }
-    }
+    );
 }

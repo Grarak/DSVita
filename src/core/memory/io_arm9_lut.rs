@@ -1,9 +1,4 @@
-use crate::core::emu::Emu;
-use crate::core::CpuType::ARM9;
-use crate::utils::Convert;
-use dsvita_macros::io_write;
-
-pub mod io_arm9 {
+pub mod io_arm9_read {
     use crate::core::CpuType::ARM9;
     use dsvita_macros::io_read;
     io_read!(
@@ -126,15 +121,16 @@ pub mod io_arm9 {
     );
 }
 
-pub mod io_arm9_upper {
+pub mod io_arm9_read_upper {
     use crate::core::CpuType::ARM9;
     use dsvita_macros::io_read;
     io_read!((io32(0x100000), |emu| emu.ipc_fifo_recv(ARM9)), (io32(0x100010), |emu| emu.cartridge_get_rom_data_in(ARM9)));
 }
 
-io_write!(
-    IoArm9WriteLut,
-    [
+pub mod io_arm9_write {
+    use crate::core::CpuType::ARM9;
+    use dsvita_macros::io_write;
+    io_write!(
         (io32(0x0), |mask, value, emu| emu.gpu.gpu_2d_regs_a.set_disp_cnt(mask, value)),
         (io16(0x4), |mask, value, emu| emu.gpu.set_disp_stat(ARM9, mask, value)),
         (io16(0x8), |mask, value, emu| emu.gpu.gpu_2d_regs_a.set_bg_cnt(0, mask, value)),
@@ -395,42 +391,5 @@ io_write!(
         (io16(0x1052), |mask, value, emu| emu.gpu.gpu_2d_regs_b.set_bld_alpha(mask, value)),
         (io8(0x1054), |value, emu| emu.gpu.gpu_2d_regs_b.set_bld_y(value)),
         (io16(0x106C), |mask, value, emu| emu.gpu.gpu_2d_regs_b.set_master_bright(mask, value)),
-    ]
-);
-
-macro_rules! create_write_fixed_slice {
-    ($($structs:tt),*) => {
-        $(
-            impl $structs {
-                pub fn write_fixed_slice<T: Convert>(addr: u32, slice: &[T], emu: &mut Emu) {
-                    let lut_addr = addr - Self::MIN_ADDR;
-                    let (func, write_size, offset) = unsafe { Self::_LUT.get_unchecked(lut_addr as usize) };
-
-                    if *write_size < size_of::<T>() as u8 {
-                        for value in slice {
-                            Self::write((*value).into(), addr, size_of::<T>() as u8, emu);
-                        }
-                    } else {
-                        let mask = 0xFFFFFFFF >> ((4 - size_of::<T>()) << 3);
-                        let mask = mask << *offset;
-                        for value in slice {
-                            let value = (*value).into() << *offset;
-                            func(mask, value, emu)
-                        }
-                    }
-                }
-            }
-        )*
-    };
+    );
 }
-
-create_write_fixed_slice!(
-    IoArm9WriteLut
-    // IoArm9Write1Lut,
-    // IoArm9Write2Lut,
-    // IoArm9Write3Lut,
-    // IoArm9Write4Lut,
-    // IoArm9Write5Lut,
-    // IoArm9Write6Lut,
-    // IoArm9WriteGpuBLut
-);

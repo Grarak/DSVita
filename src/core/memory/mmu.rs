@@ -97,8 +97,9 @@ impl Emu {
         let wram = &self.mem.wram;
 
         for addr in (SHARED_WRAM_OFFSET..IO_PORTS_OFFSET).step_by(MMU_PAGE_SIZE) {
-            let mmu_read = &mut self.mem.mmu_arm9.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
-            let mmu_write = &mut self.mem.mmu_arm9.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
+            let shifted_addr = (addr as usize) >> MMU_PAGE_SHIFT;
+            let mmu_read = unsafe { self.mem.mmu_arm9.mmu_read.get_unchecked_mut(shifted_addr) };
+            let mmu_write = unsafe { self.mem.mmu_arm9.mmu_write.get_unchecked_mut(shifted_addr) };
 
             let shm_offset = wram.get_shm_offset::<{ ARM9 }>(addr);
             if shm_offset != usize::MAX {
@@ -126,8 +127,9 @@ impl Emu {
         let jit_mmu = &self.jit.jit_memory_map;
 
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            let mmu_read = &mut self.mem.mmu_arm9.mmu_read_tcm[(addr as usize) >> MMU_PAGE_SHIFT];
-            let mmu_write = &mut self.mem.mmu_arm9.mmu_write_tcm[(addr as usize) >> MMU_PAGE_SHIFT];
+            let shifted_addr = (addr as usize) >> MMU_PAGE_SHIFT;
+            let mmu_read = unsafe { self.mem.mmu_arm9.mmu_read_tcm.get_unchecked_mut(shifted_addr) };
+            let mmu_write = unsafe { self.mem.mmu_arm9.mmu_write_tcm.get_unchecked_mut(shifted_addr) };
             *mmu_read = 0;
             *mmu_write = 0;
 
@@ -265,10 +267,11 @@ impl Emu {
         let start = start | VRAM_OFFSET;
         let end = end | VRAM_OFFSET;
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            let mmu_read = &mut self.mem.mmu_arm9.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
-            let mmu_write = &mut self.mem.mmu_arm9.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
-            let mmu_read_tcm = &mut self.mem.mmu_arm9.mmu_read_tcm[(addr as usize) >> MMU_PAGE_SHIFT];
-            let mmu_write_tcm = &mut self.mem.mmu_arm9.mmu_write_tcm[(addr as usize) >> MMU_PAGE_SHIFT];
+            let shifted_addr = (addr as usize) >> MMU_PAGE_SHIFT;
+            let mmu_read = unsafe { self.mem.mmu_arm9.mmu_read.get_unchecked_mut(shifted_addr) };
+            let mmu_write = unsafe { self.mem.mmu_arm9.mmu_write.get_unchecked_mut(shifted_addr) };
+            let mmu_read_tcm = unsafe { self.mem.mmu_arm9.mmu_read_tcm.get_unchecked_mut(shifted_addr) };
+            let mmu_write_tcm = unsafe { self.mem.mmu_arm9.mmu_write_tcm.get_unchecked_mut(shifted_addr) };
             *mmu_read = 0;
             *mmu_write = 0;
             *mmu_read_tcm = 0;
@@ -280,10 +283,11 @@ impl Emu {
         let start = start | VRAM_OFFSET;
         let end = end | VRAM_OFFSET;
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            let mmu_read = &mut self.mem.mmu_arm9.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
-            let mmu_write = &mut self.mem.mmu_arm9.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
-            let mmu_read_tcm = &mut self.mem.mmu_arm9.mmu_read_tcm[(addr as usize) >> MMU_PAGE_SHIFT];
-            let mmu_write_tcm = &mut self.mem.mmu_arm9.mmu_write_tcm[(addr as usize) >> MMU_PAGE_SHIFT];
+            let shifted_addr = (addr as usize) >> MMU_PAGE_SHIFT;
+            let mmu_read = unsafe { self.mem.mmu_arm9.mmu_read.get_unchecked_mut(shifted_addr) };
+            let mmu_write = unsafe { self.mem.mmu_arm9.mmu_write.get_unchecked_mut(shifted_addr) };
+            let mmu_read_tcm = unsafe { self.mem.mmu_arm9.mmu_read_tcm.get_unchecked_mut(shifted_addr) };
+            let mmu_write_tcm = unsafe { self.mem.mmu_arm9.mmu_write_tcm.get_unchecked_mut(shifted_addr) };
 
             let shm_offset = self.mem.vram.get_shm_offset::<{ ARM9 }>(addr);
 
@@ -373,8 +377,9 @@ impl Emu {
 
     fn update_wram_arm7(&mut self) {
         for addr in (SHARED_WRAM_OFFSET..IO_PORTS_OFFSET).step_by(MMU_PAGE_SIZE) {
-            let mmu_read = &mut self.mem.mmu_arm7.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
-            let mmu_write = &mut self.mem.mmu_arm7.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
+            let shifted_addr = (addr as usize) >> MMU_PAGE_SHIFT;
+            let mmu_read = unsafe { self.mem.mmu_arm7.mmu_read.get_unchecked_mut(shifted_addr) };
+            let mmu_write = unsafe { self.mem.mmu_arm7.mmu_write.get_unchecked_mut(shifted_addr) };
 
             let shm_offset = self.mem.wram.get_shm_offset::<{ ARM7 }>(addr);
             *mmu_read = shm_offset;
@@ -396,8 +401,9 @@ impl Emu {
         let start = start | VRAM_OFFSET;
         let end = end | VRAM_OFFSET;
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            let mmu_read = &mut self.mem.mmu_arm7.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
-            let mmu_write = &mut self.mem.mmu_arm7.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
+            let shifted_addr = (addr as usize) >> MMU_PAGE_SHIFT;
+            let mmu_read = unsafe { self.mem.mmu_arm7.mmu_read.get_unchecked_mut(shifted_addr) };
+            let mmu_write = unsafe { self.mem.mmu_arm7.mmu_write.get_unchecked_mut(shifted_addr) };
             *mmu_read = 0;
             *mmu_write = 0;
         }
@@ -407,8 +413,9 @@ impl Emu {
         let start = start | VRAM_OFFSET;
         let end = end | VRAM_OFFSET;
         for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            let mmu_read = &mut self.mem.mmu_arm7.mmu_read[(addr as usize) >> MMU_PAGE_SHIFT];
-            let mmu_write = &mut self.mem.mmu_arm7.mmu_write[(addr as usize) >> MMU_PAGE_SHIFT];
+            let shifted_addr = (addr as usize) >> MMU_PAGE_SHIFT;
+            let mmu_read = unsafe { self.mem.mmu_arm7.mmu_read.get_unchecked_mut(shifted_addr) };
+            let mmu_write = unsafe { self.mem.mmu_arm7.mmu_write.get_unchecked_mut(shifted_addr) };
 
             let shm_offset = self.mem.vram.get_shm_offset::<{ ARM7 }>(addr);
 

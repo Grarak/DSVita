@@ -801,6 +801,7 @@ impl Emu {
 
     pub fn vram_set_cnt(&mut self, bank: usize, value: u8) {
         const MASKS: [u8; 9] = [0x9B, 0x9B, 0x9F, 0x9F, 0x87, 0x9F, 0x9F, 0x83, 0x83];
+        unsafe { assert_unchecked(bank < MASKS.len()) };
         let value = value & MASKS[bank];
         if self.mem.vram.cnt[bank] == value {
             return;
