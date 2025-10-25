@@ -225,9 +225,6 @@ impl Presenter {
                 ];
 
                 for (event, button) in SHORTCUT_EVENTS {
-                    if pressed.buttons & button != 0 {
-                        self.do_nothing_until_all_btns_released = true;
-                    }
                     if previous_pressed_btn & button != 0 && pressed.buttons & button == 0 {
                         self.do_nothing_until_all_btns_released = true;
                         return event;
