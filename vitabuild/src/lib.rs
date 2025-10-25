@@ -75,6 +75,7 @@ pub fn create_c_build() -> cc::Build {
             build.flag("-ffat-lto-objects");
         }
     }
+    build.cargo_warnings(false);
     build
 }
 
@@ -109,5 +110,6 @@ pub fn create_cc_build() -> cc::Build {
             build.flag("-ffat-lto-objects");
         }
     }
+    build.cargo_warnings(false);
     build
 }
