@@ -283,8 +283,15 @@ impl Emu {
                 *src_addr += total_size;
             }
             (DmaAddrCtrl::Increment, DmaAddrCtrl::Increment | DmaAddrCtrl::IncrementReload) => {
-                let slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
-                self.mem_read_multiple_slice::<CPU, false, true, T>(*src_addr, slice);
+                let mut slice = unsafe { slice::from_raw_parts_mut(dma.src_buf.as_mut_ptr() as *mut T, count as usize) };
+                let aligned_addr = *src_addr & !(size_of::<T>() as u32 - 1);
+                let aligned_addr = aligned_addr & 0x0FFFFFFF;
+                let shm_offset = self.get_shm_offset::<CPU, false, false>(aligned_addr);
+                if shm_offset != 0 {
+                    slice = unsafe { slice::from_raw_parts_mut(self.mem.shm.as_ptr().add(shm_offset) as *mut T, count as usize) };
+                } else {
+                    self.mem_read_multiple_slice::<CPU, false, false, T>(aligned_addr, slice);
+                }
                 self.mem_write_multiple_slice::<CPU, false, T>(*dest_addr, slice);
                 *src_addr += total_size;
                 *dest_addr += total_size;
