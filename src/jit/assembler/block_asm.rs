@@ -17,16 +17,51 @@ use vixl::{
 pub const GUEST_REGS_PTR_REG: Reg = Reg::R3;
 pub const CPSR_TMP_REG: Reg = Reg::R0;
 
-#[derive(Clone)]
-pub struct GuestInstMetadata {
-    pub fast_mem_start_offset: u16,
-    pub fast_mem_size: u16,
-    pub opcode_offset: usize,
-    pub pc: u32,
-    pub total_cycle_count: u16,
+#[derive(Copy, Clone)]
+pub struct GuestInstMetadataFastMem {
+    pub start_offset: u16,
+    pub size: u16,
     pub op: Op,
     pub operands: Operands,
     pub op0: Reg,
+}
+
+impl GuestInstMetadataFastMem {
+    fn new(start_offset: u16, size: u16, op: Op, operands: Operands, op0: Reg) -> Self {
+        GuestInstMetadataFastMem {
+            start_offset,
+            size,
+            op,
+            operands,
+            op0,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct GuestInstMetadataSlowMem {
+    pub initial_patch_addr: u32,
+    pub io_func: *const (),
+}
+
+#[derive(Copy, Clone)]
+pub union GuestInstMetadataShared {
+    pub fast: GuestInstMetadataFastMem,
+    pub slow: GuestInstMetadataSlowMem,
+}
+
+impl GuestInstMetadataShared {
+    fn new(fast: GuestInstMetadataFastMem) -> Self {
+        GuestInstMetadataShared { fast }
+    }
+}
+
+#[derive(Clone)]
+pub struct GuestInstMetadata {
+    pub s: GuestInstMetadataShared,
+    pub opcode_offset: usize,
+    pub pc: u32,
+    pub total_cycle_count: u16,
     pub dirty_guest_regs: RegReserve,
     pub mapped_guest_regs: [Reg; GUEST_REGS_LENGTH],
 }
@@ -45,14 +80,10 @@ impl GuestInstMetadata {
         mapped_guest_regs: [Reg; GUEST_REGS_LENGTH],
     ) -> Self {
         GuestInstMetadata {
-            fast_mem_start_offset,
-            fast_mem_size,
+            s: GuestInstMetadataShared::new(GuestInstMetadataFastMem::new(fast_mem_start_offset, fast_mem_size, op, operands, op0)),
             opcode_offset,
             pc,
             total_cycle_count,
-            op,
-            operands,
-            op0,
             dirty_guest_regs,
             mapped_guest_regs,
         }
@@ -412,12 +443,12 @@ impl BlockAsm {
 
     pub fn set_fast_mem_size(&mut self, start: usize, size: u16) {
         for i in start..self.guest_inst_metadata.len() {
-            self.guest_inst_metadata[i].1.fast_mem_size = size;
+            self.guest_inst_metadata[i].1.s.fast.size = size;
         }
     }
 
     pub fn set_fast_mem_size_last(&mut self, size: u16) {
-        self.guest_inst_metadata.last_mut().unwrap().1.fast_mem_size = size;
+        self.guest_inst_metadata.last_mut().unwrap().1.s.fast.size = size;
     }
 
     pub fn bind_basic_block(&mut self, basic_block_index: usize) {
