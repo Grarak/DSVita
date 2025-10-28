@@ -12,7 +12,7 @@ use handler::*;
 use std::arch::naked_asm;
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::{likely, unlikely};
-use std::mem;
+use std::{mem, ptr};
 
 mod handler {
     use crate::core::emu::Emu;
@@ -201,11 +201,11 @@ macro_rules! imm_breakout {
 }
 pub(super) use imm_breakout;
 
-unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(guest_return_lr: usize, host_regs: &[usize; GUEST_REG_ALLOCATIONS.len()]) {
+unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(metadata: *const GuestInstMetadata, host_regs: &[usize; GUEST_REG_ALLOCATIONS.len()]) {
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     debug_println!("{CPU:?} breakout after write");
 
-    let metadata: &'static GuestInstMetadata = mem::transmute(asm.emu.jit.find_guest_inst_metadata(guest_return_lr));
+    let metadata = metadata.as_ref_unchecked();
 
     for dirty_guest_reg in metadata.dirty_guest_regs - Reg::CPSR {
         let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(dirty_guest_reg as usize);
@@ -216,19 +216,24 @@ unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(guest_return_lr: u
     imm_breakout!(CPU, asm, metadata.pc, metadata.total_cycle_count);
 }
 
-unsafe extern "C" fn _inst_write_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(value0: u32, value1: u32, addr: u32, guest_return_lr: usize) -> usize {
+unsafe extern "C" fn _inst_write_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(value0: u32, value1: u32, addr: u32, metadata: *const GuestInstMetadata) -> *const GuestInstMetadata {
     debug_println!("{CPU:?} handle write request addr {addr:x}");
 
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     handle_request_write::<CPU, AMOUNT>(value0, value1, addr, asm.emu);
     if unlikely(asm.emu.breakout_imm) {
-        guest_return_lr
+        metadata
     } else {
-        0
+        ptr::null()
     }
 }
 
-unsafe extern "C" fn _inst_write_io_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(value0: u32, value1: u32, addr: u32, guest_return_lr: usize) -> usize {
+unsafe extern "C" fn _inst_write_io_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(
+    value0: u32,
+    value1: u32,
+    addr: u32,
+    metadata_ptr: *const GuestInstMetadata,
+) -> *const GuestInstMetadata {
     if AMOUNT == MemoryAmount::Double {
         unreachable_unchecked();
     }
@@ -236,18 +241,18 @@ unsafe extern "C" fn _inst_write_io_mem_handler<const CPU: CpuType, const AMOUNT
     debug_println!("{CPU:?} handle write request addr {addr:x}");
 
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
-    let metadata: &'static GuestInstMetadata = mem::transmute(asm.emu.jit.find_guest_inst_metadata(guest_return_lr));
+    let metadata = metadata_ptr.as_ref_unchecked();
 
     if likely(addr == metadata.s.slow.initial_patch_addr) {
         let func: fn(&mut Emu, u32) = mem::transmute(metadata.s.slow.io_func);
         func(asm.emu, value0);
-        0
+        ptr::null()
     } else {
         handle_request_write::<CPU, AMOUNT>(value0, value1, addr, asm.emu);
         if unlikely(asm.emu.breakout_imm) {
-            guest_return_lr
+            metadata_ptr
         } else {
-            0
+            ptr::null()
         }
     }
 }
@@ -259,10 +264,10 @@ macro_rules! write_mem_handler_cpsr {
             #[rustfmt::skip]
             naked_asm!(
                 "push {{r3, lr}}",
-                "mrs r12, cpsr",
-                "lsrs r12, r12, 24",
-                "strb r12, [r3, {cpsr_bits}]",
-                "mov r3, lr",
+                "mrs lr, cpsr",
+                "lsrs lr, lr, 24",
+                "strb lr, [r3, {cpsr_bits}]",
+                "mov r3, r12",
                 "bl {handler}",
                 "cbnz r0, 1f",
                 "pop {{r3, lr}}",
@@ -289,7 +294,7 @@ macro_rules! write_mem_handler {
             #[rustfmt::skip]
             naked_asm!(
                 "push {{r3, lr}}",
-                "mov r3, lr",
+                "mov r3, r12",
                 "bl {}",
                 "cbnz r0, 1f",
                 "pop {{r3, pc}}",
@@ -358,7 +363,12 @@ pub unsafe extern "C" fn inst_read_mem_handler_with_cpsr<const CPU: CpuType, con
     );
 }
 
-pub unsafe extern "C" fn _inst_read_io_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: u8, _: u32, addr: u32, guest_return_lr: usize) -> u32 {
+pub unsafe extern "C" fn _inst_read_io_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(
+    metadata: *const GuestInstMetadata,
+    _: u32,
+    addr: u32,
+    guest_return_lr: usize,
+) -> u32 {
     if AMOUNT == MemoryAmount::Double || (AMOUNT == MemoryAmount::Word && SIGNED) {
         unreachable_unchecked();
     }
@@ -366,7 +376,7 @@ pub unsafe extern "C" fn _inst_read_io_mem_handler<const CPU: CpuType, const AMO
     debug_println!("{CPU:?} handle read request addr {addr:x}");
 
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
-    let metadata: &'static GuestInstMetadata = mem::transmute(asm.emu.jit.find_guest_inst_metadata(guest_return_lr));
+    let metadata = metadata.as_ref_unchecked();
 
     if likely(addr == metadata.s.slow.initial_patch_addr) {
         let func: fn(&mut Emu) -> u32 = mem::transmute(metadata.s.slow.io_func);
@@ -377,7 +387,7 @@ pub unsafe extern "C" fn _inst_read_io_mem_handler<const CPU: CpuType, const AMO
 }
 
 #[unsafe(naked)]
-pub unsafe extern "C" fn inst_read_io_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: u8, _: u32, _: u32) {
+pub unsafe extern "C" fn inst_read_io_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: *const GuestInstMetadata, _: u32, _: u32) {
     #[rustfmt::skip]
     naked_asm!(
         "push {{r3, lr}}",
@@ -389,7 +399,7 @@ pub unsafe extern "C" fn inst_read_io_mem_handler<const CPU: CpuType, const AMOU
 }
 
 #[unsafe(naked)]
-pub unsafe extern "C" fn inst_read_io_mem_handler_with_cpsr<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: u8, _: u32, _: u32) {
+pub unsafe extern "C" fn inst_read_io_mem_handler_with_cpsr<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: *const GuestInstMetadata, _: u32, _: u32) {
     #[rustfmt::skip]
     naked_asm!(
         "push {{r3, lr}}",
@@ -601,19 +611,24 @@ pub unsafe extern "C" fn inst_read_mem_handler_multiple<const CPU: CpuType, cons
     );
 }
 
-unsafe extern "C" fn _inst_mem_handler_write_gx_fifo<const CPU: CpuType, const AMOUNT: MemoryAmount>(value0: u32, value1: u32, addr: u32, guest_context_lr: usize) -> usize {
+unsafe extern "C" fn _inst_mem_handler_write_gx_fifo<const CPU: CpuType, const AMOUNT: MemoryAmount>(
+    value0: u32,
+    value1: u32,
+    addr: u32,
+    metadata: *const GuestInstMetadata,
+) -> *const GuestInstMetadata {
     unsafe { assert_unchecked(CPU == ARM9 && AMOUNT == MemoryAmount::Word) };
 
     if likely(addr >= 0x4000400 && addr < 0x4000440) {
         let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
         asm.emu.regs_3d_set_gx_fifo(value0, value0);
         if unlikely(asm.emu.breakout_imm) {
-            guest_context_lr
+            metadata
         } else {
-            0
+            ptr::null()
         }
     } else {
-        _inst_write_mem_handler::<{ ARM9 }, { MemoryAmount::Word }>(value0, value1, addr, guest_context_lr)
+        _inst_write_mem_handler::<{ ARM9 }, { MemoryAmount::Word }>(value0, value1, addr, metadata)
     }
 }
 

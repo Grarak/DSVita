@@ -36,15 +36,15 @@ const JIT_LIVE_RANGE_PAGE_SIZE: u32 = 1 << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
 const JIT_ARM9_MEMORY_SIZE: usize = 28 * 1024 * 1024;
 const JIT_ARM7_MEMORY_SIZE: usize = JIT_MEMORY_SIZE - JIT_ARM9_MEMORY_SIZE;
 
-const SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB: usize = 14;
-const SLOW_MEM_SINGLE_READ_LENGTH_THUMB: usize = 14;
+const SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB: usize = 22;
+const SLOW_MEM_SINGLE_READ_LENGTH_THUMB: usize = 22;
 const SLOW_MEM_MULTIPLE_LENGTH_THUMB: usize = 26;
 
-const SLOW_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 20;
-const SLOW_MEM_SINGLE_READ_LENGTH_ARM: usize = 20;
+const SLOW_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 28;
+const SLOW_MEM_SINGLE_READ_LENGTH_ARM: usize = 28;
 const SLOW_MEM_MULTIPLE_LENGTH_ARM: usize = 28;
-pub const SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 12;
-pub const SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM: usize = 12;
+pub const SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 20;
+pub const SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM: usize = 20;
 
 #[derive(Copy, Clone)]
 pub struct JitEntry(pub *const extern "C" fn(u32));
@@ -356,7 +356,7 @@ impl JitMemory {
         jit_data.start = (freed_start as usize) << PAGE_SHIFT;
         jit_data.end = (freed_end as usize) << PAGE_SHIFT;
 
-        debug_println!("{cpu_type:?} Jit memory reset from {:x} - {:x}", jit_data.start, jit_data.end);
+        println!("{cpu_type:?} Jit memory reset from {:x} - {:x}", jit_data.start, jit_data.end);
     }
 
     fn allocate_block(&mut self, required_size: usize, cpu_type: CpuType) -> (usize, bool) {
@@ -410,7 +410,7 @@ impl JitMemory {
                     *live_range &= !(1 << live_ranges_bit);
 
                     let guest_addr_start = $guest_addr & !(JIT_LIVE_RANGE_PAGE_SIZE - 1);
-                    debug_println!("Invalidating jit {guest_addr_start:x} - {:x}", guest_addr_start + JIT_LIVE_RANGE_PAGE_SIZE);
+                    println!("Invalidating jit {guest_addr_start:x} - {:x}", guest_addr_start + JIT_LIVE_RANGE_PAGE_SIZE);
                     self.jit_memory_map.write_jit_entries(guest_addr_start, JIT_LIVE_RANGE_PAGE_SIZE as usize, DEFAULT_JIT_ENTRY);
                 }
             }};
@@ -430,14 +430,14 @@ impl JitMemory {
         }
     }
 
-    pub fn find_guest_inst_metadata(&mut self, jit_pc: usize) -> &mut GuestInstMetadata {
+    unsafe fn find_guest_inst_metadata(&mut self, jit_pc: usize) -> &mut GuestInstMetadata {
         let jit_mem_offset = jit_pc - self.mem.as_ptr() as usize;
         let metadata_block_page = jit_mem_offset >> PAGE_SHIFT;
         let opcode_offset = (jit_mem_offset & (PAGE_SIZE - 1)) & !1;
         let guest_inst_metadata_list = unsafe { self.guest_inst_metadata.get_unchecked_mut(metadata_block_page) };
 
         for guest_inst_metadata in guest_inst_metadata_list {
-            if opcode_offset == guest_inst_metadata.opcode_offset {
+            if opcode_offset == guest_inst_metadata.s.fast.opcode_offset {
                 return guest_inst_metadata;
             }
         }
@@ -445,7 +445,7 @@ impl JitMemory {
         unsafe { unreachable_unchecked() }
     }
 
-    fn get_inst_mem_handler_fun<const CPU: CpuType>(is_write: bool, transfer: SingleTransfer, guest_memory_addr: u32, cpsr_dirty: bool) -> *const () {
+    fn get_inst_mem_handler_fun<const CPU: CpuType>(is_write: bool, transfer: SingleTransfer, guest_memory_addr: u32, cpsr_dirty: bool, io_func: &mut Option<*const ()>) -> *const () {
         macro_rules! _get_inst_mem_handler_fun {
             ($is_write:expr, $size:expr, $signed:expr, $write_func:ident, $read_func:ident, $read_func_64:ident) => {
                 match ($is_write, $size) {
@@ -475,7 +475,7 @@ impl JitMemory {
         }
 
         if CPU == ARM9 && is_write && guest_memory_addr >= 0x4000400 && guest_memory_addr < 0x4000440 && transfer.size() == 2 {
-            if cpsr_dirty {
+            return if cpsr_dirty {
                 _get_inst_mem_handler_fun!(
                     is_write,
                     transfer.size(),
@@ -493,53 +493,57 @@ impl JitMemory {
                     inst_read_mem_handler,
                     inst_read64_mem_handler
                 )
-            }
-        } else if transfer.size() != 3 && guest_memory_addr & 0xFF000000 == regions::IO_PORTS_OFFSET && {
+            };
+        }
+
+        if transfer.size() != 3 && guest_memory_addr & 0xFF000000 == regions::IO_PORTS_OFFSET {
             let io_addr = guest_memory_addr & 0xFFFFFF;
             let dma_range = 0xB0..=0xEC;
             let spu_range = 0x400..=0x4FC;
             let size = 1 << transfer.size();
             let aligned_addr = io_addr & !(size - 1);
-            match CPU {
-                ARM9 => {
-                    !dma_range.contains(&io_addr)
-                        && if is_write {
-                            io_arm9::get_write_with_size(aligned_addr, size as usize).is_some()
-                        } else {
-                            io_arm9::get_read_with_size(aligned_addr, size as usize).is_some()
-                        }
+            *io_func = match CPU {
+                ARM9 if !dma_range.contains(&io_addr) => {
+                    if is_write {
+                        io_arm9::get_write_with_size(aligned_addr, size as usize).map(|f| f as _)
+                    } else {
+                        io_arm9::get_read_with_size(aligned_addr, size as usize).map(|f| f as _)
+                    }
                 }
-                ARM7 => {
-                    !dma_range.contains(&io_addr)
-                        && !spu_range.contains(&io_addr)
-                        && if is_write {
-                            io_arm7::get_write_with_size(aligned_addr, size as usize).is_some()
-                        } else {
-                            io_arm7::get_read_with_size(aligned_addr, size as usize).is_some()
-                        }
+                ARM7 if !dma_range.contains(&io_addr) && !spu_range.contains(&io_addr) => {
+                    if is_write {
+                        io_arm7::get_write_with_size(aligned_addr, size as usize).map(|f| f as _)
+                    } else {
+                        io_arm7::get_read_with_size(aligned_addr, size as usize).map(|f| f as _)
+                    }
                 }
+                _ => None,
+            };
+
+            if io_func.is_some() {
+                return if cpsr_dirty {
+                    _get_inst_mem_handler_fun!(
+                        is_write,
+                        transfer.size(),
+                        transfer.signed(),
+                        inst_write_io_mem_handler_with_cpsr,
+                        inst_read_io_mem_handler_with_cpsr,
+                        inst_read64_mem_handler_with_cpsr
+                    )
+                } else {
+                    _get_inst_mem_handler_fun!(
+                        is_write,
+                        transfer.size(),
+                        transfer.signed(),
+                        inst_write_io_mem_handler,
+                        inst_read_io_mem_handler,
+                        inst_read64_mem_handler
+                    )
+                };
             }
-        } {
-            if cpsr_dirty {
-                _get_inst_mem_handler_fun!(
-                    is_write,
-                    transfer.size(),
-                    transfer.signed(),
-                    inst_write_io_mem_handler_with_cpsr,
-                    inst_read_io_mem_handler_with_cpsr,
-                    inst_read64_mem_handler_with_cpsr
-                )
-            } else {
-                _get_inst_mem_handler_fun!(
-                    is_write,
-                    transfer.size(),
-                    transfer.signed(),
-                    inst_write_io_mem_handler,
-                    inst_read_io_mem_handler,
-                    inst_read64_mem_handler
-                )
-            }
-        } else if cpsr_dirty {
+        }
+
+        if cpsr_dirty {
             _get_inst_mem_handler_fun!(
                 is_write,
                 transfer.size(),
@@ -729,10 +733,11 @@ impl JitMemory {
             };
 
             let is_write = guest_inst_metadata.s.fast.op.is_write_mem_transfer();
+            let mut io_func = None;
 
             let inst_mem_func = match cpu {
-                ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
-                ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
+                ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
+                ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
             };
             Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
 
@@ -747,12 +752,14 @@ impl JitMemory {
                 }
             }
 
-            Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
+            let guest_inst_metadata_ptr = guest_inst_metadata as *const _ as u32;
+            if is_write {
+                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, guest_inst_metadata_ptr);
+            } else if io_func.is_some() {
+                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, guest_inst_metadata_ptr);
+            }
 
-            let host_pc_page = *host_pc >> PAGE_SHIFT;
-            let slow_mem_return_page = (fast_mem.as_ptr() as usize + slow_mem_length) >> PAGE_SHIFT;
-            debug_assert_eq!(host_pc_page, slow_mem_return_page);
-            guest_inst_metadata.opcode_offset = guest_inst_metadata.opcode_offset - guest_inst_metadata.s.fast.start_offset as usize + slow_mem_length;
+            Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
 
             if !is_write {
                 Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, guest_inst_metadata.s.fast.op0, Reg::R0);
@@ -765,31 +772,9 @@ impl JitMemory {
             let max_length = Self::get_slow_mem_length(guest_inst_metadata.s.fast.op);
             debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
 
-            if guest_memory_addr & 0xF000000 == regions::IO_PORTS_OFFSET {
-                let size = 1 << transfer.size();
-                let io_addr = guest_memory_addr & 0xFFFFFF;
-                let aligned_addr = io_addr & !(size - 1);
-                let func_addr = match cpu {
-                    ARM9 => {
-                        if is_write {
-                            io_arm9::get_write_with_size(aligned_addr, size as usize).map(|func| func as *const ())
-                        } else {
-                            io_arm9::get_read_with_size(aligned_addr, size as usize).map(|func| func as *const ())
-                        }
-                    }
-                    ARM7 => {
-                        if is_write {
-                            io_arm7::get_write_with_size(aligned_addr, size as usize).map(|func| func as *const ())
-                        } else {
-                            io_arm7::get_read_with_size(aligned_addr, size as usize).map(|func| func as *const ())
-                        }
-                    }
-                };
-
-                if let Some(func_addr) = func_addr {
-                    guest_inst_metadata.s.slow.initial_patch_addr = guest_memory_addr;
-                    guest_inst_metadata.s.slow.io_func = func_addr;
-                }
+            if let Some(io_func) = io_func {
+                guest_inst_metadata.s.slow.initial_patch_addr = guest_memory_addr;
+                guest_inst_metadata.s.slow.io_func = io_func;
             }
         } else if guest_inst_metadata.s.fast.op.is_multiple_mem_transfer() {
             let transfer = match guest_inst_metadata.s.fast.op {
@@ -842,6 +827,7 @@ impl JitMemory {
             debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
         } else if !THUMB && matches!(guest_inst_metadata.s.fast.op, Op::Swpb | Op::Swp) {
             let is_write = guest_inst_metadata.s.fast.op0 == Reg::R1;
+            let mut io_func = None;
 
             let size = match guest_inst_metadata.s.fast.op {
                 Op::Swpb => 0,
@@ -850,17 +836,12 @@ impl JitMemory {
             };
             let transfer = SingleTransfer::new(false, false, false, false, size);
             let inst_mem_func = match cpu {
-                ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
-                ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR)),
+                ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
+                ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
             };
             Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
 
             Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
-
-            let host_pc_page = *host_pc >> PAGE_SHIFT;
-            let slow_mem_return_page = (fast_mem.as_ptr() as usize + slow_mem_length) >> PAGE_SHIFT;
-            debug_assert_eq!(host_pc_page, slow_mem_return_page);
-            guest_inst_metadata.opcode_offset = guest_inst_metadata.opcode_offset - guest_inst_metadata.s.fast.start_offset as usize + slow_mem_length;
 
             let max_length = if is_write { SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM } else { SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM };
             debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");

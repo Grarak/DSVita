@@ -24,16 +24,18 @@ pub struct GuestInstMetadataFastMem {
     pub op: Op,
     pub operands: Operands,
     pub op0: Reg,
+    pub opcode_offset: usize,
 }
 
 impl GuestInstMetadataFastMem {
-    fn new(start_offset: u16, size: u16, op: Op, operands: Operands, op0: Reg) -> Self {
+    fn new(start_offset: u16, size: u16, op: Op, operands: Operands, op0: Reg, opcode_offset: usize) -> Self {
         GuestInstMetadataFastMem {
             start_offset,
             size,
             op,
             operands,
             op0,
+            opcode_offset,
         }
     }
 }
@@ -59,7 +61,6 @@ impl GuestInstMetadataShared {
 #[derive(Clone)]
 pub struct GuestInstMetadata {
     pub s: GuestInstMetadataShared,
-    pub opcode_offset: usize,
     pub pc: u32,
     pub total_cycle_count: u16,
     pub dirty_guest_regs: RegReserve,
@@ -80,8 +81,7 @@ impl GuestInstMetadata {
         mapped_guest_regs: [Reg; GUEST_REGS_LENGTH],
     ) -> Self {
         GuestInstMetadata {
-            s: GuestInstMetadataShared::new(GuestInstMetadataFastMem::new(fast_mem_start_offset, fast_mem_size, op, operands, op0)),
-            opcode_offset,
+            s: GuestInstMetadataShared::new(GuestInstMetadataFastMem::new(fast_mem_start_offset, fast_mem_size, op, operands, op0, opcode_offset)),
             pc,
             total_cycle_count,
             dirty_guest_regs,
