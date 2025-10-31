@@ -451,7 +451,21 @@ pub extern "C" fn emit_code_block(guest_pc: u32) {
 
 fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     let pc_step = if thumb { 2 } else { 4 };
-    let guest_pc_end = asm.fill_jit_insts_buf(guest_pc, thumb, false);
+
+    let is_os_irq_handler = if asm.emu.nitro_sdk_version.is_valid() {
+        if asm.cpu == ARM7 && asm.os_irq_handler_addr & 0xFF000000 != regions::SHARED_WRAM_OFFSET {
+            asm.os_irq_handler_addr = asm.emu.mem_read::<{ ARM7 }, u32>(0x380FFFC);
+        }
+        asm.os_irq_handler_addr != 0 && guest_pc == asm.os_irq_handler_addr
+    } else {
+        false
+    };
+
+    let guest_pc_end = asm.fill_jit_insts_buf(guest_pc, thumb, is_os_irq_handler);
+
+    if asm.cpu == ARM9 && is_os_irq_handler && asm.emit_hle_os_irq_handler(guest_pc, thumb) {
+        return;
+    }
 
     if asm.emit_nitrosdk_func(guest_pc, thumb) {
         return;
@@ -465,7 +479,7 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
         asm.jit_buf.guest_pc_start = guest_pc;
         asm.jit_buf.debug_info.resize(asm.analyzer.basic_blocks.len(), asm.jit_buf.insts.len());
 
-        let mut block_asm = BlockAsm::new(asm.cpu, thumb);
+        let mut block_asm = BlockAsm::new(asm.cpu, thumb, is_os_irq_handler);
         block_asm.prologue(asm.analyzer.basic_blocks.len());
 
         if asm.cpu == ARM7 && guest_pc & 0xFF000000 != regions::VRAM_OFFSET && !asm.emu.nitro_sdk_version.is_valid() {
@@ -616,6 +630,7 @@ pub struct JitAsm<'a> {
     pub jit_buf: JitBuf,
     pub runtime_data: JitRuntimeData,
     pub analyzer: AsmAnalyzer,
+    pub os_irq_handler_addr: u32,
 }
 
 impl<'a> JitAsm<'a> {
@@ -627,6 +642,7 @@ impl<'a> JitAsm<'a> {
             jit_buf: JitBuf::new(),
             runtime_data: JitRuntimeData::new(),
             analyzer: AsmAnalyzer::default(),
+            os_irq_handler_addr: 0,
         }
     }
 

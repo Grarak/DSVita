@@ -68,6 +68,9 @@ fn run_cpu(emu: &mut Emu) {
     let arm7_ram_addr = emu.cartridge.io.header.arm7_values.ram_address;
     let arm7_entry_addr = emu.cartridge.io.header.arm7_values.entry_address;
 
+    info_println!("ARM9 entry addr {arm9_entry_addr:x}");
+    info_println!("ARM7 entry addr {arm7_entry_addr:x}");
+
     emu.reset();
     emu.cm.schedule(0x7FFFFFFF, EventType::Overflow);
 

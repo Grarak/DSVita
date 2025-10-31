@@ -3,7 +3,10 @@ use crate::core::memory::io_arm7::io_arm7;
 use crate::core::memory::io_arm9::io_arm9;
 use crate::core::memory::mmu::MMU_PAGE_SHIFT;
 use crate::core::memory::{regions, vram};
+use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
+use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
+use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
 use crate::jit::assembler::block_asm::{BlockAsm, GuestInstMetadata, GuestInstOffset};
 use crate::jit::assembler::{arm, thumb};
 use crate::jit::inst_mem_handler::{
@@ -651,6 +654,7 @@ impl JitMemory {
             } else {
                 _get_inst_mem_multiple_handler_fun!(inst_write_mem_handler_multiple_gxfifo, inst_read_mem_handler_multiple)
             }
+        // }else if !is_write && guest_memory_addr == 0x4000210 && rlist_len == 2 {
         } else if cpsr_dirty {
             _get_inst_mem_multiple_handler_fun!(inst_write_mem_handler_multiple_with_cpsr, inst_read_mem_handler_multiple_with_cpsr)
         } else {
@@ -726,127 +730,187 @@ impl JitMemory {
     unsafe fn execute_patch_slow_mem<const THUMB: bool>(host_pc: &mut usize, guest_memory_addr: u32, fast_mem: &mut [u8], guest_inst_metadata: &mut GuestInstMetadata, cpu: CpuType) {
         let mut slow_mem_length = 0;
 
-        if guest_inst_metadata.s.fast.op.is_single_mem_transfer() {
-            let transfer = match guest_inst_metadata.s.fast.op {
-                Op::Ldr(transfer) | Op::LdrT(transfer) | Op::Str(transfer) | Op::StrT(transfer) => transfer,
-                _ => unreachable_unchecked(),
-            };
-
+        if !THUMB && guest_inst_metadata.s.fast.is_os_irq_handler {
             let is_write = guest_inst_metadata.s.fast.op.is_write_mem_transfer();
-            let mut io_func = None;
+            if guest_inst_metadata.s.fast.op.is_single_mem_transfer() {
+                let transfer = match guest_inst_metadata.s.fast.op {
+                    Op::Ldr(transfer) | Op::Str(transfer) => transfer,
+                    _ => unreachable_unchecked(),
+                };
 
-            let inst_mem_func = match cpu {
-                ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
-                ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
-            };
-            Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
+                if transfer.size() == 2 {
+                    let op0 = guest_inst_metadata.s.fast.operands.values[0].as_reg_no_shift().unwrap_unchecked();
+                    let op0_mapped = guest_inst_metadata.mapped_guest_regs[op0 as usize];
+                    if is_write && guest_memory_addr == 0x4000214 {
+                        let thread_reg_offset = mem::offset_of!(ThreadRegs, irf);
+                        Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, LdrStrImm::ldr_offset_al(Reg::R0, Reg::R3, thread_reg_offset as u16));
+                        Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, AluShiftImm::bic_al(Reg::R0, Reg::R0, op0_mapped));
+                        Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, LdrStrImm::str_offset_al(Reg::R0, Reg::R3, thread_reg_offset as u16));
+                    } else if guest_memory_addr == 0x4000208 {
+                        let thread_reg_offset = mem::offset_of!(ThreadRegs, ime);
+                        let opcode = LdrStrImm::ldrb_offset_al(op0_mapped, Reg::R3, thread_reg_offset as u16);
+                        Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, opcode);
+                    }
+                }
+            } else if guest_inst_metadata.s.fast.op.is_multiple_mem_transfer() {
+                let rlist = guest_inst_metadata.s.fast.operands.values[1].as_reg_list().unwrap();
+                if !is_write && guest_memory_addr == 0x4000210 && rlist.len() == 2 {
+                    let op0 = rlist.get_lowest_reg();
+                    let op1 = rlist.get_highest_reg();
+                    let mapped_0 = guest_inst_metadata.mapped_guest_regs[op0 as usize];
+                    let mapped_1 = guest_inst_metadata.mapped_guest_regs[op1 as usize];
 
-            if is_write {
-                if guest_inst_metadata.s.fast.op0 != Reg::R0 {
-                    Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, guest_inst_metadata.s.fast.op0);
+                    let thread_reg_ie_offset = mem::offset_of!(ThreadRegs, ie);
+                    let opcode = LdrStrImmSBHD::ldrd_al(Reg::R0, Reg::R3, thread_reg_ie_offset as u8);
+                    Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, opcode);
+
+                    if mapped_0 == Reg::None {
+                        let opcode = LdrStrImm::str_offset_al(Reg::R0, Reg::R3, (op0 as u16) << 2);
+                        Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, opcode);
+                    } else {
+                        Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, mapped_0, Reg::R0);
+                    }
+
+                    if mapped_1 == Reg::None {
+                        let opcode = LdrStrImm::str_offset_al(Reg::R1, Reg::R3, (op1 as u16) << 2);
+                        Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, opcode);
+                    } else {
+                        Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, mapped_1, Reg::R0);
+                    }
+                }
+            }
+        }
+
+        if slow_mem_length == 0 {
+            if guest_inst_metadata.s.fast.op.is_single_mem_transfer() {
+                let transfer = match guest_inst_metadata.s.fast.op {
+                    Op::Ldr(transfer) | Op::LdrT(transfer) | Op::Str(transfer) | Op::StrT(transfer) => transfer,
+                    _ => unreachable_unchecked(),
+                };
+
+                let is_write = guest_inst_metadata.s.fast.op.is_write_mem_transfer();
+                let mut io_func = None;
+
+                let inst_mem_func = match cpu {
+                    ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
+                    ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
+                };
+                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
+
+                if is_write {
+                    if guest_inst_metadata.s.fast.op0 != Reg::R0 {
+                        Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, guest_inst_metadata.s.fast.op0);
+                    }
+
+                    if transfer.size() == 3 {
+                        let op0 = guest_inst_metadata.s.fast.operands.values[0].as_reg_no_shift().unwrap_unchecked();
+                        let mapped_next = guest_inst_metadata.mapped_guest_regs[op0 as usize + 1];
+                        Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R1, mapped_next);
+                    }
                 }
 
-                if transfer.size() == 3 {
-                    let mapped_next = guest_inst_metadata.mapped_guest_regs[guest_inst_metadata.s.fast.operands.values[0].as_reg_no_shift().unwrap_unchecked() as usize + 1];
-                    Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R1, mapped_next);
+                let guest_inst_metadata_ptr = guest_inst_metadata as *const _ as u32;
+                if is_write {
+                    Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, guest_inst_metadata_ptr);
+                } else if io_func.is_some() {
+                    Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, guest_inst_metadata_ptr);
                 }
-            }
 
-            let guest_inst_metadata_ptr = guest_inst_metadata as *const _ as u32;
-            if is_write {
-                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, guest_inst_metadata_ptr);
-            } else if io_func.is_some() {
-                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, guest_inst_metadata_ptr);
-            }
+                Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
 
-            Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
-
-            if !is_write {
-                Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, guest_inst_metadata.s.fast.op0, Reg::R0);
-                if transfer.size() == 3 {
-                    let mapped_next = guest_inst_metadata.mapped_guest_regs[guest_inst_metadata.s.fast.operands.values[0].as_reg_no_shift().unwrap_unchecked() as usize + 1];
-                    Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, mapped_next, Reg::R1);
+                if !is_write {
+                    Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, guest_inst_metadata.s.fast.op0, Reg::R0);
+                    if transfer.size() == 3 {
+                        let op0 = guest_inst_metadata.s.fast.operands.values[0].as_reg_no_shift().unwrap_unchecked();
+                        let mapped_next = guest_inst_metadata.mapped_guest_regs[op0 as usize + 1];
+                        Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, mapped_next, Reg::R1);
+                    }
                 }
+
+                let max_length = Self::get_slow_mem_length(guest_inst_metadata.s.fast.op);
+                debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
+
+                if let Some(io_func) = io_func {
+                    guest_inst_metadata.s.slow.initial_patch_addr = guest_memory_addr;
+                    guest_inst_metadata.s.slow.io_func = io_func;
+                }
+            } else if guest_inst_metadata.s.fast.op.is_multiple_mem_transfer() {
+                let transfer = match guest_inst_metadata.s.fast.op {
+                    Op::Ldm(transfer) | Op::LdmT(transfer) | Op::Stm(transfer) | Op::StmT(transfer) => transfer,
+                    _ => unreachable_unchecked(),
+                };
+
+                let is_write = guest_inst_metadata.s.fast.op.is_write_mem_transfer();
+                let op1 = guest_inst_metadata.s.fast.operands.values[1].as_reg_list().unwrap_unchecked();
+                let valid = !transfer.write_back() || !op1.is_reserved(guest_inst_metadata.s.fast.op0);
+
+                let inst_mem_func = match cpu {
+                    ARM9 => Self::get_inst_mem_multiple_handler_fun::<{ ARM9 }>(
+                        is_write,
+                        transfer,
+                        transfer.user() && !op1.is_reserved(Reg::PC),
+                        valid,
+                        op1.is_reserved(Reg::PC),
+                        guest_memory_addr,
+                        guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR),
+                    ),
+                    ARM7 => Self::get_inst_mem_multiple_handler_fun::<{ ARM7 }>(
+                        is_write,
+                        transfer,
+                        transfer.user() && !op1.is_reserved(Reg::PC),
+                        valid,
+                        op1.is_reserved(Reg::PC),
+                        guest_memory_addr,
+                        guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR),
+                    ),
+                };
+
+                let mut pre = transfer.pre();
+                if !transfer.add() {
+                    pre = !pre;
+                }
+
+                let params = InstMemMultipleParams::new(op1.0 as u16, u4::new(op1.len() as u8), u4::new(guest_inst_metadata.s.fast.op0 as u8), pre, transfer.user(), u6::new(0));
+
+                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
+
+                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, u32::from(params));
+
+                let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
+                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R1, guest_inst_metadata_ptr as u32);
+
+                Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
+
+                let max_length = Self::get_slow_mem_length(guest_inst_metadata.s.fast.op);
+                debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
+            } else if !THUMB && matches!(guest_inst_metadata.s.fast.op, Op::Swpb | Op::Swp) {
+                let is_write = guest_inst_metadata.s.fast.op0 == Reg::R1;
+                let mut io_func = None;
+
+                let size = match guest_inst_metadata.s.fast.op {
+                    Op::Swpb => 0,
+                    Op::Swp => 2,
+                    _ => unsafe { unreachable_unchecked() },
+                };
+                let transfer = SingleTransfer::new(false, false, false, false, size);
+                let inst_mem_func = match cpu {
+                    ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
+                    ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
+                };
+                Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
+
+                Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
+
+                let max_length = if is_write { SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM } else { SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM };
+                debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
+
+                if let Some(io_func) = io_func {
+                    guest_inst_metadata.s.slow.initial_patch_addr = guest_memory_addr;
+                    guest_inst_metadata.s.slow.io_func = io_func;
+                }
+            } else {
+                unreachable_unchecked()
             }
-
-            let max_length = Self::get_slow_mem_length(guest_inst_metadata.s.fast.op);
-            debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
-
-            if let Some(io_func) = io_func {
-                guest_inst_metadata.s.slow.initial_patch_addr = guest_memory_addr;
-                guest_inst_metadata.s.slow.io_func = io_func;
-            }
-        } else if guest_inst_metadata.s.fast.op.is_multiple_mem_transfer() {
-            let transfer = match guest_inst_metadata.s.fast.op {
-                Op::Ldm(transfer) | Op::LdmT(transfer) | Op::Stm(transfer) | Op::StmT(transfer) => transfer,
-                _ => unreachable_unchecked(),
-            };
-
-            let is_write = guest_inst_metadata.s.fast.op.is_write_mem_transfer();
-            let op1 = guest_inst_metadata.s.fast.operands.values[1].as_reg_list().unwrap_unchecked();
-            let valid = !transfer.write_back() || !op1.is_reserved(guest_inst_metadata.s.fast.op0);
-
-            let inst_mem_func = match cpu {
-                ARM9 => Self::get_inst_mem_multiple_handler_fun::<{ ARM9 }>(
-                    is_write,
-                    transfer,
-                    transfer.user() && !op1.is_reserved(Reg::PC),
-                    valid,
-                    op1.is_reserved(Reg::PC),
-                    guest_memory_addr,
-                    guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR),
-                ),
-                ARM7 => Self::get_inst_mem_multiple_handler_fun::<{ ARM7 }>(
-                    is_write,
-                    transfer,
-                    transfer.user() && !op1.is_reserved(Reg::PC),
-                    valid,
-                    op1.is_reserved(Reg::PC),
-                    guest_memory_addr,
-                    guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR),
-                ),
-            };
-
-            let mut pre = transfer.pre();
-            if !transfer.add() {
-                pre = !pre;
-            }
-
-            let params = InstMemMultipleParams::new(op1.0 as u16, u4::new(op1.len() as u8), u4::new(guest_inst_metadata.s.fast.op0 as u8), pre, transfer.user(), u6::new(0));
-
-            Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
-
-            Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, u32::from(params));
-
-            let guest_inst_metadata_ptr = guest_inst_metadata as *const _;
-            Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R1, guest_inst_metadata_ptr as u32);
-
-            Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
-
-            let max_length = Self::get_slow_mem_length(guest_inst_metadata.s.fast.op);
-            debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
-        } else if !THUMB && matches!(guest_inst_metadata.s.fast.op, Op::Swpb | Op::Swp) {
-            let is_write = guest_inst_metadata.s.fast.op0 == Reg::R1;
-            let mut io_func = None;
-
-            let size = match guest_inst_metadata.s.fast.op {
-                Op::Swpb => 0,
-                Op::Swp => 2,
-                _ => unsafe { unreachable_unchecked() },
-            };
-            let transfer = SingleTransfer::new(false, false, false, false, size);
-            let inst_mem_func = match cpu {
-                ARM9 => Self::get_inst_mem_handler_fun::<{ ARM9 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
-                ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
-            };
-            Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
-
-            Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
-
-            let max_length = if is_write { SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM } else { SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM };
-            debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
-        } else {
-            unreachable_unchecked()
         }
 
         debug_assert!(slow_mem_length <= fast_mem.len());

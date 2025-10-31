@@ -102,7 +102,7 @@ mod handler {
         let pc = metadata.pc & !1;
 
         let op0 = emu.thread_get_reg_mut(CPU, op0_reg);
-        debug_println!("{CPU:?} handle multiple request at {pc:x} addr {op0:x} thumb: {is_thumb} write: {WRITE}");
+        debug_println!("{CPU:?} handle multiple request at {pc:x} addr {op0:x} thumb: {is_thumb} write: {WRITE} rlist: {rlist:?}");
         debug_assert_ne!(rlist_len, 0);
 
         let start_addr = if DECREMENT { *op0 - ((rlist_len as u32) << 2) } else { *op0 };
@@ -238,10 +238,10 @@ unsafe extern "C" fn _inst_write_io_mem_handler<const CPU: CpuType, const AMOUNT
         unreachable_unchecked();
     }
 
-    debug_println!("{CPU:?} handle write request addr {addr:x}");
-
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     let metadata = metadata_ptr.as_ref_unchecked();
+
+    debug_println!("{CPU:?} handle write io request addr {addr:x} at {:x}", metadata.pc);
 
     if likely(addr == metadata.s.slow.initial_patch_addr) {
         let func: fn(&mut Emu, u32) = mem::transmute(metadata.s.slow.io_func);
@@ -367,7 +367,6 @@ pub unsafe extern "C" fn _inst_read_io_mem_handler<const CPU: CpuType, const AMO
     metadata: *const GuestInstMetadata,
     _: u32,
     addr: u32,
-    guest_return_lr: usize,
 ) -> u32 {
     if AMOUNT == MemoryAmount::Double || (AMOUNT == MemoryAmount::Word && SIGNED) {
         unreachable_unchecked();

@@ -25,10 +25,11 @@ pub struct GuestInstMetadataFastMem {
     pub operands: Operands,
     pub op0: Reg,
     pub opcode_offset: usize,
+    pub is_os_irq_handler: bool,
 }
 
 impl GuestInstMetadataFastMem {
-    fn new(start_offset: u16, size: u16, op: Op, operands: Operands, op0: Reg, opcode_offset: usize) -> Self {
+    fn new(start_offset: u16, size: u16, op: Op, operands: Operands, op0: Reg, opcode_offset: usize, is_os_irq_handler: bool) -> Self {
         GuestInstMetadataFastMem {
             start_offset,
             size,
@@ -36,6 +37,7 @@ impl GuestInstMetadataFastMem {
             operands,
             op0,
             opcode_offset,
+            is_os_irq_handler,
         }
     }
 }
@@ -72,6 +74,7 @@ impl GuestInstMetadata {
         fast_mem_start_offset: u16,
         fast_mem_size: u16,
         opcode_offset: usize,
+        is_os_irq_handler: bool,
         pc: u32,
         total_cycle_count: u16,
         op: Op,
@@ -81,7 +84,7 @@ impl GuestInstMetadata {
         mapped_guest_regs: [Reg; GUEST_REGS_LENGTH],
     ) -> Self {
         GuestInstMetadata {
-            s: GuestInstMetadataShared::new(GuestInstMetadataFastMem::new(fast_mem_start_offset, fast_mem_size, op, operands, op0, opcode_offset)),
+            s: GuestInstMetadataShared::new(GuestInstMetadataFastMem::new(fast_mem_start_offset, fast_mem_size, op, operands, op0, opcode_offset, is_os_irq_handler)),
             pc,
             total_cycle_count,
             dirty_guest_regs,
@@ -122,10 +125,11 @@ pub struct BlockAsm {
     basic_blocks_guest_regs_mappings: Vec<(RegReserve, RegReserve, [Reg; GUEST_REGS_LENGTH])>,
     last_pc_value: u32,
     guest_regs_ptr: *mut u32,
+    is_os_irq_handler: bool,
 }
 
 impl BlockAsm {
-    pub fn new(cpu: CpuType, thumb: bool) -> Self {
+    pub fn new(cpu: CpuType, thumb: bool, is_os_irq_handler: bool) -> Self {
         BlockAsm {
             masm: MacroAssembler::new(if thumb { InstructionSet_T32 } else { InstructionSet_A32 }),
             reg_alloc: RegAlloc::new(thumb),
@@ -139,6 +143,7 @@ impl BlockAsm {
             basic_blocks_guest_regs_mappings: Vec::new(),
             last_pc_value: 0,
             guest_regs_ptr: cpu.guest_regs_addr() as _,
+            is_os_irq_handler,
         }
     }
 
@@ -430,6 +435,7 @@ impl BlockAsm {
                 (offset - fast_mem_start) as u16,
                 0,
                 offset as usize & (PAGE_SIZE - 1),
+                self.is_os_irq_handler,
                 pc,
                 total_cycles_reg,
                 inst.op,

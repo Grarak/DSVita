@@ -167,9 +167,6 @@ impl Emu {
                     let addr_offset = (base_addr as usize) & (DTCM_REGION.size - 1);
                     *mmu_read = DTCM_REGION.shm_offset + addr_offset;
                     *mmu_write = DTCM_REGION.shm_offset + addr_offset;
-                } else if self.cp15.dtcm_state == TcmState::W {
-                    *mmu_read = 0;
-                    *mmu_write = 0;
                 }
             }
         }
@@ -223,8 +220,6 @@ impl Emu {
                         .vmem_tcm
                         .create_page_map(shm, DTCM_REGION.shm_offset, addr_offset, DTCM_REGION.size, addr as usize, FAST_MEM_PAGE_SIZE, true)
                         .unwrap();
-                } else if self.cp15.dtcm_state == TcmState::W {
-                    self.mem.mmu_arm9.vmem_tcm.destroy_map(addr as usize, FAST_MEM_PAGE_SIZE);
                 }
             }
         }

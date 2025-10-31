@@ -274,6 +274,16 @@ impl LdrStrImmSBHD {
     }
 
     #[inline]
+    pub fn ldrd(op0: Reg, op1: Reg, op2: u8, cond: Cond) -> u32 {
+        Self::generic(op0, op1, op2, false, MemoryAmount::Double, true, false, true, true, cond)
+    }
+
+    #[inline]
+    pub fn ldrd_al(op0: Reg, op1: Reg, op2: u8) -> u32 {
+        Self::ldrd(op0, op1, op2, Cond::AL)
+    }
+
+    #[inline]
     pub fn strh(op0: Reg, op1: Reg, op2: u8, cond: Cond) -> u32 {
         Self::generic(op0, op1, op2, false, MemoryAmount::Half, false, false, true, true, cond)
     }

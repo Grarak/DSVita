@@ -1,7 +1,7 @@
 use crate::core::emu::NitroSdkVersion;
-use crate::core::memory::regions::OAM_OFFSET;
+use crate::core::memory::regions::{self, OAM_OFFSET};
+use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
-use crate::core::{div_sqrt, CpuType};
 use crate::jit::inst_branch_handler::check_scheduler;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm::JitAsm;
@@ -15,7 +15,7 @@ use crate::{get_jit_asm_ptr, IS_DEBUG};
 use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
 use std::mem::MaybeUninit;
-use std::{mem, slice};
+use std::{mem, ptr, slice};
 use CpuType::ARM7;
 
 const GX_FIFO_NOP_CLEAR128: [u32; 37] = [
@@ -233,19 +233,25 @@ unsafe extern "C" fn hle_mi_copy64b<const CPU: CpuType>(guest_pc: u32) {
     let src = regs.gp_regs[0];
     let dst = regs.gp_regs[1];
 
-    let mut buf: [u32; 16] = MaybeUninit::uninit().assume_init();
-    let mut buf = &mut buf;
-
-    let aligned_addr = src & !0x3;
-    let aligned_addr = aligned_addr & 0x0FFFFFFF;
-    let shm_offset = asm.emu.get_shm_offset::<CPU, true, false>(aligned_addr);
-    if shm_offset != 0 {
-        buf = mem::transmute(asm.emu.mem.shm.as_ptr().add(shm_offset) as *const u32);
+    if CPU == ARM9 && likely(src == 0x4000640) {
+        let clip_matrix = asm.emu.gpu.gpu_3d_regs.get_clip_matrix();
+        let clip_matrix = slice::from_raw_parts(clip_matrix.0.as_ptr() as *const u32, 16);
+        asm.emu.mem_write_multiple_slice::<CPU, true, u32>(dst, clip_matrix);
     } else {
-        asm.emu.mem_read_multiple_slice::<CPU, true, false, u32>(aligned_addr, buf);
-    }
+        let mut buf: [u32; 16] = MaybeUninit::uninit().assume_init();
+        let mut buf = &mut buf;
 
-    asm.emu.mem_write_multiple_slice::<CPU, true, u32>(dst, buf);
+        let aligned_addr = src & !0x3;
+        let aligned_addr = aligned_addr & 0x0FFFFFFF;
+        let shm_offset = asm.emu.get_shm_offset::<CPU, true, false>(aligned_addr);
+        if shm_offset != 0 {
+            buf = mem::transmute(asm.emu.mem.shm.as_ptr().add(shm_offset) as *const u32);
+        } else {
+            asm.emu.mem_read_multiple_slice::<CPU, true, false, u32>(aligned_addr, buf);
+        }
+
+        asm.emu.mem_write_multiple_slice::<CPU, true, u32>(dst, buf);
+    }
 
     hle_post_function::<CPU>(asm, 50, guest_pc);
 }
@@ -371,15 +377,10 @@ unsafe extern "C" fn hle_cp_save_context(guest_pc: u32) {
     let regs = ARM9.thread_regs();
     let cp_context_addr = regs.gp_regs[0];
 
-    let cp_context_addr = cp_context_addr & !0x3;
-    let cp_context_addr = cp_context_addr & 0x0FFFFFFF;
-    let shm_offset = asm.emu.get_shm_offset::<{ ARM9 }, true, true>(cp_context_addr);
-    debug_assert_ne!(shm_offset, 0);
+    let buf = slice::from_raw_parts(ptr::addr_of!(asm.emu.div_sqrt.context) as *const u32, 7);
+    asm.emu.mem_write_multiple_slice::<{ ARM9 }, true, u32>(cp_context_addr, buf);
 
-    let cp_context: &mut div_sqrt::CpContext = mem::transmute(asm.emu.mem.shm.as_mut_ptr().add(shm_offset) as *mut u32);
-    asm.emu.div_sqrt.get_context(cp_context);
-
-    hle_post_function::<{ ARM9 }>(asm, 40, guest_pc);
+    hle_post_function::<{ ARM9 }>(asm, 42, guest_pc);
 }
 
 unsafe extern "C" fn hle_cp_restore_context(guest_pc: u32) {
@@ -387,15 +388,41 @@ unsafe extern "C" fn hle_cp_restore_context(guest_pc: u32) {
     let regs = ARM9.thread_regs();
     let cp_context_addr = regs.gp_regs[0];
 
-    let cp_context_addr = cp_context_addr & !0x3;
-    let cp_context_addr = cp_context_addr & 0x0FFFFFFF;
-    let shm_offset = asm.emu.get_shm_offset::<{ ARM9 }, true, false>(cp_context_addr);
-    debug_assert_ne!(shm_offset, 0);
+    let buf = slice::from_raw_parts_mut(ptr::addr_of_mut!(asm.emu.div_sqrt.context) as *mut u32, 7);
+    asm.emu.mem_read_multiple_slice::<{ ARM9 }, true, true, u32>(cp_context_addr, buf);
+    asm.emu.div_sqrt.invalidate();
 
-    let cp_context: &div_sqrt::CpContext = mem::transmute(asm.emu.mem.shm.as_ptr().add(shm_offset) as *const u32);
-    asm.emu.div_sqrt.set_context(cp_context);
+    hle_post_function::<{ ARM9 }>(asm, 41, guest_pc);
+}
 
-    hle_post_function::<{ ARM9 }>(asm, 39, guest_pc);
+unsafe extern "C" fn hle_os_irqhandler(guest_pc: u32) {
+    let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
+    let regs = ARM9.thread_regs();
+
+    let irqs = regs.ie & regs.irf;
+    if regs.ime == 0 || irqs == 0 {
+        hle_post_function::<{ ARM9 }>(asm, 18, guest_pc);
+    }
+
+    let irq_to_handle = irqs.trailing_zeros();
+    regs.irf &= !(1 << irq_to_handle);
+
+    regs.sp -= 4;
+    asm.emu.mem_write::<{ ARM9 }, u32>(regs.sp, regs.lr);
+
+    regs.lr = asm.emu.os_irq_handler_thread_switch_addr;
+
+    let irq_table_addr = asm.emu.os_irq_table_addr;
+    let irq_func = asm.emu.mem_read::<{ ARM9 }, u32>(irq_table_addr + (irq_to_handle << 2));
+
+    regs.gp_regs[0] = irq_func;
+    regs.gp_regs[1] = irq_table_addr;
+    regs.gp_regs[2] = 1 << irq_to_handle;
+    regs.gp_regs[3] = 0x80000000;
+    regs.gp_regs[12] = 0x4000210;
+
+    let jit_entry: extern "C" fn(u32) = mem::transmute(asm.emu.jit.get_jit_start_addr(irq_func));
+    jit_entry(irq_func);
 }
 
 const FUNCTIONS_ARM9: &[Function] = &[
@@ -463,6 +490,7 @@ impl JitAsm<'_> {
 
         let mut start_module_params_addr = 0;
         let mut oam_imm_load_found = false;
+        let mut start_module_params_ldr_index = 0;
         for (i, inst) in self.jit_buf.insts.iter().enumerate() {
             if !inst.is_imm_load() {
                 continue;
@@ -480,6 +508,7 @@ impl JitAsm<'_> {
                 let imm_value = self.emu.mem_read::<{ ARM9 }, u32>(imm_addr);
                 if oam_imm_load_found {
                     start_module_params_addr = imm_value;
+                    start_module_params_ldr_index = i;
                     break;
                 } else if imm_value == OAM_OFFSET {
                     oam_imm_load_found = true;
@@ -502,10 +531,42 @@ impl JitAsm<'_> {
         }
         self.emu.nitro_sdk_version = NitroSdkVersion::from(sdk_version_info);
         info_println!("Found Nitro SDK version {:?}", self.emu.nitro_sdk_version);
+
+        const ADD_IMM_VALUES: [u32; 2] = [0x3fc0, 0x3c];
+        let mut add_match_count = 0;
+        for i in (start_module_params_ldr_index + 1)..self.jit_buf.insts.len() {
+            let inst = &self.jit_buf.insts[i];
+
+            match inst.op {
+                Op::Ldr(transfer) => {
+                    if !inst.is_imm_load() || transfer.size() != 2 {
+                        continue;
+                    }
+
+                    if add_match_count == ADD_IMM_VALUES.len() {
+                        let current_pc = pc + ((i as u32) << 2);
+                        let imm = inst.operands()[2].as_imm().unwrap();
+                        let pc = current_pc + 8;
+                        let imm_addr = if transfer.add() { pc + imm } else { pc - imm };
+                        let imm_value = self.emu.mem_read::<{ ARM9 }, u32>(imm_addr);
+                        if imm_value < regions::MAIN_OFFSET {
+                            self.os_irq_handler_addr = imm_value;
+                            break;
+                        }
+                    }
+                }
+                Op::Add if add_match_count < ADD_IMM_VALUES.len() && inst.operands()[2].as_imm().is_some() => {
+                    if ADD_IMM_VALUES[add_match_count] == inst.operands()[2].as_imm().unwrap() {
+                        add_match_count += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     pub fn emit_nitrosdk_func(&mut self, guest_pc: u32, thumb: bool) -> bool {
-        if thumb {
+        if !self.emu.nitro_sdk_version.is_valid() || thumb {
             return false;
         }
 
@@ -529,5 +590,55 @@ impl JitAsm<'_> {
             }
         }
         false
+    }
+
+    pub fn emit_hle_os_irq_handler(&mut self, guest_pc: u32, thumb: bool) -> bool {
+        if thumb {
+            return false;
+        }
+
+        let mut irq_table_addr = 0;
+        let mut thread_switch_addr = 0;
+        for (i, inst) in self.jit_buf.insts.iter().enumerate().rev() {
+            if !inst.is_imm_load() {
+                continue;
+            }
+
+            if let Op::Ldr(transfer) = inst.op {
+                if transfer.size() != 2 {
+                    continue;
+                }
+
+                let current_pc = guest_pc + ((i as u32) << 2);
+                let imm = inst.operands()[2].as_imm().unwrap();
+                let pc = current_pc + 8;
+                let imm_addr = if transfer.add() { pc + imm } else { pc - imm };
+                let imm_value = self.emu.mem_read::<{ ARM9 }, u32>(imm_addr);
+
+                if thread_switch_addr == 0 && inst.operands()[0].as_reg_no_shift().unwrap() == Reg::LR {
+                    thread_switch_addr = imm_value;
+                } else if irq_table_addr == 0 {
+                    irq_table_addr = imm_value;
+                }
+            }
+
+            if irq_table_addr != 0 && thread_switch_addr != 0 {
+                break;
+            }
+        }
+
+        if irq_table_addr == 0 || thread_switch_addr == 0 {
+            return false;
+        }
+
+        self.emu.os_irq_table_addr = irq_table_addr;
+        self.emu.os_irq_handler_thread_switch_addr = thread_switch_addr;
+
+        unsafe {
+            *self.emu.jit.jit_memory_map.get_jit_entry(guest_pc) = JitEntry(hle_os_irqhandler as _);
+            hle_os_irqhandler(guest_pc);
+        }
+
+        true
     }
 }

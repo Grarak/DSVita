@@ -63,6 +63,8 @@ pub struct Emu {
     pub jit: JitMemory,
     pub settings: Settings,
     pub nitro_sdk_version: NitroSdkVersion,
+    pub os_irq_table_addr: u32,
+    pub os_irq_handler_thread_switch_addr: u32,
     pub breakout_imm: bool,
     initialized: bool,
 }
@@ -89,6 +91,8 @@ impl Emu {
             jit,
             settings: DEFAULT_SETTINGS.clone(),
             nitro_sdk_version: NitroSdkVersion::default(),
+            os_irq_table_addr: 0,
+            os_irq_handler_thread_switch_addr: 0,
             breakout_imm: false,
             initialized: true,
         }
@@ -115,6 +119,8 @@ impl Emu {
             self.wifi = Wifi::new();
         }
         self.nitro_sdk_version = NitroSdkVersion::default();
+        self.os_irq_table_addr = 0;
+        self.os_irq_handler_thread_switch_addr = 0;
         self.initialized = false;
     }
 }

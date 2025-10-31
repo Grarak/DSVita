@@ -693,7 +693,7 @@ impl Gpu3DRegisters {
     }
 
     #[inline(never)]
-    fn get_clip_matrix(&mut self) -> &Matrix {
+    pub fn get_clip_matrix(&mut self) -> &Matrix {
         if unlikely(self.mtx_flags.is_clip_dirty()) {
             self.mtx_flags.set_clip_dirty_bool(false);
             self.mtx_flags.set_clip_push(true);
