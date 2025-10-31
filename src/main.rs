@@ -197,6 +197,7 @@ unsafe fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize
 
     debug_println!("{CPU:?} fault at {host_pc:x} {mem_addr:x}");
     if mem_addr < CPU.mmu_tcm_addr() {
+        eprintln!("{CPU:?} fault {host_pc:x} {mem_addr:x} outside of mapped memory");
         return false;
     }
 

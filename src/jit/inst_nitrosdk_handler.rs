@@ -1,7 +1,7 @@
 use crate::core::emu::NitroSdkVersion;
 use crate::core::memory::regions::OAM_OFFSET;
-use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
+use crate::core::{div_sqrt, CpuType};
 use crate::jit::inst_branch_handler::check_scheduler;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm::JitAsm;
@@ -50,6 +50,14 @@ const MI_CPU_FILL8: [u32; 37] = [
 
 const MI_COPY64B: [u32; 11] = [
     0xe8b0100c, 0xe8a1100c, 0xe8b0100c, 0xe8a1100c, 0xe8b0100c, 0xe8a1100c, 0xe8b0100c, 0xe8a1100c, 0xe890100d, 0xe8a1100d, 0xe12fff1e,
+];
+
+const CP_SAVE_CONTEXT: [u32; 15] = [
+    0xe59f1034, 0xe92d0010, 0xe891101c, 0xe8a0101c, 0xe151c1b0, 0xe2811028, 0xe891000c, 0xe8a0000c, 0xe20cc003, 0xe15120b8, 0xe1c0c0b0, 0xe2022001, 0xe1c020b2, 0xe8bd0010, 0xe12fff1e,
+];
+
+const CP_RESTORE_CONTEXT: [u32; 14] = [
+    0xe92d0010, 0xe59f102c, 0xe890101c, 0xe881101c, 0xe1d021b8, 0xe1d031ba, 0xe14121b0, 0xe1c132b0, 0xe2800010, 0xe2811028, 0xe890000c, 0xe881000c, 0xe8bd0010, 0xe12fff1e,
 ];
 
 struct Function {
@@ -358,6 +366,38 @@ unsafe extern "C" fn hle_gx_fifo_send128b(guest_pc: u32) {
     hle_post_function::<{ ARM9 }>(asm, 82, guest_pc);
 }
 
+unsafe extern "C" fn hle_cp_save_context(guest_pc: u32) {
+    let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
+    let regs = ARM9.thread_regs();
+    let cp_context_addr = regs.gp_regs[0];
+
+    let cp_context_addr = cp_context_addr & !0x3;
+    let cp_context_addr = cp_context_addr & 0x0FFFFFFF;
+    let shm_offset = asm.emu.get_shm_offset::<{ ARM9 }, true, true>(cp_context_addr);
+    debug_assert_ne!(shm_offset, 0);
+
+    let cp_context: &mut div_sqrt::CpContext = mem::transmute(asm.emu.mem.shm.as_mut_ptr().add(shm_offset) as *mut u32);
+    asm.emu.div_sqrt.get_context(cp_context);
+
+    hle_post_function::<{ ARM9 }>(asm, 40, guest_pc);
+}
+
+unsafe extern "C" fn hle_cp_restore_context(guest_pc: u32) {
+    let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
+    let regs = ARM9.thread_regs();
+    let cp_context_addr = regs.gp_regs[0];
+
+    let cp_context_addr = cp_context_addr & !0x3;
+    let cp_context_addr = cp_context_addr & 0x0FFFFFFF;
+    let shm_offset = asm.emu.get_shm_offset::<{ ARM9 }, true, false>(cp_context_addr);
+    debug_assert_ne!(shm_offset, 0);
+
+    let cp_context: &div_sqrt::CpContext = mem::transmute(asm.emu.mem.shm.as_ptr().add(shm_offset) as *const u32);
+    asm.emu.div_sqrt.set_context(cp_context);
+
+    hle_post_function::<{ ARM9 }>(asm, 39, guest_pc);
+}
+
 const FUNCTIONS_ARM9: &[Function] = &[
     Function::new(&MI_CPU_CLEAR32, "MI_CPU_CLEAR32", hle_mi_cpu_clear32::<{ ARM9 }>),
     Function::new(&MI_CPU_CLEAR16, "MI_CPU_CLEAR16", hle_mi_cpu_clear16::<{ ARM9 }>),
@@ -368,6 +408,8 @@ const FUNCTIONS_ARM9: &[Function] = &[
     Function::new(&GX_FIFO_SEND48B, "GX_FIFO_SEND48B", hle_gx_fifo_send48b),
     Function::new(&GX_FIFO_SEND128B, "GX_FIFO_SEND128B", hle_gx_fifo_send128b),
     Function::new(&MI_COPY64B, "MI_COPY64B", hle_mi_copy64b::<{ ARM9 }>),
+    Function::new(&CP_RESTORE_CONTEXT, "CP_RESTORE_CONTEXT", hle_cp_restore_context),
+    Function::new(&CP_SAVE_CONTEXT, "CP_SAVE_CONTEXT", hle_cp_save_context),
     Function::new(&MI_CPU_CLEARFAST, "MI_CPU_CLEARFAST", hle_mi_cpu_clearfast::<{ ARM9 }>),
     Function::new(&MI_CPU_FILL8, "MI_CPU_FILL8", hle_mi_cpu_fill8::<{ ARM9 }>),
     Function::new(&GX_FIFO_NOP_CLEAR128, "GX_FIFO_NOP_CLEAR128", hle_gx_fifo_nop_clear128),

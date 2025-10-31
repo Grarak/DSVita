@@ -7,7 +7,7 @@ use std::ops::{Index, IndexMut};
 pub mod cp15;
 pub mod cpu_regs;
 pub mod cycle_manager;
-mod div_sqrt;
+pub mod div_sqrt;
 pub mod emu;
 pub mod exception_handler;
 pub mod graphics;

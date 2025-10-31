@@ -1,14 +1,20 @@
 use std::hint::unreachable_unchecked;
 use std::intrinsics::{unchecked_div, unchecked_rem};
 
-pub struct DivSqrt {
-    pub sqrt_cnt: u16,
-    sqrt_result: u32,
-    sqrt_param: u64,
-    sqrt_dirty: bool,
-    pub div_cnt: u16,
+#[derive(Default, Debug)]
+#[repr(C)]
+pub struct CpContext {
     div_numer: i64,
     div_denom: i64,
+    sqrt_param: u64,
+    pub div_cnt: u16,
+    pub sqrt_cnt: u16,
+}
+
+pub struct DivSqrt {
+    pub context: CpContext,
+    sqrt_result: u32,
+    sqrt_dirty: bool,
     div_result: i64,
     divrem_result: i64,
     div_dirty: bool,
@@ -17,13 +23,9 @@ pub struct DivSqrt {
 impl DivSqrt {
     pub fn new() -> Self {
         DivSqrt {
-            sqrt_cnt: 0,
+            context: CpContext::default(),
             sqrt_result: 0,
-            sqrt_param: 0,
             sqrt_dirty: true,
-            div_cnt: 0,
-            div_numer: 0,
-            div_denom: 0,
             div_result: 0,
             divrem_result: 0,
             div_dirty: true,
@@ -31,11 +33,11 @@ impl DivSqrt {
     }
 
     pub fn get_sqrt_param_l(&self) -> u32 {
-        self.sqrt_param as u32
+        self.context.sqrt_param as u32
     }
 
     pub fn get_sqrt_param_h(&self) -> u32 {
-        (self.sqrt_param >> 32) as u32
+        (self.context.sqrt_param >> 32) as u32
     }
 
     pub fn get_sqrt_result(&mut self) -> u32 {
@@ -48,43 +50,43 @@ impl DivSqrt {
             return;
         }
         self.sqrt_dirty = false;
-        if self.sqrt_cnt & 1 == 0 {
-            self.sqrt_result = (self.sqrt_param as u32).isqrt();
+        if self.context.sqrt_cnt & 1 == 0 {
+            self.sqrt_result = (self.context.sqrt_param as u32).isqrt();
         } else {
-            self.sqrt_result = self.sqrt_param.isqrt() as u32;
+            self.sqrt_result = self.context.sqrt_param.isqrt() as u32;
         }
     }
 
     pub fn set_sqrt_cnt(&mut self, mut mask: u16, value: u16) {
         mask &= 0x1;
-        self.sqrt_cnt = (self.sqrt_cnt & !mask) | (value & mask);
+        self.context.sqrt_cnt = (self.context.sqrt_cnt & !mask) | (value & mask);
         self.sqrt_dirty = true;
     }
 
     pub fn set_sqrt_param_l(&mut self, mask: u32, value: u32) {
-        self.sqrt_param = (self.sqrt_param & !(mask as u64)) | (value & mask) as u64;
+        self.context.sqrt_param = (self.context.sqrt_param & !(mask as u64)) | (value & mask) as u64;
         self.sqrt_dirty = true;
     }
 
     pub fn set_sqrt_param_h(&mut self, mask: u32, value: u32) {
-        self.sqrt_param = (self.sqrt_param & !((mask as u64) << 32)) | (((value & mask) as u64) << 32);
+        self.context.sqrt_param = (self.context.sqrt_param & !((mask as u64) << 32)) | (((value & mask) as u64) << 32);
         self.sqrt_dirty = true;
     }
 
     pub fn get_div_numer_l(&self) -> u32 {
-        self.div_numer as u32
+        self.context.div_numer as u32
     }
 
     pub fn get_div_numer_h(&self) -> u32 {
-        (self.div_numer as u64 >> 32) as u32
+        (self.context.div_numer as u64 >> 32) as u32
     }
 
     pub fn get_div_denom_l(&self) -> u32 {
-        self.div_denom as u32
+        self.context.div_denom as u32
     }
 
     pub fn get_div_denom_h(&self) -> u32 {
-        (self.div_denom as u64 >> 32) as u32
+        (self.context.div_denom as u64 >> 32) as u32
     }
 
     pub fn get_div_result_l(&mut self) -> u32 {
@@ -112,16 +114,16 @@ impl DivSqrt {
             return;
         }
         self.div_dirty = false;
-        if self.div_denom == 0 {
-            self.div_cnt |= 1 << 14;
+        if self.context.div_denom == 0 {
+            self.context.div_cnt |= 1 << 14;
         } else {
-            self.div_cnt &= !(1 << 14);
+            self.context.div_cnt &= !(1 << 14);
         }
 
-        match self.div_cnt & 0x3 {
+        match self.context.div_cnt & 0x3 {
             0 => {
-                let num = self.div_numer as i32;
-                let denom = self.div_denom as i32;
+                let num = self.context.div_numer as i32;
+                let denom = self.context.div_denom as i32;
                 if num == i32::MIN && denom == -1 {
                     self.div_result = (num as u64 ^ ((!0u32 as u64) << 32)) as i64;
                     self.divrem_result = 0;
@@ -134,8 +136,8 @@ impl DivSqrt {
                 }
             }
             1 => {
-                let num = self.div_numer;
-                let denom = self.div_denom as i32;
+                let num = self.context.div_numer;
+                let denom = self.context.div_denom as i32;
                 if num == i64::MIN && denom == -1 {
                     self.div_result = num;
                     self.divrem_result = 0;
@@ -148,8 +150,8 @@ impl DivSqrt {
                 }
             }
             2 => {
-                let num = self.div_numer;
-                let denom = self.div_denom;
+                let num = self.context.div_numer;
+                let denom = self.context.div_denom;
                 if num == i64::MIN && denom == -1 {
                     self.div_result = num;
                     self.divrem_result = 0;
@@ -167,27 +169,45 @@ impl DivSqrt {
 
     pub fn set_div_cnt(&mut self, mut mask: u16, value: u16) {
         mask &= 0x3;
-        self.div_cnt = (self.div_cnt & !mask) | (value & mask);
+        self.context.div_cnt = (self.context.div_cnt & !mask) | (value & mask);
         self.div_dirty = true;
     }
 
     pub fn set_div_numer_l(&mut self, mask: u32, value: u32) {
-        self.div_numer = ((self.div_numer as u64 & !(mask as u64)) | (value & mask) as u64) as i64;
+        self.context.div_numer = ((self.context.div_numer as u64 & !(mask as u64)) | (value & mask) as u64) as i64;
         self.div_dirty = true;
     }
 
     pub fn set_div_numer_h(&mut self, mask: u32, value: u32) {
-        self.div_numer = ((self.div_numer as u64 & !((mask as u64) << 32)) | (((value & mask) as u64) << 32)) as i64;
+        self.context.div_numer = ((self.context.div_numer as u64 & !((mask as u64) << 32)) | (((value & mask) as u64) << 32)) as i64;
         self.div_dirty = true;
     }
 
     pub fn set_div_denom_l(&mut self, mask: u32, value: u32) {
-        self.div_denom = ((self.div_denom as u64 & !(mask as u64)) | (value & mask) as u64) as i64;
+        self.context.div_denom = ((self.context.div_denom as u64 & !(mask as u64)) | (value & mask) as u64) as i64;
         self.div_dirty = true;
     }
 
     pub fn set_div_denom_h(&mut self, mask: u32, value: u32) {
-        self.div_denom = ((self.div_denom as u64 & !((mask as u64) << 32)) | (((value & mask) as u64) << 32)) as i64;
+        self.context.div_denom = ((self.context.div_denom as u64 & !((mask as u64) << 32)) | (((value & mask) as u64) << 32)) as i64;
         self.div_dirty = true;
+    }
+
+    pub fn get_context(&self, context: &mut CpContext) {
+        context.div_numer = self.context.div_numer;
+        context.div_denom = self.context.div_denom;
+        context.sqrt_param = self.context.sqrt_param;
+        context.div_cnt = self.context.div_cnt;
+        context.sqrt_cnt = self.context.sqrt_cnt;
+    }
+
+    pub fn set_context(&mut self, context: &CpContext) {
+        self.context.div_numer = context.div_numer;
+        self.context.div_denom = context.div_denom;
+        self.context.sqrt_param = context.sqrt_param;
+        self.context.div_cnt = context.div_cnt;
+        self.context.sqrt_cnt = context.sqrt_cnt;
+        self.div_dirty = true;
+        self.sqrt_dirty = true;
     }
 }
