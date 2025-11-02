@@ -193,7 +193,20 @@ impl DivSqrt {
         self.div_dirty = true;
     }
 
-    pub fn invalidate(&mut self) {
+    pub fn get_context(&self, context: &mut CpContext) {
+        context.div_numer = self.context.div_numer;
+        context.div_denom = self.context.div_denom;
+        context.sqrt_param = self.context.sqrt_param;
+        context.div_cnt = self.context.div_cnt;
+        context.sqrt_cnt = self.context.sqrt_cnt;
+    }
+
+    pub fn set_context(&mut self, context: &CpContext) {
+        self.context.div_numer = context.div_numer;
+        self.context.div_denom = context.div_denom;
+        self.context.sqrt_param = context.sqrt_param;
+        self.context.div_cnt = context.div_cnt;
+        self.context.sqrt_cnt = context.sqrt_cnt;
         self.div_dirty = true;
         self.sqrt_dirty = true;
     }

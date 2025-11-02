@@ -1,7 +1,7 @@
 use crate::core::emu::NitroSdkVersion;
 use crate::core::memory::regions::{self, OAM_OFFSET};
-use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
+use crate::core::{div_sqrt, CpuType};
 use crate::jit::inst_branch_handler::check_scheduler;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm::JitAsm;
@@ -15,7 +15,7 @@ use crate::{get_jit_asm_ptr, IS_DEBUG};
 use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
 use std::mem::MaybeUninit;
-use std::{mem, ptr, slice};
+use std::{mem, slice};
 use CpuType::ARM7;
 
 const GX_FIFO_NOP_CLEAR128: [u32; 37] = [
@@ -377,8 +377,14 @@ unsafe extern "C" fn hle_cp_save_context(guest_pc: u32) {
     let regs = ARM9.thread_regs();
     let cp_context_addr = regs.gp_regs[0];
 
-    let buf = slice::from_raw_parts(ptr::addr_of!(asm.emu.div_sqrt.context) as *const u32, 7);
-    asm.emu.mem_write_multiple_slice::<{ ARM9 }, true, u32>(cp_context_addr, buf);
+    let aligned_addr = cp_context_addr & !0x3;
+    let aligned_addr = aligned_addr & 0x0FFFFFFF;
+    // Don't query write offset here, we don't want to invalidate the jit block
+    let shm_offset = asm.emu.get_shm_offset::<{ ARM9 }, true, false>(aligned_addr);
+    debug_assert_ne!(shm_offset, 0);
+
+    let cp_context: &mut div_sqrt::CpContext = mem::transmute(asm.emu.mem.shm.as_mut_ptr().add(shm_offset));
+    asm.emu.div_sqrt.get_context(cp_context);
 
     hle_post_function::<{ ARM9 }>(asm, 42, guest_pc);
 }
@@ -388,9 +394,13 @@ unsafe extern "C" fn hle_cp_restore_context(guest_pc: u32) {
     let regs = ARM9.thread_regs();
     let cp_context_addr = regs.gp_regs[0];
 
-    let buf = slice::from_raw_parts_mut(ptr::addr_of_mut!(asm.emu.div_sqrt.context) as *mut u32, 7);
-    asm.emu.mem_read_multiple_slice::<{ ARM9 }, true, true, u32>(cp_context_addr, buf);
-    asm.emu.div_sqrt.invalidate();
+    let aligned_addr = cp_context_addr & !0x3;
+    let aligned_addr = aligned_addr & 0x0FFFFFFF;
+    let shm_offset = asm.emu.get_shm_offset::<{ ARM9 }, true, false>(aligned_addr);
+    debug_assert_ne!(shm_offset, 0);
+
+    let cp_context: &div_sqrt::CpContext = mem::transmute(asm.emu.mem.shm.as_ptr().add(shm_offset));
+    asm.emu.div_sqrt.set_context(cp_context);
 
     hle_post_function::<{ ARM9 }>(asm, 41, guest_pc);
 }
