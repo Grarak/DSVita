@@ -359,7 +359,7 @@ impl JitMemory {
         jit_data.start = (freed_start as usize) << PAGE_SHIFT;
         jit_data.end = (freed_end as usize) << PAGE_SHIFT;
 
-        println!("{cpu_type:?} Jit memory reset from {:x} - {:x}", jit_data.start, jit_data.end);
+        debug_println!("{cpu_type:?} Jit memory reset from {:x} - {:x}", jit_data.start, jit_data.end);
     }
 
     fn allocate_block(&mut self, required_size: usize, cpu_type: CpuType) -> (usize, bool) {

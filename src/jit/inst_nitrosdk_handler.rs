@@ -492,27 +492,19 @@ impl JitAsm<'_> {
         let mut oam_imm_load_found = false;
         let mut start_module_params_ldr_index = 0;
         for (i, inst) in self.jit_buf.insts.iter().enumerate() {
-            if !inst.is_imm_load() {
-                continue;
-            }
-
-            if let Op::Ldr(transfer) = inst.op {
-                if transfer.size() != 2 {
-                    continue;
+            let current_pc = pc + ((i as u32) << 2);
+            match (inst.op, inst.imm_transfer_addr(current_pc)) {
+                (Op::Ldr(transfer), Some(imm_addr)) if transfer.size() == 2 => {
+                    let imm_value = self.emu.mem_read::<{ ARM9 }, u32>(imm_addr);
+                    if oam_imm_load_found {
+                        start_module_params_addr = imm_value;
+                        start_module_params_ldr_index = i;
+                        break;
+                    } else if imm_value == OAM_OFFSET {
+                        oam_imm_load_found = true;
+                    }
                 }
-
-                let current_pc = pc + ((i as u32) << 2);
-                let imm = inst.operands()[2].as_imm().unwrap();
-                let pc = current_pc + 8;
-                let imm_addr = if transfer.add() { pc + imm } else { pc - imm };
-                let imm_value = self.emu.mem_read::<{ ARM9 }, u32>(imm_addr);
-                if oam_imm_load_found {
-                    start_module_params_addr = imm_value;
-                    start_module_params_ldr_index = i;
-                    break;
-                } else if imm_value == OAM_OFFSET {
-                    oam_imm_load_found = true;
-                }
+                _ => {}
             }
         }
 
@@ -538,20 +530,15 @@ impl JitAsm<'_> {
             let inst = &self.jit_buf.insts[i];
 
             match inst.op {
-                Op::Ldr(transfer) => {
-                    if !inst.is_imm_load() || transfer.size() != 2 {
-                        continue;
-                    }
-
-                    if add_match_count == ADD_IMM_VALUES.len() {
-                        let current_pc = pc + ((i as u32) << 2);
-                        let imm = inst.operands()[2].as_imm().unwrap();
-                        let pc = current_pc + 8;
-                        let imm_addr = if transfer.add() { pc + imm } else { pc - imm };
-                        let imm_value = self.emu.mem_read::<{ ARM9 }, u32>(imm_addr);
-                        if imm_value < regions::MAIN_OFFSET {
-                            self.os_irq_handler_addr = imm_value;
-                            break;
+                Op::Ldr(transfer) if transfer.size() == 2 => {
+                    let current_pc = pc + ((i as u32) << 2);
+                    if let Some(imm_addr) = inst.imm_transfer_addr(current_pc) {
+                        if add_match_count == ADD_IMM_VALUES.len() {
+                            let imm_value = self.emu.mem_read::<{ ARM9 }, u32>(imm_addr);
+                            if imm_value < regions::MAIN_OFFSET {
+                                self.os_irq_handler_addr = imm_value;
+                                break;
+                            }
                         }
                     }
                 }
@@ -600,26 +587,18 @@ impl JitAsm<'_> {
         let mut irq_table_addr = 0;
         let mut thread_switch_addr = 0;
         for (i, inst) in self.jit_buf.insts.iter().enumerate().rev() {
-            if !inst.is_imm_load() {
-                continue;
-            }
+            let current_pc = guest_pc + ((i as u32) << 2);
+            match (inst.op, inst.imm_transfer_addr(current_pc)) {
+                (Op::Ldr(transfer), Some(imm_addr)) if transfer.size() == 2 => {
+                    let imm_value = self.emu.mem_read::<{ ARM9 }, u32>(imm_addr);
 
-            if let Op::Ldr(transfer) = inst.op {
-                if transfer.size() != 2 {
-                    continue;
+                    if thread_switch_addr == 0 && inst.operands()[0].as_reg_no_shift().unwrap() == Reg::LR {
+                        thread_switch_addr = imm_value;
+                    } else if irq_table_addr == 0 {
+                        irq_table_addr = imm_value;
+                    }
                 }
-
-                let current_pc = guest_pc + ((i as u32) << 2);
-                let imm = inst.operands()[2].as_imm().unwrap();
-                let pc = current_pc + 8;
-                let imm_addr = if transfer.add() { pc + imm } else { pc - imm };
-                let imm_value = self.emu.mem_read::<{ ARM9 }, u32>(imm_addr);
-
-                if thread_switch_addr == 0 && inst.operands()[0].as_reg_no_shift().unwrap() == Reg::LR {
-                    thread_switch_addr = imm_value;
-                } else if irq_table_addr == 0 {
-                    irq_table_addr = imm_value;
-                }
+                _ => {}
             }
 
             if irq_table_addr != 0 && thread_switch_addr != 0 {
@@ -633,6 +612,9 @@ impl JitAsm<'_> {
 
         self.emu.os_irq_table_addr = irq_table_addr;
         self.emu.os_irq_handler_thread_switch_addr = thread_switch_addr;
+
+        info_println!("Found irq table at {irq_table_addr:x}");
+        info_println!("Found irq handler thread switch at {thread_switch_addr:x}");
 
         unsafe {
             *self.emu.jit.jit_memory_map.get_jit_entry(guest_pc) = JitEntry(hle_os_irqhandler as _);

@@ -73,15 +73,21 @@ impl InstInfo {
         }
     }
 
-    pub fn is_imm_load(&self) -> bool {
+    pub fn imm_transfer_addr(&self, pc: u32) -> Option<u32> {
         match self.op {
-            Op::Ldr(transfer) | Op::LdrT(transfer) => {
-                !transfer.write_back() && {
+            Op::Ldr(transfer) | Op::Str(transfer) | Op::LdrT(transfer) | Op::StrT(transfer)
+                if !transfer.write_back() && {
                     let operands = self.operands();
                     operands[1].as_reg_no_shift() == Some(Reg::PC) && operands[2].as_imm().is_some()
-                }
+                } =>
+            {
+                let thumb = matches!(self.op, Op::LdrT(_) | Op::StrT(_));
+                let pc = pc + if thumb { 4 } else { 8 };
+                let offset = self.operands()[2].as_imm().unwrap();
+                let addr = if transfer.add() { pc + offset } else { pc - offset };
+                Some(if thumb { addr & !0x3 } else { addr })
             }
-            _ => false,
+            _ => None,
         }
     }
 }
