@@ -98,38 +98,43 @@ fn assemble_lut_entries<'a>(entries: &'a [Entry], align: usize) -> Vec<LutEntry<
     lut_entries
 }
 
-fn assemble_read_lut(entries: &[LutEntry], align: usize) -> Vec<(Ident, TokenStream)> {
+fn assemble_read_lut(entries: &[LutEntry], align: usize) -> Vec<(Ident, Option<TokenStream>)> {
     let mut entries_funcs = Vec::new();
     for lut_entry in entries {
         let func_ret_type = format_ident!("u{}", align * 8);
-        let mut entry_funcs = Vec::new();
-        for entry in &lut_entry.entries {
-            let func = &entry.func_name;
-            entry_funcs.push(if entry.offset >= lut_entry.offset {
-                let offset = entry.offset - lut_entry.offset;
-                let shift = offset * 8;
-                quote! {
-                    {
-                        (#func(emu) as #func_ret_type) << #shift
+        if lut_entry.entries.is_empty() {
+            let func_name = format_ident!("read_empty_u{align}_lut");
+            entries_funcs.push((func_name, None));
+        } else {
+            let mut entry_funcs = Vec::new();
+            for entry in &lut_entry.entries {
+                let func = &entry.func_name;
+                entry_funcs.push(if entry.offset >= lut_entry.offset {
+                    let offset = entry.offset - lut_entry.offset;
+                    let shift = offset * 8;
+                    quote! {
+                        {
+                            (#func(emu) as #func_ret_type) << #shift
+                        }
                     }
-                }
-            } else {
-                let offset = lut_entry.offset - entry.offset;
-                let shift = offset * 8;
-                quote! {
-                    {
-                        (#func(emu) >> #shift) as #func_ret_type
+                } else {
+                    let offset = lut_entry.offset - entry.offset;
+                    let shift = offset * 8;
+                    quote! {
+                        {
+                            (#func(emu) >> #shift) as #func_ret_type
+                        }
                     }
-                }
-            });
-        }
-        let func_name = format_ident!("read_0x{:x}_u{align}_lut", lut_entry.offset);
-        let read_func = quote! {
-            fn #func_name(emu: &mut crate::core::emu::Emu) -> #func_ret_type {
-                0 #( | #entry_funcs)*
+                });
             }
-        };
-        entries_funcs.push((func_name, read_func));
+            let func_name = format_ident!("read_0x{:x}_u{align}_lut", lut_entry.offset);
+            let read_func = quote! {
+                fn #func_name(emu: &mut crate::core::emu::Emu) -> #func_ret_type {
+                    0 #( | #entry_funcs)*
+                }
+            };
+            entries_funcs.push((func_name, Some(read_func)));
+        }
     }
 
     entries_funcs
@@ -164,7 +169,7 @@ pub fn io_read(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let lut_entries = assemble_lut_entries(&entries, align);
         let lut_funcs = assemble_read_lut(&lut_entries, align);
         let lut_func_names = lut_funcs.iter().map(|(name, _)| name).collect::<Vec<_>>();
-        let lut_funcs = lut_funcs.iter().map(|(_, func)| func).collect::<Vec<_>>();
+        let lut_funcs = lut_funcs.iter().filter(|(_, func)| func.is_some()).map(|(_, func)| func.as_ref().unwrap()).collect::<Vec<_>>();
         let lut_func_names_len = lut_func_names.len();
         let size = align * 8;
         let lut_name = format_ident!("LUT_{size}");
@@ -172,6 +177,7 @@ pub fn io_read(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let get_read_func = format_ident!("get_read{size}");
         let read_func = format_ident!("read{size}");
         let offset_shift = align >> 1;
+        let func_empty_name = format_ident!("read_empty_u{align}_lut");
         lut.push(quote! {
             #(#lut_funcs)*
 
@@ -187,6 +193,10 @@ pub fn io_read(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
             pub fn #read_func(emu: &mut crate::core::emu::Emu, offset: u32) -> #size_type {
                 let func = #get_read_func(offset);
                 func(emu)
+            }
+
+            pub fn #func_empty_name(_: &mut crate::core::emu::Emu) -> #size_type {
+                0
             }
         });
         get_read_matches.push(quote! {
@@ -230,50 +240,55 @@ pub fn io_read(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     .into()
 }
 
-fn assemble_write_lut(entries: &[LutEntry], align: usize) -> Vec<(Ident, TokenStream)> {
+fn assemble_write_lut(entries: &[LutEntry], align: usize) -> Vec<(Ident, Option<TokenStream>)> {
     let mut entries_funcs = Vec::new();
     for lut_entry in entries {
-        let mut entry_funcs = Vec::new();
         let func_value_type = format_ident!("u{}", align * 8);
-        for entry in &lut_entry.entries {
-            let func = &entry.func_name;
-            let entry_value_type = format_ident!("u{}", entry.size * 8);
-            let mask = 0xFFFFFFFFu32 >> ((4 - align) * 8);
-            entry_funcs.push(if entry.offset >= lut_entry.offset {
-                let offset = entry.offset - lut_entry.offset;
-                let shift = offset * 8;
-                if entry.size == 1 {
-                    quote! {
-                        {
-                            #func(emu, (value >> #shift) as u8)
+        if lut_entry.entries.is_empty() {
+            let func_name = format_ident!("write_empty_u{align}_lut");
+            entries_funcs.push((func_name, None));
+        } else {
+            let mut entry_funcs = Vec::new();
+            for entry in &lut_entry.entries {
+                let func = &entry.func_name;
+                let entry_value_type = format_ident!("u{}", entry.size * 8);
+                let mask = 0xFFFFFFFFu32 >> ((4 - align) * 8);
+                entry_funcs.push(if entry.offset >= lut_entry.offset {
+                    let offset = entry.offset - lut_entry.offset;
+                    let shift = offset * 8;
+                    if entry.size == 1 {
+                        quote! {
+                            {
+                                #func(emu, (value >> #shift) as u8)
+                            }
+                        }
+                    } else {
+                        quote! {
+                            {
+                                #func(emu, (value >> #shift) as #entry_value_type, #mask as #entry_value_type)
+                            }
                         }
                     }
                 } else {
+                    assert_ne!(entry.size, 1);
+                    let offset = lut_entry.offset - entry.offset;
+                    let shift = offset * 8;
+                    let mask = mask << shift;
                     quote! {
                         {
-                            #func(emu, (value >> #shift) as #entry_value_type, #mask as #entry_value_type)
+                            #func(emu, (value as #entry_value_type) << #shift, #mask as #entry_value_type)
                         }
                     }
-                }
-            } else {
-                assert_ne!(entry.size, 1);
-                let offset = lut_entry.offset - entry.offset;
-                let shift = offset * 8;
-                let mask = mask << shift;
-                quote! {
-                    {
-                        #func(emu, (value as #entry_value_type) << #shift, #mask as #entry_value_type)
-                    }
-                }
-            });
-        }
-        let func_name = format_ident!("write_0x{:x}_u{align}_lut", lut_entry.offset);
-        let write_func = quote! {
-            fn #func_name(emu: &mut crate::core::emu::Emu, value: #func_value_type) {
-                #(#entry_funcs ;)*
+                });
             }
-        };
-        entries_funcs.push((func_name, write_func));
+            let func_name = format_ident!("write_0x{:x}_u{align}_lut", lut_entry.offset);
+            let write_func = quote! {
+                fn #func_name(emu: &mut crate::core::emu::Emu, value: #func_value_type) {
+                    #(#entry_funcs ;)*
+                }
+            };
+            entries_funcs.push((func_name, Some(write_func)));
+        }
     }
 
     entries_funcs
@@ -332,7 +347,7 @@ pub fn io_write(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let lut_entries = assemble_lut_entries(&entries, align);
         let lut_funcs = assemble_write_lut(&lut_entries, align);
         let lut_func_names = lut_funcs.iter().map(|(name, _)| name).collect::<Vec<_>>();
-        let lut_funcs = lut_funcs.iter().map(|(_, func)| func).collect::<Vec<_>>();
+        let lut_funcs = lut_funcs.iter().filter(|(_, func)| func.is_some()).map(|(_, func)| func.as_ref().unwrap()).collect::<Vec<_>>();
         let lut_func_names_len = lut_func_names.len();
         let size = align * 8;
         let lut_name = format_ident!("LUT_{size}");
@@ -340,6 +355,7 @@ pub fn io_write(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let get_write_func = format_ident!("get_write{size}");
         let write_func = format_ident!("write{size}");
         let offset_shift = align >> 1;
+        let func_empty_name = format_ident!("write_empty_u{align}_lut");
         lut.push(quote! {
             #(#lut_funcs)*
 
@@ -355,6 +371,9 @@ pub fn io_write(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
             pub fn #write_func(emu: &mut crate::core::emu::Emu, value: #size_type, offset: u32) {
                 let func = #get_write_func(offset);
                 func(emu, value);
+            }
+
+            pub fn #func_empty_name(_: &mut crate::core::emu::Emu, _: #size_type) {
             }
         });
         get_write_matches.push(quote! {
