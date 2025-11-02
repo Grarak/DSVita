@@ -652,7 +652,6 @@ impl<'a> JitAsm<'a> {
     }
 
     pub fn fill_jit_insts_buf(&mut self, guest_pc: u32, thumb: bool, until_bx: bool) -> u32 {
-        let mut uncond_branch_count = 0;
         let mut pc_offset = 0;
         let get_inst_info = if thumb {
             |cpu: CpuType, asm: &mut JitAsm, pc| {
@@ -675,12 +674,13 @@ impl<'a> JitAsm<'a> {
         };
 
         let pc_step = if thumb { 2 } else { 4 };
-        let mut heavy_inst_count = 0;
 
         self.jit_buf.clear_all();
 
-        loop {
-            let inst_info = get_inst_info(self.cpu, self, guest_pc + pc_offset);
+        let mut min_imm_guest_addr = u32::MAX;
+        while guest_pc + pc_offset < min_imm_guest_addr {
+            let pc = guest_pc + pc_offset;
+            let inst_info = get_inst_info(self.cpu, self, pc);
 
             if inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb || inst_info.cond == Cond::NV {
                 break;
@@ -694,25 +694,24 @@ impl<'a> JitAsm<'a> {
                 debug_assert!(self.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{:?} {guest_pc:x} {inst_info:?}", self.cpu)
             }
 
-            let is_uncond_branch = inst_info.is_uncond_branch();
-            if is_uncond_branch {
-                uncond_branch_count += 1;
+            if let Some(imm_addr) = inst_info.imm_transfer_addr(pc) {
+                if imm_addr > pc && imm_addr < min_imm_guest_addr {
+                    min_imm_guest_addr = imm_addr;
+                }
             }
+
+            let is_uncond_branch = inst_info.is_uncond_branch();
             let cond = inst_info.cond;
             let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && is_uncond_branch;
+            let is_pop = is_unreturnable_branch && inst_info.out_regs.is_reserved(Reg::SP);
             let op = inst_info.op;
-            if op.is_single_mem_transfer() || op.is_multiple_mem_transfer() || op.is_branch() {
-                heavy_inst_count += 1;
-            }
             self.jit_buf.insts.push(inst_info);
 
-            if until_bx {
-                if matches!(op, Op::Bx | Op::BxRegT) && cond == Cond::AL {
-                    break;
-                } else if self.jit_buf.insts.len() >= 500 {
-                    break;
-                }
-            } else if (is_unreturnable_branch || uncond_branch_count == 20) || (heavy_inst_count > 50 && op != Op::BlSetupT) {
+            if (matches!(op, Op::Bx | Op::BxRegT) && cond == Cond::AL)
+                || (self.jit_buf.insts.len() >= 500 && op != Op::BlSetupT)
+                || (!until_bx && is_pop)
+                || (!until_bx && is_unreturnable_branch && min_imm_guest_addr == u32::MAX)
+            {
                 break;
             }
 
