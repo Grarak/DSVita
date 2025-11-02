@@ -4,6 +4,7 @@ use crate::jit::op::Op;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
 use crate::logging::block_asm_println;
+use crate::utils::NoHashSet;
 use bilge::prelude::*;
 
 pub enum JitBranchInfo {
@@ -79,6 +80,7 @@ pub struct AsmAnalyzer {
     thumb: bool,
     pub basic_blocks: Vec<BasicBlock>,
     pub insts_metadata: Vec<InstMetadata>,
+    imm_store_addrs: NoHashSet<u32>,
 }
 
 impl AsmAnalyzer {
@@ -86,11 +88,18 @@ impl AsmAnalyzer {
         self.basic_blocks.clear();
         self.insts_metadata.clear();
         self.insts_metadata.resize(insts.len(), InstMetadata::default());
+        self.imm_store_addrs.clear();
 
         let pc_shift = if self.thumb { 1 } else { 2 };
         for i in 0..insts.len() {
+            let pc = start_pc + ((i as u32) << pc_shift);
+            if let Some(imm_addr) = insts[i].imm_transfer_addr(pc) {
+                if insts[i].op.is_write_mem_transfer() {
+                    self.imm_store_addrs.insert(imm_addr);
+                }
+            }
+
             if insts[i].op.is_labelled_branch() && !insts[i].out_regs.is_reserved(Reg::LR) {
-                let pc = start_pc + ((i as u32) << pc_shift);
                 let relative_pc = insts[i].operands()[0].as_imm().unwrap() as i32 + (2 << pc_shift);
                 let target_pc = (pc as i32 + relative_pc) as u32;
 
@@ -149,6 +158,10 @@ impl AsmAnalyzer {
     pub fn get_pc_from_inst(&self, inst_index: usize) -> u32 {
         let pc_shift = if self.thumb { 1 } else { 2 };
         self.basic_blocks[0].start_pc + ((inst_index as u32) << pc_shift)
+    }
+
+    pub fn can_imm_load(&self, guest_addr: u32) -> bool {
+        !self.imm_store_addrs.contains(&guest_addr)
     }
 
     pub fn analyze(&mut self, start_pc: u32, insts: &[InstInfo], thumb: bool) {
