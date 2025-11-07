@@ -49,7 +49,9 @@ mod transfer_ops {
         };
 
         if IS_64BIT {
-            debug_assert!(op0 as u8 & 1 == 0 && op0 <= Reg::R12, "{op:?} {opcode:x}");
+            if op0 as u8 & 1 == 1 || op0 > Reg::R12 {
+                return InstInfo::new(opcode, Op::UnkArm, Operands::new_empty(), reg_reserve!(), reg_reserve!(), 0);
+            }
             if WRITE {
                 src_regs += Reg::from(op0 as u8 + 1);
             } else {
@@ -84,7 +86,9 @@ mod transfer_ops {
         };
 
         if IS_64BIT {
-            debug_assert!(op0 as u8 & 1 == 0 && op0 <= Reg::R12, "{op:?} {opcode:x}");
+            if op0 as u8 & 1 == 1 || op0 > Reg::R12 {
+                return InstInfo::new(opcode, Op::UnkArm, Operands::new_empty(), reg_reserve!(), reg_reserve!(), 0);
+            }
             if WRITE {
                 src_regs += Reg::from(op0 as u8 + 1);
             } else {
@@ -119,7 +123,9 @@ mod transfer_ops {
         };
 
         if IS_64BIT {
-            debug_assert!(op0 as u8 & 1 == 0 && op0 <= Reg::R12, "{op:?} {opcode:x}");
+            if op0 as u8 & 1 == 1 || op0 > Reg::R12 {
+                return InstInfo::new(opcode, Op::UnkArm, Operands::new_empty(), reg_reserve!(), reg_reserve!(), 0);
+            }
             if WRITE {
                 src_regs += Reg::from(op0 as u8 + 1);
             } else {
