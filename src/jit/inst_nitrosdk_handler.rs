@@ -2,6 +2,7 @@ use crate::core::emu::NitroSdkVersion;
 use crate::core::memory::regions::{self, OAM_OFFSET};
 use crate::core::CpuType::ARM9;
 use crate::core::{div_sqrt, CpuType};
+use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::inst_branch_handler::check_scheduler;
 use crate::jit::inst_info::InstInfo;
 use crate::jit::jit_asm::JitAsm;
@@ -11,7 +12,7 @@ use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::logging::{debug_println, info_println};
 use crate::settings::Arm7Emu;
-use crate::{get_jit_asm_ptr, IS_DEBUG};
+use crate::{cartridge_io, get_jit_asm_ptr, IS_DEBUG};
 use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
 use std::mem::MaybeUninit;
@@ -55,7 +56,6 @@ const MI_COPY64B: [u32; 11] = [
 const CP_SAVE_CONTEXT: [u32; 15] = [
     0xe59f1034, 0xe92d0010, 0xe891101c, 0xe8a0101c, 0xe151c1b0, 0xe2811028, 0xe891000c, 0xe8a0000c, 0xe20cc003, 0xe15120b8, 0xe1c0c0b0, 0xe2022001, 0xe1c020b2, 0xe8bd0010, 0xe12fff1e,
 ];
-
 const CP_RESTORE_CONTEXT: [u32; 14] = [
     0xe92d0010, 0xe59f102c, 0xe890101c, 0xe881101c, 0xe1d021b8, 0xe1d031ba, 0xe14121b0, 0xe1c132b0, 0xe2800010, 0xe2811028, 0xe890000c, 0xe881000c, 0xe8bd0010, 0xe12fff1e,
 ];
@@ -435,6 +435,20 @@ unsafe extern "C" fn hle_os_irqhandler(guest_pc: u32) {
     jit_entry(irq_func);
 }
 
+unsafe extern "C" fn fs_clear_overlay_image_hook() {
+    let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
+    let regs = ARM9.thread_regs();
+    let overlay_info_header_addr = regs.gp_regs[0];
+
+    let aligned_addr = overlay_info_header_addr & !0x3;
+    let aligned_addr = aligned_addr & 0x0FFFFFFF;
+    let shm_offset = asm.emu.get_shm_offset::<{ ARM9 }, true, false>(aligned_addr);
+    debug_assert_ne!(shm_offset, 0);
+
+    let overlay_info_header: &cartridge_io::FsOverlayInfoHeader = mem::transmute(asm.emu.mem.shm.as_ptr().add(shm_offset));
+    asm.emu.jit.invalidate_blocks(overlay_info_header.ram_address, overlay_info_header.total_size() as usize);
+}
+
 const FUNCTIONS_ARM9: &[Function] = &[
     Function::new(&MI_CPU_CLEAR32, "MI_CPU_CLEAR32", hle_mi_cpu_clear32::<{ ARM9 }>),
     Function::new(&MI_CPU_CLEAR16, "MI_CPU_CLEAR16", hle_mi_cpu_clear16::<{ ARM9 }>),
@@ -466,12 +480,14 @@ const FUNCTIONS_ARM7: &[Function] = &[
 impl JitAsm<'_> {
     pub fn parse_nitrosdk_entry(&mut self) {
         let pc = self.cpu.thread_regs().pc;
-        self.fill_jit_insts_buf(pc, false, true);
-        if self.jit_buf.insts.len() < 3 {
+        let mut insts = Vec::new();
+        let mut cycle_counts = Vec::new();
+        Self::fill_jit_insts_buf(self.cpu, &mut insts, &mut cycle_counts, self.emu, pc, false, true);
+        if insts.len() < 3 {
             return;
         }
 
-        let inst = &self.jit_buf.insts[0];
+        let inst = &insts[0];
         match inst.op {
             Op::Mov => {
                 if inst.operands()[0].as_reg_no_shift() != Some(Reg::R12) || inst.operands()[1].as_imm() != Some(0x4000000) {
@@ -481,7 +497,7 @@ impl JitAsm<'_> {
             _ => return,
         }
 
-        let inst = &self.jit_buf.insts[1];
+        let inst = &insts[1];
         match inst.op {
             Op::Str(transfer) => {
                 if !transfer.pre()
@@ -501,7 +517,7 @@ impl JitAsm<'_> {
         let mut start_module_params_addr = 0;
         let mut oam_imm_load_found = false;
         let mut start_module_params_ldr_index = 0;
-        for (i, inst) in self.jit_buf.insts.iter().enumerate() {
+        for (i, inst) in insts.iter().enumerate() {
             let current_pc = pc + ((i as u32) << 2);
             match (inst.op, inst.imm_transfer_addr(current_pc)) {
                 (Op::Ldr(transfer), Some(imm_addr)) if transfer.size() == 2 => {
@@ -536,8 +552,8 @@ impl JitAsm<'_> {
 
         const ADD_IMM_VALUES: [u32; 2] = [0x3fc0, 0x3c];
         let mut add_match_count = 0;
-        for i in (start_module_params_ldr_index + 1)..self.jit_buf.insts.len() {
-            let inst = &self.jit_buf.insts[i];
+        for i in (start_module_params_ldr_index + 1)..insts.len() {
+            let inst = &insts[i];
 
             match inst.op {
                 Op::Ldr(transfer) if transfer.size() == 2 => {
@@ -560,6 +576,99 @@ impl JitAsm<'_> {
                 _ => {}
             }
         }
+    }
+
+    fn is_invalidate_range(&mut self, guest_pc: u32, cp15_reg: u32) -> bool {
+        let mut insts = Vec::new();
+        let mut cycle_counts = Vec::new();
+        Self::fill_jit_insts_buf(self.cpu, &mut insts, &mut cycle_counts, self.emu, guest_pc, false, true);
+
+        let mut has_invalidate = false;
+        let mut mcr_count = 0;
+        for inst in insts {
+            if matches!(inst.op, Op::Mcr) {
+                let cn = (inst.opcode >> 16) & 0xF;
+                let cm = inst.opcode & 0xF;
+                let cp = (inst.opcode >> 5) & 0x7;
+                let reg = (cn << 16) | (cm << 8) | cp;
+                if reg == cp15_reg {
+                    has_invalidate = true;
+                }
+                mcr_count += 1;
+            }
+        }
+        has_invalidate && mcr_count == 1
+    }
+
+    fn is_addr_fs_clear_overlay_image(&mut self, guest_pc: u32, thumb: bool) -> bool {
+        let mut insts = Vec::new();
+        let mut cycle_counts = Vec::new();
+        Self::fill_jit_insts_buf(self.cpu, &mut insts, &mut cycle_counts, self.emu, guest_pc, thumb, true);
+
+        let pc_shift = if thumb { 1 } else { 2 };
+        let mut has_ic_invalidate_range = false;
+        let mut has_dc_invalidate_range = false;
+        let mut bl_count = 0;
+        for (i, inst) in insts.iter().enumerate() {
+            if matches!(inst.op, Op::Bl | Op::BlxOffT) {
+                bl_count += 1;
+
+                let pc = guest_pc + ((i as u32) << pc_shift);
+                let target_pc = if thumb {
+                    if i == 0 || insts[i - 1].op != Op::BlSetupT {
+                        continue;
+                    }
+                    let relative_pc = insts[i - 1].operands()[0].as_imm().unwrap() as i32 + 2;
+                    let target_pc = (pc as i32 + relative_pc) as u32;
+                    (target_pc + inst.operands()[0].as_imm().unwrap()) & !3
+                } else {
+                    let relative_pc = inst.operands()[0].as_imm().unwrap() as i32 + 8;
+                    (pc as i32 + relative_pc) as u32
+                };
+
+                if !has_ic_invalidate_range {
+                    if self.is_invalidate_range(target_pc, 0x070501) {
+                        has_ic_invalidate_range = true;
+                    }
+                } else if !has_dc_invalidate_range {
+                    if self.is_invalidate_range(target_pc, 0x070601) {
+                        has_dc_invalidate_range = true;
+                    }
+                }
+            }
+        }
+        has_dc_invalidate_range && bl_count == 3
+    }
+
+    pub fn emit_fs_clear_overlay_image_hook(&mut self, guest_pc: u32, thumb: bool, block_asm: &mut BlockAsm) {
+        if self.cpu == ARM7 || !self.emu.nitro_sdk_version.is_valid() {
+            return;
+        }
+
+        if self.emu.fs_clear_overlay_image_addr == 0 {
+            let regs = ARM9.thread_regs();
+            let ptr = regs.gp_regs[0];
+            let shm_offset = self.emu.get_shm_offset::<{ ARM9 }, true, false>(ptr & 0x0FFFFFFF);
+            if shm_offset != 0 {
+                let overlay_info: &cartridge_io::FsOverlayInfoHeader = unsafe { mem::transmute(self.emu.mem.shm.as_ptr().add(shm_offset)) };
+                if (overlay_info.id as usize) < self.emu.cartridge.io.overlays.len() {
+                    let stored_overlay = &self.emu.cartridge.io.overlays[overlay_info.id as usize];
+                    if overlay_info == stored_overlay {
+                        if self.is_addr_fs_clear_overlay_image(guest_pc, thumb) {
+                            self.emu.fs_clear_overlay_image_addr = guest_pc;
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.emu.fs_clear_overlay_image_addr == 0 || self.emu.fs_clear_overlay_image_addr != guest_pc {
+            return;
+        }
+
+        block_asm.call(fs_clear_overlay_image_hook as _);
+        block_asm.is_fs_clear_overlay = true;
+        info_println!("Found fs clear overlay at {guest_pc:x}");
     }
 
     pub fn emit_nitrosdk_func(&mut self, guest_pc: u32, thumb: bool) -> bool {

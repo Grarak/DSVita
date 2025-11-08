@@ -35,6 +35,10 @@ impl NitroSdkVersion {
     pub fn is_valid(self) -> bool {
         u32::from(self) != u32::MAX
     }
+
+    pub fn rely_on_fs_invalidation(self) -> bool {
+        self.major() < 5
+    }
 }
 
 impl Default for NitroSdkVersion {
@@ -65,6 +69,7 @@ pub struct Emu {
     pub nitro_sdk_version: NitroSdkVersion,
     pub os_irq_table_addr: u32,
     pub os_irq_handler_thread_switch_addr: u32,
+    pub fs_clear_overlay_image_addr: u32,
     pub breakout_imm: bool,
     initialized: bool,
 }
@@ -93,6 +98,7 @@ impl Emu {
             nitro_sdk_version: NitroSdkVersion::default(),
             os_irq_table_addr: 0,
             os_irq_handler_thread_switch_addr: 0,
+            fs_clear_overlay_image_addr: 0,
             breakout_imm: false,
             initialized: true,
         }
@@ -121,6 +127,7 @@ impl Emu {
         self.nitro_sdk_version = NitroSdkVersion::default();
         self.os_irq_table_addr = 0;
         self.os_irq_handler_thread_switch_addr = 0;
+        self.fs_clear_overlay_image_addr = 0;
         self.initialized = false;
     }
 }

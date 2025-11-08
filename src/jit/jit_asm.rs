@@ -461,7 +461,8 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
         false
     };
 
-    let guest_pc_end = asm.fill_jit_insts_buf(guest_pc, thumb, is_os_irq_handler);
+    asm.jit_buf.clear_all();
+    let guest_pc_end = JitAsm::fill_jit_insts_buf(asm.cpu, &mut asm.jit_buf.insts, &mut asm.jit_buf.insts_cycle_counts, asm.emu, guest_pc, thumb, is_os_irq_handler);
 
     if asm.cpu == ARM9 && is_os_irq_handler && asm.emit_hle_os_irq_handler(guest_pc, thumb) {
         return;
@@ -515,6 +516,9 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
 
         block_asm.bind(&mut default_pc_label);
         block_asm.set_guest_start();
+
+        asm.emit_fs_clear_overlay_image_hook(guest_pc, thumb, &mut block_asm);
+
         asm.emit(&mut block_asm, thumb);
 
         let last_inst = asm.jit_buf.insts.last().unwrap();
@@ -651,22 +655,22 @@ impl<'a> JitAsm<'a> {
         execute_internal::<CPU>(entry)
     }
 
-    pub fn fill_jit_insts_buf(&mut self, guest_pc: u32, thumb: bool, until_bx: bool) -> u32 {
+    pub fn fill_jit_insts_buf(cpu: CpuType, insts: &mut Vec<InstInfo>, cycle_counts: &mut Vec<u16>, emu: &mut Emu, guest_pc: u32, thumb: bool, until_bx: bool) -> u32 {
         let mut pc_offset = 0;
         let get_inst_info = if thumb {
-            |cpu: CpuType, asm: &mut JitAsm, pc| {
+            |cpu, emu: &mut Emu, pc| {
                 let opcode = match cpu {
-                    ARM9 => asm.emu.mem_read::<{ ARM9 }, u16>(pc),
-                    ARM7 => asm.emu.mem_read::<{ ARM7 }, u16>(pc),
+                    ARM9 => emu.mem_read::<{ ARM9 }, u16>(pc),
+                    ARM7 => emu.mem_read::<{ ARM7 }, u16>(pc),
                 };
                 let (op, func) = lookup_thumb_opcode(opcode);
                 InstInfo::from(func(opcode, *op))
             }
         } else {
-            |cpu: CpuType, asm: &mut JitAsm, pc| {
+            |cpu, emu: &mut Emu, pc| {
                 let opcode = match cpu {
-                    ARM9 => asm.emu.mem_read::<{ ARM9 }, u32>(pc),
-                    ARM7 => asm.emu.mem_read::<{ ARM7 }, u32>(pc),
+                    ARM9 => emu.mem_read::<{ ARM9 }, u32>(pc),
+                    ARM7 => emu.mem_read::<{ ARM7 }, u32>(pc),
                 };
                 let (op, func) = lookup_opcode(opcode);
                 func(opcode, *op)
@@ -675,23 +679,21 @@ impl<'a> JitAsm<'a> {
 
         let pc_step = if thumb { 2 } else { 4 };
 
-        self.jit_buf.clear_all();
-
         let mut min_imm_guest_addr = u32::MAX;
         while guest_pc + pc_offset < min_imm_guest_addr {
             let pc = guest_pc + pc_offset;
-            let inst_info = get_inst_info(self.cpu, self, pc);
+            let inst_info = get_inst_info(cpu, emu, pc);
 
             if inst_info.op == Op::UnkArm || inst_info.op == Op::UnkThumb || inst_info.cond == Cond::NV {
                 break;
             }
 
-            if let Some(last) = self.jit_buf.insts_cycle_counts.last() {
-                debug_assert!(u16::MAX - last >= inst_info.cycle as u16, "{:?} {guest_pc:x} {inst_info:?}", self.cpu);
-                self.jit_buf.insts_cycle_counts.push(last + inst_info.cycle as u16);
+            if let Some(last) = cycle_counts.last() {
+                debug_assert!(u16::MAX - last >= inst_info.cycle as u16, "{cpu:?} {guest_pc:x} {inst_info:?}");
+                cycle_counts.push(last + inst_info.cycle as u16);
             } else {
-                self.jit_buf.insts_cycle_counts.push(inst_info.cycle as u16);
-                debug_assert!(self.jit_buf.insts_cycle_counts.len() <= u16::MAX as usize, "{:?} {guest_pc:x} {inst_info:?}", self.cpu)
+                cycle_counts.push(inst_info.cycle as u16);
+                debug_assert!(cycle_counts.len() <= u16::MAX as usize, "{cpu:?} {guest_pc:x} {inst_info:?}");
             }
 
             if let Some(imm_addr) = inst_info.imm_transfer_addr(pc) {
@@ -704,12 +706,9 @@ impl<'a> JitAsm<'a> {
             let cond = inst_info.cond;
             let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && is_uncond_branch;
             let op = inst_info.op;
-            self.jit_buf.insts.push(inst_info);
+            insts.push(inst_info);
 
-            if (matches!(op, Op::Bx | Op::BxRegT) && cond == Cond::AL)
-                || (self.jit_buf.insts.len() >= 500 && op != Op::BlSetupT)
-                || (!until_bx && is_unreturnable_branch && min_imm_guest_addr == u32::MAX)
-            {
+            if (matches!(op, Op::Bx | Op::BxRegT) && cond == Cond::AL) || (insts.len() >= 500 && op != Op::BlSetupT) || (!until_bx && is_unreturnable_branch && min_imm_guest_addr == u32::MAX) {
                 break;
             }
 

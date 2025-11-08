@@ -217,7 +217,8 @@ unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(metadata: *const G
 }
 
 unsafe extern "C" fn _inst_write_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(value0: u32, value1: u32, addr: u32, metadata: *const GuestInstMetadata) -> *const GuestInstMetadata {
-    debug_println!("{CPU:?} handle write request addr {addr:x}");
+    let metadata = metadata.as_ref_unchecked();
+    debug_println!("{CPU:?} handle write request addr {addr:x} at {:x}", metadata.pc);
 
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     handle_request_write::<CPU, AMOUNT>(value0, value1, addr, asm.emu);
@@ -363,11 +364,7 @@ pub unsafe extern "C" fn inst_read_mem_handler_with_cpsr<const CPU: CpuType, con
     );
 }
 
-pub unsafe extern "C" fn _inst_read_io_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(
-    metadata: *const GuestInstMetadata,
-    _: u32,
-    addr: u32,
-) -> u32 {
+pub unsafe extern "C" fn _inst_read_io_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(metadata: *const GuestInstMetadata, _: u32, addr: u32) -> u32 {
     if AMOUNT == MemoryAmount::Double || (AMOUNT == MemoryAmount::Word && SIGNED) {
         unreachable_unchecked();
     }

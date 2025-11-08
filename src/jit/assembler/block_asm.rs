@@ -126,6 +126,7 @@ pub struct BlockAsm {
     last_pc_value: u32,
     guest_regs_ptr: *mut u32,
     is_os_irq_handler: bool,
+    pub is_fs_clear_overlay: bool,
     pub jit_entry_insert_locations: Vec<(Reg, usize)>,
 }
 
@@ -145,6 +146,7 @@ impl BlockAsm {
             last_pc_value: 0,
             guest_regs_ptr: cpu.guest_regs_addr() as _,
             is_os_irq_handler,
+            is_fs_clear_overlay: false,
             jit_entry_insert_locations: Vec::new(),
         }
     }

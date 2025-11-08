@@ -413,7 +413,7 @@ pub fn actual_main() {
 
     let mut running = true;
     while running {
-        let (cartridge_io, settings) = match presenter.present_ui() {
+        let (mut cartridge_io, settings) = match presenter.present_ui() {
             Some((cartridge_io, settings)) => (cartridge_io, settings),
             None => return,
         };
@@ -430,6 +430,9 @@ pub fn actual_main() {
 
         let last_save_time = Arc::new(Mutex::new(None));
         let last_save_time_clone = last_save_time.clone();
+
+        cartridge_io.parse_overlays();
+        info_println!("Found {} overlays", cartridge_io.overlays.len());
 
         emu_unsafe.get_mut().cartridge.set_cartridge_io(cartridge_io);
         emu_unsafe.get_mut().settings = settings;

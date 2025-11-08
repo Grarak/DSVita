@@ -253,7 +253,13 @@ impl Emu {
         match cpu {
             ARM9 => match guest_pc & 0xFF000000 {
                 regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit.jit_entries.itcm, regions::ITCM_REGION, [ARM9]),
-                regions::MAIN_OFFSET => insert!(self.jit.jit_entries.main, regions::MAIN_REGION, [ARM9, ARM7]),
+                regions::MAIN_OFFSET => {
+                    if self.nitro_sdk_version.is_valid() && self.settings.arm7_emu() == Arm7Emu::Hle && self.nitro_sdk_version.rely_on_fs_invalidation() {
+                        insert!(self.jit.jit_entries.main)
+                    } else {
+                        insert!(self.jit.jit_entries.main, regions::MAIN_REGION, [ARM9, ARM7])
+                    }
+                }
                 regions::VRAM_OFFSET => insert!(self.jit.jit_entries.vram),
                 _ => todo!("{:x}", guest_pc),
             },
@@ -433,6 +439,21 @@ impl JitMemory {
 
         invalidate!(guest_addr);
         invalidate!(guest_addr + size as u32 - 1);
+    }
+
+    pub fn invalidate_blocks(&mut self, guest_addr: u32, size: usize) {
+        let guest_addr_begin = guest_addr & !(JIT_LIVE_RANGE_PAGE_SIZE - 1);
+        let guest_addr_end = utils::align_up(guest_addr as usize + size, JIT_LIVE_RANGE_PAGE_SIZE as usize) as u32;
+        for addr in (guest_addr_begin..guest_addr_end).step_by(JIT_LIVE_RANGE_PAGE_SIZE as usize) {
+            let live_range = unsafe { self.jit_memory_map.get_live_range(addr).as_mut_unchecked() };
+            let live_ranges_bit = (addr >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT) & 0x7;
+            if unlikely(*live_range & (1 << live_ranges_bit) != 0) {
+                *live_range &= !(1 << live_ranges_bit);
+
+                debug_println!("Invalidating multiple jit {addr:x} - {:x}", addr + JIT_LIVE_RANGE_PAGE_SIZE);
+                self.jit_memory_map.write_jit_entries(addr, JIT_LIVE_RANGE_PAGE_SIZE as usize, DEFAULT_JIT_ENTRY);
+            }
+        }
     }
 
     pub fn invalidate_vram(&mut self) {

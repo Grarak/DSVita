@@ -75,6 +75,37 @@ const HEADER_SIZE: usize = size_of::<CartridgeHeader>();
 pub const HEADER_IN_RAM_SIZE: usize = 0x170;
 const_assert_eq!(HEADER_SIZE, HEADER_IN_RAM_SIZE + 0x90);
 
+#[derive(PartialEq, Eq)]
+#[repr(C)]
+pub struct FsOverlayInfoHeader {
+    pub id: u32,
+    pub ram_address: u32,
+    pub ram_size: u32,
+    pub bss_size: u32,
+    pub sinit_init: u32,
+    pub sinit_init_end: u32,
+    pub file_id: u32,
+    pub compressed_flag: u32,
+}
+
+impl FsOverlayInfoHeader {
+    pub fn is_in_range(&self, addr: u32) -> bool {
+        (self.ram_address..self.ram_address_end()).contains(&addr)
+    }
+
+    pub fn ram_address_end(&self) -> u32 {
+        self.ram_address + self.ram_size
+    }
+
+    pub fn address_end(&self) -> u32 {
+        self.ram_address + self.total_size()
+    }
+
+    pub fn total_size(&self) -> u32 {
+        self.ram_size + self.bss_size
+    }
+}
+
 const SAVE_SIZES: [u32; 9] = [0x000200, 0x002000, 0x008000, 0x010000, 0x020000, 0x040000, 0x080000, 0x100000, 0x800000];
 const CARTRIDGE_PAGE_SIZE: usize = 4096;
 const MAX_CARTRIDGE_CACHE: usize = 16 * 1024 * 1024;
@@ -172,6 +203,7 @@ pub struct CartridgeIo {
     save_file_path: PathBuf,
     pub save_file_size: u32,
     save_buf: Mutex<(Vec<u8>, bool)>,
+    pub overlays: Vec<FsOverlayInfoHeader>,
 }
 
 unsafe impl Send for CartridgeIo {}
@@ -214,6 +246,7 @@ impl CartridgeIo {
             save_file_path,
             save_file_size,
             save_buf: Mutex::new((save_buf, false)),
+            overlays: Vec::new(),
         })
     }
 
@@ -322,6 +355,21 @@ impl CartridgeIo {
             let success = File::create(&self.save_file_path).is_ok_and(|file| file.write_at(save_buf, 0).is_ok());
             *last_save_time.lock().unwrap() = Some((Instant::now(), success));
             *dirty = false;
+        }
+    }
+
+    pub fn parse_overlays(&mut self) {
+        const INFO_HEADER_SIZE: usize = size_of::<FsOverlayInfoHeader>();
+        let mut id = 0;
+        while (id * INFO_HEADER_SIZE as u32) < self.header.arm9_overlay.overlay_size {
+            let offset = id * INFO_HEADER_SIZE as u32;
+            let mut header = [0u8; INFO_HEADER_SIZE];
+            if self.read_slice(self.header.arm9_overlay.overlay_offset + offset, &mut header).is_err() {
+                break;
+            }
+            let header: FsOverlayInfoHeader = unsafe { mem::transmute(header) };
+            self.overlays.push(header);
+            id += 1;
         }
     }
 }

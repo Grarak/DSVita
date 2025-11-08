@@ -179,6 +179,12 @@ impl JitAsm<'_> {
     }
 
     pub fn emit_branch_return_stack(&mut self, inst_index: usize, target_pc_reg: Reg, block_asm: &mut BlockAsm) {
+        if block_asm.is_fs_clear_overlay {
+            self.emit_branch_out_metadata(inst_index, true, block_asm);
+            block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
+            return;
+        }
+
         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &self.jit_buf.insts_cycle_counts[inst_index].into());
         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pc_reg.into());
         if IS_DEBUG {
