@@ -10,7 +10,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr;
 use vixl::{
     BranchHint_kNear, FlagsUpdate, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, Label, MacroAssembler, MaskedSpecialRegisterType_CPSR_f, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2,
-    MasmLdr3, MasmLsr5, MasmMov2, MasmMrs2, MasmMsr2, MasmPop1, MasmPush1, MasmStr3, MasmStrb2, MasmSub5, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR, ShiftType_RRX,
+    MasmLdr3, MasmLsr5, MasmMov2, MasmMrs2, MasmMsr2, MasmNop, MasmPop1, MasmPush1, MasmStr3, MasmStrb2, MasmSub5, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR, ShiftType_RRX,
     SpecialRegisterType_CPSR,
 };
 
@@ -126,6 +126,7 @@ pub struct BlockAsm {
     last_pc_value: u32,
     guest_regs_ptr: *mut u32,
     is_os_irq_handler: bool,
+    pub jit_entry_insert_locations: Vec<(Reg, usize)>,
 }
 
 impl BlockAsm {
@@ -144,6 +145,7 @@ impl BlockAsm {
             last_pc_value: 0,
             guest_regs_ptr: cpu.guest_regs_addr() as _,
             is_os_irq_handler,
+            jit_entry_insert_locations: Vec::new(),
         }
     }
 
@@ -481,6 +483,18 @@ impl BlockAsm {
             &self.basic_blocks_guest_regs_mappings[basic_block_index].2,
             &mut self.masm,
         );
+    }
+
+    pub fn insert_jit_entry(&mut self, reg: Reg) {
+        self.ensure_emit_for(64);
+        let offset = self.get_cursor_offset();
+        self.jit_entry_insert_locations.push((reg, offset as usize));
+        self.nop0();
+        self.nop0();
+        if self.thumb {
+            self.nop0();
+            self.nop0();
+        }
     }
 }
 

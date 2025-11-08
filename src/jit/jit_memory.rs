@@ -388,6 +388,18 @@ impl JitMemory {
         let (allocated_offset_addr, flushed) = self.allocate_block(aligned_size, cpu_type);
 
         utils::write_to_mem_slice(&mut self.mem, allocated_offset_addr, opcodes);
+
+        let jit_entry_addr = (self.mem.as_ptr() as usize + allocated_offset_addr) as u32 | (block_asm.thumb as u32);
+        for (reg, addr_offset) in block_asm.jit_entry_insert_locations {
+            let addr_offset = allocated_offset_addr + addr_offset;
+            let mut offset = 0;
+            if block_asm.thumb {
+                Self::fast_mem_mov::<true>(&mut self.mem[addr_offset..], &mut offset, reg, jit_entry_addr);
+            } else {
+                Self::fast_mem_mov::<false>(&mut self.mem[addr_offset..], &mut offset, reg, jit_entry_addr);
+            }
+        }
+
         unsafe { flush_icache(self.mem.as_ptr().add(allocated_offset_addr), aligned_size) };
 
         let block_page = allocated_offset_addr >> PAGE_SHIFT;

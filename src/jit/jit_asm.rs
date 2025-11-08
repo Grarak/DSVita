@@ -703,13 +703,11 @@ impl<'a> JitAsm<'a> {
             let is_uncond_branch = inst_info.is_uncond_branch();
             let cond = inst_info.cond;
             let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && is_uncond_branch;
-            let is_pop = is_unreturnable_branch && inst_info.out_regs.is_reserved(Reg::SP);
             let op = inst_info.op;
             self.jit_buf.insts.push(inst_info);
 
             if (matches!(op, Op::Bx | Op::BxRegT) && cond == Cond::AL)
                 || (self.jit_buf.insts.len() >= 500 && op != Op::BlSetupT)
-                || (!until_bx && is_pop)
                 || (!until_bx && is_unreturnable_branch && min_imm_guest_addr == u32::MAX)
             {
                 break;

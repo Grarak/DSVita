@@ -357,12 +357,10 @@ impl JitAsm<'_> {
 
         block_asm.bind(&mut continue_label);
 
-        let current_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(block_asm.current_pc);
         let target_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(aligned_target_pc);
 
-        block_asm.ldr2(Reg::R1, current_pc_jit_entry as u32);
         block_asm.ldr2(Reg::R2, target_pc_jit_entry as u32);
-        block_asm.ldr2(Reg::R1, &Reg::R1.into());
+        block_asm.insert_jit_entry(Reg::R1);
         block_asm.ldr2(Reg::R2, &Reg::R2.into());
         block_asm.cmp2(Reg::R1, &Reg::R2.into());
         block_asm.b3(Cond::NE, &mut exit_label, BranchHint_kFar);
