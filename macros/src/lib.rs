@@ -1,10 +1,11 @@
 #![feature(proc_macro_quote)]
 extern crate proc_macro;
 use proc_macro2::TokenStream;
+use std::collections::HashMap;
 use syn::__private::quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
-use syn::token::Comma;
-use syn::{parse_macro_input, Expr, ExprClosure, Ident, Lit, Pat};
+use syn::token::{Comma, Plus};
+use syn::{parse_macro_input, BinOp, Expr, ExprBinary, ExprClosure, ExprLit, ExprPath, Ident, Lit, Pat, Path};
 
 struct Entry {
     size: usize,
@@ -413,6 +414,176 @@ pub fn io_write(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 _ => unsafe { std::hint::unreachable_unchecked() }
             }
         }
+    }
+    .into()
+}
+
+#[proc_macro]
+pub fn gx_fifo_cmds(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(item with Punctuated::<Expr, syn::Token![,]>::parse_terminated);
+
+    enum Flag {
+        Frameskip,
+        Test,
+    }
+
+    struct CmdEntry {
+        param_count: u8,
+        exe_func: ExprPath,
+        flag: Option<Flag>,
+    }
+
+    let mut cmds = HashMap::new();
+
+    for expr in input {
+        let (tuple, flag) = match expr {
+            Expr::Tuple(tuple) => (tuple, None),
+            Expr::Binary(ExprBinary {
+                left,
+                op: BinOp::Add(Plus { .. }),
+                right,
+                ..
+            }) => (
+                match *left {
+                    Expr::Tuple(tuple) => tuple,
+                    _ => unreachable!(),
+                },
+                match *right {
+                    Expr::Path(ExprPath { path: Path { segments, .. }, .. }) if segments.first().unwrap().ident.to_string() == "frameskip" => Some(Flag::Frameskip),
+                    Expr::Path(ExprPath { path: Path { segments, .. }, .. }) if segments.first().unwrap().ident.to_string() == "test" => Some(Flag::Test),
+                    _ => unreachable!(),
+                },
+            ),
+            _ => unreachable!(),
+        };
+
+        let cmd = match &tuple.elems[0] {
+            Expr::Lit(ExprLit { lit: Lit::Int(repr), .. }) => repr.base10_parse::<u8>().unwrap(),
+            _ => unreachable!(),
+        };
+
+        let param_count = match &tuple.elems[1] {
+            Expr::Lit(ExprLit { lit: Lit::Int(repr), .. }) => repr.base10_parse::<u8>().unwrap(),
+            _ => unreachable!(),
+        };
+
+        let exe_func = match &tuple.elems[2] {
+            Expr::Path(path) => path.clone(),
+            _ => unreachable!(),
+        };
+
+        cmds.insert(cmd, CmdEntry { param_count, exe_func, flag });
+    }
+
+    let mut funcs = Vec::new();
+    let mut single_init_lut = Vec::new();
+    let mut multiple_init_lut = Vec::new();
+    let mut exe_in_queue_lut = Vec::new();
+    let mut exe_lut = Vec::new();
+    let mut param_count_lut = Vec::new();
+    let mut can_frameskip_lut = Vec::new();
+    let mut is_test_lut = Vec::new();
+
+    for cmd in 0..128 {
+        match cmds.get(&cmd) {
+            Some(entry) => {
+                let single_init_func_name = format_ident!("single_init_{cmd:x}_");
+                let multiple_init_func_name = format_ident!("multiple_init_{cmd:x}_");
+                let exe_in_queue_func_name = format_ident!("exe_cmd_in_queue_{cmd:x}_");
+                let exe_func = &entry.exe_func;
+                single_init_lut.push(quote! {
+                    Self::#single_init_func_name,
+                });
+                multiple_init_lut.push(quote! {
+                    Self::#multiple_init_func_name,
+                });
+                exe_in_queue_lut.push(quote! {
+                    Self::#exe_in_queue_func_name,
+                });
+                exe_lut.push(quote! {
+                    #exe_func,
+                });
+
+                let param_count = entry.param_count;
+                let (can_frameskip, is_test) = match entry.flag {
+                    Some(Flag::Frameskip) => (true, false),
+                    Some(Flag::Test) => (false, true),
+                    None => (false, false),
+                };
+                param_count_lut.push(quote! {
+                    #param_count,
+                });
+                can_frameskip_lut.push(quote! {
+                    #can_frameskip,
+                });
+                is_test_lut.push(quote! {
+                    #is_test,
+                });
+
+                funcs.push(quote! {
+                    fn #single_init_func_name(&mut self) {
+                        self.single_init::<#cmd>();
+                    }
+
+                    fn #multiple_init_func_name(&mut self, values: &[u32]) {
+                        self.multiple_init::<#cmd>(values);
+                    }
+
+                    fn #exe_in_queue_func_name(&mut self, params: &[u32; 32], cycles: u32, regs: &mut crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters) {
+                        self.exe_cmd_in_queue::<#cmd>(params, cycles, regs);
+                    }
+                });
+            }
+            None => {
+                single_init_lut.push(quote! {
+                    Self::single_next_cmd,
+                });
+                multiple_init_lut.push(quote! {
+                    Self::multiple_next_cmd,
+                });
+                exe_in_queue_lut.push(quote! {
+                    Self::exe_cmd_in_queue_empty,
+                });
+                exe_lut.push(quote! {
+                    crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters::exe_empty,
+                });
+                param_count_lut.push(quote! {
+                    0,
+                });
+                can_frameskip_lut.push(quote! {
+                    true,
+                });
+                is_test_lut.push(quote! {
+                    false,
+                });
+            }
+        }
+    }
+
+    quote! {
+        #(#funcs)*
+
+        const SINGLE_INIT: [fn(&mut Self); 128] = [
+            #(#single_init_lut)*
+        ];
+        const MULTIPLE_INIT: [fn(&mut Self, &[u32]); 128] = [
+            #(#multiple_init_lut)*
+        ];
+        const EXE_IN_QUEUE: [fn(&mut Self, &[u32; 32], u32, &mut crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters); 128] = [
+            #(#exe_in_queue_lut)*
+        ];
+        const EXE: [fn(&mut crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters, &[u32; 32]); 128] = [
+            #(#exe_lut)*
+        ];
+        const PARAM_COUNT: [u8; 128] = [
+            #(#param_count_lut)*
+        ];
+        const CAN_FRAMESKIP: [bool; 128] = [
+            #(#can_frameskip_lut)*
+        ];
+        const IS_TEST: [bool; 128] = [
+            #(#is_test_lut)*
+        ];
     }
     .into()
 }

@@ -3,6 +3,7 @@ use crate::core::cycle_manager::{CycleManager, EventType};
 use crate::core::emu::Emu;
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
+use crate::core::graphics::gpu_3d::gx_cmd_fifo::GxCmdFifo;
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::memory::dma::DmaTransferMode;
@@ -120,6 +121,7 @@ pub struct Gpu {
     pub v_count: u16,
     pub gpu_2d_regs_a: Gpu2DRegisters,
     pub gpu_2d_regs_b: Gpu2DRegisters,
+    pub gpu_3d_cmd_fifo: GxCmdFifo,
     pub gpu_3d_regs: Gpu3DRegisters,
     pub renderer: GpuRendererWrapper,
 }
@@ -134,6 +136,7 @@ impl Gpu {
             v_count: 0,
             gpu_2d_regs_a: Gpu2DRegisters::new(A),
             gpu_2d_regs_b: Gpu2DRegisters::new(B),
+            gpu_3d_cmd_fifo: GxCmdFifo::new(),
             gpu_3d_regs: Gpu3DRegisters::new(),
             renderer: GpuRendererWrapper(None),
         }

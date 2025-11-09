@@ -5,17 +5,12 @@ use crate::core::graphics::gpu_3d::matrix_vec::MatrixVec;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRendererContent;
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
-use crate::fixed_fifo::FixedFifo;
-use crate::logging::debug_println;
 use crate::math::{vmult_mat4, Matrix, Vectori16, Vectori32, MTX_IDENTITY};
 use crate::utils::HeapMem;
 use bilge::prelude::*;
 use paste::paste;
 use std::arch::arm::{int32x4_t, vld1q_s32, vld1q_s32_x3, vld1q_s32_x4, vsetq_lane_s32, vst1q_s32_x4};
-use std::cmp::{max, min};
-use std::hint::assert_unchecked;
-use std::intrinsics::{likely, unlikely};
-use std::mem::MaybeUninit;
+use std::intrinsics::unlikely;
 use std::{mem, ptr};
 
 pub const POLYGON_LIMIT: usize = 8192;
@@ -164,50 +159,6 @@ pub struct SwapBuffers {
     pub depth_buffering_w: bool,
     not_used: u6,
 }
-
-#[bitsize(8)]
-#[derive(Copy, Clone, Default, FromBits)]
-pub struct FifoParam {
-    param_count: u6,
-    is_test: bool,
-    can_skip: bool,
-}
-
-const fn count(c: u8) -> u8 {
-    assert!(c <= 32);
-    c
-}
-
-const fn skip(c: u8) -> u8 {
-    count(c) | (1 << 7)
-}
-
-const fn test(c: u8) -> u8 {
-    count(c) | (1 << 6)
-}
-
-#[rustfmt::skip]
-const FIFO_PARAM_COUNTS: [u8; 128] = [
-    skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x00-0x0F
-    count(1), count(0), count(1), count(1), count(1), count(0), count(16), count(12), count(16), count(12), count(9), count(3), count(3), skip(0), skip(0), skip(0), // 0x10-0x1F
-    count(1), skip(1), skip(1), skip(2), skip(1), skip(1), skip(1), skip(1), skip(1), count(1), count(1), count(1), skip(0), skip(0), skip(0), skip(0), // 0x20-0x2F
-    count(1), count(1), count(1), count(1), count(32), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x30-0x3F
-    skip(1), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x40-0x4F
-    count(1), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x50-0x5F
-    count(1), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x60-0x6F
-    test(3), test(2), test(1), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), skip(0), // 0x70-0x7F
-];
-
-const FUNC_GROUP_LUT: [fn(&mut Gpu3DRegisters, cmd: usize, params: &[u32; 32]); 8] = [
-    Gpu3DRegisters::exe_empty_group,
-    Gpu3DRegisters::exe_mat_group,
-    Gpu3DRegisters::exe_vert_group,
-    Gpu3DRegisters::exe_attr_group,
-    Gpu3DRegisters::exe_begin_vtxs,
-    Gpu3DRegisters::exe_swap_buffers,
-    Gpu3DRegisters::exe_viewport,
-    Gpu3DRegisters::exe_test_group,
-];
 
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
 #[repr(u8)]
@@ -364,11 +315,6 @@ impl MatrixFlags {
 
 #[derive(Default)]
 pub struct Gpu3DRegisters {
-    cmd_fifo: FixedFifo<u32, 1024>,
-    cmd_remaining_params: u8,
-
-    test_queue: u8,
-
     pub last_total_cycles: u32,
     pub flushed: bool,
     swap_buffers: SwapBuffers,
@@ -422,74 +368,33 @@ macro_rules! unpacked_cmd {
 
 impl Emu {
     pub fn regs_3d_run_cmds(&mut self, total_cycles: u32) {
+        let cmd_fifo = &mut self.gpu.gpu_3d_cmd_fifo;
         let regs_3d = &mut self.gpu.gpu_3d_regs;
-        if unlikely(regs_3d.cmd_fifo.is_empty() || regs_3d.flushed) {
+        if unlikely(cmd_fifo.exe_fifo.is_empty() || regs_3d.flushed) {
             regs_3d.last_total_cycles = total_cycles;
             return;
         }
 
-        let is_cmd_fifo_half_full = regs_3d.is_cmd_fifo_half_full();
+        let is_cmd_fifo_half_full = cmd_fifo.is_fifo_half_full();
 
         let cycle_diff = total_cycles - regs_3d.last_total_cycles;
         regs_3d.last_total_cycles = total_cycles;
-        let mut executed_cycles = 0;
 
-        let mut params: [u32; 32] = unsafe { MaybeUninit::uninit().assume_init() };
+        cmd_fifo.exe_queue(cycle_diff, regs_3d);
 
-        'outer: while !regs_3d.cmd_fifo.is_empty() {
-            let mut value = *regs_3d.cmd_fifo.front();
-            regs_3d.cmd_fifo.pop_front();
-
-            while value != 0 {
-                let cmd = (value & 0x7F) as usize;
-                let current_value = value;
-                value >>= 8;
-                if unlikely(cmd == 0) {
-                    continue;
-                }
-                let param_count = FifoParam::from(unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) });
-                let count = u8::from(param_count.param_count()) as usize;
-
-                if unlikely(count > regs_3d.cmd_fifo.len()) {
-                    regs_3d.cmd_fifo.push_front(current_value);
-                    break 'outer;
-                }
-
-                let skippable = param_count.can_skip();
-                if !regs_3d.skip || likely(!skippable) {
-                    for i in 0..count {
-                        unsafe { *params.get_unchecked_mut(i) = *regs_3d.cmd_fifo.front() };
-                        regs_3d.cmd_fifo.pop_front();
-                    }
-
-                    let func = unsafe { FUNC_GROUP_LUT.get_unchecked(cmd >> 4) };
-                    func(regs_3d, cmd & 0xF, &params);
-                } else {
-                    regs_3d.cmd_fifo.pop_front_multiple(count);
-                }
-
-                executed_cycles += 4;
-                if executed_cycles >= cycle_diff || cmd == 0x50 {
-                    if value != 0 {
-                        regs_3d.cmd_fifo.push_front(value);
-                    }
-                    break 'outer;
-                }
-            }
-        }
-
-        if is_cmd_fifo_half_full && !regs_3d.is_cmd_fifo_half_full() {
+        if is_cmd_fifo_half_full && !cmd_fifo.is_fifo_half_full() {
             self.dma_trigger_all(ARM9, DmaTransferMode::GeometryCmdFifo);
         }
 
-        let regs_3d = &mut self.gpu.gpu_3d_regs;
+        let cmd_fifo = &self.gpu.gpu_3d_cmd_fifo;
+        let regs_3d = &self.gpu.gpu_3d_regs;
         let irq = u8::from(regs_3d.gx_stat.cmd_fifo_irq());
-        if (irq == 1 && !regs_3d.is_cmd_fifo_half_full()) || (irq == 2 && regs_3d.is_cmd_fifo_empty()) {
+        if (irq == 1 && !cmd_fifo.is_fifo_half_full()) || (irq == 2 && cmd_fifo.is_fifo_empty()) {
             self.cpu_send_interrupt(ARM9, InterruptFlag::GeometryCmdFifo);
         }
 
-        let regs_3d = &mut self.gpu.gpu_3d_regs;
-        if !regs_3d.is_cmd_fifo_full() {
+        let cmd_fifo = &self.gpu.gpu_3d_cmd_fifo;
+        if !cmd_fifo.is_fifo_full() {
             self.cpu_unhalt(ARM9, 1);
         }
 
@@ -501,7 +406,7 @@ impl Emu {
 
     #[inline(always)]
     fn regs_3d_post_queue_entry(&mut self) {
-        if unlikely(self.gpu.gpu_3d_regs.is_cmd_fifo_full()) {
+        if unlikely(self.gpu.gpu_3d_cmd_fifo.is_fifo_full()) {
             self.breakout_imm = true;
             self.cpu_halt(ARM9, 1);
         }
@@ -516,13 +421,14 @@ impl Emu {
     }
 
     pub fn regs_3d_get_gx_stat(&self) -> u32 {
+        let cmd_fifo = &self.gpu.gpu_3d_cmd_fifo;
         let regs_3d = &self.gpu.gpu_3d_regs;
         let mut gx_stat = regs_3d.gx_stat;
-        gx_stat.set_geometry_busy(!regs_3d.cmd_fifo.is_empty());
-        gx_stat.set_num_entries_cmd_fifo(u9::new(regs_3d.get_cmd_fifo_len() as u16));
-        gx_stat.set_cmd_fifo_less_half_full(!regs_3d.is_cmd_fifo_half_full());
-        gx_stat.set_cmd_fifo_empty(regs_3d.is_cmd_fifo_empty());
-        gx_stat.set_box_pos_vec_test_busy(regs_3d.test_queue != 0);
+        gx_stat.set_geometry_busy(!cmd_fifo.exe_fifo.is_empty());
+        gx_stat.set_num_entries_cmd_fifo(u9::new(cmd_fifo.get_fifo_len() as u16));
+        gx_stat.set_cmd_fifo_less_half_full(!cmd_fifo.is_fifo_half_full());
+        gx_stat.set_cmd_fifo_empty(cmd_fifo.is_fifo_empty());
+        gx_stat.set_box_pos_vec_test_busy(cmd_fifo.test_queue != 0);
         u32::from(gx_stat)
     }
 
@@ -540,80 +446,18 @@ impl Emu {
 
     #[inline(always)]
     pub fn regs_3d_set_gx_fifo(&mut self, mask: u32, value: u32) {
-        let value = value & mask;
-        let regs_3d = &mut self.gpu.gpu_3d_regs;
-        let mut remaining_params = regs_3d.cmd_remaining_params;
-        let mut test_queue = regs_3d.test_queue;
-        if remaining_params == 0 {
-            for i in 0..4 {
-                let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                let param = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
-                remaining_params += param & 0x3F;
-                test_queue += (param >> 6) & 1;
-            }
-        } else {
-            remaining_params -= 1;
-        }
-        regs_3d.cmd_remaining_params = remaining_params;
-        regs_3d.test_queue = test_queue;
-        regs_3d.cmd_fifo.push_back(value);
+        self.gpu.gpu_3d_cmd_fifo.write(value & mask);
         self.regs_3d_post_queue_entry();
     }
 
     #[inline(always)]
     pub fn regs_3d_set_gx_fifo_multiple(&mut self, values: &[u32]) {
-        unsafe { assert_unchecked(!values.is_empty()) };
-        let regs_3d = &mut self.gpu.gpu_3d_regs;
-        let mut remaining_params = regs_3d.cmd_remaining_params;
-        let mut test_queue = regs_3d.test_queue;
-        let mut consumed = 0;
-        while consumed < values.len() {
-            if remaining_params == 0 {
-                let value = values[consumed];
-                for i in 0..4 {
-                    let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                    let param = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
-                    remaining_params += param & 0x3F;
-                    test_queue += (param >> 6) & 1;
-                }
-                consumed += 1;
-                regs_3d.cmd_fifo.push_back(value);
-            }
-
-            if unlikely(consumed >= values.len()) {
-                break;
-            }
-
-            let values = &values[consumed..];
-
-            let can_consume = min(remaining_params as usize, values.len());
-            regs_3d.cmd_fifo.push_back_multiple(&values[..can_consume]);
-            remaining_params -= can_consume as u8;
-            consumed += can_consume;
-        }
-        regs_3d.cmd_remaining_params = remaining_params;
-        regs_3d.test_queue = test_queue;
+        self.gpu.gpu_3d_cmd_fifo.write_multiple(values);
         self.regs_3d_post_queue_entry();
     }
 
     fn regs_3d_queue_unpacked_value<const CMD: u8>(&mut self, value: u32) {
-        let regs_3d = &mut self.gpu.gpu_3d_regs;
-        if regs_3d.cmd_remaining_params == 0 {
-            regs_3d.cmd_remaining_params = u8::from(FifoParam::from(FIFO_PARAM_COUNTS[CMD as usize]).param_count());
-            regs_3d.cmd_fifo.push_back(CMD as u32);
-            if regs_3d.cmd_remaining_params > 0 {
-                regs_3d.cmd_remaining_params -= 1;
-                regs_3d.cmd_fifo.push_back(value);
-            }
-
-            match CMD {
-                0x70 | 0x71 | 0x72 => regs_3d.test_queue += 1,
-                _ => {}
-            }
-        } else {
-            regs_3d.cmd_remaining_params -= 1;
-            regs_3d.cmd_fifo.push_back(value);
-        }
+        self.gpu.gpu_3d_cmd_fifo.unpacked_cmd::<CMD>(value);
         self.regs_3d_post_queue_entry();
     }
 
@@ -676,22 +520,6 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn is_cmd_fifo_full(&self) -> bool {
-        self.cmd_fifo.len() >= 260
-    }
-
-    pub fn is_cmd_fifo_half_full(&self) -> bool {
-        self.cmd_fifo.len() >= 132
-    }
-
-    fn is_cmd_fifo_empty(&self) -> bool {
-        self.cmd_fifo.len() <= 4
-    }
-
-    fn get_cmd_fifo_len(&self) -> usize {
-        max(self.cmd_fifo.len() as isize - 4, 0) as usize
-    }
-
     #[inline(never)]
     pub fn get_clip_matrix(&mut self) -> &Matrix {
         if unlikely(self.mtx_flags.is_clip_dirty()) {
@@ -702,145 +530,13 @@ impl Gpu3DRegisters {
         &self.clip_matrix
     }
 
-    fn exe_mat_group(&mut self, cmd: usize, params: &[u32; 32]) {
-        unsafe { assert_unchecked(cmd <= 0xF) };
-        const FUNC_LUT: [fn(&mut Gpu3DRegisters, params: &[u32; 32]); 16] = [
-            Gpu3DRegisters::exe_mtx_mode,
-            Gpu3DRegisters::exe_mtx_push,
-            Gpu3DRegisters::exe_mtx_pop,
-            Gpu3DRegisters::exe_mtx_store,
-            Gpu3DRegisters::exe_mtx_restore,
-            Gpu3DRegisters::exe_mtx_identity,
-            Gpu3DRegisters::exe_mtx_load44,
-            Gpu3DRegisters::exe_mtx_load43,
-            Gpu3DRegisters::exe_mtx_mult44,
-            Gpu3DRegisters::exe_mtx_mult43,
-            Gpu3DRegisters::exe_mtx_mult33,
-            Gpu3DRegisters::exe_mtx_scale,
-            Gpu3DRegisters::exe_mtx_trans,
-            Gpu3DRegisters::exe_empty,
-            Gpu3DRegisters::exe_empty,
-            Gpu3DRegisters::exe_empty,
-        ];
-        const FUNC_NAMES_LUT: [&str; 16] = [
-            "exe_mtx_mode",
-            "exe_mtx_push",
-            "exe_mtx_pop",
-            "exe_mtx_store",
-            "exe_mtx_restore",
-            "exe_mtx_identity",
-            "exe_mtx_load44",
-            "exe_mtx_load43",
-            "exe_mtx_mult44",
-            "exe_mtx_mult43",
-            "exe_mtx_mult33",
-            "exe_mtx_scale",
-            "exe_mtx_trans",
-            "exe_empty",
-            "exe_empty",
-            "exe_empty",
-        ];
-        debug_println!("execute mat group {cmd:x}: {}", FUNC_NAMES_LUT[cmd]);
-        FUNC_LUT[cmd](self, params);
-    }
+    pub fn exe_empty(&mut self, _: &[u32; 32]) {}
 
-    fn exe_vert_group(&mut self, cmd: usize, params: &[u32; 32]) {
-        unsafe { assert_unchecked(cmd <= 0xF) };
-        const FUNC_LUT: [fn(&mut Gpu3DRegisters, params: &[u32; 32]); 16] = [
-            Gpu3DRegisters::exe_color,
-            Gpu3DRegisters::exe_normal,
-            Gpu3DRegisters::exe_tex_coord,
-            Gpu3DRegisters::exe_vtx16,
-            Gpu3DRegisters::exe_vtx10,
-            Gpu3DRegisters::exe_vtx_x_y,
-            Gpu3DRegisters::exe_vtx_x_z,
-            Gpu3DRegisters::exe_vtx_y_z,
-            Gpu3DRegisters::exe_vtx_diff,
-            Gpu3DRegisters::exe_polygon_attr,
-            Gpu3DRegisters::exe_tex_image_param,
-            Gpu3DRegisters::exe_pltt_base,
-            Gpu3DRegisters::exe_empty,
-            Gpu3DRegisters::exe_empty,
-            Gpu3DRegisters::exe_empty,
-            Gpu3DRegisters::exe_empty,
-        ];
-        const FUNC_NAMES_LUT: [&str; 16] = [
-            "exe_color",
-            "exe_normal",
-            "exe_tex_coord",
-            "exe_vtx16",
-            "exe_vtx10",
-            "exe_vtx_x_y",
-            "exe_vtx_x_z",
-            "exe_vtx_y_z",
-            "exe_vtx_diff",
-            "exe_polygon_attr",
-            "exe_tex_image_param",
-            "exe_pltt_base",
-            "exe_empty",
-            "exe_empty",
-            "exe_empty",
-            "exe_empty",
-        ];
-        debug_println!("execute vert group {cmd:x}: {}", FUNC_NAMES_LUT[cmd]);
-        FUNC_LUT[cmd](self, params);
-    }
-
-    fn exe_attr_group(&mut self, cmd: usize, params: &[u32; 32]) {
-        unsafe { assert_unchecked(cmd <= 0xF) };
-        match cmd {
-            0 => {
-                debug_println!("execute attr group {cmd:x}: exe_dif_amb");
-                self.exe_dif_amb(params);
-            }
-            1 => {
-                debug_println!("execute attr group {cmd:x}: exe_spe_emi");
-                self.exe_spe_emi(params);
-            }
-            2 => {
-                debug_println!("execute attr group {cmd:x}: exe_light_vector");
-                self.exe_light_vector(params);
-            }
-            3 => {
-                debug_println!("execute attr group {cmd:x}: exe_light_color");
-                self.exe_light_color(params);
-            }
-            4 => {
-                debug_println!("execute attr group {cmd:x}: exe_shininess");
-                self.exe_shininess(params);
-            }
-            _ => debug_println!("execute attr group {cmd:x}: exe_empty"),
-        }
-    }
-
-    fn exe_test_group(&mut self, cmd: usize, params: &[u32; 32]) {
-        unsafe { assert_unchecked(cmd <= 0xF) };
-        match cmd {
-            0 => {
-                debug_println!("execute test group {cmd:x}: exe_box_test");
-                self.exe_box_test(params);
-            }
-            1 => {
-                debug_println!("execute test group {cmd:x}: exe_pos_test");
-                self.exe_pos_test(params);
-            }
-            2 => {
-                debug_println!("execute test group {cmd:x}: exe_vec_test");
-                self.exe_vec_test(params);
-            }
-            _ => debug_println!("execute test group {cmd:x}: exe_empty"),
-        }
-    }
-
-    fn exe_empty_group(&mut self, _: usize, _: &[u32; 32]) {}
-
-    fn exe_empty(&mut self, _: &[u32; 32]) {}
-
-    fn exe_mtx_mode(&mut self, params: &[u32; 32]) {
+    pub fn exe_mtx_mode(&mut self, params: &[u32; 32]) {
         self.mtx_mode = MtxMode::from((params[0] & 0x3) as u8);
     }
 
-    fn exe_mtx_push(&mut self, _: &[u32; 32]) {
+    pub fn exe_mtx_push(&mut self, _: &[u32; 32]) {
         match self.mtx_mode {
             MtxMode::Projection => {
                 if u8::from(self.gx_stat.proj_mtx_stack_lvl()) == 0 {
@@ -867,7 +563,7 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_pop(&mut self, params: &[u32; 32]) {
+    pub fn exe_mtx_pop(&mut self, params: &[u32; 32]) {
         match self.mtx_mode {
             MtxMode::Projection => {
                 if u8::from(self.gx_stat.proj_mtx_stack_lvl()) == 1 {
@@ -898,7 +594,7 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_store(&mut self, params: &[u32; 32]) {
+    pub fn exe_mtx_store(&mut self, params: &[u32; 32]) {
         match self.mtx_mode {
             MtxMode::Projection => self.matrices.proj_stack = self.matrices.proj.clone(),
             MtxMode::ModelView | MtxMode::ModelViewVec => {
@@ -915,7 +611,7 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_restore(&mut self, params: &[u32; 32]) {
+    pub fn exe_mtx_restore(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
         self.mtx_flags.value |= mode; // Overflows to 4 when mode is texture, which sets the appropriate flags
 
@@ -935,7 +631,7 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_identity(&mut self, _: &[u32; 32]) {
+    pub fn exe_mtx_identity(&mut self, _: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
         self.mtx_flags.value |= mode;
 
@@ -949,11 +645,11 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_load44(&mut self, params: &[u32; 32]) {
+    pub fn exe_mtx_load44(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
         self.mtx_flags.value |= mode;
 
-        let params: &[u32; 16] = unsafe { mem::transmute(params) };
+        let params: &[u32; 32] = unsafe { mem::transmute(params) };
         let mtx: &Matrix = unsafe { mem::transmute(params) };
 
         let dst = unsafe { ptr::addr_of_mut!(self.matrices.proj).add(self.mtx_mode as usize).as_mut_unchecked() };
@@ -966,7 +662,7 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_load43(&mut self, params: &[u32; 32]) {
+    pub fn exe_mtx_load43(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
         self.mtx_flags.value |= mode;
 
@@ -999,12 +695,12 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_mult44(&mut self, params: &[u32; 32]) {
+    pub fn exe_mtx_mult44(&mut self, params: &[u32; 32]) {
         let mtx: &Matrix = unsafe { mem::transmute(params) };
         self.mtx_mult(unsafe { mtx.vld() });
     }
 
-    fn exe_mtx_mult43(&mut self, params: &[u32; 32]) {
+    pub fn exe_mtx_mult43(&mut self, params: &[u32; 32]) {
         unsafe {
             let r0 = vld1q_s32(params.as_ptr() as *const i32);
             let r0 = vsetq_lane_s32::<3>(0, r0);
@@ -1018,7 +714,7 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_mult33(&mut self, params: &[u32; 32]) {
+    pub fn exe_mtx_mult33(&mut self, params: &[u32; 32]) {
         unsafe {
             let r0 = vld1q_s32(params.as_ptr() as *const i32);
             let r0 = vsetq_lane_s32::<3>(0, r0);
@@ -1031,7 +727,7 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_scale(&mut self, params: &[u32; 32]) {
+    pub fn exe_mtx_scale(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
         self.mtx_flags.value |= mode;
 
@@ -1050,7 +746,7 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_mtx_trans(&mut self, params: &[u32; 32]) {
+    pub fn exe_mtx_trans(&mut self, params: &[u32; 32]) {
         unsafe {
             (params.as_ptr().add(3) as *mut u32).write_volatile(1 << 12);
             let mtx = vld1q_s32_x3(MTX_IDENTITY.as_ptr());
@@ -1059,11 +755,11 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_color(&mut self, params: &[u32; 32]) {
+    pub fn exe_color(&mut self, params: &[u32; 32]) {
         self.cur_vtx.color = params[0] as u16;
     }
 
-    fn exe_normal(&mut self, params: &[u32; 32]) {
+    pub fn exe_normal(&mut self, params: &[u32; 32]) {
         let normal_vector_param = NormalVector::from(params[0]);
         self.cur_polygon.normal[0] = ((u16::from(normal_vector_param.x()) << 6) as i16) >> 3;
         self.cur_polygon.normal[1] = ((u16::from(normal_vector_param.y()) << 6) as i16) >> 3;
@@ -1076,7 +772,7 @@ impl Gpu3DRegisters {
         self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
     }
 
-    fn exe_tex_coord(&mut self, params: &[u32; 32]) {
+    pub fn exe_tex_coord(&mut self, params: &[u32; 32]) {
         let tex_coord = TexCoord::from(params[0]);
         self.cur_vtx.tex_coords[0] = tex_coord.s() as i16;
         self.cur_vtx.tex_coords[1] = tex_coord.t() as i16;
@@ -1088,59 +784,59 @@ impl Gpu3DRegisters {
         self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
     }
 
-    fn exe_vtx16(&mut self, params: &[u32; 32]) {
+    pub fn exe_vtx16(&mut self, params: &[u32; 32]) {
         self.cur_vtx.coords[0] = params[0] as i16 as i32;
         self.cur_vtx.coords[1] = (params[0] >> 16) as i16 as i32;
         self.cur_vtx.coords[2] = params[1] as i16 as i32;
         self.add_vertex();
     }
 
-    fn exe_vtx10(&mut self, params: &[u32; 32]) {
+    pub fn exe_vtx10(&mut self, params: &[u32; 32]) {
         self.cur_vtx.coords[0] = ((params[0] & 0x3FF) << 6) as i16 as i32;
         self.cur_vtx.coords[1] = ((params[0] & 0xFFC00) >> 4) as i16 as i32;
         self.cur_vtx.coords[2] = ((params[0] & 0x3FF00000) >> 14) as i16 as i32;
         self.add_vertex();
     }
 
-    fn exe_vtx_x_y(&mut self, params: &[u32; 32]) {
+    pub fn exe_vtx_x_y(&mut self, params: &[u32; 32]) {
         self.cur_vtx.coords[0] = params[0] as i16 as i32;
         self.cur_vtx.coords[1] = (params[0] >> 16) as i16 as i32;
         self.add_vertex();
     }
 
-    fn exe_vtx_x_z(&mut self, params: &[u32; 32]) {
+    pub fn exe_vtx_x_z(&mut self, params: &[u32; 32]) {
         self.cur_vtx.coords[0] = params[0] as i16 as i32;
         self.cur_vtx.coords[2] = (params[0] >> 16) as i16 as i32;
         self.add_vertex();
     }
 
-    fn exe_vtx_y_z(&mut self, params: &[u32; 32]) {
+    pub fn exe_vtx_y_z(&mut self, params: &[u32; 32]) {
         self.cur_vtx.coords[1] = params[0] as i16 as i32;
         self.cur_vtx.coords[2] = (params[0] >> 16) as i16 as i32;
         self.add_vertex();
     }
 
-    fn exe_vtx_diff(&mut self, params: &[u32; 32]) {
+    pub fn exe_vtx_diff(&mut self, params: &[u32; 32]) {
         self.cur_vtx.coords[0] += (((params[0] & 0x3FF) << 6) as i16 as i32) >> 6;
         self.cur_vtx.coords[1] += (((params[0] & 0xFFC00) >> 4) as i16 as i32) >> 6;
         self.cur_vtx.coords[2] += (((params[0] & 0x3FF00000) >> 14) as i16 as i32) >> 6;
         self.add_vertex();
     }
 
-    fn exe_polygon_attr(&mut self, params: &[u32; 32]) {
+    pub fn exe_polygon_attr(&mut self, params: &[u32; 32]) {
         self.cur_polygon_attr = params[0].into();
     }
 
-    fn exe_tex_image_param(&mut self, params: &[u32; 32]) {
+    pub fn exe_tex_image_param(&mut self, params: &[u32; 32]) {
         self.cur_polygon.tex_image_param = TexImageParam::from(params[0]);
         self.cur_vtx.tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(self.cur_polygon.tex_image_param.coord_trans_mode()));
     }
 
-    fn exe_pltt_base(&mut self, params: &[u32; 32]) {
+    pub fn exe_pltt_base(&mut self, params: &[u32; 32]) {
         self.cur_polygon.palette_addr = (params[0] & 0x1FFF) as u16;
     }
 
-    fn exe_dif_amb(&mut self, params: &[u32; 32]) {
+    pub fn exe_dif_amb(&mut self, params: &[u32; 32]) {
         self.material_color0 = MaterialColor0::from(params[0]);
 
         if self.material_color0.set_vertex_color() {
@@ -1148,29 +844,23 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn exe_spe_emi(&mut self, params: &[u32; 32]) {
+    pub fn exe_spe_emi(&mut self, params: &[u32; 32]) {
         self.material_color1 = MaterialColor1::from(params[0]);
     }
 
-    fn exe_light_vector(&mut self, params: &[u32; 32]) {
+    pub fn exe_light_vector(&mut self, params: &[u32; 32]) {
         // TODO
     }
 
-    fn exe_light_color(&mut self, params: &[u32; 32]) {
+    pub fn exe_light_color(&mut self, params: &[u32; 32]) {
         // TODO
     }
 
-    fn exe_shininess(&mut self, params: &[u32; 32]) {
+    pub fn exe_shininess(&mut self, params: &[u32; 32]) {
         // TODO
     }
 
-    fn exe_begin_vtxs(&mut self, cmd: usize, params: &[u32; 32]) {
-        if unlikely(cmd != 0) {
-            return;
-        }
-
-        debug_println!("execute exe_begin_vtxs {cmd:x}");
-
+    pub fn exe_begin_vtxs(&mut self, params: &[u32; 32]) {
         if self.vertex_list_size < self.vertex_list_primitive_type.vertex_count() as u16 {
             self.vertices_size -= self.vertex_list_size;
         }
@@ -1181,44 +871,28 @@ impl Gpu3DRegisters {
         self.cur_polygon.viewport = self.cur_viewport;
     }
 
-    fn exe_swap_buffers(&mut self, cmd: usize, params: &[u32; 32]) {
-        if unlikely(cmd != 0) {
-            return;
-        }
-
-        debug_println!("execute exe_swap_buffers {cmd:x}");
-
+    pub fn exe_swap_buffers(&mut self, params: &[u32; 32]) {
         self.flushed = true;
         self.swap_buffers = SwapBuffers::from(params[0] as u8)
     }
 
-    fn exe_viewport(&mut self, cmd: usize, params: &[u32; 32]) {
-        if unlikely(cmd != 0) {
-            return;
-        }
-
-        debug_println!("execute exe_viewport {cmd:x}");
-
+    pub fn exe_viewport(&mut self, params: &[u32; 32]) {
         self.cur_viewport = Viewport::from(params[0]);
     }
 
-    fn exe_box_test(&mut self, _: &[u32; 32]) {
+    pub fn exe_box_test(&mut self, _: &[u32; 32]) {
         self.gx_stat.set_box_test_result(true);
-
-        self.test_queue -= 1;
     }
 
-    fn exe_pos_test(&mut self, params: &[u32; 32]) {
+    pub fn exe_pos_test(&mut self, params: &[u32; 32]) {
         self.cur_vtx.coords[0] = params[0] as i16 as i32;
         self.cur_vtx.coords[1] = (params[0] >> 16) as i16 as i32;
         self.cur_vtx.coords[2] = params[1] as i16 as i32;
         self.cur_vtx.coords[3] = 1 << 12;
         self.pos_result = self.cur_vtx.coords * self.get_clip_matrix();
-
-        self.test_queue -= 1;
     }
 
-    fn exe_vec_test(&mut self, params: &[u32; 32]) {
+    pub fn exe_vec_test(&mut self, params: &[u32; 32]) {
         let mut vector = Vectori32::<3>::new([
             (((params[0] & 0x000003FF) << 6) as i16 as i32) >> 3,
             (((params[0] & 0x000FFC00) >> 4) as i16 as i32) >> 3,
@@ -1229,8 +903,6 @@ impl Gpu3DRegisters {
         self.vec_result[0] = ((vector[0] << 3) as i16) >> 3;
         self.vec_result[1] = ((vector[1] << 3) as i16) >> 3;
         self.vec_result[2] = ((vector[2] << 3) as i16) >> 3;
-
-        self.test_queue -= 1;
     }
 
     pub fn swap_buffers(&mut self) {

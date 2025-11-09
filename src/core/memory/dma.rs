@@ -167,7 +167,7 @@ impl Emu {
         let transfer_type = DmaTransferMode::from_cnt(cpu, channel.cnt, channel_num);
 
         let dma_cnt = DmaCntArm9::from(channel.cnt);
-        if transfer_type == DmaTransferMode::GeometryCmdFifo && dma_cnt.enable() && !self.gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
+        if transfer_type == DmaTransferMode::GeometryCmdFifo && dma_cnt.enable() && !self.gpu.gpu_3d_cmd_fifo.is_fifo_half_full() {
             debug_println!(
                 "{cpu:?} dma schedule imm {:x} {:x} {:x} {:x}",
                 channel.cnt,
@@ -367,7 +367,7 @@ impl Emu {
 
         if mode == DmaTransferMode::GeometryCmdFifo && count > 112 {
             channel.current_count -= 112;
-            if !self.gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
+            if !self.gpu.gpu_3d_cmd_fifo.is_fifo_half_full() {
                 self.cm.schedule_imm(ImmEventType::dma(CPU, channel_num as u8));
             }
             return;
@@ -379,7 +379,7 @@ impl Emu {
                 channel.current_dest = channel.dad;
             }
 
-            if mode == DmaTransferMode::GeometryCmdFifo && !self.gpu.gpu_3d_regs.is_cmd_fifo_half_full() {
+            if mode == DmaTransferMode::GeometryCmdFifo && !self.gpu.gpu_3d_cmd_fifo.is_fifo_half_full() {
                 self.cm.schedule_imm(ImmEventType::dma(CPU, channel_num as u8));
             }
         } else {
