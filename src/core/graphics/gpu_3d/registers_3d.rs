@@ -364,7 +364,7 @@ impl MatrixFlags {
 
 #[derive(Default)]
 pub struct Gpu3DRegisters {
-    cmd_fifo: FixedFifo<u32, 1024>,
+    cmd_fifo: FixedFifo<u32, 512>,
     cmd_remaining_params: u8,
 
     test_queue: u8,
@@ -450,7 +450,7 @@ impl Emu {
                 let param_count = FifoParam::from(unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) });
                 let count = u8::from(param_count.param_count()) as usize;
 
-                if unlikely(count > regs_3d.cmd_fifo.len()) {
+                if unlikely(count > regs_3d.cmd_fifo.len() as usize) {
                     regs_3d.cmd_fifo.push_front(current_value);
                     break 'outer;
                 }
@@ -465,7 +465,7 @@ impl Emu {
                     let func = unsafe { FUNC_GROUP_LUT.get_unchecked(cmd >> 4) };
                     func(regs_3d, cmd & 0xF, &params);
                 } else {
-                    regs_3d.cmd_fifo.pop_front_multiple(count);
+                    regs_3d.cmd_fifo.pop_front_multiple(count as u16);
                 }
 
                 executed_cycles += 4;
