@@ -1,6 +1,7 @@
 #version 300 es
 
-precision mediump float;
+precision highp int;
+precision highp float;
 
 layout(location = 0) out vec4 color;
 
@@ -15,9 +16,7 @@ uniform sampler2D objDepthTex;
 uniform sampler2D winTex;
 
 uniform BlendUbo {
-    int bldCnts[192];
-    int bldAlphas[192];
-    int bldYs[192];
+    int bldCntsAlphasYs[192];
 };
 
 int topNum = 5;
@@ -57,9 +56,7 @@ void sortBgPrio(int num, sampler2D bgTex) {
     }
 }
 
-vec4 alphaBlend(int bldAlpha) {
-    int eva = bldAlpha & 0x1F;
-    int evb = (bldAlpha >> 8) & 0x1F;
+vec4 alphaBlend(int eva, int evb) {
     float evaF = min(float(eva) / 16.0, 1.0);
     float evbF = min(float(evb) / 16.0, 1.0);
     vec3 blendedColor = topColor.rgb * evaF + bottomColor.rgb * evbF;
@@ -77,14 +74,19 @@ void main() {
         discard;
     }
 
+    int y = int(screenPos.y * 191.0);
+    int bldCntAlphaY = bldCntsAlphasYs[y];
+    int bldCnt = bldCntAlphaY & 0xFFFF;
+    int bldEva = (bldCntAlphaY >> 16) & 0x1F;
+    int bldEvb = (bldCntAlphaY >> 21) & 0x1F;
+    int bldY = (bldCntAlphaY >> 26) & 0x1F;
+
     if (topNum == 4 && topColor.a == 0.0) {
         color = vec4(topColor.rgb, 1.0);
         // Semi transparent object
-        int y = int(screenPos.y * 191.0);
-        int bldCnt = bldCnts[y];
         bool blendBottom = ((bldCnt >> 8) & (1 << bottomNum)) != 0;
         if (blendBottom) {
-            color = alphaBlend(bldAlphas[y]);
+            color = alphaBlend(bldEva, bldEvb);
             return;
         }
 
@@ -101,9 +103,6 @@ void main() {
         return;
     }
 
-    int y = int(screenPos.y * 191.0);
-
-    int bldCnt = bldCnts[y];
     int bldMode = (bldCnt >> 6) & 3;
 
     if (bldMode == 0) {
@@ -124,18 +123,16 @@ void main() {
                 color = vec4(topColor.rgb, 1.0);
                 return;
             }
-            color = alphaBlend(bldAlphas[y]);
+            color = alphaBlend(bldEva, bldEvb);
             break;
         }
         case 2: {
-            int bldY = bldYs[y];
             float bldYF = float(bldY) / 16.0;
             vec3 increaseColor = (1.0 - topColor.rgb) * bldYF;
             color = vec4((topColor.rgb + increaseColor), 1.0);
             break;
         }
         case 3: {
-            int bldY = bldYs[y];
             float bldYF = float(bldY) / 16.0;
             vec3 decreaseColor = topColor.rgb * bldYF;
             color = vec4((topColor.rgb - decreaseColor), 1.0);

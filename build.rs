@@ -4,15 +4,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
-use vitabuild::{create_c_build, create_cc_build, get_common_c_flags, get_out_path, get_profile_name, is_debug, is_host_linux, is_profiling, is_target_vita};
+use vitabuild::{create_bindgen_builder, create_c_build, create_cc_build, get_out_path, get_profile_name, is_debug, is_host_linux, is_profiling, is_target_vita};
 
-fn generate_linux_imgui_bindings(sysroot: Option<PathBuf>) {
+fn generate_linux_imgui_bindings() {
     let bindings_file = get_out_path().join("imgui_bindings.rs");
-    let mut bindings = bindgen::Builder::default()
+    let bindings = create_bindgen_builder()
         .header("imgui_wrapper.h")
         .clang_args(["-x", "c++"])
-        .clang_args(["-std=c++17"])
-        .clang_args(["-target", "armv7-unknown-linux-gnueabihf"])
+        .clang_arg("-std=c++17")
         .clang_arg("-Iimgui")
         .formatter(Formatter::Prettyplease)
         .allowlist_item("ImGui.*")
@@ -20,9 +19,6 @@ fn generate_linux_imgui_bindings(sysroot: Option<PathBuf>) {
         .use_core()
         .enable_cxx_namespaces()
         .trust_clang_mangling(true);
-    if let Some(sysroot) = sysroot {
-        bindings = bindings.clang_arg(format!("--sysroot={}", sysroot.to_str().unwrap()));
-    }
     bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
 }
 
@@ -39,7 +35,7 @@ fn main() {
         if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
             println!("cargo:rustc-link-arg=--sysroot={sysroot}");
         }
-        let mut cache_build = cc::Build::new();
+        let mut cache_build = create_c_build();
         cache_build.compiler("clang");
         // Running IDE on anything other than linux will fail, so ignore compile error
         let _ = cache_build.file("builtins/cache.c").try_compile("cache").ok();
@@ -86,9 +82,6 @@ fn main() {
 
         let math_neon_path = Path::new("math-neon/source");
 
-        let mut math_neon_flags = vec![];
-        math_neon_flags.extend(get_common_c_flags());
-
         if !is_target_vita() {
             let mut math_neon_build = create_c_build();
             for file in MATH_NEON_FILES {
@@ -96,17 +89,10 @@ fn main() {
                 println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
                 math_neon_build.file(path);
             }
-            for flag in &math_neon_flags {
-                math_neon_build.flag(flag);
-            }
             math_neon_build.compile("mathneon");
         }
 
-        let mut math_neon_bindgen = bindgen::Builder::default().clang_args(["-target", "armv7-unknown-linux-gnueabihf"]);
-
-        for flag in &math_neon_flags {
-            math_neon_bindgen = math_neon_bindgen.clang_arg(flag);
-        }
+        let math_neon_bindgen = create_bindgen_builder();
 
         let bindings_file = out_path.join("math_neon.rs");
         math_neon_bindgen
@@ -147,13 +133,12 @@ fn main() {
             soundtouch_path.join("source").join("SoundTouch").to_str().unwrap().to_string(),
         ];
 
-        let mut soundtouch_flags = vec![
+        let soundtouch_flags = vec![
             "-DSOUNDTOUCH_INTEGER_SAMPLES=1".to_string(),
             "-std=c++17".to_string(),
             "-DST_NO_EXCEPTION_HANDLING=1".to_string(),
             "-DM_PI=3.14159265358979323846".to_string(),
         ];
-        soundtouch_flags.extend(get_common_c_flags());
 
         let mut soundtouch_build = create_cc_build();
         soundtouch_build.cpp(true);
@@ -185,7 +170,7 @@ fn main() {
 
         let bindings_file = out_path.join("soundtouch_bindings.rs");
 
-        let mut soundtouch_bindgen = bindgen::Builder::default().clang_args(["-x", "c++"]).clang_args(["-target", "armv7-unknown-linux-gnueabihf"]);
+        let mut soundtouch_bindgen = create_bindgen_builder().clang_args(["-x", "c++"]);
         for include in &soundtouch_includes {
             soundtouch_bindgen = soundtouch_bindgen.clang_arg(format!("-I{include}"));
         }
@@ -231,10 +216,6 @@ fn main() {
             .include(imgui_path.join("examples").join("sdl_opengl3_example"))
             .file("imgui_impl_sdl_gl3.cpp");
 
-        for flag in get_common_c_flags() {
-            imgui_build.flag(flag);
-        }
-
         println!("cargo:rerun-if-changed=imgui_impl_sdl_gl3.cpp");
         for file in IMGUI_FILES {
             let path = imgui_path.join(file);
@@ -244,7 +225,7 @@ fn main() {
 
         imgui_build.compile("imgui");
 
-        generate_linux_imgui_bindings(None);
+        generate_linux_imgui_bindings();
 
         println!("cargo:rustc-link-lib=GL");
     }
@@ -269,11 +250,9 @@ fn main() {
         let bindings_file = out_path.join("imgui_bindings.rs");
 
         const IMGUI_HEADERS: [&str; 3] = ["imgui.h", "imgui_internal.h", "imgui_impl_vitagl.h"];
-        let mut bindings = bindgen::Builder::default()
+        let mut bindings = create_bindgen_builder()
             .clang_args(["-x", "c++"])
-            .clang_args(["-std=c++17"])
-            .clang_args(["-target", "armv7-unknown-linux-gnueabihf"])
-            .clang_args(["--sysroot", vitasdk_sysroot.to_str().unwrap()])
+            .clang_arg("-std=c++17")
             .formatter(Formatter::Prettyplease)
             .allowlist_item("ImGui.*")
             .opaque_type("std::.*")
@@ -290,19 +269,21 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", vitasdk_lib_path.to_str().unwrap());
         println!("cargo:rustc-link-lib=static=imgui");
     } else if !is_host_linux() {
-        generate_linux_imgui_bindings(Some(vitasdk_sysroot.clone()));
+        generate_linux_imgui_bindings();
+    }
+
+    if !is_target_vita() {
+        return;
     }
 
     {
         let bindings_file = out_path.join("kubridge_bindings.rs");
 
         const KUBRIDGE_HEADERS: [&str; 1] = ["kubridge.h"];
-        let mut bindings = bindgen::Builder::default()
+        let mut bindings = create_bindgen_builder()
             .clang_args(["-I", kubridge_path.to_str().unwrap()])
             .clang_args(["-x", "c++"])
-            .clang_args(["-std=c++17"])
-            .clang_args(["-target", "armv7-unknown-linux-gnueabihf"])
-            .clang_args(["--sysroot", vitasdk_sysroot.to_str().unwrap()])
+            .clang_arg("-std=c++17")
             .formatter(Formatter::Prettyplease);
         for header in KUBRIDGE_HEADERS {
             let header_path = kubridge_path.join(header);
@@ -312,10 +293,6 @@ fn main() {
         bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
     }
 
-    if !is_target_vita() {
-        return;
-    }
-
     {
         let mut vita_gl_envs = vec![
             ("HAVE_UNFLIPPED_FBOS", "1"),
@@ -323,14 +300,16 @@ fn main() {
             ("MATH_SPEEDHACK", "1"),
             ("HAVE_SHADER_CACHE", "1"),
             ("SINGLE_THREADED_GC", "1"),
+            ("DRAW_SPEEDHACK", "2"),
+            ("INDICES_SPEEDHACK", "1"),
         ];
 
         if !is_debug() {
             vita_gl_envs.push(("NO_DEBUG", "1"));
         } else {
             vita_gl_envs.push(("HAVE_SHARK_LOG", "1"));
-            vita_gl_envs.push(("LOG_ERRORS", "2"));
-            vita_gl_envs.push(("HAVE_PROFILING", "1"));
+            vita_gl_envs.push(("LOG_ERRORS", "1"));
+            // vita_gl_envs.push(("HAVE_DEVKIT", "1"));
             // vita_gl_envs.push(("HAVE_RAZOR", "1"));
         }
 
@@ -342,9 +321,15 @@ fn main() {
         Command::new("make").current_dir("vitaGL").arg("clean").status().unwrap();
         Command::new("make").current_dir("vitaGL").args(["-j", &num_jobs]).envs(vita_gl_envs).status().unwrap();
 
-        fs::rename(vita_gl_lib_path, vita_gl_lib_new_path).unwrap();
-        println!("cargo:rustc-link-search=native={}", fs::canonicalize(vita_gl_path).unwrap().to_str().unwrap());
+        fs::rename(vita_gl_lib_path, &vita_gl_lib_new_path).unwrap();
+        println!("cargo:rustc-link-search=native={}", fs::canonicalize(&vita_gl_path).unwrap().to_str().unwrap());
         println!("cargo:rustc-link-lib=static=vitaGL_dsvita");
+
+        let mut vita_gl_wrapper_build = create_c_build();
+        vita_gl_wrapper_build.file("vita_gl_wrapper.c");
+        vita_gl_wrapper_build.include(vita_gl_path.join("source"));
+        vita_gl_wrapper_build.flag(format!("-l {}", fs::canonicalize(vita_gl_lib_new_path).unwrap().to_str().unwrap()));
+        vita_gl_wrapper_build.compile("vitaGL_wrapper");
     }
 
     {

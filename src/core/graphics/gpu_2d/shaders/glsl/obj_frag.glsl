@@ -11,8 +11,7 @@ in vec2 screenPosF;
 
 uniform int dispCnt;
 uniform ObjUbo {
-    int mapWidths[128];
-    int objBounds[128];
+    int mapWidthsObjBounds[256];
 };
 
 uniform sampler2D oamTex;
@@ -20,6 +19,11 @@ uniform sampler2D objTex;
 uniform sampler2D palTex;
 uniform sampler2D extPalTex;
 uniform sampler2D winTex;
+
+int readOam8(int addr) {
+    float x = float(addr >> 2) / 255.0f;
+    return int(texture(oamTex, vec2(x, 1.0))[addr & 3] * 255.0);
+}
 
 int readOam16Aligned(int addr) {
     float x = float(addr >> 2) / 255.0f;
@@ -67,39 +71,38 @@ vec3 normRgb5(int color) {
     return vec3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-vec4 drawSprite(int objX, int objY, int attrib0, int oamIndex) {
-    int mapWidth = mapWidths[oamIndex];
-    int objBound = objBounds[oamIndex];
+vec4 drawSprite(int objX, int objY, int attrib0High, int oamIndex) {
+    int mapWidth = mapWidthsObjBounds[oamIndex * 2];
+    int objBound = mapWidthsObjBounds[oamIndex * 2 + 1];
 
     int attrib2 = readOam16Aligned(oamIndex * 8 + 4);
 
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * objBound;
+    int tileAddrOffset = ((objY & 7) + (objY >> 3) * mapWidth) * 8;
+    tileAddrOffset += (objX >> 3) * 64 + (objX & 7);
 
-    bool is8bpp = (attrib0 & (1 << 13)) != 0;
+    bool is8bpp = ((attrib0High >> 5) & 1) != 0;
+    if (!is8bpp) {
+        tileAddrOffset /= 2;
+    }
+
+    int palIndex = readObj8(tileAddr + tileAddrOffset);
+    int palColor;
+
     if (is8bpp) {
-        tileAddr += ((objY & 7) + (objY >> 3) * mapWidth) * 8;
-        tileAddr += (objX >> 3) * 64 + (objX & 7);
-
-        int palIndex = readObj8(tileAddr);
         if (palIndex == 0) {
             discard;
         }
 
-        bool useExtPal = (dispCnt & (1 << 31)) != 0;
+        bool useExtPal = ((dispCnt >> 31) & 1) != 0;
         if (useExtPal) {
-            int palBaseAddr = (attrib2 & 0xF000) >> 3;
-            int palColor = readExtPal16Aligned(palBaseAddr + palIndex * 2);
-            return vec4(normRgb5(palColor), 1.0);
+            int palBaseAddr = ((attrib2 >> 12) & 0xF) << 9;
+            palColor = readExtPal16Aligned(palBaseAddr + palIndex * 2);
         } else {
-            int palColor = readPal16Aligned(0x200 + palIndex * 2);
-            return vec4(normRgb5(palColor), 1.0);
+            palColor = readPal16Aligned(0x200 + palIndex * 2);
         }
     } else {
-        tileAddr += ((objY & 7) + (objY >> 3) * mapWidth) * 4;
-        tileAddr += (objX >> 3) * 32 + (objX & 7) / 2;
-
-        int palIndex = readObj8(tileAddr);
         palIndex >>= 4 * (objX & 1);
         palIndex &= 0xF;
         if (palIndex == 0) {
@@ -108,17 +111,17 @@ vec4 drawSprite(int objX, int objY, int attrib0, int oamIndex) {
 
         int palBank = (attrib2 >> 12) & 0xF;
         int palBaseAddr = 0x200 + palBank * 32;
-        int palColor = readPal16Aligned(palBaseAddr + palIndex * 2);
-        return vec4(normRgb5(palColor), 1.0);
+        palColor = readPal16Aligned(palBaseAddr + palIndex * 2);
     }
+    return vec4(normRgb5(palColor), 1.0);
 }
 
 vec4 drawBitmap(int objX, int objY, int oamIndex) {
-    int bitmapWidth = mapWidths[oamIndex];
-    int dataBase = objBounds[oamIndex];
+    int bitmapWidth = mapWidthsObjBounds[oamIndex * 2];
+    int dataBase = mapWidthsObjBounds[oamIndex * 2 + 1];
 
     int objColor = readObj16Aligned(dataBase + (objY * bitmapWidth + objX) * 2);
-    if ((objColor & (1 << 15)) == 0) {
+    if (((objColor >> 15) & 1) == 0) {
         discard;
     }
     return vec4(normRgb5(objColor), 1.0);
@@ -141,17 +144,17 @@ void main() {
 
     int oamIndex = int(objPos.z);
 
-    int attrib0 = readOam16Aligned(oamIndex * 8);
+    int attrib0High = readOam8(oamIndex * 8 + 1);
 
-    bool isBitmap = (attrib0 & 0xC00) == 0xC00;
+    int gfxMode = (attrib0High >> 2) & 3;
+    bool isBitmap = gfxMode == 3;
     if (isBitmap) {
         color = drawBitmap(objX, objY, oamIndex);
     } else {
-        color = drawSprite(objX, objY, attrib0, oamIndex);
-    }
-
-    bool semiTransparent = ((attrib0 >> 10) & 3) == 1;
-    if (semiTransparent) {
-        color.a = 0.0;
+        color = drawSprite(objX, objY, attrib0High, oamIndex);
+        bool semiTransparent = gfxMode == 1;
+        if (semiTransparent) {
+            color.a = 0.0;
+        }
     }
 }

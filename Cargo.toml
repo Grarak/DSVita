@@ -61,8 +61,8 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceKernelDmacMgr_stub",
     "SceShaccCg_stub",
     "ScePower_stub",
-    "SceSysrootForKernel_stub"
-    #    "SceRazorCapture_stub",
+    "SceSysrootForKernel_stub",
+    # "SceRazorCapture_stub",
 ] }
 
 [profile.release-debug]
@@ -74,11 +74,13 @@ debug = true
 
 [profile.release.package."*"]
 opt-level = 3
+codegen-units = 2
 
 [profile.release]
 panic = "abort"
 lto = true
 opt-level = 3
+codegen-units = 2
 
 [profile.release-profiling]
 inherits = "release"

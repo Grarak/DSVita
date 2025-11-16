@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{BuildHasher, Hasher};
 use std::ops::{Deref, DerefMut};
-use std::slice;
+use std::{ptr, slice};
 
 pub const fn align_up(n: usize, align: usize) -> usize {
     (n + align - 1) & !(align - 1)
@@ -85,6 +85,7 @@ impl Display for StrErr {
 impl Error for StrErr {}
 
 pub type HeapMemU8<const SIZE: usize> = HeapMem<u8, SIZE>;
+pub type HeapMemU16<const SIZE: usize> = HeapMem<u16, SIZE>;
 pub type HeapMemU32<const SIZE: usize> = HeapMem<u32, SIZE>;
 pub type HeapMemUsize<const SIZE: usize> = HeapMem<usize, SIZE>;
 
@@ -285,6 +286,22 @@ pub fn rgb5_to_rgb8(color: u16) -> u32 {
     (0xFFu32 << 24) | (b << 16) | (g << 8) | r
 }
 
+pub fn rgba5_to_rgba8(color: u16) -> u32 {
+    let r = (color & 0x1F) as u32 * 255 / 31;
+    let g = ((color >> 5) & 0x1F) as u32 * 255 / 31;
+    let b = ((color >> 10) & 0x1F) as u32 * 255 / 31;
+    let a = !((color >> 15) as u32).wrapping_sub(1);
+    (a << 24) | (b << 16) | (g << 8) | r
+}
+
+pub fn rgba5_to_rgba8_non_norm(color: u16) -> u32 {
+    let r = (color & 0x1F) as u32;
+    let g = ((color >> 5) & 0x1F) as u32;
+    let b = ((color >> 10) & 0x1F) as u32;
+    let a = (color >> 15) as u32;
+    (a << 24) | (b << 16) | (g << 8) | r
+}
+
 pub fn rgb6_to_rgb8(color: u32) -> u32 {
     let r = (color & 0x3F) * 255 / 63;
     let g = ((color >> 6) & 0x3F) * 255 / 63;
@@ -322,4 +339,78 @@ pub const fn const_bytes_equal(lhs: &[u8], rhs: &[u8]) -> bool {
 
 pub const fn const_str_equal(lhs: &str, rhs: &str) -> bool {
     const_bytes_equal(lhs.as_bytes(), rhs.as_bytes())
+}
+
+macro_rules! array_init {
+    ($init:block; $size:expr) => {{
+        [(); $size].map(|_| $init)
+    }};
+}
+
+pub(crate) use array_init;
+
+pub struct PtrWrapper<T>(*mut T);
+
+impl<T> PtrWrapper<T> {
+    pub fn new(ptr: *mut T) -> Self {
+        PtrWrapper(ptr)
+    }
+
+    pub fn null() -> Self {
+        Self::default()
+    }
+}
+
+impl<T> Default for PtrWrapper<T> {
+    fn default() -> Self {
+        PtrWrapper(ptr::null_mut())
+    }
+}
+
+impl<T> Deref for PtrWrapper<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        debug_assert_ne!(self.0, ptr::null_mut());
+        unsafe { self.0.as_ref_unchecked() }
+    }
+}
+
+impl<T> DerefMut for PtrWrapper<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        debug_assert_ne!(self.0, ptr::null_mut());
+        unsafe { self.0.as_mut_unchecked() }
+    }
+}
+
+pub struct OptionWrapper<T>(Option<T>);
+
+impl<T> OptionWrapper<T> {
+    pub fn new(value: T) -> Self {
+        OptionWrapper(Some(value))
+    }
+
+    pub fn none() -> Self {
+        Self::default()
+    }
+}
+
+impl<T> Default for OptionWrapper<T> {
+    fn default() -> Self {
+        OptionWrapper(None)
+    }
+}
+
+impl<T> Deref for OptionWrapper<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.0.as_ref().unwrap_unchecked() }
+    }
+}
+
+impl<T> DerefMut for OptionWrapper<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.0.as_mut().unwrap_unchecked() }
+    }
 }

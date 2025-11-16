@@ -3,10 +3,11 @@ use crate::core::graphics::gl_utils::{create_program, create_shader, shader_sour
 use crate::core::graphics::gpu::PowCnt1;
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::renderer_2d::Gpu2DRenderer;
+use crate::core::graphics::gpu_2d::renderer_regs_2d::Gpu2DRenderRegsShared;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
-use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
+use crate::core::graphics::gpu_mem_buf::{GpuMemBuf, GpuMemRefs};
 use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram;
 use crate::core::memory::vram::Vram;
@@ -36,8 +37,11 @@ impl GpuRendererCommon {
 }
 
 pub struct GpuRenderer {
-    pub renderer_2d: Gpu2DRenderer,
+    renderer_regs_2d_shared: Gpu2DRenderRegsShared,
+    renderer_2d: Gpu2DRenderer,
+    // renderer_soft_2d: Gpu2DSoftRenderer,
     pub renderer_3d: Gpu3DRenderer,
+    gpu_mem_refs: GpuMemRefs,
 
     common: GpuRendererCommon,
     merge_program: GLuint,
@@ -90,8 +94,11 @@ impl GpuRenderer {
         };
 
         GpuRenderer {
+            renderer_regs_2d_shared: Gpu2DRenderRegsShared::new(),
             renderer_2d: Gpu2DRenderer::new(),
+            // renderer_soft_2d: Gpu2DSoftRenderer::new(),
             renderer_3d: Gpu3DRenderer::default(),
+            gpu_mem_refs: GpuMemRefs::default(),
 
             common: GpuRendererCommon::new(),
             merge_program,
@@ -123,7 +130,7 @@ impl GpuRenderer {
     }
 
     pub fn init(&mut self) {
-        self.renderer_2d.init();
+        self.renderer_regs_2d_shared.init();
         self.renderer_3d.init();
         self.common.mem_buf.init();
         self.common.pow_cnt1[0] = PowCnt1::from(0);
@@ -137,7 +144,7 @@ impl GpuRenderer {
 
     pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters, inner_b: &mut Gpu2DRegisters, line: u8) {
         if self.sample_2d {
-            self.renderer_2d.on_scanline(inner_a, inner_b, line);
+            self.renderer_regs_2d_shared.on_scanline(inner_a, inner_b, line);
         }
     }
 
@@ -169,7 +176,7 @@ impl GpuRenderer {
                 }
             }
             self.common.pow_cnt1[0] = self.common.pow_cnt1[1];
-            self.renderer_2d.on_scanline_finish();
+            self.renderer_regs_2d_shared.on_scanline_finish();
 
             if self.renderer_3d.dirty {
                 self.renderer_3d.finish_scanline(registers_3d);
@@ -190,7 +197,7 @@ impl GpuRenderer {
         }
 
         if self.sample_2d {
-            self.renderer_2d.reload_registers();
+            self.renderer_regs_2d_shared.reload_registers();
             self.common.mem_buf.set_vram_cnt(vram);
             self.read_vram_condvar.notify_one();
         }
@@ -237,35 +244,43 @@ impl GpuRenderer {
 
         let render_time_start = Instant::now();
 
-        if self.common.pow_cnt1[0].enable() {
-            self.common.mem_buf.rebuild_vram_maps();
-            if self.rendering_3d {
-                self.common.mem_buf.read_3d();
-            }
-            self.common.mem_buf.read_2d(self.renderer_2d.has_vram_display[0]);
-        }
-        self.vram_read.store(true, Ordering::SeqCst);
-
         unsafe {
+            if self.common.pow_cnt1[0].enable() {
+                self.common.mem_buf.rebuild_vram_maps();
+                self.renderer_2d.set_tex_ptrs(&mut self.gpu_mem_refs);
+                if self.rendering_3d {
+                    self.renderer_3d.set_tex_ptrs(&mut self.gpu_mem_refs);
+                }
+                self.common
+                    .mem_buf
+                    .read_all(&mut self.gpu_mem_refs, self.renderer_regs_2d_shared.has_vram_display[0], self.rendering_3d);
+            }
+            self.vram_read.store(true, Ordering::SeqCst);
+
             gl::BindFramebuffer(gl::FRAMEBUFFER, self.final_fbo.fbo);
             gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
             gl::ClearColor(0f32, 0f32, 0f32, 1f32);
             gl::Clear(gl::COLOR_BUFFER_BIT);
 
             if self.common.pow_cnt1[0].enable() {
-                self.renderer_2d.draw::<{ B }>(&self.common);
-                let b_fbo_color = self.renderer_2d.blend::<{ B }>(&self.common, 0);
+                self.renderer_2d.draw::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
+                let b_fbo_color = self.renderer_2d.blend::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, 0);
 
-                self.renderer_2d.draw::<{ A }>(&self.common);
+                // self.renderer_soft_2d.draw::<{ A }>(&self.common, &self.renderer_regs_2d_shared);
+                self.renderer_2d.draw::<{ A }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
+
+                // self.renderer_soft_2d.draw::<{ B }>(&self.common, &self.renderer_regs_2d_shared);
+                // let b_fbo_color = self.renderer_soft_2d.blend::<{ B }>(&self.common, &self.renderer_regs_2d_shared, 0);
 
                 if self.rendering_3d {
                     let processed_3d = self.processed_3d.lock().unwrap();
                     let _processed_3d = self.processed_3d_condvar.wait_while(processed_3d, |processed_3d| !*processed_3d).unwrap();
                     self.rendering_3d = false;
-                    self.renderer_3d.render(&self.common);
+                    self.renderer_3d.render(&self.common, &self.gpu_mem_refs);
                 }
 
-                let a_fbo_color = self.renderer_2d.blend::<{ A }>(&self.common, self.renderer_3d.gl.fbo.color);
+                // let a_fbo_color = self.renderer_soft_2d.blend::<{ A }>(&self.common, &self.renderer_regs_2d_shared, self.renderer_3d.gl.fbo.color);
+                let a_fbo_color = self.renderer_2d.blend::<{ A }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, self.renderer_3d.gl.fbo.color);
                 let top_screen = if self.common.pow_cnt1[0].display_swap() {
                     screen_layout.get_screen_top()
                 } else {
@@ -333,15 +348,16 @@ impl GpuRenderer {
                 *processed_3d = false;
                 self.processed_3d_condvar.notify_one();
             }
-        }
 
-        let render_time_diff = Instant::now().duration_since(render_time_start);
-        self.render_time_sum += render_time_diff.as_micros() as u32;
-        self.render_time_measure_count += 1;
-        if unlikely(self.render_time_measure_count == 30) {
-            self.render_time_measure_count = 0;
-            self.average_render_time = self.render_time_sum / 30;
-            self.render_time_sum = 0;
+            let render_time_diff = Instant::now().duration_since(render_time_start);
+
+            self.render_time_sum += render_time_diff.as_micros() as u32;
+            self.render_time_measure_count += 1;
+            if unlikely(self.render_time_measure_count == 30) {
+                self.render_time_measure_count = 0;
+                self.average_render_time = self.render_time_sum / 30;
+                self.render_time_sum = 0;
+            }
         }
     }
 

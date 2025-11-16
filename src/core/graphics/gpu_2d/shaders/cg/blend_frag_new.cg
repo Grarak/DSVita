@@ -1,0 +1,108 @@
+float2 in texCoords : TEXCOORD0;
+
+uniform BlendUbo {
+    int bldCntsAlphasYs[192];
+} BlendUbo : BUFFER[0];
+
+uniform sampler2D topLayer : TEXUNIT0;
+uniform sampler2D bottomLayer : TEXUNIT1;
+uniform sampler2D tex3d : TEXUNIT2;
+
+float3 alphaBlendColors(float3 topColor, float3 bottomColor, float eva, float evb) {
+    return topColor * eva + bottomColor * evb;
+}
+
+void main(out float4 color : COLOR) {
+    short y = short(texCoords.y * 191.0);
+    int bldCntAlphaY = BlendUbo.bldCntsAlphasYs[y];
+    short bldCnt = bldCntAlphaY & 0xFFFF;
+    short bldTop = bldCnt & 0xFF;
+    short bldBottom = (bldCnt >> 8) & 0xFF;
+
+    short bldMode = (bldCnt >> 6) & 3;
+
+    float4 topColor = tex2D(topLayer, texCoords);
+    float4 bottomColor = tex2D(bottomLayer, texCoords);
+
+    topColor.rgb *= 255.0 / 31.0;
+    bottomColor.rgb *= 255.0 / 31.0;
+
+    short topLayer = short(topColor.a * 255.0);
+    short bottomLayer = short(bottomColor.a * 255.0);
+
+    short topLayerNum = 5 - ((topLayer >> 3) & 7);
+    short bottomLayerNum = 5 - ((bottomLayer >> 3) & 7);
+
+    bool canBe3d = ((bottomLayer >> 6) & 1) != 0;
+    if (canBe3d) {
+        float4 color3d = tex2D(tex3d, texCoords);
+        if (color3d.a > 0.0) {
+            short invPrio3d = (topLayer >> 6) & 3;
+
+            short topInvPrio = (topLayer >> 1) & 3;
+            if (topLayerNum == 4) {
+                topInvPrio += 1;
+            }
+            if (invPrio3d >= topInvPrio) {
+                bool canBlend = ((bldBottom >> topLayerNum) & 1) != 0;
+                if (canBlend) {
+                    topColor = float4(alphaBlendColors(color3d.rgb, topColor.rgb, color3d.a, 1.0 - color3d.a).rgb, 1.0);
+                    bldMode = 0;
+                } else {
+                    topColor = color3d;
+                    if (bldMode < 2) {
+                        bldMode = 0;
+                    }
+                }
+                topLayerNum = 0;
+            } else {
+                short bottomInvPrio = (bottomLayer >> 1) & 3;
+                if (bottomLayerNum == 4) {
+                    bottomInvPrio += 1;
+                }
+                if (invPrio3d >= bottomInvPrio) {
+                    bottomColor = color3d;
+                    bottomLayerNum = 0;
+                }
+            }
+        }
+    }
+
+    short bldEva = (bldCntAlphaY >> 16) & 0x1F;
+    short bldEvb = (bldCntAlphaY >> 21) & 0x1F;
+    float bldEvaF = float(bldEva) / 16.0;
+    float bldEvbF = float(bldEvb) / 16.0;
+
+    bool topOpaque = (topLayer & 1) != 0;
+    if (topLayerNum == 4 && !topOpaque) {
+        bool canBlend = ((bldBottom >> bottomLayerNum) & 1) != 0;
+        if (canBlend) {
+            topColor = float4(alphaBlendColors(topColor.rgb, bottomColor.rgb, bldEvaF, bldEvbF), 1.0);
+            bldMode = 0;
+        } else if (bldMode < 2) {
+            bldMode = 0;
+        }
+    }
+
+    bool canBlendTop = ((bldTop >> topLayerNum) & 1) != 0;
+    bool canBlendWin = ((bottomLayer >> 7) & 1) == 0;
+    if (bldMode == 0 || !canBlendTop || !canBlendWin) {
+        color = float4(topColor.rgb, 1.0);
+    } else if (bldMode == 1) {
+        bool canBlendBottom = ((bldBottom >> bottomLayerNum) & 1) != 0;
+        if (canBlendBottom) {
+            color = float4(alphaBlendColors(topColor.rgb, bottomColor.rgb, bldEvaF, bldEvbF), 1.0);
+        } else {
+            color = float4(topColor.rgb, 1.0);
+        }
+    } else {
+        short bldY = (bldCntAlphaY >> 26) & 0x1F;
+        float bldYF = float(bldY) / 16.0;
+        if (bldMode == 2) {
+            topColor.rgb += (1.0 - topColor.rgb) * bldYF;
+        } else {
+            topColor.rgb -= topColor.rgb * bldYF;
+        }
+        color = float4(topColor.rgb, 1.0);
+    }
+}

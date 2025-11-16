@@ -40,6 +40,8 @@ pub enum SharkOpt {
 #[link(name = "SceShaccCgExt", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "mathneon", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "vitashark", kind = "static", modifiers = "+whole-archive")]
+#[link(name = "SceRazorHud_stub", kind = "static", modifiers = "+whole-archive")]
+#[link(name = "ScePerf_stub", kind = "static", modifiers = "+whole-archive")]
 extern "C" {
     pub fn vglSwapBuffers(has_commondialog: GLboolean);
     pub fn vglSetupRuntimeShaderCompiler(opt_level: c_uint, use_fastmath: c_int, use_fastprecision: c_int, use_fastint: c_int);
@@ -48,6 +50,9 @@ extern "C" {
     pub fn vglFree(addr: *mut c_void);
     pub fn vglTexImageDepthBuffer(target: GLenum);
     pub fn vglGetProcAddress(name: *const c_char) -> *const c_void;
+    pub fn vglRemapTexPtr() -> *mut c_void;
+    pub fn sceRazorCpuPushMarkerWithHud(label: *const c_char, color: c_int, flags: c_int) -> c_int;
+    pub fn sceRazorCpuPopMarker() -> c_int;
 }
 
 const KEY_CODE_MAPPING: [(SceCtrlButtons, Keycode); 12] = [
@@ -142,7 +147,7 @@ impl Presenter {
             vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe as _, 1, 0, 1);
             info_println!("Initialize vitaGL");
             // Disable multisampling for depth texture
-            vglInitExtended(0, 960, 544, 60 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
+            vglInitExtended(0, 960, 544, 70 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
             gl::load_with(|name| {
                 let name = CString::new(name).unwrap();
                 vglGetProcAddress(name.as_ptr())
@@ -357,6 +362,14 @@ impl Presenter {
         vglTexImageDepthBuffer(gl::TEXTURE_2D);
         gl::BindTexture(gl::TEXTURE_2D, 0);
         tex
+    }
+
+    pub unsafe fn gl_get_tex_ptr() -> *mut u8 {
+        vglGetTexDataPointer(gl::TEXTURE_2D) as _
+    }
+
+    pub unsafe fn gl_remap_tex() -> *mut u8 {
+        vglRemapTexPtr() as _
     }
 }
 

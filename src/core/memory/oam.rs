@@ -37,7 +37,7 @@ impl From<u8> for OamGfxMode {
 #[derive(FromBits)]
 pub struct OamAttrib0 {
     pub y: u8,
-    obj_mode: u2,
+    pub obj_mode: u2,
     gfx_mode: u2,
     pub is_mosaic: bool,
     pub is_8bit: bool,
@@ -59,7 +59,8 @@ impl OamAttrib0 {
 pub struct OamAttrib1 {
     pub x: u9,
     pub affine_index: u3,
-    pub flip: u2,
+    pub h_flip: bool,
+    pub v_flip: bool,
     pub size: u2,
 }
 

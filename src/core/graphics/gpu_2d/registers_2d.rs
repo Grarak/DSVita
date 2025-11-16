@@ -2,7 +2,7 @@ use crate::core::graphics::gpu_2d::Gpu2DEngine;
 use crate::logging::debug_println;
 use bilge::prelude::*;
 use std::cmp::min;
-use std::{mem, ptr};
+use std::mem;
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
@@ -48,12 +48,11 @@ impl DispCnt {
 #[derive(Copy, Clone, FromBits)]
 pub struct BgCnt {
     pub priority: u2,
-    pub char_base_block: u2,
-    pub not_used: u2,
-    pub mosaic: u1,
+    pub char_base_block: u4,
+    pub mosaic: bool,
     pub color_256_palettes: bool,
     pub screen_base_block: u5,
-    pub ext_palette_slot_display_area_overflow: u1,
+    pub ext_palette_slot_display_area_overflow: bool,
     pub screen_size: u2,
 }
 
@@ -65,14 +64,14 @@ impl Default for BgCnt {
 
 #[bitsize(16)]
 #[derive(FromBits)]
-struct BldCnt {
+pub struct BldCnt {
     bg0_1st_target_pixel: bool,
     bg1_1st_target_pixel: bool,
     bg2_1st_target_pixel: bool,
     bg3_1st_target_pixel: bool,
     obj_1st_target_pixel: bool,
     bd_1st_target_pixel: bool,
-    color_special_effect: u2,
+    pub color_special_effect: u2,
     bg0_2nc_target_pixel: bool,
     bg1_2nc_target_pixel: bool,
     bg2_2nc_target_pixel: bool,
@@ -80,6 +79,22 @@ struct BldCnt {
     obj_2nc_target_pixel: bool,
     bd_2nc_target_pixel: bool,
     not_used: u2,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum BldMode {
+    None = 0,
+    AlphaBlending = 1,
+    BrightnessIncrease = 2,
+    BrightnessDecrease = 3,
+}
+
+impl From<u8> for BldMode {
+    fn from(value: u8) -> Self {
+        debug_assert!(value <= BldMode::BrightnessDecrease as u8);
+        unsafe { mem::transmute(value) }
+    }
 }
 
 #[repr(u8)]
@@ -101,8 +116,6 @@ impl From<u8> for DisplayMode {
 pub struct Gpu2DRegistersInner {
     x: [i32; 2],
     y: [i32; 2],
-    win_h_flip: [bool; 2],
-    win_v_flip: [bool; 2],
 }
 
 #[derive(Default)]
@@ -125,10 +138,6 @@ pub struct Gpu2DRegisters {
     pub bld_y: u8,
     pub win_h: [u16; 2],
     pub win_v: [u16; 2],
-    win_x1: [u8; 2],
-    win_x2: [u8; 2],
-    win_y1: [u8; 2],
-    win_y2: [u8; 2],
     pub win_in: u16,
     pub win_out: u16,
     pub mosaic: u16,
@@ -217,34 +226,10 @@ impl Gpu2DRegisters {
 
     pub fn set_win_h(&mut self, win: usize, mask: u16, value: u16) {
         self.win_h[win] = (self.win_h[win] & !mask) | (value & mask);
-
-        if (mask & 0x00FF) != 0 {
-            self.win_x2[win] = value as u8
-        }
-        if (mask & 0xFF00) != 0 {
-            self.win_x1[win] = (value >> 8) as u8
-        }
-
-        self.internal.win_h_flip[win] = self.win_x1[win] > self.win_x2[win];
-        if self.internal.win_h_flip[win] {
-            unsafe { ptr::swap(&mut self.win_x1[win], &mut self.win_x2[win]) };
-        }
     }
 
     pub fn set_win_v(&mut self, win: usize, mask: u16, value: u16) {
         self.win_v[win] = (self.win_v[win] & !mask) | (value & mask);
-
-        if (mask & 0x00FF) != 0 {
-            self.win_y2[win] = value as u8
-        }
-        if (mask & 0xFF00) != 0 {
-            self.win_y1[win] = (value >> 8) as u8
-        }
-
-        self.internal.win_v_flip[win] = self.win_y1[win] > self.win_y2[win];
-        if self.internal.win_v_flip[win] {
-            unsafe { ptr::swap(&mut self.win_y1[win], &mut self.win_y2[win]) };
-        }
     }
 
     pub fn set_win_in(&mut self, mut mask: u16, value: u16) {
@@ -268,7 +253,10 @@ impl Gpu2DRegisters {
 
     pub fn set_bld_alpha(&mut self, mut mask: u16, value: u16) {
         mask &= 0x1F1F;
-        self.bld_alpha = (self.bld_alpha & !mask) | (value & mask);
+        let alpha = (self.bld_alpha & !mask) | (value & mask);
+        let eva = min(alpha & 0x1F, 16);
+        let evb = min(alpha >> 8, 16);
+        self.bld_alpha = eva | (evb << 8);
     }
 
     pub fn set_bld_y(&mut self, value: u8) {

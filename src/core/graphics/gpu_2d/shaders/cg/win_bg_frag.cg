@@ -3,10 +3,8 @@ float3 in screenPos : TEXCOORD0;
 uniform int dispCnt;
 
 uniform WinBgUbo {
-    int winH[192 * 2];
-    int winV[192 * 2];
-    int winIn[192];
-    int winOut[192];
+    int winHV[192 * 2];
+    int winInOut[192];
 } WinBgUbo : BUFFER[0];
 
 static float4 oColor;
@@ -17,8 +15,9 @@ bool checkBounds(short x, short y, short winNum) {
         return false;
     }
 
-    int h = WinBgUbo.winH[winNum * 192 + y];
-    int v = WinBgUbo.winV[winNum * 192 + y];
+    int hv = WinBgUbo.winHV[y * 2 + winNum];
+    short h = hv & 0xFFFF;
+    short v = (hv >> 16) & 0xFFFF;
 
     int winX1 = (h >> 8) & 0xFF;
     int winX2 = h & 0xFF;
@@ -46,7 +45,8 @@ bool checkBounds(short x, short y, short winNum) {
         }
     }
 
-    short enabled = (WinBgUbo.winIn[y] >> (winNum * 8)) & 0xFF;
+    short winIn = WinBgUbo.winInOut[y] & 0xFFFF;
+    short enabled = (winIn >> (winNum * 8)) & 0xFF;
     oColor = float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
     return true;
 }
@@ -56,7 +56,7 @@ void main(out float4 color : COLOR) {
     short y = short(screenPos.y);
 
     if (!checkBounds(x, y, 0) && !checkBounds(x, y, 1)) {
-        short enabled = WinBgUbo.winOut[y] & 0xFF;
+        short enabled = (WinBgUbo.winInOut[y] >> 16) & 0xFF;
         oColor = float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
     }
 

@@ -3,157 +3,24 @@ use crate::core::graphics::gl_utils::{
     sub_pal_texture2d, GpuFbo,
 };
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use crate::core::graphics::gpu_2d::registers_2d::{BgCnt, DispCnt, Gpu2DRegisters};
+use crate::core::graphics::gpu_2d::registers_2d::{BgCnt, DispCnt};
+use crate::core::graphics::gpu_2d::renderer_regs_2d::{BgUbo, BlendUbo, Gpu2DMem, Gpu2DRenderRegs, Gpu2DRenderRegsShared, WinBgUbo};
 use crate::core::graphics::gpu_2d::Gpu2DEngine;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
-use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
-use crate::core::graphics::gpu_renderer::GpuRendererCommon;
+use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
-use crate::core::memory::regions;
-use crate::utils;
-use crate::utils::rgb5_to_float8;
+use crate::core::memory::{regions, vram};
+use crate::utils::{self, HeapMemU8};
+use crate::utils::{rgb5_to_float8, PtrWrapper};
 use gl::types::{GLint, GLuint};
 use static_assertions::const_assert;
 use std::hint::unreachable_unchecked;
-use std::intrinsics::unlikely;
 use std::{mem, ptr, slice};
-
-pub struct Gpu2DMem {
-    lcdc_ptr: *const u8,
-    bg_ptr: *const u8,
-    obj_ptr: *const u8,
-    pal_ptr: *const u8,
-    oam_ptr: *const u8,
-    bg_ext_pal_ptr: *const u8,
-    obj_ext_pal_ptr: *const u8,
-}
-
-impl Gpu2DMem {
-    fn new<const ENGINE: Gpu2DEngine>(buf: &GpuMemBuf) -> Self {
-        match ENGINE {
-            A => Gpu2DMem {
-                lcdc_ptr: buf.lcdc.as_ptr(),
-                bg_ptr: buf.bg_a.as_ptr(),
-                obj_ptr: buf.obj_a.as_ptr(),
-                pal_ptr: buf.pal_a[0].as_ptr(),
-                oam_ptr: buf.oam_a[0].as_ptr(),
-                bg_ext_pal_ptr: buf.bg_a_ext_palette.as_ptr(),
-                obj_ext_pal_ptr: buf.obj_a_ext_palette.as_ptr(),
-            },
-            B => Gpu2DMem {
-                lcdc_ptr: ptr::null(),
-                bg_ptr: buf.bg_b.as_ptr(),
-                obj_ptr: buf.obj_b.as_ptr(),
-                pal_ptr: buf.pal_b[0].as_ptr(),
-                oam_ptr: buf.oam_b[0].as_ptr(),
-                bg_ext_pal_ptr: buf.bg_b_ext_palette.as_ptr(),
-                obj_ext_pal_ptr: buf.obj_b_ext_palette.as_ptr(),
-            },
-        }
-    }
-}
 
 const BG_A_TEX_HEIGHT: u32 = 512;
 const BG_B_TEX_HEIGHT: u32 = 128;
 const OBJ_A_TEX_HEIGHT: u32 = 256;
 const OBJ_B_TEX_HEIGHT: u32 = 128;
-
-#[derive(Clone)]
-#[repr(C)]
-struct WinBgUbo {
-    win_h: [u32; DISPLAY_HEIGHT * 2],
-    win_v: [u32; DISPLAY_HEIGHT * 2],
-    win_in: [u32; DISPLAY_HEIGHT],
-    win_out: [u32; DISPLAY_HEIGHT],
-}
-
-const_assert!(size_of::<WinBgUbo>() <= 16 * 1024);
-
-#[derive(Clone)]
-#[repr(C)]
-struct BgUbo {
-    ofs: [u32; DISPLAY_HEIGHT * 4],
-    x: [i32; DISPLAY_HEIGHT * 2],
-    y: [i32; DISPLAY_HEIGHT * 2],
-    pa: [i32; DISPLAY_HEIGHT * 2],
-    pb: [i32; DISPLAY_HEIGHT * 2],
-    pc: [i32; DISPLAY_HEIGHT * 2],
-    pd: [i32; DISPLAY_HEIGHT * 2],
-}
-
-const_assert!(size_of::<BgUbo>() <= 16 * 1024);
-
-#[derive(Clone)]
-pub struct Gpu2DRenderRegs {
-    disp_cnts: [u32; DISPLAY_HEIGHT],
-    bg_cnts: [u16; DISPLAY_HEIGHT * 4],
-    win_bg_ubo: WinBgUbo,
-    bg_ubo: BgUbo,
-    blend_ubo: BlendUbo,
-}
-
-impl Gpu2DRenderRegs {
-    fn reset(&mut self) {
-        self.disp_cnts = unsafe { mem::zeroed() };
-        self.bg_cnts = unsafe { mem::zeroed() };
-    }
-}
-
-impl Default for Gpu2DRenderRegs {
-    fn default() -> Self {
-        unsafe { mem::zeroed() }
-    }
-}
-
-impl Gpu2DRenderRegs {
-    fn on_scanline(&mut self, inner: &mut Gpu2DRegisters, line: u8) {
-        let line = line as usize;
-
-        self.disp_cnts[line] = u32::from(inner.disp_cnt);
-        for i in 0..4 {
-            self.bg_cnts[line * 4 + i] = u16::from(inner.bg_cnt[i]);
-        }
-
-        for i in 0..2 {
-            self.win_bg_ubo.win_h[i * DISPLAY_HEIGHT + line] = inner.win_h[i] as u32;
-            self.win_bg_ubo.win_v[i * DISPLAY_HEIGHT + line] = inner.win_v[i] as u32;
-        }
-        self.win_bg_ubo.win_in[line] = inner.win_in as u32;
-        self.win_bg_ubo.win_out[line] = inner.win_out as u32;
-
-        for i in 0..4 {
-            self.bg_ubo.ofs[i * DISPLAY_HEIGHT + line] = (inner.bg_h_ofs[i] as u32) | ((inner.bg_v_ofs[i] as u32) << 16);
-        }
-        for i in 0..2 {
-            self.bg_ubo.x[i * DISPLAY_HEIGHT + line] = inner.bg_x[i];
-            self.bg_ubo.y[i * DISPLAY_HEIGHT + line] = inner.bg_y[i];
-            self.bg_ubo.pa[i * DISPLAY_HEIGHT + line] = inner.bg_pa[i] as i32;
-            self.bg_ubo.pc[i * DISPLAY_HEIGHT + line] = inner.bg_pc[i] as i32;
-        }
-
-        if unlikely(line == 0) || inner.bg_x_dirty {
-            self.bg_ubo.pb[line] = 0;
-            self.bg_ubo.pb[DISPLAY_HEIGHT + line] = 0;
-            inner.bg_x_dirty = false;
-        } else {
-            self.bg_ubo.pb[line] = inner.bg_pb[0] as i32 + self.bg_ubo.pb[line - 1];
-            self.bg_ubo.pb[DISPLAY_HEIGHT + line] = inner.bg_pb[1] as i32 + self.bg_ubo.pb[DISPLAY_HEIGHT + line - 1];
-        }
-
-        if unlikely(line == 0) || inner.bg_y_dirty {
-            self.bg_ubo.pd[line] = 0;
-            self.bg_ubo.pd[DISPLAY_HEIGHT + line] = 0;
-            inner.bg_y_dirty = false;
-        } else {
-            self.bg_ubo.pd[line] = inner.bg_pd[0] as i32 + self.bg_ubo.pd[line - 1];
-            self.bg_ubo.pd[DISPLAY_HEIGHT + line] = inner.bg_pd[1] as i32 + self.bg_ubo.pd[DISPLAY_HEIGHT + line - 1];
-        }
-
-        self.blend_ubo.bld_cnts[line] = inner.bld_cnt as u32;
-        self.blend_ubo.bld_alphas[line] = inner.bld_alpha as u32;
-        self.blend_ubo.bld_ys[line] = inner.bld_y as u32;
-    }
-}
 
 const fn generate_obj_vertices() -> [f32; 128 * 4 * 2] {
     let mut vertices: [f32; 128 * 4 * 2] = unsafe { mem::zeroed() };
@@ -195,8 +62,7 @@ const OBJ_OAM_INDICES: [u8; 128 * 4] = generate_oam_indices();
 
 #[repr(C)]
 struct ObjUbo {
-    map_widths: [u32; 128],
-    obj_bounds: [u32; 128],
+    map_widths_obj_bounds: [u32; 128 * 2],
 }
 
 const_assert!(size_of::<ObjUbo>() <= 16 * 1024);
@@ -207,15 +73,31 @@ impl Default for ObjUbo {
     }
 }
 
-#[derive(Clone)]
-#[repr(C)]
-struct BlendUbo {
-    bld_cnts: [u32; DISPLAY_HEIGHT],
-    bld_alphas: [u32; DISPLAY_HEIGHT],
-    bld_ys: [u32; DISPLAY_HEIGHT],
+struct Gpu2DTexMem {
+    bg: Vec<u8>,
+    obj: Vec<u8>,
+    oam: HeapMemU8<{ regions::OAM_SIZE as usize / 2 }>,
+    pal: HeapMemU8<{ regions::STANDARD_PALETTES_SIZE as usize / 2 }>,
+    bg_ext_pal: HeapMemU8<{ vram::BG_EXT_PAL_SIZE }>,
+    obj_ext_pal: HeapMemU8<{ vram::OBJ_EXT_PAL_SIZE }>,
 }
 
-const_assert!(size_of::<BlendUbo>() <= 16 * 1024);
+impl Gpu2DTexMem {
+    fn new(bg_size: u32, obj_size: u32) -> Self {
+        let mut bg = Vec::new();
+        bg.resize(bg_size as usize, 0);
+        let mut obj = Vec::new();
+        obj.resize(obj_size as usize, 0);
+        Gpu2DTexMem {
+            bg,
+            obj,
+            oam: HeapMemU8::new(),
+            pal: HeapMemU8::new(),
+            bg_ext_pal: HeapMemU8::new(),
+            obj_ext_pal: HeapMemU8::new(),
+        }
+    }
+}
 
 struct Gpu2DTextures {
     oam: GLuint,
@@ -228,6 +110,8 @@ struct Gpu2DTextures {
     pal: GLuint,
     bg_ext_pal: GLuint,
     obj_ext_pal: GLuint,
+    #[cfg(target_os = "linux")]
+    mem: Gpu2DTexMem,
 }
 
 impl Gpu2DTextures {
@@ -244,6 +128,8 @@ impl Gpu2DTextures {
                 pal: create_pal_texture1d(regions::STANDARD_PALETTES_SIZE / 2),
                 bg_ext_pal: create_pal_texture2d(1024, 32),
                 obj_ext_pal: create_pal_texture2d(1024, 8),
+                #[cfg(target_os = "linux")]
+                mem: Gpu2DTexMem::new(bg_width * bg_height, obj_width * obj_height),
             }
         }
     }
@@ -427,19 +313,15 @@ struct Gpu2DProgram {
 }
 
 macro_rules! draw_scanlines {
-    ($regs:expr, $draw_fn:expr, $draw_vram_display:expr, $lcdc_pal:expr) => {{
+    ($regs:expr, $draw_fn:expr, $draw_vram_display:expr, $lcdc_pal:expr, $is_bg:expr) => {{
         let mut line = 0;
         while line < DISPLAY_HEIGHT {
             let from_line = line;
+            let from_disp_cnt = $regs.disp_cnts[from_line];
+            let from_bg_cnts = &$regs.bg_cnts[from_line * 4..from_line * 4 + 4];
             line += 1;
             while line < DISPLAY_HEIGHT {
-                if $regs.disp_cnts[from_line] != $regs.disp_cnts[line] || {
-                    let mut diff = false;
-                    for i in 0..4 {
-                        diff |= $regs.bg_cnts[from_line * 4 + i] != $regs.bg_cnts[line * 4 + i];
-                    }
-                    diff
-                } {
+                if from_disp_cnt != $regs.disp_cnts[line] || ($is_bg && from_bg_cnts != &$regs.bg_cnts[line * 4..line * 4 + 4]) {
                     break;
                 }
                 line += 1;
@@ -650,11 +532,11 @@ impl Gpu2DProgram {
             return;
         }
 
-        if disp_cnt.obj_window_display_flag() {
-            self.assemble_oam::<true>(mem, from_line, to_line, disp_cnt);
+        let highest_index = if disp_cnt.obj_window_display_flag() {
+            self.assemble_oam::<true>(mem, from_line, to_line, disp_cnt)
         } else {
-            self.assemble_oam::<false>(mem, from_line, to_line, disp_cnt);
-        }
+            self.assemble_oam::<false>(mem, from_line, to_line, disp_cnt)
+        };
 
         if self.obj_oam_indices.is_empty() {
             return;
@@ -663,7 +545,12 @@ impl Gpu2DProgram {
         gl::Uniform1i(self.obj_disp_cnt_loc, u32::from(disp_cnt) as _);
 
         gl::BindBuffer(gl::UNIFORM_BUFFER, self.obj_ubo);
-        gl::BufferData(gl::UNIFORM_BUFFER, size_of::<ObjUbo>() as _, ptr::addr_of!(self.obj_ubo_data) as _, gl::DYNAMIC_DRAW);
+        gl::BufferData(
+            gl::UNIFORM_BUFFER,
+            ((highest_index + 1) * size_of::<[u32; 2]>()) as _,
+            ptr::addr_of!(self.obj_ubo_data) as _,
+            gl::DYNAMIC_DRAW,
+        );
         gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, self.obj_ubo);
 
         gl::DrawElements(gl::TRIANGLES, (6 * self.obj_oam_indices.len()) as _, gl::UNSIGNED_SHORT, self.obj_oam_indices.as_ptr() as _);
@@ -747,9 +634,6 @@ impl Gpu2DProgram {
     unsafe fn draw_bg(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, from_line: u8, to_line: u8) {
         let disp_cnt = regs.disp_cnts[from_line as usize];
 
-        gl::BindBuffer(gl::UNIFORM_BUFFER, self.bg_ubo);
-        gl::BufferData(gl::UNIFORM_BUFFER, size_of::<BgUbo>() as _, ptr::addr_of!(regs.bg_ubo) as _, gl::DYNAMIC_DRAW);
-
         let disp_cnt = DispCnt::from(disp_cnt);
         macro_rules! draw {
             ($bg3mode:expr, $bg2mode:expr, $bg1mode:expr, $bg0mode:expr) => {{
@@ -805,14 +689,13 @@ impl Gpu2DProgram {
                     _ => {}
                 }
             };
-            draw_scanlines!(regs, draw_bg, false, 0);
+            draw_scanlines!(regs, draw_bg, false, 0, false);
         }
 
         gl::BindFramebuffer(gl::FRAMEBUFFER, self.blend_fbo.fbo);
         gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
-        let pal_slice = slice::from_raw_parts(mem.pal_ptr, regions::STANDARD_PALETTES_SIZE as usize / 2);
-        let backdrop = utils::read_from_mem::<u16>(pal_slice, 0);
+        let backdrop = utils::read_from_mem::<u16>(mem.pal, 0);
         let (r, g, b) = rgb5_to_float8(backdrop);
         gl::ClearColor(r, g, b, 1f32);
         gl::Clear(gl::COLOR_BUFFER_BIT);
@@ -864,24 +747,26 @@ impl Gpu2DProgram {
             gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, common.win_bg_ubo);
 
             let draw_windows = |from_line, to_line| self.draw_windows(common, regs, from_line, to_line);
-            draw_scanlines!(regs, draw_windows, false, lcdc_pal);
+            draw_scanlines!(regs, draw_windows, false, lcdc_pal, false);
 
             gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
             gl::UseProgram(0);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
         }
 
-        gl::BindTexture(gl::TEXTURE_2D, texs.oam);
-        sub_mem_texture1d(regions::OAM_SIZE / 2, mem.oam_ptr);
+        if cfg!(target_os = "linux") {
+            gl::BindTexture(gl::TEXTURE_2D, texs.oam);
+            sub_mem_texture1d(regions::OAM_SIZE / 2, mem.oam.as_ptr());
 
-        gl::BindTexture(gl::TEXTURE_2D, texs.obj);
-        sub_mem_texture2d(texs.obj_width, texs.obj_height, mem.obj_ptr);
+            gl::BindTexture(gl::TEXTURE_2D, texs.obj);
+            sub_mem_texture2d(texs.obj_width, texs.obj_height, mem.obj.as_ptr());
 
-        gl::BindTexture(gl::TEXTURE_2D, texs.pal);
-        sub_pal_texture1d(regions::STANDARD_PALETTES_SIZE / 2, mem.pal_ptr);
+            gl::BindTexture(gl::TEXTURE_2D, texs.pal);
+            sub_pal_texture1d(regions::STANDARD_PALETTES_SIZE / 2, mem.pal.as_ptr());
 
-        gl::BindTexture(gl::TEXTURE_2D, texs.obj_ext_pal);
-        sub_pal_texture2d(1024, 8, mem.obj_ext_pal_ptr);
+            gl::BindTexture(gl::TEXTURE_2D, texs.obj_ext_pal);
+            sub_pal_texture2d(1024, 8, mem.obj_ext_pal.as_ptr());
+        }
 
         gl::BindTexture(gl::TEXTURE_2D, 0);
 
@@ -914,7 +799,7 @@ impl Gpu2DProgram {
             gl::DepthFunc(gl::LESS);
 
             let mut draw_objects = |from_line, to_line| self.draw_objects(regs, &mem, from_line, to_line);
-            draw_scanlines!(regs, draw_objects, false, lcdc_pal);
+            draw_scanlines!(regs, draw_objects, false, lcdc_pal, false);
 
             gl::Disable(gl::DEPTH_TEST);
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -922,11 +807,13 @@ impl Gpu2DProgram {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
         }
 
-        gl::BindTexture(gl::TEXTURE_2D, texs.bg);
-        sub_mem_texture2d(texs.bg_width, texs.bg_height, mem.bg_ptr);
+        if cfg!(target_os = "linux") {
+            gl::BindTexture(gl::TEXTURE_2D, texs.bg);
+            sub_mem_texture2d(texs.bg_width, texs.bg_height, mem.bg.as_ptr());
 
-        gl::BindTexture(gl::TEXTURE_2D, texs.bg_ext_pal);
-        sub_pal_texture2d(1024, 32, mem.bg_ext_pal_ptr);
+            gl::BindTexture(gl::TEXTURE_2D, texs.bg_ext_pal);
+            sub_pal_texture2d(1024, 32, mem.bg_ext_pal.as_ptr());
+        }
 
         {
             for i in 0..4 {
@@ -936,15 +823,20 @@ impl Gpu2DProgram {
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             }
 
+            gl::BindBuffer(gl::UNIFORM_BUFFER, self.bg_ubo);
+            gl::BufferData(gl::UNIFORM_BUFFER, size_of::<BgUbo>() as _, ptr::addr_of!(regs.bg_ubo) as _, gl::DYNAMIC_DRAW);
+
             let draw_bg = |from_line, to_line| self.draw_bg(common, regs, texs, from_line, to_line);
-            draw_scanlines!(regs, draw_bg, false, lcdc_pal);
+            draw_scanlines!(regs, draw_bg, false, lcdc_pal, true);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
 
         if lcdc_pal != 0 {
-            gl::BindTexture(gl::TEXTURE_2D, lcdc_pal);
-            sub_pal_texture2d(1024, 656, mem.lcdc_ptr);
+            if cfg!(target_os = "linux") {
+                gl::BindTexture(gl::TEXTURE_2D, lcdc_pal);
+                sub_pal_texture2d(1024, 656, mem.lcdc.as_ptr());
+            }
 
             gl::UseProgram(vram_display_program.program);
 
@@ -957,7 +849,7 @@ impl Gpu2DProgram {
             gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
             let draw_vram_display = |from_line, to_line| vram_display_program.draw(regs, from_line, to_line);
-            draw_scanlines!(regs, draw_vram_display, true, lcdc_pal);
+            draw_scanlines!(regs, draw_vram_display, true, lcdc_pal, false);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
@@ -967,10 +859,11 @@ impl Gpu2DProgram {
         gl::UseProgram(0);
     }
 
-    fn assemble_oam<const OBJ_WINDOW: bool>(&mut self, mem: &Gpu2DMem, from_line: u8, to_line: u8, disp_cnt: DispCnt) {
+    fn assemble_oam<const OBJ_WINDOW: bool>(&mut self, mem: &Gpu2DMem, from_line: u8, to_line: u8, disp_cnt: DispCnt) -> usize {
         const OAM_COUNT: usize = regions::OAM_SIZE as usize / 2 / size_of::<OamAttribs>();
-        let oams = unsafe { slice::from_raw_parts(mem.oam_ptr as *const OamAttribs, OAM_COUNT) };
+        let oams = unsafe { slice::from_raw_parts(mem.oam.as_ptr() as *const OamAttribs, OAM_COUNT) };
 
+        let mut highest_index = 0;
         self.obj_oam_indices.clear();
         for (i, oam) in oams.iter().enumerate() {
             let attrib0 = OamAttrib0::from(oam.attr0);
@@ -1019,38 +912,40 @@ impl Gpu2DProgram {
 
             if gfx_mode == OamGfxMode::Bitmap {
                 if disp_cnt.bitmap_obj_mapping() {
-                    self.obj_ubo_data.map_widths[i] = width as u32;
-                    self.obj_ubo_data.obj_bounds[i] = u16::from(OamAttrib2::from(oam.attr2).tile_index()) as u32 * if disp_cnt.bitmap_obj_1d_boundary() { 256 } else { 128 };
+                    self.obj_ubo_data.map_widths_obj_bounds[i * 2] = width as u32;
+                    self.obj_ubo_data.map_widths_obj_bounds[i * 2 + 1] = u16::from(OamAttrib2::from(oam.attr2).tile_index()) as u32 * if disp_cnt.bitmap_obj_1d_boundary() { 256 } else { 128 };
                 } else {
-                    self.obj_ubo_data.map_widths[i] = if disp_cnt.bitmap_obj_2d() { 256 } else { 128 };
+                    self.obj_ubo_data.map_widths_obj_bounds[i * 2] = if disp_cnt.bitmap_obj_2d() { 256 } else { 128 };
                     let x_mask = if disp_cnt.bitmap_obj_2d() { 0x1F } else { 0x0F };
-                    self.obj_ubo_data.obj_bounds[i] = (oam.attr2 & x_mask) as u32 * 0x10 + (oam.attr2 & 0x3FF & !x_mask) as u32 * 0x80;
+                    self.obj_ubo_data.map_widths_obj_bounds[i * 2 + 1] = (oam.attr2 & x_mask) as u32 * 0x10 + (oam.attr2 & 0x3FF & !x_mask) as u32 * 0x80;
                 }
             } else if disp_cnt.tile_1d_obj_mapping() {
-                self.obj_ubo_data.map_widths[i] = width as u32;
-                self.obj_ubo_data.obj_bounds[i] = 32 << u8::from(disp_cnt.tile_obj_1d_boundary());
+                self.obj_ubo_data.map_widths_obj_bounds[i * 2] = width as u32;
+                self.obj_ubo_data.map_widths_obj_bounds[i * 2 + 1] = 32 << u8::from(disp_cnt.tile_obj_1d_boundary());
             } else {
-                self.obj_ubo_data.map_widths[i] = if attrib0.is_8bit() { 128 } else { 256 };
-                self.obj_ubo_data.obj_bounds[i] = 32;
+                self.obj_ubo_data.map_widths_obj_bounds[i * 2] = if attrib0.is_8bit() { 128 } else { 256 };
+                self.obj_ubo_data.map_widths_obj_bounds[i * 2 + 1] = 32;
             }
 
             let index_base = (i * 4) as u16;
             self.obj_oam_indices.push([index_base, index_base + 1, index_base + 2, index_base, index_base + 2, index_base + 3]);
+            if i > highest_index {
+                highest_index = i;
+            }
         }
+        highest_index
     }
 }
 
 pub struct Gpu2DRenderer {
-    regs_a: [Box<Gpu2DRenderRegs>; 2],
-    regs_b: [Box<Gpu2DRenderRegs>; 2],
-    pub has_vram_display: [bool; 2],
     lcdc_pal: GLuint,
     vram_display_program: Gpu2DVramDisplayProgram,
-    tex_a: Gpu2DTextures,
-    tex_b: Gpu2DTextures,
+    texs: [Gpu2DTextures; 2],
     pub common: Gpu2DCommon,
     program_a: Gpu2DProgram,
     program_b: Gpu2DProgram,
+    #[cfg(target_os = "linux")]
+    lcdc_mem_buf: HeapMemU8<{ vram::TOTAL_SIZE }>,
 }
 
 impl Gpu2DRenderer {
@@ -1062,16 +957,17 @@ impl Gpu2DRenderer {
             let bg_vert_bitmap_shader = create_shader("bg bitmap", shader_source!("bg_vert_bitmap"), gl::VERTEX_SHADER).unwrap();
 
             let instance = Gpu2DRenderer {
-                regs_a: [Box::new(Gpu2DRenderRegs::default()), Box::new(Gpu2DRenderRegs::default())],
-                regs_b: [Box::new(Gpu2DRenderRegs::default()), Box::new(Gpu2DRenderRegs::default())],
-                has_vram_display: [false; 2],
                 lcdc_pal: create_pal_texture2d(1024, 656),
                 vram_display_program: Gpu2DVramDisplayProgram::new(),
-                tex_a: Gpu2DTextures::new(1024, OBJ_A_TEX_HEIGHT, 1024, BG_A_TEX_HEIGHT),
-                tex_b: Gpu2DTextures::new(1024, OBJ_B_TEX_HEIGHT, 1024, BG_B_TEX_HEIGHT),
+                texs: [
+                    Gpu2DTextures::new(1024, OBJ_A_TEX_HEIGHT, 1024, BG_A_TEX_HEIGHT),
+                    Gpu2DTextures::new(1024, OBJ_B_TEX_HEIGHT, 1024, BG_B_TEX_HEIGHT),
+                ],
                 common: Gpu2DCommon::new(),
                 program_a: Gpu2DProgram::new::<{ A }>(obj_vert_shader, bg_vert_shader, bg_vert_affine_extended_shader, bg_vert_bitmap_shader),
                 program_b: Gpu2DProgram::new::<{ B }>(obj_vert_shader, bg_vert_shader, bg_vert_affine_extended_shader, bg_vert_bitmap_shader),
+                #[cfg(target_os = "linux")]
+                lcdc_mem_buf: HeapMemU8::new(),
             };
 
             gl::DeleteShader(obj_vert_shader);
@@ -1083,55 +979,80 @@ impl Gpu2DRenderer {
         }
     }
 
-    pub fn init(&mut self) {
-        self.regs_a[0].reset();
-        self.regs_b[0].reset();
-        self.has_vram_display[0] = false;
-        self.reload_registers();
-    }
+    pub fn set_tex_ptrs(&mut self, refs: &mut GpuMemRefs) {
+        #[cfg(target_os = "linux")]
+        unsafe {
+            refs.lcdc = PtrWrapper::new(mem::transmute(self.lcdc_mem_buf.as_mut_ptr()));
 
-    pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters, inner_b: &mut Gpu2DRegisters, line: u8) {
-        self.regs_a[1].on_scanline(inner_a, line);
-        self.regs_b[1].on_scanline(inner_b, line);
-        if u8::from(DispCnt::from(self.regs_a[1].disp_cnts[line as usize]).display_mode()) == 2 {
-            self.has_vram_display[1] = true;
+            refs.bg_a = PtrWrapper::new(mem::transmute(self.texs[0].mem.bg.as_mut_ptr()));
+            refs.obj_a = PtrWrapper::new(mem::transmute(self.texs[0].mem.obj.as_mut_ptr()));
+            refs.bg_a_ext_pal = PtrWrapper::new(mem::transmute(self.texs[0].mem.bg_ext_pal.as_mut_ptr()));
+            refs.obj_a_ext_pal = PtrWrapper::new(mem::transmute(self.texs[0].mem.obj_ext_pal.as_mut_ptr()));
+            refs.oam_a = PtrWrapper::new(mem::transmute(self.texs[0].mem.oam.as_mut_ptr()));
+            refs.pal_a = PtrWrapper::new(mem::transmute(self.texs[0].mem.pal.as_mut_ptr()));
+
+            refs.bg_b = PtrWrapper::new(mem::transmute(self.texs[1].mem.bg.as_mut_ptr()));
+            refs.obj_b = PtrWrapper::new(mem::transmute(self.texs[1].mem.obj.as_mut_ptr()));
+            refs.bg_b_ext_pal = PtrWrapper::new(mem::transmute(self.texs[1].mem.bg_ext_pal.as_mut_ptr()));
+            refs.obj_b_ext_pal = PtrWrapper::new(mem::transmute(self.texs[1].mem.obj_ext_pal.as_mut_ptr()));
+            refs.oam_b = PtrWrapper::new(mem::transmute(self.texs[1].mem.oam.as_mut_ptr()));
+            refs.pal_b = PtrWrapper::new(mem::transmute(self.texs[1].mem.pal.as_mut_ptr()));
+        }
+
+        #[cfg(target_os = "vita")]
+        unsafe {
+            use crate::presenter::Presenter;
+            gl::BindTexture(gl::TEXTURE_2D, self.lcdc_pal);
+            refs.lcdc = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[0].bg);
+            refs.bg_a = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[0].obj);
+            refs.obj_a = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[0].bg_ext_pal);
+            refs.bg_a_ext_pal = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[0].obj_ext_pal);
+            refs.obj_a_ext_pal = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[0].oam);
+            refs.oam_a = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[0].pal);
+            refs.pal_a = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[1].bg);
+            refs.bg_b = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[1].obj);
+            refs.obj_b = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[1].bg_ext_pal);
+            refs.bg_b_ext_pal = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[1].obj_ext_pal);
+            refs.obj_b_ext_pal = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[1].oam);
+            refs.oam_b = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
+            gl::BindTexture(gl::TEXTURE_2D, self.texs[1].pal);
+            refs.pal_b = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
         }
     }
 
-    pub fn on_scanline_finish(&mut self) {
-        self.regs_a.swap(0, 1);
-        self.regs_b.swap(0, 1);
-        self.has_vram_display[0] = self.has_vram_display[1];
-    }
-
-    pub fn reload_registers(&mut self) {
-        self.regs_a[1].reset();
-        self.regs_b[1].reset();
-        self.has_vram_display[1] = false;
-    }
-
-    pub unsafe fn draw<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon) {
+    pub unsafe fn draw<const ENGINE: Gpu2DEngine>(&mut self, mem_refs: &GpuMemRefs, regs: &Gpu2DRenderRegsShared) {
         match ENGINE {
             A => self.program_a.draw(
                 &self.common,
-                &self.regs_a[0],
-                &self.tex_a,
-                Gpu2DMem::new::<{ A }>(&common.mem_buf),
-                if self.has_vram_display[0] { self.lcdc_pal } else { 0 },
+                &regs.regs_a[0],
+                &self.texs[0],
+                Gpu2DMem::new::<{ A }>(mem_refs),
+                if regs.has_vram_display[0] { self.lcdc_pal } else { 0 },
                 &self.vram_display_program,
             ),
             B => self
                 .program_b
-                .draw(&self.common, &self.regs_b[0], &self.tex_b, Gpu2DMem::new::<{ B }>(&common.mem_buf), 0, &self.vram_display_program),
+                .draw(&self.common, &regs.regs_b[0], &self.texs[1], Gpu2DMem::new::<{ B }>(mem_refs), 0, &self.vram_display_program),
         }
     }
 
-    pub unsafe fn blend<const ENGINE: Gpu2DEngine>(&mut self, common: &GpuRendererCommon, fb_tex_3d: GLuint) -> GLuint {
+    pub unsafe fn blend<const ENGINE: Gpu2DEngine>(&mut self, mem_refs: &GpuMemRefs, regs: &Gpu2DRenderRegsShared, fb_tex_3d: GLuint) -> GLuint {
         match ENGINE {
-            A => self
-                .program_a
-                .blend_fbos(&self.common, &self.regs_a[0], &self.tex_a, &Gpu2DMem::new::<{ A }>(&common.mem_buf), fb_tex_3d),
-            B => self.program_b.blend_fbos(&self.common, &self.regs_b[0], &self.tex_b, &Gpu2DMem::new::<{ B }>(&common.mem_buf), 0),
+            A => self.program_a.blend_fbos(&self.common, &regs.regs_a[0], &self.texs[0], &Gpu2DMem::new::<{ A }>(mem_refs), fb_tex_3d),
+            B => self.program_b.blend_fbos(&self.common, &regs.regs_b[0], &self.texs[1], &Gpu2DMem::new::<{ B }>(mem_refs), 0),
         }
     }
 }

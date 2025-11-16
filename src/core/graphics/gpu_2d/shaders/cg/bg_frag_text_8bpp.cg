@@ -2,7 +2,7 @@ float4 drawText(short x, short y, short bgNum) {
     int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
     int charAddr = ((dispCnt >> 8u) & 0x70000) + ((bgCnt << 12) & 0x3C000);
 
-    int of = BgUbo.bgOfs[bgNum * 192 + y];
+    int of = BgUbo.bgOfs[y * 4 + bgNum];
     x += short(of & 0xFFFF);
     x &= 0x1FF;
     y += short(of >> 16);

@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
-use vitabuild::{create_cc_build, get_out_path, get_vitasdk_path, is_debug, is_host_linux, is_target_vita};
+use vitabuild::{create_bindgen_builder, create_cc_build, get_out_path, get_vitasdk_path, is_debug, is_host_linux, is_target_vita};
 
 fn main() {
     let mut vixl_flags = vec![
@@ -56,7 +56,8 @@ fn main() {
         vixl_build
     };
 
-    let vixl_expand_build = create_vixl_build(&["aarch32/macro-assembler-aarch32.cc"]);
+    let mut vixl_expand_build = create_vixl_build(&["aarch32/macro-assembler-aarch32.cc"]);
+    vixl_expand_build.opt_level(0);
 
     let out = vixl_expand_build.expand();
     let vixl_masm_file = out_path.join("vixl_masm.cpp");
@@ -146,7 +147,7 @@ fn main() {
 
     let bindings_file = out_path.join("vixl_bindings.rs");
 
-    let mut bindings = bindgen::Builder::default()
+    let mut bindings = create_bindgen_builder()
         .clang_args(["-x", "c++"])
         .clang_args(["-I", vixl_path.join("src").to_str().unwrap()])
         .clang_args(["-target", "armv7-unknown-linux-gnueabihf"])

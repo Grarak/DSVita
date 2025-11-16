@@ -2,7 +2,7 @@ vec4 drawText(int x, int y, int bgNum) {
     int screenAddr = ((dispCnt >> 11) & 0x70000) + ((bgCnt << 3) & 0x0F800);
     int charAddr = ((dispCnt >> 8) & 0x70000) + ((bgCnt << 12) & 0x3C000);
 
-    int of = bgOfs[bgNum * 192 + y];
+    int of = bgOfs[y * 4 + bgNum];
     x += of & 0xFFFF;
     x &= 0x1FF;
     y += of >> 16;

@@ -69,6 +69,10 @@ pub fn create_c_build() -> cc::Build {
         build.compiler("clang");
     }
 
+    for flag in get_common_c_flags() {
+        build.flag(flag);
+    }
+
     if !is_debug() && is_opt_build() {
         build.flag("-flto").opt_level_str("fast");
         if is_target_vita() {
@@ -110,6 +114,27 @@ pub fn create_cc_build() -> cc::Build {
             build.flag("-ffat-lto-objects");
         }
     }
+
+    for flag in get_common_c_flags() {
+        build.flag(flag);
+    }
+
     build.cargo_warnings(false);
     build
+}
+
+pub fn create_bindgen_builder() -> bindgen::Builder {
+    let mut bindgen = bindgen::Builder::default();
+    bindgen = bindgen.clang_arg("--target=armv7-unknown-linux-gnueabihf");
+    if !is_target_vita() {
+        if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
+            bindgen = bindgen.clang_arg(format!("--sysroot={sysroot}"));
+        }
+    }
+    if let Some(vitasdk_path) = get_vitasdk_path() {
+        if is_target_vita() || !is_host_linux() {
+            bindgen = bindgen.clang_arg(format!("--sysroot={}", vitasdk_path.join("arm-vita-eabi").to_str().unwrap()));
+        }
+    }
+    bindgen
 }

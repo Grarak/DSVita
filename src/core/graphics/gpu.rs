@@ -10,10 +10,10 @@ use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
 use crate::settings::Arm7Emu;
+use crate::utils::PtrWrapper;
 use bilge::prelude::*;
 use std::intrinsics::unlikely;
 use std::mem;
-use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
@@ -40,6 +40,7 @@ impl FrameRateCounter {
     fn on_frame_ready(&mut self) {
         self.frame_counter += 1;
         let now = Instant::now();
+        // thread::sleep(Duration::from_millis(8));
         if unlikely(now.duration_since(self.last_update).as_millis() >= 1000) {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
             #[cfg(target_os = "linux")]
@@ -96,22 +97,6 @@ pub struct DispCapCnt {
     capture_enabled: bool,
 }
 
-pub struct GpuRendererWrapper(Option<NonNull<GpuRenderer>>);
-
-impl Deref for GpuRendererWrapper {
-    type Target = GpuRenderer;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { self.0.as_ref().unwrap_unchecked().as_ref() }
-    }
-}
-
-impl DerefMut for GpuRendererWrapper {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.0.as_mut().unwrap_unchecked().as_mut() }
-    }
-}
-
 pub struct Gpu {
     disp_stat: [DispStat; 2],
     pub pow_cnt1: u16,
@@ -121,7 +106,7 @@ pub struct Gpu {
     pub gpu_2d_regs_a: Gpu2DRegisters,
     pub gpu_2d_regs_b: Gpu2DRegisters,
     pub gpu_3d_regs: Gpu3DRegisters,
-    pub renderer: GpuRendererWrapper,
+    pub renderer: PtrWrapper<GpuRenderer>,
 }
 
 impl Gpu {
@@ -135,7 +120,7 @@ impl Gpu {
             gpu_2d_regs_a: Gpu2DRegisters::new(A),
             gpu_2d_regs_b: Gpu2DRegisters::new(B),
             gpu_3d_regs: Gpu3DRegisters::new(),
-            renderer: GpuRendererWrapper(None),
+            renderer: PtrWrapper::null(),
         }
     }
 
@@ -150,7 +135,7 @@ impl Gpu {
     }
 
     pub fn set_gpu_renderer(&mut self, gpu_renderer: NonNull<GpuRenderer>) {
-        self.renderer = GpuRendererWrapper(Some(gpu_renderer));
+        self.renderer = PtrWrapper::new(gpu_renderer.as_ptr());
     }
 
     pub fn initialize_schedule(cm: &mut CycleManager) {

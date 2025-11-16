@@ -9,9 +9,7 @@ uniform sampler2D objDepthTex : TEXUNIT5;
 uniform sampler2D winTex : TEXUNIT6;
 
 uniform BlendUbo {
-    int bldCnts[192];
-    int bldAlphas[192];
-    int bldYs[192];
+    int bldCntsAlphasYs[192];
 } BlendUbo : BUFFER[0];
 
 static short topNum = 5;
@@ -51,9 +49,7 @@ void sortBgPrio(short num, sampler2D bgTex) {
     }
 }
 
-float4 alphaBlend(int bldAlpha) {
-    short eva = short(bldAlpha & 0x1F);
-    short evb = short((bldAlpha >> 8) & 0x1F);
+float4 alphaBlend(short eva, short evb) {
     float evaF = min(float(eva) / 16.0, 1.0);
     float evbF = min(float(evb) / 16.0, 1.0);
     float3 blendedColor = topColor.rgb * evaF + bottomColor.rgb * evbF;
@@ -71,13 +67,18 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
+    short y = short(screenPos.y * 191.0);
+    int bldCntAlphaY = BlendUbo.bldCntsAlphasYs[y];
+    short bldCnt = bldCntAlphaY & 0xFFFF;
+    short bldEva = (bldCntAlphaY >> 16) & 0x1F;
+    short bldEvb = (bldCntAlphaY >> 21) & 0x1F;
+    short bldY = (bldCntAlphaY >> 26) & 0x1F;
+
     if (topNum == 4 && topColor.a == 0.0) {
         // Semi transparent object
-        short y = short(screenPos.y * 191.0);
-        int bldCnt = BlendUbo.bldCnts[y];
         bool blendBottom = ((bldCnt >> 8) & (1 << bottomNum)) != 0;
         if (blendBottom) {
-            color = alphaBlend(BlendUbo.bldAlphas[y]);
+            color = alphaBlend(bldEva, bldEvb);
             return;
         }
 
@@ -94,9 +95,6 @@ void main(out float4 color : COLOR) {
         return;
     }
 
-    short y = short(screenPos.y * 191.0);
-
-    int bldCnt = BlendUbo.bldCnts[y];
     int bldMode = (bldCnt >> 6) & 3;
 
     if (bldMode == 0) {
@@ -116,14 +114,12 @@ void main(out float4 color : COLOR) {
             color = float4(topColor.rgb, 1.0);
             return;
         }
-        color = alphaBlend(BlendUbo.bldAlphas[y]);
+        color = alphaBlend(bldEva, bldEvb);
     } else if (bldMode == 2) {
-        short bldY = short(BlendUbo.bldYs[y]);
         float bldYF = float(bldY) / 16.0;
         float3 increaseColor = (1.0 - topColor.rgb) * bldYF;
         color = float4((topColor.rgb + increaseColor), 1.0);
     } else if (bldMode == 3) {
-        short bldY = short(BlendUbo.bldYs[y]);
         float bldYF = float(bldY) / 16.0;
         float3 decreaseColor = topColor.rgb * bldYF;
         color = float4((topColor.rgb - decreaseColor), 1.0);

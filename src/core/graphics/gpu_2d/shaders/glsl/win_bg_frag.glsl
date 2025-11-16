@@ -9,10 +9,8 @@ in vec2 screenPos;
 uniform int dispCnt;
 
 uniform WinBgUbo {
-    int winH[192 * 2];
-    int winV[192 * 2];
-    int winIn[192];
-    int winOut[192];
+    int winHV[192 * 2];
+    int winInOut[192];
 };
 
 bool checkBounds(int x, int y, int winNum) {
@@ -21,8 +19,9 @@ bool checkBounds(int x, int y, int winNum) {
         return false;
     }
 
-    int h = winH[winNum * 192 + y];
-    int v = winV[winNum * 192 + y];
+    int hv = winHV[y * 2 + winNum];
+    int h = hv & 0xFFFF;
+    int v = (hv >> 16) & 0xFFFF;
 
     int winX1 = (h >> 8) & 0xFF;
     int winX2 = h & 0xFF;
@@ -50,7 +49,8 @@ bool checkBounds(int x, int y, int winNum) {
         }
     }
 
-    int enabled = (winIn[y] >> (winNum * 8)) & 0xFF;
+    int winIn = winInOut[y] & 0xFFFF;
+    int enabled = (winIn >> (winNum * 8)) & 0xFF;
     color = vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
     return true;
 }
@@ -60,7 +60,7 @@ void main() {
     int y = int(screenPos.y);
 
     if (!checkBounds(x, y, 0) && !checkBounds(x, y, 1)) {
-        int enabled = winOut[y] & 0xFF;
+        int enabled = (winInOut[y] >> 16) & 0xFF;
         color = vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
     }
 }
