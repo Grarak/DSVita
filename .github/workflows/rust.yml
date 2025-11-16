@@ -50,6 +50,7 @@ jobs:
         run: ${{ matrix.env }} cargo vita build vpk --profile ${{ matrix.flavor }}
         env:
           VITASDK: /usr/local/vitasdk
+          CARGO_INCREMENTAL: 0
 
       - name: Upload vpk
         uses: actions/upload-artifact@v4
