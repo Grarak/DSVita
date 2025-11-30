@@ -34,17 +34,20 @@ float4 drawAffine(int x, int y, int bgNum) {
 
     charAddr += (screenEntry & 0x3FF) * 64 + yInBlock * 8 + xInBlock;
 
-    int palIndex = readBg8(charAddr);
-    if (palIndex == 0) {
+    short palAddr = readBg8(charAddr);
+    if (palAddr == 0) {
         discard;
     }
+    palAddr *= 2;
 
     bool useExtPal = (dispCnt & (1 << 30)) != 0;
     if (useExtPal) {
-        palIndex += bgNum * 4096 + ((screenEntry & 0xF000) >> 4);
-        return float4(readExtPal(palIndex).rgb, 1.0);
+        palAddr += bgNum * 8192 + ((screenEntry & 0xF000) >> 3);
+        short color = readExtPal16Aligned(palAddr);
+        return float4(normRgb5(color), 1.0);
     } else {
-        return float4(readPal(palIndex).rgb, 1.0);
+        short color = readPal16Aligned(palAddr);
+        return float4(normRgb5(color), 1.0);
     }
 }
 

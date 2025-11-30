@@ -39,16 +39,21 @@ short readBg16Aligned(int addr) {
     return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
 }
 
-float4 readPal(short index) {
-    return tex2D(palTex, float2(float(index) / 511.0, 1.0));
+short readPal16Aligned(short addr) {
+    float x = float(addr >> 2) / 255.0f;
+    float4 value = tex2D(palTex, float2(x, 1.0));
+    short entry = addr & 2;
+    return short(value[entry] * 255.0f) | (short(value[entry + 1] * 255.0) << 8);
 }
 
-float4 readExtPal(short index) {
-    short indexX = index & 0x1FF;
-    short indexY = index >> 9;
-    float x = float(indexX) / 511.0;
-    float y = float(indexY) / 31.0;
-    return tex2D(extPalTex, float2(x, y));
+short readExtPal16Aligned(short addr) {
+    short addrX = (addr >> 2) & 0x1FF;
+    short addrY = addr >> 11;
+    float x = float(addrX) / 511.0f;
+    float y = float(addrY) / 15.0f;
+    float4 value = tex2D(extPalTex, float2(x, y));
+    short entry = addr & 2;
+    return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
 }
 
 float3 normRgb5(short color) {

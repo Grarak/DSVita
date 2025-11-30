@@ -15,11 +15,14 @@ float4 drawBitmap(short x, short y, short bgNum) {
     int dataBase = (bgCnt << 6) & 0x7C000;
     bool usePal = (bgCnt & (1 << 2)) == 0;
     if (usePal) {
-        int palIndex = readBg8(dataBase + coords.y * width + coords.x);
-        if (palIndex == 0) {
+        int palAddr = readBg8(dataBase + coords.y * width + coords.x);
+        if (palAddr == 0) {
             discard;
         }
-        return float4(readPal(palIndex).rgb, 1.0);
+        palAddr *= 2;
+
+        short color = readPal16Aligned(palAddr);
+        return float4(normRgb5(color), 1.0);
     } else {
         short color = readBg16Aligned(dataBase + (coords.y * width + coords.x) * 2);
         if ((color & (1 << 15)) == 0) {

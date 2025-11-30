@@ -4,12 +4,18 @@ uniform sampler2D lcdcPalTex : TEXUNIT0;
 
 uniform int dispCnt;
 
-float4 readLcdcPal(int index) {
-    short indexX = index & 0x1FF;
-    short indexY = index >> 9;
-    float x = float(indexX) / 511.0;
-    float y = float(indexY) / 655.0;
-    return tex2D(lcdcPalTex, float2(x, y));
+short readLcdcPal16Aligned(int addr) {
+    short addrX = (addr >> 2) & 0x1FF;
+    short addrY = addr >> 11;
+    float x = float(addrX) / 511.0f;
+    float y = float(addrY) / 327.0f;
+    float4 value = tex2D(lcdcPalTex, float2(x, y));
+    short entry = addr & 2;
+    return short(value[entry] * 255.0f) | (short(value[entry + 1] * 255.0f) << 8);
+}
+
+float3 normRgb5(short color) {
+    return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0f;
 }
 
 void main(out float4 color : COLOR) {
@@ -17,5 +23,5 @@ void main(out float4 color : COLOR) {
     short y = short(screenPos.y);
 
     int addr = ((dispCnt >> 18) & 0x3) * 0x10000 + int(y) * 256 + int(x);
-    color = float4(readLcdcPal(addr).rgb, 0.0);
+    color = float4(normRgb5(readLcdcPal16Aligned(addr * 2)), 0.0);
 }

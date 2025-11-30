@@ -40,15 +40,17 @@ float4 drawText(short x, short y, short bgNum) {
     charAddr += ((screenEntry & 0x3FF) << 5) + (yInBlock << 2);
     charAddr += xInBlock >> 1;
 
-    short palIndex = readBg8(charAddr);
-    palIndex >>= 4 * (xInBlock & 1);
-    palIndex &= 0xF;
-    if (palIndex == 0) {
+    short palAddr = readBg8(charAddr);
+    palAddr >>= 4 * (xInBlock & 1);
+    palAddr &= 0xF;
+    if (palAddr == 0) {
         discard;
     }
+    palAddr *= 2;
+    palAddr += (screenEntry & 0xF000) >> 7;
 
-    palIndex += (screenEntry & 0xF000) >> 8;
-    return float4(readPal(palIndex).rgb, 1.0);
+    short color = readPal16Aligned(palAddr);
+    return float4(normRgb5(color), 1.0);
 }
 
 void main(out float4 color : COLOR) {

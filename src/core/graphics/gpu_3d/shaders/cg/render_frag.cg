@@ -8,7 +8,7 @@ uniform sampler2D attrTex : TEXUNIT2;
 
 short readTex8(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
-    int addrY = addr >> 11;
+    short addrY = addr >> 11;
     float x = float(addrX) / 511.0;
     float y = float(addrY) / 255.0;
     return short(tex2D(tex, float2(x, y))[addr & 3] * 255.0);
@@ -16,7 +16,7 @@ short readTex8(int addr) {
 
 short readTex16Aligned(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
-    int addrY = addr >> 11;
+    short addrY = addr >> 11;
     float x = float(addrX) / 511.0;
     float y = float(addrY) / 255.0;
     float4 value = tex2D(tex, float2(x, y));
@@ -24,12 +24,14 @@ short readTex16Aligned(int addr) {
     return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
 }
 
-float4 readPal(int index) {
-    short indexX = index & 0x1FF;
-    int indexY = index >> 9;
-    float x = float(indexX) / 511.0;
-    float y = float(indexY) / 95.0;
-    return tex2D(palTex, float2(x, y));
+short readPal16Aligned(int addr) {
+    short addrX = (addr >> 2) & 0x1FF;
+    short addrY = addr >> 11;
+    float x = float(addrX) / 511.0;
+    float y = float(addrY) / 47.0;
+    float4 value = tex2D(palTex, float2(x, y));
+    short entry = addr & 2;
+    return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
 }
 
 float3 normRgb5(short color) {
@@ -44,10 +46,10 @@ float4 a3i5Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
         discard;
     }
 
-    int palOffset = palAddr << 3;
-    float4 color = readPal(palOffset + (palIndex & 0x1F));
+    int palOffset = palAddr << 4;
+    short color = readPal16Aligned(palOffset + (palIndex & 0x1F) * 2);
     float alpha = float(short((palIndex >> 5) & 0x3)) / 7.0;
-    return float4(color.rgb, alpha);
+    return float4(normRgb5(color).rgb, alpha);
 }
 
 float4 pal4Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
@@ -59,9 +61,9 @@ float4 pal4Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transp
         discard;
     }
 
-    int palOffset = palAddr << 2;
-    float4 color = readPal(palOffset + palIndex);
-    return float4(color.rgb, 1.0);
+    int palOffset = palAddr << 3;
+    short color = readPal16Aligned(palOffset + palIndex * 2);
+    return float4(normRgb5(color).rgb, 1.0);
 }
 
 float4 pal16Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
@@ -73,9 +75,9 @@ float4 pal16Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool trans
         discard;
     }
 
-    int palOffset = palAddr << 3;
-    float4 color = readPal(palOffset + palIndex);
-    return float4(color.rgb, 1.0);
+    int palOffset = palAddr << 4;
+    short color = readPal16Aligned(palOffset + palIndex * 2);
+    return float4(normRgb5(color).rgb, 1.0);
 }
 
 float4 pal256Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool transparent0) {
@@ -86,9 +88,9 @@ float4 pal256Tex(int palAddr, int addrOffset, int s, int t, int sizeS, bool tran
         discard;
     }
 
-    int palOffset = palAddr << 3;
-    float4 color = readPal(palOffset + palIndex);
-    return float4(color.rgb, 1.0);
+    int palOffset = palAddr << 4;
+    short color = readPal16Aligned(palOffset + palIndex * 2);
+    return float4(normRgb5(color).rgb, 1.0);
 }
 
 float4 compressed4x4Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
@@ -100,47 +102,47 @@ float4 compressed4x4Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
 
     addr = 0x20000 + (addrOffset & 0x1FFFF) / 2 + (((addrOffset >> 17) == 2) ? 0x10000 : 0);
     int palBase = readTex16Aligned(addr + tile * 2);
-    int palOffset = (palAddr << 3) + (palBase & 0x3FFF) * 2;
+    int palOffset = (palAddr << 4) + (palBase & 0x3FFF) * 4;
 
     int mode = (palBase >> 14) & 0x3;
     if (mode == 0) {
         if (palIndex == 3) {
             discard;
         }
-        float4 color = readPal(palOffset + palIndex);
-        return float4(color.rgb, 1.0);
+        short color = readPal16Aligned(palOffset + palIndex * 2);
+        return float4(normRgb5(color).rgb, 1.0);
     } else if (mode == 1) {
         if (palIndex == 2) {
-            float4 color = readPal(palOffset);
-            float4 color0 = float4(color.rgb, 1.0);
-            color = readPal(palOffset + 1);
-            float4 color1 = float4(color.rgb, 1.0);
+            short color = readPal16Aligned(palOffset);
+            float4 color0 = float4(normRgb5(color).rgb, 1.0);
+            color = readPal16Aligned(palOffset + 2);
+            float4 color1 = float4(normRgb5(color).rgb, 1.0);
             return (color0 + color1) / 2.0;
         } else if (palIndex == 3) {
             discard;
         } else {
-            float4 color = readPal(palOffset + palIndex);
-            return float4(color.rgb, 1.0);
+            short color = readPal16Aligned(palOffset + palIndex * 2);
+            return float4(normRgb5(color).rgb, 1.0);
         }
     } else if (mode == 2) {
-        float4 color = readPal(palOffset + palIndex);
-        return float4(color.rgb, 1.0);
+        short color = readPal16Aligned(palOffset + palIndex * 2);
+        return float4(normRgb5(color).rgb, 1.0);
     } else {
         if (palIndex == 2) {
-             float4 color = readPal(palOffset);
-             float4 color0 = float4(color.rgb, 1.0);
-             color = readPal(palOffset + 1);
-             float4 color1 = float4(color.rgb, 1.0);
+             short color = readPal16Aligned(palOffset);
+             float4 color0 = float4(normRgb5(color).rgb, 1.0);
+             color = readPal16Aligned(palOffset + 2);
+             float4 color1 = float4(normRgb5(color).rgb, 1.0);
              return (color0 * 5.0 + color1 * 3.0) / 8.0;
         } else if (palIndex == 3) {
-            float4 color = readPal(palOffset);
-            float4 color0 = float4(color.rgb, 1.0);
-            color = readPal(palOffset + 1);
-            float4 color1 = float4(color.rgb, 1.0);
+            short color = readPal16Aligned(palOffset);
+            float4 color0 = float4(normRgb5(color).rgb, 1.0);
+            color = readPal16Aligned(palOffset + 2);
+            float4 color1 = float4(normRgb5(color).rgb, 1.0);
             return (color0 * 3.0 + color1 * 5.0) / 8.0;
         } else {
-            float4 color = readPal(palOffset + palIndex);
-            return float4(color.rgb, 1.0);
+            short color = readPal16Aligned(palOffset + palIndex * 2);
+            return float4(normRgb5(color).rgb, 1.0);
         }
     }
 }
@@ -153,10 +155,10 @@ float4 a5i3Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
         discard;
     }
 
-    int palOffset = palAddr << 3;
-    float4 color = readPal(palOffset + (palIndex & 0x07));
+    int palOffset = palAddr << 4;
+    short color = readPal16Aligned(palOffset + (palIndex & 0x07) * 2);
     float alpha = float(short((palIndex >> 3) & 0x1F)) / 31.0;
-    return float4(color.rgb, alpha);
+    return float4(normRgb5(color).rgb, alpha);
 }
 
 float4 directTex(int addrOffset, int s, int t, int sizeS) {
