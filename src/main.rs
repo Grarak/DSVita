@@ -257,7 +257,7 @@ fn execute_jit<const ARM7_HLE: bool>(jit_asm_arm9: &mut JitAsm, jit_asm_arm7: &m
 
         jit_asm_arm9.emu.regs_3d_run_cmds(jit_asm_arm9.emu.cm.get_cycles());
 
-        if unlikely(jit_asm_arm9.emu.gpu.renderer.quit) {
+        if unlikely(jit_asm_arm9.emu.gpu.renderer.is_quit()) {
             break;
         }
     }
@@ -274,7 +274,7 @@ pub fn main() {
     // pub static SCE_USER_MAIN_THREAD_STACK_SIZE: u32 = 4 * 1024 * 1024;
     // Instead just create a new thread with stack size set
     if cfg!(target_os = "vita") {
-        set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core0);
+        set_thread_prio_affinity(ThreadPriority::Low, &[ThreadAffinity::Core0]);
     }
     thread::Builder::new()
         .name("actual_main".to_string())
@@ -288,7 +288,7 @@ pub fn main() {
 #[cold]
 pub fn actual_main() {
     if cfg!(target_os = "vita") {
-        set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core1);
+        set_thread_prio_affinity(ThreadPriority::High, &[ThreadAffinity::Core1]);
     }
 
     info_println!("Starting DSVita");
@@ -424,6 +424,7 @@ pub fn actual_main() {
             gpu_renderer = Some(GpuRenderer::new());
             emu_unsafe.get_mut().gpu.set_gpu_renderer(NonNull::from(gpu_renderer.as_mut().unwrap()));
         }
+        emu_unsafe.get_mut().gpu.renderer.init();
 
         let presenter_audio_out = presenter.get_presenter_audio_out();
         let presenter_audio_in = presenter.get_presenter_audio_in();
@@ -443,7 +444,7 @@ pub fn actual_main() {
             .name("cpu".to_owned())
             .stack_size(MAX_STACK_DEPTH_SIZE + 1024 * 1024) // Add 1MB headroom to stack
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core2);
+                set_thread_prio_affinity(ThreadPriority::High, &[ThreadAffinity::Core2]);
                 info_println!("Start cpu {:?}", thread::current().id());
                 let emu = emu_ptr as *mut Emu;
                 start_profiling();
@@ -460,13 +461,28 @@ pub fn actual_main() {
         let vram_read_thread = thread::Builder::new()
             .name("vram_read".to_owned())
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::High, ThreadAffinity::Core0);
+                set_thread_prio_affinity(ThreadPriority::Default, &[ThreadAffinity::Core0]);
                 let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
                 let cpu_active = cpu_active_clone;
                 let vram = emu.vram_get_mem();
                 while cpu_active.load(Ordering::Relaxed) {
                     emu.gpu.renderer.read_vram(vram);
                 }
+                info_println!("Stopped vram read");
+            })
+            .unwrap();
+
+        let cpu_active_clone = cpu_active.clone();
+        let process_3d_thread = thread::Builder::new()
+            .name("process_3d_thread".to_owned())
+            .spawn(move || {
+                set_thread_prio_affinity(ThreadPriority::Default, &[ThreadAffinity::Core0]);
+                let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
+                let cpu_active = cpu_active_clone;
+                while cpu_active.load(Ordering::Relaxed) {
+                    emu.gpu.renderer.process_3d_loop();
+                }
+                info_println!("Stopped process 3d");
             })
             .unwrap();
 
@@ -474,7 +490,7 @@ pub fn actual_main() {
         let audio_out_thread = thread::Builder::new()
             .name("audio_out".to_owned())
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
+                set_thread_prio_affinity(ThreadPriority::High, &[ThreadAffinity::Core3]);
                 let mut guest_buffer = HeapMemU32::<{ SAMPLE_BUFFER_SIZE }>::new();
                 let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_OUT_BUF_SIZE }>::new();
                 let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
@@ -493,7 +509,7 @@ pub fn actual_main() {
         let audio_in_thread = thread::Builder::new()
             .name("audio_in".to_owned())
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::Default, ThreadAffinity::Core0);
+                set_thread_prio_affinity(ThreadPriority::Default, &[ThreadAffinity::Core3]);
                 let mut audio_buffer = HeapMem::<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>::new();
                 let cpu_active = cpu_active_clone;
                 while cpu_active.load(Ordering::Relaxed) {
@@ -511,7 +527,7 @@ pub fn actual_main() {
         let save_thread = thread::Builder::new()
             .name("save".to_owned())
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::Low, ThreadAffinity::Core0);
+                set_thread_prio_affinity(ThreadPriority::Low, &[ThreadAffinity::Core3]);
                 let last_save_time = last_save_time_clone;
                 let emu = unsafe { (emu_ptr as *mut Emu).as_mut().unwrap_unchecked() };
                 let cpu_active = cpu_active_clone;
@@ -562,7 +578,7 @@ pub fn actual_main() {
             gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, arm7_emu, &screen_layout, pause);
 
             if unlikely(!running) {
-                gpu_renderer.quit = true;
+                gpu_renderer.set_quit(true);
                 gpu_renderer.unpause(cpu_thread.thread());
                 break;
             } else if unlikely(pause) {
@@ -573,13 +589,13 @@ pub fn actual_main() {
                         gpu_renderer.unpause(cpu_thread.thread());
                     }
                     UiPauseMenuReturn::Quit => {
-                        gpu_renderer.quit = true;
+                        gpu_renderer.set_quit(true);
                         gpu_renderer.unpause(cpu_thread.thread());
                         break;
                     }
                     UiPauseMenuReturn::QuitApp => {
                         running = false;
-                        gpu_renderer.quit = true;
+                        gpu_renderer.set_quit(true);
                         gpu_renderer.unpause(cpu_thread.thread());
                         break;
                     }
@@ -589,10 +605,11 @@ pub fn actual_main() {
 
         cpu_thread.join().unwrap();
         cpu_active.store(false, Ordering::SeqCst);
-        gpu_renderer.quit = false;
         audio_out_thread.join().unwrap();
         audio_in_thread.join().unwrap();
         vram_read_thread.join().unwrap();
+        process_3d_thread.join().unwrap();
         save_thread.join().unwrap();
+        gpu_renderer.set_quit(false);
     }
 }

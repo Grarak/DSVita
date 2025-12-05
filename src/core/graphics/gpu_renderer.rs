@@ -47,9 +47,13 @@ pub struct GpuRenderer {
 
     rendering: Mutex<bool>,
     rendering_condvar: Condvar,
+
+    processed_3d: Mutex<bool>,
+    processed_3d_condvar: Condvar,
+
     rendering_3d: bool,
     pause: bool,
-    pub quit: bool,
+    quit: AtomicBool,
 
     vram_read: AtomicBool,
     sample_2d: bool,
@@ -97,9 +101,13 @@ impl GpuRenderer {
 
             rendering: Mutex::new(false),
             rendering_condvar: Condvar::new(),
+
+            processed_3d: Mutex::new(false),
+            processed_3d_condvar: Condvar::new(),
+
             rendering_3d: false,
             pause: false,
-            quit: false,
+            quit: AtomicBool::new(false),
 
             vram_read: AtomicBool::new(false),
             sample_2d: true,
@@ -119,6 +127,8 @@ impl GpuRenderer {
         self.renderer_3d.init();
         self.common.mem_buf.init();
         self.common.pow_cnt1[0] = PowCnt1::from(0);
+        *self.processed_3d.lock().unwrap() = false;
+        *self.rendering.lock().unwrap() = false;
         self.vram_read.store(false, Ordering::SeqCst);
         self.sample_2d = true;
         self.ready_2d = false;
@@ -153,7 +163,7 @@ impl GpuRenderer {
         if !*rendering && self.ready_2d {
             if unlikely(self.pause) {
                 thread::park();
-                if self.quit {
+                if self.is_quit() {
                     *breakout_imm = true;
                     return;
                 }
@@ -170,7 +180,7 @@ impl GpuRenderer {
             self.ready_2d = false;
             self.vram_read.store(false, Ordering::SeqCst);
             *rendering = true;
-            self.rendering_condvar.notify_one();
+            self.rendering_condvar.notify_all();
         }
     }
 
@@ -249,6 +259,8 @@ impl GpuRenderer {
                 self.renderer_2d.draw::<{ A }>(&self.common);
 
                 if self.rendering_3d {
+                    let processed_3d = self.processed_3d.lock().unwrap();
+                    let _processed_3d = self.processed_3d_condvar.wait_while(processed_3d, |processed_3d| !*processed_3d).unwrap();
                     self.rendering_3d = false;
                     self.renderer_3d.render(&self.common);
                 }
@@ -315,6 +327,12 @@ impl GpuRenderer {
                 let mut rendering = self.rendering.lock().unwrap();
                 *rendering = false;
             }
+
+            {
+                let mut processed_3d = self.processed_3d.lock().unwrap();
+                *processed_3d = false;
+                self.processed_3d_condvar.notify_one();
+            }
         }
 
         let render_time_diff = Instant::now().duration_since(render_time_start);
@@ -327,11 +345,41 @@ impl GpuRenderer {
         }
     }
 
+    pub fn process_3d_loop(&mut self) {
+        {
+            let rendering = self.rendering.lock().unwrap();
+            let _drawing = self.rendering_condvar.wait_while(rendering, |rendering| !*rendering).unwrap();
+        }
+
+        if self.is_quit() {
+            return;
+        }
+
+        if self.common.pow_cnt1[0].enable() && self.rendering_3d {
+            self.renderer_3d.process_polygons(&self.common);
+        }
+
+        {
+            let mut processed_3d = self.processed_3d.lock().unwrap();
+            *processed_3d = true;
+            self.processed_3d_condvar.notify_one();
+        }
+
+        {
+            let processed_3d = self.processed_3d.lock().unwrap();
+            let _processed_3d = self.processed_3d_condvar.wait_while(processed_3d, |processed_3d| *processed_3d).unwrap();
+        }
+    }
+
     pub fn unpause(&mut self, cpu_thread: &Thread) {
         self.pause = false;
         cpu_thread.unpark();
 
-        if self.quit {
+        if self.is_quit() {
+            *self.rendering.lock().unwrap() = true;
+            *self.processed_3d.lock().unwrap() = false;
+            self.rendering_condvar.notify_all();
+            self.processed_3d_condvar.notify_one();
             self.read_vram_condvar.notify_one();
         }
     }
@@ -356,7 +404,7 @@ impl GpuRenderer {
     }
 
     pub fn read_vram(&mut self, vram: &[u8; vram::TOTAL_SIZE]) {
-        if self.quit {
+        if self.is_quit() {
             return;
         }
 
@@ -364,5 +412,13 @@ impl GpuRenderer {
         let _read_vram = self.read_vram_condvar.wait(read_vram).unwrap();
 
         self.common.mem_buf.read_vram(vram);
+    }
+
+    pub fn is_quit(&self) -> bool {
+        self.quit.load(Ordering::Relaxed)
+    }
+
+    pub fn set_quit(&self, value: bool) {
+        self.quit.store(value, Ordering::Relaxed);
     }
 }

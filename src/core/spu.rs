@@ -29,8 +29,8 @@ pub struct SoundSampler {
     sound_touch: SoundTouch,
     last_sample: u32,
     stretch_ratio: f32,
-    average_size: usize,
-    size_count: usize,
+    average_size: f32,
+    size_count: f32,
     cond_mutex: Mutex<bool>,
     condvar: Condvar,
 }
@@ -51,8 +51,8 @@ impl SoundSampler {
             sound_touch,
             last_sample: 0,
             stretch_ratio: 1.0,
-            average_size: 0,
-            size_count: 0,
+            average_size: 0.0,
+            size_count: 0.0,
             cond_mutex: Mutex::new(false),
             condvar: Condvar::new(),
         }
@@ -66,8 +66,8 @@ impl SoundSampler {
         self.sound_touch.clear();
         self.last_sample = 0;
         self.stretch_ratio = 1.0;
-        self.average_size = 0;
-        self.size_count = 0;
+        self.average_size = 0.0;
+        self.size_count = 0.0;
         *self.cond_mutex.lock().unwrap() = false;
     }
 
@@ -119,6 +119,7 @@ impl SoundSampler {
         let ready_queue = self.ready_queue;
         let (queue, queue_size) = &mut self.queues[ready_queue];
         let mut size = *queue_size as usize;
+        unsafe { assert_unchecked(size <= SAMPLE_BUFFER_SIZE) };
         debug_assert!(audio_stretching || size == SAMPLE_BUFFER_SIZE);
         *queue_size = 0;
         buf[..size].copy_from_slice(&queue[..size]);
@@ -135,12 +136,12 @@ impl SoundSampler {
         if audio_stretching {
             // Taken from https://github.com/dolphin-emu/dolphin/blob/b5be399fd4175eb6c4ba83201bd4866b357b3200/Source/Core/AudioCommon/AudioStretcher.cpp#L28-L65
             // Take an average ratio so tempo doesn't change abruptly
-            self.average_size += size;
-            self.size_count += 1;
+            self.average_size += size as f32;
+            self.size_count += 1.0;
             let ratio = self.average_size as f32 / self.size_count as f32 / SAMPLE_BUFFER_SIZE as f32;
-            if self.size_count >= 15 {
-                self.size_count = 0;
-                self.average_size = 0;
+            if self.size_count >= 15.0 {
+                self.size_count = 0.0;
+                self.average_size = 0.0;
             }
             // 80ms latency
             let max_backlog = SAMPLE_RATE as f32 * 80.0 / 1000.0;
@@ -155,7 +156,7 @@ impl SoundSampler {
             let tweak = 1.0 + 2.0 * (backlog_fullness - 0.5) * (1.0 - ratio);
             let current_ratio = ratio * tweak;
 
-            // The fever samples we, the smaller the lpf gain
+            // The fewer samples, the smaller the lpf gain
             // Most likely the next audio frame will have more samples
             // Thus don't let it influence the ratio too much
             const LPF_TIME_SCALE: f32 = 1.0;
@@ -173,14 +174,14 @@ impl SoundSampler {
             let num_samples = self.sound_touch.receive_samples(sound_touch_buf, SAMPLE_BUFFER_SIZE);
             if num_samples == 0 {
                 buf.fill(self.last_sample);
-            } else if num_samples != SAMPLE_BUFFER_SIZE {
+            } else if num_samples < SAMPLE_BUFFER_SIZE {
                 self.last_sample = buf[num_samples - 1];
                 buf[num_samples..].fill(self.last_sample);
             }
         }
 
         for i in 0..PRESENTER_AUDIO_OUT_BUF_SIZE {
-            ret[i] = buf[i * SAMPLE_BUFFER_SIZE / PRESENTER_AUDIO_OUT_BUF_SIZE];
+            ret[i] = unsafe { *buf.get_unchecked(i * SAMPLE_BUFFER_SIZE / PRESENTER_AUDIO_OUT_BUF_SIZE) };
         }
     }
 }

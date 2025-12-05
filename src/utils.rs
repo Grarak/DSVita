@@ -214,17 +214,20 @@ pub enum ThreadAffinity {
     Core0 = 0,
     Core1 = 1,
     Core2 = 2,
+    Core3 = 3,
 }
 
 #[cfg(target_os = "linux")]
-pub fn set_thread_prio_affinity(_: ThreadPriority, affinity: ThreadAffinity) {
-    if (affinity as usize) < affinity::get_core_num() {
-        affinity::set_thread_affinity(&[affinity as usize]).unwrap();
-    }
+pub fn set_thread_prio_affinity(_: ThreadPriority, affinity: &[ThreadAffinity]) {
+    let affinity = affinity
+        .iter()
+        .filter_map(|affinity| ((*affinity as usize) < affinity::get_core_num()).then(|| *affinity as usize))
+        .collect::<Vec<_>>();
+    affinity::set_thread_affinity(&affinity).unwrap();
 }
 
 #[cfg(target_os = "vita")]
-pub fn set_thread_prio_affinity(thread_priority: ThreadPriority, thread_affinity: ThreadAffinity) {
+pub fn set_thread_prio_affinity(thread_priority: ThreadPriority, thread_affinity: &[ThreadAffinity]) {
     unsafe {
         let id = vitasdk_sys::sceKernelGetThreadId();
         vitasdk_sys::sceKernelChangeThreadPriority(
@@ -235,14 +238,16 @@ pub fn set_thread_prio_affinity(thread_priority: ThreadPriority, thread_affinity
                 ThreadPriority::High => vitasdk_sys::SCE_KERNEL_PROCESS_PRIORITY_USER_HIGH,
             } as _,
         );
-        vitasdk_sys::sceKernelChangeThreadCpuAffinityMask(
-            id,
-            match thread_affinity {
+        let mut affinity_mask = 0;
+        for affinity in thread_affinity {
+            affinity_mask |= match affinity {
                 ThreadAffinity::Core0 => vitasdk_sys::SCE_KERNEL_CPU_MASK_USER_0,
                 ThreadAffinity::Core1 => vitasdk_sys::SCE_KERNEL_CPU_MASK_USER_1,
                 ThreadAffinity::Core2 => vitasdk_sys::SCE_KERNEL_CPU_MASK_USER_2,
-            } as _,
-        );
+                ThreadAffinity::Core3 => vitasdk_sys::SCE_KERNEL_CPU_MASK_USER_2 << 1,
+            };
+        }
+        vitasdk_sys::sceKernelChangeThreadCpuAffinityMask(id, affinity_mask as _);
     }
 }
 

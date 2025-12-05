@@ -9,10 +9,9 @@ use crate::utils::{rgb5_to_float8, HeapMem};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
-use std::arch::arm::int32x4_t;
 use std::intrinsics::{fdiv_fast, fmul_fast, fsub_fast, unchecked_div};
 use std::mem::MaybeUninit;
-use std::{mem, ptr};
+use std::ptr;
 
 #[bitsize(32)]
 #[derive(FromBits)]
@@ -256,7 +255,7 @@ impl Gpu3DRenderer {
         }
     }
 
-    fn add_vertices(&mut self, polygon_index: usize, loaded_clip_mtx_index: &mut i32, loaded_tex_mtx_index: &mut i32, clip_mtx: &mut [int32x4_t; 4], tex_mtx: &mut [int32x4_t; 4]) {
+    fn add_vertices(&mut self, polygon_index: usize) {
         let polygon = &self.content.polygons[polygon_index];
 
         // println!(
@@ -271,11 +270,13 @@ impl Gpu3DRenderer {
         for j in 0..polygon.polygon_type.vertex_count() {
             let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
             vertex.coords[3] = 1 << 12;
-            if *loaded_clip_mtx_index != vertex.clip_matrix_index as i32 {
-                *loaded_clip_mtx_index = vertex.clip_matrix_index as i32;
-                *clip_mtx = unsafe { mem::transmute(self.content.clip_matrices[vertex.clip_matrix_index as usize].vld()) };
-            }
-            unsafe { vmult_vec4_mat4(vertex.coords.vld(), *clip_mtx, &mut transformed_coords[j as usize].values) };
+            unsafe {
+                vmult_vec4_mat4(
+                    vertex.coords.vld(),
+                    self.content.clip_matrices[vertex.clip_matrix_index as usize].vld(),
+                    &mut transformed_coords[j as usize].values,
+                )
+            };
 
             if transformed_coords[j as usize][3] == 0 {
                 return;
@@ -323,11 +324,7 @@ impl Gpu3DRenderer {
                     TextureCoordTransMode::TexCoord => {
                         let mut vector = Vectori32::<4>::new([(tex_coords[0] as i32) << 8, (tex_coords[1] as i32) << 8, 1 << 8, 1 << 8]);
                         unsafe {
-                            if *loaded_tex_mtx_index != vertex.tex_matrix_index as i32 {
-                                *loaded_tex_mtx_index = vertex.tex_matrix_index as i32;
-                                *tex_mtx = mem::transmute(self.content.tex_matrices[vertex.tex_matrix_index as usize].vld());
-                            }
-                            vmult_vec4_mat4(vector.vld(), *tex_mtx, &mut vector.values);
+                            vmult_vec4_mat4(vector.vld(), self.content.tex_matrices[vertex.tex_matrix_index as usize].vld(), &mut vector.values);
                         }
                         tex_coords[0] = (vector[0] >> 8) as i16;
                         tex_coords[1] = (vector[1] >> 8) as i16;
@@ -399,6 +396,27 @@ impl Gpu3DRenderer {
         self.polygon_attrs[polygon_index].poly_attr = u16::from(polygon.attr.alpha());
     }
 
+    pub fn process_polygons(&mut self, common: &GpuRendererCommon) {
+        if self.content.pow_cnt1 != u16::from(common.pow_cnt1[0]) {
+            return;
+        }
+
+        self.vertices_buf.clear();
+        self.indices_buf.clear();
+
+        for i in 0..self.content.polygons_size {
+            if u8::from(self.content.polygons[i as usize].attr.alpha()) == 31 {
+                self.add_vertices(i as usize);
+            }
+        }
+
+        for i in 0..self.content.polygons_size {
+            if u8::from(self.content.polygons[i as usize].attr.alpha()) != 31 {
+                self.add_vertices(i as usize);
+            }
+        }
+    }
+
     pub unsafe fn render(&mut self, common: &GpuRendererCommon) {
         gl::BindFramebuffer(gl::FRAMEBUFFER, self.gl.fbo.fbo);
         gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
@@ -411,26 +429,6 @@ impl Gpu3DRenderer {
 
         if self.content.pow_cnt1 != u16::from(common.pow_cnt1[0]) {
             return;
-        }
-
-        self.vertices_buf.clear();
-        self.indices_buf.clear();
-
-        let mut loaded_clip_mtx_index = -1;
-        let mut loaded_tex_mtx_index = -1;
-        let mut clip_mtx: [int32x4_t; 4] = unsafe { MaybeUninit::uninit().assume_init() };
-        let mut tex_mtx: [int32x4_t; 4] = unsafe { MaybeUninit::uninit().assume_init() };
-
-        for i in 0..self.content.polygons_size {
-            if u8::from(self.content.polygons[i as usize].attr.alpha()) == 31 {
-                self.add_vertices(i as usize, &mut loaded_clip_mtx_index, &mut loaded_tex_mtx_index, &mut clip_mtx, &mut tex_mtx);
-            }
-        }
-
-        for i in 0..self.content.polygons_size {
-            if u8::from(self.content.polygons[i as usize].attr.alpha()) != 31 {
-                self.add_vertices(i as usize, &mut loaded_clip_mtx_index, &mut loaded_tex_mtx_index, &mut clip_mtx, &mut tex_mtx);
-            }
         }
 
         if self.vertices_buf.is_empty() {
