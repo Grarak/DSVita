@@ -40,7 +40,7 @@ float4 drawAffine(int x, int y, int bgNum) {
     }
     palAddr *= 2;
 
-    bool useExtPal = (dispCnt & (1 << 30)) != 0;
+    bool useExtPal = ((dispCnt >> 30) & 1) != 0;
     if (useExtPal) {
         palAddr += bgNum * 8192 + ((screenEntry & 0xF000) >> 3);
         short color = readExtPal16Aligned(palAddr);
@@ -54,8 +54,7 @@ float4 drawAffine(int x, int y, int bgNum) {
 void main(out float4 color : COLOR) {
     short bgNum = short(screenPos.z);
 
-    short winEnabled = short(tex2D(winTex, screenPosF).x * 255.0);
-    if ((winEnabled & (1 << bgNum)) == 0) {
+    if (!can_display(bgNum)) {
         discard;
     }
 

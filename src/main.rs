@@ -285,10 +285,9 @@ pub fn main() {
         .unwrap();
 }
 
-#[cold]
 pub fn actual_main() {
     if cfg!(target_os = "vita") {
-        set_thread_prio_affinity(ThreadPriority::High, &[ThreadAffinity::Core1]);
+        set_thread_prio_affinity(ThreadPriority::High, &[ThreadAffinity::Core0]);
     }
 
     info_println!("Starting DSVita");
@@ -461,7 +460,7 @@ pub fn actual_main() {
         let vram_read_thread = thread::Builder::new()
             .name("vram_read".to_owned())
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::Default, &[ThreadAffinity::Core0]);
+                set_thread_prio_affinity(ThreadPriority::Default, &[ThreadAffinity::Core3]);
                 let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
                 let cpu_active = cpu_active_clone;
                 let vram = emu.vram_get_mem();
@@ -476,7 +475,7 @@ pub fn actual_main() {
         let process_3d_thread = thread::Builder::new()
             .name("process_3d_thread".to_owned())
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::Default, &[ThreadAffinity::Core0]);
+                set_thread_prio_affinity(ThreadPriority::High, &[ThreadAffinity::Core1]);
                 let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
                 let cpu_active = cpu_active_clone;
                 while cpu_active.load(Ordering::Relaxed) {

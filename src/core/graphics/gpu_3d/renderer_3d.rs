@@ -7,7 +7,7 @@ use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::core::memory::vram;
 use crate::math::{vmult_vec4_mat4, Vectori32};
-use crate::utils::{self, rgb5_to_float8, HeapMem, HeapMemU8, PtrWrapper};
+use crate::utils::{rgb5_to_float8, HeapMem, HeapMemU8, PtrWrapper};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
@@ -65,7 +65,7 @@ struct Gpu3DRendererInner {
 pub struct Gpu3DGl {
     tex: GLuint,
     pal_tex: GLuint,
-    attr_tex: GLuint,
+    attrs_ubo: GLuint,
     vertices_buf: GLuint,
     program: GLuint,
     pub fbo: GpuFbo,
@@ -94,6 +94,14 @@ impl Default for Gpu3DGl {
             gl::GenBuffers(1, &mut vertices_buf);
             gl::BindBuffer(gl::ARRAY_BUFFER, vertices_buf);
 
+            let mut attrs_ubo = 0;
+            gl::GenBuffers(1, &mut attrs_ubo);
+            gl::BindBuffer(gl::UNIFORM_BUFFER, attrs_ubo);
+
+            if cfg!(target_os = "linux") {
+                gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"PolygonAttrUbo".as_ptr() as _), 0);
+            }
+
             gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::UseProgram(0);
@@ -101,7 +109,7 @@ impl Default for Gpu3DGl {
             Gpu3DGl {
                 tex: create_mem_texture2d(1024, 512),
                 pal_tex: create_pal_texture2d(1024, 96),
-                attr_tex: create_mem_texture2d(256, 256),
+                attrs_ubo,
                 vertices_buf,
                 program,
                 fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, true).unwrap(),
@@ -476,17 +484,20 @@ impl Gpu3DRenderer {
             sub_pal_texture2d(1024, 96, mem_refs.tex_pal.as_ptr());
         }
 
-        gl::BindTexture(gl::TEXTURE_2D, self.gl.attr_tex);
-        sub_mem_texture2d(256, (utils::align_up(self.content.polygons_size as usize, 64) * 8 / 256) as _, self.polygon_attrs.as_ptr() as _);
-
         gl::ActiveTexture(gl::TEXTURE0);
         gl::BindTexture(gl::TEXTURE_2D, self.gl.tex);
 
         gl::ActiveTexture(gl::TEXTURE1);
         gl::BindTexture(gl::TEXTURE_2D, self.gl.pal_tex);
 
-        gl::ActiveTexture(gl::TEXTURE2);
-        gl::BindTexture(gl::TEXTURE_2D, self.gl.attr_tex);
+        gl::BindBuffer(gl::UNIFORM_BUFFER, self.gl.attrs_ubo);
+        gl::BufferData(
+            gl::UNIFORM_BUFFER,
+            (self.content.polygons_size as usize * size_of::<Gpu3dPolygonAttr>()) as _,
+            self.polygon_attrs.as_ptr() as _,
+            gl::DYNAMIC_DRAW,
+        );
+        gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, self.gl.attrs_ubo);
 
         gl::BindBuffer(gl::ARRAY_BUFFER, self.gl.vertices_buf);
         gl::BufferData(

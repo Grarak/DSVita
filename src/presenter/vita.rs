@@ -11,7 +11,7 @@ use crate::presenter::{
     PresentEvent, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_IN_SAMPLE_RATE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH,
 };
 use crate::settings::{Settings, SettingsConfig};
-use gl::types::{GLboolean, GLenum, GLuint};
+use gl::types::GLuint;
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
@@ -43,8 +43,8 @@ pub enum SharkOpt {
 // #[link(name = "SceRazorHud_stub", kind = "static", modifiers = "+whole-archive")]
 // #[link(name = "ScePerf_stub", kind = "static", modifiers = "+whole-archive")]
 extern "C" {
-    pub fn sceRazorCpuPushMarkerWithHud(label: *const c_char, color: c_int, flags: c_int) -> c_int;
-    pub fn sceRazorCpuPopMarker() -> c_int;
+    // pub fn sceRazorCpuPushMarkerWithHud(label: *const c_char, color: c_int, flags: c_int) -> c_int;
+    // pub fn sceRazorCpuPopMarker() -> c_int;
 }
 
 const KEY_CODE_MAPPING: [(SceCtrlButtons, Keycode); 12] = [
@@ -139,7 +139,7 @@ impl Presenter {
             vita_gl::vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe as _, 1, 0, 1);
             info_println!("Initialize vitaGL");
             // Disable multisampling for depth texture
-            vita_gl::vglInitExtended(0, 960, 544, 70 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
+            vita_gl::vglInitExtended(0, 960, 544, 100 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
             gl::load_with(|name| {
                 let name = CString::new(name).unwrap();
                 vita_gl::vglGetProcAddress(name.as_ptr() as _) as _

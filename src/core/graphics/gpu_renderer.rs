@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::Thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub struct GpuRendererCommon {
     pub mem_buf: GpuMemBuf,
@@ -274,7 +274,13 @@ impl GpuRenderer {
 
                 if self.rendering_3d {
                     let processed_3d = self.processed_3d.lock().unwrap();
-                    let _processed_3d = self.processed_3d_condvar.wait_while(processed_3d, |processed_3d| !*processed_3d).unwrap();
+                    let (_processed_3d, timeout) = self
+                        .processed_3d_condvar
+                        .wait_timeout_while(processed_3d, Duration::from_millis(1000), |processed_3d| !*processed_3d)
+                        .unwrap();
+                    if timeout.timed_out() {
+                        println!("waiting for 3d processing timed out");
+                    }
                     self.rendering_3d = false;
                     self.renderer_3d.render(&self.common, &self.gpu_mem_refs);
                 }

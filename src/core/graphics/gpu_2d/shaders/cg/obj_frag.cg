@@ -2,65 +2,69 @@ float3 in objPos : TEXCOORD0;
 float2 in objDims : TEXCOORD1;
 float2 in screenPosF : TEXCOORD2;
 
-uniform sampler2D oamTex : TEXUNIT0;
-uniform sampler2D objTex : TEXUNIT1;
-uniform sampler2D palTex : TEXUNIT2;
-uniform sampler2D extPalTex : TEXUNIT3;
-uniform sampler2D winTex : TEXUNIT4;
+uniform usampler2D oamTex : TEXUNIT0;
+uniform usampler2D objTex : TEXUNIT1;
+uniform usampler2D palTex : TEXUNIT2;
+uniform usampler2D extPalTex : TEXUNIT3;
+uniform usampler2D winTex : TEXUNIT4;
 
 uniform int dispCnt;
 uniform ObjUbo {
-    int mapWidthsObjBounds[256];
+    unsigned int mapWidthsObjBounds[256];
 } ObjUbo : BUFFER[0];
 
-short readOam8(short addr) {
+unsigned short readOam8(short addr) {
     float x = float(addr >> 2) / 255.0f;
-    return short(tex2D(oamTex, float2(x, 1.0))[addr & 3] * 255.0);
+    unsigned int value = tex2D<unsigned int>(oamTex, float2(x, 1.0));
+    short shift = addr & 3;
+    return (value >> (shift * 8)) & 0xFF;
 }
 
-short readOam16Aligned(short addr) {
+unsigned short readOam16Aligned(short addr) {
     float x = float(addr >> 2) / 255.0f;
-    float4 value = tex2D(oamTex, float2(x, 1.0));
-    short entry = addr & 2;
-    return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
+    unsigned int value = tex2D<unsigned int>(oamTex, float2(x, 0.0));
+    short shift = addr & 2;
+    return (value >> (shift * 8)) & 0xFFFF;
 }
 
-short readObj8(int addr) {
+unsigned short readObj8(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0f;
     float y = float(addrY) / (OBJ_TEX_HEIGHT - 1.0);
-    return int(tex2D(objTex, float2(x, y))[short(addr) & 3] * 255.0);
+    unsigned int value = tex2D<unsigned int>(objTex, float2(x, y));
+    short shift = addr & 3;
+    return (value >> (shift * 8)) & 0xFF;
 }
 
-short readObj16Aligned(int addr) {
+unsigned short readObj16Aligned(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0f;
     float y = float(addrY) / (OBJ_TEX_HEIGHT - 1.0);
-    float4 value = tex2D(objTex, float2(x, y));
-    short entry = short(addr) & 2;
-    return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
+    unsigned int value = tex2D<unsigned int>(objTex, float2(x, y));
+    short shift = addr & 2;
+    return (value >> (shift * 8)) & 0xFFFF;
 }
 
-short readPal16Aligned(short addr) {
+unsigned short readPal16Aligned(short addr) {
     float x = float(addr >> 2) / 255.0f;
-    float4 value = tex2D(palTex, float2(x, 1.0));
-    short entry = addr & 2;
-    return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
+    unsigned int value = tex2D<unsigned int>(palTex, float2(x, 0.0));
+    short shift = addr & 2;
+    return (value >> (shift * 8)) & 0xFFFF;
 }
 
-short readExtPal16Aligned(short addr) {
+unsigned short readExtPal16Aligned(short addr) {
     short addrX = (addr >> 2) & 0x1FF;
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0f;
     float y = float(addrY) / 3.0f;
-    float4 value = tex2D(extPalTex, float2(x, y));
-    short entry = addr & 2;
-    return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
+    unsigned int value = tex2D<unsigned int>(extPalTex, float2(x, y));
+    short shift = addr & 2;
+    return (value >> (shift * 8)) & 0xFFFF;
 }
 
-float3 normRgb5(short color) {
+float3 normRgb5(unsigned short color) {
     return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0f;
 }
 
@@ -130,8 +134,8 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
-    short winEnabled = short(tex2D(winTex, screenPosF).x * 255.0);
-    if ((winEnabled & (1 << 4)) == 0) {
+    unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
+    if (((winEnabled >> 4) & 1) == 0) {
         discard;
     }
 

@@ -56,8 +56,7 @@ float4 drawText(short x, short y, short bgNum) {
 void main(out float4 color : COLOR) {
     short bgNum = short(screenPos.z);
 
-    short winEnabled = short(tex2D(winTex, screenPosF).x * 255.0);
-    if ((winEnabled & (1 << bgNum)) == 0) {
+    if (!can_display(bgNum)) {
         discard;
     }
 

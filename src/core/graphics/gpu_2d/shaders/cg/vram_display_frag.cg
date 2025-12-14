@@ -1,20 +1,20 @@
 float3 in screenPos : TEXCOORD0;
 
-uniform sampler2D lcdcPalTex : TEXUNIT0;
+uniform usampler2D lcdcPalTex : TEXUNIT0;
 
 uniform int dispCnt;
 
-short readLcdcPal16Aligned(int addr) {
+unsigned short readLcdcPal16Aligned(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0f;
     float y = float(addrY) / 327.0f;
-    float4 value = tex2D(lcdcPalTex, float2(x, y));
-    short entry = short(addr) & 2;
-    return short(value[entry] * 255.0f) | (short(value[entry + 1] * 255.0f) << 8);
+    unsigned int value = tex2D<unsigned int>(lcdcPalTex, float2(x, y));
+    short shift = addr & 2;
+    return (value >> (shift * 8)) & 0xFFFF;
 }
 
-float3 normRgb5(short color) {
+float3 normRgb5(unsigned short color) {
     return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0f;
 }
 

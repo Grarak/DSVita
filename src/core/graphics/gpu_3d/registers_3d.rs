@@ -364,7 +364,7 @@ impl MatrixFlags {
 
 #[derive(Default)]
 pub struct Gpu3DRegisters {
-    cmd_fifo: FixedFifo<u32, 512>,
+    cmd_fifo: FixedFifo<u32, 1024>,
     cmd_remaining_params: u8,
 
     test_queue: u8,

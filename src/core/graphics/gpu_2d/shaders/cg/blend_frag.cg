@@ -6,7 +6,7 @@ uniform sampler2D bg2Tex : TEXUNIT2;
 uniform sampler2D bg3Tex : TEXUNIT3;
 uniform sampler2D objTex : TEXUNIT4;
 uniform sampler2D objDepthTex : TEXUNIT5;
-uniform sampler2D winTex : TEXUNIT6;
+uniform usampler2D winTex : TEXUNIT6;
 
 uniform BlendUbo {
     int bldCntsAlphasYs[192];
@@ -63,6 +63,8 @@ void main(out float4 color : COLOR) {
     sortBgPrio(2, bg2Tex);
     sortBgPrio(3, bg3Tex);
 
+    unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPos);
+
     if (topNum == 5) {
         discard;
     }
@@ -89,8 +91,7 @@ void main(out float4 color : COLOR) {
         }
     }
 
-    short winEnabled = short(tex2D(winTex, screenPos).x * 255.0);
-    if ((winEnabled & (1 << 5)) == 0) {
+    if (((winEnabled >> 5) & 1) == 0) {
         color = float4(topColor.rgb, 1.0);
         return;
     }

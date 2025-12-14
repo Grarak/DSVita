@@ -19,8 +19,8 @@ int readOam16Aligned(int addr) {
 }
 
 const vec2 SizeLookup[12] = vec2[12](
-vec2(8.0, 8.0), vec2(16.0, 16.0), vec2(32.0, 32.0), vec2(64.0, 64.0), vec2(16.0, 8.0), vec2(32.0, 8.0),
-vec2(32.0, 16.0), vec2(64.0, 32.0), vec2(8.0, 16.0), vec2(8.0, 32.0), vec2(16.0, 32.0), vec2(32.0, 64.0)
+    vec2(8.0, 8.0), vec2(16.0, 16.0), vec2(32.0, 32.0), vec2(64.0, 64.0), vec2(16.0, 8.0), vec2(32.0, 8.0),
+    vec2(32.0, 16.0), vec2(64.0, 32.0), vec2(8.0, 16.0), vec2(8.0, 32.0), vec2(16.0, 32.0), vec2(32.0, 64.0)
 );
 
 float fixedToFloat(int n) {
@@ -65,7 +65,7 @@ void main() {
 
     vec2 pos = position.xy;
 
-    bool affine = (attrib0 & (1 << 8)) != 0;
+    bool affine = ((attrib0 >> 8) & 1) != 0;
     if (affine) {
         int affineIndex = (attrib1 >> 9) & 0x1F;
         int affineOffset = affineIndex * 0x20;
@@ -86,17 +86,15 @@ void main() {
             objPos = vec3(normPos.x + oamWidth / 2.0 - 0.5, normPos.y + oamHeight / 2.0, oamIndex);
         }
     } else {
-        bool isVFlip = (attrib1 & (1 << 13)) != 0;
-        bool isHFlip = (attrib1 & (1 << 12)) != 0;
+        bool isVFlip = ((attrib1 >> 13) & 1) != 0;
+        bool isHFlip = ((attrib1 >> 12) & 1) != 0;
 
         if (isVFlip) {
-            pos.y -= 1.0;
-            pos.y = abs(pos.y);
+            pos.y = -pos.y + 1.0;
         }
 
         if (isHFlip) {
-            pos.x -= 1.0;
-            pos.x = abs(pos.x);
+            pos.x = -pos.x + 1.0;
         }
 
         objPos = vec3((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y, oamIndex);
