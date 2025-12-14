@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
-use vitabuild::{create_bindgen_builder, create_c_build, create_cc_build, get_out_path, get_profile_name, is_debug, is_host_linux, is_profiling, is_target_vita};
+use vitabuild::{create_bindgen_builder, create_c_build, create_cc_build, get_out_path, get_profile_name, is_host_linux, is_profiling, is_target_vita};
 
 fn generate_linux_imgui_bindings() {
     let bindings_file = get_out_path().join("imgui_bindings.rs");
@@ -291,45 +291,6 @@ fn main() {
             bindings = bindings.header(header_path.to_str().unwrap());
         }
         bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
-    }
-
-    {
-        let mut vita_gl_envs = vec![
-            ("HAVE_UNFLIPPED_FBOS", "1"),
-            ("NO_TEX_COMBINER", "1"),
-            ("MATH_SPEEDHACK", "1"),
-            ("HAVE_SHADER_CACHE", "1"),
-            ("SINGLE_THREADED_GC", "1"),
-            ("DRAW_SPEEDHACK", "2"),
-            ("INDICES_SPEEDHACK", "1"),
-        ];
-
-        if !is_debug() {
-            vita_gl_envs.push(("NO_DEBUG", "1"));
-        } else {
-            vita_gl_envs.push(("HAVE_SHARK_LOG", "1"));
-            vita_gl_envs.push(("LOG_ERRORS", "1"));
-            // vita_gl_envs.push(("HAVE_DEVKIT", "1"));
-            // vita_gl_envs.push(("HAVE_RAZOR", "1"));
-        }
-
-        let vita_gl_path = PathBuf::from("vitaGL");
-        let vita_gl_lib_path = vita_gl_path.join("libvitaGL.a");
-        let vita_gl_lib_new_path = vita_gl_path.join("libvitaGL_dsvita.a");
-
-        let num_jobs = env::var("NUM_JOBS").unwrap();
-        Command::new("make").current_dir("vitaGL").arg("clean").status().unwrap();
-        Command::new("make").current_dir("vitaGL").args(["-j", &num_jobs]).envs(vita_gl_envs).status().unwrap();
-
-        fs::rename(vita_gl_lib_path, &vita_gl_lib_new_path).unwrap();
-        println!("cargo:rustc-link-search=native={}", fs::canonicalize(&vita_gl_path).unwrap().to_str().unwrap());
-        println!("cargo:rustc-link-lib=static=vitaGL_dsvita");
-
-        let mut vita_gl_wrapper_build = create_c_build();
-        vita_gl_wrapper_build.file("vita_gl_wrapper.c");
-        vita_gl_wrapper_build.include(vita_gl_path.join("source"));
-        vita_gl_wrapper_build.flag(format!("-l {}", fs::canonicalize(vita_gl_lib_new_path).unwrap().to_str().unwrap()));
-        vita_gl_wrapper_build.compile("vitaGL_wrapper");
     }
 
     {

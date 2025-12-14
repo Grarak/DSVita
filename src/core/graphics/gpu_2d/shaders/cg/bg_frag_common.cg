@@ -35,7 +35,7 @@ short readBg16Aligned(int addr) {
     float x = float(addrX) / 511.0;
     float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
     float4 value = tex2D(bgTex, float2(x, y));
-    short entry = short(addr & 2);
+    short entry = short(addr) & 2;
     return short(value[entry] * 255.0) | (short(value[entry + 1] * 255.0) << 8);
 }
 

@@ -1,4 +1,4 @@
-workspace = { members = ["screenlayouts", "macros", "vitabuild", "vixl"] }
+workspace = { members = ["screenlayouts", "macros", "vitabuild", "vitaGL", "vixl"] }
 [package]
 name = "dsvita"
 version = "0.8.2"
@@ -64,6 +64,7 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceSysrootForKernel_stub",
     # "SceRazorCapture_stub",
 ] }
+vita_gl = { path = "vitaGL" }
 
 [profile.release-debug]
 inherits = "dev"

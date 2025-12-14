@@ -1,5 +1,5 @@
 [submodule "vitaGL"]
-	path = vitaGL
+	path = vitaGL/vitaGL_src
 	url = https://github.com/Rinnegatamante/vitaGL.git
 [submodule "kubridge"]
 	path = kubridge

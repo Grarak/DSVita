@@ -40,17 +40,9 @@ pub enum SharkOpt {
 #[link(name = "SceShaccCgExt", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "mathneon", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "vitashark", kind = "static", modifiers = "+whole-archive")]
-#[link(name = "SceRazorHud_stub", kind = "static", modifiers = "+whole-archive")]
-#[link(name = "ScePerf_stub", kind = "static", modifiers = "+whole-archive")]
+// #[link(name = "SceRazorHud_stub", kind = "static", modifiers = "+whole-archive")]
+// #[link(name = "ScePerf_stub", kind = "static", modifiers = "+whole-archive")]
 extern "C" {
-    pub fn vglSwapBuffers(has_commondialog: GLboolean);
-    pub fn vglSetupRuntimeShaderCompiler(opt_level: c_uint, use_fastmath: c_int, use_fastprecision: c_int, use_fastint: c_int);
-    pub fn vglInitExtended(legacy_pool_size: c_int, width: c_int, height: c_int, ram_threshold: c_int, msaa: SceGxmMultisampleMode) -> GLboolean;
-    pub fn vglGetTexDataPointer(target: GLenum) -> *mut c_void;
-    pub fn vglFree(addr: *mut c_void);
-    pub fn vglTexImageDepthBuffer(target: GLenum);
-    pub fn vglGetProcAddress(name: *const c_char) -> *const c_void;
-    pub fn vglRemapTexPtr() -> *mut c_void;
     pub fn sceRazorCpuPushMarkerWithHud(label: *const c_char, color: c_int, flags: c_int) -> c_int;
     pub fn sceRazorCpuPopMarker() -> c_int;
 }
@@ -144,13 +136,13 @@ impl Presenter {
             sceShellUtilInitEvents(0);
 
             info_println!("Set shader compiler arguments");
-            vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe as _, 1, 0, 1);
+            vita_gl::vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe as _, 1, 0, 1);
             info_println!("Initialize vitaGL");
             // Disable multisampling for depth texture
-            vglInitExtended(0, 960, 544, 70 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
+            vita_gl::vglInitExtended(0, 960, 544, 70 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
             gl::load_with(|name| {
                 let name = CString::new(name).unwrap();
-                vglGetProcAddress(name.as_ptr())
+                vita_gl::vglGetProcAddress(name.as_ptr() as _) as _
             });
 
             sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_STOP);
@@ -346,7 +338,7 @@ impl Presenter {
     }
 
     pub fn gl_swap_window(&self) {
-        unsafe { vglSwapBuffers(gl::FALSE) };
+        unsafe { vita_gl::vglSwapBuffers(gl::FALSE) };
     }
 
     pub fn wait_vsync(&self) {
@@ -358,18 +350,22 @@ impl Presenter {
         gl::GenTextures(1, &mut tex);
         gl::BindTexture(gl::TEXTURE_2D, tex);
         gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, 1, 1, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
-        vglFree(vglGetTexDataPointer(gl::TEXTURE_2D));
-        vglTexImageDepthBuffer(gl::TEXTURE_2D);
+        vita_gl::vglFree(vita_gl::vglGetTexDataPointer(gl::TEXTURE_2D));
+        vita_gl::vglTexImageDepthBuffer(gl::TEXTURE_2D);
         gl::BindTexture(gl::TEXTURE_2D, 0);
         tex
     }
 
     pub unsafe fn gl_get_tex_ptr() -> *mut u8 {
-        vglGetTexDataPointer(gl::TEXTURE_2D) as _
+        vita_gl::vglGetTexDataPointer(gl::TEXTURE_2D) as _
     }
 
     pub unsafe fn gl_remap_tex() -> *mut u8 {
-        vglRemapTexPtr() as _
+        vita_gl::vglRemapTexPtr() as _
+    }
+
+    pub fn gl_version_suffix() -> &'static str {
+        vita_gl::VITA_GL_VERSION
     }
 }
 

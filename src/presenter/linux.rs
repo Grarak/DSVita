@@ -245,6 +245,10 @@ impl Presenter {
     pub fn gl_create_depth_tex() -> GLuint {
         0
     }
+
+    pub fn gl_version_suffix() -> &'static str {
+        ""
+    }
 }
 
 impl UiBackend for Presenter {

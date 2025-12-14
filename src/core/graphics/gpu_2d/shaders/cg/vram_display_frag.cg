@@ -10,7 +10,7 @@ short readLcdcPal16Aligned(int addr) {
     float x = float(addrX) / 511.0f;
     float y = float(addrY) / 327.0f;
     float4 value = tex2D(lcdcPalTex, float2(x, y));
-    short entry = addr & 2;
+    short entry = short(addr) & 2;
     return short(value[entry] * 255.0f) | (short(value[entry + 1] * 255.0f) << 8);
 }
 

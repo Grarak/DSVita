@@ -32,6 +32,8 @@ pub unsafe fn create_shader(name: impl Into<String>, shader_src: &str, typ: GLen
         return Err(StrErr::new("Failed to create shader"));
     }
 
+    // Append gl version to end of shader file to invalidate shader cache
+    let shader_src = shader_src.to_string() + &format!("\n// version: {}", Presenter::gl_version_suffix());
     let src_ptr = shader_src.as_ptr();
     let src_len = shader_src.len();
     gl::ShaderSource(shader, 1, ptr::addr_of!(src_ptr) as _, ptr::addr_of!(src_len) as _);
