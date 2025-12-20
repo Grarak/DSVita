@@ -26,9 +26,10 @@ unsigned short readBg8(int addr) {
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0;
     float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
-    unsigned int value = tex2D<unsigned int>(bgTex, float2(x, y));
+    unsigned int values[4];
+    tex2D_gather4(bgTex, float2(x, y), values);
     short shift = addr & 3;
-    return (value >> (shift * 8)) & 0xFF;
+    return (values[0] >> (shift * 8)) & 0xFF;
 }
 
 unsigned short readBg16Aligned(int addr) {
@@ -36,16 +37,18 @@ unsigned short readBg16Aligned(int addr) {
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0;
     float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
-    unsigned int value = tex2D<unsigned int>(bgTex, float2(x, y));
+    unsigned int values[4];
+    tex2D_gather4(bgTex, float2(x, y), values);
     short shift = addr & 2;
-    return (value >> (shift * 8)) & 0xFFFF;
+    return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
 unsigned short readPal16Aligned(short addr) {
     float x = float(addr >> 2) / 255.0f;
-    unsigned int value = tex2D<unsigned int>(palTex, float2(x, 1.0));
+    unsigned int values[4];
+    tex2D_gather4(palTex, float2(x, 1.0), values);
     short shift = addr & 2;
-    return (value >> (shift * 8)) & 0xFFFF;
+    return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
 unsigned short readExtPal16Aligned(short addr) {
@@ -53,9 +56,10 @@ unsigned short readExtPal16Aligned(short addr) {
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0f;
     float y = float(addrY) / 15.0f;
-    unsigned int value = tex2D<unsigned int>(extPalTex, float2(x, y));
+    unsigned int values[4];
+    tex2D_gather4(extPalTex, float2(x, y), values);
     short shift = addr & 2;
-    return (value >> (shift * 8)) & 0xFFFF;
+    return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
 float3 normRgb5(unsigned short color) {
@@ -74,6 +78,8 @@ short2 calculateAffineCoords(short x, short y, short bgNum) {
 }
 
 bool can_display(unsigned short bgNum) {
-    unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
+    unsigned int values[4];
+    tex2D_gather4(winTex, screenPosF, values);
+    unsigned short winEnabled = values[0];
     return ((winEnabled >> bgNum) & 1) != 0;
 }

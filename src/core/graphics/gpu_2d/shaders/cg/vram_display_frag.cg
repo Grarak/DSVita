@@ -9,9 +9,10 @@ unsigned short readLcdcPal16Aligned(int addr) {
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0f;
     float y = float(addrY) / 327.0f;
-    unsigned int value = tex2D<unsigned int>(lcdcPalTex, float2(x, y));
+    unsigned int values[4];
+    tex2D_gather4(lcdcPalTex, float2(x, y), values);
     short shift = addr & 2;
-    return (value >> (shift * 8)) & 0xFFFF;
+    return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
 float3 normRgb5(unsigned short color) {

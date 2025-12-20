@@ -340,7 +340,7 @@ impl ops::MulAssign<&Matrix> for Vectori32<4> {
     }
 }
 
-pub unsafe fn vmult_vec4_mat4(v: int32x4_t, m: [int32x4_t; 4], dst: &mut [i32; 4]) {
+pub unsafe fn vmult_vec4_mat4_no_store(v: int32x4_t, m: [int32x4_t; 4]) -> int32x4_t {
     let lower_result = vmull_n_s32(vget_low_s32(m[0]), vgetq_lane_s32::<0>(v));
     let lower_result = vmlal_n_s32(lower_result, vget_low_s32(m[1]), vgetq_lane_s32::<1>(v));
     let lower_result = vmlal_n_s32(lower_result, vget_low_s32(m[2]), vgetq_lane_s32::<2>(v));
@@ -355,7 +355,11 @@ pub unsafe fn vmult_vec4_mat4(v: int32x4_t, m: [int32x4_t; 4], dst: &mut [i32; 4
     let higher_result = vshrq_n_s64::<12>(higher_result);
 
     let v = vuzpq_s32(mem::transmute(lower_result), mem::transmute(higher_result));
-    vst1q_s32(dst.as_mut_ptr(), v.0);
+    v.0
+}
+
+pub unsafe fn vmult_vec4_mat4(v: int32x4_t, m: [int32x4_t; 4], dst: &mut [i32; 4]) {
+    vst1q_s32(dst.as_mut_ptr(), vmult_vec4_mat4_no_store(v, m));
 }
 
 impl ops::Mul<&Vectori32<3>> for Vectori32<3> {

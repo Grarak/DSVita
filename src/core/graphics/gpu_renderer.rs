@@ -161,7 +161,6 @@ impl GpuRenderer {
             self.common.pow_cnt1[1] = pow_cnt1;
             self.sample_2d = false;
             self.ready_2d = true;
-
             let _guard = self.read_vram.lock().unwrap();
         }
 
@@ -246,11 +245,11 @@ impl GpuRenderer {
 
         unsafe {
             if self.common.pow_cnt1[0].enable() {
-                self.common.mem_buf.rebuild_vram_maps();
                 self.renderer_2d.set_tex_ptrs(&mut self.gpu_mem_refs);
                 if self.rendering_3d {
                     self.renderer_3d.set_tex_ptrs(&mut self.gpu_mem_refs);
                 }
+                self.common.mem_buf.rebuild_vram_maps();
                 self.common
                     .mem_buf
                     .read_all(&mut self.gpu_mem_refs, self.renderer_regs_2d_shared.has_vram_display[0], self.rendering_3d);

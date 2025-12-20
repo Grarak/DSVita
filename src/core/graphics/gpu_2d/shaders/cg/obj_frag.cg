@@ -15,16 +15,18 @@ uniform ObjUbo {
 
 unsigned short readOam8(short addr) {
     float x = float(addr >> 2) / 255.0f;
-    unsigned int value = tex2D<unsigned int>(oamTex, float2(x, 1.0));
+    unsigned int values[4];
+    tex2D_gather4(oamTex, float2(x, 1.0), values);
     short shift = addr & 3;
-    return (value >> (shift * 8)) & 0xFF;
+    return (values[0] >> (shift * 8)) & 0xFF;
 }
 
 unsigned short readOam16Aligned(short addr) {
     float x = float(addr >> 2) / 255.0f;
-    unsigned int value = tex2D<unsigned int>(oamTex, float2(x, 0.0));
+    unsigned int values[4];
+    tex2D_gather4(oamTex, float2(x, 1.0), values);
     short shift = addr & 2;
-    return (value >> (shift * 8)) & 0xFFFF;
+    return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
 unsigned short readObj8(int addr) {
@@ -32,9 +34,10 @@ unsigned short readObj8(int addr) {
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0f;
     float y = float(addrY) / (OBJ_TEX_HEIGHT - 1.0);
-    unsigned int value = tex2D<unsigned int>(objTex, float2(x, y));
+    unsigned int values[4];
+    tex2D_gather4(objTex, float2(x, y), values);
     short shift = addr & 3;
-    return (value >> (shift * 8)) & 0xFF;
+    return (values[0] >> (shift * 8)) & 0xFF;
 }
 
 unsigned short readObj16Aligned(int addr) {
@@ -42,16 +45,18 @@ unsigned short readObj16Aligned(int addr) {
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0f;
     float y = float(addrY) / (OBJ_TEX_HEIGHT - 1.0);
-    unsigned int value = tex2D<unsigned int>(objTex, float2(x, y));
+    unsigned int values[4];
+    tex2D_gather4(objTex, float2(x, y), values);
     short shift = addr & 2;
-    return (value >> (shift * 8)) & 0xFFFF;
+    return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
 unsigned short readPal16Aligned(short addr) {
     float x = float(addr >> 2) / 255.0f;
-    unsigned int value = tex2D<unsigned int>(palTex, float2(x, 0.0));
+    unsigned int values[4];
+    tex2D_gather4(palTex, float2(x, 1.0), values);
     short shift = addr & 2;
-    return (value >> (shift * 8)) & 0xFFFF;
+    return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
 unsigned short readExtPal16Aligned(short addr) {
@@ -59,9 +64,10 @@ unsigned short readExtPal16Aligned(short addr) {
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0f;
     float y = float(addrY) / 3.0f;
-    unsigned int value = tex2D<unsigned int>(extPalTex, float2(x, y));
+    unsigned int values[4];
+    tex2D_gather4(extPalTex, float2(x, y), values);
     short shift = addr & 2;
-    return (value >> (shift * 8)) & 0xFFFF;
+    return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
 float3 normRgb5(unsigned short color) {
@@ -134,7 +140,9 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
-    unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
+    unsigned int values[4];
+    tex2D_gather4(winTex, screenPosF, values);
+    unsigned short winEnabled = values[0];
     if (((winEnabled >> 4) & 1) == 0) {
         discard;
     }

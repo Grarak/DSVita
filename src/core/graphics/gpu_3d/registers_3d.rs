@@ -247,7 +247,7 @@ impl From<u8> for TextureFormat {
     }
 }
 
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
 pub enum TextureCoordTransMode {
     #[default]

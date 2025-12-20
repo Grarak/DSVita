@@ -9,7 +9,7 @@ uniform int dispCnt;
 
 unsigned short readOam16Aligned(short addr) {
     float x = float(addr >> 2) / 255.0f;
-    unsigned int value = tex2D<unsigned int>(oamTex, float2(x, 0.0));
+    unsigned int value = tex2D<unsigned int>(oamTex, float2(x, 1.0));
     short shift = addr & 2;
     return (value >> (shift * 8)) & 0xFFFF;
 }

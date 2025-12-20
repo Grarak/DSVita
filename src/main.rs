@@ -460,7 +460,7 @@ pub fn actual_main() {
         let vram_read_thread = thread::Builder::new()
             .name("vram_read".to_owned())
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::Default, &[ThreadAffinity::Core3]);
+                set_thread_prio_affinity(ThreadPriority::High, &[ThreadAffinity::Core0, ThreadAffinity::Core1]);
                 let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
                 let cpu_active = cpu_active_clone;
                 let vram = emu.vram_get_mem();
@@ -475,7 +475,7 @@ pub fn actual_main() {
         let process_3d_thread = thread::Builder::new()
             .name("process_3d_thread".to_owned())
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::High, &[ThreadAffinity::Core1]);
+                set_thread_prio_affinity(ThreadPriority::Default, &[ThreadAffinity::Core1]);
                 let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
                 let cpu_active = cpu_active_clone;
                 while cpu_active.load(Ordering::Relaxed) {
@@ -489,7 +489,7 @@ pub fn actual_main() {
         let audio_out_thread = thread::Builder::new()
             .name("audio_out".to_owned())
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::High, &[ThreadAffinity::Core3]);
+                set_thread_prio_affinity(ThreadPriority::Default, &[ThreadAffinity::Core0, ThreadAffinity::Core1]);
                 let mut guest_buffer = HeapMemU32::<{ SAMPLE_BUFFER_SIZE }>::new();
                 let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_OUT_BUF_SIZE }>::new();
                 let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
@@ -508,7 +508,7 @@ pub fn actual_main() {
         let audio_in_thread = thread::Builder::new()
             .name("audio_in".to_owned())
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::Default, &[ThreadAffinity::Core3]);
+                set_thread_prio_affinity(ThreadPriority::Low, &[ThreadAffinity::Core0, ThreadAffinity::Core1]);
                 let mut audio_buffer = HeapMem::<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>::new();
                 let cpu_active = cpu_active_clone;
                 while cpu_active.load(Ordering::Relaxed) {
@@ -526,7 +526,7 @@ pub fn actual_main() {
         let save_thread = thread::Builder::new()
             .name("save".to_owned())
             .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::Low, &[ThreadAffinity::Core3]);
+                set_thread_prio_affinity(ThreadPriority::Low, &[ThreadAffinity::Core0, ThreadAffinity::Core1]);
                 let last_save_time = last_save_time_clone;
                 let emu = unsafe { (emu_ptr as *mut Emu).as_mut().unwrap_unchecked() };
                 let cpu_active = cpu_active_clone;

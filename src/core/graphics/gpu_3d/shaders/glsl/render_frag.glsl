@@ -15,9 +15,8 @@ uniform PolygonAttrUbo {
     PolygonAttr polygonAttrs[8192];
 };
 
-in vec3 oColor;
+in vec4 oColor;
 in vec2 oTexCoords;
-in float oPolygonIndex;
 
 layout (location = 0) out vec4 color;
 
@@ -102,6 +101,7 @@ void aXiXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int aBits) {
     int addr = addrOffset + t * sizeS + s;
 
     int palIndex = readTex8(addr);
+
     if (palIndex == 0) {
         discard;
     }
@@ -133,6 +133,7 @@ void palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format, b
     int addr = addrOffset + ((t * sizeS + s) >> (2 - format));
 
     int palIndex = readTex8(addr);
+
     int mask1 = (4 >> format) - 1;
     int mask2 = (4 << ((format * 3) & 6)) - 1;
     palIndex = (palIndex >> ((s & mask1) * (2 << format))) & mask2;
@@ -146,9 +147,10 @@ void palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format, b
 }
 
 void main() {
-    int polygonIndex = int(oPolygonIndex);
+    int polygonIndex = int(oColor.a);
 
     PolygonAttr attr = polygonAttrs[polygonIndex];
+
     int addrOffset = (attr.texImageParam & 0xFFFF) << 3;
     int texImageParam = attr.texImageParam >> 16;
     int palAddr = attr.palAddrAttrs & 0xFFFF;
@@ -189,7 +191,7 @@ void main() {
 
     switch (texFmt) {
         case 0: {
-            color = vec4(oColor, 1.0);
+            color = vec4(oColor.rgb, 1.0);
             break;
         }
         case 1: {

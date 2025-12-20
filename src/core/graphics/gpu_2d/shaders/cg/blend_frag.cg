@@ -23,7 +23,9 @@ static float4 topColor = float4(0.0, 0.0, 0.0, 1.0);
 static float4 bottomColor = float4(0.0, 0.0, 0.0, 1.0);
 
 void sortObjPrio() {
-    float prio = tex2D<float>(objDepthTex, screenPos) * 2.0 - 1.0;
+    float values[4];
+    tex2D_gather4(objDepthTex, screenPos, values);
+    float prio = values[0] * 2.0 - 1.0;
     if (prio < topPrio) {
         topNum = 4;
         // Give obj a priority boost due to float imprecision
@@ -63,7 +65,9 @@ void main(out float4 color : COLOR) {
     sortBgPrio(2, bg2Tex);
     sortBgPrio(3, bg3Tex);
 
-    unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPos);
+    unsigned int values[4];
+    tex2D_gather4(winTex, screenPos, values);
+    unsigned short winEnabled = values[0];
 
     if (topNum == 5) {
         discard;

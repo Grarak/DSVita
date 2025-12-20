@@ -1,6 +1,5 @@
-float3 in oColor : TEXCOORD0;
+float4 in oColor : TEXCOORD0;
 float2 in oTexCoords : TEXCOORD1;
-float in oPolygonIndex : TEXCOORD2;
 
 uniform usampler2D tex : TEXUNIT0;
 uniform usampler2D palTex : TEXUNIT1;
@@ -11,7 +10,7 @@ struct PolygonAttr {
 };
 
 uniform PolygonAttrUbo {
-    PolygonAttr attrs[8192];
+    PolygonAttr attrs[300];
 } PolygonAttrUbo : BUFFER[0];
 
 unsigned short readTex8(int addr) {
@@ -19,9 +18,10 @@ unsigned short readTex8(int addr) {
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0;
     float y = float(addrY) / 255.0;
-    unsigned int value = tex2D<unsigned int>(tex, float2(x, y));
+    unsigned int values[4];
+    tex2D_gather4(tex, float2(x, y), values);
     short shift = addr & 3;
-    return (value >> (shift * 8)) & 0xFF;
+    return (values[0] >> (shift * 8)) & 0xFF;
 }
 
 unsigned short readTex16Aligned(int addr) {
@@ -29,9 +29,10 @@ unsigned short readTex16Aligned(int addr) {
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0;
     float y = float(addrY) / 255.0;
-    unsigned int value = tex2D<unsigned int>(tex, float2(x, y));
+    unsigned int values[4];
+    tex2D_gather4(tex, float2(x, y), values);
     short shift = addr & 2;
-    return (value >> (shift * 8)) & 0xFFFF;
+    return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
 unsigned int readPal32Aligned(int addr) {
@@ -39,7 +40,9 @@ unsigned int readPal32Aligned(int addr) {
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0;
     float y = float(addrY) / 47.0;
-    return tex2D<unsigned int>(palTex, float2(x, y));
+    unsigned int values[4];
+    tex2D_gather4(palTex, float2(x, y), values);
+    return values[0];
 }
 
 unsigned short readPal16Aligned(int addr) {
@@ -117,7 +120,7 @@ float4 directTex(int addrOffset, int s, int t, int sizeS) {
     return float4(normRgb5(color), 1.0);
 }
 
-float4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, short format, bool transparent0) {
+float4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format, bool transparent0) {
     int addr = addrOffset + ((t * sizeS + s) >> (2 - format));
 
     short palIndex = readTex8(addr);
@@ -134,7 +137,7 @@ float4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, short forma
 }
 
 void main(out float4 color : COLOR) {
-    short polygonIndex = short(oPolygonIndex);
+    short polygonIndex = short(oColor.a);
 
     PolygonAttr attr = PolygonAttrUbo.attrs[polygonIndex];
     unsigned int addrOffset = (attr.texImageParam & 0xFFFF) << 3;
@@ -176,7 +179,7 @@ void main(out float4 color : COLOR) {
     short texFmt = (texImageParam >> 10) & 0x7;
 
     if (texFmt == 0) {
-        color = float4(oColor, 1.0);
+        color = float4(oColor.rgb, 1.0);
     } else if (texFmt == 1) {
         color = aXiXTex(palAddr, addrOffset, s, t, sizeS, 3);
     } else if (texFmt == 5) {

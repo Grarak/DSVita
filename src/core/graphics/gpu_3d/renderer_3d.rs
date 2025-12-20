@@ -1,17 +1,19 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::matrix_vec::MatrixVec;
-use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, SwapBuffers, TextureCoordTransMode, Vertex};
+use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, SwapBuffers, TextureCoordTransMode, TextureFormat, Vertex};
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::core::memory::vram;
-use crate::math::{vmult_vec4_mat4, Vectori32};
+use crate::math::{vmult_vec4_mat4, vmult_vec4_mat4_no_store, Vectori32};
 use crate::utils::{rgb5_to_float8, HeapMem, HeapMemU8, PtrWrapper};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
-use std::intrinsics::{fdiv_fast, fmul_fast, fsub_fast, unchecked_div};
+use std::arch::arm::{vcvt_n_f32_s32, vget_low_s32, vshr_n_s32, vst1_f32};
+use std::hint::{assert_unchecked, unreachable_unchecked};
+use std::intrinsics::fdiv_fast;
 use std::mem::{self, MaybeUninit};
 use std::ptr;
 
@@ -273,7 +275,7 @@ impl Gpu3DRenderer {
         }
     }
 
-    fn add_vertices(&mut self, polygon_index: usize) {
+    unsafe fn add_vertices(&mut self, polygon_index: usize) {
         let polygon = &self.content.polygons[polygon_index];
 
         // println!(
@@ -284,19 +286,20 @@ impl Gpu3DRenderer {
         //     polygon.attr
         // );
 
-        let mut transformed_coords: [Vectori32<4>; 4] = unsafe { MaybeUninit::uninit().assume_init() };
+        let mut trans_coords: [Vectori32<4>; 4] = MaybeUninit::uninit().assume_init();
+        let mut clip_matrix_index = usize::MAX;
+        let mut clip_matrix = MaybeUninit::uninit().assume_init();
         for j in 0..polygon.polygon_type.vertex_count() {
             let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
             vertex.coords[3] = 1 << 12;
-            unsafe {
-                vmult_vec4_mat4(
-                    vertex.coords.vld(),
-                    self.content.clip_matrices[vertex.clip_matrix_index as usize].vld(),
-                    &mut transformed_coords[j as usize].values,
-                )
-            };
+            assert_unchecked(vertex.clip_matrix_index as usize != usize::MAX);
+            if clip_matrix_index != vertex.clip_matrix_index as usize {
+                clip_matrix_index = vertex.clip_matrix_index as usize;
+                clip_matrix = self.content.clip_matrices[clip_matrix_index].vld();
+            }
+            vmult_vec4_mat4(vertex.coords.vld(), clip_matrix, &mut trans_coords[j as usize].values);
 
-            if transformed_coords[j as usize][3] == 0 {
+            if trans_coords[j as usize][3] == 0 {
                 return;
             }
         }
@@ -316,83 +319,75 @@ impl Gpu3DRenderer {
             self.indices_buf.push(vertex_index + j);
         }
 
-        let x = polygon.viewport.x1();
-        let y = 191 - polygon.viewport.y2();
-        let w = (polygon.viewport.x2() - polygon.viewport.x1()) as u16 + 1;
-        let h = (191 - polygon.viewport.y1() - y) as u16 + 1;
+        let mut tex_matrix_index = usize::MAX;
+        let mut tex_matrix = MaybeUninit::uninit().assume_init();
+
+        let x1 = polygon.viewport.x1() as u16;
+        let y1 = polygon.viewport.y1() as u16;
+        let x2 = polygon.viewport.x2() as u16 + 1;
+        let y2 = polygon.viewport.y2() as u16 + 1;
+        let w = x2 - x1;
+        let h = y2 - y1;
 
         for j in 0..polygon.polygon_type.vertex_count() {
             let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
 
-            let coords = &transformed_coords[j as usize];
-            let c = rgb5_to_float8(vertex.color);
-
-            let (vertex_x, vertex_y) = unsafe {
-                (
-                    (unchecked_div((coords[0] as i64 + coords[3] as i64) * w as i64, coords[3] as i64 * 2) + x as i64) as i32,
-                    (unchecked_div((-coords[1] as i64 + coords[3] as i64) * h as i64, coords[3] as i64 * 2) + y as i64) as i32,
-                )
+            let c = if TextureFormat::from(u8::from(polygon.tex_image_param.format())) == TextureFormat::None {
+                rgb5_to_float8(vertex.color)
+            } else {
+                (0.0, 0.0, 0.0)
             };
 
-            let mut tex_coords = vertex.tex_coords;
-            if (vertex.tex_matrix_index as usize) < self.content.tex_matrices.len() {
-                let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
+            let mut tex_coords: [f32; 2] = MaybeUninit::uninit().assume_init();
+            let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
+            if tex_coord_trans_mode != TextureCoordTransMode::None && (vertex.tex_matrix_index as usize) < self.content.tex_matrices.len() {
+                assert_unchecked(vertex.tex_matrix_index as usize != usize::MAX);
+                if tex_matrix_index != vertex.tex_matrix_index as usize {
+                    tex_matrix_index = vertex.tex_matrix_index as usize;
+                    let mtx = &mut self.content.tex_matrices[tex_matrix_index];
+                    if tex_coord_trans_mode != TextureCoordTransMode::TexCoord {
+                        mtx[12] = (vertex.tex_coords[0] as i32) << 12;
+                        mtx[13] = (vertex.tex_coords[1] as i32) << 12;
+                    }
+                    tex_matrix = mtx.vld();
+                }
+
                 match tex_coord_trans_mode {
-                    TextureCoordTransMode::None => {}
                     TextureCoordTransMode::TexCoord => {
-                        let mut vector = Vectori32::<4>::new([(tex_coords[0] as i32) << 8, (tex_coords[1] as i32) << 8, 1 << 8, 1 << 8]);
-                        unsafe {
-                            vmult_vec4_mat4(vector.vld(), self.content.tex_matrices[vertex.tex_matrix_index as usize].vld(), &mut vector.values);
-                        }
-                        tex_coords[0] = (vector[0] >> 8) as i16;
-                        tex_coords[1] = (vector[1] >> 8) as i16;
+                        let vector = Vectori32::<4>::new([(vertex.tex_coords[0] as i32) << 8, (vertex.tex_coords[1] as i32) << 8, 1 << 8, 1 << 8]);
+                        let ret = vmult_vec4_mat4_no_store(vector.vld(), tex_matrix);
+                        let ret = vshr_n_s32::<8>(vget_low_s32(ret));
+                        let ret = vcvt_n_f32_s32::<4>(ret);
+                        vst1_f32(tex_coords.as_mut_ptr(), ret);
                     }
                     TextureCoordTransMode::Normal => {
-                        let mut normal = Vectori32::<4>::new([polygon.normal[0] as i32, polygon.normal[1] as i32, polygon.normal[2] as i32, 1 << 12]);
-                        let mut mtx = self.content.tex_matrices[vertex.tex_matrix_index as usize].clone();
-                        mtx[12] = (tex_coords[0] as i32) << 12;
-                        mtx[13] = (tex_coords[1] as i32) << 12;
-
-                        unsafe { vmult_vec4_mat4(normal.vld(), mtx.vld(), &mut normal.values) };
-                        tex_coords[0] = (normal[0] >> 12) as i16;
-                        tex_coords[1] = (normal[1] >> 12) as i16;
+                        let normal = Vectori32::<4>::new([polygon.normal[0] as i32, polygon.normal[1] as i32, polygon.normal[2] as i32, 1 << 12]);
+                        let ret = vmult_vec4_mat4_no_store(normal.vld(), tex_matrix);
+                        let ret = vshr_n_s32::<12>(vget_low_s32(ret));
+                        let ret = vcvt_n_f32_s32::<4>(ret);
+                        vst1_f32(tex_coords.as_mut_ptr(), ret);
                     }
                     TextureCoordTransMode::Vertex => {
-                        let mut mtx = self.content.tex_matrices[vertex.tex_matrix_index as usize].clone();
-                        mtx[12] = (tex_coords[0] as i32) << 12;
-                        mtx[13] = (tex_coords[1] as i32) << 12;
-
-                        let mut vector: Vectori32<4> = unsafe { MaybeUninit::uninit().assume_init() };
-                        unsafe { vmult_vec4_mat4(vertex.coords.vld(), mtx.vld(), &mut vector.values) };
-                        tex_coords[0] = (vector[0] >> 12) as i16;
-                        tex_coords[1] = (vector[1] >> 12) as i16;
+                        let ret = vmult_vec4_mat4_no_store(vertex.coords.vld(), tex_matrix);
+                        let ret = vshr_n_s32::<12>(vget_low_s32(ret));
+                        let ret = vcvt_n_f32_s32::<4>(ret);
+                        vst1_f32(tex_coords.as_mut_ptr(), ret);
                     }
+                    _ => unreachable_unchecked(),
                 }
+            } else {
+                tex_coords[0] = fdiv_fast(vertex.tex_coords[0] as f32, 16.0);
+                tex_coords[1] = fdiv_fast(vertex.tex_coords[1] as f32, 16.0);
             }
 
-            let gpu_vertex = unsafe {
-                let w = fdiv_fast(coords[3] as f32, 4096.0);
+            let vertices = &trans_coords[j as usize];
+            let vertex_x = ((w as i64 * vertices[0] as i64 + vertices[3] as i64 * (x2 as i16 + x1 as i16 - 255) as i64) >> 8) as i32;
+            let vertex_y = ((h as i64 * vertices[1] as i64 + vertices[3] as i64 * (y2 as i16 + y1 as i16 - 191) as i64) >> 8) as i32;
 
-                let x = fmul_fast(vertex_x as f32, 2.0);
-                let x = fdiv_fast(x, 255.0);
-                let x = fsub_fast(x, 1.0);
-                let x = fmul_fast(x, w);
-
-                let y = fmul_fast(vertex_y as f32, 2.0);
-                let y = fdiv_fast(y, 191.0);
-                let y = fsub_fast(1.0, y);
-                let y = fmul_fast(y, w);
-
-                let z = fdiv_fast(coords[2] as f32, 4096.0);
-
-                let s = fdiv_fast(tex_coords[0] as f32, 16.0);
-                let t = fdiv_fast(tex_coords[1] as f32, 16.0);
-
-                Gpu3DVertex {
-                    coords: [x, y, z, w],
-                    color: [c.0, c.1, c.2, polygon_index as f32],
-                    tex_coords: [s, t],
-                }
+            let gpu_vertex = Gpu3DVertex {
+                coords: [vertex_x as f32, vertex_y as f32, vertices[2] as f32, vertices[3] as f32],
+                color: [c.0, c.1, c.2, polygon_index as f32],
+                tex_coords,
             };
 
             // println!(
@@ -423,13 +418,13 @@ impl Gpu3DRenderer {
 
         for i in 0..self.content.polygons_size {
             if u8::from(self.content.polygons[i as usize].attr.alpha()) == 31 {
-                self.add_vertices(i as usize);
+                unsafe { self.add_vertices(i as usize) };
             }
         }
 
         for i in 0..self.content.polygons_size {
             if u8::from(self.content.polygons[i as usize].attr.alpha()) != 31 {
-                self.add_vertices(i as usize);
+                unsafe { self.add_vertices(i as usize) };
             }
         }
     }

@@ -136,10 +136,10 @@ impl Presenter {
             sceShellUtilInitEvents(0);
 
             info_println!("Set shader compiler arguments");
-            vita_gl::vglSetupRuntimeShaderCompiler(SharkOpt::Unsafe as _, 1, 0, 1);
+            vita_gl::vglSetupRuntimeShaderCompiler(SharkOpt::Fast as _, 1, 0, 1);
             info_println!("Initialize vitaGL");
             // Disable multisampling for depth texture
-            vita_gl::vglInitExtended(0, 960, 544, 100 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
+            vita_gl::vglInitExtended(0, 960, 544, 65 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
             gl::load_with(|name| {
                 let name = CString::new(name).unwrap();
                 vita_gl::vglGetProcAddress(name.as_ptr() as _) as _
