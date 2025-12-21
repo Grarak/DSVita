@@ -61,8 +61,14 @@ const fn generate_oam_indices() -> [u8; 128 * 4] {
 const OBJ_OAM_INDICES: [u8; 128 * 4] = generate_oam_indices();
 
 #[repr(C)]
+struct ObjAttr {
+    map_width: u32,
+    obj_bound: u32,
+}
+
+#[repr(C)]
 struct ObjUbo {
-    map_widths_obj_bounds: [u32; 128 * 2],
+    attrs: [ObjAttr; 128],
 }
 
 const_assert!(size_of::<ObjUbo>() <= 16 * 1024);
@@ -912,19 +918,19 @@ impl Gpu2DProgram {
 
             if gfx_mode == OamGfxMode::Bitmap {
                 if disp_cnt.bitmap_obj_mapping() {
-                    self.obj_ubo_data.map_widths_obj_bounds[i * 2] = width as u32;
-                    self.obj_ubo_data.map_widths_obj_bounds[i * 2 + 1] = u16::from(OamAttrib2::from(oam.attr2).tile_index()) as u32 * if disp_cnt.bitmap_obj_1d_boundary() { 256 } else { 128 };
+                    self.obj_ubo_data.attrs[i].map_width = width as u32;
+                    self.obj_ubo_data.attrs[i].obj_bound = u16::from(OamAttrib2::from(oam.attr2).tile_index()) as u32 * if disp_cnt.bitmap_obj_1d_boundary() { 256 } else { 128 };
                 } else {
-                    self.obj_ubo_data.map_widths_obj_bounds[i * 2] = if disp_cnt.bitmap_obj_2d() { 256 } else { 128 };
+                    self.obj_ubo_data.attrs[i].map_width = if disp_cnt.bitmap_obj_2d() { 256 } else { 128 };
                     let x_mask = if disp_cnt.bitmap_obj_2d() { 0x1F } else { 0x0F };
-                    self.obj_ubo_data.map_widths_obj_bounds[i * 2 + 1] = (oam.attr2 & x_mask) as u32 * 0x10 + (oam.attr2 & 0x3FF & !x_mask) as u32 * 0x80;
+                    self.obj_ubo_data.attrs[i].obj_bound = (oam.attr2 & x_mask) as u32 * 0x10 + (oam.attr2 & 0x3FF & !x_mask) as u32 * 0x80;
                 }
             } else if disp_cnt.tile_1d_obj_mapping() {
-                self.obj_ubo_data.map_widths_obj_bounds[i * 2] = width as u32;
-                self.obj_ubo_data.map_widths_obj_bounds[i * 2 + 1] = 32 << u8::from(disp_cnt.tile_obj_1d_boundary());
+                self.obj_ubo_data.attrs[i].map_width = width as u32;
+                self.obj_ubo_data.attrs[i].obj_bound = 32 << u8::from(disp_cnt.tile_obj_1d_boundary());
             } else {
-                self.obj_ubo_data.map_widths_obj_bounds[i * 2] = if attrib0.is_8bit() { 128 } else { 256 };
-                self.obj_ubo_data.map_widths_obj_bounds[i * 2 + 1] = 32;
+                self.obj_ubo_data.attrs[i].map_width = if attrib0.is_8bit() { 128 } else { 256 };
+                self.obj_ubo_data.attrs[i].obj_bound = 32;
             }
 
             let index_base = (i * 4) as u16;

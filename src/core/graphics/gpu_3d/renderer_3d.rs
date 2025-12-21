@@ -381,8 +381,8 @@ impl Gpu3DRenderer {
             }
 
             let vertices = &trans_coords[j as usize];
-            let vertex_x = ((w as i64 * vertices[0] as i64 + vertices[3] as i64 * (x2 as i16 + x1 as i16 - 255) as i64) >> 8) as i32;
-            let vertex_y = ((h as i64 * vertices[1] as i64 + vertices[3] as i64 * (y2 as i16 + y1 as i16 - 191) as i64) >> 8) as i32;
+            let vertex_x = ((w as i64 * vertices[0] as i64 + vertices[3] as i64 * (x2 as i16 + x1 as i16 - 255) as i64) >> 6) as i32;
+            let vertex_y = ((h as i64 * vertices[1] as i64 + vertices[3] as i64 * (y2 as i16 + y1 as i16 - 191) as i64) >> 6) as i32;
 
             let gpu_vertex = Gpu3DVertex {
                 coords: [vertex_x as f32, vertex_y as f32, vertices[2] as f32, vertices[3] as f32],

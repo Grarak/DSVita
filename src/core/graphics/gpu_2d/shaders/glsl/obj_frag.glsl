@@ -8,10 +8,18 @@ layout(location = 0) out vec4 color;
 in vec3 objPos;
 flat in ivec2 objDims;
 in vec2 screenPosF;
+in vec2 objAttrib0Addr;
+in vec2 objAttrib2Addr;
 
 uniform int dispCnt;
+
+struct ObjAttr {
+    int mapWidth;
+    int objBounds;
+};
+
 uniform ObjUbo {
-    int mapWidthsObjBounds[256];
+    ObjAttr objAttrs[256];
 };
 
 uniform sampler2D oamTex;
@@ -20,16 +28,14 @@ uniform sampler2D palTex;
 uniform sampler2D extPalTex;
 uniform sampler2D winTex;
 
-int readOam8(int addr) {
-    float x = float(addr >> 2) / 255.0f;
-    return int(texture(oamTex, vec2(x, 1.0))[addr & 3] * 255.0);
+int readAttrib0() {
+    vec4 value = texture(oamTex, objAttrib0Addr);
+    return int(value[0] * 255.0) | (int(value[1] * 255.0) << 8);
 }
 
-int readOam16Aligned(int addr) {
-    float x = float(addr >> 2) / 255.0f;
-    vec4 value = texture(oamTex, vec2(x, 1.0));
-    int entry = addr & 2;
-    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
+int readAttrib2() {
+    vec4 value = texture(oamTex, objAttrib2Addr);
+    return int(value[0] * 255.0) | (int(value[1] * 255.0) << 8);
 }
 
 int readObj8(int addr) {
@@ -71,18 +77,16 @@ vec3 normRgb5(int color) {
     return vec3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-vec4 drawSprite(int objX, int objY, int attrib0High, int oamIndex) {
-    int mapWidth = mapWidthsObjBounds[oamIndex * 2];
-    int objBound = mapWidthsObjBounds[oamIndex * 2 + 1];
-
-    int attrib2 = readOam16Aligned(oamIndex * 8 + 4);
+vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, ObjAttr attr) {
+    int mapWidth = attr.mapWidth;
+    int objBound = attr.objBounds;
 
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * objBound;
     int tileAddrOffset = ((objY & 7) + (objY >> 3) * mapWidth) * 8;
     tileAddrOffset += (objX >> 3) * 64 + (objX & 7);
 
-    bool is8bpp = ((attrib0High >> 5) & 1) != 0;
+    bool is8bpp = ((attrib0 >> 13) & 1) != 0;
     if (!is8bpp) {
         tileAddrOffset /= 2;
     }
@@ -116,9 +120,9 @@ vec4 drawSprite(int objX, int objY, int attrib0High, int oamIndex) {
     return vec4(normRgb5(palColor), 1.0);
 }
 
-vec4 drawBitmap(int objX, int objY, int oamIndex) {
-    int bitmapWidth = mapWidthsObjBounds[oamIndex * 2];
-    int dataBase = mapWidthsObjBounds[oamIndex * 2 + 1];
+vec4 drawBitmap(int objX, int objY, ObjAttr attr) {
+    int bitmapWidth = attr.mapWidth;
+    int dataBase = attr.objBounds;
 
     int objColor = readObj16Aligned(dataBase + (objY * bitmapWidth + objX) * 2);
     if (((objColor >> 15) & 1) == 0) {
@@ -128,6 +132,14 @@ vec4 drawBitmap(int objX, int objY, int oamIndex) {
 }
 
 void main() {
+    int attrib0 = readAttrib0();
+    int attrib2 = readAttrib2();
+    int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
+
+    if ((winEnabled & (1 << 4)) == 0) {
+        discard;
+    }
+
     int objWidth = objDims.x;
     int objHeight = objDims.y;
     int objY = int(objPos.y);
@@ -137,21 +149,15 @@ void main() {
         discard;
     }
 
-    int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
-    if ((winEnabled & (1 << 4)) == 0) {
-        discard;
-    }
-
     int oamIndex = int(objPos.z);
+    ObjAttr attr = objAttrs[oamIndex];
 
-    int attrib0High = readOam8(oamIndex * 8 + 1);
-
-    int gfxMode = (attrib0High >> 2) & 3;
+    int gfxMode = (attrib0 >> 10) & 3;
     bool isBitmap = gfxMode == 3;
     if (isBitmap) {
-        color = drawBitmap(objX, objY, oamIndex);
+        color = drawBitmap(objX, objY, attr);
     } else {
-        color = drawSprite(objX, objY, attrib0High, oamIndex);
+        color = drawSprite(objX, objY, attrib0, attrib2, attr);
         bool semiTransparent = gfxMode == 1;
         if (semiTransparent) {
             color.a = 0.0;

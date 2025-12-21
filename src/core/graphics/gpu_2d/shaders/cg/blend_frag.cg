@@ -65,9 +65,7 @@ void main(out float4 color : COLOR) {
     sortBgPrio(2, bg2Tex);
     sortBgPrio(3, bg3Tex);
 
-    unsigned int values[4];
-    tex2D_gather4(winTex, screenPos, values);
-    unsigned short winEnabled = values[0];
+    unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPos);
 
     if (topNum == 5) {
         discard;

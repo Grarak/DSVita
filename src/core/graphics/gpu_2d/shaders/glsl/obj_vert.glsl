@@ -1,5 +1,8 @@
 #version 300 es
 
+precision highp float;
+precision highp int;
+
 in vec4 position;
 in float oamIndex;
 
@@ -8,6 +11,8 @@ uniform sampler2D oamTex;
 out vec3 objPos;
 flat out ivec2 objDims;
 out vec2 screenPosF;
+out vec2 objAttrib0Addr;
+out vec2 objAttrib2Addr;
 
 uniform int dispCnt;
 
@@ -104,6 +109,8 @@ void main() {
     float y = float(oamY) + oamHeight * position.y;
 
     screenPosF = vec2(x / 256.0, y / 192.0);
+    objAttrib0Addr = vec2(oamIndex * 8.0 / 4.0 / 255.0, 1.0);
+    objAttrib2Addr = vec2((oamIndex * 8.0 + 4.0) / 4.0 / 255.0, 1.0);
 
     int priority = (attrib2 >> 10) & 3;
     gl_Position = vec4(screenPosF.x * 2.0 - 1.0, 1.0 - screenPosF.y * 2.0, float(priority) / 4.0, 1.0);

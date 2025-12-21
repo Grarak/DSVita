@@ -62,7 +62,7 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceShaccCg_stub",
     "ScePower_stub",
     "SceSysrootForKernel_stub",
-    # "SceRazorCapture_stub",
+    "SceRazorCapture_stub",
 ] }
 vita_gl = { path = "vitaGL" }
 

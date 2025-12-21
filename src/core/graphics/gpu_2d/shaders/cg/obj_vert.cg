@@ -2,6 +2,8 @@ float4 out gl_Position : POSITION;
 float3 out objPos : TEXCOORD0;
 float2 out objDims : TEXCOORD1;
 float2 out screenPosF : TEXCOORD2;
+float2 out objAttrib0Addr : TEXCOORD3;
+float2 out objAttrib2Addr : TEXCOORD4;
 
 uniform usampler2D oamTex : TEXUNIT0;
 
@@ -22,12 +24,12 @@ static const float2 SizeLookup[12] = {
 void main(float2 position, float oamIndex) {
     short index = short(oamIndex);
 
-    short attrib0 = readOam16Aligned(index * 8);
-    short attrib1 = readOam16Aligned(index * 8 + 2);
-    short attrib2 = readOam16Aligned(index * 8 + 4);
+    unsigned short attrib0 = readOam16Aligned(index * 8);
+    unsigned short attrib1 = readOam16Aligned(index * 8 + 2);
+    unsigned short attrib2 = readOam16Aligned(index * 8 + 4);
 
-    short oamX = short(attrib1 & 0x1FF);
-    short oamY = short(attrib0 & 0xFF);
+    short oamX = attrib1 & 0x1FF;
+    short oamY = attrib0 & 0xFF;
 
     int shape = (attrib0 >> 12) & 0xC;
     int size = (attrib1 >> 14) & 0x3;
@@ -57,7 +59,7 @@ void main(float2 position, float oamIndex) {
         short pd = readOam16Aligned(affineOffset + 30);
         float2x2 m = float2x2(float(pa), float(pb), float(pc), float(pd)) / 256.0;
 
-        bool doubleAffine = (attrib0 & (1 << 9)) != 0;
+        bool doubleAffine = ((attrib0 >> 9) & 1) != 0;
         if (doubleAffine) {
             float2 normPos = mul(m, float2(max(oamWidth * 2.0 * pos.x - 0.9, 0.0) - oamWidth, max(oamHeight * 2.0 * pos.y - 0.9, 0.0) - oamHeight));
             objPos = float3(normPos.x + oamWidth / 2.0, normPos.y + oamHeight / 2.0, oamIndex);
@@ -86,6 +88,8 @@ void main(float2 position, float oamIndex) {
     float y = float(oamY) + oamHeight * position.y;
 
     screenPosF = float2(x / 256.0, y / 192.0);
+    objAttrib0Addr = float2(oamIndex * 8.0 / 4.0 / 255.0, 1.0);
+    objAttrib2Addr = float2((oamIndex * 8.0 + 4.0) / 4.0 / 255.0, 1.0);
 
     short priority = short((attrib2 >> 10) & 3);
     gl_Position = float4(screenPosF.x * 2.0 - 1.0, 1.0 - screenPosF.y * 2.0, float(priority) / 4.0, 1.0);

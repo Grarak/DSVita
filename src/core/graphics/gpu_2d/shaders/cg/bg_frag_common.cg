@@ -78,8 +78,6 @@ short2 calculateAffineCoords(short x, short y, short bgNum) {
 }
 
 bool can_display(unsigned short bgNum) {
-    unsigned int values[4];
-    tex2D_gather4(winTex, screenPosF, values);
-    unsigned short winEnabled = values[0];
+    unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
     return ((winEnabled >> bgNum) & 1) != 0;
 }

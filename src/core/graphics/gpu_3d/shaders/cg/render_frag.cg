@@ -1,5 +1,6 @@
-float4 in oColor : TEXCOORD0;
+float3 in oColor : TEXCOORD0_HALF;
 float2 in oTexCoords : TEXCOORD1;
+float in oPolygonIndex : TEXCOORD2;
 
 uniform usampler2D tex : TEXUNIT0;
 uniform usampler2D palTex : TEXUNIT1;
@@ -10,7 +11,7 @@ struct PolygonAttr {
 };
 
 uniform PolygonAttrUbo {
-    PolygonAttr attrs[300];
+    PolygonAttr attrs[8192];
 } PolygonAttrUbo : BUFFER[0];
 
 unsigned short readTex8(int addr) {
@@ -137,7 +138,7 @@ float4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format,
 }
 
 void main(out float4 color : COLOR) {
-    short polygonIndex = short(oColor.a);
+    short polygonIndex = short(oPolygonIndex);
 
     PolygonAttr attr = PolygonAttrUbo.attrs[polygonIndex];
     unsigned int addrOffset = (attr.texImageParam & 0xFFFF) << 3;
