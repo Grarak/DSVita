@@ -1,18 +1,11 @@
 float3 in oColor : TEXCOORD0_HALF;
 float2 in oTexCoords : TEXCOORD1;
-float in oPolygonIndex : TEXCOORD2;
+float2 in texImageParamAddr : TEXCOORD2;
+float2 in palPolyAttribAddr : TEXCOORD4;
 
 uniform usampler2D tex : TEXUNIT0;
 uniform usampler2D palTex : TEXUNIT1;
-
-struct PolygonAttr {
-    unsigned int texImageParam;
-    unsigned int palAddrAttrs;
-};
-
-uniform PolygonAttrUbo {
-    PolygonAttr attrs[8192];
-} PolygonAttrUbo : BUFFER[0];
+uniform usampler2D attrTex : TEXUNIT2;
 
 unsigned short readTex8(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
@@ -138,13 +131,12 @@ float4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format,
 }
 
 void main(out float4 color : COLOR) {
-    short polygonIndex = short(oPolygonIndex);
+    int texImageParamValue = tex2D<unsigned int>(attrTex, texImageParamAddr);
+    int palPolyAttribValue = tex2D<unsigned int>(attrTex, palPolyAttribAddr);
 
-    PolygonAttr attr = PolygonAttrUbo.attrs[polygonIndex];
-    unsigned int addrOffset = (attr.texImageParam & 0xFFFF) << 3;
-    unsigned short texImageParam = attr.texImageParam >> 16;
-    unsigned short palAddr = attr.palAddrAttrs & 0xFFFF;
-    unsigned short polyAttr = attr.palAddrAttrs >> 16;
+    unsigned int addrOffset = (texImageParamValue & 0xFFFF) << 3;
+    unsigned short texImageParam = texImageParamValue >> 16;
+    unsigned short palAddr = palPolyAttribValue & 0xFFFF;
 
     short sizeS = 8 << ((texImageParam >> 4) & 0x7);
     short sizeT = 8 << ((texImageParam >> 7) & 0x7);
@@ -194,6 +186,7 @@ void main(out float4 color : COLOR) {
         color = palXTex(palAddr, addrOffset, s, t, sizeS, texFmt - 2, transparent0);
     }
 
+    unsigned short polyAttr = palPolyAttribValue >> 16;
     float alpha = float(polyAttr & 31) / 31.0;
     color.a *= alpha;
 }

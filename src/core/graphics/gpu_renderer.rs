@@ -184,6 +184,7 @@ impl GpuRenderer {
             }
 
             self.ready_2d = false;
+            self.renderer_3d.on_render_start();
             self.vram_read.store(false, Ordering::SeqCst);
             *rendering = true;
             self.rendering_condvar.notify_all();
@@ -245,10 +246,10 @@ impl GpuRenderer {
 
         unsafe {
             if self.common.pow_cnt1[0].enable() {
-                self.renderer_2d.set_tex_ptrs(&mut self.gpu_mem_refs);
                 if self.rendering_3d {
                     self.renderer_3d.set_tex_ptrs(&mut self.gpu_mem_refs);
                 }
+                self.renderer_2d.set_tex_ptrs(&mut self.gpu_mem_refs);
                 self.common.mem_buf.rebuild_vram_maps();
                 self.common
                     .mem_buf
