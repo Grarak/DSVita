@@ -1,37 +1,37 @@
+use crate::core::CpuType;
 use crate::core::emu::Emu;
 use crate::core::memory::io_arm7::io_arm7;
 use crate::core::memory::io_arm9::io_arm9;
 use crate::core::memory::mmu::MMU_PAGE_SHIFT;
 use crate::core::memory::{regions, vram};
 use crate::core::thread_regs::ThreadRegs;
-use crate::core::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
 use crate::jit::assembler::block_asm::{BlockAsm, GuestInstMetadata, GuestInstOffset};
 use crate::jit::assembler::{arm, thumb};
 use crate::jit::inst_mem_handler::{
-    inst_read64_mem_handler, inst_read64_mem_handler_with_cpsr, inst_read_io_mem_handler, inst_read_io_mem_handler_with_cpsr, inst_read_mem_handler, inst_read_mem_handler_multiple,
-    inst_read_mem_handler_multiple_with_cpsr, inst_read_mem_handler_with_cpsr, inst_write_io_mem_handler, inst_write_io_mem_handler_with_cpsr, inst_write_mem_handler, inst_write_mem_handler_gxfifo,
-    inst_write_mem_handler_gxfifo_with_cpsr, inst_write_mem_handler_multiple, inst_write_mem_handler_multiple_gxfifo, inst_write_mem_handler_multiple_gxfifo_with_cpsr,
-    inst_write_mem_handler_multiple_with_cpsr, inst_write_mem_handler_with_cpsr, InstMemMultipleParams,
+    InstMemMultipleParams, inst_read_io_mem_handler, inst_read_io_mem_handler_with_cpsr, inst_read_mem_handler, inst_read_mem_handler_multiple, inst_read_mem_handler_multiple_with_cpsr,
+    inst_read_mem_handler_with_cpsr, inst_read64_mem_handler, inst_read64_mem_handler_with_cpsr, inst_write_io_mem_handler, inst_write_io_mem_handler_with_cpsr, inst_write_mem_handler,
+    inst_write_mem_handler_gxfifo, inst_write_mem_handler_gxfifo_with_cpsr, inst_write_mem_handler_multiple, inst_write_mem_handler_multiple_gxfifo, inst_write_mem_handler_multiple_gxfifo_with_cpsr,
+    inst_write_mem_handler_multiple_with_cpsr, inst_write_mem_handler_with_cpsr,
 };
-use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt, JitDebugInfo};
+use crate::jit::jit_asm::{JitDebugInfo, emit_code_block, hle_bios_uninterrupt};
 use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::jit::op::{MultipleTransfer, Op, SingleTransfer};
 use crate::jit::reg::Reg;
 use crate::jit::{Cond, MemoryAmount};
 use crate::logging::debug_println;
-use crate::mmap::{flush_icache, ArmContext, Mmap, PAGE_SHIFT, PAGE_SIZE};
+use crate::mmap::{ArmContext, Mmap, PAGE_SHIFT, PAGE_SIZE, flush_icache};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils;
 use crate::utils::{HeapMem, HeapMemU8};
+use CpuType::{ARM7, ARM9};
 use bilge::prelude::{u4, u6};
 use std::collections::VecDeque;
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::unlikely;
 use std::ops::{Deref, DerefMut};
 use std::{mem, ptr, slice};
-use CpuType::{ARM7, ARM9};
 
 pub const JIT_MEMORY_SIZE: usize = 32 * 1024 * 1024;
 pub const JIT_LIVE_RANGE_PAGE_SIZE_SHIFT: u32 = 8;
@@ -931,6 +931,13 @@ impl JitMemory {
                     ARM7 => Self::get_inst_mem_handler_fun::<{ ARM7 }>(is_write, transfer, guest_memory_addr, guest_inst_metadata.dirty_guest_regs.is_reserved(Reg::CPSR), &mut io_func),
                 };
                 Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR, inst_mem_func as u32);
+
+                let guest_inst_metadata_ptr = guest_inst_metadata as *const _ as u32;
+                if is_write {
+                    Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R12, guest_inst_metadata_ptr);
+                } else if io_func.is_some() {
+                    Self::fast_mem_mov::<THUMB>(fast_mem, &mut slow_mem_length, Reg::R0, guest_inst_metadata_ptr);
+                }
 
                 Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
 
