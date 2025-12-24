@@ -19,16 +19,10 @@ vec4 drawAffine(int x, int y, int bgNum) {
     int yBlockNum = coords.y >> 3;
     int yInBlock = coords.y & 7;
 
-    screenAddr += (yBlockNum * (size / 8) + xBlockNum) * 2;
-    int screenEntry = readBg16Aligned(screenAddr);
+    screenAddr += yBlockNum * (size / 8) + xBlockNum;
+    int screenEntry = readBg8(screenAddr);
 
-    int isHFlip = (screenEntry >> 10) & 1;
-    int isVFlip = (screenEntry >> 11) & 1;
-
-    xInBlock = abs(isHFlip * 7 - xInBlock);
-    yInBlock = abs(isVFlip * 7 - yInBlock);
-
-    charAddr += (screenEntry & 0x3FF) * 64 + yInBlock * 8 + xInBlock;
+    charAddr += screenEntry * 64 + yInBlock * 8 + xInBlock;
 
     int palAddr = readBg8(charAddr);
     if (palAddr == 0) {
@@ -36,15 +30,8 @@ vec4 drawAffine(int x, int y, int bgNum) {
     }
     palAddr *= 2;
 
-    bool useExtPal = (dispCnt & (1 << 30)) != 0;
-    if (useExtPal) {
-        palAddr += bgNum * 8192 + ((screenEntry & 0xF000) >> 3);
-        int color = readExtPal16Aligned(palAddr);
-        return vec4(normRgb5(color), 1.0);
-    } else {
-        int color = readPal16Aligned(palAddr);
-        return vec4(normRgb5(color), 1.0);
-    }
+    int color = readPal16Aligned(palAddr);
+    return vec4(normRgb5(color), 1.0);
 }
 
 void main() {

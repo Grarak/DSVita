@@ -308,6 +308,7 @@ struct Gpu2DProgram {
     obj_disp_cnt_loc: GLint,
     obj_ubo: GLuint,
 
+    bg_affine_program: Gpu2DBgProgram,
     bg_affine_extended_program: Gpu2DBgProgram,
     bg_bitmap_program: Gpu2DBgProgram,
     bg_display_3d_program: Gpu2DBgProgram,
@@ -348,7 +349,7 @@ macro_rules! draw_scanlines {
 }
 
 impl Gpu2DProgram {
-    fn new<const ENGINE: Gpu2DEngine>(obj_vert_shader: GLuint, bg_vert_shader: GLuint, bg_vert_affine_extended_shader: GLuint, bg_vert_bitmap_shader: GLuint) -> Self {
+    fn new<const ENGINE: Gpu2DEngine>(obj_vert_shader: GLuint, bg_vert_shader: GLuint, bg_vert_affine_shader: GLuint, bg_vert_bitmap_shader: GLuint) -> Self {
         unsafe {
             let (obj_program, obj_vao, obj_disp_cnt_loc, obj_ubo) = {
                 let frag_shader_src = shader_source!("obj_frag").replace(
@@ -417,7 +418,7 @@ impl Gpu2DProgram {
                 (program, vao, disp_cnt_loc, ubo)
             };
 
-            let (bg_affine_extended_program, bg_bitmap_program, bg_display_3d_program, bg_text_4bpp_program, bg_text_8bpp_program, bg_ubo) = {
+            let (bg_affine_program, bg_affine_extended_program, bg_bitmap_program, bg_display_3d_program, bg_text_4bpp_program, bg_text_8bpp_program, bg_ubo) = {
                 let frag_common_shader_src = shader_source!("bg_frag_common").replace(
                     "BG_TEX_HEIGHT",
                     &format!(
@@ -429,13 +430,15 @@ impl Gpu2DProgram {
                     ),
                 );
 
+                let frag_affine_shader = create_shader("bg affine", &(frag_common_shader_src.clone() + shader_source!("bg_frag_affine")), gl::FRAGMENT_SHADER).unwrap();
                 let frag_affine_extended_shader = create_shader("bg affine extended", &(frag_common_shader_src.clone() + shader_source!("bg_frag_affine_extended")), gl::FRAGMENT_SHADER).unwrap();
                 let frag_bitmap_shader = create_shader("bg bitmap", &(frag_common_shader_src.clone() + shader_source!("bg_frag_bitmap")), gl::FRAGMENT_SHADER).unwrap();
                 let frag_display_3d_shader = create_shader("bg display 3d", &(frag_common_shader_src.clone() + shader_source!("bg_frag_display_3d")), gl::FRAGMENT_SHADER).unwrap();
                 let frag_text_4bpp_shader = create_shader("bg text 4bpp", &(frag_common_shader_src.clone() + shader_source!("bg_frag_text_4bpp")), gl::FRAGMENT_SHADER).unwrap();
                 let frag_text_8bpp_shader = create_shader("bg text 8bpp", &(frag_common_shader_src + shader_source!("bg_frag_text_8bpp")), gl::FRAGMENT_SHADER).unwrap();
 
-                let affine_extended_program = create_program(&[bg_vert_affine_extended_shader, frag_affine_extended_shader]).unwrap();
+                let affine_program = create_program(&[bg_vert_affine_shader, frag_affine_shader]).unwrap();
+                let affine_extended_program = create_program(&[bg_vert_affine_shader, frag_affine_extended_shader]).unwrap();
                 let bitmap_program = create_program(&[bg_vert_bitmap_shader, frag_bitmap_shader]).unwrap();
                 let display_3d_program = create_program(&[bg_vert_shader, frag_display_3d_shader]).unwrap();
                 let text_4bpp_program = create_program(&[bg_vert_shader, frag_text_4bpp_shader]).unwrap();
@@ -479,6 +482,7 @@ impl Gpu2DProgram {
                 };
 
                 (
+                    init_program(affine_program, true),
                     init_program(affine_extended_program, true),
                     init_program(bitmap_program, true),
                     init_program(display_3d_program, false),
@@ -497,6 +501,7 @@ impl Gpu2DProgram {
                 obj_ubo_data: ObjUbo::default(),
                 obj_disp_cnt_loc,
                 obj_ubo,
+                bg_affine_program,
                 bg_affine_extended_program,
                 bg_bitmap_program,
                 bg_display_3d_program,
@@ -510,9 +515,6 @@ impl Gpu2DProgram {
 
     unsafe fn draw_windows(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, from_line: u8, to_line: u8) {
         let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
-        if disp_cnt.obj_window_display_flag() {
-            // todo!()
-        }
         if !disp_cnt.is_any_window_enabled() {
             return;
         }
@@ -538,11 +540,11 @@ impl Gpu2DProgram {
             return;
         }
 
-        let highest_index = if disp_cnt.obj_window_display_flag() {
-            self.assemble_oam::<true>(mem, from_line, to_line, disp_cnt)
-        } else {
-            self.assemble_oam::<false>(mem, from_line, to_line, disp_cnt)
-        };
+        if disp_cnt.obj_window_display_flag() {
+            todo!()
+        }
+
+        let highest_index = self.assemble_oam::<true>(mem, from_line, to_line, disp_cnt);
 
         if self.obj_oam_indices.is_empty() {
             return;
@@ -563,10 +565,6 @@ impl Gpu2DProgram {
     }
 
     unsafe fn draw_bg_program(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, from_line: u8, to_line: u8, fb_tex_3d: GLuint, bg_num: u8, bg_mode: BgMode) {
-        if bg_mode == BgMode::Affine || bg_mode == BgMode::Large {
-            // todo!("{bg_mode:?}")
-        }
-
         let bg_cnt = regs.bg_cnts[from_line as usize * 4 + bg_num as usize];
         let bg_cnt = BgCnt::from(bg_cnt);
         let program = match bg_mode {
@@ -577,10 +575,7 @@ impl Gpu2DProgram {
                     &self.bg_text_4bpp_program
                 }
             }
-            BgMode::Affine => {
-                // TODO
-                &self.bg_affine_extended_program
-            }
+            BgMode::Affine => &self.bg_affine_program,
             BgMode::Extended => {
                 if bg_cnt.color_256_palettes() {
                     &self.bg_bitmap_program
@@ -589,8 +584,7 @@ impl Gpu2DProgram {
                 }
             }
             BgMode::Large => {
-                // TODO
-                &self.bg_affine_extended_program
+                todo!()
             }
             BgMode::Display3d => &self.bg_display_3d_program,
         };
@@ -879,7 +873,7 @@ impl Gpu2DProgram {
             }
             let gfx_mode = attrib0.get_gfx_mode();
             if OBJ_WINDOW && gfx_mode == OamGfxMode::Window {
-                // todo!()
+                todo!()
             }
 
             let attrib1 = OamAttrib1::from(oam.attr1);
@@ -959,7 +953,7 @@ impl Gpu2DRenderer {
         unsafe {
             let obj_vert_shader = create_shader("obj", shader_source!("obj_vert"), gl::VERTEX_SHADER).unwrap();
             let bg_vert_shader = create_shader("bg", shader_source!("bg_vert"), gl::VERTEX_SHADER).unwrap();
-            let bg_vert_affine_extended_shader = create_shader("bg affine extended", shader_source!("bg_vert_affine_extended"), gl::VERTEX_SHADER).unwrap();
+            let bg_vert_affine_shader = create_shader("bg affine", shader_source!("bg_vert_affine"), gl::VERTEX_SHADER).unwrap();
             let bg_vert_bitmap_shader = create_shader("bg bitmap", shader_source!("bg_vert_bitmap"), gl::VERTEX_SHADER).unwrap();
 
             let instance = Gpu2DRenderer {
@@ -970,15 +964,15 @@ impl Gpu2DRenderer {
                     Gpu2DTextures::new(1024, OBJ_B_TEX_HEIGHT, 1024, BG_B_TEX_HEIGHT),
                 ],
                 common: Gpu2DCommon::new(),
-                program_a: Gpu2DProgram::new::<{ A }>(obj_vert_shader, bg_vert_shader, bg_vert_affine_extended_shader, bg_vert_bitmap_shader),
-                program_b: Gpu2DProgram::new::<{ B }>(obj_vert_shader, bg_vert_shader, bg_vert_affine_extended_shader, bg_vert_bitmap_shader),
+                program_a: Gpu2DProgram::new::<{ A }>(obj_vert_shader, bg_vert_shader, bg_vert_affine_shader, bg_vert_bitmap_shader),
+                program_b: Gpu2DProgram::new::<{ B }>(obj_vert_shader, bg_vert_shader, bg_vert_affine_shader, bg_vert_bitmap_shader),
                 #[cfg(target_os = "linux")]
                 lcdc_mem_buf: HeapMemU8::new(),
             };
 
             gl::DeleteShader(obj_vert_shader);
             gl::DeleteShader(bg_vert_shader);
-            gl::DeleteShader(bg_vert_affine_extended_shader);
+            gl::DeleteShader(bg_vert_affine_shader);
             gl::DeleteShader(bg_vert_bitmap_shader);
 
             instance
