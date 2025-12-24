@@ -9,4 +9,5 @@ unsafe extern "C" {
     pub fn vglTexImageDepthBuffer(target: u32);
     pub fn vglGetProcAddress(name: *const u8) -> *const u8;
     pub fn vglRemapTexPtr() -> *mut u8;
+    pub fn glTexImage2Drgba5(width: i32, height: i32);
 }

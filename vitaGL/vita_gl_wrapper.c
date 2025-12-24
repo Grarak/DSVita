@@ -20,3 +20,12 @@ void *vglRemapTexPtr() {
 	}
 	return tex->data;
 }
+
+void glTexImage2Drgba5(GLsizei width, GLsizei height) {
+	// Setting some aliases to make code more readable
+	texture_unit *tex_unit = &texture_units[server_texture_unit];
+	int texture2d_idx = tex_unit->tex_id[0];
+	texture *tex = &texture_slots[texture2d_idx];
+
+	gpu_alloc_texture(width, height, SCE_GXM_TEXTURE_FORMAT_U1U5U5U5_ABGR, NULL, tex, 2, NULL, NULL, GL_TRUE);
+}

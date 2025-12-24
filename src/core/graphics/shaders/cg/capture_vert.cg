@@ -1,0 +1,9 @@
+float4 out gl_Position : POSITION;
+float2 out texCoords : TEXCOORD0;
+
+uniform float2 sizeScalar;
+
+void main(float4 position) {
+    texCoords = position.zw * sizeScalar;
+    gl_Position = float4(position.xy * sizeScalar, 0.0, 1.0);
+}

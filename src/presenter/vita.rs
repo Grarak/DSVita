@@ -364,6 +364,10 @@ impl Presenter {
         vita_gl::vglRemapTexPtr() as _
     }
 
+    pub unsafe fn gl_tex_image_2d_rgba5(width: i32, height: i32) {
+        vita_gl::glTexImage2Drgba5(width, height);
+    }
+
     pub fn gl_version_suffix() -> &'static str {
         vita_gl::VITA_GL_VERSION
     }

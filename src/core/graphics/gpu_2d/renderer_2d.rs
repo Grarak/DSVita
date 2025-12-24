@@ -1,17 +1,17 @@
 use crate::core::graphics::gl_utils::{
-    create_mem_texture1d, create_mem_texture2d, create_pal_texture1d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture1d, sub_mem_texture2d, sub_pal_texture1d,
-    sub_pal_texture2d, GpuFbo,
+    GpuFbo, create_mem_texture1d, create_mem_texture2d, create_pal_texture1d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture1d, sub_mem_texture2d,
+    sub_pal_texture1d, sub_pal_texture2d,
 };
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use crate::core::graphics::gpu_2d::registers_2d::{BgCnt, DispCnt};
-use crate::core::graphics::gpu_2d::renderer_regs_2d::{BgUbo, BlendUbo, Gpu2DMem, Gpu2DRenderRegs, Gpu2DRenderRegsShared, WinBgUbo};
 use crate::core::graphics::gpu_2d::Gpu2DEngine;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
+use crate::core::graphics::gpu_2d::registers_2d::{BgCnt, DispCnt};
+use crate::core::graphics::gpu_2d::renderer_regs_2d::{BgUbo, BlendUbo, Gpu2DMem, Gpu2DRenderRegs, Gpu2DRenderRegsShared, WinBgUbo};
 use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
 use crate::core::memory::{regions, vram};
 use crate::utils::{self, HeapMemU8};
-use crate::utils::{rgb5_to_float8, PtrWrapper};
+use crate::utils::{PtrWrapper, rgb5_to_float8};
 use gl::types::{GLint, GLuint};
 use static_assertions::const_assert;
 use std::hint::unreachable_unchecked;
@@ -544,7 +544,7 @@ impl Gpu2DProgram {
             todo!()
         }
 
-        let highest_index = self.assemble_oam::<true>(mem, from_line, to_line, disp_cnt);
+        let highest_index = self.assemble_oam::<false>(mem, from_line, to_line, disp_cnt);
 
         if self.obj_oam_indices.is_empty() {
             return;

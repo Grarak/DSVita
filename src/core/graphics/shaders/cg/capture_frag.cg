@@ -1,0 +1,7 @@
+float2 in texCoords : TEXCOORD0;
+
+uniform sampler2D tex : TEXUNIT0;
+
+void main(out float4 color : COLOR) {
+    color = tex2D(tex, texCoords);
+}

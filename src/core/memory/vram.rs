@@ -14,7 +14,7 @@ use std::mem;
 
 const BANK_SECTION_SHIFT: usize = 12;
 const BANK_SECTION_SIZE: usize = 1 << BANK_SECTION_SHIFT;
-const BANK_SIZE: usize = 9;
+pub const BANK_SIZE: usize = 9;
 
 #[derive(Copy, Clone)]
 struct VramMap<const SIZE: usize> {
@@ -237,7 +237,7 @@ where
 #[bitsize(8)]
 #[derive(FromBits)]
 pub struct VramCnt {
-    mst: u3,
+    pub mst: u3,
     ofs: u2,
     not_used: u2,
     pub enable: bool,

@@ -29,5 +29,9 @@
         "JSONC": {
             "enable_language_server": false
         }
-    }
+    },
+    "file_scan_exclusions": [
+        "imgui",
+        "vitaGL/vitaGL_src"
+    ]
 }

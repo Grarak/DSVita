@@ -1,7 +1,10 @@
+use crate::core::graphics::gpu::DispCapCnt;
 use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram::{Vram, VramBanks, VramCnt};
 use crate::core::memory::{regions, vram};
-use crate::utils::{HeapMemU8, PtrWrapper};
+use crate::utils::{self, HeapMemU8, PtrWrapper};
+
+pub const CAPTURE_IDENTIFIER: &[u8; 8] = b"CAPTURE_";
 
 #[derive(Default)]
 pub struct GpuMemRefs {
@@ -27,9 +30,9 @@ pub struct GpuMemRefs {
 
 #[derive(Default)]
 pub struct GpuMemBuf {
-    vram: Vram,
+    pub vram: Vram,
+    queued_vram_cnt: [u8; vram::BANK_SIZE],
     vram_mem: HeapMemU8<{ vram::TOTAL_SIZE }>,
-
     pub pal: HeapMemU8<{ regions::STANDARD_PALETTES_SIZE as usize }>,
     pub oam: HeapMemU8<{ regions::OAM_SIZE as usize }>,
 }
@@ -39,12 +42,12 @@ impl GpuMemBuf {
         self.vram = Vram::default();
     }
 
-    pub fn set_vram_cnt(&mut self, vram: &Vram) {
-        self.vram.cnt = vram.cnt;
+    pub fn queue_vram(&mut self, vram: &Vram) {
+        self.queued_vram_cnt = vram.cnt;
     }
 
     pub fn read_vram(&mut self, vram: &[u8; vram::TOTAL_SIZE]) {
-        for (i, &cnt) in self.vram.cnt.iter().enumerate() {
+        for (i, &cnt) in self.queued_vram_cnt.iter().enumerate() {
             let cnt = VramCnt::from(cnt);
             if cnt.enable() {
                 VramBanks::copy_bank(i as u8, &mut self.vram_mem, vram);
@@ -55,6 +58,10 @@ impl GpuMemBuf {
     pub fn read_palettes_oam(&mut self, palettes: &[u8; STANDARD_PALETTES_SIZE as usize], oam: &[u8; OAM_SIZE as usize]) {
         self.pal.copy_from_slice(palettes);
         self.oam.copy_from_slice(oam);
+    }
+
+    pub fn use_queued_vram(&mut self) {
+        self.vram.cnt = self.queued_vram_cnt;
     }
 
     pub fn rebuild_vram_maps(&mut self) {
@@ -83,6 +90,35 @@ impl GpuMemBuf {
         if read_3d {
             self.vram.maps.read_all_tex_rear_plane_img(&mut refs.tex_rear_plane_image, &self.vram_mem);
             self.vram.maps.read_all_tex_palette(&mut refs.tex_pal, &self.vram_mem);
+        }
+    }
+
+    pub fn mark_block_as_captured(disp_cap_cnt: DispCapCnt, bank: &mut [u8; vram::BANK_A_SIZE]) {
+        utils::write_to_mem_slice(bank, disp_cap_cnt.write_offset() as usize, CAPTURE_IDENTIFIER);
+        utils::write_to_mem(bank, disp_cap_cnt.write_offset() + CAPTURE_IDENTIFIER.len() as u32, disp_cap_cnt);
+    }
+
+    pub fn insert_capture_mem(&mut self, capture_mem: &[u8; vram::BANK_A_SIZE * 4]) {
+        for bank_num in 0..4 {
+            if !VramCnt::from(self.vram.cnt[bank_num]).enable() {
+                continue;
+            }
+
+            for offset_num in 0..4 {
+                let offset = offset_num * 0x8000;
+                let bank = &mut self.vram_mem[bank_num * vram::BANK_A_SIZE + offset..];
+                let disp_cap_cnt = utils::read_from_mem::<DispCapCnt>(bank, CAPTURE_IDENTIFIER.len() as u32);
+                if &bank[..CAPTURE_IDENTIFIER.len()] == CAPTURE_IDENTIFIER
+                    && disp_cap_cnt.capture_enabled()
+                    && u8::from(disp_cap_cnt.vram_write_block()) == bank_num as u8
+                    && u8::from(disp_cap_cnt.vram_write_offset()) == offset_num as u8
+                {
+                    let bytes_len = disp_cap_cnt.pixel_size() * 2;
+                    let capture_offset = bank_num * vram::BANK_A_SIZE + offset;
+                    let capture_mem = &capture_mem[capture_offset..capture_offset + bytes_len];
+                    bank[..bytes_len].copy_from_slice(capture_mem);
+                }
+            }
         }
     }
 }

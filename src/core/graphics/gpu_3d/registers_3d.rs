@@ -1,6 +1,6 @@
 use crate::core::cpu_regs::InterruptFlag;
 use crate::core::emu::Emu;
-use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::matrix_vec::MatrixVec;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRendererContent;
 use crate::core::memory::dma::DmaTransferMode;
@@ -364,7 +364,7 @@ impl MatrixFlags {
 
 #[derive(Default)]
 pub struct Gpu3DRegisters {
-    cmd_fifo: FixedFifo<u32, 1024>,
+    cmd_fifo: FixedFifo<u32, 2048>,
     cmd_remaining_params: u8,
 
     test_queue: u8,
@@ -406,8 +406,8 @@ pub struct Gpu3DRegisters {
 
     pub skip: bool,
     pub consume: bool,
-    pub pow_cnt1: u16,
-    pub current_pow_cnt1: u16,
+    pub set_pow_cnt1: bool,
+    pub pow_cnt1: PowCnt1,
 }
 
 macro_rules! unpacked_cmd {
@@ -491,11 +491,6 @@ impl Emu {
         let regs_3d = &mut self.gpu.gpu_3d_regs;
         if !regs_3d.is_cmd_fifo_full() {
             self.cpu_unhalt(ARM9, 1);
-        }
-
-        let regs_3d = &mut self.gpu.gpu_3d_regs;
-        if !regs_3d.skip && regs_3d.flushed {
-            regs_3d.pow_cnt1 = regs_3d.current_pow_cnt1;
         }
     }
 
@@ -1237,6 +1232,7 @@ impl Gpu3DRegisters {
         self.flushed = false;
         if !self.skip {
             self.consume = true;
+            self.set_pow_cnt1 = true;
         }
         self.skip = self.consume;
     }
@@ -1288,7 +1284,13 @@ impl Gpu3DRegisters {
         self.vertex_list_size += 1;
 
         if unlikely(match self.vertex_list_primitive_type {
-            PrimitiveType::SeparateTriangles => self.vertex_list_size % 3 == 0,
+            PrimitiveType::SeparateTriangles => {
+                let complete = self.vertex_list_size == 3;
+                if complete {
+                    self.vertex_list_size = 0;
+                }
+                complete
+            }
             PrimitiveType::SeparateQuadliterals => self.vertex_list_size % 4 == 0,
             PrimitiveType::TriangleStrips => self.vertex_list_size >= 3,
             PrimitiveType::QuadliteralStrips => self.vertex_list_size >= 4 && self.vertex_list_size % 2 == 0,

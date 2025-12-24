@@ -40,7 +40,7 @@ pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
 #[inline(always)]
 pub fn read_from_mem_slice<T: Copy>(mem: &[u8], addr: u32, slice: &mut [T]) {
     debug_assert!(addr as usize <= mem.len() - size_of_val(slice));
-    unsafe { (mem.as_ptr().add(addr as usize) as *const T).copy_to_nonoverlapping(slice.as_mut_ptr(), slice.len()) };
+    unsafe { (mem.as_ptr().add(addr as usize) as *const T).copy_to(slice.as_mut_ptr(), slice.len()) };
 }
 
 #[inline(always)]
@@ -52,7 +52,7 @@ pub fn write_to_mem<T>(mem: &mut [u8], addr: u32, value: T) {
 #[inline(always)]
 pub fn write_to_mem_slice<T: Copy>(mem: &mut [u8], addr: usize, slice: &[T]) {
     debug_assert!(addr <= mem.len() - size_of_val(slice));
-    unsafe { (mem.as_mut_ptr().add(addr) as *mut T).copy_from_nonoverlapping(slice.as_ptr(), slice.len()) };
+    unsafe { (mem.as_mut_ptr().add(addr) as *mut T).copy_from(slice.as_ptr(), slice.len()) };
 }
 
 #[inline(always)]
@@ -344,6 +344,14 @@ pub const fn const_str_equal(lhs: &str, rhs: &str) -> bool {
 macro_rules! array_init {
     ($init:block; $size:expr) => {{
         [(); $size].map(|_| $init)
+    }};
+    ($index:ident; $init:block; $size:expr) => {{
+        let mut $index = 0;
+        [(); $size].map(|_| {
+            let ret = $init;
+            $index += 1;
+            ret
+        })
     }};
 }
 

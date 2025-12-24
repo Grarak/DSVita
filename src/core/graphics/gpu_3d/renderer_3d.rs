@@ -1,5 +1,5 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
-use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::matrix_vec::MatrixVec;
 use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, SwapBuffers, TextureCoordTransMode, TextureFormat, Vertex};
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
@@ -71,7 +71,8 @@ pub struct Gpu3DGl {
     attr_tex: GLuint,
     vertices_buf: GLuint,
     program: GLuint,
-    pub fbo: GpuFbo,
+    top_fbo: GpuFbo,
+    bottom_fbo: GpuFbo,
 }
 
 impl Default for Gpu3DGl {
@@ -107,7 +108,8 @@ impl Default for Gpu3DGl {
                 attr_tex: create_mem_texture2d(256, 256),
                 vertices_buf,
                 program,
-                fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, true).unwrap(),
+                top_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, true).unwrap(),
+                bottom_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, true).unwrap(),
             }
         }
     }
@@ -140,7 +142,7 @@ pub struct Gpu3DRendererContent {
     pub clip_matrices: MatrixVec,
     pub tex_matrices: MatrixVec,
     pub swap_buffers: SwapBuffers,
-    pub pow_cnt1: u16,
+    pub pow_cnt1: PowCnt1,
 }
 
 #[derive(Default)]
@@ -155,7 +157,7 @@ pub struct Gpu3DRenderer {
     pub dirty: bool,
     inners: [Gpu3DRendererInner; 2],
     content: Gpu3DRendererContent,
-    pub gl: Gpu3DGl,
+    gl: Gpu3DGl,
     vertices_buf: Vec<Gpu3DVertex>,
     indices_buf: Vec<u16>,
     polygon_attrs_ready: AtomicBool,
@@ -171,7 +173,7 @@ impl Gpu3DRenderer {
         self.inners[1] = Gpu3DRendererInner::default();
         self.content.vertices_size = 0;
         self.content.polygons_size = 0;
-        self.content.pow_cnt1 = 0;
+        self.content.pow_cnt1 = PowCnt1::from(0);
     }
 
     pub fn invalidate(&mut self) {
@@ -406,7 +408,7 @@ impl Gpu3DRenderer {
     }
 
     pub fn process_polygons(&mut self, common: &GpuRendererCommon) {
-        if self.content.pow_cnt1 != u16::from(common.pow_cnt1[0]) {
+        if self.content.pow_cnt1 != common.pow_cnt1[0] {
             return;
         }
 
@@ -458,8 +460,21 @@ impl Gpu3DRenderer {
         }
     }
 
+    pub fn get_fbo(&self, swap: bool) -> &GpuFbo {
+        if swap {
+            &self.gl.top_fbo
+        } else {
+            &self.gl.bottom_fbo
+        }
+    }
+
     pub unsafe fn render(&mut self, common: &GpuRendererCommon, mem_refs: &GpuMemRefs) {
-        gl::BindFramebuffer(gl::FRAMEBUFFER, self.gl.fbo.fbo);
+        if self.content.pow_cnt1 != common.pow_cnt1[0] {
+            return;
+        }
+
+        let fbo = self.get_fbo(self.content.pow_cnt1.display_swap());
+        gl::BindFramebuffer(gl::FRAMEBUFFER, fbo.fbo);
         gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
         let clear_color = ClearColor::from(self.inners[0].clear_color);
@@ -467,10 +482,6 @@ impl Gpu3DRenderer {
         gl::ClearColor(r, g, b, u8::from(clear_color.alpha()) as f32 / 31f32);
 
         gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-
-        if self.content.pow_cnt1 != u16::from(common.pow_cnt1[0]) {
-            return;
-        }
 
         if self.vertices_buf.is_empty() {
             return;

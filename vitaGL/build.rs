@@ -65,6 +65,8 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", fs::canonicalize(&vita_gl_path).unwrap().to_str().unwrap());
     println!("cargo:rustc-link-lib=static=vitaGL_dsvita");
 
+    println!("cargo:rerun-if-changed=vita_gl_wrapper.c");
+
     let mut vita_gl_wrapper_build = create_c_build();
     vita_gl_wrapper_build.file("vita_gl_wrapper.c");
     vita_gl_wrapper_build.include(vita_gl_path.join("source"));

@@ -178,14 +178,12 @@ pub struct GpuFbo {
 }
 
 impl GpuFbo {
-    pub fn new(width: u32, height: u32, depth: bool) -> Result<Self, StrErr> {
+    pub fn from_tex(width: u32, height: u32, depth: bool, tex: GLuint) -> Result<Self, StrErr> {
         unsafe {
-            let color = create_fb_color(width, height);
-
             let mut fbo = 0;
             gl::GenFramebuffers(1, &mut fbo);
             gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
-            gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color, 0);
+            gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, tex, 0);
 
             let depth = if depth { Some(create_fb_depth_tex(fbo, width, height)) } else { None };
 
@@ -195,8 +193,12 @@ impl GpuFbo {
             if status != gl::FRAMEBUFFER_COMPLETE {
                 Err(StrErr::new(format!("Failed to create fbo: {status}")))
             } else {
-                Ok(GpuFbo { color, depth, fbo })
+                Ok(GpuFbo { color: tex, depth, fbo })
             }
         }
+    }
+
+    pub fn new(width: u32, height: u32, depth: bool) -> Result<Self, StrErr> {
+        unsafe { Self::from_tex(width, height, depth, create_fb_color(width, height)) }
     }
 }

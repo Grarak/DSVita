@@ -73,7 +73,7 @@ pub mod io_arm9_read {
         (io32(0x2B8), |emu| emu.div_sqrt.get_sqrt_param_l()),
         (io32(0x2BC), |emu| emu.div_sqrt.get_sqrt_param_h()),
         (io8(0x300), |emu| emu.cpu[ARM9].post_flg),
-        (io16(0x304), |emu| emu.gpu.pow_cnt1),
+        (io16(0x304), |emu| emu.gpu.get_pow_cnt1()),
         (io32(0x600), |emu| emu.regs_3d_get_gx_stat()),
         (io32(0x604), |emu| emu.regs_3d_get_ram_count()),
         (io32(0x620), |emu| emu.regs_3d_get_pos_result(0)),

@@ -4,8 +4,10 @@ use crate::core::emu::Emu;
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
+use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::memory::dma::DmaTransferMode;
+use crate::core::memory::vram::VramBanks;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
@@ -40,7 +42,6 @@ impl FrameRateCounter {
     fn on_frame_ready(&mut self) {
         self.frame_counter += 1;
         let now = Instant::now();
-        // thread::sleep(Duration::from_millis(8));
         if unlikely(now.duration_since(self.last_update).as_millis() >= 1000) {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
             #[cfg(target_os = "linux")]
@@ -66,7 +67,7 @@ struct DispStat {
 }
 
 #[bitsize(16)]
-#[derive(Copy, Clone, FromBits)]
+#[derive(Copy, Clone, Default, Eq, FromBits, PartialEq)]
 pub struct PowCnt1 {
     pub enable: bool,
     gpu_2d_a_enable: bool,
@@ -81,25 +82,41 @@ pub struct PowCnt1 {
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
 pub struct DispCapCnt {
-    eva: u5,
+    pub eva: u5,
     not_used: u3,
-    evb: u5,
+    pub evb: u5,
     not_used2: u3,
-    vram_write_block: u2,
-    vram_write_offset: u2,
-    capture_size: u2,
+    pub vram_write_block: u2,
+    pub vram_write_offset: u2,
+    pub capture_size: u2,
     not_used3: u2,
-    source_a: bool,
-    source_b: bool,
-    vram_read_offset: u2,
+    pub source_a: bool,
+    pub source_b: bool,
+    pub vram_read_offset: u2,
     not_used4: u1,
-    capture_source: u2,
-    capture_enabled: bool,
+    pub capture_source: u2,
+    pub capture_enabled: bool,
+}
+
+impl DispCapCnt {
+    pub fn size(self) -> (u16, u16) {
+        const SIZES: [(u16, u16); 4] = [(128, 128), (256, 64), (256, 128), (256, 192)];
+        SIZES[u8::from(self.capture_size()) as usize]
+    }
+
+    pub fn pixel_size(self) -> usize {
+        let (width, height) = self.size();
+        width as usize * height as usize
+    }
+
+    pub fn write_offset(self) -> u32 {
+        u8::from(self.vram_write_offset()) as u32 * 0x8000
+    }
 }
 
 pub struct Gpu {
     disp_stat: [DispStat; 2],
-    pub pow_cnt1: u16,
+    pub pow_cnt1: PowCnt1,
     pub disp_cap_cnt: DispCapCnt,
     frame_rate_counter: FrameRateCounter,
     pub v_count: u16,
@@ -113,7 +130,7 @@ impl Gpu {
     pub fn new(fps: Arc<AtomicU16>) -> Gpu {
         Gpu {
             disp_stat: [DispStat::from(0); 2],
-            pow_cnt1: 0,
+            pow_cnt1: PowCnt1::from(0),
             disp_cap_cnt: DispCapCnt::from(0),
             frame_rate_counter: FrameRateCounter::new(fps),
             v_count: 0,
@@ -126,7 +143,7 @@ impl Gpu {
 
     pub fn init(&mut self) {
         self.disp_stat = [DispStat::from(0); 2];
-        self.pow_cnt1 = 0;
+        self.pow_cnt1 = PowCnt1::from(0);
         self.disp_cap_cnt = DispCapCnt::from(0);
         self.v_count = 0;
         self.gpu_2d_regs_a = Gpu2DRegisters::new(A);
@@ -150,6 +167,10 @@ impl Gpu {
         self.disp_stat[cpu].into()
     }
 
+    pub fn get_pow_cnt1(&self) -> u16 {
+        self.pow_cnt1.into()
+    }
+
     pub const fn get_disp_stat_offset(cpu: CpuType) -> usize {
         mem::offset_of!(Emu, gpu.disp_stat) + cpu as usize * size_of::<DispStat>()
     }
@@ -165,7 +186,7 @@ impl Gpu {
 
     pub fn set_pow_cnt1(&mut self, mut mask: u16, value: u16) {
         mask &= 0x820F;
-        self.pow_cnt1 = (self.pow_cnt1 & !mask) | (value & mask);
+        self.pow_cnt1.value = (self.pow_cnt1.value & !mask) | (value & mask);
     }
 
     pub fn set_disp_cap_cnt(&mut self, mut mask: u32, value: u32) {
@@ -195,14 +216,19 @@ impl Emu {
     pub fn gpu_on_scanline355_event(&mut self) {
         self.gpu.v_count += 1;
         match self.gpu.v_count {
+            1 => {
+                if self.gpu.gpu_3d_regs.set_pow_cnt1 {
+                    self.gpu.gpu_3d_regs.pow_cnt1 = self.gpu.pow_cnt1;
+                    self.gpu.gpu_3d_regs.set_pow_cnt1 = false;
+                }
+            }
             192 => {
-                self.gpu.gpu_3d_regs.current_pow_cnt1 = self.gpu.pow_cnt1;
-
-                let pow_cnt1 = PowCnt1::from(self.gpu.pow_cnt1);
                 let palettes = self.mem_get_palettes();
                 let oam = self.mem_get_oam();
 
-                self.gpu.renderer.on_scanline_finish(palettes, oam, pow_cnt1, &mut self.gpu.gpu_3d_regs, &mut self.breakout_imm);
+                self.gpu
+                    .renderer
+                    .on_scanline_finish(palettes, oam, self.gpu.pow_cnt1, self.gpu.disp_cap_cnt, &mut self.gpu.gpu_3d_regs, &mut self.breakout_imm);
 
                 if self.gpu.gpu_3d_regs.flushed {
                     self.gpu.gpu_3d_regs.swap_buffers();
@@ -216,6 +242,14 @@ impl Emu {
                         self.cpu_send_interrupt(CpuType::from(i as u8), InterruptFlag::LcdVBlank);
                         self.dma_trigger_all(CpuType::from(i as u8), DmaTransferMode::StartAtVBlank);
                     }
+                }
+
+                if self.gpu.disp_cap_cnt.capture_enabled() {
+                    let bank_num = u8::from(self.gpu.disp_cap_cnt.vram_write_block());
+                    let vram = self.vram_get_mem_mut();
+                    let (vram_offset, _) = VramBanks::get(bank_num);
+                    let bank = unsafe { mem::transmute(vram.as_mut_ptr().add(vram_offset)) };
+                    GpuMemBuf::mark_block_as_captured(self.gpu.disp_cap_cnt, bank);
                 }
 
                 self.gpu.disp_cap_cnt.set_capture_enabled(false);
