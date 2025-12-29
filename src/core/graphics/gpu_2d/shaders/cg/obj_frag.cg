@@ -6,8 +6,8 @@ float2 in objAttrib2Addr : TEXCOORD4;
 
 uniform usampler2D oamTex : TEXUNIT0;
 uniform usampler2D objTex : TEXUNIT1;
-uniform usampler2D palTex : TEXUNIT2;
-uniform usampler2D extPalTex : TEXUNIT3;
+uniform sampler2D palTex : TEXUNIT2;
+uniform sampler2D extPalTex : TEXUNIT3;
 uniform usampler2D winTex : TEXUNIT4;
 
 uniform int dispCnt;
@@ -53,27 +53,20 @@ unsigned short readObj16Aligned(int addr) {
     return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
-unsigned short readPal16Aligned(short addr) {
-    float x = float(addr >> 2) / 255.0f;
-    unsigned int values[4];
-    tex2D_gather4(palTex, float2(x, 1.0), values);
-    short shift = addr & 2;
-    return (values[0] >> (shift * 8)) & 0xFFFF;
+float4 readPal(short index) {
+    return tex2D(palTex, float2(float(index) / 511.0, 1.0));
 }
 
-unsigned short readExtPal16Aligned(short addr) {
-    short addrX = (addr >> 2) & 0x1FF;
-    short addrY = addr >> 11;
-    float x = float(addrX) / 511.0f;
-    float y = float(addrY) / 3.0f;
-    unsigned int values[4];
-    tex2D_gather4(extPalTex, float2(x, y), values);
-    short shift = addr & 2;
-    return (values[0] >> (shift * 8)) & 0xFFFF;
+float4 readExtPal(short index) {
+    short indexX = index & 0x1FF;
+    short indexY = index >> 9;
+    float x = float(indexX) / 511.0;
+    float y = float(indexY) / 7.0;
+    return tex2D(extPalTex, float2(x, y));
 }
 
-float3 normRgb5(unsigned short color) {
-    return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0f;
+float3 normRgb5(short color) {
+    return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
 float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short attrib2, ObjAttr attr) {
@@ -101,9 +94,10 @@ float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short
         bool useExtPal = (dispCnt & (1 << 31)) != 0;
         if (useExtPal) {
             short palBaseAddr = ((attrib2 >> 12) & 0xF) << 9;
-            palColor = readExtPal16Aligned(palBaseAddr + palIndex * 2);
+            short palBaseIndex = ((attrib2 >> 12) & 0xF) << 8;
+            return float4(readExtPal(palBaseIndex + palIndex).rgb, 1.0);
         } else {
-            palColor = readPal16Aligned(0x200 + palIndex * 2);
+            return float4(readPal(0x100 + palIndex).rgb, 1.0);
         }
     } else {
         palIndex >>= 4 * (objX & 1);
@@ -113,8 +107,8 @@ float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short
         }
 
         short palBank = (attrib2 >> 12) & 0xF;
-        short palBase = 0x200 + palBank * 32;
-        palColor = readPal16Aligned(palBase + palIndex * 2);
+        short palBase = 0x100 + palBank * 16;
+        return float4(readPal(palBase + palIndex).rgb, 1.0);
     }
     return float4(normRgb5(palColor).rgb, 1.0);
 }

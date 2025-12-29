@@ -6,8 +6,8 @@ uniform int dispCnt;
 uniform int bgCnt;
 
 uniform usampler2D bgTex : TEXUNIT0;
-uniform usampler2D palTex : TEXUNIT1;
-uniform usampler2D extPalTex : TEXUNIT2;
+uniform sampler2D palTex : TEXUNIT1;
+uniform sampler2D extPalTex : TEXUNIT2;
 uniform usampler2D winTex : TEXUNIT3;
 uniform sampler2D display3dTex : TEXUNIT4;
 
@@ -43,23 +43,16 @@ unsigned short readBg16Aligned(int addr) {
     return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
-unsigned short readPal16Aligned(short addr) {
-    float x = float(addr >> 2) / 255.0f;
-    unsigned int values[4];
-    tex2D_gather4(palTex, float2(x, 1.0), values);
-    short shift = addr & 2;
-    return (values[0] >> (shift * 8)) & 0xFFFF;
+float4 readPal(short index) {
+    return tex2D(palTex, float2(float(index) / 511.0, 1.0));
 }
 
-unsigned short readExtPal16Aligned(short addr) {
-    short addrX = (addr >> 2) & 0x1FF;
-    short addrY = addr >> 11;
-    float x = float(addrX) / 511.0f;
-    float y = float(addrY) / 15.0f;
-    unsigned int values[4];
-    tex2D_gather4(extPalTex, float2(x, y), values);
-    short shift = addr & 2;
-    return (values[0] >> (shift * 8)) & 0xFFFF;
+float4 readExtPal(short index) {
+    short indexX = index & 0x1FF;
+    short indexY = index >> 9;
+    float x = float(indexX) / 511.0;
+    float y = float(indexY) / 31.0;
+    return tex2D(extPalTex, float2(x, y));
 }
 
 float3 normRgb5(unsigned short color) {

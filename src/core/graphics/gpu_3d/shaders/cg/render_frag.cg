@@ -4,7 +4,7 @@ float2 in texImageParamAddr : TEXCOORD2;
 float2 in palPolyAttribAddr : TEXCOORD4;
 
 uniform usampler2D tex : TEXUNIT0;
-uniform usampler2D palTex : TEXUNIT1;
+uniform sampler2D palTex : TEXUNIT1;
 uniform usampler2D attrTex : TEXUNIT2;
 
 unsigned short readTex8(int addr) {
@@ -29,20 +29,12 @@ unsigned short readTex16Aligned(int addr) {
     return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
-unsigned int readPal32Aligned(int addr) {
-    short addrX = (addr >> 2) & 0x1FF;
-    short addrY = addr >> 11;
-    float x = float(addrX) / 511.0;
-    float y = float(addrY) / 47.0;
-    unsigned int values[4];
-    tex2D_gather4(palTex, float2(x, y), values);
-    return values[0];
-}
-
-unsigned short readPal16Aligned(int addr) {
-    unsigned int value = readPal32Aligned(addr);
-    short shift = addr & 2;
-    return (value >> (shift * 8)) & 0xFFFF;
+float4 readPal(int index) {
+    short indexX = index & 0x1FF;
+    int indexY = index >> 9;
+    float x = float(indexX) / 511.0;
+    float y = float(indexY) / 95.0;
+    return tex2D(palTex, float2(x, y));
 }
 
 float3 normRgb5(unsigned short color) {
@@ -68,15 +60,17 @@ float4 compressed4x4Tex(int palAddr, int addrOffset, short s, short t, short siz
         addr += 0x10000;
     }
     short palBase = readTex16Aligned(addr + tile * 2);
-    int palOffset = (palAddr << 4) + (palBase & 0x3FFF) * 4;
+    int palOffset = (palAddr << 3) + (palBase & 0x3FFF) * 2;
 
-    unsigned int colors01 = readPal32Aligned(palOffset);
-    unsigned int colors23 = readPal32Aligned(palOffset + 4);
+    float4 color0 = readPal(palOffset);
+    float4 color1 = readPal(palOffset + 1);
+    float4 color2 = readPal(palOffset + 2);
+    float4 color3 = readPal(palOffset + 3);
     float4x4 colors = float4x4(
-        float4(normRgb5(colors01 & 0xFFFF), 1.0),
-        float4(normRgb5(colors01 >> 16), 1.0),
-        float4(normRgb5(colors23 & 0xFFFF), 1.0),
-        float4(normRgb5(colors23 >> 16), 1.0)
+        float4(color0.rgb, 1.0),
+        float4(color1.rgb, 1.0),
+        float4(color2.rgb, 1.0),
+        float4(color3.rgb, 1.0)
     );
     short mode = (palBase >> 14) & 0x3;
     short lookup = palIndex | (mode << 2);
@@ -95,14 +89,14 @@ float4 aXiXTex(int palAddr, int addrOffset, int s, int t, int sizeS, short aBits
         discard;
     }
 
-    int palOffset = palAddr << 4;
+    int palOffset = palAddr << 3;
     short colorBits = 8 - aBits;
     short colorMask = (1 << colorBits) - 1;
     short aMask = (1 << aBits) - 1;
     float aMax = float(aMask);
-    short color = readPal16Aligned(palOffset + (palIndex & colorMask) * 2);
+    float4 color = readPal(palOffset + (palIndex & colorMask));
     float alpha = float(short((palIndex >> colorBits) & aMask)) / aMax;
-    return float4(normRgb5(color), alpha);
+    return float4(color.rgb, alpha);
 }
 
 float4 directTex(int addrOffset, int s, int t, int sizeS) {
@@ -125,9 +119,9 @@ float4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format,
         discard;
     }
 
-    int palOffset = palAddr << (format == 0 ? 3 : 4);
-    short color = readPal16Aligned(palOffset + palIndex * 2);
-    return float4(normRgb5(color), 1.0);
+    int palOffset = palAddr << (format == 0 ? 2 : 3);
+    float4 color = readPal(palOffset + palIndex);
+    return float4(color.rgb, 1.0);
 }
 
 void main(out float4 color : COLOR) {

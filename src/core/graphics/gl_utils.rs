@@ -112,11 +112,37 @@ pub unsafe fn create_mem_texture2d(width: u32, height: u32) -> GLuint {
 }
 
 pub unsafe fn create_pal_texture1d(size: u32) -> GLuint {
-    create_mem_texture1d(size)
+    if cfg!(target_os = "linux") {
+        create_mem_texture1d(size)
+    } else {
+        let mut tex = 0;
+        gl::GenTextures(1, &mut tex);
+        gl::BindTexture(gl::TEXTURE_2D, tex);
+        Presenter::gl_tex_image_2d_rgba5((size / 2) as _, 1);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as _);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as _);
+        gl::BindTexture(gl::TEXTURE_2D, 0);
+        tex
+    }
 }
 
 pub unsafe fn create_pal_texture2d(width: u32, height: u32) -> GLuint {
-    create_mem_texture2d(width, height)
+    if cfg!(target_os = "linux") {
+        create_mem_texture2d(width, height)
+    } else {
+        let mut tex = 0;
+        gl::GenTextures(1, &mut tex);
+        gl::BindTexture(gl::TEXTURE_2D, tex);
+        Presenter::gl_tex_image_2d_rgba5(512, (width * height / 2 / 512) as _);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as _);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as _);
+        gl::BindTexture(gl::TEXTURE_2D, 0);
+        tex
+    }
 }
 
 pub unsafe fn sub_mem_texture1d(size: u32, data: *const u8) {
@@ -128,11 +154,19 @@ pub unsafe fn sub_mem_texture2d(width: u32, height: u32, data: *const u8) {
 }
 
 pub unsafe fn sub_pal_texture1d(size: u32, data: *const u8) {
-    sub_mem_texture1d(size, data)
+    if cfg!(target_os = "linux") {
+        sub_mem_texture1d(size, data)
+    } else {
+        panic!()
+    }
 }
 
 pub unsafe fn sub_pal_texture2d(width: u32, height: u32, data: *const u8) {
-    sub_mem_texture2d(width, height, data)
+    if cfg!(target_os = "linux") {
+        sub_mem_texture2d(width, height, data)
+    } else {
+        panic!()
+    }
 }
 
 pub unsafe fn create_fb_color(width: u32, height: u32) -> GLuint {

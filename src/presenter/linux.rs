@@ -1,6 +1,7 @@
 use crate::cartridge_io::{CartridgeIo, CartridgePreview};
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::input;
+use crate::logging::debug_panic;
 use crate::presenter::imgui::root::{
     ImDrawData, ImGui, ImGuiConfigFlags__ImGuiConfigFlags_NavEnableKeyboard, ImGui_ImplSdlGL3_Init, ImGui_ImplSdlGL3_NewFrame, ImGui_ImplSdlGL3_ProcessEvent, ImGui_ImplSdlGL3_RenderDrawData,
 };
@@ -244,6 +245,10 @@ impl Presenter {
 
     pub fn gl_create_depth_tex() -> GLuint {
         0
+    }
+
+    pub fn gl_tex_image_2d_rgba5(_: i32, _: i32) {
+        debug_panic!()
     }
 
     pub fn gl_version_suffix() -> &'static str {

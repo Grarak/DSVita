@@ -40,21 +40,18 @@ float4 drawText(short x, short y, short bgNum) {
     charAddr += ((screenEntry & 0x3FF) << 6) + (yInBlock << 3);
     charAddr += xInBlock;
 
-    short palAddr = readBg8(charAddr);
-    if (palAddr == 0) {
+    short palIndex = readBg8(charAddr);
+    if (palIndex == 0) {
         discard;
     }
-    palAddr *= 2;
 
     bool useExtPal = (dispCnt & (1 << 30)) != 0;
     if (useExtPal) {
         short slot = bgNum < 2 && (bgCnt & (1 << 13)) != 0 ? bgNum + 2 : bgNum;
-        palAddr += slot * 8192 + ((screenEntry & 0xF000) >> 3);
-        unsigned short color = readExtPal16Aligned(palAddr);
-        return float4(normRgb5(color), 1.0);
+        palIndex += slot * 4096 + ((screenEntry & 0xF000) >> 4);
+        return float4(readExtPal(palIndex).rgb, 1.0);
     } else {
-        unsigned short color = readPal16Aligned(palAddr);
-        return float4(normRgb5(color), 1.0);
+        return float4(readPal(palIndex).rgb, 1.0);
     }
 }
 
