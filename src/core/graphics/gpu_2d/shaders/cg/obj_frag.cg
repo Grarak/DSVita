@@ -21,6 +21,11 @@ uniform ObjUbo {
     ObjAttr attrs[128];
 } ObjUbo : BUFFER[0];
 
+uniform WinBgUbo {
+    unsigned int winHV[192 * 2];
+    unsigned int winInOut[192];
+} WinBgUbo : BUFFER[1];
+
 unsigned short readAttrib0() {
     unsigned int value = tex2D<unsigned int>(oamTex, objAttrib0Addr);
     return value & 0xFFFF;
@@ -91,13 +96,18 @@ float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short
             discard;
         }
 
-        bool useExtPal = (dispCnt & (1 << 31)) != 0;
-        if (useExtPal) {
-            short palBaseAddr = ((attrib2 >> 12) & 0xF) << 9;
-            short palBaseIndex = ((attrib2 >> 12) & 0xF) << 8;
-            return float4(readExtPal(palBaseIndex + palIndex).rgb, 1.0);
+        if (OBJ_WINDOW) {
+            unsigned short enabled = (WinBgUbo.winInOut[short(192.0 * screenPosF.y)] >> 24) & 0xFF;
+            enabled |= 0x80; // indicate this was set by obj, to avoid win out override
+            return float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
         } else {
-            return float4(readPal(0x100 + palIndex).rgb, 1.0);
+            bool useExtPal = (dispCnt & (1 << 31)) != 0;
+            if (useExtPal) {
+                short palBaseIndex = ((attrib2 >> 12) & 0xF) << 8;
+                return float4(readExtPal(palBaseIndex + palIndex).rgb, 1.0);
+            } else {
+                return float4(readPal(0x100 + palIndex).rgb, 1.0);
+            }
         }
     } else {
         palIndex >>= 4 * (objX & 1);
@@ -106,9 +116,15 @@ float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short
             discard;
         }
 
-        short palBank = (attrib2 >> 12) & 0xF;
-        short palBase = 0x100 + palBank * 16;
-        return float4(readPal(palBase + palIndex).rgb, 1.0);
+        if (OBJ_WINDOW) {
+            unsigned short enabled = (WinBgUbo.winInOut[short(192.0 * screenPosF.y)] >> 24) & 0xFF;
+            enabled |= 0x80; // indicate this was set by obj, to avoid win out override
+            return float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+        } else {
+            short palBank = (attrib2 >> 12) & 0xF;
+            short palBase = 0x100 + palBank * 16;
+            return float4(readPal(palBase + palIndex).rgb, 1.0);
+        }
     }
     return float4(normRgb5(palColor).rgb, 1.0);
 }
@@ -127,10 +143,11 @@ float4 drawBitmap(short objX, short objY, ObjAttr attr) {
 void main(out float4 color : COLOR) {
     unsigned int attrib0 = readAttrib0();
     unsigned int attrib2 = readAttrib2();
-    unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
-
-    if (((winEnabled >> 4) & 1) == 0) {
-        discard;
+    if (!OBJ_WINDOW) {
+        unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
+        if (((winEnabled >> 4) & 1) == 0) {
+            discard;
+        }
     }
 
     short objWidth = short(objDims.x);

@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
-use vitabuild::{create_c_build, get_out_path, is_debug};
+use vitabuild::{get_out_path, is_debug};
 
 fn get_source_files(path: &Path, files: &mut Vec<PathBuf>) {
     let dir = path.read_dir().unwrap();
@@ -64,14 +64,6 @@ fn main() {
     fs::rename(vita_gl_lib_path, &vita_gl_lib_new_path).unwrap();
     println!("cargo:rustc-link-search=native={}", fs::canonicalize(&vita_gl_path).unwrap().to_str().unwrap());
     println!("cargo:rustc-link-lib=static=vitaGL_dsvita");
-
-    println!("cargo:rerun-if-changed=vita_gl_wrapper.c");
-
-    let mut vita_gl_wrapper_build = create_c_build();
-    vita_gl_wrapper_build.file("vita_gl_wrapper.c");
-    vita_gl_wrapper_build.include(vita_gl_path.join("source"));
-    vita_gl_wrapper_build.flag(format!("-l {}", fs::canonicalize(vita_gl_lib_new_path).unwrap().to_str().unwrap()));
-    vita_gl_wrapper_build.compile("vitaGL_wrapper");
 
     let git_hash = Command::new("git").current_dir(&vita_gl_path).args(["rev-parse", "HEAD"]).output().unwrap().stdout;
     let out_path = get_out_path();

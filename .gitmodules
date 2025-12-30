@@ -1,6 +1,6 @@
 [submodule "vitaGL"]
 	path = vitaGL/vitaGL_src
-	url = https://github.com/Rinnegatamante/vitaGL.git
+	url = https://github.com/Grarak/vitaGL.git
 [submodule "kubridge"]
 	path = kubridge
 	url = https://github.com/bythos14/kubridge.git

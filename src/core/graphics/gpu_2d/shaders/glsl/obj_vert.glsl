@@ -108,10 +108,13 @@ void main() {
     float x = float(oamX) + oamWidth * position.x;
     float y = float(oamY) + oamHeight * position.y;
 
-    screenPosF = vec2(x / 256.0, y / 192.0);
+    screenPosF = vec2(x / 255.0, y / 191.0);
     objAttrib0Addr = vec2(oamIndex * 8.0 / 4.0 / 255.0, 1.0);
     objAttrib2Addr = vec2((oamIndex * 8.0 + 4.0) / 4.0 / 255.0, 1.0);
 
     int priority = (attrib2 >> 10) & 3;
     gl_Position = vec4(screenPosF.x * 2.0 - 1.0, 1.0 - screenPosF.y * 2.0, float(priority) / 4.0, 1.0);
+    if (OBJ_WINDOW) {
+        gl_Position.y = -gl_Position.y;
+    }
 }

@@ -98,7 +98,7 @@ void main() {
     }
 
     int winEnabled = int(texture(winTex, screenPos).x * 255.0);
-    if ((winEnabled & (1 << 5)) == 0) {
+    if (((winEnabled >> 5) & 1) == 0) {
         color = vec4(topColor.rgb, 1.0);
         return;
     }

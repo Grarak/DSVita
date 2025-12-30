@@ -6,12 +6,15 @@ precision highp int;
 layout(location = 0) out vec4 color;
 
 in vec2 screenPos;
+in vec2 screenPosF;
 uniform int dispCnt;
 
 uniform WinBgUbo {
     int winHV[192 * 2];
     int winInOut[192];
 };
+
+uniform sampler2D objWinTex;
 
 bool checkBounds(int x, int y, int winNum) {
     bool winEnabled = (dispCnt & (1 << (13 + winNum))) != 0;
@@ -58,9 +61,15 @@ bool checkBounds(int x, int y, int winNum) {
 void main() {
     int x = int(screenPos.x);
     int y = int(screenPos.y);
+    int objWin = int(texture(objWinTex, screenPosF).x * 255.0);
 
     if (!checkBounds(x, y, 0) && !checkBounds(x, y, 1)) {
-        int enabled = (winInOut[y] >> 16) & 0xFF;
-        color = vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+        if (((objWin >> 7) & 1) != 0) {
+            objWin &= 0x7F;
+            color = vec4(float(objWin) / 255.0, 0.0, 0.0, 0.0);
+        } else {
+            int enabled = (winInOut[y] >> 16) & 0xFF;
+            color = vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+        }
     }
 }

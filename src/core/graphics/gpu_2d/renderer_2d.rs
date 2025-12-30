@@ -1,17 +1,17 @@
 use crate::core::graphics::gl_utils::{
-    GpuFbo, create_mem_texture1d, create_mem_texture2d, create_pal_texture1d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture1d, sub_mem_texture2d,
-    sub_pal_texture1d, sub_pal_texture2d,
+    create_mem_texture1d, create_mem_texture2d, create_pal_texture1d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture1d, sub_mem_texture2d, sub_pal_texture1d,
+    sub_pal_texture2d, GpuFbo,
 };
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use crate::core::graphics::gpu_2d::Gpu2DEngine;
-use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_2d::registers_2d::{BgCnt, DispCnt};
 use crate::core::graphics::gpu_2d::renderer_regs_2d::{BgUbo, BlendUbo, Gpu2DMem, Gpu2DRenderRegs, Gpu2DRenderRegsShared, WinBgUbo};
+use crate::core::graphics::gpu_2d::Gpu2DEngine;
+use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
 use crate::core::memory::{regions, vram};
-use crate::utils::{self, HeapMemU8};
-use crate::utils::{PtrWrapper, rgb5_to_float8};
+use crate::utils::{self, array_init, HeapMemU8};
+use crate::utils::{rgb5_to_float8, PtrWrapper};
 use gl::types::{GLint, GLuint};
 use static_assertions::const_assert;
 use std::hint::unreachable_unchecked;
@@ -146,6 +146,7 @@ pub struct Gpu2DCommon {
     win_bg_disp_cnt_loc: GLint,
     win_bg_ubo: GLuint,
     win_bg_fbo: GpuFbo,
+    win_obj_fbo: GpuFbo,
     obj_fbo: GpuFbo,
     bg_fbos: [GpuFbo; 4],
     blend_program: GLuint,
@@ -166,12 +167,16 @@ impl Gpu2DCommon {
 
                 gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
 
+                gl::Uniform1i(gl::GetUniformLocation(program, c"objWinTex".as_ptr() as _), 0);
+
                 let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCnt".as_ptr() as _);
 
                 let mut ubo = 0;
                 gl::GenBuffers(1, &mut ubo);
                 gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
 
+                // Don't set ubo binding on vita, shader cache in vitaGL doesn't seem to consider block name
+                // Which results in an endless loop
                 if cfg!(target_os = "linux") {
                     gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"WinBgUbo".as_ptr() as _), 0);
                 }
@@ -221,13 +226,9 @@ impl Gpu2DCommon {
                 win_bg_disp_cnt_loc,
                 win_bg_ubo,
                 win_bg_fbo,
+                win_obj_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false).unwrap(),
                 obj_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, true).unwrap(),
-                bg_fbos: [
-                    GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false).unwrap(),
-                    GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false).unwrap(),
-                    GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false).unwrap(),
-                    GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false).unwrap(),
-                ],
+                bg_fbos: array_init!({ GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false).unwrap() }; 4),
                 blend_program,
                 blend_ubo,
             }
@@ -300,13 +301,90 @@ struct Gpu2DBgProgram {
     has_ubo: bool,
 }
 
+struct Gpu2DObjProgram {
+    program: GLuint,
+    vao: GLuint,
+    disp_cnt_loc: GLint,
+    ubo: GLuint,
+}
+
+impl Gpu2DObjProgram {
+    unsafe fn new<const ENGINE: Gpu2DEngine>(obj_vert_shader: GLuint, window: bool) -> Self {
+        let frag_shader_src = shader_source!("obj_frag").replace(
+            "OBJ_TEX_HEIGHT",
+            &format!(
+                "{}.0",
+                match ENGINE {
+                    A => OBJ_A_TEX_HEIGHT / 2,
+                    B => OBJ_B_TEX_HEIGHT / 2,
+                }
+            ),
+        );
+
+        let frag_shader_src = frag_shader_src.replace("OBJ_WINDOW", if window { "true" } else { "false" });
+
+        let frag_shader = create_shader(if window { "obj window" } else { "obj" }, &frag_shader_src, gl::FRAGMENT_SHADER).unwrap();
+        let program = create_program(&[obj_vert_shader, frag_shader]).unwrap();
+        gl::DeleteShader(frag_shader);
+
+        gl::UseProgram(program);
+
+        let mut vertices_buf = 0;
+        gl::GenBuffers(1, &mut vertices_buf);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vertices_buf);
+        gl::BufferData(gl::ARRAY_BUFFER, (size_of::<f32>() * OBJ_VERTICES.len()) as _, OBJ_VERTICES.as_ptr() as _, gl::STATIC_DRAW);
+
+        let mut indices_buf = 0;
+        gl::GenBuffers(1, &mut indices_buf);
+        gl::BindBuffer(gl::ARRAY_BUFFER, indices_buf);
+        gl::BufferData(gl::ARRAY_BUFFER, OBJ_OAM_INDICES.len() as _, OBJ_OAM_INDICES.as_ptr() as _, gl::STATIC_DRAW);
+
+        let mut vao = 0;
+        gl::GenVertexArrays(1, &mut vao);
+        gl::BindVertexArray(vao);
+
+        gl::BindBuffer(gl::ARRAY_BUFFER, vertices_buf);
+        gl::EnableVertexAttribArray(0);
+        gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 0, ptr::null());
+
+        gl::BindBuffer(gl::ARRAY_BUFFER, indices_buf);
+        gl::EnableVertexAttribArray(1);
+        gl::VertexAttribPointer(1, 1, gl::UNSIGNED_BYTE, gl::FALSE, 0, ptr::null());
+
+        gl::BindVertexArray(0);
+        gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+
+        gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
+        gl::BindAttribLocation(program, 1, c"oamIndex".as_ptr() as _);
+
+        gl::Uniform1i(gl::GetUniformLocation(program, c"oamTex".as_ptr() as _), 0);
+        gl::Uniform1i(gl::GetUniformLocation(program, c"objTex".as_ptr() as _), 1);
+        gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 2);
+        gl::Uniform1i(gl::GetUniformLocation(program, c"extPalTex".as_ptr() as _), 3);
+        gl::Uniform1i(gl::GetUniformLocation(program, c"winTex".as_ptr() as _), 4);
+
+        let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCnt".as_ptr() as _);
+
+        let mut ubo = 0;
+        gl::GenBuffers(1, &mut ubo);
+        gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
+
+        if cfg!(target_os = "linux") {
+            gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"ObjUbo".as_ptr() as _), 0);
+            gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"WinBgUbo".as_ptr() as _), 1);
+        }
+
+        gl::UseProgram(0);
+
+        Gpu2DObjProgram { program, vao, disp_cnt_loc, ubo }
+    }
+}
+
 struct Gpu2DProgram {
-    obj_program: GLuint,
-    obj_vao: GLuint,
     obj_oam_indices: Vec<[u16; 6]>,
     obj_ubo_data: ObjUbo,
-    obj_disp_cnt_loc: GLint,
-    obj_ubo: GLuint,
+    obj_window_program: Gpu2DObjProgram,
+    obj_program: Gpu2DObjProgram,
 
     bg_affine_program: Gpu2DBgProgram,
     bg_affine_extended_program: Gpu2DBgProgram,
@@ -349,75 +427,8 @@ macro_rules! draw_scanlines {
 }
 
 impl Gpu2DProgram {
-    fn new<const ENGINE: Gpu2DEngine>(obj_vert_shader: GLuint, bg_vert_shader: GLuint, bg_vert_affine_shader: GLuint, bg_vert_bitmap_shader: GLuint) -> Self {
+    fn new<const ENGINE: Gpu2DEngine>(obj_window_vert_shader: GLuint, obj_vert_shader: GLuint, bg_vert_shader: GLuint, bg_vert_affine_shader: GLuint, bg_vert_bitmap_shader: GLuint) -> Self {
         unsafe {
-            let (obj_program, obj_vao, obj_disp_cnt_loc, obj_ubo) = {
-                let frag_shader_src = shader_source!("obj_frag").replace(
-                    "OBJ_TEX_HEIGHT",
-                    &format!(
-                        "{}.0",
-                        match ENGINE {
-                            A => OBJ_A_TEX_HEIGHT / 2,
-                            B => OBJ_B_TEX_HEIGHT / 2,
-                        }
-                    ),
-                );
-
-                let frag_shader = create_shader("obj", &frag_shader_src, gl::FRAGMENT_SHADER).unwrap();
-                let program = create_program(&[obj_vert_shader, frag_shader]).unwrap();
-                gl::DeleteShader(frag_shader);
-
-                gl::UseProgram(program);
-
-                let mut vertices_buf = 0;
-                gl::GenBuffers(1, &mut vertices_buf);
-                gl::BindBuffer(gl::ARRAY_BUFFER, vertices_buf);
-                gl::BufferData(gl::ARRAY_BUFFER, (size_of::<f32>() * OBJ_VERTICES.len()) as _, OBJ_VERTICES.as_ptr() as _, gl::STATIC_DRAW);
-
-                let mut indices_buf = 0;
-                gl::GenBuffers(1, &mut indices_buf);
-                gl::BindBuffer(gl::ARRAY_BUFFER, indices_buf);
-                gl::BufferData(gl::ARRAY_BUFFER, OBJ_OAM_INDICES.len() as _, OBJ_OAM_INDICES.as_ptr() as _, gl::STATIC_DRAW);
-
-                let mut vao = 0;
-                gl::GenVertexArrays(1, &mut vao);
-                gl::BindVertexArray(vao);
-
-                gl::BindBuffer(gl::ARRAY_BUFFER, vertices_buf);
-                gl::EnableVertexAttribArray(0);
-                gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 0, ptr::null());
-
-                gl::BindBuffer(gl::ARRAY_BUFFER, indices_buf);
-                gl::EnableVertexAttribArray(1);
-                gl::VertexAttribPointer(1, 1, gl::UNSIGNED_BYTE, gl::FALSE, 0, ptr::null());
-
-                gl::BindVertexArray(0);
-                gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-
-                gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
-                gl::BindAttribLocation(program, 1, c"oamIndex".as_ptr() as _);
-
-                gl::Uniform1i(gl::GetUniformLocation(program, c"oamTex".as_ptr() as _), 0);
-                gl::Uniform1i(gl::GetUniformLocation(program, c"objTex".as_ptr() as _), 1);
-                gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 2);
-                gl::Uniform1i(gl::GetUniformLocation(program, c"extPalTex".as_ptr() as _), 3);
-                gl::Uniform1i(gl::GetUniformLocation(program, c"winTex".as_ptr() as _), 4);
-
-                let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCnt".as_ptr() as _);
-
-                let mut ubo = 0;
-                gl::GenBuffers(1, &mut ubo);
-                gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
-
-                if cfg!(target_os = "linux") {
-                    gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"ObjUbo".as_ptr() as _), 0);
-                }
-
-                gl::UseProgram(0);
-
-                (program, vao, disp_cnt_loc, ubo)
-            };
-
             let (bg_affine_program, bg_affine_extended_program, bg_bitmap_program, bg_display_3d_program, bg_text_4bpp_program, bg_text_8bpp_program, bg_ubo) = {
                 let frag_common_shader_src = shader_source!("bg_frag_common").replace(
                     "BG_TEX_HEIGHT",
@@ -495,12 +506,10 @@ impl Gpu2DProgram {
             let blend_fbo = GpuFbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32, false).unwrap();
 
             Gpu2DProgram {
-                obj_program,
-                obj_vao,
+                obj_window_program: Gpu2DObjProgram::new::<ENGINE>(obj_window_vert_shader, true),
+                obj_program: Gpu2DObjProgram::new::<ENGINE>(obj_vert_shader, false),
                 obj_oam_indices: Vec::new(),
                 obj_ubo_data: ObjUbo::default(),
-                obj_disp_cnt_loc,
-                obj_ubo,
                 bg_affine_program,
                 bg_affine_extended_program,
                 bg_bitmap_program,
@@ -534,32 +543,37 @@ impl Gpu2DProgram {
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
     }
 
-    unsafe fn draw_objects(&mut self, regs: &Gpu2DRenderRegs, mem: &Gpu2DMem, from_line: u8, to_line: u8) {
+    unsafe fn draw_objects<const OBJ_WINDOW: bool>(&mut self, regs: &Gpu2DRenderRegs, mem: &Gpu2DMem, from_line: u8, to_line: u8) {
         let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
         if !disp_cnt.screen_display_obj() {
             return;
         }
 
-        if disp_cnt.obj_window_display_flag() {
-            todo!()
-        }
-
-        let highest_index = self.assemble_oam::<false>(mem, from_line, to_line, disp_cnt);
+        let highest_index = if OBJ_WINDOW {
+            if disp_cnt.obj_window_display_flag() {
+                self.assemble_oam(mem, from_line, to_line, disp_cnt, true)
+            } else {
+                return;
+            }
+        } else {
+            self.assemble_oam(mem, from_line, to_line, disp_cnt, false)
+        };
 
         if self.obj_oam_indices.is_empty() {
             return;
         }
 
-        gl::Uniform1i(self.obj_disp_cnt_loc, u32::from(disp_cnt) as _);
+        let program = if OBJ_WINDOW { &self.obj_window_program } else { &self.obj_program };
+        gl::Uniform1i(program.disp_cnt_loc, u32::from(disp_cnt) as _);
 
-        gl::BindBuffer(gl::UNIFORM_BUFFER, self.obj_ubo);
+        gl::BindBuffer(gl::UNIFORM_BUFFER, program.ubo);
         gl::BufferData(
             gl::UNIFORM_BUFFER,
             ((highest_index + 1) * size_of::<[u32; 2]>()) as _,
             ptr::addr_of!(self.obj_ubo_data) as _,
             gl::DYNAMIC_DRAW,
         );
-        gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, self.obj_ubo);
+        gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, program.ubo);
 
         gl::DrawElements(gl::TRIANGLES, (6 * self.obj_oam_indices.len()) as _, gl::UNSIGNED_SHORT, self.obj_oam_indices.as_ptr() as _);
     }
@@ -734,16 +748,58 @@ impl Gpu2DProgram {
     }
 
     unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, lcdc_pal: GLuint, vram_display_program: &Gpu2DVramDisplayProgram) {
+        if cfg!(target_os = "linux") {
+            gl::BindTexture(gl::TEXTURE_2D, texs.oam);
+            sub_mem_texture1d(regions::OAM_SIZE / 2, mem.oam.as_ptr());
+
+            gl::BindTexture(gl::TEXTURE_2D, texs.obj);
+            sub_mem_texture2d(texs.obj_width, texs.obj_height, mem.obj.as_ptr());
+        }
+
+        {
+            gl::UseProgram(self.obj_window_program.program);
+
+            gl::BindVertexArray(self.obj_window_program.vao);
+
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, texs.oam);
+
+            gl::ActiveTexture(gl::TEXTURE1);
+            gl::BindTexture(gl::TEXTURE_2D, texs.obj);
+
+            gl::BindFramebuffer(gl::FRAMEBUFFER, common.win_obj_fbo.fbo);
+            gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+            gl::ClearColor(0f32, 0f32, 0f32, 0f32);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+
+            gl::BindBuffer(gl::UNIFORM_BUFFER, common.win_bg_ubo);
+            gl::BufferData(gl::UNIFORM_BUFFER, size_of::<WinBgUbo>() as _, ptr::addr_of!(regs.win_bg_ubo) as _, gl::DYNAMIC_DRAW);
+            gl::BindBufferBase(gl::UNIFORM_BUFFER, 1, common.win_bg_ubo);
+
+            // This sets the bind index in vita gl by force
+            // Shader cache doesn't seem to consider uniform block name and we can't use glUniformBlockBinding
+            #[cfg(target_os = "vita")]
+            crate::presenter::Presenter::gl_bind_frag_ubo(1);
+
+            let mut draw_objects = |from_line, to_line| self.draw_objects::<true>(regs, &mem, from_line, to_line);
+            draw_scanlines!(regs, draw_objects, false, lcdc_pal, false);
+
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+            gl::BindVertexArray(0);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        }
+
         {
             gl::BindFramebuffer(gl::FRAMEBUFFER, common.win_bg_fbo.fbo);
             gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
-            gl::ClearColor(1f32, 0f32, 0f32, 1f32);
+            gl::ClearColor(1f32, 0f32, 0f32, 0f32);
             gl::Clear(gl::COLOR_BUFFER_BIT);
 
             gl::UseProgram(common.win_bg_program);
 
-            gl::BindBuffer(gl::UNIFORM_BUFFER, common.win_bg_ubo);
-            gl::BufferData(gl::UNIFORM_BUFFER, size_of::<WinBgUbo>() as _, ptr::addr_of!(regs.win_bg_ubo) as _, gl::DYNAMIC_DRAW);
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, common.win_obj_fbo.color);
+
             gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, common.win_bg_ubo);
 
             let draw_windows = |from_line, to_line| self.draw_windows(common, regs, from_line, to_line);
@@ -755,12 +811,6 @@ impl Gpu2DProgram {
         }
 
         if cfg!(target_os = "linux") {
-            gl::BindTexture(gl::TEXTURE_2D, texs.oam);
-            sub_mem_texture1d(regions::OAM_SIZE / 2, mem.oam.as_ptr());
-
-            gl::BindTexture(gl::TEXTURE_2D, texs.obj);
-            sub_mem_texture2d(texs.obj_width, texs.obj_height, mem.obj.as_ptr());
-
             gl::BindTexture(gl::TEXTURE_2D, texs.pal);
             sub_pal_texture1d(regions::STANDARD_PALETTES_SIZE / 2, mem.pal.as_ptr());
 
@@ -771,9 +821,9 @@ impl Gpu2DProgram {
         gl::BindTexture(gl::TEXTURE_2D, 0);
 
         {
-            gl::UseProgram(self.obj_program);
+            gl::UseProgram(self.obj_program.program);
 
-            gl::BindVertexArray(self.obj_vao);
+            gl::BindVertexArray(self.obj_program.vao);
 
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, texs.oam);
@@ -798,7 +848,7 @@ impl Gpu2DProgram {
             gl::Enable(gl::DEPTH_TEST);
             gl::DepthFunc(gl::LESS);
 
-            let mut draw_objects = |from_line, to_line| self.draw_objects(regs, &mem, from_line, to_line);
+            let mut draw_objects = |from_line, to_line| self.draw_objects::<false>(regs, &mem, from_line, to_line);
             draw_scanlines!(regs, draw_objects, false, lcdc_pal, false);
 
             gl::Disable(gl::DEPTH_TEST);
@@ -859,7 +909,7 @@ impl Gpu2DProgram {
         gl::UseProgram(0);
     }
 
-    fn assemble_oam<const OBJ_WINDOW: bool>(&mut self, mem: &Gpu2DMem, from_line: u8, to_line: u8, disp_cnt: DispCnt) -> usize {
+    fn assemble_oam(&mut self, mem: &Gpu2DMem, from_line: u8, to_line: u8, disp_cnt: DispCnt, window: bool) -> usize {
         const OAM_COUNT: usize = regions::OAM_SIZE as usize / 2 / size_of::<OamAttribs>();
         let oams = unsafe { slice::from_raw_parts(mem.oam.as_ptr() as *const OamAttribs, OAM_COUNT) };
 
@@ -868,12 +918,9 @@ impl Gpu2DProgram {
         for (i, oam) in oams.iter().enumerate() {
             let attrib0 = OamAttrib0::from(oam.attr0);
             let obj_mode = attrib0.get_obj_mode();
-            if obj_mode == OamObjMode::Disabled {
-                continue;
-            }
             let gfx_mode = attrib0.get_gfx_mode();
-            if OBJ_WINDOW && gfx_mode == OamGfxMode::Window {
-                todo!()
+            if obj_mode == OamObjMode::Disabled || (gfx_mode == OamGfxMode::Window) != window {
+                continue;
             }
 
             let attrib1 = OamAttrib1::from(oam.attr1);
@@ -951,7 +998,8 @@ pub struct Gpu2DRenderer {
 impl Gpu2DRenderer {
     pub fn new() -> Self {
         unsafe {
-            let obj_vert_shader = create_shader("obj", shader_source!("obj_vert"), gl::VERTEX_SHADER).unwrap();
+            let obj_window_vert_shader = create_shader("obj window", &shader_source!("obj_vert").replace("OBJ_WINDOW", "true"), gl::VERTEX_SHADER).unwrap();
+            let obj_vert_shader = create_shader("obj", &shader_source!("obj_vert").replace("OBJ_WINDOW", "false"), gl::VERTEX_SHADER).unwrap();
             let bg_vert_shader = create_shader("bg", shader_source!("bg_vert"), gl::VERTEX_SHADER).unwrap();
             let bg_vert_affine_shader = create_shader("bg affine", shader_source!("bg_vert_affine"), gl::VERTEX_SHADER).unwrap();
             let bg_vert_bitmap_shader = create_shader("bg bitmap", shader_source!("bg_vert_bitmap"), gl::VERTEX_SHADER).unwrap();
@@ -964,12 +1012,13 @@ impl Gpu2DRenderer {
                     Gpu2DTextures::new(1024, OBJ_B_TEX_HEIGHT, 1024, BG_B_TEX_HEIGHT),
                 ],
                 common: Gpu2DCommon::new(),
-                program_a: Gpu2DProgram::new::<{ A }>(obj_vert_shader, bg_vert_shader, bg_vert_affine_shader, bg_vert_bitmap_shader),
-                program_b: Gpu2DProgram::new::<{ B }>(obj_vert_shader, bg_vert_shader, bg_vert_affine_shader, bg_vert_bitmap_shader),
+                program_a: Gpu2DProgram::new::<{ A }>(obj_window_vert_shader, obj_vert_shader, bg_vert_shader, bg_vert_affine_shader, bg_vert_bitmap_shader),
+                program_b: Gpu2DProgram::new::<{ B }>(obj_window_vert_shader, obj_vert_shader, bg_vert_shader, bg_vert_affine_shader, bg_vert_bitmap_shader),
                 #[cfg(target_os = "linux")]
                 lcdc_mem_buf: HeapMemU8::new(),
             };
 
+            gl::DeleteShader(obj_window_vert_shader);
             gl::DeleteShader(obj_vert_shader);
             gl::DeleteShader(bg_vert_shader);
             gl::DeleteShader(bg_vert_affine_shader);

@@ -22,6 +22,11 @@ uniform ObjUbo {
     ObjAttr objAttrs[256];
 };
 
+uniform WinBgUbo {
+    int winHV[192 * 2];
+    int winInOut[192];
+};
+
 uniform sampler2D oamTex;
 uniform sampler2D objTex;
 uniform sampler2D palTex;
@@ -99,12 +104,18 @@ vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, ObjAttr attr) {
             discard;
         }
 
-        bool useExtPal = ((dispCnt >> 31) & 1) != 0;
-        if (useExtPal) {
-            int palBaseAddr = ((attrib2 >> 12) & 0xF) << 9;
-            palColor = readExtPal16Aligned(palBaseAddr + palIndex * 2);
+        if (OBJ_WINDOW) {
+            int enabled = (winInOut[int(191.0 * screenPosF.y)] >> 24) & 0xFF;
+            enabled |= 0x80; // indicate this was set by obj, to avoid win out override
+            return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
         } else {
-            palColor = readPal16Aligned(0x200 + palIndex * 2);
+            bool useExtPal = ((dispCnt >> 31) & 1) != 0;
+            if (useExtPal) {
+                int palBaseAddr = ((attrib2 >> 12) & 0xF) << 9;
+                palColor = readExtPal16Aligned(palBaseAddr + palIndex * 2);
+            } else {
+                palColor = readPal16Aligned(0x200 + palIndex * 2);
+            }
         }
     } else {
         palIndex >>= 4 * (objX & 1);
@@ -113,9 +124,15 @@ vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, ObjAttr attr) {
             discard;
         }
 
-        int palBank = (attrib2 >> 12) & 0xF;
-        int palBaseAddr = 0x200 + palBank * 32;
-        palColor = readPal16Aligned(palBaseAddr + palIndex * 2);
+        if (OBJ_WINDOW) {
+            int enabled = (winInOut[int(191.0 * screenPosF.y)] >> 24) & 0xFF;
+            enabled |= 0x80; // indicate this was set by obj, to avoid win out override
+            return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+        } else {
+            int palBank = (attrib2 >> 12) & 0xF;
+            int palBaseAddr = 0x200 + palBank * 32;
+            palColor = readPal16Aligned(palBaseAddr + palIndex * 2);
+        }
     }
     return vec4(normRgb5(palColor), 1.0);
 }
@@ -134,10 +151,12 @@ vec4 drawBitmap(int objX, int objY, ObjAttr attr) {
 void main() {
     int attrib0 = readAttrib0();
     int attrib2 = readAttrib2();
-    int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
 
-    if ((winEnabled & (1 << 4)) == 0) {
-        discard;
+    if (!OBJ_WINDOW) {
+        int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
+        if (((winEnabled >> 4) & 1) == 0) {
+            discard;
+        }
     }
 
     int objWidth = objDims.x;

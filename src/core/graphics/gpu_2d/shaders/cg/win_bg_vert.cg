@@ -1,7 +1,9 @@
 float2 out screenPos : TEXCOORD0;
+float2 out screenPosF : TEXCOORD1;
 float4 out gl_Position : POSITION;
 
 void main(float2 position) {
     screenPos = float2(max((position.x * 0.5 + 0.5) * 256.0 - 0.1, 0.0), max(position.y - 0.1, 0.0));
+    screenPosF = float2(position.x * 0.5 + 0.5, position.y / 192.0);
     gl_Position = float4(position.x, 1.0 - position.y / 192.0 * 2.0, 0.0, 1.0);
 }
