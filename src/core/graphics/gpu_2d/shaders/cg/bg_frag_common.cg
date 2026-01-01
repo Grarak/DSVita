@@ -74,3 +74,9 @@ bool can_display(unsigned short bgNum) {
     unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
     return ((winEnabled >> bgNum) & 1) != 0;
 }
+
+float4 setPrio(float4 color) {
+    short priority = short(bgCnt & 3);
+    color.a = float(priority) / 255.0;
+    return color;
+}

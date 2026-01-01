@@ -78,6 +78,12 @@ pub struct TexImageParam {
     pub coord_trans_mode: u2,
 }
 
+impl TexImageParam {
+    pub fn is_translucent(self) -> bool {
+        u8::from(self.format()) == 1 || u8::from(self.format()) == 6
+    }
+}
+
 #[bitsize(32)]
 #[derive(Copy, Clone, Default, FromBits)]
 struct NormalVector {
@@ -148,13 +154,19 @@ pub struct PolygonAttr {
     not_used: u3,
     pub trans_new_depth: bool,
     pub render_far_plane: bool,
-    pub render_1_bot_polygons: bool,
+    pub render_1_dot_polygons: bool,
     pub depth_test_equal: bool,
     pub fog: bool,
     pub alpha: u5,
     not_used2: u3,
     pub id: u6,
     not_used3: u2,
+}
+
+impl PolygonAttr {
+    pub fn is_translucent(self) -> bool {
+        u8::from(self.alpha()) != 0 && u8::from(self.alpha()) != 31
+    }
 }
 
 #[bitsize(8)]

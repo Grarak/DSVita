@@ -74,3 +74,8 @@ ivec2 calculateAffineCoords(int x, int y, int bgNum) {
     float bgPd = float(bgPds[index]) / 256.0;
     return ivec2(int(bgX + bgPb + float(x) * bgPa), int(bgY + bgPd + float(x) * bgPc));
 }
+
+void setPrio() {
+    int priority = bgCnt & 3;
+    color.a = float(priority) / 255.0;
+}

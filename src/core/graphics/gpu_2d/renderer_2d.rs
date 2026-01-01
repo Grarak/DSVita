@@ -690,17 +690,10 @@ impl Gpu2DProgram {
         if fb_tex_3d != 0 {
             let draw_bg = |from_line, to_line| {
                 let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
-                match u8::from(disp_cnt.bg_mode()) {
-                    0..=5 => {
-                        if disp_cnt.screen_display_bg0() && disp_cnt.bg0_3d() {
-                            gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[0].fbo);
-                            gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
-                            gl::ClearColor(0f32, 0f32, 0f32, 1f32);
-                            gl::Clear(gl::COLOR_BUFFER_BIT);
-                            self.draw_bg_program(common, regs, texs, from_line, to_line, fb_tex_3d, 0, BgMode::Display3d);
-                        }
+                if let 0..=5 = u8::from(disp_cnt.bg_mode()) {
+                    if disp_cnt.screen_display_bg0() && disp_cnt.bg0_3d() {
+                        self.draw_bg_program(common, regs, texs, from_line, to_line, fb_tex_3d, 0, BgMode::Display3d);
                     }
-                    _ => {}
                 }
             };
             draw_scanlines!(regs, draw_bg, false, 0, false);
@@ -842,16 +835,20 @@ impl Gpu2DProgram {
 
             gl::BindFramebuffer(gl::FRAMEBUFFER, common.obj_fbo.fbo);
             gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
-            gl::ClearColor(0f32, 0f32, 0f32, 1f32);
+            gl::ClearColor(0f32, 0f32, 0f32, 0f32);
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
 
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::ONE_MINUS_DST_ALPHA, gl::DST_ALPHA);
+
             gl::Enable(gl::DEPTH_TEST);
-            gl::DepthFunc(gl::LESS);
+            gl::DepthFunc(gl::LEQUAL);
 
             let mut draw_objects = |from_line, to_line| self.draw_objects::<false>(regs, &mem, from_line, to_line);
             draw_scanlines!(regs, draw_objects, false, lcdc_pal, false);
 
             gl::Disable(gl::DEPTH_TEST);
+            gl::Disable(gl::BLEND);
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::BindVertexArray(0);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);

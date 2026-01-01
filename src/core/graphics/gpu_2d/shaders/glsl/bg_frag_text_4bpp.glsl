@@ -61,7 +61,5 @@ void main() {
     int y = int(screenPos.y);
 
     color = drawText(x, y, bgNum);
-
-    int priority = bgCnt & 3;
-    color.a = float(priority) / 4.0;
+    setPrio();
 }

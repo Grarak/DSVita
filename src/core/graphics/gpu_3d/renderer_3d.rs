@@ -1,7 +1,7 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
 use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::matrix_vec::MatrixVec;
-use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, SwapBuffers, TextureCoordTransMode, TextureFormat, Vertex};
+use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, SwapBuffers, TextureCoordTransMode, Vertex};
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
@@ -330,11 +330,7 @@ impl Gpu3DRenderer {
         for j in 0..polygon.polygon_type.vertex_count() {
             let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
 
-            let c = if TextureFormat::from(u8::from(polygon.tex_image_param.format())) == TextureFormat::None {
-                rgb5_to_float8(vertex.color)
-            } else {
-                (0.0, 0.0, 0.0)
-            };
+            let c = rgb5_to_float8(vertex.color);
 
             let mut tex_coords: [f32; 2] = MaybeUninit::uninit().assume_init();
             let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
@@ -404,7 +400,7 @@ impl Gpu3DRenderer {
 
         self.polygon_attrs[polygon_index].tex_image_param = u32::from(polygon.tex_image_param);
         self.polygon_attrs[polygon_index].pal_addr = polygon.palette_addr;
-        self.polygon_attrs[polygon_index].poly_attr = u16::from(polygon.attr.alpha());
+        self.polygon_attrs[polygon_index].poly_attr = u16::from(polygon.attr.alpha()) | (u16::from(polygon.attr.mode()) << 5);
     }
 
     pub fn process_polygons(&mut self, common: &GpuRendererCommon) {
@@ -421,14 +417,16 @@ impl Gpu3DRenderer {
         while !self.polygon_attrs_ready.load(Ordering::SeqCst) {}
 
         for i in 0..polygon_size {
-            if u8::from(self.content.polygons[i as usize].attr.alpha()) == 31 {
-                unsafe { self.add_vertices(i as usize) };
+            let polygon = &self.content.polygons[i];
+            if !polygon.attr.is_translucent() && !polygon.tex_image_param.is_translucent() {
+                unsafe { self.add_vertices(i) };
             }
         }
 
         for i in 0..polygon_size {
-            if u8::from(self.content.polygons[i as usize].attr.alpha()) != 31 {
-                unsafe { self.add_vertices(i as usize) };
+            let polygon = &self.content.polygons[i];
+            if polygon.attr.is_translucent() || polygon.tex_image_param.is_translucent() {
+                unsafe { self.add_vertices(i) };
             }
         }
     }
@@ -490,7 +488,9 @@ impl Gpu3DRenderer {
         gl::UseProgram(self.gl.program);
 
         gl::Enable(gl::BLEND);
-        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+        gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE);
+        gl::BlendEquationSeparate(gl::FUNC_ADD, gl::MAX);
+
         gl::Enable(gl::DEPTH_TEST);
         gl::DepthFunc(gl::LEQUAL);
         gl::DepthRange(0.0, 1.0);

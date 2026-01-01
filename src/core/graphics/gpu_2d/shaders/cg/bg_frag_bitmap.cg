@@ -40,7 +40,5 @@ void main(out float4 color : COLOR) {
     short y = short(screenPos.y);
 
     color = drawBitmap(x, y, bgNum);
-
-    short priority = short(bgCnt & 3);
-    color.a = float(priority) / 4.0;
+    color = setPrio(color);
 }

@@ -31,7 +31,7 @@ unsigned short readTex16Aligned(int addr) {
 
 float4 readPal(int index) {
     short indexX = index & 0x1FF;
-    int indexY = index >> 9;
+    short indexY = index >> 9;
     float x = float(indexX) / 511.0;
     float y = float(indexY) / 95.0;
     return tex2D(palTex, float2(x, y));
@@ -163,24 +163,32 @@ void main(out float4 color : COLOR) {
         t = sizeT - 1;
     }
 
-    short texFmt = (texImageParam >> 10) & 0x7;
-
-    if (texFmt == 0) {
-        color = float4(oColor.rgb, 1.0);
-    } else if (texFmt == 1) {
-        color = aXiXTex(palAddr, addrOffset, s, t, sizeS, 3);
-    } else if (texFmt == 5) {
-        color = compressed4x4Tex(palAddr, addrOffset, s, t, sizeS);
-    } else if (texFmt == 6) {
-        color = aXiXTex(palAddr, addrOffset, s, t, sizeS, 5);
-    } else if (texFmt == 7) {
-        color = directTex(addrOffset, s, t, sizeS);
-    } else {
-        bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
-        color = palXTex(palAddr, addrOffset, s, t, sizeS, texFmt - 2, transparent0);
-    }
-
     unsigned short polyAttr = palPolyAttribValue >> 16;
     float alpha = float(polyAttr & 31) / 31.0;
-    color.a *= alpha;
+
+    short texFmt = (texImageParam >> 10) & 0x7;
+    float4 texColor;
+    if (texFmt == 0) {
+        color = float4(oColor, alpha);
+        return;
+    } else if (texFmt == 1) {
+        texColor = aXiXTex(palAddr, addrOffset, s, t, sizeS, 3);
+    } else if (texFmt == 5) {
+        texColor = compressed4x4Tex(palAddr, addrOffset, s, t, sizeS);
+    } else if (texFmt == 6) {
+        texColor = aXiXTex(palAddr, addrOffset, s, t, sizeS, 5);
+    } else if (texFmt == 7) {
+        texColor = directTex(addrOffset, s, t, sizeS);
+    } else {
+        bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+        texColor = palXTex(palAddr, addrOffset, s, t, sizeS, texFmt - 2, transparent0);
+    }
+
+    short mode = (polyAttr >> 5) & 0x3;
+    if (mode == 0) {
+        color = texColor * float4(oColor, alpha);
+    } else {
+        color = texColor;
+        color.a *= alpha;
+    }
 }

@@ -66,7 +66,5 @@ void main(out float4 color : COLOR) {
     short y = short(screenPos.y);
 
     color = drawText(x, y, bgNum);
-
-    short priority = short(bgCnt & 3);
-    color.a = float(priority) / 4.0;
+    color = setPrio(color);
 }

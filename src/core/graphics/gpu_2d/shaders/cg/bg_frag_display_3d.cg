@@ -1,8 +1,6 @@
 void main(out float4 color : COLOR) {
-    short bgNum = short(screenPos.z);
-
     color = tex2D(display3dTex, screenPosF);
-    if (!can_display(bgNum)) {
+    if (!can_display(0)) {
         discard;
     }
 
@@ -10,6 +8,8 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
-    short priority = short(bgCnt & 3);
-    color.a = float(priority) / 4.0;
+    unsigned char priority = bgCnt & 3;
+    unsigned char alpha = unsigned char(color.a * 31.0);
+    unsigned char data = priority | (alpha << 2);
+    color.a = float(data) / 255.0;
 }

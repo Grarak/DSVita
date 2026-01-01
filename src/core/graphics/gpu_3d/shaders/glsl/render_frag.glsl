@@ -60,7 +60,7 @@ const vec4 TexelMulLookup[16] = vec4[16](
     vec4(1.0, 0.0, 0.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), vec4(5.0 / 8.0, 3.0 / 8.0, 0.0, 0.0), vec4(3.0 / 8.0, 5.0 / 8.0, 0.0, 0.0)
 );
 
-void compressed4x4Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
+vec4 compressed4x4Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
     int tile = (t / 4) * (sizeS / 4) + (s / 4);
     int addr = addrOffset + (tile * 4 + (t & 0x3));
 
@@ -88,10 +88,10 @@ void compressed4x4Tex(int palAddr, int addrOffset, int s, int t, int sizeS) {
     if (weights.x < 0.0) {
         discard;
     }
-    color = vec4((colors * weights).rgb, 1.0);
+    return vec4((colors * weights).rgb, 1.0);
 }
 
-void aXiXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int aBits) {
+vec4 aXiXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int aBits) {
     int addr = addrOffset + t * sizeS + s;
 
     int palIndex = readTex8(addr);
@@ -107,23 +107,23 @@ void aXiXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int aBits) {
     float aMax = float(aMask);
     int tex = readPal16Aligned(palOffset + (palIndex & colorMask) * 2);
     float alpha = float((palIndex >> colorBits) & aMask) / aMax;
-    color = vec4(normRgb5(tex), alpha);
+    return vec4(normRgb5(tex), alpha);
 }
 
-void directTex(int addrOffset, int s, int t, int sizeS) {
+vec4 directTex(int addrOffset, int s, int t, int sizeS) {
     int addr = addrOffset + (t * sizeS + s) * 2;
     int tex = readTex16Aligned(addr);
     if (tex == 0) {
         discard;
     }
     if ((tex >> 15) == 0) {
-        color = vec4(normRgb5(tex), 0.0);
-    } else {
-        color = vec4(normRgb5(tex), 1.0);
+        discard;
     }
+
+    return vec4(normRgb5(tex), 1.0);
 }
 
-void palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format, bool transparent0) {
+vec4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format, bool transparent0) {
     int addr = addrOffset + ((t * sizeS + s) >> (2 - format));
 
     int palIndex = readTex8(addr);
@@ -137,7 +137,7 @@ void palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format, b
 
     int palOffset = palAddr << (format == 0 ? 3 : 4);
     int tex = readPal16Aligned(palOffset + palIndex * 2);
-    color = vec4(normRgb5(tex), 1.0);
+    return vec4(normRgb5(tex), 1.0);
 }
 
 void main() {
@@ -179,37 +179,49 @@ void main() {
         t = sizeT - 1;
     }
 
-    int texFmt = (texImageParam >> 10) & 0x7;
+    int polyAttr = int(palPolyAttribValue[2]) | (int(palPolyAttribValue[3]) << 8);
+    float alpha = float(polyAttr & 31) / 31.0;
 
+    int texFmt = (texImageParam >> 10) & 0x7;
+    vec4 texColor;
     switch (texFmt) {
         case 0: {
-            color = vec4(oColor.rgb, 1.0);
-            break;
+            color = vec4(oColor, alpha);
+            return;
         }
         case 1: {
-            aXiXTex(palAddr, addrOffset, int(s), int(t), sizeS, 3);
+            texColor = aXiXTex(palAddr, addrOffset, int(s), int(t), sizeS, 3);
             break;
         }
         case 5: {
-            compressed4x4Tex(palAddr, addrOffset, int(s), int(t), sizeS);
+            texColor = compressed4x4Tex(palAddr, addrOffset, int(s), int(t), sizeS);
             break;
         }
         case 6: {
-            aXiXTex(palAddr, addrOffset, int(s), int(t), sizeS, 5);
+            texColor = aXiXTex(palAddr, addrOffset, int(s), int(t), sizeS, 5);
             break;
         }
         case 7: {
-            directTex(addrOffset, int(s), int(t), sizeS);
+            texColor = directTex(addrOffset, int(s), int(t), sizeS);
             break;
         }
         default: {
             bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
-            palXTex(palAddr, addrOffset, int(s), int(t), sizeS, texFmt - 2, transparent0);
+            texColor = palXTex(palAddr, addrOffset, int(s), int(t), sizeS, texFmt - 2, transparent0);
             break;
         }
     }
 
-    int polyAttr = int(palPolyAttribValue[2]) | (int(palPolyAttribValue[3]) << 8);
-    float alpha = float(polyAttr & 31) / 31.0;
-    color.a *= alpha;
+    int mode = (polyAttr >> 5) & 0x3;
+    switch (mode) {
+        case 0: {
+            color = texColor * vec4(oColor.rgb, alpha);
+            break;
+        }
+        default: {
+            color = texColor;
+            color.a *= alpha;
+            break;
+        }
+    }
 }
