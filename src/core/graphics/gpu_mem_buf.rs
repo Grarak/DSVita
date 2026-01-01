@@ -98,6 +98,18 @@ impl GpuMemBuf {
         utils::write_to_mem(bank, disp_cap_cnt.write_offset() + CAPTURE_IDENTIFIER.len() as u32, disp_cap_cnt);
     }
 
+    pub fn unmark_blocks_as_captured(vram_mem: &mut [u8; vram::TOTAL_SIZE]) {
+        for bank_num in 0..4 {
+            for offset_num in 0..4 {
+                let offset = offset_num * 0x8000;
+                let bank = &mut vram_mem[bank_num * vram::BANK_A_SIZE + offset..];
+                if &bank[..CAPTURE_IDENTIFIER.len()] == CAPTURE_IDENTIFIER {
+                    bank[..CAPTURE_IDENTIFIER.len()].fill(0);
+                }
+            }
+        }
+    }
+
     pub fn insert_capture_mem(&mut self, capture_mem: &[u8; vram::BANK_A_SIZE * 4]) {
         for bank_num in 0..4 {
             if !VramCnt::from(self.vram.cnt[bank_num]).enable() {

@@ -244,12 +244,14 @@ impl Emu {
                     }
                 }
 
+                let vram = self.vram_get_mem_mut();
                 if self.gpu.disp_cap_cnt.capture_enabled() {
                     let bank_num = u8::from(self.gpu.disp_cap_cnt.vram_write_block());
-                    let vram = self.vram_get_mem_mut();
                     let (vram_offset, _) = VramBanks::get(bank_num);
                     let bank = unsafe { mem::transmute(vram.as_mut_ptr().add(vram_offset)) };
                     GpuMemBuf::mark_block_as_captured(self.gpu.disp_cap_cnt, bank);
+                } else {
+                    GpuMemBuf::unmark_blocks_as_captured(vram);
                 }
 
                 self.gpu.disp_cap_cnt.set_capture_enabled(false);

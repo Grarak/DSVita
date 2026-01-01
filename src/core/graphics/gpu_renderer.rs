@@ -313,7 +313,7 @@ impl GpuRenderer {
                 .read_all(&mut self.gpu_mem_refs, self.renderer_regs_2d_shared.has_vram_display[0], self.rendering_3d);
 
             if disp_cap_cnt.capture_enabled() && u8::from(disp_cap_cnt.capture_source()) != 0 {
-                todo!()
+                // todo!()
             }
 
             self.renderer_vram_busy.store(false, Ordering::SeqCst);
@@ -354,7 +354,7 @@ impl GpuRenderer {
 
             if disp_cap_cnt.capture_enabled() && u8::from(disp_cap_cnt.capture_source()) != 1 {
                 if u8::from(disp_cap_cnt.capture_size()) == 0 {
-                    todo!()
+                    // todo!()
                 }
 
                 gl::BindFramebuffer(gl::FRAMEBUFFER, self.capture_fbo.fbo);

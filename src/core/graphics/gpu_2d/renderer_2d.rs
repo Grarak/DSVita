@@ -838,11 +838,8 @@ impl Gpu2DProgram {
             gl::ClearColor(0f32, 0f32, 0f32, 0f32);
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
 
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::ONE_MINUS_DST_ALPHA, gl::DST_ALPHA);
-
             gl::Enable(gl::DEPTH_TEST);
-            gl::DepthFunc(gl::LEQUAL);
+            gl::DepthFunc(gl::LESS);
 
             let mut draw_objects = |from_line, to_line| self.draw_objects::<false>(regs, &mem, from_line, to_line);
             draw_scanlines!(regs, draw_objects, false, lcdc_pal, false);
