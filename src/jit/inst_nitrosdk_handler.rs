@@ -60,6 +60,9 @@ const CP_RESTORE_CONTEXT: [u32; 14] = [
     0xe92d0010, 0xe59f102c, 0xe890101c, 0xe881101c, 0xe1d021b8, 0xe1d031ba, 0xe14121b0, 0xe1c132b0, 0xe2800010, 0xe2811028, 0xe890000c, 0xe881000c, 0xe8bd0010, 0xe12fff1e,
 ];
 
+const MICROCODE_SHAKEHAND: [u32; 10] = [0xe1d120b0, 0xe1d030b0, 0xe2833001, 0xe1c030b0, 0xe1d1c0b0, 0xe152000c, 0x0afffffa, 0xe2833001, 0xe1c030b0, 0xe12fff1e];
+const MICROCODE_WAIT_AGREEMENT: [u32; 7] = [0xe1d020b0, 0xe1510002, 0x012fff1e, 0xe3a03010, 0xe2533001, 0x1afffffd, 0xeafffff8];
+
 struct Function {
     opcodes: &'static [u32],
     name: &'static str,
@@ -449,6 +452,16 @@ unsafe extern "C" fn fs_clear_overlay_image_hook() {
     asm.emu.jit.invalidate_blocks(overlay_info_header.ram_address, overlay_info_header.total_size() as usize);
 }
 
+unsafe extern "C" fn hle_microcode_shakehand(guest_pc: u32) {
+    let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
+    hle_post_function::<{ ARM9 }>(asm, 20, guest_pc);
+}
+
+unsafe extern "C" fn hle_microcode_wait_agreement(guest_pc: u32) {
+    let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
+    hle_post_function::<{ ARM9 }>(asm, 7, guest_pc);
+}
+
 const FUNCTIONS_ARM9: &[Function] = &[
     Function::new(&MI_CPU_CLEAR32, "MI_CPU_CLEAR32", hle_mi_cpu_clear32::<{ ARM9 }>),
     Function::new(&MI_CPU_CLEAR16, "MI_CPU_CLEAR16", hle_mi_cpu_clear16::<{ ARM9 }>),
@@ -674,6 +687,26 @@ impl JitAsm<'_> {
     pub fn emit_nitrosdk_func(&mut self, guest_pc: u32, thumb: bool) -> bool {
         if !self.emu.nitro_sdk_version.is_valid() || thumb {
             return false;
+        }
+
+        if self.emu.nitro_sdk_version.is_twl_sdk() && self.emu.settings.arm7_emu() == Arm7Emu::Hle && guest_pc & 0xFFFF000 == 0x1FF8000 {
+            const MICROCODE_FUNCTIONS: &[Function] = &[
+                Function::new(&MICROCODE_SHAKEHAND, "MICROCODE_SHAKEHAND", hle_microcode_shakehand),
+                Function::new(&MICROCODE_WAIT_AGREEMENT, "MICROCODE_WAIT_AGREEMENT", hle_microcode_wait_agreement),
+            ];
+
+            for func in MICROCODE_FUNCTIONS {
+                if func.eq(&self.jit_buf.insts) {
+                    let pc_end = guest_pc + ((self.jit_buf.insts.len() as u32) << if thumb { 1 } else { 2 });
+                    self.emu.jit_protect_region::<{ ARM9 }>(guest_pc, pc_end, thumb, &regions::ITCM_REGION);
+                    self.emu.jit_set_live_range(guest_pc, pc_end, thumb);
+                    unsafe {
+                        *self.emu.jit.jit_memory_map.get_jit_entry(guest_pc) = JitEntry(func.hle_function as _);
+                        (func.hle_function)(guest_pc);
+                    }
+                    return true;
+                }
+            }
         }
 
         let functions: &[Function] = match self.cpu {

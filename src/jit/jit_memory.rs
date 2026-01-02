@@ -21,7 +21,7 @@ use crate::jit::op::{MultipleTransfer, Op, SingleTransfer};
 use crate::jit::reg::Reg;
 use crate::jit::{Cond, MemoryAmount};
 use crate::logging::debug_println;
-use crate::mmap::{ArmContext, Mmap, PAGE_SHIFT, PAGE_SIZE, flush_icache};
+use crate::mmap::{ArmContext, Mmap, PAGE_SHIFT, PAGE_SIZE, flush_icache, MemRegion};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils;
 use crate::utils::{HeapMem, HeapMemU8};
@@ -202,17 +202,35 @@ pub struct JitMemory {
 }
 
 impl Emu {
+    pub fn jit_protect_region<const CPU: CpuType>(&mut self, guest_pc: u32, guest_pc_end: u32, thumb: bool, region: &MemRegion) {
+        let guest_pc_end = guest_pc_end - if thumb { 2 } else { 4 };
+        let begin = guest_pc >> MMU_PAGE_SHIFT;
+        let end = guest_pc_end >> MMU_PAGE_SHIFT;
+        for i in begin..=end {
+            self.mmu_remove_write::<CPU>(i << MMU_PAGE_SHIFT, region);
+        }
+    }
+
+    pub fn jit_set_live_range(&mut self, guest_pc: u32, guest_pc_end: u32, thumb: bool,) {
+        // >> 3 for u8 (each bit represents a page)
+        let guest_pc_end = guest_pc_end - if thumb { 2 } else { 4 };
+        let live_range_begin = guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
+        let live_range_end = guest_pc_end >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
+        for i in live_range_begin..=live_range_end {
+            let live_ranges_bit = i & 0x7;
+            let live_range_ptr = self.jit.jit_memory_map.get_live_range(i << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT);
+            if !live_range_ptr.is_null() {
+                unsafe { *live_range_ptr |= 1 << live_ranges_bit };
+            }
+        }
+    }
+
     pub fn jit_insert_block(&mut self, block_asm: BlockAsm, debug_info: &JitDebugInfo, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu: CpuType) -> (*const extern "C" fn(u32), bool) {
         macro_rules! insert {
             ($entries:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
                 let ret = insert!($entries);
                 $(
-                    let guest_pc_end = guest_pc_end - if thumb { 2 } else { 4 };
-                    let begin = guest_pc >> MMU_PAGE_SHIFT;
-                    let end = guest_pc_end >> MMU_PAGE_SHIFT;
-                    for i in begin..=end {
-                        self.mmu_remove_write::<{ $cpu_entry }>(i << MMU_PAGE_SHIFT, &$region);
-                    }
+                    self.jit_protect_region::<{ $cpu_entry }>(guest_pc, guest_pc_end, thumb, &$region);
                 )*
                 ret
             }};
@@ -229,17 +247,7 @@ impl Emu {
                 let metadata = JitBlockMetadata::new(guest_pc | (thumb as u32), guest_pc_end | (thumb as u32), (allocated_offset_addr >> PAGE_SHIFT) as u16, ((allocated_offset_addr + aligned_size) >> PAGE_SHIFT) as u16);
                 self.jit.get_jit_data(cpu).jit_funcs.push_back(metadata);
 
-                // >> 3 for u8 (each bit represents a page)
-                let guest_pc_end = guest_pc_end - if thumb { 2 } else { 4 };
-                let live_range_begin = guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
-                let live_range_end = guest_pc_end >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
-                for i in live_range_begin..=live_range_end {
-                    let live_ranges_bit = i & 0x7;
-                    let live_range_ptr = self.jit.jit_memory_map.get_live_range(i << JIT_LIVE_RANGE_PAGE_SIZE_SHIFT);
-                    if !live_range_ptr.is_null() {
-                        unsafe { *live_range_ptr |= 1 << live_ranges_bit };
-                    }
-                }
+                self.jit_set_live_range(guest_pc, guest_pc_end, thumb);
 
                 #[cfg(any(debug_assertions, target_os = "linux"))]
                 for &(pc, offset, size) in &debug_info.blocks {

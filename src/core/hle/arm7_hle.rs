@@ -190,5 +190,12 @@ impl Emu {
         self.mem_write::<{ ARM7 }, _>(0x027FFFA8, (self.input.get_ext_key_in() << 10) & 0x2C00);
         let frame_counter = self.mem_read::<{ ARM7 }, u32>(0x27FFC3C);
         self.mem_write::<{ ARM7 }, _>(0x27FFC3C, frame_counter.wrapping_add(1));
+
+        if self.nitro_sdk_version.is_twl_sdk() {
+            let sync = self.mem_read::<{ ARM7 }, u8>(0x2FFFFF0);
+            self.mem_write::<{ ARM7 }, u8>(0x2FFFFF1, !sync);
+            self.mem_write::<{ ARM7 }, u8>(0x2FFFFF2, 1);
+            self.mem_write::<{ ARM7 }, u8>(0x2FFFFF3, 1);
+        }
     }
 }

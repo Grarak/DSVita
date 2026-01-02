@@ -748,5 +748,7 @@ pub unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(pc: u32, opcode
 unsafe extern "C" fn debug_enter_block<const CPU: CpuType>(pc: u32) {
     branch_println!("{CPU:?} execute {pc:x}");
     let asm = get_jit_asm_ptr::<CPU>();
-    debug_inst_info::<CPU>((*asm).emu, pc, "enter block");
+    if BRANCH_LOG {
+        debug_inst_info::<CPU>((*asm).emu, pc, "enter block");
+    }
 }
