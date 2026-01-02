@@ -4,6 +4,7 @@ use crate::core::CpuType::ARM9;
 use crate::get_jit_asm_ptr;
 use crate::jit::assembler::block_asm::GuestInstMetadata;
 use crate::jit::assembler::reg_alloc::GUEST_REG_ALLOCATIONS;
+use crate::jit::inst_branch_handler::breakout_imm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
@@ -184,23 +185,6 @@ mod handler {
     }
 }
 
-macro_rules! imm_breakout {
-    ($cpu:expr, $asm:expr, $pc:expr, $total_cycles:expr) => {{
-        crate::logging::debug_println!("immediate breakout");
-        let is_thumb = $pc & 1 == 1;
-        let pc = $pc & !1;
-        if crate::IS_DEBUG {
-            $asm.runtime_data.set_branch_out_pc(pc & !1);
-        }
-        $asm.runtime_data.accumulated_cycles += $total_cycles - $asm.runtime_data.pre_cycle_count_sum;
-        let next_pc_offset = (1 << (!is_thumb as u8)) + 2;
-        $cpu.thread_regs().pc = pc + next_pc_offset;
-        $asm.emu.breakout_imm = false;
-        crate::jit::jit_asm_common_funs::exit_guest_context!($asm);
-    }};
-}
-pub(super) use imm_breakout;
-
 unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(metadata: *const GuestInstMetadata, host_regs: &[usize; GUEST_REG_ALLOCATIONS.len()]) {
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     debug_println!("{CPU:?} breakout after write");
@@ -213,7 +197,7 @@ unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(metadata: *const G
         debug_println!("{CPU:?} save {dirty_guest_reg:?} as {value:x} from host {mapped_reg:?}");
         *asm.emu.thread_get_reg_mut(CPU, dirty_guest_reg) = value;
     }
-    imm_breakout!(CPU, asm, metadata.pc, metadata.total_cycle_count);
+    breakout_imm::<CPU>(asm, metadata.total_cycle_count, metadata.pc);
 }
 
 unsafe extern "C" fn _inst_write_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(value0: u32, value1: u32, addr: u32, metadata: *const GuestInstMetadata) -> *const GuestInstMetadata {
@@ -271,6 +255,7 @@ macro_rules! write_mem_handler_cpsr {
                 "mov r3, r12",
                 "bl {handler}",
                 "cbnz r0, 1f",
+                "2:",
                 "pop {{r3, lr}}",
                 "ldr r2, [r3, {cpsr}]",
                 "msr cpsr, r2",
@@ -278,7 +263,9 @@ macro_rules! write_mem_handler_cpsr {
                 "1:",
                 "push {{r4-r11}}",
                 "mov r1, sp",
-                "b {breakout}",
+                "bl {breakout}",
+                "pop {{r4-r11}}",
+                "b 2b",
                 cpsr_bits = const Reg::CPSR as usize * 4 + 3,
                 handler = sym $inst_fun::<CPU, AMOUNT>,
                 cpsr = const Reg::CPSR as usize * 4,
@@ -298,11 +285,14 @@ macro_rules! write_mem_handler {
                 "mov r3, r12",
                 "bl {}",
                 "cbnz r0, 1f",
+                "2:",
                 "pop {{r3, pc}}",
                 "1:",
                 "push {{r4-r11}}",
                 "mov r1, sp",
-                "b {}",
+                "bl {}",
+                "pop {{r4-r11}}",
+                "b 2b",
                 sym $inst_fun::<CPU, AMOUNT>,
                 sym breakout_after_write::<CPU>,
             );
@@ -498,23 +488,23 @@ pub unsafe extern "C" fn _inst_mem_handler_multiple<
     handle_multiple_request::<CPU, WRITE, WRITE_BACK, DECREMENT, VALID, USER, NEEDS_PC, GX_FIFO>(rlist, rlist_len, op0_reg, params.pre(), asm.emu, metadata);
 
     if WRITE && unlikely(asm.emu.breakout_imm) {
-        imm_breakout!(CPU, asm, metadata.pc, metadata.total_cycle_count);
-    } else {
-        if WRITE_BACK {
-            let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(op0_reg as usize);
-            *host_regs.get_unchecked_mut(mapped_reg as usize - 4) = *asm.emu.thread_get_reg(CPU, op0_reg) as usize;
-        }
+        breakout_imm::<CPU>(asm, metadata.total_cycle_count, metadata.pc);
+    }
 
-        if !WRITE {
-            let mut rlist = rlist.0.reverse_bits();
-            for _ in 0..rlist_len {
-                let zeros = rlist.leading_zeros();
-                let reg = Reg::from(zeros as u8);
-                rlist &= !(0x80000000 >> zeros);
-                let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(reg as usize);
-                if mapped_reg != Reg::None {
-                    *host_regs.get_unchecked_mut(mapped_reg as usize - 4) = *asm.emu.thread_get_reg(CPU, reg) as usize;
-                }
+    if WRITE_BACK {
+        let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(op0_reg as usize);
+        *host_regs.get_unchecked_mut(mapped_reg as usize - 4) = *asm.emu.thread_get_reg(CPU, op0_reg) as usize;
+    }
+
+    if !WRITE {
+        let mut rlist = rlist.0.reverse_bits();
+        for _ in 0..rlist_len {
+            let zeros = rlist.leading_zeros();
+            let reg = Reg::from(zeros as u8);
+            rlist &= !(0x80000000 >> zeros);
+            let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(reg as usize);
+            if mapped_reg != Reg::None {
+                *host_regs.get_unchecked_mut(mapped_reg as usize - 4) = *asm.emu.thread_get_reg(CPU, reg) as usize;
             }
         }
     }

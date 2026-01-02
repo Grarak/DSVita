@@ -134,6 +134,10 @@ impl Emu {
         self.cpu[cpu].halt != 0
     }
 
+    pub fn cpu_halted_by_gxfifo(&self) -> bool {
+        self.cpu[ARM9].halt & 2 != 0
+    }
+
     #[inline(never)]
     pub fn cpu_send_interrupt(&mut self, cpu: CpuType, flag: InterruptFlag) {
         let regs = cpu.thread_regs();

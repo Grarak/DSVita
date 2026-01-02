@@ -3,6 +3,7 @@ use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::jit_asm::{align_guest_pc, call_jit_entry, JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_asm_common_funs::{exit_guest_context, JitAsmCommonFuns};
 use crate::logging::debug_println;
+use crate::settings::Arm7Emu;
 use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, IS_DEBUG};
 use std::cmp::min;
 use std::intrinsics::{likely, unlikely};
@@ -222,4 +223,43 @@ pub unsafe extern "C" fn branch_any_reg<const ARM7_HLE: bool>(total_cycles: u16,
 
     asm.runtime_data.pre_cycle_count_sum = 0;
     call_jit_fun::<{ ARM9 }>(asm, ARM9.thread_regs().pc);
+}
+
+pub unsafe fn breakout_imm<const CPU: CpuType>(asm: &mut JitAsm, total_cycles: u16, current_pc: u32) {
+    asm.runtime_data.accumulated_cycles += total_cycles - asm.runtime_data.pre_cycle_count_sum;
+    CPU.thread_regs().pc = current_pc;
+    asm.emu.breakout_imm = false;
+    asm.runtime_data.pre_cycle_count_sum = 0;
+
+    match CPU {
+        ARM9 => {
+            let arm7_hle = asm.emu.settings.arm7_emu() == Arm7Emu::Hle;
+            if arm7_hle {
+                run_scheduler::<true>(asm, current_pc);
+            } else {
+                run_scheduler::<false>(asm, current_pc);
+            }
+            while asm.emu.cpu_halted_by_gxfifo() {
+                if arm7_hle {
+                    run_scheduler_idle_loop::<true>(asm);
+                } else {
+                    run_scheduler_idle_loop::<false>(asm);
+                }
+            }
+            asm.emu.breakout_imm = false;
+            if unlikely(ARM9.thread_regs().pc != current_pc) {
+                handle_interrupt(asm, current_pc, current_pc);
+            }
+        }
+        ARM7 => {
+            let is_thumb = current_pc & 1 == 1;
+            let pc = current_pc & !1;
+            if IS_DEBUG {
+                asm.runtime_data.set_branch_out_pc(pc);
+            }
+            let next_pc_offset = (1 << (!is_thumb as u8)) + 2;
+            ARM7.thread_regs().pc = pc + next_pc_offset;
+            exit_guest_context!(asm);
+        }
+    }
 }
