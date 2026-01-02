@@ -7,11 +7,14 @@ use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
 use crate::fixed_fifo::FixedFifo;
 use crate::logging::debug_println;
-use crate::math::{vmult_mat4, Matrix, Vectori16, Vectori32, MTX_IDENTITY};
+use crate::math::{vdot_vec3, vmult_mat4, vmult_vec3_mat3_no_store, Matrix, Vectori16, Vectori32, MTX_IDENTITY};
+use crate::utils;
 use crate::utils::HeapMem;
 use bilge::prelude::*;
 use paste::paste;
-use std::arch::arm::{int32x4_t, vld1q_s32, vld1q_s32_x3, vld1q_s32_x4, vsetq_lane_s32, vst1q_s32_x4};
+use std::arch::arm::{
+    int32x4_t, vcombine_s32, vget_high_s32, vget_low_s32, vld1_s32, vld1q_s32, vld1q_s32_x3, vld1q_s32_x4, vnegq_s32, vsetq_lane_s32, vshrq_n_s32, vst1q_s32, vst1q_s32_x4, vsub_s32,
+};
 use std::cmp::{max, min};
 use std::hint::assert_unchecked;
 use std::intrinsics::{likely, unlikely};
@@ -133,15 +136,6 @@ struct MaterialColor1 {
     set_shininess: bool,
     em: u15,
     not_used: u1,
-}
-
-#[bitsize(32)]
-#[derive(Copy, Clone, Default, FromBits)]
-struct Shininess {
-    shininess0: u8,
-    shininess1: u8,
-    shininess2: u8,
-    shininess3: u8,
 }
 
 #[bitsize(32)]
@@ -337,16 +331,16 @@ struct Matrices {
 #[derive(Copy, Clone, Default)]
 pub struct Vertex {
     pub coords: Vectori32<4>,
+    pub normal: Vectori16<3>,
+    pub tex_coord_trans_mode: TextureCoordTransMode,
     pub tex_coords: Vectori16<2>,
     pub color: u16,
-    pub tex_coord_trans_mode: TextureCoordTransMode,
     pub tex_matrix_index: u16,
     pub clip_matrix_index: u16,
 }
 
 #[derive(Copy, Clone, Default)]
 pub struct Polygon {
-    pub normal: Vectori16<3>,
     pub attr: PolygonAttr,
     pub tex_image_param: TexImageParam,
     pub palette_addr: u16,
@@ -357,20 +351,28 @@ pub struct Polygon {
 
 #[bitsize(8)]
 #[derive(Copy, Clone, Default, FromBits)]
-struct MatrixFlags {
+struct DirtyFlags {
     clip_dirty: u2,
     tex_push: bool,
     clip_push: bool,
     unused: u4,
 }
 
-impl MatrixFlags {
+impl DirtyFlags {
     fn is_clip_dirty(self) -> bool {
         u8::from(self.clip_dirty()) != 0
     }
 
     fn set_clip_dirty_bool(&mut self, dirty: bool) {
         self.set_clip_dirty(u2::new(dirty as u8));
+    }
+}
+
+pub struct Shininess(pub [u8; 128]);
+
+impl Default for Shininess {
+    fn default() -> Self {
+        unsafe { mem::zeroed() }
     }
 }
 
@@ -406,15 +408,21 @@ pub struct Gpu3DRegisters {
     clip_matrix: Matrix,
     clip_matrices: MatrixVec,
     tex_matrices: MatrixVec,
-    mtx_flags: MatrixFlags,
 
     cur_polygon_attr: PolygonAttr,
+
+    cur_light_vectors: [Vectori32<4>; 4],
+    cur_light_half_vectors: [Vectori32<4>; 4],
+    cur_light_colors: [u16; 4],
+    cur_shininess: Shininess,
 
     material_color0: MaterialColor0,
     material_color1: MaterialColor1,
 
     pos_result: Vectori32<4>,
     vec_result: Vectori16<3>,
+
+    dirty_flags: DirtyFlags,
 
     pub skip: bool,
     pub consume: bool,
@@ -674,11 +682,11 @@ impl Emu {
 
 impl Gpu3DRegisters {
     pub fn new() -> Self {
-        let mut mtx_flags = MatrixFlags::from(0);
+        let mut mtx_flags = DirtyFlags::from(0);
         mtx_flags.set_clip_push(true);
         mtx_flags.set_tex_push(true);
         Gpu3DRegisters {
-            mtx_flags,
+            dirty_flags: mtx_flags,
             ..Gpu3DRegisters::default()
         }
     }
@@ -701,9 +709,9 @@ impl Gpu3DRegisters {
 
     #[inline(never)]
     pub fn get_clip_matrix(&mut self) -> &Matrix {
-        if unlikely(self.mtx_flags.is_clip_dirty()) {
-            self.mtx_flags.set_clip_dirty_bool(false);
-            self.mtx_flags.set_clip_push(true);
+        if unlikely(self.dirty_flags.is_clip_dirty()) {
+            self.dirty_flags.set_clip_dirty_bool(false);
+            self.dirty_flags.set_clip_push(true);
             unsafe { vmult_mat4(self.matrices.coord.vld(), self.matrices.proj.vld(), &mut self.clip_matrix.0) };
         }
         &self.clip_matrix
@@ -880,7 +888,7 @@ impl Gpu3DRegisters {
                 if u8::from(self.gx_stat.proj_mtx_stack_lvl()) == 1 {
                     self.matrices.proj = self.matrices.proj_stack.clone();
                     self.gx_stat.set_proj_mtx_stack_lvl(u1::new(0));
-                    self.mtx_flags.set_clip_dirty_bool(true);
+                    self.dirty_flags.set_clip_dirty_bool(true);
                 } else {
                     self.gx_stat.set_mtx_stack_overflow_underflow_err(true);
                 }
@@ -895,12 +903,12 @@ impl Gpu3DRegisters {
                     self.gx_stat.set_pos_vec_mtx_stack_lvl(u5::new(ptr));
                     self.matrices.coord = self.matrices.coord_stack[ptr as usize].clone();
                     self.matrices.dir = self.matrices.dir_stack[ptr as usize].clone();
-                    self.mtx_flags.set_clip_dirty_bool(true);
+                    self.dirty_flags.set_clip_dirty_bool(true);
                 }
             }
             MtxMode::Texture => {
                 self.matrices.tex = self.matrices.tex_stack.clone();
-                self.mtx_flags.set_tex_push(true);
+                self.dirty_flags.set_tex_push(true);
             }
         }
     }
@@ -924,7 +932,7 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_restore(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.mtx_flags.value |= mode; // Overflows to 4 when mode is texture, which sets the appropriate flags
+        self.dirty_flags.value |= mode; // Overflows to 4 when mode is texture, which sets the appropriate flags
 
         match self.mtx_mode {
             MtxMode::Projection => self.matrices.proj = self.matrices.proj_stack.clone(),
@@ -944,7 +952,7 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_identity(&mut self, _: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.mtx_flags.value |= mode;
+        self.dirty_flags.value |= mode;
 
         let dst = unsafe { ptr::addr_of_mut!(self.matrices.proj).add(self.mtx_mode as usize).as_mut_unchecked() };
         unsafe {
@@ -958,7 +966,7 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_load44(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.mtx_flags.value |= mode;
+        self.dirty_flags.value |= mode;
 
         let params: &[u32; 16] = unsafe { mem::transmute(params) };
         let mtx: &Matrix = unsafe { mem::transmute(params) };
@@ -975,7 +983,7 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_load43(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.mtx_flags.value |= mode;
+        self.dirty_flags.value |= mode;
 
         let load = |mtx: &mut Matrix| {
             for i in 0..4 {
@@ -997,7 +1005,7 @@ impl Gpu3DRegisters {
     #[inline(always)]
     fn mtx_mult(&mut self, mtx: [int32x4_t; 4]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.mtx_flags.value |= mode;
+        self.dirty_flags.value |= mode;
 
         let dst = unsafe { ptr::addr_of_mut!(self.matrices.proj).add(self.mtx_mode as usize).as_mut_unchecked() };
         unsafe { vmult_mat4(mtx, dst.vld(), &mut dst.0) };
@@ -1040,7 +1048,7 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_scale(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.mtx_flags.value |= mode;
+        self.dirty_flags.value |= mode;
 
         static mut SCALE_MTX: [i32; 16] = MTX_IDENTITY;
         unsafe {
@@ -1072,15 +1080,92 @@ impl Gpu3DRegisters {
 
     fn exe_normal(&mut self, params: &[u32; 32]) {
         let normal_vector_param = NormalVector::from(params[0]);
-        self.cur_polygon.normal[0] = ((u16::from(normal_vector_param.x()) << 6) as i16) >> 3;
-        self.cur_polygon.normal[1] = ((u16::from(normal_vector_param.y()) << 6) as i16) >> 3;
-        self.cur_polygon.normal[2] = ((u16::from(normal_vector_param.z()) << 6) as i16) >> 3;
+        self.cur_vtx.normal[0] = ((u16::from(normal_vector_param.x()) << 6) as i16) >> 3;
+        self.cur_vtx.normal[1] = ((u16::from(normal_vector_param.y()) << 6) as i16) >> 3;
+        self.cur_vtx.normal[2] = ((u16::from(normal_vector_param.z()) << 6) as i16) >> 3;
 
-        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Normal && self.mtx_flags.tex_push() {
+        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Normal && self.dirty_flags.tex_push() {
             self.tex_matrices.push(&self.matrices.tex);
-            self.mtx_flags.set_tex_push(false);
+            self.dirty_flags.set_tex_push(false);
         }
         self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
+
+        self.cur_vtx.color = u16::from(self.material_color1.em());
+
+        if u8::from(self.cur_polygon.attr.enable_lights()) == 0 {
+            return;
+        }
+
+        unsafe {
+            let normal_vector_vec = Vectori32::new([self.cur_vtx.normal[0] as i32, self.cur_vtx.normal[1] as i32, self.cur_vtx.normal[2] as i32, 0]);
+            let normal_vector = vmult_vec3_mat3_no_store(normal_vector_vec.vld(), self.matrices.dir.vld());
+
+            let mut r = (self.cur_vtx.color & 0x1F) as i32;
+            let mut g = ((self.cur_vtx.color >> 5) & 0x1F) as i32;
+            let mut b = ((self.cur_vtx.color >> 10) & 0x1F) as i32;
+
+            let specular_color = u16::from(self.material_color1.spe());
+            let sr = (specular_color & 0x1F) as i32;
+            let sg = ((specular_color >> 5) & 0x1F) as i32;
+            let sb = ((specular_color >> 10) & 0x1F) as i32;
+
+            let diffuse_color = u16::from(self.material_color0.dif());
+            let dr = (diffuse_color & 0x1F) as i32;
+            let dg = ((diffuse_color >> 5) & 0x1F) as i32;
+            let db = ((diffuse_color >> 10) & 0x1F) as i32;
+
+            let ambient_color = u16::from(self.material_color0.amb());
+            let ar = (ambient_color & 0x1F) as i32;
+            let ag = ((ambient_color >> 5) & 0x1F) as i32;
+            let ab = ((ambient_color >> 10) & 0x1F) as i32;
+
+            for j in 0..4 {
+                if u8::from(self.cur_polygon.attr.enable_lights()) & (1 << j) == 0 {
+                    continue;
+                }
+
+                let light_vector = self.cur_light_vectors[j].vld();
+                let half_vector = self.cur_light_half_vectors[j].vld();
+
+                let diffuse_level = (-vdot_vec3(light_vector, normal_vector)).max(0);
+                let shininess_level = vdot_vec3(half_vector, normal_vector).max(0);
+                let mut shininess_level = (shininess_level * shininess_level) >> 12;
+                if self.material_color1.set_shininess() {
+                    shininess_level = (*self.cur_shininess.0.get_unchecked((shininess_level >> 5) as usize) as i32) << 4;
+                }
+
+                let light_color = self.cur_light_colors[j];
+                let lr = (light_color & 0x1F) as i32;
+                let lg = ((light_color >> 5) & 0x1F) as i32;
+                let lb = ((light_color >> 10) & 0x1F) as i32;
+
+                let sr = sr * shininess_level;
+                let sg = sg * shininess_level;
+                let sb = sb * shininess_level;
+
+                let dr = dr * diffuse_level;
+                let dg = dg * diffuse_level;
+                let db = db * diffuse_level;
+
+                let ar = ar << 12;
+                let ag = ag << 12;
+                let ab = ab << 12;
+
+                let sumr = sr + dr + ar;
+                let sumg = sg + dg + ag;
+                let sumb = sb + db + ab;
+
+                r += (sumr * lr) >> 17;
+                g += (sumg * lg) >> 17;
+                b += (sumb * lb) >> 17;
+
+                r = r.min(31);
+                g = g.min(31);
+                b = b.min(31);
+            }
+
+            self.cur_vtx.color = ((b as u16) << 10) | ((g as u16) << 5) | (r as u16);
+        }
     }
 
     fn exe_tex_coord(&mut self, params: &[u32; 32]) {
@@ -1088,9 +1173,9 @@ impl Gpu3DRegisters {
         self.cur_vtx.tex_coords[0] = tex_coord.s() as i16;
         self.cur_vtx.tex_coords[1] = tex_coord.t() as i16;
 
-        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::TexCoord && self.mtx_flags.tex_push() {
+        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::TexCoord && self.dirty_flags.tex_push() {
             self.tex_matrices.push(&self.matrices.tex);
-            self.mtx_flags.set_tex_push(false);
+            self.dirty_flags.set_tex_push(false);
         }
         self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
     }
@@ -1160,15 +1245,36 @@ impl Gpu3DRegisters {
     }
 
     fn exe_light_vector(&mut self, params: &[u32; 32]) {
-        // TODO
+        let vector = LightVector::from(params[0]);
+        let light_vector = Vectori32::new([
+            (((u16::from(vector.x()) << 6) as i16) >> 3) as i32,
+            (((u16::from(vector.y()) << 6) as i16) >> 3) as i32,
+            (((u16::from(vector.z()) << 6) as i16) >> 3) as i32,
+            0,
+        ]);
+
+        unsafe {
+            let light_vector = vmult_vec3_mat3_no_store(light_vector.vld(), self.matrices.dir.vld());
+
+            const LINE_OF_SIGHT_VECTOR: [i32; 2] = [1 << 12, 0];
+            let line_of_sight_vector = vld1_s32(LINE_OF_SIGHT_VECTOR.as_ptr());
+
+            let half_vector = vsub_s32(vget_high_s32(light_vector), line_of_sight_vector);
+            let half_vector = vshrq_n_s32::<1>(vcombine_s32(vget_low_s32(light_vector), half_vector));
+            let half_vector = vnegq_s32(half_vector);
+
+            vst1q_s32(self.cur_light_vectors[u8::from(vector.num()) as usize].values.as_mut_ptr(), light_vector);
+            vst1q_s32(self.cur_light_half_vectors[u8::from(vector.num()) as usize].values.as_mut_ptr(), half_vector);
+        }
     }
 
     fn exe_light_color(&mut self, params: &[u32; 32]) {
-        // TODO
+        let color = LightColor::from(params[0]);
+        self.cur_light_colors[u8::from(color.num()) as usize] = u16::from(color.color());
     }
 
     fn exe_shininess(&mut self, params: &[u32; 32]) {
-        // TODO
+        utils::write_to_mem_slice(&mut self.cur_shininess.0, 0, params);
     }
 
     fn exe_begin_vtxs(&mut self, cmd: usize, params: &[u32; 32]) {
@@ -1261,11 +1367,11 @@ impl Gpu3DRegisters {
 
         mem::swap(&mut self.clip_matrices, &mut content.clip_matrices);
         self.clip_matrices.clear();
-        self.mtx_flags.set_clip_push(true);
+        self.dirty_flags.set_clip_push(true);
 
         mem::swap(&mut self.tex_matrices, &mut content.tex_matrices);
         self.tex_matrices.clear();
-        self.mtx_flags.set_tex_push(true);
+        self.dirty_flags.set_tex_push(true);
 
         content.swap_buffers = self.swap_buffers;
         content.pow_cnt1 = self.pow_cnt1;
@@ -1277,14 +1383,14 @@ impl Gpu3DRegisters {
         }
 
         self.get_clip_matrix();
-        if unlikely(self.mtx_flags.clip_push()) {
+        if unlikely(self.dirty_flags.clip_push()) {
             self.clip_matrices.push(&self.clip_matrix);
-            self.mtx_flags.set_clip_push(false);
+            self.dirty_flags.set_clip_push(false);
         }
 
-        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Vertex && unlikely(self.mtx_flags.tex_push()) {
+        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Vertex && unlikely(self.dirty_flags.tex_push()) {
             self.tex_matrices.push(&self.matrices.tex);
-            self.mtx_flags.set_tex_push(false);
+            self.dirty_flags.set_tex_push(false);
         }
         self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
 

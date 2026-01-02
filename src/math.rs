@@ -87,23 +87,10 @@ impl ops::MulAssign<&Matrix> for Matrix {
     }
 }
 
+#[inline(always)]
 pub unsafe fn vmult_mat4(lm: [int32x4_t; 4], rm: [int32x4_t; 4], result: &mut [i32; 16]) {
     for i in 0..4 {
-        let low = vmull_n_s32(vget_low_s32(rm[0]), vgetq_lane_s32::<0>(lm[i]));
-        let low = vmlal_n_s32(low, vget_low_s32(rm[1]), vgetq_lane_s32::<1>(lm[i]));
-        let low = vmlal_n_s32(low, vget_low_s32(rm[2]), vgetq_lane_s32::<2>(lm[i]));
-        let low = vmlal_n_s32(low, vget_low_s32(rm[3]), vgetq_lane_s32::<3>(lm[i]));
-
-        let high = vmull_n_s32(vget_high_s32(rm[0]), vgetq_lane_s32::<0>(lm[i]));
-        let high = vmlal_n_s32(high, vget_high_s32(rm[1]), vgetq_lane_s32::<1>(lm[i]));
-        let high = vmlal_n_s32(high, vget_high_s32(rm[2]), vgetq_lane_s32::<2>(lm[i]));
-        let high = vmlal_n_s32(high, vget_high_s32(rm[3]), vgetq_lane_s32::<3>(lm[i]));
-
-        let low = vshrq_n_s64::<12>(low);
-        let high = vshrq_n_s64::<12>(high);
-
-        let v = vuzpq_s32(mem::transmute(low), mem::transmute(high));
-        vst1q_s32(result.as_mut_ptr().add(i << 2), v.0);
+        vst1q_s32(result.as_mut_ptr().add(i << 2), vmult_vec4_mat4_no_store(lm[i], rm));
     }
 }
 
@@ -340,6 +327,7 @@ impl ops::MulAssign<&Matrix> for Vectori32<4> {
     }
 }
 
+#[inline(always)]
 pub unsafe fn vmult_vec4_mat4_no_store(v: int32x4_t, m: [int32x4_t; 4]) -> int32x4_t {
     let lower_result = vmull_n_s32(vget_low_s32(m[0]), vgetq_lane_s32::<0>(v));
     let lower_result = vmlal_n_s32(lower_result, vget_low_s32(m[1]), vgetq_lane_s32::<1>(v));
@@ -350,6 +338,23 @@ pub unsafe fn vmult_vec4_mat4_no_store(v: int32x4_t, m: [int32x4_t; 4]) -> int32
     let higher_result = vmlal_n_s32(higher_result, vget_high_s32(m[1]), vgetq_lane_s32::<1>(v));
     let higher_result = vmlal_n_s32(higher_result, vget_high_s32(m[2]), vgetq_lane_s32::<2>(v));
     let higher_result = vmlal_n_s32(higher_result, vget_high_s32(m[3]), vgetq_lane_s32::<3>(v));
+
+    let lower_result = vshrq_n_s64::<12>(lower_result);
+    let higher_result = vshrq_n_s64::<12>(higher_result);
+
+    let v = vuzpq_s32(mem::transmute(lower_result), mem::transmute(higher_result));
+    v.0
+}
+
+#[inline(always)]
+pub unsafe fn vmult_vec3_mat3_no_store(v: int32x4_t, m: [int32x4_t; 4]) -> int32x4_t {
+    let lower_result = vmull_n_s32(vget_low_s32(m[0]), vgetq_lane_s32::<0>(v));
+    let lower_result = vmlal_n_s32(lower_result, vget_low_s32(m[1]), vgetq_lane_s32::<1>(v));
+    let lower_result = vmlal_n_s32(lower_result, vget_low_s32(m[2]), vgetq_lane_s32::<2>(v));
+
+    let higher_result = vmull_n_s32(vget_high_s32(m[0]), vgetq_lane_s32::<0>(v));
+    let higher_result = vmlal_n_s32(higher_result, vget_high_s32(m[1]), vgetq_lane_s32::<1>(v));
+    let higher_result = vmlal_n_s32(higher_result, vget_high_s32(m[2]), vgetq_lane_s32::<2>(v));
 
     let lower_result = vshrq_n_s64::<12>(lower_result);
     let higher_result = vshrq_n_s64::<12>(higher_result);
@@ -374,14 +379,15 @@ impl ops::Mul<&Vectori32<3>> for Vectori32<3> {
     }
 }
 
-pub unsafe fn vadd_u64(a: int64x1_t, b: int64x1_t) -> int64x1_t {
+pub unsafe fn vadd_s64(a: int64x1_t, b: int64x1_t) -> int64x1_t {
     simd_add(a, b)
 }
 
+#[inline(always)]
 pub unsafe fn vdot_vec3(v1: int32x4_t, v2: int32x4_t) -> i32 {
     let ret = vmull_s32(vget_low_s32(v1), vget_low_s32(v2));
     let ret = vmlal_s32(ret, vget_high_s32(v1), vget_high_s32(v2));
-    let ret = vadd_u64(vget_low_s64(ret), vget_high_s64(ret));
+    let ret = vadd_s64(vget_low_s64(ret), vget_high_s64(ret));
     let ret = vshr_n_s64::<12>(ret);
     vget_lane_s32::<0>(mem::transmute(ret))
 }

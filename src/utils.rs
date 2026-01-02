@@ -309,11 +309,11 @@ pub fn rgb6_to_rgb8(color: u32) -> u32 {
     (0xFFu32 << 24) | (b << 16) | (g << 8) | r
 }
 
-pub fn rgb5_to_float8(color: u16) -> (f32, f32, f32) {
+pub fn rgb5_to_float8(color: u16) -> [f32; 3] {
     let r = (color & 0x1F) as f32;
     let g = ((color >> 5) & 0x1F) as f32;
     let b = ((color >> 10) & 0x1F) as f32;
-    (r / 31f32, g / 31f32, b / 31f32)
+    [r / 31f32, g / 31f32, b / 31f32]
 }
 
 pub fn rgb6_to_float8(color: u32) -> (f32, f32, f32) {

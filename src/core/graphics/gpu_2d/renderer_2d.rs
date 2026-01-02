@@ -703,7 +703,7 @@ impl Gpu2DProgram {
         gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
         let backdrop = utils::read_from_mem::<u16>(mem.pal, 0);
-        let (r, g, b) = rgb5_to_float8(backdrop);
+        let [r, g, b] = rgb5_to_float8(backdrop);
         gl::ClearColor(r, g, b, 1f32);
         gl::Clear(gl::COLOR_BUFFER_BIT);
 

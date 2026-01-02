@@ -287,17 +287,17 @@ impl Gpu3DRenderer {
         let mut trans_coords: [Vectori32<4>; 4] = MaybeUninit::uninit().assume_init();
         let mut clip_matrix_index = usize::MAX;
         let mut clip_matrix = MaybeUninit::uninit().assume_init();
-        for j in 0..polygon.polygon_type.vertex_count() {
-            let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
+        for i in 0..polygon.polygon_type.vertex_count() {
+            let vertex = &mut self.content.vertices[polygon.vertices_index as usize + i as usize];
             vertex.coords[3] = 1 << 12;
             assert_unchecked(vertex.clip_matrix_index as usize != usize::MAX);
             if clip_matrix_index != vertex.clip_matrix_index as usize {
                 clip_matrix_index = vertex.clip_matrix_index as usize;
                 clip_matrix = self.content.clip_matrices[clip_matrix_index].vld();
             }
-            vmult_vec4_mat4(vertex.coords.vld(), clip_matrix, &mut trans_coords[j as usize].values);
+            vmult_vec4_mat4(vertex.coords.vld(), clip_matrix, &mut trans_coords[i as usize].values);
 
-            if trans_coords[j as usize][3] == 0 {
+            if trans_coords[i as usize][3] == 0 {
                 return;
             }
         }
@@ -311,10 +311,10 @@ impl Gpu3DRenderer {
             self.indices_buf.push(vertex_index + 2);
         }
 
-        for j in 3..polygon.polygon_type.vertex_count() as u16 {
+        for i in 3..polygon.polygon_type.vertex_count() as u16 {
             self.indices_buf.push(vertex_index);
-            self.indices_buf.push(vertex_index + j - 1);
-            self.indices_buf.push(vertex_index + j);
+            self.indices_buf.push(vertex_index + i - 1);
+            self.indices_buf.push(vertex_index + i);
         }
 
         let mut tex_matrix_index = usize::MAX;
@@ -327,10 +327,8 @@ impl Gpu3DRenderer {
         let w = x2 - x1;
         let h = y2 - y1;
 
-        for j in 0..polygon.polygon_type.vertex_count() {
-            let vertex = &mut self.content.vertices[polygon.vertices_index as usize + j as usize];
-
-            let c = rgb5_to_float8(vertex.color);
+        for i in 0..polygon.polygon_type.vertex_count() {
+            let vertex = &mut self.content.vertices[polygon.vertices_index as usize + i as usize];
 
             let mut tex_coords: [f32; 2] = MaybeUninit::uninit().assume_init();
             let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
@@ -355,7 +353,7 @@ impl Gpu3DRenderer {
                         vst1_f32(tex_coords.as_mut_ptr(), ret);
                     }
                     TextureCoordTransMode::Normal => {
-                        let normal = Vectori32::<4>::new([polygon.normal[0] as i32, polygon.normal[1] as i32, polygon.normal[2] as i32, 1 << 12]);
+                        let normal = Vectori32::<4>::new([vertex.normal[0] as i32, vertex.normal[1] as i32, vertex.normal[2] as i32, 1 << 12]);
                         let ret = vmult_vec4_mat4_no_store(normal.vld(), tex_matrix);
                         let ret = vshr_n_s32::<12>(vget_low_s32(ret));
                         let ret = vcvt_n_f32_s32::<4>(ret);
@@ -374,13 +372,15 @@ impl Gpu3DRenderer {
                 tex_coords[1] = fdiv_fast(vertex.tex_coords[1] as f32, 16.0);
             }
 
-            let vertices = &trans_coords[j as usize];
+            let vertex_color = rgb5_to_float8(vertex.color);
+
+            let vertices = &trans_coords[i as usize];
             let vertex_x = ((w as i64 * vertices[0] as i64 + vertices[3] as i64 * (x2 as i16 + x1 as i16 - 255) as i64) >> 6) as i32;
             let vertex_y = ((h as i64 * vertices[1] as i64 + vertices[3] as i64 * (y2 as i16 + y1 as i16 - 191) as i64) >> 6) as i32;
 
             let gpu_vertex = Gpu3DVertex {
                 coords: [vertex_x as f32, vertex_y as f32, vertices[2] as f32, vertices[3] as f32],
-                color: [c.0, c.1, c.2, polygon_index as f32],
+                color: [vertex_color[0], vertex_color[1], vertex_color[2], polygon_index as f32],
                 tex_coords,
             };
 
@@ -476,7 +476,7 @@ impl Gpu3DRenderer {
         gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
         let clear_color = ClearColor::from(self.inners[0].clear_color);
-        let (r, g, b) = rgb5_to_float8(u16::from(clear_color.color()));
+        let [r, g, b] = rgb5_to_float8(u16::from(clear_color.color()));
         gl::ClearColor(r, g, b, u8::from(clear_color.alpha()) as f32 / 31f32);
 
         gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
