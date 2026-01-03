@@ -77,6 +77,10 @@ impl CpuType {
             ARM7 => 128,
         }
     }
+
+    pub const fn max_branch_loop_cycle_count(self) -> u32 {
+        128
+    }
 }
 
 impl From<bool> for CpuType {

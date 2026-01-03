@@ -291,7 +291,7 @@ impl JitAsm<'_> {
             let mut cycles_exceed_label = Label::new();
             let mut continue_label = Label::new();
 
-            block_asm.cmp2(Reg::R2, &self.cpu.max_loop_cycle_count().into());
+            block_asm.cmp2(Reg::R2, &self.cpu.max_branch_loop_cycle_count().into());
             block_asm.b3(Cond::HS, &mut cycles_exceed_label, BranchHint_kFar);
 
             block_asm.bind(&mut continue_label);
@@ -358,7 +358,7 @@ impl JitAsm<'_> {
         let mut continue_label = Label::new();
         let mut exit_label = Label::new();
 
-        block_asm.cmp2(Reg::R2, &self.cpu.max_loop_cycle_count().into());
+        block_asm.cmp2(Reg::R2, &self.cpu.max_branch_loop_cycle_count().into());
         block_asm.b3(Cond::HS, &mut cycles_exceed_label, BranchHint_kFar);
 
         block_asm.bind(&mut continue_label);

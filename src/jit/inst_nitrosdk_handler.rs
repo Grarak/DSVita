@@ -765,9 +765,6 @@ impl JitAsm<'_> {
         self.emu.os_irq_table_addr = irq_table_addr;
         self.emu.os_irq_handler_thread_switch_addr = thread_switch_addr;
 
-        info_println!("Found irq table at {irq_table_addr:x}");
-        info_println!("Found irq handler thread switch at {thread_switch_addr:x}");
-
         unsafe {
             *self.emu.jit.jit_memory_map.get_jit_entry(guest_pc) = JitEntry(hle_os_irqhandler as _);
             hle_os_irqhandler(guest_pc);

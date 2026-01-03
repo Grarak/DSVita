@@ -227,7 +227,13 @@ pub unsafe extern "C" fn branch_any_reg<const ARM7_HLE: bool>(total_cycles: u16,
 
 pub unsafe fn breakout_imm<const CPU: CpuType>(asm: &mut JitAsm, total_cycles: u16, current_pc: u32) {
     asm.runtime_data.accumulated_cycles += total_cycles - asm.runtime_data.pre_cycle_count_sum;
-    CPU.thread_regs().pc = current_pc;
+    let is_thumb = current_pc & 1 == 1;
+    let pc = current_pc & !1;
+    if IS_DEBUG {
+        asm.runtime_data.set_branch_out_pc(pc);
+    }
+    let next_pc_offset = (1 << (!is_thumb as u8)) + 2;
+    CPU.thread_regs().pc = pc + next_pc_offset;
     asm.emu.breakout_imm = false;
     asm.runtime_data.pre_cycle_count_sum = 0;
 
@@ -247,18 +253,11 @@ pub unsafe fn breakout_imm<const CPU: CpuType>(asm: &mut JitAsm, total_cycles: u
                 }
             }
             asm.emu.breakout_imm = false;
-            if unlikely(ARM9.thread_regs().pc != current_pc) {
-                handle_interrupt(asm, current_pc, current_pc);
+            if ARM9.thread_regs().pc != pc + next_pc_offset || asm.emu.cpu_is_halted(ARM9) {
+                exit_guest_context!(asm);
             }
         }
         ARM7 => {
-            let is_thumb = current_pc & 1 == 1;
-            let pc = current_pc & !1;
-            if IS_DEBUG {
-                asm.runtime_data.set_branch_out_pc(pc);
-            }
-            let next_pc_offset = (1 << (!is_thumb as u8)) + 2;
-            ARM7.thread_regs().pc = pc + next_pc_offset;
             exit_guest_context!(asm);
         }
     }
