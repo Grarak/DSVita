@@ -8,7 +8,7 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
 use crate::mmap::{MemRegion, VirtualMem};
-use crate::utils::HeapMemUsize;
+use crate::utils::HeapArrayUsize;
 use regions::{ARM7_BIOS_OFFSET, GBA_RAM_OFFSET, GBA_ROM_OFFSET, GBA_ROM_OFFSET2, IO_PORTS_OFFSET, MAIN_OFFSET, MAIN_REGION, SHARED_WRAM_OFFSET, V_MEM_ARM9_RANGE};
 use std::cmp::max;
 
@@ -36,10 +36,10 @@ impl MmuArm9 {
     pub fn new() -> Self {
         MmuArm9 {
             vmem_tcm: VirtualMem::new(V_MEM_ARM9_RANGE as _, ARM9.mmu_tcm_addr()).unwrap(),
-            mmu_read: HeapMemUsize::new(),
-            mmu_write: HeapMemUsize::new(),
-            mmu_read_tcm: HeapMemUsize::new(),
-            mmu_write_tcm: HeapMemUsize::new(),
+            mmu_read: HeapArrayUsize::default(),
+            mmu_write: HeapArrayUsize::default(),
+            mmu_read_tcm: HeapArrayUsize::default(),
+            mmu_write_tcm: HeapArrayUsize::default(),
             current_itcm_size: 0,
             current_dtcm_addr: 0,
             current_dtcm_size: 0,
@@ -49,10 +49,10 @@ impl MmuArm9 {
 
 pub struct MmuArm9 {
     vmem_tcm: VirtualMem,
-    mmu_read: HeapMemUsize<{ V_MEM_ARM9_RANGE as usize / MMU_PAGE_SIZE }>,
-    mmu_write: HeapMemUsize<{ V_MEM_ARM9_RANGE as usize / MMU_PAGE_SIZE }>,
-    mmu_read_tcm: HeapMemUsize<{ V_MEM_ARM9_RANGE as usize / MMU_PAGE_SIZE }>,
-    mmu_write_tcm: HeapMemUsize<{ V_MEM_ARM9_RANGE as usize / MMU_PAGE_SIZE }>,
+    mmu_read: HeapArrayUsize<{ V_MEM_ARM9_RANGE as usize / MMU_PAGE_SIZE }>,
+    mmu_write: HeapArrayUsize<{ V_MEM_ARM9_RANGE as usize / MMU_PAGE_SIZE }>,
+    mmu_read_tcm: HeapArrayUsize<{ V_MEM_ARM9_RANGE as usize / MMU_PAGE_SIZE }>,
+    mmu_write_tcm: HeapArrayUsize<{ V_MEM_ARM9_RANGE as usize / MMU_PAGE_SIZE }>,
     current_itcm_size: u32,
     current_dtcm_addr: u32,
     current_dtcm_size: u32,
@@ -296,16 +296,16 @@ impl Emu {
 
 pub struct MmuArm7 {
     vmem: VirtualMem,
-    mmu_read: HeapMemUsize<{ V_MEM_ARM7_RANGE as usize / MMU_PAGE_SIZE }>,
-    mmu_write: HeapMemUsize<{ V_MEM_ARM7_RANGE as usize / MMU_PAGE_SIZE }>,
+    mmu_read: HeapArrayUsize<{ V_MEM_ARM7_RANGE as usize / MMU_PAGE_SIZE }>,
+    mmu_write: HeapArrayUsize<{ V_MEM_ARM7_RANGE as usize / MMU_PAGE_SIZE }>,
 }
 
 impl MmuArm7 {
     pub fn new() -> Self {
         MmuArm7 {
             vmem: VirtualMem::new(V_MEM_ARM7_RANGE as usize, ARM7.mmu_tcm_addr()).unwrap(),
-            mmu_read: HeapMemUsize::new(),
-            mmu_write: HeapMemUsize::new(),
+            mmu_read: HeapArrayUsize::default(),
+            mmu_write: HeapArrayUsize::default(),
         }
     }
 }

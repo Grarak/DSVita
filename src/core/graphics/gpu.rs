@@ -216,12 +216,7 @@ impl Emu {
     pub fn gpu_on_scanline355_event(&mut self) {
         self.gpu.v_count += 1;
         match self.gpu.v_count {
-            1 => {
-                if self.gpu.gpu_3d_regs.set_pow_cnt1 {
-                    self.gpu.gpu_3d_regs.pow_cnt1 = self.gpu.pow_cnt1;
-                    self.gpu.gpu_3d_regs.set_pow_cnt1 = false;
-                }
-            }
+            1 => self.gpu.gpu_3d_regs.on_first_scanline(self.gpu.pow_cnt1),
             192 => {
                 let palettes = self.mem_get_palettes();
                 let oam = self.mem_get_oam();

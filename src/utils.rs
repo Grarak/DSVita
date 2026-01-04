@@ -1,9 +1,10 @@
+use std::alloc::Layout;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{BuildHasher, Hasher};
 use std::ops::{Deref, DerefMut};
-use std::{ptr, slice};
+use std::{mem, ptr, slice};
 
 pub const fn align_up(n: usize, align: usize) -> usize {
     (n + align - 1) & !(align - 1)
@@ -84,63 +85,122 @@ impl Display for StrErr {
 
 impl Error for StrErr {}
 
-pub type HeapMemU8<const SIZE: usize> = HeapMem<u8, SIZE>;
-pub type HeapMemU16<const SIZE: usize> = HeapMem<u16, SIZE>;
-pub type HeapMemU32<const SIZE: usize> = HeapMem<u32, SIZE>;
-pub type HeapMemUsize<const SIZE: usize> = HeapMem<usize, SIZE>;
+pub type HeapArrayU8<const SIZE: usize> = HeapArray<u8, SIZE>;
+pub type HeapArrayU16<const SIZE: usize> = HeapArray<u16, SIZE>;
+pub type HeapArrayI16<const SIZE: usize> = HeapArray<i16, SIZE>;
+pub type HeapArrayU32<const SIZE: usize> = HeapArray<u32, SIZE>;
+pub type HeapArrayUsize<const SIZE: usize> = HeapArray<usize, SIZE>;
 
-pub struct HeapMem<T: Sized, const SIZE: usize>(Box<[T; SIZE]>);
+pub struct HeapArray<T, const SIZE: usize>(*mut T);
 
-impl<T: Sized, const SIZE: usize> HeapMem<T, SIZE> {
-    pub unsafe fn zeroed() -> Self {
-        let mem: Box<[T; SIZE]> = Box::new_zeroed().assume_init();
-        HeapMem(mem)
+impl<T, const SIZE: usize> HeapArray<T, SIZE> {
+    unsafe fn uninitialized() -> Self {
+        HeapArray(std::alloc::alloc(Layout::array::<T>(SIZE).unwrap_unchecked()) as *mut T)
+    }
+
+    pub unsafe fn zeroed() -> Self
+    where
+        [(); size_of::<T>() * SIZE]:,
+    {
+        let instance = Self::uninitialized();
+        let buf: &mut [u8; size_of::<T>() * SIZE] = mem::transmute(instance.0);
+        buf.fill(0);
+        instance
     }
 }
 
-impl<T: Sized + Default, const SIZE: usize> HeapMem<T, SIZE> {
-    pub fn new() -> Self {
-        HeapMem::default()
+impl<T: Default, const SIZE: usize> Default for HeapArray<T, SIZE> {
+    fn default() -> Self {
+        unsafe {
+            let mut instance = Self::uninitialized();
+            instance.fill_with(|| T::default());
+            instance
+        }
     }
 }
 
-impl<T: Sized, const SIZE: usize> Deref for HeapMem<T, SIZE> {
+impl<T, const SIZE: usize> Drop for HeapArray<T, SIZE> {
+    fn drop(&mut self) {
+        unsafe { std::alloc::dealloc(self.0 as _, Layout::array::<T>(SIZE).unwrap_unchecked()) };
+    }
+}
+
+impl<T, const SIZE: usize> Deref for HeapArray<T, SIZE> {
     type Target = [T; SIZE];
 
     fn deref(&self) -> &Self::Target {
-        self.0.deref()
+        unsafe { mem::transmute(self.0) }
     }
 }
 
-impl<T: Sized, const SIZE: usize> DerefMut for HeapMem<T, SIZE> {
+impl<T, const SIZE: usize> DerefMut for HeapArray<T, SIZE> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.0.deref_mut()
+        unsafe { mem::transmute(self.0) }
     }
 }
 
-impl<T: Sized + Default, const SIZE: usize> Default for HeapMem<T, SIZE> {
-    fn default() -> Self {
-        let mut mem: Box<[T; SIZE]> = unsafe { Box::new_zeroed().assume_init() };
-        mem.fill_with(|| T::default());
-        HeapMem(mem)
-    }
-}
-
-impl<T: Sized + Copy, const SIZE: usize> Clone for HeapMem<T, SIZE> {
+impl<T: Copy, const SIZE: usize> Clone for HeapArray<T, SIZE> {
     fn clone(&self) -> Self {
-        let mut mem: Box<[T; SIZE]> = unsafe { Box::new_zeroed().assume_init() };
-        mem.copy_from_slice(self.deref());
-        HeapMem(mem)
+        let mut instance = unsafe { Self::uninitialized() };
+        instance.copy_from_slice(self.deref());
+        instance
     }
 }
 
-impl<T: Debug, const SIZE: usize> Debug for HeapMem<T, SIZE> {
+impl<T: Debug, const SIZE: usize> Debug for HeapArray<T, SIZE> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut list = f.debug_map();
         for (i, v) in self.deref().iter().enumerate() {
             list.entry(&i, v);
         }
         list.finish()
+    }
+}
+
+unsafe impl<T: Sync, const SIZE: usize> Sync for HeapArray<T, SIZE> {}
+unsafe impl<T: Send, const SIZE: usize> Send for HeapArray<T, SIZE> {}
+
+pub struct HeapMem<T>(*mut T);
+
+impl<T> HeapMem<T> {
+    unsafe fn uninitialized() -> Self {
+        HeapMem(std::alloc::alloc(Layout::new::<T>()) as *mut T)
+    }
+
+    pub unsafe fn zeroed() -> Self {
+        let instance = Self::uninitialized();
+        instance.0.write_bytes(0, size_of::<T>());
+        instance
+    }
+}
+
+impl<T: Default> Default for HeapMem<T> {
+    fn default() -> Self {
+        unsafe {
+            let instance = Self::uninitialized();
+            instance.0.write(T::default());
+            instance
+        }
+    }
+}
+
+impl<T> Drop for HeapMem<T> {
+    fn drop(&mut self) {
+        unsafe { std::alloc::dealloc(self.0 as _, Layout::new::<T>()) };
+    }
+}
+
+impl<T> Deref for HeapMem<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.0.as_ref_unchecked() }
+    }
+}
+
+impl<T> DerefMut for HeapMem<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.0.as_mut_unchecked() }
     }
 }
 

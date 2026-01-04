@@ -5,7 +5,7 @@ use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
 use crate::logging::debug_println;
 use crate::utils;
-use crate::utils::HeapMemU8;
+use crate::utils::HeapArrayU8;
 use crate::{cartridge_io::CartridgeIo, utils::OptionWrapper};
 use bilge::prelude::*;
 use std::ops::Deref;
@@ -83,7 +83,7 @@ pub struct Cartridge {
     pub io: OptionWrapper<CartridgeIo>,
     cmd_mode: CmdMode,
     inner: [CartridgeInner; 2],
-    read_buf: HeapMemU8<{ 16 * 1024 }>,
+    read_buf: HeapArrayU8<{ 16 * 1024 }>,
 }
 
 impl Cartridge {
@@ -92,7 +92,7 @@ impl Cartridge {
             io: OptionWrapper::none(),
             inner: [CartridgeInner::default(), CartridgeInner::default()],
             cmd_mode: CmdMode::None,
-            read_buf: HeapMemU8::new(),
+            read_buf: HeapArrayU8::default(),
         }
     }
 

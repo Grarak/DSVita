@@ -4,7 +4,7 @@ use crate::core::CpuType::ARM7;
 use crate::logging::debug_println;
 use crate::presenter::{PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE};
 use crate::soundtouch::SoundTouch;
-use crate::utils::HeapMemU32;
+use crate::utils::HeapArrayU32;
 use bilge::prelude::*;
 use std::cmp::min;
 use std::hint::{assert_unchecked, unreachable_unchecked};
@@ -21,7 +21,7 @@ const SAMPLE_RATE: usize = 32768;
 pub const SAMPLE_BUFFER_SIZE: usize = SAMPLE_RATE * PRESENTER_AUDIO_OUT_BUF_SIZE / PRESENTER_AUDIO_OUT_SAMPLE_RATE;
 
 pub struct SoundSampler {
-    queues: [(HeapMemU32<SAMPLE_BUFFER_SIZE>, u16); 2],
+    queues: [(HeapArrayU32<SAMPLE_BUFFER_SIZE>, u16); 2],
     busy_queue: usize,
     ready_queue: usize,
     waiting: bool,
@@ -43,7 +43,7 @@ impl SoundSampler {
         sound_touch.set_pitch(1.0);
         sound_touch.set_tempo(1.0);
         SoundSampler {
-            queues: [(HeapMemU32::new(), 0), (HeapMemU32::new(), 0)],
+            queues: [(HeapArrayU32::default(), 0), (HeapArrayU32::default(), 0)],
             busy_queue: 0,
             ready_queue: 0,
             waiting: false,

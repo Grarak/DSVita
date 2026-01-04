@@ -2,7 +2,7 @@ use crate::core::graphics::gpu::DispCapCnt;
 use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram::{Vram, VramBanks, VramCnt};
 use crate::core::memory::{regions, vram};
-use crate::utils::{self, HeapMemU8, PtrWrapper};
+use crate::utils::{self, HeapArrayU8, PtrWrapper};
 
 pub const CAPTURE_IDENTIFIER: &[u8; 8] = b"CAPTURE_";
 
@@ -32,9 +32,9 @@ pub struct GpuMemRefs {
 pub struct GpuMemBuf {
     pub vram: Vram,
     queued_vram_cnt: [u8; vram::BANK_SIZE],
-    vram_mem: HeapMemU8<{ vram::TOTAL_SIZE }>,
-    pub pal: HeapMemU8<{ regions::STANDARD_PALETTES_SIZE as usize }>,
-    pub oam: HeapMemU8<{ regions::OAM_SIZE as usize }>,
+    vram_mem: HeapArrayU8<{ vram::TOTAL_SIZE }>,
+    pub pal: HeapArrayU8<{ regions::STANDARD_PALETTES_SIZE as usize }>,
+    pub oam: HeapArrayU8<{ regions::OAM_SIZE as usize }>,
 }
 
 impl GpuMemBuf {

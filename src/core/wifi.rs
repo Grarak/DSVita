@@ -1,7 +1,7 @@
 use crate::core::cpu_regs::InterruptFlag;
 use crate::core::emu::Emu;
 use crate::core::CpuType::ARM7;
-use crate::utils::HeapMemU8;
+use crate::utils::HeapArrayU8;
 use bilge::prelude::*;
 
 #[bitsize(16)]
@@ -67,7 +67,7 @@ pub struct Wifi {
     pub w_bb_write: u16,
     pub w_bb_read: u16,
     pub w_tx_seqno: u16,
-    bb_registers: HeapMemU8<0x100>,
+    bb_registers: HeapArrayU8<0x100>,
     pub w_config: [u16; 15],
 }
 

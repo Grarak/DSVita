@@ -3,7 +3,7 @@ use crate::logging::debug_println;
 use crate::presenter::{PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_IN_SAMPLE_RATE};
 use crate::settings::{Language, Settings};
 use crate::utils;
-use crate::utils::{HeapMem, HeapMemU8};
+use crate::utils::{HeapArray, HeapArrayI16, HeapArrayU8};
 use bilge::prelude::*;
 use std::mem;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -124,21 +124,21 @@ struct SpiCnt {
 }
 
 pub struct MicSampler {
-    data: [HeapMem<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>; 2],
+    data: [HeapArrayI16<PRESENTER_AUDIO_IN_BUF_SIZE>; 2],
 }
 
 impl MicSampler {
     pub fn new() -> Self {
         MicSampler {
-            data: [HeapMem::new(), HeapMem::new()],
+            data: [HeapArray::default(), HeapArray::default()],
         }
     }
 
-    pub fn push(&mut self, buf: &mut [i16; PRESENTER_AUDIO_IN_BUF_SIZE]) {
+    pub fn push(&mut self, buf: &mut HeapArrayI16<PRESENTER_AUDIO_IN_BUF_SIZE>) {
         mem::swap(buf, &mut self.data[1]);
     }
 
-    pub fn consume(&mut self, buf: &mut [i16; PRESENTER_AUDIO_IN_BUF_SIZE]) {
+    pub fn consume(&mut self, buf: &mut HeapArrayI16<PRESENTER_AUDIO_IN_BUF_SIZE>) {
         self.data.swap(0, 1);
         self.data[1].fill(0);
         mem::swap(buf, &mut self.data[0]);
@@ -153,10 +153,10 @@ pub struct Spi {
     cmd: u8,
     addr: u32,
     touch_points: Arc<AtomicU16>,
-    pub firmware: HeapMemU8<FIRMWARE_SIZE>,
+    pub firmware: HeapArrayU8<FIRMWARE_SIZE>,
     last_mic_sample: u16,
     pub mic_sample_cycle: u32,
-    pub mic_samples: HeapMem<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>,
+    pub mic_samples: HeapArray<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>,
     pub mic_sampler: Arc<Mutex<MicSampler>>,
 }
 
@@ -169,10 +169,10 @@ impl Spi {
             cmd: 0,
             addr: 0,
             touch_points,
-            firmware: HeapMemU8::new(),
+            firmware: HeapArrayU8::default(),
             last_mic_sample: 0,
             mic_sample_cycle: 0,
-            mic_samples: HeapMem::new(),
+            mic_samples: HeapArray::default(),
             mic_sampler,
         }
     }

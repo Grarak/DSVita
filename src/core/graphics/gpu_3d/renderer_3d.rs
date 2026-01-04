@@ -1,13 +1,12 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
 use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use crate::core::graphics::gpu_3d::matrix_vec::MatrixVec;
-use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DRegisters, Polygon, PrimitiveType, SwapBuffers, TextureCoordTransMode, Vertex};
-use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
+use crate::core::graphics::gpu_3d::registers_3d::POLYGON_LIMIT;
+use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DBuffer, Gpu3DRegisters, PrimitiveType, TextureCoordTransMode};
 use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::core::memory::vram;
 use crate::math::{vmult_vec4_mat4, vmult_vec4_mat4_no_store, Vectori32};
-use crate::utils::{self, rgb5_to_float8, HeapMem, HeapMemU8, PtrWrapper};
+use crate::utils::{self, rgb5_to_float8, HeapArray, HeapArrayU8, HeapMem, PtrWrapper};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
@@ -15,6 +14,7 @@ use std::arch::arm::{vcvt_n_f32_s32, vget_low_s32, vshr_n_s32, vst1_f32};
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::fdiv_fast;
 use std::mem::{self, MaybeUninit};
+use std::ops::DerefMut;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -134,29 +134,17 @@ struct Gpu3dPolygonAttr {
 const_assert_eq!(size_of::<Gpu3dPolygonAttr>(), 8);
 
 #[derive(Default)]
-pub struct Gpu3DRendererContent {
-    pub vertices: HeapMem<Vertex, VERTEX_LIMIT>,
-    pub vertices_size: u16,
-    pub polygons: HeapMem<Polygon, POLYGON_LIMIT>,
-    pub polygons_size: u16,
-    pub clip_matrices: MatrixVec,
-    pub tex_matrices: MatrixVec,
-    pub swap_buffers: SwapBuffers,
-    pub pow_cnt1: PowCnt1,
-}
-
-#[derive(Default)]
 struct Gpu3DTexMem {
-    tex: HeapMemU8<{ vram::TEX_REAR_PLANE_IMAGE_SIZE }>,
-    pal: HeapMemU8<{ vram::TEX_PAL_SIZE }>,
-    polygon_attrs: HeapMem<Gpu3dPolygonAttr, POLYGON_LIMIT>,
+    tex: HeapArrayU8<{ vram::TEX_REAR_PLANE_IMAGE_SIZE }>,
+    pal: HeapArrayU8<{ vram::TEX_PAL_SIZE }>,
+    polygon_attrs: HeapArray<Gpu3dPolygonAttr, POLYGON_LIMIT>,
 }
 
 #[derive(Default)]
 pub struct Gpu3DRenderer {
     pub dirty: bool,
     inners: [Gpu3DRendererInner; 2],
-    content: Gpu3DRendererContent,
+    buffer: HeapMem<Gpu3DBuffer>,
     gl: Gpu3DGl,
     vertices_buf: Vec<Gpu3DVertex>,
     indices_buf: Vec<u16>,
@@ -171,9 +159,9 @@ impl Gpu3DRenderer {
         self.dirty = false;
         self.inners[0] = Gpu3DRendererInner::default();
         self.inners[1] = Gpu3DRendererInner::default();
-        self.content.vertices_size = 0;
-        self.content.polygons_size = 0;
-        self.content.pow_cnt1 = PowCnt1::from(0);
+        self.buffer.vertices_count = 0;
+        self.buffer.polygons_count = 0;
+        self.buffer.pow_cnt1 = PowCnt1::from(0);
     }
 
     pub fn invalidate(&mut self) {
@@ -266,15 +254,15 @@ impl Gpu3DRenderer {
     pub fn finish_scanline(&mut self, registers: &mut Gpu3DRegisters) {
         self.inners[0] = self.inners[1].clone();
 
-        if registers.consume {
-            registers.swap_to_renderer(&mut self.content);
-            registers.consume = false;
+        if registers.can_consume() {
+            registers.swap_to_renderer(&mut self.buffer);
         }
     }
 
     unsafe fn add_vertices(&mut self, polygon_index: usize) {
         unsafe { assert_unchecked(polygon_index < POLYGON_LIMIT) };
-        let polygon = &self.content.polygons[polygon_index];
+        let buffer = self.buffer.deref_mut();
+        let polygon = buffer.polygons[polygon_index];
 
         // println!(
         //     "renderer: polygon {polygon_index} type {:?} pal addr {:x} tex image param {:?} attr {:?}",
@@ -288,12 +276,12 @@ impl Gpu3DRenderer {
         let mut clip_matrix_index = usize::MAX;
         let mut clip_matrix = MaybeUninit::uninit().assume_init();
         for i in 0..polygon.polygon_type.vertex_count() {
-            let vertex = &mut self.content.vertices[polygon.vertices_index as usize + i as usize];
+            let vertex = &mut buffer.vertices[polygon.vertices_index as usize + i as usize];
             vertex.coords[3] = 1 << 12;
             assert_unchecked(vertex.clip_matrix_index as usize != usize::MAX);
             if clip_matrix_index != vertex.clip_matrix_index as usize {
                 clip_matrix_index = vertex.clip_matrix_index as usize;
-                clip_matrix = self.content.clip_matrices[clip_matrix_index].vld();
+                clip_matrix = buffer.clip_matrices[clip_matrix_index].vld();
             }
             vmult_vec4_mat4(vertex.coords.vld(), clip_matrix, &mut trans_coords[i as usize].values);
 
@@ -328,15 +316,15 @@ impl Gpu3DRenderer {
         let h = y2 - y1;
 
         for i in 0..polygon.polygon_type.vertex_count() {
-            let vertex = &mut self.content.vertices[polygon.vertices_index as usize + i as usize];
+            let vertex = &mut buffer.vertices[polygon.vertices_index as usize + i as usize];
 
             let mut tex_coords: [f32; 2] = MaybeUninit::uninit().assume_init();
             let tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(polygon.tex_image_param.coord_trans_mode()));
-            if tex_coord_trans_mode != TextureCoordTransMode::None && (vertex.tex_matrix_index as usize) < self.content.tex_matrices.len() {
+            if tex_coord_trans_mode != TextureCoordTransMode::None && (vertex.tex_matrix_index as usize) < buffer.tex_matrices.len() {
                 assert_unchecked(vertex.tex_matrix_index as usize != usize::MAX);
                 if tex_matrix_index != vertex.tex_matrix_index as usize {
                     tex_matrix_index = vertex.tex_matrix_index as usize;
-                    let mtx = &mut self.content.tex_matrices[tex_matrix_index];
+                    let mtx = &mut buffer.tex_matrices[tex_matrix_index];
                     if tex_coord_trans_mode != TextureCoordTransMode::TexCoord {
                         mtx[12] = (vertex.tex_coords[0] as i32) << 12;
                         mtx[13] = (vertex.tex_coords[1] as i32) << 12;
@@ -404,27 +392,27 @@ impl Gpu3DRenderer {
     }
 
     pub fn process_polygons(&mut self, common: &GpuRendererCommon) {
-        if self.content.pow_cnt1 != common.pow_cnt1[0] {
+        if self.buffer.pow_cnt1 != common.pow_cnt1[0] {
             return;
         }
 
         self.vertices_buf.clear();
         self.indices_buf.clear();
 
-        let polygon_size = self.content.polygons_size as usize;
+        let polygon_size = self.buffer.polygons_count as usize;
         unsafe { assert_unchecked(polygon_size <= POLYGON_LIMIT) };
 
         while !self.polygon_attrs_ready.load(Ordering::SeqCst) {}
 
         for i in 0..polygon_size {
-            let polygon = &self.content.polygons[i];
+            let polygon = &self.buffer.polygons[i];
             if !polygon.attr.is_translucent() && !polygon.tex_image_param.is_translucent() {
                 unsafe { self.add_vertices(i) };
             }
         }
 
         for i in 0..polygon_size {
-            let polygon = &self.content.polygons[i];
+            let polygon = &self.buffer.polygons[i];
             if polygon.attr.is_translucent() || polygon.tex_image_param.is_translucent() {
                 unsafe { self.add_vertices(i) };
             }
@@ -467,11 +455,11 @@ impl Gpu3DRenderer {
     }
 
     pub unsafe fn render(&mut self, common: &GpuRendererCommon, mem_refs: &GpuMemRefs) {
-        if self.content.pow_cnt1 != common.pow_cnt1[0] {
+        if self.buffer.pow_cnt1 != common.pow_cnt1[0] {
             return;
         }
 
-        let fbo = self.get_fbo(self.content.pow_cnt1.display_swap());
+        let fbo = self.get_fbo(self.buffer.pow_cnt1.display_swap());
         gl::BindFramebuffer(gl::FRAMEBUFFER, fbo.fbo);
         gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
@@ -503,7 +491,7 @@ impl Gpu3DRenderer {
             sub_pal_texture2d(1024, 96, mem_refs.tex_pal.as_ptr());
 
             gl::BindTexture(gl::TEXTURE_2D, self.gl.attr_tex);
-            sub_mem_texture2d(256, (utils::align_up(self.content.polygons_size as usize, 64) * 8 / 256) as _, self.polygon_attrs.as_ptr() as _);
+            sub_mem_texture2d(256, (utils::align_up(self.buffer.polygons_count as usize, 64) * 8 / 256) as _, self.polygon_attrs.as_ptr() as _);
         }
 
         gl::ActiveTexture(gl::TEXTURE0);

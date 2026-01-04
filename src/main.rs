@@ -30,7 +30,7 @@ use crate::mmap::{register_abort_handler, ArmContext, Mmap, PAGE_SIZE};
 use crate::presenter::ui::UiPauseMenuReturn;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE};
 use crate::settings::Arm7Emu;
-use crate::utils::{const_str_equal, set_thread_prio_affinity, start_profiling, stop_profiling, HeapMem, HeapMemU32, ThreadAffinity, ThreadPriority};
+use crate::utils::{const_str_equal, set_thread_prio_affinity, start_profiling, stop_profiling, HeapArray, HeapArrayU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::intrinsics::unlikely;
@@ -490,8 +490,8 @@ pub fn actual_main() {
             .name("audio_out".to_owned())
             .spawn(move || {
                 set_thread_prio_affinity(ThreadPriority::Default, &[ThreadAffinity::Core0, ThreadAffinity::Core1]);
-                let mut guest_buffer = HeapMemU32::<{ SAMPLE_BUFFER_SIZE }>::new();
-                let mut audio_buffer = HeapMemU32::<{ PRESENTER_AUDIO_OUT_BUF_SIZE }>::new();
+                let mut guest_buffer = HeapArrayU32::<{ SAMPLE_BUFFER_SIZE }>::default();
+                let mut audio_buffer = HeapArrayU32::<{ PRESENTER_AUDIO_OUT_BUF_SIZE }>::default();
                 let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
                 let sound_sampler = unsafe { (sound_sampler_ptr as *mut SoundSampler).as_mut_unchecked() };
                 let cpu_thread = unsafe { (cpu_thread_ptr as *const Thread).as_ref_unchecked() };
@@ -509,7 +509,7 @@ pub fn actual_main() {
             .name("audio_in".to_owned())
             .spawn(move || {
                 set_thread_prio_affinity(ThreadPriority::Low, &[ThreadAffinity::Core0, ThreadAffinity::Core1]);
-                let mut audio_buffer = HeapMem::<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>::new();
+                let mut audio_buffer = HeapArray::<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>::default();
                 let cpu_active = cpu_active_clone;
                 while cpu_active.load(Ordering::Relaxed) {
                     presenter_audio_in.receive(&mut audio_buffer);

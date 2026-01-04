@@ -14,7 +14,7 @@ use crate::core::memory::vram::Vram;
 use crate::presenter::{Presenter, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::screen_layouts::ScreenLayout;
 use crate::settings::Arm7Emu;
-use crate::utils::HeapMemU8;
+use crate::utils::HeapArrayU8;
 use gl::types::{GLint, GLuint};
 use std::intrinsics::unlikely;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
@@ -50,7 +50,7 @@ pub struct GpuRenderer {
     capture_program: GLuint,
     capture_size_scalers_uniform: GLint,
     capture_fbo: GpuFbo,
-    capture_mem: HeapMemU8<{ vram::BANK_A_SIZE * 4 }>,
+    capture_mem: HeapArrayU8<{ vram::BANK_A_SIZE * 4 }>,
     capture_query: GLuint,
 
     merge_program: GLuint,
@@ -151,7 +151,7 @@ impl GpuRenderer {
             capture_program,
             capture_size_scalers_uniform,
             capture_fbo: GpuFbo::from_tex(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, capture_fbo_tex).unwrap(),
-            capture_mem: HeapMemU8::new(),
+            capture_mem: HeapArrayU8::default(),
             capture_query,
 
             merge_program,

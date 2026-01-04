@@ -1,7 +1,7 @@
 use crate::core::memory::regions;
 use crate::jit::jit_memory::{JitEntries, JitEntry, JitLiveRanges, BIOS_UNINTERRUPT_ENTRY_ARM7, BIOS_UNINTERRUPT_ENTRY_ARM9, JIT_LIVE_RANGE_PAGE_SIZE_SHIFT};
 use crate::utils;
-use crate::utils::HeapMemU32;
+use crate::utils::HeapArrayU32;
 use std::cmp::min;
 use std::{ptr, slice};
 
@@ -16,15 +16,15 @@ const SIZE: usize = (MEMORY_RANGE >> 1) as usize / BLOCK_SIZE;
 const LIVE_RANGES_SIZE: usize = (MEMORY_RANGE >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize;
 
 pub struct JitMemoryMap {
-    map: HeapMemU32<SIZE>,
-    live_ranges_map: HeapMemU32<LIVE_RANGES_SIZE>,
+    map: HeapArrayU32<SIZE>,
+    live_ranges_map: HeapArrayU32<LIVE_RANGES_SIZE>,
 }
 
 impl JitMemoryMap {
     pub fn new(entries: &JitEntries, live_ranges: &JitLiveRanges) -> Self {
         let mut instance = JitMemoryMap {
-            map: HeapMemU32::new(),
-            live_ranges_map: HeapMemU32::new(),
+            map: HeapArrayU32::default(),
+            live_ranges_map: HeapArrayU32::default(),
         };
 
         macro_rules! get_ptr {

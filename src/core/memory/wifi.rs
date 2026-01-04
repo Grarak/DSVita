@@ -1,14 +1,14 @@
 use crate::core::memory::regions;
 use crate::utils;
-use crate::utils::{Convert, HeapMemU8};
+use crate::utils::{Convert, HeapArrayU8};
 
 pub struct Wifi {
-    pub mem: HeapMemU8<{ regions::WIFI_RAM_SIZE as usize }>,
+    pub mem: HeapArrayU8<{ regions::WIFI_RAM_SIZE as usize }>,
 }
 
 impl Wifi {
     pub fn new() -> Self {
-        Wifi { mem: HeapMemU8::new() }
+        Wifi { mem: HeapArrayU8::default() }
     }
 
     pub fn get_ptr(&self, addr: u32) -> *const u8 {

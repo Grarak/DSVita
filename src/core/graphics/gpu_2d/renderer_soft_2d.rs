@@ -10,7 +10,7 @@ use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
 use crate::core::memory::{regions, vram};
-use crate::utils::{self, array_init, HeapMem};
+use crate::utils::{self, array_init, HeapArray};
 use bilge::prelude::*;
 use core::slice;
 use gl::types::GLuint;
@@ -77,8 +77,8 @@ impl Default for FrameWindow {
 }
 
 struct Gpu2DFrame {
-    layers: [HeapMem<FrameLayer, { DISPLAY_WIDTH * DISPLAY_HEIGHT }>; 2],
-    window: HeapMem<FrameWindow, { DISPLAY_WIDTH * DISPLAY_HEIGHT }>,
+    layers: [HeapArray<FrameLayer, { DISPLAY_WIDTH * DISPLAY_HEIGHT }>; 2],
+    window: HeapArray<FrameWindow, { DISPLAY_WIDTH * DISPLAY_HEIGHT }>,
     layer_texs: [GLuint; 2],
     fbo: GpuFbo,
 }
@@ -86,8 +86,8 @@ struct Gpu2DFrame {
 impl Gpu2DFrame {
     fn new() -> Self {
         Gpu2DFrame {
-            layers: [HeapMem::new(), HeapMem::new()],
-            window: HeapMem::new(),
+            layers: [HeapArray::default(), HeapArray::default()],
+            window: HeapArray::default(),
             layer_texs: array_init!({ unsafe {
                 let mut tex = 0;
                 gl::GenTextures(1, &mut tex);

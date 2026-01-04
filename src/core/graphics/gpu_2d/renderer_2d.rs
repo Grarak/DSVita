@@ -10,7 +10,7 @@ use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
 use crate::core::memory::{regions, vram};
-use crate::utils::{self, array_init, HeapMemU8};
+use crate::utils::{self, array_init, HeapArrayU8};
 use crate::utils::{rgb5_to_float8, PtrWrapper};
 use gl::types::{GLint, GLuint};
 use static_assertions::const_assert;
@@ -82,10 +82,10 @@ impl Default for ObjUbo {
 struct Gpu2DTexMem {
     bg: Vec<u8>,
     obj: Vec<u8>,
-    oam: HeapMemU8<{ regions::OAM_SIZE as usize / 2 }>,
-    pal: HeapMemU8<{ regions::STANDARD_PALETTES_SIZE as usize / 2 }>,
-    bg_ext_pal: HeapMemU8<{ vram::BG_EXT_PAL_SIZE }>,
-    obj_ext_pal: HeapMemU8<{ vram::OBJ_EXT_PAL_SIZE }>,
+    oam: HeapArrayU8<{ regions::OAM_SIZE as usize / 2 }>,
+    pal: HeapArrayU8<{ regions::STANDARD_PALETTES_SIZE as usize / 2 }>,
+    bg_ext_pal: HeapArrayU8<{ vram::BG_EXT_PAL_SIZE }>,
+    obj_ext_pal: HeapArrayU8<{ vram::OBJ_EXT_PAL_SIZE }>,
 }
 
 impl Gpu2DTexMem {
@@ -97,10 +97,10 @@ impl Gpu2DTexMem {
         Gpu2DTexMem {
             bg,
             obj,
-            oam: HeapMemU8::new(),
-            pal: HeapMemU8::new(),
-            bg_ext_pal: HeapMemU8::new(),
-            obj_ext_pal: HeapMemU8::new(),
+            oam: HeapArrayU8::default(),
+            pal: HeapArrayU8::default(),
+            bg_ext_pal: HeapArrayU8::default(),
+            obj_ext_pal: HeapArrayU8::default(),
         }
     }
 }
@@ -986,7 +986,7 @@ pub struct Gpu2DRenderer {
     program_a: Gpu2DProgram,
     program_b: Gpu2DProgram,
     #[cfg(target_os = "linux")]
-    lcdc_mem_buf: HeapMemU8<{ vram::TOTAL_SIZE }>,
+    lcdc_mem_buf: HeapArrayU8<{ vram::TOTAL_SIZE }>,
 }
 
 impl Gpu2DRenderer {
@@ -1009,7 +1009,7 @@ impl Gpu2DRenderer {
                 program_a: Gpu2DProgram::new::<{ A }>(obj_window_vert_shader, obj_vert_shader, bg_vert_shader, bg_vert_affine_shader, bg_vert_bitmap_shader),
                 program_b: Gpu2DProgram::new::<{ B }>(obj_window_vert_shader, obj_vert_shader, bg_vert_shader, bg_vert_affine_shader, bg_vert_bitmap_shader),
                 #[cfg(target_os = "linux")]
-                lcdc_mem_buf: HeapMemU8::new(),
+                lcdc_mem_buf: HeapArrayU8::default(),
             };
 
             gl::DeleteShader(obj_window_vert_shader);

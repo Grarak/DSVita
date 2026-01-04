@@ -1,7 +1,7 @@
 use crate::cartridge_metadata::get_cartridge_metadata;
 use crate::logging::debug_println;
 use crate::utils;
-use crate::utils::{rgb5_to_rgb8, HeapMemU8, NoHashMap};
+use crate::utils::{rgb5_to_rgb8, HeapArrayU8, NoHashMap};
 use static_assertions::const_assert_eq;
 use std::cmp::min;
 use std::fs::File;
@@ -199,7 +199,7 @@ pub struct CartridgeIo {
     pub file_size: u32,
     pub header: CartridgeHeader,
     content_pages: NoHashMap<u32, u16>,
-    content_cache: HeapMemU8<MAX_CARTRIDGE_CACHE>,
+    content_cache: HeapArrayU8<MAX_CARTRIDGE_CACHE>,
     save_file_path: PathBuf,
     pub save_file_size: u32,
     save_buf: Mutex<(Vec<u8>, bool)>,
@@ -242,7 +242,7 @@ impl CartridgeIo {
             file_size,
             header: preview.header,
             content_pages: NoHashMap::default(),
-            content_cache: HeapMemU8::new(),
+            content_cache: HeapArrayU8::default(),
             save_file_path,
             save_file_size,
             save_buf: Mutex::new((save_buf, false)),

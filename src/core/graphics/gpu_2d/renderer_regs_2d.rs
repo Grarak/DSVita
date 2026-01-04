@@ -1,14 +1,12 @@
-use crate::{
-    core::graphics::{
-        gpu::DISPLAY_HEIGHT,
-        gpu_2d::{
-            registers_2d::{DispCnt, Gpu2DRegisters},
-            Gpu2DEngine::{self, A, B},
-        },
-        gpu_mem_buf::GpuMemRefs,
+use crate::core::graphics::{
+    gpu::DISPLAY_HEIGHT,
+    gpu_2d::{
+        registers_2d::{DispCnt, Gpu2DRegisters},
+        Gpu2DEngine::{self, A, B},
     },
-    utils::HeapMem,
+    gpu_mem_buf::GpuMemRefs,
 };
+use crate::utils::HeapMem;
 use static_assertions::const_assert;
 use std::{hint::assert_unchecked, intrinsics::unlikely, mem};
 
@@ -161,16 +159,16 @@ impl Gpu2DRenderRegs {
 }
 
 pub struct Gpu2DRenderRegsShared {
-    pub regs_a: HeapMem<Gpu2DRenderRegs, 2>,
-    pub regs_b: HeapMem<Gpu2DRenderRegs, 2>,
+    pub regs_a: [HeapMem<Gpu2DRenderRegs>; 2],
+    pub regs_b: [HeapMem<Gpu2DRenderRegs>; 2],
     pub has_vram_display: [bool; 2],
 }
 
 impl Gpu2DRenderRegsShared {
     pub fn new() -> Self {
         Gpu2DRenderRegsShared {
-            regs_a: HeapMem::new(),
-            regs_b: HeapMem::new(),
+            regs_a: [HeapMem::default(), HeapMem::default()],
+            regs_b: [HeapMem::default(), HeapMem::default()],
             has_vram_display: [false; 2],
         }
     }

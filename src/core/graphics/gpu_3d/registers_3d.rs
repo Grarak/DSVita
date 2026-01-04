@@ -2,7 +2,6 @@ use crate::core::cpu_regs::InterruptFlag;
 use crate::core::emu::Emu;
 use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::matrix_vec::MatrixVec;
-use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRendererContent;
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
 use crate::fixed_fifo::FixedFifo;
@@ -376,6 +375,87 @@ impl Default for Shininess {
     }
 }
 
+pub struct Gpu3DBuffer {
+    pub vertices: [Vertex; VERTEX_LIMIT],
+    pub vertices_count: u16,
+    pub polygons: [Polygon; POLYGON_LIMIT],
+    pub polygons_count: u16,
+    pub clip_matrices: MatrixVec,
+    pub tex_matrices: MatrixVec,
+    pub swap_buffers: SwapBuffers,
+    pub pow_cnt1: PowCnt1,
+}
+
+impl Gpu3DBuffer {
+    fn reset(&mut self) {
+        self.vertices_count = 0;
+        self.polygons_count = 0;
+        self.clip_matrices.clear();
+        self.tex_matrices.clear();
+    }
+}
+
+impl Default for Gpu3DBuffer {
+    fn default() -> Self {
+        Gpu3DBuffer {
+            vertices: unsafe { mem::zeroed() },
+            vertices_count: 0,
+            polygons: unsafe { mem::zeroed() },
+            polygons_count: 0,
+            clip_matrices: Default::default(),
+            tex_matrices: Default::default(),
+            pow_cnt1: Default::default(),
+            swap_buffers: SwapBuffers::default(),
+        }
+    }
+}
+
+#[bitsize(8)]
+#[derive(Default, FromBits)]
+struct Gpu3DBuffersState {
+    has_front: bool,
+    has_back: bool,
+    front_set_pow_cnt1: bool,
+    back_set_pow_cnt1: bool,
+    unsued: u4,
+}
+
+#[derive(Default)]
+struct Gpu3DBuffers {
+    front: HeapMem<Gpu3DBuffer>,
+    back: HeapMem<Gpu3DBuffer>,
+    state: Gpu3DBuffersState,
+}
+
+impl Gpu3DBuffers {
+    fn is_full(&self) -> bool {
+        self.state.has_front() && self.state.has_back()
+    }
+
+    fn push_front(&mut self, buffer: &mut HeapMem<Gpu3DBuffer>) {
+        mem::swap(&mut self.front, buffer);
+        self.state.set_has_front(true);
+        self.state.set_front_set_pow_cnt1(true);
+    }
+
+    fn push_back(&mut self, buffer: &mut HeapMem<Gpu3DBuffer>) {
+        if self.state.has_front() {
+            mem::swap(&mut self.back, buffer);
+            self.state.set_has_back(true);
+            self.state.set_back_set_pow_cnt1(true);
+        } else {
+            self.push_front(buffer);
+        }
+    }
+
+    fn pop_front(&mut self, buffer: &mut HeapMem<Gpu3DBuffer>) {
+        mem::swap(&mut self.front, buffer);
+        mem::swap(&mut self.front, &mut self.back);
+        self.state.set_has_front(self.state.has_back());
+        self.state.set_has_back(false);
+    }
+}
+
 #[derive(Default)]
 pub struct Gpu3DRegisters {
     cmd_fifo: FixedFifo<u32, 2048>,
@@ -385,7 +465,6 @@ pub struct Gpu3DRegisters {
 
     pub last_total_cycles: u32,
     pub flushed: bool,
-    swap_buffers: SwapBuffers,
 
     pub gx_stat: GxStat,
 
@@ -397,17 +476,10 @@ pub struct Gpu3DRegisters {
     vertex_list_primitive_type: PrimitiveType,
     vertex_list_size: u16,
 
-    vertices: HeapMem<Vertex, VERTEX_LIMIT>,
     cur_vtx: Vertex,
-    vertices_size: u16,
-
-    polygons: HeapMem<Polygon, POLYGON_LIMIT>,
     cur_polygon: Polygon,
-    polygons_size: u16,
 
     clip_matrix: Matrix,
-    clip_matrices: MatrixVec,
-    tex_matrices: MatrixVec,
 
     cur_polygon_attr: PolygonAttr,
 
@@ -424,10 +496,9 @@ pub struct Gpu3DRegisters {
 
     dirty_flags: DirtyFlags,
 
-    pub skip: bool,
-    pub consume: bool,
-    pub set_pow_cnt1: bool,
-    pub pow_cnt1: PowCnt1,
+    out_buffers: Gpu3DBuffers,
+    buffer: HeapMem<Gpu3DBuffer>,
+    skip: bool,
 }
 
 macro_rules! unpacked_cmd {
@@ -542,7 +613,7 @@ impl Emu {
     }
 
     pub fn regs_3d_get_ram_count(&self) -> u32 {
-        ((self.gpu.gpu_3d_regs.vertices_size as u32) << 16) | (self.gpu.gpu_3d_regs.polygons_size as u32)
+        ((self.gpu.gpu_3d_regs.buffer.vertices_count as u32) << 16) | (self.gpu.gpu_3d_regs.buffer.polygons_count as u32)
     }
 
     pub fn regs_3d_get_pos_result(&self, index: usize) -> u32 {
@@ -1085,10 +1156,10 @@ impl Gpu3DRegisters {
         self.cur_vtx.normal[2] = ((u16::from(normal_vector_param.z()) << 6) as i16) >> 3;
 
         if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Normal && self.dirty_flags.tex_push() {
-            self.tex_matrices.push(&self.matrices.tex);
+            self.buffer.tex_matrices.push(&self.matrices.tex);
             self.dirty_flags.set_tex_push(false);
         }
-        self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
+        self.cur_vtx.tex_matrix_index = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1);
 
         self.cur_vtx.color = u16::from(self.material_color1.em());
 
@@ -1174,10 +1245,10 @@ impl Gpu3DRegisters {
         self.cur_vtx.tex_coords[1] = tex_coord.t() as i16;
 
         if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::TexCoord && self.dirty_flags.tex_push() {
-            self.tex_matrices.push(&self.matrices.tex);
+            self.buffer.tex_matrices.push(&self.matrices.tex);
             self.dirty_flags.set_tex_push(false);
         }
-        self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
+        self.cur_vtx.tex_matrix_index = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1);
     }
 
     fn exe_vtx16(&mut self, params: &[u32; 32]) {
@@ -1285,7 +1356,7 @@ impl Gpu3DRegisters {
         debug_println!("execute exe_begin_vtxs {cmd:x}");
 
         if self.vertex_list_size < self.vertex_list_primitive_type.vertex_count() as u16 {
-            self.vertices_size -= self.vertex_list_size;
+            self.buffer.vertices_count -= self.vertex_list_size;
         }
 
         self.vertex_list_primitive_type = PrimitiveType::from((params[0] & 0x3) as u8);
@@ -1302,7 +1373,7 @@ impl Gpu3DRegisters {
         debug_println!("execute exe_swap_buffers {cmd:x}");
 
         self.flushed = true;
-        self.swap_buffers = SwapBuffers::from(params[0] as u8)
+        self.buffer.swap_buffers = SwapBuffers::from(params[0] as u8);
     }
 
     fn exe_viewport(&mut self, cmd: usize, params: &[u32; 32]) {
@@ -1348,57 +1419,56 @@ impl Gpu3DRegisters {
 
     pub fn swap_buffers(&mut self) {
         self.flushed = false;
-        if !self.skip {
-            self.consume = true;
-            self.set_pow_cnt1 = true;
+        if !self.out_buffers.state.has_back() && !self.skip {
+            self.out_buffers.push_back(&mut self.buffer);
         }
-        self.skip = self.consume;
+        self.skip = self.out_buffers.is_full();
+        self.buffer.reset();
+        self.vertex_list_size = 0;
+        self.dirty_flags.set_clip_push(true);
+        self.dirty_flags.set_tex_push(true);
     }
 
-    pub fn swap_to_renderer(&mut self, content: &mut Gpu3DRendererContent) {
-        mem::swap(&mut self.vertices, &mut content.vertices);
-        content.vertices_size = self.vertices_size;
-        self.vertices_size = 0;
-        self.vertex_list_size = 0;
+    pub fn on_first_scanline(&mut self, pow_cnt1: PowCnt1) {
+        if self.out_buffers.state.front_set_pow_cnt1() {
+            self.out_buffers.front.pow_cnt1 = pow_cnt1;
+            self.out_buffers.state.set_front_set_pow_cnt1(false);
+        }
+        if self.out_buffers.state.back_set_pow_cnt1() {
+            self.out_buffers.back.pow_cnt1 = pow_cnt1;
+            self.out_buffers.state.set_back_set_pow_cnt1(false);
+        }
+    }
 
-        mem::swap(&mut self.polygons, &mut content.polygons);
-        content.polygons_size = self.polygons_size;
-        self.polygons_size = 0;
+    pub fn can_consume(&self) -> bool {
+        self.out_buffers.state.has_front()
+    }
 
-        mem::swap(&mut self.clip_matrices, &mut content.clip_matrices);
-        self.clip_matrices.clear();
-        self.dirty_flags.set_clip_push(true);
-
-        mem::swap(&mut self.tex_matrices, &mut content.tex_matrices);
-        self.tex_matrices.clear();
-        self.dirty_flags.set_tex_push(true);
-
-        content.swap_buffers = self.swap_buffers;
-        content.pow_cnt1 = self.pow_cnt1;
+    pub fn swap_to_renderer(&mut self, buffer: &mut HeapMem<Gpu3DBuffer>) {
+        self.out_buffers.pop_front(buffer);
     }
 
     fn add_vertex(&mut self) {
-        if self.vertices_size >= VERTEX_LIMIT as u16 {
+        if self.buffer.vertices_count >= VERTEX_LIMIT as u16 {
             return;
         }
 
         self.get_clip_matrix();
         if unlikely(self.dirty_flags.clip_push()) {
-            self.clip_matrices.push(&self.clip_matrix);
+            self.buffer.clip_matrices.push(&self.clip_matrix);
             self.dirty_flags.set_clip_push(false);
         }
 
         if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Vertex && unlikely(self.dirty_flags.tex_push()) {
-            self.tex_matrices.push(&self.matrices.tex);
+            self.buffer.tex_matrices.push(&self.matrices.tex);
             self.dirty_flags.set_tex_push(false);
         }
-        self.cur_vtx.tex_matrix_index = (self.tex_matrices.len() as u16).wrapping_sub(1);
+        self.cur_vtx.tex_matrix_index = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1);
 
-        unsafe {
-            *self.vertices.get_unchecked_mut(self.vertices_size as usize) = self.cur_vtx;
-            self.vertices.get_unchecked_mut(self.vertices_size as usize).clip_matrix_index = self.clip_matrices.len() as u16 - 1;
-        }
-        self.vertices_size += 1;
+        let vertices_count = self.buffer.vertices_count as usize;
+        self.buffer.vertices[vertices_count] = self.cur_vtx;
+        self.buffer.vertices[vertices_count].clip_matrix_index = self.buffer.clip_matrices.len() as u16 - 1;
+        self.buffer.vertices_count += 1;
         self.vertex_list_size += 1;
 
         if unlikely(match self.vertex_list_primitive_type {
@@ -1418,17 +1488,18 @@ impl Gpu3DRegisters {
     }
 
     fn add_polygon(&mut self) {
-        if self.polygons_size as usize >= POLYGON_LIMIT {
+        if self.buffer.polygons_count as usize >= POLYGON_LIMIT {
             return;
         }
 
         let size = self.vertex_list_primitive_type.vertex_count();
 
-        let polygon = &mut self.polygons[self.polygons_size as usize];
-        *polygon = self.cur_polygon;
-        polygon.polygon_type = self.vertex_list_primitive_type;
-        polygon.vertices_index = self.vertices_size - size as u16;
+        let polygons_count = self.buffer.polygons_count as usize;
+        self.buffer.polygons[polygons_count] = self.cur_polygon;
+        self.buffer.polygons[polygons_count].polygon_type = self.vertex_list_primitive_type;
+        let vertices_count = self.buffer.vertices_count;
+        self.buffer.polygons[polygons_count].vertices_index = vertices_count - size as u16;
 
-        self.polygons_size += 1;
+        self.buffer.polygons_count += 1;
     }
 }

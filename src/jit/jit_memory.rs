@@ -24,7 +24,7 @@ use crate::logging::debug_println;
 use crate::mmap::{ArmContext, Mmap, PAGE_SHIFT, PAGE_SIZE, flush_icache, MemRegion};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils;
-use crate::utils::{HeapMem, HeapMemU8};
+use crate::utils::{HeapArray, HeapArrayU8};
 use CpuType::{ARM7, ARM9};
 use bilge::prelude::{u4, u6};
 use std::collections::VecDeque;
@@ -69,7 +69,7 @@ macro_rules! create_jit_blocks {
     ($([$block_name:ident, $size:expr]),+) => {
         pub struct JitEntries {
             $(
-                pub $block_name: HeapMem<JitEntry, { $size as usize / 2 }>,
+                pub $block_name: HeapArray<JitEntry, { $size as usize / 2 }>,
             )*
         }
 
@@ -77,7 +77,7 @@ macro_rules! create_jit_blocks {
             fn new() -> Self {
                 let mut instance = JitEntries {
                     $(
-                        $block_name: HeapMem::new(),
+                        $block_name: HeapArray::default(),
                     )*
                 };
                 instance.reset();
@@ -103,9 +103,9 @@ create_jit_blocks!(
 
 #[derive(Default)]
 pub struct JitLiveRanges {
-    pub itcm: HeapMemU8<{ (regions::ITCM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
-    pub main: HeapMemU8<{ (regions::MAIN_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
-    pub vram: HeapMemU8<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>, // Use arm7 vram size for arm9 as well
+    pub itcm: HeapArrayU8<{ (regions::ITCM_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
+    pub main: HeapArrayU8<{ (regions::MAIN_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>,
+    pub vram: HeapArrayU8<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>, // Use arm7 vram size for arm9 as well
 }
 
 #[cfg(target_os = "linux")]
@@ -197,8 +197,8 @@ pub struct JitMemory {
     jit_live_ranges: JitLiveRanges,
     pub jit_memory_map: JitMemoryMap,
     jit_perf_map_record: JitPerfMapRecord,
-    pub guest_inst_offsets: HeapMem<Vec<GuestInstOffset>, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
-    guest_inst_metadata: HeapMem<Vec<GuestInstMetadata>, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
+    pub guest_inst_offsets: HeapArray<Vec<GuestInstOffset>, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
+    guest_inst_metadata: HeapArray<Vec<GuestInstMetadata>, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
 }
 
 impl Emu {
@@ -300,8 +300,8 @@ impl JitMemory {
             jit_live_ranges,
             jit_memory_map,
             jit_perf_map_record: JitPerfMapRecord::new(),
-            guest_inst_offsets: HeapMem::new(),
-            guest_inst_metadata: HeapMem::new(),
+            guest_inst_offsets: HeapArray::default(),
+            guest_inst_metadata: HeapArray::default(),
         }
     }
 
