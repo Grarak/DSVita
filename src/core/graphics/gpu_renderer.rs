@@ -1,5 +1,5 @@
 use crate::core::graphics::gl_glyph::GlGlyph;
-use crate::core::graphics::gl_utils::{create_program, create_shader, shader_source, GpuFbo};
+use crate::core::graphics::gl_utils::GpuFbo;
 use crate::core::graphics::gpu::{DispCapCnt, PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::renderer_2d::Gpu2DRenderer;
@@ -8,6 +8,7 @@ use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::core::graphics::gpu_mem_buf::{GpuMemBuf, GpuMemRefs};
+use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
 use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram;
 use crate::core::memory::vram::Vram;
@@ -81,22 +82,16 @@ pub struct GpuRenderer {
 }
 
 impl GpuRenderer {
-    pub fn new() -> Self {
-        let (capture_program, capture_size_scalers_uniform, capture_fbo_tex, capture_query) = unsafe {
-            let vert_shader = create_shader("capture", shader_source!("capture_vert"), gl::VERTEX_SHADER).unwrap();
-            let frag_shader = create_shader("capture", shader_source!("capture_frag"), gl::FRAGMENT_SHADER).unwrap();
-            let program = create_program(&[vert_shader, frag_shader]).unwrap();
-            gl::DeleteShader(vert_shader);
-            gl::DeleteShader(frag_shader);
+    pub fn new(gpu_programs: &GpuShadersPrograms) -> Self {
+        let (capture_size_scalers_uniform, capture_fbo_tex, capture_query) = unsafe {
+            gl::UseProgram(gpu_programs.capture);
 
-            gl::UseProgram(program);
+            gl::BindAttribLocation(gpu_programs.capture, 0, c"position".as_ptr() as _);
 
-            gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
+            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.capture, c"tex".as_ptr() as _), 0);
+            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.capture, c"texTest".as_ptr() as _), 1);
 
-            gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
-            gl::Uniform1i(gl::GetUniformLocation(program, c"texTest".as_ptr() as _), 1);
-
-            let capture_size_scalers_uniform = gl::GetUniformLocation(program, c"sizeScalar".as_ptr() as _);
+            let capture_size_scalers_uniform = gl::GetUniformLocation(gpu_programs.capture, c"sizeScalar".as_ptr() as _);
 
             gl::UseProgram(0);
 
@@ -117,47 +112,41 @@ impl GpuRenderer {
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
 
-            (program, capture_size_scalers_uniform, tex, query)
+            (capture_size_scalers_uniform, tex, query)
         };
 
-        let (merge_program, merge_alpha_uniform) = unsafe {
-            let vert_shader = create_shader("merge", shader_source!("merge_vert"), gl::VERTEX_SHADER).unwrap();
-            let frag_shader = create_shader("merge", shader_source!("merge_frag"), gl::FRAGMENT_SHADER).unwrap();
-            let program = create_program(&[vert_shader, frag_shader]).unwrap();
-            gl::DeleteShader(vert_shader);
-            gl::DeleteShader(frag_shader);
+        let merge_alpha_uniform = unsafe {
+            gl::UseProgram(gpu_programs.merge);
 
-            gl::UseProgram(program);
+            gl::BindAttribLocation(gpu_programs.merge, 0, c"position".as_ptr() as _);
 
-            gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
+            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.merge, c"tex".as_ptr() as _), 0);
 
-            gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
-
-            let merge_alpha_uniform = gl::GetUniformLocation(program, c"alpha".as_ptr() as _);
+            let merge_alpha_uniform = gl::GetUniformLocation(gpu_programs.merge, c"alpha".as_ptr() as _);
 
             gl::UseProgram(0);
 
-            (program, merge_alpha_uniform)
+            merge_alpha_uniform
         };
 
         GpuRenderer {
             renderer_regs_2d_shared: Gpu2DRenderRegsShared::new(),
-            renderer_2d: Gpu2DRenderer::new(),
+            renderer_2d: Gpu2DRenderer::new(gpu_programs),
             // renderer_soft_2d: Gpu2DSoftRenderer::new(),
-            renderer_3d: Gpu3DRenderer::default(),
+            renderer_3d: Gpu3DRenderer::new(gpu_programs),
             gpu_mem_refs: GpuMemRefs::default(),
 
             common: GpuRendererCommon::new(),
-            capture_program,
+            capture_program: gpu_programs.capture,
             capture_size_scalers_uniform,
             capture_fbo: GpuFbo::from_tex(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, capture_fbo_tex).unwrap(),
             capture_mem: HeapArrayU8::default(),
             capture_query,
 
-            merge_program,
+            merge_program: gpu_programs.merge,
             merge_alpha_uniform,
             final_fbo: GpuFbo::new(PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, false).unwrap(),
-            gl_glyph: GlGlyph::new(),
+            gl_glyph: GlGlyph::new(gpu_programs),
 
             rendering: Mutex::new(false),
             rendering_condvar: Condvar::new(),

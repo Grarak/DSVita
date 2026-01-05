@@ -6,7 +6,7 @@ use crate::presenter::imgui::root::{
     ImDrawData, ImGui, ImGuiStyleVar__ImGuiStyleVar_ItemSpacing, ImGuiStyleVar__ImGuiStyleVar_WindowRounding, ImGui_ImplVitaGL_GamepadUsage, ImGui_ImplVitaGL_Init, ImGui_ImplVitaGL_MouseStickUsage,
     ImGui_ImplVitaGL_NewFrame, ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImVec2,
 };
-use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, UiBackend, UiPauseMenuReturn};
+use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, show_progress, UiBackend, UiPauseMenuReturn};
 use crate::presenter::{
     PresentEvent, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_IN_SAMPLE_RATE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH,
 };
@@ -327,6 +327,10 @@ impl Presenter {
             _ => {}
         }
         ret
+    }
+
+    pub fn present_progress(&mut self, current_name: impl AsRef<str>, progress: usize, total: usize) {
+        show_progress(self, current_name, progress, total)
     }
 
     pub fn get_presenter_audio_out(&self) -> PresenterAudioOut {

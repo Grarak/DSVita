@@ -11,6 +11,8 @@ uniform sampler2D extPalTex : TEXUNIT3;
 uniform usampler2D winTex : TEXUNIT4;
 
 uniform int dispCnt;
+uniform float objTexHeight;
+uniform bool objWindow;
 
 struct ObjAttr {
     unsigned int mapWidth;
@@ -40,7 +42,7 @@ unsigned short readObj8(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0f;
-    float y = float(addrY) / (OBJ_TEX_HEIGHT - 1.0);
+    float y = float(addrY) / objTexHeight;
     unsigned int values[4];
     tex2D_gather4(objTex, float2(x, y), values);
     short shift = addr & 3;
@@ -51,7 +53,7 @@ unsigned short readObj16Aligned(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0f;
-    float y = float(addrY) / (OBJ_TEX_HEIGHT - 1.0);
+    float y = float(addrY) / objTexHeight;
     unsigned int values[4];
     tex2D_gather4(objTex, float2(x, y), values);
     short shift = addr & 2;
@@ -96,7 +98,7 @@ float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short
             discard;
         }
 
-        if (OBJ_WINDOW) {
+        if (objWindow) {
             unsigned short enabled = (WinBgUbo.winInOut[short(192.0 * screenPosF.y)] >> 24) & 0xFF;
             enabled |= 0x80; // indicate this was set by obj, to avoid win out override
             return float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
@@ -116,7 +118,7 @@ float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short
             discard;
         }
 
-        if (OBJ_WINDOW) {
+        if (objWindow) {
             unsigned short enabled = (WinBgUbo.winInOut[short(192.0 * screenPosF.y)] >> 24) & 0xFF;
             enabled |= 0x80; // indicate this was set by obj, to avoid win out override
             return float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
@@ -149,7 +151,7 @@ float4 drawBitmap(short objX, short objY, ObjAttr attr, unsigned short attrib2) 
 void main(out float4 color : COLOR) {
     unsigned short attrib0 = readAttrib0();
     unsigned short attrib2 = readAttrib2();
-    if (!OBJ_WINDOW) {
+    if (!objWindow) {
         unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
         if (((winEnabled >> 4) & 1) == 0) {
             discard;

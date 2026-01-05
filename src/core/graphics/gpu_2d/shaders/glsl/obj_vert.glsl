@@ -15,6 +15,7 @@ out vec2 objAttrib0Addr;
 out vec2 objAttrib2Addr;
 
 uniform int dispCnt;
+uniform bool objWindow;
 
 int readOam16Aligned(int addr) {
     float x = float(addr >> 2) / 255.0f;
@@ -114,7 +115,7 @@ void main() {
 
     int priority = (attrib2 >> 10) & 3;
     gl_Position = vec4(screenPosF.x * 2.0 - 1.0, 1.0 - screenPosF.y * 2.0, float(priority) / 4.0, 1.0);
-    if (OBJ_WINDOW) {
+    if (objWindow) {
         gl_Position.y = -gl_Position.y;
     }
 }

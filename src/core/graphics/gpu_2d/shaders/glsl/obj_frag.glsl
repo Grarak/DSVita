@@ -12,6 +12,8 @@ in vec2 objAttrib0Addr;
 in vec2 objAttrib2Addr;
 
 uniform int dispCnt;
+uniform float objTexHeight;
+uniform bool objWindow;
 
 struct ObjAttr {
     int mapWidth;
@@ -47,7 +49,7 @@ int readObj8(int addr) {
     int addrX = (addr >> 2) & 0x1FF;
     int addrY = addr >> 11;
     float x = float(addrX) / 511.0;
-    float y = float(addrY) / (OBJ_TEX_HEIGHT - 1.0);
+    float y = float(addrY) / objTexHeight;
     return int(texture(objTex, vec2(x, y))[addr & 3] * 255.0);
 }
 
@@ -55,7 +57,7 @@ int readObj16Aligned(int addr) {
     int addrX = (addr >> 2) & 0x1FF;
     int addrY = addr >> 11;
     float x = float(addrX) / 511.0;
-    float y = float(addrY) / (OBJ_TEX_HEIGHT - 1.0);
+    float y = float(addrY) / objTexHeight;
     vec4 value = texture(objTex, vec2(x, y));
     int entry = addr & 2;
     return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
@@ -104,7 +106,7 @@ vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, ObjAttr attr) {
             discard;
         }
 
-        if (OBJ_WINDOW) {
+        if (objWindow) {
             int enabled = (winInOut[int(191.0 * screenPosF.y)] >> 24) & 0xFF;
             enabled |= 0x80; // indicate this was set by obj, to avoid win out override
             return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
@@ -124,7 +126,7 @@ vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, ObjAttr attr) {
             discard;
         }
 
-        if (OBJ_WINDOW) {
+        if (objWindow) {
             int enabled = (winInOut[int(191.0 * screenPosF.y)] >> 24) & 0xFF;
             enabled |= 0x80; // indicate this was set by obj, to avoid win out override
             return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
@@ -158,7 +160,7 @@ void main() {
     int attrib0 = readAttrib0();
     int attrib2 = readAttrib2();
 
-    if (!OBJ_WINDOW) {
+    if (!objWindow) {
         int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
         if (((winEnabled >> 4) & 1) == 0) {
             discard;

@@ -4,6 +4,7 @@ float2 in affineDims : TEXCOORD2;
 
 uniform int dispCnt;
 uniform int bgCnt;
+uniform float bgTexHeight;
 
 uniform usampler2D bgTex : TEXUNIT0;
 uniform sampler2D palTex : TEXUNIT1;
@@ -25,7 +26,7 @@ unsigned short readBg8(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0;
-    float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
+    float y = float(addrY) / bgTexHeight;
     unsigned int values[4];
     tex2D_gather4(bgTex, float2(x, y), values);
     short shift = addr & 3;
@@ -36,7 +37,7 @@ unsigned short readBg16Aligned(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
     short addrY = addr >> 11;
     float x = float(addrX) / 511.0;
-    float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
+    float y = float(addrY) / bgTexHeight;
     unsigned int values[4];
     tex2D_gather4(bgTex, float2(x, y), values);
     short shift = addr & 2;

@@ -1,9 +1,10 @@
-use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, create_program, create_shader, shader_source, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
+use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
 use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::registers_3d::POLYGON_LIMIT;
 use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DBuffer, Gpu3DRegisters, PrimitiveType, TextureCoordTransMode};
 use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
+use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
 use crate::core::memory::vram;
 use crate::math::{vmult_vec4_mat4, vmult_vec4_mat4_no_store, Vectori32};
 use crate::utils::{self, rgb5_to_float8, HeapArray, HeapArrayU16, HeapArrayU8, HeapMem, PtrWrapper};
@@ -75,26 +76,20 @@ pub struct Gpu3DGl {
     bottom_fbo: GpuFbo,
 }
 
-impl Default for Gpu3DGl {
-    fn default() -> Self {
+impl Gpu3DGl {
+    fn new(gpu_programs: &GpuShadersPrograms) -> Self {
         unsafe {
-            let vert_shader = create_shader("render 3d", shader_source!("render_vert"), gl::VERTEX_SHADER).unwrap();
-            let frag_shader = create_shader("render 3d", shader_source!("render_frag"), gl::FRAGMENT_SHADER).unwrap();
-            let program = create_program(&[vert_shader, frag_shader]).unwrap();
-            gl::DeleteShader(vert_shader);
-            gl::DeleteShader(frag_shader);
+            gl::UseProgram(gpu_programs.render_3d);
 
-            gl::UseProgram(program);
+            let translucent_only_loc = gl::GetUniformLocation(gpu_programs.render_3d, c"translucentOnly".as_ptr() as _);
 
-            let translucent_only_loc = gl::GetUniformLocation(program, c"translucentOnly".as_ptr() as _);
+            gl::BindAttribLocation(gpu_programs.render_3d, 0, c"position".as_ptr() as _);
+            gl::BindAttribLocation(gpu_programs.render_3d, 1, c"color".as_ptr() as _);
+            gl::BindAttribLocation(gpu_programs.render_3d, 2, c"texCoords".as_ptr() as _);
 
-            gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
-            gl::BindAttribLocation(program, 1, c"color".as_ptr() as _);
-            gl::BindAttribLocation(program, 2, c"texCoords".as_ptr() as _);
-
-            gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
-            gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 1);
-            gl::Uniform1i(gl::GetUniformLocation(program, c"attrTex".as_ptr() as _), 2);
+            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.render_3d, c"tex".as_ptr() as _), 0);
+            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.render_3d, c"palTex".as_ptr() as _), 1);
+            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.render_3d, c"attrTex".as_ptr() as _), 2);
 
             let mut vertices_buf = 0;
             gl::GenBuffers(1, &mut vertices_buf);
@@ -110,7 +105,7 @@ impl Default for Gpu3DGl {
                 pal_tex: create_pal_texture2d(1024, 96),
                 attr_tex: create_mem_texture2d(256, 256),
                 vertices_buf,
-                program,
+                program: gpu_programs.render_3d,
                 top_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, true).unwrap(),
                 bottom_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, true).unwrap(),
             }
@@ -143,7 +138,6 @@ struct Gpu3DTexMem {
     polygon_attrs: HeapArray<Gpu3dPolygonAttr, POLYGON_LIMIT>,
 }
 
-#[derive(Default)]
 pub struct Gpu3DRenderer {
     pub dirty: bool,
     inners: [Gpu3DRendererInner; 2],
@@ -162,12 +156,46 @@ pub struct Gpu3DRenderer {
 }
 
 impl Gpu3DRenderer {
+    pub fn new(gpu_programs: &GpuShadersPrograms) -> Self {
+        Gpu3DRenderer {
+            dirty: false,
+            inners: [Gpu3DRendererInner::default(), Gpu3DRendererInner::default()],
+            buffer: Default::default(),
+            gl: Gpu3DGl::new(gpu_programs),
+            translucent_polygons: Vec::new(),
+            translucent_depth_polygons: Vec::new(),
+            vertices_buf: Vec::new(),
+            indices_opaque_buf: Vec::new(),
+            indices_translucent_buf: Vec::new(),
+            polygon_vertices_mapping: Default::default(),
+            polygon_attrs_ready: Default::default(),
+            polygon_attrs: Default::default(),
+            #[cfg(target_os = "linux")]
+            mem: Default::default(),
+        }
+    }
+
     pub fn init(&mut self) {
         self.dirty = false;
         self.inners[0] = Gpu3DRendererInner::default();
         self.inners[1] = Gpu3DRendererInner::default();
         self.buffer.reset();
         self.buffer.pow_cnt1 = PowCnt1::from(0);
+
+        unsafe {
+            for fbo in [self.gl.top_fbo.fbo, self.gl.bottom_fbo.fbo] {
+                gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
+                gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+
+                let clear_color = ClearColor::from(self.inners[0].clear_color);
+                let [r, g, b] = rgb5_to_float8(u16::from(clear_color.color()));
+                gl::ClearColor(r, g, b, u8::from(clear_color.alpha()) as f32 / 31f32);
+
+                gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+            }
+
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        }
     }
 
     pub fn invalidate(&mut self) {

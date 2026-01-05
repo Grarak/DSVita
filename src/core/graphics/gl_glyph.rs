@@ -1,4 +1,4 @@
-use crate::core::graphics::gl_utils::{create_program, create_shader, shader_source};
+use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
 use gl::types::GLuint;
 use glyph_brush::ab_glyph::FontRef;
 use glyph_brush::{BrushAction, BrushError, Extra, GlyphBrush, GlyphBrushBuilder, Section, Text};
@@ -13,7 +13,7 @@ pub struct GlGlyph {
 }
 
 impl GlGlyph {
-    pub fn new() -> Self {
+    pub fn new(gpu_programs: &GpuShadersPrograms) -> Self {
         let font = FontRef::try_from_slice(include_bytes!("../../../font/OpenSans-Regular.ttf")).unwrap();
         let glyph_brush = GlyphBrushBuilder::using_font(font).multithread(false).build();
         let (width, height) = glyph_brush.texture_dimensions();
@@ -41,30 +41,22 @@ impl GlGlyph {
             tex
         };
 
-        let text_program = unsafe {
-            let vert_shader = create_shader("text", shader_source!("text_vert"), gl::VERTEX_SHADER).unwrap();
-            let frag_shader = create_shader("text", shader_source!("text_frag"), gl::FRAGMENT_SHADER).unwrap();
-            let program = create_program(&[vert_shader, frag_shader]).unwrap();
-            gl::DeleteShader(vert_shader);
-            gl::DeleteShader(frag_shader);
+        unsafe {
+            gl::UseProgram(gpu_programs.text);
 
-            gl::UseProgram(program);
+            gl::BindAttribLocation(gpu_programs.text, 0, c"position".as_ptr() as _);
 
-            gl::BindAttribLocation(program, 0, "position\0".as_ptr() as _);
-
-            gl::Uniform1i(gl::GetUniformLocation(program, "tex\0".as_ptr() as _), 0);
+            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.text, c"tex".as_ptr() as _), 0);
 
             gl::UseProgram(0);
-
-            program
-        };
+        }
 
         GlGlyph {
             glyph_brush,
             glyph_tex,
             glyph_vertices: Vec::new(),
             glyph_indices: Vec::new(),
-            text_program,
+            text_program: gpu_programs.text,
         }
     }
 

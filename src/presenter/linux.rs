@@ -5,7 +5,7 @@ use crate::logging::debug_panic;
 use crate::presenter::imgui::root::{
     ImDrawData, ImGui, ImGuiConfigFlags__ImGuiConfigFlags_NavEnableKeyboard, ImGui_ImplSdlGL3_Init, ImGui_ImplSdlGL3_NewFrame, ImGui_ImplSdlGL3_ProcessEvent, ImGui_ImplSdlGL3_RenderDrawData,
 };
-use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, UiBackend, UiPauseMenuReturn};
+use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, show_progress, UiBackend, UiPauseMenuReturn};
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::settings::{Arm7Emu, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
@@ -178,6 +178,10 @@ impl Presenter {
 
     pub fn present_pause(&mut self, gpu_renderer: &GpuRenderer, settings: &mut Settings) -> UiPauseMenuReturn {
         show_pause_menu(self, gpu_renderer, settings)
+    }
+
+    pub fn present_progress(&mut self, current_name: impl AsRef<str>, progress: usize, total: usize) {
+        show_progress(self, current_name, progress, total)
     }
 
     pub fn poll_event(&mut self, _: &Settings) -> PresentEvent {

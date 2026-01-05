@@ -414,7 +414,7 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
             ) {
                 let text = c"Exit the game? Unsaved progress will be lost.";
                 let text_width = ImGui::CalcTextSize(text.as_ptr(), ptr::null(), false, 0.0).x;
-                ImGui::Text(c"Exit the game? Unsaved progress will be lost.".as_ptr());
+                ImGui::Text(text.as_ptr());
                 let vec = ImVec2 { x: text_width / 2.0, y: 50.0 };
                 if ImGui::Button(c"No".as_ptr(), &vec) {
                     pressed_quit = false;
@@ -435,7 +435,10 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                     let vec = ImVec2 { x: 0.0, y: 0.0 };
                     let vec2 = ImVec2 { x: 0.0, y: 0.0 };
                     ImGui::SetNextWindowPos(&vec, ImGuiCond__ImGuiSetCond_Always as _, &vec2);
-                    let vec = ImVec2 { x: 960.0, y: 544.0 };
+                    let vec = ImVec2 {
+                        x: PRESENTER_SCREEN_WIDTH as f32,
+                        y: PRESENTER_SCREEN_HEIGHT as f32,
+                    };
                     ImGui::SetNextWindowSize(&vec, ImGuiCond__ImGuiSetCond_Always as _);
                     if ImGui::Begin(
                         c"##details".as_ptr() as _,
@@ -471,5 +474,40 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                 return return_value;
             }
         }
+    }
+}
+
+pub fn show_progress(ui_backend: &mut impl UiBackend, current_name: impl AsRef<str>, progress: usize, total: usize) {
+    unsafe {
+        gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
+        gl::ClearColor(0f32, 0f32, 0f32, 1f32);
+        gl::Clear(gl::COLOR_BUFFER_BIT);
+
+        ui_backend.new_frame();
+
+        if ImGui::BeginPopupModal(
+            c"ProgressPopup".as_ptr(),
+            ptr::null_mut(),
+            (ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar
+                | ImGuiWindowFlags__ImGuiWindowFlags_NoResize
+                | ImGuiWindowFlags__ImGuiWindowFlags_NoMove
+                | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse
+                | ImGuiWindowFlags__ImGuiWindowFlags_AlwaysAutoResize) as _,
+        ) {
+            let text = CString::from_str(current_name.as_ref()).unwrap();
+            ImGui::Text(text.as_ptr());
+            let vec = ImVec2 { x: 400.0, y: 45.0 };
+            ImGui::ProgressBar(progress as f32 / total as f32, &vec, ptr::null());
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::OpenPopup(c"ProgressPopup".as_ptr());
+
+        ImGui::Render();
+
+        ui_backend.render_draw_data(ImGui::GetDrawData());
+        ui_backend.swap_window();
     }
 }

@@ -16,8 +16,10 @@
 
 use crate::core::cycle_manager::EventType;
 use crate::core::emu::Emu;
+use crate::core::graphics::gl_utils::create_shader;
 use crate::core::graphics::gpu::{Gpu, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_renderer::GpuRenderer;
+use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
 use crate::core::memory::regions;
 use crate::core::spi::MicSampler;
 use crate::core::spu::{SoundSampler, SAMPLE_BUFFER_SIZE};
@@ -420,7 +422,20 @@ pub fn actual_main() {
         presenter.on_game_launched();
 
         if gpu_renderer.is_none() {
-            gpu_renderer = Some(GpuRenderer::new());
+            let mut counter = 0;
+            gpu_renderer = Some(GpuRenderer::new(&GpuShadersPrograms::new(|name, src, shader_type| unsafe {
+                let name = format!(
+                    "Compiling {name} {}shader",
+                    match shader_type {
+                        gl::VERTEX_SHADER => "vertex ",
+                        gl::FRAGMENT_SHADER => "fragment ",
+                        _ => "",
+                    }
+                );
+                presenter.present_progress(&name, counter, GpuShadersPrograms::count());
+                counter += 1;
+                create_shader(name, src, shader_type).unwrap()
+            })));
             emu_unsafe.get_mut().gpu.set_gpu_renderer(NonNull::from(gpu_renderer.as_mut().unwrap()));
         }
         emu_unsafe.get_mut().gpu.renderer.init();

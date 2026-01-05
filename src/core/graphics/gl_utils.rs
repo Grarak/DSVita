@@ -5,13 +5,23 @@ use std::ptr;
 
 macro_rules! shader_source {
     ($name:expr) => {{
+        #[cfg(target_os = "linux")]
+        {
+            include_str!(concat!("shaders/glsl/", $name, ".glsl"))
+        }
         #[cfg(target_os = "vita")]
         {
             include_str!(concat!("shaders/cg/", $name, ".cg"))
         }
+    }};
+    ($path:expr, $name:expr) => {{
         #[cfg(target_os = "linux")]
         {
-            include_str!(concat!("shaders/glsl/", $name, ".glsl"))
+            include_str!(concat!($path, "/glsl/", $name, ".glsl"))
+        }
+        #[cfg(target_os = "vita")]
+        {
+            include_str!(concat!($path, "/cg/", $name, ".cg"))
         }
     }};
 }

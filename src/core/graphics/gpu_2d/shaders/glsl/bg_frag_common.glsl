@@ -10,6 +10,7 @@ in vec2 affineDims;
 
 uniform int dispCnt;
 uniform int bgCnt;
+uniform float bgTexHeight;
 
 uniform BgUbo {
     int bgOfs[192 * 4];
@@ -29,7 +30,7 @@ uniform sampler2D display3dTex;
 
 int readBg8(int addr) {
     float x = float((addr >> 2) & 0x1FF) / 511.0;
-    float y = float(addr >> 11) / (BG_TEX_HEIGHT - 1.0);
+    float y = float(addr >> 11) / bgTexHeight;
     return int(texture(bgTex, vec2(x, y))[addr & 3] * 255.0);
 }
 
@@ -37,7 +38,7 @@ int readBg16Aligned(int addr) {
     int addrX = (addr >> 2) & 0x1FF;
     int addrY = addr >> 11;
     float x = float(addrX) / 511.0;
-    float y = float(addrY) / (BG_TEX_HEIGHT - 1.0);
+    float y = float(addrY) / bgTexHeight;
     vec4 value = texture(bgTex, vec2(x, y));
     int entry = addr & 2;
     return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
