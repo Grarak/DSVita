@@ -129,20 +129,26 @@ float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short
     return float4(normRgb5(palColor).rgb, 1.0);
 }
 
-float4 drawBitmap(short objX, short objY, ObjAttr attr) {
+float4 drawBitmap(short objX, short objY, ObjAttr attr, unsigned short attrib2) {
     int bitmapWidth = attr.mapWidth;
     int dataBase = attr.objBound;
+
+    unsigned char alpha = (attrib2 >> 12) & 0xF;
+    if (alpha == 0) {
+        discard;
+    }
+    float alphaF = float(alpha) / 15.0;
 
     short objColor = readObj16Aligned(dataBase + (objY * bitmapWidth + objX) * 2);
     if (((objColor >> 15) & 1) == 0) {
         discard;
     }
-    return float4(normRgb5(objColor), 1.0);
+    return float4(normRgb5(objColor), alphaF);
 }
 
 void main(out float4 color : COLOR) {
-    unsigned int attrib0 = readAttrib0();
-    unsigned int attrib2 = readAttrib2();
+    unsigned short attrib0 = readAttrib0();
+    unsigned short attrib2 = readAttrib2();
     if (!OBJ_WINDOW) {
         unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
         if (((winEnabled >> 4) & 1) == 0) {
@@ -165,7 +171,7 @@ void main(out float4 color : COLOR) {
     short gfxMode = (attrib0 >> 10) & 3;
     bool isBitmap = gfxMode == 3;
     if (isBitmap) {
-        color = drawBitmap(objX, objY, attr);
+        color = drawBitmap(objX, objY, attr, attrib2);
     } else {
         color = drawSprite(objX, objY, attrib0, attrib2, attr);
         bool semiTransparent = gfxMode == 1;

@@ -387,7 +387,7 @@ pub struct Gpu3DBuffer {
 }
 
 impl Gpu3DBuffer {
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.vertices_count = 0;
         self.polygons_count = 0;
         self.clip_matrices.clear();
@@ -440,8 +440,12 @@ impl Gpu3DBuffers {
 
     fn push_back(&mut self, buffer: &mut HeapMem<Gpu3DBuffer>) {
         if self.state.has_front() {
+            if self.state.has_back() {
+                mem::swap(&mut self.front, &mut self.back);
+            } else {
+                self.state.set_has_back(true);
+            }
             mem::swap(&mut self.back, buffer);
-            self.state.set_has_back(true);
             self.state.set_back_set_pow_cnt1(true);
         } else {
             self.push_front(buffer);
@@ -1419,7 +1423,7 @@ impl Gpu3DRegisters {
 
     pub fn swap_buffers(&mut self) {
         self.flushed = false;
-        if !self.out_buffers.state.has_back() && !self.skip {
+        if !self.skip {
             self.out_buffers.push_back(&mut self.buffer);
         }
         self.skip = self.out_buffers.is_full();
@@ -1449,7 +1453,8 @@ impl Gpu3DRegisters {
     }
 
     fn add_vertex(&mut self) {
-        if self.buffer.vertices_count >= VERTEX_LIMIT as u16 {
+        let vertices_count = self.buffer.vertices_count as usize;
+        if vertices_count >= VERTEX_LIMIT {
             return;
         }
 
@@ -1465,7 +1470,6 @@ impl Gpu3DRegisters {
         }
         self.cur_vtx.tex_matrix_index = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1);
 
-        let vertices_count = self.buffer.vertices_count as usize;
         self.buffer.vertices[vertices_count] = self.cur_vtx;
         self.buffer.vertices[vertices_count].clip_matrix_index = self.buffer.clip_matrices.len() as u16 - 1;
         self.buffer.vertices_count += 1;
@@ -1488,17 +1492,19 @@ impl Gpu3DRegisters {
     }
 
     fn add_polygon(&mut self) {
-        if self.buffer.polygons_count as usize >= POLYGON_LIMIT {
+        let polygon_count = self.buffer.polygons_count;
+        if polygon_count as usize >= POLYGON_LIMIT {
             return;
         }
 
         let size = self.vertex_list_primitive_type.vertex_count();
 
-        let polygons_count = self.buffer.polygons_count as usize;
-        self.buffer.polygons[polygons_count] = self.cur_polygon;
-        self.buffer.polygons[polygons_count].polygon_type = self.vertex_list_primitive_type;
         let vertices_count = self.buffer.vertices_count;
-        self.buffer.polygons[polygons_count].vertices_index = vertices_count - size as u16;
+
+        let polygon = &mut self.buffer.polygons[polygon_count as usize];
+        *polygon = self.cur_polygon;
+        polygon.polygon_type = self.vertex_list_primitive_type;
+        polygon.vertices_index = vertices_count - size as u16;
 
         self.buffer.polygons_count += 1;
     }

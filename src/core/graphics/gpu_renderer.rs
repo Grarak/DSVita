@@ -492,9 +492,6 @@ impl GpuRenderer {
                     gl::BindTexture(gl::TEXTURE_2D, self.capture_fbo.color);
                     let fbo: &[u16; DISPLAY_WIDTH * DISPLAY_HEIGHT] = mem::transmute(Presenter::gl_get_tex_ptr());
                     let read_pixels_ptr: &mut [u16; DISPLAY_WIDTH * DISPLAY_HEIGHT] = mem::transmute(read_pixels_ptr);
-                    let (width, height) = disp_cap_cnt.size();
-                    let width = width as usize;
-                    let height = height as usize;
                     if u8::from(disp_cap_cnt.capture_size()) == 0 {
                         for i in 0..height {
                             let capture_mem = &mut read_pixels_ptr[i * width..i * width + width];
@@ -530,7 +527,7 @@ impl GpuRenderer {
         }
 
         if self.rendering_3d {
-            self.renderer_3d.process_polygons(&self.common);
+            unsafe { self.renderer_3d.process_polygons(&self.common) };
         }
 
         {

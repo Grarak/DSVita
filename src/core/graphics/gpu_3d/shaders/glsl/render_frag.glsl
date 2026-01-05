@@ -3,6 +3,8 @@
 precision highp int;
 precision highp float;
 
+uniform bool translucentOnly;
+
 uniform sampler2D tex;
 uniform sampler2D palTex;
 uniform sampler2D attrTex;
@@ -112,15 +114,8 @@ vec4 aXiXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int aBits) {
 
 vec4 directTex(int addrOffset, int s, int t, int sizeS) {
     int addr = addrOffset + (t * sizeS + s) * 2;
-    int tex = readTex16Aligned(addr);
-    if (tex == 0) {
-        discard;
-    }
-    if ((tex >> 15) == 0) {
-        discard;
-    }
-
-    return vec4(normRgb5(tex), 1.0);
+    int color = readTex16Aligned(addr);
+    return vec4(normRgb5(color), (color >> 15) == 0 ? 0.0 : 1.0);
 }
 
 vec4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format, bool transparent0) {
@@ -180,14 +175,14 @@ void main() {
     }
 
     int polyAttr = int(palPolyAttribValue[2]) | (int(palPolyAttribValue[3]) << 8);
-    float alpha = float(polyAttr & 31) / 31.0;
+    float alphaF = float(polyAttr & 31) / 31.0;
 
     int texFmt = (texImageParam >> 10) & 0x7;
     vec4 texColor;
     switch (texFmt) {
         case 0: {
-            color = vec4(oColor, alpha);
-            return;
+            color = vec4(oColor, alphaF);
+            break;
         }
         case 1: {
             texColor = aXiXTex(palAddr, addrOffset, int(s), int(t), sizeS, 3);
@@ -212,16 +207,31 @@ void main() {
         }
     }
 
-    int mode = (polyAttr >> 5) & 0x3;
-    switch (mode) {
-        case 0: {
-            color = texColor * vec4(oColor.rgb, alpha);
-            break;
+    if (texFmt != 0) {
+        int mode = (polyAttr >> 5) & 0x3;
+        switch (mode) {
+            case 0: {
+                color = texColor * vec4(oColor.rgb, alphaF);
+                break;
+            }
+            default: {
+                color = texColor;
+                color.a *= alphaF;
+                break;
+            }
         }
-        default: {
-            color = texColor;
-            color.a *= alpha;
-            break;
+    }
+
+    if (translucentOnly) {
+        if (color.a == 1.0) {
+            discard;
+        }
+    } else if (color.a != 1.0) {
+        bool transNewDepth = ((polyAttr >> 7) & 1) != 0;
+        if (transNewDepth) {
+            color.a = 0.0;
+        } else {
+            discard;
         }
     }
 }

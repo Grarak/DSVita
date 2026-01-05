@@ -137,15 +137,21 @@ vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, ObjAttr attr) {
     return vec4(normRgb5(palColor), 1.0);
 }
 
-vec4 drawBitmap(int objX, int objY, ObjAttr attr) {
+vec4 drawBitmap(int objX, int objY, ObjAttr attr, int attrib2) {
     int bitmapWidth = attr.mapWidth;
     int dataBase = attr.objBounds;
+
+    int alpha = (attrib2 >> 12) & 0xF;
+    if (alpha == 0) {
+        discard;
+    }
+    float alphaF = float(alpha) / 15.0;
 
     int objColor = readObj16Aligned(dataBase + (objY * bitmapWidth + objX) * 2);
     if (((objColor >> 15) & 1) == 0) {
         discard;
     }
-    return vec4(normRgb5(objColor), 1.0);
+    return vec4(normRgb5(objColor), alphaF);
 }
 
 void main() {
@@ -174,7 +180,7 @@ void main() {
     int gfxMode = (attrib0 >> 10) & 3;
     bool isBitmap = gfxMode == 3;
     if (isBitmap) {
-        color = drawBitmap(objX, objY, attr);
+        color = drawBitmap(objX, objY, attr, attrib2);
     } else {
         color = drawSprite(objX, objY, attrib0, attrib2, attr);
         bool semiTransparent = gfxMode == 1;

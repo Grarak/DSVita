@@ -240,7 +240,7 @@ impl Emu {
                 }
 
                 let vram = self.vram_get_mem_mut();
-                if self.gpu.disp_cap_cnt.capture_enabled() {
+                if self.gpu.disp_cap_cnt.capture_enabled() && u8::from(self.gpu.disp_cap_cnt.capture_source()) != 1 {
                     let bank_num = u8::from(self.gpu.disp_cap_cnt.vram_write_block());
                     let (vram_offset, _) = VramBanks::get(bank_num);
                     let bank = unsafe { mem::transmute(vram.as_mut_ptr().add(vram_offset)) };
