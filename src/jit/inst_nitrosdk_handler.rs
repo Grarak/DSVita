@@ -474,7 +474,7 @@ const FUNCTIONS_ARM9: &[Function] = &[
     Function::new(&MI_COPY64B, "MI_COPY64B", hle_mi_copy64b::<{ ARM9 }>),
     Function::new(&CP_RESTORE_CONTEXT, "CP_RESTORE_CONTEXT", hle_cp_restore_context),
     Function::new(&CP_SAVE_CONTEXT, "CP_SAVE_CONTEXT", hle_cp_save_context),
-    Function::new(&MI_CPU_CLEARFAST, "MI_CPU_CLEARFAST", hle_mi_cpu_clearfast::<{ ARM9 }>),
+    // Function::new(&MI_CPU_CLEARFAST, "MI_CPU_CLEARFAST", hle_mi_cpu_clearfast::<{ ARM9 }>),
     Function::new(&MI_CPU_FILL8, "MI_CPU_FILL8", hle_mi_cpu_fill8::<{ ARM9 }>),
     Function::new(&GX_FIFO_NOP_CLEAR128, "GX_FIFO_NOP_CLEAR128", hle_gx_fifo_nop_clear128),
 ];
@@ -486,7 +486,7 @@ const FUNCTIONS_ARM7: &[Function] = &[
     Function::new(&MI_CPU_SEND32, "MI_CPU_SEND32", hle_mi_cpu_send32::<{ ARM7 }>),
     Function::new(&MI_CPU_COPY16, "MI_CPU_COPY16", hle_mi_cpu_copy16::<{ ARM7 }>),
     Function::new(&MI_COPY64B, "MI_COPY64B", hle_mi_copy64b::<{ ARM7 }>),
-    Function::new(&MI_CPU_CLEARFAST, "MI_CPU_CLEARFAST", hle_mi_cpu_clearfast::<{ ARM7 }>),
+    // Function::new(&MI_CPU_CLEARFAST, "MI_CPU_CLEARFAST", hle_mi_cpu_clearfast::<{ ARM7 }>),
     Function::new(&MI_CPU_FILL8, "MI_CPU_FILL8", hle_mi_cpu_fill8::<{ ARM7 }>),
 ];
 
