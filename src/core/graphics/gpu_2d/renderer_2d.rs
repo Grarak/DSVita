@@ -544,7 +544,8 @@ impl Gpu2DProgram {
                 }
             }
             BgMode::Large => {
-                todo!()
+                // todo!()
+                return;
             }
             BgMode::Display3d => &self.bg_display_3d_program,
         };

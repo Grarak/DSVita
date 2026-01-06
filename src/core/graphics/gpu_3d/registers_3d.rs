@@ -1421,12 +1421,16 @@ impl Gpu3DRegisters {
         self.test_queue -= 1;
     }
 
-    pub fn swap_buffers(&mut self) {
+    pub fn swap_buffers(&mut self, skip_when_full: bool) {
         self.flushed = false;
         if !self.skip {
-            self.out_buffers.push_back(&mut self.buffer);
+            if !skip_when_full {
+                self.out_buffers.push_front(&mut self.buffer);
+            } else {
+                self.out_buffers.push_back(&mut self.buffer);
+            }
         }
-        self.skip = self.out_buffers.is_full();
+        self.skip = skip_when_full && self.out_buffers.is_full();
         self.buffer.reset();
         self.vertex_list_size = 0;
         self.dirty_flags.set_clip_push(true);

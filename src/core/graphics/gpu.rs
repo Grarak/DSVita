@@ -226,7 +226,7 @@ impl Emu {
                     .on_scanline_finish(palettes, oam, self.gpu.pow_cnt1, self.gpu.disp_cap_cnt, &mut self.gpu.gpu_3d_regs, &mut self.breakout_imm);
 
                 if self.gpu.gpu_3d_regs.flushed {
-                    self.gpu.gpu_3d_regs.swap_buffers();
+                    self.gpu.gpu_3d_regs.swap_buffers(self.settings.geometry_3d_skip());
                     self.gpu.renderer.renderer_3d.invalidate();
                 }
 

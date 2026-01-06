@@ -166,7 +166,11 @@ lazy_static! {
                 Arm7Emu::iter().into(),
                 false,
             ),
-            Setting::new("Audio stretching", "Enable if a games doesn't run at fullspeed, introduces latency.", SettingValue::Bool(true), true),
+            Setting::new("Geometry 3D frameskip",
+                "Don't calculate new frames when old ones in queue haven't been consumed yet. Increases latency and might introduce\nglitches, however gives a performance boost. Disable when playing games that use 3D on both screens",
+                SettingValue::Bool(true),
+                true),
+            Setting::new("Audio stretching", "Enable if games doesn't run at fullspeed, introduces latency however prevents audio stutter.", SettingValue::Bool(true), true),
             Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", ScreenLayout::settings_value(), true),
             Setting::new("Swap screens", "Press PS + Cross to swap screens in game.", SettingValue::Bool(false), true),
             Setting::new("Top screen scale", "Press PS + Square to cycle screen sizes.", ScreenLayout::scale_settings_value(), true),
@@ -178,13 +182,14 @@ lazy_static! {
 }
 
 #[derive(Clone)]
-pub struct Settings([Setting; 10]);
+pub struct Settings([Setting; 11]);
 
 #[repr(u8)]
 enum SettingIndices {
     Framelimit = 0,
     Audio,
     Arm7Emu,
+    Geometry3DSkip,
     AudioStretching,
     ScreenLayout,
     SwapScreen,
@@ -222,6 +227,10 @@ impl Settings {
         unsafe { Arm7Emu::from(self.0[SettingIndices::Arm7Emu as usize].value.as_list().unwrap_unchecked().0 as u8) }
     }
 
+    pub fn geometry_3d_skip(&self) -> bool {
+        unsafe { self.0[SettingIndices::Geometry3DSkip as usize].value.as_bool().unwrap_unchecked() }
+    }
+
     pub fn audio_stretching(&self) -> bool {
         unsafe { self.0[SettingIndices::AudioStretching as usize].value.as_bool().unwrap_unchecked() }
     }
@@ -247,7 +256,7 @@ impl Settings {
         *self.0[SettingIndices::Arm7Emu as usize].value.as_list_mut().unwrap().0 = value as usize
     }
 
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 10] {
+    pub fn get_all_mut(&mut self) -> &mut [Setting; 11] {
         &mut self.0
     }
 }
