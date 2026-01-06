@@ -391,7 +391,6 @@ dependencies = [
  "backtrace",
  "bilge",
  "bindgen",
- "cc",
  "chrono",
  "clap",
  "dsvita_macros",
@@ -1299,7 +1298,6 @@ name = "vixl"
 version = "0.1.0"
 dependencies = [
  "bindgen",
- "cc",
  "regex",
  "vitabuild",
 ]

@@ -39,7 +39,6 @@ backtrace = "0.3.74"
 
 [build-dependencies]
 bindgen = "0.71.1"
-cc = { version = "1.2.18", features = ["parallel"] }
 vitabuild = { path = "vitabuild" }
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]
@@ -62,7 +61,7 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceShaccCg_stub",
     "ScePower_stub",
     "SceSysrootForKernel_stub",
-    "SceRazorCapture_stub",
+    #    "SceRazorCapture_stub",
 ] }
 vita_gl = { path = "vitaGL" }
 
