@@ -12,7 +12,6 @@ use crate::logging::debug_println;
 use crate::mmap::Shm;
 use crate::utils::Convert;
 use crate::{utils, DEBUG_LOG};
-use std::hint::unreachable_unchecked;
 use std::intrinsics::unlikely;
 use std::marker::PhantomData;
 use std::mem;
@@ -232,7 +231,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryIo<CPU, TCM, T> {
     }
 
     fn read_palettes(_: u32, _: &mut Emu) -> T {
-        unsafe { unreachable_unchecked() }
+        T::from(0)
     }
 
     fn read_vram(addr: u32, emu: &mut Emu) -> T {
@@ -272,9 +271,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryIo<CPU, TCM, T> {
         );
     }
 
-    fn write_palettes(_: u32, _: T, _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
+    fn write_palettes(_: u32, _: T, _: &mut Emu) {}
 
     fn write_vram(addr: u32, value: T, emu: &mut Emu) {
         write_vram!(addr, size_of::<T>(), emu, { emu.vram_write::<CPU, _>(addr, value) });
@@ -344,9 +341,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
         );
     }
 
-    fn read_palettes(_: u32, _: &mut [T], _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
+    fn read_palettes(_: u32, _: &mut [T], _: &mut Emu) {}
 
     fn read_vram(addr: u32, slice: &mut [T], emu: &mut Emu) {
         let read_shift = size_of::<T>() >> 1;
@@ -401,9 +396,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
         )
     }
 
-    fn write_palettes(_: u32, _: &[T], _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
+    fn write_palettes(_: u32, _: &[T], _: &mut Emu) {}
 
     fn write_vram(addr: u32, slice: &[T], emu: &mut Emu) {
         emu.vram_write_slice::<CPU, _>(addr, slice);
@@ -473,9 +466,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TC
         )
     }
 
-    fn read_palettes(_: u32, _: &mut [T], _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
+    fn read_palettes(_: u32, _: &mut [T], _: &mut Emu) {}
 
     fn read_vram(addr: u32, slice: &mut [T], emu: &mut Emu) {
         slice.fill(emu.vram_read::<CPU, _>(addr));
@@ -522,9 +513,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TC
         );
     }
 
-    fn write_palettes(_: u32, _: &[T], _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
+    fn write_palettes(_: u32, _: &[T], _: &mut Emu) {}
 
     fn write_vram(addr: u32, slice: &[T], emu: &mut Emu) {
         for i in 0..slice.len() {
@@ -589,9 +578,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleMemsetIo<CPU
         )
     }
 
-    fn write_palettes(_: u32, _: T, _: usize, _: &mut Emu) {
-        unsafe { unreachable_unchecked() }
-    }
+    fn write_palettes(_: u32, _: T, _: usize, _: &mut Emu) {}
 
     fn write_vram(addr: u32, value: T, size: usize, emu: &mut Emu) {
         let write_shift = size_of::<T>() >> 1;
