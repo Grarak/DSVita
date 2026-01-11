@@ -76,13 +76,17 @@ pub struct TexImageParam {
     pub size_s_shift: u3,
     pub size_t_shift: u3,
     pub format: u3,
-    color_0_transparent: bool,
+    pub color_0_transparent: bool,
     pub coord_trans_mode: u2,
 }
 
 impl TexImageParam {
     pub fn is_translucent(self) -> bool {
         u8::from(self.format()) == 1 || u8::from(self.format()) == 6
+    }
+
+    pub fn key(self) -> u32 {
+        self.value & if (2..=4).contains(&u8::from(self.format())) { 0x3FF0FFFF } else { 0x1FF0FFFF }
     }
 }
 

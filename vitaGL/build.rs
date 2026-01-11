@@ -44,15 +44,15 @@ fn main() {
         ("INDICES_SPEEDHACK", "1"),
     ];
 
-    if !is_debug() {
-        vita_gl_envs.push(("NO_DEBUG", "1"));
-    } else {
-        vita_gl_envs.push(("HAVE_SHARK_LOG", "1"));
-        vita_gl_envs.push(("LOG_ERRORS", "1"));
-        vita_gl_envs.push(("DEBUG_GC", "1"));
-    }
-    // vita_gl_envs.push(("HAVE_DEVKIT", "1"));
-    // vita_gl_envs.push(("HAVE_CPU_TRACER", "1"));
+    // if !is_debug() {
+    //     vita_gl_envs.push(("NO_DEBUG", "1"));
+    // } else {
+    vita_gl_envs.push(("HAVE_SHARK_LOG", "1"));
+    vita_gl_envs.push(("LOG_ERRORS", "1"));
+    vita_gl_envs.push(("DEBUG_GC", "1"));
+    // }
+    vita_gl_envs.push(("HAVE_DEVKIT", "1"));
+    vita_gl_envs.push(("HAVE_CPU_TRACER", "1"));
 
     let vita_gl_lib_path = vita_gl_path.join("libvitaGL.a");
     let vita_gl_lib_new_path = vita_gl_path.join("libvitaGL_dsvita.a");

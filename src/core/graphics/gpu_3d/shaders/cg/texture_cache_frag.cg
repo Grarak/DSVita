@@ -1,0 +1,138 @@
+uniform usampler2D tex : TEXUNIT0;
+uniform sampler2D palTex : TEXUNIT1;
+
+uniform int texFmt;
+uniform bool colorTransparent;
+uniform int vramAddr;
+uniform int palAddr;
+uniform int sizeS;
+
+unsigned short readTex8(int addr) {
+    short addrX = (addr >> 2) & 0x1FF;
+    short addrY = addr >> 11;
+    float x = float(addrX) / 511.0;
+    float y = float(addrY) / 255.0;
+    unsigned int values[4];
+    tex2D_gather4(tex, float2(x, y), values);
+    short shift = addr & 3;
+    return (values[0] >> (shift * 8)) & 0xFF;
+}
+
+unsigned short readTex16Aligned(int addr) {
+    short addrX = (addr >> 2) & 0x1FF;
+    short addrY = addr >> 11;
+    float x = float(addrX) / 511.0;
+    float y = float(addrY) / 255.0;
+    unsigned int values[4];
+    tex2D_gather4(tex, float2(x, y), values);
+    short shift = addr & 2;
+    return (values[0] >> (shift * 8)) & 0xFFFF;
+}
+
+float4 readPal(int index) {
+    short indexX = index & 0x1FF;
+    short indexY = index >> 9;
+    float x = float(indexX) / 511.0;
+    float y = float(indexY) / 95.0;
+    return tex2D(palTex, float2(x, y));
+}
+
+float3 normRgb5(unsigned short color) {
+    return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
+}
+
+static const float4 TexelMulLookup[16] = {
+    float4(1.0, 0.0, 0.0, 0.0), float4(0.0, 1.0, 0.0, 0.0), float4(0.0, 0.0, 1.0, 0.0), float4(-1.0, 0.0, 0.0, 0.0),
+    float4(1.0, 0.0, 0.0, 0.0), float4(0.0, 1.0, 0.0, 0.0), float4(0.5, 0.5, 0.0, 0.0), float4(-1.0, 0.0, 0.0, 0.0),
+    float4(1.0, 0.0, 0.0, 0.0), float4(0.0, 1.0, 0.0, 0.0), float4(0.0, 0.0, 1.0, 0.0), float4(0.0, 0.0, 0.0, 1.0),
+    float4(1.0, 0.0, 0.0, 0.0), float4(0.0, 1.0, 0.0, 0.0), float4(5.0 / 8.0, 3.0 / 8.0, 0.0, 0.0), float4(3.0 / 8.0, 5.0 / 8.0, 0.0, 0.0),
+};
+
+float4 compressed4x4Tex(short s, short t) {
+    short tile = (t / 4) * (sizeS / 4) + (s / 4);
+    int addr = vramAddr + (tile * 4 + (t & 0x3));
+
+    short palIndex = readTex8(addr);
+    palIndex = (palIndex >> ((s & 0x3) * 2)) & 0x3;
+
+    addr = 0x20000 + (vramAddr & 0x1FFFF) / 2;
+    if ((vramAddr >> 17) == 2) {
+        addr += 0x10000;
+    }
+    short palBase = readTex16Aligned(addr + tile * 2);
+    int palOffset = (palAddr << 3) + (palBase & 0x3FFF) * 2;
+
+    float4 color0 = readPal(palOffset);
+    float4 color1 = readPal(palOffset + 1);
+    float4 color2 = readPal(palOffset + 2);
+    float4 color3 = readPal(palOffset + 3);
+    float4x4 colors = float4x4(
+        float4(color0.rgb, 1.0),
+        float4(color1.rgb, 1.0),
+        float4(color2.rgb, 1.0),
+        float4(color3.rgb, 1.0)
+    );
+    short mode = (palBase >> 14) & 0x3;
+    short lookup = palIndex | (mode << 2);
+    float4 weights = TexelMulLookup[lookup];
+    if (weights.x < 0.0) {
+        discard;
+    }
+    return float4(mul(weights, colors).rgb, 1.0);
+}
+
+float4 aXiXTex(int s, int t, short aBits) {
+    int addr = vramAddr + t * sizeS + s;
+
+    short palIndex = readTex8(addr);
+    if (palIndex == 0) {
+        discard;
+    }
+
+    int palOffset = palAddr << 3;
+    short colorBits = 8 - aBits;
+    short colorMask = (1 << colorBits) - 1;
+    short aMask = (1 << aBits) - 1;
+    float aMax = float(aMask);
+    float4 color = readPal(palOffset + (palIndex & colorMask));
+    float alpha = float(short((palIndex >> colorBits) & aMask)) / aMax;
+    return float4(color.rgb, alpha);
+}
+
+float4 directTex(int s, int t) {
+    int addr = vramAddr + (t * sizeS + s) * 2;
+    short color = readTex16Aligned(addr);
+    return float4(normRgb5(color), (color >> 15) == 0 ? 0.0 : 1.0);
+}
+
+float4 palXTex(int s, int t, int format) {
+    int addr = vramAddr + ((t * sizeS + s) >> (2 - format));
+
+    short palIndex = readTex8(addr);
+    short mask1 = (4 >> format) - 1;
+    short mask2 = (4 << ((format * 3) & 6)) - 1;
+    palIndex = (palIndex >> ((s & mask1) * (2 << format))) & mask2;
+    if (colorTransparent && palIndex == 0) {
+        discard;
+    }
+
+    int palOffset = palAddr << (format == 0 ? 2 : 3);
+    float4 color = readPal(palOffset + palIndex);
+    return float4(color.rgb, 1.0);
+}
+
+void main(float2 wpos : WPOS, out float4 color : COLOR) {
+    short s = short(wpos.x);
+    short t = short(wpos.y);
+    if (texFmt == 1) {
+        color = aXiXTex(s, t, 3);
+    } else if (texFmt == 5) {
+        color = compressed4x4Tex(s, t);
+    } else if (texFmt == 6) {
+        color = aXiXTex(s, t, 5);
+    } else if (texFmt == 7) {
+        color = directTex(s, t);
+    } else {
+        color = palXTex(s, t, texFmt - 2);
+    }
+}

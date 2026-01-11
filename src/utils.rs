@@ -263,6 +263,50 @@ impl BuildHasher for BuildNoHasher {
 pub type NoHashMap<T, V> = HashMap<T, V, BuildNoHasher>;
 pub type NoHashSet<T> = HashSet<T, BuildNoHasher>;
 
+pub struct NoHasher64 {
+    state: u64,
+}
+
+impl Hasher for NoHasher64 {
+    fn finish(&self) -> u64 {
+        self.state as u64
+    }
+
+    fn write(&mut self, _: &[u8]) {
+        unreachable!()
+    }
+
+    fn write_u16(&mut self, i: u16) {
+        self.state = i as u64;
+    }
+
+    fn write_u32(&mut self, i: u32) {
+        self.state = i as u64;
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        self.state = i;
+    }
+
+    fn write_usize(&mut self, i: usize) {
+        self.state = i as u64;
+    }
+
+    fn write_i32(&mut self, i: i32) {
+        self.state = i as u64;
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct BuildNoHasher64;
+
+impl BuildHasher for BuildNoHasher64 {
+    type Hasher = NoHasher64;
+    fn build_hasher(&self) -> NoHasher64 {
+        NoHasher64 { state: 0 }
+    }
+}
+
 pub enum ThreadPriority {
     Low,
     Default,

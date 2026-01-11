@@ -40,8 +40,8 @@ pub enum SharkOpt {
 #[link(name = "SceShaccCgExt", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "mathneon", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "vitashark", kind = "static", modifiers = "+whole-archive")]
-// #[link(name = "SceRazorHud_stub", kind = "static", modifiers = "+whole-archive")]
-// #[link(name = "ScePerf_stub", kind = "static", modifiers = "+whole-archive")]
+#[link(name = "SceRazorHud_stub", kind = "static", modifiers = "+whole-archive")]
+#[link(name = "ScePerf_stub", kind = "static", modifiers = "+whole-archive")]
 extern "C" {
     // pub fn sceRazorCpuPushMarkerWithHud(label: *const c_char, color: c_int, flags: c_int) -> c_int;
     // pub fn sceRazorCpuPopMarker() -> c_int;
@@ -139,7 +139,7 @@ impl Presenter {
             vita_gl::vglSetupRuntimeShaderCompiler(SharkOpt::Fast as _, 1, 0, 1);
             info_println!("Initialize vitaGL");
             // Disable multisampling for depth texture
-            vita_gl::vglInitExtended(0, 960, 544, 65 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
+            vita_gl::vglInitExtended(0, 960, 544, 150 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
             gl::load_with(|name| {
                 let name = CString::new(name).unwrap();
                 vita_gl::vglGetProcAddress(name.as_ptr() as _) as _

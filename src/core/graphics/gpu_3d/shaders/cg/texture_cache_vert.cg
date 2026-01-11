@@ -1,0 +1,5 @@
+float4 out gl_Position : POSITION;
+
+void main(float2 position) {
+    gl_Position = float4(position, 0.0, 1.0);
+}

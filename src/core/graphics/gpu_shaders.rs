@@ -65,6 +65,7 @@ pub struct GpuShadersPrograms {
     pub blend: GLuint,
     pub vram_display: GLuint,
     pub render_3d: GLuint,
+    pub texture_cache_3d: GLuint,
     pub text: GLuint,
     pub capture: GLuint,
     pub merge: GLuint,
@@ -90,6 +91,11 @@ impl GpuShadersPrograms {
             shader_source!("gpu_2d/shaders", "vram_display_frag"),
         );
         let render_3d = create_program("render 3d", shader_source!("gpu_3d/shaders", "render_vert"), shader_source!("gpu_3d/shaders", "render_frag"));
+        let texture_cache_3d = create_program(
+            "texture cache 3d",
+            shader_source!("gpu_3d/shaders", "texture_cache_vert"),
+            shader_source!("gpu_3d/shaders", "texture_cache_frag"),
+        );
         let text = create_program("text", shader_source!("text_vert"), shader_source!("text_frag"));
         let capture = create_program("capture", shader_source!("capture_vert"), shader_source!("capture_frag"));
         let merge = create_program("merge", shader_source!("merge_vert"), shader_source!("merge_frag"));
@@ -101,6 +107,7 @@ impl GpuShadersPrograms {
             blend,
             vram_display,
             render_3d,
+            texture_cache_3d,
             text,
             capture,
             merge,
@@ -108,6 +115,6 @@ impl GpuShadersPrograms {
     }
 
     pub const fn count() -> usize {
-        16 + Gpu2DBgShaderPrograms::count()
+        18 + Gpu2DBgShaderPrograms::count()
     }
 }

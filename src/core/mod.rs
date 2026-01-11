@@ -110,12 +110,12 @@ impl<T> Index<CpuType> for [T; 2] {
     type Output = T;
 
     fn index(&self, index: CpuType) -> &Self::Output {
-        &self[index as usize]
+        unsafe { self.get_unchecked(index as usize) }
     }
 }
 
 impl<T> IndexMut<CpuType> for [T; 2] {
     fn index_mut(&mut self, index: CpuType) -> &mut Self::Output {
-        &mut self[index as usize]
+        unsafe { self.get_unchecked_mut(index as usize) }
     }
 }
