@@ -241,8 +241,6 @@ fn main() {
     let kubridge_path = PathBuf::from("kubridge");
 
     if is_profiling() {
-        println!("cargo:rustc-link-arg=-pg");
-        println!("cargo::rustc-env=CC=-pg");
         println!("cargo::rustc-cfg=profiling");
     }
 
@@ -314,19 +312,9 @@ fn main() {
     }
 
     if is_profiling() {
-        let gprof_out = out_path.join("vita-gprof");
-        Command::new("cmake")
-            .arg("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
-            .arg("-B")
-            .arg(&gprof_out)
-            .arg("-S")
-            .arg("vita-gprof")
-            .status()
-            .unwrap();
-        Command::new("cmake").arg("--build").arg(&gprof_out).status().unwrap();
-
-        println!("cargo:rerun-if-changed=vita-gprof");
-        println!("cargo:rustc-link-search=native={}", fs::canonicalize(gprof_out).unwrap().to_str().unwrap());
-        println!("cargo:rustc-link-lib=static=vitagprof");
+        let profilerino_file = Path::new("profilerino.c");
+        println!("cargo:rerun-if-changed={}", profilerino_file.to_str().unwrap());
+        let mut build = create_c_build();
+        build.remove_flag("-finstrument-functions").file(profilerino_file).compile("profilerino");
     }
 }

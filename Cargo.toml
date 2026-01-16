@@ -61,7 +61,8 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceShaccCg_stub",
     "ScePower_stub",
     "SceSysrootForKernel_stub",
-    #    "SceRazorCapture_stub",
+    "SceRazorCapture_stub",
+    "SceSysmodule_stub",
 ] }
 vita_gl = { path = "vitaGL" }
 
@@ -81,10 +82,12 @@ panic = "abort"
 lto = true
 opt-level = 3
 codegen-units = 2
+debug = true
 
 [profile.release-profiling]
 inherits = "release"
 panic = "abort"
 lto = true
 opt-level = 3
-debug = true
+codegen-units = 2
+#debug = true

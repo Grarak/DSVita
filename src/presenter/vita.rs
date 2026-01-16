@@ -40,11 +40,11 @@ pub enum SharkOpt {
 #[link(name = "SceShaccCgExt", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "mathneon", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "vitashark", kind = "static", modifiers = "+whole-archive")]
-// #[link(name = "SceRazorHud_stub", kind = "static", modifiers = "+whole-archive")]
-// #[link(name = "ScePerf_stub", kind = "static", modifiers = "+whole-archive")]
+#[link(name = "SceRazorHud_stub", kind = "static", modifiers = "+whole-archive")]
+#[link(name = "ScePerf_stub", kind = "static", modifiers = "+whole-archive")]
 extern "C" {
-    // pub fn sceRazorCpuPushMarkerWithHud(label: *const c_char, color: c_int, flags: c_int) -> c_int;
-    // pub fn sceRazorCpuPopMarker() -> c_int;
+    pub fn sceRazorCpuPushMarkerWithHud(label: *const c_char, color: u32, flags: c_int) -> c_int;
+    pub fn sceRazorCpuPopMarker() -> c_int;
 }
 
 const KEY_CODE_MAPPING: [(SceCtrlButtons, Keycode); 12] = [

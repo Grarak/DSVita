@@ -13,9 +13,6 @@
 [submodule "imgui"]
 	path = imgui
 	url = https://github.com/ocornut/imgui.git
-[submodule "vita-gprof"]
-	path = vita-gprof
-	url = https://github.com/Grarak/vita-gprof.git
 [submodule "math-neon"]
 	path = math-neon
 	url = https://github.com/Rinnegatamante/math-neon.git

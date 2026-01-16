@@ -312,24 +312,10 @@ pub fn set_thread_prio_affinity(thread_priority: ThreadPriority, thread_affinity
     }
 }
 
-#[cfg(profiling)]
-extern "C" {
-    pub fn gprof_start();
-    pub fn gprof_stop(filename: *const vitasdk_sys::c_char, should_dump: vitasdk_sys::c_int);
-}
-
 pub fn start_profiling() {
-    #[cfg(profiling)]
-    unsafe {
-        gprof_start();
-    }
 }
 
 pub fn stop_profiling() {
-    #[cfg(profiling)]
-    unsafe {
-        gprof_stop(c"ux0:/data/gprof_dsvita.out".as_ptr(), 1);
-    }
 }
 
 pub fn rgb5_to_rgb6(color: u32) -> u32 {

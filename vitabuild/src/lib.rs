@@ -45,7 +45,7 @@ pub fn get_common_c_flags() -> Vec<String> {
         }
     }
     if is_profiling() {
-        flags.push("-pg".to_string());
+        // flags.push("-finstrument-functions".to_string());
     }
     if let Some(vitasdk_path) = get_vitasdk_path() {
         if is_target_vita() || !is_host_linux() {

@@ -30,18 +30,21 @@ use crate::jit::jit_memory::JitMemory;
 use crate::logging::{debug_println, info_println};
 use crate::mmap::{register_abort_handler, ArmContext, Mmap, PAGE_SIZE};
 use crate::presenter::ui::UiPauseMenuReturn;
-use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE};
+use crate::presenter::{sceRazorCpuPopMarker, sceRazorCpuPushMarkerWithHud, PresentEvent, Presenter, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE};
 use crate::settings::Arm7Emu;
 use crate::utils::{const_str_equal, set_thread_prio_affinity, start_profiling, stop_profiling, HeapArray, HeapArrayU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
+use std::ffi::CString;
 use std::intrinsics::unlikely;
 use std::ptr::NonNull;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::Thread;
 use std::time::Duration;
 use std::{mem, slice, thread};
+use vitasdk_sys::{sceSysmoduleLoadModule, SCE_SYSMODULE_PERF};
 use CpuType::{ARM7, ARM9};
 
 mod bitset;
@@ -293,6 +296,8 @@ pub fn actual_main() {
     }
 
     info_println!("Starting DSVita");
+
+    unsafe { sceSysmoduleLoadModule(SCE_SYSMODULE_PERF) };
 
     if IS_DEBUG {
         std::env::set_var("RUST_BACKTRACE", "1");

@@ -18,11 +18,14 @@ use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::jit::Cond;
 use crate::logging::{branch_println, debug_println};
 use crate::mmap::PAGE_SHIFT;
+use crate::presenter::sceRazorCpuPushMarkerWithHud;
 use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
 use bilge::prelude::*;
 use static_assertions::const_assert_eq;
 use std::arch::{asm, naked_asm};
+use std::ffi::CString;
 use std::intrinsics::unlikely;
+use std::str::FromStr;
 use std::{mem, slice};
 use vixl::{BranchHint_kNear, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmB3, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
 use xxhash_rust::xxh32::xxh32;
@@ -393,6 +396,11 @@ unsafe extern "C" fn validate_guest_block_hash() {
 const_assert_eq!(size_of::<Vec<GuestInstOffset>>(), 12);
 const_assert_eq!(size_of::<GuestInstOffset>(), 40);
 
+const EMU_OFFSET: usize = mem::offset_of!(JitAsm, emu);
+const JIT_MEM_MMAP_OFFSET: usize = mem::offset_of!(Emu, jit.mem.ptr);
+const JIT_GUEST_INST_OFFSET: usize = mem::offset_of!(Emu, jit.guest_inst_offsets);
+const PRE_CYCLE_COUNT_SUM_OFFSET: usize = mem::offset_of!(JitAsm, runtime_data.pre_cycle_count_sum);
+
 #[unsafe(naked)]
 unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) {
     #[rustfmt::skip]
@@ -429,11 +437,11 @@ unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) 
         "ldr r11, [r11]",
         "bx lr",
         jit_asm_ptr = const CPU.jit_asm_addr(),
-        emu_offset = const mem::offset_of!(JitAsm, emu),
-        jit_mem_mmap_offset = const mem::offset_of!(Emu, jit.mem.ptr),
+        emu_offset = const EMU_OFFSET,
+        jit_mem_mmap_offset = const JIT_MEM_MMAP_OFFSET,
         page_shift = const PAGE_SHIFT,
-        jit_guest_inst_offset = const mem::offset_of!(Emu, jit.guest_inst_offsets),
-        pre_cycle_count_sum_offset = const mem::offset_of!(JitAsm, runtime_data.pre_cycle_count_sum),
+        jit_guest_inst_offset = const JIT_GUEST_INST_OFFSET,
+        pre_cycle_count_sum_offset = const PRE_CYCLE_COUNT_SUM_OFFSET,
         guest_regs_offset = const CPU.guest_regs_addr(),
         cpsr_offset = const Reg::CPSR as usize * 4,
     );
@@ -500,6 +508,10 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
             block_asm.call(map_fun_cpu!(asm.cpu, debug_enter_block));
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &Reg::R4.into());
         }
+
+        // block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
+        // block_asm.call(map_fun_cpu!(asm.cpu, push_marker));
+        // block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &Reg::R4.into());
 
         let mut default_pc_label = Label::new();
 
@@ -751,4 +763,10 @@ unsafe extern "C" fn debug_enter_block<const CPU: CpuType>(pc: u32) {
     if BRANCH_LOG {
         debug_inst_info::<CPU>((*asm).emu, pc, "enter block");
     }
+}
+
+unsafe extern "C" fn push_marker<const CPU: CpuType>(pc: u32) {
+    let str = format!("jit {} {pc:x}", CPU as u8);
+    let str = CString::from_str(&str).unwrap_unchecked();
+    sceRazorCpuPushMarkerWithHud(str.as_ptr(), 0x800000ff, 0);
 }
