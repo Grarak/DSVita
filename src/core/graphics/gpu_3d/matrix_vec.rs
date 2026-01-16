@@ -12,15 +12,23 @@ impl MatrixVec {
         MatrixVec(Vec::new())
     }
 
-    pub fn push(&mut self, mat: &Matrix) {
+    pub fn push_empty(&mut self) -> *mut Matrix {
         if unlikely(self.0.len() == self.0.capacity()) {
             self.0.reserve(1);
         }
         unsafe {
-            let ptr = self.0.as_mut_ptr().add(self.0.len());
-            vst1q_s32_x4(ptr as _, mem::transmute(mat.vld()));
             self.0.set_len(self.0.len() + 1);
+            self.0.as_mut_ptr().add(self.0.len() - 1)
         }
+    }
+
+    pub fn push(&mut self, mat: &Matrix) {
+        let last_ptr = self.push_empty();
+        unsafe { vst1q_s32_x4(last_ptr as _, mem::transmute(mat.vld())) };
+    }
+
+    pub fn last(&self) -> Option<&Matrix> {
+        self.0.last()
     }
 
     pub fn len(&self) -> usize {

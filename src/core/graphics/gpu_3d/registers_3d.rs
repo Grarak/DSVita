@@ -353,8 +353,7 @@ pub struct Polygon {
 struct DirtyFlags {
     clip_dirty: u2,
     tex_push: bool,
-    clip_push: bool,
-    unused: u4,
+    unused: u5,
 }
 
 impl DirtyFlags {
@@ -482,8 +481,6 @@ pub struct Gpu3DRegisters {
 
     cur_vtx: Vertex,
     cur_polygon: Polygon,
-
-    clip_matrix: Matrix,
 
     cur_polygon_attr: PolygonAttr,
 
@@ -758,7 +755,6 @@ impl Emu {
 impl Gpu3DRegisters {
     pub fn new() -> Self {
         let mut mtx_flags = DirtyFlags::from(0);
-        mtx_flags.set_clip_push(true);
         mtx_flags.set_tex_push(true);
         Gpu3DRegisters {
             dirty_flags: mtx_flags,
@@ -786,10 +782,14 @@ impl Gpu3DRegisters {
     pub fn get_clip_matrix(&mut self) -> &Matrix {
         if unlikely(self.dirty_flags.is_clip_dirty()) {
             self.dirty_flags.set_clip_dirty_bool(false);
-            self.dirty_flags.set_clip_push(true);
-            unsafe { vmult_mat4(self.matrices.coord.vld(), self.matrices.proj.vld(), &mut self.clip_matrix.0) };
+            let last_ptr = self.buffer.clip_matrices.push_empty();
+            unsafe {
+                vmult_mat4(self.matrices.coord.vld(), self.matrices.proj.vld(), mem::transmute(last_ptr));
+                mem::transmute(last_ptr)
+            }
+        } else {
+            unsafe { self.buffer.clip_matrices.last().unwrap_unchecked() }
         }
-        &self.clip_matrix
     }
 
     fn exe_mat_group(&mut self, cmd: usize, params: &[u32; 32]) {
@@ -1433,7 +1433,7 @@ impl Gpu3DRegisters {
         self.skip = skip_when_full && self.out_buffers.is_full();
         self.buffer.reset();
         self.vertex_list_size = 0;
-        self.dirty_flags.set_clip_push(true);
+        self.dirty_flags.set_clip_dirty_bool(true);
         self.dirty_flags.set_tex_push(true);
     }
 
@@ -1463,10 +1463,6 @@ impl Gpu3DRegisters {
         }
 
         self.get_clip_matrix();
-        if unlikely(self.dirty_flags.clip_push()) {
-            self.buffer.clip_matrices.push(&self.clip_matrix);
-            self.dirty_flags.set_clip_push(false);
-        }
 
         if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Vertex && unlikely(self.dirty_flags.tex_push()) {
             self.buffer.tex_matrices.push(&self.matrices.tex);
