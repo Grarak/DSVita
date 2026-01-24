@@ -7,12 +7,19 @@ uniform bool translucentOnly;
 
 uniform sampler2D tex;
 uniform sampler2D palTex;
-uniform sampler2D attrTex;
+
+struct PolygonAttr {
+    int texImageParam;
+    int palAddrAttrs;
+};
+
+uniform PolygonAttrsUbo {
+    PolygonAttr polygonAttrs[8192];
+};
 
 in vec3 oColor;
 in vec2 oTexCoords;
-in vec2 texImageParamAddr;
-in vec2 palPolyAttribAddr;
+flat in int oPolygonIndex;
 
 layout (location = 0) out vec4 color;
 
@@ -136,12 +143,12 @@ vec4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format, b
 }
 
 void main() {
-    vec4 texImageParamValue = texture(attrTex, texImageParamAddr) * 255.0;
-    vec4 palPolyAttribValue = texture(attrTex, palPolyAttribAddr) * 255.0;
+    PolygonAttr attr = polygonAttrs[oPolygonIndex];
 
-    int addrOffset = (int(texImageParamValue[0]) | (int(texImageParamValue[1]) << 8)) << 3;
-    int texImageParam = int(texImageParamValue[2]) | (int(texImageParamValue[3]) << 8);
-    int palAddr = int(palPolyAttribValue[0]) | (int(palPolyAttribValue[1]) << 8);
+    int addrOffset = (attr.texImageParam & 0xFFFF) << 3;
+    int texImageParam = attr.texImageParam >> 16;
+    int palAddr = attr.palAddrAttrs & 0xFFFF;
+    int polyAttr = attr.palAddrAttrs >> 16;
 
     int sizeS = 8 << ((texImageParam >> 4) & 0x7);
     int sizeT = 8 << ((texImageParam >> 7) & 0x7);
@@ -174,7 +181,6 @@ void main() {
         t = sizeT - 1;
     }
 
-    int polyAttr = int(palPolyAttribValue[2]) | (int(palPolyAttribValue[3]) << 8);
     float alphaF = float(polyAttr & 31) / 31.0;
 
     int texFmt = (texImageParam >> 10) & 0x7;

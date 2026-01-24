@@ -4,28 +4,18 @@ precision highp int;
 precision highp float;
 
 in vec4 position;
-in vec4 color;
-in vec2 texCoords;
+in vec3 texCoords;
+in vec4 viewport;
+in vec3 color;
 
 out vec3 oColor;
 out vec2 oTexCoords;
-out vec2 texImageParamAddr;
-out vec2 palPolyAttribAddr;
+flat out int oPolygonIndex;
 
 void main() {
-    oColor = color.rgb;
-    oTexCoords = texCoords;
-
-    int polygonIndex = int(color.a);
-    polygonIndex <<= 1;
-    float x = float(polygonIndex & 0x7F) / 127.0;
-    float y = float(polygonIndex >> 7) / 127.0;
-    texImageParamAddr = vec2(x, y);
-
-    polygonIndex += 1;
-    x = float(polygonIndex & 0x7F) / 127.0;
-    y = float(polygonIndex >> 7) / 127.0;
-    palPolyAttribAddr = vec2(x, y);
-
-    gl_Position = vec4(position.x / (64.0 * 256.0), position.y / (64.0 * 192.0), position.zw / 4096.0);
+    oColor = color.rgb / 31.0;
+    oTexCoords = texCoords.xy;
+    oPolygonIndex = int(texCoords[2]);
+    gl_Position = position;
+    gl_Position.xy = 255.0 / vec2(255.0, 191.0) * ((viewport.zw - viewport.xy) * (gl_Position.xy + gl_Position.w)) - gl_Position.w;
 }

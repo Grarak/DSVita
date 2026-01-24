@@ -424,7 +424,7 @@ pub fn actual_main() {
         if gpu_renderer.is_none() {
             let mut counter = 0;
             gpu_renderer = Some(GpuRenderer::new(&GpuShadersPrograms::new(|name, src, shader_type| unsafe {
-                let name = format!(
+                let progress_name = format!(
                     "Compiling {name} {}shader",
                     match shader_type {
                         gl::VERTEX_SHADER => "vertex ",
@@ -432,7 +432,7 @@ pub fn actual_main() {
                         _ => "",
                     }
                 );
-                presenter.present_progress(&name, counter, GpuShadersPrograms::count());
+                presenter.present_progress(&progress_name, counter, GpuShadersPrograms::count());
                 counter += 1;
                 create_shader(name, src, shader_type).unwrap()
             })));
