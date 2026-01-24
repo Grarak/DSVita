@@ -230,7 +230,6 @@ impl GpuRenderer {
             }
 
             self.ready_2d = false;
-            self.renderer_3d.on_render_start();
             self.renderer_vram_busy.store(true, Ordering::SeqCst);
             *rendering = true;
             self.rendering_condvar.notify_all();

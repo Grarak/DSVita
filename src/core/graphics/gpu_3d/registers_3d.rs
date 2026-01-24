@@ -6,7 +6,7 @@ use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
 use crate::fixed_fifo::FixedFifo;
 use crate::logging::debug_println;
-use crate::math::{vdot_vec3, vmult_mat4, vmult_vec3_mat3_no_store, Matrix, Vectori16, Vectori32, MTX_IDENTITY};
+use crate::math::{vdot_vec3, vmult_mat4, vmult_vec3_mat3_no_store, Matrix, Vectorf32, Vectori16, Vectori32, MTX_IDENTITY};
 use crate::utils;
 use crate::utils::HeapMem;
 use bilge::prelude::*;
@@ -77,7 +77,7 @@ pub struct TexImageParam {
     pub size_t_shift: u3,
     pub format: u3,
     color_0_transparent: bool,
-    pub coord_trans_mode: u2,
+    pub coord_trans_mode: TextureCoordTransMode,
 }
 
 impl TexImageParam {
@@ -153,7 +153,7 @@ pub struct PolygonAttr {
     pub alpha: u5,
     not_used2: u3,
     pub id: u6,
-    not_used3: u2,
+    pub primitive_type: PrimitiveType,
 }
 
 impl PolygonAttr {
@@ -252,8 +252,8 @@ impl From<u8> for TextureFormat {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-#[repr(u8)]
+#[bitsize(2)]
+#[derive(Copy, Clone, Debug, Default, Eq, FromBits, PartialEq)]
 pub enum TextureCoordTransMode {
     #[default]
     None = 0,
@@ -269,8 +269,8 @@ impl From<u8> for TextureCoordTransMode {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-#[repr(u8)]
+#[bitsize(2)]
+#[derive(Copy, Clone, Debug, Default, Eq, FromBits, PartialEq)]
 pub enum PrimitiveType {
     #[default]
     SeparateTriangles = 0,
@@ -327,15 +327,54 @@ struct Matrices {
     tex_stack: Matrix,
 }
 
+#[bitsize(32)]
+#[derive(Copy, Clone, Default, FromBits)]
+pub struct VertexData {
+    pub color: u15,
+    pub begin_vtxs: bool,
+    pub polygon_index: u14,
+    pub coord_trans_mode: TextureCoordTransMode,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union VertexCoords {
+    pub fixed: Vectori32<4>,
+    pub float: Vectorf32<4>,
+}
+
+impl Default for VertexCoords {
+    fn default() -> Self {
+        VertexCoords { fixed: Vectori32::default() }
+    }
+}
+
+#[derive(Copy, Clone, Default)]
+pub struct VertexIndices {
+    pub tex_coords: Vectori16<2>,
+    pub tex_matrix: u16,
+    pub clip_matrix: u16,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union VertexShared {
+    pub indices: VertexIndices,
+    pub trans_tex_coords: Vectorf32<2>,
+}
+
+impl Default for VertexShared {
+    fn default() -> Self {
+        VertexShared { indices: VertexIndices::default() }
+    }
+}
+
 #[derive(Copy, Clone, Default)]
 pub struct Vertex {
-    pub coords: Vectori32<4>,
+    pub coords: VertexCoords,
     pub normal: Vectori16<3>,
-    pub tex_coord_trans_mode: TextureCoordTransMode,
-    pub tex_coords: Vectori16<2>,
-    pub color: u16,
-    pub tex_matrix_index: u16,
-    pub clip_matrix_index: u16,
+    pub s: VertexShared,
+    pub data: VertexData,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -343,8 +382,6 @@ pub struct Polygon {
     pub attr: PolygonAttr,
     pub tex_image_param: TexImageParam,
     pub palette_addr: u16,
-    pub polygon_type: PrimitiveType,
-    pub vertices_index: u16,
     pub viewport: Viewport,
 }
 
@@ -353,7 +390,8 @@ pub struct Polygon {
 struct DirtyFlags {
     clip_dirty: u2,
     tex_push: bool,
-    unused: u5,
+    polygon_dirty: bool,
+    unused: u4,
 }
 
 impl DirtyFlags {
@@ -378,7 +416,7 @@ pub struct Gpu3DBuffer {
     pub vertices: [Vertex; VERTEX_LIMIT],
     pub vertices_count: u16,
     pub polygons: [Polygon; POLYGON_LIMIT],
-    pub polygons_count: u16,
+    polygons_count: u16,
     pub clip_matrices: MatrixVec,
     pub tex_matrices: MatrixVec,
     pub swap_buffers: SwapBuffers,
@@ -390,6 +428,10 @@ impl Gpu3DBuffer {
         self.vertices_count = 0;
         self.polygons_count = 0;
         self.clip_matrices.clear();
+    }
+
+    pub fn reset_all(&mut self) {
+        self.reset();
         self.tex_matrices.clear();
     }
 }
@@ -475,9 +517,6 @@ pub struct Gpu3DRegisters {
     matrices: Matrices,
 
     cur_viewport: Viewport,
-
-    vertex_list_primitive_type: PrimitiveType,
-    vertex_list_size: u16,
 
     cur_vtx: Vertex,
     cur_polygon: Polygon,
@@ -1150,7 +1189,7 @@ impl Gpu3DRegisters {
     }
 
     fn exe_color(&mut self, params: &[u32; 32]) {
-        self.cur_vtx.color = params[0] as u16;
+        self.cur_vtx.data.set_color(u15::new(params[0] as u16));
     }
 
     fn exe_normal(&mut self, params: &[u32; 32]) {
@@ -1159,25 +1198,29 @@ impl Gpu3DRegisters {
         self.cur_vtx.normal[1] = ((u16::from(normal_vector_param.y()) << 6) as i16) >> 3;
         self.cur_vtx.normal[2] = ((u16::from(normal_vector_param.z()) << 6) as i16) >> 3;
 
-        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Normal && self.dirty_flags.tex_push() {
-            self.buffer.tex_matrices.push(&self.matrices.tex);
-            self.dirty_flags.set_tex_push(false);
+        if self.cur_vtx.data.coord_trans_mode() == TextureCoordTransMode::Normal {
+            if self.dirty_flags.tex_push() {
+                self.buffer.tex_matrices.push(&self.matrices.tex);
+                self.dirty_flags.set_tex_push(false);
+            }
+            unsafe { self.cur_vtx.s.indices.tex_matrix = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1) };
         }
-        self.cur_vtx.tex_matrix_index = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1);
 
-        self.cur_vtx.color = u16::from(self.material_color1.em());
+        self.cur_vtx.data.set_color(self.material_color1.em());
 
         if u8::from(self.cur_polygon.attr.enable_lights()) == 0 {
             return;
         }
 
         unsafe {
+            let vtx_color = u16::from(self.cur_vtx.data.color());
+
             let normal_vector_vec = Vectori32::new([self.cur_vtx.normal[0] as i32, self.cur_vtx.normal[1] as i32, self.cur_vtx.normal[2] as i32, 0]);
             let normal_vector = vmult_vec3_mat3_no_store(normal_vector_vec.vld(), self.matrices.dir.vld());
 
-            let mut r = (self.cur_vtx.color & 0x1F) as i32;
-            let mut g = ((self.cur_vtx.color >> 5) & 0x1F) as i32;
-            let mut b = ((self.cur_vtx.color >> 10) & 0x1F) as i32;
+            let mut r = (vtx_color & 0x1F) as i32;
+            let mut g = ((vtx_color >> 5) & 0x1F) as i32;
+            let mut b = ((vtx_color >> 10) & 0x1F) as i32;
 
             let specular_color = u16::from(self.material_color1.spe());
             let sr = (specular_color & 0x1F) as i32;
@@ -1239,58 +1282,74 @@ impl Gpu3DRegisters {
                 b = b.min(31);
             }
 
-            self.cur_vtx.color = ((b as u16) << 10) | ((g as u16) << 5) | (r as u16);
+            self.cur_vtx.data.set_color(u15::new(((b as u16) << 10) | ((g as u16) << 5) | (r as u16)));
         }
     }
 
     fn exe_tex_coord(&mut self, params: &[u32; 32]) {
         let tex_coord = TexCoord::from(params[0]);
-        self.cur_vtx.tex_coords[0] = tex_coord.s() as i16;
-        self.cur_vtx.tex_coords[1] = tex_coord.t() as i16;
-
-        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::TexCoord && self.dirty_flags.tex_push() {
-            self.buffer.tex_matrices.push(&self.matrices.tex);
-            self.dirty_flags.set_tex_push(false);
+        unsafe {
+            self.cur_vtx.s.indices.tex_coords[0] = tex_coord.s() as i16;
+            self.cur_vtx.s.indices.tex_coords[1] = tex_coord.t() as i16;
         }
-        self.cur_vtx.tex_matrix_index = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1);
+
+        if self.cur_vtx.data.coord_trans_mode() == TextureCoordTransMode::TexCoord {
+            if self.dirty_flags.tex_push() {
+                self.buffer.tex_matrices.push(&self.matrices.tex);
+                self.dirty_flags.set_tex_push(false);
+            }
+            unsafe { self.cur_vtx.s.indices.tex_matrix = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1) };
+        }
     }
 
     fn exe_vtx16(&mut self, params: &[u32; 32]) {
-        self.cur_vtx.coords[0] = params[0] as i16 as i32;
-        self.cur_vtx.coords[1] = (params[0] >> 16) as i16 as i32;
-        self.cur_vtx.coords[2] = params[1] as i16 as i32;
+        unsafe {
+            self.cur_vtx.coords.fixed[0] = params[0] as i16 as i32;
+            self.cur_vtx.coords.fixed[1] = (params[0] >> 16) as i16 as i32;
+            self.cur_vtx.coords.fixed[2] = params[1] as i16 as i32;
+        }
         self.add_vertex();
     }
 
     fn exe_vtx10(&mut self, params: &[u32; 32]) {
-        self.cur_vtx.coords[0] = ((params[0] & 0x3FF) << 6) as i16 as i32;
-        self.cur_vtx.coords[1] = ((params[0] & 0xFFC00) >> 4) as i16 as i32;
-        self.cur_vtx.coords[2] = ((params[0] & 0x3FF00000) >> 14) as i16 as i32;
+        unsafe {
+            self.cur_vtx.coords.fixed[0] = ((params[0] & 0x3FF) << 6) as i16 as i32;
+            self.cur_vtx.coords.fixed[1] = ((params[0] & 0xFFC00) >> 4) as i16 as i32;
+            self.cur_vtx.coords.fixed[2] = ((params[0] & 0x3FF00000) >> 14) as i16 as i32;
+        }
         self.add_vertex();
     }
 
     fn exe_vtx_x_y(&mut self, params: &[u32; 32]) {
-        self.cur_vtx.coords[0] = params[0] as i16 as i32;
-        self.cur_vtx.coords[1] = (params[0] >> 16) as i16 as i32;
+        unsafe {
+            self.cur_vtx.coords.fixed[0] = params[0] as i16 as i32;
+            self.cur_vtx.coords.fixed[1] = (params[0] >> 16) as i16 as i32;
+        }
         self.add_vertex();
     }
 
     fn exe_vtx_x_z(&mut self, params: &[u32; 32]) {
-        self.cur_vtx.coords[0] = params[0] as i16 as i32;
-        self.cur_vtx.coords[2] = (params[0] >> 16) as i16 as i32;
+        unsafe {
+            self.cur_vtx.coords.fixed[0] = params[0] as i16 as i32;
+            self.cur_vtx.coords.fixed[2] = (params[0] >> 16) as i16 as i32;
+        }
         self.add_vertex();
     }
 
     fn exe_vtx_y_z(&mut self, params: &[u32; 32]) {
-        self.cur_vtx.coords[1] = params[0] as i16 as i32;
-        self.cur_vtx.coords[2] = (params[0] >> 16) as i16 as i32;
+        unsafe {
+            self.cur_vtx.coords.fixed[1] = params[0] as i16 as i32;
+            self.cur_vtx.coords.fixed[2] = (params[0] >> 16) as i16 as i32;
+        }
         self.add_vertex();
     }
 
     fn exe_vtx_diff(&mut self, params: &[u32; 32]) {
-        self.cur_vtx.coords[0] += (((params[0] & 0x3FF) << 6) as i16 as i32) >> 6;
-        self.cur_vtx.coords[1] += (((params[0] & 0xFFC00) >> 4) as i16 as i32) >> 6;
-        self.cur_vtx.coords[2] += (((params[0] & 0x3FF00000) >> 14) as i16 as i32) >> 6;
+        unsafe {
+            self.cur_vtx.coords.fixed[0] += (((params[0] & 0x3FF) << 6) as i16 as i32) >> 6;
+            self.cur_vtx.coords.fixed[1] += (((params[0] & 0xFFC00) >> 4) as i16 as i32) >> 6;
+            self.cur_vtx.coords.fixed[2] += (((params[0] & 0x3FF00000) >> 14) as i16 as i32) >> 6;
+        }
         self.add_vertex();
     }
 
@@ -1299,19 +1358,22 @@ impl Gpu3DRegisters {
     }
 
     fn exe_tex_image_param(&mut self, params: &[u32; 32]) {
-        self.cur_polygon.tex_image_param = TexImageParam::from(params[0]);
-        self.cur_vtx.tex_coord_trans_mode = TextureCoordTransMode::from(u8::from(self.cur_polygon.tex_image_param.coord_trans_mode()));
+        let tex_image_param = TexImageParam::from(params[0]);
+        self.cur_polygon.tex_image_param = tex_image_param;
+        self.cur_vtx.data.set_coord_trans_mode(tex_image_param.coord_trans_mode());
+        self.dirty_flags.set_polygon_dirty(true);
     }
 
     fn exe_pltt_base(&mut self, params: &[u32; 32]) {
         self.cur_polygon.palette_addr = (params[0] & 0x1FFF) as u16;
+        self.dirty_flags.set_polygon_dirty(true);
     }
 
     fn exe_dif_amb(&mut self, params: &[u32; 32]) {
         self.material_color0 = MaterialColor0::from(params[0]);
 
         if self.material_color0.set_vertex_color() {
-            self.cur_vtx.color = u16::from(self.material_color0.dif());
+            self.cur_vtx.data.set_color(self.material_color0.dif());
         }
     }
 
@@ -1359,14 +1421,12 @@ impl Gpu3DRegisters {
 
         debug_println!("execute exe_begin_vtxs {cmd:x}");
 
-        if self.vertex_list_size < self.vertex_list_primitive_type.vertex_count() as u16 {
-            self.buffer.vertices_count -= self.vertex_list_size;
-        }
-
-        self.vertex_list_primitive_type = PrimitiveType::from((params[0] & 0x3) as u8);
-        self.vertex_list_size = 0;
         self.cur_polygon.attr = self.cur_polygon_attr;
+        self.cur_polygon.attr.set_primitive_type(PrimitiveType::from((params[0] & 0x3) as u8));
         self.cur_polygon.viewport = self.cur_viewport;
+
+        self.cur_vtx.data.set_begin_vtxs(true);
+        self.dirty_flags.set_polygon_dirty(true);
     }
 
     fn exe_swap_buffers(&mut self, cmd: usize, params: &[u32; 32]) {
@@ -1378,6 +1438,7 @@ impl Gpu3DRegisters {
 
         self.flushed = true;
         self.buffer.swap_buffers = SwapBuffers::from(params[0] as u8);
+        self.cur_vtx.data.set_begin_vtxs(false);
     }
 
     fn exe_viewport(&mut self, cmd: usize, params: &[u32; 32]) {
@@ -1397,11 +1458,13 @@ impl Gpu3DRegisters {
     }
 
     fn exe_pos_test(&mut self, params: &[u32; 32]) {
-        self.cur_vtx.coords[0] = params[0] as i16 as i32;
-        self.cur_vtx.coords[1] = (params[0] >> 16) as i16 as i32;
-        self.cur_vtx.coords[2] = params[1] as i16 as i32;
-        self.cur_vtx.coords[3] = 1 << 12;
-        self.pos_result = self.cur_vtx.coords * self.get_clip_matrix();
+        unsafe {
+            self.cur_vtx.coords.fixed[0] = params[0] as i16 as i32;
+            self.cur_vtx.coords.fixed[1] = (params[0] >> 16) as i16 as i32;
+            self.cur_vtx.coords.fixed[2] = params[1] as i16 as i32;
+            self.cur_vtx.coords.fixed[3] = 1 << 12;
+            self.pos_result = self.cur_vtx.coords.fixed * self.get_clip_matrix();
+        }
 
         self.test_queue -= 1;
     }
@@ -1431,10 +1494,20 @@ impl Gpu3DRegisters {
             }
         }
         self.skip = skip_when_full && self.out_buffers.is_full();
+
         self.buffer.reset();
-        self.vertex_list_size = 0;
         self.dirty_flags.set_clip_dirty_bool(true);
-        self.dirty_flags.set_tex_push(true);
+        self.dirty_flags.set_polygon_dirty(true);
+
+        let tex_matrix_index = unsafe { self.cur_vtx.s.indices.tex_matrix };
+        if (tex_matrix_index as usize) < self.buffer.tex_matrices.len() {
+            let tex_matrix = self.buffer.tex_matrices[tex_matrix_index as usize].clone();
+            self.buffer.tex_matrices.clear();
+            self.buffer.tex_matrices.push(&tex_matrix);
+        } else {
+            self.buffer.tex_matrices.clear();
+        }
+        unsafe { self.cur_vtx.s.indices.tex_matrix = 0 };
     }
 
     pub fn on_first_scanline(&mut self, pow_cnt1: PowCnt1) {
@@ -1458,54 +1531,48 @@ impl Gpu3DRegisters {
 
     fn add_vertex(&mut self) {
         let vertices_count = self.buffer.vertices_count as usize;
-        if vertices_count >= VERTEX_LIMIT {
+        if unlikely(vertices_count == VERTEX_LIMIT) {
             return;
         }
 
         self.get_clip_matrix();
 
-        if self.cur_vtx.tex_coord_trans_mode == TextureCoordTransMode::Vertex && unlikely(self.dirty_flags.tex_push()) {
-            self.buffer.tex_matrices.push(&self.matrices.tex);
-            self.dirty_flags.set_tex_push(false);
-        }
-        self.cur_vtx.tex_matrix_index = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1);
-
-        self.buffer.vertices[vertices_count] = self.cur_vtx;
-        self.buffer.vertices[vertices_count].clip_matrix_index = self.buffer.clip_matrices.len() as u16 - 1;
-        self.buffer.vertices_count += 1;
-        self.vertex_list_size += 1;
-
-        if unlikely(match self.vertex_list_primitive_type {
-            PrimitiveType::SeparateTriangles => {
-                let complete = self.vertex_list_size == 3;
-                if complete {
-                    self.vertex_list_size = 0;
-                }
-                complete
+        if self.cur_vtx.data.coord_trans_mode() == TextureCoordTransMode::Vertex {
+            if unlikely(self.dirty_flags.tex_push()) {
+                self.buffer.tex_matrices.push(&self.matrices.tex);
+                self.dirty_flags.set_tex_push(false);
             }
-            PrimitiveType::SeparateQuadliterals => self.vertex_list_size % 4 == 0,
-            PrimitiveType::TriangleStrips => self.vertex_list_size >= 3,
-            PrimitiveType::QuadliteralStrips => self.vertex_list_size >= 4 && self.vertex_list_size % 2 == 0,
-        }) {
-            self.add_polygon();
-        }
-    }
-
-    fn add_polygon(&mut self) {
-        let polygon_count = self.buffer.polygons_count;
-        if polygon_count as usize >= POLYGON_LIMIT {
-            return;
+            unsafe { self.cur_vtx.s.indices.tex_matrix = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1) };
         }
 
-        let size = self.vertex_list_primitive_type.vertex_count();
+        if unlikely(self.dirty_flags.polygon_dirty()) {
+            self.dirty_flags.set_polygon_dirty(false);
+            let polygon_count = self.buffer.polygons_count;
+            if unlikely(polygon_count as usize == POLYGON_LIMIT) {
+                return;
+            }
 
-        let vertices_count = self.buffer.vertices_count;
+            let polygon = unsafe { self.buffer.polygons.get_unchecked_mut(polygon_count as usize) };
+            *polygon = self.cur_polygon;
 
-        let polygon = &mut self.buffer.polygons[polygon_count as usize];
-        *polygon = self.cur_polygon;
-        polygon.polygon_type = self.vertex_list_primitive_type;
-        polygon.vertices_index = vertices_count - size as u16;
+            self.buffer.polygons_count += 1;
+        }
 
-        self.buffer.polygons_count += 1;
+        let clip_matrix_index = self.buffer.clip_matrices.len() as u16 - 1;
+        let polygon_index = self.buffer.polygons_count - 1;
+
+        let vertex = unsafe { self.buffer.vertices.get_unchecked_mut(vertices_count) };
+        unsafe {
+            vertex.coords = self.cur_vtx.coords;
+            vertex.normal = self.cur_vtx.normal;
+            vertex.s.indices.tex_coords = self.cur_vtx.s.indices.tex_coords;
+            vertex.data = self.cur_vtx.data;
+            vertex.s.indices.clip_matrix = clip_matrix_index;
+            vertex.s.indices.tex_matrix = self.cur_vtx.s.indices.tex_matrix;
+        }
+        vertex.data.set_polygon_index(u14::new(polygon_index));
+        self.buffer.vertices_count += 1;
+
+        self.cur_vtx.data.set_begin_vtxs(false);
     }
 }
