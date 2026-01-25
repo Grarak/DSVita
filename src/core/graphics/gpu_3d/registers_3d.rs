@@ -48,7 +48,7 @@ impl Default for GxStat {
 }
 
 #[bitsize(32)]
-#[derive(Copy, Clone, FromBits)]
+#[derive(Copy, Clone, DebugBits, FromBits)]
 pub struct Viewport {
     pub x1: u8,
     pub y1: u8,
@@ -1563,7 +1563,10 @@ impl Gpu3DRegisters {
 
         let vertex = unsafe { self.buffer.vertices.get_unchecked_mut(vertices_count) };
         unsafe {
-            vertex.coords = self.cur_vtx.coords;
+            for i in 0..3 {
+                vertex.coords.fixed[i] = self.cur_vtx.coords.fixed[i];
+            }
+            vertex.coords.fixed[3] = 1 << 12;
             vertex.normal = self.cur_vtx.normal;
             vertex.s.indices.tex_coords = self.cur_vtx.s.indices.tex_coords;
             vertex.data = self.cur_vtx.data;
