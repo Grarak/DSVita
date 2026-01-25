@@ -1,5 +1,4 @@
 use crate::core::graphics::gpu::DispCapCnt;
-use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram::{Vram, VramBanks, VramCnt};
 use crate::core::memory::{regions, vram};
 use crate::utils::{self, HeapArrayU8, PtrWrapper};
@@ -55,7 +54,7 @@ impl GpuMemBuf {
         }
     }
 
-    pub fn read_palettes_oam(&mut self, palettes: &[u8; STANDARD_PALETTES_SIZE as usize], oam: &[u8; OAM_SIZE as usize]) {
+    pub fn read_palettes_oam(&mut self, palettes: &[u8; regions::STANDARD_PALETTES_SIZE as usize], oam: &[u8; regions::OAM_SIZE as usize]) {
         self.pal.copy_from_slice(palettes);
         self.oam.copy_from_slice(oam);
     }

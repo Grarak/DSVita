@@ -91,11 +91,15 @@ pub type HeapArrayI16<const SIZE: usize> = HeapArray<i16, SIZE>;
 pub type HeapArrayU32<const SIZE: usize> = HeapArray<u32, SIZE>;
 pub type HeapArrayUsize<const SIZE: usize> = HeapArray<usize, SIZE>;
 
-pub struct HeapArray<T, const SIZE: usize>(*mut T);
+pub struct HeapArray<T, const SIZE: usize, const ALIGNMENT: usize = 4>(*mut T);
 
-impl<T, const SIZE: usize> HeapArray<T, SIZE> {
+impl<T, const SIZE: usize, const ALIGNMENT: usize> HeapArray<T, SIZE, ALIGNMENT> {
+    unsafe fn layout() -> Layout {
+        Layout::array::<T>(SIZE).unwrap_unchecked().align_to(ALIGNMENT).unwrap_unchecked()
+    }
+
     unsafe fn uninitialized() -> Self {
-        HeapArray(std::alloc::alloc(Layout::array::<T>(SIZE).unwrap_unchecked()) as *mut T)
+        HeapArray(std::alloc::alloc(Self::layout()) as *mut T)
     }
 
     pub unsafe fn zeroed() -> Self
@@ -107,9 +111,13 @@ impl<T, const SIZE: usize> HeapArray<T, SIZE> {
         buf.fill(0);
         instance
     }
+
+    pub fn byte_size(&self) -> usize {
+        unsafe { Self::layout().size() }
+    }
 }
 
-impl<T: Default, const SIZE: usize> Default for HeapArray<T, SIZE> {
+impl<T: Default, const SIZE: usize, const ALIGNMENT: usize> Default for HeapArray<T, SIZE, ALIGNMENT> {
     fn default() -> Self {
         unsafe {
             let mut instance = Self::uninitialized();
@@ -119,13 +127,13 @@ impl<T: Default, const SIZE: usize> Default for HeapArray<T, SIZE> {
     }
 }
 
-impl<T, const SIZE: usize> Drop for HeapArray<T, SIZE> {
+impl<T, const SIZE: usize, const ALIGNMENT: usize> Drop for HeapArray<T, SIZE, ALIGNMENT> {
     fn drop(&mut self) {
-        unsafe { std::alloc::dealloc(self.0 as _, Layout::array::<T>(SIZE).unwrap_unchecked()) };
+        unsafe { std::alloc::dealloc(self.0 as _, Self::layout()) };
     }
 }
 
-impl<T, const SIZE: usize> Deref for HeapArray<T, SIZE> {
+impl<T, const SIZE: usize, const ALIGNMENT: usize> Deref for HeapArray<T, SIZE, ALIGNMENT> {
     type Target = [T; SIZE];
 
     fn deref(&self) -> &Self::Target {
@@ -133,13 +141,13 @@ impl<T, const SIZE: usize> Deref for HeapArray<T, SIZE> {
     }
 }
 
-impl<T, const SIZE: usize> DerefMut for HeapArray<T, SIZE> {
+impl<T, const SIZE: usize, const ALIGNMENT: usize> DerefMut for HeapArray<T, SIZE, ALIGNMENT> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { mem::transmute(self.0) }
     }
 }
 
-impl<T: Copy, const SIZE: usize> Clone for HeapArray<T, SIZE> {
+impl<T: Copy, const SIZE: usize, const ALIGNMENT: usize> Clone for HeapArray<T, SIZE, ALIGNMENT> {
     fn clone(&self) -> Self {
         let mut instance = unsafe { Self::uninitialized() };
         instance.copy_from_slice(self.deref());
@@ -147,7 +155,7 @@ impl<T: Copy, const SIZE: usize> Clone for HeapArray<T, SIZE> {
     }
 }
 
-impl<T: Debug, const SIZE: usize> Debug for HeapArray<T, SIZE> {
+impl<T: Debug, const SIZE: usize, const ALIGNMENT: usize> Debug for HeapArray<T, SIZE, ALIGNMENT> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut list = f.debug_map();
         for (i, v) in self.deref().iter().enumerate() {
@@ -157,8 +165,8 @@ impl<T: Debug, const SIZE: usize> Debug for HeapArray<T, SIZE> {
     }
 }
 
-unsafe impl<T: Sync, const SIZE: usize> Sync for HeapArray<T, SIZE> {}
-unsafe impl<T: Send, const SIZE: usize> Send for HeapArray<T, SIZE> {}
+unsafe impl<T: Sync, const SIZE: usize, const ALIGNMENT: usize> Sync for HeapArray<T, SIZE, ALIGNMENT> {}
+unsafe impl<T: Send, const SIZE: usize, const ALIGNMENT: usize> Send for HeapArray<T, SIZE, ALIGNMENT> {}
 
 pub struct HeapMem<T>(*mut T);
 
@@ -426,6 +434,10 @@ impl<T> PtrWrapper<T> {
 
     pub fn null() -> Self {
         Self::default()
+    }
+
+    pub fn is_null(&self) -> bool {
+        self.0.is_null()
     }
 }
 

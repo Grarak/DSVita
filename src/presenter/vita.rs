@@ -11,11 +11,12 @@ use crate::presenter::{
     PresentEvent, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_IN_SAMPLE_RATE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH,
 };
 use crate::settings::{Settings, SettingsConfig};
-use gl::types::GLuint;
+use gl::types::{GLenum, GLuint};
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::ptr;
+use vita_gl::{SharkOpt, VglMemType};
 use vitasdk_sys::*;
 
 mod imgui {
@@ -26,15 +27,6 @@ mod imgui {
 const ROM_PATH: &str = "ux0:data/dsvita";
 pub const LOG_PATH: &str = "ux0:data/dsvita/log";
 pub const LOG_FILE: &str = "ux0:data/dsvita/log/log.txt";
-
-#[repr(u8)]
-pub enum SharkOpt {
-    Slow = 0,
-    Safe = 1,
-    Default = 2,
-    Fast = 3,
-    Unsafe = 4,
-}
 
 #[link(name = "taihen_stub", kind = "static", modifiers = "+whole-archive")]
 #[link(name = "SceShaccCgExt", kind = "static", modifiers = "+whole-archive")]
@@ -137,6 +129,7 @@ impl Presenter {
 
             info_println!("Set shader compiler arguments");
             vita_gl::vglSetupRuntimeShaderCompiler(SharkOpt::Fast as _, 1, 0, 1);
+            vita_gl::vglUseExtraMem(false);
             info_println!("Initialize vitaGL");
             // Disable multisampling for depth texture
             vita_gl::vglInitExtended(0, 960, 544, 65 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
@@ -372,12 +365,28 @@ impl Presenter {
         vita_gl::glTexImage2Drgba5(width, height);
     }
 
+    pub unsafe fn gl_buffer_data(target: GLenum, data: *const u8) {
+        vita_gl::vglBufferData(target, data);
+    }
+
+    pub unsafe fn gl_mem_align_ram(alignment: usize, size: usize) -> *mut u8 {
+        vita_gl::vgl_memalign(alignment, size, VglMemType::Ram)
+    }
+
+    pub unsafe fn gl_mem_align_vram(alignment: usize, size: usize) -> *mut u8 {
+        vita_gl::vgl_memalign(alignment, size, VglMemType::Vram)
+    }
+
     pub unsafe fn gl_bind_frag_ubo(index: u32) {
         vita_gl::vglBindFragUbo(index);
     }
 
     pub fn gl_version_suffix() -> &'static str {
         vita_gl::VITA_GL_VERSION
+    }
+
+    pub unsafe fn gl_get_context() -> *mut SceGxmContext {
+        vita_gl::gxm_context as _
     }
 }
 

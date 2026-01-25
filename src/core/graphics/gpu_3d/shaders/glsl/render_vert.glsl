@@ -16,6 +16,7 @@ void main() {
     oColor = color.rgb / 31.0;
     oTexCoords = texCoords.xy;
     oPolygonIndex = int(texCoords[2]);
+    vec2 screenDims = vec2(255.0, 191.0);
     gl_Position = position;
-    gl_Position.xy = 255.0 / vec2(255.0, 191.0) * ((viewport.zw - viewport.xy) * (gl_Position.xy + gl_Position.w)) - gl_Position.w;
+    gl_Position.xy = (gl_Position.w * (viewport.zw + viewport.xy - screenDims) + (viewport.zw - viewport.xy) * gl_Position.xy) / screenDims;
 }

@@ -7,6 +7,7 @@ void main(float4 position, float3 texCoords, float4 viewport, float3 color) {
     oColor = color / 31.0;
     oTexCoords = texCoords.xy;
     oPolygonIndex = texCoords[2];
+    float2 screenDims = float2(256.0, 191.0);
     gl_Position = position;
-    gl_Position.xy = 255.0 / float2(256.0, 191.0) * ((viewport.zw - viewport.xy) * (gl_Position.xy + gl_Position.w)) - gl_Position.w;
+    gl_Position.xy = (gl_Position.w * (viewport.zw + viewport.xy - screenDims) + (viewport.zw - viewport.xy) * gl_Position.xy) / screenDims;
 }

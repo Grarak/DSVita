@@ -321,6 +321,8 @@ impl GpuRenderer {
             // let b_fbo_color = self.renderer_soft_2d.blend::<{ B }>(&self.common, &self.renderer_regs_2d_shared, 0);
 
             if self.rendering_3d {
+                self.rendering_3d = false;
+                self.renderer_3d.bind_ubos();
                 let processed_3d = self.processed_3d.lock().unwrap();
                 let (_processed_3d, timeout) = self
                     .processed_3d_condvar
@@ -329,7 +331,6 @@ impl GpuRenderer {
                 if timeout.timed_out() {
                     println!("waiting for 3d processing timed out");
                 }
-                self.rendering_3d = false;
                 self.renderer_3d.render(&self.common, &self.gpu_mem_refs);
             }
 
