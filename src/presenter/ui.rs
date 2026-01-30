@@ -348,6 +348,7 @@ pub fn show_main_menu(cartridge_path: PathBuf, ui_backend: &mut impl UiBackend) 
 
 pub enum UiPauseMenuReturn {
     Resume,
+    BlowMic,
     Quit,
     QuitApp,
 }
@@ -389,9 +390,13 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                     pressed_quit = true;
                     ImGui::CloseCurrentPopup();
                 }
-                let vec = ImVec2 { x: 100.0, y: 50.0 };
                 if ImGui::Button(c"Resume".as_ptr(), &vec) {
                     return_value = Some(UiPauseMenuReturn::Resume);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine(0.0, 5.0);
+                if ImGui::Button(c"Blow mic".as_ptr(), &vec) {
+                    return_value = Some(UiPauseMenuReturn::BlowMic);
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine(0.0, 5.0);

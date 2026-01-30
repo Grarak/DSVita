@@ -314,7 +314,8 @@ impl Presenter {
         unsafe { sceShellUtilUnlock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_QUICK_MENU | SCE_SHELL_UTIL_LOCK_TYPE_USB_CONNECTION | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2) };
         let ret = show_pause_menu(self, gpu_renderer, settings);
         match ret {
-            UiPauseMenuReturn::Resume => unsafe {
+            UiPauseMenuReturn::Resume | UiPauseMenuReturn::BlowMic => unsafe {
+                self.do_nothing_until_all_btns_released = true;
                 sceShellUtilLock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_QUICK_MENU | SCE_SHELL_UTIL_LOCK_TYPE_USB_CONNECTION | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2);
             },
             _ => {}

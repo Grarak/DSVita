@@ -1,3 +1,4 @@
+use crate::core::blow_mic_data::BLOW_MIC_DATA;
 use crate::core::emu::Emu;
 use crate::logging::debug_println;
 use crate::presenter::{PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_IN_SAMPLE_RATE};
@@ -158,6 +159,7 @@ pub struct Spi {
     pub mic_sample_cycle: u32,
     pub mic_samples: HeapArray<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>,
     pub mic_sampler: Arc<Mutex<MicSampler>>,
+    blow_mic_offset: u16,
 }
 
 impl Spi {
@@ -174,6 +176,7 @@ impl Spi {
             mic_sample_cycle: 0,
             mic_samples: HeapArray::default(),
             mic_sampler,
+            blow_mic_offset: u16::MAX,
         }
     }
 
@@ -186,6 +189,7 @@ impl Spi {
         self.firmware.copy_from_slice(&get_firmware(settings.language()));
         self.last_mic_sample = 0;
         self.mic_sample_cycle = 0;
+        self.blow_mic_offset = u16::MAX;
     }
 
     pub fn set_cnt(&mut self, mut mask: u16, value: u16) {
@@ -293,17 +297,31 @@ impl Emu {
         }
     }
 
+    pub fn spi_load_mic_sample(&mut self) {
+        let block_mic_offset = self.spi.blow_mic_offset as usize;
+        if block_mic_offset < BLOW_MIC_DATA.len() {
+            self.spi.mic_samples.copy_from_slice(&BLOW_MIC_DATA[block_mic_offset..block_mic_offset + PRESENTER_AUDIO_IN_BUF_SIZE]);
+            self.spi.blow_mic_offset += self.spi.mic_samples.len() as u16;
+        } else {
+            let mut mic_sampler = self.spi.mic_sampler.lock().unwrap();
+            mic_sampler.consume(&mut self.spi.mic_samples);
+        }
+    }
+
     pub fn spi_mic_sample(&mut self) -> i16 {
         let cycle_diff = self.cm.get_cycles() - self.spi.mic_sample_cycle;
         let mut index = (cycle_diff / MIC_SAMPLE_CYCLES) as usize;
         if index >= self.spi.mic_samples.len() {
-            {
-                let mut mic_sampler = self.spi.mic_sampler.lock().unwrap();
-                mic_sampler.consume(&mut self.spi.mic_samples);
-            }
+            self.spi_load_mic_sample();
             self.spi.mic_sample_cycle = self.cm.get_cycles();
             index = 0;
         }
         self.spi.mic_samples[index]
+    }
+}
+
+impl Spi {
+    pub fn start_blow_mic(&mut self) {
+        self.blow_mic_offset = 0;
     }
 }

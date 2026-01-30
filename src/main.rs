@@ -602,6 +602,11 @@ pub fn actual_main() {
                         screen_layout = emu_unsafe.get_mut().settings.screen_layout();
                         gpu_renderer.unpause(cpu_thread.thread());
                     }
+                    UiPauseMenuReturn::BlowMic => {
+                        emu_unsafe.get_mut().spi.start_blow_mic();
+                        screen_layout = emu_unsafe.get_mut().settings.screen_layout();
+                        gpu_renderer.unpause(cpu_thread.thread());
+                    }
                     UiPauseMenuReturn::Quit => {
                         gpu_renderer.set_quit(true);
                         gpu_renderer.unpause(cpu_thread.thread());

@@ -123,8 +123,7 @@ impl Emu {
 
         let index = self.hle.mic.sample_count as usize % self.spi.mic_samples.len();
         if index == 0 {
-            let mut mic_sampler = self.spi.mic_sampler.lock().unwrap();
-            mic_sampler.consume(&mut self.spi.mic_samples);
+            self.spi_load_mic_sample();
         }
         let sample = self.hle.mic.sample_flags.adjust_sample(self.spi.mic_samples[index]);
         let addr = self.hle.mic.sample_buf + ((self.hle.mic.sample_count * self.hle.mic.sample_size / self.hle.mic.sample_max_count) << self.hle.mic.sample_flags.is_16bit() as u8);
