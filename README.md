@@ -6,21 +6,22 @@ Fast NDS Emulator for ARM32/PSVita
 
 ## Status
 
-[![DSVita Pokemon Black](http://img.youtube.com/vi/hlUOiNKZm4g/0.jpg)](https://www.youtube.com/watch?v=hlUOiNKZm4g "DSVita Pokemon Black")
+[![DSVita Pokemon Black](http://img.youtube.com/vi/VcFaAcu0bhE/0.jpg)](https://www.youtube.com/watch?v=VcFaAcu0bhE "DSVita Pokemon Black")
 
 This runs most games, however consider:
 
 - 3D rendering
-    - Polygons and their textures are drawn, however no lighting, any other shading (e.g. toon) nor shadow volumes are
-      implemented
-    - Games which swap screens every frame for displaying 3D on both screens at the same time, will flicker heavily
+    - Mostly implemented
+      - Z fighting can occur
+      - Unimplemented shadows will render as transparent black boxes
+      - Text can be unreadable
+      - Games using 3D on both screen will have bad framerates
 - 2D rendering is mostly complete
-    - Mosaic and some window objects (you will see black screens or silhouettes) are not implemented
 - ARM7 HLE will not work with most games
     - Disable it if certain games don't boot further, get struck, crash or have any issues
     - There are other emulation modes like SoundHle. You can pick them if full HLE breaks anything
 - Auto frameskip is always used
-    - Games will feel choppy, you will most likely hover around 15 fps, even if they run at full game speed
+    - Games will feel choppy, you will most likely hover around 20-30 fps, even if they run at full game speed
 - No scanline rendering, thus games that update VRAM mid frame will not render correctly
     - Not many games do this, however games that do use it for scrolling texts
 
@@ -30,6 +31,7 @@ This runs most games, however consider:
 - Install `libshacccg.suprx`, follow
   this [guide](https://cimmerian.gitbook.io/vita-troubleshooting-guide/shader-compiler/extract-libshacccg.suprx)
 - Install `kubridge.skprx` from https://github.com/bythos14/kubridge/releases
+  - Make sure this plugin is in the `*KERNEL` section, otherwise the app might crash upon opening
 - It's strongly recommend to overclock your vita to 500MHz
 - Create the folder ux0:data/dsvita and put your roms there
     - They must have the file extensions `*.nds`
@@ -45,7 +47,7 @@ having issues with exhibits the same behavior with the `AccurateLle` setting ena
 1. Install [Vitasdk](https://vitasdk.org/)
 2. Install [cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html)
 3. Install [cargo vita](https://github.com/vita-rust/cargo-vita)
-4. `RUSTFLAGS="-Zlocation-detail=none -Zfmt-debug=none" cargo vita build vpk -- --release`
+4. `RUSTFLAGS="-Zlocation-detail=none -Zfmt-debug=none -Clto=fat -Zub-checks=no -Zsaturating-float-casts=no -Ztrap-unreachable=no -Zmir-opt-level=4" cargo vita build vpk -- --release`
 
 ## Credits
 
