@@ -42,7 +42,7 @@ pub const ARM7_BIOS_OFFSET: u32 = 0x00000000;
 pub const ARM7_BIOS_SIZE: u32 = 16 * 1024;
 
 pub const TOTAL_MEM_SIZE: u32 = 16 * 1024 /* Some padding for mmu */
-        + ITCM_SIZE + DTCM_SIZE + MAIN_SIZE + SHARED_WRAM_SIZE + ARM7_WRAM_SIZE + WIFI_RAM_SIZE
+        + ITCM_SIZE + DTCM_SIZE + MAIN_SIZE + SHARED_WRAM_SIZE + ARM7_WRAM_SIZE
         + FAST_MEM_PAGE_SIZE as u32 /* Palettes */
         + FAST_MEM_PAGE_SIZE as u32 /* OAM */
         + vram::TOTAL_SIZE as u32
@@ -55,8 +55,7 @@ const P_DTCM_OFFSET: usize = P_ITCM_OFFSET + ITCM_SIZE as usize;
 const P_MAIN_OFFSET: usize = P_DTCM_OFFSET + DTCM_SIZE as usize;
 const P_SHARED_WRAM_OFFSET: usize = P_MAIN_OFFSET + MAIN_SIZE as usize;
 const P_ARM7_WRAM_OFFSET: usize = P_SHARED_WRAM_OFFSET + SHARED_WRAM_SIZE as usize;
-const P_WIFI_RAM_OFFSET: usize = P_ARM7_WRAM_OFFSET + ARM7_WRAM_SIZE as usize;
-const P_PALETTES_OFFSET: usize = P_WIFI_RAM_OFFSET + WIFI_RAM_SIZE as usize;
+const P_PALETTES_OFFSET: usize = P_ARM7_WRAM_OFFSET + ARM7_WRAM_SIZE as usize;
 const P_VRAM_OFFSET: usize = P_PALETTES_OFFSET + FAST_MEM_PAGE_SIZE;
 const P_OAM_OFFSET: usize = P_VRAM_OFFSET + vram::TOTAL_SIZE;
 const P_GBA_ROM_OFFSET: usize = P_OAM_OFFSET + FAST_MEM_PAGE_SIZE;
@@ -76,8 +75,6 @@ pub const GBA_ROM_REGION: MemRegion = MemRegion::new(GBA_ROM_OFFSET as usize, GB
 pub const GBA_RAM_REGION: MemRegion = MemRegion::new(GBA_RAM_OFFSET as usize, 0x0B000000, FAST_MEM_PAGE_SIZE, P_GBA_ROM_OFFSET, false);
 pub const ARM9_BIOS_REGION: MemRegion = MemRegion::new(0x0F000000, 0x10000000, FAST_MEM_PAGE_SIZE, P_ARM9_BIOS_OFFSET, false);
 pub const ARM7_BIOS_REGION: MemRegion = MemRegion::new(ARM7_BIOS_OFFSET as usize, MAIN_OFFSET as usize, FAST_MEM_PAGE_SIZE, P_ARM7_BIOS_OFFSET, false);
-pub const WIFI_REGION: MemRegion = MemRegion::new(WIFI_RAM_OFFSET as usize, (WIFI_RAM_OFFSET + WIFI_RAM_SIZE) as usize, WIFI_RAM_SIZE as usize, P_WIFI_RAM_OFFSET, true);
-pub const WIFI_MIRROR_REGION: MemRegion = MemRegion::new(WIFI_RAM_OFFSET2 as usize, (WIFI_RAM_OFFSET2 + WIFI_RAM_SIZE) as usize, WIFI_RAM_SIZE as usize, P_WIFI_RAM_OFFSET, true);
 
 pub const V_MEM_ARM9_RANGE: u32 = 0x10000000;
 pub const V_MEM_ARM7_RANGE: u32 = 0x0B000000;

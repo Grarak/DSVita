@@ -346,19 +346,6 @@ impl Emu {
                 .unwrap();
         }
 
-        // This aligns the underlying pages of the vita to 8kb for the wifi regions
-        // Otherwise it will crash when cleaning them up
-        // for addr in (IO_PORTS_OFFSET..STANDARD_PALETTES_OFFSET).step_by(8 * 1024) {
-        //     self.vmem.destroy_map(addr as usize, 8 * 1024);
-        //     self.vmem.create_map(shm, 0, addr as usize, 8 * 1024, false, false, false).unwrap();
-        // }
-
-        // self.vmem.destroy_region_map(&WIFI_REGION);
-        // self.vmem.create_region_map(shm, &WIFI_REGION).unwrap();
-        //
-        // self.vmem.destroy_region_map(&WIFI_MIRROR_REGION);
-        // self.vmem.create_region_map(shm, &WIFI_MIRROR_REGION).unwrap();
-
         // self.mem.mmu_arm7.vmem.destroy_region_map(&GBA_ROM_REGION);
         // self.mem.mmu_arm7.vmem.create_region_map(&self.mem.shm, &GBA_ROM_REGION).unwrap();
         //
