@@ -4,10 +4,8 @@ use crate::core::emu::Emu;
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
-use crate::core::graphics::gpu_mem_buf::GpuMemBuf;
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::memory::dma::DmaTransferMode;
-use crate::core::memory::vram::VramBanks;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
@@ -221,9 +219,15 @@ impl Emu {
                 let palettes = self.mem_get_palettes();
                 let oam = self.mem_get_oam();
 
-                self.gpu
-                    .renderer
-                    .on_scanline_finish(palettes, oam, self.gpu.pow_cnt1, self.gpu.disp_cap_cnt, &mut self.gpu.gpu_3d_regs, &mut self.breakout_imm);
+                self.gpu.renderer.on_scanline_finish(
+                    &mut self.mem.vram.banks,
+                    palettes,
+                    oam,
+                    self.gpu.pow_cnt1,
+                    self.gpu.disp_cap_cnt,
+                    &mut self.gpu.gpu_3d_regs,
+                    &mut self.breakout_imm,
+                );
 
                 if self.gpu.gpu_3d_regs.flushed {
                     self.gpu.gpu_3d_regs.swap_buffers(self.settings.geometry_3d_skip());
@@ -239,14 +243,11 @@ impl Emu {
                     }
                 }
 
-                let vram = self.vram_get_mem_mut();
                 if self.gpu.disp_cap_cnt.capture_enabled() && u8::from(self.gpu.disp_cap_cnt.capture_source()) != 1 {
                     let bank_num = u8::from(self.gpu.disp_cap_cnt.vram_write_block());
-                    let (vram_offset, _) = VramBanks::get(bank_num);
-                    let bank = unsafe { mem::transmute(vram.as_mut_ptr().add(vram_offset)) };
-                    GpuMemBuf::mark_block_as_captured(self.gpu.disp_cap_cnt, bank);
+                    self.mem.vram.mark_block_as_captured(self.gpu.disp_cap_cnt, bank_num);
                 } else {
-                    GpuMemBuf::unmark_blocks_as_captured(vram);
+                    self.mem.vram.unmark_blocks_as_captured();
                 }
 
                 self.gpu.disp_cap_cnt.set_capture_enabled(false);

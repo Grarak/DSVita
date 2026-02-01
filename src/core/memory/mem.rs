@@ -235,7 +235,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryIo<CPU, TCM, T> {
     }
 
     fn read_vram(addr: u32, emu: &mut Emu) -> T {
-        emu.vram_read::<CPU, _>(addr)
+        emu.mem.vram.read::<CPU, _>(addr)
     }
 
     fn write(addr: u32, value: T, emu: &mut Emu) {
@@ -274,7 +274,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryIo<CPU, TCM, T> {
     fn write_palettes(_: u32, _: T, _: &mut Emu) {}
 
     fn write_vram(addr: u32, value: T, emu: &mut Emu) {
-        write_vram!(addr, size_of::<T>(), emu, { emu.vram_write::<CPU, _>(addr, value) });
+        write_vram!(addr, size_of::<T>(), emu, { emu.mem.vram.write::<CPU, _>(addr, value) });
     }
 }
 
@@ -346,7 +346,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
     fn read_vram(addr: u32, slice: &mut [T], emu: &mut Emu) {
         let read_shift = size_of::<T>() >> 1;
         for i in 0..slice.len() {
-            slice[i] = emu.vram_read::<CPU, _>(addr + (i << read_shift) as u32);
+            slice[i] = emu.mem.vram.read::<CPU, _>(addr + (i << read_shift) as u32);
         }
     }
 
@@ -399,7 +399,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
     fn write_palettes(_: u32, _: &[T], _: &mut Emu) {}
 
     fn write_vram(addr: u32, slice: &[T], emu: &mut Emu) {
-        emu.vram_write_slice::<CPU, _>(addr, slice);
+        emu.mem.vram.write_slice::<CPU, _>(addr, slice);
         emu.jit.invalidate_block(addr, size_of_val(slice));
     }
 }
@@ -469,7 +469,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TC
     fn read_palettes(_: u32, _: &mut [T], _: &mut Emu) {}
 
     fn read_vram(addr: u32, slice: &mut [T], emu: &mut Emu) {
-        slice.fill(emu.vram_read::<CPU, _>(addr));
+        slice.fill(emu.mem.vram.read::<CPU, _>(addr));
     }
 
     fn write(addr: u32, slice: &[T], emu: &mut Emu) {
@@ -517,7 +517,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TC
 
     fn write_vram(addr: u32, slice: &[T], emu: &mut Emu) {
         for i in 0..slice.len() {
-            emu.vram_write::<CPU, _>(addr, slice[i]);
+            emu.mem.vram.write::<CPU, _>(addr, slice[i]);
         }
     }
 }
@@ -583,7 +583,7 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleMemsetIo<CPU
     fn write_vram(addr: u32, value: T, size: usize, emu: &mut Emu) {
         let write_shift = size_of::<T>() >> 1;
         for i in 0..size {
-            emu.vram_write::<CPU, _>(addr + (i << write_shift) as u32, value);
+            emu.mem.vram.write::<CPU, _>(addr + (i << write_shift) as u32, value);
         }
     }
 }

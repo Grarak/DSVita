@@ -3,8 +3,6 @@ use crate::core::memory::vram::{Vram, VramBanks, VramCnt};
 use crate::core::memory::{regions, vram};
 use crate::utils::{self, HeapArrayU8, PtrWrapper};
 
-pub const CAPTURE_IDENTIFIER: &[u8; 8] = b"CAPTURE_";
-
 #[derive(Default)]
 pub struct GpuMemRefs {
     pub lcdc: PtrWrapper<[u8; vram::TOTAL_SIZE]>,
@@ -45,13 +43,9 @@ impl GpuMemBuf {
         self.queued_vram_cnt = vram.cnt;
     }
 
-    pub fn read_vram(&mut self, vram: &[u8; vram::TOTAL_SIZE]) {
-        for (i, &cnt) in self.queued_vram_cnt.iter().enumerate() {
-            let cnt = VramCnt::from(cnt);
-            if cnt.enable() {
-                VramBanks::copy_bank(i as u8, &mut self.vram_mem, vram);
-            }
-        }
+    pub fn read_vram(&mut self, vram_banks: &mut VramBanks) {
+        vram_banks.copy_dirty_sections(&mut self.vram_mem);
+        vram_banks.reset_dirty_sections();
     }
 
     pub fn read_palettes_oam(&mut self, palettes: &[u8; regions::STANDARD_PALETTES_SIZE as usize], oam: &[u8; regions::OAM_SIZE as usize]) {
@@ -92,23 +86,6 @@ impl GpuMemBuf {
         }
     }
 
-    pub fn mark_block_as_captured(disp_cap_cnt: DispCapCnt, bank: &mut [u8; vram::BANK_A_SIZE]) {
-        utils::write_to_mem_slice(bank, disp_cap_cnt.write_offset() as usize, CAPTURE_IDENTIFIER);
-        utils::write_to_mem(bank, disp_cap_cnt.write_offset() + CAPTURE_IDENTIFIER.len() as u32, disp_cap_cnt);
-    }
-
-    pub fn unmark_blocks_as_captured(vram_mem: &mut [u8; vram::TOTAL_SIZE]) {
-        for bank_num in 0..4 {
-            for offset_num in 0..4 {
-                let offset = offset_num * 0x8000;
-                let bank = &mut vram_mem[bank_num * vram::BANK_A_SIZE + offset..];
-                if &bank[..CAPTURE_IDENTIFIER.len()] == CAPTURE_IDENTIFIER {
-                    bank[..CAPTURE_IDENTIFIER.len()].fill(0);
-                }
-            }
-        }
-    }
-
     pub fn insert_capture_mem(&mut self, capture_mem: &[u8; vram::BANK_A_SIZE * 4]) {
         for bank_num in 0..4 {
             if !VramCnt::from(self.vram.cnt[bank_num]).enable() {
@@ -118,8 +95,8 @@ impl GpuMemBuf {
             for offset_num in 0..4 {
                 let offset = offset_num * 0x8000;
                 let bank = &mut self.vram_mem[bank_num * vram::BANK_A_SIZE + offset..];
-                let disp_cap_cnt = utils::read_from_mem::<DispCapCnt>(bank, CAPTURE_IDENTIFIER.len() as u32);
-                if &bank[..CAPTURE_IDENTIFIER.len()] == CAPTURE_IDENTIFIER
+                let disp_cap_cnt = utils::read_from_mem::<DispCapCnt>(bank, vram::CAPTURE_IDENTIFIER.len() as u32);
+                if &bank[..vram::CAPTURE_IDENTIFIER.len()] == vram::CAPTURE_IDENTIFIER
                     && disp_cap_cnt.capture_enabled()
                     && u8::from(disp_cap_cnt.vram_write_block()) == bank_num as u8
                     && u8::from(disp_cap_cnt.vram_write_offset()) == offset_num as u8

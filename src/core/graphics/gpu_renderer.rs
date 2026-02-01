@@ -11,7 +11,7 @@ use crate::core::graphics::gpu_mem_buf::{GpuMemBuf, GpuMemRefs};
 use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
 use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram;
-use crate::core::memory::vram::Vram;
+use crate::core::memory::vram::{Vram, VramBanks};
 use crate::presenter::{Presenter, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::screen_layouts::ScreenLayout;
 use crate::settings::Arm7Emu;
@@ -192,6 +192,7 @@ impl GpuRenderer {
 
     pub fn on_scanline_finish(
         &mut self,
+        vram_banks: &mut VramBanks,
         palettes: &[u8; STANDARD_PALETTES_SIZE as usize],
         oam: &[u8; OAM_SIZE as usize],
         pow_cnt1: PowCnt1,
@@ -200,6 +201,7 @@ impl GpuRenderer {
         breakout_imm: &mut bool,
     ) {
         if self.sample_2d {
+            self.common.mem_buf.read_vram(vram_banks);
             self.common.mem_buf.read_palettes_oam(palettes, oam);
             self.common.pow_cnt1[1] = pow_cnt1;
             self.common.disp_cap_cnt[1] = disp_cap_cnt;
@@ -561,17 +563,6 @@ impl GpuRenderer {
                 gl::NEAREST,
             );
         }
-    }
-
-    pub fn read_vram(&mut self, vram: &[u8; vram::TOTAL_SIZE]) {
-        if self.is_quit() {
-            return;
-        }
-
-        let read_vram = self.read_vram.lock().unwrap();
-        let _read_vram = self.read_vram_condvar.wait(read_vram).unwrap();
-
-        self.common.mem_buf.read_vram(vram);
     }
 
     pub fn is_quit(&self) -> bool {

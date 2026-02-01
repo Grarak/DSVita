@@ -1,9 +1,7 @@
 use crate::core::cp15::TcmState;
 use crate::core::emu::Emu;
 use crate::core::memory::regions;
-use crate::core::memory::regions::{
-    ARM7_BIOS_REGION, ARM9_BIOS_REGION, DTCM_REGION, GBA_ROM_REGION, ITCM_REGION, OAM_OFFSET, OAM_REGION, PALETTES_REGION, STANDARD_PALETTES_OFFSET, VRAM_OFFSET, V_MEM_ARM7_RANGE,
-};
+use crate::core::memory::regions::{ARM7_BIOS_REGION, ARM9_BIOS_REGION, DTCM_REGION, GBA_ROM_REGION, ITCM_REGION, OAM_OFFSET, OAM_REGION, PALETTES_REGION, STANDARD_PALETTES_OFFSET, V_MEM_ARM7_RANGE};
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
@@ -79,8 +77,6 @@ impl Emu {
         }
 
         self.update_wram_no_tcm_arm9();
-
-        self.remove_vram_tcm_arm9(0, OAM_OFFSET);
 
         let mmu_read = &mut self.mem.mmu_arm9.mmu_read[(STANDARD_PALETTES_OFFSET as usize) >> MMU_PAGE_SHIFT];
         let mmu_write = &mut self.mem.mmu_arm9.mmu_write[(STANDARD_PALETTES_OFFSET as usize) >> MMU_PAGE_SHIFT];
@@ -257,41 +253,6 @@ impl Emu {
             }
         }
     }
-
-    fn remove_vram_tcm_arm9(&mut self, start: u32, end: u32) {
-        let start = start | VRAM_OFFSET;
-        let end = end | VRAM_OFFSET;
-        for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            let shifted_addr = (addr as usize) >> MMU_PAGE_SHIFT;
-            let mmu_read = unsafe { self.mem.mmu_arm9.mmu_read.get_unchecked_mut(shifted_addr) };
-            let mmu_write = unsafe { self.mem.mmu_arm9.mmu_write.get_unchecked_mut(shifted_addr) };
-            let mmu_read_tcm = unsafe { self.mem.mmu_arm9.mmu_read_tcm.get_unchecked_mut(shifted_addr) };
-            let mmu_write_tcm = unsafe { self.mem.mmu_arm9.mmu_write_tcm.get_unchecked_mut(shifted_addr) };
-            *mmu_read = 0;
-            *mmu_write = 0;
-            *mmu_read_tcm = 0;
-            *mmu_write_tcm = 0;
-        }
-    }
-
-    fn update_vram_tcm_arm9(&mut self, start: u32, end: u32) {
-        let start = start | VRAM_OFFSET;
-        let end = end | VRAM_OFFSET;
-        for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            let shifted_addr = (addr as usize) >> MMU_PAGE_SHIFT;
-            let mmu_read = unsafe { self.mem.mmu_arm9.mmu_read.get_unchecked_mut(shifted_addr) };
-            let mmu_write = unsafe { self.mem.mmu_arm9.mmu_write.get_unchecked_mut(shifted_addr) };
-            let mmu_read_tcm = unsafe { self.mem.mmu_arm9.mmu_read_tcm.get_unchecked_mut(shifted_addr) };
-            let mmu_write_tcm = unsafe { self.mem.mmu_arm9.mmu_write_tcm.get_unchecked_mut(shifted_addr) };
-
-            let shm_offset = self.mem.vram.get_shm_offset::<{ ARM9 }>(addr);
-
-            *mmu_read = shm_offset;
-            *mmu_write = shm_offset;
-            *mmu_read_tcm = shm_offset;
-            *mmu_write_tcm = shm_offset;
-        }
-    }
 }
 
 pub struct MmuArm7 {
@@ -353,8 +314,6 @@ impl Emu {
         // self.mem.mmu_arm7.vmem.create_region_map(&self.mem.shm, &GBA_RAM_REGION).unwrap();
 
         self.update_wram_arm7();
-
-        self.remove_vram_arm7(0, OAM_OFFSET);
     }
 
     fn update_wram_arm7(&mut self) {
@@ -376,33 +335,6 @@ impl Emu {
                 .vmem
                 .create_map(&self.mem.shm, shm_offset, addr as usize, FAST_MEM_PAGE_SIZE, true, true, false)
                 .unwrap();
-        }
-    }
-
-    fn remove_vram_arm7(&mut self, start: u32, end: u32) {
-        let start = start | VRAM_OFFSET;
-        let end = end | VRAM_OFFSET;
-        for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            let shifted_addr = (addr as usize) >> MMU_PAGE_SHIFT;
-            let mmu_read = unsafe { self.mem.mmu_arm7.mmu_read.get_unchecked_mut(shifted_addr) };
-            let mmu_write = unsafe { self.mem.mmu_arm7.mmu_write.get_unchecked_mut(shifted_addr) };
-            *mmu_read = 0;
-            *mmu_write = 0;
-        }
-    }
-
-    fn update_vram_arm7(&mut self, start: u32, end: u32) {
-        let start = start | VRAM_OFFSET;
-        let end = end | VRAM_OFFSET;
-        for addr in (start..end).step_by(MMU_PAGE_SIZE) {
-            let shifted_addr = (addr as usize) >> MMU_PAGE_SHIFT;
-            let mmu_read = unsafe { self.mem.mmu_arm7.mmu_read.get_unchecked_mut(shifted_addr) };
-            let mmu_write = unsafe { self.mem.mmu_arm7.mmu_write.get_unchecked_mut(shifted_addr) };
-
-            let shm_offset = self.mem.vram.get_shm_offset::<{ ARM7 }>(addr);
-
-            *mmu_read = shm_offset;
-            *mmu_write = shm_offset;
         }
     }
 }
@@ -483,20 +415,6 @@ impl Emu {
                 remove_mmu_write_entry(addr, region, self.mem.mmu_arm9.mmu_write_tcm.as_mut(), Some(&mut self.mem.mmu_arm9.vmem_tcm));
             }
             ARM7 => remove_mmu_write_entry(addr, region, self.mem.mmu_arm7.mmu_write.as_mut(), Some(&mut self.mem.mmu_arm7.vmem)),
-        }
-    }
-
-    pub fn mmu_remove_vram<const CPU: CpuType>(&mut self, start_addr: u32, end_addr: u32) {
-        match CPU {
-            ARM9 => self.remove_vram_tcm_arm9(start_addr, end_addr),
-            ARM7 => self.remove_vram_arm7(start_addr, end_addr),
-        }
-    }
-
-    pub fn mmu_update_vram<const CPU: CpuType>(&mut self, start_addr: u32, end_addr: u32) {
-        match CPU {
-            ARM9 => self.update_vram_tcm_arm9(start_addr, end_addr),
-            ARM7 => self.update_vram_arm7(start_addr, end_addr),
         }
     }
 }

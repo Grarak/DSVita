@@ -472,21 +472,6 @@ pub fn actual_main() {
         cpu_active.store(true, Ordering::SeqCst);
 
         let cpu_active_clone = cpu_active.clone();
-        let vram_read_thread = thread::Builder::new()
-            .name("vram_read".to_owned())
-            .spawn(move || {
-                set_thread_prio_affinity(ThreadPriority::High, &[ThreadAffinity::Core0, ThreadAffinity::Core1]);
-                let emu = unsafe { (emu_ptr as *mut Emu).as_mut_unchecked() };
-                let cpu_active = cpu_active_clone;
-                let vram = emu.vram_get_mem();
-                while cpu_active.load(Ordering::Relaxed) {
-                    emu.gpu.renderer.read_vram(vram);
-                }
-                info_println!("Stopped vram read");
-            })
-            .unwrap();
-
-        let cpu_active_clone = cpu_active.clone();
         let process_3d_thread = thread::Builder::new()
             .name("process_3d_thread".to_owned())
             .spawn(move || {
@@ -626,7 +611,6 @@ pub fn actual_main() {
         cpu_active.store(false, Ordering::SeqCst);
         audio_out_thread.join().unwrap();
         audio_in_thread.join().unwrap();
-        vram_read_thread.join().unwrap();
         process_3d_thread.join().unwrap();
         save_thread.join().unwrap();
         gpu_renderer.set_quit(false);
