@@ -512,6 +512,7 @@ impl Gpu3DRenderer {
 
         self.process_vertices();
         self.assemble_polygons();
+        self.buffer.vertices_count = 0;
     }
 
     pub fn set_tex_ptrs(&mut self, refs: &mut GpuMemRefs) {
