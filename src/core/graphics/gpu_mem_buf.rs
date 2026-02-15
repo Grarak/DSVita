@@ -1,3 +1,4 @@
+use crate::bitset::Bitset;
 use crate::core::graphics::gpu::DispCapCnt;
 use crate::core::memory::vram::{Vram, VramBanks, VramCnt};
 use crate::core::memory::{regions, vram};
@@ -29,7 +30,9 @@ pub struct GpuMemRefs {
 pub struct GpuMemBuf {
     pub vram: Vram,
     queued_vram_cnt: [u8; vram::BANK_SIZE],
-    vram_mem: HeapArrayU8<{ vram::TOTAL_SIZE }>,
+    pub vram_banks: VramBanks,
+    vram_banks_dirty_sections: Bitset<6>,
+    pub vram_banks_dirty_sections_accumulated: Bitset<6>,
     pub pal: HeapArrayU8<{ regions::STANDARD_PALETTES_SIZE as usize }>,
     pub oam: HeapArrayU8<{ regions::OAM_SIZE as usize }>,
 }
@@ -44,7 +47,8 @@ impl GpuMemBuf {
     }
 
     pub fn read_vram(&mut self, vram_banks: &mut VramBanks) {
-        vram_banks.copy_dirty_sections(&mut self.vram_mem);
+        vram_banks.copy_dirty_sections(&mut self.vram_banks.mem);
+        self.vram_banks_dirty_sections = vram_banks.dirty_sections;
         vram_banks.reset_dirty_sections();
     }
 
@@ -55,6 +59,8 @@ impl GpuMemBuf {
 
     pub fn use_queued_vram(&mut self) {
         self.vram.cnt = self.queued_vram_cnt;
+        self.vram_banks.dirty_sections = self.vram_banks_dirty_sections;
+        self.vram_banks_dirty_sections_accumulated += self.vram_banks_dirty_sections;
     }
 
     pub fn rebuild_vram_maps(&mut self) {
@@ -63,26 +69,26 @@ impl GpuMemBuf {
 
     pub fn read_all(&self, refs: &mut GpuMemRefs, read_lcdc: bool, read_3d: bool) {
         if read_lcdc {
-            self.vram.maps.read_all_lcdc(&mut refs.lcdc, &self.vram_mem);
+            self.vram.maps.read_all_lcdc(&mut refs.lcdc, &self.vram_banks.mem);
         }
 
-        self.vram.maps.read_all_bg_a(&mut refs.bg_a, &self.vram_mem);
-        self.vram.maps.read_all_obj_a(&mut refs.obj_a, &self.vram_mem);
-        self.vram.maps.read_all_bg_a_ext_palette(&mut refs.bg_a_ext_pal, &self.vram_mem);
-        self.vram.maps.read_all_obj_a_ext_palette(&mut refs.obj_a_ext_pal, &self.vram_mem);
+        self.vram.maps.read_all_bg_a(&mut refs.bg_a, &self.vram_banks.mem);
+        self.vram.maps.read_all_obj_a(&mut refs.obj_a, &self.vram_banks.mem);
+        self.vram.maps.read_all_bg_a_ext_palette(&mut refs.bg_a_ext_pal, &self.vram_banks.mem);
+        self.vram.maps.read_all_obj_a_ext_palette(&mut refs.obj_a_ext_pal, &self.vram_banks.mem);
         refs.pal_a.copy_from_slice(&self.pal[..regions::STANDARD_PALETTES_SIZE as usize / 2]);
         refs.oam_a.copy_from_slice(&self.oam[..regions::OAM_SIZE as usize / 2]);
 
-        self.vram.maps.read_bg_b(&mut refs.bg_b, &self.vram_mem);
-        self.vram.maps.read_all_obj_b(&mut refs.obj_b, &self.vram_mem);
-        self.vram.maps.read_all_bg_b_ext_palette(&mut refs.bg_b_ext_pal, &self.vram_mem);
-        self.vram.maps.read_all_obj_b_ext_palette(&mut refs.obj_b_ext_pal, &self.vram_mem);
+        self.vram.maps.read_bg_b(&mut refs.bg_b, &self.vram_banks.mem);
+        self.vram.maps.read_all_obj_b(&mut refs.obj_b, &self.vram_banks.mem);
+        self.vram.maps.read_all_bg_b_ext_palette(&mut refs.bg_b_ext_pal, &self.vram_banks.mem);
+        self.vram.maps.read_all_obj_b_ext_palette(&mut refs.obj_b_ext_pal, &self.vram_banks.mem);
         refs.pal_b.copy_from_slice(&self.pal[regions::STANDARD_PALETTES_SIZE as usize / 2..]);
         refs.oam_b.copy_from_slice(&self.oam[regions::OAM_SIZE as usize / 2..]);
 
         if read_3d {
-            self.vram.maps.read_all_tex_rear_plane_img(&mut refs.tex_rear_plane_image, &self.vram_mem);
-            self.vram.maps.read_all_tex_palette(&mut refs.tex_pal, &self.vram_mem);
+            self.vram.maps.read_all_tex_rear_plane_img(&mut refs.tex_rear_plane_image, &self.vram_banks.mem);
+            self.vram.maps.read_all_tex_palette(&mut refs.tex_pal, &self.vram_banks.mem);
         }
     }
 
@@ -94,7 +100,7 @@ impl GpuMemBuf {
 
             for offset_num in 0..4 {
                 let offset = offset_num * 0x8000;
-                let bank = &mut self.vram_mem[bank_num * vram::BANK_A_SIZE + offset..];
+                let bank = &mut self.vram_banks.mem[bank_num * vram::BANK_A_SIZE + offset..];
                 let disp_cap_cnt = utils::read_from_mem::<DispCapCnt>(bank, vram::CAPTURE_IDENTIFIER.len() as u32);
                 if &bank[..vram::CAPTURE_IDENTIFIER.len()] == vram::CAPTURE_IDENTIFIER
                     && disp_cap_cnt.capture_enabled()

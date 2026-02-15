@@ -36,7 +36,6 @@ fn main() {
 
     let mut vita_gl_envs = vec![
         ("HAVE_UNFLIPPED_FBOS", "1"),
-        ("NO_TEX_COMBINER", "1"),
         ("HAVE_SHADER_CACHE", "1"),
         ("SINGLE_THREADED_GC", "1"),
         ("BUFFERS_SPEEDHACK", "1"),
@@ -44,13 +43,13 @@ fn main() {
         ("INDICES_SPEEDHACK", "1"),
     ];
 
-    if !is_debug() {
-        vita_gl_envs.push(("NO_DEBUG", "1"));
-    } else {
-        vita_gl_envs.push(("HAVE_SHARK_LOG", "1"));
-        vita_gl_envs.push(("LOG_ERRORS", "1"));
-        vita_gl_envs.push(("DEBUG_GC", "1"));
-    }
+    // if !is_debug() {
+    //     vita_gl_envs.push(("NO_DEBUG", "1"));
+    // } else {
+    vita_gl_envs.push(("HAVE_SHARK_LOG", "1"));
+    vita_gl_envs.push(("LOG_ERRORS", "1"));
+    vita_gl_envs.push(("DEBUG_GC", "1"));
+    // }
     // vita_gl_envs.push(("HAVE_DEVKIT", "1"));
     // vita_gl_envs.push(("HAVE_CPU_TRACER", "1"));
 

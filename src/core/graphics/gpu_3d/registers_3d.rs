@@ -75,14 +75,18 @@ pub struct TexImageParam {
     pub flip_t: bool,
     pub size_s_shift: u3,
     pub size_t_shift: u3,
-    pub format: u3,
-    color_0_transparent: bool,
+    pub format: TextureFormat,
+    pub color_0_transparent: bool,
     pub coord_trans_mode: TextureCoordTransMode,
 }
 
 impl TexImageParam {
     pub fn is_translucent(self) -> bool {
-        u8::from(self.format()) == 1 || u8::from(self.format()) == 6
+        self.format() == TextureFormat::A3I5Translucent || self.format() == TextureFormat::A5I3Translucent
+    }
+
+    pub fn key(self) -> u32 {
+        self.value & if (2..=4).contains(&(self.format() as u8)) { 0x3FF0FFFF } else { 0x1FF0FFFF }
     }
 }
 
@@ -231,7 +235,8 @@ impl From<u8> for PolygonMode {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[bitsize(3)]
+#[derive(Copy, Clone, Debug, Default, Eq, FromBits, PartialEq)]
 #[repr(u8)]
 pub enum TextureFormat {
     #[default]

@@ -1,0 +1,136 @@
+uniform bool translucentOnly;
+
+float3 in oColor : TEXCOORD0_HALF;
+float2 in oTexCoords : TEXCOORD1;
+float in oPolygonIndex : TEXCOORD2;
+float in oTextureIndex : TEXCOORD3;
+
+uniform sampler2D tex0 : TEXUNIT0;
+uniform sampler2D tex1 : TEXUNIT1;
+uniform sampler2D tex2 : TEXUNIT2;
+uniform sampler2D tex3 : TEXUNIT3;
+uniform sampler2D tex4 : TEXUNIT4;
+uniform sampler2D tex5 : TEXUNIT5;
+uniform sampler2D tex6 : TEXUNIT6;
+uniform sampler2D tex7 : TEXUNIT7;
+uniform sampler2D tex8 : TEXUNIT8;
+uniform sampler2D tex9 : TEXUNIT9;
+uniform sampler2D tex10 : TEXUNIT10;
+uniform sampler2D tex11 : TEXUNIT11;
+uniform sampler2D tex12 : TEXUNIT12;
+uniform sampler2D tex13 : TEXUNIT13;
+uniform sampler2D tex14 : TEXUNIT14;
+uniform sampler2D tex15 : TEXUNIT15;
+
+struct PolygonAttr {
+    unsigned int texImageParam;
+    unsigned int palAddrAttrs;
+};
+
+struct {
+    PolygonAttr attrs[1];
+} PolygonAttrsUbo : BUFFER[0];
+
+void main(out float4 color : COLOR) {
+    short polygonIndex = short(oPolygonIndex);
+    unsigned char textureIndex = unsigned char(oTextureIndex);
+
+    PolygonAttr attr = PolygonAttrsUbo.attrs[polygonIndex];
+    unsigned short texImageParam = attr.texImageParam >> 16;
+    unsigned short polyAttr = attr.palAddrAttrs >> 16;
+
+    short sizeS = 8 << ((texImageParam >> 4) & 0x7);
+    short sizeT = 8 << ((texImageParam >> 7) & 0x7);
+
+    float sNorm = oTexCoords.x / sizeS;
+    float tNorm = oTexCoords.y / sizeT;
+
+    bool repeatS = (texImageParam & 0x1) == 1;
+    bool repeatT = ((texImageParam >> 1) & 0x1) == 1;
+
+    if (repeatS) {
+        float sFrac = frac(sNorm);
+        bool flip = ((texImageParam >> 2) & 0x1) == 1;
+        if (flip && fmod(floor(sNorm), 2.0) != 0.0) {
+            sNorm = 1.0 - sFrac;
+        } else {
+            sNorm = sFrac;
+        }
+    }
+
+    if (repeatT) {
+        float tFrac = frac(tNorm);
+        bool flip = ((texImageParam >> 3) & 0x1) == 1;
+        if (flip && fmod(floor(tNorm), 2.0) != 0.0) {
+            tNorm = 1.0 - tFrac;
+        } else {
+            tNorm = tFrac;
+        }
+    }
+
+    float alpha = float(polyAttr & 31) / 31.0;
+
+    float4 texColor;
+    if (textureIndex == 0) {
+        texColor = tex2D(tex0, float2(sNorm, tNorm));
+    } else if (textureIndex == 1) {
+        texColor = tex2D(tex1, float2(sNorm, tNorm));
+    } else if (textureIndex == 2) {
+        texColor = tex2D(tex2, float2(sNorm, tNorm));
+    } else if (textureIndex == 3) {
+        texColor = tex2D(tex3, float2(sNorm, tNorm));
+    } else if (textureIndex == 4) {
+        texColor = tex2D(tex4, float2(sNorm, tNorm));
+    } else if (textureIndex == 5) {
+        texColor = tex2D(tex5, float2(sNorm, tNorm));
+    } else if (textureIndex == 6) {
+        texColor = tex2D(tex6, float2(sNorm, tNorm));
+    } else if (textureIndex == 7) {
+        texColor = tex2D(tex7, float2(sNorm, tNorm));
+    } else if (textureIndex == 8) {
+        texColor = tex2D(tex8, float2(sNorm, tNorm));
+    } else if (textureIndex == 9) {
+        texColor = tex2D(tex9, float2(sNorm, tNorm));
+    } else if (textureIndex == 10) {
+        texColor = tex2D(tex10, float2(sNorm, tNorm));
+    } else if (textureIndex == 11) {
+        texColor = tex2D(tex11, float2(sNorm, tNorm));
+    } else if (textureIndex == 12) {
+        texColor = tex2D(tex12, float2(sNorm, tNorm));
+    } else if (textureIndex == 13) {
+        texColor = tex2D(tex13, float2(sNorm, tNorm));
+    } else if (textureIndex == 14) {
+        texColor = tex2D(tex14, float2(sNorm, tNorm));
+    } else if (textureIndex == 15) {
+        texColor = tex2D(tex15, float2(sNorm, tNorm));
+    } else {
+        color = float4(oColor, alpha);
+    }
+
+    if (textureIndex < 16) {
+        if (texColor.a == 0.0) {
+            discard;
+        }
+
+        short mode = (polyAttr >> 5) & 0x3;
+        if (mode == 0) {
+            color = texColor * float4(oColor, alpha);
+        } else {
+            color = texColor;
+            color.a *= alpha;
+        }
+    }
+
+    if (translucentOnly) {
+        if (color.a == 1.0) {
+            discard;
+        }
+    } else if (color.a != 1.0) {
+        bool transNewDepth = ((polyAttr >> 7) & 1) != 0;
+        if (transNewDepth) {
+            color.a = 0.0;
+        } else {
+            discard;
+        }
+    }
+}
