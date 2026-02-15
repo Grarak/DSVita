@@ -7,7 +7,7 @@ layout(location = 0) out vec4 color;
 
 in vec2 screenPos;
 in vec2 screenPosF;
-uniform int dispCnt;
+uniform float dispCntF;
 
 uniform WinBgUbo {
     int winHV[192 * 2];
@@ -17,6 +17,7 @@ uniform WinBgUbo {
 uniform sampler2D objWinTex;
 
 bool checkBounds(int x, int y, int winNum) {
+    int dispCnt = floatBitsToInt(dispCntF);
     bool winEnabled = (dispCnt & (1 << (13 + winNum))) != 0;
     if (!winEnabled) {
         return false;

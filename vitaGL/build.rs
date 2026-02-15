@@ -36,7 +36,6 @@ fn main() {
 
     let mut vita_gl_envs = vec![
         ("HAVE_UNFLIPPED_FBOS", "1"),
-        ("NO_TEX_COMBINER", "1"),
         ("HAVE_SHADER_CACHE", "1"),
         ("SINGLE_THREADED_GC", "1"),
         ("BUFFERS_SPEEDHACK", "1"),

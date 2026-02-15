@@ -11,7 +11,7 @@ in vec2 screenPosF;
 in vec2 objAttrib0Addr;
 in vec2 objAttrib2Addr;
 
-uniform int dispCnt;
+uniform float dispCntF;
 uniform float objTexHeight;
 uniform bool objWindow;
 
@@ -111,6 +111,7 @@ vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, ObjAttr attr) {
             enabled |= 0x80; // indicate this was set by obj, to avoid win out override
             return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
         } else {
+            int dispCnt = floatBitsToInt(dispCntF);
             bool useExtPal = ((dispCnt >> 31) & 1) != 0;
             if (useExtPal) {
                 int palBaseAddr = ((attrib2 >> 12) & 0xF) << 9;

@@ -10,7 +10,7 @@ uniform sampler2D palTex : TEXUNIT2;
 uniform sampler2D extPalTex : TEXUNIT3;
 uniform usampler2D winTex : TEXUNIT4;
 
-uniform int dispCnt;
+uniform float dispCntF;
 uniform float objTexHeight;
 uniform bool objWindow;
 
@@ -103,7 +103,8 @@ float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short
             enabled |= 0x80; // indicate this was set by obj, to avoid win out override
             return float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
         } else {
-            bool useExtPal = (dispCnt & (1 << 31)) != 0;
+            int dispCnt = bit_cast<unsigned int>(dispCntF);
+            bool useExtPal = ((dispCnt >> 31) & 1) != 0;
             if (useExtPal) {
                 short palBaseIndex = ((attrib2 >> 12) & 0xF) << 8;
                 return float4(readExtPal(palBaseIndex + palIndex).rgb, 1.0);

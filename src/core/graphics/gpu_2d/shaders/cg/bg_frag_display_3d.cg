@@ -8,6 +8,7 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
+    int bgCnt = getBgCnt();
     unsigned char priority = bgCnt & 3;
     unsigned char alpha = unsigned char(color.a * 31.0);
     unsigned char data = priority | (alpha << 2);

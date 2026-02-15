@@ -5,9 +5,10 @@ out vec3 screenPos;
 out vec2 screenPosF;
 out vec2 affineDims;
 
-uniform int bgCnt;
+uniform float bgCntF;
 
 void main() {
+    int bgCnt = floatBitsToInt(bgCntF);
     float size = float(128 << ((bgCnt >> 14) & 0x3));
     affineDims = vec2(size, size);
 

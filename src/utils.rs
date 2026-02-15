@@ -1,4 +1,5 @@
 use std::alloc::Layout;
+use std::arch::arm::{uint16x4_t, uint32x4_t, uint8x16x2_t, uint8x8_t, vand_u16, vcombine_u16, vdup_n_u16, vld1_u8, vld1q_u8, vmovn_u16, vmvn_u16, vshr_n_u16, vsub_u16, vtbl4_u8, vzip_u16, vzip_u8};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
@@ -212,6 +213,82 @@ impl<T> DerefMut for HeapMem<T> {
     }
 }
 
+pub struct HeapDynamic<T, const ALIGNMENT: usize = 4> {
+    ptr: *mut T,
+    len: usize,
+}
+
+impl<T, const ALIGNMENT: usize> HeapDynamic<T, ALIGNMENT> {
+    unsafe fn layout(len: usize) -> Layout {
+        Layout::array::<T>(len).unwrap_unchecked().align_to(ALIGNMENT).unwrap_unchecked()
+    }
+
+    pub unsafe fn uninitialized(len: usize) -> Self {
+        HeapDynamic {
+            ptr: std::alloc::alloc(Self::layout(len)) as *mut T,
+            len,
+        }
+    }
+
+    pub unsafe fn zeroed(len: usize) -> Self {
+        let instance = Self::uninitialized(len);
+        let buf = slice::from_raw_parts_mut(instance.ptr as *mut u8, len * size_of::<T>());
+        buf.fill(0);
+        instance
+    }
+
+    pub fn byte_size(&self) -> usize {
+        unsafe { Self::layout(self.len).size() }
+    }
+
+    pub unsafe fn destroy(&mut self) {
+        std::alloc::dealloc(self.ptr as _, Self::layout(self.len));
+        self.ptr = ptr::null_mut();
+        self.len = 0;
+    }
+}
+
+impl<T, const ALIGNMENT: usize> Drop for HeapDynamic<T, ALIGNMENT> {
+    fn drop(&mut self) {
+        unsafe { self.destroy() };
+    }
+}
+
+impl<T, const ALIGNMENT: usize> Deref for HeapDynamic<T, ALIGNMENT> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { slice::from_raw_parts(self.ptr, self.len) }
+    }
+}
+
+impl<T, const ALIGNMENT: usize> DerefMut for HeapDynamic<T, ALIGNMENT> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { slice::from_raw_parts_mut(self.ptr, self.len) }
+    }
+}
+
+impl<T: Copy, const ALIGNMENT: usize> Clone for HeapDynamic<T, ALIGNMENT> {
+    fn clone(&self) -> Self {
+        let mut instance = unsafe { Self::uninitialized(self.len) };
+        instance.copy_from_slice(self.deref());
+        instance
+    }
+}
+
+impl<T: Debug, const ALIGNMENT: usize> Debug for HeapDynamic<T, ALIGNMENT> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut list = f.debug_map();
+        for (i, v) in self.deref().iter().enumerate() {
+            list.entry(&i, v);
+        }
+        list.finish()
+    }
+}
+
+unsafe impl<T: Sync, const ALIGNMENT: usize> Sync for HeapDynamic<T, ALIGNMENT> {}
+unsafe impl<T: Send, const ALIGNMENT: usize> Send for HeapDynamic<T, ALIGNMENT> {}
+
 pub const fn crc16(mut crc: u32, buf: &[u8], start: usize, size: usize) -> u16 {
     const TABLE: [u16; 8] = [0xC0C1, 0xC181, 0xC301, 0xC601, 0xCC01, 0xD801, 0xF001, 0xA001];
 
@@ -270,6 +347,50 @@ impl BuildHasher for BuildNoHasher {
 
 pub type NoHashMap<T, V> = HashMap<T, V, BuildNoHasher>;
 pub type NoHashSet<T> = HashSet<T, BuildNoHasher>;
+
+pub struct NoHasher64 {
+    state: u64,
+}
+
+impl Hasher for NoHasher64 {
+    fn finish(&self) -> u64 {
+        self.state as u64
+    }
+
+    fn write(&mut self, _: &[u8]) {
+        unreachable!()
+    }
+
+    fn write_u16(&mut self, i: u16) {
+        self.state = i as u64;
+    }
+
+    fn write_u32(&mut self, i: u32) {
+        self.state = i as u64;
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        self.state = i;
+    }
+
+    fn write_usize(&mut self, i: usize) {
+        self.state = i as u64;
+    }
+
+    fn write_i32(&mut self, i: i32) {
+        self.state = i as u64;
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct BuildNoHasher64;
+
+impl BuildHasher for BuildNoHasher64 {
+    type Hasher = NoHasher64;
+    fn build_hasher(&self) -> NoHasher64 {
+        NoHasher64 { state: 0 }
+    }
+}
 
 pub enum ThreadPriority {
     Low,
@@ -389,6 +510,70 @@ pub fn rgb6_to_float8(color: u32) -> (f32, f32, f32) {
     let g = ((color >> 6) & 0x3F) as f32;
     let b = ((color >> 12) & 0x3F) as f32;
     (r / 63f32, g / 63f32, b / 63f32)
+}
+
+const fn generate_5_to_8_tbl() -> [u8; 32] {
+    let mut tbl = [0; 32];
+    let mut i = 0;
+    while i < 32 {
+        tbl[i] = (i * 255 / 31) as u8;
+        i += 1;
+    }
+    tbl
+}
+
+const fn generate_3_to_5_tbl() -> [u8; 8] {
+    let mut tbl = [0; 8];
+    let mut i = 0;
+    while i < 8 {
+        tbl[i] = (i * 31 / 7) as u8;
+        i += 1;
+    }
+    tbl
+}
+
+pub unsafe fn vld_5_to_8_tbl() -> uint8x16x2_t {
+    const TABLE: [u8; 32] = generate_5_to_8_tbl();
+    uint8x16x2_t(vld1q_u8(TABLE.as_ptr()), vld1q_u8(TABLE.as_ptr().add(16)))
+}
+
+pub unsafe fn vld_3_to_5_tbl() -> uint8x8_t {
+    const TABLE: [u8; 8] = generate_3_to_5_tbl();
+    vld1_u8(TABLE.as_ptr())
+}
+
+pub unsafe fn vunpack_rgb5_to_rgb8<const ALPHA: bool>(packed: uint16x4_t, tbl_5_to_8: uint8x16x2_t) -> uint32x4_t {
+    let mask = vdup_n_u16(0x1F);
+    let vr = vand_u16(packed, mask);
+    let vg = vand_u16(vshr_n_u16::<5>(packed), mask);
+    let vb = vand_u16(vshr_n_u16::<10>(packed), mask);
+    let va = if ALPHA {
+        let va = vsub_u16(vshr_n_u16::<15>(packed), vdup_n_u16(1));
+        vand_u16(vmvn_u16(va), mask)
+    } else {
+        vdup_n_u16(31)
+    };
+    let vrb = vmovn_u16(vcombine_u16(vr, vb));
+    let vga = vmovn_u16(vcombine_u16(vg, va));
+    let vrb = vtbl4_u8(mem::transmute(tbl_5_to_8), vrb);
+    let vga = vtbl4_u8(mem::transmute(tbl_5_to_8), vga);
+    let vrgba = vzip_u8(vrb, vga);
+    let vrgba = vzip_u16(mem::transmute(vrgba.0), mem::transmute(vrgba.1));
+    mem::transmute(vrgba)
+}
+
+pub unsafe fn vunpack_rgba5_to_rgba8(packed: uint16x4_t, alpha: uint16x4_t, tbl_5_to_8: uint8x16x2_t) -> uint32x4_t {
+    let mask = vdup_n_u16(0x1F);
+    let vr = vand_u16(packed, mask);
+    let vg = vand_u16(vshr_n_u16::<5>(packed), mask);
+    let vb = vand_u16(vshr_n_u16::<10>(packed), mask);
+    let vrb = vmovn_u16(vcombine_u16(vr, vb));
+    let vga = vmovn_u16(vcombine_u16(vg, alpha));
+    let vrb = vtbl4_u8(mem::transmute(tbl_5_to_8), vrb);
+    let vga = vtbl4_u8(mem::transmute(tbl_5_to_8), vga);
+    let vrgba = vzip_u8(vrb, vga);
+    let vrgba = vzip_u16(mem::transmute(vrgba.0), mem::transmute(vrgba.1));
+    mem::transmute(vrgba)
 }
 
 pub const fn const_bytes_equal(lhs: &[u8], rhs: &[u8]) -> bool {

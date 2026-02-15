@@ -6,6 +6,7 @@ use crate::core::graphics::gpu_2d::registers_2d::{BgCnt, DispCnt};
 use crate::core::graphics::gpu_2d::renderer_regs_2d::{BgUbo, BlendUbo, Gpu2DMem, Gpu2DRenderRegs, Gpu2DRenderRegsShared, WinBgUbo};
 use crate::core::graphics::gpu_2d::Gpu2DEngine;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
+use crate::core::graphics::gpu_3d::renderer_3d::{HEIGHT_3D, WIDTH_3D};
 use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
@@ -167,7 +168,7 @@ impl Gpu2DCommon {
 
                 gl::Uniform1i(gl::GetUniformLocation(gpu_programs.win, c"objWinTex".as_ptr() as _), 0);
 
-                let disp_cnt_loc = gl::GetUniformLocation(gpu_programs.win, c"dispCnt".as_ptr() as _);
+                let disp_cnt_loc = gl::GetUniformLocation(gpu_programs.win, c"dispCntF".as_ptr() as _);
 
                 let mut ubo = 0;
                 gl::GenBuffers(1, &mut ubo);
@@ -250,7 +251,7 @@ impl Gpu2DVramDisplayProgram {
 
             gl::BindAttribLocation(gpu_programs.vram_display, 0, c"position".as_ptr() as _);
 
-            let disp_cnt_loc = gl::GetUniformLocation(gpu_programs.vram_display, c"dispCnt".as_ptr() as _);
+            let disp_cnt_loc = gl::GetUniformLocation(gpu_programs.vram_display, c"dispCntF".as_ptr() as _);
 
             gl::Uniform1i(gl::GetUniformLocation(gpu_programs.vram_display, c"lcdcPalTex".as_ptr() as _), 0);
 
@@ -274,7 +275,8 @@ impl Gpu2DVramDisplayProgram {
             -1f32, to_line as f32,
         ];
 
-        gl::Uniform1i(self.disp_cnt_loc, disp_cnt as _);
+        let disp_cnt = [disp_cnt];
+        gl::Uniform1fv(self.disp_cnt_loc, 1, disp_cnt.as_ptr() as _);
 
         gl::EnableVertexAttribArray(0);
         gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 0, vertices.as_ptr() as _);
@@ -337,7 +339,7 @@ impl Gpu2DObjProgram {
         gl::Uniform1i(gl::GetUniformLocation(gpu_programs.obj, c"extPalTex".as_ptr() as _), 3);
         gl::Uniform1i(gl::GetUniformLocation(gpu_programs.obj, c"winTex".as_ptr() as _), 4);
 
-        let disp_cnt_loc = gl::GetUniformLocation(gpu_programs.obj, c"dispCnt".as_ptr() as _);
+        let disp_cnt_loc = gl::GetUniformLocation(gpu_programs.obj, c"dispCntF".as_ptr() as _);
         let tex_height_loc = gl::GetUniformLocation(gpu_programs.obj, c"objTexHeight".as_ptr() as _);
         let window_loc = gl::GetUniformLocation(gpu_programs.obj, c"objWindow".as_ptr() as _);
 
@@ -375,6 +377,8 @@ struct Gpu2DProgram {
     bg_text_4bpp_program: Gpu2DBgProgram,
     bg_text_8bpp_program: Gpu2DBgProgram,
     bg_ubo: GLuint,
+
+    bg_fbo_3d: GpuFbo,
 }
 
 macro_rules! draw_scanlines {
@@ -418,8 +422,8 @@ impl Gpu2DProgram {
 
                     gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
 
-                    let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCnt".as_ptr() as _);
-                    let cnt_loc = gl::GetUniformLocation(program, c"bgCnt".as_ptr() as _);
+                    let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCntF".as_ptr() as _);
+                    let cnt_loc = gl::GetUniformLocation(program, c"bgCntF".as_ptr() as _);
                     let tex_height_loc = gl::GetUniformLocation(program, c"bgTexHeight".as_ptr() as _);
 
                     gl::Uniform1i(gl::GetUniformLocation(program, c"bgTex".as_ptr() as _), 0);
@@ -465,6 +469,7 @@ impl Gpu2DProgram {
                 bg_text_4bpp_program,
                 bg_text_8bpp_program,
                 bg_ubo,
+                bg_fbo_3d: GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, false).unwrap(),
             }
         }
     }
@@ -483,7 +488,8 @@ impl Gpu2DProgram {
             -1f32, to_line as f32,
         ];
 
-        gl::Uniform1i(common.win_bg_disp_cnt_loc, u32::from(disp_cnt) as _);
+        let disp_cnt = [u32::from(disp_cnt)];
+        gl::Uniform1fv(common.win_bg_disp_cnt_loc, 1, disp_cnt.as_ptr() as _);
 
         gl::EnableVertexAttribArray(0);
         gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 0, vertices.as_ptr() as _);
@@ -510,7 +516,8 @@ impl Gpu2DProgram {
             return;
         }
 
-        gl::Uniform1i(self.obj_program.disp_cnt_loc, u32::from(disp_cnt) as _);
+        let disp_cnt = [u32::from(disp_cnt)];
+        gl::Uniform1fv(self.obj_program.disp_cnt_loc, 1, disp_cnt.as_ptr() as _);
 
         gl::BindBuffer(gl::UNIFORM_BUFFER, self.obj_program.ubo);
         gl::BufferData(
@@ -552,7 +559,13 @@ impl Gpu2DProgram {
 
         gl::UseProgram(program.program);
 
-        gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[bg_num as usize].fbo);
+        if bg_mode == BgMode::Display3d {
+            gl::BindFramebuffer(gl::FRAMEBUFFER, self.bg_fbo_3d.fbo);
+            gl::Viewport(0, 0, WIDTH_3D as _, HEIGHT_3D as _);
+        } else {
+            gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[bg_num as usize].fbo);
+            gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+        }
 
         gl::ActiveTexture(gl::TEXTURE0);
         gl::BindTexture(gl::TEXTURE_2D, texs.bg);
@@ -575,9 +588,10 @@ impl Gpu2DProgram {
             gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, self.bg_ubo);
         }
 
-        let disp_cnt = regs.disp_cnts[from_line as usize];
-        gl::Uniform1i(program.disp_cnt_loc, disp_cnt as _);
-        gl::Uniform1i(program.cnt_loc, u16::from(bg_cnt) as _);
+        let disp_cnt = [regs.disp_cnts[from_line as usize]];
+        gl::Uniform1fv(program.disp_cnt_loc, 1, disp_cnt.as_ptr() as _);
+        let bg_cnt = [u16::from(bg_cnt) as u32];
+        gl::Uniform1fv(program.cnt_loc, 1, bg_cnt.as_ptr() as _);
         gl::Uniform1f(program.tex_height_loc, texs.bg_heightf);
 
         #[rustfmt::skip]
@@ -635,7 +649,15 @@ impl Gpu2DProgram {
     }
 
     unsafe fn blend_fbos(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: &Gpu2DMem, blend_fbo: GLuint, fb_tex_3d: GLuint) {
+        let mut bg_fbo_0 = common.bg_fbos[0].color;
+
         if fb_tex_3d != 0 {
+            gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, self.bg_fbo_3d.fbo);
+            gl::BindFramebuffer(gl::READ_FRAMEBUFFER, common.bg_fbos[0].fbo);
+            gl::BlitFramebuffer(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, 0, 0, WIDTH_3D as _, HEIGHT_3D as _, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+
+            bg_fbo_0 = self.bg_fbo_3d.color;
+
             let draw_bg = |from_line, to_line| {
                 let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
                 if let 0..=5 = u8::from(disp_cnt.bg_mode()) {
@@ -648,7 +670,11 @@ impl Gpu2DProgram {
         }
 
         gl::BindFramebuffer(gl::FRAMEBUFFER, blend_fbo);
-        gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+        if fb_tex_3d != 0 {
+            gl::Viewport(0, 0, WIDTH_3D as _, HEIGHT_3D as _);
+        } else {
+            gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
+        }
 
         let backdrop = utils::read_from_mem::<u16>(mem.pal, 0);
         let [r, g, b] = rgb5_to_float8(backdrop);
@@ -657,7 +683,10 @@ impl Gpu2DProgram {
 
         gl::UseProgram(common.blend_program);
 
-        for i in 0..4 {
+        gl::ActiveTexture(gl::TEXTURE0);
+        gl::BindTexture(gl::TEXTURE_2D, bg_fbo_0);
+
+        for i in 1..4 {
             gl::ActiveTexture(gl::TEXTURE0 + i);
             gl::BindTexture(gl::TEXTURE_2D, common.bg_fbos[i as usize].color);
         }
@@ -953,9 +982,10 @@ impl Gpu2DRenderer {
                 ],
                 common: Gpu2DCommon::new(gpu_programs),
                 program: Gpu2DProgram::new(gpu_programs),
-                blend_fbos: array_init!({
-                    GpuFbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32, false).unwrap()
-                }; 2),
+                blend_fbos: [
+                    GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, false).unwrap(),
+                    GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false).unwrap(),
+                ],
                 #[cfg(target_os = "linux")]
                 lcdc_mem_buf: HeapArrayU8::default(),
             };

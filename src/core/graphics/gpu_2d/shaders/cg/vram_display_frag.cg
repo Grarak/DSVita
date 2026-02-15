@@ -2,7 +2,7 @@ float3 in screenPos : TEXCOORD0;
 
 uniform sampler2D lcdcPalTex : TEXUNIT0;
 
-uniform int dispCnt;
+uniform float dispCntF;
 
 float4 readLcdcPal(int index) {
     short indexX = index & 0x1FF;
@@ -16,6 +16,7 @@ void main(out float4 color : COLOR) {
     short x = short(screenPos.x);
     short y = short(screenPos.y);
 
+    int dispCnt = bit_cast<unsigned int>(dispCntF);
     int addr = ((dispCnt >> 18) & 0x3) * 0x10000 + int(y) * 256 + int(x);
     color = float4(readLcdcPal(addr).rgb, 0.0);
 }

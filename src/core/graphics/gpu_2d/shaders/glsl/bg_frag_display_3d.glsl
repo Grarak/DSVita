@@ -10,6 +10,7 @@ void main() {
         discard;
     }
 
+    int bgCnt = getBgCnt();
     int priority = bgCnt & 3;
     int alpha = int(color.a * 31.0);
     int data = priority | (alpha << 2);

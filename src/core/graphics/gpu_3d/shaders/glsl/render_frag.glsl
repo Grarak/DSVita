@@ -3,23 +3,15 @@
 precision highp int;
 precision highp float;
 
+uniform float polygonAttrsF;
+uniform float texImageParamF;
 uniform bool translucentOnly;
 
 uniform sampler2D tex;
 uniform sampler2D palTex;
 
-struct PolygonAttr {
-    int texImageParam;
-    int palAddrAttrs;
-};
-
-uniform PolygonAttrsUbo {
-    PolygonAttr polygonAttrs[8192];
-};
-
-in vec3 oColor;
+in vec4 oColor;
 in vec2 oTexCoords;
-flat in int oPolygonIndex;
 
 layout (location = 0) out vec4 color;
 
@@ -143,12 +135,13 @@ vec4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format, b
 }
 
 void main() {
-    PolygonAttr attr = polygonAttrs[oPolygonIndex];
+    int polygonAttrs = floatBitsToInt(polygonAttrsF);
+    int texImageParam = floatBitsToInt(texImageParamF);
 
-    int addrOffset = (attr.texImageParam & 0xFFFF) << 3;
-    int texImageParam = attr.texImageParam >> 16;
-    int palAddr = attr.palAddrAttrs & 0xFFFF;
-    int polyAttr = attr.palAddrAttrs >> 16;
+    int addrOffset = (texImageParam & 0xFFFF) << 3;
+    texImageParam = texImageParam >> 16;
+    int palAddr = polygonAttrs >> 16;
+    polygonAttrs = polygonAttrs & 0xFFFF;
 
     int sizeS = 8 << ((texImageParam >> 4) & 0x7);
     int sizeT = 8 << ((texImageParam >> 7) & 0x7);
@@ -181,63 +174,59 @@ void main() {
         t = sizeT - 1;
     }
 
-    float alphaF = float(polyAttr & 31) / 31.0;
-
     int texFmt = (texImageParam >> 10) & 0x7;
-    vec4 texColor;
-    switch (texFmt) {
-        case 0: {
-            color = vec4(oColor, alphaF);
-            break;
-        }
-        case 1: {
-            texColor = aXiXTex(palAddr, addrOffset, int(s), int(t), sizeS, 3);
-            break;
-        }
-        case 5: {
-            texColor = compressed4x4Tex(palAddr, addrOffset, int(s), int(t), sizeS);
-            break;
-        }
-        case 6: {
-            texColor = aXiXTex(palAddr, addrOffset, int(s), int(t), sizeS, 5);
-            break;
-        }
-        case 7: {
-            texColor = directTex(addrOffset, int(s), int(t), sizeS);
-            break;
-        }
-        default: {
-            bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
-            texColor = palXTex(palAddr, addrOffset, int(s), int(t), sizeS, texFmt - 2, transparent0);
-            break;
-        }
-    }
-
     if (texFmt != 0) {
-        int mode = (polyAttr >> 5) & 0x3;
-        switch (mode) {
-            case 0: {
-                color = texColor * vec4(oColor.rgb, alphaF);
+        vec4 texColor;
+        switch (texFmt) {
+            case 1: {
+                texColor = aXiXTex(palAddr, addrOffset, int(s), int(t), sizeS, 3);
+                break;
+            }
+            case 5: {
+                texColor = compressed4x4Tex(palAddr, addrOffset, int(s), int(t), sizeS);
+                break;
+            }
+            case 6: {
+                texColor = aXiXTex(palAddr, addrOffset, int(s), int(t), sizeS, 5);
+                break;
+            }
+            case 7: {
+                texColor = directTex(addrOffset, int(s), int(t), sizeS);
                 break;
             }
             default: {
-                color = texColor;
-                color.a *= alphaF;
+                bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+                texColor = palXTex(palAddr, addrOffset, int(s), int(t), sizeS, texFmt - 2, transparent0);
                 break;
             }
         }
+
+        int mode = (polygonAttrs >> 4) & 0x3;
+        switch (mode) {
+            case 0:
+            case 2:
+                color = texColor * oColor;
+                break;
+            case 1:
+            case 3:
+                color.rgb = texColor.rgb * texColor.a + oColor.rgb * (1.0 - texColor.a);
+                color.a = oColor.a;
+                break;
+        }
+    } else {
+        color = oColor;
     }
 
     if (translucentOnly) {
-        if (color.a == 1.0) {
+        if (color.a >= 0.99) {
             discard;
         }
-    } else if (color.a != 1.0) {
-        bool transNewDepth = ((polyAttr >> 7) & 1) != 0;
-        if (transNewDepth) {
-            color.a = 0.0;
-        } else {
-            discard;
-        }
-    }
+    } else if (color.a < 0.99) {
+       bool transNewDepth = ((polygonAttrs >> 11) & 1) != 0;
+       if (transNewDepth) {
+           color.a = 0.0;
+       } else {
+           discard;
+       }
+   }
 }

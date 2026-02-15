@@ -30,7 +30,7 @@ impl<const SIZE: usize> VramMap<SIZE> {
     }
 
     fn extract_section<const CHUNK_SIZE: usize>(&self, offset: usize) -> VramMap<CHUNK_SIZE> {
-        debug_assert!(!self.is_null() && CHUNK_SIZE * offset < SIZE);
+        unsafe { assert_unchecked(!self.is_null() && CHUNK_SIZE * offset < SIZE) };
         VramMap {
             offset: self.offset + CHUNK_SIZE * offset,
         }
@@ -41,8 +41,10 @@ impl<const SIZE: usize> VramMap<SIZE> {
     }
 
     pub fn as_ptr(&self, vram_bank_start: *const u8) -> *const u8 {
-        debug_assert!(!self.is_null());
-        unsafe { vram_bank_start.add(self.offset) }
+        unsafe {
+            assert_unchecked(!self.is_null());
+            vram_bank_start.add(self.offset)
+        }
     }
 
     pub fn as_mut_ptr(&mut self, vram_bank_start: *const u8) -> *mut u8 {
@@ -55,7 +57,7 @@ impl<const SIZE: usize> VramMap<SIZE> {
 
     pub fn set_dirty(&self, index: u32, size: usize, vram_banks: &mut VramBanks) {
         let start = (self.offset + index as usize) >> BANK_SECTION_SHIFT;
-        let end = (self.offset + index as usize + size) >> BANK_SECTION_SHIFT;
+        let end = (self.offset + index as usize + size - 1) >> BANK_SECTION_SHIFT;
         for section in start..end + 1 {
             vram_banks.dirty_sections += section;
         }
@@ -65,8 +67,8 @@ impl<const SIZE: usize> VramMap<SIZE> {
         unsafe { (vram.as_ptr().add(self.offset) as *const [u8; SIZE]).as_ref_unchecked() }
     }
 
-    pub fn as_mut(&self, vram: &[u8; TOTAL_SIZE]) -> &mut [u8; SIZE] {
-        unsafe { (vram.as_ptr().add(self.offset) as *mut [u8; SIZE]).as_mut_unchecked() }
+    pub fn as_mut<'a>(&self, vram: &'a mut [u8; TOTAL_SIZE]) -> &'a mut [u8; SIZE] {
+        unsafe { (vram.as_mut_ptr().add(self.offset) as *mut [u8; SIZE]).as_mut_unchecked() }
     }
 }
 
@@ -96,7 +98,7 @@ impl<const SIZE: usize, const MAX_OVERLAP: usize> OverlapSection<SIZE, MAX_OVERL
         let mut ret = 0;
         for i in 0..self.count as usize {
             let map = &self.overlaps[i];
-            debug_assert!(!map.is_null());
+            unsafe { assert_unchecked(!map.is_null()) };
             ret |= utils::read_from_mem::<T>(map.as_ref(vram), index).into();
         }
         T::from(ret)
@@ -259,7 +261,7 @@ const_assert_eq!(TOTAL_SIZE, 656 * 1024);
 #[derive(Default)]
 pub struct VramBanks {
     pub mem: HeapArrayU8<TOTAL_SIZE>,
-    dirty_sections: Bitset<6>,
+    pub dirty_sections: Bitset<6>,
 }
 
 macro_rules! create_vram_bank {
@@ -274,10 +276,6 @@ macro_rules! create_vram_bank {
 }
 
 impl VramBanks {
-    pub fn reset_dirty_sections(&mut self) {
-        self.dirty_sections.clear();
-    }
-
     pub fn copy_dirty_sections(&self, other: &mut [u8; TOTAL_SIZE]) {
         for i in 0..TOTAL_SIZE / BANK_SECTION_SIZE {
             if self.dirty_sections.contains(i) {
@@ -327,7 +325,9 @@ pub struct VramMaps {
     obj_ext_palette_a: VramMap<{ OBJ_EXT_PAL_SIZE }>,
 
     tex_rear_plane_img: [VramMap<{ 128 * 1024 }>; 4],
+    pub tex_rear_plane_img_banks: [u8; 4],
     tex_palette: [VramMap<{ 16 * 1024 }>; 6],
+    pub tex_palette_banks: [u8; 6],
 
     bg_b: OverlapMapping<{ BG_B_SIZE }, { 16 * 1024 }, 3>,
     obj_b: OverlapMapping<{ 128 * 1024 }, { 16 * 1024 }, 2>,
@@ -343,7 +343,9 @@ impl VramMaps {
         self.bg_ext_palette_a.fill(VramMap::default());
         self.obj_ext_palette_a = VramMap::default();
         self.tex_rear_plane_img.fill(VramMap::default());
+        self.tex_rear_plane_img_banks.fill(u8::MAX);
         self.tex_palette.fill(VramMap::default());
+        self.tex_palette_banks.fill(u8::MAX);
         self.bg_b.reset();
         self.obj_b.reset();
         self.bg_ext_palette_b.fill(VramMap::default());
@@ -433,6 +435,56 @@ impl VramMaps {
             }
         }
     }
+
+    pub fn is_tex_rear_plane_img_dirty(&self, start: u32, end: u32, other: &[u8; 4], dirty_sections: &Bitset<6>) -> bool {
+        let start_index = start >> 17;
+        let end_index = (end - 1) >> 17;
+        for i in start_index..end_index + 1 {
+            if self.tex_rear_plane_img_banks[i as usize] != other[i as usize] {
+                return true;
+            }
+        }
+
+        let start = start & !(BANK_SECTION_SIZE as u32 - 1);
+        let end = (end - 1) & !(BANK_SECTION_SIZE as u32 - 1);
+        for addr in (start..(end + BANK_SECTION_SIZE as u32)).step_by(BANK_SECTION_SIZE) {
+            let bank_index = addr >> 17;
+            let bank_map = self.tex_rear_plane_img[bank_index as usize];
+            if !bank_map.is_null() {
+                let offset = addr & ((1 << 17) - 1);
+                if dirty_sections.contains((bank_map.offset + offset as usize) >> BANK_SECTION_SHIFT) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    pub fn is_tex_palette_dirty(&self, start: u32, end: u32, other: &[u8; 6], dirty_sections: &Bitset<6>) -> bool {
+        let start_index = start >> 14;
+        let end_index = (end - 1) >> 14;
+        for i in start_index..end_index + 1 {
+            if self.tex_palette_banks[i as usize] != other[i as usize] {
+                return true;
+            }
+        }
+
+        let start = start & !(BANK_SECTION_SIZE as u32 - 1);
+        let end = (end - 1) & !(BANK_SECTION_SIZE as u32 - 1);
+        for addr in (start..(end + BANK_SECTION_SIZE as u32)).step_by(BANK_SECTION_SIZE) {
+            let bank_index = addr >> 14;
+            let bank_map = self.tex_palette[bank_index as usize];
+            if !bank_map.is_null() {
+                let offset = addr & ((1 << 14) - 1);
+                if dirty_sections.contains((bank_map.offset + offset as usize) >> BANK_SECTION_SHIFT) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
 }
 
 #[derive(Default)]
@@ -470,6 +522,7 @@ impl Vram {
                     3 => {
                         let ofs = u8::from(cnt_a.ofs()) as usize;
                         self.maps.tex_rear_plane_img[ofs] = VramMap::new(VramBanks::get_a());
+                        self.maps.tex_rear_plane_img_banks[ofs] = 0;
                     }
                     _ => unsafe { unreachable_unchecked() },
                 }
@@ -495,6 +548,7 @@ impl Vram {
                     3 => {
                         let ofs = u8::from(cnt_b.ofs()) as usize;
                         self.maps.tex_rear_plane_img[ofs] = VramMap::new(VramBanks::get_b());
+                        self.maps.tex_rear_plane_img_banks[ofs] = 1;
                     }
                     _ => unsafe { unreachable_unchecked() },
                 }
@@ -521,6 +575,7 @@ impl Vram {
                     3 => {
                         let ofs = u8::from(cnt_c.ofs()) as usize;
                         self.maps.tex_rear_plane_img[ofs] = VramMap::new(VramBanks::get_c());
+                        self.maps.tex_rear_plane_img_banks[ofs] = 2;
                     }
                     4 => {
                         self.maps.bg_b.add::<BANK_C_SIZE>(VramMap::new(VramBanks::get_c()), 0);
@@ -550,6 +605,7 @@ impl Vram {
                     3 => {
                         let ofs = u8::from(cnt_d.ofs()) as usize;
                         self.maps.tex_rear_plane_img[ofs] = VramMap::new(VramBanks::get_d());
+                        self.maps.tex_rear_plane_img_banks[ofs] = 3;
                     }
                     4 => {
                         self.maps.obj_b.add::<BANK_D_SIZE>(VramMap::new(VramBanks::get_d()), 0);
@@ -577,6 +633,7 @@ impl Vram {
                         let vram_map = VramMap::<BANK_E_SIZE>::new(VramBanks::get_e());
                         for i in 0..4 {
                             self.maps.tex_palette[i] = vram_map.extract_section(i);
+                            self.maps.tex_palette_banks[i] = 4;
                         }
                     }
                     4 => {
@@ -608,7 +665,9 @@ impl Vram {
                     }
                     3 => {
                         let ofs = u8::from(cnt_f.ofs()) as usize;
-                        self.maps.tex_palette[(ofs & 1) + ((ofs & 2) * 2)] = VramMap::new(VramBanks::get_f());
+                        let ofs = (ofs & 1) + ((ofs & 2) * 2);
+                        self.maps.tex_palette[ofs] = VramMap::new(VramBanks::get_f());
+                        self.maps.tex_palette_banks[ofs] = 5;
                     }
                     4 => {
                         let ofs = u8::from(cnt_f.ofs()) as usize;
@@ -645,7 +704,9 @@ impl Vram {
                     }
                     3 => {
                         let ofs = u8::from(cnt_g.ofs()) as usize;
-                        self.maps.tex_palette[((ofs & 2) << 1) + (ofs & 1)] = VramMap::new(VramBanks::get_g())
+                        let ofs = ((ofs & 2) << 1) + (ofs & 1);
+                        self.maps.tex_palette[ofs] = VramMap::new(VramBanks::get_g());
+                        self.maps.tex_palette_banks[ofs] = 6;
                     }
                     4 => {
                         let ofs = u8::from(cnt_g.ofs()) as usize;
@@ -759,7 +820,7 @@ impl Vram {
     }
 
     pub fn mark_block_as_captured(&mut self, disp_cap_cnt: DispCapCnt, bank_num: u8) {
-        debug_assert!(bank_num < 4);
+        unsafe { assert_unchecked(bank_num < 4) };
         let vram_offset = bank_num as usize * BANK_A_SIZE;
         let vram_offset = vram_offset + disp_cap_cnt.write_offset() as usize;
         utils::write_to_mem_slice(self.banks.mem.as_mut(), vram_offset, CAPTURE_IDENTIFIER);

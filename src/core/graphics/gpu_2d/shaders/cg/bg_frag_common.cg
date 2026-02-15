@@ -2,8 +2,8 @@ float3 in screenPos : TEXCOORD0;
 float2 in screenPosF : TEXCOORD1;
 float2 in affineDims : TEXCOORD2;
 
-uniform int dispCnt;
-uniform int bgCnt;
+uniform float dispCntF;
+uniform float bgCntF;
 uniform float bgTexHeight;
 
 uniform usampler2D bgTex : TEXUNIT0;
@@ -22,35 +22,43 @@ uniform BgUbo {
     int bgPds[192 * 2];
 } BgUbo : BUFFER[0];
 
-unsigned short readBg8(int addr) {
-    short addrX = (addr >> 2) & 0x1FF;
-    short addrY = addr >> 11;
+unsigned int getDispCnt() {
+    return bit_cast<unsigned int>(dispCntF);
+}
+
+unsigned int getBgCnt() {
+    return bit_cast<unsigned int>(bgCntF);
+}
+
+unsigned short readBg8(unsigned int addr) {
+    unsigned short addrX = (addr >> 2) & 0x1FF;
+    unsigned short addrY = addr >> 11;
     float x = float(addrX) / 511.0;
     float y = float(addrY) / bgTexHeight;
     unsigned int values[4];
     tex2D_gather4(bgTex, float2(x, y), values);
-    short shift = addr & 3;
+    unsigned short shift = addr & 3;
     return (values[0] >> (shift * 8)) & 0xFF;
 }
 
-unsigned short readBg16Aligned(int addr) {
-    short addrX = (addr >> 2) & 0x1FF;
-    short addrY = addr >> 11;
+unsigned short readBg16Aligned(unsigned int addr) {
+    unsigned short addrX = (addr >> 2) & 0x1FF;
+    unsigned short addrY = addr >> 11;
     float x = float(addrX) / 511.0;
     float y = float(addrY) / bgTexHeight;
     unsigned int values[4];
     tex2D_gather4(bgTex, float2(x, y), values);
-    short shift = addr & 2;
+    unsigned short shift = addr & 2;
     return (values[0] >> (shift * 8)) & 0xFFFF;
 }
 
-float4 readPal(short index) {
+float4 readPal(unsigned short index) {
     return tex2D(palTex, float2(float(index) / 511.0, 1.0));
 }
 
-float4 readExtPal(short index) {
-    short indexX = index & 0x1FF;
-    short indexY = index >> 9;
+float4 readExtPal(unsigned short index) {
+    unsigned short indexX = index & 0x1FF;
+    unsigned short indexY = index >> 9;
     float x = float(indexX) / 511.0;
     float y = float(indexY) / 31.0;
     return tex2D(extPalTex, float2(x, y));
@@ -77,6 +85,7 @@ bool can_display(unsigned short bgNum) {
 }
 
 float4 setPrio(float4 color) {
+    int bgCnt = getBgCnt();
     short priority = short(bgCnt & 3);
     color.a = float(priority) / 255.0;
     return color;

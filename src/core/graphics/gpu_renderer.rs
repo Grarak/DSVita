@@ -12,6 +12,7 @@ use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
 use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram;
 use crate::core::memory::vram::{Vram, VramBanks};
+use crate::logging::info_println;
 use crate::presenter::{Presenter, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::screen_layouts::ScreenLayout;
 use crate::settings::Arm7Emu;
@@ -171,9 +172,9 @@ impl GpuRenderer {
         }
     }
 
-    pub fn init(&mut self) {
+    pub fn init(&mut self, cache_3d_textures: bool) {
         self.renderer_regs_2d_shared.init();
-        self.renderer_3d.init();
+        self.renderer_3d.init(cache_3d_textures);
         self.common.mem_buf.init();
         self.common.pow_cnt1[0] = PowCnt1::from(0);
         *self.processed_3d.lock().unwrap() = false;
@@ -232,6 +233,7 @@ impl GpuRenderer {
             }
 
             self.ready_2d = false;
+            self.renderer_3d.on_render_start();
             self.renderer_vram_busy.store(true, Ordering::SeqCst);
             *rendering = true;
             self.rendering_condvar.notify_all();
@@ -301,6 +303,9 @@ impl GpuRenderer {
             self.common
                 .mem_buf
                 .read_all(&mut self.gpu_mem_refs, self.renderer_regs_2d_shared.has_vram_display[0], self.rendering_3d);
+            if self.rendering_3d {
+                self.renderer_3d.on_vram_ready();
+            }
 
             if disp_cap_cnt.capture_enabled() && u8::from(disp_cap_cnt.capture_source()) != 0 {
                 // todo!()
@@ -324,14 +329,13 @@ impl GpuRenderer {
 
             if self.rendering_3d {
                 self.rendering_3d = false;
-                self.renderer_3d.bind_ubos();
                 let processed_3d = self.processed_3d.lock().unwrap();
                 let (_processed_3d, timeout) = self
                     .processed_3d_condvar
                     .wait_timeout_while(processed_3d, Duration::from_millis(1000), |processed_3d| !*processed_3d)
                     .unwrap();
-                if timeout.timed_out() {
-                    println!("waiting for 3d processing timed out");
+                if unlikely(timeout.timed_out()) {
+                    info_println!("waiting for 3d processing timed out");
                 }
                 self.renderer_3d.render(&self.common, &self.gpu_mem_refs);
             }
@@ -518,7 +522,7 @@ impl GpuRenderer {
         }
 
         if self.rendering_3d {
-            unsafe { self.renderer_3d.process_polygons(&self.common) };
+            unsafe { self.renderer_3d.process_polygons(&mut self.common, &self.gpu_mem_refs) };
         }
 
         {

@@ -3,9 +3,10 @@ float3 out screenPos : TEXCOORD0;
 float2 out screenPosF : TEXCOORD1;
 float2 out affineDims : TEXCOORD2;
 
-uniform int bgCnt;
+uniform float bgCntF;
 
 void main(float3 position) {
+    int bgCnt = bit_cast<unsigned int>(bgCntF);
     float size = float(short(128 << ((bgCnt >> 14) & 0x3)));
     affineDims = float2(size, size);
 

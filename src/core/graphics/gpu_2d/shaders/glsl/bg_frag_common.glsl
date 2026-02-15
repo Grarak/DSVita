@@ -8,8 +8,8 @@ in vec3 screenPos;
 in vec2 screenPosF;
 in vec2 affineDims;
 
-uniform int dispCnt;
-uniform int bgCnt;
+uniform float dispCntF;
+uniform float bgCntF;
 uniform float bgTexHeight;
 
 uniform BgUbo {
@@ -21,6 +21,14 @@ uniform BgUbo {
     int bgPcs[192 * 2];
     int bgPds[192 * 2];
 };
+
+int getDispCnt() {
+    return floatBitsToInt(dispCntF);
+}
+
+int getBgCnt() {
+    return floatBitsToInt(bgCntF);
+}
 
 uniform sampler2D bgTex;
 uniform sampler2D palTex;
@@ -77,6 +85,7 @@ ivec2 calculateAffineCoords(int x, int y, int bgNum) {
 }
 
 void setPrio() {
+    int bgCnt = getBgCnt();
     int priority = bgCnt & 3;
     color.a = float(priority) / 255.0;
 }

@@ -1,7 +1,7 @@
 float2 in screenPos : TEXCOORD0;
 float2 in screenPosF : TEXCOORD1;
 
-uniform int dispCnt;
+uniform float dispCntF;
 
 uniform WinBgUbo {
     unsigned int winHV[192 * 2];
@@ -13,6 +13,7 @@ uniform usampler2D objWinTex : TEXUNIT0;
 static float4 oColor;
 
 bool checkBounds(short x, short y, short winNum) {
+    int dispCnt = bit_cast<unsigned int>(dispCntF);
     bool winEnabled = (dispCnt & (1 << (13 + winNum))) != 0;
     if (!winEnabled) {
         return false;

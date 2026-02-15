@@ -3,6 +3,7 @@ vec4 drawAffine(int x, int y, int bgNum) {
 
     ivec2 coords = calculateAffineCoords(x, y, bgNum);
 
+    int bgCnt = getBgCnt();
     bool wrap = ((bgCnt >> 13) & 1) != 0;
     if (wrap) {
         coords.x &= size - 1;
@@ -11,6 +12,7 @@ vec4 drawAffine(int x, int y, int bgNum) {
         discard;
     }
 
+    int dispCnt = getDispCnt();
     int screenAddr = (((dispCnt >> 27) & 0x7) * 64 + ((bgCnt >> 8) & 0x1F) * 2) * 1024;
     int charAddr = (((dispCnt >> 24) & 0x7) * 64 + ((bgCnt >> 2) & 0xF) * 16) * 1024;
 
@@ -36,7 +38,7 @@ vec4 drawAffine(int x, int y, int bgNum) {
     }
     palAddr *= 2;
 
-    bool useExtPal = (dispCnt & (1 << 30)) != 0;
+    bool useExtPal = ((dispCnt >> 30) & 1) != 0;
     if (useExtPal) {
         palAddr += bgNum * 8192 + ((screenEntry & 0xF000) >> 3);
         int color = readExtPal16Aligned(palAddr);

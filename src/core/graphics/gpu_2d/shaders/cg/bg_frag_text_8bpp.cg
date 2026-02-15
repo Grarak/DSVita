@@ -1,4 +1,6 @@
 float4 drawText(short x, short y, short bgNum) {
+    int dispCnt = getDispCnt();
+    int bgCnt = getBgCnt();
     int screenAddr = (((dispCnt >> 27) & 0x7) * 64 + ((bgCnt >> 8) & 0x1F) * 2) * 1024;
     int charAddr = (((dispCnt >> 24) & 0x7) * 64 + ((bgCnt >> 2) & 0xF) * 16) * 1024;
 
@@ -45,9 +47,9 @@ float4 drawText(short x, short y, short bgNum) {
         discard;
     }
 
-    bool useExtPal = (dispCnt & (1 << 30)) != 0;
+    bool useExtPal = ((dispCnt >> 30) & 1) != 0;
     if (useExtPal) {
-        short slot = bgNum < 2 && (bgCnt & (1 << 13)) != 0 ? bgNum + 2 : bgNum;
+        short slot = bgNum < 2 && ((bgCnt >> 13) & 1) != 0 ? bgNum + 2 : bgNum;
         palIndex += slot * 4096 + ((screenEntry & 0xF000) >> 4);
         return float4(readExtPal(palIndex).rgb, 1.0);
     } else {

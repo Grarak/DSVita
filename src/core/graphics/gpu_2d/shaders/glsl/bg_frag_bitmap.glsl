@@ -4,6 +4,7 @@ vec4 drawBitmap(int x, int y, int bgNum) {
 
     ivec2 coords = calculateAffineCoords(x, y, bgNum);
 
+    int bgCnt = getBgCnt();
     bool wrap = (bgCnt & (1 << 13)) != 0;
     if (wrap) {
         coords.x &= width - 1;

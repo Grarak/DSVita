@@ -4,6 +4,7 @@ float4 drawBitmap(short x, short y, short bgNum) {
 
     int2 coords = int2(calculateAffineCoords(x, y, bgNum));
 
+    int bgCnt = getBgCnt();
     bool wrap = (bgCnt & (1 << 13)) != 0;
     if (wrap) {
         coords.x &= width - 1;

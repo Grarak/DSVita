@@ -1,20 +1,12 @@
+uniform float polygonAttrsF;
+uniform float texImageParamF;
 uniform bool translucentOnly;
 
-float3 in oColor : TEXCOORD0_HALF;
+float4 in oColor : TEXCOORD0_HALF;
 float2 in oTexCoords : TEXCOORD1;
-float in oPolygonIndex : TEXCOORD2;
 
 uniform usampler2D tex : TEXUNIT0;
 uniform sampler2D palTex : TEXUNIT1;
-
-struct PolygonAttr {
-    unsigned int texImageParam;
-    unsigned int palAddrAttrs;
-};
-
-struct {
-    PolygonAttr attrs[1];
-} PolygonAttrsUbo : BUFFER[0];
 
 unsigned short readTex8(int addr) {
     short addrX = (addr >> 2) & 0x1FF;
@@ -131,13 +123,13 @@ float4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format,
 }
 
 void main(out float4 color : COLOR) {
-    short polygonIndex = short(oPolygonIndex);
+    unsigned int polygonAttrs = bit_cast<unsigned int>(polygonAttrsF);
+    unsigned int texImageParam = bit_cast<unsigned int>(texImageParamF);
 
-    PolygonAttr attr = PolygonAttrsUbo.attrs[polygonIndex];
-    unsigned int addrOffset = (attr.texImageParam & 0xFFFF) << 3;
-    unsigned short texImageParam = attr.texImageParam >> 16;
-    unsigned short palAddr = attr.palAddrAttrs & 0xFFFF;
-    unsigned short polyAttr = attr.palAddrAttrs >> 16;
+    unsigned int addrOffset = (texImageParam & 0xFFFF) << 3;
+    texImageParam = texImageParam >> 16;
+    unsigned short palAddr = polygonAttrs >> 16;
+    polygonAttrs = polygonAttrs & 0xFFFF;
 
     short sizeS = 8 << ((texImageParam >> 4) & 0x7);
     short sizeT = 8 << ((texImageParam >> 7) & 0x7);
@@ -170,45 +162,43 @@ void main(out float4 color : COLOR) {
         t = sizeT - 1;
     }
 
-    float alpha = float(polyAttr & 31) / 31.0;
-
     short texFmt = (texImageParam >> 10) & 0x7;
-    float4 texColor;
-    if (texFmt == 0) {
-        color = float4(oColor, alpha);
-    } else if (texFmt == 1) {
-        texColor = aXiXTex(palAddr, addrOffset, s, t, sizeS, 3);
-    } else if (texFmt == 5) {
-        texColor = compressed4x4Tex(palAddr, addrOffset, s, t, sizeS);
-    } else if (texFmt == 6) {
-        texColor = aXiXTex(palAddr, addrOffset, s, t, sizeS, 5);
-    } else if (texFmt == 7) {
-        texColor = directTex(addrOffset, s, t, sizeS);
-    } else {
-        bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
-        texColor = palXTex(palAddr, addrOffset, s, t, sizeS, texFmt - 2, transparent0);
-    }
-
     if (texFmt != 0) {
-        short mode = (polyAttr >> 5) & 0x3;
-        if (mode == 0) {
-            color = texColor * float4(oColor, alpha);
+        float4 texColor;
+        if (texFmt == 1) {
+            texColor = aXiXTex(palAddr, addrOffset, s, t, sizeS, 3);
+        } else if (texFmt == 5) {
+            texColor = compressed4x4Tex(palAddr, addrOffset, s, t, sizeS);
+        } else if (texFmt == 6) {
+            texColor = aXiXTex(palAddr, addrOffset, s, t, sizeS, 5);
+        } else if (texFmt == 7) {
+            texColor = directTex(addrOffset, s, t, sizeS);
         } else {
-            color = texColor;
-            color.a *= alpha;
+            bool transparent0 = ((texImageParam >> 13) & 0x1) == 1;
+            texColor = palXTex(palAddr, addrOffset, s, t, sizeS, texFmt - 2, transparent0);
         }
+
+        int mode = (polygonAttrs >> 4) & 0x3;
+        if (mode == 0 || mode == 2) {
+            color = texColor * oColor;
+        } else {
+            color.rgb = texColor.rgb * texColor.a + oColor.rgb * (1.0 - texColor.a);
+            color.a = oColor.a;
+        }
+    } else {
+        color = oColor;
     }
 
     if (translucentOnly) {
-        if (color.a == 1.0) {
+        if (color.a >= 0.99) {
             discard;
         }
-    } else if (color.a != 1.0) {
-        bool transNewDepth = ((polyAttr >> 7) & 1) != 0;
-        if (transNewDepth) {
-            color.a = 0.0;
-        } else {
-            discard;
-        }
-    }
+    } else if (color.a < 0.99) {
+       bool transNewDepth = ((polygonAttrs >> 11) & 1) != 0;
+       if (transNewDepth) {
+           color.a = 0.0;
+       } else {
+           discard;
+       }
+   }
 }

@@ -5,11 +5,12 @@ out vec3 screenPos;
 out vec2 screenPosF;
 out vec2 affineDims;
 
-uniform int bgCnt;
+uniform float bgCntF;
 
 const vec2 BitMapSizeLookup[4] = vec2[4](vec2(128.0, 128.0), vec2(256.0, 256.0), vec2(512.0, 256.0), vec2(512.0, 512.0));
 
 void main() {
+    int bgCnt = floatBitsToInt(bgCntF);
     int size = (bgCnt >> 14) & 0x3;
     affineDims = BitMapSizeLookup[size];
 

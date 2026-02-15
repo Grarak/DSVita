@@ -3,11 +3,12 @@ float3 out screenPos : TEXCOORD0;
 float2 out screenPosF : TEXCOORD1;
 float2 out affineDims : TEXCOORD2;
 
-uniform int bgCnt;
+uniform float bgCntF;
 
 static const float2 BitMapSizeLookup[4] = {float2(128.0, 128.0), float2(256.0, 256.0), float2(512.0, 256.0), float2(512.0, 512.0)};
 
 void main(float3 position) {
+    int bgCnt = bit_cast<unsigned int>(bgCntF);
     short size = (bgCnt >> 14) & 0x3;
     affineDims = BitMapSizeLookup[size];
 

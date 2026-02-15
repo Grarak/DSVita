@@ -59,8 +59,8 @@ pub struct Viewport {
 impl Default for Viewport {
     fn default() -> Self {
         let mut viewport = Viewport::from(0);
-        viewport.set_x2(DISPLAY_WIDTH as u8);
-        viewport.set_y2(DISPLAY_HEIGHT as u8);
+        viewport.set_x2((DISPLAY_WIDTH - 1) as u8);
+        viewport.set_y2((DISPLAY_HEIGHT - 1) as u8);
         viewport
     }
 }
@@ -75,14 +75,18 @@ pub struct TexImageParam {
     pub flip_t: bool,
     pub size_s_shift: u3,
     pub size_t_shift: u3,
-    pub format: u3,
-    color_0_transparent: bool,
+    pub format: TextureFormat,
+    pub color_0_transparent: bool,
     pub coord_trans_mode: TextureCoordTransMode,
 }
 
 impl TexImageParam {
     pub fn is_translucent(self) -> bool {
-        u8::from(self.format()) == 1 || u8::from(self.format()) == 6
+        self.format() == TextureFormat::A3I5Translucent || self.format() == TextureFormat::A5I3Translucent
+    }
+
+    pub fn key(self) -> u32 {
+        self.value & if (2..=4).contains(&(self.format() as u8)) { 0x3FF0FFFF } else { 0x1FF0FFFF }
     }
 }
 
@@ -231,7 +235,8 @@ impl From<u8> for PolygonMode {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[bitsize(3)]
+#[derive(Copy, Clone, Debug, Default, Eq, FromBits, PartialEq)]
 #[repr(u8)]
 pub enum TextureFormat {
     #[default]
@@ -503,7 +508,7 @@ impl Gpu3DBuffers {
 
 #[derive(Default)]
 pub struct Gpu3DRegisters {
-    cmd_fifo: FixedFifo<u32, 2048>,
+    cmd_fifo: FixedFifo<u32, 4096>,
     cmd_remaining_params: u8,
 
     test_queue: u8,

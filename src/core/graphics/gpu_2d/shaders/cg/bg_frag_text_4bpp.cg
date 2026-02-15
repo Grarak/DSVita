@@ -1,4 +1,6 @@
 float4 drawText(short x, short y, short bgNum) {
+    int dispCnt = getDispCnt();
+    int bgCnt = getBgCnt();
     int screenAddr = (((dispCnt >> 27) & 0x7) * 64 + ((bgCnt >> 8) & 0x1F) * 2) * 1024;
     int charAddr = (((dispCnt >> 24) & 0x7) * 64 + ((bgCnt >> 2) & 0xF) * 16) * 1024;
 

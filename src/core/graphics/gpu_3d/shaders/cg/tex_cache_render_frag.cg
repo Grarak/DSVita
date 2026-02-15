@@ -1,0 +1,50 @@
+uniform float polygonAttrsF;
+uniform float texImageParamF;
+uniform bool translucentOnly;
+
+float4 in oColor : COLOR0;
+float2 in oTexCoords : TEXCOORD0;
+float4 in oTexModeWeights : TEXCOORD1;
+
+uniform sampler2D tex : TEXUNIT0;
+
+void main(out float4 color : COLOR) {
+    unsigned int polygonAttrs = bit_cast<unsigned int>(polygonAttrsF);
+    bool noTex = (polygonAttrs & 1) != 0;
+    if (!noTex) {
+        float4 weights = round(oTexModeWeights);
+        float2 texCoords = oTexCoords * (1.0 - weights.xz);
+        float2 texCoordsFrac = frac(oTexCoords);
+        float2 texCoordsMod = frac(floor(oTexCoords) / weights.yw) * weights.yw;
+        texCoordsFrac = texCoordsFrac * (1.0 - 2.0 * texCoordsMod) + texCoordsMod;
+        texCoords += texCoordsFrac * weights.xz;
+
+        float4 texColor = tex2D(tex, texCoords);
+        if (texColor.a == 0.0) {
+            discard;
+        }
+
+        int mode = (polygonAttrs >> 4) & 0x3;
+        if (mode == 0 || mode == 2) {
+            color = texColor * oColor;
+        } else {
+            color.rgb = texColor.rgb * texColor.a + oColor.rgb * (1.0 - texColor.a);
+            color.a = oColor.a;
+        }
+    } else {
+        color = oColor;
+    }
+
+    if (translucentOnly) {
+        if (color.a >= 0.99) {
+            discard;
+        }
+    } else if (color.a < 0.99) {
+       bool transNewDepth = ((polygonAttrs >> 11) & 1) != 0;
+       if (transNewDepth) {
+           color.a = 0.0;
+       } else {
+           discard;
+       }
+   }
+}

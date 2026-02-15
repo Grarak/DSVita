@@ -14,7 +14,7 @@ out vec2 screenPosF;
 out vec2 objAttrib0Addr;
 out vec2 objAttrib2Addr;
 
-uniform int dispCnt;
+uniform float dispCntF;
 uniform bool objWindow;
 
 int readOam16Aligned(int addr) {

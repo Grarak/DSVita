@@ -170,6 +170,7 @@ lazy_static! {
                 "Don't calculate new frames when old ones in queue haven't been consumed yet. Increases latency and might introduce\nglitches, however gives a performance boost. Disable when playing games that use 3D on both screens",
                 SettingValue::Bool(true),
                 true),
+            Setting::new("Cache 3D textures", "Decode and cache 3D textures", SettingValue::Bool(true), true),
             Setting::new("Audio stretching", "Enable if games doesn't run at fullspeed, introduces latency however prevents audio stutter.", SettingValue::Bool(true), true),
             Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", ScreenLayout::settings_value(), true),
             Setting::new("Swap screens", "Press PS + Cross to swap screens in game.", SettingValue::Bool(false), true),
@@ -182,7 +183,7 @@ lazy_static! {
 }
 
 #[derive(Clone)]
-pub struct Settings([Setting; 11]);
+pub struct Settings([Setting; 12]);
 
 #[repr(u8)]
 enum SettingIndices {
@@ -190,6 +191,7 @@ enum SettingIndices {
     Audio,
     Arm7Emu,
     Geometry3DSkip,
+    Cache3DTextures,
     AudioStretching,
     ScreenLayout,
     SwapScreen,
@@ -231,6 +233,10 @@ impl Settings {
         unsafe { self.0[SettingIndices::Geometry3DSkip as usize].value.as_bool().unwrap_unchecked() }
     }
 
+    pub fn cache_3d_textures(&self) -> bool {
+        unsafe { self.0[SettingIndices::Cache3DTextures as usize].value.as_bool().unwrap_unchecked() }
+    }
+
     pub fn audio_stretching(&self) -> bool {
         unsafe { self.0[SettingIndices::AudioStretching as usize].value.as_bool().unwrap_unchecked() }
     }
@@ -256,7 +262,7 @@ impl Settings {
         *self.0[SettingIndices::Arm7Emu as usize].value.as_list_mut().unwrap().0 = value as usize
     }
 
-    pub fn get_all_mut(&mut self) -> &mut [Setting; 11] {
+    pub fn get_all_mut(&mut self) -> &mut [Setting] {
         &mut self.0
     }
 }
