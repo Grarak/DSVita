@@ -23,7 +23,7 @@ pub const WIDTH_3D: usize = DISPLAY_WIDTH * 2;
 pub const HEIGHT_3D: usize = DISPLAY_HEIGHT * 2;
 
 #[bitsize(32)]
-#[derive(FromBits)]
+#[derive(Copy, Clone, FromBits)]
 struct ClearColor {
     color: u15,
     fog: bool,
@@ -31,6 +31,12 @@ struct ClearColor {
     not_used: u3,
     clear_polygon_id: u6,
     not_used1: u2,
+}
+
+impl Default for ClearColor {
+    fn default() -> Self {
+        ClearColor::from(0)
+    }
 }
 
 #[bitsize(16)]
@@ -61,8 +67,10 @@ impl Default for Disp3DCnt {
 struct Gpu3DRendererInner {
     disp_cnt: Disp3DCnt,
     edge_colors: [u16; 8],
-    clear_color: u32,
+    clear_color: ClearColor,
+    clear_colorf: [f32; 4],
     clear_depth: u16,
+    clear_depthf: f32,
     fog_color: u32,
     fog_offset: u16,
     fog_table: [u8; 32],
@@ -73,6 +81,7 @@ struct Gpu3DLoc {
     polygon_attrs: GLint,
     tex_image_param: GLint,
     translucent_only: GLint,
+    w_buffering: GLint,
 }
 
 pub struct Gpu3DGl {
@@ -96,6 +105,7 @@ impl Gpu3DGl {
                 let polygon_attrs_loc = gl::GetUniformLocation(program, c"polygonAttrsF".as_ptr() as _);
                 let tex_imag_param_loc = gl::GetUniformLocation(program, c"texImageParamF".as_ptr() as _);
                 let translucent_only_loc = gl::GetUniformLocation(program, c"translucentOnly".as_ptr() as _);
+                let w_buffering_loc = gl::GetUniformLocation(program, c"wBuffering".as_ptr() as _);
 
                 gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
                 gl::BindAttribLocation(program, 1, c"texCoords".as_ptr() as _);
@@ -104,15 +114,15 @@ impl Gpu3DGl {
                 gl::BindAttribLocation(program, 4, c"texSize".as_ptr() as _);
                 gl::BindAttribLocation(program, 5, c"texModeWeights".as_ptr() as _);
 
-                (polygon_attrs_loc, tex_imag_param_loc, translucent_only_loc)
+                (polygon_attrs_loc, tex_imag_param_loc, translucent_only_loc, w_buffering_loc)
             };
 
-            let (polygon_attrs_loc, tex_imag_param_loc, translucent_only_loc) = init_program(gpu_programs.render_3d);
+            let (polygon_attrs_loc, tex_imag_param_loc, translucent_only_loc, w_buffering_loc) = init_program(gpu_programs.render_3d);
 
             gl::Uniform1i(gl::GetUniformLocation(gpu_programs.render_3d, c"tex".as_ptr() as _), 0);
             gl::Uniform1i(gl::GetUniformLocation(gpu_programs.render_3d, c"palTex".as_ptr() as _), 1);
 
-            let (tex_cache_polygon_attrs_loc, tex_cache_tex_imag_param_loc, tex_cache_translucent_only_loc) = init_program(gpu_programs.tex_cache_render_3d);
+            let (tex_cache_polygon_attrs_loc, tex_cache_tex_imag_param_loc, tex_cache_translucent_only_loc, tex_cache_w_buffering_loc) = init_program(gpu_programs.tex_cache_render_3d);
 
             gl::Uniform1i(gl::GetUniformLocation(gpu_programs.tex_cache_render_3d, c"tex".as_ptr() as _), 0);
 
@@ -129,11 +139,13 @@ impl Gpu3DGl {
                     polygon_attrs: polygon_attrs_loc,
                     tex_image_param: tex_imag_param_loc,
                     translucent_only: translucent_only_loc,
+                    w_buffering: w_buffering_loc,
                 },
                 tex_cache_loc: Gpu3DLoc {
                     polygon_attrs: tex_cache_polygon_attrs_loc,
                     tex_image_param: tex_cache_tex_imag_param_loc,
                     translucent_only: tex_cache_translucent_only_loc,
+                    w_buffering: tex_cache_w_buffering_loc,
                 },
                 tex: create_mem_texture2d(1024, 512),
                 pal_tex: create_pal_texture2d(1024, 96),
@@ -323,10 +335,12 @@ impl Gpu3DRenderer {
 
     pub fn set_clear_color(&mut self, mut mask: u32, value: u32) {
         mask &= 0x3F1FFFFF;
-        if value & mask == self.inners[1].clear_color & mask {
+        if value & mask == self.inners[1].clear_color.value & mask {
             return;
         }
-        self.inners[1].clear_color = (self.inners[1].clear_color & !mask) | (value & mask);
+        self.inners[1].clear_color.value = (self.inners[1].clear_color.value & !mask) | (value & mask);
+        let [r, g, b] = rgb5_to_float8(u16::from(self.inners[1].clear_color.color()));
+        self.inners[1].clear_colorf = [r, g, b, u8::from(self.inners[1].clear_color.alpha()) as f32 / 31f32];
         self.invalidate();
     }
 
@@ -336,6 +350,7 @@ impl Gpu3DRenderer {
             return;
         }
         self.inners[1].clear_depth = (self.inners[1].clear_depth & !mask) | (value & mask);
+        self.inners[1].clear_depthf = self.inners[1].clear_depth as f32 / 0x7FFF as f32;
         self.invalidate();
     }
 
@@ -740,10 +755,10 @@ impl Gpu3DRenderer {
         gl::BindFramebuffer(gl::FRAMEBUFFER, fbo.fbo);
         gl::Viewport(0, 0, WIDTH_3D as _, HEIGHT_3D as _);
 
-        let clear_color = ClearColor::from(self.inners[0].clear_color);
-        let [r, g, b] = rgb5_to_float8(u16::from(clear_color.color()));
-        gl::ClearColor(r, g, b, u8::from(clear_color.alpha()) as f32 / 31f32);
+        let [r, g, b, a] = self.inners[0].clear_colorf;
+        gl::ClearColor(r, g, b, a);
 
+        gl::ClearDepth(self.inners[0].clear_depthf as _);
         gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
 
         self.vertices_buf_count = 0;
@@ -847,6 +862,12 @@ impl Gpu3DRenderer {
         gl::VertexAttribPointer(5, 4, gl::UNSIGNED_BYTE, gl::FALSE, size_of::<Gpu3DVertex>() as _, mem::offset_of!(Gpu3DVertex, tex_mode_weights) as _);
 
         let loc = if self.cache_3d_textures { &self.gl.tex_cache_loc } else { &self.gl.loc };
+
+        if self.buffer.swap_buffers.depth_buffering_w() {
+            gl::Uniform1i(loc.w_buffering, 1);
+        } else {
+            gl::Uniform1i(loc.w_buffering, 0);
+        }
 
         if !self.indices_opaque.is_empty() {
             gl::DepthMask(gl::TRUE);

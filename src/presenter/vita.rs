@@ -384,10 +384,6 @@ impl Presenter {
     pub fn gl_version_suffix() -> &'static str {
         vita_gl::VITA_GL_VERSION
     }
-
-    pub unsafe fn gl_get_context() -> *mut SceGxmContext {
-        vita_gl::gxm_context as _
-    }
 }
 
 impl UiBackend for Presenter {

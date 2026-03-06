@@ -1,7 +1,9 @@
 uniform float polygonAttrsF;
 uniform float texImageParamF;
+uniform bool wBuffering;
 uniform bool translucentOnly;
 
+float4 in gl_FragCoord : WPOS;
 float4 in oColor : TEXCOORD0_HALF;
 float2 in oTexCoords : TEXCOORD1;
 
@@ -122,7 +124,7 @@ float4 palXTex(int palAddr, int addrOffset, int s, int t, int sizeS, int format,
     return float4(color.rgb, 1.0);
 }
 
-void main(out float4 color : COLOR) {
+void main(out float4 color : COLOR, out float gl_FragDepth : DEPTH) {
     unsigned int polygonAttrs = bit_cast<unsigned int>(polygonAttrsF);
     unsigned int texImageParam = bit_cast<unsigned int>(texImageParamF);
 
@@ -194,11 +196,15 @@ void main(out float4 color : COLOR) {
             discard;
         }
     } else if (color.a < 0.99) {
-       bool transNewDepth = ((polygonAttrs >> 11) & 1) != 0;
-       if (transNewDepth) {
-           color.a = 0.0;
-       } else {
-           discard;
-       }
-   }
+        bool transNewDepth = ((polygonAttrs >> 11) & 1) != 0;
+        if (transNewDepth) {
+            color.a = 0.0;
+        } else {
+            discard;
+        }
+    }
+
+    if (wBuffering) {
+        gl_FragDepth = 1.0 / gl_FragCoord.w / 4095.0;
+    }
 }

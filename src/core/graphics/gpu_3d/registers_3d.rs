@@ -167,7 +167,7 @@ impl PolygonAttr {
 }
 
 #[bitsize(8)]
-#[derive(Copy, Clone, Default, FromBits)]
+#[derive(Copy, Clone, DebugBits, Default, FromBits)]
 pub struct SwapBuffers {
     pub manual_sort_translucent_polygon: bool,
     pub depth_buffering_w: bool,

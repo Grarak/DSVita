@@ -1,14 +1,16 @@
 uniform float polygonAttrsF;
 uniform float texImageParamF;
+uniform bool wBuffering;
 uniform bool translucentOnly;
 
+float4 in gl_FragCoord : WPOS;
 float4 in oColor : COLOR0;
 float2 in oTexCoords : TEXCOORD0;
 float4 in oTexModeWeights : TEXCOORD1;
 
 uniform sampler2D tex : TEXUNIT0;
 
-void main(out float4 color : COLOR) {
+void main(out float4 color : COLOR, out float gl_FragDepth : DEPTH) {
     unsigned int polygonAttrs = bit_cast<unsigned int>(polygonAttrsF);
     bool noTex = (polygonAttrs & 1) != 0;
     if (!noTex) {
@@ -46,5 +48,9 @@ void main(out float4 color : COLOR) {
        } else {
            discard;
        }
+   }
+
+   if (wBuffering) {
+       gl_FragDepth = 1.0 / gl_FragCoord.w / 4095.0;
    }
 }
