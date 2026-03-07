@@ -1,5 +1,5 @@
 use crate::core::graphics::gpu_3d::registers_3d::TextureFormat;
-use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DPolygon;
+use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DDraw;
 use crate::core::graphics::gpu_mem_buf::{GpuMemBuf, GpuMemRefs};
 use crate::core::memory::vram;
 use crate::core::memory::vram::Vram;
@@ -399,18 +399,18 @@ impl Texture3D {
         }
     }
 
-    fn new(polygon: &Gpu3DPolygon, vram: &Vram, mem_refs: &GpuMemRefs) -> Self {
+    fn new(draw: &Gpu3DDraw, vram: &Vram, mem_refs: &GpuMemRefs) -> Self {
         let metadata = Texture3DMetadata::new(
-            polygon.tex_image_param.size_s_shift(),
-            polygon.tex_image_param.size_t_shift(),
-            polygon.tex_image_param.format(),
-            polygon.tex_image_param.color_0_transparent(),
+            draw.tex_image_param.size_s_shift(),
+            draw.tex_image_param.size_t_shift(),
+            draw.tex_image_param.format(),
+            draw.tex_image_param.color_0_transparent(),
             u6::new(0),
         );
 
         let mut instance = Texture3D {
-            vram_addr: polygon.tex_image_param.vram_offset(),
-            pal_addr: polygon.pal_addr,
+            vram_addr: draw.tex_image_param.vram_offset(),
+            pal_addr: draw.pal_addr,
             metadata,
             last_used: Instant::now(),
             tex_rear_plane_img_banks: vram.maps.tex_rear_plane_img_banks,
@@ -569,8 +569,8 @@ impl Texture3DCache {
         }
     }
 
-    pub fn get(&mut self, polygon: &Gpu3DPolygon, mem_buf: &GpuMemBuf, mem_refs: &GpuMemRefs, texture_ids_to_delete: &mut Vec<GLuint>) -> &mut Texture3D {
-        let key = polygon.key();
+    pub fn get(&mut self, draw: &Gpu3DDraw, mem_buf: &GpuMemBuf, mem_refs: &GpuMemRefs, texture_ids_to_delete: &mut Vec<GLuint>) -> &mut Texture3D {
+        let key = draw.key();
         if let Some(texture_3d) = self.cache.get_mut(&key) {
             if texture_3d.in_use || !texture_3d.dirty {
                 texture_3d.last_used = Instant::now();
@@ -585,7 +585,7 @@ impl Texture3DCache {
             }
         }
 
-        let texture_3d = Texture3D::new(polygon, &mem_buf.vram, mem_refs);
+        let texture_3d = Texture3D::new(draw, &mem_buf.vram, mem_refs);
         while self.total_size + texture_3d.metadata.size() >= CACHE_SIZE_LIMIT {
             let mut oldest_key = 0;
             let mut oldest_timestamp = Instant::now();

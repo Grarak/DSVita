@@ -148,7 +148,8 @@ pub struct PolygonAttr {
     pub mode: u2,
     pub render_back: bool,
     pub render_front: bool,
-    not_used: u3,
+    pub primitive_type: PrimitiveType,
+    not_used: u1,
     pub trans_new_depth: bool,
     pub render_far_plane: bool,
     pub render_1_dot_polygons: bool,
@@ -157,7 +158,7 @@ pub struct PolygonAttr {
     pub alpha: u5,
     not_used2: u3,
     pub id: u6,
-    pub primitive_type: PrimitiveType,
+    not_used3: u2,
 }
 
 impl PolygonAttr {

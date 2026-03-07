@@ -42,15 +42,15 @@ void main(out float4 color : COLOR, out float gl_FragDepth : DEPTH) {
             discard;
         }
     } else if (color.a < 0.99) {
-       bool transNewDepth = ((polygonAttrs >> 11) & 1) != 0;
-       if (transNewDepth) {
-           color.a = 0.0;
-       } else {
-           discard;
-       }
-   }
+        bool transNewDepth = ((polygonAttrs >> 11) & 1) != 0;
+        if (transNewDepth) {
+            color.a = 0.0;
+        } else {
+            discard;
+        }
+    }
 
-   if (wBuffering) {
-       gl_FragDepth = 1.0 / gl_FragCoord.w / 4095.0;
-   }
+    if (wBuffering) {
+        gl_FragDepth = 1.0 / gl_FragCoord.w / 4095.0;
+    }
 }
