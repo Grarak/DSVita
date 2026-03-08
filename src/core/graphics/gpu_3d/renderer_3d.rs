@@ -10,7 +10,7 @@ use crate::core::memory::vram;
 use crate::math::{vmult_vec4_mat4_no_store, Vectori32};
 use crate::utils::{rgb5_to_float8, HeapArray, HeapArrayU16, HeapArrayU8, HeapMem, PtrWrapper};
 use bilge::prelude::*;
-use gl::types::{GLint, GLuint};
+use gl::types::GLuint;
 use static_assertions::const_assert_eq;
 use std::arch::arm::{vcvt_n_f32_s32, vcvtq_n_f32_s32, vget_low_s32, vsetq_lane_s32, vshr_n_s32, vst1_f32, vst1q_f32};
 use std::hint::{assert_unchecked, unreachable_unchecked};
@@ -132,7 +132,6 @@ struct Gpu3DTexMem {
 struct Gpu3DVertex {
     coords: [f32; 4],
     tex_coords: [f32; 2],
-    tex_mode_weights: [u8; 4],
     viewport: [u8; 4],
     color: [u8; 4],
     tex_size: [u8; 2],
@@ -158,6 +157,7 @@ impl Gpu3DDraw {
 struct IndicesBatch {
     indices_offset: usize,
     tex: GLuint,
+    tex_image_param: TexImageParam,
     attr: PolygonAttr,
 }
 
@@ -186,6 +186,7 @@ pub struct Gpu3DRenderer {
     texture_ids_to_delete: Vec<GLuint>,
     active_texture_id: GLuint,
     active_polygon_attr: PolygonAttr,
+    active_tex_image_param: TexImageParam,
     indices_opaque_batches: Vec<IndicesBatch>,
     indices_translucent_batches: Vec<IndicesBatch>,
     vram_ready: AtomicBool,
@@ -222,6 +223,7 @@ impl Gpu3DRenderer {
             texture_cache: Texture3DCache::new(),
             active_texture_id: u32::MAX,
             active_polygon_attr: PolygonAttr::default(),
+            active_tex_image_param: TexImageParam::default(),
             indices_opaque_batches: Vec::new(),
             indices_translucent_batches: Vec::new(),
             vram_ready: AtomicBool::new(false),
@@ -507,6 +509,7 @@ impl Gpu3DRenderer {
             indices_batch.push(IndicesBatch {
                 indices_offset: indices_len,
                 tex: self.active_texture_id,
+                tex_image_param: self.active_tex_image_param,
                 attr: self.active_polygon_attr,
             });
         }
@@ -516,6 +519,7 @@ impl Gpu3DRenderer {
         assert_unchecked((draw_index as usize) < POLYGON_LIMIT);
         let draw = &self.assembled_draws[draw_index as usize];
         let primitive_type = draw.attr.primitive_type();
+        let tex_image_param = draw.tex_image_param;
 
         // println!(
         //     "renderer: translucent only {TRANSLUCENT_ONLY} polygon {polygon_index} type {:?} pal addr {:x} tex image param {:?} attr {:?}",
@@ -525,27 +529,25 @@ impl Gpu3DRenderer {
         //     polygon.attr
         // );
 
-        const POLYGON_ATTR_MASK: u32 = 0x0000F8F0;
-        let (texture_id, polygon_attr) = if self.cache_3d_textures {
-            (
-                if draw.tex_image_param.format() != TextureFormat::None {
-                    draw.texture_3d_ptr.as_mut_unchecked().get_texture_id()
-                } else {
-                    u32::MAX
-                },
-                u32::from(draw.attr) & POLYGON_ATTR_MASK,
-            )
+        let texture_id = if self.cache_3d_textures && draw.tex_image_param.format() != TextureFormat::None {
+            draw.texture_3d_ptr.as_mut_unchecked().get_texture_id()
         } else {
-            (
-                u32::from(draw.tex_image_param) & 0x3FFFFFFF,
-                (u32::from(draw.attr) & POLYGON_ATTR_MASK) | ((draw.pal_addr as u32) << 16),
-            )
+            u32::MAX
         };
-        if self.active_texture_id != texture_id || u32::from(self.active_polygon_attr) & POLYGON_ATTR_MASK != polygon_attr {
+
+        let (tex_image_param, polygon_attr) = if self.cache_3d_textures {
+            (u32::from(draw.tex_image_param) & 0x1C0F0000, u32::from(draw.attr) & 0x0000F8F0)
+        } else {
+            (u32::from(draw.tex_image_param) & 0x3FFFFFFF, (u32::from(draw.attr) & 0x0000F8F0) | ((draw.pal_addr as u32) << 16))
+        };
+        if self.active_texture_id != texture_id
+            || u32::from(self.active_tex_image_param) != tex_image_param
+            || u32::from(self.active_polygon_attr) != polygon_attr
+        {
             self.add_indices_batch::<TRANSLUCENT_ONLY>();
             self.active_texture_id = texture_id;
+            self.active_tex_image_param = TexImageParam::from(tex_image_param);
             self.active_polygon_attr = PolygonAttr::from(polygon_attr);
-            self.active_polygon_attr.set_primitive_type(primitive_type);
         }
 
         let draw = &self.assembled_draws[draw_index as usize];
@@ -579,13 +581,6 @@ impl Gpu3DRenderer {
             self.polygon_vertices_mapping[draw_index as usize] = self.vertices_buf_count;
         }
 
-        let tex_mode_weights = [
-            if draw.tex_image_param.repeat_s() { 1 } else { 0 },
-            if draw.tex_image_param.flip_s() { 2 } else { 1 },
-            if draw.tex_image_param.repeat_t() { 1 } else { 0 },
-            if draw.tex_image_param.flip_t() { 2 } else { 1 },
-        ];
-
         // println!("add draw {:?}", draw.attr.primitive_type());
 
         for i in draw.vertex_start_index..draw.vertex_start_index + draw.vertex_count {
@@ -597,7 +592,6 @@ impl Gpu3DRenderer {
             let gpu_vertex = Gpu3DVertex {
                 coords: vertex.coords.float.0,
                 tex_coords: [vertex.s.trans_tex_coords[0], vertex.s.trans_tex_coords[1]],
-                tex_mode_weights,
                 tex_size: [1 << u8::from(draw.tex_image_param.size_s_shift()), 1 << u8::from(draw.tex_image_param.size_t_shift())],
                 viewport: [draw.viewport.x1(), draw.viewport.y1(), draw.viewport.x2(), draw.viewport.y2()],
                 color: [(color & 0x1F) as u8, ((color >> 5) & 0x1F) as u8, ((color >> 10) & 0x1F) as u8, u8::from(draw.attr.alpha())],
@@ -696,19 +690,40 @@ impl Gpu3DRenderer {
             // );
             // println!("{:?}", &indices[previous_offset..batch.indices_offset]);
 
-            let mut attr = u32::from(batch.attr);
-
-            if cache_3d_textures {
-                if batch.tex != u32::MAX {
-                    gl::ActiveTexture(gl::TEXTURE0);
-                    gl::BindTexture(gl::TEXTURE_2D, batch.tex);
-                } else {
-                    attr |= 1; // Set lsb to indicate no tex
-                }
-            } else {
-                let tex_image_param = [batch.tex];
-                gl::Uniform1fv(program.tex_image_param, 1, tex_image_param.as_ptr() as _);
+            if cache_3d_textures && batch.tex_image_param.format() != TextureFormat::None {
+                debug_assert_ne!(batch.tex, u32::MAX);
+                gl::ActiveTexture(gl::TEXTURE0);
+                gl::BindTexture(gl::TEXTURE_2D, batch.tex);
+                gl::TexParameteri(
+                    gl::TEXTURE_2D,
+                    gl::TEXTURE_WRAP_S,
+                    if batch.tex_image_param.repeat_s() {
+                        if batch.tex_image_param.flip_s() {
+                            gl::MIRRORED_REPEAT
+                        } else {
+                            gl::REPEAT
+                        }
+                    } else {
+                        gl::CLAMP_TO_EDGE
+                    } as _,
+                );
+                gl::TexParameteri(
+                    gl::TEXTURE_2D,
+                    gl::TEXTURE_WRAP_T,
+                    if batch.tex_image_param.repeat_t() {
+                        if batch.tex_image_param.flip_t() {
+                            gl::MIRRORED_REPEAT
+                        } else {
+                            gl::REPEAT
+                        }
+                    } else {
+                        gl::CLAMP_TO_EDGE
+                    } as _,
+                );
             }
+
+            let tex_image_param = [u32::from(batch.tex_image_param)];
+            gl::Uniform1fv(program.tex_image_param, 1, tex_image_param.as_ptr() as _);
 
             if batch.attr.depth_test_equal() {
                 gl::DepthFunc(gl::EQUAL);
@@ -727,7 +742,7 @@ impl Gpu3DRenderer {
                 gl::Disable(gl::BLEND);
             }
 
-            let attr = [attr];
+            let attr = [u32::from(batch.attr)];
             gl::Uniform1fv(program.polygon_attrs, 1, attr.as_ptr() as _);
 
             gl::DrawElements(
@@ -781,6 +796,7 @@ impl Gpu3DRenderer {
         }
 
         self.active_texture_id = u32::MAX;
+        self.active_tex_image_param = TexImageParam::default();
         self.active_polygon_attr = PolygonAttr::default();
         for i in 0..self.assembled_draw_count {
             let draw = self.assembled_draws.get_unchecked(i as usize);
@@ -799,6 +815,7 @@ impl Gpu3DRenderer {
         self.add_indices_batch::<false>();
 
         self.active_texture_id = u32::MAX;
+        self.active_tex_image_param = TexImageParam::default();
         self.active_polygon_attr = PolygonAttr::default();
         for i in 0..self.translucent_polygons.len() {
             unsafe { self.add_vertices::<true>(*self.translucent_polygons.get_unchecked(i)) };
@@ -860,9 +877,6 @@ impl Gpu3DRenderer {
 
         gl::EnableVertexAttribArray(4);
         gl::VertexAttribPointer(4, 2, gl::UNSIGNED_BYTE, gl::FALSE, size_of::<Gpu3DVertex>() as _, mem::offset_of!(Gpu3DVertex, tex_size) as _);
-
-        gl::EnableVertexAttribArray(5);
-        gl::VertexAttribPointer(5, 4, gl::UNSIGNED_BYTE, gl::FALSE, size_of::<Gpu3DVertex>() as _, mem::offset_of!(Gpu3DVertex, tex_mode_weights) as _);
 
         let program = if self.cache_3d_textures { &self.gl.program_tex_cache } else { &self.gl.program };
         let program = program.get_program(self.buffer.swap_buffers.depth_buffering_w());

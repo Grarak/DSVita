@@ -84,7 +84,6 @@ impl Gpu3DShaderPrograms {
             gl::BindAttribLocation(program, 2, c"viewport".as_ptr() as _);
             gl::BindAttribLocation(program, 3, c"color".as_ptr() as _);
             gl::BindAttribLocation(program, 4, c"texSize".as_ptr() as _);
-            gl::BindAttribLocation(program, 5, c"texModeWeights".as_ptr() as _);
 
             let ret = (
                 gl::GetUniformLocation(program, c"polygonAttrsF".as_ptr() as _),

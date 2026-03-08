@@ -5,7 +5,6 @@ in vec2 texCoords;
 in vec4 viewport;
 in vec4 color;
 in vec2 texSize;
-in vec4 texModeWeights;
 
 out vec4 oColor;
 out vec2 oTexCoords;

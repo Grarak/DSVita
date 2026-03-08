@@ -8,23 +8,21 @@ uniform sampler2D tex;
 
 in vec4 oColor;
 in vec2 oTexCoords;
-in vec4 oTexModeWeights;
 
 layout (location = 0) out vec4 color;
 
-void main() {
-    int polygonAttrs = floatBitsToInt(polygonAttrsF);
-    bool noTex = (polygonAttrs & 1) != 0;
-    vec4 texColor;
-    if (!noTex) {
-        vec4 weights = round(oTexModeWeights);
-        vec2 texCoords = oTexCoords * (1.0 - weights.xz);
-        vec2 texCoordsFrac = fract(oTexCoords);
-        vec2 texCoordsMod = fract(floor(oTexCoords) / weights.yw) * weights.yw;
-        texCoordsFrac = texCoordsFrac * (1.0 - 2.0 * texCoordsMod) + texCoordsMod;
-        texCoords += texCoordsFrac * weights.xz;
+const vec2 texModLookup[3] = vec2[3](
+    vec2(2.0, 1.0), vec2(1.0, 2.0), vec2(2.0, 2.0)
+);
 
-        texColor = texture(tex, texCoords);
+void main() {
+    vec4 texColor = texture(tex, oTexCoords);
+
+    int polygonAttrs = floatBitsToInt(polygonAttrsF);
+    int texImageParam = floatBitsToInt(texImageParamF);
+
+    int texFormat = (texImageParam >> 26) & 0x7;
+    if (texFormat != 0) {
         if (texColor.a == 0.0) {
             discard;
         }

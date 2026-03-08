@@ -10,22 +10,22 @@ float4 in oTexModeWeights : TEXCOORD1;
 
 uniform sampler2D tex : TEXUNIT0;
 
+static const float2 texModLookup[3] = {
+    float2(2.0, 1.0), float2(1.0, 2.0), float2(2.0, 2.0),
+};
+
 void main(out float4 color : COLOR
 #ifdef W_DEPTH_BUFFER
     ,out float gl_FragDepth : DEPTH
 #endif
 ) {
-    unsigned int polygonAttrs = bit_cast<unsigned int>(polygonAttrsF);
-    bool noTex = (polygonAttrs & 1) != 0;
-    if (!noTex) {
-        float4 weights = round(oTexModeWeights);
-        float2 texCoords = oTexCoords * (1.0 - weights.xz);
-        float2 texCoordsFrac = frac(oTexCoords);
-        float2 texCoordsMod = frac(floor(oTexCoords) / weights.yw) * weights.yw;
-        texCoordsFrac = texCoordsFrac * (1.0 - 2.0 * texCoordsMod) + texCoordsMod;
-        texCoords += texCoordsFrac * weights.xz;
+    float4 texColor = tex2D(tex, oTexCoords);
 
-        float4 texColor = tex2D(tex, texCoords);
+    unsigned int polygonAttrs = bit_cast<unsigned int>(polygonAttrsF);
+    unsigned int texImageParam = bit_cast<unsigned int>(texImageParamF);
+
+    int texFormat = (texImageParam >> 26) & 0x7;
+    if (texFormat != 0) {
         if (texColor.a == 0.0) {
             discard;
         }
