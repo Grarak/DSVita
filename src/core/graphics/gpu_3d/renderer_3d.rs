@@ -466,18 +466,19 @@ impl Gpu3DRenderer {
                 PrimitiveType::SeparateQuadliterals => draw_vertex_count % 4 == 0,
                 _ => false,
             };
-            if draw_complete
-                && !add_draw(
+            if draw_complete {
+                let polygon = self.buffer.polygons.get_unchecked(polygon_index as usize);
+                if !add_draw(
                     self,
                     i + 1 - polygon_attr.primitive_type().vertex_count() as u16,
                     polygon_attr.primitive_type().vertex_count() as u16,
                     polygon_attr,
-                    tex_image_param,
-                    pal_addr,
+                    polygon.tex_image_param,
+                    polygon.palette_addr,
                     viewport,
-                )
-            {
-                return;
+                ) {
+                    return;
+                }
             }
         }
 
@@ -540,10 +541,7 @@ impl Gpu3DRenderer {
         } else {
             (u32::from(draw.tex_image_param) & 0x3FFFFFFF, (u32::from(draw.attr) & 0x0000F8F0) | ((draw.pal_addr as u32) << 16))
         };
-        if self.active_texture_id != texture_id
-            || u32::from(self.active_tex_image_param) != tex_image_param
-            || u32::from(self.active_polygon_attr) != polygon_attr
-        {
+        if self.active_texture_id != texture_id || u32::from(self.active_tex_image_param) != tex_image_param || u32::from(self.active_polygon_attr) != polygon_attr {
             self.add_indices_batch::<TRANSLUCENT_ONLY>();
             self.active_texture_id = texture_id;
             self.active_tex_image_param = TexImageParam::from(tex_image_param);
