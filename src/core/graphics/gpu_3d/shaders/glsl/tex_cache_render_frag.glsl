@@ -1,12 +1,8 @@
-#version 300 es
-
 precision highp float;
 precision highp int;
 
 uniform float polygonAttrsF;
 uniform float texImageParamF;
-uniform bool wBuffering;
-uniform bool translucentOnly;
 
 uniform sampler2D tex;
 
@@ -49,11 +45,12 @@ void main() {
         color = oColor;
     }
 
-    if (translucentOnly) {
-        if (color.a >= 0.99) {
-            discard;
-        }
-    } else if (color.a < 0.99) {
+#ifdef TRANSLUCENT
+    if (color.a >= 0.99) {
+        discard;
+    }
+#else
+    if (color.a < 0.99) {
         bool transNewDepth = ((polygonAttrs >> 11) & 1) != 0;
         if (transNewDepth) {
             color.a = 0.0;
@@ -61,8 +58,9 @@ void main() {
             discard;
         }
     }
+#endif
 
-    if (wBuffering) {
-        gl_FragDepth = 1.0 / gl_FragCoord.w / 4095.0;
-    }
+#ifdef W_DEPTH_BUFFER
+    gl_FragDepth = 1.0 / gl_FragCoord.w / 4096.0;
+#endif
 }

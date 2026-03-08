@@ -1,5 +1,5 @@
 use crate::core::graphics::gl_utils::{create_program, shader_source};
-use gl::types::{GLenum, GLuint};
+use gl::types::{GLenum, GLint, GLuint};
 
 pub struct Gpu2DBgShaderPrograms {
     pub affine: GLuint,
@@ -17,14 +17,14 @@ impl Gpu2DBgShaderPrograms {
         let bg_vert_bitmap_shader = create_shader("bg bitmap", shader_source!("gpu_2d/shaders", "bg_vert_bitmap"), gl::VERTEX_SHADER);
 
         let frag_common_shader_src = shader_source!("gpu_2d/shaders", "bg_frag_common").to_string();
-        let mut create_bg_frag_shader = |src: &str| create_shader("bg affine", &(frag_common_shader_src.clone() + src), gl::FRAGMENT_SHADER);
+        let mut create_bg_frag_shader = |name: &str, src: &str| create_shader(name, &(frag_common_shader_src.clone() + src), gl::FRAGMENT_SHADER);
 
-        let frag_affine_shader = create_bg_frag_shader(shader_source!("gpu_2d/shaders", "bg_frag_affine"));
-        let frag_affine_extended_shader = create_bg_frag_shader(shader_source!("gpu_2d/shaders", "bg_frag_affine_extended"));
-        let frag_bitmap_shader = create_bg_frag_shader(shader_source!("gpu_2d/shaders", "bg_frag_bitmap"));
-        let frag_display_3d_shader = create_bg_frag_shader(shader_source!("gpu_2d/shaders", "bg_frag_display_3d"));
-        let frag_text_4bpp_shader = create_bg_frag_shader(shader_source!("gpu_2d/shaders", "bg_frag_text_4bpp"));
-        let frag_text_8bpp_shader = create_bg_frag_shader(shader_source!("gpu_2d/shaders", "bg_frag_text_8bpp"));
+        let frag_affine_shader = create_bg_frag_shader("bg affine", shader_source!("gpu_2d/shaders", "bg_frag_affine"));
+        let frag_affine_extended_shader = create_bg_frag_shader("bg affine extended", shader_source!("gpu_2d/shaders", "bg_frag_affine_extended"));
+        let frag_bitmap_shader = create_bg_frag_shader("bg bitmap", shader_source!("gpu_2d/shaders", "bg_frag_bitmap"));
+        let frag_display_3d_shader = create_bg_frag_shader("bg display 3d", shader_source!("gpu_2d/shaders", "bg_frag_display_3d"));
+        let frag_text_4bpp_shader = create_bg_frag_shader("bg text 4bpp", shader_source!("gpu_2d/shaders", "bg_frag_text_4bpp"));
+        let frag_text_8bpp_shader = create_bg_frag_shader("bg text 8bpp", shader_source!("gpu_2d/shaders", "bg_frag_text_8bpp"));
 
         let affine = create_program(&[bg_vert_affine_shader, frag_affine_shader]).unwrap();
         let affine_extended = create_program(&[bg_vert_affine_shader, frag_affine_extended_shader]).unwrap();
@@ -58,21 +58,117 @@ impl Gpu2DBgShaderPrograms {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct Gpu3DShaderProgram {
+    pub program: GLuint,
+    pub polygon_attrs: GLint,
+    pub tex_image_param: GLint,
+}
+
+#[derive(Copy, Clone)]
+pub struct Gpu3DShaderPrograms {
+    pub opaque: Gpu3DShaderProgram,
+    pub translucent: Gpu3DShaderProgram,
+}
+
+impl Gpu3DShaderPrograms {
+    unsafe fn new<F: FnMut(&str, &str, GLenum) -> GLuint>(vertex_shader: GLuint, frag_shader_src: &str, create_shader: &mut F) -> Self {
+        let init_program = |program| {
+            let mut previous_program = 0;
+            gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut previous_program);
+
+            gl::UseProgram(program);
+
+            gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
+            gl::BindAttribLocation(program, 1, c"texCoords".as_ptr() as _);
+            gl::BindAttribLocation(program, 2, c"viewport".as_ptr() as _);
+            gl::BindAttribLocation(program, 3, c"color".as_ptr() as _);
+            gl::BindAttribLocation(program, 4, c"texSize".as_ptr() as _);
+            gl::BindAttribLocation(program, 5, c"texModeWeights".as_ptr() as _);
+
+            let ret = (
+                gl::GetUniformLocation(program, c"polygonAttrsF".as_ptr() as _),
+                gl::GetUniformLocation(program, c"texImageParamF".as_ptr() as _),
+            );
+
+            gl::UseProgram(previous_program as _);
+            ret
+        };
+
+        let frag_shader_opaque = create_shader("render 3d opaque", frag_shader_src, gl::FRAGMENT_SHADER);
+        let opaque = create_program(&[vertex_shader, frag_shader_opaque]).unwrap();
+        gl::DeleteShader(frag_shader_opaque);
+        let opaque_locs = init_program(opaque);
+        let opaque = Gpu3DShaderProgram {
+            program: opaque,
+            polygon_attrs: opaque_locs.0,
+            tex_image_param: opaque_locs.1,
+        };
+
+        let frag_shader_translucent = create_shader("render 3d translucent", &("#define TRANSLUCENT\n".to_string() + frag_shader_src), gl::FRAGMENT_SHADER);
+        let translucent = create_program(&[vertex_shader, frag_shader_translucent]).unwrap();
+        gl::DeleteShader(frag_shader_translucent);
+        let translucent_locs = init_program(translucent);
+        let translucent = Gpu3DShaderProgram {
+            program: translucent,
+            polygon_attrs: translucent_locs.0,
+            tex_image_param: translucent_locs.1,
+        };
+
+        Gpu3DShaderPrograms { opaque, translucent }
+    }
+
+    const fn count() -> usize {
+        2
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct Gpu3DShaderDepthPrograms {
+    z: Gpu3DShaderPrograms,
+    w: Gpu3DShaderPrograms,
+}
+
+impl Gpu3DShaderDepthPrograms {
+    unsafe fn new<F: FnMut(&str, &str, GLenum) -> GLuint>(vertex_shader: GLuint, frag_shader_src: &str, create_shader: &mut F) -> Self {
+        let z = Gpu3DShaderPrograms::new(vertex_shader, frag_shader_src, create_shader);
+        let w = Gpu3DShaderPrograms::new(vertex_shader, &("#define W_DEPTH_BUFFER\n".to_string() + frag_shader_src), create_shader);
+
+        Gpu3DShaderDepthPrograms { z, w }
+    }
+
+    fn all_programs(&self) -> [GLuint; 4] {
+        [self.z.opaque.program, self.z.translucent.program, self.w.opaque.program, self.w.translucent.program]
+    }
+
+    pub fn get_program(&self, w_depth_buffer: bool) -> &Gpu3DShaderPrograms {
+        if w_depth_buffer {
+            &self.w
+        } else {
+            &self.z
+        }
+    }
+
+    const fn count() -> usize {
+        2 * Gpu3DShaderPrograms::count()
+    }
+}
+
 pub struct GpuShadersPrograms {
     pub bg: Gpu2DBgShaderPrograms,
     pub obj: GLuint,
     pub win: GLuint,
     pub blend: GLuint,
     pub vram_display: GLuint,
-    pub render_3d: GLuint,
-    pub tex_cache_render_3d: GLuint,
+    pub render_3d: Gpu3DShaderDepthPrograms,
+    pub tex_cache_render_3d: Gpu3DShaderDepthPrograms,
     pub text: GLuint,
     pub capture: GLuint,
     pub merge: GLuint,
 }
 
 impl GpuShadersPrograms {
-    pub fn new<F: FnMut(&str, &str, GLenum) -> GLuint>(mut create_shader: F) -> Self {
+    pub unsafe fn new<F: FnMut(&str, &str, GLenum) -> GLuint>(mut create_shader: F) -> Self {
         let mut create_program = |name: &str, vertex_src: &str, frag_src: &str| unsafe {
             let vert_shader = create_shader(name, vertex_src, gl::VERTEX_SHADER);
             let frag_shader = create_shader(name, frag_src, gl::FRAGMENT_SHADER);
@@ -90,18 +186,30 @@ impl GpuShadersPrograms {
             shader_source!("gpu_2d/shaders", "vram_display_vert"),
             shader_source!("gpu_2d/shaders", "vram_display_frag"),
         );
-        let render_3d = create_program("render 3d", shader_source!("gpu_3d/shaders", "render_vert"), shader_source!("gpu_3d/shaders", "render_frag"));
-        let tex_cache_render_3d = create_program(
-            "tex cache render 3d",
-            shader_source!("gpu_3d/shaders", "tex_cache_render_vert"),
-            shader_source!("gpu_3d/shaders", "tex_cache_render_frag"),
-        );
+
         let text = create_program("text", shader_source!("text_vert"), shader_source!("text_frag"));
         let capture = create_program("capture", shader_source!("capture_vert"), shader_source!("capture_frag"));
         let merge = create_program("merge", shader_source!("merge_vert"), shader_source!("merge_frag"));
 
+        let render_3d_vertex_shader = create_shader("render 3d", shader_source!("gpu_3d/shaders", "render_vert"), gl::VERTEX_SHADER);
+        let render_3d = Gpu3DShaderDepthPrograms::new(render_3d_vertex_shader, shader_source!("gpu_3d/shaders", "render_frag"), &mut create_shader);
+        gl::DeleteShader(render_3d_vertex_shader);
+
+        for program in render_3d.all_programs() {
+            gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
+            gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 1);
+        }
+
+        let tex_cache_render_3d_vertex_shader = create_shader("tex cache render 3d", shader_source!("gpu_3d/shaders", "tex_cache_render_vert"), gl::VERTEX_SHADER);
+        let tex_cache_render_3d = Gpu3DShaderDepthPrograms::new(tex_cache_render_3d_vertex_shader, shader_source!("gpu_3d/shaders", "tex_cache_render_frag"), &mut create_shader);
+        gl::DeleteShader(tex_cache_render_3d_vertex_shader);
+
+        for program in tex_cache_render_3d.all_programs() {
+            gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
+        }
+
         GpuShadersPrograms {
-            bg: unsafe { Gpu2DBgShaderPrograms::new(create_shader) },
+            bg: Gpu2DBgShaderPrograms::new(&mut create_shader),
             obj,
             win,
             blend,
@@ -115,6 +223,6 @@ impl GpuShadersPrograms {
     }
 
     pub const fn count() -> usize {
-        18 + Gpu2DBgShaderPrograms::count()
+        16 + 2 * Gpu3DShaderDepthPrograms::count() + Gpu2DBgShaderPrograms::count()
     }
 }

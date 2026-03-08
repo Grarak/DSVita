@@ -423,19 +423,21 @@ pub fn actual_main() {
 
         if gpu_renderer.is_none() {
             let mut counter = 0;
-            gpu_renderer = Some(GpuRenderer::new(&GpuShadersPrograms::new(|name, src, shader_type| unsafe {
-                let progress_name = format!(
-                    "Compiling {name} {}shader",
-                    match shader_type {
-                        gl::VERTEX_SHADER => "vertex ",
-                        gl::FRAGMENT_SHADER => "fragment ",
-                        _ => "",
-                    }
-                );
-                presenter.present_progress(&progress_name, counter, GpuShadersPrograms::count());
-                counter += 1;
-                create_shader(name, src, shader_type).unwrap()
-            })));
+            gpu_renderer = Some(GpuRenderer::new(unsafe {
+                &GpuShadersPrograms::new(|name, src, shader_type| {
+                    let progress_name = format!(
+                        "Compiling {name} {}shader",
+                        match shader_type {
+                            gl::VERTEX_SHADER => "vertex ",
+                            gl::FRAGMENT_SHADER => "fragment ",
+                            _ => "",
+                        }
+                    );
+                    presenter.present_progress(&progress_name, counter, GpuShadersPrograms::count());
+                    counter += 1;
+                    create_shader(name, src, shader_type).unwrap()
+                })
+            }));
             emu_unsafe.get_mut().gpu.set_gpu_renderer(NonNull::from(gpu_renderer.as_mut().unwrap()));
         }
         emu_unsafe.get_mut().gpu.renderer.init(settings.cache_3d_textures());

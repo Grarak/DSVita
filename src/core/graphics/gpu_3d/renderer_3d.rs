@@ -5,7 +5,7 @@ use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_3d::texture_cache::{Texture3D, Texture3DCache};
 use crate::core::graphics::gpu_mem_buf::{GpuMemBuf, GpuMemRefs};
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
-use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
+use crate::core::graphics::gpu_shaders::{Gpu3DShaderDepthPrograms, Gpu3DShaderProgram, GpuShadersPrograms};
 use crate::core::memory::vram;
 use crate::math::{vmult_vec4_mat4_no_store, Vectori32};
 use crate::utils::{rgb5_to_float8, HeapArray, HeapArrayU16, HeapArrayU8, HeapMem, PtrWrapper};
@@ -77,21 +77,12 @@ struct Gpu3DRendererInner {
     toon_table: [u16; 32],
 }
 
-struct Gpu3DLoc {
-    polygon_attrs: GLint,
-    tex_image_param: GLint,
-    translucent_only: GLint,
-    w_buffering: GLint,
-}
-
 pub struct Gpu3DGl {
-    loc: Gpu3DLoc,
-    tex_cache_loc: Gpu3DLoc,
     tex: GLuint,
     pal_tex: GLuint,
     vertices_buf: GLuint,
-    program: GLuint,
-    program_tex_cache: GLuint,
+    program: Gpu3DShaderDepthPrograms,
+    program_tex_cache: Gpu3DShaderDepthPrograms,
     top_fbo: GpuFbo,
     bottom_fbo: GpuFbo,
 }
@@ -99,33 +90,6 @@ pub struct Gpu3DGl {
 impl Gpu3DGl {
     fn new(gpu_programs: &GpuShadersPrograms) -> Self {
         unsafe {
-            let init_program = |program| {
-                gl::UseProgram(program);
-
-                let polygon_attrs_loc = gl::GetUniformLocation(program, c"polygonAttrsF".as_ptr() as _);
-                let tex_imag_param_loc = gl::GetUniformLocation(program, c"texImageParamF".as_ptr() as _);
-                let translucent_only_loc = gl::GetUniformLocation(program, c"translucentOnly".as_ptr() as _);
-                let w_buffering_loc = gl::GetUniformLocation(program, c"wBuffering".as_ptr() as _);
-
-                gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
-                gl::BindAttribLocation(program, 1, c"texCoords".as_ptr() as _);
-                gl::BindAttribLocation(program, 2, c"viewport".as_ptr() as _);
-                gl::BindAttribLocation(program, 3, c"color".as_ptr() as _);
-                gl::BindAttribLocation(program, 4, c"texSize".as_ptr() as _);
-                gl::BindAttribLocation(program, 5, c"texModeWeights".as_ptr() as _);
-
-                (polygon_attrs_loc, tex_imag_param_loc, translucent_only_loc, w_buffering_loc)
-            };
-
-            let (polygon_attrs_loc, tex_imag_param_loc, translucent_only_loc, w_buffering_loc) = init_program(gpu_programs.render_3d);
-
-            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.render_3d, c"tex".as_ptr() as _), 0);
-            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.render_3d, c"palTex".as_ptr() as _), 1);
-
-            let (tex_cache_polygon_attrs_loc, tex_cache_tex_imag_param_loc, tex_cache_translucent_only_loc, tex_cache_w_buffering_loc) = init_program(gpu_programs.tex_cache_render_3d);
-
-            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.tex_cache_render_3d, c"tex".as_ptr() as _), 0);
-
             let mut vertices_buf = 0;
             gl::GenBuffers(1, &mut vertices_buf);
             gl::BindBuffer(gl::ARRAY_BUFFER, vertices_buf);
@@ -135,18 +99,6 @@ impl Gpu3DGl {
             gl::UseProgram(0);
 
             Gpu3DGl {
-                loc: Gpu3DLoc {
-                    polygon_attrs: polygon_attrs_loc,
-                    tex_image_param: tex_imag_param_loc,
-                    translucent_only: translucent_only_loc,
-                    w_buffering: w_buffering_loc,
-                },
-                tex_cache_loc: Gpu3DLoc {
-                    polygon_attrs: tex_cache_polygon_attrs_loc,
-                    tex_image_param: tex_cache_tex_imag_param_loc,
-                    translucent_only: tex_cache_translucent_only_loc,
-                    w_buffering: tex_cache_w_buffering_loc,
-                },
                 tex: create_mem_texture2d(1024, 512),
                 pal_tex: create_pal_texture2d(1024, 96),
                 vertices_buf,
@@ -613,7 +565,6 @@ impl Gpu3DRenderer {
                     indices_buf.extend(&[i - 2, i - 1, i + 1, i - 2, i, i + 1]);
                 }
             }
-            _ => {}
         };
 
         if TRANSLUCENT_ONLY {
@@ -735,7 +686,7 @@ impl Gpu3DRenderer {
         }
     }
 
-    unsafe fn draw_elements(cache_3d_textures: bool, translucent_only: bool, loc: &Gpu3DLoc, indices: &[u16], indices_batch: &[IndicesBatch]) {
+    unsafe fn draw_elements(cache_3d_textures: bool, translucent_only: bool, program: &Gpu3DShaderProgram, indices: &[u16], indices_batch: &[IndicesBatch]) {
         let mut previous_offset = 0;
         for batch in indices_batch {
             // println!(
@@ -756,7 +707,7 @@ impl Gpu3DRenderer {
                 }
             } else {
                 let tex_image_param = [batch.tex];
-                gl::Uniform1fv(loc.tex_image_param, 1, tex_image_param.as_ptr() as _);
+                gl::Uniform1fv(program.tex_image_param, 1, tex_image_param.as_ptr() as _);
             }
 
             if batch.attr.depth_test_equal() {
@@ -777,7 +728,7 @@ impl Gpu3DRenderer {
             }
 
             let attr = [attr];
-            gl::Uniform1fv(loc.polygon_attrs, 1, attr.as_ptr() as _);
+            gl::Uniform1fv(program.polygon_attrs, 1, attr.as_ptr() as _);
 
             gl::DrawElements(
                 gl::TRIANGLES,
@@ -868,8 +819,6 @@ impl Gpu3DRenderer {
             sub_pal_texture2d(1024, 96, mem_refs.tex_pal.as_ptr());
         }
 
-        gl::UseProgram(if self.cache_3d_textures { self.gl.program_tex_cache } else { self.gl.program });
-
         gl::Enable(gl::DEPTH_TEST);
         gl::DepthFunc(gl::LEQUAL);
         gl::DepthRange(0.0, 1.0);
@@ -915,32 +864,26 @@ impl Gpu3DRenderer {
         gl::EnableVertexAttribArray(5);
         gl::VertexAttribPointer(5, 4, gl::UNSIGNED_BYTE, gl::FALSE, size_of::<Gpu3DVertex>() as _, mem::offset_of!(Gpu3DVertex, tex_mode_weights) as _);
 
-        let loc = if self.cache_3d_textures { &self.gl.tex_cache_loc } else { &self.gl.loc };
-
-        if self.buffer.swap_buffers.depth_buffering_w() {
-            gl::Uniform1i(loc.w_buffering, 1);
-        } else {
-            gl::Uniform1i(loc.w_buffering, 0);
-        }
+        let program = if self.cache_3d_textures { &self.gl.program_tex_cache } else { &self.gl.program };
+        let program = program.get_program(self.buffer.swap_buffers.depth_buffering_w());
 
         if !self.indices_opaque.is_empty() {
+            gl::UseProgram(program.opaque.program);
             gl::DepthMask(gl::TRUE);
 
-            gl::Uniform1i(loc.translucent_only, 0);
-
-            Self::draw_elements(self.cache_3d_textures, false, loc, &self.indices_opaque, &self.indices_opaque_batches);
+            Self::draw_elements(self.cache_3d_textures, false, &program.opaque, &self.indices_opaque, &self.indices_opaque_batches);
         }
 
         if !self.indices_translucent.is_empty() {
+            gl::UseProgram(program.translucent.program);
+
             gl::Enable(gl::BLEND);
             gl::DepthMask(gl::FALSE);
 
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE);
             gl::BlendEquationSeparate(gl::FUNC_ADD, gl::MAX);
 
-            gl::Uniform1i(loc.translucent_only, 1);
-
-            Self::draw_elements(self.cache_3d_textures, true, loc, &self.indices_translucent, &self.indices_translucent_batches);
+            Self::draw_elements(self.cache_3d_textures, true, &program.translucent, &self.indices_translucent, &self.indices_translucent_batches);
         }
 
         gl::DepthMask(gl::TRUE);
