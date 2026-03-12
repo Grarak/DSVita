@@ -18,6 +18,7 @@ use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::mem;
 use std::mem::MaybeUninit;
 use std::time::Instant;
+use xxhash_rust::xxh32::xxh32;
 
 #[bitsize(16)]
 #[derive(Copy, Clone, FromBits)]
@@ -51,6 +52,8 @@ pub struct Texture3D {
     tex_rear_plane_img_banks: [u8; 4],
     tex_palette_banks: [u8; 6],
     data: HeapDynamic<u32>,
+    tex_hash: u32,
+    pal_hash: u32,
     in_use: bool,
     dirty: bool,
     pub texture_id: GLuint,
@@ -416,12 +419,53 @@ impl Texture3D {
             tex_rear_plane_img_banks: vram.maps.tex_rear_plane_img_banks,
             tex_palette_banks: vram.maps.tex_palette_banks,
             data: unsafe { HeapDynamic::uninitialized(metadata.size() as usize) },
+            tex_hash: 0,
+            pal_hash: 0,
             in_use: true,
             dirty: false,
             texture_id: u32::MAX,
         };
+        instance.tex_hash = instance.calculate_tex_hash(mem_refs);
+        instance.pal_hash = instance.calculate_pal_hash(mem_refs);
         unsafe { instance.decode_texture(mem_refs) };
         instance
+    }
+
+    fn get_tex_size_bytes(&self) -> u32 {
+        const TEX_SIZE_SHIFTS: [u8; 7] = [2, 0, 1, 2, 0, 2, 3];
+        (self.metadata.size() << TEX_SIZE_SHIFTS[self.metadata.format() as usize - 1]) >> 2
+    }
+
+    fn get_tex_vram_range(&self) -> (u32, u32) {
+        let vram_addr = (self.vram_addr as u32) << 3;
+        let vram_addr_end = vram_addr + self.get_tex_size_bytes();
+        let vram_addr_end = min(vram::TEX_REAR_PLANE_IMAGE_SIZE as u32, vram_addr_end);
+        (vram_addr, vram_addr_end)
+    }
+
+    fn calculate_tex_hash(&self, mem_refs: &GpuMemRefs) -> u32 {
+        let (vram_addr, vram_addr_end) = self.get_tex_vram_range();
+        let mem = &mem_refs.tex_rear_plane_image.as_ref()[vram_addr as usize..vram_addr_end as usize];
+        xxh32(mem, 0)
+    }
+
+    fn get_pal_size_bytes(&self) -> u32 {
+        debug_assert_ne!(self.metadata.format(), TextureFormat::Direct);
+        const PAL_SIZE_SHIFTS: [u8; 6] = [5, 2, 4, 8, 15, 3];
+        1 << (PAL_SIZE_SHIFTS[self.metadata.format() as usize - 1] + 1)
+    }
+
+    fn get_pal_range(&self) -> (u32, u32) {
+        let pal_addr = (self.pal_addr as u32) << if self.metadata.format() == TextureFormat::Color4Palette { 3 } else { 4 };
+        let pal_addr_end = pal_addr + self.get_pal_size_bytes();
+        let pal_addr_end = min(vram::TEX_PAL_SIZE as u32, pal_addr_end);
+        (pal_addr, pal_addr_end)
+    }
+
+    fn calculate_pal_hash(&self, mem_refs: &GpuMemRefs) -> u32 {
+        let (pal_addr, pal_addr_end) = self.get_pal_range();
+        let mem = &mem_refs.tex_pal.as_ref()[pal_addr as usize..pal_addr_end as usize];
+        xxh32(mem, 0)
     }
 
     pub unsafe fn get_texture_id(&mut self) -> GLuint {
@@ -488,17 +532,14 @@ impl Texture3D {
         // file.write_all_at(slice::from_raw_parts(self.data.as_ptr() as _, self.data.len() * 4), header.len() as u64).unwrap();
     }
 
-    fn is_dirty(&self, mem_buf: &GpuMemBuf) -> bool {
-        const TEX_SIZE_SHIFTS: [u8; 7] = [2, 0, 1, 2, 0, 2, 3];
-
-        let tex_size_bytes = (self.metadata.size() << TEX_SIZE_SHIFTS[self.metadata.format() as usize - 1]) >> 2;
-        let vram_addr = (self.vram_addr as u32) << 3;
-        let vram_addr_end = vram_addr + tex_size_bytes;
+    fn is_dirty(&self, mem_buf: &GpuMemBuf, mem_refs: &GpuMemRefs) -> bool {
+        let (vram_addr, vram_addr_end) = self.get_tex_vram_range();
 
         if mem_buf
             .vram
             .maps
             .is_tex_rear_plane_img_dirty(vram_addr, vram_addr_end, &self.tex_rear_plane_img_banks, &mem_buf.vram_banks.dirty_sections)
+            && self.tex_hash != self.calculate_tex_hash(mem_refs)
         {
             return true;
         }
@@ -519,15 +560,12 @@ impl Texture3D {
         }
 
         if self.metadata.format() != TextureFormat::Direct {
-            const PAL_SIZE_SHIFTS: [u8; 6] = [5, 2, 4, 8, 15, 3];
-            let pal_size_bytes = 1 << (PAL_SIZE_SHIFTS[self.metadata.format() as usize - 1] + 1);
-            let pal_addr = (self.pal_addr as u32) << if self.metadata.format() == TextureFormat::Color4Palette { 3 } else { 4 };
-            let pal_addr_end = pal_addr + pal_size_bytes;
-            let pal_addr_end = min(vram::TEX_PAL_SIZE as u32, pal_addr_end);
+            let (pal_addr, pal_addr_end) = self.get_pal_range();
             if mem_buf
                 .vram
                 .maps
                 .is_tex_palette_dirty(pal_addr, pal_addr_end, &self.tex_palette_banks, &mem_buf.vram_banks.dirty_sections)
+                && self.pal_hash != self.calculate_pal_hash(mem_refs)
             {
                 return true;
             }
@@ -561,9 +599,9 @@ impl Texture3DCache {
         self.cache.clear();
     }
 
-    pub fn mark_dirty(&mut self, mem_buf: &GpuMemBuf) {
+    pub fn mark_dirty(&mut self, mem_buf: &GpuMemBuf, mem_refs: &GpuMemRefs) {
         for texture_3d in self.cache.values_mut() {
-            if !texture_3d.dirty && texture_3d.is_dirty(mem_buf) {
+            if !texture_3d.dirty && texture_3d.is_dirty(mem_buf, mem_refs) {
                 texture_3d.dirty = true;
             }
         }

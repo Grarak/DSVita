@@ -603,7 +603,7 @@ impl Gpu3DRenderer {
     }
 
     pub unsafe fn populate_tex_cache(&mut self, mem_buf: &mut GpuMemBuf, mem_refs: &GpuMemRefs) {
-        self.texture_cache.mark_dirty(mem_buf);
+        self.texture_cache.mark_dirty(mem_buf, mem_refs);
 
         let mut last_value = u64::MAX;
         let mut last_texture_3d_ptr = ptr::null_mut();
