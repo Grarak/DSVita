@@ -426,7 +426,9 @@ impl Texture3D {
             texture_id: u32::MAX,
         };
         instance.tex_hash = instance.calculate_tex_hash(mem_refs);
-        instance.pal_hash = instance.calculate_pal_hash(mem_refs);
+        if metadata.format() != TextureFormat::Direct {
+            instance.pal_hash = instance.calculate_pal_hash(mem_refs);
+        }
         unsafe { instance.decode_texture(mem_refs) };
         instance
     }
@@ -450,7 +452,7 @@ impl Texture3D {
     }
 
     fn get_pal_size_bytes(&self) -> u32 {
-        debug_assert_ne!(self.metadata.format(), TextureFormat::Direct);
+        unsafe { assert_unchecked(self.metadata.format() != TextureFormat::Direct) };
         const PAL_SIZE_SHIFTS: [u8; 6] = [5, 2, 4, 8, 15, 3];
         1 << (PAL_SIZE_SHIFTS[self.metadata.format() as usize - 1] + 1)
     }
@@ -591,6 +593,8 @@ impl Texture3DCache {
     }
 
     pub fn clear(&mut self) {
+        // Don't delete texture with Drop
+        // Guarantee thread safety with opengl
         for texture_3d in self.cache.values() {
             if texture_3d.texture_id != u32::MAX {
                 unsafe { gl::DeleteTextures(1, &texture_3d.texture_id) };

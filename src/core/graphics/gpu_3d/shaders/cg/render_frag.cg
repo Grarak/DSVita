@@ -184,7 +184,7 @@ void main(out float4 color : COLOR
             texColor = palXTex(palAddr, addrOffset, s, t, sizeS, texFmt - 2, transparent0);
         }
 
-        int mode = (polygonAttrs >> 4) & 0x3;
+        int mode = polygonAttrs & 0x3;
         if (mode == 0 || mode == 2) {
             color = texColor * oColor;
         } else {
@@ -201,7 +201,7 @@ void main(out float4 color : COLOR
     }
 #else
     if (color.a < 0.99) {
-        bool transNewDepth = ((polygonAttrs >> 11) & 1) != 0;
+        bool transNewDepth = ((polygonAttrs >> 4) & 1) != 0;
         if (transNewDepth) {
             color.a = 0.0;
         } else {

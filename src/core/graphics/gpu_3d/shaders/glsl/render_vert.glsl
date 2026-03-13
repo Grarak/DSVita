@@ -4,7 +4,6 @@ in vec4 position;
 in vec2 texCoords;
 in vec4 viewport;
 in vec4 color;
-in vec2 texSize;
 
 out vec4 oColor;
 out vec2 oTexCoords;

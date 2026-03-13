@@ -194,18 +194,29 @@ impl GpuShadersPrograms {
         let render_3d = Gpu3DShaderDepthPrograms::new(render_3d_vertex_shader, shader_source!("gpu_3d/shaders", "render_frag"), &mut create_shader);
         gl::DeleteShader(render_3d_vertex_shader);
 
+        let mut previous_program = 0;
+        gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut previous_program);
+
         for program in render_3d.all_programs() {
+            gl::UseProgram(program);
             gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
             gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 1);
         }
+
+        gl::UseProgram(previous_program as _);
 
         let tex_cache_render_3d_vertex_shader = create_shader("tex cache render 3d", shader_source!("gpu_3d/shaders", "tex_cache_render_vert"), gl::VERTEX_SHADER);
         let tex_cache_render_3d = Gpu3DShaderDepthPrograms::new(tex_cache_render_3d_vertex_shader, shader_source!("gpu_3d/shaders", "tex_cache_render_frag"), &mut create_shader);
         gl::DeleteShader(tex_cache_render_3d_vertex_shader);
 
+        gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut previous_program);
+
         for program in tex_cache_render_3d.all_programs() {
+            gl::UseProgram(program);
             gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
         }
+
+        gl::UseProgram(previous_program as _);
 
         GpuShadersPrograms {
             bg: Gpu2DBgShaderPrograms::new(&mut create_shader),

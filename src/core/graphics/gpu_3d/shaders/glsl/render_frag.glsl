@@ -198,7 +198,7 @@ void main() {
             }
         }
 
-        int mode = (polygonAttrs >> 4) & 0x3;
+        int mode = polygonAttrs & 0x3;
         switch (mode) {
             case 0:
             case 2:
@@ -220,7 +220,7 @@ void main() {
     }
 #else
     if (color.a < 0.99) {
-        bool transNewDepth = ((polygonAttrs >> 11) & 1) != 0;
+        bool transNewDepth = ((polygonAttrs >> 4) & 1) != 0;
         if (transNewDepth) {
             color.a = 0.0;
         } else {
@@ -228,7 +228,7 @@ void main() {
         }
     }
 #endif
-    
+
 #ifdef W_DEPTH_BUFFER
     gl_FragDepth = 1.0 / gl_FragCoord.w / 4096.0;
 #endif
