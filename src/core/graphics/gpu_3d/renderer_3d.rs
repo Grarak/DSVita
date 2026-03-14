@@ -1,6 +1,6 @@
 use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
 use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DBuffer, Gpu3DRegisters, PolygonAttr, PrimitiveType, TexImageParam, TextureCoordTransMode, TextureFormat, Vertex, Viewport};
+use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DBuffer, Gpu3DRegisters, PolygonAttr, PolygonMode, PrimitiveType, TexImageParam, TextureCoordTransMode, TextureFormat, Vertex, Viewport};
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_3d::texture_cache::{Texture3D, Texture3DCache};
 use crate::core::graphics::gpu_mem_buf::{GpuMemBuf, GpuMemRefs};
@@ -63,7 +63,7 @@ impl Default for Disp3DCnt {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct Gpu3DRendererInner {
     disp_cnt: Disp3DCnt,
     edge_colors: [u16; 8],
@@ -75,6 +75,23 @@ struct Gpu3DRendererInner {
     fog_offset: u16,
     fog_table: [u8; 32],
     toon_table: [u16; 32],
+}
+
+impl Default for Gpu3DRendererInner {
+    fn default() -> Self {
+        Gpu3DRendererInner {
+            disp_cnt: Default::default(),
+            edge_colors: [0; 8],
+            clear_color: Default::default(),
+            clear_colorf: [0.0; 4],
+            clear_depth: 0x7FFF,
+            clear_depthf: 1.0,
+            fog_color: 0,
+            fog_offset: 0,
+            fog_table: [0; 32],
+            toon_table: [0; 32],
+        }
+    }
 }
 
 pub struct Gpu3DGl {
@@ -104,8 +121,8 @@ impl Gpu3DGl {
                 vertices_buf,
                 program: gpu_programs.render_3d,
                 program_tex_cache: gpu_programs.tex_cache_render_3d,
-                top_fbo: GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, true).unwrap(),
-                bottom_fbo: GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, true).unwrap(),
+                top_fbo: GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, true, true).unwrap(),
+                bottom_fbo: GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, true, true).unwrap(),
             }
         }
     }
@@ -140,7 +157,7 @@ struct Gpu3DVertex {
 #[bitsize(32)]
 #[derive(Copy, Clone, DebugBits, Default, FromBits)]
 struct Gpu3DDrawAttr {
-    mode: u2,
+    mode: PolygonMode,
     render_back: bool,
     render_front: bool,
     trans_new_depth: bool,
@@ -339,7 +356,14 @@ impl Gpu3DRenderer {
             return;
         }
         self.inners[1].clear_depth = (self.inners[1].clear_depth & !mask) | (value & mask);
-        self.inners[1].clear_depthf = self.inners[1].clear_depth as f32 / 0x7FFF as f32;
+        let depth = self.inners[1].clear_depth as u32;
+        let expanded_depth = depth * 0x200 + ((depth + 1) / 0x8000) * 0x1FF;
+        self.inners[1].clear_depthf = expanded_depth as f32 / 0xFFFFFF as f32;
+        const TOLERANCE: f32 = 0x200 as f32 / 0xFFFFFF as f32;
+        self.inners[1].clear_depthf += TOLERANCE;
+        if self.inners[1].clear_depthf > 1.0 {
+            self.inners[1].clear_depthf = 1.0;
+        }
         self.invalidate();
     }
 
@@ -765,9 +789,26 @@ impl Gpu3DRenderer {
                 gl::DepthFunc(gl::LEQUAL);
             }
 
+            gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
+            gl::StencilFunc(gl::ALWAYS, u8::from(batch.attr.id()) as _, 0x3F);
+            gl::StencilOp(gl::KEEP, gl::KEEP, gl::REPLACE);
+            gl::StencilMask(0x3F);
+
             if translucent_only {
                 if batch.attr.trans_new_depth() {
                     gl::DepthFunc(gl::EQUAL);
+                }
+
+                if batch.attr.mode() == PolygonMode::Shadow {
+                    gl::ColorMask(gl::FALSE, gl::FALSE, gl::FALSE, gl::FALSE);
+                    gl::StencilMask(0x80);
+                    if u8::from(batch.attr.id()) == 0 {
+                        gl::StencilFunc(gl::ALWAYS, 0x80, 0x80);
+                        gl::StencilOp(gl::KEEP, gl::REPLACE, gl::KEEP);
+                    } else {
+                        gl::StencilFunc(gl::NOTEQUAL, u8::from(batch.attr.id()) as _, 0x3F);
+                        gl::StencilOp(gl::ZERO, gl::KEEP, gl::KEEP);
+                    }
                 }
             } else if batch.attr.trans_new_depth() {
                 gl::Enable(gl::BLEND);
@@ -775,9 +816,6 @@ impl Gpu3DRenderer {
             } else {
                 gl::Disable(gl::BLEND);
             }
-
-            let attr = [u32::from(batch.attr)];
-            gl::Uniform1fv(program.polygon_attrs, 1, attr.as_ptr() as _);
 
             if !batch.attr.render_back() || !batch.attr.render_front() {
                 gl::Enable(gl::CULL_FACE);
@@ -791,12 +829,25 @@ impl Gpu3DRenderer {
                 gl::Disable(gl::CULL_FACE);
             }
 
-            gl::DrawElements(
-                gl::TRIANGLES,
-                (batch.indices_offset - previous_offset) as _,
-                gl::UNSIGNED_SHORT,
-                indices.as_ptr().add(previous_offset) as _,
-            );
+            let attr = [u32::from(batch.attr)];
+            gl::Uniform1fv(program.polygon_attrs, 1, attr.as_ptr() as _);
+
+            let count = batch.indices_offset - previous_offset;
+            let ptr = indices.as_ptr().add(previous_offset);
+            gl::DrawElements(gl::TRIANGLES, count as _, gl::UNSIGNED_SHORT, ptr as _);
+
+            if translucent_only && batch.attr.mode() == PolygonMode::Shadow && u8::from(batch.attr.id()) != 0 {
+                gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
+
+                gl::StencilFunc(gl::EQUAL, 0x80, 0x80);
+                gl::StencilOp(gl::KEEP, gl::KEEP, gl::KEEP);
+
+                gl::DrawElements(gl::TRIANGLES, count as _, gl::UNSIGNED_SHORT, ptr as _);
+
+                gl::StencilMask(0x80);
+                gl::Clear(gl::STENCIL_BUFFER_BIT);
+            }
+
             previous_offset = batch.indices_offset
         }
     }
@@ -822,8 +873,8 @@ impl Gpu3DRenderer {
         let [r, g, b, a] = self.inners[0].clear_colorf;
         gl::ClearColor(r, g, b, a);
 
-        gl::ClearDepth(self.inners[0].clear_depthf as _);
-        gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+        // gl::ClearDepth(self.inners[0].clear_depthf as _);
+        gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT | gl::STENCIL_BUFFER_BIT);
 
         self.vertices_buf_count = 0;
         if self.assembled_draw_count == 0 {
@@ -876,7 +927,8 @@ impl Gpu3DRenderer {
 
         gl::Enable(gl::DEPTH_TEST);
         gl::DepthFunc(gl::LEQUAL);
-        gl::DepthRange(0.0, 1.0);
+
+        gl::Enable(gl::STENCIL_TEST);
 
         if !self.cache_3d_textures {
             gl::ActiveTexture(gl::TEXTURE0);
@@ -948,7 +1000,6 @@ impl Gpu3DRenderer {
 
         gl::DepthMask(gl::TRUE);
         gl::Disable(gl::DEPTH_TEST);
-        gl::DepthRange(0.0, 1.0);
         gl::Disable(gl::BLEND);
         gl::BindBuffer(gl::ARRAY_BUFFER, 0);
         gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, 0);
@@ -957,5 +1008,7 @@ impl Gpu3DRenderer {
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
         gl::CullFace(gl::BACK);
         gl::Disable(gl::CULL_FACE);
+        gl::Disable(gl::STENCIL_TEST);
+        gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
     }
 }

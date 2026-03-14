@@ -183,7 +183,7 @@ impl Gpu2DCommon {
                 gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
                 gl::UseProgram(0);
 
-                let fbo = GpuFbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32, false).unwrap();
+                let fbo = GpuFbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32, false, false).unwrap();
 
                 (disp_cnt_loc, ubo, fbo)
             };
@@ -219,9 +219,9 @@ impl Gpu2DCommon {
                 win_bg_disp_cnt_loc,
                 win_bg_ubo,
                 win_bg_fbo,
-                win_obj_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false).unwrap(),
-                obj_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, true).unwrap(),
-                bg_fbos: array_init!({ GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false).unwrap() }; 4),
+                win_obj_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap(),
+                obj_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, true, false).unwrap(),
+                bg_fbos: array_init!({ GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap() }; 4),
                 blend_program: gpu_programs.blend,
                 blend_ubo,
             }
@@ -469,7 +469,7 @@ impl Gpu2DProgram {
                 bg_text_4bpp_program,
                 bg_text_8bpp_program,
                 bg_ubo,
-                bg_fbo_3d: GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, false).unwrap(),
+                bg_fbo_3d: GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, false, false).unwrap(),
             }
         }
     }
@@ -983,8 +983,8 @@ impl Gpu2DRenderer {
                 common: Gpu2DCommon::new(gpu_programs),
                 program: Gpu2DProgram::new(gpu_programs),
                 blend_fbos: [
-                    GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, false).unwrap(),
-                    GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false).unwrap(),
+                    GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, false, false).unwrap(),
+                    GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap(),
                 ],
                 #[cfg(target_os = "linux")]
                 lcdc_mem_buf: HeapArrayU8::default(),

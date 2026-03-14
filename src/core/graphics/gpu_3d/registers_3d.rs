@@ -145,7 +145,7 @@ struct MaterialColor1 {
 #[derive(Copy, Clone, DebugBits, Default, FromBits)]
 pub struct PolygonAttr {
     pub enable_lights: u4,
-    pub mode: u2,
+    pub mode: PolygonMode,
     pub render_back: bool,
     pub render_front: bool,
     pub primitive_type: PrimitiveType,
@@ -219,8 +219,8 @@ const FUNC_GROUP_LUT: [fn(&mut Gpu3DRegisters, cmd: usize, params: &[u32; 32]); 
     Gpu3DRegisters::exe_test_group,
 ];
 
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
-#[repr(u8)]
+#[bitsize(2)]
+#[derive(Copy, Clone, Debug, Default, Eq, FromBits, PartialEq)]
 pub enum PolygonMode {
     #[default]
     Modulation = 0,

@@ -100,7 +100,7 @@ impl Gpu2DFrame {
                 gl::BindTexture(gl::TEXTURE_2D, 0);
                 tex
             }}; 2),
-            fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false).unwrap(),
+            fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap(),
         }
     }
 

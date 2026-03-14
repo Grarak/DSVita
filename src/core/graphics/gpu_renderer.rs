@@ -140,13 +140,13 @@ impl GpuRenderer {
             common: GpuRendererCommon::new(),
             capture_program: gpu_programs.capture,
             capture_size_scalers_uniform,
-            capture_fbo: GpuFbo::from_tex(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, capture_fbo_tex).unwrap(),
+            capture_fbo: GpuFbo::from_tex(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false, capture_fbo_tex).unwrap(),
             capture_mem: HeapArrayU8::default(),
             capture_query,
 
             merge_program: gpu_programs.merge,
             merge_alpha_uniform,
-            final_fbo: GpuFbo::new(PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, false).unwrap(),
+            final_fbo: GpuFbo::new(PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, false, false).unwrap(),
             gl_glyph: GlGlyph::new(gpu_programs),
 
             rendering: Mutex::new(false),

@@ -197,25 +197,35 @@ pub unsafe fn create_fb_color(width: u32, height: u32) -> GLuint {
     tex
 }
 
-pub unsafe fn create_fb_depth_tex(fbo: GLuint, width: u32, height: u32) -> GLuint {
+pub unsafe fn create_fb_depth_tex(fbo: GLuint, width: u32, height: u32, stencil: bool) -> GLuint {
     gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
     if cfg!(target_os = "linux") {
         let mut tex = 0;
         gl::GenTextures(1, &mut tex);
         gl::BindTexture(gl::TEXTURE_2D, tex);
-        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::DEPTH_COMPONENT32F as _, width as _, height as _, 0, gl::DEPTH_COMPONENT, gl::FLOAT, ptr::null());
+        gl::TexImage2D(
+            gl::TEXTURE_2D,
+            0,
+            if stencil { gl::DEPTH24_STENCIL8 as _ } else { gl::DEPTH_COMPONENT24 as _ },
+            width as _,
+            height as _,
+            0,
+            if stencil { gl::DEPTH_STENCIL } else { gl::DEPTH_COMPONENT },
+            if stencil { gl::UNSIGNED_INT_24_8 } else { gl::UNSIGNED_INT },
+            ptr::null(),
+        );
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as _);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
         gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as _);
-        gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::TEXTURE_2D, tex, 0);
+        gl::FramebufferTexture2D(gl::FRAMEBUFFER, if stencil { gl::DEPTH_STENCIL_ATTACHMENT } else { gl::DEPTH_ATTACHMENT }, gl::TEXTURE_2D, tex, 0);
         tex
     } else {
         let mut buf = 0;
         gl::GenRenderbuffers(1, &mut buf);
         gl::BindRenderbuffer(gl::RENDERBUFFER, buf);
-        gl::RenderbufferStorage(gl::RENDERBUFFER, gl::DEPTH_COMPONENT, width as _, height as _);
-        gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::RENDERBUFFER, buf);
+        gl::RenderbufferStorage(gl::RENDERBUFFER, if stencil { gl::DEPTH24_STENCIL8 } else { gl::DEPTH_COMPONENT24 }, width as _, height as _);
+        gl::FramebufferRenderbuffer(gl::FRAMEBUFFER, if stencil { gl::DEPTH_STENCIL_ATTACHMENT } else { gl::DEPTH_ATTACHMENT }, gl::RENDERBUFFER, buf);
         Presenter::gl_create_depth_tex()
     }
 }
@@ -227,14 +237,16 @@ pub struct GpuFbo {
 }
 
 impl GpuFbo {
-    pub fn from_tex(width: u32, height: u32, depth: bool, tex: GLuint) -> Result<Self, StrErr> {
+    pub fn from_tex(width: u32, height: u32, depth: bool, stencil: bool, tex: GLuint) -> Result<Self, StrErr> {
         unsafe {
+            debug_assert!(depth || !stencil);
+
             let mut fbo = 0;
             gl::GenFramebuffers(1, &mut fbo);
             gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
             gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, tex, 0);
 
-            let depth = if depth { Some(create_fb_depth_tex(fbo, width, height)) } else { None };
+            let depth = if depth { Some(create_fb_depth_tex(fbo, width, height, stencil)) } else { None };
 
             let status = gl::CheckFramebufferStatus(gl::FRAMEBUFFER);
             gl::BindRenderbuffer(gl::RENDERBUFFER, 0);
@@ -247,7 +259,7 @@ impl GpuFbo {
         }
     }
 
-    pub fn new(width: u32, height: u32, depth: bool) -> Result<Self, StrErr> {
-        unsafe { Self::from_tex(width, height, depth, create_fb_color(width, height)) }
+    pub fn new(width: u32, height: u32, depth: bool, stencil: bool) -> Result<Self, StrErr> {
+        unsafe { Self::from_tex(width, height, depth, stencil, create_fb_color(width, height)) }
     }
 }
