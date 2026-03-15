@@ -382,7 +382,7 @@ struct Gpu2DProgram {
 }
 
 macro_rules! draw_scanlines {
-    ($regs:expr, $draw_fn:expr, $draw_vram_display:expr, $lcdc_pal:expr, $is_bg:expr) => {{
+    ($regs:expr, $draw_fn:expr, $lcdc_pal:expr, $is_bg:expr) => {{
         let mut line = 0;
         while line < DISPLAY_HEIGHT {
             let from_line = line;
@@ -399,9 +399,7 @@ macro_rules! draw_scanlines {
             if $lcdc_pal != 0 {
                 let disp_cnt = DispCnt::from($regs.disp_cnts[from_line]);
                 if u8::from(disp_cnt.display_mode()) == 2 {
-                    if $draw_vram_display {
-                        $draw_fn(from_line as u8, line as u8);
-                    }
+                    $draw_fn(from_line as u8, line as u8);
                     continue;
                 }
             }
@@ -666,7 +664,7 @@ impl Gpu2DProgram {
                     }
                 }
             };
-            draw_scanlines!(regs, draw_bg, false, 0, false);
+            draw_scanlines!(regs, draw_bg, 0, false);
         }
 
         gl::BindFramebuffer(gl::FRAMEBUFFER, blend_fbo);
@@ -753,7 +751,7 @@ impl Gpu2DProgram {
             gl::Uniform1i(self.obj_program.window_loc, 1);
 
             let mut draw_objects = |from_line, to_line| self.draw_objects::<true>(regs, &mem, from_line, to_line);
-            draw_scanlines!(regs, draw_objects, false, lcdc_pal, false);
+            draw_scanlines!(regs, draw_objects, 0, false);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::BindVertexArray(0);
@@ -774,7 +772,7 @@ impl Gpu2DProgram {
             gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, common.win_bg_ubo);
 
             let draw_windows = |from_line, to_line| self.draw_windows(common, regs, from_line, to_line);
-            draw_scanlines!(regs, draw_windows, false, lcdc_pal, false);
+            draw_scanlines!(regs, draw_windows, 0, false);
 
             gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
             gl::UseProgram(0);
@@ -823,7 +821,7 @@ impl Gpu2DProgram {
             gl::Uniform1i(self.obj_program.window_loc, 0);
 
             let mut draw_objects = |from_line, to_line| self.draw_objects::<false>(regs, &mem, from_line, to_line);
-            draw_scanlines!(regs, draw_objects, false, lcdc_pal, false);
+            draw_scanlines!(regs, draw_objects, 0, false);
 
             gl::Disable(gl::DEPTH_TEST);
             gl::Disable(gl::BLEND);
@@ -852,7 +850,7 @@ impl Gpu2DProgram {
             gl::BufferData(gl::UNIFORM_BUFFER, size_of::<BgUbo>() as _, ptr::addr_of!(regs.bg_ubo) as _, gl::DYNAMIC_DRAW);
 
             let draw_bg = |from_line, to_line| self.draw_bg(common, regs, texs, from_line, to_line);
-            draw_scanlines!(regs, draw_bg, false, lcdc_pal, true);
+            draw_scanlines!(regs, draw_bg, 0, true);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
@@ -874,7 +872,7 @@ impl Gpu2DProgram {
             gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
             let draw_vram_display = |from_line, to_line| vram_display_program.draw(regs, from_line, to_line);
-            draw_scanlines!(regs, draw_vram_display, true, lcdc_pal, false);
+            draw_scanlines!(regs, draw_vram_display, lcdc_pal, false);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
