@@ -234,6 +234,8 @@ pub struct GpuFbo {
     pub color: GLuint,
     pub depth: Option<GLuint>,
     pub fbo: GLuint,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl GpuFbo {
@@ -254,7 +256,13 @@ impl GpuFbo {
             if status != gl::FRAMEBUFFER_COMPLETE {
                 Err(StrErr::new(format!("Failed to create fbo: {status}")))
             } else {
-                Ok(GpuFbo { color: tex, depth, fbo })
+                Ok(GpuFbo {
+                    color: tex,
+                    depth,
+                    fbo,
+                    width,
+                    height,
+                })
             }
         }
     }

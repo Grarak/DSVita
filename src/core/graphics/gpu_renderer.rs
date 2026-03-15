@@ -283,7 +283,16 @@ impl GpuRenderer {
         gl::UseProgram(0);
     }
 
-    pub fn render_loop(&mut self, presenter: &mut Presenter, fps: &Arc<AtomicU16>, last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>, arm7_emu: Arm7Emu, screen_layout: &ScreenLayout, pause: bool) {
+    pub fn render_loop(
+        &mut self,
+        presenter: &mut Presenter,
+        fps: &Arc<AtomicU16>,
+        last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>,
+        arm7_emu: Arm7Emu,
+        screen_layout: &ScreenLayout,
+        upscale_3d: bool,
+        pause: bool,
+    ) {
         {
             let rendering = self.rendering.lock().unwrap();
             let _drawing = self.rendering_condvar.wait_while(rendering, |rendering| !*rendering).unwrap();
@@ -319,7 +328,7 @@ impl GpuRenderer {
             gl::Clear(gl::COLOR_BUFFER_BIT);
 
             self.renderer_2d.draw::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
-            let b_fbo_color = self.renderer_2d.blend::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, 0);
+            let b_fbo_color = self.renderer_2d.blend::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, 0, false);
 
             // self.renderer_soft_2d.draw::<{ A }>(&self.common, &self.renderer_regs_2d_shared);
             self.renderer_2d.draw::<{ A }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
@@ -337,14 +346,15 @@ impl GpuRenderer {
                 if unlikely(timeout.timed_out()) {
                     info_println!("waiting for 3d processing timed out");
                 }
-                self.renderer_3d.render(&self.common);
+                self.renderer_3d.render(&self.common, upscale_3d);
             }
 
             // let a_fbo_color = self.renderer_soft_2d.blend::<{ A }>(&self.common, &self.renderer_regs_2d_shared, self.renderer_3d.gl.fbo.color);
             let a_fbo_color = self.renderer_2d.blend::<{ A }>(
                 &self.gpu_mem_refs,
                 &self.renderer_regs_2d_shared,
-                self.renderer_3d.get_fbo(self.common.pow_cnt1[0].display_swap()).color,
+                self.renderer_3d.get_fbo(self.common.pow_cnt1[0].display_swap(), upscale_3d).color,
+                upscale_3d,
             );
 
             if disp_cap_cnt.capture_enabled() && u8::from(disp_cap_cnt.capture_source()) != 1 {
@@ -363,7 +373,7 @@ impl GpuRenderer {
                 gl::BindTexture(
                     gl::TEXTURE_2D,
                     if disp_cap_cnt.source_a() {
-                        self.renderer_3d.get_fbo(self.common.pow_cnt1[0].display_swap()).color
+                        self.renderer_3d.get_fbo(self.common.pow_cnt1[0].display_swap(), upscale_3d).color
                     } else {
                         a_fbo_color
                     },

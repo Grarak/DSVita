@@ -170,6 +170,7 @@ lazy_static! {
                 "Don't calculate new frames when old ones in queue haven't been consumed yet. Increases latency and might introduce\nglitches, however gives a performance boost. Disable when playing games that use 3D on both screens",
                 SettingValue::Bool(true),
                 true),
+            Setting::new("Upscale 3D", "2x upscale 3D polygons at the cost of lower framerate.", SettingValue::Bool(true), true),
             Setting::new("Audio stretching", "Enable if games doesn't run at fullspeed, introduces latency however prevents audio stutter.", SettingValue::Bool(true), true),
             Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", ScreenLayout::settings_value(), true),
             Setting::new("Swap screens", "Press PS + Cross to swap screens in game.", SettingValue::Bool(false), true),
@@ -182,7 +183,7 @@ lazy_static! {
 }
 
 #[derive(Clone)]
-pub struct Settings([Setting; 11]);
+pub struct Settings([Setting; 12]);
 
 #[repr(u8)]
 enum SettingIndices {
@@ -190,6 +191,7 @@ enum SettingIndices {
     Audio,
     Arm7Emu,
     Geometry3DSkip,
+    Upscale3D,
     AudioStretching,
     ScreenLayout,
     SwapScreen,
@@ -229,6 +231,10 @@ impl Settings {
 
     pub fn geometry_3d_skip(&self) -> bool {
         unsafe { self.0[SettingIndices::Geometry3DSkip as usize].value.as_bool().unwrap_unchecked() }
+    }
+
+    pub fn upscale_3d(&self) -> bool {
+        unsafe { self.0[SettingIndices::Upscale3D as usize].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn audio_stretching(&self) -> bool {

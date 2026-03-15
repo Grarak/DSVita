@@ -546,6 +546,7 @@ pub fn actual_main() {
 
         let gpu_renderer = gpu_renderer.as_mut().unwrap();
         let mut screen_layout = emu_unsafe.get_mut().settings.screen_layout();
+        let mut upscale_3d = emu_unsafe.get_mut().settings.upscale_3d();
         let arm7_emu = emu_unsafe.get_mut().settings.arm7_emu();
         loop {
             let pause = match presenter.poll_event(&emu_unsafe.get_mut().settings) {
@@ -576,7 +577,7 @@ pub fn actual_main() {
                 }
             };
 
-            gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, arm7_emu, &screen_layout, pause);
+            gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, arm7_emu, &screen_layout, upscale_3d, pause);
 
             if unlikely(!running) {
                 gpu_renderer.set_quit(true);
@@ -587,11 +588,13 @@ pub fn actual_main() {
                 match presenter.present_pause(gpu_renderer, &mut emu_unsafe.get_mut().settings) {
                     UiPauseMenuReturn::Resume => {
                         screen_layout = emu_unsafe.get_mut().settings.screen_layout();
+                        upscale_3d = emu_unsafe.get_mut().settings.upscale_3d();
                         gpu_renderer.unpause(cpu_thread.thread());
                     }
                     UiPauseMenuReturn::BlowMic => {
                         emu_unsafe.get_mut().spi.start_blow_mic();
                         screen_layout = emu_unsafe.get_mut().settings.screen_layout();
+                        upscale_3d = emu_unsafe.get_mut().settings.upscale_3d();
                         gpu_renderer.unpause(cpu_thread.thread());
                     }
                     UiPauseMenuReturn::Quit => {
