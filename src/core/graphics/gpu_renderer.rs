@@ -172,9 +172,9 @@ impl GpuRenderer {
         }
     }
 
-    pub fn init(&mut self, cache_3d_textures: bool) {
+    pub fn init(&mut self) {
         self.renderer_regs_2d_shared.init();
-        self.renderer_3d.init(cache_3d_textures);
+        self.renderer_3d.init();
         self.common.mem_buf.init();
         self.common.pow_cnt1[0] = PowCnt1::from(0);
         *self.processed_3d.lock().unwrap() = false;
@@ -337,7 +337,7 @@ impl GpuRenderer {
                 if unlikely(timeout.timed_out()) {
                     info_println!("waiting for 3d processing timed out");
                 }
-                self.renderer_3d.render(&self.common, &self.gpu_mem_refs);
+                self.renderer_3d.render(&self.common);
             }
 
             // let a_fbo_color = self.renderer_soft_2d.blend::<{ A }>(&self.common, &self.renderer_regs_2d_shared, self.renderer_3d.gl.fbo.color);

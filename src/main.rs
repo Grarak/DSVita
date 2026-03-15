@@ -440,7 +440,7 @@ pub fn actual_main() {
             }));
             emu_unsafe.get_mut().gpu.set_gpu_renderer(NonNull::from(gpu_renderer.as_mut().unwrap()));
         }
-        emu_unsafe.get_mut().gpu.renderer.init(settings.cache_3d_textures());
+        emu_unsafe.get_mut().gpu.renderer.init();
 
         let presenter_audio_out = presenter.get_presenter_audio_out();
         let presenter_audio_in = presenter.get_presenter_audio_in();
@@ -606,8 +606,6 @@ pub fn actual_main() {
                         break;
                     }
                 }
-
-                emu_unsafe.get_mut().gpu.renderer.renderer_3d.cache_3d_textures = emu_unsafe.get_mut().settings.cache_3d_textures();
             }
         }
 

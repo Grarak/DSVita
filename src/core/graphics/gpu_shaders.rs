@@ -85,6 +85,8 @@ impl Gpu3DShaderPrograms {
             gl::BindAttribLocation(program, 3, c"color".as_ptr() as _);
             gl::BindAttribLocation(program, 4, c"texSize".as_ptr() as _);
 
+            gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
+
             let ret = (
                 gl::GetUniformLocation(program, c"polygonAttrsF".as_ptr() as _),
                 gl::GetUniformLocation(program, c"texImageParamF".as_ptr() as _),
@@ -136,10 +138,6 @@ impl Gpu3DShaderDepthPrograms {
         Gpu3DShaderDepthPrograms { z, w }
     }
 
-    fn all_programs(&self) -> [GLuint; 4] {
-        [self.z.opaque.program, self.z.translucent.program, self.w.opaque.program, self.w.translucent.program]
-    }
-
     pub fn get_program(&self, w_depth_buffer: bool) -> &Gpu3DShaderPrograms {
         if w_depth_buffer {
             &self.w
@@ -160,7 +158,6 @@ pub struct GpuShadersPrograms {
     pub blend: GLuint,
     pub vram_display: GLuint,
     pub render_3d: Gpu3DShaderDepthPrograms,
-    pub tex_cache_render_3d: Gpu3DShaderDepthPrograms,
     pub text: GLuint,
     pub capture: GLuint,
     pub merge: GLuint,
@@ -194,30 +191,6 @@ impl GpuShadersPrograms {
         let render_3d = Gpu3DShaderDepthPrograms::new(render_3d_vertex_shader, shader_source!("gpu_3d/shaders", "render_frag"), &mut create_shader);
         gl::DeleteShader(render_3d_vertex_shader);
 
-        let mut previous_program = 0;
-        gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut previous_program);
-
-        for program in render_3d.all_programs() {
-            gl::UseProgram(program);
-            gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
-            gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 1);
-        }
-
-        gl::UseProgram(previous_program as _);
-
-        let tex_cache_render_3d_vertex_shader = create_shader("tex cache render 3d", shader_source!("gpu_3d/shaders", "tex_cache_render_vert"), gl::VERTEX_SHADER);
-        let tex_cache_render_3d = Gpu3DShaderDepthPrograms::new(tex_cache_render_3d_vertex_shader, shader_source!("gpu_3d/shaders", "tex_cache_render_frag"), &mut create_shader);
-        gl::DeleteShader(tex_cache_render_3d_vertex_shader);
-
-        gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut previous_program);
-
-        for program in tex_cache_render_3d.all_programs() {
-            gl::UseProgram(program);
-            gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
-        }
-
-        gl::UseProgram(previous_program as _);
-
         GpuShadersPrograms {
             bg: Gpu2DBgShaderPrograms::new(&mut create_shader),
             obj,
@@ -225,7 +198,6 @@ impl GpuShadersPrograms {
             blend,
             vram_display,
             render_3d,
-            tex_cache_render_3d,
             text,
             capture,
             merge,
@@ -233,6 +205,6 @@ impl GpuShadersPrograms {
     }
 
     pub const fn count() -> usize {
-        16 + 2 * Gpu3DShaderDepthPrograms::count() + Gpu2DBgShaderPrograms::count()
+        16 + Gpu3DShaderDepthPrograms::count() + Gpu2DBgShaderPrograms::count()
     }
 }

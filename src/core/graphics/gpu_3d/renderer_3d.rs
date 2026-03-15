@@ -1,4 +1,4 @@
-use crate::core::graphics::gl_utils::{create_mem_texture2d, create_pal_texture2d, sub_mem_texture2d, sub_pal_texture2d, GpuFbo};
+use crate::core::graphics::gl_utils::GpuFbo;
 use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::registers_3d::{Gpu3DBuffer, Gpu3DRegisters, PolygonAttr, PolygonMode, PrimitiveType, TexImageParam, TextureCoordTransMode, TextureFormat, Vertex, Viewport};
 use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
@@ -95,11 +95,8 @@ impl Default for Gpu3DRendererInner {
 }
 
 pub struct Gpu3DGl {
-    tex: GLuint,
-    pal_tex: GLuint,
     vertices_buf: GLuint,
     program: Gpu3DShaderDepthPrograms,
-    program_tex_cache: Gpu3DShaderDepthPrograms,
     top_fbo: GpuFbo,
     bottom_fbo: GpuFbo,
 }
@@ -116,11 +113,8 @@ impl Gpu3DGl {
             gl::UseProgram(0);
 
             Gpu3DGl {
-                tex: create_mem_texture2d(1024, 512),
-                pal_tex: create_pal_texture2d(1024, 96),
                 vertices_buf,
                 program: gpu_programs.render_3d,
-                program_tex_cache: gpu_programs.tex_cache_render_3d,
                 top_fbo: GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, true, true).unwrap(),
                 bottom_fbo: GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, true, true).unwrap(),
             }
@@ -232,7 +226,6 @@ pub struct Gpu3DRenderer {
 
     polygon_vertices_mapping: HeapArrayU16<POLYGON_LIMIT>,
 
-    pub cache_3d_textures: bool,
     texture_cache: Texture3DCache,
     texture_ids_to_delete: Vec<GLuint>,
     active_texture_id: GLuint,
@@ -269,7 +262,6 @@ impl Gpu3DRenderer {
 
             polygon_vertices_mapping: Default::default(),
 
-            cache_3d_textures: false,
             texture_ids_to_delete: Vec::new(),
             texture_cache: Texture3DCache::new(),
             active_texture_id: u32::MAX,
@@ -283,14 +275,13 @@ impl Gpu3DRenderer {
         }
     }
 
-    pub fn init(&mut self, cache_3d_textures: bool) {
+    pub fn init(&mut self) {
         self.dirty = false;
         self.inners[0] = Gpu3DRendererInner::default();
         self.inners[1] = Gpu3DRendererInner::default();
         self.buffer.reset_all();
         self.buffer.pow_cnt1 = PowCnt1::from(0);
         self.texture_cache.clear();
-        self.cache_3d_textures = cache_3d_textures;
 
         unsafe {
             for fbo in [self.gl.top_fbo.fbo, self.gl.bottom_fbo.fbo] {
@@ -587,19 +578,14 @@ impl Gpu3DRenderer {
         //     polygon.attr
         // );
 
-        let texture_id = if self.cache_3d_textures && draw.tex_image_param.format() != TextureFormat::None {
+        let texture_id = if draw.tex_image_param.format() != TextureFormat::None {
             draw.texture_3d_ptr.as_mut_unchecked().get_texture_id()
         } else {
             u32::MAX
         };
 
-        let mut draw_attr = Gpu3DDrawAttr::from(draw.attr);
-        let tex_image_param = if self.cache_3d_textures {
-            u32::from(draw.tex_image_param) & 0x1C0F0000
-        } else {
-            draw_attr.set_pal_addr(draw.pal_addr);
-            u32::from(draw.tex_image_param) & 0x3FFFFFFF
-        };
+        let draw_attr = Gpu3DDrawAttr::from(draw.attr);
+        let tex_image_param = u32::from(draw.tex_image_param) & 0x1C0F0000;
         if self.active_texture_id != texture_id || u32::from(self.active_tex_image_param) != tex_image_param || self.active_polygon_attr.value != draw_attr.value {
             self.add_indices_batch::<TRANSLUCENT_ONLY>();
             self.active_texture_id = texture_id;
@@ -694,10 +680,8 @@ impl Gpu3DRenderer {
         self.assemble_draws();
         self.buffer.vertices_count = 0;
 
-        if self.cache_3d_textures {
-            while !self.vram_ready.load(Ordering::SeqCst) {}
-            self.populate_tex_cache(&mut common.mem_buf, mem_refs);
-        }
+        while !self.vram_ready.load(Ordering::SeqCst) {}
+        self.populate_tex_cache(&mut common.mem_buf, mem_refs);
     }
 
     pub fn on_render_start(&self) {
@@ -705,24 +689,9 @@ impl Gpu3DRenderer {
     }
 
     pub fn set_tex_ptrs(&mut self, refs: &mut GpuMemRefs) {
-        #[cfg(target_os = "linux")]
         unsafe {
             refs.tex_rear_plane_image = PtrWrapper::new(mem::transmute(self.mem.tex.as_mut_ptr()));
             refs.tex_pal = PtrWrapper::new(mem::transmute(self.mem.pal.as_mut_ptr()));
-        }
-        #[cfg(target_os = "vita")]
-        unsafe {
-            use crate::presenter::Presenter;
-
-            if self.cache_3d_textures {
-                refs.tex_rear_plane_image = PtrWrapper::new(mem::transmute(self.mem.tex.as_mut_ptr()));
-                refs.tex_pal = PtrWrapper::new(mem::transmute(self.mem.pal.as_mut_ptr()));
-            } else {
-                gl::BindTexture(gl::TEXTURE_2D, self.gl.tex);
-                refs.tex_rear_plane_image = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
-                gl::BindTexture(gl::TEXTURE_2D, self.gl.pal_tex);
-                refs.tex_pal = PtrWrapper::new(mem::transmute(Presenter::gl_remap_tex()));
-            }
         }
     }
 
@@ -738,7 +707,7 @@ impl Gpu3DRenderer {
         }
     }
 
-    unsafe fn draw_elements(cache_3d_textures: bool, translucent_only: bool, program: &Gpu3DShaderProgram, indices: &[u16], indices_batch: &[IndicesBatch]) {
+    unsafe fn draw_elements(translucent_only: bool, program: &Gpu3DShaderProgram, indices: &[u16], indices_batch: &[IndicesBatch]) {
         let mut previous_offset = 0;
         for batch in indices_batch {
             // println!(
@@ -748,7 +717,7 @@ impl Gpu3DRenderer {
             // );
             // println!("{:?}", &indices[previous_offset..batch.indices_offset]);
 
-            if cache_3d_textures && batch.tex_image_param.format() != TextureFormat::None {
+            if batch.tex_image_param.format() != TextureFormat::None {
                 debug_assert_ne!(batch.tex, u32::MAX);
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindTexture(gl::TEXTURE_2D, batch.tex);
@@ -852,7 +821,7 @@ impl Gpu3DRenderer {
         }
     }
 
-    pub unsafe fn render(&mut self, common: &GpuRendererCommon, mem_refs: &GpuMemRefs) {
+    pub unsafe fn render(&mut self, common: &GpuRendererCommon) {
         if self.buffer.pow_cnt1 != common.pow_cnt1[0] {
             return;
         }
@@ -860,10 +829,6 @@ impl Gpu3DRenderer {
         if !self.texture_ids_to_delete.is_empty() {
             gl::DeleteTextures(self.texture_ids_to_delete.len() as _, self.texture_ids_to_delete.as_ptr());
             self.texture_ids_to_delete.clear();
-        }
-
-        if !self.cache_3d_textures {
-            self.texture_cache.clear();
         }
 
         let fbo = self.get_fbo(self.buffer.pow_cnt1.display_swap());
@@ -930,20 +895,6 @@ impl Gpu3DRenderer {
 
         gl::Enable(gl::STENCIL_TEST);
 
-        if !self.cache_3d_textures {
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, self.gl.tex);
-            if cfg!(target_os = "linux") {
-                sub_mem_texture2d(1024, 512, mem_refs.tex_rear_plane_image.as_ptr());
-            }
-
-            gl::ActiveTexture(gl::TEXTURE1);
-            gl::BindTexture(gl::TEXTURE_2D, self.gl.pal_tex);
-            if cfg!(target_os = "linux") {
-                sub_pal_texture2d(1024, 96, mem_refs.tex_pal.as_ptr());
-            }
-        }
-
         gl::BindBuffer(gl::ARRAY_BUFFER, self.gl.vertices_buf);
         #[cfg(target_os = "linux")]
         {
@@ -971,19 +922,16 @@ impl Gpu3DRenderer {
         gl::EnableVertexAttribArray(3);
         gl::VertexAttribPointer(3, 4, gl::UNSIGNED_BYTE, gl::FALSE, size_of::<Gpu3DVertex>() as _, mem::offset_of!(Gpu3DVertex, color) as _);
 
-        if self.cache_3d_textures {
-            gl::EnableVertexAttribArray(4);
-            gl::VertexAttribPointer(4, 2, gl::UNSIGNED_BYTE, gl::FALSE, size_of::<Gpu3DVertex>() as _, mem::offset_of!(Gpu3DVertex, tex_size) as _);
-        }
+        gl::EnableVertexAttribArray(4);
+        gl::VertexAttribPointer(4, 2, gl::UNSIGNED_BYTE, gl::FALSE, size_of::<Gpu3DVertex>() as _, mem::offset_of!(Gpu3DVertex, tex_size) as _);
 
-        let program = if self.cache_3d_textures { &self.gl.program_tex_cache } else { &self.gl.program };
-        let program = program.get_program(self.buffer.swap_buffers.depth_buffering_w());
+        let program = self.gl.program.get_program(self.buffer.swap_buffers.depth_buffering_w());
 
         if !self.indices_opaque.is_empty() {
             gl::UseProgram(program.opaque.program);
             gl::DepthMask(gl::TRUE);
 
-            Self::draw_elements(self.cache_3d_textures, false, &program.opaque, &self.indices_opaque, &self.indices_opaque_batches);
+            Self::draw_elements(false, &program.opaque, &self.indices_opaque, &self.indices_opaque_batches);
         }
 
         if !self.indices_translucent.is_empty() {
@@ -995,7 +943,7 @@ impl Gpu3DRenderer {
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE);
             gl::BlendEquationSeparate(gl::FUNC_ADD, gl::MAX);
 
-            Self::draw_elements(self.cache_3d_textures, true, &program.translucent, &self.indices_translucent, &self.indices_translucent_batches);
+            Self::draw_elements(true, &program.translucent, &self.indices_translucent, &self.indices_translucent_batches);
         }
 
         gl::DepthMask(gl::TRUE);
