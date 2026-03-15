@@ -205,6 +205,6 @@ impl GpuShadersPrograms {
     }
 
     pub const fn count() -> usize {
-        16 + Gpu3DShaderDepthPrograms::count() + Gpu2DBgShaderPrograms::count()
+        15 + Gpu3DShaderDepthPrograms::count() + Gpu2DBgShaderPrograms::count()
     }
 }

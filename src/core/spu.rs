@@ -243,7 +243,7 @@ const fn calculate_adpcm_index_table() -> [[u8; 8]; 89] {
 const ADPCM_INDEX_TABLE: [[u8; 8]; 89] = calculate_adpcm_index_table();
 
 #[bitsize(32)]
-#[derive(Copy, Clone, Default, FromBits)]
+#[derive(Copy, Clone, DebugBits, Default, FromBits)]
 pub struct SoundCnt {
     pub volume_mul: u7,
     not_used: u1,
@@ -282,7 +282,7 @@ impl From<u8> for SoundChannelFormat {
 }
 
 #[bitsize(16)]
-#[derive(Copy, Clone, Default, FromBits)]
+#[derive(Copy, Clone, DebugBits, Default, FromBits)]
 pub struct MainSoundCnt {
     pub master_volume: u7,
     not_used: u1,
@@ -300,7 +300,8 @@ struct SpuChannel {
     tmr: u16,
     pnt: u16,
     len: u32,
-    sad_current: u32,
+    sad_ptr: usize,
+    sad_current: usize,
     tmr_current: u32,
     adpcm_value: i16,
     adpcm_loop_value: i16,
@@ -308,6 +309,12 @@ struct SpuChannel {
     adpcm_loop_index: u8,
     adpcm_toggle: bool,
     active: bool,
+}
+
+impl SpuChannel {
+    fn sad_current_ptr(&self) -> *const u8 {
+        self.sad_current as _
+    }
 }
 
 #[bitsize(32)]
@@ -495,12 +502,14 @@ impl Emu {
 
     fn spu_start_channel(&mut self, channel_num: usize) {
         debug_println!("spu start channel {channel_num}");
-        self.spu.channels[channel_num].sad_current = self.spu.channels[channel_num].sad;
+
+        self.spu.channels[channel_num].sad_ptr = self.mem.shm.as_ptr() as usize + self.get_shm_offset::<{ ARM7 }, true, false>(self.spu.channels[channel_num].sad);
+        self.spu.channels[channel_num].sad_current = self.spu.channels[channel_num].sad_ptr;
         self.spu.channels[channel_num].tmr_current = self.spu.channels[channel_num].tmr as u32;
 
         match self.spu.channels[channel_num].cnt.get_format() {
             SoundChannelFormat::ImaAdpcm => {
-                let header = AdpcmHeader::from(self.mem_read::<{ ARM7 }, u32>(self.spu.channels[channel_num].sad_current));
+                let header = AdpcmHeader::from(unsafe { (self.spu.channels[channel_num].sad_current_ptr() as *const u32).read() });
                 self.spu.channels[channel_num].adpcm_value = header.pcm16_value() as i16;
                 self.spu.channels[channel_num].adpcm_index = min(u8::from(header.table_index()), 88);
                 self.spu.channels[channel_num].adpcm_toggle = false;
@@ -517,10 +526,6 @@ impl Emu {
         }
 
         self.spu.channels[channel_num].active = true;
-    }
-
-    fn spu_next_sample_pcm(&mut self, channel_num: usize) {
-        self.spu.channels[channel_num].sad_current += 1 + u8::from(self.spu.channels[channel_num].cnt.format()) as u32;
     }
 
     fn spu_next_sample_psg(&mut self, channel_num: usize) {
@@ -540,13 +545,12 @@ impl Emu {
     fn spu_next_sample_adpcm(&mut self, channel_num: usize) {
         let channel = &mut self.spu.channels[channel_num];
 
-        if channel.sad_current == channel.sad + ((channel.pnt as u32) << 2) && !channel.adpcm_toggle {
+        if channel.sad_current == channel.sad_ptr + ((channel.pnt as usize) << 2) && !channel.adpcm_toggle {
             channel.adpcm_loop_value = channel.adpcm_value;
             channel.adpcm_loop_index = channel.adpcm_index;
         }
 
-        let sad_current = channel.sad_current;
-        let adpcm_data = self.mem_read::<{ ARM7 }, u8>(sad_current);
+        let adpcm_data = unsafe { channel.sad_current_ptr().read() };
 
         let channel = &mut self.spu.channels[channel_num];
         let adpcm_data = if channel.adpcm_toggle { adpcm_data >> 4 } else { adpcm_data & 0xF };
@@ -556,7 +560,7 @@ impl Emu {
 
         channel.adpcm_index = unsafe { ADPCM_INDEX_TABLE.get_unchecked(channel.adpcm_index as usize)[(adpcm_data & 0x7) as usize] };
 
-        channel.sad_current += channel.adpcm_toggle as u32;
+        channel.sad_current += channel.adpcm_toggle as usize;
         channel.adpcm_toggle = !channel.adpcm_toggle;
     }
 
@@ -581,175 +585,174 @@ impl Emu {
     }
 
     pub fn spu_on_sample_event(&mut self) {
-        if unlikely(!self.settings.audio()) {
+        unsafe {
+            if unlikely(!self.settings.audio()) {
+                for i in 0..CHANNEL_COUNT {
+                    self.spu.channels[i].cnt.set_start_status(false);
+                }
+                for i in 0..2 {
+                    self.spu.sound_cap_channels[i].cnt.set_start_status(false);
+                }
+                self.spu.sound_sampler.as_mut().push(0, self.settings.framelimit(), self.settings.audio_stretching());
+                self.cm.schedule(512 * 2, EventType::SpuSample);
+                return;
+            }
+
+            let mut mixer_left = 0;
+            let mut mixer_right = 0;
+            let mut channels_left = [0; 2];
+            let mut channels_right = [0; 2];
+
             for i in 0..CHANNEL_COUNT {
-                self.spu.channels[i].cnt.set_start_status(false);
-            }
-            for i in 0..2 {
-                self.spu.sound_cap_channels[i].cnt.set_start_status(false);
-            }
-            unsafe { self.spu.sound_sampler.as_mut().push(0, self.settings.framelimit(), self.settings.audio_stretching()) };
-            self.cm.schedule(512 * 2, EventType::SpuSample);
-            return;
-        }
-
-        let mut mixer_left = 0;
-        let mut mixer_right = 0;
-        let mut channels_left = [0; 2];
-        let mut channels_right = [0; 2];
-
-        for i in 0..CHANNEL_COUNT {
-            if !self.spu.channels[i].active {
-                continue;
-            }
-
-            let channel = &mut self.spu.channels[i];
-            let sad_current = channel.sad_current;
-            let format = channel.cnt.get_format();
-
-            let mut data = match format {
-                SoundChannelFormat::Pcm8 => (self.mem_read::<{ ARM7 }, u8>(sad_current) as i8 as i32) << 8,
-                SoundChannelFormat::Pcm16 => self.mem_read::<{ ARM7 }, u16>(sad_current) as i16 as i32,
-                SoundChannelFormat::ImaAdpcm => channel.adpcm_value as i32,
-                SoundChannelFormat::PsgNoise => self.spu_sample_psg_noise(i),
-            };
-
-            let channel = &mut self.spu.channels[i];
-            let mut tmr_current = channel.tmr_current + 512;
-            let tmr = channel.tmr;
-            while tmr_current >> 16 != 0 {
-                tmr_current = tmr as u32 + (tmr_current - 0x10000);
-
-                match format {
-                    SoundChannelFormat::Pcm8 | SoundChannelFormat::Pcm16 => self.spu_next_sample_pcm(i),
-                    SoundChannelFormat::ImaAdpcm => self.spu_next_sample_adpcm(i),
-                    SoundChannelFormat::PsgNoise => self.spu_next_sample_psg(i),
+                if !self.spu.channels[i].active {
+                    continue;
                 }
 
                 let channel = &mut self.spu.channels[i];
-                if format != SoundChannelFormat::PsgNoise && channel.sad_current >= (channel.sad + ((channel.pnt as u32 + channel.len) << 2)) {
-                    if u8::from(channel.cnt.repeat_mode()) == 1 {
-                        channel.sad_current = channel.sad + ((channel.pnt as u32) << 2);
+                let sad_current_ptr = channel.sad_current_ptr();
+                let format = channel.cnt.get_format();
 
-                        if format == SoundChannelFormat::ImaAdpcm {
-                            channel.adpcm_value = channel.adpcm_loop_value;
-                            channel.adpcm_index = channel.adpcm_loop_index;
-                            channel.adpcm_toggle = false;
+                let mut data = match format {
+                    SoundChannelFormat::Pcm8 => ((sad_current_ptr as *const i8).read() as i32) << 8,
+                    SoundChannelFormat::Pcm16 => (sad_current_ptr as *const i16).read() as i32,
+                    SoundChannelFormat::ImaAdpcm => channel.adpcm_value as i32,
+                    SoundChannelFormat::PsgNoise => self.spu_sample_psg_noise(i),
+                };
+
+                let channel = &mut self.spu.channels[i];
+                let mut tmr_current = channel.tmr_current + 512;
+                let tmr = channel.tmr;
+                while tmr_current >> 16 != 0 {
+                    tmr_current = tmr as u32 + (tmr_current - 0x10000);
+
+                    match format {
+                        SoundChannelFormat::Pcm8 => self.spu.channels[i].sad_current += 1,
+                        SoundChannelFormat::Pcm16 => self.spu.channels[i].sad_current += 2,
+                        SoundChannelFormat::ImaAdpcm => self.spu_next_sample_adpcm(i),
+                        SoundChannelFormat::PsgNoise => self.spu_next_sample_psg(i),
+                    }
+
+                    let channel = &mut self.spu.channels[i];
+                    if format != SoundChannelFormat::PsgNoise && channel.sad_current >= (channel.sad_ptr + ((channel.pnt as usize + channel.len as usize) << 2)) {
+                        if u8::from(channel.cnt.repeat_mode()) == 1 {
+                            channel.sad_current = channel.sad_ptr + ((channel.pnt as usize) << 2);
+
+                            if format == SoundChannelFormat::ImaAdpcm {
+                                channel.adpcm_value = channel.adpcm_loop_value;
+                                channel.adpcm_index = channel.adpcm_loop_index;
+                                channel.adpcm_toggle = false;
+                            }
+                        } else {
+                            channel.cnt.set_start_status(false);
+                            channel.active = false;
+                            break;
                         }
-                    } else {
-                        channel.cnt.set_start_status(false);
-                        channel.active = false;
-                        break;
                     }
                 }
-            }
-            let channel = &mut self.spu.channels[i];
-            channel.tmr_current = tmr_current;
+                let channel = &mut self.spu.channels[i];
+                channel.tmr_current = tmr_current;
 
-            let mut volume_mul = u8::from(channel.cnt.volume_mul());
-            if volume_mul == 127 {
-                volume_mul += 1;
-            }
-            data = (data * volume_mul as i32) >> 7;
+                let volume_mul = u8::from(channel.cnt.volume_mul());
+                if volume_mul != 127 {
+                    data = (data * volume_mul as i32) >> 7;
+                }
 
-            let mut volume_div = u8::from(channel.cnt.volume_div());
-            if volume_div == 3 {
-                volume_div += 1;
-            }
-            data >>= volume_div;
+                let mut volume_div = u8::from(channel.cnt.volume_div());
+                if volume_div == 3 {
+                    volume_div += 1;
+                }
+                data >>= volume_div;
 
-            let mut panning = u8::from(channel.cnt.panning());
-            if panning == 127 {
-                panning += 1;
-            }
-            let data_left = (data * (128 - panning as i32)) >> 7;
-            let data_right = (data * panning as i32) >> 7;
+                let mut panning = u8::from(channel.cnt.panning());
+                if panning == 127 {
+                    panning += 1;
+                }
+                let data_left = (data * (128 - panning as i32)) >> 7;
+                let data_right = (data * panning as i32) >> 7;
 
-            if i == 1 || i == 3 {
-                let index = i >> 1;
-                channels_left[index] = data_left;
-                channels_right[index] = data_right;
-                if u8::from(self.spu.main_sound_cnt.output_ch_to_mixer()) & (1 << index) != 0 {
+                if i == 1 || i == 3 {
+                    let index = i >> 1;
+                    channels_left[index] = data_left;
+                    channels_right[index] = data_right;
+                    if u8::from(self.spu.main_sound_cnt.output_ch_to_mixer()) & (1 << index) != 0 {
+                        continue;
+                    }
+                }
+
+                mixer_left += data_left;
+                mixer_right += data_right;
+            }
+
+            for i in 0..2 {
+                if !self.spu.sound_cap_channels[i].cnt.start_status() {
                     continue;
                 }
-            }
 
-            mixer_left += data_left;
-            mixer_right += data_right;
-        }
+                let sample = if i == 0 { mixer_left } else { mixer_right };
+                let sample = sample.clamp(-0x8000, 0x7FFF);
 
-        for i in 0..2 {
-            if !self.spu.sound_cap_channels[i].cnt.start_status() {
-                continue;
-            }
+                let mut tmr_current = self.spu.sound_cap_channels[i].tmr_current + 512;
+                let tmr = self.spu.channels[(i << 1) + 1].tmr;
+                while tmr_current >> 16 != 0 {
+                    tmr_current = tmr as u32 + (tmr_current - 0x10000);
 
-            let sample = if i == 0 { mixer_left } else { mixer_right };
-            let sample = sample.clamp(-0x8000, 0x7FFF);
-
-            let mut tmr_current = self.spu.sound_cap_channels[i].tmr_current + 512;
-            let tmr = self.spu.channels[(i << 1) + 1].tmr;
-            while tmr_current >> 16 != 0 {
-                tmr_current = tmr as u32 + (tmr_current - 0x10000);
-
-                if self.spu.sound_cap_channels[i].cnt.pcm8() {
-                    self.mem_write::<{ ARM7 }, u8>(self.spu.sound_cap_channels[i].dad_current, (sample >> 8) as u8);
-                    self.spu.sound_cap_channels[i].dad_current += 1;
-                } else {
-                    self.mem_write::<{ ARM7 }, u16>(self.spu.sound_cap_channels[i].dad_current, sample as u16);
-                    self.spu.sound_cap_channels[i].dad_current += 2;
-                }
-
-                let channel = &mut self.spu.sound_cap_channels[i];
-                if channel.dad_current >= (channel.dad + ((channel.len as u32) << 2)) {
-                    if channel.cnt.one_shot() {
-                        channel.cnt.set_start_status(false);
+                    if self.spu.sound_cap_channels[i].cnt.pcm8() {
+                        self.mem_write::<{ ARM7 }, u8>(self.spu.sound_cap_channels[i].dad_current, (sample >> 8) as u8);
+                        self.spu.sound_cap_channels[i].dad_current += 1;
                     } else {
-                        channel.dad_current = channel.dad;
+                        self.mem_write::<{ ARM7 }, u16>(self.spu.sound_cap_channels[i].dad_current, sample as u16);
+                        self.spu.sound_cap_channels[i].dad_current += 2;
+                    }
+
+                    let channel = &mut self.spu.sound_cap_channels[i];
+                    if channel.dad_current >= (channel.dad + ((channel.len as u32) << 2)) {
+                        if channel.cnt.one_shot() {
+                            channel.cnt.set_start_status(false);
+                        } else {
+                            channel.dad_current = channel.dad;
+                        }
                     }
                 }
+                self.spu.sound_cap_channels[i].tmr_current = tmr_current;
             }
-            self.spu.sound_cap_channels[i].tmr_current = tmr_current;
-        }
 
-        let sample_left = match u8::from(self.spu.main_sound_cnt.left_output_from()) {
-            0 => mixer_left,
-            1 => channels_left[0],
-            2 => channels_left[1],
-            3 => channels_left[0] + channels_left[1],
-            _ => unsafe { unreachable_unchecked() },
-        };
+            let mut sample_left = match u8::from(self.spu.main_sound_cnt.left_output_from()) {
+                0 => mixer_left,
+                1 => channels_left[0],
+                2 => channels_left[1],
+                3 => channels_left[0] + channels_left[1],
+                _ => unreachable_unchecked(),
+            };
 
-        let sample_right = match u8::from(self.spu.main_sound_cnt.right_output_from()) {
-            0 => mixer_right,
-            1 => channels_right[0],
-            2 => channels_right[1],
-            3 => channels_right[0] + channels_right[1],
-            _ => unsafe { unreachable_unchecked() },
-        };
+            let mut sample_right = match u8::from(self.spu.main_sound_cnt.right_output_from()) {
+                0 => mixer_right,
+                1 => channels_right[0],
+                2 => channels_right[1],
+                3 => channels_right[0] + channels_right[1],
+                _ => unreachable_unchecked(),
+            };
 
-        let mut master_volume = u8::from(self.spu.main_sound_cnt.master_volume());
-        if master_volume == 127 {
-            master_volume += 1;
-        }
-        let sample_left = (sample_left * master_volume as i32) >> 7;
-        let sample_right = (sample_right * master_volume as i32) >> 7;
+            let master_volume = u8::from(self.spu.main_sound_cnt.master_volume());
+            if master_volume != 127 {
+                sample_left = (sample_left * master_volume as i32) >> 7;
+                sample_right = (sample_right * master_volume as i32) >> 7;
+            }
 
-        let sample_left = (sample_left >> 6) + self.spu.sound_bias as i32;
-        let sample_right = (sample_right >> 6) + self.spu.sound_bias as i32;
+            let sample_left = sample_left + ((self.spu.sound_bias as i32) << 6);
+            let sample_right = sample_right + ((self.spu.sound_bias as i32) << 6);
 
-        let sample_left = sample_left.clamp(0, 0x3FF);
-        let sample_right = sample_right.clamp(0, 0x3FF);
+            let sample_left = sample_left.clamp(0, 0xFFFF);
+            let sample_right = sample_right.clamp(0, 0xFFFF);
 
-        let sample_left = ((sample_left - 0x200) << 5) as u32;
-        let sample_right = ((sample_right - 0x200) << 5) as u32;
+            let sample_left = (sample_left - 0x8000) as u32;
+            let sample_right = (sample_right - 0x8000) as u32;
 
-        unsafe {
             self.spu.sound_sampler.as_mut().push(
                 ((sample_right << 16) & 0xFFFF0000) | (sample_left & 0xFFFF),
                 self.settings.framelimit(),
                 self.settings.audio_stretching(),
-            )
-        };
-        self.cm.schedule(512 * 2, EventType::SpuSample);
+            );
+            self.cm.schedule(512 * 2, EventType::SpuSample);
+        }
     }
 }
