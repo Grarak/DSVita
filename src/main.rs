@@ -107,6 +107,11 @@ fn run_cpu(emu: &mut Emu) {
         // User settings
         let user_settings = unsafe { slice::from_raw_parts(emu.spi.firmware.as_ptr().add(spi::USER_SETTINGS_1_ADDR), 0x70) };
         emu.mem_write_multiple_slice::<{ ARM9 }, false, _>(0x27FFC80, user_settings);
+
+        if emu.settings.arm7_emu() == Arm7Emu::Hle {
+            let mac_addr = unsafe { slice::from_raw_parts(emu.spi.firmware.as_ptr().add(0x36), 6) };
+            emu.mem_write_multiple_slice::<{ ARM9 }, false, _>(0x27FFC80 + 0x74, mac_addr);
+        }
     }
 
     // unsafe {
