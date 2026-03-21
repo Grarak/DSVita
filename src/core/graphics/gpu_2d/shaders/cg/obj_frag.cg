@@ -67,72 +67,7 @@ float3 normRgb5(short color) {
     return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short attrib2, short width) {
-    int dispCnt = bit_cast<unsigned int>(dispCntF);
-
-    int bpp8 = (attrib0 >> 13) & 1;
-    bool tile1DMapping = ((dispCnt >> 4) & 1) != 0;
-    int mapWidth;
-    int objBound;
-    if (tile1DMapping) {
-        mapWidth = width;
-        int obj1DBoundary = (dispCnt >> 20) & 3;
-        objBound = 32 << obj1DBoundary;
-    } else {
-        mapWidth = 256 >> bpp8;
-        objBound = 32;
-    }
-
-    int tileIndex = attrib2 & 0x3FF;
-    int tileAddr = tileIndex * objBound;
-    int tileAddrOffset = ((objY & 7) + (objY >> 3) * mapWidth) * 8;
-    tileAddrOffset += (objX >> 3) * 64 + (objX & 7);
-
-    bool is8bpp = bpp8 != 0;
-    if (!is8bpp) {
-        tileAddrOffset /= 2;
-    }
-
-    int palIndex = readObj8(tileAddr + tileAddrOffset);
-    short palColor;
-
-    if (is8bpp) {
-        if (palIndex == 0) {
-            discard;
-        }
-
-        if (objWindow) {
-            unsigned short enabled = (WinBgUbo.winInOut[short(192.0 * screenPosF.y)] >> 24) & 0xFF;
-            enabled |= 0x80; // indicate this was set by obj, to avoid win out override
-            return float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
-        } else {
-            bool useExtPal = ((dispCnt >> 31) & 1) != 0;
-            if (useExtPal) {
-                short palBaseIndex = ((attrib2 >> 12) & 0xF) << 8;
-                return float4(readExtPal(palBaseIndex + palIndex).rgb, 1.0);
-            } else {
-                return float4(readPal(0x100 + palIndex).rgb, 1.0);
-            }
-        }
-    } else {
-        palIndex >>= 4 * (objX & 1);
-        palIndex &= 0xF;
-        if (palIndex == 0) {
-            discard;
-        }
-
-        if (objWindow) {
-            unsigned short enabled = (WinBgUbo.winInOut[short(192.0 * screenPosF.y)] >> 24) & 0xFF;
-            enabled |= 0x80; // indicate this was set by obj, to avoid win out override
-            return float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
-        } else {
-            short palBank = (attrib2 >> 12) & 0xF;
-            short palBase = 0x100 + palBank * 16;
-            return float4(readPal(palBase + palIndex).rgb, 1.0);
-        }
-    }
-    return float4(normRgb5(palColor).rgb, 1.0);
-}
+#ifdef BITMAP
 
 float4 drawBitmap(short objX, short objY, short width, unsigned short attrib2) {
     int dispCnt = bit_cast<unsigned int>(dispCntF);
@@ -162,12 +97,90 @@ float4 drawBitmap(short objX, short objY, short width, unsigned short attrib2) {
     return float4(normRgb5(objColor), alphaF);
 }
 
+#else
+
+float4 drawSprite(short objX, short objY, unsigned short attrib2, short width) {
+    int dispCnt = bit_cast<unsigned int>(dispCntF);
+
+    bool tile1DMapping = ((dispCnt >> 4) & 1) != 0;
+    int mapWidth;
+    int objBound;
+    if (tile1DMapping) {
+        mapWidth = width;
+        int obj1DBoundary = (dispCnt >> 20) & 3;
+        objBound = 32 << obj1DBoundary;
+    } else {
+#ifdef BPP8
+        mapWidth = 128;
+#else
+        mapWidth = 256;
+#endif
+        objBound = 32;
+    }
+
+    int tileIndex = attrib2 & 0x3FF;
+    int tileAddr = tileIndex * objBound;
+    int tileAddrOffset = ((objY & 7) + (objY >> 3) * mapWidth) * 8;
+    tileAddrOffset += (objX >> 3) * 64 + (objX & 7);
+
+#ifndef BPP8
+    tileAddrOffset /= 2;
+#endif
+
+    int palIndex = readObj8(tileAddr + tileAddrOffset);
+    short palColor;
+
+#ifdef BPP8
+    if (palIndex == 0) {
+        discard;
+    }
+
+    if (objWindow) {
+        unsigned short enabled = (WinBgUbo.winInOut[short(192.0 * screenPosF.y)] >> 24) & 0xFF;
+        enabled |= 0x80; // indicate this was set by obj, to avoid win out override
+        return float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+    } else {
+        bool useExtPal = ((dispCnt >> 31) & 1) != 0;
+        if (useExtPal) {
+            short palBaseIndex = ((attrib2 >> 12) & 0xF) << 8;
+            return float4(readExtPal(palBaseIndex + palIndex).rgb, 1.0);
+        } else {
+            return float4(readPal(0x100 + palIndex).rgb, 1.0);
+        }
+    }
+#else
+    palIndex >>= 4 * (objX & 1);
+    palIndex &= 0xF;
+    if (palIndex == 0) {
+        discard;
+    }
+
+    if (objWindow) {
+        unsigned short enabled = (WinBgUbo.winInOut[short(192.0 * screenPosF.y)] >> 24) & 0xFF;
+        enabled |= 0x80; // indicate this was set by obj, to avoid win out override
+        return float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+    } else {
+        short palBank = (attrib2 >> 12) & 0xF;
+        short palBase = 0x100 + palBank * 16;
+        return float4(readPal(palBase + palIndex).rgb, 1.0);
+    }
+#endif
+    return float4(normRgb5(palColor).rgb, 1.0);
+}
+
+#endif
+
 void main(out float4 color : COLOR) {
     unsigned short attrib0 = readAttrib0();
     unsigned short attrib2 = readAttrib2();
     unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
 
-    if (!objWindow && ((winEnabled >> 4) & 1) == 0) {
+#ifdef BITMAP
+    bool checkWindow = true;
+#else
+    bool checkWindow = !objWindow;
+#endif
+    if (checkWindow && ((winEnabled >> 4) & 1) == 0) {
         discard;
     }
 
@@ -180,15 +193,14 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
+#ifdef BITMAP
+    color = drawBitmap(objX, objY, objWidth, attrib2);
+#else
+    color = drawSprite(objX, objY, attrib2, objWidth);
     short gfxMode = (attrib0 >> 10) & 3;
-    bool isBitmap = gfxMode == 3;
-    if (isBitmap) {
-        color = drawBitmap(objX, objY, objWidth, attrib2);
-    } else {
-        color = drawSprite(objX, objY, attrib0, attrib2, objWidth);
-        bool semiTransparent = gfxMode == 1;
-        if (semiTransparent) {
-            color.a = 0.0;
-        }
+    bool semiTransparent = gfxMode == 1;
+    if (semiTransparent) {
+        color.a = 0.0;
     }
+#endif
 }

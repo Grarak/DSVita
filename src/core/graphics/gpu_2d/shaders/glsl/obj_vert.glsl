@@ -114,7 +114,7 @@ void main() {
     objAttrib2Addr = vec2((oamIndex * 8.0 + 4.0) / 4.0 / 255.0, 1.0);
 
     int priority = (attrib2 >> 10) & 3;
-    gl_Position = vec4(screenPosF.x * 2.0 - 1.0, 1.0 - screenPosF.y * 2.0, float(priority) / 4.0, 1.0);
+    gl_Position = vec4(screenPosF.x * 2.0 - 1.0, 1.0 - screenPosF.y * 2.0, float(priority) / 4.0 + oamIndex / 127.0 / 100.0, 1.0);
     if (objWindow) {
         gl_Position.y = -gl_Position.y;
     }

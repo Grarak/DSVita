@@ -8,7 +8,7 @@ use crate::core::graphics::gpu_2d::Gpu2DEngine;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::renderer_3d::{HEIGHT_3D, UPSCALE_HEIGHT_3D, UPSCALE_WIDTH_3D, WIDTH_3D};
 use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
-use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
+use crate::core::graphics::gpu_shaders::{Gpu2DObjShaderProgram, GpuShadersPrograms};
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
 use crate::core::memory::{regions, vram};
 use crate::utils::{self, array_init, HeapArrayU8};
@@ -272,7 +272,7 @@ struct Gpu2DBgProgram {
     has_ubo: bool,
 }
 
-struct Gpu2DObjProgram {
+struct Gpu2DObjProgramInner {
     program: GLuint,
     vao: GLuint,
     disp_cnt_loc: GLint,
@@ -280,9 +280,9 @@ struct Gpu2DObjProgram {
     window_loc: GLint,
 }
 
-impl Gpu2DObjProgram {
-    unsafe fn new(gpu_programs: &GpuShadersPrograms) -> Self {
-        gl::UseProgram(gpu_programs.obj);
+impl Gpu2DObjProgramInner {
+    unsafe fn new(program: GLuint) -> Self {
+        gl::UseProgram(program);
 
         let mut vertices_buf = 0;
         gl::GenBuffers(1, &mut vertices_buf);
@@ -309,27 +309,27 @@ impl Gpu2DObjProgram {
         gl::BindVertexArray(0);
         gl::BindBuffer(gl::ARRAY_BUFFER, 0);
 
-        gl::BindAttribLocation(gpu_programs.obj, 0, c"position".as_ptr() as _);
-        gl::BindAttribLocation(gpu_programs.obj, 1, c"oamIndex".as_ptr() as _);
+        gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
+        gl::BindAttribLocation(program, 1, c"oamIndex".as_ptr() as _);
 
-        gl::Uniform1i(gl::GetUniformLocation(gpu_programs.obj, c"oamTex".as_ptr() as _), 0);
-        gl::Uniform1i(gl::GetUniformLocation(gpu_programs.obj, c"objTex".as_ptr() as _), 1);
-        gl::Uniform1i(gl::GetUniformLocation(gpu_programs.obj, c"palTex".as_ptr() as _), 2);
-        gl::Uniform1i(gl::GetUniformLocation(gpu_programs.obj, c"extPalTex".as_ptr() as _), 3);
-        gl::Uniform1i(gl::GetUniformLocation(gpu_programs.obj, c"winTex".as_ptr() as _), 4);
+        gl::Uniform1i(gl::GetUniformLocation(program, c"oamTex".as_ptr() as _), 0);
+        gl::Uniform1i(gl::GetUniformLocation(program, c"objTex".as_ptr() as _), 1);
+        gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 2);
+        gl::Uniform1i(gl::GetUniformLocation(program, c"extPalTex".as_ptr() as _), 3);
+        gl::Uniform1i(gl::GetUniformLocation(program, c"winTex".as_ptr() as _), 4);
 
-        let disp_cnt_loc = gl::GetUniformLocation(gpu_programs.obj, c"dispCntF".as_ptr() as _);
-        let tex_height_loc = gl::GetUniformLocation(gpu_programs.obj, c"objTexHeight".as_ptr() as _);
-        let window_loc = gl::GetUniformLocation(gpu_programs.obj, c"objWindow".as_ptr() as _);
+        let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCntF".as_ptr() as _);
+        let tex_height_loc = gl::GetUniformLocation(program, c"objTexHeight".as_ptr() as _);
+        let window_loc = gl::GetUniformLocation(program, c"objWindow".as_ptr() as _);
 
         if cfg!(target_os = "linux") {
-            gl::UniformBlockBinding(gpu_programs.obj, gl::GetUniformBlockIndex(gpu_programs.obj, c"WinBgUbo".as_ptr() as _), 0);
+            gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"WinBgUbo".as_ptr() as _), 0);
         }
 
         gl::UseProgram(0);
 
-        Gpu2DObjProgram {
-            program: gpu_programs.obj,
+        Gpu2DObjProgramInner {
+            program,
             vao,
             disp_cnt_loc,
             tex_height_loc,
@@ -338,8 +338,26 @@ impl Gpu2DObjProgram {
     }
 }
 
+struct Gpu2DObjProgram {
+    sprite_4bpp: Gpu2DObjProgramInner,
+    sprite_8bpp: Gpu2DObjProgramInner,
+    bitmap: Gpu2DObjProgramInner,
+}
+
+impl Gpu2DObjProgram {
+    unsafe fn new(program: &Gpu2DObjShaderProgram) -> Self {
+        Gpu2DObjProgram {
+            sprite_4bpp: Gpu2DObjProgramInner::new(program.sprite_4bpp),
+            sprite_8bpp: Gpu2DObjProgramInner::new(program.sprite_8bpp),
+            bitmap: Gpu2DObjProgramInner::new(program.bitmap),
+        }
+    }
+}
+
 struct Gpu2DProgram {
-    obj_oam_indices: Vec<[u16; 6]>,
+    obj_oam_sprite_4bpp_indices: Vec<[u16; 6]>,
+    obj_oam_sprite_8bpp_indices: Vec<[u16; 6]>,
+    obj_oam_bitmap_indices: Vec<[u16; 6]>,
     obj_program: Gpu2DObjProgram,
 
     bg_affine_program: Gpu2DBgProgram,
@@ -351,6 +369,8 @@ struct Gpu2DProgram {
     bg_ubo: GLuint,
 
     bg_fbo_3d: [GpuFbo; 2],
+
+    vram_display: Gpu2DVramDisplayProgram,
 }
 
 macro_rules! draw_scanlines {
@@ -429,8 +449,10 @@ impl Gpu2DProgram {
             };
 
             Gpu2DProgram {
-                obj_program: Gpu2DObjProgram::new(gpu_programs),
-                obj_oam_indices: Vec::new(),
+                obj_program: Gpu2DObjProgram::new(&gpu_programs.obj),
+                obj_oam_sprite_4bpp_indices: Vec::new(),
+                obj_oam_sprite_8bpp_indices: Vec::new(),
+                obj_oam_bitmap_indices: Vec::new(),
                 bg_affine_program,
                 bg_affine_extended_program,
                 bg_bitmap_program,
@@ -442,6 +464,7 @@ impl Gpu2DProgram {
                     GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, false, false).unwrap(),
                     GpuFbo::new(UPSCALE_WIDTH_3D as _, UPSCALE_HEIGHT_3D as _, false, false).unwrap(),
                 ],
+                vram_display: Gpu2DVramDisplayProgram::new(gpu_programs),
             }
         }
     }
@@ -468,7 +491,7 @@ impl Gpu2DProgram {
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
     }
 
-    unsafe fn draw_objects<const OBJ_WINDOW: bool>(&mut self, regs: &Gpu2DRenderRegs, mem: &Gpu2DMem, from_line: u8, to_line: u8) {
+    unsafe fn draw_objects<const OBJ_WINDOW: bool>(&mut self, regs: &Gpu2DRenderRegs, mem: &Gpu2DMem, tex_height: f32, from_line: u8, to_line: u8) {
         let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
         if !disp_cnt.screen_display_obj() {
             return;
@@ -484,14 +507,25 @@ impl Gpu2DProgram {
             self.assemble_oam(mem, from_line, to_line, false);
         }
 
-        if self.obj_oam_indices.is_empty() {
-            return;
+        let draw = |indices: &[[u16; 6]], program: &Gpu2DObjProgramInner| {
+            if !indices.is_empty() {
+                gl::UseProgram(program.program);
+                gl::BindVertexArray(program.vao);
+
+                gl::Uniform1i(program.window_loc, OBJ_WINDOW as _);
+                gl::Uniform1f(program.tex_height_loc, tex_height);
+                let disp_cnt = [u32::from(disp_cnt)];
+                gl::Uniform1fv(program.disp_cnt_loc, 1, disp_cnt.as_ptr() as _);
+
+                gl::DrawElements(gl::TRIANGLES, (6 * indices.len()) as _, gl::UNSIGNED_SHORT, indices.as_ptr() as _);
+            }
+        };
+
+        draw(&self.obj_oam_sprite_4bpp_indices, &self.obj_program.sprite_4bpp);
+        draw(&self.obj_oam_sprite_8bpp_indices, &self.obj_program.sprite_8bpp);
+        if !OBJ_WINDOW {
+            draw(&self.obj_oam_bitmap_indices, &self.obj_program.bitmap);
         }
-
-        let disp_cnt = [u32::from(disp_cnt)];
-        gl::Uniform1fv(self.obj_program.disp_cnt_loc, 1, disp_cnt.as_ptr() as _);
-
-        gl::DrawElements(gl::TRIANGLES, (6 * self.obj_oam_indices.len()) as _, gl::UNSIGNED_SHORT, self.obj_oam_indices.as_ptr() as _);
     }
 
     unsafe fn draw_bg_program(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, from_line: u8, to_line: u8, fb_tex_3d: GLuint, fbo: &GpuFbo, bg_num: u8, bg_mode: BgMode) {
@@ -679,7 +713,7 @@ impl Gpu2DProgram {
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
     }
 
-    unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, lcdc_pal: GLuint, vram_display_program: &Gpu2DVramDisplayProgram) {
+    unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, lcdc_pal: GLuint) {
         if cfg!(target_os = "linux") {
             gl::BindTexture(gl::TEXTURE_2D, texs.oam);
             sub_mem_texture1d(regions::OAM_SIZE / 2, mem.oam.as_ptr());
@@ -689,10 +723,6 @@ impl Gpu2DProgram {
         }
 
         {
-            gl::UseProgram(self.obj_program.program);
-
-            gl::BindVertexArray(self.obj_program.vao);
-
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, texs.oam);
 
@@ -708,10 +738,7 @@ impl Gpu2DProgram {
             gl::BufferData(gl::UNIFORM_BUFFER, size_of::<WinBgUbo>() as _, ptr::addr_of!(regs.win_bg_ubo) as _, gl::DYNAMIC_DRAW);
             gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, common.win_bg_ubo);
 
-            gl::Uniform1f(self.obj_program.tex_height_loc, texs.obj_heightf);
-            gl::Uniform1i(self.obj_program.window_loc, 1);
-
-            let mut draw_objects = |from_line, to_line| self.draw_objects::<true>(regs, &mem, from_line, to_line);
+            let mut draw_objects = |from_line, to_line| self.draw_objects::<true>(regs, &mem, texs.obj_heightf, from_line, to_line);
             draw_scanlines!(regs, draw_objects, 0, false);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -751,10 +778,6 @@ impl Gpu2DProgram {
         gl::BindTexture(gl::TEXTURE_2D, 0);
 
         {
-            gl::UseProgram(self.obj_program.program);
-
-            gl::BindVertexArray(self.obj_program.vao);
-
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, texs.oam);
 
@@ -778,10 +801,7 @@ impl Gpu2DProgram {
             gl::Enable(gl::DEPTH_TEST);
             gl::DepthFunc(gl::LESS);
 
-            gl::Uniform1f(self.obj_program.tex_height_loc, texs.obj_heightf);
-            gl::Uniform1i(self.obj_program.window_loc, 0);
-
-            let mut draw_objects = |from_line, to_line| self.draw_objects::<false>(regs, &mem, from_line, to_line);
+            let mut draw_objects = |from_line, to_line| self.draw_objects::<false>(regs, &mem, texs.obj_heightf, from_line, to_line);
             draw_scanlines!(regs, draw_objects, 0, false);
 
             gl::Disable(gl::DEPTH_TEST);
@@ -822,7 +842,7 @@ impl Gpu2DProgram {
                 sub_pal_texture2d(1024, 656, mem.lcdc.as_ptr());
             }
 
-            gl::UseProgram(vram_display_program.program);
+            gl::UseProgram(self.vram_display.program);
 
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, lcdc_pal);
@@ -832,7 +852,7 @@ impl Gpu2DProgram {
             gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[0].fbo);
             gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
-            let draw_vram_display = |from_line, to_line| vram_display_program.draw(regs, from_line, to_line);
+            let draw_vram_display = |from_line, to_line| self.vram_display.draw(regs, from_line, to_line);
             draw_scanlines!(regs, draw_vram_display, lcdc_pal, false);
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -847,7 +867,9 @@ impl Gpu2DProgram {
         const OAM_COUNT: usize = regions::OAM_SIZE as usize / 2 / size_of::<OamAttribs>();
         let oams = unsafe { slice::from_raw_parts(mem.oam.as_ptr() as *const OamAttribs, OAM_COUNT) };
 
-        self.obj_oam_indices.clear();
+        self.obj_oam_sprite_4bpp_indices.clear();
+        self.obj_oam_sprite_8bpp_indices.clear();
+        self.obj_oam_bitmap_indices.clear();
         for (i, oam) in oams.iter().enumerate() {
             let attrib0 = OamAttrib0::from(oam.attr0);
             let obj_mode = attrib0.get_obj_mode();
@@ -899,14 +921,20 @@ impl Gpu2DProgram {
             }
 
             let index_base = (i * 4) as u16;
-            self.obj_oam_indices.push([index_base, index_base + 1, index_base + 2, index_base, index_base + 2, index_base + 3]);
+            let indices = if gfx_mode == OamGfxMode::Bitmap {
+                &mut self.obj_oam_bitmap_indices
+            } else if attrib0.is_8bit() {
+                &mut self.obj_oam_sprite_8bpp_indices
+            } else {
+                &mut self.obj_oam_sprite_4bpp_indices
+            };
+            indices.push([index_base, index_base + 1, index_base + 2, index_base, index_base + 2, index_base + 3]);
         }
     }
 }
 
 pub struct Gpu2DRenderer {
     lcdc_pal: GLuint,
-    vram_display_program: Gpu2DVramDisplayProgram,
     texs: [Gpu2DTextures; 2],
     pub common: Gpu2DCommon,
     program: Gpu2DProgram,
@@ -921,7 +949,6 @@ impl Gpu2DRenderer {
         unsafe {
             Gpu2DRenderer {
                 lcdc_pal: create_pal_texture2d(1024, 656),
-                vram_display_program: Gpu2DVramDisplayProgram::new(gpu_programs),
                 texs: [
                     Gpu2DTextures::new(1024, OBJ_A_TEX_HEIGHT, 1024, BG_A_TEX_HEIGHT),
                     Gpu2DTextures::new(1024, OBJ_B_TEX_HEIGHT, 1024, BG_B_TEX_HEIGHT),
@@ -1001,11 +1028,8 @@ impl Gpu2DRenderer {
                 &self.texs[0],
                 Gpu2DMem::new::<{ A }>(mem_refs),
                 if regs.has_vram_display[0] { self.lcdc_pal } else { 0 },
-                &self.vram_display_program,
             ),
-            B => self
-                .program
-                .draw(&self.common, &regs.regs_b[0], &self.texs[1], Gpu2DMem::new::<{ B }>(mem_refs), 0, &self.vram_display_program),
+            B => self.program.draw(&self.common, &regs.regs_b[0], &self.texs[1], Gpu2DMem::new::<{ B }>(mem_refs), 0),
         }
     }
 

@@ -1,5 +1,3 @@
-#version 300 es
-
 precision highp float;
 precision highp int;
 
@@ -75,72 +73,7 @@ vec3 normRgb5(int color) {
     return vec3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, int width) {
-    int dispCnt = floatBitsToInt(dispCntF);
-
-    int bpp8 = (attrib0 >> 13) & 1;
-    bool tile1DMapping = ((dispCnt >> 4) & 1) != 0;
-    int mapWidth;
-    int objBound;
-    if (tile1DMapping) {
-        mapWidth = width;
-        int obj1DBoundary = (dispCnt >> 20) & 3;
-        objBound = 32 << obj1DBoundary;
-    } else {
-        mapWidth = 256 >> bpp8;
-        objBound = 32;
-    }
-
-    int tileIndex = attrib2 & 0x3FF;
-    int tileAddr = tileIndex * objBound;
-    int tileAddrOffset = ((objY & 7) + (objY >> 3) * mapWidth) * 8;
-    tileAddrOffset += (objX >> 3) * 64 + (objX & 7);
-
-    bool is8bpp = bpp8 != 0;
-    if (!is8bpp) {
-        tileAddrOffset /= 2;
-    }
-
-    int palIndex = readObj8(tileAddr + tileAddrOffset);
-    int palColor;
-
-    if (is8bpp) {
-        if (palIndex == 0) {
-            discard;
-        }
-
-        if (objWindow) {
-            int enabled = (winInOut[int(191.0 * screenPosF.y)] >> 24) & 0xFF;
-            enabled |= 0x80; // indicate this was set by obj, to avoid win out override
-            return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
-        } else {
-            bool useExtPal = ((dispCnt >> 31) & 1) != 0;
-            if (useExtPal) {
-                int palBaseAddr = ((attrib2 >> 12) & 0xF) << 9;
-                palColor = readExtPal16Aligned(palBaseAddr + palIndex * 2);
-            } else {
-                palColor = readPal16Aligned(0x200 + palIndex * 2);
-            }
-        }
-    } else {
-        palIndex >>= 4 * (objX & 1);
-        palIndex &= 0xF;
-        if (palIndex == 0) {
-            discard;
-        }
-
-        if (objWindow) {
-            int enabled = (winInOut[int(191.0 * screenPosF.y)] >> 24) & 0xFF;
-            enabled |= 0x80; // indicate this was set by obj, to avoid win out override
-            return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
-        } else {
-            int palBank = (attrib2 >> 12) & 0xF;
-            int palBaseAddr = 0x200 + palBank * 32;
-            palColor = readPal16Aligned(palBaseAddr + palIndex * 2);
-        }
-    }
-    return vec4(normRgb5(palColor), 1.0);
-}
+#ifdef BITMAP
 
 vec4 drawBitmap(int objX, int objY, int width, int attrib2) {
     int dispCnt = floatBitsToInt(dispCntF);
@@ -170,12 +103,90 @@ vec4 drawBitmap(int objX, int objY, int width, int attrib2) {
     return vec4(normRgb5(objColor), alphaF);
 }
 
+#else
+
+vec4 drawSprite(int objX, int objY, int attrib2, int width) {
+    int dispCnt = floatBitsToInt(dispCntF);
+
+    bool tile1DMapping = ((dispCnt >> 4) & 1) != 0;
+    int mapWidth;
+    int objBound;
+    if (tile1DMapping) {
+        mapWidth = width;
+        int obj1DBoundary = (dispCnt >> 20) & 3;
+        objBound = 32 << obj1DBoundary;
+    } else {
+#ifdef BPP8
+        mapWidth = 128;
+#else
+        mapWidth = 256;
+#endif
+        objBound = 32;
+    }
+
+    int tileIndex = attrib2 & 0x3FF;
+    int tileAddr = tileIndex * objBound;
+    int tileAddrOffset = ((objY & 7) + (objY >> 3) * mapWidth) * 8;
+    tileAddrOffset += (objX >> 3) * 64 + (objX & 7);
+
+#ifndef BPP8
+    tileAddrOffset /= 2;
+#endif
+
+    int palIndex = readObj8(tileAddr + tileAddrOffset);
+    int palColor;
+
+#ifdef BPP8
+    if (palIndex == 0) {
+        discard;
+    }
+
+    if (objWindow) {
+        int enabled = (winInOut[int(191.0 * screenPosF.y)] >> 24) & 0xFF;
+        enabled |= 0x80; // indicate this was set by obj, to avoid win out override
+        return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+    } else {
+        bool useExtPal = ((dispCnt >> 31) & 1) != 0;
+        if (useExtPal) {
+            int palBaseAddr = ((attrib2 >> 12) & 0xF) << 9;
+            palColor = readExtPal16Aligned(palBaseAddr + palIndex * 2);
+        } else {
+            palColor = readPal16Aligned(0x200 + palIndex * 2);
+        }
+    }
+#else
+    palIndex >>= 4 * (objX & 1);
+    palIndex &= 0xF;
+    if (palIndex == 0) {
+        discard;
+    }
+
+    if (objWindow) {
+        int enabled = (winInOut[int(191.0 * screenPosF.y)] >> 24) & 0xFF;
+        enabled |= 0x80; // indicate this was set by obj, to avoid win out override
+        return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+    } else {
+        int palBank = (attrib2 >> 12) & 0xF;
+        int palBaseAddr = 0x200 + palBank * 32;
+        palColor = readPal16Aligned(palBaseAddr + palIndex * 2);
+    }
+#endif
+    return vec4(normRgb5(palColor), 1.0);
+}
+
+#endif
+
 void main() {
     int attrib0 = readAttrib0();
     int attrib2 = readAttrib2();
     int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
 
-    if (!objWindow && ((winEnabled >> 4) & 1) == 0) {
+#ifdef BITMAP
+    bool checkWindow = true;
+#else
+    bool checkWindow = !objWindow;
+#endif
+    if (checkWindow && ((winEnabled >> 4) & 1) == 0) {
         discard;
     }
 
@@ -188,15 +199,14 @@ void main() {
         discard;
     }
 
+#ifdef BITMAP
+    color = drawBitmap(objX, objY, objWidth, attrib2);
+#else
+    color = drawSprite(objX, objY, attrib2, objWidth);
     int gfxMode = (attrib0 >> 10) & 3;
-    bool isBitmap = gfxMode == 3;
-    if (isBitmap) {
-        color = drawBitmap(objX, objY, objWidth, attrib2);
-    } else {
-        color = drawSprite(objX, objY, attrib0, attrib2, objWidth);
-        bool semiTransparent = gfxMode == 1;
-        if (semiTransparent) {
-            color.a = 0.0;
-        }
+    bool semiTransparent = gfxMode == 1;
+    if (semiTransparent) {
+        color.a = 0.0;
     }
+#endif
 }
