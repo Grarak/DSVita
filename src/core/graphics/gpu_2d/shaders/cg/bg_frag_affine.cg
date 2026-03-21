@@ -1,7 +1,7 @@
-float4 drawAffine(int x, int y, int bgNum) {
+float4 drawAffine(int x, int y) {
     short size = short(affineDims.x);
 
-    int2 coords = int2(calculateAffineCoords(x, y, bgNum));
+    int2 coords = int2(calculateAffineCoords(x, y));
 
     int bgCnt = getBgCnt();
     bool wrap = ((bgCnt >> 13) & 1) != 0;
@@ -35,15 +35,13 @@ float4 drawAffine(int x, int y, int bgNum) {
 }
 
 void main(out float4 color : COLOR) {
-    short bgNum = short(screenPos.z);
-
-    if (!can_display(bgNum)) {
+    if (!canDisplay()) {
         discard;
     }
 
     short x = short(screenPos.x);
     short y = short(screenPos.y);
 
-    color = drawAffine(x, y, bgNum);
+    color = drawAffine(x, y);
     color = setPrio(color);
 }

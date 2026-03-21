@@ -1,7 +1,7 @@
-vec4 drawAffine(int x, int y, int bgNum) {
+vec4 drawAffine(int x, int y) {
     int size = int(affineDims.x);
 
-    ivec2 coords = calculateAffineCoords(x, y, bgNum);
+    ivec2 coords = calculateAffineCoords(x, y);
 
     int bgCnt = getBgCnt();
     bool wrap = ((bgCnt >> 13) & 1) != 0;
@@ -50,8 +50,6 @@ vec4 drawAffine(int x, int y, int bgNum) {
 }
 
 void main() {
-    int bgNum = int(screenPos.z);
-
     int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
     if ((winEnabled & (1 << bgNum)) == 0) {
         discard;
@@ -60,6 +58,6 @@ void main() {
     int x = int(screenPos.x);
     int y = int(screenPos.y);
 
-    color = drawAffine(x, y, bgNum);
+    color = drawAffine(x, y);
     setPrio();
 }

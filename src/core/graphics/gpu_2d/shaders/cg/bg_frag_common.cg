@@ -1,10 +1,11 @@
-float3 in screenPos : TEXCOORD0;
+float2 in screenPos : TEXCOORD0;
 float2 in screenPosF : TEXCOORD1;
 float2 in affineDims : TEXCOORD2;
 
 uniform float dispCntF;
 uniform float bgCntF;
 uniform float bgTexHeight;
+uniform int bgNum;
 
 uniform usampler2D bgTex : TEXUNIT0;
 uniform sampler2D palTex : TEXUNIT1;
@@ -68,7 +69,7 @@ float3 normRgb5(unsigned short color) {
     return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-short2 calculateAffineCoords(short x, short y, short bgNum) {
+short2 calculateAffineCoords(short x, short y) {
     short index = (bgNum - 2) * 192 + y;
     float bgX = float(BgUbo.bgX[index]) / 256.0;
     float bgY = float(BgUbo.bgY[index]) / 256.0;
@@ -79,7 +80,7 @@ short2 calculateAffineCoords(short x, short y, short bgNum) {
     return short2(short(bgX + bgPb + float(x) * bgPa), short(bgY + bgPd + float(x) * bgPc));
 }
 
-bool can_display(unsigned short bgNum) {
+bool canDisplay() {
     unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
     return ((winEnabled >> bgNum) & 1) != 0;
 }

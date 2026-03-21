@@ -1,8 +1,8 @@
-vec4 drawBitmap(int x, int y, int bgNum) {
+vec4 drawBitmap(int x, int y) {
     int width = int(affineDims.x);
     int height = int(affineDims.y);
 
-    ivec2 coords = calculateAffineCoords(x, y, bgNum);
+    ivec2 coords = calculateAffineCoords(x, y);
 
     int bgCnt = getBgCnt();
     bool wrap = (bgCnt & (1 << 13)) != 0;
@@ -34,8 +34,6 @@ vec4 drawBitmap(int x, int y, int bgNum) {
 }
 
 void main() {
-    int bgNum = int(screenPos.z);
-
     int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
     if ((winEnabled & (1 << bgNum)) == 0) {
         discard;
@@ -44,6 +42,6 @@ void main() {
     int x = int(screenPos.x);
     int y = int(screenPos.y);
 
-    color = drawBitmap(x, y, bgNum);
+    color = drawBitmap(x, y);
     setPrio();
 }

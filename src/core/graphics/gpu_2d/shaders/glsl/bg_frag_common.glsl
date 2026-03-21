@@ -4,13 +4,14 @@ precision highp float;
 precision highp int;
 
 layout(location = 0) out vec4 color;
-in vec3 screenPos;
+in vec2 screenPos;
 in vec2 screenPosF;
 in vec2 affineDims;
 
 uniform float dispCntF;
 uniform float bgCntF;
 uniform float bgTexHeight;
+uniform int bgNum;
 
 uniform BgUbo {
     int bgOfs[192 * 4];
@@ -73,7 +74,7 @@ vec3 normRgb5(int color) {
     return vec3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-ivec2 calculateAffineCoords(int x, int y, int bgNum) {
+ivec2 calculateAffineCoords(int x, int y) {
     int index = (bgNum - 2) * 192 + y;
     float bgX = float(bgX[index]) / 256.0;
     float bgY = float(bgY[index]) / 256.0;

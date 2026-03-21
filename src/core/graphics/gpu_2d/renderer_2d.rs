@@ -269,6 +269,7 @@ struct Gpu2DBgProgram {
     disp_cnt_loc: GLint,
     cnt_loc: GLint,
     tex_height_loc: GLint,
+    num_loc: GLint,
     has_ubo: bool,
 }
 
@@ -415,6 +416,7 @@ impl Gpu2DProgram {
                     let disp_cnt_loc = gl::GetUniformLocation(program, c"dispCntF".as_ptr() as _);
                     let cnt_loc = gl::GetUniformLocation(program, c"bgCntF".as_ptr() as _);
                     let tex_height_loc = gl::GetUniformLocation(program, c"bgTexHeight".as_ptr() as _);
+                    let num_loc = gl::GetUniformLocation(program, c"bgNum".as_ptr() as _);
 
                     gl::Uniform1i(gl::GetUniformLocation(program, c"bgTex".as_ptr() as _), 0);
                     gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 1);
@@ -433,6 +435,7 @@ impl Gpu2DProgram {
                         disp_cnt_loc,
                         cnt_loc,
                         tex_height_loc,
+                        num_loc,
                         has_ubo,
                     }
                 };
@@ -585,17 +588,18 @@ impl Gpu2DProgram {
         let bg_cnt = [u16::from(bg_cnt) as u32];
         gl::Uniform1fv(program.cnt_loc, 1, bg_cnt.as_ptr() as _);
         gl::Uniform1f(program.tex_height_loc, texs.bg_heightf);
+        gl::Uniform1i(program.num_loc, bg_num as _);
 
         #[rustfmt::skip]
         let vertices = [
-            -1f32, from_line as f32, bg_num as f32,
-            1f32, from_line as f32, bg_num as f32,
-            1f32, to_line as f32, bg_num as f32,
-            -1f32, to_line as f32, bg_num as f32,
+            -1f32, from_line as f32,
+            1f32, from_line as f32,
+            1f32, to_line as f32,
+            -1f32, to_line as f32,
         ];
 
         gl::EnableVertexAttribArray(0);
-        gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, 0, vertices.as_ptr() as _);
+        gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 0, vertices.as_ptr() as _);
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
     }
 

@@ -1,4 +1,4 @@
-vec4 drawText(int x, int y, int bgNum) {
+vec4 drawText(int x, int y) {
     int dispCnt = getDispCnt();
     int bgCnt = getBgCnt();
     int screenAddr = (((dispCnt >> 27) & 0x7) * 64 + ((bgCnt >> 8) & 0x1F) * 2) * 1024;
@@ -52,8 +52,6 @@ vec4 drawText(int x, int y, int bgNum) {
 }
 
 void main() {
-    int bgNum = int(screenPos.z);
-
     int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
     if ((winEnabled & (1 << bgNum)) == 0) {
         discard;
@@ -62,6 +60,6 @@ void main() {
     int x = int(screenPos.x);
     int y = int(screenPos.y);
 
-    color = drawText(x, y, bgNum);
+    color = drawText(x, y);
     setPrio();
 }

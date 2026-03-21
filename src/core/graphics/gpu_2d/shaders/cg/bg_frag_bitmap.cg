@@ -1,8 +1,8 @@
-float4 drawBitmap(short x, short y, short bgNum) {
+float4 drawBitmap(short x, short y) {
     short width = short(affineDims.x);
     short height = short(affineDims.y);
 
-    int2 coords = int2(calculateAffineCoords(x, y, bgNum));
+    int2 coords = int2(calculateAffineCoords(x, y));
 
     int bgCnt = getBgCnt();
     bool wrap = (bgCnt & (1 << 13)) != 0;
@@ -31,15 +31,13 @@ float4 drawBitmap(short x, short y, short bgNum) {
 }
 
 void main(out float4 color : COLOR) {
-    short bgNum = short(screenPos.z);
-
-    if (!can_display(bgNum)) {
+    if (!canDisplay()) {
         discard;
     }
 
     short x = short(screenPos.x);
     short y = short(screenPos.y);
 
-    color = drawBitmap(x, y, bgNum);
+    color = drawBitmap(x, y);
     color = setPrio(color);
 }

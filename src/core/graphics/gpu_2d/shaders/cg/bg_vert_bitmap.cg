@@ -1,5 +1,5 @@
 float4 out gl_Position : POSITION;
-float3 out screenPos : TEXCOORD0;
+float2 out screenPos : TEXCOORD0;
 float2 out screenPosF : TEXCOORD1;
 float2 out affineDims : TEXCOORD2;
 
@@ -7,13 +7,13 @@ uniform float bgCntF;
 
 static const float2 BitMapSizeLookup[4] = {float2(128.0, 128.0), float2(256.0, 256.0), float2(512.0, 256.0), float2(512.0, 512.0)};
 
-void main(float3 position) {
+void main(float2 position) {
     int bgCnt = bit_cast<unsigned int>(bgCntF);
     short size = (bgCnt >> 14) & 0x3;
     affineDims = BitMapSizeLookup[size];
 
     float normX = position.x * 0.5 + 0.5;
-    screenPos = float3(max(normX * 256.0 - 0.1, 0.0), max(position.y - 0.1, 0.0), position.z);
+    screenPos = float2(max(normX * 256.0 - 0.1, 0.0), max(position.y - 0.1, 0.0));
     screenPosF = float2(normX, position.y / 192.0);
     gl_Position = float4(position.x, 1.0 - screenPosF.y * 2.0, 0.0, 1.0);
 }

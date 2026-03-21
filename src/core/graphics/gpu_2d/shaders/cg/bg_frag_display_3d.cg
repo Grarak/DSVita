@@ -1,6 +1,6 @@
 void main(out float4 color : COLOR) {
     color = tex2D(display3dTex, screenPosF);
-    if (!can_display(0)) {
+    if (!canDisplay()) {
         discard;
     }
 

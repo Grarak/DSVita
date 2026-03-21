@@ -1,4 +1,4 @@
-float4 drawText(short x, short y, short bgNum) {
+float4 drawText(short x, short y) {
     int dispCnt = getDispCnt();
     int bgCnt = getBgCnt();
     int screenAddr = (((dispCnt >> 27) & 0x7) * 64 + ((bgCnt >> 8) & 0x1F) * 2) * 1024;
@@ -58,15 +58,13 @@ float4 drawText(short x, short y, short bgNum) {
 }
 
 void main(out float4 color : COLOR) {
-    short bgNum = short(screenPos.z);
-
-    if (!can_display(bgNum)) {
+    if (!canDisplay()) {
         discard;
     }
 
     short x = short(screenPos.x);
     short y = short(screenPos.y);
 
-    color = drawText(x, y, bgNum);
+    color = drawText(x, y);
     color = setPrio(color);
 }
