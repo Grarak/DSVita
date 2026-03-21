@@ -1,4 +1,4 @@
-float3 in objPos : TEXCOORD0;
+float2 in objPos : TEXCOORD0;
 float2 in objDims : TEXCOORD1;
 float2 in screenPosF : TEXCOORD2;
 float2 in objAttrib0Addr : TEXCOORD3;
@@ -13,15 +13,6 @@ uniform usampler2D winTex : TEXUNIT4;
 uniform float dispCntF;
 uniform float objTexHeight;
 uniform bool objWindow;
-
-struct ObjAttr {
-    unsigned int mapWidth;
-    unsigned int objBound;
-};
-
-uniform ObjUbo {
-    ObjAttr attrs[128];
-} ObjUbo : BUFFER[0];
 
 uniform WinBgUbo {
     unsigned int winHV[192 * 2];
@@ -76,16 +67,28 @@ float3 normRgb5(short color) {
     return float3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short attrib2, ObjAttr attr) {
-    int mapWidth = attr.mapWidth;
-    int objBound = attr.objBound;
+float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short attrib2, short width) {
+    int dispCnt = bit_cast<unsigned int>(dispCntF);
+
+    int bpp8 = (attrib0 >> 13) & 1;
+    bool tile1DMapping = ((dispCnt >> 4) & 1) != 0;
+    int mapWidth;
+    int objBound;
+    if (tile1DMapping) {
+        mapWidth = width;
+        int obj1DBoundary = (dispCnt >> 20) & 3;
+        objBound = 32 << obj1DBoundary;
+    } else {
+        mapWidth = 256 >> bpp8;
+        objBound = 32;
+    }
 
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * objBound;
     int tileAddrOffset = ((objY & 7) + (objY >> 3) * mapWidth) * 8;
     tileAddrOffset += (objX >> 3) * 64 + (objX & 7);
 
-    bool is8bpp = ((attrib0 >> 13) & 1) != 0;
+    bool is8bpp = bpp8 != 0;
     if (!is8bpp) {
         tileAddrOffset /= 2;
     }
@@ -103,7 +106,6 @@ float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short
             enabled |= 0x80; // indicate this was set by obj, to avoid win out override
             return float4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
         } else {
-            int dispCnt = bit_cast<unsigned int>(dispCntF);
             bool useExtPal = ((dispCnt >> 31) & 1) != 0;
             if (useExtPal) {
                 short palBaseIndex = ((attrib2 >> 12) & 0xF) << 8;
@@ -132,14 +134,25 @@ float4 drawSprite(short objX, short objY, unsigned short attrib0, unsigned short
     return float4(normRgb5(palColor).rgb, 1.0);
 }
 
-float4 drawBitmap(short objX, short objY, ObjAttr attr, unsigned short attrib2) {
-    int bitmapWidth = attr.mapWidth;
-    int dataBase = attr.objBound;
+float4 drawBitmap(short objX, short objY, short width, unsigned short attrib2) {
+    int dispCnt = bit_cast<unsigned int>(dispCntF);
+
+    bool objMapping1D = ((dispCnt >> 6) & 1) != 0;
+    int bitmapWidth;
+    int dataBase;
+    if (objMapping1D) {
+        bitmapWidth = width;
+        int tileIndex = attrib2 & 0x3FF;
+        int objBoundary1D = (dispCnt >> 22) & 1;
+        dataBase = tileIndex * (128 << objBoundary1D);
+    } else {
+        int obj2D = (dispCnt >> 5) & 1;
+        bitmapWidth = 128 << obj2D;
+        int xMask = 0x0F | (obj2D << 4);
+        dataBase = (attrib2 & xMask) * 0x10 + (attrib2 & 0x3FF & ~xMask) * 0x80;
+    }
 
     unsigned char alpha = (attrib2 >> 12) & 0xF;
-    if (alpha == 0) {
-        discard;
-    }
     float alphaF = float(alpha) / 15.0;
 
     short objColor = readObj16Aligned(dataBase + (objY * bitmapWidth + objX) * 2);
@@ -152,11 +165,10 @@ float4 drawBitmap(short objX, short objY, ObjAttr attr, unsigned short attrib2) 
 void main(out float4 color : COLOR) {
     unsigned short attrib0 = readAttrib0();
     unsigned short attrib2 = readAttrib2();
-    if (!objWindow) {
-        unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
-        if (((winEnabled >> 4) & 1) == 0) {
-            discard;
-        }
+    unsigned short winEnabled = tex2D<unsigned int>(winTex, screenPosF);
+
+    if (!objWindow && ((winEnabled >> 4) & 1) == 0) {
+        discard;
     }
 
     short objWidth = short(objDims.x);
@@ -168,15 +180,12 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
-    short oamIndex = short(objPos.z);
-    ObjAttr attr = ObjUbo.attrs[oamIndex];
-
     short gfxMode = (attrib0 >> 10) & 3;
     bool isBitmap = gfxMode == 3;
     if (isBitmap) {
-        color = drawBitmap(objX, objY, attr, attrib2);
+        color = drawBitmap(objX, objY, objWidth, attrib2);
     } else {
-        color = drawSprite(objX, objY, attrib0, attrib2, attr);
+        color = drawSprite(objX, objY, attrib0, attrib2, objWidth);
         bool semiTransparent = gfxMode == 1;
         if (semiTransparent) {
             color.a = 0.0;

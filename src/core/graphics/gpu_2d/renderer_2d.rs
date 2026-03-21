@@ -14,7 +14,6 @@ use crate::core::memory::{regions, vram};
 use crate::utils::{self, array_init, HeapArrayU8};
 use crate::utils::{rgb5_to_float8, PtrWrapper};
 use gl::types::{GLint, GLuint};
-use static_assertions::const_assert;
 use std::hint::unreachable_unchecked;
 use std::{mem, ptr, slice};
 
@@ -60,25 +59,6 @@ const fn generate_oam_indices() -> [u8; 128 * 4] {
 }
 
 const OBJ_OAM_INDICES: [u8; 128 * 4] = generate_oam_indices();
-
-#[repr(C)]
-struct ObjAttr {
-    map_width: u32,
-    obj_bound: u32,
-}
-
-#[repr(C)]
-struct ObjUbo {
-    attrs: [ObjAttr; 128],
-}
-
-const_assert!(size_of::<ObjUbo>() <= 16 * 1024);
-
-impl Default for ObjUbo {
-    fn default() -> Self {
-        unsafe { mem::zeroed() }
-    }
-}
 
 struct Gpu2DTexMem {
     bg: Vec<u8>,
@@ -298,7 +278,6 @@ struct Gpu2DObjProgram {
     disp_cnt_loc: GLint,
     tex_height_loc: GLint,
     window_loc: GLint,
-    ubo: GLuint,
 }
 
 impl Gpu2DObjProgram {
@@ -343,13 +322,8 @@ impl Gpu2DObjProgram {
         let tex_height_loc = gl::GetUniformLocation(gpu_programs.obj, c"objTexHeight".as_ptr() as _);
         let window_loc = gl::GetUniformLocation(gpu_programs.obj, c"objWindow".as_ptr() as _);
 
-        let mut ubo = 0;
-        gl::GenBuffers(1, &mut ubo);
-        gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
-
         if cfg!(target_os = "linux") {
-            gl::UniformBlockBinding(gpu_programs.obj, gl::GetUniformBlockIndex(gpu_programs.obj, c"ObjUbo".as_ptr() as _), 0);
-            gl::UniformBlockBinding(gpu_programs.obj, gl::GetUniformBlockIndex(gpu_programs.obj, c"WinBgUbo".as_ptr() as _), 1);
+            gl::UniformBlockBinding(gpu_programs.obj, gl::GetUniformBlockIndex(gpu_programs.obj, c"WinBgUbo".as_ptr() as _), 0);
         }
 
         gl::UseProgram(0);
@@ -360,14 +334,12 @@ impl Gpu2DObjProgram {
             disp_cnt_loc,
             tex_height_loc,
             window_loc,
-            ubo,
         }
     }
 }
 
 struct Gpu2DProgram {
     obj_oam_indices: Vec<[u16; 6]>,
-    obj_ubo_data: ObjUbo,
     obj_program: Gpu2DObjProgram,
 
     bg_affine_program: Gpu2DBgProgram,
@@ -459,7 +431,6 @@ impl Gpu2DProgram {
             Gpu2DProgram {
                 obj_program: Gpu2DObjProgram::new(gpu_programs),
                 obj_oam_indices: Vec::new(),
-                obj_ubo_data: ObjUbo::default(),
                 bg_affine_program,
                 bg_affine_extended_program,
                 bg_bitmap_program,
@@ -503,15 +474,15 @@ impl Gpu2DProgram {
             return;
         }
 
-        let highest_index = if OBJ_WINDOW {
+        if OBJ_WINDOW {
             if disp_cnt.obj_window_display_flag() {
-                self.assemble_oam(mem, from_line, to_line, disp_cnt, true)
+                self.assemble_oam(mem, from_line, to_line, true);
             } else {
                 return;
             }
         } else {
-            self.assemble_oam(mem, from_line, to_line, disp_cnt, false)
-        };
+            self.assemble_oam(mem, from_line, to_line, false);
+        }
 
         if self.obj_oam_indices.is_empty() {
             return;
@@ -519,15 +490,6 @@ impl Gpu2DProgram {
 
         let disp_cnt = [u32::from(disp_cnt)];
         gl::Uniform1fv(self.obj_program.disp_cnt_loc, 1, disp_cnt.as_ptr() as _);
-
-        gl::BindBuffer(gl::UNIFORM_BUFFER, self.obj_program.ubo);
-        gl::BufferData(
-            gl::UNIFORM_BUFFER,
-            ((highest_index + 1) * size_of::<[u32; 2]>()) as _,
-            ptr::addr_of!(self.obj_ubo_data) as _,
-            gl::DYNAMIC_DRAW,
-        );
-        gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, self.obj_program.ubo);
 
         gl::DrawElements(gl::TRIANGLES, (6 * self.obj_oam_indices.len()) as _, gl::UNSIGNED_SHORT, self.obj_oam_indices.as_ptr() as _);
     }
@@ -744,12 +706,7 @@ impl Gpu2DProgram {
 
             gl::BindBuffer(gl::UNIFORM_BUFFER, common.win_bg_ubo);
             gl::BufferData(gl::UNIFORM_BUFFER, size_of::<WinBgUbo>() as _, ptr::addr_of!(regs.win_bg_ubo) as _, gl::DYNAMIC_DRAW);
-            gl::BindBufferBase(gl::UNIFORM_BUFFER, 1, common.win_bg_ubo);
-
-            // This sets the bind index in vita gl by force
-            // Shader cache doesn't seem to consider uniform block name and we can't use glUniformBlockBinding
-            #[cfg(target_os = "vita")]
-            crate::presenter::Presenter::gl_bind_frag_ubo(1);
+            gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, common.win_bg_ubo);
 
             gl::Uniform1f(self.obj_program.tex_height_loc, texs.obj_heightf);
             gl::Uniform1i(self.obj_program.window_loc, 1);
@@ -886,17 +843,24 @@ impl Gpu2DProgram {
         gl::UseProgram(0);
     }
 
-    fn assemble_oam(&mut self, mem: &Gpu2DMem, from_line: u8, to_line: u8, disp_cnt: DispCnt, window: bool) -> usize {
+    fn assemble_oam(&mut self, mem: &Gpu2DMem, from_line: u8, to_line: u8, window: bool) {
         const OAM_COUNT: usize = regions::OAM_SIZE as usize / 2 / size_of::<OamAttribs>();
         let oams = unsafe { slice::from_raw_parts(mem.oam.as_ptr() as *const OamAttribs, OAM_COUNT) };
 
-        let mut highest_index = 0;
         self.obj_oam_indices.clear();
         for (i, oam) in oams.iter().enumerate() {
             let attrib0 = OamAttrib0::from(oam.attr0);
             let obj_mode = attrib0.get_obj_mode();
             let gfx_mode = attrib0.get_gfx_mode();
             if obj_mode == OamObjMode::Disabled || (gfx_mode == OamGfxMode::Window) != window {
+                continue;
+            }
+
+            let attrib2 = OamAttrib2::from(oam.attr2);
+            if gfx_mode == OamGfxMode::Bitmap && {
+                let alpha = u8::from(attrib2.pal_bank());
+                alpha == 0
+            } {
                 continue;
             }
 
@@ -934,30 +898,9 @@ impl Gpu2DProgram {
                 continue;
             }
 
-            if gfx_mode == OamGfxMode::Bitmap {
-                if disp_cnt.bitmap_obj_mapping() {
-                    self.obj_ubo_data.attrs[i].map_width = width as u32;
-                    self.obj_ubo_data.attrs[i].obj_bound = u16::from(OamAttrib2::from(oam.attr2).tile_index()) as u32 * if disp_cnt.bitmap_obj_1d_boundary() { 256 } else { 128 };
-                } else {
-                    self.obj_ubo_data.attrs[i].map_width = if disp_cnt.bitmap_obj_2d() { 256 } else { 128 };
-                    let x_mask = if disp_cnt.bitmap_obj_2d() { 0x1F } else { 0x0F };
-                    self.obj_ubo_data.attrs[i].obj_bound = (oam.attr2 & x_mask) as u32 * 0x10 + (oam.attr2 & 0x3FF & !x_mask) as u32 * 0x80;
-                }
-            } else if disp_cnt.tile_1d_obj_mapping() {
-                self.obj_ubo_data.attrs[i].map_width = width as u32;
-                self.obj_ubo_data.attrs[i].obj_bound = 32 << u8::from(disp_cnt.tile_obj_1d_boundary());
-            } else {
-                self.obj_ubo_data.attrs[i].map_width = if attrib0.is_8bit() { 128 } else { 256 };
-                self.obj_ubo_data.attrs[i].obj_bound = 32;
-            }
-
             let index_base = (i * 4) as u16;
             self.obj_oam_indices.push([index_base, index_base + 1, index_base + 2, index_base, index_base + 2, index_base + 3]);
-            if i > highest_index {
-                highest_index = i;
-            }
         }
-        highest_index
     }
 }
 
@@ -976,7 +919,7 @@ pub struct Gpu2DRenderer {
 impl Gpu2DRenderer {
     pub fn new(gpu_programs: &GpuShadersPrograms) -> Self {
         unsafe {
-            let instance = Gpu2DRenderer {
+            Gpu2DRenderer {
                 lcdc_pal: create_pal_texture2d(1024, 656),
                 vram_display_program: Gpu2DVramDisplayProgram::new(gpu_programs),
                 texs: [
@@ -992,9 +935,7 @@ impl Gpu2DRenderer {
                 blend_fbo_upscaled: GpuFbo::new(UPSCALE_WIDTH_3D as _, UPSCALE_HEIGHT_3D as _, false, false).unwrap(),
                 #[cfg(target_os = "linux")]
                 lcdc_mem_buf: HeapArrayU8::default(),
-            };
-
-            instance
+            }
         }
     }
 

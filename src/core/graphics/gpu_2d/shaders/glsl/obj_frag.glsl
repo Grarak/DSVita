@@ -5,7 +5,7 @@ precision highp int;
 
 layout(location = 0) out vec4 color;
 
-in vec3 objPos;
+in vec2 objPos;
 flat in ivec2 objDims;
 in vec2 screenPosF;
 in vec2 objAttrib0Addr;
@@ -14,15 +14,6 @@ in vec2 objAttrib2Addr;
 uniform float dispCntF;
 uniform float objTexHeight;
 uniform bool objWindow;
-
-struct ObjAttr {
-    int mapWidth;
-    int objBounds;
-};
-
-uniform ObjUbo {
-    ObjAttr objAttrs[256];
-};
 
 uniform WinBgUbo {
     int winHV[192 * 2];
@@ -84,16 +75,28 @@ vec3 normRgb5(int color) {
     return vec3(float(color & 0x1F), float((color >> 5) & 0x1F), float((color >> 10) & 0x1F)) / 31.0;
 }
 
-vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, ObjAttr attr) {
-    int mapWidth = attr.mapWidth;
-    int objBound = attr.objBounds;
+vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, int width) {
+    int dispCnt = floatBitsToInt(dispCntF);
+
+    int bpp8 = (attrib0 >> 13) & 1;
+    bool tile1DMapping = ((dispCnt >> 4) & 1) != 0;
+    int mapWidth;
+    int objBound;
+    if (tile1DMapping) {
+        mapWidth = width;
+        int obj1DBoundary = (dispCnt >> 20) & 3;
+        objBound = 32 << obj1DBoundary;
+    } else {
+        mapWidth = 256 >> bpp8;
+        objBound = 32;
+    }
 
     int tileIndex = attrib2 & 0x3FF;
     int tileAddr = tileIndex * objBound;
     int tileAddrOffset = ((objY & 7) + (objY >> 3) * mapWidth) * 8;
     tileAddrOffset += (objX >> 3) * 64 + (objX & 7);
 
-    bool is8bpp = ((attrib0 >> 13) & 1) != 0;
+    bool is8bpp = bpp8 != 0;
     if (!is8bpp) {
         tileAddrOffset /= 2;
     }
@@ -111,7 +114,6 @@ vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, ObjAttr attr) {
             enabled |= 0x80; // indicate this was set by obj, to avoid win out override
             return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
         } else {
-            int dispCnt = floatBitsToInt(dispCntF);
             bool useExtPal = ((dispCnt >> 31) & 1) != 0;
             if (useExtPal) {
                 int palBaseAddr = ((attrib2 >> 12) & 0xF) << 9;
@@ -140,14 +142,25 @@ vec4 drawSprite(int objX, int objY, int attrib0, int attrib2, ObjAttr attr) {
     return vec4(normRgb5(palColor), 1.0);
 }
 
-vec4 drawBitmap(int objX, int objY, ObjAttr attr, int attrib2) {
-    int bitmapWidth = attr.mapWidth;
-    int dataBase = attr.objBounds;
+vec4 drawBitmap(int objX, int objY, int width, int attrib2) {
+    int dispCnt = floatBitsToInt(dispCntF);
+
+    bool objMapping1D = ((dispCnt >> 6) & 1) != 0;
+    int bitmapWidth;
+    int dataBase;
+    if (objMapping1D) {
+        bitmapWidth = width;
+        int tileIndex = attrib2 & 0x3FF;
+        int objBoundary1D = (dispCnt >> 22) & 1;
+        dataBase = tileIndex * (128 << objBoundary1D);
+    } else {
+        int obj2D = (dispCnt >> 5) & 1;
+        bitmapWidth = 128 << obj2D;
+        int xMask = 0x0F | (obj2D << 4);
+        dataBase = (attrib2 & xMask) * 0x10 + (attrib2 & 0x3FF & ~xMask) * 0x80;
+    }
 
     int alpha = (attrib2 >> 12) & 0xF;
-    if (alpha == 0) {
-        discard;
-    }
     float alphaF = float(alpha) / 15.0;
 
     int objColor = readObj16Aligned(dataBase + (objY * bitmapWidth + objX) * 2);
@@ -160,12 +173,10 @@ vec4 drawBitmap(int objX, int objY, ObjAttr attr, int attrib2) {
 void main() {
     int attrib0 = readAttrib0();
     int attrib2 = readAttrib2();
+    int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
 
-    if (!objWindow) {
-        int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
-        if (((winEnabled >> 4) & 1) == 0) {
-            discard;
-        }
+    if (!objWindow && ((winEnabled >> 4) & 1) == 0) {
+        discard;
     }
 
     int objWidth = objDims.x;
@@ -177,15 +188,12 @@ void main() {
         discard;
     }
 
-    int oamIndex = int(objPos.z);
-    ObjAttr attr = objAttrs[oamIndex];
-
     int gfxMode = (attrib0 >> 10) & 3;
     bool isBitmap = gfxMode == 3;
     if (isBitmap) {
-        color = drawBitmap(objX, objY, attr, attrib2);
+        color = drawBitmap(objX, objY, objWidth, attrib2);
     } else {
-        color = drawSprite(objX, objY, attrib0, attrib2, attr);
+        color = drawSprite(objX, objY, attrib0, attrib2, objWidth);
         bool semiTransparent = gfxMode == 1;
         if (semiTransparent) {
             color.a = 0.0;

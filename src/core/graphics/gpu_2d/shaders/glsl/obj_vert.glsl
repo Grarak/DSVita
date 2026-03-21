@@ -8,7 +8,7 @@ in float oamIndex;
 
 uniform sampler2D oamTex;
 
-out vec3 objPos;
+out vec2 objPos;
 flat out ivec2 objDims;
 out vec2 screenPosF;
 out vec2 objAttrib0Addr;
@@ -84,12 +84,12 @@ void main() {
         bool doubleAffine = (attrib0 & (1 << 9)) != 0;
         if (doubleAffine) {
             vec2 normPos = vec2(max(oamWidth * 2.0 * pos.x - 0.9, 0.0) - oamWidth, max(oamHeight * 2.0 * pos.y - 0.9, 0.0) - oamHeight) * m;
-            objPos = vec3(normPos.x + oamWidth / 2.0, normPos.y + oamHeight / 2.0, oamIndex);
+            objPos = vec2(normPos.x + oamWidth / 2.0, normPos.y + oamHeight / 2.0);
             oamWidth *= 2.0;
             oamHeight *= 2.0;
         } else {
             vec2 normPos = vec2(max(oamWidth * pos.x - 0.5, 0.0) - oamWidth / 2.0, max(oamHeight * pos.y - 0.5, 0.0) - oamHeight / 2.0) * m;
-            objPos = vec3(normPos.x + oamWidth / 2.0 - 0.5, normPos.y + oamHeight / 2.0, oamIndex);
+            objPos = vec2(normPos.x + oamWidth / 2.0 - 0.5, normPos.y + oamHeight / 2.0);
         }
     } else {
         bool isVFlip = ((attrib1 >> 13) & 1) != 0;
@@ -103,7 +103,7 @@ void main() {
             pos.x = -pos.x + 1.0;
         }
 
-        objPos = vec3((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y, oamIndex);
+        objPos = vec2((oamWidth - 0.1) * pos.x, (oamHeight - 0.1) * pos.y);
     }
 
     float x = float(oamX) + oamWidth * position.x;
