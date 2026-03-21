@@ -7,7 +7,7 @@ use crate::presenter::imgui::root::{
 };
 use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, show_progress, UiBackend, UiPauseMenuReturn};
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
-use crate::settings::{Arm7Emu, Settings, DEFAULT_SETTINGS};
+use crate::settings::{Arm7Emu, Framelimit, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
 use clap::{arg, command, value_parser, ArgAction, ArgMatches};
 use gl::types::GLuint;
@@ -70,7 +70,7 @@ impl Presenter {
     #[cold]
     pub fn new() -> Self {
         let arg_matches = command!()
-            .arg(arg!(framelimit: -f "Enable framelimit").required(false).action(ArgAction::SetTrue))
+            .arg(arg!(-f <framelimit> "0: No 1: 100%, 2: 200%, 3: 300%").num_args(1).required(false).default_value("0").value_parser(value_parser!(u8)))
             .arg(arg!(audio: -a "Enable audio").required(false).action(ArgAction::SetTrue))
             .arg(
                 arg!(-e <arm7_emu> "0: Accurate, 1: SoundHle, 2: Hle")
@@ -161,7 +161,7 @@ impl Presenter {
             show_main_menu(file_path, self)
         } else {
             let mut settings = DEFAULT_SETTINGS.clone();
-            settings.set_framelimit(self.arg_matches.get_flag("framelimit"));
+            settings.set_framelimit(Framelimit::from(*self.arg_matches.get_one::<u8>("framelimit").unwrap_or(&0)));
             settings.set_audio(self.arg_matches.get_flag("audio"));
             settings.set_arm7_emu(Arm7Emu::from(*self.arg_matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
 

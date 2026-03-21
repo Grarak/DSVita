@@ -3,8 +3,9 @@ use crate::core::emu::Emu;
 use crate::core::CpuType::ARM7;
 use crate::logging::debug_println;
 use crate::presenter::{PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE};
+use crate::settings::Framelimit;
 use crate::soundtouch::SoundTouch;
-use crate::utils::HeapArrayU32;
+use crate::utils::{array_init, HeapArrayU32};
 use bilge::prelude::*;
 use std::cmp::min;
 use std::hint::{assert_unchecked, unreachable_unchecked};
@@ -43,7 +44,7 @@ impl SoundSampler {
         sound_touch.set_pitch(1.0);
         sound_touch.set_tempo(1.0);
         SoundSampler {
-            queues: [(HeapArrayU32::default(), 0), (HeapArrayU32::default(), 0)],
+            queues: array_init!({(HeapArrayU32::default(), 0)}; 2),
             busy_queue: 0,
             ready_queue: 0,
             waiting: false,
@@ -71,15 +72,32 @@ impl SoundSampler {
         *self.cond_mutex.lock().unwrap() = false;
     }
 
-    fn push(&mut self, sample: u32, framelimit: bool, audio_stretching: bool) {
+    fn push(&mut self, sample: u32, framelimit: Framelimit, audio_stretching: bool) {
         while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
 
         unsafe { assert_unchecked(self.busy_queue <= 1) };
         let (queue, size) = &mut self.queues[self.busy_queue];
-        unsafe { assert_unchecked((*size as usize) < queue.len()) };
-        queue[*size as usize] = sample;
+        if *size < SAMPLE_BUFFER_SIZE as u16 {
+            queue[*size as usize] = sample;
+        }
         *size += 1;
-        if *size == SAMPLE_BUFFER_SIZE as u16 {
+
+        const SAMPLE_LIMITS: [u16; 10] = [
+            SAMPLE_BUFFER_SIZE as u16,
+            SAMPLE_BUFFER_SIZE as u16,
+            (SAMPLE_BUFFER_SIZE * 125 / 100) as u16,
+            (SAMPLE_BUFFER_SIZE * 150 / 100) as u16,
+            (SAMPLE_BUFFER_SIZE * 175 / 100) as u16,
+            (SAMPLE_BUFFER_SIZE * 200 / 100) as u16,
+            (SAMPLE_BUFFER_SIZE * 250 / 100) as u16,
+            (SAMPLE_BUFFER_SIZE * 3) as u16,
+            (SAMPLE_BUFFER_SIZE * 4) as u16,
+            (SAMPLE_BUFFER_SIZE * 5) as u16,
+        ];
+
+        let sample_limit = SAMPLE_LIMITS[framelimit as usize];
+
+        if *size == sample_limit {
             let (_, other_size) = &mut self.queues[self.busy_queue ^ 1];
 
             if !audio_stretching {
@@ -88,7 +106,7 @@ impl SoundSampler {
                 self.condvar.notify_one();
             }
 
-            if framelimit && *other_size == SAMPLE_BUFFER_SIZE as u16 {
+            if framelimit != Framelimit::Off && *other_size == sample_limit {
                 self.waiting = true;
                 self.busy.store(false, Ordering::SeqCst);
                 thread::park();
@@ -119,8 +137,7 @@ impl SoundSampler {
         let ready_queue = self.ready_queue;
         let (queue, queue_size) = &mut self.queues[ready_queue];
         let mut size = *queue_size as usize;
-        unsafe { assert_unchecked(size <= SAMPLE_BUFFER_SIZE) };
-        debug_assert!(audio_stretching || size == SAMPLE_BUFFER_SIZE);
+        size = min(size, SAMPLE_BUFFER_SIZE);
         *queue_size = 0;
         buf[..size].copy_from_slice(&queue[..size]);
         self.ready_queue = self.busy_queue;

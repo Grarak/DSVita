@@ -8,6 +8,52 @@ use std::str::FromStr;
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, EnumString, IntoStaticStr};
 
+#[derive(Copy, Clone, Debug, Default, EnumIter, EnumString, Eq, PartialEq)]
+#[repr(u8)]
+pub enum Framelimit {
+    Off = 0,
+    #[default]
+    X100,
+    X125,
+    X150,
+    X175,
+    X200,
+    X250,
+    X300,
+    X400,
+    X500,
+}
+
+impl From<u8> for Framelimit {
+    fn from(value: u8) -> Self {
+        debug_assert!(value <= Framelimit::X500 as u8);
+        unsafe { std::mem::transmute(value) }
+    }
+}
+
+impl From<Framelimit> for u8 {
+    fn from(value: Framelimit) -> Self {
+        value as u8
+    }
+}
+
+impl Into<&'static str> for Framelimit {
+    fn into(self) -> &'static str {
+        match self {
+            Framelimit::Off => "off",
+            Framelimit::X100 => "100%",
+            Framelimit::X125 => "125%",
+            Framelimit::X150 => "150%",
+            Framelimit::X175 => "175%",
+            Framelimit::X200 => "200%",
+            Framelimit::X250 => "250%",
+            Framelimit::X300 => "300%",
+            Framelimit::X400 => "400%",
+            Framelimit::X500 => "500%",
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Default, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
 pub enum Arm7Emu {
@@ -30,8 +76,8 @@ impl From<Arm7Emu> for u8 {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
 #[repr(u8)]
+#[derive(Copy, Clone, Debug, Default, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
 pub enum Language {
     Japanese = 0,
     #[default]
@@ -158,7 +204,7 @@ impl Setting {
 lazy_static! {
     pub static ref DEFAULT_SETTINGS: Settings = Settings(
         [
-            Setting::new("Framelimit", "", SettingValue::Bool(true), true),
+            Setting::new("Framelimit", "", Framelimit::iter().into(), true),
             Setting::new("Audio", "Disabling audio can give a performance boost.", SettingValue::Bool(true), true),
             Setting::new(
                 "Arm7 Emulation",
@@ -217,8 +263,8 @@ impl Settings {
         unsafe { self.0[SettingIndices::JoystickAsDpad as usize].value.as_bool().unwrap_unchecked() }
     }
 
-    pub fn framelimit(&self) -> bool {
-        unsafe { self.0[SettingIndices::Framelimit as usize].value.as_bool().unwrap_unchecked() }
+    pub fn framelimit(&self) -> Framelimit {
+        unsafe { Framelimit::from(self.0[SettingIndices::Framelimit as usize].value.as_list().unwrap_unchecked().0 as u8) }
     }
 
     pub fn audio(&self) -> bool {
@@ -250,8 +296,8 @@ impl Settings {
         *self.0[SettingIndices::SwapScreen as usize].value.as_bool_mut().unwrap() = screen_layout.swap;
     }
 
-    pub fn set_framelimit(&mut self, value: bool) {
-        *self.0[SettingIndices::Framelimit as usize].value.as_bool_mut().unwrap() = value;
+    pub fn set_framelimit(&mut self, value: Framelimit) {
+        *self.0[SettingIndices::Framelimit as usize].value.as_list_mut().unwrap().0 = value as usize;
     }
 
     pub fn set_audio(&mut self, value: bool) {
