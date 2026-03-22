@@ -6,16 +6,15 @@ Fast NDS Emulator for ARM32/PSVita
 
 ## Status
 
-[![DSVita Pokemon Black](http://img.youtube.com/vi/VcFaAcu0bhE/0.jpg)](https://www.youtube.com/watch?v=VcFaAcu0bhE "DSVita Pokemon Black")
+[![DSVita Pokemon Black](http://img.youtube.com/vi/7H00OgI5OtQ/0.jpg)](https://www.youtube.com/watch?v=7H00OgI5OtQ "DSVita Mario Kart DS")
 
 This runs most games, however consider:
 
 - 3D rendering
     - Mostly implemented
       - Z fighting can occur
-      - Unimplemented shadows will render as transparent black boxes
-      - Text can be unreadable
       - Games using 3D on both screen will have bad framerates
+      - Some effects like fog are unimplemented
 - 2D rendering is mostly complete
 - ARM7 HLE will not work with most games
     - Disable it if certain games don't boot further, get struck, crash or have any issues
