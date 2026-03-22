@@ -183,6 +183,8 @@ impl Presenter {
             let file_name = file_path.file_name().unwrap().to_str().unwrap();
             let save_path = file_path.parent().unwrap().join(format!("{file_name}.sav"));
             let preview = CartridgePreview::new(file_path).unwrap();
+
+            settings.populate_screen_layouts(screen_layouts);
             Some((CartridgeIo::from_preview(preview, save_path).unwrap(), settings))
         }
     }
