@@ -15,7 +15,7 @@ use crate::core::memory::vram::{Vram, VramBanks};
 use crate::logging::info_println;
 use crate::presenter::{Presenter, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::screen_layouts::ScreenLayout;
-use crate::settings::Arm7Emu;
+use crate::settings::Settings;
 use crate::utils::HeapArrayU8;
 use gl::types::{GLint, GLuint};
 use std::intrinsics::unlikely;
@@ -288,11 +288,12 @@ impl GpuRenderer {
         presenter: &mut Presenter,
         fps: &Arc<AtomicU16>,
         last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>,
-        arm7_emu: Arm7Emu,
         screen_layout: &ScreenLayout,
-        upscale_3d: bool,
+        settings: &Settings,
         pause: bool,
     ) {
+        let upscale_3d = settings.upscale_3d();
+
         {
             let rendering = self.rendering.lock().unwrap();
             let _drawing = self.rendering_condvar.wait_while(rendering, |rendering| !*rendering).unwrap();
@@ -421,34 +422,36 @@ impl GpuRenderer {
                 self.merge_screens([top_screen, bottom_screen], 0);
             }
 
-            let fps = fps.load(Ordering::Relaxed) as u32;
-            let per = fps * 100 / 60;
+            if settings.show_debug_stats() {
+                let fps = fps.load(Ordering::Relaxed) as u32;
+                let per = fps * 100 / 60;
 
-            let last_time_saved = *last_save_time.lock().unwrap();
-            let mut info_text = {
-                #[cfg(target_os = "vita")]
-                {
-                    format!("CPU: {}MHz", vitasdk_sys::scePowerGetArmClockFrequency())
-                }
-                #[cfg(target_os = "linux")]
-                "".to_string()
-            };
-            if let Some((last_time_saved, success)) = last_time_saved {
-                if Instant::now().duration_since(last_time_saved).as_secs() < 3 {
-                    if success {
-                        info_text = "Written to save file".to_string();
-                    } else {
-                        info_text = "Failed to save".to_string();
+                let last_time_saved = *last_save_time.lock().unwrap();
+                let mut info_text = {
+                    #[cfg(target_os = "vita")]
+                    {
+                        format!("CPU: {}MHz", vitasdk_sys::scePowerGetArmClockFrequency())
+                    }
+                    #[cfg(target_os = "linux")]
+                    "".to_string()
+                };
+                if let Some((last_time_saved, success)) = last_time_saved {
+                    if Instant::now().duration_since(last_time_saved).as_secs() < 3 {
+                        if success {
+                            info_text = "Written to save file".to_string();
+                        } else {
+                            info_text = "Failed to save".to_string();
+                        }
                     }
                 }
-            }
 
-            let arm7_emu: &str = arm7_emu.into();
-            self.gl_glyph.draw(format!(
-                "{}ms ({}fps) {arm7_emu}\n{per}% ({fps}/60)\n{info_text}",
-                self.average_render_time / 1000,
-                if self.average_render_time == 0 { 0 } else { 1000000 / self.average_render_time }
-            ));
+                let arm7_emu: &str = settings.arm7_emu().into();
+                self.gl_glyph.draw(format!(
+                    "{}ms ({}fps) {arm7_emu}\n{per}% ({fps}/60)\n{info_text}",
+                    self.average_render_time / 1000,
+                    if self.average_render_time == 0 { 0 } else { 1000000 / self.average_render_time }
+                ));
+            }
 
             if !pause {
                 gl::BindFramebuffer(gl::FRAMEBUFFER, 0);

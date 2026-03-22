@@ -183,12 +183,13 @@ lazy_static! {
             Setting::new("Bottom screen scale", "Press PS + Circle to cycle screen sizes", ScreenLayout::scale_settings_value(), true),
             Setting::new("Language", "Some ROMs only come with one language. Make sure yours is multilingual.", Language::iter().into(), false),
             Setting::new("Joystick as D-Pad", "", SettingValue::Bool(true), true),
+            Setting::new("Show debug statistics", "", SettingValue::Bool(true), true),
         ],
     );
 }
 
 #[derive(Clone)]
-pub struct Settings([Setting; 12]);
+pub struct Settings([Setting; 13]);
 
 #[repr(u8)]
 enum SettingIndices {
@@ -204,6 +205,7 @@ enum SettingIndices {
     BottomScreenScale,
     Language,
     JoystickAsDpad,
+    ShowDebugStatistics,
 }
 
 impl Settings {
@@ -257,6 +259,10 @@ impl Settings {
 
     pub fn language(&self) -> Language {
         unsafe { Language::from(self.0[SettingIndices::Language as usize].value.as_list().unwrap_unchecked().0 as u8) }
+    }
+
+    pub fn show_debug_stats(&self) -> bool {
+        unsafe { self.0[SettingIndices::ShowDebugStatistics as usize].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn set_screen_layout(&mut self, screen_layout: &ScreenLayout) {

@@ -96,7 +96,7 @@ impl SoundSampler {
 
         let sample_limit = SAMPLE_LIMITS[framelimit as usize];
 
-        if *size == sample_limit {
+        if *size >= sample_limit {
             let (_, other_size) = &mut self.queues[self.busy_queue ^ 1];
 
             if !audio_stretching {
@@ -105,7 +105,7 @@ impl SoundSampler {
                 self.condvar.notify_one();
             }
 
-            if framelimit != 0 && *other_size == sample_limit {
+            if framelimit != 0 && *other_size >= sample_limit {
                 self.waiting = true;
                 self.busy.store(false, Ordering::SeqCst);
                 thread::park();
