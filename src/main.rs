@@ -31,6 +31,7 @@ use crate::logging::{debug_println, info_println};
 use crate::mmap::{register_abort_handler, ArmContext, Mmap, PAGE_SIZE};
 use crate::presenter::ui::UiPauseMenuReturn;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE};
+use crate::screen_layouts::ScreenLayouts;
 use crate::settings::Arm7Emu;
 use crate::utils::{const_str_equal, set_thread_prio_affinity, start_profiling, stop_profiling, HeapArray, HeapArrayU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
@@ -49,6 +50,7 @@ mod cartridge_io;
 mod cartridge_metadata;
 mod core;
 mod fixed_fifo;
+mod global_settings;
 mod jit;
 mod logging;
 mod math;
@@ -417,9 +419,11 @@ pub fn actual_main() {
 
     let cpu_active = Arc::new(AtomicBool::new(true));
 
+    let mut screen_layouts = ScreenLayouts::new();
+
     let mut running = true;
     while running {
-        let (mut cartridge_io, settings) = match presenter.present_ui() {
+        let (mut cartridge_io, settings) = match presenter.present_ui(&mut screen_layouts) {
             Some((cartridge_io, settings)) => (cartridge_io, settings),
             None => return,
         };
@@ -550,7 +554,7 @@ pub fn actual_main() {
             .unwrap();
 
         let gpu_renderer = gpu_renderer.as_mut().unwrap();
-        let mut screen_layout = emu_unsafe.get_mut().settings.screen_layout();
+        let mut screen_layout = emu_unsafe.get_mut().settings.screen_layout(&screen_layouts);
         let mut upscale_3d = emu_unsafe.get_mut().settings.upscale_3d();
         let arm7_emu = emu_unsafe.get_mut().settings.arm7_emu();
         loop {
@@ -572,7 +576,7 @@ pub fn actual_main() {
                     top_screen_scale_offset,
                     bottom_screen_scale_offset,
                 } => {
-                    screen_layout = screen_layout.apply_settings_event(offset, swap, top_screen_scale_offset, bottom_screen_scale_offset);
+                    screen_layout = screen_layout.apply_settings_event(&screen_layouts, offset, swap, top_screen_scale_offset, bottom_screen_scale_offset);
                     false
                 }
                 PresentEvent::Pause => true,
@@ -592,13 +596,13 @@ pub fn actual_main() {
                 emu_unsafe.get_mut().settings.set_screen_layout(&screen_layout);
                 match presenter.present_pause(gpu_renderer, &mut emu_unsafe.get_mut().settings) {
                     UiPauseMenuReturn::Resume => {
-                        screen_layout = emu_unsafe.get_mut().settings.screen_layout();
+                        screen_layout = emu_unsafe.get_mut().settings.screen_layout(&screen_layouts);
                         upscale_3d = emu_unsafe.get_mut().settings.upscale_3d();
                         gpu_renderer.unpause(cpu_thread.thread());
                     }
                     UiPauseMenuReturn::BlowMic => {
                         emu_unsafe.get_mut().spi.start_blow_mic();
-                        screen_layout = emu_unsafe.get_mut().settings.screen_layout();
+                        screen_layout = emu_unsafe.get_mut().settings.screen_layout(&screen_layouts);
                         upscale_3d = emu_unsafe.get_mut().settings.upscale_3d();
                         gpu_renderer.unpause(cpu_thread.thread());
                     }

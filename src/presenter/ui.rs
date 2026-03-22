@@ -1,5 +1,6 @@
 use crate::cartridge_io::{CartridgeIo, CartridgePreview};
 use crate::core::graphics::gpu_renderer::GpuRenderer;
+use crate::global_settings::GlobalSettings;
 use crate::presenter::imgui::root::{
     ImDrawData, ImFontAtlas_AddFontFromMemoryTTF, ImFontAtlas_GetGlyphRangesDefault, ImFontConfig, ImFontConfig_ImFontConfig, ImGui, ImGuiCond__ImGuiSetCond_Always,
     ImGuiHoveredFlags__ImGuiHoveredFlags_Default, ImGuiItemFlags__ImGuiItemFlags_Disabled, ImGuiNavInput__ImGuiNavInput_Cancel, ImGuiStyleVar__ImGuiStyleVar_Alpha,
@@ -7,7 +8,8 @@ use crate::presenter::imgui::root::{
     ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags__ImGuiWindowFlags_NoMove, ImGuiWindowFlags__ImGuiWindowFlags_NoResize, ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar,
     ImVec2, ImVec4,
 };
-use crate::presenter::{PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::presenter::{show_layout_create_settings, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::screen_layouts::{CustomLayout, ScreenLayouts};
 use crate::settings::{SettingValue, Settings, SettingsConfig};
 use std::ffi::CString;
 use std::path::PathBuf;
@@ -68,6 +70,9 @@ unsafe fn show_settings(settings_config: &mut SettingsConfig, only_runtime: bool
                 }
             }
             SettingValue::List(selection, values) => {
+                if *selection >= values.len() {
+                    *selection = 0;
+                }
                 let value = CString::from_str(&values[*selection]).unwrap();
 
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 125f32);
@@ -103,14 +108,26 @@ unsafe fn show_settings(settings_config: &mut SettingsConfig, only_runtime: bool
     }
 }
 
-pub fn show_main_menu(cartridge_path: PathBuf, ui_backend: &mut impl UiBackend) -> Option<(CartridgeIo, Settings)> {
+#[derive(Default)]
+pub struct CustomLayoutContext {
+    pub parse_error: bool,
+    pub empty_name: bool,
+    pub duplicated_name: bool,
+}
+
+pub fn show_main_menu(cartridge_path: PathBuf, screen_layouts: &mut ScreenLayouts, ui_backend: &mut impl UiBackend) -> Option<(CartridgeIo, GlobalSettings, Settings)> {
     unsafe {
         let saves_path = cartridge_path.join("saves");
+        let global_settings_path = cartridge_path.join("global_settings");
         let settings_path = cartridge_path.join("settings");
 
         let _ = fs::create_dir_all(&cartridge_path);
         let _ = fs::create_dir_all(&saves_path);
+        let _ = fs::create_dir_all(&global_settings_path);
         let _ = fs::create_dir_all(&settings_path);
+
+        let mut global_settings = GlobalSettings::new(global_settings_path).unwrap();
+        screen_layouts.populate_custom_layouts(&global_settings.custom_layouts);
 
         let mut cartridges: Vec<CartridgePreview> = match fs::read_dir(&cartridge_path) {
             Ok(rom_dir) => rom_dir
@@ -120,17 +137,6 @@ pub fn show_main_menu(cartridge_path: PathBuf, ui_backend: &mut impl UiBackend) 
                     let path = entry.path();
                     let name = path.file_name().unwrap().to_str().unwrap();
                     if name.to_lowercase().ends_with(".nds") {
-                        // I mistyped the save file extension in 0.3.0
-                        // Add migration step
-                        let old_save_file = saves_path.join(format!("{name}.nds"));
-                        let save_file = saves_path.join(format!("{name}.sav"));
-                        if old_save_file.exists() {
-                            if save_file.exists() {
-                                let _ = fs::remove_file(old_save_file);
-                            } else {
-                                let _ = fs::rename(old_save_file, &save_file);
-                            }
-                        }
                         CartridgePreview::new(path).ok()
                     } else {
                         None
@@ -148,9 +154,15 @@ pub fn show_main_menu(cartridge_path: PathBuf, ui_backend: &mut impl UiBackend) 
             settings_configs.push(SettingsConfig::new(path));
         }
 
+        let mut show_global_settings = false;
         let mut hovered: Option<usize> = None;
         static mut SELECTED: Option<usize> = None;
         let mut launched = false;
+        let mut layout_settings = false;
+        let mut custom_layout = false;
+        let mut custom_layout_context = CustomLayoutContext::default();
+        let mut new_custom_layout = CustomLayout::default();
+        let mut selected_custom_layout: Option<usize> = None;
 
         let mut icon_tex = 0;
         gl::GenTextures(1, &mut icon_tex);
@@ -202,6 +214,13 @@ pub fn show_main_menu(cartridge_path: PathBuf, ui_backend: &mut impl UiBackend) 
                     | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse) as _,
             ) {
                 let vec = ImVec2 { x: -1f32, y: 0f32 };
+                if ImGui::Button(c"Global settings".as_ptr() as _, &vec) {
+                    show_global_settings = true;
+                }
+                if ImGui::IsItemHovered(ImGuiHoveredFlags__ImGuiHoveredFlags_Default as _) {
+                    hovered = None
+                }
+
                 for (i, cartridge) in cartridges.iter().enumerate() {
                     let name = CString::new(cartridge.file_name.clone()).unwrap();
                     if ImGui::Button(name.as_ptr() as _, &vec) {
@@ -302,6 +321,7 @@ pub fn show_main_menu(cartridge_path: PathBuf, ui_backend: &mut impl UiBackend) 
                     ImGui::Dummy(&vec);
 
                     let settings_config = &mut settings_configs[i];
+                    settings_config.settings.populate_screen_layouts(screen_layouts);
                     show_settings(settings_config, false);
 
                     let settings_dirty = settings_config.dirty;
@@ -325,6 +345,120 @@ pub fn show_main_menu(cartridge_path: PathBuf, ui_backend: &mut impl UiBackend) 
                 }
 
                 ImGui::End();
+            } else if custom_layout {
+                let vec = ImVec2 { x: 0.0, y: 0.0 };
+                let vec2 = ImVec2 { x: 0.0, y: 0.0 };
+                ImGui::SetNextWindowPos(&vec, ImGuiCond__ImGuiSetCond_Always as _, &vec2);
+                let vec = ImVec2 { x: 960.0, y: 544.0 };
+                ImGui::SetNextWindowSize(&vec, ImGuiCond__ImGuiSetCond_Always as _);
+                if ImGui::Begin(
+                    c"##createcustomlayout".as_ptr() as _,
+                    ptr::null_mut(),
+                    (ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoResize
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoMove
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse) as _,
+                ) {
+                    if show_layout_create_settings(&mut global_settings, &mut custom_layout_context, &mut new_custom_layout) {
+                        custom_layout = false;
+                        screen_layouts.populate_custom_layouts(&global_settings.custom_layouts);
+                    }
+
+                    if (*ImGui::GetIO()).NavInputs[ImGuiNavInput__ImGuiNavInput_Cancel as usize] != 0f32 {
+                        custom_layout = false;
+                    }
+                }
+
+                ImGui::End();
+            } else if layout_settings {
+                let vec = ImVec2 { x: 0.0, y: 0.0 };
+                let vec2 = ImVec2 { x: 0.0, y: 0.0 };
+                ImGui::SetNextWindowPos(&vec, ImGuiCond__ImGuiSetCond_Always as _, &vec2);
+                let vec = ImVec2 { x: 960.0, y: 544.0 };
+                ImGui::SetNextWindowSize(&vec, ImGuiCond__ImGuiSetCond_Always as _);
+                if ImGui::Begin(
+                    c"##layoutsettings".as_ptr() as _,
+                    ptr::null_mut(),
+                    (ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoResize
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoMove
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse) as _,
+                ) {
+                    let vec = ImVec2 { x: -1f32, y: 0f32 };
+
+                    if ImGui::BeginPopupModal(
+                        c"customlayoutmenu".as_ptr(),
+                        ptr::null_mut(),
+                        (ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar
+                            | ImGuiWindowFlags__ImGuiWindowFlags_NoResize
+                            | ImGuiWindowFlags__ImGuiWindowFlags_NoMove
+                            | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse
+                            | ImGuiWindowFlags__ImGuiWindowFlags_AlwaysAutoResize) as _,
+                    ) {
+                        let vec = ImVec2 { x: 100.0, y: 50.0 };
+                        if ImGui::Button(c"Delete".as_ptr(), &vec) {
+                            global_settings.delete_custom_layout(selected_custom_layout.unwrap());
+                            screen_layouts.populate_custom_layouts(&global_settings.custom_layouts);
+                            selected_custom_layout = None;
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::SameLine(0.0, 5.0);
+                        if ImGui::Button(c"Back".as_ptr(), &vec) {
+                            selected_custom_layout = None;
+                            ImGui::CloseCurrentPopup();
+                        }
+
+                        ImGui::EndPopup();
+                    }
+
+                    if selected_custom_layout.is_some() {
+                        ImGui::OpenPopup(c"customlayoutmenu".as_ptr());
+                    }
+
+                    for (i, layout) in global_settings.custom_layouts.iter().enumerate() {
+                        let name = layout.name_c_str();
+                        if ImGui::Button(name.as_ptr(), &vec) {
+                            selected_custom_layout = Some(i);
+                        }
+                    }
+
+                    if ImGui::Button(c"Add custom layout".as_ptr() as _, &vec) {
+                        custom_layout = true;
+                        custom_layout_context = CustomLayoutContext::default();
+                        new_custom_layout = CustomLayout::default();
+                    }
+
+                    if (*ImGui::GetIO()).NavInputs[ImGuiNavInput__ImGuiNavInput_Cancel as usize] != 0f32 {
+                        layout_settings = false;
+                    }
+                }
+
+                ImGui::End();
+            } else if show_global_settings {
+                let vec = ImVec2 { x: 0.0, y: 0.0 };
+                let vec2 = ImVec2 { x: 0.0, y: 0.0 };
+                ImGui::SetNextWindowPos(&vec, ImGuiCond__ImGuiSetCond_Always as _, &vec2);
+                let vec = ImVec2 { x: 960.0, y: 544.0 };
+                ImGui::SetNextWindowSize(&vec, ImGuiCond__ImGuiSetCond_Always as _);
+                if ImGui::Begin(
+                    c"##globalsettings".as_ptr() as _,
+                    ptr::null_mut(),
+                    (ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoResize
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoMove
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse) as _,
+                ) {
+                    let vec = ImVec2 { x: -1f32, y: 0f32 };
+                    if ImGui::Button(c"Custom screen layout".as_ptr() as _, &vec) {
+                        layout_settings = true;
+                    }
+
+                    if (*ImGui::GetIO()).NavInputs[ImGuiNavInput__ImGuiNavInput_Cancel as usize] != 0f32 {
+                        show_global_settings = false;
+                    }
+                }
+
+                ImGui::End();
             }
 
             let io = ImGui::GetIO();
@@ -342,7 +476,11 @@ pub fn show_main_menu(cartridge_path: PathBuf, ui_backend: &mut impl UiBackend) 
 
         let preview = cartridges.remove(SELECTED.unwrap());
         let save_file = saves_path.join(format!("{}.sav", preview.file_name));
-        Some((CartridgeIo::from_preview(preview, save_file).unwrap(), settings_configs.remove(SELECTED.unwrap()).settings))
+        Some((
+            CartridgeIo::from_preview(preview, save_file).unwrap(),
+            global_settings,
+            settings_configs.remove(SELECTED.unwrap()).settings,
+        ))
     }
 }
 

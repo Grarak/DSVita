@@ -1,13 +1,15 @@
 use crate::cartridge_io::{CartridgeIo, CartridgePreview};
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::input;
+use crate::global_settings::GlobalSettings;
 use crate::logging::debug_panic;
 use crate::presenter::imgui::root::{
     ImDrawData, ImGui, ImGuiConfigFlags__ImGuiConfigFlags_NavEnableKeyboard, ImGui_ImplSdlGL3_Init, ImGui_ImplSdlGL3_NewFrame, ImGui_ImplSdlGL3_ProcessEvent, ImGui_ImplSdlGL3_RenderDrawData,
 };
-use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, show_progress, UiBackend, UiPauseMenuReturn};
+use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, show_progress, CustomLayoutContext, UiBackend, UiPauseMenuReturn};
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
-use crate::settings::{Arm7Emu, Framelimit, Settings, DEFAULT_SETTINGS};
+use crate::screen_layouts::{CustomLayout, ScreenLayouts};
+use crate::settings::{Arm7Emu, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
 use clap::{arg, command, value_parser, ArgAction, ArgMatches};
 use gl::types::GLuint;
@@ -70,7 +72,13 @@ impl Presenter {
     #[cold]
     pub fn new() -> Self {
         let arg_matches = command!()
-            .arg(arg!(-f <framelimit> "0: No 1: 100%, 2: 200%, 3: 300%").num_args(1).required(false).default_value("0").value_parser(value_parser!(u8)))
+            .arg(
+                arg!(-f <framelimit> "0: No 1: 100%, 2: 200%, 3: 300%")
+                    .num_args(1)
+                    .required(false)
+                    .default_value("0")
+                    .value_parser(value_parser!(u8)),
+            )
             .arg(arg!(audio: -a "Enable audio").required(false).action(ArgAction::SetTrue))
             .arg(
                 arg!(-e <arm7_emu> "0: Accurate, 1: SoundHle, 2: Hle")
@@ -150,7 +158,7 @@ impl Presenter {
         instance
     }
 
-    pub fn present_ui(&mut self) -> Option<(CartridgeIo, Settings)> {
+    pub fn present_ui(&mut self, screen_layouts: &mut ScreenLayouts) -> Option<(CartridgeIo, Settings)> {
         let file_path = PathBuf::from(self.arg_matches.get_one::<String>("nds_rom").unwrap());
         if self.arg_matches.get_flag("ui") {
             if file_path.exists() && file_path.is_file() {
@@ -158,10 +166,17 @@ impl Presenter {
                 std::process::exit(1);
             }
 
-            show_main_menu(file_path, self)
+            match show_main_menu(file_path, screen_layouts, self) {
+                None => None,
+                Some((cartridge_io, global_settings, mut settings)) => {
+                    screen_layouts.populate_custom_layouts(&global_settings.custom_layouts);
+                    settings.populate_screen_layouts(screen_layouts);
+                    Some((cartridge_io, settings))
+                }
+            }
         } else {
             let mut settings = DEFAULT_SETTINGS.clone();
-            settings.set_framelimit(Framelimit::from(*self.arg_matches.get_one::<u8>("framelimit").unwrap_or(&0)));
+            settings.set_framelimit(*self.arg_matches.get_one::<u8>("framelimit").unwrap_or(&0));
             settings.set_audio(self.arg_matches.get_flag("audio"));
             settings.set_arm7_emu(Arm7Emu::from(*self.arg_matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
 
@@ -292,4 +307,8 @@ impl UiBackend for Presenter {
     fn swap_window(&mut self) {
         self.gl_swap_window();
     }
+}
+
+pub fn show_layout_create_settings(_: &mut GlobalSettings, _: &mut CustomLayoutContext, _: &mut CustomLayout) -> bool {
+    true
 }

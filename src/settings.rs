@@ -1,4 +1,4 @@
-use crate::screen_layouts::ScreenLayout;
+use crate::screen_layouts::{ScreenLayout, ScreenLayouts};
 use ini::Ini;
 use lazy_static::lazy_static;
 use std::convert::Into;
@@ -8,50 +8,9 @@ use std::str::FromStr;
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, EnumString, IntoStaticStr};
 
-#[derive(Copy, Clone, Debug, Default, EnumIter, EnumString, Eq, PartialEq)]
-#[repr(u8)]
-pub enum Framelimit {
-    Off = 0,
-    #[default]
-    X100,
-    X125,
-    X150,
-    X175,
-    X200,
-    X250,
-    X300,
-    X400,
-    X500,
-}
-
-impl From<u8> for Framelimit {
-    fn from(value: u8) -> Self {
-        debug_assert!(value <= Framelimit::X500 as u8);
-        unsafe { std::mem::transmute(value) }
-    }
-}
-
-impl From<Framelimit> for u8 {
-    fn from(value: Framelimit) -> Self {
-        value as u8
-    }
-}
-
-impl Into<&'static str> for Framelimit {
-    fn into(self) -> &'static str {
-        match self {
-            Framelimit::Off => "off",
-            Framelimit::X100 => "100%",
-            Framelimit::X125 => "125%",
-            Framelimit::X150 => "150%",
-            Framelimit::X175 => "175%",
-            Framelimit::X200 => "200%",
-            Framelimit::X250 => "250%",
-            Framelimit::X300 => "300%",
-            Framelimit::X400 => "400%",
-            Framelimit::X500 => "500%",
-        }
-    }
+fn framelimit_value() -> SettingValue {
+    const VALUES: [&str; 10] = ["off", "100%", "125%", "150%", "175%", "200%", "250%", "300%", "400%", "500%"];
+    SettingValue::List(1, VALUES.into_iter().map(|value| value.to_string()).collect())
 }
 
 #[repr(u8)]
@@ -204,7 +163,7 @@ impl Setting {
 lazy_static! {
     pub static ref DEFAULT_SETTINGS: Settings = Settings(
         [
-            Setting::new("Framelimit", "", Framelimit::iter().into(), true),
+            Setting::new("Framelimit", "", framelimit_value(), true),
             Setting::new("Audio", "Disabling audio can give a performance boost.", SettingValue::Bool(true), true),
             Setting::new(
                 "Arm7 Emulation",
@@ -218,7 +177,7 @@ lazy_static! {
                 true),
             Setting::new("Upscale 3D", "2x upscale 3D polygons at the cost of lower framerate.", SettingValue::Bool(true), true),
             Setting::new("Audio stretching", "Enable if games doesn't run at fullspeed, introduces latency however prevents audio stutter.", SettingValue::Bool(true), true),
-            Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", ScreenLayout::settings_value(), true),
+            Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", SettingValue::List(0, vec![]), true),
             Setting::new("Swap screens", "Press PS + Cross to swap screens in game.", SettingValue::Bool(false), true),
             Setting::new("Top screen scale", "Press PS + Square to cycle screen sizes.", ScreenLayout::scale_settings_value(), true),
             Setting::new("Bottom screen scale", "Press PS + Circle to cycle screen sizes", ScreenLayout::scale_settings_value(), true),
@@ -248,9 +207,10 @@ enum SettingIndices {
 }
 
 impl Settings {
-    pub fn screen_layout(&self) -> ScreenLayout {
+    pub fn screen_layout(&self, screen_layouts: &ScreenLayouts) -> ScreenLayout {
         unsafe {
             ScreenLayout::new(
+                screen_layouts,
                 self.0[SettingIndices::ScreenLayout as usize].value.as_list().unwrap_unchecked().0,
                 self.0[SettingIndices::SwapScreen as usize].value.as_bool().unwrap_unchecked(),
                 self.0[SettingIndices::TopScreenScale as usize].value.as_list().unwrap_unchecked().0,
@@ -259,12 +219,20 @@ impl Settings {
         }
     }
 
+    pub fn populate_screen_layouts(&mut self, layouts: &ScreenLayouts) {
+        let (_, values) = unsafe { self.0[SettingIndices::ScreenLayout as usize].value.as_list_mut().unwrap_unchecked() };
+        values.clear();
+        for i in 0..layouts.len() {
+            values.push(layouts.get_name(i).to_string());
+        }
+    }
+
     pub fn joystick_as_dpad(&self) -> bool {
         unsafe { self.0[SettingIndices::JoystickAsDpad as usize].value.as_bool().unwrap_unchecked() }
     }
 
-    pub fn framelimit(&self) -> Framelimit {
-        unsafe { Framelimit::from(self.0[SettingIndices::Framelimit as usize].value.as_list().unwrap_unchecked().0 as u8) }
+    pub fn framelimit(&self) -> u8 {
+        unsafe { self.0[SettingIndices::Framelimit as usize].value.as_list().unwrap_unchecked().0 as u8 }
     }
 
     pub fn audio(&self) -> bool {
@@ -296,7 +264,7 @@ impl Settings {
         *self.0[SettingIndices::SwapScreen as usize].value.as_bool_mut().unwrap() = screen_layout.swap;
     }
 
-    pub fn set_framelimit(&mut self, value: Framelimit) {
+    pub fn set_framelimit(&mut self, value: u8) {
         *self.0[SettingIndices::Framelimit as usize].value.as_list_mut().unwrap().0 = value as usize;
     }
 

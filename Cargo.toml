@@ -1,4 +1,4 @@
-workspace = { members = ["screenlayouts", "macros", "vitabuild", "vitaGL", "vixl"] }
+workspace = { members = ["macros", "vitabuild", "vitaGL", "vixl"] }
 [package]
 name = "dsvita"
 version = "0.9.0"
@@ -21,9 +21,9 @@ enum_dispatch = "0.3.13"
 gl = { git = "https://github.com/bjz/gl-rs" }
 glyph_brush = "0.7.12"
 lazy_static = "1.5.0"
+nalgebra = "0.34.1"
 paste = "1.0.15"
 rust-ini = "0.21.1"
-screenlayouts = { path = "screenlayouts" }
 static_assertions = "1.1.0"
 strum = "0.27.1"
 strum_macros = "0.27.1"
@@ -61,7 +61,7 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceShaccCg_stub",
     "ScePower_stub",
     "SceSysrootForKernel_stub",
-#    "SceRazorCapture_stub",
+    #    "SceRazorCapture_stub",
 ] }
 vita_gl = { path = "vitaGL" }
 

@@ -399,9 +399,9 @@ dependencies = [
  "glyph_brush",
  "lazy_static",
  "libc",
+ "nalgebra",
  "paste",
  "rust-ini",
- "screenlayouts",
  "sdl2",
  "static_assertions",
  "strum",
@@ -1119,13 +1119,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "screenlayouts"
-version = "0.1.0"
-dependencies = [
- "nalgebra",
 ]
 
 [[package]]

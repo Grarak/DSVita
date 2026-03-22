@@ -3,7 +3,6 @@ use crate::core::emu::Emu;
 use crate::core::CpuType::ARM7;
 use crate::logging::debug_println;
 use crate::presenter::{PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE};
-use crate::settings::Framelimit;
 use crate::soundtouch::SoundTouch;
 use crate::utils::{array_init, HeapArrayU32};
 use bilge::prelude::*;
@@ -72,7 +71,7 @@ impl SoundSampler {
         *self.cond_mutex.lock().unwrap() = false;
     }
 
-    fn push(&mut self, sample: u32, framelimit: Framelimit, audio_stretching: bool) {
+    fn push(&mut self, sample: u32, framelimit: u8, audio_stretching: bool) {
         while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
 
         unsafe { assert_unchecked(self.busy_queue <= 1) };
@@ -106,7 +105,7 @@ impl SoundSampler {
                 self.condvar.notify_one();
             }
 
-            if framelimit != Framelimit::Off && *other_size == sample_limit {
+            if framelimit != 0 && *other_size == sample_limit {
                 self.waiting = true;
                 self.busy.store(false, Ordering::SeqCst);
                 thread::park();
