@@ -1,7 +1,7 @@
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::math;
 use crate::presenter::{PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
-use crate::settings::SettingValue;
+use crate::settings::{ListInner, SettingValue};
 use ini::{Properties, SectionSetter};
 use nalgebra::{Matrix3, Vector2, Vector3};
 use std::f32::consts::PI;
@@ -228,7 +228,7 @@ pub struct ScreenLayout {
 
 impl ScreenLayout {
     pub fn scale_settings_value() -> SettingValue {
-        SettingValue::List(3, SCALE_FACTORS.iter().map(|factor| format!("{}%", (factor * 100.0) as u8)).collect())
+        SettingValue::List(ListInner::new(3, SCALE_FACTORS.iter().map(|factor| format!("{}%", (factor * 100.0) as u8)).collect()))
     }
 
     fn scale_matrix(factor: f32) -> [f32; 9] {

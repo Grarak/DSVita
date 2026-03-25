@@ -3,6 +3,7 @@ use ini::Ini;
 use lazy_static::lazy_static;
 use std::convert::Into;
 use std::fmt::{Debug, Display, Formatter};
+use std::hint::unreachable_unchecked;
 use std::path::PathBuf;
 use std::str::FromStr;
 use strum::IntoEnumIterator;
@@ -10,7 +11,7 @@ use strum_macros::{EnumIter, EnumString, IntoStaticStr};
 
 fn framelimit_value() -> SettingValue {
     const VALUES: [&str; 10] = ["off", "100%", "125%", "150%", "175%", "200%", "250%", "300%", "400%", "500%"];
-    SettingValue::List(1, VALUES.into_iter().map(|value| value.to_string()).collect())
+    SettingValue::List(ListInner::new(1, VALUES.into_iter().map(|value| value.to_string()).collect()))
 }
 
 #[repr(u8)]
@@ -61,14 +62,38 @@ impl From<Language> for u8 {
 }
 
 #[derive(Clone)]
+pub struct ListInner {
+    pub selection: usize,
+    pub values: Vec<String>,
+    initial_selection: String,
+}
+
+impl ListInner {
+    pub fn new(selection: usize, values: Vec<String>) -> Self {
+        ListInner {
+            initial_selection: if selection >= values.len() { "".to_string() } else { values[selection].clone() },
+            selection,
+            values,
+        }
+    }
+
+    fn reset_to_initial_selection(&mut self) {
+        self.selection = self.values.iter().position(|value| self.initial_selection == *value).unwrap_or(0)
+    }
+}
+
+#[derive(Clone)]
 pub enum SettingValue {
     Bool(bool),
-    List(usize, Vec<String>),
+    List(ListInner),
 }
 
 impl<D: Default + Into<u8> + Sized + Into<&'static str>, T: Iterator<Item = D>> From<T> for SettingValue {
     fn from(value: T) -> Self {
-        SettingValue::List(Into::<u8>::into(D::default()) as usize, value.map(|d| Into::<&'static str>::into(d).to_string()).collect())
+        SettingValue::List(ListInner::new(
+            Into::<u8>::into(D::default()) as usize,
+            value.map(|d| Into::<&'static str>::into(d).to_string()).collect(),
+        ))
     }
 }
 
@@ -76,7 +101,7 @@ impl SettingValue {
     pub fn next(&mut self) {
         match self {
             SettingValue::Bool(value) => *value ^= true,
-            SettingValue::List(selection, values) => *selection = (*selection + 1) % values.len(),
+            SettingValue::List(inner) => inner.selection = (inner.selection + 1) % inner.values.len(),
         }
     }
 
@@ -96,14 +121,14 @@ impl SettingValue {
 
     pub fn as_list(&self) -> Option<(usize, &Vec<String>)> {
         match self {
-            SettingValue::List(selection, values) => Some((*selection, values)),
+            SettingValue::List(inner) => Some((inner.selection, &inner.values)),
             _ => None,
         }
     }
 
     pub fn as_list_mut(&mut self) -> Option<(&mut usize, &mut Vec<String>)> {
         match self {
-            SettingValue::List(selection, values) => Some((selection, values)),
+            SettingValue::List(inner) => Some((&mut inner.selection, &mut inner.values)),
             _ => None,
         }
     }
@@ -111,10 +136,9 @@ impl SettingValue {
     fn parse_str(&mut self, str: &str) {
         match self {
             SettingValue::Bool(value) => *value = bool::from_str(str).unwrap_or(false),
-            SettingValue::List(selection, values) => {
-                if let Some(index) = values.iter().position(|value| value == str) {
-                    *selection = index;
-                }
+            SettingValue::List(inner) => {
+                inner.initial_selection = str.to_string();
+                inner.reset_to_initial_selection();
             }
         }
     }
@@ -122,7 +146,7 @@ impl SettingValue {
     fn to_parse_string(&self) -> String {
         match self {
             SettingValue::Bool(value) => value.to_string(),
-            SettingValue::List(selection, values) => values[*selection].to_string(),
+            SettingValue::List(inner) => inner.values[inner.selection].to_string(),
         }
     }
 }
@@ -140,7 +164,7 @@ impl Display for SettingValue {
                         "off"
                     }
                 }
-                SettingValue::List(selection, values) => &values[*selection],
+                SettingValue::List(inner) => &inner.values[inner.selection],
             }
         )
     }
@@ -177,7 +201,7 @@ lazy_static! {
                 true),
             Setting::new("Upscale 3D", "2x upscale 3D polygons at the cost of lower framerate.", SettingValue::Bool(true), true),
             Setting::new("Audio stretching", "Enable if games doesn't run at fullspeed, introduces latency however prevents audio stutter.", SettingValue::Bool(true), true),
-            Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", SettingValue::List(0, vec![]), true),
+            Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", SettingValue::List(ListInner::new(0, vec![])), true),
             Setting::new("Swap screens", "Press PS + Cross to swap screens in game.", SettingValue::Bool(false), true),
             Setting::new("Top screen scale", "Press PS + Square to cycle screen sizes.", ScreenLayout::scale_settings_value(), true),
             Setting::new("Bottom screen scale", "Press PS + Circle to cycle screen sizes", ScreenLayout::scale_settings_value(), true),
@@ -223,9 +247,16 @@ impl Settings {
 
     pub fn populate_screen_layouts(&mut self, layouts: &ScreenLayouts) {
         let (_, values) = unsafe { self.0[SettingIndices::ScreenLayout as usize].value.as_list_mut().unwrap_unchecked() };
+        let first_population = values.is_empty();
         values.clear();
         for i in 0..layouts.len() {
             values.push(layouts.get_name(i).to_string());
+        }
+        if first_population {
+            match &mut self.0[SettingIndices::ScreenLayout as usize].value {
+                SettingValue::List(inner) => inner.reset_to_initial_selection(),
+                _ => unsafe { unreachable_unchecked() },
+            }
         }
     }
 

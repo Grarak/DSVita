@@ -69,22 +69,22 @@ unsafe fn show_settings(settings_config: &mut SettingsConfig, only_runtime: bool
                     settings_config.dirty = true;
                 }
             }
-            SettingValue::List(selection, values) => {
-                if *selection >= values.len() {
-                    *selection = 0;
+            SettingValue::List(inner) => {
+                if inner.selection >= inner.values.len() {
+                    inner.selection = 0;
                 }
-                let value = CString::from_str(&values[*selection]).unwrap();
+                let value = CString::from_str(&inner.values[inner.selection]).unwrap();
 
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 125f32);
 
                 let id = CString::new(format!("##{i}_list")).unwrap();
                 if ImGui::BeginCombo(id.as_ptr() as _, value.as_ptr() as _, 0) {
-                    for (i, value) in values.iter().enumerate() {
-                        let is_selected = i == *selection;
+                    for (i, value) in inner.values.iter().enumerate() {
+                        let is_selected = i == inner.selection;
                         let value_cstr = CString::from_str(value).unwrap();
                         let size = ImVec2 { x: 0f32, y: 0f32 };
                         if ImGui::Selectable(value_cstr.as_ptr() as _, is_selected, 0, &size) {
-                            *selection = i;
+                            inner.selection = i;
                             settings_config.dirty = true;
                         }
                         if is_selected {
