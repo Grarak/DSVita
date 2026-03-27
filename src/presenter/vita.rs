@@ -400,10 +400,6 @@ impl Presenter {
         vita_gl::vgl_memalign(alignment, size, VglMemType::Vram)
     }
 
-    pub unsafe fn gl_bind_frag_ubo(index: u32) {
-        vita_gl::vglBindFragUbo(index);
-    }
-
     pub fn gl_version_suffix() -> &'static str {
         vita_gl::VITA_GL_VERSION
     }

@@ -33,7 +33,6 @@ unsafe extern "C" {
     pub fn vglGetProcAddress(name: *const u8) -> *const u8;
     pub fn vglRemapTexPtr() -> *mut u8;
     pub fn glTexImage2Drgba5(width: i32, height: i32);
-    pub fn vglBindFragUbo(index: u32);
     pub fn vglBufferData(target: u32, data: *const u8);
     pub fn vgl_memalign(alignment: usize, size: usize, vgl_mem_type: VglMemType) -> *mut u8;
 }
