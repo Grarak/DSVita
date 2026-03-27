@@ -774,11 +774,6 @@ impl Gpu3DRenderer {
                 gl::DepthFunc(gl::LEQUAL);
             }
 
-            gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
-            gl::StencilFunc(gl::ALWAYS, u8::from(batch.attr.id()) as _, 0x3F);
-            gl::StencilOp(gl::KEEP, gl::KEEP, gl::REPLACE);
-            gl::StencilMask(0x3F);
-
             if translucent_only {
                 if batch.attr.trans_new_depth() {
                     gl::DepthFunc(gl::EQUAL);
@@ -794,12 +789,24 @@ impl Gpu3DRenderer {
                         gl::StencilFunc(gl::NOTEQUAL, u8::from(batch.attr.id()) as _, 0x3F);
                         gl::StencilOp(gl::ZERO, gl::KEEP, gl::KEEP);
                     }
+                } else {
+                    gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
+                    gl::StencilMask(0x7F);
+                    gl::StencilFunc(gl::NOTEQUAL, (u8::from(batch.attr.id()) | 0x40) as _, 0x7F);
+                    gl::StencilOp(gl::KEEP, gl::KEEP, gl::REPLACE);
                 }
-            } else if batch.attr.trans_new_depth() {
-                gl::Enable(gl::BLEND);
-                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             } else {
-                gl::Disable(gl::BLEND);
+                gl::ColorMask(gl::TRUE, gl::TRUE, gl::TRUE, gl::TRUE);
+                gl::StencilMask(0x7F);
+                gl::StencilFunc(gl::ALWAYS, u8::from(batch.attr.id()) as _, 0x7F);
+                gl::StencilOp(gl::KEEP, gl::KEEP, gl::REPLACE);
+
+                if batch.attr.trans_new_depth() {
+                    gl::Enable(gl::BLEND);
+                    gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+                } else {
+                    gl::Disable(gl::BLEND);
+                }
             }
 
             if !batch.attr.render_back() || !batch.attr.render_front() {
@@ -855,6 +862,7 @@ impl Gpu3DRenderer {
         gl::ClearColor(r, g, b, a);
 
         // gl::ClearDepth(self.inners[0].clear_depthf as _);
+        gl::StencilMask(0xFF);
         gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT | gl::STENCIL_BUFFER_BIT);
 
         self.vertices_buf_count = 0;
