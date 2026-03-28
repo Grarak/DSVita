@@ -1,3 +1,4 @@
+use std::ops::Index;
 use std::{
     fmt::{Debug, Formatter},
     mem,
@@ -115,5 +116,17 @@ where
             list.entry(&self.fifo[start as usize]);
         }
         list.finish()
+    }
+}
+
+impl<T, const SIZE: u16> Index<u16> for FixedFifo<T, SIZE>
+where
+    [(); SIZE as usize]:,
+{
+    type Output = T;
+
+    fn index(&self, index: u16) -> &Self::Output {
+        let index = (index + self.start) % SIZE;
+        &self.fifo[index as usize]
     }
 }

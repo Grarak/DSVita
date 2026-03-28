@@ -229,7 +229,7 @@ impl Emu {
                     &mut self.breakout_imm,
                 );
 
-                if self.gpu.gpu_3d_regs.flushed {
+                if self.gpu.gpu_3d_regs.is_flushed() {
                     self.gpu.gpu_3d_regs.swap_buffers(self.settings.geometry_3d_skip());
                     self.gpu.renderer.renderer_3d.invalidate();
                 }

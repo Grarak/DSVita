@@ -14,7 +14,7 @@ use paste::paste;
 use std::arch::arm::{
     int32x4_t, vcombine_s32, vget_high_s32, vget_low_s32, vld1_s32, vld1q_s32, vld1q_s32_x3, vld1q_s32_x4, vnegq_s32, vsetq_lane_s32, vshrq_n_s32, vst1q_s32, vst1q_s32_x4, vsub_s32,
 };
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::hint::assert_unchecked;
 use std::intrinsics::{likely, unlikely};
 use std::mem::MaybeUninit;
@@ -393,14 +393,17 @@ pub struct Polygon {
 
 #[bitsize(8)]
 #[derive(Copy, Clone, Default, FromBits)]
-struct DirtyFlags {
+struct Gpu3DFlags {
     clip_dirty: u2,
     tex_push: bool,
     polygon_dirty: bool,
-    unused: u4,
+    test_queue_busy: bool,
+    test_queue_dirty: bool,
+    flushed: bool,
+    skip: bool,
 }
 
-impl DirtyFlags {
+impl Gpu3DFlags {
     fn is_clip_dirty(self) -> bool {
         u8::from(self.clip_dirty()) != 0
     }
@@ -512,10 +515,7 @@ pub struct Gpu3DRegisters {
     cmd_fifo: FixedFifo<u32, 4096>,
     cmd_remaining_params: u8,
 
-    test_queue: u8,
-
     pub last_total_cycles: u32,
-    pub flushed: bool,
 
     pub gx_stat: GxStat,
 
@@ -540,11 +540,10 @@ pub struct Gpu3DRegisters {
     pos_result: Vectori32<4>,
     vec_result: Vectori16<3>,
 
-    dirty_flags: DirtyFlags,
+    flags: Gpu3DFlags,
 
     out_buffers: Gpu3DBuffers,
     buffer: HeapMem<Gpu3DBuffer>,
-    skip: bool,
 }
 
 macro_rules! unpacked_cmd {
@@ -560,7 +559,7 @@ macro_rules! unpacked_cmd {
 impl Emu {
     pub fn regs_3d_run_cmds(&mut self, total_cycles: u32) {
         let regs_3d = &mut self.gpu.gpu_3d_regs;
-        if unlikely(regs_3d.cmd_fifo.is_empty() || regs_3d.flushed) {
+        if unlikely(regs_3d.cmd_fifo.is_empty() || regs_3d.flags.flushed()) {
             regs_3d.last_total_cycles = total_cycles;
             return;
         }
@@ -593,7 +592,7 @@ impl Emu {
                 }
 
                 let skippable = param_count.can_skip();
-                if !regs_3d.skip || likely(!skippable) {
+                if !regs_3d.flags.skip() || likely(!skippable) {
                     for i in 0..count {
                         unsafe { *params.get_unchecked_mut(i) = *regs_3d.cmd_fifo.front() };
                         regs_3d.cmd_fifo.pop_front();
@@ -615,6 +614,8 @@ impl Emu {
             }
         }
 
+        regs_3d.flags.set_test_queue_dirty(true);
+
         if is_cmd_fifo_half_full && !regs_3d.is_cmd_fifo_half_full() {
             self.dma_trigger_all(ARM9, DmaTransferMode::GeometryCmdFifo);
         }
@@ -633,6 +634,7 @@ impl Emu {
 
     #[inline(always)]
     fn regs_3d_post_queue_entry(&mut self) {
+        self.gpu.gpu_3d_regs.flags.set_test_queue_dirty(true);
         if unlikely(self.gpu.gpu_3d_regs.is_cmd_fifo_full()) {
             self.breakout_imm = true;
             self.cpu_halt(ARM9, 1);
@@ -647,14 +649,14 @@ impl Emu {
         self.gpu.gpu_3d_regs.matrices.dir[(index / 3) * 4 + index % 3] as u32
     }
 
-    pub fn regs_3d_get_gx_stat(&self) -> u32 {
-        let regs_3d = &self.gpu.gpu_3d_regs;
+    pub fn regs_3d_get_gx_stat(&mut self) -> u32 {
+        let regs_3d = &mut self.gpu.gpu_3d_regs;
         let mut gx_stat = regs_3d.gx_stat;
         gx_stat.set_geometry_busy(!regs_3d.cmd_fifo.is_empty());
         gx_stat.set_num_entries_cmd_fifo(u9::new(regs_3d.get_cmd_fifo_len() as u16));
         gx_stat.set_cmd_fifo_less_half_full(!regs_3d.is_cmd_fifo_half_full());
         gx_stat.set_cmd_fifo_empty(regs_3d.is_cmd_fifo_empty());
-        gx_stat.set_box_pos_vec_test_busy(regs_3d.test_queue != 0);
+        gx_stat.set_box_pos_vec_test_busy(regs_3d.is_test_queue_busy());
         u32::from(gx_stat)
     }
 
@@ -674,20 +676,6 @@ impl Emu {
     pub fn regs_3d_set_gx_fifo(&mut self, mask: u32, value: u32) {
         let value = value & mask;
         let regs_3d = &mut self.gpu.gpu_3d_regs;
-        let mut remaining_params = regs_3d.cmd_remaining_params;
-        let mut test_queue = regs_3d.test_queue;
-        if remaining_params == 0 {
-            for i in 0..4 {
-                let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                let param = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
-                remaining_params += param & 0x3F;
-                test_queue += (param >> 6) & 1;
-            }
-        } else {
-            remaining_params -= 1;
-        }
-        regs_3d.cmd_remaining_params = remaining_params;
-        regs_3d.test_queue = test_queue;
         regs_3d.cmd_fifo.push_back(value);
         self.regs_3d_post_queue_entry();
     }
@@ -696,35 +684,7 @@ impl Emu {
     pub fn regs_3d_set_gx_fifo_multiple(&mut self, values: &[u32]) {
         unsafe { assert_unchecked(!values.is_empty()) };
         let regs_3d = &mut self.gpu.gpu_3d_regs;
-        let mut remaining_params = regs_3d.cmd_remaining_params;
-        let mut test_queue = regs_3d.test_queue;
-        let mut consumed = 0;
-        while consumed < values.len() {
-            if remaining_params == 0 {
-                let value = values[consumed];
-                for i in 0..4 {
-                    let cmd = ((value as usize) >> (i << 3)) & 0x7F;
-                    let param = unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) };
-                    remaining_params += param & 0x3F;
-                    test_queue += (param >> 6) & 1;
-                }
-                consumed += 1;
-                regs_3d.cmd_fifo.push_back(value);
-            }
-
-            if unlikely(consumed >= values.len()) {
-                break;
-            }
-
-            let values = &values[consumed..];
-
-            let can_consume = min(remaining_params as usize, values.len());
-            regs_3d.cmd_fifo.push_back_multiple(&values[..can_consume]);
-            remaining_params -= can_consume as u8;
-            consumed += can_consume;
-        }
-        regs_3d.cmd_remaining_params = remaining_params;
-        regs_3d.test_queue = test_queue;
+        regs_3d.cmd_fifo.push_back_multiple(values);
         self.regs_3d_post_queue_entry();
     }
 
@@ -736,11 +696,6 @@ impl Emu {
             if regs_3d.cmd_remaining_params > 0 {
                 regs_3d.cmd_remaining_params -= 1;
                 regs_3d.cmd_fifo.push_back(value);
-            }
-
-            match CMD {
-                0x70 | 0x71 | 0x72 => regs_3d.test_queue += 1,
-                _ => {}
             }
         } else {
             regs_3d.cmd_remaining_params -= 1;
@@ -799,12 +754,9 @@ impl Emu {
 
 impl Gpu3DRegisters {
     pub fn new() -> Self {
-        let mut mtx_flags = DirtyFlags::from(0);
-        mtx_flags.set_tex_push(true);
-        Gpu3DRegisters {
-            dirty_flags: mtx_flags,
-            ..Gpu3DRegisters::default()
-        }
+        let mut flags = Gpu3DFlags::from(0);
+        flags.set_tex_push(true);
+        Gpu3DRegisters { flags, ..Gpu3DRegisters::default() }
     }
 
     fn is_cmd_fifo_full(&self) -> bool {
@@ -825,8 +777,8 @@ impl Gpu3DRegisters {
 
     #[inline(never)]
     pub fn get_clip_matrix(&mut self) -> &Matrix {
-        if unlikely(self.dirty_flags.is_clip_dirty()) {
-            self.dirty_flags.set_clip_dirty_bool(false);
+        if unlikely(self.flags.is_clip_dirty()) {
+            self.flags.set_clip_dirty_bool(false);
             let last_ptr = self.buffer.clip_matrices.push_empty();
             unsafe {
                 vmult_mat4(self.matrices.coord.vld(), self.matrices.proj.vld(), mem::transmute(last_ptr));
@@ -835,6 +787,50 @@ impl Gpu3DRegisters {
         } else {
             unsafe { self.buffer.clip_matrices.last().unwrap_unchecked() }
         }
+    }
+
+    fn is_test_queue_busy(&mut self) -> bool {
+        if !self.flags.test_queue_dirty() {
+            return self.flags.test_queue_busy();
+        }
+
+        self.flags.set_test_queue_dirty(false);
+
+        if self.cmd_fifo.is_empty() {
+            self.flags.set_test_queue_busy(false);
+            return false;
+        }
+
+        let mut offset = 0;
+
+        while offset < self.cmd_fifo.len() {
+            let mut value = self.cmd_fifo[offset];
+            let mut param_count = 0;
+            offset += 1;
+
+            while value != 0 {
+                let cmd = (value & 0x7F) as usize;
+                value >>= 8;
+                let param = FifoParam::from(unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) });
+
+                if param.is_test() {
+                    self.flags.set_test_queue_busy(true);
+                    return true;
+                }
+
+                let count = u8::from(param.param_count()) as u16;
+                param_count += count;
+            }
+
+            offset += param_count;
+        }
+
+        self.flags.set_test_queue_busy(false);
+        false
+    }
+
+    pub fn is_flushed(&self) -> bool {
+        self.flags.flushed()
     }
 
     fn exe_mat_group(&mut self, cmd: usize, params: &[u32; 32]) {
@@ -1008,7 +1004,7 @@ impl Gpu3DRegisters {
                 if u8::from(self.gx_stat.proj_mtx_stack_lvl()) == 1 {
                     self.matrices.proj = self.matrices.proj_stack.clone();
                     self.gx_stat.set_proj_mtx_stack_lvl(u1::new(0));
-                    self.dirty_flags.set_clip_dirty_bool(true);
+                    self.flags.set_clip_dirty_bool(true);
                 } else {
                     self.gx_stat.set_mtx_stack_overflow_underflow_err(true);
                 }
@@ -1023,12 +1019,12 @@ impl Gpu3DRegisters {
                     self.gx_stat.set_pos_vec_mtx_stack_lvl(u5::new(ptr));
                     self.matrices.coord = self.matrices.coord_stack[ptr as usize].clone();
                     self.matrices.dir = self.matrices.dir_stack[ptr as usize].clone();
-                    self.dirty_flags.set_clip_dirty_bool(true);
+                    self.flags.set_clip_dirty_bool(true);
                 }
             }
             MtxMode::Texture => {
                 self.matrices.tex = self.matrices.tex_stack.clone();
-                self.dirty_flags.set_tex_push(true);
+                self.flags.set_tex_push(true);
             }
         }
     }
@@ -1052,7 +1048,7 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_restore(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.dirty_flags.value |= mode; // Overflows to 4 when mode is texture, which sets the appropriate flags
+        self.flags.value |= mode; // Overflows to 4 when mode is texture, which sets the appropriate flags
 
         match self.mtx_mode {
             MtxMode::Projection => self.matrices.proj = self.matrices.proj_stack.clone(),
@@ -1072,7 +1068,7 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_identity(&mut self, _: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.dirty_flags.value |= mode;
+        self.flags.value |= mode;
 
         let dst = unsafe { ptr::addr_of_mut!(self.matrices.proj).add(self.mtx_mode as usize).as_mut_unchecked() };
         unsafe {
@@ -1086,7 +1082,7 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_load44(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.dirty_flags.value |= mode;
+        self.flags.value |= mode;
 
         let params: &[u32; 16] = unsafe { mem::transmute(params) };
         let mtx: &Matrix = unsafe { mem::transmute(params) };
@@ -1103,7 +1099,7 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_load43(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.dirty_flags.value |= mode;
+        self.flags.value |= mode;
 
         let load = |mtx: &mut Matrix| {
             for i in 0..4 {
@@ -1125,7 +1121,7 @@ impl Gpu3DRegisters {
     #[inline(always)]
     fn mtx_mult(&mut self, mtx: [int32x4_t; 4]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.dirty_flags.value |= mode;
+        self.flags.value |= mode;
 
         let dst = unsafe { ptr::addr_of_mut!(self.matrices.proj).add(self.mtx_mode as usize).as_mut_unchecked() };
         unsafe { vmult_mat4(mtx, dst.vld(), &mut dst.0) };
@@ -1168,7 +1164,7 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_scale(&mut self, params: &[u32; 32]) {
         let mode = self.mtx_mode as u8 + 1;
-        self.dirty_flags.value |= mode;
+        self.flags.value |= mode;
 
         static mut SCALE_MTX: [i32; 16] = MTX_IDENTITY;
         unsafe {
@@ -1205,9 +1201,9 @@ impl Gpu3DRegisters {
         self.cur_vtx.normal[2] = ((u16::from(normal_vector_param.z()) << 6) as i16) >> 3;
 
         if self.cur_vtx.data.coord_trans_mode() == TextureCoordTransMode::Normal {
-            if self.dirty_flags.tex_push() {
+            if self.flags.tex_push() {
                 self.buffer.tex_matrices.push(&self.matrices.tex);
-                self.dirty_flags.set_tex_push(false);
+                self.flags.set_tex_push(false);
             }
             unsafe { self.cur_vtx.s.indices.tex_matrix = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1) };
         }
@@ -1300,9 +1296,9 @@ impl Gpu3DRegisters {
         }
 
         if self.cur_vtx.data.coord_trans_mode() == TextureCoordTransMode::TexCoord {
-            if self.dirty_flags.tex_push() {
+            if self.flags.tex_push() {
                 self.buffer.tex_matrices.push(&self.matrices.tex);
-                self.dirty_flags.set_tex_push(false);
+                self.flags.set_tex_push(false);
             }
             unsafe { self.cur_vtx.s.indices.tex_matrix = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1) };
         }
@@ -1367,12 +1363,12 @@ impl Gpu3DRegisters {
         let tex_image_param = TexImageParam::from(params[0]);
         self.cur_polygon.tex_image_param = tex_image_param;
         self.cur_vtx.data.set_coord_trans_mode(tex_image_param.coord_trans_mode());
-        self.dirty_flags.set_polygon_dirty(true);
+        self.flags.set_polygon_dirty(true);
     }
 
     fn exe_pltt_base(&mut self, params: &[u32; 32]) {
         self.cur_polygon.palette_addr = (params[0] & 0x1FFF) as u16;
-        self.dirty_flags.set_polygon_dirty(true);
+        self.flags.set_polygon_dirty(true);
     }
 
     fn exe_dif_amb(&mut self, params: &[u32; 32]) {
@@ -1432,7 +1428,7 @@ impl Gpu3DRegisters {
         self.cur_polygon.viewport = self.cur_viewport;
 
         self.cur_vtx.data.set_begin_vtxs(true);
-        self.dirty_flags.set_polygon_dirty(true);
+        self.flags.set_polygon_dirty(true);
     }
 
     fn exe_swap_buffers(&mut self, cmd: usize, params: &[u32; 32]) {
@@ -1442,7 +1438,7 @@ impl Gpu3DRegisters {
 
         debug_println!("execute exe_swap_buffers {cmd:x}");
 
-        self.flushed = true;
+        self.flags.set_flushed(true);
         self.buffer.swap_buffers = SwapBuffers::from(params[0] as u8);
         self.cur_vtx.data.set_begin_vtxs(false);
     }
@@ -1459,8 +1455,6 @@ impl Gpu3DRegisters {
 
     fn exe_box_test(&mut self, _: &[u32; 32]) {
         self.gx_stat.set_box_test_result(true);
-
-        self.test_queue -= 1;
     }
 
     fn exe_pos_test(&mut self, params: &[u32; 32]) {
@@ -1471,8 +1465,6 @@ impl Gpu3DRegisters {
             self.cur_vtx.coords.fixed[3] = 1 << 12;
             self.pos_result = self.cur_vtx.coords.fixed * self.get_clip_matrix();
         }
-
-        self.test_queue -= 1;
     }
 
     fn exe_vec_test(&mut self, params: &[u32; 32]) {
@@ -1486,24 +1478,22 @@ impl Gpu3DRegisters {
         self.vec_result[0] = ((vector[0] << 3) as i16) >> 3;
         self.vec_result[1] = ((vector[1] << 3) as i16) >> 3;
         self.vec_result[2] = ((vector[2] << 3) as i16) >> 3;
-
-        self.test_queue -= 1;
     }
 
     pub fn swap_buffers(&mut self, skip_when_full: bool) {
-        self.flushed = false;
-        if !self.skip {
+        self.flags.set_flushed(false);
+        if !self.flags.skip() {
             if !skip_when_full {
                 self.out_buffers.push_front(&mut self.buffer);
             } else {
                 self.out_buffers.push_back(&mut self.buffer);
             }
         }
-        self.skip = skip_when_full && self.out_buffers.is_full();
+        self.flags.set_skip(skip_when_full && self.out_buffers.is_full());
 
         self.buffer.reset();
-        self.dirty_flags.set_clip_dirty_bool(true);
-        self.dirty_flags.set_polygon_dirty(true);
+        self.flags.set_clip_dirty_bool(true);
+        self.flags.set_polygon_dirty(true);
 
         let tex_matrix_index = unsafe { self.cur_vtx.s.indices.tex_matrix };
         if (tex_matrix_index as usize) < self.buffer.tex_matrices.len() {
@@ -1544,15 +1534,15 @@ impl Gpu3DRegisters {
         self.get_clip_matrix();
 
         if self.cur_vtx.data.coord_trans_mode() == TextureCoordTransMode::Vertex {
-            if unlikely(self.dirty_flags.tex_push()) {
+            if unlikely(self.flags.tex_push()) {
                 self.buffer.tex_matrices.push(&self.matrices.tex);
-                self.dirty_flags.set_tex_push(false);
+                self.flags.set_tex_push(false);
             }
             unsafe { self.cur_vtx.s.indices.tex_matrix = (self.buffer.tex_matrices.len() as u16).wrapping_sub(1) };
         }
 
-        if unlikely(self.dirty_flags.polygon_dirty()) {
-            self.dirty_flags.set_polygon_dirty(false);
+        if unlikely(self.flags.polygon_dirty()) {
+            self.flags.set_polygon_dirty(false);
             let polygon_count = self.buffer.polygons_count;
             if unlikely(polygon_count as usize == POLYGON_LIMIT) {
                 return;
