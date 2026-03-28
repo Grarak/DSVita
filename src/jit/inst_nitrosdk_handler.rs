@@ -196,7 +196,7 @@ unsafe extern "C" fn hle_mi_cpu_send32<const CPU: CpuType>(guest_pc: u32) {
         };
 
         if CPU == ARM9 && likely(dst >= 0x4000400 && dst < 0x4000440) {
-            asm.emu.regs_3d_set_gx_fifo_multiple(values);
+            asm.emu.regs_3d_set_gx_fifo_multiple::<false>(values);
         } else {
             asm.emu.mem_write_multiple_slice::<CPU, true, u32>(dst, values);
         }
@@ -295,7 +295,7 @@ unsafe extern "C" fn hle_gx_fifo_nop_clear128(guest_pc: u32) {
     debug_assert_eq!(dst, 0x4000400);
 
     let nops = [0; 128];
-    asm.emu.regs_3d_set_gx_fifo_multiple(&nops);
+    asm.emu.regs_3d_set_gx_fifo_multiple::<true>(&nops);
 
     hle_post_function::<{ ARM9 }>(asm, 167, guest_pc);
 }
@@ -320,7 +320,7 @@ unsafe extern "C" fn hle_gx_fifo_send64b(guest_pc: u32) {
         asm.emu.mem_read_multiple_slice::<{ ARM9 }, true, false, u32>(aligned_addr, buf);
     }
 
-    asm.emu.regs_3d_set_gx_fifo_multiple(buf);
+    asm.emu.regs_3d_set_gx_fifo_multiple::<true>(buf);
 
     hle_post_function::<{ ARM9 }>(asm, 44, guest_pc);
 }
@@ -345,7 +345,7 @@ unsafe extern "C" fn hle_gx_fifo_send48b(guest_pc: u32) {
         asm.emu.mem_read_multiple_slice::<{ ARM9 }, true, false, u32>(aligned_addr, buf);
     }
 
-    asm.emu.regs_3d_set_gx_fifo_multiple(buf);
+    asm.emu.regs_3d_set_gx_fifo_multiple::<true>(buf);
 
     hle_post_function::<{ ARM9 }>(asm, 39, guest_pc);
 }
@@ -370,7 +370,7 @@ unsafe extern "C" fn hle_gx_fifo_send128b(guest_pc: u32) {
         asm.emu.mem_read_multiple_slice::<{ ARM9 }, true, false, u32>(aligned_addr, buf);
     }
 
-    asm.emu.regs_3d_set_gx_fifo_multiple(buf);
+    asm.emu.regs_3d_set_gx_fifo_multiple::<true>(buf);
 
     hle_post_function::<{ ARM9 }>(asm, 82, guest_pc);
 }

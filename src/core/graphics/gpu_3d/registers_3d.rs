@@ -4,7 +4,7 @@ use crate::core::graphics::gpu::{PowCnt1, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_3d::matrix_vec::MatrixVec;
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
-use crate::fixed_fifo::FixedFifo;
+use crate::fast_fixed_fifo::FastFixedFifo;
 use crate::logging::debug_println;
 use crate::math::{vdot_vec3, vmult_mat4, vmult_vec3_mat3_no_store, Matrix, Vectorf32, Vectori16, Vectori32, MTX_IDENTITY};
 use crate::utils;
@@ -17,7 +17,6 @@ use std::arch::arm::{
 use std::cmp::max;
 use std::hint::assert_unchecked;
 use std::intrinsics::{likely, unlikely};
-use std::mem::MaybeUninit;
 use std::{mem, ptr};
 
 pub const POLYGON_LIMIT: usize = 8192;
@@ -512,7 +511,7 @@ impl Gpu3DBuffers {
 
 #[derive(Default)]
 pub struct Gpu3DRegisters {
-    cmd_fifo: FixedFifo<u32, 4096>,
+    cmd_fifo: FastFixedFifo<u32, 4096>,
     cmd_remaining_params: u8,
 
     pub last_total_cycles: u32,
@@ -570,8 +569,6 @@ impl Emu {
         regs_3d.last_total_cycles = total_cycles;
         let mut executed_cycles = 0;
 
-        let mut params: [u32; 32] = unsafe { MaybeUninit::uninit().assume_init() };
-
         'outer: while !regs_3d.cmd_fifo.is_empty() {
             let mut value = *regs_3d.cmd_fifo.front();
             regs_3d.cmd_fifo.pop_front();
@@ -593,16 +590,10 @@ impl Emu {
 
                 let skippable = param_count.can_skip();
                 if !regs_3d.flags.skip() || likely(!skippable) {
-                    for i in 0..count {
-                        unsafe { *params.get_unchecked_mut(i) = *regs_3d.cmd_fifo.front() };
-                        regs_3d.cmd_fifo.pop_front();
-                    }
-
                     let func = unsafe { FUNC_GROUP_LUT.get_unchecked(cmd >> 4) };
-                    func(regs_3d, cmd & 0xF, &params);
-                } else {
-                    regs_3d.cmd_fifo.pop_front_multiple(count as u16);
+                    func(regs_3d, cmd & 0xF, unsafe { mem::transmute(regs_3d.cmd_fifo.front_ptr()) });
                 }
+                regs_3d.cmd_fifo.pop_front_multiple(count as u16);
 
                 executed_cycles += 4;
                 if executed_cycles >= cycle_diff || cmd == 0x50 {
@@ -656,7 +647,7 @@ impl Emu {
         gx_stat.set_num_entries_cmd_fifo(u9::new(regs_3d.get_cmd_fifo_len() as u16));
         gx_stat.set_cmd_fifo_less_half_full(!regs_3d.is_cmd_fifo_half_full());
         gx_stat.set_cmd_fifo_empty(regs_3d.is_cmd_fifo_empty());
-        gx_stat.set_box_pos_vec_test_busy(regs_3d.is_test_queue_busy());
+        gx_stat.set_box_pos_vec_test_busy(regs_3d.test_queue_busy());
         u32::from(gx_stat)
     }
 
@@ -681,10 +672,10 @@ impl Emu {
     }
 
     #[inline(always)]
-    pub fn regs_3d_set_gx_fifo_multiple(&mut self, values: &[u32]) {
+    pub fn regs_3d_set_gx_fifo_multiple<const MEMCPY: bool>(&mut self, values: &[u32]) {
         unsafe { assert_unchecked(!values.is_empty()) };
         let regs_3d = &mut self.gpu.gpu_3d_regs;
-        regs_3d.cmd_fifo.push_back_multiple(values);
+        regs_3d.cmd_fifo.push_back_multiple::<MEMCPY>(values);
         self.regs_3d_post_queue_entry();
     }
 
@@ -759,6 +750,30 @@ impl Gpu3DRegisters {
         Gpu3DRegisters { flags, ..Gpu3DRegisters::default() }
     }
 
+    pub fn init(&mut self) {
+        self.cmd_fifo.clear();
+        self.cmd_remaining_params = 0;
+        self.last_total_cycles = 0;
+        self.gx_stat = Default::default();
+        self.mtx_mode = Default::default();
+        self.matrices = Default::default();
+        self.cur_viewport = Default::default();
+        self.cur_vtx = Default::default();
+        self.cur_polygon = Default::default();
+        self.cur_polygon_attr = Default::default();
+        self.cur_light_vectors = Default::default();
+        self.cur_light_half_vectors = Default::default();
+        self.cur_light_colors = Default::default();
+        self.cur_shininess = Default::default();
+        self.material_color0 = Default::default();
+        self.material_color1 = Default::default();
+        self.pos_result = Default::default();
+        self.vec_result = Default::default();
+        self.flags = Default::default();
+        self.out_buffers.state = Default::default();
+        self.buffer.reset();
+    }
+
     fn is_cmd_fifo_full(&self) -> bool {
         self.cmd_fifo.len() >= 260
     }
@@ -789,7 +804,7 @@ impl Gpu3DRegisters {
         }
     }
 
-    fn is_test_queue_busy(&mut self) -> bool {
+    fn test_queue_busy(&mut self) -> bool {
         if !self.flags.test_queue_dirty() {
             return self.flags.test_queue_busy();
         }
@@ -1183,9 +1198,9 @@ impl Gpu3DRegisters {
 
     fn exe_mtx_trans(&mut self, params: &[u32; 32]) {
         unsafe {
-            (params.as_ptr().add(3) as *mut u32).write_volatile(1 << 12);
             let mtx = vld1q_s32_x3(MTX_IDENTITY.as_ptr());
             let trans_vector = vld1q_s32(params.as_ptr() as _);
+            let trans_vector = vsetq_lane_s32::<3>(1 << 12, trans_vector);
             self.mtx_mult([mtx.0, mtx.1, mtx.2, trans_vector]);
         }
     }

@@ -149,12 +149,12 @@ mod handler {
                 if unlikely(end_addr > 0x4000440) {
                     let diff = (end_addr - 0x4000440) >> 2;
                     let slice = unsafe { slice::from_raw_parts(values.as_ptr(), rlist_len - diff as usize) };
-                    emu.regs_3d_set_gx_fifo_multiple(slice);
+                    emu.regs_3d_set_gx_fifo_multiple::<false>(slice);
                     let slice = unsafe { slice::from_raw_parts(values.as_ptr().add(rlist_len - diff as usize), diff as usize) };
                     emu.mem_write_multiple_slice::<CPU, true, _>(mem_addr, slice);
                 } else {
                     let slice = unsafe { slice::from_raw_parts(values.as_ptr(), rlist_len) };
-                    emu.regs_3d_set_gx_fifo_multiple(slice);
+                    emu.regs_3d_set_gx_fifo_multiple::<false>(slice);
                 }
             } else {
                 let slice = unsafe { slice::from_raw_parts(values.as_ptr(), rlist_len) };

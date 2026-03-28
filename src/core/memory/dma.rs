@@ -276,7 +276,7 @@ impl Emu {
                 }
                 if *dest_addr >= 0x4000400 && *dest_addr < 0x4000440 {
                     let slice = unsafe { slice::from_raw_parts(slice.as_ptr() as *const u32, (total_size as usize) >> 2) };
-                    self.regs_3d_set_gx_fifo_multiple(slice);
+                    self.regs_3d_set_gx_fifo_multiple::<true>(slice);
                 } else {
                     self.mem_write_fixed_slice::<CPU, false, T>(*dest_addr, slice);
                 }

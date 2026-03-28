@@ -49,6 +49,7 @@ mod bitset;
 mod cartridge_io;
 mod cartridge_metadata;
 mod core;
+mod fast_fixed_fifo;
 mod fixed_fifo;
 mod global_settings;
 mod jit;

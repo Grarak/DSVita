@@ -90,6 +90,7 @@ where
         let end = self.end;
         self.end = (end + values.len() as u16) % SIZE;
         self.len += values.len() as u16;
+        debug_assert!(self.len <= SIZE);
         for i in 0..values.len() {
             unsafe { *self.fifo.get_unchecked_mut(((end + i as u16) % SIZE) as usize) = values[i] };
         }
@@ -112,8 +113,7 @@ where
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut list = f.debug_list();
         for i in 0..self.len() {
-            let start = (self.start.wrapping_add(i)) % SIZE;
-            list.entry(&self.fifo[start as usize]);
+            list.entry(&self[i]);
         }
         list.finish()
     }

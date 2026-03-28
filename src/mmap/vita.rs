@@ -198,7 +198,7 @@ impl VirtualMem {
     pub fn new(virtual_size: usize, addr: usize) -> io::Result<Self> {
         let mut ptr = addr as *mut c_void;
         let vmem_block = unsafe { kuKernelMemReserve(&mut ptr, virtual_size as _, SCE_KERNEL_MEMBLOCK_TYPE_USER_RW) };
-        if vmem_block >= 0 && ptr as usize == addr {
+        if vmem_block >= 0 && (addr == 0 || ptr as usize == addr) {
             Ok(VirtualMem {
                 ptr: ptr as _,
                 vmem_block,

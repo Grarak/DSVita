@@ -146,7 +146,7 @@ impl Gpu {
         self.v_count = 0;
         self.gpu_2d_regs_a = Gpu2DRegisters::new(A);
         self.gpu_2d_regs_b = Gpu2DRegisters::new(B);
-        self.gpu_3d_regs = Gpu3DRegisters::new();
+        self.gpu_3d_regs.init();
     }
 
     pub fn set_gpu_renderer(&mut self, gpu_renderer: NonNull<GpuRenderer>) {
