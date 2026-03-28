@@ -329,7 +329,7 @@ impl GpuRenderer {
             gl::Clear(gl::COLOR_BUFFER_BIT);
 
             self.renderer_2d.draw::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
-            let b_fbo_color = self.renderer_2d.blend::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, 0, false);
+            let b_fbo_color = self.renderer_2d.blend::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, None);
 
             // self.renderer_soft_2d.draw::<{ A }>(&self.common, &self.renderer_regs_2d_shared);
             self.renderer_2d.draw::<{ A }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
@@ -354,8 +354,7 @@ impl GpuRenderer {
             let a_fbo_color = self.renderer_2d.blend::<{ A }>(
                 &self.gpu_mem_refs,
                 &self.renderer_regs_2d_shared,
-                self.renderer_3d.get_fbo(self.common.pow_cnt1[0].display_swap(), upscale_3d).color,
-                upscale_3d,
+                Some(self.renderer_3d.get_fbo(self.common.pow_cnt1[0].display_swap(), upscale_3d)),
             );
 
             if disp_cap_cnt.capture_enabled() && u8::from(disp_cap_cnt.capture_source()) != 1 {

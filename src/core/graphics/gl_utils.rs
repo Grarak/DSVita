@@ -271,3 +271,15 @@ impl GpuFbo {
         unsafe { Self::from_tex(width, height, depth, stencil, create_fb_color(width, height)) }
     }
 }
+
+impl Drop for GpuFbo {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteTextures(1, &self.color);
+            if let Some(depth) = self.depth {
+                gl::DeleteTextures(1, &depth);
+            }
+            gl::DeleteFramebuffers(1, &self.fbo);
+        }
+    }
+}

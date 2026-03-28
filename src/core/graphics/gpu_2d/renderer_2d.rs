@@ -6,7 +6,7 @@ use crate::core::graphics::gpu_2d::registers_2d::{BgCnt, DispCnt};
 use crate::core::graphics::gpu_2d::renderer_regs_2d::{BgUbo, BlendUbo, Gpu2DMem, Gpu2DRenderRegs, Gpu2DRenderRegsShared, WinBgUbo};
 use crate::core::graphics::gpu_2d::Gpu2DEngine;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
-use crate::core::graphics::gpu_3d::renderer_3d::{HEIGHT_3D, UPSCALE_HEIGHT_3D, UPSCALE_WIDTH_3D, WIDTH_3D};
+use crate::core::graphics::gpu_3d::renderer_3d::{UPSCALE_HEIGHT_3D, UPSCALE_WIDTH_3D};
 use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::graphics::gpu_shaders::{Gpu2DObjShaderProgram, GpuShadersPrograms};
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
@@ -369,7 +369,7 @@ struct Gpu2DProgram {
     bg_text_8bpp_program: Gpu2DBgProgram,
     bg_ubo: GLuint,
 
-    bg_fbo_3d: [GpuFbo; 2],
+    bg_fbo_3d: GpuFbo,
 
     vram_display: Gpu2DVramDisplayProgram,
 }
@@ -463,10 +463,7 @@ impl Gpu2DProgram {
                 bg_text_4bpp_program,
                 bg_text_8bpp_program,
                 bg_ubo,
-                bg_fbo_3d: [
-                    GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, false, false).unwrap(),
-                    GpuFbo::new(UPSCALE_WIDTH_3D as _, UPSCALE_HEIGHT_3D as _, false, false).unwrap(),
-                ],
+                bg_fbo_3d: GpuFbo::new(UPSCALE_WIDTH_3D as _, UPSCALE_HEIGHT_3D as _, false, false).unwrap(),
                 vram_display: Gpu2DVramDisplayProgram::new(gpu_programs),
             }
         }
@@ -531,7 +528,18 @@ impl Gpu2DProgram {
         }
     }
 
-    unsafe fn draw_bg_program(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, from_line: u8, to_line: u8, fb_tex_3d: GLuint, fbo: &GpuFbo, bg_num: u8, bg_mode: BgMode) {
+    unsafe fn draw_bg_program(
+        &self,
+        common: &Gpu2DCommon,
+        regs: &Gpu2DRenderRegs,
+        texs: &Gpu2DTextures,
+        from_line: u8,
+        to_line: u8,
+        fbo_3d: Option<&GpuFbo>,
+        fbo: &GpuFbo,
+        bg_num: u8,
+        bg_mode: BgMode,
+    ) {
         let bg_cnt = regs.bg_cnts[from_line as usize * 4 + bg_num as usize];
         let bg_cnt = BgCnt::from(bg_cnt);
         let program = match bg_mode {
@@ -574,9 +582,9 @@ impl Gpu2DProgram {
         gl::ActiveTexture(gl::TEXTURE3);
         gl::BindTexture(gl::TEXTURE_2D, common.win_bg_fbo.color);
 
-        if fb_tex_3d != 0 {
+        if let Some(fbo_3d) = fbo_3d {
             gl::ActiveTexture(gl::TEXTURE4);
-            gl::BindTexture(gl::TEXTURE_2D, fb_tex_3d);
+            gl::BindTexture(gl::TEXTURE_2D, fbo_3d.color);
         }
 
         if program.has_ubo {
@@ -610,16 +618,16 @@ impl Gpu2DProgram {
         macro_rules! draw {
             ($bg3mode:expr, $bg2mode:expr, $bg1mode:expr, $bg0mode:expr) => {{
                 if disp_cnt.screen_display_bg3() {
-                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, &common.bg_fbos[3], 3, $bg3mode);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, None, &common.bg_fbos[3], 3, $bg3mode);
                 }
                 if disp_cnt.screen_display_bg2() {
-                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, &common.bg_fbos[2], 2, $bg2mode);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, None, &common.bg_fbos[2], 2, $bg2mode);
                 }
                 if disp_cnt.screen_display_bg1() {
-                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, &common.bg_fbos[1], 1, $bg1mode);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, None, &common.bg_fbos[1], 1, $bg1mode);
                 }
                 if disp_cnt.screen_display_bg0() && !disp_cnt.bg0_3d() {
-                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, &common.bg_fbos[0], 0, $bg0mode);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, None, &common.bg_fbos[0], 0, $bg0mode);
                 }
             }};
         }
@@ -633,7 +641,7 @@ impl Gpu2DProgram {
             5 => draw!(BgMode::Extended, BgMode::Extended, BgMode::Text, BgMode::Text),
             6 => {
                 if disp_cnt.screen_display_bg2() {
-                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, &common.bg_fbos[2], 2, BgMode::Large);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, None, &common.bg_fbos[2], 2, BgMode::Large);
                 }
             }
             7 => {}
@@ -644,11 +652,15 @@ impl Gpu2DProgram {
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
     }
 
-    unsafe fn blend_fbos(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: &Gpu2DMem, blend_fbo: GLuint, fb_tex_3d: GLuint, upscale_3d: bool) {
+    unsafe fn blend_fbos(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: &Gpu2DMem, blend_fbo: &mut GpuFbo, fbo_3d: Option<&GpuFbo>) -> GLuint {
         let mut bg_fbo_0 = &common.bg_fbos[0];
 
-        if fb_tex_3d != 0 {
-            bg_fbo_0 = &self.bg_fbo_3d[upscale_3d as usize];
+        if let Some(fbo_3d) = fbo_3d {
+            if fbo_3d.width != blend_fbo.width || fbo_3d.height != blend_fbo.height {
+                *blend_fbo = GpuFbo::new(fbo_3d.width, fbo_3d.height, false, false).unwrap();
+                self.bg_fbo_3d = GpuFbo::new(fbo_3d.width, fbo_3d.height, false, false).unwrap();
+            }
+            bg_fbo_0 = &self.bg_fbo_3d;
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, bg_fbo_0.fbo);
             gl::BindFramebuffer(gl::READ_FRAMEBUFFER, common.bg_fbos[0].fbo);
             gl::BlitFramebuffer(
@@ -668,14 +680,14 @@ impl Gpu2DProgram {
                 let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
                 if let 0..=5 = u8::from(disp_cnt.bg_mode()) {
                     if disp_cnt.screen_display_bg0() && disp_cnt.bg0_3d() {
-                        self.draw_bg_program(common, regs, texs, from_line, to_line, fb_tex_3d, bg_fbo_0, 0, BgMode::Display3d);
+                        self.draw_bg_program(common, regs, texs, from_line, to_line, Some(fbo_3d), bg_fbo_0, 0, BgMode::Display3d);
                     }
                 }
             };
             draw_scanlines!(regs, draw_bg, 0, false);
         }
 
-        gl::BindFramebuffer(gl::FRAMEBUFFER, blend_fbo);
+        gl::BindFramebuffer(gl::FRAMEBUFFER, blend_fbo.fbo);
         gl::Viewport(0, 0, bg_fbo_0.width as _, bg_fbo_0.height as _);
 
         let backdrop = utils::read_from_mem::<u16>(mem.pal, 0);
@@ -715,6 +727,8 @@ impl Gpu2DProgram {
         gl::BindTexture(gl::TEXTURE_2D, 0);
         gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+
+        blend_fbo.color
     }
 
     unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, lcdc_pal: GLuint) {
@@ -943,7 +957,6 @@ pub struct Gpu2DRenderer {
     pub common: Gpu2DCommon,
     program: Gpu2DProgram,
     blend_fbos: [GpuFbo; 2],
-    blend_fbo_upscaled: GpuFbo,
     #[cfg(target_os = "linux")]
     lcdc_mem_buf: HeapArrayU8<{ vram::TOTAL_SIZE }>,
 }
@@ -960,10 +973,9 @@ impl Gpu2DRenderer {
                 common: Gpu2DCommon::new(gpu_programs),
                 program: Gpu2DProgram::new(gpu_programs),
                 blend_fbos: [
-                    GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, false, false).unwrap(),
+                    GpuFbo::new(UPSCALE_WIDTH_3D as _, UPSCALE_HEIGHT_3D as _, false, false).unwrap(),
                     GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap(),
                 ],
-                blend_fbo_upscaled: GpuFbo::new(UPSCALE_WIDTH_3D as _, UPSCALE_HEIGHT_3D as _, false, false).unwrap(),
                 #[cfg(target_os = "linux")]
                 lcdc_mem_buf: HeapArrayU8::default(),
             }
@@ -1037,16 +1049,14 @@ impl Gpu2DRenderer {
         }
     }
 
-    pub unsafe fn blend<const ENGINE: Gpu2DEngine>(&mut self, mem_refs: &GpuMemRefs, regs: &Gpu2DRenderRegsShared, fb_tex_3d: GLuint, upscale_3d: bool) -> GLuint {
-        let blend_fbo = if upscale_3d { &self.blend_fbo_upscaled } else { &self.blend_fbos[ENGINE as usize] };
-        match ENGINE {
-            A => self
-                .program
-                .blend_fbos(&self.common, &regs.regs_a[0], &self.texs[0], &Gpu2DMem::new::<{ A }>(mem_refs), blend_fbo.fbo, fb_tex_3d, upscale_3d),
-            B => self
-                .program
-                .blend_fbos(&self.common, &regs.regs_b[0], &self.texs[1], &Gpu2DMem::new::<{ B }>(mem_refs), blend_fbo.fbo, 0, false),
-        };
-        blend_fbo.color
+    pub unsafe fn blend<const ENGINE: Gpu2DEngine>(&mut self, mem_refs: &GpuMemRefs, regs: &Gpu2DRenderRegsShared, fbo_3d: Option<&GpuFbo>) -> GLuint {
+        self.program.blend_fbos(
+            &self.common,
+            &regs.regs_a[0],
+            &self.texs[ENGINE],
+            &Gpu2DMem::new::<ENGINE>(mem_refs),
+            &mut self.blend_fbos[ENGINE],
+            fbo_3d,
+        )
     }
 }
