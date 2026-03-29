@@ -202,6 +202,7 @@ lazy_static! {
             Setting::new("Upscale 3D", "2x upscale 3D polygons at the cost of lower framerate.", SettingValue::Bool(true), true),
             Setting::new("Audio stretching", "Enable if games doesn't run at fullspeed, introduces latency however prevents audio stutter.", SettingValue::Bool(true), true),
             Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", SettingValue::List(ListInner::new(0, vec![])), true),
+            Setting::new("Wide 3D screen", "This is experimental and causes glitches, only available when using single, focus overlap or custom layouts", SettingValue::Bool(false), true),
             Setting::new("Swap screens", "Press PS + Cross to swap screens in game.", SettingValue::Bool(false), true),
             Setting::new("Top screen scale", "Press PS + Square to cycle screen sizes.", ScreenLayout::scale_settings_value(), true),
             Setting::new("Bottom screen scale", "Press PS + Circle to cycle screen sizes", ScreenLayout::scale_settings_value(), true),
@@ -213,7 +214,7 @@ lazy_static! {
 }
 
 #[derive(Clone)]
-pub struct Settings([Setting; 13]);
+pub struct Settings([Setting; 14]);
 
 #[repr(u8)]
 enum SettingIndices {
@@ -224,6 +225,7 @@ enum SettingIndices {
     Upscale3D,
     AudioStretching,
     ScreenLayout,
+    Wide3DScreen,
     SwapScreen,
     TopScreenScale,
     BottomScreenScale,
@@ -282,6 +284,10 @@ impl Settings {
 
     pub fn upscale_3d(&self) -> bool {
         unsafe { self.0[SettingIndices::Upscale3D as usize].value.as_bool().unwrap_unchecked() }
+    }
+
+    pub fn wide_3d_screen(&self) -> bool {
+        unsafe { self.0[SettingIndices::Wide3DScreen as usize].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn audio_stretching(&self) -> bool {

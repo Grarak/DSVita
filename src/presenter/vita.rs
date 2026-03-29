@@ -550,6 +550,19 @@ pub fn show_layout_create_settings(global_settings: &mut GlobalSettings, custom_
             ImGui::PopID();
         }
 
+        let title = "Widescreen coefficient";
+        let c_title = CString::from_str(&title).unwrap();
+        ImGui::PushID(c_title.as_ptr());
+        ImGui::Text(c_title.as_ptr());
+        ImGui::SameLine(0f32, -1f32);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 500f32);
+        let vec = ImVec2 { x: 500.0, y: 0.0 };
+        let c_width = custom_layout.wide_screen_coefficient_c_str();
+        if ImGui::Button(c_width.as_ptr() as _, &vec) {
+            custom_layout_context.parse_error = !custom_layout.set_wide_screen_coefficient(&dialog_input(&title, &custom_layout.wide_screen_coefficient_str(), SCE_IME_TYPE_EXTENDED_NUMBER, 6));
+        }
+        ImGui::PopID();
+
         ImGui::PushStyleColor(ImGuiCol__ImGuiCol_Text as _, 0xFF0000FF);
         if custom_layout_context.parse_error {
             ImGui::Text(c"Please enter a valid value".as_ptr());

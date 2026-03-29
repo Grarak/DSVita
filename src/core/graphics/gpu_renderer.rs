@@ -56,6 +56,7 @@ pub struct GpuRenderer {
     capture_query: GLuint,
 
     merge_program: GLuint,
+    merge_width_coefficient_uniform: GLint,
     merge_alpha_uniform: GLint,
     final_fbo: GpuFbo,
     gl_glyph: GlGlyph,
@@ -116,18 +117,19 @@ impl GpuRenderer {
             (capture_size_scalers_uniform, tex, query)
         };
 
-        let merge_alpha_uniform = unsafe {
+        let (merge_width_coefficient_uniform, merge_alpha_uniform) = unsafe {
             gl::UseProgram(gpu_programs.merge);
 
             gl::BindAttribLocation(gpu_programs.merge, 0, c"position".as_ptr() as _);
 
             gl::Uniform1i(gl::GetUniformLocation(gpu_programs.merge, c"tex".as_ptr() as _), 0);
 
+            let merge_width_coefficient_uniform = gl::GetUniformLocation(gpu_programs.merge, c"widthCoefficient".as_ptr() as _);
             let merge_alpha_uniform = gl::GetUniformLocation(gpu_programs.merge, c"alpha".as_ptr() as _);
 
             gl::UseProgram(0);
 
-            merge_alpha_uniform
+            (merge_width_coefficient_uniform, merge_alpha_uniform)
         };
 
         GpuRenderer {
@@ -145,6 +147,7 @@ impl GpuRenderer {
             capture_query,
 
             merge_program: gpu_programs.merge,
+            merge_width_coefficient_uniform,
             merge_alpha_uniform,
             final_fbo: GpuFbo::new(PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, false, false).unwrap(),
             gl_glyph: GlGlyph::new(gpu_programs),
@@ -253,10 +256,10 @@ impl GpuRenderer {
         }
     }
 
-    unsafe fn merge_screens(&self, screens: [(GLuint, &[f32; 16], f32); 2], top_index: usize) {
+    unsafe fn merge_screens(&self, screens: [(GLuint, &[f32; 16], f32, f32); 2], top_index: usize) {
         let bottom_index = (top_index + 1) & 1;
-        let (top_fbo_color, top_vertices_coords, top_alpha) = screens[top_index];
-        let (bottom_fbo_color, bottom_vertices_coords, bottom_alpha) = screens[bottom_index];
+        let (top_fbo_color, top_vertices_coords, top_wide_screen_coefficient, top_alpha) = screens[top_index];
+        let (bottom_fbo_color, bottom_vertices_coords, bottom_wide_screen_coefficient, bottom_alpha) = screens[bottom_index];
         if top_alpha < bottom_alpha {
             return self.merge_screens(screens, bottom_index);
         }
@@ -266,12 +269,14 @@ impl GpuRenderer {
         gl::Enable(gl::BLEND);
         gl::ActiveTexture(gl::TEXTURE0);
 
+        gl::Uniform1f(self.merge_width_coefficient_uniform, top_wide_screen_coefficient);
         gl::Uniform1f(self.merge_alpha_uniform, top_alpha);
         gl::BindTexture(gl::TEXTURE_2D, top_fbo_color);
         gl::EnableVertexAttribArray(0);
         gl::VertexAttribPointer(0, 4, gl::FLOAT, gl::FALSE, 0, top_vertices_coords.as_ptr() as _);
         gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
 
+        gl::Uniform1f(self.merge_width_coefficient_uniform, bottom_wide_screen_coefficient);
         gl::Uniform1f(self.merge_alpha_uniform, bottom_alpha);
         gl::BindTexture(gl::TEXTURE_2D, bottom_fbo_color);
         gl::EnableVertexAttribArray(0);
@@ -293,6 +298,7 @@ impl GpuRenderer {
         pause: bool,
     ) {
         let upscale_3d = settings.upscale_3d();
+        let wide_screen_coefficient = if settings.wide_3d_screen() { screen_layout.wide_screen_coefficient } else { 1.0 };
 
         {
             let rendering = self.rendering.lock().unwrap();
@@ -347,15 +353,12 @@ impl GpuRenderer {
                 if unlikely(timeout.timed_out()) {
                     info_println!("waiting for 3d processing timed out");
                 }
-                self.renderer_3d.render(&self.common, upscale_3d);
+                self.renderer_3d.render(&self.common, upscale_3d, wide_screen_coefficient);
             }
 
             // let a_fbo_color = self.renderer_soft_2d.blend::<{ A }>(&self.common, &self.renderer_regs_2d_shared, self.renderer_3d.gl.fbo.color);
-            let a_fbo_color = self.renderer_2d.blend::<{ A }>(
-                &self.gpu_mem_refs,
-                &self.renderer_regs_2d_shared,
-                Some(self.renderer_3d.get_fbo(self.common.pow_cnt1[0].display_swap(), upscale_3d)),
-            );
+            let fbo_3d = self.renderer_3d.get_fbo(self.common.pow_cnt1[0].display_swap(), upscale_3d, wide_screen_coefficient);
+            let a_fbo_color = self.renderer_2d.blend::<{ A }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, Some(fbo_3d));
 
             if disp_cap_cnt.capture_enabled() && u8::from(disp_cap_cnt.capture_source()) != 1 {
                 if u8::from(disp_cap_cnt.capture_size()) == 0 {
@@ -370,14 +373,7 @@ impl GpuRenderer {
                 gl::UseProgram(self.capture_program);
 
                 gl::ActiveTexture(gl::TEXTURE0);
-                gl::BindTexture(
-                    gl::TEXTURE_2D,
-                    if disp_cap_cnt.source_a() {
-                        self.renderer_3d.get_fbo(self.common.pow_cnt1[0].display_swap(), upscale_3d).color
-                    } else {
-                        a_fbo_color
-                    },
-                );
+                gl::BindTexture(gl::TEXTURE_2D, if disp_cap_cnt.source_a() { fbo_3d.color() } else { a_fbo_color });
 
                 const SIZE_SCALARS: [(f32, f32); 4] = [
                     (128.0 / 256.0, 128.0 / 192.0),
@@ -411,13 +407,16 @@ impl GpuRenderer {
                 } else {
                     screen_layout.get_screen_bottom()
                 };
-                let top_screen = (a_fbo_color, top_screen.0, top_screen.1);
+
+                let is_physical_top = top_screen.2;
+                let top_screen = (a_fbo_color, top_screen.0, if is_physical_top { wide_screen_coefficient } else { 1.0 }, top_screen.1);
+
                 let bottom_screen = if self.common.pow_cnt1[0].display_swap() {
                     screen_layout.get_screen_bottom()
                 } else {
                     screen_layout.get_screen_top()
                 };
-                let bottom_screen = (b_fbo_color, bottom_screen.0, bottom_screen.1);
+                let bottom_screen = (b_fbo_color, bottom_screen.0, 1.0, bottom_screen.1);
                 self.merge_screens([top_screen, bottom_screen], 0);
             }
 

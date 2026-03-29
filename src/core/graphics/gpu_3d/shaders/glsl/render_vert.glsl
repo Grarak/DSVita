@@ -9,10 +9,12 @@ in vec2 texSize;
 out vec4 oColor;
 out vec2 oTexCoords;
 
+uniform float screenWidth;
+
 void main() {
     oColor = color / 31.0;
     oTexCoords = texCoords / (texSize * 8.0);
     vec2 screenDims = vec2(255.0, 191.0);
     gl_Position = position;
-    gl_Position.xy = (gl_Position.w * (viewport.zw + viewport.xy - screenDims) + (viewport.zw - viewport.xy) * gl_Position.xy) / screenDims;
+    gl_Position.xy = (gl_Position.w * (viewport.zw + viewport.xy - screenDims) + (viewport.zw - viewport.xy) * gl_Position.xy) / vec2(screenWidth, 191.0);
 }

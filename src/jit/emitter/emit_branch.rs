@@ -365,7 +365,10 @@ impl JitAsm<'_> {
 
         let target_pc_jit_entry = self.emu.jit.jit_memory_map.get_jit_entry(aligned_target_pc);
 
+        // Check if current block is still valid
         block_asm.ldr2(Reg::R2, target_pc_jit_entry as u32);
+        // At compile time we don't know where the block will end up
+        // Let jit memory insert the address after allocation
         block_asm.insert_jit_entry(Reg::R1);
         block_asm.ldr2(Reg::R2, &Reg::R2.into());
         block_asm.cmp2(Reg::R1, &Reg::R2.into());

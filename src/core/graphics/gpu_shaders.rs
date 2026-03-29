@@ -63,6 +63,7 @@ pub struct Gpu3DShaderProgram {
     pub program: GLuint,
     pub polygon_attrs: GLint,
     pub tex_image_param: GLint,
+    pub screen_width: GLint,
 }
 
 #[derive(Copy, Clone)]
@@ -90,6 +91,7 @@ impl Gpu3DShaderPrograms {
             let ret = (
                 gl::GetUniformLocation(program, c"polygonAttrsF".as_ptr() as _),
                 gl::GetUniformLocation(program, c"texImageParamF".as_ptr() as _),
+                gl::GetUniformLocation(program, c"screenWidth".as_ptr() as _),
             );
 
             gl::UseProgram(previous_program as _);
@@ -104,6 +106,7 @@ impl Gpu3DShaderPrograms {
             program: opaque,
             polygon_attrs: opaque_locs.0,
             tex_image_param: opaque_locs.1,
+            screen_width: opaque_locs.2,
         };
 
         let frag_shader_translucent = create_shader("render 3d translucent", &("#define TRANSLUCENT\n".to_string() + frag_shader_src), gl::FRAGMENT_SHADER);
@@ -114,6 +117,7 @@ impl Gpu3DShaderPrograms {
             program: translucent,
             polygon_attrs: translucent_locs.0,
             tex_image_param: translucent_locs.1,
+            screen_width: translucent_locs.2,
         };
 
         Gpu3DShaderPrograms { opaque, translucent }

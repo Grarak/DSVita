@@ -8,7 +8,7 @@ use std::f32::consts::PI;
 use std::ffi::CString;
 use std::str::FromStr;
 
-fn get_predefined_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
+fn get_predefined_layouts() -> Vec<(&'static str, [[f32; 9]; 4], f32)> {
     let mut layouts = Vec::new();
 
     {
@@ -21,7 +21,7 @@ fn get_predefined_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
             * Matrix3::new_scaling(width_scale);
         let b_trans = Matrix3::new_translation(&Vector2::new(guest_width, 0.0));
 
-        layouts.push(("Side by side", [mtx, b_trans * mtx]));
+        layouts.push(("Side by side", [mtx, b_trans * mtx], 1.0));
     }
 
     {
@@ -34,7 +34,7 @@ fn get_predefined_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
             * Matrix3::new_scaling(full_height_scale);
         let b_trans = Matrix3::new_translation(&Vector2::new(guest_height, 0.0));
 
-        layouts.push(("Rotate", [mtx, b_trans * mtx]));
+        layouts.push(("Rotate", [mtx, b_trans * mtx], 1.0));
     }
 
     {
@@ -42,10 +42,12 @@ fn get_predefined_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
         let guest_top_width = DISPLAY_WIDTH as f32 * full_height_scale;
         let width_remaining_space = PRESENTER_SCREEN_WIDTH as f32 - guest_top_width;
         let top_mtx = Matrix3::new_translation(&Vector2::new(guest_top_width / 2.0 + width_remaining_space / 2.0, PRESENTER_SCREEN_HEIGHT as f32 / 2.0)) * Matrix3::new_scaling(full_height_scale);
+        let wide_screen_coefficient = PRESENTER_SCREEN_WIDTH as f32 / guest_top_width;
 
         layouts.push((
             "Single",
             [top_mtx, Matrix3::new_translation(&Vector2::new(-(PRESENTER_SCREEN_WIDTH as f32), -(PRESENTER_SCREEN_HEIGHT as f32)))],
+            wide_screen_coefficient,
         ));
     }
 
@@ -60,7 +62,7 @@ fn get_predefined_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
         let bottom_mtx =
             Matrix3::new_translation(&Vector2::new(width_remaining_space / 2.0 + guest_top_width, guest_bottom_height / 2.0 + height_remaining_space / 2.0)) * Matrix3::new_scaling(guest_bottom_scale);
 
-        layouts.push(("Focus", [top_mtx, bottom_mtx]));
+        layouts.push(("Focus", [top_mtx, bottom_mtx], 1.0));
     }
 
     {
@@ -72,8 +74,9 @@ fn get_predefined_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
             (PRESENTER_SCREEN_WIDTH as usize - DISPLAY_WIDTH) as f32,
             (PRESENTER_SCREEN_HEIGHT as usize - DISPLAY_HEIGHT) as f32,
         )) * Matrix3::new_translation(&Vector2::new(DISPLAY_WIDTH as f32 / 2.0, DISPLAY_HEIGHT as f32 / 2.0));
+        let wide_screen_coefficient = PRESENTER_SCREEN_WIDTH as f32 / guest_top_width;
 
-        layouts.push(("Focus Overlap", [top_mtx, bottom_mtx]));
+        layouts.push(("Focus Overlap", [top_mtx, bottom_mtx], wide_screen_coefficient));
     }
 
     {
@@ -81,14 +84,13 @@ fn get_predefined_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
         let full_width_scale = PRESENTER_SCREEN_WIDTH as f32 / DISPLAY_WIDTH as f32;
         let guest_top_width = DISPLAY_WIDTH as f32 * full_width_scale;
         let guest_top_height = DISPLAY_HEIGHT as f32 * full_height_scale;
-        let top_mtx =
-            Matrix3::new_translation(&Vector2::new(guest_top_width / 2.0, guest_top_height as f32 / 2.0)) * Matrix3::new_nonuniform_scaling(&Vector2::new(full_width_scale, full_height_scale));
+        let top_mtx = Matrix3::new_translation(&Vector2::new(guest_top_width / 2.0, guest_top_height / 2.0)) * Matrix3::new_nonuniform_scaling(&Vector2::new(full_width_scale, full_height_scale));
         let bottom_mtx = Matrix3::new_translation(&Vector2::new(
             (PRESENTER_SCREEN_WIDTH as usize - DISPLAY_WIDTH) as f32,
             (PRESENTER_SCREEN_HEIGHT as usize - DISPLAY_HEIGHT) as f32,
         )) * Matrix3::new_translation(&Vector2::new(DISPLAY_WIDTH as f32 / 2.0, DISPLAY_HEIGHT as f32 / 2.0));
 
-        layouts.push(("Stretch Overlap", [top_mtx, bottom_mtx]));
+        layouts.push(("Stretch Overlap", [top_mtx, bottom_mtx], 1.0));
     }
 
     {
@@ -97,7 +99,7 @@ fn get_predefined_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
         let half_height_scale = half_height / DISPLAY_HEIGHT as f32;
         let mtx = Matrix3::new_translation(&Vector2::new(half_width, half_height / 2.0)) * Matrix3::new_scaling(half_height_scale);
 
-        layouts.push(("Vertical", [mtx, Matrix3::new_translation(&Vector2::new(0.0, half_height)) * mtx]));
+        layouts.push(("Vertical", [mtx, Matrix3::new_translation(&Vector2::new(0.0, half_height)) * mtx], 1.0));
     }
 
     {
@@ -112,7 +114,7 @@ fn get_predefined_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
             * Matrix3::new_scaling(full_height_scale);
         let b_trans = Matrix3::new_translation(&Vector2::new(guest_height, 0.0));
 
-        layouts.push(("Int Rotate", [mtx, b_trans * mtx]));
+        layouts.push(("Int Rotate", [mtx, b_trans * mtx], 1.0));
     }
 
     {
@@ -131,23 +133,24 @@ fn get_predefined_layouts() -> Vec<(&'static str, [[f32; 9]; 4])> {
             (PRESENTER_SCREEN_HEIGHT as usize - DISPLAY_HEIGHT) as f32,
         )) * Matrix3::new_translation(&Vector2::new(DISPLAY_WIDTH as f32 / 2.0, DISPLAY_HEIGHT as f32 / 2.0));
 
-        layouts.push(("Int Focus Overlap", [top_mtx, bottom_mtx]));
+        layouts.push(("Int Focus Overlap", [top_mtx, bottom_mtx], 1.0));
     }
 
     layouts
         .iter()
-        .map(|(name, mtxs)| {
+        .map(|(name, mtxs, wide_screen_coefficient)| {
             let flatten = |mtx: &Matrix3<f32>| [mtx[0], mtx[1], mtx[2], mtx[3], mtx[4], mtx[5], mtx[6], mtx[7], mtx[8]];
             (
                 *name,
                 [flatten(&mtxs[0]), flatten(&mtxs[1]), flatten(&mtxs[0].try_inverse().unwrap()), flatten(&mtxs[1].try_inverse().unwrap())],
+                *wide_screen_coefficient,
             )
         })
         .collect()
 }
 
 pub struct ScreenLayouts {
-    predefined: Vec<(&'static str, [[f32; 9]; 4])>,
+    predefined: Vec<(&'static str, [[f32; 9]; 4], f32)>,
     custom: Vec<CustomLayout>,
 }
 
@@ -203,6 +206,15 @@ impl ScreenLayouts {
         }
     }
 
+    pub fn wide_screen_coefficient(&self, index: usize) -> f32 {
+        if index < self.predefined.len() {
+            self.predefined[index].2
+        } else {
+            let index = index - self.predefined.len();
+            self.custom[index].wide_screen_coefficient
+        }
+    }
+
     pub fn get(&self, index: usize) -> [[f32; 9]; 4] {
         if index < self.predefined.len() {
             self.predefined[index].1
@@ -221,6 +233,7 @@ pub struct ScreenLayout {
     top_scale_index: usize,
     bottom_scale_index: usize,
     overlap: bool,
+    pub wide_screen_coefficient: f32,
     screen_top: [f32; 16],
     screen_bottom: [f32; 16],
     bottom_inverse_mtx: [f32; 9],
@@ -297,6 +310,7 @@ impl ScreenLayout {
             top_scale_index,
             bottom_scale_index,
             overlap,
+            wide_screen_coefficient: screen_layouts.wide_screen_coefficient(index),
             screen_top: [
                 screen_top[0][0],
                 screen_top[0][1],
@@ -353,19 +367,19 @@ impl ScreenLayout {
         (touch_points[0] as i16 + DISPLAY_WIDTH as i16 / 2, touch_points[1] as i16 + DISPLAY_HEIGHT as i16 / 2)
     }
 
-    pub fn get_screen_top(&self) -> (&[f32; 16], f32) {
+    pub fn get_screen_top(&self) -> (&[f32; 16], f32, bool) {
         if self.swap {
-            (&self.screen_bottom, if self.overlap { 0.5 } else { 1.0 })
+            (&self.screen_bottom, if self.overlap { 0.5 } else { 1.0 }, false)
         } else {
-            (&self.screen_top, 1.0)
+            (&self.screen_top, 1.0, true)
         }
     }
 
-    pub fn get_screen_bottom(&self) -> (&[f32; 16], f32) {
+    pub fn get_screen_bottom(&self) -> (&[f32; 16], f32, bool) {
         if self.swap {
-            (&self.screen_top, 1.0)
+            (&self.screen_top, 1.0, true)
         } else {
-            (&self.screen_bottom, if self.overlap { 0.5 } else { 1.0 })
+            (&self.screen_bottom, if self.overlap { 0.5 } else { 1.0 }, false)
         }
     }
 }
@@ -376,6 +390,7 @@ pub struct CustomLayout {
     pub sizes: [(u16, u16); 2],
     pub pos: [(u16, u16); 2],
     pub rotation: [u16; 2],
+    pub wide_screen_coefficient: f32,
 }
 
 impl CustomLayout {
@@ -473,6 +488,24 @@ impl CustomLayout {
         }
     }
 
+    pub fn wide_screen_coefficient_str(&self) -> String {
+        self.wide_screen_coefficient.to_string()
+    }
+
+    pub fn wide_screen_coefficient_c_str(&self) -> CString {
+        CString::from_str(&self.wide_screen_coefficient_str()).unwrap()
+    }
+
+    pub fn set_wide_screen_coefficient(&mut self, wide_screen_coefficient: &str) -> bool {
+        match wide_screen_coefficient.parse::<f32>() {
+            Ok(value) => {
+                self.wide_screen_coefficient = value;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     fn parse_ini_tuple(value: Option<&str>) -> (u16, u16) {
         match value {
             None => (0, 0),
@@ -496,6 +529,7 @@ impl CustomLayout {
                 props.get("rot_top").unwrap_or("0").parse::<u16>().unwrap_or(0),
                 props.get("rot_bottom").unwrap_or("0").parse::<u16>().unwrap_or(0),
             ],
+            wide_screen_coefficient: props.get("wide_screen_coefficient").unwrap_or("1.0").parse::<f32>().unwrap_or(1.0),
         }
     }
 
@@ -510,6 +544,7 @@ impl CustomLayout {
         section_setter.set("pos_bottom", Self::ini_tuple(self.pos[1]));
         section_setter.set("rot_top", self.rotation[0].to_string());
         section_setter.set("rot_bottom", self.rotation[1].to_string());
+        section_setter.set("wide_screen_coefficient", self.wide_screen_coefficient.to_string());
     }
 }
 
@@ -520,6 +555,7 @@ impl Default for CustomLayout {
             sizes: [(DISPLAY_WIDTH as u16, DISPLAY_HEIGHT as u16); 2],
             pos: [(0, 0), (DISPLAY_WIDTH as u16, 0)],
             rotation: [0; 2],
+            wide_screen_coefficient: 1.0,
         }
     }
 }

@@ -8,7 +8,7 @@ use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::core::graphics::gpu_shaders::{Gpu3DShaderDepthPrograms, Gpu3DShaderProgram, GpuShadersPrograms};
 use crate::core::memory::vram;
 use crate::math::{vmult_vec4_mat4_no_store, Vectori32};
-use crate::utils::{rgb5_to_float8, HeapArray, HeapArrayU16, HeapArrayU8, HeapMem, PtrWrapper};
+use crate::utils::{rgb5_to_float8, HeapArray, HeapArrayU16, HeapArrayU8, HeapMem, PtrWrapper, StrErr};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
@@ -18,11 +18,6 @@ use std::intrinsics::unlikely;
 use std::mem::{self, MaybeUninit};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
-
-pub const WIDTH_3D: usize = DISPLAY_WIDTH;
-pub const HEIGHT_3D: usize = DISPLAY_HEIGHT;
-pub const UPSCALE_WIDTH_3D: usize = DISPLAY_WIDTH * 2;
-pub const UPSCALE_HEIGHT_3D: usize = DISPLAY_HEIGHT * 2;
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
@@ -99,8 +94,48 @@ impl Default for Gpu3DRendererInner {
 pub struct Gpu3DGl {
     vertices_buf: GLuint,
     program: Gpu3DShaderDepthPrograms,
-    top_fbo: [GpuFbo; 2],
-    bottom_fbo: [GpuFbo; 2],
+    fbos: [Gpu3DFbo; 2],
+}
+
+pub struct Gpu3DFbo {
+    inner: GpuFbo,
+    upscale: bool,
+    wide_screen_coefficient: f32,
+    guest_width: f32,
+}
+
+impl Gpu3DFbo {
+    fn new(upscale: bool, wide_screen_coefficient: f32) -> Result<Self, StrErr> {
+        let mut width = (DISPLAY_WIDTH as u32) << upscale as u32;
+        let height = (DISPLAY_HEIGHT as u32) << upscale as u32;
+        let mut guest_width = (DISPLAY_WIDTH - 1) as f32;
+        if wide_screen_coefficient != 1.0 {
+            width = (width as f32 * wide_screen_coefficient) as u32 & !1;
+            guest_width *= wide_screen_coefficient;
+        }
+        Ok(Gpu3DFbo {
+            inner: GpuFbo::new(width, height, true, true)?,
+            upscale,
+            wide_screen_coefficient,
+            guest_width,
+        })
+    }
+
+    pub fn width(&self) -> u32 {
+        self.inner.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.inner.height
+    }
+
+    pub fn color(&self) -> GLuint {
+        self.inner.color
+    }
+
+    pub fn fbo(&self) -> GLuint {
+        self.inner.fbo
+    }
 }
 
 impl Gpu3DGl {
@@ -117,14 +152,7 @@ impl Gpu3DGl {
             Gpu3DGl {
                 vertices_buf,
                 program: gpu_programs.render_3d,
-                top_fbo: [
-                    GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, true, true).unwrap(),
-                    GpuFbo::new(UPSCALE_WIDTH_3D as _, UPSCALE_HEIGHT_3D as _, true, true).unwrap(),
-                ],
-                bottom_fbo: [
-                    GpuFbo::new(WIDTH_3D as _, HEIGHT_3D as _, true, true).unwrap(),
-                    GpuFbo::new(UPSCALE_WIDTH_3D as _, UPSCALE_HEIGHT_3D as _, true, true).unwrap(),
-                ],
+                fbos: [Gpu3DFbo::new(true, 1.0).unwrap(), Gpu3DFbo::new(true, 1.0).unwrap()],
             }
         }
     }
@@ -292,20 +320,12 @@ impl Gpu3DRenderer {
         self.texture_cache.clear();
 
         unsafe {
-            for fbo in [self.gl.top_fbo[0].fbo, self.gl.bottom_fbo[0].fbo] {
-                gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
-                gl::Viewport(0, 0, WIDTH_3D as _, HEIGHT_3D as _);
+            for fbo in &self.gl.fbos {
+                gl::BindFramebuffer(gl::FRAMEBUFFER, fbo.fbo());
+                gl::Viewport(0, 0, fbo.inner.width as _, fbo.inner.height as _);
                 gl::ClearColor(0.0, 0.0, 0.0, 0.0);
 
-                gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT | gl::STENCIL_BUFFER_BIT);
-            }
-
-            for fbo in [self.gl.top_fbo[1].fbo, self.gl.bottom_fbo[1].fbo] {
-                gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
-                gl::Viewport(0, 0, UPSCALE_WIDTH_3D as _, UPSCALE_HEIGHT_3D as _);
-                gl::ClearColor(0.0, 0.0, 0.0, 0.0);
-
-                gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT | gl::STENCIL_BUFFER_BIT);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
             }
 
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
@@ -715,12 +735,12 @@ impl Gpu3DRenderer {
         self.vram_ready.store(true, Ordering::SeqCst);
     }
 
-    pub fn get_fbo(&self, swap: bool, upscale: bool) -> &GpuFbo {
-        if swap {
-            &self.gl.top_fbo[upscale as usize]
-        } else {
-            &self.gl.bottom_fbo[upscale as usize]
+    pub fn get_fbo(&mut self, swap: bool, upscale: bool, wide_screen_coefficient: f32) -> &Gpu3DFbo {
+        let fbo = &mut self.gl.fbos[swap as usize];
+        if fbo.upscale != upscale || fbo.wide_screen_coefficient != wide_screen_coefficient {
+            *fbo = Gpu3DFbo::new(upscale, wide_screen_coefficient).unwrap();
         }
+        fbo
     }
 
     unsafe fn draw_elements(translucent_only: bool, program: &Gpu3DShaderProgram, indices: &[u16], indices_batch: &[IndicesBatch]) {
@@ -844,7 +864,7 @@ impl Gpu3DRenderer {
         }
     }
 
-    pub unsafe fn render(&mut self, common: &GpuRendererCommon, upscale: bool) {
+    pub unsafe fn render(&mut self, common: &GpuRendererCommon, upscale: bool, wide_screen_coefficient: f32) {
         if self.buffer.pow_cnt1 != common.pow_cnt1[0] {
             return;
         }
@@ -854,9 +874,11 @@ impl Gpu3DRenderer {
             self.texture_ids_to_delete.clear();
         }
 
-        let fbo = self.get_fbo(self.buffer.pow_cnt1.display_swap(), upscale);
-        gl::BindFramebuffer(gl::FRAMEBUFFER, fbo.fbo);
-        gl::Viewport(0, 0, fbo.width as _, fbo.height as _);
+        let fbo = self.get_fbo(self.buffer.pow_cnt1.display_swap(), upscale, wide_screen_coefficient);
+        gl::BindFramebuffer(gl::FRAMEBUFFER, fbo.fbo());
+        gl::Viewport(0, 0, fbo.inner.width as _, fbo.inner.height as _);
+
+        let guest_width = fbo.guest_width;
 
         let [r, g, b, a] = self.inners[0].clear_colorf;
         gl::ClearColor(r, g, b, a);
@@ -955,6 +977,8 @@ impl Gpu3DRenderer {
             gl::UseProgram(program.opaque.program);
             gl::DepthMask(gl::TRUE);
 
+            gl::Uniform1f(program.opaque.screen_width, guest_width);
+
             Self::draw_elements(false, &program.opaque, &self.indices_opaque, &self.indices_opaque_batches);
         }
 
@@ -966,6 +990,8 @@ impl Gpu3DRenderer {
 
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE);
             gl::BlendEquationSeparate(gl::FUNC_ADD, gl::MAX);
+
+            gl::Uniform1f(program.translucent.screen_width, guest_width);
 
             Self::draw_elements(true, &program.translucent, &self.indices_translucent, &self.indices_translucent_batches);
         }
