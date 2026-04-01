@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
-use vitabuild::{get_out_path, is_debug};
+use vitabuild::{get_out_path, is_debug, is_target_vita};
 
 fn get_source_files(path: &Path, files: &mut Vec<PathBuf>) {
     let dir = path.read_dir().unwrap();
@@ -25,6 +25,10 @@ fn get_source_files(path: &Path, files: &mut Vec<PathBuf>) {
 }
 
 fn main() {
+    if !is_target_vita() {
+        return;
+    }
+
     let vita_gl_path = PathBuf::from("vitaGL_src");
     let vita_gl_source_path = vita_gl_path.join("source");
     let mut source_files = Vec::new();
