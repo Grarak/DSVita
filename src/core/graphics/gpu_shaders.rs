@@ -188,11 +188,43 @@ impl Gpu2DObjShaderProgram {
     }
 }
 
+pub struct Gpu2DBlendProgram {
+    pub top: GLuint,
+    pub bottom: GLuint,
+}
+
+impl Gpu2DBlendProgram {
+    unsafe fn new<F: FnMut(&str, &str, GLenum) -> GLuint>(create_shader: &mut F) -> Self {
+        let vertex_shader = create_shader("blend", shader_source!("gpu_2d/shaders", "blend_vert"), gl::VERTEX_SHADER);
+        let frag_src = shader_source!("gpu_2d/shaders", "blend_frag");
+
+        let top_frag = create_shader("blend top", &("#define BLEND_3D\n".to_string() + frag_src), gl::FRAGMENT_SHADER);
+        let top_shader = create_program(&[vertex_shader, top_frag]).unwrap();
+        gl::DeleteShader(top_frag);
+
+        let bottom_frag = create_shader("blend bottom", frag_src, gl::FRAGMENT_SHADER);
+        let bottom_shader = create_program(&[vertex_shader, bottom_frag]).unwrap();
+        gl::DeleteShader(bottom_frag);
+
+        gl::DeleteShader(vertex_shader);
+
+        Gpu2DBlendProgram {
+            top: top_shader,
+            bottom: bottom_shader,
+        }
+    }
+
+    const fn count() -> usize {
+        3
+    }
+}
+
 pub struct GpuShadersPrograms {
     pub bg: Gpu2DBgShaderPrograms,
     pub obj: Gpu2DObjShaderProgram,
     pub win: GLuint,
-    pub blend: GLuint,
+    pub blend: Gpu2DBlendProgram,
+    pub blend_3d: GLuint,
     pub vram_display: GLuint,
     pub render_3d: Gpu3DShaderDepthPrograms,
     pub text: GLuint,
@@ -212,7 +244,6 @@ impl GpuShadersPrograms {
         };
 
         let win = create_program("win", shader_source!("gpu_2d/shaders", "win_bg_vert"), shader_source!("gpu_2d/shaders", "win_bg_frag"));
-        let blend = create_program("blend", shader_source!("gpu_2d/shaders", "blend_vert"), shader_source!("gpu_2d/shaders", "blend_frag"));
         let vram_display = create_program(
             "vram display",
             shader_source!("gpu_2d/shaders", "vram_display_vert"),
@@ -222,6 +253,7 @@ impl GpuShadersPrograms {
         let text = create_program("text", shader_source!("text_vert"), shader_source!("text_frag"));
         let capture = create_program("capture", shader_source!("capture_vert"), shader_source!("capture_frag"));
         let merge = create_program("merge", shader_source!("merge_vert"), shader_source!("merge_frag"));
+        let blend_3d = create_program("blend 3d", shader_source!("gpu_2d/shaders", "blend_3d_vert"), shader_source!("gpu_2d/shaders", "blend_3d_frag"));
 
         let obj = Gpu2DObjShaderProgram::new(&mut create_shader);
 
@@ -233,7 +265,8 @@ impl GpuShadersPrograms {
             bg: Gpu2DBgShaderPrograms::new(&mut create_shader),
             obj,
             win,
-            blend,
+            blend: Gpu2DBlendProgram::new(&mut create_shader),
+            blend_3d,
             vram_display,
             render_3d,
             text,
@@ -243,6 +276,6 @@ impl GpuShadersPrograms {
     }
 
     pub const fn count() -> usize {
-        13 + Gpu3DShaderDepthPrograms::count() + Gpu2DBgShaderPrograms::count() + Gpu2DObjShaderProgram::count()
+        13 + Gpu3DShaderDepthPrograms::count() + Gpu2DBgShaderPrograms::count() + Gpu2DObjShaderProgram::count() + Gpu2DBlendProgram::count()
     }
 }

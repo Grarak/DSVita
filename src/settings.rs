@@ -1,3 +1,4 @@
+use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
 use crate::screen_layouts::{ScreenLayout, ScreenLayouts};
 use ini::Ini;
 use lazy_static::lazy_static;
@@ -199,7 +200,7 @@ lazy_static! {
                 "Don't calculate new frames when old ones in queue haven't been consumed yet. Increases latency and might introduce\nglitches, however gives a performance boost. Disable when playing games that use 3D on both screens",
                 SettingValue::Bool(true),
                 true),
-            Setting::new("Upscale 3D", "2x upscale 3D polygons at the cost of lower framerate.", SettingValue::Bool(true), true),
+            Setting::new("Upscale 3D factor", "Upscale 3D polygons, will decrease framerate when set too high", Gpu3DRenderer::upscale_factor_settings_value(), true),
             Setting::new("Audio stretching", "Enable if games doesn't run at fullspeed, introduces latency however prevents audio stutter.", SettingValue::Bool(true), true),
             Setting::new("Screen Layout", "Press PS + L Trigger or PS + R Trigger to cycle through layouts in game.", SettingValue::List(ListInner::new(0, vec![])), true),
             Setting::new("Wide 3D screen", "This is experimental and causes glitches, only available when using single, focus overlap or custom layouts", SettingValue::Bool(false), true),
@@ -222,7 +223,7 @@ enum SettingIndices {
     Audio,
     Arm7Emu,
     Geometry3DSkip,
-    Upscale3D,
+    Upscale3DFactor,
     AudioStretching,
     ScreenLayout,
     Wide3DScreen,
@@ -282,8 +283,8 @@ impl Settings {
         unsafe { self.0[SettingIndices::Geometry3DSkip as usize].value.as_bool().unwrap_unchecked() }
     }
 
-    pub fn upscale_3d(&self) -> bool {
-        unsafe { self.0[SettingIndices::Upscale3D as usize].value.as_bool().unwrap_unchecked() }
+    pub fn upscale_3d_factor(&self) -> u8 {
+        unsafe { self.0[SettingIndices::Upscale3DFactor as usize].value.as_list().unwrap_unchecked().0 as u8 }
     }
 
     pub fn wide_3d_screen(&self) -> bool {

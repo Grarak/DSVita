@@ -1,5 +1,3 @@
-#version 300 es
-
 precision highp int;
 precision highp float;
 
@@ -21,7 +19,9 @@ uniform BlendUbo {
 
 int topNum = 5;
 int bottomNum = 5;
+#ifdef BLEND_3D
 bool top3D = false;
+#endif
 int topPrio = 4;
 int bottomPrio = 4;
 vec4 topColor = vec4(0.0, 0.0, 0.0, 0.0);
@@ -52,11 +52,13 @@ void sortBgPrio(int num, sampler2D bgTex) {
         topNum = num;
         topPrio = prio;
         topColor = texColor;
+#ifdef BLEND_3D
         int alpha3D = (data >> 2) & 0x3F;
         top3D = num == 0 && alpha3D != 0;
         if (top3D) {
             topColor.a = float(alpha3D) / 31.0;
         }
+#endif
     } else if (prio < bottomPrio) {
         bottomNum = num;
         bottomPrio = prio;
@@ -67,8 +69,8 @@ void sortBgPrio(int num, sampler2D bgTex) {
 vec4 alphaBlend(int eva, int evb) {
     float evaF = float(eva) / 16.0;
     float evbF = float(evb) / 16.0;
-    vec3 blendedColor = topColor.rgb * evaF + bottomColor.rgb * evbF;
-    return vec4(blendedColor.rgb, 1.0);
+    vec4 blendedColor = vec4(topColor.rgb * evaF + bottomColor.rgb * evbF, 1.0);
+    return blendedColor;
 }
 
 void main() {
@@ -94,18 +96,32 @@ void main() {
     bool blendBottom = ((bldCnt >> (8 + bottomNum)) & 1) != 0;
     int bldMode = (bldCnt >> 6) & 3;
 
+#ifdef BLEND_3D
     if (top3D) {
         if (blendBottom) {
-            float eva = topColor.a;
-            float evb = 1.0 - eva;
-            color = vec4(topColor.rgb * eva + bottomColor.rgb * evb, 1.0);
-            return;
+            color = vec4(bottomColor.rgb, 1.0 / 255.0);
+        } else {
+            switch (bldMode) {
+                case 2: {
+                    float bldYF = float(bldY) / 16.0;
+                    color = vec4(bldYF, 0.0, 0.0, 2.0 / 255.0);
+                    break;
+                }
+                case 3: {
+                    float bldYF = float(bldY) / 16.0;
+                    color = vec4(bldYF, 0.0, 0.0, 3.0 / 255.0);
+                    break;
+                }
+                default: {
+                    color = vec4(0.0, 0.0, 0.0, 4.0 / 255.0);
+                    break;
+                }
+            }
         }
-
-        if (bldMode < 2) {
-            bldMode = 0;
-        }
-    } else if (topNum == 4 && topColor.a == 0.0) {
+        return;
+    } else
+#endif
+    if (topNum == 4 && topColor.a == 0.0) {
         // Semi transparent object
         if (blendBottom) {
             color = alphaBlend(bldEva, bldEvb);
@@ -119,29 +135,28 @@ void main() {
 
     if (bldMode == 0 || !blendTop || ((winEnabled >> 5) & 1) == 0) {
         color = vec4(topColor.rgb, 1.0);
-        return;
-    }
-
-    switch (bldMode) {
-        case 1: {
-            if (blendBottom) {
-                color = alphaBlend(bldEva, bldEvb);
-            } else {
-                color = vec4(topColor.rgb, 1.0);
+    } else {
+        switch (bldMode) {
+            case 1: {
+                if (blendBottom) {
+                    color = alphaBlend(bldEva, bldEvb);
+                } else {
+                    color = vec4(topColor.rgb, 1.0);
+                }
+                break;
             }
-            break;
-        }
-        case 2: {
-            float bldYF = float(bldY) / 16.0;
-            vec3 increaseColor = (1.0 - topColor.rgb) * bldYF;
-            color = vec4((topColor.rgb + increaseColor), 1.0);
-            break;
-        }
-        case 3: {
-            float bldYF = float(bldY) / 16.0;
-            vec3 decreaseColor = topColor.rgb * bldYF;
-            color = vec4((topColor.rgb - decreaseColor), 1.0);
-            break;
+            case 2: {
+                float bldYF = float(bldY) / 16.0;
+                vec3 increaseColor = (1.0 - topColor.rgb) * bldYF;
+                color = vec4((topColor.rgb + increaseColor), 1.0);
+                break;
+            }
+            case 3: {
+                float bldYF = float(bldY) / 16.0;
+                vec3 decreaseColor = topColor.rgb * bldYF;
+                color = vec4((topColor.rgb - decreaseColor), 1.0);
+                break;
+            }
         }
     }
 }

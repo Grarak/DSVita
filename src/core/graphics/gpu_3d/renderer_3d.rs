@@ -8,6 +8,7 @@ use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::core::graphics::gpu_shaders::{Gpu3DShaderDepthPrograms, Gpu3DShaderProgram, GpuShadersPrograms};
 use crate::core::memory::vram;
 use crate::math::{vmult_vec4_mat4_no_store, Vectori32};
+use crate::settings::{ListInner, SettingValue};
 use crate::utils::{rgb5_to_float8, HeapArray, HeapArrayU16, HeapArrayU8, HeapMem, PtrWrapper, StrErr};
 use bilge::prelude::*;
 use gl::types::GLuint;
@@ -18,6 +19,8 @@ use std::intrinsics::unlikely;
 use std::mem::{self, MaybeUninit};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+const UPSCALE_FACTORS: [f32; 8] = [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75];
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
@@ -99,23 +102,26 @@ pub struct Gpu3DGl {
 
 pub struct Gpu3DFbo {
     inner: GpuFbo,
-    upscale: bool,
+    upscale_factor_index: u8,
     wide_screen_coefficient: f32,
     guest_width: f32,
 }
 
 impl Gpu3DFbo {
-    fn new(upscale: bool, wide_screen_coefficient: f32) -> Result<Self, StrErr> {
-        let mut width = (DISPLAY_WIDTH as u32) << upscale as u32;
-        let height = (DISPLAY_HEIGHT as u32) << upscale as u32;
+    fn new(upscale_factor_index: u8, wide_screen_coefficient: f32) -> Result<Self, StrErr> {
+        let upscale_factor = UPSCALE_FACTORS[upscale_factor_index as usize];
+        let mut width = DISPLAY_WIDTH as f32 * upscale_factor;
+        let height = DISPLAY_HEIGHT as f32 * upscale_factor;
         let mut guest_width = (DISPLAY_WIDTH - 1) as f32;
         if wide_screen_coefficient != 1.0 {
-            width = (width as f32 * wide_screen_coefficient) as u32 & !1;
+            width *= wide_screen_coefficient;
             guest_width *= wide_screen_coefficient;
         }
+        let width = (width as u32) & !1;
+        let height = (height as u32) & !1;
         Ok(Gpu3DFbo {
             inner: GpuFbo::new(width, height, true, true)?,
-            upscale,
+            upscale_factor_index,
             wide_screen_coefficient,
             guest_width,
         })
@@ -152,7 +158,7 @@ impl Gpu3DGl {
             Gpu3DGl {
                 vertices_buf,
                 program: gpu_programs.render_3d,
-                fbos: [Gpu3DFbo::new(true, 1.0).unwrap(), Gpu3DFbo::new(true, 1.0).unwrap()],
+                fbos: [Gpu3DFbo::new(4, 1.0).unwrap(), Gpu3DFbo::new(4, 1.0).unwrap()],
             }
         }
     }
@@ -275,6 +281,10 @@ pub struct Gpu3DRenderer {
 }
 
 impl Gpu3DRenderer {
+    pub fn upscale_factor_settings_value() -> SettingValue {
+        SettingValue::List(ListInner::new(4, UPSCALE_FACTORS.map(|factor| format!("{factor}x")).to_vec()))
+    }
+
     pub fn new(gpu_programs: &GpuShadersPrograms) -> Self {
         Gpu3DRenderer {
             dirty: false,
@@ -735,10 +745,10 @@ impl Gpu3DRenderer {
         self.vram_ready.store(true, Ordering::SeqCst);
     }
 
-    pub fn get_fbo(&mut self, swap: bool, upscale: bool, wide_screen_coefficient: f32) -> &Gpu3DFbo {
+    pub fn get_fbo(&mut self, swap: bool, upscale_factor_index: u8, wide_screen_coefficient: f32) -> &Gpu3DFbo {
         let fbo = &mut self.gl.fbos[swap as usize];
-        if fbo.upscale != upscale || fbo.wide_screen_coefficient != wide_screen_coefficient {
-            *fbo = Gpu3DFbo::new(upscale, wide_screen_coefficient).unwrap();
+        if fbo.upscale_factor_index != upscale_factor_index || fbo.wide_screen_coefficient != wide_screen_coefficient {
+            *fbo = Gpu3DFbo::new(upscale_factor_index, wide_screen_coefficient).unwrap();
         }
         fbo
     }
@@ -864,7 +874,7 @@ impl Gpu3DRenderer {
         }
     }
 
-    pub unsafe fn render(&mut self, common: &GpuRendererCommon, upscale: bool, wide_screen_coefficient: f32) {
+    pub unsafe fn render(&mut self, common: &GpuRendererCommon, upscale_factor_index: u8, wide_screen_coefficient: f32) {
         if self.buffer.pow_cnt1 != common.pow_cnt1[0] {
             return;
         }
@@ -874,7 +884,7 @@ impl Gpu3DRenderer {
             self.texture_ids_to_delete.clear();
         }
 
-        let fbo = self.get_fbo(self.buffer.pow_cnt1.display_swap(), upscale, wide_screen_coefficient);
+        let fbo = self.get_fbo(self.buffer.pow_cnt1.display_swap(), upscale_factor_index, wide_screen_coefficient);
         gl::BindFramebuffer(gl::FRAMEBUFFER, fbo.fbo());
         gl::Viewport(0, 0, fbo.inner.width as _, fbo.inner.height as _);
 

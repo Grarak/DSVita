@@ -1,0 +1,28 @@
+float2 in screenPos : TEXCOORD0;
+
+uniform sampler2D texBlend : TEXUNIT0;
+uniform sampler2D tex3d : TEXUNIT1;
+
+void main(out float4 color : COLOR) {
+    float4 colorBlend = tex2D(texBlend, screenPos);
+    float4 color3d = tex2D(tex3d, screenPos);
+
+    char mode = char(colorBlend.a * 255.0);
+    if (mode == 1) {
+        float eva = color3d.a;
+        float evb = 1.0 - eva;
+        color = float4(color3d.rgb * eva + colorBlend.rgb * evb, 1.0);
+    } else if (mode == 2) {
+        float bldYF = colorBlend.r;
+        float3 increaseColor = (1.0 - color3d.rgb) * bldYF;
+        color = float4((color3d.rgb + increaseColor), 1.0);
+    } else if (mode == 3) {
+        float bldYF = colorBlend.r;
+        float3 decreaseColor = color3d.rgb * bldYF;
+        color = float4((color3d.rgb - decreaseColor), 1.0);
+    } else if (mode == 4) {
+        color = float4(color3d.rgb, 1.0);
+    } else {
+        color = colorBlend;
+    }
+}

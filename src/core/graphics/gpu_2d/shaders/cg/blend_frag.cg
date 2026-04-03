@@ -14,7 +14,9 @@ uniform BlendUbo {
 
 static char topNum = 5;
 static char bottomNum = 5;
+#ifdef BLEND_3D
 static bool top3D = false;
+#endif
 static char topPrio = 4;
 static char bottomPrio = 4;
 static float4 topColor = float4(0.0, 0.0, 0.0, 1.0);
@@ -45,11 +47,13 @@ void sortBgPrio(short num, sampler2D bgTex) {
         topNum = num;
         topPrio = prio;
         topColor = texColor;
+#ifdef BLEND_3D
         unsigned char alpha3D = (data >> 2) & 0x3F;
         top3D = num == 0 && alpha3D != 0;
         if (top3D) {
             topColor.a = float(alpha3D) / 31.0;
         }
+#endif
     } else if (prio < bottomPrio) {
         bottomNum = num;
         bottomPrio = prio;
@@ -87,18 +91,25 @@ void main(out float4 color : COLOR) {
     bool blendBottom = ((bldCnt >> (8 + bottomNum)) & 1) != 0;
     unsigned char bldMode = (bldCnt >> 6) & 3;
 
+#ifdef BLEND_3D
     if (top3D) {
         if (blendBottom) {
             float eva = topColor.a;
             float evb = 1.0 - eva;
-            color = float4(topColor.rgb * eva + bottomColor.rgb * evb, 1.0);
-            return;
+            color = float4(topColor.rgb * eva + bottomColor.rgb * evb, 1.0 / 255.0);
+        } else if (bldMode == 2) {
+            float bldYF = float(bldY) / 16.0;
+            color = float4(bldYF, 0.0, 0.0, 2.0 / 255.0);
+        } else if (bldMode == 3) {
+            float bldYF = float(bldY) / 16.0;
+            color = float4(bldYF, 0.0, 0.0, 3.0 / 255.0);
+        } else {
+            color = float4(0.0, 0.0, 0.0, 4.0 / 255.0);
         }
-
-        if (bldMode < 2) {
-            bldMode = 0;
-        }
-    } else if (topNum == 4 && topColor.a == 0.0) {
+        return;
+    } else
+#endif
+    if (topNum == 4 && topColor.a == 0.0) {
         // Semi transparent object
         if (blendBottom) {
             color = alphaBlend(bldEva, bldEvb);
@@ -112,10 +123,7 @@ void main(out float4 color : COLOR) {
 
     if (bldMode == 0 || !blendTop || ((winEnabled >> 5) & 1) == 0) {
         color = float4(topColor.rgb, 1.0);
-        return;
-    }
-
-    if (bldMode == 1) {
+    } else if (bldMode == 1) {
         if (blendBottom) {
             color = alphaBlend(bldEva, bldEvb);
         } else {
