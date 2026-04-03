@@ -97,14 +97,14 @@ void main(out float4 color : COLOR) {
             float eva = topColor.a;
             float evb = 1.0 - eva;
             color = float4(topColor.rgb * eva + bottomColor.rgb * evb, 1.0 / 255.0);
+        } else if (bldMode < 2 || !blendTop || ((winEnabled >> 5) & 1) == 0) {
+            color = float4(0.0, 0.0, 0.0, 4.0 / 255.0);
         } else if (bldMode == 2) {
             float bldYF = float(bldY) / 16.0;
             color = float4(bldYF, 0.0, 0.0, 2.0 / 255.0);
-        } else if (bldMode == 3) {
+        } else {
             float bldYF = float(bldY) / 16.0;
             color = float4(bldYF, 0.0, 0.0, 3.0 / 255.0);
-        } else {
-            color = float4(0.0, 0.0, 0.0, 4.0 / 255.0);
         }
         return;
     } else

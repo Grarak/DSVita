@@ -59,72 +59,48 @@ impl Gpu2DBgShaderPrograms {
 }
 
 #[derive(Copy, Clone)]
-pub struct Gpu3DShaderProgram {
+pub struct Gpu3DShaderPrograms {
     pub program: GLuint,
     pub polygon_attrs: GLint,
     pub tex_image_param: GLint,
     pub screen_width: GLint,
 }
 
-#[derive(Copy, Clone)]
-pub struct Gpu3DShaderPrograms {
-    pub opaque: Gpu3DShaderProgram,
-    pub translucent: Gpu3DShaderProgram,
-}
-
 impl Gpu3DShaderPrograms {
     unsafe fn new<F: FnMut(&str, &str, GLenum) -> GLuint>(vertex_shader: GLuint, frag_shader_src: &str, create_shader: &mut F) -> Self {
-        let init_program = |program| {
-            let mut previous_program = 0;
-            gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut previous_program);
+        let frag_shader = create_shader("render 3d opaque", frag_shader_src, gl::FRAGMENT_SHADER);
+        let program = create_program(&[vertex_shader, frag_shader]).unwrap();
+        gl::DeleteShader(frag_shader);
 
-            gl::UseProgram(program);
+        let mut previous_program = 0;
+        gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut previous_program);
 
-            gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
-            gl::BindAttribLocation(program, 1, c"texCoords".as_ptr() as _);
-            gl::BindAttribLocation(program, 2, c"viewport".as_ptr() as _);
-            gl::BindAttribLocation(program, 3, c"color".as_ptr() as _);
-            gl::BindAttribLocation(program, 4, c"texSize".as_ptr() as _);
+        gl::UseProgram(program);
 
-            gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
+        gl::BindAttribLocation(program, 0, c"position".as_ptr() as _);
+        gl::BindAttribLocation(program, 1, c"texCoords".as_ptr() as _);
+        gl::BindAttribLocation(program, 2, c"viewport".as_ptr() as _);
+        gl::BindAttribLocation(program, 3, c"color".as_ptr() as _);
+        gl::BindAttribLocation(program, 4, c"texSize".as_ptr() as _);
 
-            let ret = (
-                gl::GetUniformLocation(program, c"polygonAttrsF".as_ptr() as _),
-                gl::GetUniformLocation(program, c"texImageParamF".as_ptr() as _),
-                gl::GetUniformLocation(program, c"screenWidth".as_ptr() as _),
-            );
+        gl::Uniform1i(gl::GetUniformLocation(program, c"tex".as_ptr() as _), 0);
 
-            gl::UseProgram(previous_program as _);
-            ret
-        };
+        let polygon_attrs = gl::GetUniformLocation(program, c"polygonAttrsF".as_ptr() as _);
+        let tex_image_param = gl::GetUniformLocation(program, c"texImageParamF".as_ptr() as _);
+        let screen_width = gl::GetUniformLocation(program, c"screenWidth".as_ptr() as _);
 
-        let frag_shader_opaque = create_shader("render 3d opaque", frag_shader_src, gl::FRAGMENT_SHADER);
-        let opaque = create_program(&[vertex_shader, frag_shader_opaque]).unwrap();
-        gl::DeleteShader(frag_shader_opaque);
-        let opaque_locs = init_program(opaque);
-        let opaque = Gpu3DShaderProgram {
-            program: opaque,
-            polygon_attrs: opaque_locs.0,
-            tex_image_param: opaque_locs.1,
-            screen_width: opaque_locs.2,
-        };
+        gl::UseProgram(previous_program as _);
 
-        let frag_shader_translucent = create_shader("render 3d translucent", &("#define TRANSLUCENT\n".to_string() + frag_shader_src), gl::FRAGMENT_SHADER);
-        let translucent = create_program(&[vertex_shader, frag_shader_translucent]).unwrap();
-        gl::DeleteShader(frag_shader_translucent);
-        let translucent_locs = init_program(translucent);
-        let translucent = Gpu3DShaderProgram {
-            program: translucent,
-            polygon_attrs: translucent_locs.0,
-            tex_image_param: translucent_locs.1,
-            screen_width: translucent_locs.2,
-        };
-
-        Gpu3DShaderPrograms { opaque, translucent }
+        Gpu3DShaderPrograms {
+            program,
+            polygon_attrs,
+            tex_image_param,
+            screen_width,
+        }
     }
 
     const fn count() -> usize {
-        2
+        1
     }
 }
 

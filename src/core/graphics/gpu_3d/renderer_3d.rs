@@ -5,11 +5,11 @@ use crate::core::graphics::gpu_3d::registers_3d::{POLYGON_LIMIT, VERTEX_LIMIT};
 use crate::core::graphics::gpu_3d::texture_cache::{Texture3D, Texture3DCache};
 use crate::core::graphics::gpu_mem_buf::{GpuMemBuf, GpuMemRefs};
 use crate::core::graphics::gpu_renderer::GpuRendererCommon;
-use crate::core::graphics::gpu_shaders::{Gpu3DShaderDepthPrograms, Gpu3DShaderProgram, GpuShadersPrograms};
+use crate::core::graphics::gpu_shaders::{Gpu3DShaderDepthPrograms, Gpu3DShaderPrograms, GpuShadersPrograms};
 use crate::core::memory::vram;
 use crate::math::{vmult_vec4_mat4_no_store, Vectori32};
 use crate::settings::{ListInner, SettingValue};
-use crate::utils::{rgb5_to_float8, HeapArray, HeapArrayU16, HeapArrayU8, HeapMem, PtrWrapper, StrErr};
+use crate::utils::{rgb5_to_float8, HeapArray, HeapArrayU8, HeapMem, PtrWrapper, StrErr};
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
@@ -266,8 +266,6 @@ pub struct Gpu3DRenderer {
     indices_opaque: Vec<u16>,
     indices_translucent: Vec<u16>,
 
-    polygon_vertices_mapping: HeapArrayU16<POLYGON_LIMIT>,
-
     texture_cache: Texture3DCache,
     texture_ids_to_delete: Vec<GLuint>,
     active_texture_id: GLuint,
@@ -305,8 +303,6 @@ impl Gpu3DRenderer {
 
             indices_opaque: Vec::new(),
             indices_translucent: Vec::new(),
-
-            polygon_vertices_mapping: Default::default(),
 
             texture_ids_to_delete: Vec::new(),
             texture_cache: Texture3DCache::new(),
@@ -660,21 +656,12 @@ impl Gpu3DRenderer {
         };
 
         if TRANSLUCENT_ONLY {
-            if (draw.attr.is_translucent() && draw.attr.trans_new_depth()) || (!draw.attr.is_translucent() && draw.tex_image_param.is_translucent()) {
-                push_indices(&mut self.indices_translucent, self.polygon_vertices_mapping[draw_index as usize], draw.vertex_count);
-                return;
-            } else {
-                push_indices(&mut self.indices_translucent, self.vertices_buf_count, draw.vertex_count);
-            }
+            push_indices(&mut self.indices_translucent, self.vertices_buf_count, draw.vertex_count);
         } else {
             push_indices(&mut self.indices_opaque, self.vertices_buf_count, draw.vertex_count);
-            self.polygon_vertices_mapping[draw_index as usize] = self.vertices_buf_count;
         }
 
-        // println!("add draw {:?}", draw.attr.primitive_type());
-
         for i in draw.vertex_start_index..draw.vertex_start_index + draw.vertex_count {
-            // println!("add vertex {i}");
             let vertex = self.buffer.vertices.get_unchecked(i as usize);
 
             let color = u16::from(vertex.data.color());
@@ -687,7 +674,7 @@ impl Gpu3DRenderer {
                 color: [(color & 0x1F) as u8, ((color >> 5) & 0x1F) as u8, ((color >> 10) & 0x1F) as u8, u8::from(draw.attr.alpha())],
             };
 
-            // println!("add vertex {i} {:?}", gpu_vertex.coords);
+            // println!("{} {} add vertex {i} {:?}", draw_attr.id(), draw_attr.trans_new_depth(), gpu_vertex.coords);
 
             *self.vertices_buf.get_unchecked_mut(self.vertices_buf_count as usize) = gpu_vertex;
             self.vertices_buf_count += 1;
@@ -753,15 +740,10 @@ impl Gpu3DRenderer {
         fbo
     }
 
-    unsafe fn draw_elements(translucent_only: bool, program: &Gpu3DShaderProgram, indices: &[u16], indices_batch: &[IndicesBatch]) {
+    unsafe fn draw_elements(translucent_only: bool, program: &Gpu3DShaderPrograms, indices: &[u16], indices_batch: &[IndicesBatch]) {
         let mut previous_offset = 0;
         for batch in indices_batch {
-            // println!(
-            //     "draw elements {translucent_only} {previous_offset} {} {:?}",
-            //     batch.indices_offset - previous_offset,
-            //     batch.attr.primitive_type()
-            // );
-            // println!("{:?}", &indices[previous_offset..batch.indices_offset]);
+            // println!("draw elements {translucent_only} {previous_offset} {} {:?}", batch.indices_offset - previous_offset, batch.attr.id());
 
             if batch.tex_image_param.format() != TextureFormat::None {
                 debug_assert_ne!(batch.tex, u32::MAX);
@@ -806,7 +788,9 @@ impl Gpu3DRenderer {
 
             if translucent_only {
                 if batch.attr.trans_new_depth() {
-                    gl::DepthFunc(gl::EQUAL);
+                    gl::DepthMask(gl::TRUE);
+                } else {
+                    gl::DepthMask(gl::FALSE);
                 }
 
                 if batch.attr.mode() == PolygonMode::Shadow {
@@ -831,12 +815,7 @@ impl Gpu3DRenderer {
                 gl::StencilFunc(gl::ALWAYS, u8::from(batch.attr.id()) as _, 0x7F);
                 gl::StencilOp(gl::KEEP, gl::KEEP, gl::REPLACE);
 
-                if batch.attr.trans_new_depth() {
-                    gl::Enable(gl::BLEND);
-                    gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-                } else {
-                    gl::Disable(gl::BLEND);
-                }
+                gl::Disable(gl::BLEND);
             }
 
             if !batch.attr.render_back() || !batch.attr.render_front() {
@@ -918,15 +897,9 @@ impl Gpu3DRenderer {
         self.active_polygon_attr = Gpu3DDrawAttr::default();
         for i in 0..self.assembled_draw_count {
             let draw = self.assembled_draws.get_unchecked(i as usize);
-            if unlikely(draw.attr.is_translucent()) {
-                if draw.attr.trans_new_depth() {
-                    self.add_vertices::<false>(i);
-                }
+            if draw.attr.is_translucent() || draw.tex_image_param.is_translucent() {
                 self.translucent_polygons.push(i);
             } else {
-                if draw.tex_image_param.is_translucent() {
-                    self.translucent_polygons.push(i);
-                }
                 self.add_vertices::<false>(i);
             }
         }
@@ -946,10 +919,15 @@ impl Gpu3DRenderer {
 
         // println!("render");
 
+        let program = self.gl.program.get_program(self.buffer.swap_buffers.depth_buffering_w());
+        gl::UseProgram(program.program);
+
         gl::Enable(gl::DEPTH_TEST);
         gl::DepthFunc(gl::LEQUAL);
 
         gl::Enable(gl::STENCIL_TEST);
+
+        gl::Uniform1f(program.screen_width, guest_width);
 
         gl::BindBuffer(gl::ARRAY_BUFFER, self.gl.vertices_buf);
         #[cfg(target_os = "linux")]
@@ -981,29 +959,19 @@ impl Gpu3DRenderer {
         gl::EnableVertexAttribArray(4);
         gl::VertexAttribPointer(4, 2, gl::UNSIGNED_BYTE, gl::FALSE, size_of::<Gpu3DVertex>() as _, mem::offset_of!(Gpu3DVertex, tex_size) as _);
 
-        let program = self.gl.program.get_program(self.buffer.swap_buffers.depth_buffering_w());
-
         if !self.indices_opaque.is_empty() {
-            gl::UseProgram(program.opaque.program);
             gl::DepthMask(gl::TRUE);
 
-            gl::Uniform1f(program.opaque.screen_width, guest_width);
-
-            Self::draw_elements(false, &program.opaque, &self.indices_opaque, &self.indices_opaque_batches);
+            Self::draw_elements(false, program, &self.indices_opaque, &self.indices_opaque_batches);
         }
 
         if !self.indices_translucent.is_empty() {
-            gl::UseProgram(program.translucent.program);
-
             gl::Enable(gl::BLEND);
-            gl::DepthMask(gl::FALSE);
 
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::ONE, gl::ONE);
             gl::BlendEquationSeparate(gl::FUNC_ADD, gl::MAX);
 
-            gl::Uniform1f(program.translucent.screen_width, guest_width);
-
-            Self::draw_elements(true, &program.translucent, &self.indices_translucent, &self.indices_translucent_batches);
+            Self::draw_elements(true, program, &self.indices_translucent, &self.indices_translucent_batches);
         }
 
         gl::DepthMask(gl::TRUE);

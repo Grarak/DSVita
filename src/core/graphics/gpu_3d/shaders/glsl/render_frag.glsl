@@ -43,21 +43,6 @@ void main() {
         color = oColor;
     }
 
-#ifdef TRANSLUCENT
-    if (color.a >= 0.99) {
-        discard;
-    }
-#else
-    if (color.a < 0.99) {
-        bool transNewDepth = ((polygonAttrs >> 4) & 1) != 0;
-        if (transNewDepth) {
-            color.a = 0.0;
-        } else {
-            discard;
-        }
-    }
-#endif
-
 #ifdef W_DEPTH_BUFFER
     gl_FragDepth = 1.0 / gl_FragCoord.w / 4096.0;
 #endif

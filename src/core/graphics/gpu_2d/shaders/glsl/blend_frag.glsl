@@ -100,6 +100,8 @@ void main() {
     if (top3D) {
         if (blendBottom) {
             color = vec4(bottomColor.rgb, 1.0 / 255.0);
+        } else if (bldMode < 2 || !blendTop || ((winEnabled >> 5) & 1) == 0) {
+            color = vec4(0.0, 0.0, 0.0, 4.0 / 255.0);
         } else {
             switch (bldMode) {
                 case 2: {
@@ -110,10 +112,6 @@ void main() {
                 case 3: {
                     float bldYF = float(bldY) / 16.0;
                     color = vec4(bldYF, 0.0, 0.0, 3.0 / 255.0);
-                    break;
-                }
-                default: {
-                    color = vec4(0.0, 0.0, 0.0, 4.0 / 255.0);
                     break;
                 }
             }
