@@ -638,6 +638,7 @@ pub fn show_progress(ui_backend: &mut impl UiBackend, current_name: impl AsRef<s
                 | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse
                 | ImGuiWindowFlags__ImGuiWindowFlags_AlwaysAutoResize) as _,
         ) {
+            ImGui::Text(c"If you are stuck here, make sure you have\nkubridge version 0.3.1 installed!".as_ptr());
             let text = CString::from_str(current_name.as_ref()).unwrap();
             ImGui::Text(text.as_ptr());
             let vec = ImVec2 { x: 400.0, y: 45.0 };

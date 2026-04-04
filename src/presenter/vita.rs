@@ -42,6 +42,10 @@ extern "C" {
     // pub fn sceRazorCpuPopMarker() -> c_int;
 }
 
+fn sce_common_dialog_set_magic_number(param: &mut SceCommonDialogParam) {
+    param.magic = SCE_COMMON_DIALOG_MAGIC_NUMBER + param as *mut _ as usize as u32;
+}
+
 const KEY_CODE_MAPPING: [(SceCtrlButtons, Keycode); 12] = [
     (SCE_CTRL_UP, Keycode::Up),
     (SCE_CTRL_DOWN, Keycode::Down),
@@ -120,7 +124,7 @@ pub struct Presenter {
 
 impl Presenter {
     #[cold]
-    pub fn new() -> Self {
+    pub fn new() -> Option<Self> {
         unsafe {
             info_println!("Set clocks");
             scePowerSetArmClockFrequency(444);
@@ -142,6 +146,29 @@ impl Presenter {
             info_println!("Initialize vitaGL");
             // Disable multisampling for depth texture
             vita_gl::vglInitExtended(0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, 70 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
+
+            info_println!("Checking for kubridge");
+            let search_unk = [0u32; 2];
+            if _vshKernelSearchModuleByName(c"kubridge".as_ptr(), search_unk.as_ptr() as _) < 0 {
+                let mut msg_param: SceMsgDialogUserMessageParam = mem::zeroed();
+                msg_param.buttonType = SCE_MSG_DIALOG_BUTTON_TYPE_OK as _;
+                msg_param.msg = c"Kubridge not installed, get version 0.3.1 from https://github.com/bythos14/kubridge/releases and put in under the *KERNEL section in config.txt!".as_ptr();
+
+                let mut param: SceMsgDialogParam = mem::zeroed();
+                sce_common_dialog_set_magic_number(&mut param.commonParam);
+                param.sdkVersion = PSP2_SDK_VERSION;
+                param.mode = SCE_MSG_DIALOG_MODE_USER_MSG as _;
+                param.userMsgParam = ptr::addr_of_mut!(msg_param);
+
+                sceMsgDialogInit(&param);
+
+                while sceMsgDialogGetStatus() != SCE_COMMON_DIALOG_STATUS_FINISHED {
+                    vita_gl::vglSwapBuffers(gl::TRUE);
+                }
+                sceMsgDialogTerm();
+                return None;
+            }
+
             gl::load_with(|name| {
                 let name = CString::new(name).unwrap();
                 vita_gl::vglGetProcAddress(name.as_ptr() as _) as _
@@ -159,7 +186,7 @@ impl Presenter {
             };
 
             init_ui(&mut instance);
-            instance
+            Some(instance)
         }
     }
 
@@ -445,8 +472,7 @@ fn to_cstr_utf16(str: &str) -> Vec<u16> {
 
 unsafe fn dialog_input(title: &str, value: &str, input_type: u32, max_len: u32) -> String {
     let mut params: SceImeDialogParam = mem::zeroed();
-    let common_param_ptr = ptr::addr_of!(params.commonParam);
-    params.commonParam.magic = SCE_COMMON_DIALOG_MAGIC_NUMBER + *(ptr::addr_of!(common_param_ptr) as *const u32);
+    sce_common_dialog_set_magic_number(&mut params.commonParam);
     params.sdkVersion = PSP2_SDK_VERSION;
     params.type_ = input_type;
 

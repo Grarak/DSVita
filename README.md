@@ -29,8 +29,9 @@ This runs most games, however consider:
 - Grab the latest vpk from [releases](https://github.com/Grarak/DSVita/releases)
 - Install `libshacccg.suprx`, follow
   this [guide](https://cimmerian.gitbook.io/vita-troubleshooting-guide/shader-compiler/extract-libshacccg.suprx) or just install and open VitaDB
-- Install `kubridge.skprx` from https://github.com/bythos14/kubridge/releases
+- Install `kubridge.skprx` version >= 0.3.1 from https://github.com/bythos14/kubridge/releases
   - Make sure this plugin is in the `*KERNEL` section, otherwise the app might crash upon opening
+  - If you have the wrong version installed, the app will either crash or will not be able to launch any games
 - It's strongly recommend to overclock your vita to 500MHz
 - Create the folder ux0:data/dsvita and put your roms there
     - They must have the file extensions `*.nds`

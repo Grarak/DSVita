@@ -374,7 +374,11 @@ pub fn actual_main() {
         }
     }
 
-    let mut presenter = Presenter::new();
+    let presenter = Presenter::new();
+    let mut presenter = match presenter {
+        None => return,
+        Some(presenter) => presenter,
+    };
 
     let fps = Arc::new(AtomicU16::new(0));
     let key_map = Arc::new(AtomicU32::new(0xFFFFFFFF));

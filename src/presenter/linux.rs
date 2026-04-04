@@ -70,7 +70,7 @@ pub struct Presenter {
 
 impl Presenter {
     #[cold]
-    pub fn new() -> Self {
+    pub fn new() -> Option<Self> {
         let arg_matches = command!()
             .arg(
                 arg!(-f <framelimit> "0: No 1: 100%, 2: 200%, 3: 300%")
@@ -155,7 +155,7 @@ impl Presenter {
         };
 
         init_ui(&mut instance);
-        instance
+        Some(instance)
     }
 
     pub fn present_ui(&mut self, screen_layouts: &mut ScreenLayouts) -> Option<(CartridgeIo, Settings)> {
