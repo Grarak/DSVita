@@ -5,14 +5,15 @@ precision highp float;
 
 layout(location = 0) out vec4 color;
 
-in vec2 screenPos;
+in vec2 texCoordsBlend;
+in vec2 texCoords3d;
 
 uniform sampler2D texBlend;
 uniform sampler2D tex3d;
 
 void main() {
-    vec4 colorBlend = texture(texBlend, screenPos);
-    vec4 color3d = texture(tex3d, screenPos);
+    vec4 colorBlend = texture(texBlend, texCoordsBlend);
+    vec4 color3d = texture(tex3d, texCoords3d);
 
     int mode = int(colorBlend.a * 255.0);
     switch (mode) {

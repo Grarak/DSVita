@@ -1,5 +1,7 @@
+float2 in screenPosWidescreen : TEXCOORD3;
+
 void main(out float4 color : COLOR) {
-    color = tex2D(display3dTex, screenPosF);
+    color = tex2D(display3dTex, screenPosWidescreen);
     if (!canDisplay()) {
         discard;
     }

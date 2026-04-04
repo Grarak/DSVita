@@ -19,8 +19,35 @@ use std::intrinsics::unlikely;
 use std::mem::{self, MaybeUninit};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
 const UPSCALE_FACTORS: [f32; 8] = [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75];
+
+#[repr(u8)]
+#[derive(Copy, Clone, EnumIter, Eq, PartialEq)]
+pub enum WidescreenOption {
+    Off = 0,
+    Only3d,
+    Both,
+}
+
+impl Into<String> for WidescreenOption {
+    fn into(self) -> String {
+        match self {
+            WidescreenOption::Off => "Off".to_string(),
+            WidescreenOption::Only3d => "3D only".to_string(),
+            WidescreenOption::Both => "2D + 3D".to_string(),
+        }
+    }
+}
+
+impl From<u8> for WidescreenOption {
+    fn from(value: u8) -> Self {
+        debug_assert!(value <= WidescreenOption::Both as u8);
+        unsafe { mem::transmute(value) }
+    }
+}
 
 #[bitsize(32)]
 #[derive(Copy, Clone, FromBits)]
@@ -102,27 +129,35 @@ pub struct Gpu3DGl {
 
 pub struct Gpu3DFbo {
     inner: GpuFbo,
+    pub regular_width: u32,
     upscale_factor_index: u8,
-    wide_screen_coefficient: f32,
+    pub widescreen: WidescreenOption,
+    widescreen_coefficient: f32,
+    pub widescreen_invert_coefficient: f32,
     guest_width: f32,
 }
 
 impl Gpu3DFbo {
-    fn new(upscale_factor_index: u8, wide_screen_coefficient: f32) -> Result<Self, StrErr> {
+    fn new(upscale_factor_index: u8, widescreen: WidescreenOption, widescreen_coefficient: f32) -> Result<Self, StrErr> {
         let upscale_factor = UPSCALE_FACTORS[upscale_factor_index as usize];
-        let mut width = DISPLAY_WIDTH as f32 * upscale_factor;
+
+        let regular_width = DISPLAY_WIDTH as f32 * upscale_factor;
         let height = DISPLAY_HEIGHT as f32 * upscale_factor;
-        let mut guest_width = (DISPLAY_WIDTH - 1) as f32;
-        if wide_screen_coefficient != 1.0 {
-            width *= wide_screen_coefficient;
-            guest_width *= wide_screen_coefficient;
-        }
+        let width = regular_width * widescreen_coefficient;
+
+        let guest_width = (DISPLAY_WIDTH - 1) as f32 * widescreen_coefficient;
+
+        let regular_width = (regular_width as u32) & !1;
         let width = (width as u32) & !1;
         let height = (height as u32) & !1;
+
         Ok(Gpu3DFbo {
             inner: GpuFbo::new(width, height, true, true)?,
+            regular_width,
             upscale_factor_index,
-            wide_screen_coefficient,
+            widescreen,
+            widescreen_coefficient,
+            widescreen_invert_coefficient: if widescreen == WidescreenOption::Only3d { 1.0 / widescreen_coefficient } else { 1.0 },
             guest_width,
         })
     }
@@ -158,7 +193,7 @@ impl Gpu3DGl {
             Gpu3DGl {
                 vertices_buf,
                 program: gpu_programs.render_3d,
-                fbos: [Gpu3DFbo::new(4, 1.0).unwrap(), Gpu3DFbo::new(4, 1.0).unwrap()],
+                fbos: [Gpu3DFbo::new(4, WidescreenOption::Off, 1.0).unwrap(), Gpu3DFbo::new(4, WidescreenOption::Off, 1.0).unwrap()],
             }
         }
     }
@@ -281,6 +316,10 @@ pub struct Gpu3DRenderer {
 impl Gpu3DRenderer {
     pub fn upscale_factor_settings_value() -> SettingValue {
         SettingValue::List(ListInner::new(4, UPSCALE_FACTORS.map(|factor| format!("{factor}x")).to_vec()))
+    }
+
+    pub fn widescreen_settings_value() -> SettingValue {
+        SettingValue::List(ListInner::new(0, WidescreenOption::iter().map(|option| option.into()).collect()))
     }
 
     pub fn new(gpu_programs: &GpuShadersPrograms) -> Self {
@@ -732,10 +771,10 @@ impl Gpu3DRenderer {
         self.vram_ready.store(true, Ordering::SeqCst);
     }
 
-    pub fn get_fbo(&mut self, swap: bool, upscale_factor_index: u8, wide_screen_coefficient: f32) -> &Gpu3DFbo {
+    pub fn get_fbo(&mut self, swap: bool, upscale_factor_index: u8, widescreen: WidescreenOption, widescreen_coefficient: f32) -> &Gpu3DFbo {
         let fbo = &mut self.gl.fbos[swap as usize];
-        if fbo.upscale_factor_index != upscale_factor_index || fbo.wide_screen_coefficient != wide_screen_coefficient {
-            *fbo = Gpu3DFbo::new(upscale_factor_index, wide_screen_coefficient).unwrap();
+        if fbo.upscale_factor_index != upscale_factor_index || fbo.widescreen != widescreen || fbo.widescreen_coefficient != widescreen_coefficient {
+            *fbo = Gpu3DFbo::new(upscale_factor_index, widescreen, widescreen_coefficient).unwrap();
         }
         fbo
     }
@@ -853,7 +892,7 @@ impl Gpu3DRenderer {
         }
     }
 
-    pub unsafe fn render(&mut self, common: &GpuRendererCommon, upscale_factor_index: u8, wide_screen_coefficient: f32) {
+    pub unsafe fn render(&mut self, common: &GpuRendererCommon, upscale_factor_index: u8, widescreen: WidescreenOption, widescreen_coefficient: f32) {
         if self.buffer.pow_cnt1 != common.pow_cnt1[0] {
             return;
         }
@@ -863,7 +902,7 @@ impl Gpu3DRenderer {
             self.texture_ids_to_delete.clear();
         }
 
-        let fbo = self.get_fbo(self.buffer.pow_cnt1.display_swap(), upscale_factor_index, wide_screen_coefficient);
+        let fbo = self.get_fbo(self.buffer.pow_cnt1.display_swap(), upscale_factor_index, widescreen, widescreen_coefficient);
         gl::BindFramebuffer(gl::FRAMEBUFFER, fbo.fbo());
         gl::Viewport(0, 0, fbo.inner.width as _, fbo.inner.height as _);
 

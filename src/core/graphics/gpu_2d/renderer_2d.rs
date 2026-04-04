@@ -6,7 +6,7 @@ use crate::core::graphics::gpu_2d::registers_2d::{BgCnt, DispCnt};
 use crate::core::graphics::gpu_2d::renderer_regs_2d::{BgUbo, BlendUbo, Gpu2DMem, Gpu2DRenderRegs, Gpu2DRenderRegsShared, WinBgUbo};
 use crate::core::graphics::gpu_2d::Gpu2DEngine;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
-use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DFbo;
+use crate::core::graphics::gpu_3d::renderer_3d::{Gpu3DFbo, WidescreenOption};
 use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::graphics::gpu_shaders::{Gpu2DObjShaderProgram, GpuShadersPrograms};
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
@@ -136,6 +136,7 @@ pub struct Gpu2DCommon {
     bg_fbos: [GpuFbo; 4],
     blend_programs: [GLuint; 2],
     blend_3d_program: GLuint,
+    blend_3d_widescreen_invert_coefficient_loc: GLint,
     blend_ubo: GLuint,
 }
 
@@ -199,6 +200,8 @@ impl Gpu2DCommon {
             gl::Uniform1i(gl::GetUniformLocation(gpu_programs.blend_3d, c"texBlend".as_ptr() as _), 0);
             gl::Uniform1i(gl::GetUniformLocation(gpu_programs.blend_3d, c"tex3d".as_ptr() as _), 1);
 
+            let blend_3d_widescreen_invert_coefficient_loc = gl::GetUniformLocation(gpu_programs.blend_3d, c"widescreenInvertCoefficient".as_ptr() as _);
+
             gl::UseProgram(0);
 
             Gpu2DCommon {
@@ -211,6 +214,7 @@ impl Gpu2DCommon {
                 bg_fbos: array_init!({ GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap() }; 4),
                 blend_programs,
                 blend_3d_program: gpu_programs.blend_3d,
+                blend_3d_widescreen_invert_coefficient_loc,
                 blend_ubo,
             }
         }
@@ -278,6 +282,7 @@ struct Gpu2DBgProgram {
     cnt_loc: GLint,
     tex_height_loc: GLint,
     num_loc: GLint,
+    widescreen_invert_coefficient_loc: GLint,
     has_ubo: bool,
 }
 
@@ -425,6 +430,7 @@ impl Gpu2DProgram {
                     let cnt_loc = gl::GetUniformLocation(program, c"bgCntF".as_ptr() as _);
                     let tex_height_loc = gl::GetUniformLocation(program, c"bgTexHeight".as_ptr() as _);
                     let num_loc = gl::GetUniformLocation(program, c"bgNum".as_ptr() as _);
+                    let widescreen_invert_coefficient_loc = gl::GetUniformLocation(program, c"widescreenInvertCoefficient".as_ptr() as _);
 
                     gl::Uniform1i(gl::GetUniformLocation(program, c"bgTex".as_ptr() as _), 0);
                     gl::Uniform1i(gl::GetUniformLocation(program, c"palTex".as_ptr() as _), 1);
@@ -444,6 +450,7 @@ impl Gpu2DProgram {
                         cnt_loc,
                         tex_height_loc,
                         num_loc,
+                        widescreen_invert_coefficient_loc,
                         has_ubo,
                     }
                 };
@@ -536,7 +543,7 @@ impl Gpu2DProgram {
         }
     }
 
-    unsafe fn draw_bg_program(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, from_line: u8, to_line: u8, fbo_3d_color: GLuint, bg_num: u8, bg_mode: BgMode) {
+    unsafe fn draw_bg_program(&self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, from_line: u8, to_line: u8, fbo_3d: Option<&Gpu3DFbo>, bg_num: u8, bg_mode: BgMode) {
         let bg_cnt = regs.bg_cnts[from_line as usize * 4 + bg_num as usize];
         let bg_cnt = BgCnt::from(bg_cnt);
         let program = match bg_mode {
@@ -579,9 +586,11 @@ impl Gpu2DProgram {
         gl::ActiveTexture(gl::TEXTURE3);
         gl::BindTexture(gl::TEXTURE_2D, common.win_bg_fbo.color);
 
-        if bg_mode == BgMode::Display3d {
+        if let Some(fbo_3d) = fbo_3d {
             gl::ActiveTexture(gl::TEXTURE4);
-            gl::BindTexture(gl::TEXTURE_2D, fbo_3d_color);
+            gl::BindTexture(gl::TEXTURE_2D, fbo_3d.color());
+
+            gl::Uniform1f(program.widescreen_invert_coefficient_loc, fbo_3d.widescreen_invert_coefficient);
         }
 
         if program.has_ubo {
@@ -615,16 +624,16 @@ impl Gpu2DProgram {
         macro_rules! draw {
             ($bg3mode:expr, $bg2mode:expr, $bg1mode:expr, $bg0mode:expr) => {{
                 if disp_cnt.screen_display_bg3() {
-                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, 3, $bg3mode);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, None, 3, $bg3mode);
                 }
                 if disp_cnt.screen_display_bg2() {
-                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, 2, $bg2mode);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, None, 2, $bg2mode);
                 }
                 if disp_cnt.screen_display_bg1() {
-                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, 1, $bg1mode);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, None, 1, $bg1mode);
                 }
                 if disp_cnt.screen_display_bg0() && !disp_cnt.bg0_3d() {
-                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, 0, $bg0mode);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, None, 0, $bg0mode);
                 }
             }};
         }
@@ -638,7 +647,7 @@ impl Gpu2DProgram {
             5 => draw!(BgMode::Extended, BgMode::Extended, BgMode::Text, BgMode::Text),
             6 => {
                 if disp_cnt.screen_display_bg2() {
-                    self.draw_bg_program(common, regs, texs, from_line, to_line, 0, 2, BgMode::Large);
+                    self.draw_bg_program(common, regs, texs, from_line, to_line, None, 2, BgMode::Large);
                 }
             }
             7 => {}
@@ -664,7 +673,7 @@ impl Gpu2DProgram {
                 let disp_cnt = DispCnt::from(regs.disp_cnts[from_line as usize]);
                 if let 0..=5 = u8::from(disp_cnt.bg_mode()) {
                     if disp_cnt.screen_display_bg0() && disp_cnt.bg0_3d() {
-                        self.draw_bg_program(common, regs, texs, from_line, to_line, fbo_3d.color(), 0, BgMode::Display3d);
+                        self.draw_bg_program(common, regs, texs, from_line, to_line, Some(fbo_3d), 0, BgMode::Display3d);
                     }
                 }
             };
@@ -714,8 +723,18 @@ impl Gpu2DProgram {
 
             gl::BindFramebuffer(gl::FRAMEBUFFER, self.blend_3d_fbo.fbo);
             gl::Viewport(0, 0, self.blend_3d_fbo.width as _, self.blend_3d_fbo.height as _);
+            gl::ClearColor(0f32, 0f32, 0f32, 0f32);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
 
             gl::UseProgram(common.blend_3d_program);
+
+            if fbo_3d.widescreen == WidescreenOption::Only3d {
+                let x_offset = (fbo_3d.width() - fbo_3d.regular_width) >> 1;
+                gl::Viewport(x_offset as _, 0, fbo_3d.regular_width as _, fbo_3d.height() as _);
+                gl::Uniform1f(common.blend_3d_widescreen_invert_coefficient_loc, fbo_3d.widescreen_invert_coefficient);
+            } else {
+                gl::Uniform1f(common.blend_3d_widescreen_invert_coefficient_loc, 1.0);
+            }
 
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, blend_fbo.color);
@@ -728,6 +747,37 @@ impl Gpu2DProgram {
             gl::EnableVertexAttribArray(0);
             gl::VertexAttribPointer(0, 4, gl::FLOAT, gl::FALSE, 0, VERTICES.as_ptr() as _);
             gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+
+            if fbo_3d.widescreen == WidescreenOption::Only3d {
+                let x_offset = (fbo_3d.width() - fbo_3d.regular_width) >> 1;
+
+                gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, self.blend_3d_fbo.fbo);
+                gl::BindFramebuffer(gl::READ_FRAMEBUFFER, fbo_3d.fbo());
+                gl::BlitFramebuffer(
+                    0,
+                    0,
+                    x_offset as _,
+                    fbo_3d.height() as _,
+                    0,
+                    0,
+                    x_offset as _,
+                    self.blend_3d_fbo.height as _,
+                    gl::COLOR_BUFFER_BIT,
+                    gl::NEAREST,
+                );
+                gl::BlitFramebuffer(
+                    (x_offset + fbo_3d.regular_width) as _,
+                    0,
+                    fbo_3d.width() as _,
+                    fbo_3d.height() as _,
+                    (x_offset + fbo_3d.regular_width) as _,
+                    0,
+                    self.blend_3d_fbo.width as _,
+                    self.blend_3d_fbo.height as _,
+                    gl::COLOR_BUFFER_BIT,
+                    gl::NEAREST,
+                );
+            }
 
             blend_fbo_color = self.blend_3d_fbo.color;
         }

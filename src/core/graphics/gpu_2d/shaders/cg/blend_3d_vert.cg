@@ -1,7 +1,14 @@
 float4 out gl_Position : POSITION;
-float2 out screenPos : TEXCOORD0;
+float2 out texCoordsBlend : TEXCOORD0;
+float2 out texCoords3d : TEXCOORD1;
+
+uniform float widescreenInvertCoefficient;
 
 void main(float4 position) {
-    screenPos = position.zw;
+    texCoordsBlend = position.zw;
+    texCoords3d.x = position.z * 2.0 - 1.0;
+    texCoords3d.x *= widescreenInvertCoefficient;
+    texCoords3d.x = texCoords3d.x * 0.5 + 0.5;
+    texCoords3d.y = position.w;
     gl_Position = float4(position.xy, 0.0, 1.0);
 }

@@ -1,11 +1,12 @@
-float2 in screenPos : TEXCOORD0;
+float2 in texCoordsBlend : TEXCOORD0;
+float2 in texCoords3d : TEXCOORD1;
 
 uniform sampler2D texBlend : TEXUNIT0;
 uniform sampler2D tex3d : TEXUNIT1;
 
 void main(out float4 color : COLOR) {
-    float4 colorBlend = tex2D(texBlend, screenPos);
-    float4 color3d = tex2D(tex3d, screenPos);
+    float4 colorBlend = tex2D(texBlend, texCoordsBlend);
+    float4 color3d = tex2D(tex3d, texCoords3d);
 
     char mode = char(colorBlend.a * 255.0);
     if (mode == 1) {

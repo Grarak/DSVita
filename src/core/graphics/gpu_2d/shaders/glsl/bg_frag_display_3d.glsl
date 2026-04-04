@@ -1,10 +1,11 @@
+in vec2 screenPosWidescreen;
+
 void main() {
+    color = texture(display3dTex, screenPosWidescreen);
     int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
     if ((winEnabled & 1) == 0) {
         discard;
     }
-
-    color = texture(display3dTex, vec2(screenPosF.x, 1.0 - screenPosF.y));
 
     if (color.a == 0.0) {
         discard;

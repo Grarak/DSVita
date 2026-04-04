@@ -6,7 +6,7 @@ use crate::core::graphics::gpu_2d::renderer_2d::Gpu2DRenderer;
 use crate::core::graphics::gpu_2d::renderer_regs_2d::Gpu2DRenderRegsShared;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
-use crate::core::graphics::gpu_3d::renderer_3d::Gpu3DRenderer;
+use crate::core::graphics::gpu_3d::renderer_3d::{Gpu3DRenderer, WidescreenOption};
 use crate::core::graphics::gpu_mem_buf::{GpuMemBuf, GpuMemRefs};
 use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
 use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
@@ -298,7 +298,15 @@ impl GpuRenderer {
         pause: bool,
     ) {
         let upscale_3d_factor_index = settings.upscale_3d_factor();
-        let wide_screen_coefficient = if settings.wide_3d_screen() { screen_layout.wide_screen_coefficient } else { 1.0 };
+        let mut widescreen = settings.widescreen();
+        let widescreen_coefficient = if widescreen != WidescreenOption::Off {
+            if screen_layout.wide_screen_coefficient == 1.0 {
+                widescreen = WidescreenOption::Off
+            }
+            screen_layout.wide_screen_coefficient
+        } else {
+            1.0
+        };
 
         {
             let rendering = self.rendering.lock().unwrap();
@@ -353,11 +361,13 @@ impl GpuRenderer {
                 if unlikely(timeout.timed_out()) {
                     info_println!("waiting for 3d processing timed out");
                 }
-                self.renderer_3d.render(&self.common, upscale_3d_factor_index, wide_screen_coefficient);
+                self.renderer_3d.render(&self.common, upscale_3d_factor_index, widescreen, widescreen_coefficient);
             }
 
             // let a_fbo_color = self.renderer_soft_2d.blend::<{ A }>(&self.common, &self.renderer_regs_2d_shared, self.renderer_3d.gl.fbo.color);
-            let fbo_3d = self.renderer_3d.get_fbo(self.common.pow_cnt1[0].display_swap(), upscale_3d_factor_index, wide_screen_coefficient);
+            let fbo_3d = self
+                .renderer_3d
+                .get_fbo(self.common.pow_cnt1[0].display_swap(), upscale_3d_factor_index, widescreen, widescreen_coefficient);
             let a_fbo_color = self.renderer_2d.blend::<{ A }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, Some(fbo_3d));
 
             if disp_cap_cnt.capture_enabled() && u8::from(disp_cap_cnt.capture_source()) != 1 {
@@ -409,7 +419,7 @@ impl GpuRenderer {
                 };
 
                 let is_physical_top = top_screen.2;
-                let top_screen = (a_fbo_color, top_screen.0, if is_physical_top { wide_screen_coefficient } else { 1.0 }, top_screen.1);
+                let top_screen = (a_fbo_color, top_screen.0, if is_physical_top { widescreen_coefficient } else { 1.0 }, top_screen.1);
 
                 let bottom_screen = if self.common.pow_cnt1[0].display_swap() {
                     screen_layout.get_screen_bottom()
