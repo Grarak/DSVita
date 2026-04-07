@@ -242,9 +242,11 @@ impl<T, const ALIGNMENT: usize> HeapDynamic<T, ALIGNMENT> {
     }
 
     pub unsafe fn destroy(&mut self) {
-        std::alloc::dealloc(self.ptr as _, Self::layout(self.len));
-        self.ptr = ptr::null_mut();
-        self.len = 0;
+        if !self.ptr.is_null() {
+            std::alloc::dealloc(self.ptr as _, Self::layout(self.len));
+            self.ptr = ptr::null_mut();
+            self.len = 0;
+        }
     }
 }
 
