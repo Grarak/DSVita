@@ -8,7 +8,8 @@ use crate::presenter::imgui::root::{
     ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags__ImGuiWindowFlags_NoMove, ImGuiWindowFlags__ImGuiWindowFlags_NoResize, ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar,
     ImVec2, ImVec4,
 };
-use crate::presenter::{show_layout_create_settings, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::presenter::{show_layout_create_settings, show_retroachievements_settings, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::ra_context::RaContext;
 use crate::screen_layouts::{CustomLayout, ScreenLayouts};
 use crate::settings::{SettingValue, Settings, SettingsConfig};
 use std::ffi::CString;
@@ -115,7 +116,15 @@ pub struct CustomLayoutContext {
     pub duplicated_name: bool,
 }
 
-pub fn show_main_menu(cartridge_path: PathBuf, screen_layouts: &mut ScreenLayouts, ui_backend: &mut impl UiBackend) -> Option<(CartridgeIo, GlobalSettings, Settings)> {
+#[derive(Default)]
+pub struct RALoginContext {
+    pub username: String,
+    pub password: String,
+    pub error: String,
+    pub logging_in: bool,
+}
+
+pub fn show_main_menu(cartridge_path: PathBuf, screen_layouts: &mut ScreenLayouts, ra_context: &mut RaContext, ui_backend: &mut impl UiBackend) -> Option<(CartridgeIo, GlobalSettings, Settings)> {
     unsafe {
         let saves_path = cartridge_path.join("saves");
         let global_settings_path = cartridge_path.join("global_settings");
@@ -128,6 +137,8 @@ pub fn show_main_menu(cartridge_path: PathBuf, screen_layouts: &mut ScreenLayout
 
         let mut global_settings = GlobalSettings::new(global_settings_path).unwrap();
         screen_layouts.populate_custom_layouts(&global_settings.custom_layouts);
+
+        ra_context.set_cache_dir(cartridge_path.join("ra"));
 
         let mut cartridges: Vec<CartridgePreview> = match fs::read_dir(&cartridge_path) {
             Ok(rom_dir) => rom_dir
@@ -158,11 +169,15 @@ pub fn show_main_menu(cartridge_path: PathBuf, screen_layouts: &mut ScreenLayout
         let mut hovered: Option<usize> = None;
         static mut SELECTED: Option<usize> = None;
         let mut launched = false;
+
         let mut layout_settings = false;
         let mut custom_layout = false;
         let mut custom_layout_context = CustomLayoutContext::default();
         let mut new_custom_layout = CustomLayout::default();
         let mut selected_custom_layout: Option<usize> = None;
+
+        let mut ra_settings = false;
+        let mut ra_login_context = RALoginContext::default();
 
         let mut icon_tex = 0;
         gl::GenTextures(1, &mut icon_tex);
@@ -434,6 +449,45 @@ pub fn show_main_menu(cartridge_path: PathBuf, screen_layouts: &mut ScreenLayout
                 }
 
                 ImGui::End();
+            } else if ra_settings {
+                let vec = ImVec2 { x: 0.0, y: 0.0 };
+                let vec2 = ImVec2 { x: 0.0, y: 0.0 };
+                ImGui::SetNextWindowPos(&vec, ImGuiCond__ImGuiSetCond_Always as _, &vec2);
+                let vec = ImVec2 { x: 960.0, y: 544.0 };
+                ImGui::SetNextWindowSize(&vec, ImGuiCond__ImGuiSetCond_Always as _);
+                if ImGui::Begin(
+                    c"##retroachievements".as_ptr() as _,
+                    ptr::null_mut(),
+                    (ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoResize
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoMove
+                        | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse) as _,
+                ) {
+                    if ra_login_context.logging_in {
+                        if ImGui::BeginPopupModal(
+                            c"retroachievements_login_dialog".as_ptr(),
+                            ptr::null_mut(),
+                            (ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar
+                                | ImGuiWindowFlags__ImGuiWindowFlags_NoResize
+                                | ImGuiWindowFlags__ImGuiWindowFlags_NoMove
+                                | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse
+                                | ImGuiWindowFlags__ImGuiWindowFlags_AlwaysAutoResize) as _,
+                        ) {
+                            ImGui::Text(c"Logging in".as_ptr());
+                            ImGui::EndPopup();
+                        }
+
+                        ImGui::OpenPopup(c"retroachievements_login_dialog".as_ptr());
+                    }
+
+                    show_retroachievements_settings(&mut global_settings, &mut ra_login_context, ra_context);
+
+                    if (*ImGui::GetIO()).NavInputs[ImGuiNavInput__ImGuiNavInput_Cancel as usize] != 0f32 {
+                        ra_settings = false;
+                    }
+                }
+
+                ImGui::End();
             } else if show_global_settings {
                 let vec = ImVec2 { x: 0.0, y: 0.0 };
                 let vec2 = ImVec2 { x: 0.0, y: 0.0 };
@@ -451,6 +505,10 @@ pub fn show_main_menu(cartridge_path: PathBuf, screen_layouts: &mut ScreenLayout
                     let vec = ImVec2 { x: -1f32, y: 0f32 };
                     if ImGui::Button(c"Custom screen layout".as_ptr() as _, &vec) {
                         layout_settings = true;
+                    }
+
+                    if ImGui::Button(c"Retroachievements".as_ptr() as _, &vec) {
+                        ra_settings = true;
                     }
 
                     if (*ImGui::GetIO()).NavInputs[ImGuiNavInput__ImGuiNavInput_Cancel as usize] != 0f32 {

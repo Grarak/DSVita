@@ -393,6 +393,22 @@ unsafe extern "C" fn validate_guest_block_hash() {
 const_assert_eq!(size_of::<Vec<GuestInstOffset>>(), 12);
 const_assert_eq!(size_of::<GuestInstOffset>(), 40);
 
+const fn jit_emu_offset() -> usize {
+    mem::offset_of!(JitAsm, emu)
+}
+
+const fn jit_mem_mmap_offset() -> usize {
+    mem::offset_of!(Emu, jit.mem.ptr)
+}
+
+const fn jit_guest_inst_offset() -> usize {
+    mem::offset_of!(Emu, jit.guest_inst_offsets)
+}
+
+const fn pre_cycle_count_sum_offset() -> usize {
+    mem::offset_of!(JitAsm, runtime_data.pre_cycle_count_sum)
+}
+
 #[unsafe(naked)]
 unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) {
     #[rustfmt::skip]
@@ -429,11 +445,11 @@ unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) 
         "ldr r11, [r11]",
         "bx lr",
         jit_asm_ptr = const CPU.jit_asm_addr(),
-        emu_offset = const mem::offset_of!(JitAsm, emu),
-        jit_mem_mmap_offset = const mem::offset_of!(Emu, jit.mem.ptr),
+        emu_offset = const jit_emu_offset(),
+        jit_mem_mmap_offset = const jit_mem_mmap_offset(),
         page_shift = const PAGE_SHIFT,
-        jit_guest_inst_offset = const mem::offset_of!(Emu, jit.guest_inst_offsets),
-        pre_cycle_count_sum_offset = const mem::offset_of!(JitAsm, runtime_data.pre_cycle_count_sum),
+        jit_guest_inst_offset = const jit_guest_inst_offset(),
+        pre_cycle_count_sum_offset = const pre_cycle_count_sum_offset(),
         guest_regs_offset = const CPU.guest_regs_addr(),
         cpsr_offset = const Reg::CPSR as usize * 4,
     );

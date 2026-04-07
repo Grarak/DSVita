@@ -1,0 +1,11 @@
+float2 in texCoords : TEXCOORD0;
+float in texFactor : TEXCOORD1;
+
+uniform sampler2D tex : TEXUNIT0;
+
+uniform float alpha;
+
+void main(out float4 color : COLOR) {
+    float4 texColor = tex2D(tex, texCoords);
+    color = float4(texColor.rgb * texFactor + float3(0.2, 0.2, 0.2) * (1.0 - texFactor), alpha);
+}

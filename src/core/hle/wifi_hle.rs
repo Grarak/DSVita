@@ -17,6 +17,8 @@ enum WMApiid {
     EndParent = 9,
     StartScan = 10,
     EndScan = 11,
+    SetLifetime = 29,
+    StartScanEx = 38,
     AsyncKindMax = 46,
     Unknown = 255,
 }

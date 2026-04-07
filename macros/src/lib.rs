@@ -1,4 +1,3 @@
-#![feature(proc_macro_quote)]
 extern crate proc_macro;
 use proc_macro2::TokenStream;
 use syn::__private::quote::{format_ident, quote};

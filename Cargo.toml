@@ -1,4 +1,4 @@
-workspace = { members = ["macros", "vitabuild", "vitaGL", "vixl"] }
+workspace = { members = ["macros", "vitabuild", "vitaGL", "vixl", "rcheevos"] }
 [package]
 name = "dsvita"
 version = "0.9.1"
@@ -29,6 +29,13 @@ strum = "0.27.1"
 strum_macros = "0.27.1"
 vixl = { path = "vixl" }
 xxhash-rust = { version = "0.8.15", features = ["xxh32"] }
+libc = "0.2.149"
+
+png = "0.18.1"
+rcheevos = { path = "rcheevos" }
+
+[patch.crates-io]
+simd-adler32 = { git = 'https://github.com/Grarak/simd-adler32.git' }
 
 [target.armv7-unknown-linux-gnueabihf.dependencies]
 clap = { version = "4.5.17", features = ["cargo"] }
@@ -36,6 +43,8 @@ libc = "0.2.153"
 sdl2 = "0.35.0"
 affinity = "0.1.2"
 backtrace = "0.3.74"
+
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "rustls-tls"] }
 
 [build-dependencies]
 bindgen = "0.71.1"
@@ -65,6 +74,9 @@ vitasdk-sys = { version = "0.3.2", features = [
     "SceVshBridge_stub",
 ] }
 vita_gl = { path = "vitaGL" }
+
+openssl-sys = "=0.9.111"
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "native-tls"] }
 
 [profile.release-debug]
 inherits = "dev"

@@ -1,7 +1,7 @@
 use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
-use gl::types::GLuint;
+use gl::types::{GLint, GLuint};
 use glyph_brush::ab_glyph::FontRef;
-use glyph_brush::{BrushAction, BrushError, Extra, GlyphBrush, GlyphBrushBuilder, Section, Text};
+use glyph_brush::{BrushAction, BrushError, BuiltInLineBreaker, Extra, GlyphBrush, GlyphBrushBuilder, Layout, Section, Text};
 use std::ptr;
 
 pub struct GlGlyph {
@@ -10,6 +10,8 @@ pub struct GlGlyph {
     glyph_vertices: Vec<[f32; 4 * 4]>,
     glyph_indices: Vec<[u16; 6]>,
     text_program: GLuint,
+    text_dims_loc: GLint,
+    text_alpha_loc: GLint,
 }
 
 impl GlGlyph {
@@ -41,15 +43,20 @@ impl GlGlyph {
             tex
         };
 
-        unsafe {
+        let (text_dims_loc, text_alpha_loc) = unsafe {
             gl::UseProgram(gpu_programs.text);
 
             gl::BindAttribLocation(gpu_programs.text, 0, c"position".as_ptr() as _);
 
             gl::Uniform1i(gl::GetUniformLocation(gpu_programs.text, c"tex".as_ptr() as _), 0);
 
+            let dims_loc = gl::GetUniformLocation(gpu_programs.text, c"dims".as_ptr() as _);
+            let alpha_loc = gl::GetUniformLocation(gpu_programs.text, c"alpha".as_ptr() as _);
+
             gl::UseProgram(0);
-        }
+
+            (dims_loc, alpha_loc)
+        };
 
         GlGlyph {
             glyph_brush,
@@ -57,11 +64,19 @@ impl GlGlyph {
             glyph_vertices: Vec::new(),
             glyph_indices: Vec::new(),
             text_program: gpu_programs.text,
+            text_dims_loc,
+            text_alpha_loc,
         }
     }
 
-    pub unsafe fn draw(&mut self, text: impl Into<String>) {
-        self.glyph_brush.queue(Section::default().add_text(Text::new(&text.into()).with_scale(25.0)));
+    pub unsafe fn draw(&mut self, text: impl Into<String>, dimensions: (f32, f32), position: (f32, f32), scale: f32, layout: impl Into<Layout<BuiltInLineBreaker>>, alpha: f32) {
+        self.glyph_brush.queue(
+            Section::default()
+                .with_bounds(dimensions)
+                .with_screen_position(position)
+                .with_layout(layout)
+                .add_text(Text::new(&text.into()).with_scale(scale)),
+        );
         let glyph_action;
         loop {
             glyph_action = self.glyph_brush.process_queued(
@@ -81,7 +96,6 @@ impl GlGlyph {
                     gl::BindTexture(gl::TEXTURE_2D, 0);
                 },
                 |glyph| {
-                    #[rustfmt::skip]
                     [
                         // Top left
                         glyph.pixel_coords.min.x,
@@ -116,7 +130,7 @@ impl GlGlyph {
             }
         }
 
-        match glyph_action.unwrap() {
+        match glyph_action.unwrap_unchecked() {
             BrushAction::Draw(vertices) => {
                 self.glyph_vertices = vertices;
                 self.glyph_indices.clear();
@@ -136,6 +150,9 @@ impl GlGlyph {
 
         gl::ActiveTexture(gl::TEXTURE0);
         gl::BindTexture(gl::TEXTURE_2D, self.glyph_tex);
+
+        gl::Uniform2f(self.text_dims_loc, dimensions.0, -dimensions.1);
+        gl::Uniform1f(self.text_alpha_loc, alpha);
 
         gl::EnableVertexAttribArray(0);
         gl::VertexAttribPointer(0, 4, gl::FLOAT, gl::FALSE, 0, self.glyph_vertices.as_ptr() as _);

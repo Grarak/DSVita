@@ -195,6 +195,7 @@ impl CartridgePreview {
 
 pub struct CartridgeIo {
     file: File,
+    pub file_path: PathBuf,
     pub file_name: String,
     pub file_size: u32,
     pub header: CartridgeHeader,
@@ -238,6 +239,7 @@ impl CartridgeIo {
 
         Ok(CartridgeIo {
             file,
+            file_path: preview.file_path,
             file_name: preview.file_name,
             file_size,
             header: preview.header,

@@ -7,18 +7,20 @@ use crate::presenter::imgui::root::{
     ImDrawData, ImGui, ImGuiCol__ImGuiCol_Text, ImGuiStyleVar__ImGuiStyleVar_ItemSpacing, ImGuiStyleVar__ImGuiStyleVar_WindowRounding, ImGui_ImplVitaGL_GamepadUsage, ImGui_ImplVitaGL_Init,
     ImGui_ImplVitaGL_MouseStickUsage, ImGui_ImplVitaGL_NewFrame, ImGui_ImplVitaGL_RenderDrawData, ImGui_ImplVitaGL_TouchUsage, ImVec2,
 };
-use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, show_progress, CustomLayoutContext, UiBackend, UiPauseMenuReturn};
+use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, show_progress, CustomLayoutContext, RALoginContext, UiBackend, UiPauseMenuReturn};
 use crate::presenter::{
     PresentEvent, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_IN_SAMPLE_RATE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH,
 };
+use crate::ra_context::RaContext;
 use crate::screen_layouts::{CustomLayout, ScreenLayouts};
 use crate::settings::{Settings, SettingsConfig};
 use gl::types::{GLenum, GLuint};
+use std::cmp::min;
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::{mem, ptr};
+use std::{env, mem, ptr};
 use vita_gl::{SharkOpt, VglMemType};
 use vitasdk_sys::*;
 
@@ -126,6 +128,8 @@ impl Presenter {
     #[cold]
     pub fn new() -> Option<Self> {
         unsafe {
+            env::set_var("SSL_CERT_FILE", "vs0:data/external/cert/CA_LIST.cer");
+
             info_println!("Set clocks");
             scePowerSetArmClockFrequency(444);
             scePowerSetGpuClockFrequency(222);
@@ -313,7 +317,7 @@ impl Presenter {
         }
     }
 
-    pub fn present_ui(&mut self, screen_layouts: &mut ScreenLayouts) -> Option<(CartridgeIo, Settings)> {
+    pub fn present_ui(&mut self, screen_layouts: &mut ScreenLayouts, ra_context: &mut RaContext) -> Option<(CartridgeIo, GlobalSettings, Settings)> {
         unsafe {
             sceShellUtilUnlock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2);
 
@@ -337,19 +341,19 @@ impl Presenter {
                                 screen_layouts.populate_custom_layouts(&global_settings.custom_layouts);
                                 settings.populate_screen_layouts(screen_layouts);
 
-                                return Some((CartridgeIo::from_preview(preview, save_file).unwrap(), settings));
+                                return Some((CartridgeIo::from_preview(preview, save_file).unwrap(), global_settings, settings));
                             }
                         }
                     }
                 }
             }
 
-            match show_main_menu(PathBuf::from(ROM_PATH), screen_layouts, self) {
+            match show_main_menu(PathBuf::from(ROM_PATH), screen_layouts, ra_context, self) {
                 None => None,
                 Some((cartridge_io, global_settings, mut settings)) => {
                     screen_layouts.populate_custom_layouts(&global_settings.custom_layouts);
                     settings.populate_screen_layouts(screen_layouts);
-                    Some((cartridge_io, settings))
+                    Some((cartridge_io, global_settings, settings))
                 }
             }
         }
@@ -470,11 +474,12 @@ fn to_cstr_utf16(str: &str) -> Vec<u16> {
     vec
 }
 
-unsafe fn dialog_input(title: &str, value: &str, input_type: u32, max_len: u32) -> String {
+unsafe fn dialog_input(title: &str, value: &str, input_type: u32, text_box_mode: u32, max_len: u32) -> String {
     let mut params: SceImeDialogParam = mem::zeroed();
     sce_common_dialog_set_magic_number(&mut params.commonParam);
     params.sdkVersion = PSP2_SDK_VERSION;
     params.type_ = input_type;
+    params.textBoxMode = text_box_mode;
 
     let title = to_cstr_utf16(title);
     params.title = title.as_ptr() as _;
@@ -506,7 +511,7 @@ pub fn show_layout_create_settings(global_settings: &mut GlobalSettings, custom_
         let vec = ImVec2 { x: 500.0, y: 0.0 };
         let name = custom_layout.name_c_str();
         if ImGui::Button(name.as_ptr() as _, &vec) {
-            custom_layout.name = dialog_input("Layout name", &custom_layout.name, SCE_IME_TYPE_BASIC_LATIN, 32);
+            custom_layout.name = dialog_input("Layout name", &custom_layout.name, SCE_IME_TYPE_BASIC_LATIN, SCE_IME_DIALOG_TEXTBOX_MODE_DEFAULT, 32);
         }
 
         for (i, name) in [(0, "Top"), (1, "Bottom")] {
@@ -519,7 +524,7 @@ pub fn show_layout_create_settings(global_settings: &mut GlobalSettings, custom_
             let vec = ImVec2 { x: 500.0, y: 0.0 };
             let c_width = custom_layout.width_c_str(i);
             if ImGui::Button(c_width.as_ptr() as _, &vec) {
-                custom_layout_context.parse_error = !custom_layout.set_width(i, &dialog_input(&title, &custom_layout.width_str(i), SCE_IME_TYPE_NUMBER, 5));
+                custom_layout_context.parse_error = !custom_layout.set_width(i, &dialog_input(&title, &custom_layout.width_str(i), SCE_IME_TYPE_NUMBER, SCE_IME_DIALOG_TEXTBOX_MODE_DEFAULT, 5));
             }
             ImGui::PopID();
 
@@ -532,7 +537,7 @@ pub fn show_layout_create_settings(global_settings: &mut GlobalSettings, custom_
             let vec = ImVec2 { x: 500.0, y: 0.0 };
             let c_height = custom_layout.height_c_str(i);
             if ImGui::Button(c_height.as_ptr() as _, &vec) {
-                custom_layout_context.parse_error = !custom_layout.set_height(i, &dialog_input(&title, &custom_layout.height_str(i), SCE_IME_TYPE_NUMBER, 5));
+                custom_layout_context.parse_error = !custom_layout.set_height(i, &dialog_input(&title, &custom_layout.height_str(i), SCE_IME_TYPE_NUMBER, SCE_IME_DIALOG_TEXTBOX_MODE_DEFAULT, 5));
             }
             ImGui::PopID();
 
@@ -545,7 +550,7 @@ pub fn show_layout_create_settings(global_settings: &mut GlobalSettings, custom_
             let vec = ImVec2 { x: 500.0, y: 0.0 };
             let c_pos_x = custom_layout.pos_x_c_str(i);
             if ImGui::Button(c_pos_x.as_ptr() as _, &vec) {
-                custom_layout_context.parse_error = !custom_layout.set_pos_x(i, &dialog_input(&title, &custom_layout.pos_x_str(i), SCE_IME_TYPE_NUMBER, 5));
+                custom_layout_context.parse_error = !custom_layout.set_pos_x(i, &dialog_input(&title, &custom_layout.pos_x_str(i), SCE_IME_TYPE_NUMBER, SCE_IME_DIALOG_TEXTBOX_MODE_DEFAULT, 5));
             }
             ImGui::PopID();
 
@@ -558,7 +563,7 @@ pub fn show_layout_create_settings(global_settings: &mut GlobalSettings, custom_
             let vec = ImVec2 { x: 500.0, y: 0.0 };
             let c_pos_y = custom_layout.pos_y_c_str(i);
             if ImGui::Button(c_pos_y.as_ptr() as _, &vec) {
-                custom_layout_context.parse_error = !custom_layout.set_pos_y(i, &dialog_input(&title, &custom_layout.pos_y_str(i), SCE_IME_TYPE_NUMBER, 5));
+                custom_layout_context.parse_error = !custom_layout.set_pos_y(i, &dialog_input(&title, &custom_layout.pos_y_str(i), SCE_IME_TYPE_NUMBER, SCE_IME_DIALOG_TEXTBOX_MODE_DEFAULT, 5));
             }
             ImGui::PopID();
 
@@ -571,7 +576,7 @@ pub fn show_layout_create_settings(global_settings: &mut GlobalSettings, custom_
             let vec = ImVec2 { x: 500.0, y: 0.0 };
             let c_rot = custom_layout.rot_c_str(i);
             if ImGui::Button(c_rot.as_ptr() as _, &vec) {
-                custom_layout_context.parse_error = !custom_layout.set_rot(i, &dialog_input(&title, &custom_layout.rot_str(i), SCE_IME_TYPE_NUMBER, 3));
+                custom_layout_context.parse_error = !custom_layout.set_rot(i, &dialog_input(&title, &custom_layout.rot_str(i), SCE_IME_TYPE_NUMBER, SCE_IME_DIALOG_TEXTBOX_MODE_DEFAULT, 3));
             }
             ImGui::PopID();
         }
@@ -585,7 +590,13 @@ pub fn show_layout_create_settings(global_settings: &mut GlobalSettings, custom_
         let vec = ImVec2 { x: 500.0, y: 0.0 };
         let c_width = custom_layout.wide_screen_coefficient_c_str();
         if ImGui::Button(c_width.as_ptr() as _, &vec) {
-            custom_layout_context.parse_error = !custom_layout.set_wide_screen_coefficient(&dialog_input(&title, &custom_layout.wide_screen_coefficient_str(), SCE_IME_TYPE_EXTENDED_NUMBER, 6));
+            custom_layout_context.parse_error = !custom_layout.set_wide_screen_coefficient(&dialog_input(
+                &title,
+                &custom_layout.wide_screen_coefficient_str(),
+                SCE_IME_TYPE_EXTENDED_NUMBER,
+                SCE_IME_DIALOG_TEXTBOX_MODE_DEFAULT,
+                6,
+            ));
         }
         ImGui::PopID();
 
@@ -612,5 +623,67 @@ pub fn show_layout_create_settings(global_settings: &mut GlobalSettings, custom_
             }
         }
         false
+    }
+}
+
+pub fn show_retroachievements_settings(global_settings: &mut GlobalSettings, login_context: &mut RALoginContext, context: &mut RaContext) {
+    unsafe {
+        if !global_settings.ra_username.is_empty() && !global_settings.ra_token.is_empty() {
+            let msg = format!("Currently logged in as {}", global_settings.ra_username);
+            ImGui::Text(CString::from_str(&msg).unwrap().as_ptr());
+        }
+
+        let title = "Username";
+        let c_title = CString::from_str(&title).unwrap();
+        ImGui::PushID(c_title.as_ptr());
+        ImGui::Text(c_title.as_ptr());
+        ImGui::SameLine(0f32, -1f32);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 500f32);
+        let vec = ImVec2 { x: 500.0, y: 0.0 };
+        let username = CString::from_str(&login_context.username).unwrap();
+        if ImGui::Button(username.as_ptr() as _, &vec) {
+            login_context.username = dialog_input(&title, &login_context.username, SCE_IME_TYPE_BASIC_LATIN, SCE_IME_DIALOG_TEXTBOX_MODE_DEFAULT, 128);
+        }
+        ImGui::PopID();
+
+        let title = "Password";
+        let c_title = CString::from_str(&title).unwrap();
+        ImGui::PushID(c_title.as_ptr());
+        ImGui::Text(c_title.as_ptr());
+        ImGui::SameLine(0f32, -1f32);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 500f32);
+        let vec = ImVec2 { x: 500.0, y: 0.0 };
+        let password = CString::from_str(&"*".repeat(login_context.password.len())).unwrap();
+        if ImGui::Button(password.as_ptr() as _, &vec) {
+            login_context.password = dialog_input(&title, &login_context.password, SCE_IME_TYPE_BASIC_LATIN, SCE_IME_DIALOG_TEXTBOX_MODE_PASSWORD, 128);
+        }
+        ImGui::PopID();
+
+        ImGui::PushStyleColor(ImGuiCol__ImGuiCol_Text as _, 0xFF0000FF);
+        if !login_context.error.is_empty() {
+            ImGui::Text(CString::from_str(&login_context.error).unwrap().as_ptr());
+        }
+        ImGui::PopStyleColor(1);
+
+        if login_context.logging_in {
+            if let Some(data) = context.get_login_callback_data() {
+                login_context.logging_in = false;
+                if data.result == rcheevos::RC_OK {
+                    *login_context = Default::default();
+                    if let Some((username, token)) = context.get_user_info() {
+                        global_settings.set_ra_data(username, token);
+                    }
+                } else {
+                    login_context.error = data.error_message.unwrap_or_default();
+                }
+            }
+        }
+
+        let vec = ImVec2 { x: 0.0, y: 0.0 };
+        if ImGui::Button(c"Login".as_ptr(), &vec) {
+            login_context.error.clear();
+            login_context.logging_in = true;
+            context.login_with_password(&login_context.username, &login_context.password);
+        }
     }
 }

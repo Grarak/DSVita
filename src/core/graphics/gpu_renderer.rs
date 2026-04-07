@@ -14,11 +14,15 @@ use crate::core::memory::vram;
 use crate::core::memory::vram::{Vram, VramBanks};
 use crate::logging::info_println;
 use crate::presenter::{Presenter, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::ra_context::RaContext;
 use crate::screen_layouts::ScreenLayout;
 use crate::settings::Settings;
 use crate::utils::HeapArrayU8;
 use gl::types::{GLint, GLuint};
+use glyph_brush::{HorizontalAlign, Layout, VerticalAlign};
+use png::{BitDepth, ColorType};
 use std::intrinsics::unlikely;
+use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -58,8 +62,14 @@ pub struct GpuRenderer {
     merge_program: GLuint,
     merge_width_coefficient_uniform: GLint,
     merge_alpha_uniform: GLint,
-    final_fbo: GpuFbo,
+
+    ra_program: GLuint,
+    ra_alpha_loc: GLint,
+    ra_last_event_instant: Instant,
+    ra_badge_texture: Option<GLuint>,
+
     gl_glyph: GlGlyph,
+    final_fbo: GpuFbo,
 
     rendering: Mutex<bool>,
     rendering_condvar: Condvar,
@@ -127,9 +137,22 @@ impl GpuRenderer {
             let merge_width_coefficient_uniform = gl::GetUniformLocation(gpu_programs.merge, c"widthCoefficient".as_ptr() as _);
             let merge_alpha_uniform = gl::GetUniformLocation(gpu_programs.merge, c"alpha".as_ptr() as _);
 
+            (merge_width_coefficient_uniform, merge_alpha_uniform)
+        };
+
+        let ra_alpha_loc = unsafe {
+            gl::UseProgram(gpu_programs.ra);
+
+            gl::BindAttribLocation(gpu_programs.ra, 0, c"position".as_ptr() as _);
+            gl::BindAttribLocation(gpu_programs.ra, 1, c"texCoordsColor".as_ptr() as _);
+
+            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.ra, c"tex".as_ptr() as _), 0);
+
+            let alpha_loc = gl::GetUniformLocation(gpu_programs.ra, c"alpha".as_ptr() as _);
+
             gl::UseProgram(0);
 
-            (merge_width_coefficient_uniform, merge_alpha_uniform)
+            alpha_loc
         };
 
         GpuRenderer {
@@ -149,8 +172,14 @@ impl GpuRenderer {
             merge_program: gpu_programs.merge,
             merge_width_coefficient_uniform,
             merge_alpha_uniform,
-            final_fbo: GpuFbo::new(PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, false, false).unwrap(),
+
+            ra_program: gpu_programs.ra,
+            ra_alpha_loc,
+            ra_last_event_instant: Instant::now(),
+            ra_badge_texture: None,
+
             gl_glyph: GlGlyph::new(gpu_programs),
+            final_fbo: GpuFbo::new(PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, false, false).unwrap(),
 
             rendering: Mutex::new(false),
             rendering_condvar: Condvar::new(),
@@ -294,6 +323,7 @@ impl GpuRenderer {
         fps: &Arc<AtomicU16>,
         last_save_time: &Arc<Mutex<Option<(Instant, bool)>>>,
         screen_layout: &ScreenLayout,
+        ra_context: &RaContext,
         settings: &Settings,
         pause: bool,
     ) {
@@ -454,11 +484,145 @@ impl GpuRenderer {
                 }
 
                 let arm7_emu: &str = settings.arm7_emu().into();
-                self.gl_glyph.draw(format!(
-                    "{}ms ({}fps) {arm7_emu}\n{per}% ({fps}/60)\n{info_text}",
-                    self.average_render_time / 1000,
-                    if self.average_render_time == 0 { 0 } else { 1000000 / self.average_render_time }
-                ));
+
+                const OFFSET_X: u32 = 500;
+                const OFFSET_Y: u32 = 450;
+                const WIDTH: u32 = PRESENTER_SCREEN_WIDTH - OFFSET_X;
+                const HEIGHT: u32 = PRESENTER_SCREEN_HEIGHT - OFFSET_Y;
+                gl::Viewport(OFFSET_X as _, OFFSET_Y as _, WIDTH as _, HEIGHT as _);
+
+                self.gl_glyph.draw(
+                    format!(
+                        "{}ms ({}fps) {arm7_emu}\n{per}% ({fps}/60)\n{info_text}",
+                        self.average_render_time / 1000,
+                        if self.average_render_time == 0 { 0 } else { 1000000 / self.average_render_time }
+                    ),
+                    (WIDTH as f32, HEIGHT as f32),
+                    (430.0, 0.0),
+                    40.0,
+                    Layout::default().h_align(HorizontalAlign::Right).v_align(VerticalAlign::Center),
+                    1.0,
+                );
+            }
+
+            if settings.retroachievements() {
+                let ra_event = ra_context.event.lock().unwrap();
+                let (event, instant) = ra_event.deref();
+                let elapsed = instant.elapsed();
+                const EVENT_DURATION_SECS: u8 = 5;
+                if elapsed <= Duration::from_secs(EVENT_DURATION_SECS as _) && !event.title.is_empty() {
+                    if self.ra_last_event_instant != *instant {
+                        if let Some(texture) = self.ra_badge_texture {
+                            gl::DeleteTextures(1, &texture);
+                            self.ra_badge_texture = None;
+                        }
+
+                        if let Some((badge_data, info)) = &event.badge {
+                            if info.bit_depth == BitDepth::Eight {
+                                match info.color_type {
+                                    ColorType::Rgb | ColorType::Rgba => {
+                                        let format = if info.color_type == ColorType::Rgb { gl::RGB } else { gl::RGBA };
+                                        let mut texture = 0;
+                                        gl::GenTextures(1, &mut texture);
+                                        gl::BindTexture(gl::TEXTURE_2D, texture);
+                                        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
+                                        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as _);
+                                        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
+                                        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as _);
+                                        gl::TexImage2D(
+                                            gl::TEXTURE_2D,
+                                            0,
+                                            format as _,
+                                            info.width as _,
+                                            info.height as _,
+                                            0,
+                                            format,
+                                            gl::UNSIGNED_BYTE,
+                                            badge_data.as_ptr() as _,
+                                        );
+                                        self.ra_badge_texture = Some(texture);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+
+                        self.ra_last_event_instant = *instant;
+                    }
+
+                    let elapsed_ms = elapsed.as_millis() as u16 as f32;
+                    let alpha = 1.0 - (elapsed_ms - (EVENT_DURATION_SECS as f32 * 1000.0 / 2.0)).abs() / (EVENT_DURATION_SECS as f32 * 1000.0 / 2.0);
+
+                    const OFFSET_X: u32 = 0;
+                    const OFFSET_Y: u32 = 416;
+                    const WIDTH: u32 = 500;
+                    const HEIGHT: u32 = PRESENTER_SCREEN_HEIGHT - OFFSET_Y;
+                    gl::Viewport(OFFSET_X as _, OFFSET_Y as _, WIDTH as _, HEIGHT as _);
+
+                    gl::Enable(gl::BLEND);
+                    gl::BlendEquation(gl::FUNC_ADD);
+                    gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+
+                    gl::UseProgram(self.ra_program);
+
+                    gl::Uniform1f(self.ra_alpha_loc, alpha);
+
+                    const BADGE_NORMALIZED_WIDTH: f32 = HEIGHT as f32 / WIDTH as f32 * 2.0;
+                    #[rustfmt::skip]
+                    const VERTICES: [f32; 8 * 2] = [
+                        -1.0, 1.0,
+                        -1.0 + BADGE_NORMALIZED_WIDTH, 1.0,
+                        -1.0 + BADGE_NORMALIZED_WIDTH, -1.0,
+                        -1.0, -1.0,
+
+                        -1.0 + BADGE_NORMALIZED_WIDTH, 1.0,
+                        1.0, 1.0,
+                        1.0, -1.0,
+                        -1.0 + BADGE_NORMALIZED_WIDTH, -1.0,
+                    ];
+
+                    gl::EnableVertexAttribArray(0);
+                    gl::VertexAttribPointer(0, 2, gl::FLOAT, gl::FALSE, 0, VERTICES.as_ptr() as _);
+
+                    let tex_factor = match self.ra_badge_texture {
+                        None => 0.0,
+                        Some(tex) => {
+                            gl::ActiveTexture(gl::TEXTURE0);
+                            gl::BindTexture(gl::TEXTURE_2D, tex);
+                            1.0
+                        }
+                    };
+
+                    #[rustfmt::skip]
+                    let tex_coords_factor: [f32; 8 * 3] = [
+                        0.0, 0.0, tex_factor,
+                        1.0, 0.0, tex_factor,
+                        1.0, 1.0, tex_factor,
+                        0.0, 1.0, tex_factor,
+
+                        0.0, 0.0, 0.0,
+                        0.0, 0.0, 0.0,
+                        0.0, 0.0, 0.0,
+                        0.0, 0.0, 0.0,
+                    ];
+
+                    gl::EnableVertexAttribArray(1);
+                    gl::VertexAttribPointer(1, 3, gl::FLOAT, gl::FALSE, 0, tex_coords_factor.as_ptr() as _);
+
+                    const INDICES: [u16; 12] = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7];
+                    gl::DrawElements(gl::TRIANGLES, INDICES.len() as _, gl::UNSIGNED_SHORT, INDICES.as_ptr() as _);
+
+                    self.gl_glyph.draw(
+                        format!("{}\n{}", event.title, event.description),
+                        (WIDTH as f32, HEIGHT as f32),
+                        (-200.0, 0.0),
+                        40.0,
+                        Layout::default().h_align(HorizontalAlign::Left).v_align(VerticalAlign::Center),
+                        alpha,
+                    );
+
+                    gl::Disable(gl::BLEND);
+                }
             }
 
             if !pause {

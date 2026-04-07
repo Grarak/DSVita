@@ -210,12 +210,13 @@ lazy_static! {
             Setting::new("Language", "Some ROMs only come with one language. Make sure yours is multilingual.", Language::iter().into(), false),
             Setting::new("Joystick as D-Pad", "", SettingValue::Bool(true), true),
             Setting::new("Show debug statistics", "", SettingValue::Bool(true), true),
+            Setting::new("Retroachievements", "Make sure you are logged in first", SettingValue::Bool(true), false),
         ],
     );
 }
 
 #[derive(Clone)]
-pub struct Settings([Setting; 14]);
+pub struct Settings([Setting; 15]);
 
 #[repr(u8)]
 enum SettingIndices {
@@ -233,6 +234,7 @@ enum SettingIndices {
     Language,
     JoystickAsDpad,
     ShowDebugStatistics,
+    Retroachievements,
 }
 
 impl Settings {
@@ -303,6 +305,10 @@ impl Settings {
         unsafe { self.0[SettingIndices::ShowDebugStatistics as usize].value.as_bool().unwrap_unchecked() }
     }
 
+    pub fn retroachievements(&self) -> bool {
+        unsafe { self.0[SettingIndices::Retroachievements as usize].value.as_bool().unwrap_unchecked() }
+    }
+
     pub fn set_screen_layout(&mut self, screen_layout: &ScreenLayout) {
         *self.0[SettingIndices::ScreenLayout as usize].value.as_list_mut().unwrap().0 = screen_layout.index;
         *self.0[SettingIndices::SwapScreen as usize].value.as_bool_mut().unwrap() = screen_layout.swap;
@@ -318,6 +324,10 @@ impl Settings {
 
     pub fn set_arm7_emu(&mut self, value: Arm7Emu) {
         *self.0[SettingIndices::Arm7Emu as usize].value.as_list_mut().unwrap().0 = value as usize
+    }
+
+    pub fn set_retroachievements(&mut self, value: bool) {
+        unsafe { *self.0[SettingIndices::Retroachievements as usize].value.as_bool_mut().unwrap_unchecked() = value };
     }
 
     pub fn get_all_mut(&mut self) -> &mut [Setting] {

@@ -4,10 +4,12 @@ use crate::core::input;
 use crate::global_settings::GlobalSettings;
 use crate::logging::debug_panic;
 use crate::presenter::imgui::root::{
-    ImDrawData, ImGui, ImGuiConfigFlags__ImGuiConfigFlags_NavEnableKeyboard, ImGui_ImplSdlGL3_Init, ImGui_ImplSdlGL3_NewFrame, ImGui_ImplSdlGL3_ProcessEvent, ImGui_ImplSdlGL3_RenderDrawData,
+    ImDrawData, ImGui, ImGuiCol__ImGuiCol_Text, ImGuiConfigFlags__ImGuiConfigFlags_NavEnableKeyboard, ImGuiInputTextFlags__ImGuiInputTextFlags_Password, ImGui_ImplSdlGL3_Init,
+    ImGui_ImplSdlGL3_NewFrame, ImGui_ImplSdlGL3_ProcessEvent, ImGui_ImplSdlGL3_RenderDrawData, ImVec2,
 };
-use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, show_progress, CustomLayoutContext, UiBackend, UiPauseMenuReturn};
+use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, show_progress, CustomLayoutContext, RALoginContext, UiBackend, UiPauseMenuReturn};
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+use crate::ra_context::RaContext;
 use crate::screen_layouts::{CustomLayout, ScreenLayouts};
 use crate::settings::{Arm7Emu, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
@@ -18,10 +20,13 @@ use sdl2::event::{Event, EventType};
 use sdl2::mouse::MouseButton;
 use sdl2::video::{GLContext, GLProfile, Window};
 use sdl2::{keyboard, EventPump};
+use std::cmp::min;
 use std::collections::HashMap;
+use std::ffi::{CStr, CString};
 use std::ops::BitOrAssign;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::str::FromStr;
 use std::{mem, ptr, slice, thread};
 
 #[derive(Clone)]
@@ -158,7 +163,7 @@ impl Presenter {
         Some(instance)
     }
 
-    pub fn present_ui(&mut self, screen_layouts: &mut ScreenLayouts) -> Option<(CartridgeIo, Settings)> {
+    pub fn present_ui(&mut self, screen_layouts: &mut ScreenLayouts, ra_context: &mut RaContext) -> Option<(CartridgeIo, GlobalSettings, Settings)> {
         let file_path = PathBuf::from(self.arg_matches.get_one::<String>("nds_rom").unwrap());
         if self.arg_matches.get_flag("ui") {
             if file_path.exists() && file_path.is_file() {
@@ -166,12 +171,12 @@ impl Presenter {
                 std::process::exit(1);
             }
 
-            match show_main_menu(file_path, screen_layouts, self) {
+            match show_main_menu(file_path, screen_layouts, ra_context, self) {
                 None => None,
                 Some((cartridge_io, global_settings, mut settings)) => {
                     screen_layouts.populate_custom_layouts(&global_settings.custom_layouts);
                     settings.populate_screen_layouts(screen_layouts);
-                    Some((cartridge_io, settings))
+                    Some((cartridge_io, global_settings, settings))
                 }
             }
         } else {
@@ -182,10 +187,14 @@ impl Presenter {
 
             let file_name = file_path.file_name().unwrap().to_str().unwrap();
             let save_path = file_path.parent().unwrap().join(format!("{file_name}.sav"));
-            let preview = CartridgePreview::new(file_path).unwrap();
+            let preview = CartridgePreview::new(file_path.clone()).unwrap();
 
+            ra_context.set_cache_dir(file_path.parent().unwrap().join("ra"));
+
+            let global_settings = GlobalSettings::new(file_path.parent().unwrap().join("global_settings")).unwrap();
+            screen_layouts.populate_custom_layouts(&global_settings.custom_layouts);
             settings.populate_screen_layouts(screen_layouts);
-            Some((CartridgeIo::from_preview(preview, save_path).unwrap(), settings))
+            Some((CartridgeIo::from_preview(preview, save_path).unwrap(), global_settings, settings))
         }
     }
 
@@ -313,4 +322,61 @@ impl UiBackend for Presenter {
 
 pub fn show_layout_create_settings(_: &mut GlobalSettings, _: &mut CustomLayoutContext, _: &mut CustomLayout) -> bool {
     true
+}
+
+pub fn show_retroachievements_settings(global_settings: &mut GlobalSettings, login_context: &mut RALoginContext, context: &mut RaContext) {
+    unsafe {
+        if !global_settings.ra_username.is_empty() && !global_settings.ra_token.is_empty() {
+            let msg = format!("Currently logged in as {}", global_settings.ra_username);
+            ImGui::Text(CString::from_str(&msg).unwrap().as_ptr());
+        }
+
+        let mut username = [0; 128];
+        let len = min(username.len() - 1, login_context.username.len());
+        username[..len].copy_from_slice(&login_context.username.as_bytes()[..len]);
+        if ImGui::InputText(c"Username".as_ptr(), username.as_mut_ptr(), username.len(), 0, None, ptr::null_mut()) {
+            login_context.username = CStr::from_ptr(username.as_ptr()).to_str().unwrap().to_string();
+        }
+
+        let mut password = [0; 128];
+        let len = min(password.len() - 1, login_context.password.len());
+        password[..len].copy_from_slice(&login_context.password.as_bytes()[..len]);
+        if ImGui::InputText(
+            c"Password".as_ptr(),
+            password.as_mut_ptr(),
+            password.len(),
+            ImGuiInputTextFlags__ImGuiInputTextFlags_Password as _,
+            None,
+            ptr::null_mut(),
+        ) {
+            login_context.password = CStr::from_ptr(password.as_ptr()).to_str().unwrap().to_string();
+        }
+
+        ImGui::PushStyleColor(ImGuiCol__ImGuiCol_Text as _, 0xFF0000FF);
+        if !login_context.error.is_empty() {
+            ImGui::Text(CString::from_str(&login_context.error).unwrap().as_ptr());
+        }
+        ImGui::PopStyleColor(1);
+
+        if login_context.logging_in {
+            if let Some(data) = context.get_login_callback_data() {
+                login_context.logging_in = false;
+                if data.result == rcheevos::RC_OK {
+                    *login_context = Default::default();
+                    if let Some((username, token)) = context.get_user_info() {
+                        global_settings.set_ra_data(username, token);
+                    }
+                } else {
+                    login_context.error = data.error_message.unwrap_or_default();
+                }
+            }
+        }
+
+        let vec = ImVec2 { x: 0.0, y: 0.0 };
+        if ImGui::Button(c"Login".as_ptr(), &vec) {
+            login_context.error.clear();
+            login_context.logging_in = true;
+            context.login_with_password(&login_context.username, &login_context.password);
+        }
+    }
 }

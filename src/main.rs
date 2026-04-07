@@ -31,12 +31,14 @@ use crate::logging::{debug_println, info_println};
 use crate::mmap::{register_abort_handler, ArmContext, Mmap, PAGE_SIZE};
 use crate::presenter::ui::UiPauseMenuReturn;
 use crate::presenter::{PresentEvent, Presenter, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE};
+use crate::ra_context::RaContext;
 use crate::screen_layouts::ScreenLayouts;
 use crate::settings::Arm7Emu;
 use crate::utils::{const_str_equal, set_thread_prio_affinity, start_profiling, stop_profiling, HeapArray, HeapArrayU32, ThreadAffinity, ThreadPriority};
 use std::cell::UnsafeCell;
 use std::cmp::min;
 use std::intrinsics::unlikely;
+use std::ops::Deref;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -57,6 +59,7 @@ mod logging;
 mod math;
 mod mmap;
 mod presenter;
+mod ra_context;
 mod screen_layouts;
 mod settings;
 mod soundtouch;
@@ -425,14 +428,28 @@ pub fn actual_main() {
     let cpu_active = Arc::new(AtomicBool::new(true));
 
     let mut screen_layouts = ScreenLayouts::new();
+    let mut ra_context = RaContext::new();
+    let ra_context_thread_handle = ra_context.start_server_request_receive_thread();
 
     let mut running = true;
     while running {
-        let (mut cartridge_io, settings) = match presenter.present_ui(&mut screen_layouts) {
-            Some((cartridge_io, settings)) => (cartridge_io, settings),
+        let (mut cartridge_io, global_settings, mut settings) = match presenter.present_ui(&mut screen_layouts, &mut ra_context) {
+            Some((cartridge_io, global_settings, settings)) => (cartridge_io, global_settings, settings),
             None => return,
         };
+
+        if settings.retroachievements() {
+            if ra_context.get_user_info().is_none() {
+                if !global_settings.ra_username.is_empty() && !global_settings.ra_token.is_empty() {
+                    ra_context.login_with_token(&global_settings.ra_username, &global_settings.ra_token);
+                } else {
+                    settings.set_retroachievements(false);
+                }
+            }
+        }
+
         info_println!("{} Settings: {settings:?}", cartridge_io.file_name);
+
         presenter.on_game_launched();
 
         if gpu_renderer.is_none() {
@@ -558,6 +575,10 @@ pub fn actual_main() {
             })
             .unwrap();
 
+        if emu_unsafe.get_mut().settings.retroachievements() {
+            ra_context.load_game((ARM9.mmu_tcm_addr() + regions::MAIN_OFFSET as usize) as _, emu_unsafe.get_mut().cartridge.io.deref());
+        }
+
         let gpu_renderer = gpu_renderer.as_mut().unwrap();
         let mut screen_layout = emu_unsafe.get_mut().settings.screen_layout(&screen_layouts);
         loop {
@@ -589,14 +610,17 @@ pub fn actual_main() {
                 }
             };
 
-            let settings = &emu_unsafe.get_mut().settings;
-            gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &screen_layout, settings, pause);
+            let settings = unsafe { &emu_unsafe.get().as_ref_unchecked().settings };
+            gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &screen_layout, &ra_context, settings, pause);
 
             if unlikely(!running) {
                 gpu_renderer.set_quit(true);
                 gpu_renderer.unpause(cpu_thread.thread());
                 break;
             } else if unlikely(pause) {
+                if settings.retroachievements() {
+                    ra_context.on_idle();
+                }
                 emu_unsafe.get_mut().settings.set_screen_layout(&screen_layout);
                 match presenter.present_pause(gpu_renderer, &mut emu_unsafe.get_mut().settings) {
                     UiPauseMenuReturn::Resume => {
@@ -620,6 +644,10 @@ pub fn actual_main() {
                         break;
                     }
                 }
+            } else {
+                if settings.retroachievements() {
+                    ra_context.on_frame();
+                }
             }
         }
 
@@ -631,4 +659,6 @@ pub fn actual_main() {
         save_thread.join().unwrap();
         gpu_renderer.set_quit(false);
     }
+
+    ra_context.stop_server_request_receive_thread(ra_context_thread_handle);
 }

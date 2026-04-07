@@ -19,3 +19,6 @@
 [submodule "math-neon"]
 	path = math-neon
 	url = https://github.com/Rinnegatamante/math-neon.git
+[submodule "rcheevos/rcheevos_src"]
+	path = rcheevos/rcheevos_src
+	url = https://github.com/RetroAchievements/rcheevos.git

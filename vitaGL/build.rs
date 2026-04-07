@@ -25,11 +25,15 @@ fn get_source_files(path: &Path, files: &mut Vec<PathBuf>) {
 }
 
 fn main() {
+    let vita_gl_path = PathBuf::from("vitaGL_src");
+    let git_hash = Command::new("git").current_dir(&vita_gl_path).args(["rev-parse", "HEAD"]).output().unwrap().stdout;
+    let out_path = get_out_path();
+    File::create(out_path.join("vita_gl_version")).unwrap().write_all(&git_hash).unwrap();
+
     if !is_target_vita() {
         return;
     }
 
-    let vita_gl_path = PathBuf::from("vitaGL_src");
     let vita_gl_source_path = vita_gl_path.join("source");
     let mut source_files = Vec::new();
     get_source_files(&vita_gl_source_path, &mut source_files);
@@ -67,8 +71,4 @@ fn main() {
     fs::rename(vita_gl_lib_path, &vita_gl_lib_new_path).unwrap();
     println!("cargo:rustc-link-search=native={}", fs::canonicalize(&vita_gl_path).unwrap().to_str().unwrap());
     println!("cargo:rustc-link-lib=static=vitaGL_dsvita");
-
-    let git_hash = Command::new("git").current_dir(&vita_gl_path).args(["rev-parse", "HEAD"]).output().unwrap().stdout;
-    let out_path = get_out_path();
-    File::create(out_path.join("vita_gl_version")).unwrap().write_all(&git_hash).unwrap();
 }

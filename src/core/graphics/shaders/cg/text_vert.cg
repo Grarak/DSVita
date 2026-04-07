@@ -1,7 +1,9 @@
 float4 out gl_Position : POSITION;
 float2 out texCoords : TEXCOORD0;
 
+uniform float2 dims;
+
 void main(float4 position) {
     texCoords = position.zw;
-    gl_Position = float4(position.x / 550.0 + 0.6, -position.y / 300.0 + 0.925, 0.0, 1.0);
+    gl_Position = float4(position.xy / dims, 0.0, 1.0);
 }

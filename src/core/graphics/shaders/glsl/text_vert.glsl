@@ -3,7 +3,9 @@
 in vec4 position;
 out vec2 texCoords;
 
+uniform vec2 dims;
+
 void main() {
     texCoords = position.zw;
-    gl_Position = vec4(position.x / 550.0 + 0.6, -position.y / 300.0 + 0.925, 0.0, 1.0);
+    gl_Position = vec4(position.xy / dims, 0.0, 1.0);
 }
