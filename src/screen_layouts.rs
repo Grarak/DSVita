@@ -218,8 +218,8 @@ const SCALE_FACTORS: [f32; 8] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 pub struct ScreenLayout {
     pub index: usize,
     pub swap: bool,
-    top_scale_index: usize,
-    bottom_scale_index: usize,
+    pub top_scale_index: usize,
+    pub bottom_scale_index: usize,
     overlap: bool,
     screen_top: [f32; 16],
     screen_bottom: [f32; 16],

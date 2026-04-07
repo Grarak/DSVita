@@ -423,11 +423,11 @@ pub fn actual_main() {
 
     let mut running = true;
     while running {
-        let (mut cartridge_io, settings) = match presenter.present_ui(&mut screen_layouts) {
-            Some((cartridge_io, settings)) => (cartridge_io, settings),
+        let (mut cartridge_io, mut settings_config) = match presenter.present_ui(&mut screen_layouts) {
+            Some((cartridge_io, settings_config)) => (cartridge_io, settings_config),
             None => return,
         };
-        info_println!("{} Settings: {settings:?}", cartridge_io.file_name);
+        info_println!("{} Settings: {:?}", cartridge_io.file_name, settings_config.settings);
         presenter.on_game_launched();
 
         if gpu_renderer.is_none() {
@@ -461,7 +461,7 @@ pub fn actual_main() {
         info_println!("Found {} overlays", cartridge_io.overlays.len());
 
         emu_unsafe.get_mut().cartridge.set_cartridge_io(cartridge_io);
-        emu_unsafe.get_mut().settings = settings;
+        emu_unsafe.get_mut().settings = settings_config.settings.clone();
 
         sound_sampler.get_mut().init();
 
@@ -625,5 +625,11 @@ pub fn actual_main() {
         process_3d_thread.join().unwrap();
         save_thread.join().unwrap();
         gpu_renderer.set_quit(false);
+
+        // Persist per-game settings (including screen layout) to disk
+        emu_unsafe.get_mut().settings.set_screen_layout(&screen_layout);
+        settings_config.settings = emu_unsafe.get_mut().settings.clone();
+        settings_config.dirty = true;
+        settings_config.flush();
     }
 }

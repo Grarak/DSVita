@@ -115,7 +115,7 @@ pub struct CustomLayoutContext {
     pub duplicated_name: bool,
 }
 
-pub fn show_main_menu(cartridge_path: PathBuf, screen_layouts: &mut ScreenLayouts, ui_backend: &mut impl UiBackend) -> Option<(CartridgeIo, GlobalSettings, Settings)> {
+pub fn show_main_menu(cartridge_path: PathBuf, screen_layouts: &mut ScreenLayouts, ui_backend: &mut impl UiBackend) -> Option<(CartridgeIo, GlobalSettings, SettingsConfig)> {
     unsafe {
         let saves_path = cartridge_path.join("saves");
         let global_settings_path = cartridge_path.join("global_settings");
@@ -479,7 +479,7 @@ pub fn show_main_menu(cartridge_path: PathBuf, screen_layouts: &mut ScreenLayout
         Some((
             CartridgeIo::from_preview(preview, save_file).unwrap(),
             global_settings,
-            settings_configs.remove(SELECTED.unwrap()).settings,
+            settings_configs.remove(SELECTED.unwrap()),
         ))
     }
 }

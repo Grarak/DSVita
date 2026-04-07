@@ -9,7 +9,7 @@ use crate::presenter::imgui::root::{
 use crate::presenter::ui::{init_ui, show_main_menu, show_pause_menu, show_progress, CustomLayoutContext, UiBackend, UiPauseMenuReturn};
 use crate::presenter::{PresentEvent, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::screen_layouts::{CustomLayout, ScreenLayouts};
-use crate::settings::{Arm7Emu, Settings, DEFAULT_SETTINGS};
+use crate::settings::{Arm7Emu, Settings, SettingsConfig, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
 use clap::{arg, command, value_parser, ArgAction, ArgMatches};
 use gl::types::GLuint;
@@ -158,7 +158,7 @@ impl Presenter {
         instance
     }
 
-    pub fn present_ui(&mut self, screen_layouts: &mut ScreenLayouts) -> Option<(CartridgeIo, Settings)> {
+    pub fn present_ui(&mut self, screen_layouts: &mut ScreenLayouts) -> Option<(CartridgeIo, SettingsConfig)> {
         let file_path = PathBuf::from(self.arg_matches.get_one::<String>("nds_rom").unwrap());
         if self.arg_matches.get_flag("ui") {
             if file_path.exists() && file_path.is_file() {
@@ -168,10 +168,10 @@ impl Presenter {
 
             match show_main_menu(file_path, screen_layouts, self) {
                 None => None,
-                Some((cartridge_io, global_settings, mut settings)) => {
+                Some((cartridge_io, global_settings, mut settings_config)) => {
                     screen_layouts.populate_custom_layouts(&global_settings.custom_layouts);
-                    settings.populate_screen_layouts(screen_layouts);
-                    Some((cartridge_io, settings))
+                    settings_config.settings.populate_screen_layouts(screen_layouts);
+                    Some((cartridge_io, settings_config))
                 }
             }
         } else {
@@ -185,7 +185,7 @@ impl Presenter {
             let preview = CartridgePreview::new(file_path).unwrap();
 
             settings.populate_screen_layouts(screen_layouts);
-            Some((CartridgeIo::from_preview(preview, save_path).unwrap(), settings))
+            Some((CartridgeIo::from_preview(preview, save_path).unwrap(), SettingsConfig::from(settings)))
         }
     }
 

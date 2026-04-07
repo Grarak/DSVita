@@ -268,6 +268,8 @@ impl Settings {
     pub fn set_screen_layout(&mut self, screen_layout: &ScreenLayout) {
         *self.0[SettingIndices::ScreenLayout as usize].value.as_list_mut().unwrap().0 = screen_layout.index;
         *self.0[SettingIndices::SwapScreen as usize].value.as_bool_mut().unwrap() = screen_layout.swap;
+        *self.0[SettingIndices::TopScreenScale as usize].value.as_list_mut().unwrap().0 = screen_layout.top_scale_index;
+        *self.0[SettingIndices::BottomScreenScale as usize].value.as_list_mut().unwrap().0 = screen_layout.bottom_scale_index;
     }
 
     pub fn set_framelimit(&mut self, value: u8) {
