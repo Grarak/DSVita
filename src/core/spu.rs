@@ -9,6 +9,7 @@ use bilge::prelude::*;
 use std::cmp::min;
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::unlikely;
+use std::marker::ConstParamTy;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex};
@@ -281,7 +282,7 @@ impl SoundCnt {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(ConstParamTy, Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum SoundChannelFormat {
     #[default]
     Pcm8 = 0,
@@ -558,9 +559,7 @@ impl Emu {
         }
     }
 
-    fn spu_next_sample_adpcm(&mut self, channel_num: usize) {
-        let channel = &mut self.spu.channels[channel_num];
-
+    fn spu_next_sample_adpcm(channel: &mut SpuChannel) {
         if channel.sad_current == channel.sad_ptr + ((channel.pnt as usize) << 2) && !channel.adpcm_toggle {
             channel.adpcm_loop_value = channel.adpcm_value;
             channel.adpcm_loop_index = channel.adpcm_index;
@@ -568,7 +567,6 @@ impl Emu {
 
         let adpcm_data = unsafe { channel.sad_current_ptr().read() };
 
-        let channel = &mut self.spu.channels[channel_num];
         let adpcm_data = if channel.adpcm_toggle { adpcm_data >> 4 } else { adpcm_data & 0xF };
 
         let diff = unsafe { *ADPCM_DIFF_TABLE.get_unchecked(channel.adpcm_index as usize).get_unchecked(adpcm_data as usize) };
@@ -600,6 +598,71 @@ impl Emu {
         }
     }
 
+    unsafe fn spu_sample_channel<const FORMAT: SoundChannelFormat>(&mut self, channel_num: usize) -> (i32, i32) {
+        assert_unchecked(channel_num < CHANNEL_COUNT);
+        let channel = &self.spu.channels[channel_num];
+        let sad_current_ptr = channel.sad_current_ptr();
+
+        let mut data = match FORMAT {
+            SoundChannelFormat::Pcm8 => ((sad_current_ptr as *const i8).read() as i32) << 8,
+            SoundChannelFormat::Pcm16 => (sad_current_ptr as *const i16).read() as i32,
+            SoundChannelFormat::ImaAdpcm => channel.adpcm_value as i32,
+            SoundChannelFormat::PsgNoise => self.spu_sample_psg_noise(channel_num),
+        };
+
+        let mut tmr_current = channel.tmr_current + 512;
+        let tmr = channel.tmr;
+        while unlikely(tmr_current >> 16 != 0) {
+            tmr_current = tmr as u32 + (tmr_current - 0x10000);
+
+            match FORMAT {
+                SoundChannelFormat::Pcm8 => self.spu.channels[channel_num].sad_current += 1,
+                SoundChannelFormat::Pcm16 => self.spu.channels[channel_num].sad_current += 2,
+                SoundChannelFormat::ImaAdpcm => Self::spu_next_sample_adpcm(&mut self.spu.channels[channel_num]),
+                SoundChannelFormat::PsgNoise => self.spu_next_sample_psg(channel_num),
+            }
+
+            let channel = &mut self.spu.channels[channel_num];
+            if FORMAT != SoundChannelFormat::PsgNoise && channel.sad_current >= (channel.sad_ptr + ((channel.pnt as usize + channel.len as usize) << 2)) {
+                if u8::from(channel.cnt.repeat_mode()) == 1 {
+                    channel.sad_current = channel.sad_ptr + ((channel.pnt as usize) << 2);
+
+                    if FORMAT == SoundChannelFormat::ImaAdpcm {
+                        channel.adpcm_value = channel.adpcm_loop_value;
+                        channel.adpcm_index = channel.adpcm_loop_index;
+                        channel.adpcm_toggle = false;
+                    }
+                } else {
+                    channel.cnt.set_start_status(false);
+                    channel.active = false;
+                    break;
+                }
+            }
+        }
+        self.spu.channels[channel_num].tmr_current = tmr_current;
+
+        let channel = &self.spu.channels[channel_num];
+        let volume_mul = u8::from(channel.cnt.volume_mul());
+        if volume_mul != 127 {
+            data = (data * volume_mul as i32) >> 7;
+        }
+
+        let mut volume_div = u8::from(channel.cnt.volume_div());
+        if volume_div == 3 {
+            volume_div += 1;
+        }
+        data >>= volume_div;
+
+        let mut panning = u8::from(channel.cnt.panning());
+        if panning == 127 {
+            panning += 1;
+        }
+        let data_left = (data * (128 - panning as i32)) >> 7;
+        let data_right = (data * panning as i32) >> 7;
+
+        (data_left, data_right)
+    }
+
     pub fn spu_on_sample_event(&mut self) {
         unsafe {
             if unlikely(!self.settings.audio()) {
@@ -624,67 +687,14 @@ impl Emu {
                     continue;
                 }
 
-                let channel = &mut self.spu.channels[i];
-                let sad_current_ptr = channel.sad_current_ptr();
-                let format = channel.cnt.get_format();
-
-                let mut data = match format {
-                    SoundChannelFormat::Pcm8 => ((sad_current_ptr as *const i8).read() as i32) << 8,
-                    SoundChannelFormat::Pcm16 => (sad_current_ptr as *const i16).read() as i32,
-                    SoundChannelFormat::ImaAdpcm => channel.adpcm_value as i32,
-                    SoundChannelFormat::PsgNoise => self.spu_sample_psg_noise(i),
+                let format = self.spu.channels[i].cnt.get_format();
+                let fun: unsafe fn(&mut Self, usize) -> (i32, i32) = match format {
+                    SoundChannelFormat::Pcm8 => Self::spu_sample_channel::<{ SoundChannelFormat::Pcm8 }>,
+                    SoundChannelFormat::Pcm16 => Self::spu_sample_channel::<{ SoundChannelFormat::Pcm16 }>,
+                    SoundChannelFormat::ImaAdpcm => Self::spu_sample_channel::<{ SoundChannelFormat::ImaAdpcm }>,
+                    SoundChannelFormat::PsgNoise => Self::spu_sample_channel::<{ SoundChannelFormat::PsgNoise }>,
                 };
-
-                let channel = &mut self.spu.channels[i];
-                let mut tmr_current = channel.tmr_current + 512;
-                let tmr = channel.tmr;
-                while tmr_current >> 16 != 0 {
-                    tmr_current = tmr as u32 + (tmr_current - 0x10000);
-
-                    match format {
-                        SoundChannelFormat::Pcm8 => self.spu.channels[i].sad_current += 1,
-                        SoundChannelFormat::Pcm16 => self.spu.channels[i].sad_current += 2,
-                        SoundChannelFormat::ImaAdpcm => self.spu_next_sample_adpcm(i),
-                        SoundChannelFormat::PsgNoise => self.spu_next_sample_psg(i),
-                    }
-
-                    let channel = &mut self.spu.channels[i];
-                    if format != SoundChannelFormat::PsgNoise && channel.sad_current >= (channel.sad_ptr + ((channel.pnt as usize + channel.len as usize) << 2)) {
-                        if u8::from(channel.cnt.repeat_mode()) == 1 {
-                            channel.sad_current = channel.sad_ptr + ((channel.pnt as usize) << 2);
-
-                            if format == SoundChannelFormat::ImaAdpcm {
-                                channel.adpcm_value = channel.adpcm_loop_value;
-                                channel.adpcm_index = channel.adpcm_loop_index;
-                                channel.adpcm_toggle = false;
-                            }
-                        } else {
-                            channel.cnt.set_start_status(false);
-                            channel.active = false;
-                            break;
-                        }
-                    }
-                }
-                let channel = &mut self.spu.channels[i];
-                channel.tmr_current = tmr_current;
-
-                let volume_mul = u8::from(channel.cnt.volume_mul());
-                if volume_mul != 127 {
-                    data = (data * volume_mul as i32) >> 7;
-                }
-
-                let mut volume_div = u8::from(channel.cnt.volume_div());
-                if volume_div == 3 {
-                    volume_div += 1;
-                }
-                data >>= volume_div;
-
-                let mut panning = u8::from(channel.cnt.panning());
-                if panning == 127 {
-                    panning += 1;
-                }
-                let data_left = (data * (128 - panning as i32)) >> 7;
-                let data_right = (data * panning as i32) >> 7;
+                let (data_left, data_right) = fun(self, i);
 
                 if i == 1 || i == 3 {
                     let index = i >> 1;
