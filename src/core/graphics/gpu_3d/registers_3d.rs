@@ -7,7 +7,6 @@ use crate::core::CpuType::ARM9;
 use crate::fast_fixed_fifo::FastFixedFifo;
 use crate::logging::debug_println;
 use crate::math::{vdot_vec3, vmult_mat4, vmult_vec3_mat3_no_store, Matrix, Vectorf32, Vectori16, Vectori32, MTX_IDENTITY};
-use crate::utils;
 use crate::utils::HeapMem;
 use bilge::prelude::*;
 use paste::paste;
@@ -412,7 +411,7 @@ impl Gpu3DFlags {
     }
 }
 
-pub struct Shininess(pub [u8; 128]);
+pub struct Shininess(pub [u32; 32]);
 
 impl Default for Shininess {
     fn default() -> Self {
@@ -569,9 +568,11 @@ impl Emu {
         regs_3d.last_total_cycles = total_cycles;
         let mut executed_cycles = 0;
 
-        'outer: while !regs_3d.cmd_fifo.is_empty() {
-            let mut value = *regs_3d.cmd_fifo.front();
-            regs_3d.cmd_fifo.pop_front();
+        let mut consumed = 0;
+        let len = regs_3d.cmd_fifo.len();
+        'outer: while consumed < len {
+            let mut value = regs_3d.cmd_fifo[consumed];
+            consumed += 1;
 
             while value != 0 {
                 let cmd = (value & 0x7F) as usize;
@@ -583,27 +584,33 @@ impl Emu {
                 let param_count = FifoParam::from(unsafe { *FIFO_PARAM_COUNTS.get_unchecked(cmd) });
                 let count = u8::from(param_count.param_count()) as usize;
 
-                if unlikely(count > regs_3d.cmd_fifo.len() as usize) {
-                    regs_3d.cmd_fifo.push_front(current_value);
+                if unlikely((count + consumed) > len) {
+                    consumed -= 1;
+                    regs_3d.cmd_fifo[consumed] = current_value;
                     break 'outer;
                 }
 
                 let skippable = param_count.can_skip();
                 if !regs_3d.flags.skip() || likely(!skippable) {
-                    let func = unsafe { FUNC_GROUP_LUT.get_unchecked(cmd >> 4) };
-                    func(regs_3d, cmd & 0xF, unsafe { mem::transmute(regs_3d.cmd_fifo.front_ptr()) });
+                    unsafe {
+                        let func = FUNC_GROUP_LUT.get_unchecked(cmd >> 4);
+                        let ptr = regs_3d.cmd_fifo.front_ptr().add(consumed);
+                        func(regs_3d, cmd & 0xF, mem::transmute(ptr));
+                    }
                 }
-                regs_3d.cmd_fifo.pop_front_multiple(count as u16);
+                consumed += count;
 
                 executed_cycles += 4;
-                if executed_cycles >= cycle_diff || cmd == 0x50 {
+                if unlikely(executed_cycles >= cycle_diff || cmd == 0x50) {
                     if value != 0 {
-                        regs_3d.cmd_fifo.push_front(value);
+                        consumed -= 1;
+                        regs_3d.cmd_fifo[consumed] = value;
                     }
                     break 'outer;
                 }
             }
         }
+        regs_3d.cmd_fifo.pop_front_multiple(consumed);
 
         regs_3d.flags.set_test_queue_dirty(true);
 
@@ -833,7 +840,7 @@ impl Gpu3DRegisters {
                     return true;
                 }
 
-                let count = u8::from(param.param_count()) as u16;
+                let count = u8::from(param.param_count()) as usize;
                 param_count += count;
             }
 
@@ -1266,7 +1273,7 @@ impl Gpu3DRegisters {
                 let shininess_level = vdot_vec3(half_vector, normal_vector).max(0);
                 let mut shininess_level = (shininess_level * shininess_level) >> 12;
                 if self.material_color1.set_shininess() {
-                    shininess_level = (*self.cur_shininess.0.get_unchecked((shininess_level >> 5) as usize) as i32) << 4;
+                    shininess_level = ((self.cur_shininess.0.as_ptr() as *const u8).add((shininess_level >> 5) as usize).read() as i32) << 4;
                 }
 
                 let light_color = self.cur_light_colors[j];
@@ -1428,7 +1435,7 @@ impl Gpu3DRegisters {
     }
 
     fn exe_shininess(&mut self, params: &[u32; 32]) {
-        utils::write_to_mem_slice(&mut self.cur_shininess.0, 0, params);
+        self.cur_shininess.0.copy_from_slice(params);
     }
 
     fn exe_begin_vtxs(&mut self, cmd: usize, params: &[u32; 32]) {
