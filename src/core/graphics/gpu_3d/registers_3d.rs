@@ -790,7 +790,7 @@ impl Gpu3DRegisters {
         max(self.cmd_fifo.len() as isize - 4, 0) as usize
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub fn get_clip_matrix(&mut self) -> &Matrix {
         if unlikely(self.flags.is_clip_dirty()) {
             self.flags.set_clip_dirty_bool(false);

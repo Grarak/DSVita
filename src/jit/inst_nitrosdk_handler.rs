@@ -413,7 +413,7 @@ unsafe extern "C" fn hle_os_irqhandler(guest_pc: u32) {
     let regs = ARM9.thread_regs();
 
     let irqs = regs.ie & regs.irf;
-    if regs.ime == 0 || irqs == 0 {
+    if unlikely(regs.ime == 0 || irqs == 0) {
         hle_post_function::<{ ARM9 }>(asm, 18, guest_pc);
     }
 
@@ -421,12 +421,12 @@ unsafe extern "C" fn hle_os_irqhandler(guest_pc: u32) {
     regs.irf &= !(1 << irq_to_handle);
 
     regs.sp -= 4;
-    asm.emu.mem_write::<{ ARM9 }, u32>(regs.sp, regs.lr);
+    ((ARM9.mmu_tcm_addr() + regs.sp as usize) as *mut u32).write(regs.lr);
 
     regs.lr = asm.emu.os_irq_handler_thread_switch_addr;
 
     let irq_table_addr = asm.emu.os_irq_table_addr;
-    let irq_func = asm.emu.mem_read::<{ ARM9 }, u32>(irq_table_addr + (irq_to_handle << 2));
+    let irq_func = ((ARM9.mmu_tcm_addr() + irq_table_addr as usize + ((irq_to_handle as usize) << 2)) as *const u32).read();
 
     regs.gp_regs[0] = irq_func;
     regs.gp_regs[1] = irq_table_addr;
