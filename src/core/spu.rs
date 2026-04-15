@@ -72,6 +72,7 @@ impl SoundSampler {
         *self.cond_mutex.lock().unwrap() = false;
     }
 
+    #[inline(always)]
     fn push(&mut self, sample: u32, framelimit: u8, audio_stretching: bool) {
         while self.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire).is_err() {}
 
@@ -95,10 +96,10 @@ impl SoundSampler {
             (SAMPLE_BUFFER_SIZE * 5) as u16,
         ];
 
-        let sample_limit = SAMPLE_LIMITS[framelimit as usize];
+        let sample_limit = unsafe { *SAMPLE_LIMITS.get_unchecked(framelimit as usize) };
 
-        if *size >= sample_limit {
-            let (_, other_size) = &mut self.queues[self.busy_queue ^ 1];
+        if unlikely(*size >= sample_limit) {
+            let (_, other_size) = unsafe { self.queues.get_unchecked_mut(self.busy_queue ^ 1) };
 
             if !audio_stretching {
                 let mut can_sample = self.cond_mutex.lock().unwrap();
@@ -358,7 +359,8 @@ struct SoundCapChannel {
     cnt: SoundCapCnt,
     dad: u32,
     len: u16,
-    dad_current: u32,
+    dad_current: usize,
+    dad_ptr: usize,
     tmr_current: u32,
 }
 
@@ -491,7 +493,7 @@ impl Emu {
         let cap_channel = &mut self.spu.sound_cap_channels[channel_num];
         let cnt = SoundCapCnt::from(value & 0x8F);
         if !cap_channel.cnt.start_status() && cnt.start_status() {
-            cap_channel.dad_current = cap_channel.dad;
+            cap_channel.dad_current = cap_channel.dad_ptr;
             cap_channel.tmr_current = self.spu.channels[(channel_num << 1) + 1].tmr as u32;
         }
 
@@ -505,8 +507,12 @@ impl Emu {
         let cap_channel = &mut self.spu.sound_cap_channels[channel_num];
         cap_channel.dad = (cap_channel.dad & !mask) | (value & mask);
 
-        cap_channel.dad_current = cap_channel.dad;
         cap_channel.tmr_current = self.spu.channels[(channel_num << 1) + 1].tmr as u32;
+
+        let dad = cap_channel.dad;
+        let dad_ptr = self.mem.shm.as_ptr() as usize + self.get_shm_offset::<{ ARM7 }, true, false>(dad);
+        let cap_channel = &mut self.spu.sound_cap_channels[channel_num];
+        cap_channel.dad_ptr = dad_ptr;
 
         debug_println!("spu set snd cap cnt {:x}", u8::from(cap_channel.cnt));
     }
@@ -663,22 +669,26 @@ impl Emu {
         (data_left, data_right)
     }
 
+    #[inline(never)]
+    unsafe fn spu_push_empty_sample(&mut self) {
+        for i in 0..CHANNEL_COUNT {
+            self.spu.channels[i].cnt.set_start_status(false);
+        }
+        for i in 0..2 {
+            self.spu.sound_cap_channels[i].cnt.set_start_status(false);
+        }
+        self.spu.sound_sampler.as_mut().push(0, self.settings.framelimit(), self.settings.audio_stretching());
+        self.cm.schedule(512 * 2, EventType::SpuSample);
+    }
+
     pub fn spu_on_sample_event(&mut self) {
         unsafe {
             if unlikely(!self.settings.audio()) {
-                for i in 0..CHANNEL_COUNT {
-                    self.spu.channels[i].cnt.set_start_status(false);
-                }
-                for i in 0..2 {
-                    self.spu.sound_cap_channels[i].cnt.set_start_status(false);
-                }
-                self.spu.sound_sampler.as_mut().push(0, self.settings.framelimit(), self.settings.audio_stretching());
-                self.cm.schedule(512 * 2, EventType::SpuSample);
+                self.spu_push_empty_sample();
                 return;
             }
 
-            let mut mixer_left = 0;
-            let mut mixer_right = 0;
+            let mut mixers = [0; 2];
             let mut channels_left = [0; 2];
             let mut channels_right = [0; 2];
 
@@ -705,45 +715,46 @@ impl Emu {
                     }
                 }
 
-                mixer_left += data_left;
-                mixer_right += data_right;
+                mixers[0] += data_left;
+                mixers[1] += data_right;
             }
 
             for i in 0..2 {
-                if !self.spu.sound_cap_channels[i].cnt.start_status() {
+                let channel = &mut self.spu.sound_cap_channels[i];
+                if unlikely(!channel.cnt.start_status()) {
                     continue;
                 }
 
-                let sample = if i == 0 { mixer_left } else { mixer_right };
+                let sample = mixers[i];
                 let sample = sample.clamp(-0x8000, 0x7FFF);
 
-                let mut tmr_current = self.spu.sound_cap_channels[i].tmr_current + 512;
+                let mut tmr_current = channel.tmr_current + 512;
                 let tmr = self.spu.channels[(i << 1) + 1].tmr;
                 while tmr_current >> 16 != 0 {
                     tmr_current = tmr as u32 + (tmr_current - 0x10000);
 
-                    if self.spu.sound_cap_channels[i].cnt.pcm8() {
-                        self.mem_write::<{ ARM7 }, u8>(self.spu.sound_cap_channels[i].dad_current, (sample >> 8) as u8);
-                        self.spu.sound_cap_channels[i].dad_current += 1;
+                    let ptr = channel.dad_current;
+                    if channel.cnt.pcm8() {
+                        (ptr as *mut u8).write((sample >> 8) as u8);
+                        channel.dad_current += 1;
                     } else {
-                        self.mem_write::<{ ARM7 }, u16>(self.spu.sound_cap_channels[i].dad_current, sample as u16);
-                        self.spu.sound_cap_channels[i].dad_current += 2;
+                        (ptr as *mut u16).write(sample as u16);
+                        channel.dad_current += 2;
                     }
 
-                    let channel = &mut self.spu.sound_cap_channels[i];
-                    if channel.dad_current >= (channel.dad + ((channel.len as u32) << 2)) {
+                    if channel.dad_current >= (channel.dad_ptr + ((channel.len as usize) << 2)) {
                         if channel.cnt.one_shot() {
                             channel.cnt.set_start_status(false);
                         } else {
-                            channel.dad_current = channel.dad;
+                            channel.dad_current = channel.dad_ptr;
                         }
                     }
                 }
-                self.spu.sound_cap_channels[i].tmr_current = tmr_current;
+                channel.tmr_current = tmr_current;
             }
 
             let mut sample_left = match u8::from(self.spu.main_sound_cnt.left_output_from()) {
-                0 => mixer_left,
+                0 => mixers[0],
                 1 => channels_left[0],
                 2 => channels_left[1],
                 3 => channels_left[0] + channels_left[1],
@@ -751,7 +762,7 @@ impl Emu {
             };
 
             let mut sample_right = match u8::from(self.spu.main_sound_cnt.right_output_from()) {
-                0 => mixer_right,
+                0 => mixers[1],
                 1 => channels_right[0],
                 2 => channels_right[1],
                 3 => channels_right[0] + channels_right[1],
