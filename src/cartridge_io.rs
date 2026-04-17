@@ -5,6 +5,7 @@ use crate::utils::{rgb5_to_rgb8, HeapArrayU8, NoHashMap};
 use static_assertions::const_assert_eq;
 use std::cmp::min;
 use std::fs::File;
+use std::hint::assert_unchecked;
 use std::io::{ErrorKind, Seek};
 use std::ops::{Deref, DerefMut};
 use std::os::unix::fs::FileExt;
@@ -254,21 +255,24 @@ impl CartridgeIo {
 
     fn get_page(&mut self, page_addr: u32) -> io::Result<*const [u8; CARTRIDGE_PAGE_SIZE]> {
         debug_assert_eq!(page_addr & (CARTRIDGE_PAGE_SIZE as u32 - 1), 0);
-        match self.content_pages.get(&page_addr) {
-            None => {
-                if self.content_pages.len() >= MAX_CARTRIDGE_CACHE / CARTRIDGE_PAGE_SIZE {
-                    debug_println!("clear cartridge pages");
-                    self.content_pages.clear();
-                }
+        unsafe {
+            match self.content_pages.get(&page_addr) {
+                None => {
+                    if self.content_pages.len() >= MAX_CARTRIDGE_CACHE / CARTRIDGE_PAGE_SIZE {
+                        debug_println!("clear cartridge pages");
+                        self.content_pages.clear();
+                    }
 
-                let content_offset = self.content_pages.len() as u16;
-                let start = content_offset as usize * CARTRIDGE_PAGE_SIZE;
-                let buf = &mut self.content_cache[start..start + CARTRIDGE_PAGE_SIZE];
-                self.file.read_at(buf, page_addr as u64)?;
-                self.content_pages.insert(page_addr, content_offset);
-                Ok(buf.as_ptr() as _)
+                    let content_offset = self.content_pages.len() as u16;
+                    let start = content_offset as usize * CARTRIDGE_PAGE_SIZE;
+                    unsafe { assert_unchecked(start + CARTRIDGE_PAGE_SIZE < self.content_cache.len()) };
+                    let buf = &mut self.content_cache[start..start + CARTRIDGE_PAGE_SIZE];
+                    self.file.read_at(buf, page_addr as u64)?;
+                    self.content_pages.insert(page_addr, content_offset);
+                    Ok(buf.as_ptr() as _)
+                }
+                Some(page) => Ok(self.content_cache.as_ptr().add(*page as usize * CARTRIDGE_PAGE_SIZE) as _),
             }
-            Some(page) => Ok(self.content_cache[*page as usize * CARTRIDGE_PAGE_SIZE..].as_ptr() as _),
         }
     }
 
@@ -280,12 +284,10 @@ impl CartridgeIo {
             let page_addr = (offset + slice_start as u32) & !(CARTRIDGE_PAGE_SIZE as u32 - 1);
             let page_offset = offset + slice_start as u32 - page_addr;
             let page = self.get_page(page_addr)?;
-            let page = unsafe { page.as_ref_unchecked() };
-            let page_slice = &page[page_offset as usize..];
+            let page_size = CARTRIDGE_PAGE_SIZE - page_offset as usize;
 
-            let read_amount = min(remaining, page_slice.len());
-            let slice_end = slice_start + read_amount;
-            slice[slice_start..slice_end].copy_from_slice(&page_slice[..read_amount]);
+            let read_amount = min(remaining, page_size);
+            unsafe { slice.as_mut_ptr().add(slice_start).copy_from_nonoverlapping((page as *const u8).add(page_offset as usize), read_amount) };
             remaining -= read_amount;
         }
         Ok(())
