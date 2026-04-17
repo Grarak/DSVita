@@ -1,9 +1,10 @@
 use crate::cartridge_metadata::get_cartridge_metadata;
 use crate::logging::debug_println;
 use crate::utils;
-use crate::utils::{rgb5_to_rgb8, HeapArrayU8, NoHashMap};
+use crate::utils::{rgb5_to_rgb8, HeapArrayU8};
 use static_assertions::const_assert_eq;
 use std::cmp::min;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::hint::assert_unchecked;
 use std::io::{ErrorKind, Seek};
@@ -200,7 +201,7 @@ pub struct CartridgeIo {
     pub file_name: String,
     pub file_size: u32,
     pub header: CartridgeHeader,
-    content_pages: NoHashMap<u32, u16>,
+    content_pages: BTreeMap<u32, u16>,
     content_cache: HeapArrayU8<MAX_CARTRIDGE_CACHE>,
     save_file_path: PathBuf,
     pub save_file_size: u32,
@@ -244,7 +245,7 @@ impl CartridgeIo {
             file_name: preview.file_name,
             file_size,
             header: preview.header,
-            content_pages: NoHashMap::default(),
+            content_pages: BTreeMap::default(),
             content_cache: HeapArrayU8::default(),
             save_file_path,
             save_file_size,
