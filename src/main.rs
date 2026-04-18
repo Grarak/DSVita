@@ -23,7 +23,7 @@ use crate::core::graphics::gpu_shaders::GpuShadersPrograms;
 use crate::core::memory::regions;
 use crate::core::spi::MicSampler;
 use crate::core::spu::{SoundSampler, SAMPLE_BUFFER_SIZE};
-use crate::core::thread_regs::ThreadRegs;
+use crate::core::thread_regs::{Cpsr, ThreadRegs};
 use crate::core::{spi, CpuType};
 use crate::jit::jit_asm::{JitAsm, MAX_STACK_DEPTH_SIZE};
 use crate::jit::jit_memory::JitMemory;
@@ -66,7 +66,7 @@ mod soundtouch;
 mod utils;
 
 const BUILD_PROFILE_NAME: &str = include_str!(concat!(env!("OUT_DIR"), "/build_profile_name"));
-pub const DEBUG_LOG: bool = const_str_equal(BUILD_PROFILE_NAME, "debug");
+pub const DEBUG_LOG: bool = false;
 pub const IS_DEBUG: bool = DEBUG_LOG || const_str_equal(BUILD_PROFILE_NAME, "release-debug");
 pub const BRANCH_LOG: bool = DEBUG_LOG;
 
@@ -218,8 +218,9 @@ unsafe fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize
     }
 
     let guest_mem_addr = (mem_addr - CPU.mmu_tcm_addr()) as u32;
-    debug_println!("{CPU:?} guest fault at {host_pc:x} {mem_addr:x} to guest {guest_mem_addr:x}");
-    asm.emu.jit.patch_slow_mem(host_pc, guest_mem_addr, CPU, arm_context)
+    let host_thumb = Cpsr::from(arm_context.cpsr as u32).thumb();
+    debug_println!("{CPU:?} guest fault at {host_pc:x} {mem_addr:x} to guest {guest_mem_addr:x}, host thumb {host_thumb}");
+    asm.emu.jit.patch_slow_mem(host_pc, host_thumb, guest_mem_addr, CPU)
 }
 
 #[cold]
@@ -429,7 +430,7 @@ pub fn actual_main() {
 
     let mut screen_layouts = ScreenLayouts::new();
     let mut ra_context = RaContext::new();
-    let ra_context_thread_handle = ra_context.start_server_request_receive_thread();
+    // let ra_context_thread_handle = ra_context.start_server_request_receive_thread();
 
     let mut running = true;
     while running {
@@ -660,5 +661,5 @@ pub fn actual_main() {
         gpu_renderer.set_quit(false);
     }
 
-    ra_context.stop_server_request_receive_thread(ra_context_thread_handle);
+    // ra_context.stop_server_request_receive_thread(ra_context_thread_handle);
 }

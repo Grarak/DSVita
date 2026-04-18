@@ -15,10 +15,13 @@ pub const PAGE_SIZE: usize = 4096;
 pub const PAGE_SHIFT: usize = 12;
 const_assert_eq!(PAGE_SIZE, 1 << PAGE_SHIFT);
 
+#[derive(Clone)]
 pub struct ArmContext {
     pub gp_regs: [usize; 13],
     pub sp: usize,
     pub lr: usize,
+    pub pc: usize,
+    pub cpsr: usize,
 }
 
 pub struct MemRegion {

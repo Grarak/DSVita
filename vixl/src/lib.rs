@@ -452,10 +452,22 @@ impl From<i32> for Operand {
     }
 }
 
+impl From<Register> for Operand {
+    fn from(value: Register) -> Self {
+        unsafe { Operand::new2(value) }
+    }
+}
+
 impl From<Reg> for Register {
     fn from(value: Reg) -> Self {
         debug_assert!(value as u8 <= Reg::PC as u8, "{value:?} <= {:?}", Reg::PC);
         unsafe { Register::new(value as u32) }
+    }
+}
+
+impl From<Register> for Reg {
+    fn from(value: Register) -> Self {
+        Reg::from(value._base.get_code() as u8)
     }
 }
 
@@ -512,12 +524,16 @@ impl WriteBack {
 }
 
 impl CPURegister {
-    pub fn get_type(self) -> CPURegister_RegisterType {
-        (self.value_ & 0x1E0) >> 5
+    pub fn get_type(&self) -> CPURegister_RegisterType {
+        (self.value_ & CPURegister_kTypeMask) >> CPURegister_kTypeShift
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.get_type() != CPURegister_RegisterType_kNoRegister
     }
 
     pub fn get_code(self) -> u32 {
-        self.value_ & 0x1F
+        (self.value_ & CPURegister_kCodeMask) >> CPURegister_kCodeShift
     }
 }
 
@@ -555,6 +571,10 @@ impl MacroAssembler {
     pub fn ensure_emit_for(&mut self, size: u32) {
         unsafe { masm_ensure_emit_for(self.inner, size) }
     }
+
+    pub fn is_thumb_isa(&self) -> bool {
+        self.isa == InstructionSet_T32
+    }
 }
 
 impl Drop for MacroAssembler {
@@ -567,10 +587,20 @@ impl Drop for MacroAssembler {
 
 impl MasmLdr2<Reg, u32> for MacroAssembler {
     fn ldr2(&mut self, reg: Reg, v: u32) {
-        if self.isa == InstructionSet_T32 && reg.is_low() {
+        if self.is_thumb_isa() && reg.is_low() {
             self.ldr3(Cond::AL, reg, v)
         } else {
             self.mov4(FlagsUpdate_LeaveFlags, Cond::AL, reg, &v.into());
         }
+    }
+}
+
+impl Operand {
+    pub fn is_immediate(&self) -> bool {
+        !self.rm_._base.is_valid()
+    }
+
+    pub fn is_register_shifted_register(&self) -> bool {
+        self.rm_._base.is_valid() && self.rs_._base.is_valid()
     }
 }

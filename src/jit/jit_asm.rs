@@ -496,7 +496,17 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
         asm.jit_buf.guest_pc_start = guest_pc;
         asm.jit_buf.debug_info.resize(asm.analyzer.basic_blocks.len(), asm.jit_buf.insts.len());
 
-        let mut block_asm = BlockAsm::new(asm.cpu, thumb, is_os_irq_handler);
+        let mut thumb_isa = true;
+        // if !thumb {
+        //     for inst in &asm.jit_buf.insts {
+        //         if inst.op == Op::Mvn {
+        //             thumb_isa = false;
+        //             break;
+        //         }
+        //     }
+        // }
+
+        let mut block_asm = BlockAsm::new(asm.cpu, thumb_isa, thumb, is_os_irq_handler);
         block_asm.prologue(asm.analyzer.basic_blocks.len());
 
         if asm.cpu == ARM7 && guest_pc & 0xFF000000 != regions::VRAM_OFFSET && !asm.emu.nitro_sdk_version.is_valid() {

@@ -4,11 +4,13 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
+use std::hint::unreachable_unchecked;
 use vixl::{
-    MacroAssembler, MasmAdc4, MasmAdcs4, MasmAdd4, MasmAdds4, MasmAnd4, MasmAnds4, MasmBic4, MasmBics4, MasmClz3, MasmCmn3, MasmCmp3, MasmEor4, MasmEors4, MasmMla5, MasmMlas5, MasmMov3, MasmMovs3,
-    MasmMul4, MasmMuls4, MasmMvn3, MasmMvns3, MasmOrr4, MasmOrrs4, MasmQadd4, MasmQdadd4, MasmQdsub4, MasmQsub4, MasmRsb4, MasmRsbs4, MasmRsc4, MasmRscs4, MasmSbc4, MasmSbcs4, MasmSmlabb5,
-    MasmSmlabt5, MasmSmlal5, MasmSmlalbb5, MasmSmlalbt5, MasmSmlals5, MasmSmlaltb5, MasmSmlaltt5, MasmSmlatb5, MasmSmlatt5, MasmSmlawb5, MasmSmlawt5, MasmSmulbb4, MasmSmulbt4, MasmSmull5,
-    MasmSmulls5, MasmSmultb4, MasmSmultt4, MasmSmulwb4, MasmSmulwt4, MasmSub4, MasmSubs4, MasmTeq3, MasmTst3, MasmUmlal5, MasmUmlals5, MasmUmull5, MasmUmulls5,
+    MacroAssembler, MasmAdc4, MasmAdcs4, MasmAdd4, MasmAdds4, MasmAnd4, MasmAnds4, MasmAsr4, MasmBic4, MasmBics4, MasmClz3, MasmCmn3, MasmCmp3, MasmEor4, MasmEors4, MasmLsl4, MasmLsr4, MasmMla5,
+    MasmMlas5, MasmMov3, MasmMovs3, MasmMul4, MasmMuls4, MasmMvn3, MasmMvns3, MasmOrr4, MasmOrrs4, MasmQadd4, MasmQdadd4, MasmQdsub4, MasmQsub4, MasmRor4, MasmRsb4, MasmRsbs4, MasmRsc4, MasmRscs4,
+    MasmSbc4, MasmSbcs4, MasmSmlabb5, MasmSmlabt5, MasmSmlal5, MasmSmlalbb5, MasmSmlalbt5, MasmSmlals5, MasmSmlaltb5, MasmSmlaltt5, MasmSmlatb5, MasmSmlatt5, MasmSmlawb5, MasmSmlawt5, MasmSmulbb4,
+    MasmSmulbt4, MasmSmull5, MasmSmulls5, MasmSmultb4, MasmSmultt4, MasmSmulwb4, MasmSmulwt4, MasmSub4, MasmSubs4, MasmTeq3, MasmTst3, MasmUmlal5, MasmUmlals5, MasmUmull5, MasmUmulls5, ShiftType_ASR,
+    ShiftType_LSL, ShiftType_LSR, ShiftType_ROR,
 };
 
 impl JitAsm<'_> {
@@ -37,7 +39,19 @@ impl JitAsm<'_> {
                 let op0_mapped = block_asm.get_guest_map(operands[0].as_reg_no_shift().unwrap());
                 let op1_operand = block_asm.get_guest_operand_map(&operands[1]);
 
-                func(block_asm, cond, op0_mapped, &op1_operand);
+                if matches!(inst.op, Op::Mvn) && block_asm.is_thumb_isa() && op1_operand.is_register_shifted_register() {
+                    let shift_func = match unsafe { vixl::Operand_GetShift(&op1_operand) }.shift_ {
+                        ShiftType_LSL => <MacroAssembler as MasmLsl4<Cond, Reg, Reg, &vixl::Operand>>::lsl4,
+                        ShiftType_LSR => <MacroAssembler as MasmLsr4<_, _, _, _>>::lsr4,
+                        ShiftType_ASR => <MacroAssembler as MasmAsr4<_, _, _, _>>::asr4,
+                        ShiftType_ROR => <MacroAssembler as MasmRor4<_, _, _, _>>::ror4,
+                        _ => unreachable!(),
+                    };
+                    shift_func(block_asm, cond, Reg::R0, op1_operand.rm_.into(), &op1_operand.rs_.into());
+                    func(block_asm, cond, op0_mapped, &Reg::R0.into());
+                } else {
+                    func(block_asm, cond, op0_mapped, &op1_operand);
+                }
             }
             3 => {
                 let func = match inst.op {
@@ -68,6 +82,27 @@ impl JitAsm<'_> {
                 let op1_mapped = block_asm.get_guest_map(operands[1].as_reg_no_shift().unwrap());
                 let op2_operand = block_asm.get_guest_operand_map(&operands[2]);
 
+                if block_asm.is_thumb_isa() {
+                    if op2_operand.is_immediate() {
+                        if unsafe { !vixl::is_t2_immediate_valid(op2_operand.imm_) } {
+                            block_asm.mov3(cond, Reg::R0, &op2_operand);
+                            func(block_asm, cond, op0_mapped, op1_mapped, &Reg::R0.into());
+                            return;
+                        }
+                    } else if op2_operand.is_register_shifted_register() {
+                        let shift_func = match unsafe { vixl::Operand_GetShift(&op2_operand) }.shift_ {
+                            ShiftType_LSL => <MacroAssembler as MasmLsl4<Cond, Reg, Reg, &vixl::Operand>>::lsl4,
+                            ShiftType_LSR => <MacroAssembler as MasmLsr4<_, _, _, _>>::lsr4,
+                            ShiftType_ASR => <MacroAssembler as MasmAsr4<_, _, _, _>>::asr4,
+                            ShiftType_ROR => <MacroAssembler as MasmRor4<_, _, _, _>>::ror4,
+                            _ => unreachable!(),
+                        };
+                        shift_func(block_asm, cond, Reg::R0, op2_operand.rm_.into(), &op2_operand.rs_.into());
+                        func(block_asm, cond, op0_mapped, op1_mapped, &Reg::R0.into());
+                        return;
+                    }
+                }
+
                 func(block_asm, cond, op0_mapped, op1_mapped, &op2_operand);
             }
             _ => unreachable!(),
@@ -78,8 +113,8 @@ impl JitAsm<'_> {
         let inst = &self.jit_buf.insts[inst_index];
 
         let operands = inst.operands();
-        let op0_mapped = block_asm.get_guest_map(operands[0].as_reg_no_shift().unwrap());
-        let op1_mapped = block_asm.get_guest_map(operands[1].as_reg_no_shift().unwrap());
+        let mut op0_mapped = block_asm.get_guest_map(operands[0].as_reg_no_shift().unwrap());
+        let mut op1_mapped = block_asm.get_guest_map(operands[1].as_reg_no_shift().unwrap());
         let op2_mapped = block_asm.get_guest_map(operands[2].as_reg_no_shift().unwrap());
 
         match inst.operands().len() {
@@ -95,6 +130,23 @@ impl JitAsm<'_> {
                     Op::Smultt => <MacroAssembler as MasmSmultt4<_, _, _, _>>::smultt4,
                     _ => unreachable!(),
                 };
+
+                if block_asm.is_thumb_isa() && matches!(inst.op, Op::Mul | Op::Muls) {
+                    if op0_mapped != op2_mapped || !op1_mapped.is_low() || !op2_mapped.is_low() {
+                        if !op1_mapped.is_low() {
+                            block_asm.mov3(inst.cond, Reg::R1, &op1_mapped.into());
+                            op1_mapped = Reg::R1;
+                        }
+
+                        if op0_mapped != op2_mapped || !op2_mapped.is_low() {
+                            block_asm.mov3(inst.cond, Reg::R0, &op2_mapped.into());
+                            func(block_asm, inst.cond, Reg::R0, op1_mapped, Reg::R0);
+                            block_asm.mov3(inst.cond, op0_mapped, &Reg::R0.into());
+                            return;
+                        }
+                    }
+                }
+
                 func(block_asm, inst.cond, op0_mapped, op1_mapped, op2_mapped);
             }
             4 => {

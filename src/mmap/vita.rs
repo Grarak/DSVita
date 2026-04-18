@@ -365,9 +365,10 @@ unsafe extern "C" fn abort_handler(abort_context: *mut KuKernelAbortContext) {
     let context = &mut (*abort_context);
 
     let delegate_fun: fn(usize, &mut usize, &ArmContext) -> bool = mem::transmute(DELEGATE_FUN);
-    let arm_context: &ArmContext = unsafe { mem::transmute(&context.r0) };
+    let mut arm_context = mem::transmute::<_, &ArmContext>(&context.r0).clone();
+    arm_context.cpsr = context.SPSR as usize;
     let mut pc = context.pc as usize;
-    if delegate_fun(context.FAR as usize, &mut pc, arm_context) {
+    if delegate_fun(context.FAR as usize, &mut pc, &arm_context) {
         context.pc = pc as _;
         return;
     }

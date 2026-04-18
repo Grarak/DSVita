@@ -266,7 +266,7 @@ impl CartridgeIo {
 
                     let content_offset = self.content_pages.len() as u16;
                     let start = content_offset as usize * CARTRIDGE_PAGE_SIZE;
-                    unsafe { assert_unchecked(start + CARTRIDGE_PAGE_SIZE < self.content_cache.len()) };
+                    assert_unchecked(start + CARTRIDGE_PAGE_SIZE < self.content_cache.len());
                     let buf = &mut self.content_cache[start..start + CARTRIDGE_PAGE_SIZE];
                     self.file.read_at(buf, page_addr as u64)?;
                     self.content_pages.insert(page_addr, content_offset);

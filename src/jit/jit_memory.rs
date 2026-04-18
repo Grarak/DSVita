@@ -1,37 +1,35 @@
-use crate::core::CpuType;
 use crate::core::emu::Emu;
 use crate::core::memory::io_arm7::io_arm7;
 use crate::core::memory::io_arm9::io_arm9;
 use crate::core::memory::mmu::MMU_PAGE_SHIFT;
 use crate::core::memory::{regions, vram};
 use crate::core::thread_regs::ThreadRegs;
-use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
-use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
+use crate::core::CpuType;
 use crate::jit::assembler::block_asm::{BlockAsm, GuestInstMetadata, GuestInstOffset};
 use crate::jit::assembler::{arm, thumb};
 use crate::jit::inst_mem_handler::{
-    InstMemMultipleParams, inst_read_io_mem_handler, inst_read_io_mem_handler_with_cpsr, inst_read_mem_handler, inst_read_mem_handler_multiple, inst_read_mem_handler_multiple_with_cpsr,
-    inst_read_mem_handler_with_cpsr, inst_read64_mem_handler, inst_read64_mem_handler_with_cpsr, inst_write_io_mem_handler, inst_write_io_mem_handler_with_cpsr, inst_write_mem_handler,
-    inst_write_mem_handler_gxfifo, inst_write_mem_handler_gxfifo_with_cpsr, inst_write_mem_handler_multiple, inst_write_mem_handler_multiple_gxfifo, inst_write_mem_handler_multiple_gxfifo_with_cpsr,
-    inst_write_mem_handler_multiple_with_cpsr, inst_write_mem_handler_with_cpsr,
+    inst_read64_mem_handler, inst_read64_mem_handler_with_cpsr, inst_read_io_mem_handler, inst_read_io_mem_handler_with_cpsr, inst_read_mem_handler, inst_read_mem_handler_multiple,
+    inst_read_mem_handler_multiple_with_cpsr, inst_read_mem_handler_with_cpsr, inst_write_io_mem_handler, inst_write_io_mem_handler_with_cpsr, inst_write_mem_handler, inst_write_mem_handler_gxfifo,
+    inst_write_mem_handler_gxfifo_with_cpsr, inst_write_mem_handler_multiple, inst_write_mem_handler_multiple_gxfifo, inst_write_mem_handler_multiple_gxfifo_with_cpsr,
+    inst_write_mem_handler_multiple_with_cpsr, inst_write_mem_handler_with_cpsr, InstMemMultipleParams,
 };
-use crate::jit::jit_asm::{JitDebugInfo, emit_code_block, hle_bios_uninterrupt};
+use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt, JitDebugInfo};
 use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::jit::op::{MultipleTransfer, Op, SingleTransfer};
 use crate::jit::reg::Reg;
 use crate::jit::{Cond, MemoryAmount};
 use crate::logging::debug_println;
-use crate::mmap::{ArmContext, Mmap, PAGE_SHIFT, PAGE_SIZE, flush_icache, MemRegion};
+use crate::mmap::{flush_icache, MemRegion, Mmap, PAGE_SHIFT, PAGE_SIZE};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils;
 use crate::utils::{HeapArray, HeapArrayU8};
-use CpuType::{ARM7, ARM9};
 use bilge::prelude::{u4, u6};
 use std::collections::VecDeque;
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::unlikely;
 use std::ops::{Deref, DerefMut};
 use std::{mem, ptr, slice};
+use CpuType::{ARM7, ARM9};
 
 pub const JIT_MEMORY_SIZE: usize = 32 * 1024 * 1024;
 pub const JIT_LIVE_RANGE_PAGE_SIZE_SHIFT: u32 = 8;
@@ -211,7 +209,7 @@ impl Emu {
         }
     }
 
-    pub fn jit_set_live_range(&mut self, guest_pc: u32, guest_pc_end: u32, thumb: bool,) {
+    pub fn jit_set_live_range(&mut self, guest_pc: u32, guest_pc_end: u32, thumb: bool) {
         // >> 3 for u8 (each bit represents a page)
         let guest_pc_end = guest_pc_end - if thumb { 2 } else { 4 };
         let live_range_begin = guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
@@ -226,6 +224,8 @@ impl Emu {
     }
 
     pub fn jit_insert_block(&mut self, block_asm: BlockAsm, debug_info: &JitDebugInfo, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu: CpuType) -> (*const extern "C" fn(u32), bool) {
+        let block_thumb_isa = block_asm.is_thumb_isa();
+
         macro_rules! insert {
             ($entries:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
                 let ret = insert!($entries);
@@ -238,7 +238,7 @@ impl Emu {
             ($entries:expr) => {{
                 let (allocated_offset_addr, aligned_size, flushed) = self.jit.insert(block_asm, cpu);
 
-                let jit_entry_addr = ((allocated_offset_addr + self.jit.mem.as_ptr() as usize) | (thumb as usize)) as *const extern "C" fn(u32);
+                let jit_entry_addr = ((allocated_offset_addr + self.jit.mem.as_ptr() as usize) | (block_thumb_isa as usize)) as *const extern "C" fn(u32);
 
                 let guest_block_size = (guest_pc_end - guest_pc) as usize;
                 debug_assert!(guest_block_size < PAGE_SIZE);
@@ -403,11 +403,13 @@ impl JitMemory {
 
         utils::write_to_mem_slice(&mut self.mem, allocated_offset_addr, opcodes);
 
-        let jit_entry_addr = (self.mem.as_ptr() as usize + allocated_offset_addr) as u32 | (block_asm.thumb as u32);
+        let block_thumb_isa = block_asm.is_thumb_isa();
+
+        let jit_entry_addr = (self.mem.as_ptr() as usize + allocated_offset_addr) as u32 | (block_thumb_isa as u32);
         for (reg, addr_offset) in block_asm.jit_entry_insert_locations {
             let addr_offset = allocated_offset_addr + addr_offset;
             let mut offset = 0;
-            if block_asm.thumb {
+            if block_thumb_isa {
                 Self::fast_mem_mov::<true>(&mut self.mem[addr_offset..], &mut offset, reg, jit_entry_addr);
             } else {
                 Self::fast_mem_mov::<false>(&mut self.mem[addr_offset..], &mut offset, reg, jit_entry_addr);
@@ -703,38 +705,45 @@ impl JitMemory {
         }
     }
 
-    pub fn get_slow_mem_length(op: Op) -> usize {
+    pub fn get_slow_mem_length(op: Op, thumb_isa: bool) -> usize {
         match op {
-            Op::Str(transfer) => {
-                if transfer.size() == 3 {
-                    SLOW_MEM_SINGLE_WRITE_LENGTH_ARM
+            Op::Str(transfer) | Op::StrT(transfer) => {
+                if thumb_isa {
+                    if transfer.size() == 3 {
+                        SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB
+                    } else {
+                        SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB - 2
+                    }
                 } else {
-                    SLOW_MEM_SINGLE_WRITE_LENGTH_ARM - 4
+                    if transfer.size() == 3 {
+                        SLOW_MEM_SINGLE_WRITE_LENGTH_ARM
+                    } else {
+                        SLOW_MEM_SINGLE_WRITE_LENGTH_ARM - 4
+                    }
                 }
             }
-            Op::StrT(transfer) => {
-                if transfer.size() == 3 {
-                    SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB
+            Op::Ldr(transfer) | Op::LdrT(transfer) => {
+                if thumb_isa {
+                    if transfer.size() == 3 {
+                        SLOW_MEM_SINGLE_READ_LENGTH_THUMB
+                    } else {
+                        SLOW_MEM_SINGLE_READ_LENGTH_THUMB - 2
+                    }
                 } else {
-                    SLOW_MEM_SINGLE_WRITE_LENGTH_THUMB - 2
+                    if transfer.size() == 3 {
+                        SLOW_MEM_SINGLE_READ_LENGTH_ARM
+                    } else {
+                        SLOW_MEM_SINGLE_READ_LENGTH_ARM - 4
+                    }
                 }
             }
-            Op::Ldr(transfer) => {
-                if transfer.size() == 3 {
-                    SLOW_MEM_SINGLE_READ_LENGTH_ARM
+            Op::Stm(_) | Op::Ldm(_) | Op::StmT(_) | Op::LdmT(_) => {
+                if thumb_isa {
+                    SLOW_MEM_MULTIPLE_LENGTH_THUMB
                 } else {
-                    SLOW_MEM_SINGLE_READ_LENGTH_ARM - 4
+                    SLOW_MEM_MULTIPLE_LENGTH_ARM
                 }
             }
-            Op::LdrT(transfer) => {
-                if transfer.size() == 3 {
-                    SLOW_MEM_SINGLE_READ_LENGTH_THUMB
-                } else {
-                    SLOW_MEM_SINGLE_READ_LENGTH_THUMB - 2
-                }
-            }
-            Op::Stm(_) | Op::Ldm(_) => SLOW_MEM_MULTIPLE_LENGTH_ARM,
-            Op::StmT(_) | Op::LdmT(_) => SLOW_MEM_MULTIPLE_LENGTH_THUMB,
             _ => unsafe { unreachable_unchecked() },
         }
     }
@@ -784,12 +793,20 @@ impl JitMemory {
                     let op0_mapped = guest_inst_metadata.mapped_guest_regs[op0 as usize];
                     if is_write && guest_memory_addr == 0x4000214 {
                         let thread_reg_offset = mem::offset_of!(ThreadRegs, irf);
-                        Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, LdrStrImm::ldr_offset_al(Reg::R0, Reg::R3, thread_reg_offset as u16));
-                        Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, AluShiftImm::bic_al(Reg::R0, Reg::R0, op0_mapped));
-                        Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, LdrStrImm::str_offset_al(Reg::R0, Reg::R3, thread_reg_offset as u16));
+                        Self::write_to_fast_mem(
+                            fast_mem,
+                            &mut slow_mem_length,
+                            arm::transfer_assembler::LdrStrImm::ldr_offset_al(Reg::R0, Reg::R3, thread_reg_offset as u16),
+                        );
+                        Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, arm::alu_assembler::AluShiftImm::bic_al(Reg::R0, Reg::R0, op0_mapped));
+                        Self::write_to_fast_mem(
+                            fast_mem,
+                            &mut slow_mem_length,
+                            arm::transfer_assembler::LdrStrImm::str_offset_al(Reg::R0, Reg::R3, thread_reg_offset as u16),
+                        );
                     } else if guest_memory_addr == 0x4000208 {
                         let thread_reg_offset = mem::offset_of!(ThreadRegs, ime);
-                        let opcode = LdrStrImm::ldrb_offset_al(op0_mapped, Reg::R3, thread_reg_offset as u16);
+                        let opcode = arm::transfer_assembler::LdrStrImm::ldrb_offset_al(op0_mapped, Reg::R3, thread_reg_offset as u16);
                         Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, opcode);
                     }
                 }
@@ -802,18 +819,18 @@ impl JitMemory {
                     let mapped_1 = guest_inst_metadata.mapped_guest_regs[op1 as usize];
 
                     let thread_reg_ie_offset = mem::offset_of!(ThreadRegs, ie);
-                    let opcode = LdrStrImmSBHD::ldrd_al(Reg::R0, Reg::R3, thread_reg_ie_offset as u8);
+                    let opcode = arm::transfer_assembler::LdrStrImmSBHD::ldrd_al(Reg::R0, Reg::R3, thread_reg_ie_offset as u8);
                     Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, opcode);
 
                     if mapped_0 == Reg::None {
-                        let opcode = LdrStrImm::str_offset_al(Reg::R0, Reg::R3, (op0 as u16) << 2);
+                        let opcode = arm::transfer_assembler::LdrStrImm::str_offset_al(Reg::R0, Reg::R3, (op0 as u16) << 2);
                         Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, opcode);
                     } else {
                         Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, mapped_0, Reg::R0);
                     }
 
                     if mapped_1 == Reg::None {
-                        let opcode = LdrStrImm::str_offset_al(Reg::R1, Reg::R3, (op1 as u16) << 2);
+                        let opcode = arm::transfer_assembler::LdrStrImm::str_offset_al(Reg::R1, Reg::R3, (op1 as u16) << 2);
                         Self::write_to_fast_mem(fast_mem, &mut slow_mem_length, opcode);
                     } else {
                         Self::fast_mem_mov_reg::<THUMB>(fast_mem, &mut slow_mem_length, mapped_1, Reg::R0);
@@ -868,7 +885,7 @@ impl JitMemory {
                     }
                 }
 
-                let max_length = Self::get_slow_mem_length(guest_inst_metadata.s.fast.op);
+                let max_length = Self::get_slow_mem_length(guest_inst_metadata.s.fast.op, THUMB);
                 debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
 
                 if let Some(io_func) = io_func {
@@ -922,9 +939,9 @@ impl JitMemory {
 
                 Self::fast_mem_blx::<THUMB>(fast_mem, &mut slow_mem_length, Reg::LR);
 
-                let max_length = Self::get_slow_mem_length(guest_inst_metadata.s.fast.op);
+                let max_length = Self::get_slow_mem_length(guest_inst_metadata.s.fast.op, THUMB);
                 debug_assert!(slow_mem_length <= max_length, "{slow_mem_length} <= {max_length}");
-            } else if !THUMB && matches!(guest_inst_metadata.s.fast.op, Op::Swpb | Op::Swp) {
+            } else if matches!(guest_inst_metadata.s.fast.op, Op::Swpb | Op::Swp) {
                 let is_write = guest_inst_metadata.s.fast.op0 == Reg::R1;
                 let mut io_func = None;
 
@@ -976,7 +993,7 @@ impl JitMemory {
         flush_icache(fast_mem.as_ptr(), fast_mem.len());
     }
 
-    pub unsafe fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType, _: &ArmContext) -> bool {
+    pub unsafe fn patch_slow_mem(&mut self, host_pc: &mut usize, host_thumb: bool, guest_memory_addr: u32, cpu: CpuType) -> bool {
         if *host_pc < self.mem.as_ptr() as usize || *host_pc >= self.mem.as_ptr() as usize + JIT_MEMORY_SIZE {
             eprintln!("Segfault outside of guest context");
             return false;
@@ -989,8 +1006,7 @@ impl JitMemory {
 
         debug_println!("{cpu:?} slow mem patch at {:x} {:?} addr {guest_memory_addr:x}", metadata.pc, metadata.s.fast.op);
 
-        let thumb = metadata.pc & 1 == 1;
-        if thumb {
+        if host_thumb {
             Self::execute_patch_slow_mem::<true>(host_pc, guest_memory_addr, fast_mem, metadata, cpu);
         } else {
             Self::execute_patch_slow_mem::<false>(host_pc, guest_memory_addr, fast_mem, metadata, cpu);

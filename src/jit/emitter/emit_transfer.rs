@@ -52,13 +52,13 @@ macro_rules! get_write_func {
 
 impl JitAsm<'_> {
     fn pad_nop(current_length: usize, max_length: usize, block_asm: &mut BlockAsm) {
-        for _ in (current_length..max_length).step_by(if block_asm.thumb { 2 } else { 4 }) {
+        for _ in (current_length..max_length).step_by(if block_asm.is_thumb_isa() { 2 } else { 4 }) {
             block_asm.nop0();
         }
     }
 
     fn emit_align_addr(flag_update: u32, dest_reg: Reg, src_reg: Reg, size: u8, block_asm: &mut BlockAsm) {
-        if block_asm.thumb {
+        if block_asm.is_thumb_isa() {
             block_asm.ldr2(dest_reg, !(0xF0000000 | (size as u32 - 1)));
             block_asm.and5(flag_update, Cond::AL, dest_reg, dest_reg, &src_reg.into());
         } else {
@@ -272,7 +272,7 @@ impl JitAsm<'_> {
 
         let fast_mem_end = block_asm.get_cursor_offset();
         let fast_mem_size = fast_mem_end - fast_mem_start;
-        let slow_mem_size = JitMemory::get_slow_mem_length(self.jit_buf.insts[inst_index].op);
+        let slow_mem_size = JitMemory::get_slow_mem_length(self.jit_buf.insts[inst_index].op, block_asm.is_thumb_isa());
         Self::pad_nop(fast_mem_size as usize, slow_mem_size, block_asm);
         block_asm.set_fast_mem_size_last(max(fast_mem_size, slow_mem_size as u32) as u16);
     }
@@ -520,13 +520,32 @@ impl JitAsm<'_> {
                         &MemOperand::new1(Reg::R0.into(), if transfer.add() { 4 } else { -4 }, if transfer.pre() { AddrMode_PreIndex } else { AddrMode_PostIndex })
                     });
                 } else {
-                    let func = match (transfer.pre(), transfer.add()) {
-                        (false, false) => <MacroAssembler as MasmStmda3<Reg, WriteBack, RegReserve>>::stmda3,
-                        (false, true) => <MacroAssembler as MasmStm3<_, _, _>>::stm3,
-                        (true, false) => <MacroAssembler as MasmStmdb3<_, _, _>>::stmdb3,
-                        (true, true) => <MacroAssembler as MasmStmib3<_, _, _>>::stmib3,
-                    };
-                    func(block_asm, Reg::R0, WriteBack::yes(), usable_regs);
+                    match (transfer.pre(), transfer.add()) {
+                        (false, false) => {
+                            if block_asm.is_thumb_isa() {
+                                if usable_regs.len() > 1 {
+                                    block_asm.sub5(flag_update, Cond::AL, Reg::R0, Reg::R0, &((usable_regs.len() - 1) as u32 * 4).into());
+                                }
+                                block_asm.stm3(Reg::R0, WriteBack::no(), usable_regs);
+                                block_asm.sub5(flag_update, Cond::AL, Reg::R0, Reg::R0, &4.into());
+                            } else {
+                                block_asm.stmda3(Reg::R0, WriteBack::yes(), usable_regs);
+                            }
+                        }
+                        (false, true) => block_asm.stm3(Reg::R0, WriteBack::yes(), usable_regs),
+                        (true, false) => block_asm.stmdb3(Reg::R0, WriteBack::yes(), usable_regs),
+                        (true, true) => {
+                            if block_asm.is_thumb_isa() {
+                                block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &4.into());
+                                block_asm.stm3(Reg::R0, WriteBack::no(), usable_regs);
+                                if usable_regs.len() > 1 {
+                                    block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &((usable_regs.len() - 1) as u32 * 4).into());
+                                }
+                            } else {
+                                block_asm.stmib3(Reg::R0, WriteBack::yes(), usable_regs)
+                            }
+                        }
+                    }
                 }
             } else {
                 block_asm.guest_inst_metadata(self.jit_buf.insts_cycle_counts[inst_index], inst, fast_mem_start, op0, dirty_guest_regs);
@@ -543,7 +562,16 @@ impl JitAsm<'_> {
                         (true, false) => <MacroAssembler as MasmLdmdb3<_, _, _>>::ldmdb3,
                         (true, true) => <MacroAssembler as MasmLdmib3<_, _, _>>::ldmib3,
                     };
-                    func(block_asm, Reg::R0, WriteBack::yes(), usable_regs);
+
+                    if transfer.pre() && transfer.add() && block_asm.is_thumb_isa() {
+                        block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &4.into());
+                        block_asm.ldm3(Reg::R0, WriteBack::no(), usable_regs);
+                        if usable_regs.len() > 1 {
+                            block_asm.add5(flag_update, Cond::AL, Reg::R0, Reg::R0, &((usable_regs.len() - 1) as u32 * 4).into());
+                        }
+                    } else {
+                        func(block_asm, Reg::R0, WriteBack::yes(), usable_regs);
+                    }
                 }
 
                 if user {
@@ -611,7 +639,7 @@ impl JitAsm<'_> {
 
         let fast_mem_end = block_asm.get_cursor_offset();
         let fast_mem_size = fast_mem_end - fast_mem_start;
-        let slow_mem_size = JitMemory::get_slow_mem_length(inst.op);
+        let slow_mem_size = JitMemory::get_slow_mem_length(inst.op, block_asm.is_thumb_isa());
         Self::pad_nop(fast_mem_size as usize, slow_mem_size, block_asm);
         block_asm.set_fast_mem_size(guest_inst_metadata_start, max(fast_mem_size, slow_mem_size as u32) as u16);
 

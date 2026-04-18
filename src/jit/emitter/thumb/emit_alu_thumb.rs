@@ -4,8 +4,8 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use vixl::{
-    MacroAssembler, MasmAdcs3, MasmAdd3, MasmAdds3, MasmAnds3, MasmAsrs3, MasmBics3, MasmCmp2, MasmEors3, MasmLsls3, MasmLsrs3, MasmMov2, MasmMovs2, MasmMuls3, MasmMvns2, MasmOrrs3, MasmRors3,
-    MasmRsbs3, MasmSbcs3, MasmSub3, MasmSubs3, MasmTst2,
+    MacroAssembler, MasmAdcs3, MasmAdd3, MasmAdds3, MasmAnds3, MasmAsrs3, MasmBics3, MasmCmp2, MasmEors3, MasmLsls3, MasmLsrs3, MasmMov2, MasmMov3, MasmMovs2, MasmMuls3, MasmMvns2, MasmOrrs3,
+    MasmRors3, MasmRsbs3, MasmSbcs3, MasmSub3, MasmSubs3, MasmTst2,
 };
 
 impl JitAsm<'_> {
@@ -18,7 +18,24 @@ impl JitAsm<'_> {
                 Op::MulT => {
                     let op0_mapped = block_asm.get_guest_map(operands[0].as_reg_no_shift().unwrap());
                     let op1_mapped = block_asm.get_guest_map(operands[1].as_reg_no_shift().unwrap());
-                    block_asm.muls3(op0_mapped, op1_mapped, op0_mapped);
+                    let mut op0 = op0_mapped;
+                    let mut op1 = op1_mapped;
+
+                    if !op0_mapped.is_low() {
+                        block_asm.mov2(Reg::R0, &op0_mapped.into());
+                        op0 = Reg::R0;
+                    }
+
+                    if !op1_mapped.is_low() {
+                        block_asm.mov2(Reg::R1, &op1_mapped.into());
+                        op1 = Reg::R1;
+                    }
+
+                    block_asm.muls3(op0, op1, op0);
+
+                    if !op0_mapped.is_low() {
+                        block_asm.mov2(op0_mapped, &op0.into());
+                    }
                 }
                 _ => {
                     let func = match inst.op {

@@ -131,9 +131,9 @@ pub struct BlockAsm {
 }
 
 impl BlockAsm {
-    pub fn new(cpu: CpuType, thumb: bool, is_os_irq_handler: bool) -> Self {
+    pub fn new(cpu: CpuType, thumb_isa: bool, thumb: bool, is_os_irq_handler: bool) -> Self {
         BlockAsm {
-            masm: MacroAssembler::new(if thumb { InstructionSet_T32 } else { InstructionSet_A32 }),
+            masm: MacroAssembler::new(if thumb_isa { InstructionSet_T32 } else { InstructionSet_A32 }),
             reg_alloc: RegAlloc::new(thumb),
             current_pc: 0,
             thumb,
@@ -149,6 +149,10 @@ impl BlockAsm {
             is_fs_clear_overlay: false,
             jit_entry_insert_locations: Vec::new(),
         }
+    }
+
+    pub fn is_thumb_isa(&self) -> bool {
+        self.masm.is_thumb_isa()
     }
 
     pub fn prologue(&mut self, basic_block_len: usize) {
@@ -199,7 +203,7 @@ impl BlockAsm {
 
     pub fn guest_offset(&mut self, pre_cycle_count_sum: u16, cpu: CpuType, emu: &Emu) {
         let offset = self.get_cursor_offset() as usize - self.guest_start;
-        let offset = offset - if self.thumb { 2 } else { 4 };
+        let offset = offset - if self.is_thumb_isa() { 2 } else { 4 };
         debug_assert!(offset <= u16::MAX as usize);
         self.guest_inst_offsets.push(GuestInstOffset::new(offset as u16, pre_cycle_count_sum, self.last_pc_value));
         let inst_offset = self.guest_inst_offsets.last_mut().unwrap();
@@ -493,7 +497,7 @@ impl BlockAsm {
         self.jit_entry_insert_locations.push((reg, offset as usize));
         self.nop0();
         self.nop0();
-        if self.thumb {
+        if self.is_thumb_isa() {
             self.nop0();
             self.nop0();
         }
