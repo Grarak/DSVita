@@ -320,7 +320,7 @@ impl RaContext {
                                 }
                                 .header("User-Agent", USER_AGENT)
                                 .header("Content-Type", rc_request.content_type)
-                                .timeout(Duration::from_secs(10))
+                                .timeout(Duration::from_secs(20))
                                 .build()
                                 .unwrap();
 
@@ -377,7 +377,7 @@ impl RaContext {
                                     buf.shrink_to_fit();
                                     Some((buf, info))
                                 } else {
-                                    let request = http_client.get(rc_request.badge_url).timeout(Duration::from_secs(10)).build().unwrap();
+                                    let request = http_client.get(rc_request.badge_url).timeout(Duration::from_secs(20)).build().unwrap();
                                     match http_client.execute(request) {
                                         Ok(response) => {
                                             fs::create_dir_all(ra_context.cache_dir.join(hash)).unwrap();
