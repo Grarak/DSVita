@@ -13,14 +13,14 @@ This runs most games, however consider:
 - 3D rendering
     - Mostly implemented
       - Z fighting can occur
-      - Games using 3D on both screen will have bad framerates
+      - Games using 3D on both screen will have bad framerates and stutters
       - Some effects like fog are unimplemented
 - 2D rendering is mostly complete
-- ARM7 HLE will not work with most games
-    - Disable it if certain games don't boot further, get struck, crash or have any issues
+- ARM7 HLE will not work with some games
+    - Disable it if certain games don't boot further, get stuck, crash or have any other issues
     - There are other emulation modes like SoundHle. You can pick them if full HLE breaks anything
 - Auto frameskip is always used
-    - Games will feel choppy, you will most likely hover around 20-30 fps, even if they run at full game speed
+    - You will most likely hover around 20-30 fps, even if they run at full game speed
 - No scanline rendering, thus games that update VRAM mid frame will not render correctly
     - Not many games do this, however games that do use it for scrolling texts
 
@@ -35,6 +35,7 @@ This runs most games, however consider:
 - It's strongly recommend to overclock your vita to 500MHz
 - Create the folder ux0:data/dsvita and put your roms there
     - They must have the file extensions `*.nds`
+- Check out the [compatibility list](https://github.com/Grarak/DSVita/wiki/Compatibility-list) for popular games
 
 ## Bug reporting
 
