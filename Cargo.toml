@@ -9,7 +9,7 @@ edition = "2021"
 [package.metadata.vita]
 title_id = "DSVITA000"
 title_name = "DSVita"
-build_std = "std,core,panic_abort"
+build_std = "std,core,panic_abort,alloc"
 assets = "./static"
 vita_make_fself_flags = ["-a", "0x2800000000000001", "-na"]
 

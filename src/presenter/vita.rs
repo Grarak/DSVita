@@ -15,7 +15,6 @@ use crate::ra_context::RaContext;
 use crate::screen_layouts::{CustomLayout, ScreenLayouts};
 use crate::settings::{Settings, SettingsConfig};
 use gl::types::{GLenum, GLuint};
-use std::cmp::min;
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
