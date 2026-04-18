@@ -253,7 +253,7 @@ impl JitAsm<'_> {
             } else {
                 match inst.op {
                     Op::Mcr | Op::Mrc => self.emit_cp15(i, basic_block_index, block_asm),
-                    Op::MsrRc | Op::MsrIc | Op::MsrRs | Op::MsrIs => self.emit_msr(i, basic_block_index, block_asm),
+                    Op::MsrRc | Op::MsrIc | Op::MsrRs | Op::MsrIs => self.emit_msr(i, block_asm),
                     Op::MrsRc | Op::MrsRs => self.emit_mrs(i, block_asm),
                     Op::BlxReg => self.emit_blx_reg(i, basic_block_index, block_asm),
                     Op::Bl => self.emit_bl(i, basic_block_index, block_asm),

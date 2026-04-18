@@ -9,18 +9,22 @@ use crate::jit::Cond;
 use vixl::{FlagsUpdate_DontCare, MaskedSpecialRegisterType_CPSR_f, MasmAnd3, MasmLdrh2, MasmMov4, MasmMrs2, MasmMsr2, MasmOrr3, SpecialRegisterType_CPSR};
 
 impl JitAsm<'_> {
-    pub fn emit_msr(&mut self, inst_index: usize, basic_block_index: usize, block_asm: &mut BlockAsm) {
+    pub fn emit_msr(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
         let inst = &self.jit_buf.insts[inst_index];
 
         let flags = (inst.opcode >> 16) & 0xF;
 
-        let func = match inst.op {
-            Op::MsrRc | Op::MsrIc => map_fun_cpu!(self.cpu, register_set_cpsr_checked),
-            Op::MsrRs | Op::MsrIs => map_fun_cpu!(self.cpu, register_set_spsr_checked),
+        let (func, save_regs) = match inst.op {
+            Op::MsrRc | Op::MsrIc => (map_fun_cpu!(self.cpu, register_set_cpsr_checked), flags & 1 == 1),
+            Op::MsrRs | Op::MsrIs => (map_fun_cpu!(self.cpu, register_set_spsr_checked), false),
             _ => unreachable!(),
         };
 
-        block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        if save_regs {
+            block_asm.save_dirty_guest_regs(true, inst.cond == Cond::AL);
+        } else {
+            block_asm.save_dirty_guest_cpsr(inst.cond == Cond::AL);
+        }
         match inst.operands()[0] {
             Operand::Reg { reg, shift: None } => {
                 let reg = block_asm.get_guest_map(reg);
@@ -34,11 +38,12 @@ impl JitAsm<'_> {
 
         block_asm.msr2(MaskedSpecialRegisterType_CPSR_f.into(), &Reg::R0.into());
 
-        let next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
-        block_asm.restore_tmp_regs(next_live_regs);
+        block_asm.restore_guest_regs_ptr();
 
-        const REG_TO_RESTORE: RegReserve = reg_reserve!(Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::R12, Reg::SP, Reg::LR);
-        block_asm.reload_active_guest_regs(REG_TO_RESTORE);
+        if save_regs {
+            const REG_TO_RESTORE: RegReserve = reg_reserve!(Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::R12, Reg::SP, Reg::LR);
+            block_asm.reload_active_guest_regs(REG_TO_RESTORE);
+        }
     }
 
     pub fn emit_mrs(&mut self, inst_index: usize, block_asm: &mut BlockAsm) {
