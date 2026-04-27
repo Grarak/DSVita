@@ -1,7 +1,14 @@
 use std::path::PathBuf;
 use std::{env, fs};
 
-const COMMON_C_FLAGS: &[&str] = &["-mtune=cortex-a9", "-mfloat-abi=hard", "-mfpu=neon", "-mthumb"];
+const COMMON_C_FLAGS: &[&str] = &[
+    "-mtune=cortex-a9",
+    "-mfloat-abi=hard",
+    "-mfpu=neon",
+    "-mthumb",
+    "-fno-omit-frame-pointer",
+    "-mno-omit-leaf-frame-pointer",
+];
 
 pub fn get_profile_name() -> String {
     get_out_path().to_str().unwrap().split(std::path::MAIN_SEPARATOR).nth_back(3).unwrap().to_string()

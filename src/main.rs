@@ -13,6 +13,7 @@
 #![feature(stdarch_arm_neon_intrinsics)]
 #![feature(stmt_expr_attributes)]
 #![feature(vec_push_within_capacity)]
+#![feature(thread_id_value)]
 
 use crate::core::cycle_manager::EventType;
 use crate::core::emu::Emu;

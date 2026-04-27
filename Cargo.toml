@@ -94,6 +94,7 @@ panic = "abort"
 lto = true
 opt-level = 3
 codegen-units = 2
+debug = "line-tables-only"
 
 [profile.release-profiling]
 inherits = "release"

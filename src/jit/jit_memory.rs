@@ -1,37 +1,38 @@
-use crate::core::CpuType;
 use crate::core::emu::Emu;
 use crate::core::memory::io_arm7::io_arm7;
 use crate::core::memory::io_arm9::io_arm9;
 use crate::core::memory::mmu::MMU_PAGE_SHIFT;
 use crate::core::memory::{regions, vram};
 use crate::core::thread_regs::ThreadRegs;
+use crate::core::CpuType;
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
 use crate::jit::assembler::block_asm::{BlockAsm, GuestInstMetadata, GuestInstOffset};
 use crate::jit::assembler::{arm, thumb};
 use crate::jit::inst_mem_handler::{
-    InstMemMultipleParams, inst_read_io_mem_handler, inst_read_io_mem_handler_with_cpsr, inst_read_mem_handler, inst_read_mem_handler_multiple, inst_read_mem_handler_multiple_with_cpsr,
-    inst_read_mem_handler_with_cpsr, inst_read64_mem_handler, inst_read64_mem_handler_with_cpsr, inst_write_io_mem_handler, inst_write_io_mem_handler_with_cpsr, inst_write_mem_handler,
-    inst_write_mem_handler_gxfifo, inst_write_mem_handler_gxfifo_with_cpsr, inst_write_mem_handler_multiple, inst_write_mem_handler_multiple_gxfifo, inst_write_mem_handler_multiple_gxfifo_with_cpsr,
-    inst_write_mem_handler_multiple_with_cpsr, inst_write_mem_handler_with_cpsr,
+    inst_read64_mem_handler, inst_read64_mem_handler_with_cpsr, inst_read_io_mem_handler, inst_read_io_mem_handler_with_cpsr, inst_read_mem_handler, inst_read_mem_handler_multiple,
+    inst_read_mem_handler_multiple_with_cpsr, inst_read_mem_handler_with_cpsr, inst_write_io_mem_handler, inst_write_io_mem_handler_with_cpsr, inst_write_mem_handler, inst_write_mem_handler_gxfifo,
+    inst_write_mem_handler_gxfifo_with_cpsr, inst_write_mem_handler_multiple, inst_write_mem_handler_multiple_gxfifo, inst_write_mem_handler_multiple_gxfifo_with_cpsr,
+    inst_write_mem_handler_multiple_with_cpsr, inst_write_mem_handler_with_cpsr, InstMemMultipleParams,
 };
-use crate::jit::jit_asm::{JitDebugInfo, emit_code_block, hle_bios_uninterrupt};
+use crate::jit::jit_asm::{emit_code_block, hle_bios_uninterrupt, JitDebugInfo};
 use crate::jit::jit_memory_map::JitMemoryMap;
 use crate::jit::op::{MultipleTransfer, Op, SingleTransfer};
 use crate::jit::reg::Reg;
 use crate::jit::{Cond, MemoryAmount};
 use crate::logging::debug_println;
-use crate::mmap::{ArmContext, Mmap, PAGE_SHIFT, PAGE_SIZE, flush_icache, MemRegion};
+use crate::mmap::{flush_icache, ArmContext, MemRegion, Mmap, PAGE_SHIFT, PAGE_SIZE};
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils;
 use crate::utils::{HeapArray, HeapArrayU8};
-use CpuType::{ARM7, ARM9};
 use bilge::prelude::{u4, u6};
 use std::collections::VecDeque;
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::unlikely;
 use std::ops::{Deref, DerefMut};
+use std::path::PathBuf;
 use std::{mem, ptr, slice};
+use CpuType::{ARM7, ARM9};
 
 pub const JIT_MEMORY_SIZE: usize = 32 * 1024 * 1024;
 pub const JIT_LIVE_RANGE_PAGE_SIZE_SHIFT: u32 = 8;
@@ -110,27 +111,19 @@ pub struct JitLiveRanges {
 
 #[cfg(target_os = "linux")]
 struct JitPerfMapRecord {
-    perf_map_path: std::path::PathBuf,
-    perf_map: std::fs::File,
+    log: crate::jit::jit_perf_log::JitPerfLog,
 }
 
 #[cfg(target_os = "linux")]
 impl JitPerfMapRecord {
     fn new() -> Self {
-        let perf_map_path = std::path::PathBuf::from(format!("/tmp/perf-{}.map", std::process::id()));
         JitPerfMapRecord {
-            perf_map_path: perf_map_path.clone(),
-            perf_map: std::fs::File::create(perf_map_path).unwrap(),
+            log: crate::jit::jit_perf_log::JitPerfLog::new(PathBuf::from("/tmp")),
         }
     }
 
-    fn record(&mut self, jit_start: usize, jit_size: usize, guest_pc: u32, cpu_type: CpuType) {
-        use std::io::Write;
-        writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {cpu_type:?}_{guest_pc:x}").unwrap();
-    }
-
-    fn reset(&mut self) {
-        self.perf_map = std::fs::File::create(&self.perf_map_path).unwrap();
+    fn record(&mut self, code: &[u8], guest_pc: u32, cpu_type: CpuType, thumb: bool) {
+        self.log.load(&format!("{cpu_type:?}_{guest_pc:x}"), code, thumb);
     }
 }
 
@@ -211,7 +204,7 @@ impl Emu {
         }
     }
 
-    pub fn jit_set_live_range(&mut self, guest_pc: u32, guest_pc_end: u32, thumb: bool,) {
+    pub fn jit_set_live_range(&mut self, guest_pc: u32, guest_pc_end: u32, thumb: bool) {
         // >> 3 for u8 (each bit represents a page)
         let guest_pc_end = guest_pc_end - if thumb { 2 } else { 4 };
         let live_range_begin = guest_pc >> JIT_LIVE_RANGE_PAGE_SIZE_SHIFT;
@@ -250,8 +243,10 @@ impl Emu {
                 self.jit_set_live_range(guest_pc, guest_pc_end, thumb);
 
                 #[cfg(any(debug_assertions, target_os = "linux"))]
+                let addr = (jit_entry_addr as usize) & !1;
                 for &(pc, offset, size) in &debug_info.blocks {
-                    self.jit.jit_perf_map_record.record(jit_entry_addr as usize + offset, size, pc, cpu);
+                    let code = unsafe { slice::from_raw_parts((addr as usize + offset) as *const u8, size) };
+                    self.jit.jit_perf_map_record.record(code, pc, cpu, thumb);
                 }
 
                 (jit_entry_addr, flushed)
@@ -337,8 +332,6 @@ impl JitMemory {
     }
 
     fn reset_blocks(&mut self, cpu_type: CpuType) {
-        self.jit_perf_map_record.reset();
-
         let block_metadata = self.get_jit_data(cpu_type).jit_funcs.pop_front().unwrap();
         self.jit_memory_map
             .write_jit_entries(block_metadata.guest_pc, (block_metadata.guest_pc_end - block_metadata.guest_pc) as usize, DEFAULT_JIT_ENTRY);
