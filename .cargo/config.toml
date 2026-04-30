@@ -1,6 +1,6 @@
 [target.armv7-unknown-linux-gnueabihf]
 linker = "clang"
-rustflags = ["-C", "link-args=-target armv7-unknown-linux-gnueabihf -fuse-ld=lld", "-C", "target-feature=+v7,+neon,+vfp3,+thumb2,+thumb-mode", "-Clink-arg=-Wl,--no-rosegment"]
+rustflags = ["-C", "link-args=--target=armv7-unknown-linux-gnueabihf", "-C", "link-args=-fuse-ld=lld", "-C", "target-feature=+v7,+neon,+vfp3,+thumb2,+thumb-mode", "-Clink-arg=-Wl,--no-rosegment"]
 
 [unstable]
 build-std = ["core", "alloc", "std", "panic_abort"]
