@@ -4,8 +4,8 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
 use vixl::{
-    MacroAssembler, MasmAdcs3, MasmAdd3, MasmAdds3, MasmAnds3, MasmAsrs3, MasmBics3, MasmCmp2, MasmEors3, MasmLsls3, MasmLsrs3, MasmMov2, MasmMovs2, MasmMuls3, MasmMvns2, MasmOrrs3, MasmRors3,
-    MasmRsbs3, MasmSbcs3, MasmSub3, MasmSubs3, MasmTst2,
+    MacroAssembler, MasmAdcs3, MasmAdd3, MasmAdds3, MasmAnds3, MasmAsrs3, MasmBics3, MasmCmn2, MasmCmp2, MasmEors3, MasmLsls3, MasmLsrs3, MasmMov2, MasmMovs2, MasmMuls3, MasmMvns2, MasmOrrs3,
+    MasmRors3, MasmRsbs3, MasmSbcs3, MasmSub3, MasmSubs3, MasmTst2,
 };
 
 impl JitAsm<'_> {
@@ -27,6 +27,7 @@ impl JitAsm<'_> {
                         Op::TstT => <MacroAssembler as MasmTst2<_, _>>::tst2,
                         Op::MvnT => <MacroAssembler as MasmMvns2<_, _>>::mvns2,
                         Op::MovHT => <MacroAssembler as MasmMov2<_, _>>::mov2,
+                        Op::CmnT => <MacroAssembler as MasmCmn2<_, _>>::cmn2,
                         _ => todo!("{inst:?}"),
                     };
 

@@ -510,7 +510,7 @@ impl Gpu3DBuffers {
 
 #[derive(Default)]
 pub struct Gpu3DRegisters {
-    cmd_fifo: FastFixedFifo<u32, 4096>,
+    cmd_fifo: FastFixedFifo<u32, 8192>,
     cmd_remaining_params: u8,
 
     pub last_total_cycles: u32,
