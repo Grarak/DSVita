@@ -508,12 +508,12 @@ impl Gpu3DBuffers {
     }
 }
 
+#[repr(C)]
 #[derive(Default)]
 pub struct Gpu3DRegisters {
-    cmd_fifo: FastFixedFifo<u32, 8192>,
-    cmd_remaining_params: u8,
-
+    flags: Gpu3DFlags,
     pub last_total_cycles: u32,
+    cmd_fifo: FastFixedFifo<u32, 4096>,
 
     pub gx_stat: GxStat,
 
@@ -538,10 +538,10 @@ pub struct Gpu3DRegisters {
     pos_result: Vectori32<4>,
     vec_result: Vectori16<3>,
 
-    flags: Gpu3DFlags,
-
     out_buffers: Gpu3DBuffers,
     buffer: HeapMem<Gpu3DBuffer>,
+
+    cmd_remaining_params: u8,
 }
 
 macro_rules! unpacked_cmd {
@@ -570,11 +570,11 @@ impl Emu {
 
         let mut consumed = 0;
         let len = regs_3d.cmd_fifo.len();
-        'outer: while consumed < len {
+        'outer: while likely(consumed < len) {
             let mut value = regs_3d.cmd_fifo[consumed];
             consumed += 1;
 
-            while value != 0 {
+            while likely(value != 0) {
                 let cmd = (value & 0x7F) as usize;
                 let current_value = value;
                 value >>= 8;
@@ -1462,7 +1462,6 @@ impl Gpu3DRegisters {
 
         self.flags.set_flushed(true);
         self.buffer.swap_buffers = SwapBuffers::from(params[0] as u8);
-        self.cur_vtx.data.set_begin_vtxs(false);
     }
 
     fn exe_viewport(&mut self, cmd: usize, params: &[u32; 32]) {
@@ -1515,7 +1514,6 @@ impl Gpu3DRegisters {
 
         self.buffer.reset();
         self.flags.set_clip_dirty_bool(true);
-        self.flags.set_polygon_dirty(true);
 
         let tex_matrix_index = unsafe { self.cur_vtx.s.indices.tex_matrix };
         if (tex_matrix_index as usize) < self.buffer.tex_matrices.len() {
@@ -1526,6 +1524,14 @@ impl Gpu3DRegisters {
             self.buffer.tex_matrices.clear();
         }
         unsafe { self.cur_vtx.s.indices.tex_matrix = 0 };
+
+        let primitive_type = self.cur_polygon.attr.primitive_type();
+        self.cur_polygon.attr = self.cur_polygon_attr;
+        self.cur_polygon.attr.set_primitive_type(primitive_type);
+        self.cur_polygon.viewport = self.cur_viewport;
+
+        self.cur_vtx.data.set_begin_vtxs(true);
+        self.flags.set_polygon_dirty(true);
     }
 
     pub fn on_first_scanline(&mut self, pow_cnt1: PowCnt1) {
