@@ -29,7 +29,7 @@ strum = "0.27.1"
 strum_macros = "0.27.1"
 vixl = { path = "vixl" }
 xxhash-rust = { version = "0.8.15", features = ["xxh32"] }
-libc = "0.2.149"
+libc = "0.2.186"
 
 png = "0.18.1"
 rcheevos = { path = "rcheevos" }
@@ -37,9 +37,8 @@ rcheevos = { path = "rcheevos" }
 [patch.crates-io]
 simd-adler32 = { git = 'https://github.com/Grarak/simd-adler32.git' }
 
-[target.armv7-unknown-linux-gnueabihf.dependencies]
+[target.thumbv7neon-unknown-linux-gnueabihf.dependencies]
 clap = { version = "4.5.17", features = ["cargo"] }
-libc = "0.2.153"
 sdl2 = "0.35.0"
 affinity = "0.1.2"
 backtrace = "0.3.74"
@@ -47,7 +46,7 @@ backtrace = "0.3.74"
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "rustls-tls"] }
 
 [build-dependencies]
-bindgen = "0.71.1"
+bindgen = "0.72.1"
 vitabuild = { path = "vitabuild" }
 
 [target.armv7-sony-vita-newlibeabihf.dependencies]
@@ -87,13 +86,13 @@ debug = true
 
 [profile.release.package."*"]
 opt-level = 3
-codegen-units = 2
+codegen-units = 1
 
 [profile.release]
 panic = "abort"
 lto = true
 opt-level = 3
-codegen-units = 2
+codegen-units = 1
 
 [profile.release-profiling]
 inherits = "release"

@@ -199,10 +199,10 @@ struct JitRuntimeDataPacked {
 
 #[repr(C, align(32))]
 pub struct JitRuntimeData {
-    pub pre_cycle_count_sum: u16,
-    pub accumulated_cycles: u16,
-    pub host_sp: usize,
     data_packed: JitRuntimeDataPacked,
+    pub accumulated_cycles: u16,
+    pub pre_cycle_count_sum: u16,
+    pub host_sp: usize,
     pub return_stack: [u32; RETURN_STACK_SIZE],
     pub interrupt_sp: usize,
     #[cfg(debug_assertions)]
@@ -644,11 +644,12 @@ fn execute_internal<const CPU: CpuType>(guest_pc: u32) -> u16 {
     asm.runtime_data.accumulated_cycles
 }
 
+#[repr(C)]
 pub struct JitAsm<'a> {
+    pub runtime_data: JitRuntimeData,
     pub cpu: CpuType,
     pub emu: &'a mut Emu,
     pub jit_buf: JitBuf,
-    pub runtime_data: JitRuntimeData,
     pub analyzer: AsmAnalyzer,
     pub os_irq_handler_addr: u32,
 }

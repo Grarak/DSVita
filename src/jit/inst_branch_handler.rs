@@ -99,26 +99,31 @@ fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm, total_cycles: u16, current
     debug_println!("{CPU:?} flush cycles {} at {current_pc:x}", asm.runtime_data.accumulated_cycles);
 }
 
+#[inline(never)]
+fn exe_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, current_pc: u32) {
+    match CPU {
+        ARM9 => {
+            let pc_og = ARM9.thread_regs().pc;
+            run_scheduler::<ARM7_HLE>(asm, current_pc);
+
+            if unlikely(ARM9.thread_regs().pc != pc_og) {
+                handle_interrupt(asm, pc_og, current_pc);
+            }
+        }
+        ARM7 => {
+            debug_println!("{CPU:?} exit guest flush cycles");
+            if IS_DEBUG {
+                asm.runtime_data.set_branch_out_pc(current_pc);
+            }
+            unsafe { exit_guest_context!(asm) };
+        }
+    }
+}
+
 #[inline(always)]
 pub fn check_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, current_pc: u32) {
     if unlikely(asm.runtime_data.accumulated_cycles >= CPU.max_loop_cycle_count() as u16) {
-        match CPU {
-            ARM9 => {
-                let pc_og = ARM9.thread_regs().pc;
-                run_scheduler::<ARM7_HLE>(asm, current_pc);
-
-                if unlikely(ARM9.thread_regs().pc != pc_og) {
-                    handle_interrupt(asm, pc_og, current_pc);
-                }
-            }
-            ARM7 => {
-                debug_println!("{CPU:?} exit guest flush cycles");
-                if IS_DEBUG {
-                    asm.runtime_data.set_branch_out_pc(current_pc);
-                }
-                unsafe { exit_guest_context!(asm) };
-            }
-        }
+        exe_scheduler::<CPU, ARM7_HLE>(asm, current_pc);
     }
 }
 

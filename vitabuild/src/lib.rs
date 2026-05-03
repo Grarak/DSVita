@@ -1,7 +1,18 @@
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-const COMMON_C_FLAGS: &[&str] = &["-mtune=cortex-a9", "-mfloat-abi=hard", "-mfpu=neon", "-mthumb"];
+const COMMON_C_FLAGS: &[&str] = &[
+    "-mcpu=cortex-a9",
+    "-mfpu=neon",
+    "-mthumb",
+    "-Wno-invalid-constexpr",
+    "-Xclang",
+    "-target-feature",
+    "-Xclang",
+    "-read-tp-tpidruro",
+];
 
 pub fn get_profile_name() -> String {
     get_out_path().to_str().unwrap().split(std::path::MAIN_SEPARATOR).nth_back(3).unwrap().to_string()
@@ -39,7 +50,7 @@ pub fn is_target_vita() -> bool {
 pub fn get_common_c_flags() -> Vec<String> {
     let mut flags = COMMON_C_FLAGS.to_vec().iter().map(|flag| flag.to_string()).collect::<Vec<_>>();
     if !is_target_vita() {
-        flags.push("--target=armv7-unknown-linux-gnueabihf".to_string());
+        flags.push(format!("--target={}", env::var("TARGET").unwrap()));
         if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
             flags.push(format!("--sysroot={sysroot}"));
         }
@@ -57,44 +68,22 @@ pub fn get_common_c_flags() -> Vec<String> {
 
 pub fn create_c_build() -> cc::Build {
     let mut build = cc::Build::new();
-    if is_target_vita() {
-        if let Some(vitasdk_path) = get_vitasdk_path() {
-            build
-                .compiler(vitasdk_path.join("bin").join("arm-vita-eabi-gcc"))
-                .archiver(vitasdk_path.join("bin").join("arm-vita-eabi-gcc-ar"))
-                .ranlib(vitasdk_path.join("bin").join("arm-vita-eabi-gcc-ranlib"))
-                .pic(false);
-        }
-    } else {
-        build.compiler("clang");
-    }
+    build.compiler("clang-21").archiver("llvm-ar-21").pic(false);
 
     for flag in get_common_c_flags() {
         build.flag(flag);
     }
 
     if !is_debug() && is_opt_build() {
-        build.flag("-flto").opt_level_str("fast");
-        if is_target_vita() {
-            build.flag("-ffat-lto-objects");
-        }
+        build.flag("-flto=full");
     }
     build
 }
 
 pub fn create_cc_build() -> cc::Build {
     let mut build = cc::Build::new();
-    if is_target_vita() {
-        if let Some(vitasdk_path) = get_vitasdk_path() {
-            build
-                .compiler(vitasdk_path.join("bin").join("arm-vita-eabi-g++"))
-                .archiver(vitasdk_path.join("bin").join("arm-vita-eabi-gcc-ar"))
-                .ranlib(vitasdk_path.join("bin").join("arm-vita-eabi-gcc-ranlib"))
-                .pic(false);
-        }
-    } else {
-        build.compiler("clang++");
-    }
+    build.cpp(true);
+    build.compiler("clang++-21").archiver("llvm-ar-21").pic(false);
 
     if let Some(vitasdk_path) = get_vitasdk_path() {
         if is_target_vita() || !is_host_linux() {
@@ -108,10 +97,7 @@ pub fn create_cc_build() -> cc::Build {
     }
 
     if !is_debug() && is_opt_build() {
-        build.flag("-flto").opt_level_str("fast");
-        if is_target_vita() {
-            build.flag("-ffat-lto-objects");
-        }
+        build.flag("-flto=full");
     }
 
     for flag in get_common_c_flags() {
@@ -122,7 +108,7 @@ pub fn create_cc_build() -> cc::Build {
 
 pub fn create_bindgen_builder() -> bindgen::Builder {
     let mut bindgen = bindgen::Builder::default();
-    bindgen = bindgen.clang_arg("--target=armv7-unknown-linux-gnueabihf");
+    bindgen = bindgen.clang_arg("--target=thumbv7neon-unknown-linux-gnueabihf");
     if !is_target_vita() {
         if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
             bindgen = bindgen.clang_arg(format!("--sysroot={sysroot}"));
@@ -134,4 +120,10 @@ pub fn create_bindgen_builder() -> bindgen::Builder {
         }
     }
     bindgen
+}
+
+pub fn bindgen_generate_to_file(builder: bindgen::Builder, file: impl AsRef<Path>) {
+    let bindings = builder.generate().unwrap().to_string();
+    let bindings = bindings.replace("#[link_name = \"\\u{1}_", "#[link_name = \"_");
+    File::create(file.as_ref()).unwrap().write_all(bindings.as_bytes()).unwrap();
 }

@@ -45,10 +45,47 @@ having issues with exhibits the same behavior with the `AccurateLle` setting ena
 
 ## Building
 
-1. Install [Vitasdk](https://vitasdk.org/)
-2. Install [cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html)
-3. Install [cargo vita](https://github.com/vita-rust/cargo-vita)
-4. `RUSTFLAGS="-Zlocation-detail=none -Zfmt-debug=none -Clto=fat -Zub-checks=no -Zsaturating-float-casts=no -Ztrap-unreachable=no -Zmir-opt-level=4" cargo vita build vpk -- --release`
+Install [cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html)
+
+You need to have both llvm-18 and llvm-21 installed.
+- llvm-18 is required for bindgen, newer versions struggle to parse class sizes correctly
+- llvm-21 is used for building C/C++ libraries
+
+Clone the repo
+```bash
+$ git clone --recurse-submodules https://github.com/Grarak/DSVita.git
+```
+
+### Linux
+Get a armhf sysroot with libsdl2 development packages installed
+- On ubuntu >= 22.04
+    ```bash
+    $ sudo apt install debootstrap qemu-user-static
+    $ sudo debootstrap --foreign --variant=buildd --arch=armhf jammy ./ubuntu-armhf https://ports.ubuntu.com
+    $ sudo cp /usr/bin/qemu-arm-static ubuntu-armhf/usr/bin/
+    $ sudo chroot ubuntu-armhf /debootstrap/debootstrap --second-stage
+    $ apt update && apt install libsdl2-dev # If apt can't find the package make sure the source has "main restricted universe multiverse" defined in /etc/apt
+    ```
+```bash
+$ LIBCLANG_PATH=<path to llvm-18 library> DSVITA_SYSROOT=<path to armhf sysroot> cargo build --target thumbv7neon-unknown-linux-gnueabihf --release
+```
+
+### Vita
+- Install [Vitasdk](https://vitasdk.org/)
+- Install [cargo vita](https://github.com/vita-rust/cargo-vita)
+```bash
+$ LIBCLANG_PATH=<path to llvm-18 library> cargo vita build vpk -- --release
+```
+
+### Final optimized release build
+To obtain the most optimized build you need to use a [patched rust compiler](https://github.com/Grarak/rust) due to LTO incompatibility.
+The upstream rust compiler doesn't set the target cpu and target features in the callsite attributes
+which prevents the clang linker from inlining cross language functions.
+```bash
+$ RUSTC=<path to compiled rustc> LIBCLANG_PATH=<path to llvm-18 library> RUSTFLAGS="-Zlocation-detail=none -Zfmt-debug=none -Zub-checks=no -Zsaturating-float-casts=no -Ztrap-unreachable=no -Zmir-opt-level=4 -Clinker-plugin-lto -Clto=fat -Zunstable-options -Cpanic=immediate-abort" cargo vita build vpk -- --release
+```
+
+Currently we are also stuck with an older rust compiler, which still uses llvm-21, later versions of llvm seem to cause performance regressions.
 
 ## Credits
 

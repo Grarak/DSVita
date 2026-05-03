@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
-use vitabuild::{create_bindgen_builder, create_c_build, create_cc_build, get_out_path, get_profile_name, is_host_linux, is_profiling, is_target_vita};
+use vitabuild::{bindgen_generate_to_file, create_bindgen_builder, create_c_build, create_cc_build, get_out_path, get_profile_name, is_host_linux, is_opt_build, is_profiling, is_target_vita};
 
 fn generate_linux_imgui_bindings() {
     let bindings_file = get_out_path().join("imgui_bindings.rs");
@@ -19,7 +19,7 @@ fn generate_linux_imgui_bindings() {
         .use_core()
         .enable_cxx_namespaces()
         .trust_clang_mangling(true);
-    bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
+    bindgen_generate_to_file(bindings.rust_target(bindgen::RustTarget::nightly()), bindings_file);
 }
 
 fn main() {
@@ -30,19 +30,62 @@ fn main() {
     let build_profile_name_file = out_path.join("build_profile_name");
     File::create(build_profile_name_file).unwrap().write_all(get_profile_name().as_bytes()).unwrap();
 
-    if !is_target_vita() {
-        println!("cargo:rerun-if-env-changed=SYSROOT");
+    let vitasdk_path = env::var("VITASDK").map(PathBuf::from);
+    println!("cargo:rerun-if-env-changed=VITASDK");
+
+    if is_target_vita() {
+        if let Ok(vitasdk_path) = &vitasdk_path {
+            let sysroot = vitasdk_path.join("arm-vita-eabi");
+            println!("cargo:rustc-link-arg=--sysroot={}", sysroot.to_str().unwrap());
+            println!("cargo:rustc-link-arg={}", sysroot.join("lib").join("crt0.o").to_str().unwrap());
+
+            let gcc_lib_path = vitasdk_path.join("lib").join("gcc").join("arm-vita-eabi");
+            let gcc_version = gcc_lib_path.read_dir().unwrap().into_iter().next().unwrap().unwrap().path();
+            println!("cargo:rustc-link-arg=-L{}", gcc_version.to_str().unwrap());
+            for crt_object in ["crtend.o", "crtn.o", "crti.o", "crtbegin.o"] {
+                println!("cargo:rustc-link-arg={}", gcc_version.join(crt_object).to_str().unwrap());
+            }
+
+            println!("cargo:rustc-link-arg=-T");
+            println!("cargo:rustc-link-arg={}", fs::canonicalize("ldscript.ld").unwrap().to_str().unwrap());
+
+            for flag in ["-nostdlib", "-nostdlib++", "-Wl,-z,norelro", "-Wl,-z,max-page-size=4096", "-Wl,--no-eh-frame-hdr"] {
+                println!("cargo:rustc-link-arg={flag}");
+            }
+
+            for lib in [
+                "gcc",
+                "SceRtc_stub",
+                "SceSysmem_stub",
+                "SceKernelThreadMgr_stub",
+                "SceKernelModulemgr_stub",
+                "SceIofilemgr_stub",
+                "SceProcessmgr_stub",
+                "SceLibKernel_stub",
+                "SceNet_stub",
+                "SceNetCtl_stub",
+                "SceSysmodule_stub",
+            ] {
+                println!("cargo:rustc-link-arg=-l{lib}");
+            }
+        }
+    } else {
+        println!("cargo:rerun-if-env-changed=DSVITA_SYSROOT");
         if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
             println!("cargo:rustc-link-arg=--sysroot={sysroot}");
         }
+        println!("cargo:rustc-link-arg=--target={}", env::var("TARGET").unwrap());
         let mut cache_build = create_c_build();
-        cache_build.compiler("clang");
         // Running IDE on anything other than linux will fail, so ignore compile error
         let _ = cache_build.file("builtins/cache.c").try_compile("cache").ok();
     }
 
-    let vitasdk_path = env::var("VITASDK").map(PathBuf::from);
-    println!("cargo:rerun-if-env-changed=VITASDK");
+    println!("cargo:rustc-link-arg=-fuse-ld=lld");
+    println!("cargo:rustc-link-arg=-Wl,--no-rosegment");
+
+    if is_opt_build() {
+        println!("cargo:rustc-link-arg=-Wl,--lto-whole-program-visibility");
+    }
 
     {
         const MATH_NEON_FILES: [&str; 31] = [
@@ -95,18 +138,17 @@ fn main() {
         let math_neon_bindgen = create_bindgen_builder();
 
         let bindings_file = out_path.join("math_neon.rs");
-        math_neon_bindgen
-            .header(math_neon_path.join("math_neon.h").to_str().unwrap())
-            .formatter(Formatter::Prettyplease)
-            .generate_comments(true)
-            .layout_tests(false)
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-            .use_core()
-            .trust_clang_mangling(true)
-            .generate()
-            .unwrap()
-            .write_to_file(bindings_file)
-            .unwrap();
+        bindgen_generate_to_file(
+            math_neon_bindgen
+                .header(math_neon_path.join("math_neon.h").to_str().unwrap())
+                .formatter(Formatter::Prettyplease)
+                .generate_comments(true)
+                .layout_tests(false)
+                .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+                .use_core()
+                .trust_clang_mangling(true),
+            bindings_file,
+        );
     }
 
     {
@@ -141,7 +183,6 @@ fn main() {
         ];
 
         let mut soundtouch_build = create_cc_build();
-        soundtouch_build.cpp(true);
         for file in SOUNDTOUCH_FILES {
             let path = soundtouch_path.join("source").join("SoundTouch").join(file);
             println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
@@ -177,7 +218,7 @@ fn main() {
         for flag in &soundtouch_flags {
             soundtouch_bindgen = soundtouch_bindgen.clang_arg(flag);
         }
-        soundtouch_bindgen
+        soundtouch_bindgen = soundtouch_bindgen
             .header("soundtouch_wrapper.h")
             .formatter(Formatter::Prettyplease)
             .generate_comments(true)
@@ -197,11 +238,8 @@ fn main() {
             .default_non_copy_union_style(bindgen::NonCopyUnionStyle::ManuallyDrop)
             .use_core()
             .enable_cxx_namespaces()
-            .trust_clang_mangling(true)
-            .generate()
-            .unwrap()
-            .write_to_file(bindings_file)
-            .unwrap();
+            .trust_clang_mangling(true);
+        bindgen_generate_to_file(soundtouch_bindgen, bindings_file);
     }
 
     if !is_target_vita() && is_host_linux() {
@@ -211,7 +249,6 @@ fn main() {
 
         let mut imgui_build = create_cc_build();
         imgui_build
-            .cpp(true)
             .include(&imgui_path)
             .include(imgui_path.join("examples").join("sdl_opengl3_example"))
             .file("imgui_impl_sdl_gl3.cpp");
@@ -264,7 +301,7 @@ fn main() {
             println!("cargo:rerun-if-changed={}", header_path.to_str().unwrap());
             bindings = bindings.header(header_path.to_str().unwrap());
         }
-        bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
+        bindgen_generate_to_file(bindings.rust_target(bindgen::RustTarget::nightly()), bindings_file);
 
         println!("cargo:rustc-link-search=native={}", vitasdk_lib_path.to_str().unwrap());
         println!("cargo:rustc-link-lib=static=imgui");
@@ -290,7 +327,7 @@ fn main() {
             println!("cargo:rerun-if-changed={}", header_path.to_str().unwrap());
             bindings = bindings.header(header_path.to_str().unwrap());
         }
-        bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
+        bindgen_generate_to_file(bindings.rust_target(bindgen::RustTarget::nightly()), bindings_file);
     }
 
     {

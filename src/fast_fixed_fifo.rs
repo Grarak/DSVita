@@ -17,9 +17,9 @@ pub struct FastFixedFifo<T, const SIZE: usize> {
 
 impl<T, const SIZE: usize> FastFixedFifo<T, SIZE> {
     pub fn new() -> Self {
-        let total_size = size_of::<T>() * SIZE as usize;
+        let total_size = size_of::<T>() * SIZE;
         debug_assert!(total_size > PAGE_SIZE);
-        debug_assert_eq!(total_size % SIZE as usize, 0);
+        debug_assert_eq!(total_size % SIZE, 0);
 
         let mut vmem = VirtualMem::new(total_size * 2, 0).unwrap();
         let shm = Shm::new("fast_fixed_fifo", total_size).unwrap();

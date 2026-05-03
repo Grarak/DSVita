@@ -1,5 +1,5 @@
 use std::path::Path;
-use vitabuild::{create_bindgen_builder, create_c_build, get_out_path};
+use vitabuild::{bindgen_generate_to_file, create_bindgen_builder, create_c_build, get_out_path};
 
 fn main() {
     const C_FILES: &[&str] = &[
@@ -90,14 +90,14 @@ fn main() {
     let out_path = get_out_path();
     let bindings_file = out_path.join("rcheevos_bindings.rs");
 
-    create_bindgen_builder()
-        .header(path.join("include/rc_client.h").to_str().unwrap())
-        .header(path.join("include/rc_consoles.h").to_str().unwrap())
-        .clang_args(FLAGS)
-        .allowlist_function("rc_.*")
-        .allowlist_var("RC_.*")
-        .generate()
-        .unwrap()
-        .write_to_file(bindings_file)
-        .unwrap();
+    bindgen_generate_to_file(
+        create_bindgen_builder()
+            .header(path.join("include/rc_client.h").to_str().unwrap())
+            .header(path.join("include/rc_consoles.h").to_str().unwrap())
+            .clang_args(FLAGS)
+            .allowlist_function("rc_.*")
+            .allowlist_var("RC_.*")
+            .trust_clang_mangling(true),
+        bindings_file,
+    );
 }

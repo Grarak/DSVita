@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
-use vitabuild::{create_bindgen_builder, create_cc_build, get_out_path, get_vitasdk_path, is_debug, is_host_linux, is_target_vita};
+use vitabuild::{bindgen_generate_to_file, create_bindgen_builder, create_cc_build, get_out_path, get_vitasdk_path, is_debug, is_host_linux, is_target_vita};
 
 fn main() {
     let mut vixl_flags = vec![
@@ -38,7 +38,7 @@ fn main() {
 
     let create_vixl_build = |src_files: &[&str]| {
         let mut vixl_build = create_cc_build();
-        vixl_build.include(vixl_path.join("src")).cpp(true);
+        vixl_build.include(vixl_path.join("src"));
 
         for flag in &vixl_flags {
             vixl_build.flag(flag);
@@ -150,7 +150,6 @@ fn main() {
     let mut bindings = create_bindgen_builder()
         .clang_args(["-x", "c++"])
         .clang_args(["-I", vixl_path.join("src").to_str().unwrap()])
-        .clang_args(["-target", "armv7-unknown-linux-gnueabihf"])
         .formatter(Formatter::Prettyplease)
         .header(vixl_bindings_header_path.to_str().unwrap());
 
@@ -158,7 +157,7 @@ fn main() {
         bindings = bindings.clang_arg(flag);
     }
 
-    bindings.rust_target(bindgen::RustTarget::nightly()).generate().unwrap().write_to_file(bindings_file).unwrap();
+    bindgen_generate_to_file(bindings, bindings_file);
 
     let vixl_files: &[&str] = &[
         "code-buffer-vixl.cc",
