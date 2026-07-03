@@ -51,8 +51,12 @@ impl Debug for InterruptFlags {
         let mut debug_set = f.debug_set();
         for i in 0..=InterruptFlag::Wifi as u8 {
             if self.0 & (1 << i) != 0 {
-                let flag = InterruptFlag::from(i);
-                debug_set.entry(&flag);
+                // Bits 14/15 are reserved and have no enum variant, but guests can still set them.
+                if matches!(i, 14 | 15) {
+                    debug_set.entry(&format_args!("Reserved{i}"));
+                } else {
+                    debug_set.entry(&InterruptFlag::from(i));
+                }
             }
         }
         debug_set.finish()
