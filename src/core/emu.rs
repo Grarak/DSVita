@@ -37,11 +37,11 @@ impl NitroSdkVersion {
     }
 
     pub fn rely_on_fs_invalidation(self) -> bool {
-        self.major() < 5
+        self.is_valid() && self.major() < 5
     }
 
     pub fn is_twl_sdk(self) -> bool {
-        self.major() >= 5
+        self.is_valid() && self.major() >= 5
     }
 }
 

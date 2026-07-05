@@ -36,6 +36,7 @@ use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
 use crate::settings::Arm7Emu;
 use crate::{utils, DEBUG_LOG, IS_DEBUG};
+use std::hint::assert_unchecked;
 use std::intrinsics::{likely, unlikely};
 
 // Bring every specialized handler into scope so the flat tables can reference them by bare name.
@@ -397,21 +398,19 @@ fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) -> 
                 let aligned = target & !(step - 1);
                 if target & 1 == THUMB as u32 && (cpu == ARM9 || asm.os_irq_handler_addr & 0xFF000000 == regions::SHARED_WRAM_OFFSET) {
                     let count_ptr = asm.emu.jit.jit_memory_map.get_exec_count(aligned);
-                    if !count_ptr.is_null() {
-                        let count = unsafe { (*count_ptr).saturating_add(1) };
-                        unsafe { *count_ptr = count };
-                        // The TWL microcode window (0x1FF8xxx) must also hand off: its HLE
-                        // substitution only exists in the jit (see emit_code_block_internal).
-                        if count <= INTERP_THRESHOLD
-                            && aligned != asm.os_irq_handler_addr
-                            && aligned != asm.emu.fs_clear_overlay_image_addr
-                            && !(aligned & 0xFFFF000 == 0x1FF8000 && cpu == ARM9 && arm7_hle && asm.emu.nitro_sdk_version.is_twl_sdk())
-                        {
-                            asm.runtime_data.pre_cycle_count_sum = 0;
-                            addr = aligned;
-                            page_left = 0;
-                            continue;
-                        }
+                    unsafe { assert_unchecked(!count_ptr.is_null()) };
+                    let count = unsafe { (*count_ptr).saturating_add(1) };
+                    unsafe { *count_ptr = count };
+                    // The TWL microcode window (0x1FF8xxx) must also hand off: its HLE
+                    // substitution only exists in the jit (see emit_code_block_internal).
+                    if count <= INTERP_THRESHOLD
+                        && aligned != asm.os_irq_handler_addr
+                        && aligned != asm.emu.fs_clear_overlay_image_addr
+                        && !(aligned & 0xFFFF000 == 0x1FF8000 && cpu == ARM9 && arm7_hle && asm.emu.nitro_sdk_version.is_twl_sdk())
+                    {
+                        addr = aligned;
+                        page_left = 0;
+                        continue;
                     }
                 }
                 hand_to_next_entry(asm, target);
@@ -477,11 +476,10 @@ fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) -> 
 fn run_breakout_imm<const THUMB: bool>(asm: &mut JitAsm, next_addr: u32) {
     // breakout_imm re-derives the resume point from the faulting instruction's (tagged) pc.
     let current_pc = (next_addr - if THUMB { 2 } else { 4 }) | THUMB as u32;
-    let pre_cycle_count_sum = asm.runtime_data.pre_cycle_count_sum;
     unsafe {
         match asm.cpu {
-            ARM9 => breakout_imm::<{ ARM9 }>(asm, pre_cycle_count_sum, current_pc),
-            ARM7 => breakout_imm::<{ ARM7 }>(asm, pre_cycle_count_sum, current_pc),
+            ARM9 => breakout_imm::<{ ARM9 }>(asm, asm.runtime_data.pre_cycle_count_sum, current_pc),
+            ARM7 => breakout_imm::<{ ARM7 }>(asm, asm.runtime_data.pre_cycle_count_sum, current_pc),
         }
     }
 }

@@ -18,6 +18,7 @@ use crate::jit::reg::{reg_reserve, RegReserve};
 use crate::jit::Cond;
 use crate::logging::{branch_println, debug_println};
 use crate::mmap::PAGE_SHIFT;
+use crate::settings::Arm7Emu;
 use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBUG};
 use bilge::prelude::*;
 use static_assertions::const_assert_eq;
@@ -485,18 +486,15 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     // found, everything must run through the jit; once found, only that pc must. Interpreting
     // it skips the hook and stale blocks of the previous overlay keep executing (Pokemon
     // Diamond save-resume corruption).
-    let interp_blocked_by_fs_clear_overlay = asm.cpu == ARM9
-        && asm.emu.nitro_sdk_version.is_valid()
-        && asm.emu.nitro_sdk_version.rely_on_fs_invalidation()
-        && (asm.emu.fs_clear_overlay_image_addr == 0 || guest_pc == asm.emu.fs_clear_overlay_image_addr);
+    let interp_blocked_by_fs_clear_overlay =
+        asm.cpu == ARM9 && asm.emu.nitro_sdk_version.rely_on_fs_invalidation() && (asm.emu.fs_clear_overlay_image_addr == 0 || guest_pc == asm.emu.fs_clear_overlay_image_addr);
 
     // TWL-sdk titles under HLE arm7 load cpu-sync microcode at 0x1FF8xxx whose real code spins
     // on an ARM7 reply that only the HLE substitution (emit_nitrosdk_func) can deliver.
     // Interpreting it executes the raw wait loop forever — and poisons the substitution: the
     // loop's hotness counter belongs to a mid-pattern pc, which later compiles without matching
     // the microcode pattern (Pokemon Black boot hang).
-    let interp_blocked_by_twl_microcode =
-        asm.cpu == ARM9 && asm.emu.nitro_sdk_version.is_twl_sdk() && asm.emu.settings.arm7_emu() == crate::settings::Arm7Emu::Hle && guest_pc & 0xFFFF000 == 0x1FF8000;
+    let interp_blocked_by_twl_microcode = asm.cpu == ARM9 && asm.emu.nitro_sdk_version.is_twl_sdk() && asm.emu.settings.arm7_emu() == Arm7Emu::Hle && guest_pc & 0xFFFF000 == 0x1FF8000;
 
     // The os irq handler gets replaced by an HLE version (emit_hle_os_irq_handler below);
     // interpreting the real handler would bypass that replacement. It also runs every frame, so

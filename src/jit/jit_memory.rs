@@ -286,7 +286,7 @@ impl Emu {
             ARM9 => match guest_pc & 0xFF000000 {
                 regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit.jit_entries.itcm, regions::ITCM_REGION, [ARM9]),
                 regions::MAIN_OFFSET => {
-                    if self.nitro_sdk_version.is_valid() && self.settings.arm7_emu() == Arm7Emu::Hle && self.nitro_sdk_version.rely_on_fs_invalidation() {
+                    if self.fs_clear_overlay_image_addr != 0 && self.nitro_sdk_version.rely_on_fs_invalidation() {
                         insert!(self.jit.jit_entries.main)
                     } else {
                         insert!(self.jit.jit_entries.main, regions::MAIN_REGION, [ARM9, ARM7])
