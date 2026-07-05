@@ -13,6 +13,7 @@
 #![feature(slice_swap_unchecked)]
 #![feature(stdarch_arm_neon_intrinsics)]
 #![feature(stmt_expr_attributes)]
+#![feature(thread_id_value)]
 #![feature(vec_push_within_capacity)]
 
 use crate::core::emu::Emu;

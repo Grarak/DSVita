@@ -135,6 +135,10 @@ impl JitExecCounts {
 struct JitPerfMapRecord {
     perf_map_path: std::path::PathBuf,
     perf_map: std::fs::File,
+    // With DSVITA_JITDUMP set, blocks are additionally written as a perf jitdump (code bytes
+    // included, thumb bit on the address) so `perf inject --jit` + a genelf-patched perf can
+    // annotate inside jit blocks; the plain map stays for flat symbolization.
+    jit_dump: Option<crate::jit::jit_perf_log::JitPerfLog>,
 }
 
 #[cfg(target_os = "linux")]
@@ -144,12 +148,19 @@ impl JitPerfMapRecord {
         JitPerfMapRecord {
             perf_map_path: perf_map_path.clone(),
             perf_map: std::fs::File::create(perf_map_path).unwrap(),
+            jit_dump: std::env::var("DSVITA_JITDUMP")
+                .is_ok()
+                .then(|| crate::jit::jit_perf_log::JitPerfLog::new(std::path::PathBuf::from("/tmp"))),
         }
     }
 
-    fn record(&mut self, jit_start: usize, jit_size: usize, guest_pc: u32, cpu_type: CpuType) {
+    fn record(&mut self, jit_start: usize, jit_size: usize, guest_pc: u32, cpu_type: CpuType, thumb: bool) {
         use std::io::Write;
         writeln!(self.perf_map, "{jit_start:x} {jit_size:x} {cpu_type:?}_{guest_pc:x}").unwrap();
+        if let Some(dump) = &mut self.jit_dump {
+            let code = unsafe { slice::from_raw_parts((jit_start & !1) as *const u8, jit_size) };
+            dump.load(&format!("{cpu_type:?}_{guest_pc:x}"), code, thumb);
+        }
     }
 
     fn reset(&mut self) {
@@ -168,7 +179,7 @@ impl JitPerfMapRecord {
 
     fn record_common(&mut self, jit_start: usize, jit_size: usize, name: impl AsRef<str>) {}
 
-    fn record(&mut self, jit_start: usize, jit_size: usize, guest_pc: u32, cpu_type: CpuType) {}
+    fn record(&mut self, jit_start: usize, jit_size: usize, guest_pc: u32, cpu_type: CpuType, thumb: bool) {}
 
     fn reset(&mut self) {}
 }
@@ -275,7 +286,7 @@ impl Emu {
 
                 #[cfg(any(debug_assertions, target_os = "linux"))]
                 for &(pc, offset, size) in &debug_info.blocks {
-                    self.jit.jit_perf_map_record.record(jit_entry_addr as usize + offset, size, pc, cpu);
+                    self.jit.jit_perf_map_record.record(jit_entry_addr as usize + offset, size, pc, cpu, thumb);
                 }
 
                 (jit_entry_addr, flushed)
