@@ -10,9 +10,15 @@ macro_rules! debug_println {
     ($($args:tt)*) => {
         if crate::DEBUG_LOG {
             let log = format!($($args)*);
-            let current_thread = std::thread::current();
-            let thread_name = current_thread.name().unwrap();
-            println!("[{}] {}", thread_name, log);
+            // Interleave into the binary instruction log (when enabled) so debug lines line up with
+            // the per-instruction register snapshots; otherwise print.
+            if crate::debug_inst_log::is_logging() {
+                crate::debug_inst_log::log_text(&log);
+            } else {
+                let current_thread = std::thread::current();
+                let thread_name = current_thread.name().unwrap();
+                println!("[{}] {}", thread_name, log);
+            }
         }
     };
 }
@@ -40,9 +46,15 @@ macro_rules! branch_println {
     ($($args:tt)*) => {
         if crate::BRANCH_LOG {
             let log = format!($($args)*);
-            let current_thread = std::thread::current();
-            let thread_name = current_thread.name().unwrap();
-            println!("[{}] {}", thread_name, log);
+            // Interleave branch decisions into the binary instruction log (when enabled) so control
+            // flow can be diffed alongside the per-instruction register snapshots; otherwise print.
+            if crate::debug_inst_log::is_logging() {
+                crate::debug_inst_log::log_text(&log);
+            } else {
+                let current_thread = std::thread::current();
+                let thread_name = current_thread.name().unwrap();
+                println!("[{}] {}", thread_name, log);
+            }
         }
     };
 }
@@ -51,7 +63,11 @@ pub(crate) use branch_println;
 macro_rules! block_asm_print {
     ($($args:tt)*) => {
         if crate::DEBUG_LOG {
-            print!($($args)*);
+            if crate::debug_inst_log::is_logging() {
+                crate::debug_inst_log::log_text_no_newline(&format!($($args)*));
+            } else {
+                print!($($args)*);
+            }
         }
     };
 }
@@ -60,7 +76,11 @@ pub(crate) use block_asm_print;
 macro_rules! block_asm_println {
     ($($args:tt)*) => {
         if crate::DEBUG_LOG {
-            println!($($args)*);
+            if crate::debug_inst_log::is_logging() {
+                crate::debug_inst_log::log_text(&format!($($args)*));
+            } else {
+                println!($($args)*);
+            }
         }
     };
 }

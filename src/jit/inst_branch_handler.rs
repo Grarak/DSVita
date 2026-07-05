@@ -61,7 +61,7 @@ fn run_scheduler_idle_loop<const ARM7_HLE: bool>(asm: &mut JitAsm) {
 }
 
 #[inline(always)]
-fn check_stack_depth(asm: &mut JitAsm, current_pc: u32) {
+pub fn check_stack_depth(asm: &mut JitAsm, current_pc: u32) {
     let sp_depth_size = asm.runtime_data.get_sp_depth_size();
     if unlikely(sp_depth_size >= MAX_STACK_DEPTH_SIZE) {
         if IS_DEBUG {

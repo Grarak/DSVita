@@ -311,6 +311,10 @@ unsafe extern "C" fn sigsegv_handler(sig: i32, si: *mut siginfo_t, segfault_ctx:
         return;
     }
 
+    // Not a fastmem fixup: a genuine crash. Flush the instruction log before we chain to the next
+    // handler / abort, so the trace survives up to the faulting instruction.
+    crate::debug_inst_log::flush();
+
     if NEXT_SEGV_HANDLER.sa_sigaction != 0 {
         let action: extern "C" fn(i32, *mut siginfo_t, *mut c_void) = mem::transmute(NEXT_SEGV_HANDLER.sa_sigaction);
         action(sig, si, segfault_ctx);

@@ -108,6 +108,29 @@ pub struct JitLiveRanges {
     pub vram: HeapArrayU8<{ (vram::ARM7_SIZE / JIT_LIVE_RANGE_PAGE_SIZE / 8) as usize }>, // Use arm7 vram size for arm9 as well
 }
 
+// The interpreter's hotness counters (see jit/interpreter): one u8 per halfword of executable
+// memory, laid out per region exactly like JitEntries and indexed through jit_memory_map, which
+// collapses memory mirrors the same way it does for the jit entries. A single set serves both
+// cpus — arm9 and arm7 don't execute from overlapping address ranges.
+#[derive(Default)]
+pub struct JitExecCounts {
+    pub itcm: HeapArrayU8<{ regions::ITCM_SIZE as usize / 2 }>,
+    pub main: HeapArrayU8<{ regions::MAIN_SIZE as usize / 2 }>,
+    pub shared_wram_arm7: HeapArrayU8<{ regions::SHARED_WRAM_SIZE as usize / 2 }>,
+    pub wram_arm7: HeapArrayU8<{ regions::ARM7_WRAM_SIZE as usize / 2 }>,
+    pub vram: HeapArrayU8<{ vram::ARM7_SIZE as usize / 2 }>, // Use arm7 vram size for arm9 as well
+}
+
+impl JitExecCounts {
+    fn reset(&mut self) {
+        self.itcm.fill(0);
+        self.main.fill(0);
+        self.shared_wram_arm7.fill(0);
+        self.wram_arm7.fill(0);
+        self.vram.fill(0);
+    }
+}
+
 #[cfg(target_os = "linux")]
 struct JitPerfMapRecord {
     perf_map_path: std::path::PathBuf,
@@ -195,6 +218,7 @@ pub struct JitMemory {
     arm7_data: JitMemoryMetadata,
     jit_entries: JitEntries,
     jit_live_ranges: JitLiveRanges,
+    jit_exec_counts: JitExecCounts,
     pub jit_memory_map: JitMemoryMap,
     jit_perf_map_record: JitPerfMapRecord,
     pub guest_inst_offsets: HeapArray<Vec<GuestInstOffset>, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
@@ -291,13 +315,15 @@ impl JitMemory {
     pub fn new() -> Self {
         let jit_entries = JitEntries::new();
         let jit_live_ranges = JitLiveRanges::default();
-        let jit_memory_map = JitMemoryMap::new(&jit_entries, &jit_live_ranges);
+        let jit_exec_counts = JitExecCounts::default();
+        let jit_memory_map = JitMemoryMap::new(&jit_entries, &jit_live_ranges, &jit_exec_counts);
         JitMemory {
             mem: Mmap::executable("jit", JIT_MEMORY_SIZE).unwrap(),
             arm9_data: JitMemoryMetadata::default(),
             arm7_data: JitMemoryMetadata::default(),
             jit_entries,
             jit_live_ranges,
+            jit_exec_counts,
             jit_memory_map,
             jit_perf_map_record: JitPerfMapRecord::new(),
             guest_inst_offsets: HeapArray::default(),
@@ -320,7 +346,8 @@ impl JitMemory {
         self.jit_live_ranges.itcm.fill(0);
         self.jit_live_ranges.main.fill(0);
         self.jit_live_ranges.vram.fill(0);
-        self.jit_memory_map = JitMemoryMap::new(&self.jit_entries, &self.jit_live_ranges);
+        self.jit_exec_counts.reset();
+        self.jit_memory_map = JitMemoryMap::new(&self.jit_entries, &self.jit_live_ranges, &self.jit_exec_counts);
         for vec in self.guest_inst_offsets.deref_mut() {
             vec.clear();
         }

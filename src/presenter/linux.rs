@@ -14,7 +14,8 @@ use crate::ra_context::RaContext;
 use crate::screen_layouts::{CustomLayout, ScreenLayouts};
 use crate::settings::{Arm7Emu, Settings, DEFAULT_SETTINGS};
 use crate::utils::BuildNoHasher;
-use clap::{arg, command, value_parser, ArgAction, ArgMatches};
+use crate::DEBUG_LOG;
+use clap::{arg, command, value_parser, ArgAction, ArgMatches, Command};
 use gl::types::GLuint;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::{Event, EventType};
@@ -77,7 +78,7 @@ pub struct Presenter {
 impl Presenter {
     #[cold]
     pub fn new() -> Option<Self> {
-        let arg_matches = command!()
+        let mut arg_matches = command!()
             .arg(
                 arg!(-f <framelimit> "0: No 1: 100%, 2: 200%, 3: 300%")
                     .num_args(1)
@@ -93,9 +94,46 @@ impl Presenter {
                     .default_value("0")
                     .value_parser(value_parser!(u8)),
             )
-            .arg(arg!(ui: --ui "Use UI").required(false).action(ArgAction::SetTrue))
+            .arg(arg!(ui: --ui "Use UI").required(false).action(ArgAction::SetTrue));
+        if DEBUG_LOG {
+            arg_matches = arg_matches
+                .arg(
+                    arg!(--"inst-log" <path> "Write a per-instruction binary log (debug builds only)")
+                        .num_args(1)
+                        .required(false)
+                        .value_parser(value_parser!(String)),
+                )
+                .arg(
+                    arg!(--"inst-log-lazy" <path> "Like --inst-log, but recording only starts on SIGUSR2")
+                        .num_args(1)
+                        .required(false)
+                        .value_parser(value_parser!(String)),
+                )
+        }
+        let arg_matches = arg_matches
             .arg(arg!([nds_rom] "NDS rom to run").num_args(1).required(true).value_parser(value_parser!(String)))
+            .subcommand(
+                Command::new("decode-inst-log")
+                    .about("Decode a binary instruction log to text")
+                    .arg(arg!(<path> "Log file to decode").value_parser(value_parser!(String))),
+            )
+            .subcommand_negates_reqs(true)
             .get_matches();
+
+        // Offline deserializer for the binary instruction log; runs and exits without starting the emulator.
+        if let Some(sub) = arg_matches.subcommand_matches("decode-inst-log") {
+            crate::debug_inst_log::decode_file(sub.get_one::<String>("path").unwrap());
+            return None;
+        }
+
+        if DEBUG_LOG {
+            if let Some(path) = arg_matches.get_one::<String>("inst-log") {
+                crate::debug_inst_log::init(path);
+            }
+            if let Some(path) = arg_matches.get_one::<String>("inst-log-lazy") {
+                crate::debug_inst_log::init_lazy(path);
+            }
+        }
 
         sdl2::hint::set("SDL_NO_SIGNAL_HANDLERS", "1");
         let sdl = sdl2::init().unwrap();

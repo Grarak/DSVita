@@ -35,7 +35,7 @@ impl Convert for u32 {
 
 #[inline(always)]
 pub fn read_from_mem<T: Clone>(mem: &[u8], addr: u32) -> T {
-    debug_assert!(addr as usize <= mem.len() - size_of::<T>());
+    debug_assert!(addr as usize <= mem.len() - size_of::<T>(), "read at {addr:x} out of range (len {:x})", mem.len());
     unsafe { (mem.as_ptr().add(addr as usize) as *const T).read() }
 }
 

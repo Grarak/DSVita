@@ -7,7 +7,7 @@ use crate::jit::op::{MultipleTransfer, SingleTransfer};
 use crate::jit::Op;
 use crate::jit::Op::*;
 
-pub fn lookup_opcode(opcode: u32) -> &'static (Op, fn(u32, Op) -> InstInfo) {
+pub const fn lookup_opcode(opcode: u32) -> &'static (Op, fn(u32, Op) -> InstInfo) {
     &LOOKUP_TABLE[(((opcode >> 16) & 0xFF0) | ((opcode >> 4) & 0xF)) as usize]
 }
 

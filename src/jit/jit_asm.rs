@@ -22,6 +22,7 @@ use crate::{get_jit_asm_ptr, BRANCH_LOG, CURRENT_RUNNING_CPU, DEBUG_LOG, IS_DEBU
 use bilge::prelude::*;
 use static_assertions::const_assert_eq;
 use std::arch::{asm, naked_asm};
+use std::hint::assert_unchecked;
 use std::intrinsics::unlikely;
 use std::{mem, slice};
 use vixl::{BranchHint_kNear, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmB3, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
@@ -468,8 +469,6 @@ pub extern "C" fn emit_code_block(guest_pc: u32) {
 }
 
 fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
-    let pc_step = if thumb { 2 } else { 4 };
-
     let is_os_irq_handler = if asm.emu.settings.hle_os_irq_handler() && asm.emu.nitro_sdk_version.is_valid() {
         if asm.cpu == ARM7 && asm.os_irq_handler_addr & 0xFF000000 != regions::SHARED_WRAM_OFFSET {
             asm.os_irq_handler_addr = asm.emu.mem_read::<{ ARM7 }, u32>(0x380FFFC);
@@ -478,6 +477,41 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     } else {
         false
     };
+
+    // Overlay-load jit invalidation relies solely on fs_clear_overlay_image_hook when the game
+    // is a NTR-sdk HLE title (jit_insert_block skips ARM9 main live ranges there, so per-write
+    // invalidation doesn't cover overlay reloads). The hook only exists in the COMPILED
+    // FSi_ClearOverlayImage and is found by compile-time pattern detection — so until it's
+    // found, everything must run through the jit; once found, only that pc must. Interpreting
+    // it skips the hook and stale blocks of the previous overlay keep executing (Pokemon
+    // Diamond save-resume corruption).
+    let interp_blocked_by_fs_clear_overlay = asm.cpu == ARM9
+        && asm.emu.nitro_sdk_version.is_valid()
+        && asm.emu.nitro_sdk_version.rely_on_fs_invalidation()
+        && (asm.emu.fs_clear_overlay_image_addr == 0 || guest_pc == asm.emu.fs_clear_overlay_image_addr);
+
+    // TWL-sdk titles under HLE arm7 load cpu-sync microcode at 0x1FF8xxx whose real code spins
+    // on an ARM7 reply that only the HLE substitution (emit_nitrosdk_func) can deliver.
+    // Interpreting it executes the raw wait loop forever — and poisons the substitution: the
+    // loop's hotness counter belongs to a mid-pattern pc, which later compiles without matching
+    // the microcode pattern (Pokemon Black boot hang).
+    let interp_blocked_by_twl_microcode =
+        asm.cpu == ARM9 && asm.emu.nitro_sdk_version.is_twl_sdk() && asm.emu.settings.arm7_emu() == crate::settings::Arm7Emu::Hle && guest_pc & 0xFFFF000 == 0x1FF8000;
+
+    // The os irq handler gets replaced by an HLE version (emit_hle_os_irq_handler below);
+    // interpreting the real handler would bypass that replacement. It also runs every frame, so
+    // compiling it right away is a win anyway.
+    if !is_os_irq_handler && !interp_blocked_by_fs_clear_overlay && !interp_blocked_by_twl_microcode {
+        let count_ptr = asm.emu.jit.jit_memory_map.get_exec_count(guest_pc);
+        unsafe { assert_unchecked(!count_ptr.is_null()) };
+        let count = unsafe { (*count_ptr).saturating_add(1) };
+        unsafe { *count_ptr = count };
+        if count <= crate::jit::interpreter::INTERP_THRESHOLD && crate::jit::interpreter::interpret_block(asm, guest_pc, thumb) {
+            return;
+        }
+    }
+
+    let pc_step = if thumb { 2 } else { 4 };
 
     asm.jit_buf.clear_all();
     let guest_pc_end = JitAsm::fill_jit_insts_buf(asm.cpu, &mut asm.jit_buf.insts, &mut asm.jit_buf.insts_cycle_counts, asm.emu, guest_pc, thumb, is_os_irq_handler);
@@ -654,6 +688,8 @@ pub struct JitAsm<'a> {
     pub jit_buf: JitBuf,
     pub analyzer: AsmAnalyzer,
     pub os_irq_handler_addr: u32,
+    // Per-address execution counter, direct-mapped on the guest pc. A cold address is interpreted
+    // until it has been seen INTERP_THRESHOLD times, after which it gets compiled to a jit block.
 }
 
 impl<'a> JitAsm<'a> {
@@ -749,22 +785,12 @@ fn debug_inst_info<const CPU: CpuType>(emu: &Emu, pc: u32, append: &str) {
         output += &format!("{reg:?}: {value:x}, ");
     }
 
-    println!("{CPU:?} {output}{append}");
+    debug_println!("{CPU:?} {output}{append}");
 }
 
 pub unsafe extern "C" fn debug_after_exec_op<const CPU: CpuType>(pc: u32, opcode: u32) {
     let asm = get_jit_asm_ptr::<CPU>();
-    let inst_info = {
-        if (*asm).emu.thread_is_thumb(CPU) {
-            let (op, func) = lookup_thumb_opcode(opcode as u16);
-            InstInfo::from(func(opcode as u16, *op))
-        } else {
-            let (op, func) = lookup_opcode(opcode);
-            func(opcode, *op)
-        }
-    };
-
-    debug_inst_info::<CPU>((*asm).emu, pc, &format!("\n\t{CPU:?} {inst_info:?}"));
+    crate::debug_inst_log::log((*asm).emu, CPU, pc, opcode);
 }
 
 unsafe extern "C" fn debug_enter_block<const CPU: CpuType>(pc: u32) {

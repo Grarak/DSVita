@@ -1,5 +1,5 @@
 use crate::core::memory::regions;
-use crate::jit::jit_memory::{JitEntries, JitEntry, JitLiveRanges, BIOS_UNINTERRUPT_ENTRY_ARM7, BIOS_UNINTERRUPT_ENTRY_ARM9, JIT_LIVE_RANGE_PAGE_SIZE_SHIFT};
+use crate::jit::jit_memory::{JitEntries, JitEntry, JitExecCounts, JitLiveRanges, BIOS_UNINTERRUPT_ENTRY_ARM7, BIOS_UNINTERRUPT_ENTRY_ARM9, JIT_LIVE_RANGE_PAGE_SIZE_SHIFT};
 use crate::utils;
 use crate::utils::HeapArrayU32;
 use std::cmp::min;
@@ -17,13 +17,15 @@ const LIVE_RANGES_SIZE: usize = (MEMORY_RANGE >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT
 
 pub struct JitMemoryMap {
     map: HeapArrayU32<SIZE>,
+    exec_counts_map: HeapArrayU32<SIZE>,
     live_ranges_map: HeapArrayU32<LIVE_RANGES_SIZE>,
 }
 
 impl JitMemoryMap {
-    pub fn new(entries: &JitEntries, live_ranges: &JitLiveRanges) -> Self {
+    pub fn new(entries: &JitEntries, live_ranges: &JitLiveRanges, exec_counts: &JitExecCounts) -> Self {
         let mut instance = JitMemoryMap {
             map: HeapArrayU32::default(),
+            exec_counts_map: HeapArrayU32::default(),
             live_ranges_map: HeapArrayU32::default(),
         };
 
@@ -39,18 +41,30 @@ impl JitMemoryMap {
         for i in 0..SIZE {
             let addr = (i << BLOCK_SHIFT) << 1;
             let map_ptr = &mut instance.map[i];
+            let counts_ptr = &mut instance.exec_counts_map[i];
 
             match (addr as u32) & 0x0F000000 {
-                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => *map_ptr = get_ptr!(addr, entries.itcm),
-                regions::MAIN_OFFSET => *map_ptr = get_ptr!(addr, entries.main),
+                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => {
+                    *map_ptr = get_ptr!(addr, entries.itcm);
+                    *counts_ptr = get_ptr!(addr, exec_counts.itcm);
+                }
+                regions::MAIN_OFFSET => {
+                    *map_ptr = get_ptr!(addr, entries.main);
+                    *counts_ptr = get_ptr!(addr, exec_counts.main);
+                }
                 regions::SHARED_WRAM_OFFSET => {
                     if (addr as u32) & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
-                        *map_ptr = get_ptr!(addr, entries.wram_arm7)
+                        *map_ptr = get_ptr!(addr, entries.wram_arm7);
+                        *counts_ptr = get_ptr!(addr, exec_counts.wram_arm7);
                     } else {
-                        *map_ptr = get_ptr!(addr, entries.shared_wram_arm7)
+                        *map_ptr = get_ptr!(addr, entries.shared_wram_arm7);
+                        *counts_ptr = get_ptr!(addr, exec_counts.shared_wram_arm7);
                     }
                 }
-                regions::VRAM_OFFSET => *map_ptr = get_ptr!(addr, entries.vram),
+                regions::VRAM_OFFSET => {
+                    *map_ptr = get_ptr!(addr, entries.vram);
+                    *counts_ptr = get_ptr!(addr, exec_counts.vram);
+                }
                 _ => {}
             }
         }
@@ -93,6 +107,19 @@ impl JitMemoryMap {
             addr = utils::align_up(addr as usize, BLOCK_SIZE) as u32;
             size -= write_size;
         }
+    }
+
+    /// The interpreter's hotness counter for a guest pc: one u8 per halfword slot,
+    /// mirror-collapsed like the jit entries and shared between the cpus. Null for addresses
+    /// outside the executable regions (the bios trampoline blocks, unmapped space) — callers
+    /// skip the interpreter there and let the pc's jit entry deal with it.
+    pub fn get_exec_count(&self, addr: u32) -> *mut u8 {
+        let addr = (addr & 0x0FFFFFFF) >> 1;
+        let block = unsafe { *self.exec_counts_map.get_unchecked((addr >> BLOCK_SHIFT) as usize) } as *mut u8;
+        if block.is_null() {
+            return block;
+        }
+        unsafe { block.add((addr as usize) & (BLOCK_SIZE - 1)) }
     }
 
     pub fn get_live_range(&self, addr: u32) -> *mut u8 {

@@ -52,6 +52,7 @@ mod bitset;
 mod cartridge_io;
 mod cartridge_metadata;
 mod core;
+mod debug_inst_log;
 mod fast_fixed_fifo;
 mod fixed_fifo;
 mod game_info;
@@ -309,6 +310,8 @@ pub fn actual_main() {
         std::env::set_var("RUST_BACKTRACE", "1");
         #[cfg(target_os = "linux")]
         std::panic::set_hook(Box::new(|panic_info| {
+            debug_inst_log::flush();
+            jit::interpreter::print_last_interpreted();
             let mut count = 0;
             let cwd = std::env::current_dir();
             backtrace::trace(|frame| {

@@ -13,14 +13,15 @@ mod inst_exception_handler;
 pub mod inst_info;
 mod inst_info_thumb;
 mod inst_mem_handler;
+mod inst_nitrosdk_handler;
 mod inst_thread_regs_handler;
+pub mod interpreter;
 pub mod jit_asm;
 mod jit_asm_common_funs;
 pub mod jit_memory;
 mod jit_memory_map;
 pub mod op;
 pub mod reg;
-mod inst_nitrosdk_handler;
 
 pub type Cond = vixl::Cond;
 

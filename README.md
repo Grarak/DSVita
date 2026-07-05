@@ -70,6 +70,21 @@ Get a armhf sysroot with libsdl2 development packages installed
 $ LIBCLANG_PATH=<path to llvm-18 library> DSVITA_SYSROOT=<path to armhf sysroot> cargo build --target thumbv7neon-unknown-linux-gnueabihf --release
 ```
 
+### Development environment file
+The build variables above and the helper scripts in `tools/` (launching under qemu, remote
+test box runs, screenshots, instruction traces — see `tools/README.md`) read their paths from
+environment variables. Copy the example file and fill in your own setup:
+```bash
+$ cp .env.example .env   # then edit .env with your paths
+```
+The `tools/` scripts source `.env` automatically. To use it for cargo builds:
+```bash
+$ set -a; . ./.env; set +a
+$ cargo build --target thumbv7neon-unknown-linux-gnueabihf --release
+```
+`.env` is gitignored — it's your machine-specific setup. Development background (JIT/interpreter
+invariants, debugging playbook) lives in `DEVELOPMENT.md`.
+
 ### Vita
 - Install [Vitasdk](https://vitasdk.org/)
 - Install [cargo vita](https://github.com/vita-rust/cargo-vita)
