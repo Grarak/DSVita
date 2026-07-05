@@ -435,7 +435,7 @@ unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) 
         "add r5, r5, r0, lsl #3",
         "ldmia r5, {{r2, r4, r5, r6, r7, r8, r9, r10, r11}}",
         "ldr r0, [r3, {cpsr_offset}]",
-        "msr cpsr, r0",
+        "msr cpsr_f, r0",
         "ldr r4, [r4]",
         "uxth r0, r2",
         "lsr r2, r2, 16",
