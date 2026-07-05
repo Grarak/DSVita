@@ -750,6 +750,58 @@ impl Emu {
             );
         }
 
+        // When compiling with framepointers
+        // let regs3d_ptr_skip_mask = regs3d_ptr | skip_mask;
+        // unsafe {
+        //     asm!(
+        //         ".p2align 5",
+        //         "1:",
+        //         "ldr r8, [r4], #4", // value = fifo[consumed]
+        //         "2:",
+        //             "ands r1, r8, #0x7F", // cmd = current_value & 0x7F
+        //             "ldrb r3, [{fifo_param_counts}, r1]", // param = FIFO_PARAMS_COUNT[cmd]
+        //             "it ne",
+        //             "subne r5, #4", // cycle_diff -= 4
+        //             "bic r2, r3, #0x3",
+        //             "add r4, r2", // consumed += count
+        //             "cmp r4, r11", // consumed > len break out
+        //             "bhi 2f",
+        //             "and r3, #1",
+        //             "ands r3, {regs3d_ptr_skip_mask}", // can_skip = param & skip_mask
+        //             "bne 3f", // can_skip != 0 skip execution
+        //             "ldr r3, [r10, r1, lsl #2]", // func = FUNC_LUT[func_index]
+        //             "subs r1, r4, r2", // fifo_param_offset = consumed - count
+        //             "bic r0, {regs3d_ptr_skip_mask}, #1", // arg0 = &mut regs3d
+        //             "blx r3", // func(&mut regs3d, param_ptr)
+        //             // swap buffer will directly jump to 4f with lr + 0xC
+        //             "3:",
+        //             "cbz r5, 4f", // cycle_diff == 0 breakout
+        //             "lsrs r8, #8",
+        //             "bne 2b",
+        //             "cmp r4, r11",
+        //             "blo 1b",
+        //         "4:",
+        //         "lsrs r8, #8",
+        //         "it ne", // value != 0
+        //         "strne r8, [r4, #-4]!", // fifo[--consumed1] = value
+        //         "b 1f",
+        //         "2:",
+        //         "subs r4, r2", // consumed -= count
+        //         "str r8, [r4, #-4]!", // fifo[--consumed] = current_value
+        //         "1:",
+        //         inout("r4") consumed,
+        //         out("r8") _,
+        //         fifo_param_counts = in(reg) fifo_param_counts,
+        //         regs3d_ptr_skip_mask = in(reg) regs3d_ptr_skip_mask,
+        //         inout("r5") cycle_diff,
+        //         in("r10") func_lut_ptr,
+        //         in("r11") fifo_ptr_end,
+        //         out("r0") _, out("r1") _, out("r2") _, out("r3") _, out("r12") _, out("lr") _,
+        //         clobber_abi("C"),
+        //         options(nostack),
+        //     );
+        // }
+
         regs_3d.cmd_fifo.pop_front_multiple((consumed as usize - fifo_ptr as usize) >> 2);
 
         // let mut consumed = 0;
