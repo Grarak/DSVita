@@ -29,6 +29,7 @@ pub enum PresentEvent {
         top_screen_scale_offset: i8,
         bottom_screen_scale_offset: i8,
     },
+    SetFramelimit(u8),
     Pause,
     Quit,
 }

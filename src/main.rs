@@ -663,6 +663,11 @@ pub fn actual_main() {
                     screen_layout = screen_layout.apply_settings_event(&screen_layouts, offset, swap, top_screen_scale_offset, bottom_screen_scale_offset);
                     false
                 }
+                PresentEvent::SetFramelimit(value) => {
+                    emu_unsafe.get_mut().settings.set_framelimit(value);
+                    info_println!("Framelimit set to {value}");
+                    false
+                }
                 PresentEvent::Pause => true,
                 PresentEvent::Quit => {
                     running = false;

@@ -273,6 +273,22 @@ impl Presenter {
                     ..
                 } => return PresentEvent::Pause,
                 Event::KeyDown { keycode: Some(code), .. } => {
+                    // F1-F9 set the framelimit to 1-9 (100%..500%), F10 uncaps it.
+                    let function_keys = [
+                        keyboard::Keycode::F1,
+                        keyboard::Keycode::F2,
+                        keyboard::Keycode::F3,
+                        keyboard::Keycode::F4,
+                        keyboard::Keycode::F5,
+                        keyboard::Keycode::F6,
+                        keyboard::Keycode::F7,
+                        keyboard::Keycode::F8,
+                        keyboard::Keycode::F9,
+                        keyboard::Keycode::F10,
+                    ];
+                    if let Some(index) = function_keys.iter().position(|&key| key == code) {
+                        return PresentEvent::SetFramelimit(if index == 9 { 0 } else { index as u8 + 1 });
+                    }
                     if let Some(code) = self.key_code_mapping.get(&code) {
                         self.keymap &= !(1 << *code as u8);
                     }
