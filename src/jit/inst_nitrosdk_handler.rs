@@ -66,6 +66,19 @@ const CP_RESTORE_CONTEXT: [u32; 14] = [
 const MICROCODE_SHAKEHAND: [u32; 10] = [0xe1d120b0, 0xe1d030b0, 0xe2833001, 0xe1c030b0, 0xe1d1c0b0, 0xe152000c, 0x0afffffa, 0xe2833001, 0xe1c030b0, 0xe12fff1e];
 const MICROCODE_WAIT_AGREEMENT: [u32; 7] = [0xe1d020b0, 0xe1510002, 0x012fff1e, 0xe3a03010, 0xe2533001, 0x1afffffd, 0xeafffff8];
 
+// Thumb lcg rand step over a seed context: seed = seed * lit0 + lit1, returns (seed >> 16) &
+// 0xFFFF. The multiplier/increment literals sit right behind the body (the pc-relative loads
+// are part of the pattern, so the pool offsets are fixed); the handler reads them from guest
+// memory instead of assuming values.
+const LCRNG_STEP: [u32; 11] = [0x6802, 0x4905, 0x1c13, 0x434b, 0x4904, 0x1859, 0x6001, 0x0c08, 0x0400, 0x0c00, 0x4770];
+// Thumb halfword-crypt over an lcg keystream: xors size/2 halfwords at r0 with successive
+// LCRNG_STEP outputs seeded from r2 (a stack copy, so the caller's seed is untouched). A major
+// game family runs this constantly over its entity data, one guest bl per halfword. The inner
+// bl offset is fixed by the pattern: the lcg body sits at +0x34.
+const LCRNG_CRYPT16: [u32; 21] = [
+    0xb40f, 0xb5f8, 0x1c05, 0x2400, 0x084e, 0xd00a, 0xaf08, 0x1c38, 0xf000, 0xf810, 0x8829, 0x1c64, 0x4048, 0x8028, 0x1cad, 0x42b4, 0xd3f5, 0xbcf8, 0xbc08, 0xb004, 0x4718,
+];
+
 struct Function {
     opcodes: &'static [u32],
     name: &'static str,
@@ -467,6 +480,58 @@ unsafe extern "C" fn hle_microcode_wait_agreement(guest_pc: u32) {
     hle_post_function::<{ ARM9 }>(asm, 7, guest_pc);
 }
 
+unsafe extern "C" fn hle_lcrng_step(guest_pc: u32) {
+    let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
+    let regs = ARM9.thread_regs();
+    let ctx_addr = regs.gp_regs[0];
+    let mul = asm.emu.mem_read::<{ ARM9 }, u32>(guest_pc + 0x18);
+    let inc = asm.emu.mem_read::<{ ARM9 }, u32>(guest_pc + 0x1C);
+    let old = asm.emu.mem_read::<{ ARM9 }, u32>(ctx_addr);
+    let seed = old.wrapping_mul(mul).wrapping_add(inc);
+    asm.emu.mem_write::<{ ARM9 }, u32>(ctx_addr, seed);
+    regs.gp_regs[0] = (seed >> 16) & 0xFFFF;
+    regs.gp_regs[1] = seed;
+    regs.gp_regs[2] = old;
+    regs.gp_regs[3] = old.wrapping_mul(mul);
+    hle_post_function::<{ ARM9 }>(asm, 18, guest_pc);
+}
+
+unsafe extern "C" fn hle_lcrng_crypt16(guest_pc: u32) {
+    let asm = get_jit_asm_ptr::<{ ARM9 }>().as_mut_unchecked();
+    let regs = ARM9.thread_regs();
+    let buf_addr = regs.gp_regs[0];
+    let size = regs.gp_regs[1];
+    let mut seed = regs.gp_regs[2];
+    let len = (size >> 1) as usize;
+
+    if likely(len > 0) {
+        let lcg_pc = guest_pc + 0x34;
+        let mul = asm.emu.mem_read::<{ ARM9 }, u32>(lcg_pc + 0x18);
+        let inc = asm.emu.mem_read::<{ ARM9 }, u32>(lcg_pc + 0x1C);
+
+        let buf = get_buf::<u16>(len);
+        asm.emu.mem_read_multiple_slice::<{ ARM9 }, true, false, u16>(buf_addr, buf);
+        let mut last_read = 0;
+        for v in buf.iter_mut() {
+            seed = seed.wrapping_mul(mul).wrapping_add(inc);
+            last_read = *v;
+            *v ^= (seed >> 16) as u16;
+        }
+        asm.emu.mem_write_multiple_slice::<{ ARM9 }, true, u16>(buf_addr, buf);
+
+        regs.gp_regs[0] = buf[len - 1] as u32;
+        regs.gp_regs[1] = last_read as u32;
+        regs.gp_regs[3] = regs.lr;
+    }
+
+    hle_post_function::<{ ARM9 }>(asm, 4 + len as u32 * 27, guest_pc);
+}
+
+const FUNCTIONS_THUMB_ARM9: &[Function] = &[
+    Function::new(&LCRNG_STEP, "LCRNG_STEP", hle_lcrng_step),
+    Function::new(&LCRNG_CRYPT16, "LCRNG_CRYPT16", hle_lcrng_crypt16),
+];
+
 const FUNCTIONS_ARM9: &[Function] = &[
     Function::new(&MI_CPU_CLEAR32, "MI_CPU_CLEAR32", hle_mi_cpu_clear32::<{ ARM9 }>),
     Function::new(&MI_CPU_CLEAR16, "MI_CPU_CLEAR16", hle_mi_cpu_clear16::<{ ARM9 }>),
@@ -692,7 +757,27 @@ impl JitAsm<'_> {
     }
 
     pub fn emit_nitrosdk_func(&mut self, guest_pc: u32, thumb: bool) -> bool {
-        if !self.emu.nitro_sdk_version.is_valid() || thumb {
+        if !self.emu.nitro_sdk_version.is_valid() {
+            return false;
+        }
+
+        if thumb {
+            if self.cpu == ARM9 {
+                for func in FUNCTIONS_THUMB_ARM9 {
+                    if func.opcodes.len() == self.jit_buf.insts.len() {
+                        if func.eq(&self.jit_buf.insts) {
+                            debug_println!("{:?} found {} at {guest_pc:x}", self.cpu, func.name);
+                            unsafe {
+                                *self.emu.jit.jit_memory_map.get_jit_entry(guest_pc) = JitEntry(func.hle_function as _);
+                                (func.hle_function)(guest_pc);
+                            }
+                            return true;
+                        }
+                    } else if func.opcodes.len() > self.jit_buf.insts.len() {
+                        break;
+                    }
+                }
+            }
             return false;
         }
 
