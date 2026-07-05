@@ -42,6 +42,9 @@ const MI_CPU_COPY16: [u32; 7] = [0xe3a0c000, 0xe15c0002, 0xb19030bc, 0xb18130bc,
 const MI_CPU_COPY32: [u32; 6] = [0xe081c002, 0xe151000c, 0xb8b00004, 0xb8a10004, 0xbafffffb, 0xe12fff1e];
 
 const MI_CPU_SEND32: [u32; 6] = [0xe080c002, 0xe150000c, 0xb8b00004, 0xb5812000, 0xbafffffb, 0xe12fff1e];
+// The same function from sdk builds with de-conditionalized bodies: every conditional
+// instruction becomes `blt 1f; b 2f; 1: op; 2:` (branch imm 0 = skip one instruction).
+const MI_CPU_SEND32_NOCOND: [u32; 10] = [0xe080c002, 0xe150000c, 0xba000000, 0xea000000, 0xe8b00004, 0xba000000, 0xea000000, 0xe5812000, 0xbafffff7, 0xe12fff1e];
 
 const MI_CPU_FILL8: [u32; 37] = [
     0xe3520000, 0x12fff1e, 0xe3100001, 0xa000006, 0xe150c0b1, 0xe20cc0ff, 0xe18c3401, 0xe14030b1, 0xe2800001, 0xe2522001, 0x12fff1e, 0xe3520002, 0x3a00000f, 0xe1811401, 0xe3100002, 0xa000002,
@@ -472,6 +475,7 @@ const FUNCTIONS_ARM9: &[Function] = &[
     Function::new(&MI_CPU_COPY16, "MI_CPU_COPY16", hle_mi_cpu_copy16::<{ ARM9 }>),
     Function::new(&GX_FIFO_SEND64B, "GX_FIFO_SEND64B", hle_gx_fifo_send64b),
     Function::new(&GX_FIFO_SEND48B, "GX_FIFO_SEND48B", hle_gx_fifo_send48b),
+    Function::new(&MI_CPU_SEND32_NOCOND, "MI_CPU_SEND32_NOCOND", hle_mi_cpu_send32::<{ ARM9 }>),
     Function::new(&GX_FIFO_SEND128B, "GX_FIFO_SEND128B", hle_gx_fifo_send128b),
     Function::new(&MI_COPY64B, "MI_COPY64B", hle_mi_copy64b::<{ ARM9 }>),
     Function::new(&CP_RESTORE_CONTEXT, "CP_RESTORE_CONTEXT", hle_cp_restore_context),
@@ -487,6 +491,7 @@ const FUNCTIONS_ARM7: &[Function] = &[
     // Function::new(&MI_CPU_COPY32, "MI_CPU_COPY32", hle_mi_cpu_copy32::<{ ARM7 }>),
     Function::new(&MI_CPU_SEND32, "MI_CPU_SEND32", hle_mi_cpu_send32::<{ ARM7 }>),
     Function::new(&MI_CPU_COPY16, "MI_CPU_COPY16", hle_mi_cpu_copy16::<{ ARM7 }>),
+    Function::new(&MI_CPU_SEND32_NOCOND, "MI_CPU_SEND32_NOCOND", hle_mi_cpu_send32::<{ ARM7 }>),
     Function::new(&MI_COPY64B, "MI_COPY64B", hle_mi_copy64b::<{ ARM7 }>),
     // Function::new(&MI_CPU_CLEARFAST, "MI_CPU_CLEARFAST", hle_mi_cpu_clearfast::<{ ARM7 }>),
     Function::new(&MI_CPU_FILL8, "MI_CPU_FILL8", hle_mi_cpu_fill8::<{ ARM7 }>),

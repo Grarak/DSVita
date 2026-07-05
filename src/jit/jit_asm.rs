@@ -758,10 +758,19 @@ impl<'a> JitAsm<'a> {
             let is_uncond_branch = inst_info.is_uncond_branch();
             let cond = inst_info.cond;
             let is_unreturnable_branch = !inst_info.out_regs.is_reserved(Reg::LR) && is_uncond_branch;
+            // An unconditional branch skipping exactly one instruction (imm 0 = pipeline-only
+            // offset) is de-conditionalized code — some sdk builds emit `blt 1f; b 2f; 1: op; 2:`
+            // instead of a conditional op. Keep building: the analyzer resolves it as a local
+            // branch, the block doesn't shatter into per-instruction pieces, and the nitro-sdk
+            // pattern substitutions can still recognize such function bodies.
+            let is_skip_one_branch = is_unreturnable_branch && inst_info.op.is_labelled_branch() && inst_info.operands()[0].as_imm() == Some(0);
             let op = inst_info.op;
             insts.push(inst_info);
 
-            if (matches!(op, Op::Bx | Op::BxRegT) && cond == Cond::AL) || (insts.len() >= 500 && op != Op::BlSetupT) || (!until_bx && is_unreturnable_branch && min_imm_guest_addr == u32::MAX) {
+            if (matches!(op, Op::Bx | Op::BxRegT) && cond == Cond::AL)
+                || (insts.len() >= 500 && op != Op::BlSetupT)
+                || (!until_bx && is_unreturnable_branch && !is_skip_one_branch && min_imm_guest_addr == u32::MAX)
+            {
                 break;
             }
 
