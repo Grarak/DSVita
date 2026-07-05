@@ -4,10 +4,12 @@ use crate::core::memory::regions;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::analyzer::asm_analyzer::AsmAnalyzer;
-use crate::jit::assembler::block_asm::{BlockAsm, GuestInstOffset};
-use crate::jit::assembler::reg_alloc::GUEST_REGS_LENGTH;
+#[cfg(target_arch = "arm")]
+use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::{GuestInstOffset, GUEST_REGS_LENGTH};
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
+#[cfg(target_arch = "arm")]
 use crate::jit::emitter::map_fun_cpu;
 use crate::jit::inst_branch_handler::call_jit_fun;
 use crate::jit::inst_info::InstInfo;
@@ -26,6 +28,7 @@ use std::arch::{asm, naked_asm};
 use std::hint::assert_unchecked;
 use std::intrinsics::unlikely;
 use std::{mem, slice};
+#[cfg(target_arch = "arm")]
 use vixl::{BranchHint_kNear, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmB3, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
 use xxhash_rust::xxh32::xxh32;
 
@@ -86,6 +89,7 @@ impl JitDebugInfo {
     fn print_info(&self, start_pc: u32, thumb: bool) {}
 }
 
+#[cfg(target_arch = "arm")]
 pub struct JitForwardBranch {
     pub inst_index: usize,
     pub target_pc: u32,
@@ -94,6 +98,7 @@ pub struct JitForwardBranch {
     pub bind_label: Label,
 }
 
+#[cfg(target_arch = "arm")]
 impl JitForwardBranch {
     pub fn new(inst_index: usize, target_pc: u32, dirty_guest_regs: RegReserve, guest_regs_mapping: [Reg; GUEST_REGS_LENGTH], bind_label: Label) -> Self {
         JitForwardBranch {
@@ -106,6 +111,7 @@ impl JitForwardBranch {
     }
 }
 
+#[cfg(target_arch = "arm")]
 pub struct JitRunSchedulerLabel {
     pub inst_index: usize,
     pub target_pc: u32,
@@ -116,6 +122,7 @@ pub struct JitRunSchedulerLabel {
     pub exit_label: Option<Label>,
 }
 
+#[cfg(target_arch = "arm")]
 impl JitRunSchedulerLabel {
     pub fn new(
         inst_index: usize,
@@ -138,6 +145,7 @@ impl JitRunSchedulerLabel {
     }
 }
 
+#[cfg(target_arch = "arm")]
 pub struct JitCondIndirectBranch {
     pub inst_index: usize,
     pub dirty_guest_regs: RegReserve,
@@ -145,6 +153,7 @@ pub struct JitCondIndirectBranch {
     pub bind_label: Label,
 }
 
+#[cfg(target_arch = "arm")]
 impl JitCondIndirectBranch {
     pub fn new(inst_index: usize, dirty_guest_regs: RegReserve, guest_regs_mapping: [Reg; GUEST_REGS_LENGTH], bind_label: Label) -> Self {
         JitCondIndirectBranch {
@@ -160,8 +169,11 @@ pub struct JitBuf {
     pub guest_pc_start: u32,
     pub insts: Vec<InstInfo>,
     pub insts_cycle_counts: Vec<u16>,
+    #[cfg(target_arch = "arm")]
     pub forward_branches: Vec<JitForwardBranch>,
+    #[cfg(target_arch = "arm")]
     pub run_scheduler_labels: Vec<JitRunSchedulerLabel>,
+    #[cfg(target_arch = "arm")]
     pub cond_indirect_branches: Vec<JitCondIndirectBranch>,
     pub debug_info: JitDebugInfo,
 }
@@ -172,8 +184,11 @@ impl JitBuf {
             guest_pc_start: 0,
             insts: Vec::new(),
             insts_cycle_counts: Vec::new(),
+            #[cfg(target_arch = "arm")]
             forward_branches: Vec::new(),
+            #[cfg(target_arch = "arm")]
             run_scheduler_labels: Vec::new(),
+            #[cfg(target_arch = "arm")]
             cond_indirect_branches: Vec::new(),
             debug_info: JitDebugInfo::default(),
         }
@@ -182,9 +197,12 @@ impl JitBuf {
     fn clear_all(&mut self) {
         self.insts.clear();
         self.insts_cycle_counts.clear();
-        self.forward_branches.clear();
-        self.run_scheduler_labels.clear();
-        self.cond_indirect_branches.clear();
+        #[cfg(target_arch = "arm")]
+        {
+            self.forward_branches.clear();
+            self.run_scheduler_labels.clear();
+            self.cond_indirect_branches.clear();
+        }
     }
 }
 
@@ -348,9 +366,22 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
                 if unlikely(asm.runtime_data.is_in_interrupt() && asm.runtime_data.pop_return_stack() == CPU.thread_regs().pc) {
                     asm.emu.thread_set_thumb(CPU, CPU.thread_regs().pc & 1 == 1);
                     unsafe {
+                        #[cfg(target_arch = "arm")]
                         std::arch::asm!(
                         "mov sp, {}",
                         "pop {{r4-r12,pc}}",
+                        in(reg) asm.runtime_data.interrupt_sp
+                        );
+                        #[cfg(target_arch = "aarch64")]
+                        std::arch::asm!(
+                        "mov sp, {0}",
+                        "ldp x19, x20, [sp, #16]",
+                        "ldp x21, x22, [sp, #32]",
+                        "ldp x23, x24, [sp, #48]",
+                        "ldp x25, x26, [sp, #64]",
+                        "ldp x27, x28, [sp, #80]",
+                        "ldp x29, x30, [sp], #96",
+                        "ret",
                         in(reg) asm.runtime_data.interrupt_sp
                         );
                         std::hint::unreachable_unchecked();
@@ -369,11 +400,13 @@ pub extern "C" fn hle_bios_uninterrupt<const CPU: CpuType>() {
     }
 }
 
+#[cfg(target_arch = "arm")]
 extern "C" fn guest_block_invalid(guest_pc: u32) {
     debug_println!("Guest block hash mismatch {guest_pc:x}");
     emit_code_block(guest_pc);
 }
 
+#[cfg(target_arch = "arm")]
 #[unsafe(naked)]
 unsafe extern "C" fn validate_guest_block_hash() {
     #[rustfmt::skip]
@@ -394,25 +427,32 @@ unsafe extern "C" fn validate_guest_block_hash() {
     );
 }
 
+#[cfg(target_arch = "arm")]
 const_assert_eq!(size_of::<Vec<GuestInstOffset>>(), 12);
+#[cfg(target_arch = "arm")]
 const_assert_eq!(size_of::<GuestInstOffset>(), 40);
 
+#[cfg(target_arch = "arm")]
 const fn jit_emu_offset() -> usize {
     mem::offset_of!(JitAsm, emu)
 }
 
+#[cfg(target_arch = "arm")]
 const fn jit_mem_mmap_offset() -> usize {
     mem::offset_of!(Emu, jit.mem.ptr)
 }
 
+#[cfg(target_arch = "arm")]
 const fn jit_guest_inst_offset() -> usize {
     mem::offset_of!(Emu, jit.guest_inst_offsets)
 }
 
+#[cfg(target_arch = "arm")]
 const fn pre_cycle_count_sum_offset() -> usize {
     mem::offset_of!(JitAsm, runtime_data.pre_cycle_count_sum)
 }
 
+#[cfg(target_arch = "arm")]
 #[unsafe(naked)]
 unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) {
     #[rustfmt::skip]
@@ -469,6 +509,16 @@ pub extern "C" fn emit_code_block(guest_pc: u32) {
     emit_code_block_internal(asm, guest_pc & !1, thumb);
 }
 
+#[cfg(not(target_arch = "arm"))]
+fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
+    // Interpreter-only host: no jit backend exists, every block interprets, and the
+    // interpreter's Fallback ops execute one instruction at a time (interpreter::fallback).
+    if !crate::jit::interpreter::interpret_block(asm, guest_pc, thumb) {
+        crate::jit::interpreter::fallback::interpret_fallback(asm, guest_pc, thumb);
+    }
+}
+
+#[cfg(target_arch = "arm")]
 fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     let is_os_irq_handler = if asm.emu.settings.hle_os_irq_handler() && asm.emu.nitro_sdk_version.is_valid() {
         if asm.cpu == ARM7 && asm.os_irq_handler_addr & 0xFF000000 != regions::SHARED_WRAM_OFFSET {
@@ -606,6 +656,7 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     }
 }
 
+#[cfg(target_arch = "arm")]
 #[unsafe(naked)]
 pub unsafe extern "C" fn call_jit_entry(_: u32, _entry: *const fn(), _host_sp: *mut usize) {
     #[rustfmt::skip]
@@ -614,6 +665,33 @@ pub unsafe extern "C" fn call_jit_entry(_: u32, _entry: *const fn(), _host_sp: *
         "str sp, [r2]",
         "blx r1",
         "pop {{r4-r12,pc}}",
+    );
+}
+
+// The aarch64 twin of the guest-context frame: callee-saved pairs + fp/lr, entry sp stored
+// through x2. exit_guest_context! and the interrupt return in hle_bios_uninterrupt must
+// mirror this layout exactly.
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+pub unsafe extern "C" fn call_jit_entry(_: u32, _entry: *const fn(), _host_sp: *mut usize) {
+    #[rustfmt::skip]
+    naked_asm!(
+        "stp x29, x30, [sp, #-96]!",
+        "stp x19, x20, [sp, #16]",
+        "stp x21, x22, [sp, #32]",
+        "stp x23, x24, [sp, #48]",
+        "stp x25, x26, [sp, #64]",
+        "stp x27, x28, [sp, #80]",
+        "mov x9, sp",
+        "str x9, [x2]",
+        "blr x1",
+        "ldp x19, x20, [sp, #16]",
+        "ldp x21, x22, [sp, #32]",
+        "ldp x23, x24, [sp, #48]",
+        "ldp x25, x26, [sp, #64]",
+        "ldp x27, x28, [sp, #80]",
+        "ldp x29, x30, [sp], #96",
+        "ret",
     );
 }
 

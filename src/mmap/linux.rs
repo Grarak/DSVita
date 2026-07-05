@@ -304,10 +304,29 @@ unsafe extern "C" fn sigsegv_handler(sig: i32, si: *mut siginfo_t, segfault_ctx:
     let context = &mut (*context).uc_mcontext;
 
     let delegate_fun: fn(usize, &mut usize, &ArmContext) -> bool = mem::transmute(DELEGATE_FUN);
+    // armv7 mcontext: contiguous arm_r0..arm_lr match ArmContext's layout; aarch64 keeps its
+    // own register file, ArmContext is only meaningful for the arm32 fastmem patcher.
+    #[cfg(target_arch = "arm")]
     let arm_context: &ArmContext = unsafe { mem::transmute(&context.arm_r0) };
+    #[cfg(target_arch = "aarch64")]
+    let arm_context: &ArmContext = &ArmContext {
+        gp_regs: [0; 13],
+        sp: context.sp as usize,
+        lr: context.regs[30] as usize,
+    };
+    #[cfg(target_arch = "arm")]
     let mut pc = context.arm_pc as usize;
+    #[cfg(target_arch = "aarch64")]
+    let mut pc = context.pc as usize;
     if delegate_fun(si_addr as usize, &mut pc, arm_context) {
-        context.arm_pc = pc as _;
+        #[cfg(target_arch = "arm")]
+        {
+            context.arm_pc = pc as _;
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            context.pc = pc as _;
+        }
         return;
     }
 

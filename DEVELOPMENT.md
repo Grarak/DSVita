@@ -189,6 +189,28 @@ Ordered by cost. Every technique below cracked at least one real bug.
    with an address watch** and capture the reference stream — this pinpointed an
    event-ordering bug that pure trace diffing could not.
 
+### JIT-block annotation (jitdump)
+
+Flat perf-map profiles name hot jit blocks but can't see inside them. The jitdump path can:
+
+1. Run with `DSVITA_JITDUMP=1` (Linux builds): blocks are also written to
+   `/tmp/jit-<pid>.dump` with code bytes and the thumb bit on the code address.
+2. Record with a monotonic clock (required for inject): `perf record -k CLOCK_MONOTONIC -p <pid>`.
+3. `perf inject --jit -i perf.data -o jitted.data` writes one small ELF per block
+   (`/tmp/jitted-<pid>-N.so`); `perf report`/`perf annotate -i jitted.data` then gives
+   per-instruction sample counts inside guest blocks, correctly disassembled as arm or thumb.
+
+This needs a patched perf (kernel 7.0 sources work): genelf must set the thumb bit on the
+function symbol, emit a `$t` mapping symbol when the jitdump address has bit0 set, and — when
+building on an aarch64 host — be forced to emit EM_ARM/ELFCLASS32 ELFs instead of native
+ones, or thumb disassembly comes out as garbage. Aggregate the per-block annotations across
+the top N blocks to spot systematic emitter overhead (that's how the cross-block cpsr
+round-trip and the accounting load pair were found).
+
+Two attribution caveats: each debug-info sub-block becomes its own jitdump record, so a
+branch between records looks cross-block when it's local; and a high sample count on a cheap
+instruction right after a load is usually the load's latency (skid), not that instruction.
+
 ### Environment / tooling pitfalls
 
 - **`sed -i file && cargo build` chained in one command can produce a STALE binary**: the
@@ -209,6 +231,10 @@ Ordered by cost. Every technique below cracked at least one real bug.
   boot); the V3D driver has a known cosmetic glyph/tile rendering offset — verify a suspected
   rendering bug against a pure-jit build and another renderer before blaming emulation.
   Under qemu+Xwayland, mouse injection works but keyboard does not reach SDL.
+- Throughput benchmarking: navigate to the test scene at `-f 1` (input choreography timed
+  against log-line counts breaks at uncapped speeds), then uncap live with F10 (F1-F9 set
+  framelimit 1-9) and average ~40 seconds of the per-second vblank log. Same build type,
+  same scene, back-to-back runs — the box drifts thermally between sessions.
 
 ---
 
@@ -279,10 +305,47 @@ All tried and reverted for zero or negative gain:
    (r7-thumb/r11-arm fp split; JIT emits host code in guest mode). Flat profiles work via
    the perf map (`/tmp/perf-<pid>.map`, `ARM9_<guest_pc>` symbols); callgraphs need dwarf.
 
-Meta-lesson: the geometry/JIT/SPU core is tuned out; instruction-count reasoning has
-repeatedly been wrong about it. Don't micro-optimize the core without a profile showing the
-target dominating. The interpreter (skipping compilation of code executed < threshold times)
-is the one structural perf avenue that survived.
+Second round (JIT/dispatch/SPU, block-annotation-driven), also tried and dropped after
+hardware A/B showed no gain on the target:
+
+7. Weakening the SPU sample-queue lock from seqcst to acquire/release. On the Linux test
+   box with audio enabled this was a 5.4x throughput unlock (the seqcst spinlock ran two
+   fenced atomics per pushed sample against a busy-waiting consumer core) — on the target
+   it measured flat. The contention was an artifact of the test box's audio-thread design
+   and core count, not of the emulator.
+8. Merging the per-branch cycle accounting into one 32-bit load/store pair (the two u16
+   counters share a word). Fewer memory ops, no measurable gain anywhere.
+9. Caching decoded per-channel SPU cnt fields (volume/divider/panning/format) and direct
+   format dispatch instead of a fn pointer.
+10. Doing the lighting dot products scalar (smull/smlal) instead of neon-with-lane-extract
+    on the target build. Annotation showed a big stall on the neon-to-core transfer, but
+    the hardware disagreed with the fix.
+11. The div peripheral's 64-bit modes taking a 32-bit library division when operands fit,
+    and a lookup table for the sound driver's bounded rate curve.
+12. Removing the unaligned-rotate emission after fastmem loads (the lsl/ror pair) — the
+    hot annotate samples on those lines are load-latency skid, not the rotate itself.
+
+What DID survive hardware measurement from that round: building through skip-one branches
+of de-conditionalized SDK functions plus HLE of their nocond sends; HLE of the thumb
+lcg-keystream crypt family (pattern substitution now covers thumb bodies; read constants
+from the guest literal pool, never assume them); carrying the guest cpsr in host lr across
+the local-branch accounting instead of a memory round-trip; flags-only cpsr restores in the
+naked-asm helpers.
+
+Meta-lessons:
+
+- The geometry/JIT/SPU core is tuned out; instruction-count reasoning has repeatedly been
+  wrong about it. Don't micro-optimize the core without a profile showing the target
+  dominating. The interpreter (skipping compilation of code executed < threshold times)
+  is the one structural perf avenue that survived.
+- Fence and contention costs are nearly invisible to leaf sampling: the seqcst lock cost
+  ~1% of samples while capping throughput at a fifth. Only A/B throughput runs catch this
+  class. Conversely, a big win on the dev box can be worth exactly nothing on the target —
+  different core count, memory model cost, and thread architecture. No perf change counts
+  until the target hardware measured it; keep each one in its own commit so they can be
+  accepted or dropped independently.
+- Audio-on and audio-off are different benchmark baselines (they exercise different SPU
+  paths and thread interactions). Compare like with like.
 
 Interpreter-specific perf that DID land: sequential opcode fetch (resolve the code's shm
 offset once per straight-line run, re-resolve on 4KB page cross or jump), cached ThreadRegs

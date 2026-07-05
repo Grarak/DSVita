@@ -2,6 +2,7 @@ use crate::core::emu::NitroSdkVersion;
 use crate::core::memory::regions::{self, OAM_OFFSET};
 use crate::core::CpuType::ARM9;
 use crate::core::{div_sqrt, CpuType};
+#[cfg(target_arch = "arm")]
 use crate::jit::assembler::block_asm::BlockAsm;
 use crate::jit::inst_branch_handler::check_scheduler;
 use crate::jit::inst_info::InstInfo;
@@ -725,6 +726,7 @@ impl JitAsm<'_> {
         has_dc_invalidate_range && bl_count == 3
     }
 
+    #[cfg(target_arch = "arm")]
     pub fn emit_fs_clear_overlay_image_hook(&mut self, guest_pc: u32, thumb: bool, block_asm: &mut BlockAsm) {
         if self.cpu == ARM7 || !self.emu.nitro_sdk_version.is_valid() {
             return;
@@ -756,6 +758,7 @@ impl JitAsm<'_> {
         info_println!("Found fs clear overlay at {guest_pc:x}");
     }
 
+    #[cfg(target_arch = "arm")]
     pub fn emit_nitrosdk_func(&mut self, guest_pc: u32, thumb: bool) -> bool {
         if !self.emu.nitro_sdk_version.is_valid() {
             return false;
@@ -823,6 +826,7 @@ impl JitAsm<'_> {
         false
     }
 
+    #[cfg(target_arch = "arm")]
     pub fn emit_hle_os_irq_handler(&mut self, guest_pc: u32, thumb: bool) -> bool {
         if thumb {
             return false;

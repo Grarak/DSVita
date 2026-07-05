@@ -1,5 +1,8 @@
 use crate::mmap::{Shm, VirtualMem, PAGE_SIZE};
+#[cfg(target_arch = "arm")]
 use std::arch::arm::{vld4q_u32, vst4q_u32};
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{vld4q_u32, vst4q_u32};
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};
 use std::{

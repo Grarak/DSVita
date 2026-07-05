@@ -13,7 +13,10 @@ use crate::utils::{rgb5_to_float8, HeapArray, HeapArrayU8, HeapMem, PtrWrapper, 
 use bilge::prelude::*;
 use gl::types::GLuint;
 use static_assertions::const_assert_eq;
+#[cfg(target_arch = "arm")]
 use std::arch::arm::{vcvt_n_f32_s32, vcvtq_n_f32_s32, vget_low_s32, vsetq_lane_s32, vshr_n_s32, vst1_f32, vst1q_f32};
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{vcvt_n_f32_s32, vcvtq_n_f32_s32, vget_low_s32, vsetq_lane_s32, vshr_n_s32, vst1_f32, vst1q_f32};
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::unlikely;
 use std::mem::{self, MaybeUninit};

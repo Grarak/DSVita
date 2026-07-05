@@ -283,8 +283,8 @@ impl ScreenLayout {
         let bottom_scale_mtx = Self::scale_matrix(SCALE_FACTORS[bottom_scale_index]);
 
         unsafe {
-            math::neon::matmul3_neon(a_mtx.as_ptr() as _, top_scale_mtx.as_ptr() as _, a_mtx.as_mut_ptr());
-            math::neon::matmul3_neon(b_mtx.as_ptr() as _, bottom_scale_mtx.as_ptr() as _, b_mtx.as_mut_ptr());
+            math::matmul3(a_mtx.as_ptr() as _, top_scale_mtx.as_ptr() as _, a_mtx.as_mut_ptr());
+            math::matmul3(b_mtx.as_ptr() as _, bottom_scale_mtx.as_ptr() as _, b_mtx.as_mut_ptr());
         }
 
         let mut screen_top = [[0.0; 3]; 4];
@@ -293,13 +293,13 @@ impl ScreenLayout {
 
         unsafe {
             let inverse_scale_mtx = Self::scale_matrix(1.0 / SCALE_FACTORS[if swap { top_scale_index } else { bottom_scale_index }]);
-            math::neon::matmul3_neon(inverse_scale_mtx.as_ptr() as _, bottom_inverse_mtx.as_ptr() as _, bottom_inverse_mtx.as_mut_ptr());
+            math::matmul3(inverse_scale_mtx.as_ptr() as _, bottom_inverse_mtx.as_ptr() as _, bottom_inverse_mtx.as_mut_ptr());
         }
 
         let overlap = unsafe {
             for i in 0..GUEST_DISPLAY_DIM_MTX.len() {
-                math::neon::matvec3_neon(a_mtx.as_ptr() as _, GUEST_DISPLAY_DIM_MTX[i].as_ptr() as _, screen_top[i].as_mut_ptr());
-                math::neon::matvec3_neon(b_mtx.as_ptr() as _, GUEST_DISPLAY_DIM_MTX[i].as_ptr() as _, screen_bottom[i].as_mut_ptr());
+                math::matvec3(a_mtx.as_ptr() as _, GUEST_DISPLAY_DIM_MTX[i].as_ptr() as _, screen_top[i].as_mut_ptr());
+                math::matvec3(b_mtx.as_ptr() as _, GUEST_DISPLAY_DIM_MTX[i].as_ptr() as _, screen_bottom[i].as_mut_ptr());
             }
 
             let overlap = ((screen_bottom[0][0].round() > screen_top[0][0].round() && screen_bottom[0][0].round() < screen_top[1][0].round())
@@ -381,7 +381,7 @@ impl ScreenLayout {
 
     pub fn normalize_touch_points(&self, x: i16, y: i16) -> (i16, i16) {
         let mut touch_points = [x as f32, y as f32, 1.0];
-        unsafe { math::neon::matvec3_neon(self.bottom_inverse_mtx.as_ptr() as _, touch_points.as_ptr() as _, touch_points.as_mut_ptr() as _) };
+        unsafe { math::matvec3(self.bottom_inverse_mtx.as_ptr() as _, touch_points.as_ptr() as _, touch_points.as_mut_ptr() as _) };
         (touch_points[0] as i16 + DISPLAY_WIDTH as i16 / 2, touch_points[1] as i16 + DISPLAY_HEIGHT as i16 / 2)
     }
 

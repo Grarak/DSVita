@@ -1,7 +1,7 @@
 use crate::core::memory::regions;
 use crate::jit::jit_memory::{JitEntries, JitEntry, JitExecCounts, JitLiveRanges, BIOS_UNINTERRUPT_ENTRY_ARM7, BIOS_UNINTERRUPT_ENTRY_ARM9, JIT_LIVE_RANGE_PAGE_SIZE_SHIFT};
 use crate::utils;
-use crate::utils::HeapArrayU32;
+use crate::utils::HeapArrayUsize;
 use std::cmp::min;
 use std::{ptr, slice};
 
@@ -16,27 +16,27 @@ const SIZE: usize = (MEMORY_RANGE >> 1) as usize / BLOCK_SIZE;
 const LIVE_RANGES_SIZE: usize = (MEMORY_RANGE >> (JIT_LIVE_RANGE_PAGE_SIZE_SHIFT + 3)) as usize;
 
 pub struct JitMemoryMap {
-    map: HeapArrayU32<SIZE>,
-    exec_counts_map: HeapArrayU32<SIZE>,
-    live_ranges_map: HeapArrayU32<LIVE_RANGES_SIZE>,
+    map: HeapArrayUsize<SIZE>,
+    exec_counts_map: HeapArrayUsize<SIZE>,
+    live_ranges_map: HeapArrayUsize<LIVE_RANGES_SIZE>,
 }
 
 impl JitMemoryMap {
     pub fn new(entries: &JitEntries, live_ranges: &JitLiveRanges, exec_counts: &JitExecCounts) -> Self {
         let mut instance = JitMemoryMap {
-            map: HeapArrayU32::default(),
-            exec_counts_map: HeapArrayU32::default(),
-            live_ranges_map: HeapArrayU32::default(),
+            map: HeapArrayUsize::default(),
+            exec_counts_map: HeapArrayUsize::default(),
+            live_ranges_map: HeapArrayUsize::default(),
         };
 
         macro_rules! get_ptr {
             ($addr:expr, $entries:expr) => {{
-                (unsafe { $entries.as_ptr().add(($addr >> 1) % $entries.len()) } as u32)
+                (unsafe { $entries.as_ptr().add(($addr >> 1) % $entries.len()) } as usize)
             }};
         }
 
-        instance.map[(0xFFF0000) >> BLOCK_SHIFT >> 1] = ptr::addr_of!(BIOS_UNINTERRUPT_ENTRY_ARM9) as u32;
-        instance.map[(0xFF00000) >> BLOCK_SHIFT >> 1] = ptr::addr_of!(BIOS_UNINTERRUPT_ENTRY_ARM7) as u32;
+        instance.map[(0xFFF0000) >> BLOCK_SHIFT >> 1] = ptr::addr_of!(BIOS_UNINTERRUPT_ENTRY_ARM9) as usize;
+        instance.map[(0xFF00000) >> BLOCK_SHIFT >> 1] = ptr::addr_of!(BIOS_UNINTERRUPT_ENTRY_ARM7) as usize;
 
         for i in 0..SIZE {
             let addr = (i << BLOCK_SHIFT) << 1;
@@ -71,7 +71,7 @@ impl JitMemoryMap {
 
         macro_rules! get_ptr {
             ($index:expr, $live_ranges:expr) => {{
-                (unsafe { $live_ranges.as_ptr().add($index % $live_ranges.len()) } as u32)
+                (unsafe { $live_ranges.as_ptr().add($index % $live_ranges.len()) } as usize)
             }};
         }
 

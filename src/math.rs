@@ -1,4 +1,10 @@
 use paste::paste;
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{
+    int32x4_t, int64x1_t, int64x2_t, uint64x2_t, vaddq_u64, vget_high_s32, vget_high_s64, vget_lane_s32, vget_low_s32, vget_low_s64, vgetq_lane_s32, vld1q_s32, vld1q_s32_x4, vmlal_n_s32, vmlal_s32,
+    vmovn_u64, vmull_n_s32, vmull_s32, vmull_u32, vreinterpretq_s64_u64, vreinterpretq_u64_s64, vshlq_n_u64, vshr_n_s64, vshrq_n_s64, vshrq_n_u64, vst1q_s32, vuzpq_s32,
+};
+#[cfg(target_arch = "arm")]
 use std::arch::arm::{
     int32x4_t, int64x1_t, int64x2_t, uint64x2_t, vaddq_u64, vget_high_s32, vget_high_s64, vget_lane_s32, vget_low_s32, vget_low_s64, vgetq_lane_s32, vld1q_s32, vld1q_s32_x4, vmlal_n_s32, vmlal_s32,
     vmovn_u64, vmull_n_s32, vmull_s32, vmull_u32, vreinterpretq_s64_u64, vreinterpretq_u64_s64, vshlq_n_u64, vshr_n_s64, vshrq_n_s64, vshrq_n_u64, vst1q_s32, vuzpq_s32,
@@ -8,6 +14,7 @@ use std::intrinsics::simd::simd_add;
 use std::ops::{Index, IndexMut};
 use std::{mem, ops};
 
+#[cfg(target_arch = "arm")]
 pub mod neon {
     #![allow(warnings, unused)]
     include!(concat!(env!("OUT_DIR"), "/math_neon.rs"));
@@ -390,4 +397,42 @@ pub unsafe fn vdot_vec3(v1: int32x4_t, v2: int32x4_t) -> i32 {
     let ret = vadd_s64(vget_low_s64(ret), vget_high_s64(ret));
     let ret = vshr_n_s64::<12>(ret);
     vget_lane_s32::<0>(mem::transmute(ret))
+}
+
+// Screen-layout 3x3 helpers, column major, semantics of math-neon's matmul3/matvec3
+// (d = m0 * m1, d = m * v). Arm targets call the neon asm lib; other hosts compute scalar —
+// cold UI path. Alias-safe: callers pass the same matrix as input and output.
+#[cfg(target_arch = "arm")]
+pub unsafe fn matmul3(m0: *const f32, m1: *const f32, d: *mut f32) {
+    neon::matmul3_neon(m0 as _, m1 as _, d);
+}
+
+#[cfg(target_arch = "arm")]
+pub unsafe fn matvec3(m: *const f32, v: *const f32, d: *mut f32) {
+    neon::matvec3_neon(m as _, v as _, d);
+}
+
+#[cfg(not(target_arch = "arm"))]
+pub unsafe fn matmul3(m0: *const f32, m1: *const f32, d: *mut f32) {
+    let a = core::slice::from_raw_parts(m0, 9);
+    let b = core::slice::from_raw_parts(m1, 9);
+    let mut out = [0f32; 9];
+    for col in 0..3 {
+        for row in 0..3 {
+            out[col * 3 + row] = a[row] * b[col * 3] + a[3 + row] * b[col * 3 + 1] + a[6 + row] * b[col * 3 + 2];
+        }
+    }
+    core::slice::from_raw_parts_mut(d, 9).copy_from_slice(&out);
+}
+
+#[cfg(not(target_arch = "arm"))]
+pub unsafe fn matvec3(m: *const f32, v: *const f32, d: *mut f32) {
+    let m = core::slice::from_raw_parts(m, 9);
+    let vv = core::slice::from_raw_parts(v, 3);
+    let out = [
+        m[0] * vv[0] + m[3] * vv[1] + m[6] * vv[2],
+        m[1] * vv[0] + m[4] * vv[1] + m[7] * vv[2],
+        m[2] * vv[0] + m[5] * vv[1] + m[8] * vv[2],
+    ];
+    core::slice::from_raw_parts_mut(d, 3).copy_from_slice(&out);
 }

@@ -49,6 +49,9 @@ use thumb_memory::*;
 
 // Threshold of executions of a cold address before it gets compiled to a jit block.
 // 255 = always interpret (counter saturates), 0 = always compile. Useful for testing.
+#[cfg(not(target_arch = "arm"))]
+pub mod fallback;
+
 pub const INTERP_THRESHOLD: u8 = 100;
 
 // CPSR flag bits.

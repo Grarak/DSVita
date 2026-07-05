@@ -356,225 +356,235 @@ impl FromIterator<Reg> for RegReserve {
     }
 }
 
-include!(concat!(env!("OUT_DIR"), "/vixl_bindings.rs"));
-include!(concat!(env!("OUT_DIR"), "/vixl_inst_wrapper.rs"));
+// Everything below depends on the generated aarch32 bindings.
+#[cfg(target_arch = "arm")]
+mod aarch32_glue {
+    use super::*;
 
-pub struct DOperand {
-    inner: *mut Aarch32DOperand,
-}
+    include!(concat!(env!("OUT_DIR"), "/vixl_bindings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/vixl_inst_wrapper.rs"));
 
-pub struct QOperand {
-    inner: *mut Aarch32DOperand,
-}
 
-pub struct SOperand {
-    inner: *mut Aarch32DOperand,
-}
-
-pub struct RawLiteral {
-    inner: *mut Aarch32RawLiteral,
-    should_destroy: bool,
-    value: Pin<Box<u32>>,
-}
-
-impl Drop for RawLiteral {
-    fn drop(&mut self) {
-        if self.should_destroy {
-            unsafe { destroy_aarch32_raw_literal(self.inner) };
-        }
-    }
-}
-
-impl From<u32> for RawLiteral {
-    fn from(value: u32) -> Self {
-        let mut literal = RawLiteral {
-            inner: ptr::null_mut(),
-            should_destroy: false,
-            value: Box::pin(value),
-        };
-        let addr = literal.value.as_ref().get_ref() as *const u32;
-        literal.inner = unsafe { create_aarch32_raw_literal(addr as _, size_of::<u32>() as _, PlacementPolicy_kPlacedWhenUsed, DeletionPolicy_kDeletedOnPlacementByPool) };
-        literal
-    }
-}
-
-pub struct Label {
-    inner: *mut Aarch32Label,
-}
-
-impl Label {
-    pub fn new() -> Self {
-        Label {
-            inner: unsafe { create_aarch32_label() },
-        }
-    }
-}
-
-impl Drop for Label {
-    fn drop(&mut self) {
-        unsafe { destroy_aarch32_label(self.inner) }
-    }
-}
-
-impl From<u32> for MaskedSpecialRegister {
-    fn from(value: u32) -> Self {
-        unsafe { MaskedSpecialRegister::new(value) }
-    }
-}
-
-impl From<u32> for SpecialRegister {
-    fn from(value: u32) -> Self {
-        SpecialRegister { reg_: value }
-    }
-}
-
-impl From<u8> for Operand {
-    fn from(value: u8) -> Self {
-        (value as u32).into()
-    }
-}
-
-impl From<u16> for Operand {
-    fn from(value: u16) -> Self {
-        (value as u32).into()
-    }
-}
-
-impl From<u32> for Operand {
-    fn from(value: u32) -> Self {
-        unsafe { Operand::new(value) }
-    }
-}
-
-impl From<i32> for Operand {
-    fn from(value: i32) -> Self {
-        unsafe { Operand::new1(value) }
-    }
-}
-
-impl From<Reg> for Register {
-    fn from(value: Reg) -> Self {
-        debug_assert!(value as u8 <= Reg::PC as u8, "{value:?} <= {:?}", Reg::PC);
-        unsafe { Register::new(value as u32) }
-    }
-}
-
-impl From<Cond> for Condition {
-    fn from(value: Cond) -> Self {
-        unsafe { Condition::new(value as u32) }
-    }
-}
-
-impl From<Reg> for Operand {
-    fn from(value: Reg) -> Self {
-        unsafe { Operand::new2(value.into()) }
-    }
-}
-
-impl From<ShiftType> for Shift {
-    fn from(value: u32) -> Self {
-        Shift { shift_: value }
-    }
-}
-
-impl From<Reg> for MemOperand {
-    fn from(value: Reg) -> Self {
-        unsafe { MemOperand::new(value.into(), AddrMode_Offset) }
-    }
-}
-
-impl From<(Reg, i32)> for MemOperand {
-    fn from((reg, offset): (Reg, i32)) -> Self {
-        unsafe { MemOperand::new1(reg.into(), offset, AddrMode_Offset) }
-    }
-}
-
-impl From<(Reg, Reg)> for MemOperand {
-    fn from((reg, reg_offset): (Reg, Reg)) -> Self {
-        unsafe { MemOperand::new4(reg.into(), reg_offset.into(), AddrMode_Offset) }
-    }
-}
-
-impl From<RegReserve> for RegisterList {
-    fn from(value: RegReserve) -> Self {
-        RegisterList { list_: value.0 }
-    }
-}
-
-impl WriteBack {
-    pub const fn no() -> Self {
-        WriteBack { value_: WriteBackValue_NO_WRITE_BACK }
+    pub struct DOperand {
+        inner: *mut Aarch32DOperand,
     }
 
-    pub const fn yes() -> Self {
-        WriteBack { value_: WriteBackValue_WRITE_BACK }
-    }
-}
-
-impl CPURegister {
-    pub fn get_type(self) -> CPURegister_RegisterType {
-        (self.value_ & 0x1E0) >> 5
+    pub struct QOperand {
+        inner: *mut Aarch32DOperand,
     }
 
-    pub fn get_code(self) -> u32 {
-        self.value_ & 0x1F
+    pub struct SOperand {
+        inner: *mut Aarch32DOperand,
     }
-}
 
-pub struct MacroAssembler {
-    inner: *mut Aarch32MacroAssembler,
-    isa: InstructionSet,
-}
+    pub struct RawLiteral {
+        inner: *mut Aarch32RawLiteral,
+        should_destroy: bool,
+        value: Pin<Box<u32>>,
+    }
 
-impl MacroAssembler {
-    pub fn new(isa: InstructionSet) -> Self {
-        MacroAssembler {
-            inner: unsafe { create_aarch32_masm(isa) },
-            isa,
+    impl Drop for RawLiteral {
+        fn drop(&mut self) {
+            if self.should_destroy {
+                unsafe { destroy_aarch32_raw_literal(self.inner) };
+            }
         }
     }
 
-    pub fn bind(&mut self, label: &mut Label) {
-        unsafe { masm_bind(self.inner, label.inner) }
-    }
-
-    pub fn finalize(&mut self) {
-        unsafe { masm_finalize(self.inner) }
-    }
-
-    pub fn get_code_buffer(&self) -> &[u8] {
-        let ptr = unsafe { masm_get_start_address(self.inner) };
-        let size = unsafe { masm_get_size_of_code_generated(self.inner) };
-        unsafe { slice::from_raw_parts(ptr, size as usize) }
-    }
-
-    pub fn get_cursor_offset(&self) -> u32 {
-        unsafe { masm_get_cursor_offset(self.inner) }
-    }
-
-    pub fn ensure_emit_for(&mut self, size: u32) {
-        unsafe { masm_ensure_emit_for(self.inner, size) }
-    }
-}
-
-impl Drop for MacroAssembler {
-    fn drop(&mut self) {
-        if !self.inner.is_null() {
-            unsafe { destroy_aarch32_masm(self.inner) };
+    impl From<u32> for RawLiteral {
+        fn from(value: u32) -> Self {
+            let mut literal = RawLiteral {
+                inner: ptr::null_mut(),
+                should_destroy: false,
+                value: Box::pin(value),
+            };
+            let addr = literal.value.as_ref().get_ref() as *const u32;
+            literal.inner = unsafe { create_aarch32_raw_literal(addr as _, size_of::<u32>() as _, PlacementPolicy_kPlacedWhenUsed, DeletionPolicy_kDeletedOnPlacementByPool) };
+            literal
         }
     }
-}
 
-impl MasmLdr2<Reg, u32> for MacroAssembler {
-    fn ldr2(&mut self, reg: Reg, v: u32) {
-        let single_mov = v & 0xFFFF == v || {
-            let shifted = v >> v.trailing_zeros();
-            shifted & 0x1F == shifted
-        };
-        if !single_mov && (self.isa == InstructionSet_T32 && reg.is_low()) {
-            self.ldr3(Cond::AL, reg, v)
-        } else {
-            self.mov4(FlagsUpdate_LeaveFlags, Cond::AL, reg, &v.into());
+    pub struct Label {
+        inner: *mut Aarch32Label,
+    }
+
+    impl Label {
+        pub fn new() -> Self {
+            Label {
+                inner: unsafe { create_aarch32_label() },
+            }
         }
     }
+
+    impl Drop for Label {
+        fn drop(&mut self) {
+            unsafe { destroy_aarch32_label(self.inner) }
+        }
+    }
+
+    impl From<u32> for MaskedSpecialRegister {
+        fn from(value: u32) -> Self {
+            unsafe { MaskedSpecialRegister::new(value) }
+        }
+    }
+
+    impl From<u32> for SpecialRegister {
+        fn from(value: u32) -> Self {
+            SpecialRegister { reg_: value }
+        }
+    }
+
+    impl From<u8> for Operand {
+        fn from(value: u8) -> Self {
+            (value as u32).into()
+        }
+    }
+
+    impl From<u16> for Operand {
+        fn from(value: u16) -> Self {
+            (value as u32).into()
+        }
+    }
+
+    impl From<u32> for Operand {
+        fn from(value: u32) -> Self {
+            unsafe { Operand::new(value) }
+        }
+    }
+
+    impl From<i32> for Operand {
+        fn from(value: i32) -> Self {
+            unsafe { Operand::new1(value) }
+        }
+    }
+
+    impl From<Reg> for Register {
+        fn from(value: Reg) -> Self {
+            debug_assert!(value as u8 <= Reg::PC as u8, "{value:?} <= {:?}", Reg::PC);
+            unsafe { Register::new(value as u32) }
+        }
+    }
+
+    impl From<Cond> for Condition {
+        fn from(value: Cond) -> Self {
+            unsafe { Condition::new(value as u32) }
+        }
+    }
+
+    impl From<Reg> for Operand {
+        fn from(value: Reg) -> Self {
+            unsafe { Operand::new2(value.into()) }
+        }
+    }
+
+    impl From<ShiftType> for Shift {
+        fn from(value: u32) -> Self {
+            Shift { shift_: value }
+        }
+    }
+
+    impl From<Reg> for MemOperand {
+        fn from(value: Reg) -> Self {
+            unsafe { MemOperand::new(value.into(), AddrMode_Offset) }
+        }
+    }
+
+    impl From<(Reg, i32)> for MemOperand {
+        fn from((reg, offset): (Reg, i32)) -> Self {
+            unsafe { MemOperand::new1(reg.into(), offset, AddrMode_Offset) }
+        }
+    }
+
+    impl From<(Reg, Reg)> for MemOperand {
+        fn from((reg, reg_offset): (Reg, Reg)) -> Self {
+            unsafe { MemOperand::new4(reg.into(), reg_offset.into(), AddrMode_Offset) }
+        }
+    }
+
+    impl From<RegReserve> for RegisterList {
+        fn from(value: RegReserve) -> Self {
+            RegisterList { list_: value.0 }
+        }
+    }
+
+    impl WriteBack {
+        pub const fn no() -> Self {
+            WriteBack { value_: WriteBackValue_NO_WRITE_BACK }
+        }
+
+        pub const fn yes() -> Self {
+            WriteBack { value_: WriteBackValue_WRITE_BACK }
+        }
+    }
+
+    impl CPURegister {
+        pub fn get_type(self) -> CPURegister_RegisterType {
+            (self.value_ & 0x1E0) >> 5
+        }
+
+        pub fn get_code(self) -> u32 {
+            self.value_ & 0x1F
+        }
+    }
+
+    pub struct MacroAssembler {
+        inner: *mut Aarch32MacroAssembler,
+        isa: InstructionSet,
+    }
+
+    impl MacroAssembler {
+        pub fn new(isa: InstructionSet) -> Self {
+            MacroAssembler {
+                inner: unsafe { create_aarch32_masm(isa) },
+                isa,
+            }
+        }
+
+        pub fn bind(&mut self, label: &mut Label) {
+            unsafe { masm_bind(self.inner, label.inner) }
+        }
+
+        pub fn finalize(&mut self) {
+            unsafe { masm_finalize(self.inner) }
+        }
+
+        pub fn get_code_buffer(&self) -> &[u8] {
+            let ptr = unsafe { masm_get_start_address(self.inner) };
+            let size = unsafe { masm_get_size_of_code_generated(self.inner) };
+            unsafe { slice::from_raw_parts(ptr, size as usize) }
+        }
+
+        pub fn get_cursor_offset(&self) -> u32 {
+            unsafe { masm_get_cursor_offset(self.inner) }
+        }
+
+        pub fn ensure_emit_for(&mut self, size: u32) {
+            unsafe { masm_ensure_emit_for(self.inner, size) }
+        }
+    }
+
+    impl Drop for MacroAssembler {
+        fn drop(&mut self) {
+            if !self.inner.is_null() {
+                unsafe { destroy_aarch32_masm(self.inner) };
+            }
+        }
+    }
+
+    impl MasmLdr2<Reg, u32> for MacroAssembler {
+        fn ldr2(&mut self, reg: Reg, v: u32) {
+            let single_mov = v & 0xFFFF == v || {
+                let shifted = v >> v.trailing_zeros();
+                shifted & 0x1F == shifted
+            };
+            if !single_mov && (self.isa == InstructionSet_T32 && reg.is_low()) {
+                self.ldr3(Cond::AL, reg, v)
+            } else {
+                self.mov4(FlagsUpdate_LeaveFlags, Cond::AL, reg, &v.into());
+            }
+        }
+    }
+
 }
+#[cfg(target_arch = "arm")]
+pub use aarch32_glue::*;

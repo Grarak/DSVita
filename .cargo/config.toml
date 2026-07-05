@@ -5,5 +5,9 @@ rustflags = ["-Ctarget-feature=+v7,+neon,+vfp3,+thumb2,+thumb-mode"]
 [target.armv7-sony-vita-newlibeabihf]
 linker = "clang-21"
 
+[target.aarch64-unknown-linux-gnu]
+linker = "clang-21"
+rustflags = ["-Clink-args=-fuse-ld=lld"]
+
 [unstable]
 build-std = ["core", "alloc", "std", "panic_abort"]

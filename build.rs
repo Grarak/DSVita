@@ -74,8 +74,11 @@ fn main() {
         }
     } else {
         println!("cargo:rerun-if-env-changed=DSVITA_SYSROOT");
-        if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
-            println!("cargo:rustc-link-arg=--sysroot={sysroot}");
+        if vitabuild::is_target_arm32() {
+            // The armhf cross sysroot; native (e.g. aarch64) hosts link against their own.
+            if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
+                println!("cargo:rustc-link-arg=--sysroot={sysroot}");
+            }
         }
         println!("cargo:rustc-link-arg=--target={}", env::var("TARGET").unwrap());
         let mut cache_build = create_c_build();
@@ -128,7 +131,9 @@ fn main() {
 
         let math_neon_path = Path::new("math-neon/source");
 
-        if !is_target_vita() {
+        // armv7 NEON/VFP assembly — linux-arm32 builds it here, vita links the prebuilt
+        // static lib, other arches use the scalar wrappers in math.rs instead.
+        if !is_target_vita() && vitabuild::is_target_arm32() {
             let mut math_neon_build = create_c_build();
             for file in MATH_NEON_FILES {
                 let path = math_neon_path.join(file);

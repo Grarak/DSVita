@@ -2,14 +2,14 @@ use crate::core::emu::Emu;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::get_jit_asm_ptr;
-use crate::jit::assembler::block_asm::GuestInstMetadata;
-use crate::jit::assembler::reg_alloc::GUEST_REG_ALLOCATIONS;
+use crate::jit::assembler::{GuestInstMetadata, GUEST_REG_POOL_SIZE};
 use crate::jit::inst_branch_handler::breakout_imm;
 use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::MemoryAmount;
 use crate::logging::debug_println;
 use bilge::prelude::*;
 use handler::*;
+#[cfg(target_arch = "arm")]
 use std::arch::naked_asm;
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::intrinsics::{likely, unlikely};
@@ -18,7 +18,7 @@ use std::{mem, ptr};
 mod handler {
     use crate::core::emu::Emu;
     use crate::core::CpuType;
-    use crate::jit::assembler::block_asm::GuestInstMetadata;
+    use crate::jit::assembler::GuestInstMetadata;
     use crate::jit::reg::{Reg, RegReserve};
     use crate::jit::MemoryAmount;
     use crate::logging::debug_println;
@@ -185,7 +185,8 @@ mod handler {
     }
 }
 
-unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(metadata: *const GuestInstMetadata, host_regs: &[usize; GUEST_REG_ALLOCATIONS.len()]) {
+#[cfg(target_arch = "arm")]
+unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(metadata: *const GuestInstMetadata, host_regs: &[usize; GUEST_REG_POOL_SIZE]) {
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     debug_println!("{CPU:?} breakout after write");
 
@@ -244,6 +245,7 @@ unsafe extern "C" fn _inst_write_io_mem_handler<const CPU: CpuType, const AMOUNT
 
 macro_rules! write_mem_handler_cpsr {
     ($name:ident, $inst_fun:ident) => {
+        #[cfg(target_arch = "arm")]
         #[unsafe(naked)]
         pub unsafe extern "C" fn $name<const CPU: CpuType, const AMOUNT: MemoryAmount>(_value0: u32, _value1: u32, _addr: u32) {
             #[rustfmt::skip]
@@ -277,6 +279,7 @@ macro_rules! write_mem_handler_cpsr {
 
 macro_rules! write_mem_handler {
     ($name:ident, $inst_fun:ident) => {
+        #[cfg(target_arch = "arm")]
         #[unsafe(naked)]
         pub unsafe extern "C" fn $name<const CPU: CpuType, const AMOUNT: MemoryAmount>(_value0: u32, _value1: u32, _addr: u32, _metadata: *const GuestInstMetadata) {
             #[rustfmt::skip]
@@ -324,6 +327,7 @@ pub unsafe extern "C" fn _inst_read64_mem_handler<const CPU: CpuType>(_: u8, _: 
     (value0 as u64) | ((value1 as u64) << 32)
 }
 
+#[cfg(target_arch = "arm")]
 #[unsafe(naked)]
 pub unsafe extern "C" fn inst_read_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: u8, _: u32, _: u32) {
     #[rustfmt::skip]
@@ -335,6 +339,7 @@ pub unsafe extern "C" fn inst_read_mem_handler<const CPU: CpuType, const AMOUNT:
     );
 }
 
+#[cfg(target_arch = "arm")]
 #[unsafe(naked)]
 pub unsafe extern "C" fn inst_read_mem_handler_with_cpsr<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: u8, _: u32, _: u32) {
     #[rustfmt::skip]
@@ -372,6 +377,7 @@ pub unsafe extern "C" fn _inst_read_io_mem_handler<const CPU: CpuType, const AMO
     }
 }
 
+#[cfg(target_arch = "arm")]
 #[unsafe(naked)]
 pub unsafe extern "C" fn inst_read_io_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: *const GuestInstMetadata, _: u32, _: u32) {
     #[rustfmt::skip]
@@ -384,6 +390,7 @@ pub unsafe extern "C" fn inst_read_io_mem_handler<const CPU: CpuType, const AMOU
     );
 }
 
+#[cfg(target_arch = "arm")]
 #[unsafe(naked)]
 pub unsafe extern "C" fn inst_read_io_mem_handler_with_cpsr<const CPU: CpuType, const AMOUNT: MemoryAmount, const SIGNED: bool>(_: *const GuestInstMetadata, _: u32, _: u32) {
     #[rustfmt::skip]
@@ -404,6 +411,7 @@ pub unsafe extern "C" fn inst_read_io_mem_handler_with_cpsr<const CPU: CpuType, 
     );
 }
 
+#[cfg(target_arch = "arm")]
 #[unsafe(naked)]
 pub unsafe extern "C" fn inst_read64_mem_handler<const CPU: CpuType>(_: u8, _: u32, _: u32) {
     #[rustfmt::skip]
@@ -415,6 +423,7 @@ pub unsafe extern "C" fn inst_read64_mem_handler<const CPU: CpuType>(_: u8, _: u
     );
 }
 
+#[cfg(target_arch = "arm")]
 #[unsafe(naked)]
 pub unsafe extern "C" fn inst_read64_mem_handler_with_cpsr<const CPU: CpuType>(_: u8, _: u32, _: u32) {
     #[rustfmt::skip]
@@ -457,7 +466,7 @@ pub unsafe extern "C" fn _inst_mem_handler_multiple<
 >(
     params: u32,
     metadata: *const GuestInstMetadata,
-    host_regs: &mut [usize; GUEST_REG_ALLOCATIONS.len()],
+    host_regs: &mut [usize; GUEST_REG_POOL_SIZE],
 ) {
     if (!WRITE_BACK && !VALID) || (!WRITE && NEEDS_PC) || (!WRITE && GX_FIFO) || (USER && NEEDS_PC) {
         unreachable_unchecked()
@@ -512,6 +521,7 @@ pub unsafe extern "C" fn _inst_mem_handler_multiple<
 
 macro_rules! write_mem_handler_multiple_cpsr {
     ($name:ident, $inst_func:ident, $gx_fifo:expr) => {
+        #[cfg(target_arch = "arm")]
         #[unsafe(naked)]
         pub unsafe extern "C" fn $name<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool, const VALID: bool, const USER: bool, const NEEDS_PC: bool>(
             _: u32,
@@ -539,6 +549,7 @@ macro_rules! write_mem_handler_multiple_cpsr {
 
 macro_rules! write_mem_handler_multiple {
     ($name:ident, $inst_func:ident, $gx_fifo:expr) => {
+        #[cfg(target_arch = "arm")]
         #[unsafe(naked)]
         pub unsafe extern "C" fn $name<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool, const VALID: bool, const USER: bool, const NEEDS_PC: bool>(
             _: u32,
@@ -559,6 +570,7 @@ macro_rules! write_mem_handler_multiple {
 write_mem_handler_multiple_cpsr!(inst_write_mem_handler_multiple_with_cpsr, _inst_mem_handler_multiple, false);
 write_mem_handler_multiple!(inst_write_mem_handler_multiple, _inst_mem_handler_multiple, false);
 
+#[cfg(target_arch = "arm")]
 #[unsafe(naked)]
 pub unsafe extern "C" fn inst_read_mem_handler_multiple_with_cpsr<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool, const VALID: bool, const USER: bool, const NEEDS_PC: bool>(
     _: u32,
@@ -582,6 +594,7 @@ pub unsafe extern "C" fn inst_read_mem_handler_multiple_with_cpsr<const CPU: Cpu
     );
 }
 
+#[cfg(target_arch = "arm")]
 #[unsafe(naked)]
 pub unsafe extern "C" fn inst_read_mem_handler_multiple<const CPU: CpuType, const WRITE_BACK: bool, const DECREMENT: bool, const VALID: bool, const USER: bool, const NEEDS_PC: bool>(
     _: u32,

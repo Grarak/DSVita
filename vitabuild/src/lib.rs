@@ -3,7 +3,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-const COMMON_C_FLAGS: &[&str] = &[
+// armv7-only flags: cortex-a9 tuning, thumb2, and the tpidruro tls read apply to the two
+// 32-bit arm targets; other host arches only get the warning suppression.
+const ARM32_C_FLAGS: &[&str] = &[
     "-mcpu=cortex-a9",
     "-mfpu=neon",
     "-mthumb",
@@ -13,6 +15,8 @@ const COMMON_C_FLAGS: &[&str] = &[
     "-Xclang",
     "-read-tp-tpidruro",
 ];
+
+const PORTABLE_C_FLAGS: &[&str] = &["-Wno-invalid-constexpr"];
 
 pub fn get_profile_name() -> String {
     get_out_path().to_str().unwrap().split(std::path::MAIN_SEPARATOR).nth_back(3).unwrap().to_string()
@@ -47,12 +51,21 @@ pub fn is_target_vita() -> bool {
     target == "armv7-sony-vita-newlibeabihf"
 }
 
+pub fn is_target_arm32() -> bool {
+    let target = env::var("TARGET").unwrap();
+    target.starts_with("thumbv7") || target.starts_with("armv7")
+}
+
 pub fn get_common_c_flags() -> Vec<String> {
-    let mut flags = COMMON_C_FLAGS.to_vec().iter().map(|flag| flag.to_string()).collect::<Vec<_>>();
+    let base = if is_target_arm32() { ARM32_C_FLAGS } else { PORTABLE_C_FLAGS };
+    let mut flags = base.to_vec().iter().map(|flag| flag.to_string()).collect::<Vec<_>>();
     if !is_target_vita() {
         flags.push(format!("--target={}", env::var("TARGET").unwrap()));
-        if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
-            flags.push(format!("--sysroot={sysroot}"));
+        // DSVITA_SYSROOT is the armhf cross sysroot; native hosts use their own.
+        if is_target_arm32() {
+            if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
+                flags.push(format!("--sysroot={sysroot}"));
+            }
         }
     }
     if is_profiling() {
@@ -108,8 +121,14 @@ pub fn create_cc_build() -> cc::Build {
 
 pub fn create_bindgen_builder() -> bindgen::Builder {
     let mut bindgen = bindgen::Builder::default();
-    bindgen = bindgen.clang_arg("--target=thumbv7neon-unknown-linux-gnueabihf");
-    if !is_target_vita() {
+    // Both 32-bit arm targets share the thumbv7 layout; other arches bind with their own
+    // triple so struct layouts (pointer width, long) come out right.
+    if is_target_arm32() {
+        bindgen = bindgen.clang_arg("--target=thumbv7neon-unknown-linux-gnueabihf");
+    } else {
+        bindgen = bindgen.clang_arg(format!("--target={}", env::var("TARGET").unwrap()));
+    }
+    if !is_target_vita() && is_target_arm32() {
         if let Ok(sysroot) = env::var("DSVITA_SYSROOT") {
             bindgen = bindgen.clang_arg(format!("--sysroot={sysroot}"));
         }

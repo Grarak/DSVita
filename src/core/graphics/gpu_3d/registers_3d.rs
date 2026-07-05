@@ -10,7 +10,12 @@ use crate::utils;
 use crate::utils::HeapMem;
 use bilge::prelude::*;
 use paste::paste;
+#[cfg(target_arch = "arm")]
 use std::arch::arm::{
+    int32x4_t, vcombine_s32, vget_high_s32, vget_low_s32, vld1_s32, vld1q_s32, vld1q_s32_x3, vld1q_s32_x4, vnegq_s32, vsetq_lane_s32, vshrq_n_s32, vst1q_s32, vst1q_s32_x4, vsub_s32,
+};
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{
     int32x4_t, vcombine_s32, vget_high_s32, vget_low_s32, vld1_s32, vld1q_s32, vld1q_s32_x3, vld1q_s32_x4, vnegq_s32, vsetq_lane_s32, vshrq_n_s32, vst1q_s32, vst1q_s32_x4, vsub_s32,
 };
 use std::arch::{asm, naked_asm};
@@ -700,6 +705,54 @@ impl Emu {
         let regs3d_ptr = regs_3d as *mut _ as usize;
         let skip_mask = regs_3d.flags.skip() as usize;
 
+        #[cfg(not(target_arch = "arm"))]
+        {
+            // Portable twin of the arm asm dispatch loop below, matching its accounting:
+            // cycle budget drops by 4 per non-zero command (wrapping, so a zero budget wraps
+            // to effectively-unbounded exactly like the 32-bit asm), skipped commands still
+            // consume, swap buffers (0x50) and an exhausted budget push the remaining packed
+            // value back and stop.
+            let mut ptr = consumed;
+            'outer: while ptr < fifo_ptr_end {
+                let mut value = unsafe { ptr.read() };
+                ptr = unsafe { ptr.add(1) };
+                loop {
+                    let cmd = (value & 0x7F) as usize;
+                    let param = unsafe { *fifo_param_counts.add(cmd) } as usize;
+                    if cmd != 0 {
+                        cycle_diff = cycle_diff.wrapping_sub(4);
+                    }
+                    let count_bytes = param & !3;
+                    let params_ptr = ptr;
+                    ptr = unsafe { ptr.byte_add(count_bytes) };
+                    if ptr > fifo_ptr_end {
+                        ptr = unsafe { ptr.byte_sub(count_bytes).sub(1) };
+                        unsafe { ptr.write(value) };
+                        break 'outer;
+                    }
+                    if param & skip_mask == 0 {
+                        let func = unsafe { *func_lut_ptr.add(cmd) };
+                        func(unsafe { &mut *(regs3d_ptr as *mut Gpu3DRegisters) }, unsafe { &*(params_ptr as *const [u32; 32]) });
+                    }
+                    let swap_buffers = cmd == 0x50;
+                    if swap_buffers || cycle_diff == 0 {
+                        value >>= 8;
+                        if value != 0 {
+                            ptr = unsafe { ptr.sub(1) };
+                            unsafe { ptr.write(value) };
+                        }
+                        break 'outer;
+                    }
+                    value >>= 8;
+                    if value == 0 {
+                        break;
+                    }
+                }
+            }
+            consumed = ptr;
+        }
+
+        #[cfg(target_arch = "arm")]
         unsafe {
             asm!(
                 ".p2align 5",
@@ -1556,8 +1609,15 @@ impl Gpu3DRegisters {
     }
 
     #[unsafe(naked)]
+    #[cfg(target_arch = "arm")]
     fn exe_swap_buffers(&mut self, _: &[u32; 32]) {
         naked_asm!("add lr, #0xC", "b {}", sym Self::exe_swap_buffers_impl);
+    }
+
+    // Non-arm hosts have no lr-hijack: the dispatch loop checks for cmd 0x50 instead.
+    #[cfg(not(target_arch = "arm"))]
+    fn exe_swap_buffers(&mut self, params: &[u32; 32]) {
+        self.exe_swap_buffers_impl(params);
     }
 
     fn exe_swap_buffers_impl(&mut self, params: &[u32; 32]) {

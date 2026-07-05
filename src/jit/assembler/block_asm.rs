@@ -17,100 +17,7 @@ use vixl::{
 pub const GUEST_REGS_PTR_REG: Reg = Reg::R3;
 pub const CPSR_TMP_REG: Reg = Reg::R0;
 
-#[derive(Copy, Clone)]
-pub struct GuestInstMetadataFastMem {
-    pub start_offset: u16,
-    pub size: u16,
-    pub op: Op,
-    pub operands: Operands,
-    pub op0: Reg,
-    pub opcode_offset: usize,
-    pub is_os_irq_handler: bool,
-}
-
-impl GuestInstMetadataFastMem {
-    fn new(start_offset: u16, size: u16, op: Op, operands: Operands, op0: Reg, opcode_offset: usize, is_os_irq_handler: bool) -> Self {
-        GuestInstMetadataFastMem {
-            start_offset,
-            size,
-            op,
-            operands,
-            op0,
-            opcode_offset,
-            is_os_irq_handler,
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct GuestInstMetadataSlowMem {
-    pub initial_patch_addr: u32,
-    pub io_func: *const (),
-}
-
-#[derive(Copy, Clone)]
-pub union GuestInstMetadataShared {
-    pub fast: GuestInstMetadataFastMem,
-    pub slow: GuestInstMetadataSlowMem,
-}
-
-impl GuestInstMetadataShared {
-    fn new(fast: GuestInstMetadataFastMem) -> Self {
-        GuestInstMetadataShared { fast }
-    }
-}
-
-#[derive(Clone)]
-pub struct GuestInstMetadata {
-    pub s: GuestInstMetadataShared,
-    pub pc: u32,
-    pub total_cycle_count: u16,
-    pub dirty_guest_regs: RegReserve,
-    pub mapped_guest_regs: [Reg; GUEST_REGS_LENGTH],
-}
-
-impl GuestInstMetadata {
-    pub fn new(
-        fast_mem_start_offset: u16,
-        fast_mem_size: u16,
-        opcode_offset: usize,
-        is_os_irq_handler: bool,
-        pc: u32,
-        total_cycle_count: u16,
-        op: Op,
-        operands: Operands,
-        op0: Reg,
-        dirty_guest_regs: RegReserve,
-        mapped_guest_regs: [Reg; GUEST_REGS_LENGTH],
-    ) -> Self {
-        GuestInstMetadata {
-            s: GuestInstMetadataShared::new(GuestInstMetadataFastMem::new(fast_mem_start_offset, fast_mem_size, op, operands, op0, opcode_offset, is_os_irq_handler)),
-            pc,
-            total_cycle_count,
-            dirty_guest_regs,
-            mapped_guest_regs,
-        }
-    }
-}
-
-#[repr(C)]
-pub struct GuestInstOffset {
-    pub offset: u16,
-    pub pre_cycle_count_sum: u16,
-    pub mapping: [*const u32; GUEST_REG_ALLOCATIONS.len()],
-    pub pc: u32,
-}
-
-impl GuestInstOffset {
-    fn new(offset: u16, pre_cycle_count_sum: u16, pc: u32) -> Self {
-        GuestInstOffset {
-            offset,
-            mapping: [ptr::null(); GUEST_REG_ALLOCATIONS.len()],
-            pre_cycle_count_sum,
-            pc,
-        }
-    }
-}
+pub use super::{GuestInstMetadata, GuestInstMetadataFastMem, GuestInstMetadataShared, GuestInstMetadataSlowMem, GuestInstOffset};
 
 pub struct BlockAsm {
     masm: MacroAssembler,
@@ -306,6 +213,21 @@ impl BlockAsm {
         self.mrs2(tmp_reg, SpecialRegisterType_CPSR.into());
         self.lsr5(flags_update, Cond::AL, tmp_reg, tmp_reg, &24.into());
         self.strb2(tmp_reg, &(GUEST_REGS_PTR_REG, Reg::CPSR as i32 * 4 + 3).into());
+    }
+
+    /// Like store_guest_cpsr_reg, but keeps the full cpsr in keep_reg so the flags can later be
+    /// restored with a register msr instead of reloading them through memory. keep_reg must
+    /// survive until the restore: the allocator only hands out r4-r11 and the assembler only
+    /// scratches ip, so host lr is safe across accounting and relocation as long as nothing is
+    /// called in between.
+    pub fn store_guest_cpsr_reg_keep(&mut self, keep_reg: Reg, scratch_reg: Reg) {
+        self.mrs2(keep_reg, SpecialRegisterType_CPSR.into());
+        self.lsr5(FlagsUpdate_DontCare, Cond::AL, scratch_reg, keep_reg, &24.into());
+        self.strb2(scratch_reg, &(GUEST_REGS_PTR_REG, Reg::CPSR as i32 * 4 + 3).into());
+    }
+
+    pub fn restore_guest_cpsr_from_reg(&mut self, keep_reg: Reg) {
+        self.msr2(MaskedSpecialRegisterType_CPSR_f.into(), &keep_reg.into());
     }
 
     pub fn save_dirty_guest_cpsr(&mut self, clear: bool) {

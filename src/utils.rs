@@ -1,4 +1,9 @@
 use std::alloc::Layout;
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{
+    uint16x4_t, uint32x4_t, uint8x16x2_t, uint8x8_t, vand_u16, vcombine_u16, vdup_n_u16, vld1_u8, vld1q_u8, vmovn_u16, vmvn_u16, vshr_n_u16, vsub_u16, vtbl4_u8, vzip_u16, vzip_u8,
+};
+#[cfg(target_arch = "arm")]
 use std::arch::arm::{uint16x4_t, uint32x4_t, uint8x16x2_t, uint8x8_t, vand_u16, vcombine_u16, vdup_n_u16, vld1_u8, vld1q_u8, vmovn_u16, vmvn_u16, vshr_n_u16, vsub_u16, vtbl4_u8, vzip_u16, vzip_u8};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -90,7 +95,7 @@ pub type HeapArrayU8<const SIZE: usize> = HeapArray<u8, SIZE>;
 pub type HeapArrayU16<const SIZE: usize> = HeapArray<u16, SIZE>;
 pub type HeapArrayI16<const SIZE: usize> = HeapArray<i16, SIZE>;
 pub type HeapArrayU32<const SIZE: usize> = HeapArray<u32, SIZE>;
-pub type HeapArrayUsize<const SIZE: usize> = HeapArray<usize, SIZE>;
+pub type HeapArrayUsize<const SIZE: usize> = HeapArray<usize, SIZE, { align_of::<usize>() }>;
 
 pub struct HeapArray<T, const SIZE: usize, const ALIGNMENT: usize = 4>(*mut T);
 

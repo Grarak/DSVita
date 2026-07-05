@@ -14,7 +14,10 @@ use crate::utils::{self, array_init, HeapArray};
 use bilge::prelude::*;
 use core::slice;
 use gl::types::GLuint;
+#[cfg(target_arch = "arm")]
 use std::arch::arm::{vandq_u8, vdupq_n_u8, vget_high_u8, vget_low_u8, vld1q_u8_x2, vld1q_u8_x4, vrev64q_u8, vshrq_n_u8, vst1_u8, vst1q_u8, vzipq_u8};
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{vandq_u8, vdupq_n_u8, vget_high_u8, vget_low_u8, vld1q_u8_x2, vld1q_u8_x4, vrev64q_u8, vshrq_n_u8, vst1_u8, vst1q_u8, vzipq_u8};
 use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::marker::ConstParamTy;
 use std::mem::MaybeUninit;

@@ -282,10 +282,21 @@ impl JitAsm<'_> {
                 block_asm.b3(!cond, skip_label, BranchHint_kNear);
             }
 
-            block_asm.save_dirty_guest_cpsr(false);
-
             let jump_to_index = (inst_index as isize + ((aligned_target_pc as isize - block_asm.current_pc as isize) >> pc_shift)) as usize;
             let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
+
+            let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
+            let basic_block_input_regs = self.analyzer.basic_blocks[basic_block_index].get_inputs();
+            // Loop back-edges live here: when the target consumes the flags the accounting cmp
+            // is about to clobber, carry the cpsr in host lr and restore it with a register msr
+            // instead of storing and reloading it through memory every iteration. BRANCH_LOG
+            // calls in between, which clobbers lr, so it falls back to the memory reload.
+            let keep_cpsr_in_lr = !BRANCH_LOG && basic_block_input_regs.is_reserved(Reg::CPSR) && block_asm.dirty_guest_regs.is_reserved(Reg::CPSR);
+            if keep_cpsr_in_lr {
+                block_asm.store_guest_cpsr_reg_keep(Reg::LR, Reg::R0);
+            } else {
+                block_asm.save_dirty_guest_cpsr(false);
+            }
 
             block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
             self.emit_count_cycles(self.jit_buf.insts_cycle_counts[inst_index], block_asm);
@@ -309,11 +320,11 @@ impl JitAsm<'_> {
                 block_asm.restore_guest_regs_ptr();
             }
 
-            let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
-            let basic_block = &self.analyzer.basic_blocks[basic_block_index];
-            let basic_block_input_regs = basic_block.get_inputs();
-            block_asm.relocate_for_basic_block(FlagsUpdate_DontCare, basic_block.output_regs, basic_block_index);
-            if basic_block_input_regs.is_reserved(Reg::CPSR) {
+            let basic_block_output_regs = self.analyzer.basic_blocks[basic_block_index].output_regs;
+            block_asm.relocate_for_basic_block(FlagsUpdate_DontCare, basic_block_output_regs, basic_block_index);
+            if keep_cpsr_in_lr {
+                block_asm.restore_guest_cpsr_from_reg(Reg::LR);
+            } else if basic_block_input_regs.is_reserved(Reg::CPSR) {
                 block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
             }
             block_asm.b_basic_block(basic_block_index);
@@ -347,10 +358,19 @@ impl JitAsm<'_> {
         let aligned_target_pc = forward_branch.target_pc & !1;
         let pc_shift = if thumb { 1 } else { 2 };
 
-        block_asm.save_dirty_guest_cpsr(false);
-
         let jump_to_index = (inst_index as isize + ((aligned_target_pc as isize - block_asm.current_pc as isize) >> pc_shift)) as usize;
         let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
+
+        let target_basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
+        let target_basic_block_input_regs = self.analyzer.basic_blocks[target_basic_block_index].get_inputs();
+        // Same as the backward-branch case: carry the cpsr in host lr past the accounting and
+        // jit-entry checks when the target consumes the flags they clobber.
+        let keep_cpsr_in_lr = !BRANCH_LOG && target_basic_block_input_regs.is_reserved(Reg::CPSR) && block_asm.dirty_guest_regs.is_reserved(Reg::CPSR);
+        if keep_cpsr_in_lr {
+            block_asm.store_guest_cpsr_reg_keep(Reg::LR, Reg::R0);
+        } else {
+            block_asm.save_dirty_guest_cpsr(false);
+        }
 
         block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
         self.emit_count_cycles(self.jit_buf.insts_cycle_counts[inst_index], block_asm);
@@ -387,14 +407,14 @@ impl JitAsm<'_> {
             block_asm.restore_guest_regs_ptr();
         }
 
-        let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
-        let basic_block = &self.analyzer.basic_blocks[basic_block_index];
-        let basic_block_input_regs = basic_block.get_inputs();
-        block_asm.relocate_for_basic_block(FlagsUpdate_DontCare, basic_block.output_regs, basic_block_index);
-        if basic_block_input_regs.is_reserved(Reg::CPSR) {
+        let basic_block = &self.analyzer.basic_blocks[target_basic_block_index];
+        block_asm.relocate_for_basic_block(FlagsUpdate_DontCare, basic_block.output_regs, target_basic_block_index);
+        if keep_cpsr_in_lr {
+            block_asm.restore_guest_cpsr_from_reg(Reg::LR);
+        } else if target_basic_block_input_regs.is_reserved(Reg::CPSR) {
             block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
         }
-        block_asm.b_basic_block(basic_block_index);
+        block_asm.b_basic_block(target_basic_block_index);
 
         self.jit_buf.run_scheduler_labels.push(JitRunSchedulerLabel::new(
             forward_branch.inst_index,

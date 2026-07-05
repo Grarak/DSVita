@@ -1,5 +1,8 @@
 use crate::math::Matrix;
+#[cfg(target_arch = "arm")]
 use std::arch::arm::vst1q_s32_x4;
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::vst1q_s32_x4;
 use std::intrinsics::unlikely;
 use std::mem;
 use std::ops::{Index, IndexMut};

@@ -5,10 +5,16 @@ use crate::core::memory::mmu::MMU_PAGE_SHIFT;
 use crate::core::memory::{regions, vram};
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
+#[cfg(target_arch = "arm")]
 use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
+#[cfg(target_arch = "arm")]
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
-use crate::jit::assembler::block_asm::{BlockAsm, GuestInstMetadata, GuestInstOffset};
+#[cfg(target_arch = "arm")]
+use crate::jit::assembler::block_asm::BlockAsm;
+use crate::jit::assembler::{GuestInstMetadata, GuestInstOffset};
+#[cfg(target_arch = "arm")]
 use crate::jit::assembler::{arm, thumb};
+#[cfg(target_arch = "arm")]
 use crate::jit::inst_mem_handler::{
     inst_read64_mem_handler, inst_read64_mem_handler_with_cpsr, inst_read_io_mem_handler, inst_read_io_mem_handler_with_cpsr, inst_read_mem_handler, inst_read_mem_handler_multiple,
     inst_read_mem_handler_multiple_with_cpsr, inst_read_mem_handler_with_cpsr, inst_write_io_mem_handler, inst_write_io_mem_handler_with_cpsr, inst_write_mem_handler, inst_write_mem_handler_gxfifo,
@@ -260,6 +266,7 @@ impl Emu {
         }
     }
 
+    #[cfg(target_arch = "arm")]
     pub fn jit_insert_block(&mut self, block_asm: BlockAsm, debug_info: &JitDebugInfo, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu: CpuType) -> (*const extern "C" fn(u32), bool) {
         macro_rules! insert {
             ($entries:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
@@ -434,6 +441,7 @@ impl JitMemory {
         (addr, flushed)
     }
 
+    #[cfg(target_arch = "arm")]
     fn insert(&mut self, block_asm: BlockAsm, cpu_type: CpuType) -> (usize, usize, bool) {
         let opcodes = block_asm.get_code_buffer();
         let aligned_size = utils::align_up(opcodes.len(), PAGE_SIZE);
@@ -512,6 +520,7 @@ impl JitMemory {
         }
     }
 
+    #[cfg(target_arch = "arm")]
     unsafe fn find_guest_inst_metadata(&mut self, jit_pc: usize) -> &mut GuestInstMetadata {
         let jit_mem_offset = jit_pc - self.mem.as_ptr() as usize;
         let metadata_block_page = jit_mem_offset >> PAGE_SHIFT;
@@ -527,6 +536,7 @@ impl JitMemory {
         unsafe { unreachable_unchecked() }
     }
 
+    #[cfg(target_arch = "arm")]
     fn get_inst_mem_handler_fun<const CPU: CpuType>(is_write: bool, transfer: SingleTransfer, guest_memory_addr: u32, cpsr_dirty: bool, io_func: &mut Option<*const ()>) -> *const () {
         macro_rules! _get_inst_mem_handler_fun {
             ($is_write:expr, $size:expr, $signed:expr, $write_func:ident, $read_func:ident, $read_func_64:ident) => {
@@ -639,6 +649,7 @@ impl JitMemory {
         }
     }
 
+    #[cfg(target_arch = "arm")]
     fn get_inst_mem_multiple_handler_fun<const CPU: CpuType>(
         is_write: bool,
         transfer: MultipleTransfer,
@@ -741,6 +752,7 @@ impl JitMemory {
         }
     }
 
+    #[cfg(target_arch = "arm")]
     pub fn get_slow_mem_length(op: Op) -> usize {
         match op {
             Op::Str(transfer) => {
@@ -777,12 +789,14 @@ impl JitMemory {
         }
     }
 
+    #[cfg(target_arch = "arm")]
     fn write_to_fast_mem<T>(fast_mem: &mut [u8], offset: &mut usize, value: T) {
         let ptr: &u8 = unsafe { mem::transmute(&value) };
         utils::write_to_mem_slice(fast_mem, *offset, unsafe { slice::from_raw_parts(ptr, size_of::<T>()) });
         *offset += size_of::<T>();
     }
 
+    #[cfg(target_arch = "arm")]
     fn fast_mem_mov_reg<const THUMB: bool>(fast_mem: &mut [u8], offset: &mut usize, reg: Reg, reg2: Reg) {
         if THUMB {
             Self::write_to_fast_mem(fast_mem, offset, thumb::MovReg::mov(reg, reg2));
@@ -791,6 +805,7 @@ impl JitMemory {
         }
     }
 
+    #[cfg(target_arch = "arm")]
     fn fast_mem_mov<const THUMB: bool>(fast_mem: &mut [u8], offset: &mut usize, reg: Reg, value: u32) {
         let (opcodes, length) = if THUMB { thumb::Mov::mov32(reg, value) } else { arm::alu_assembler::AluImm::mov32(reg, value) };
         for opcode in &opcodes[..length] {
@@ -798,6 +813,7 @@ impl JitMemory {
         }
     }
 
+    #[cfg(target_arch = "arm")]
     fn fast_mem_blx<const THUMB: bool>(fast_mem: &mut [u8], offset: &mut usize, reg: Reg) {
         if THUMB {
             Self::write_to_fast_mem(fast_mem, offset, thumb::BlxReg::blx_reg(reg));
@@ -806,6 +822,7 @@ impl JitMemory {
         }
     }
 
+    #[cfg(target_arch = "arm")]
     unsafe fn execute_patch_slow_mem<const THUMB: bool>(host_pc: &mut usize, guest_memory_addr: u32, fast_mem: &mut [u8], guest_inst_metadata: &mut GuestInstMetadata, cpu: CpuType) {
         let mut slow_mem_length = 0;
 
@@ -1018,6 +1035,7 @@ impl JitMemory {
         addr >= self.mem.as_ptr() as usize && addr < self.mem.as_ptr() as usize + JIT_MEMORY_SIZE
     }
 
+    #[cfg(target_arch = "arm")]
     pub unsafe fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType, _: &ArmContext) -> bool {
         if !self.is_in_jit_mem(*host_pc) {
             eprintln!("Segfault outside of guest context");
