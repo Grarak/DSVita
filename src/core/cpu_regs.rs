@@ -4,6 +4,7 @@ use crate::core::exception_handler::ExceptionVector;
 use crate::core::thread_regs::Cpsr;
 use crate::core::CpuType::ARM7;
 use crate::core::{exception_handler, CpuType};
+use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
 use std::fmt::{Debug, Formatter};
 use std::mem;
@@ -103,6 +104,11 @@ impl Emu {
         let regs = cpu.thread_regs();
         if regs.ime != 0 && (regs.ie & regs.irf) != 0 && !Cpsr::from(regs.cpsr).irq_disable() {
             self.cpu_schedule_interrupt(cpu);
+            // Make sure to run the interrupt as soon as possible
+            let asm = unsafe { (cpu.jit_asm_addr() as *mut JitAsm).as_mut_unchecked() };
+            if asm.runtime_data.accumulated_cycles < cpu.max_branch_loop_cycle_count() as u16 {
+                asm.runtime_data.accumulated_cycles = cpu.max_branch_loop_cycle_count() as u16;
+            }
         }
     }
 
