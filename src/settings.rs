@@ -399,6 +399,10 @@ impl Settings {
         *self.0[SettingId::Arm7Emu as usize].value.as_list_mut().unwrap().0 = value as usize
     }
 
+    pub fn set_hle_os_irq_handler(&mut self, value: bool) {
+        *self.0[SettingId::HleOsIrqHandler as usize].value.as_bool_mut().unwrap() = value;
+    }
+
     pub fn set_retroachievements(&mut self, value: bool) {
         unsafe { *self.0[SettingId::Retroachievements as usize].value.as_bool_mut().unwrap_unchecked() = value };
     }

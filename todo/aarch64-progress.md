@@ -54,18 +54,45 @@ Test setup: arm64 binaries run on the local machine; arm32 binaries on the pi5 (
 - Verified on the pi5 (release, threshold 100): HG -e 0 uncapped 3/3 runs clean past the
   old deterministic death point (120s/60s/60s wall vs 1-3s to crash before), title intro
   rendering; a64 local build runs it clean too. Vita vpk builds. No emitter/jit changes.
+  Post-fix gameplay check: HG title → Continue → save loaded → walking the overworld
+  (follower + in-game menu working); Diamond -e 2 title → Continue → save loaded, adventure
+  journal interactive (its close is touch-only — no remote touch injection, overworld view
+  unverified). Mechanism-proof trace: the fixed blx callsite ran 100x with correct lr, first
+  occurrence at the exact record index where the broken trace diverged.
 - **Disassembler cycle values disagree with NooDS** for: swp (disasm 4, NooDS arm9 2),
   ldrd (disasm 3, NooDS 2), ldm/stm formula (above). The jit charges the disassembler values.
   Interpreter now follows NooDS for the newly implemented ops → interp/jit parity for these
   ops differs by the delta. Needs a maintainer call: fix the disassembler (changes jit timing)
   or mirror the disassembler in the interpreter.
-- a64 visual verification of a commercial boot still outstanding (local machine is headless;
-  HG runs 180s+ deep and clean by trace/marker evidence).
+- a64 visual verification of a commercial boot still outstanding (the dev box blocks
+  unattended screenshots: GNOME denies the dbus capture, no grim; HG runs 240s+ deep and
+  clean by survival/vblank evidence). The pi visual run stands in for rendering.
+- **The long-standing pi "bottom-screen 2D garble" is CLOSED: it was the box's GPU driver,
+  not emulation.** Software GL (`LIBGL_ALWAYS_SOFTWARE=1`) renders pixel-perfect. Rule
+  (maintainer): always run with software rendering — baked into tools/pi_run.sh (the local
+  launch scripts already set it) and the run-on-testbox skill.
 
-## Stage 2 — cross-arch tracediff harness
-- Not started as a harness. Learned: record pairing breaks across jit-vs-interp variants of
-  the same function (unlogged taken branches + jit-only bl records) — strict mode needs
-  same-engine pairs or a smarter differ.
+## Stage 2 — cross-arch tracediff harness: DONE, acceptance met
+- `tools/tracediff.sh <rom> [records] [arm7_emu]`: builds armhf (threshold 255) + a64 with
+  DEBUG_LOG, runs both from the test box's .sav with `--hle-irq 0`, captures exactly N
+  records per side (`DSVITA_INST_LOG_MAX`, race-free logger-side stop — SIGINT tears
+  records), pulls, `trace_diff.py --strict` (record-for-record, no resync, first diff
+  exits 1).
+- **Acceptance: hello_world 12M and a commercial boot 100M records strict-identical,
+  ARM9+ARM7 interleaved, zero divergence** (armhf-interp on the pi5 vs a64-interp local).
+- Two reference-config bugs found on the way: (1) the fs-clear-overlay gate compiled
+  everything on NTR-sdk titles even at threshold 255 (now stands down there; const-folds
+  away at production threshold — `rely_on_fs_invalidation()` has NO hle condition, memory
+  of "HLE-only" was wrong); (2) the os irq handler substitution needs `--hle-irq 0` on
+  both sides (HLE substitution exists only in compiled code).
+- Trace size work (maintainer ask): delta-encoded records (~6.5x smaller, 12.5 B/record on
+  a real boot; keyframe per 2^20/cpu; zeroed padding → identical runs give byte-identical
+  files), `DSVITA_INST_LOG_TEXT=0` drops text records (commercial boot: text > inst bytes).
+  All readers handle old+new format. Pull-speed benchmark: rsync -z / rsync+zstd / scp all
+  ~equal on the LAN (the box-side read is the bottleneck, ~60 MB/s); an ssh|zstd pipe wins
+  only ~10% — not adopted; the delta format is the real 6.5x.
+- Rules (maintainer): never decode traces on the box — always pull the .ilog and analyze
+  locally.
 
 ## Stages 3-6
 - Not started (seam refactor, vixl a64 with hardcoded instruction lists, A64 backend,

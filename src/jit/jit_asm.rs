@@ -540,8 +540,13 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     // found, everything must run through the jit; once found, only that pc must. Interpreting
     // it skips the hook and stale blocks of the previous overlay keep executing (Pokemon
     // Diamond save-resume corruption).
-    let interp_blocked_by_fs_clear_overlay =
-        asm.cpu == ARM9 && asm.emu.nitro_sdk_version.rely_on_fs_invalidation() && (asm.emu.fs_clear_overlay_image_addr == 0 || guest_pc == asm.emu.fs_clear_overlay_image_addr);
+    // At INTERP_THRESHOLD 255 ("always interpret", the trace-reference config) the hazard the
+    // hook guards against cannot exist — nothing ever compiles, so there are no stale blocks
+    // to invalidate — and the gate would silently turn an NTR-sdk title into a mixed run.
+    let interp_blocked_by_fs_clear_overlay = crate::jit::interpreter::INTERP_THRESHOLD != 255
+        && asm.cpu == ARM9
+        && asm.emu.nitro_sdk_version.rely_on_fs_invalidation()
+        && (asm.emu.fs_clear_overlay_image_addr == 0 || guest_pc == asm.emu.fs_clear_overlay_image_addr);
 
     // TWL-sdk titles under HLE arm7 load cpu-sync microcode at 0x1FF8xxx whose real code spins
     // on an ARM7 reply that only the HLE substitution (emit_nitrosdk_func) can deliver.
@@ -556,11 +561,9 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     if !is_os_irq_handler && !interp_blocked_by_fs_clear_overlay && !interp_blocked_by_twl_microcode {
         let count_ptr = asm.emu.jit.jit_memory_map.get_exec_count(guest_pc);
         if count_ptr.is_null() {
-            panic!(
-                "{:?} dispatch to unmapped guest pc {guest_pc:x} thumb {thumb}, last interpreted {:x?}",
-                asm.cpu,
-                unsafe { crate::jit::interpreter::LAST_INTERPRETED }
-            );
+            panic!("{:?} dispatch to unmapped guest pc {guest_pc:x} thumb {thumb}, last interpreted {:x?}", asm.cpu, unsafe {
+                crate::jit::interpreter::LAST_INTERPRETED
+            });
         }
         unsafe { assert_unchecked(!count_ptr.is_null()) };
         let count = unsafe { (*count_ptr).saturating_add(1) };

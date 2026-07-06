@@ -32,6 +32,10 @@ listed below.
   breakout/fallback.
 - **CPSR cross-block contract**: blocks are emitted assuming guest CPSR memory is clean at
   entry; keeping flags in a host register across block edges is unsound.
+- **Every linking branch must write the guest LR itself** (jit emitters and interpreter
+  handlers both). The return stack is emulator bookkeeping, not the architecture: passing
+  the return address only to the return-stack push leaves the guest r14 stale, and the
+  callee's `bx lr` then jumps wherever the previous call went (5.6).
 - Guest regs map to host R4–R11 contiguously; `GUEST_REGS_PTR_REG = R3`, `CPSR_TMP_REG = R0`
   — R0–R3/R12/LR are scratch, so a helper call emitted mid-block clobbers them. (A hand-rolled
   emitter change that parked a value in R0 across a call faulted instantly; even R8 parking
@@ -176,6 +180,13 @@ Ordered by cost. Every technique below cracked at least one real bug.
      search, or it aligns far-future visits and reports bogus divergences.
    - Interleaved `memory read/write at X with value Y` text records show io handshakes,
      overlay/file loads, and callback-pointer provenance for free.
+   - **Memory-watch a region across a whole trace** by scanning the raw ilog and
+     reconstructing each store/load's effective address from the post-execution registers
+     (invert writeback; ~15 s per 24 GB with a small standalone scanner). Histogram the
+     hits by (pc, sp): a one-off sp variant among thousands of identical executions IS the
+     anomaly. In the text records, `failed to branch lr ... desired: ffffffff` is routine
+     (empty return stack); a failed branch-lr with a *real* desired address means a callee
+     returned somewhere its caller never expected — follow that first.
 6. **Static disassembly of guest code.** armhf binutils via qemu:
    `qemu-arm -L <sysroot> .../arm-linux-gnueabihf-objdump -D -b binary -m armv5te
    [-M force-thumb] --adjust-vma=<ram_addr> <bin>`. Extract the arm9 binary from a .nds via
@@ -288,6 +299,19 @@ without dispatches = starvation (5.3); (c) healthy irq traffic but a dead render
 the frontend/GL or a crashed helper thread (the StorageFull panic killed the cpu thread
 while the UI kept running).
 
+### 5.6 Stale guest LR: the return-stack safety net hides the wrong turn
+A deep, deterministic corruption crash (a callback table zeroed mid-frame → null call →
+garbage walk → unmapped-dispatch panic) traced back to one interpreter path (cond-0xF
+`blx imm`) that fed the return address to the return-stack push but never wrote the guest
+r14. The callee's `bx lr` then returned to the PREVIOUS call's lr — into the middle of an
+outer function. The return-stack mismatch was absorbed by the exit-guest-context safety
+net (execution "resumed" at the stale lr looking almost legitimate), the outer function
+re-ran half its body with sp still one frame low, and its epilogue stores landed on its
+caller's locals — the callback table. Lessons: the safety net converts a hard wrong-turn
+into subtle downstream corruption, so treat real-address `failed to branch lr` records as
+primary evidence (§4.5); and a function's own pcs executing at a never-before-seen sp is
+the fingerprint of a broken call/return upstream, not of the function itself.
+
 ---
 
 ## 6. Performance lessons — measured on hardware, do NOT retry
@@ -369,6 +393,9 @@ fast path, batched ldm/stm, store-only breakout checks.
   Reference technique: §4.7 NooDS write-watch.
 - `cpu_send_interrupt`'s enabled-arrival path could theoretically starve like 5.3 (no known
   repro; the fix pattern is the same quantum saturation).
-- Interpreter coverage gaps that fall back to the JIT (fine for correctness): SWI, MCR/MRC,
-  LDRD/STRD, SWP, DSP muls, cond=0xF space, user-banked ldm/stm, empty-rlist thumb block
-  transfers.
+- The interpreter now covers the full instruction set (the former fallback list — SWI,
+  MCR/MRC, LDRD/STRD, SWP, DSP muls, cond=0xF space, user-banked ldm/stm, empty rlists —
+  is implemented from the NooDS reference). Open disagreement: the disassembler's cycle
+  values differ from NooDS for SWP (4 vs arm9 2), LDRD (3 vs 2) and the ldm/stm formula;
+  the jit charges the disassembler, the interpreter follows NooDS for the new ops.
+  Needs one source of truth (§1 cycle accounting says: mirror the jit).

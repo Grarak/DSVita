@@ -33,6 +33,9 @@ Mouse click on the bottom-screen area = touch (needs local display; remotely the
 touch injection — only keys).
 
 Rules that bite:
+- ALWAYS launch with `LIBGL_ALWAYS_SOFTWARE=1` — the box's GPU driver renders incorrectly
+  (garbled 2D layers); software GL is the reference. Never diagnose rendering from a
+  GPU-driver run.
 - ALWAYS pass a framelimit: `-f 1` for interaction, `-f 5`/`-f 9` to fast-forward through
   boot/loading. Uncapped (`-f 0`) is uninteractable.
 - `pkill -f` / `pgrep -f` over ssh match the remote shell's own command line and kill your

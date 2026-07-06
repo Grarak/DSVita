@@ -54,4 +54,16 @@ overlay/file loads, and pointer provenance — grep them before writing new tool
 - An interp-vs-jit diff cannot distinguish "interp = hardware, jit HLE ≠ hardware" (benign)
   from "interp ≠ hardware" (bug) — break ties with a third reference (NooDS; instrument its
   Memory::write with an address watch for a known-good write sequence).
-- Process multi-GB decoded traces on the dev machine, not the test box.
+- **Never decode or analyze traces on the test box** — always scp the .ilog to the dev
+  machine first (maintainer rule). The box's SD is slow and small; the dev machine chews a
+  24 GB log in seconds.
+
+## Keeping traces small
+
+- `DSVITA_INST_LOG_TEXT=0` drops the interleaved text records — on a commercial boot they
+  outweigh the instruction records. Strict A/B diffs never need them.
+- Instruction records are delta-encoded automatically (~5x smaller than the old fixed 80 B
+  records; keyframe every 2^20 records per cpu). All readers (decode-inst-log,
+  trace_diff.py) handle both formats.
+- `DSVITA_INST_LOG_MAX=N` stops the log after exactly N records, flushed from the logging
+  thread — use it instead of SIGINT for A/B pairs (a signal stop can tear a record).

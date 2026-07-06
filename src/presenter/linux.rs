@@ -109,6 +109,15 @@ impl Presenter {
                         .required(false)
                         .value_parser(value_parser!(String)),
                 )
+                .arg(
+                    // Strict cross-engine trace diffs need the raw os irq handler on both
+                    // sides: the HLE substitution only exists in compiled code, so an
+                    // interpreter-only run and a jit run diverge inside the handler body.
+                    arg!(--"hle-irq" <bool> "0/1: override the 'HLE OS irq handler' setting (debug builds only)")
+                        .num_args(1)
+                        .required(false)
+                        .value_parser(value_parser!(u8)),
+                )
         }
         let arg_matches = arg_matches
             .arg(arg!([nds_rom] "NDS rom to run").num_args(1).required(true).value_parser(value_parser!(String)))
@@ -230,6 +239,11 @@ impl Presenter {
             settings.set_framelimit(*self.arg_matches.get_one::<u8>("framelimit").unwrap_or(&0));
             settings.set_audio(self.arg_matches.get_flag("audio"));
             settings.set_arm7_emu(Arm7Emu::from(*self.arg_matches.get_one::<u8>("arm7_emu").unwrap_or(&0)));
+            if DEBUG_LOG {
+                if let Some(hle_irq) = self.arg_matches.try_get_one::<u8>("hle-irq").ok().flatten() {
+                    settings.set_hle_os_irq_handler(*hle_irq != 0);
+                }
+            }
 
             let file_name = file_path.file_name().unwrap().to_str().unwrap();
             let save_path = file_path.parent().unwrap().join(format!("{file_name}.sav"));

@@ -29,6 +29,13 @@ import sys
 RECORD_SIZE = 80  # InstLogRecord: regs[15]+pc+cpsr+spsr+opcode+cpu, repr(C), 4-byte aligned
 TAG_INST = 0
 TAG_TEXT = 1
+TAG_INST_DELTA = 2  # delta vs the same cpu's previous record; see debug_inst_log.rs
+
+FLAG_CPU7 = 1 << 0
+FLAG_PC_SEQ = 1 << 1
+FLAG_OPCODE_SAME = 1 << 2
+FLAG_SPSR_SAME = 1 << 3
+FLAG_CPSR_SAME = 1 << 4
 
 # Optional cpu filter: if set (via --cpu N), read_inst skips records from other cpus.
 # Used when diffing -e 0 (LLE, has arm7 records) vs -e 2 (HLE, arm7 absent) — filter to
@@ -36,9 +43,10 @@ TAG_TEXT = 1
 CPU_FILTER = None
 
 
-def read_inst(f):
+def read_inst(f, prev):
     """Read one inst record, skipping any interleaved text records. None at EOF.
-    If CPU_FILTER is set, skip records whose cpu doesn't match."""
+    `prev` is the caller-owned per-cpu delta state ([rec_or_None, rec_or_None]); it is
+    updated on EVERY record, including ones skipped by CPU_FILTER."""
     while True:
         tag = f.read(1)
         if not tag:
@@ -51,9 +59,71 @@ def read_inst(f):
             regs = struct.unpack("<15I", buf[0:60])
             pc, cpsr, spsr, opcode = struct.unpack("<4I", buf[60:76])
             cpu = buf[76]
+            rec = (cpu, pc, opcode, cpsr, spsr, regs)
+            if cpu < 2:
+                prev[cpu] = rec
             if CPU_FILTER is not None and cpu != CPU_FILTER:
                 continue
-            return (cpu, pc, opcode, cpsr, spsr, regs)
+            return rec
+        elif t == TAG_INST_DELTA:
+            head = f.read(3)
+            if len(head) < 3:
+                return None
+            flags = head[0]
+            mask = head[1] | (head[2] << 8)
+            cpu = flags & FLAG_CPU7
+            p = prev[cpu]
+            if p is None:
+                return None  # delta before keyframe — corrupt
+            nwords = (
+                (0 if flags & FLAG_PC_SEQ else 1)
+                + (0 if flags & FLAG_CPSR_SAME else 1)
+                + (0 if flags & FLAG_SPSR_SAME else 1)
+                + (0 if flags & FLAG_OPCODE_SAME else 1)
+                + bin(mask).count("1")
+            )
+            data = f.read(4 * nwords)
+            if len(data) < 4 * nwords:
+                return None
+            words = struct.unpack(f"<{nwords}I", data) if nwords else ()
+            w = 0
+            _, ppc, popcode, pcpsr, pspsr, pregs = p
+            if flags & FLAG_PC_SEQ:
+                pc = None  # resolved after cpsr
+            else:
+                pc = words[w]
+                w += 1
+            if flags & FLAG_CPSR_SAME:
+                cpsr = pcpsr
+            else:
+                cpsr = words[w]
+                w += 1
+            if flags & FLAG_SPSR_SAME:
+                spsr = pspsr
+            else:
+                spsr = words[w]
+                w += 1
+            if flags & FLAG_OPCODE_SAME:
+                opcode = popcode
+            else:
+                opcode = words[w]
+                w += 1
+            if mask:
+                regs = list(pregs)
+                for i in range(15):
+                    if mask & (1 << i):
+                        regs[i] = words[w]
+                        w += 1
+                regs = tuple(regs)
+            else:
+                regs = pregs
+            if pc is None:
+                pc = (ppc + (2 if cpsr & 0x20 else 4)) & 0xFFFFFFFF
+            rec = (cpu, pc, opcode, cpsr, spsr, regs)
+            prev[cpu] = rec
+            if CPU_FILTER is not None and cpu != CPU_FILTER:
+                continue
+            return rec
         elif t == TAG_TEXT:
             (ln,) = struct.unpack("<I", f.read(4))
             f.read(ln)
@@ -65,7 +135,7 @@ def read_inst(f):
 class Stream:
     """Sliding-window stream over inst records with bounded lookahead buffer."""
 
-    __slots__ = ("f", "W", "buf", "hi", "read_count")
+    __slots__ = ("f", "W", "buf", "hi", "read_count", "prev")
 
     def __init__(self, path, W):
         self.f = open(path, "rb")
@@ -73,10 +143,11 @@ class Stream:
         self.buf = []
         self.hi = 0
         self.read_count = 0
+        self.prev = [None, None]
 
     def _ensure(self, n):
         while len(self.buf) - self.hi < n:
-            r = read_inst(self.f)
+            r = read_inst(self.f, self.prev)
             if r is None:
                 return False
             self.buf.append(r)
@@ -260,14 +331,66 @@ def main(pathA, pathB, W):
     print(f"A read_count={A.read_count}  B read_count={B.read_count}")
 
 
+def fmt_rec(r):
+    regs = " ".join(f"{reg_name(i)}={r[5][i]:#x}" for i in range(15))
+    return f"cpu{r[0]} pc={r[1]:#x} op={r[2]:#x} cpsr={r[3]:#x} spsr={r[4]:#x} {regs}"
+
+
+def strict_main(pathA, pathB):
+    """Same-engine mode: the streams must match record-for-record, no resync, no tolerated
+    field diffs. First difference of any kind is reported with context and exits 1; a clean
+    run (EOF on either side with everything before it identical) exits 0. Interpreter-vs-
+    interpreter (and later jit-vs-jit) pairs must pass this."""
+    A = Stream(pathA, 16)
+    B = Stream(pathB, 16)
+    n = 0
+    progress_every = 10_000_000
+    while True:
+        a = A.head()
+        b = B.head()
+        if a is None or b is None:
+            side = "A" if a is None else "B"
+            print(f"STRICT PASS to EOF({side}): {n} records identical "
+                  f"(A read={A.read_count} B read={B.read_count})")
+            return 0
+        if a != b:
+            print(f"*** STRICT DIVERGENCE at record #{n} ***")
+            print(f"  A ({pathA}):")
+            for o in range(0, 4):
+                r = A.peek(o) if o else a
+                if r is not None:
+                    print(f"    +{o} {fmt_rec(r)}")
+            print(f"  B ({pathB}):")
+            for o in range(0, 4):
+                r = B.peek(o) if o else b
+                if r is not None:
+                    print(f"    +{o} {fmt_rec(r)}")
+            if (a[0], a[1]) == (b[0], b[1]):
+                diffs = []
+                for name, ia in (("opcode", 2), ("cpsr", 3), ("spsr", 4)):
+                    if a[ia] != b[ia]:
+                        diffs.append(f"{name}={a[ia]:#x}/{b[ia]:#x}")
+                diffs += [f"{reg_name(i)}={a[5][i]:#x}/{b[5][i]:#x}" for i in range(15) if a[5][i] != b[5][i]]
+                print(f"  same (cpu,pc), fields differ: {' '.join(diffs)}")
+            else:
+                print("  control flow split (different cpu/pc)")
+            return 1
+        n += 1
+        A.pop()
+        B.pop()
+        if n % progress_every == 0:
+            print(f"... {n} records identical")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if len(args) < 2:
-        print("Usage: trace_diff.py <a.ilog> <b.ilog> [window=100000] [--cpu N]", file=sys.stderr)
+        print("Usage: trace_diff.py <a.ilog> <b.ilog> [window=100000] [--cpu N] [--strict]", file=sys.stderr)
         sys.exit(2)
     pathA = args[0]
     pathB = args[1]
     W = 100000
+    strict = False
     i = 2
     while i < len(args):
         a = args[i]
@@ -277,7 +400,12 @@ if __name__ == "__main__":
         elif a.startswith("--cpu="):
             CPU_FILTER = int(a.split("=")[1])
             i += 1
+        elif a == "--strict":
+            strict = True
+            i += 1
         else:
             W = int(a)
             i += 1
+    if strict:
+        sys.exit(strict_main(pathA, pathB))
     main(pathA, pathB, W)

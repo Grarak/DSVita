@@ -24,6 +24,54 @@ const RECORD_SIZE: usize = size_of::<InstLogRecord>();
 
 const TAG_INST: u8 = 0;
 const TAG_TEXT: u8 = 1;
+const TAG_INST_DELTA: u8 = 2;
+
+// Delta records (TAG_INST_DELTA) carry only what changed since the same cpu's previous
+// record — consecutive instructions share almost all register state, so this shrinks traces
+// roughly 5x. A full TAG_INST keyframe is emitted per cpu at the start and every
+// KEYFRAME_INTERVAL records, bounding how much a corrupt byte can poison.
+//
+// Layout: flags u8, mask u16 (bit i = reg i changed, i < 15), then LE u32s in order:
+// pc (unless FLAG_PC_SEQ), cpsr / spsr / opcode (unless their _SAME flag), changed regs
+// ascending. FLAG_PC_SEQ means pc = prev pc + (4 >> new cpsr thumb bit).
+const FLAG_CPU7: u8 = 1 << 0;
+const FLAG_PC_SEQ: u8 = 1 << 1;
+const FLAG_OPCODE_SAME: u8 = 1 << 2;
+const FLAG_SPSR_SAME: u8 = 1 << 3;
+const FLAG_CPSR_SAME: u8 = 1 << 4;
+const KEYFRAME_INTERVAL: u32 = 1 << 20;
+
+#[derive(Copy, Clone, Default)]
+struct PrevState {
+    regs: [u32; 15],
+    pc: u32,
+    cpsr: u32,
+    spsr: u32,
+    opcode: u32,
+    valid: bool,
+    since_keyframe: u32,
+}
+
+// Per-cpu previous record for delta encoding; only touched from the cpu thread.
+struct PrevStates(UnsafeCell<[PrevState; 2]>);
+
+unsafe impl Sync for PrevStates {}
+
+static PREV_STATES: PrevStates = PrevStates(UnsafeCell::new([PrevState::default_const(), PrevState::default_const()]));
+
+impl PrevState {
+    const fn default_const() -> Self {
+        PrevState {
+            regs: [0; 15],
+            pc: 0,
+            cpsr: 0,
+            spsr: 0,
+            opcode: 0,
+            valid: false,
+            since_keyframe: 0,
+        }
+    }
+}
 
 struct Logger {
     writer: UnsafeCell<Option<BufWriter<File>>>,
@@ -33,9 +81,32 @@ unsafe impl Sync for Logger {}
 
 static LOGGER: Logger = Logger { writer: UnsafeCell::new(None) };
 
+// Optional record budget (DSVITA_INST_LOG_MAX): after this many instruction records the log
+// is flushed and closed from the logging thread itself — a deterministic, race-free stop for
+// A/B captures (a SIGINT flush can tear a record mid-write and corrupt the stream framing).
+// 0 = unlimited. The remaining count is only touched from the cpu thread.
+struct RecordBudget(UnsafeCell<u64>);
+
+unsafe impl Sync for RecordBudget {}
+
+static RECORD_BUDGET: RecordBudget = RecordBudget(UnsafeCell::new(0));
+
+fn init_budget() {
+    let max = std::env::var("DSVITA_INST_LOG_MAX").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+    unsafe { *RECORD_BUDGET.0.get() = max };
+    // DSVITA_INST_LOG_TEXT=0 drops the interleaved text records (debug_println/branch_println
+    // lines). Instruction-only logs are what the strict differ compares, at a fraction of the
+    // size — a commercial boot's text records outweigh the instruction records.
+    let text = std::env::var("DSVITA_INST_LOG_TEXT").map(|v| v != "0").unwrap_or(true);
+    TEXT_ENABLED.store(text, std::sync::atomic::Ordering::Relaxed);
+}
+
+static TEXT_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 pub fn init(path: &str) {
     let file = File::create(path).unwrap_or_else(|e| panic!("failed to create inst log {path}: {e}"));
     unsafe { *LOGGER.writer.get() = Some(BufWriter::with_capacity(1 << 20, file)) };
+    init_budget();
 
     #[cfg(target_os = "linux")]
     unsafe {
@@ -55,6 +126,7 @@ static LAZY_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 
 pub fn init_lazy(path: &str) {
     unsafe { *LAZY_PATH.0.get() = Some(path.to_string()) };
+    init_budget();
 
     #[cfg(target_os = "linux")]
     unsafe {
@@ -97,22 +169,100 @@ extern "C" fn sigint_handler(_sig: i32) {
 pub fn log(emu: &Emu, cpu: CpuType, pc: u32, opcode: u32) {
     let Some(writer) = lazy_writer() else { return };
 
+    let budget = unsafe { &mut *RECORD_BUDGET.0.get() };
+    if *budget != 0 {
+        *budget -= 1;
+        if *budget == 0 {
+            // Budget exhausted: this record is the last one. Flush and close from here (the
+            // logging thread) so the file ends on a clean record boundary.
+            write_record(writer, emu, cpu, pc, opcode);
+            let _ = writer.flush();
+            unsafe { *LOGGER.writer.get() = None };
+            unsafe { *LAZY_PATH.0.get() = None };
+            println!("inst log record budget exhausted, log closed");
+            return;
+        }
+    }
+    write_record(writer, emu, cpu, pc, opcode);
+}
+
+#[inline]
+fn write_record(writer: &mut BufWriter<File>, emu: &Emu, cpu: CpuType, pc: u32, opcode: u32) {
     let mut regs = [0u32; 15];
     for (i, r) in regs.iter_mut().enumerate() {
         *r = *emu.thread_get_reg(cpu, Reg::from(i as u8));
     }
-    let record = InstLogRecord {
-        regs,
-        pc,
-        cpsr: *emu.thread_get_reg(cpu, Reg::CPSR),
-        spsr: *emu.thread_get_reg(cpu, Reg::SPSR),
-        opcode,
-        cpu: cpu as u8,
-    };
+    let cpsr = *emu.thread_get_reg(cpu, Reg::CPSR);
+    let spsr = *emu.thread_get_reg(cpu, Reg::SPSR);
 
-    let bytes = unsafe { std::slice::from_raw_parts((&record as *const InstLogRecord).cast::<u8>(), RECORD_SIZE) };
-    let _ = writer.write_all(&[TAG_INST]);
-    let _ = writer.write_all(bytes);
+    let prev = unsafe { &mut (*PREV_STATES.0.get())[cpu as usize] };
+    if !prev.valid || prev.since_keyframe >= KEYFRAME_INTERVAL {
+        // Zero-init so the struct's 3 padding bytes are deterministic — two identical runs
+        // then produce byte-identical files.
+        let mut bytes = [0u8; RECORD_SIZE];
+        let record = InstLogRecord {
+            regs,
+            pc,
+            cpsr,
+            spsr,
+            opcode,
+            cpu: cpu as u8,
+        };
+        unsafe { std::ptr::copy_nonoverlapping((&record as *const InstLogRecord).cast::<u8>(), bytes.as_mut_ptr(), std::mem::offset_of!(InstLogRecord, cpu) + 1) };
+        let _ = writer.write_all(&[TAG_INST]);
+        let _ = writer.write_all(&bytes);
+        prev.since_keyframe = 0;
+    } else {
+        // Delta record: flags + changed-reg mask, then only the changed words.
+        let mut flags = if cpu == CpuType::ARM7 { FLAG_CPU7 } else { 0 };
+        // payload: [pc][cpsr][spsr][opcode][regs...] — worst case 19 words.
+        let mut payload = [0u32; 19];
+        let mut n = 0;
+        if pc == prev.pc.wrapping_add(if cpsr & 0x20 != 0 { 2 } else { 4 }) {
+            flags |= FLAG_PC_SEQ;
+        } else {
+            payload[n] = pc;
+            n += 1;
+        }
+        if cpsr == prev.cpsr {
+            flags |= FLAG_CPSR_SAME;
+        } else {
+            payload[n] = cpsr;
+            n += 1;
+        }
+        if spsr == prev.spsr {
+            flags |= FLAG_SPSR_SAME;
+        } else {
+            payload[n] = spsr;
+            n += 1;
+        }
+        if opcode == prev.opcode {
+            flags |= FLAG_OPCODE_SAME;
+        } else {
+            payload[n] = opcode;
+            n += 1;
+        }
+        let mut mask = 0u16;
+        for i in 0..15 {
+            if regs[i] != prev.regs[i] {
+                mask |= 1 << i;
+                payload[n] = regs[i];
+                n += 1;
+            }
+        }
+        let _ = writer.write_all(&[TAG_INST_DELTA, flags]);
+        let _ = writer.write_all(&mask.to_le_bytes());
+        let payload_bytes = unsafe { std::slice::from_raw_parts(payload.as_ptr().cast::<u8>(), n * 4) };
+        let _ = writer.write_all(payload_bytes);
+        prev.since_keyframe += 1;
+    }
+
+    prev.regs = regs;
+    prev.pc = pc;
+    prev.cpsr = cpsr;
+    prev.spsr = spsr;
+    prev.opcode = opcode;
+    prev.valid = true;
 }
 
 #[inline]
@@ -139,6 +289,9 @@ pub fn log_text_no_newline(s: &str) {
 
 #[inline]
 fn write_text(s: &str, newline: bool) {
+    if !TEXT_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     let Some(writer) = lazy_writer() else { return };
 
     let _ = writer.write_all(&[TAG_TEXT]);
@@ -169,6 +322,27 @@ pub fn decode_file(path: &str) {
     let stdout = std::io::stdout();
     let mut out = BufWriter::new(stdout.lock());
 
+    // Delta decode state: the last full record seen per cpu.
+    let mut prev: [Option<InstLogRecord>; 2] = [None, None];
+
+    let mut print_record = |out: &mut BufWriter<std::io::StdoutLock>, record: &InstLogRecord| {
+        let cpu = CpuType::from(record.cpu);
+        let cpsr = Cpsr::from(record.cpsr);
+        let inst_info = if cpsr.thumb() {
+            let (op, func) = lookup_thumb_opcode(record.opcode as u16);
+            InstInfo::from(func(record.opcode as u16, *op))
+        } else {
+            let (op, func) = lookup_opcode(record.opcode);
+            func(record.opcode, *op)
+        };
+
+        let mut output = "Executed ".to_owned();
+        for reg in reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR, Reg::SPSR) + RegReserve::gp() {
+            output += &format!("{reg:?}: {:x}, ", record_reg(record, reg));
+        }
+        let _ = writeln!(out, "{cpu:?} {output}\n\t{cpu:?} {inst_info:?}");
+    };
+
     let mut tag = [0u8; 1];
     while reader.read_exact(&mut tag).is_ok() {
         match tag[0] {
@@ -176,22 +350,43 @@ pub fn decode_file(path: &str) {
                 let mut buf = [0u8; RECORD_SIZE];
                 reader.read_exact(&mut buf).expect("truncated inst record");
                 let record: InstLogRecord = unsafe { std::ptr::read_unaligned(buf.as_ptr().cast()) };
-                let cpu = CpuType::from(record.cpu);
+                print_record(&mut out, &record);
+                prev[record.cpu as usize] = Some(record);
+            }
+            TAG_INST_DELTA => {
+                let mut head = [0u8; 3];
+                reader.read_exact(&mut head).expect("truncated delta record header");
+                let flags = head[0];
+                let mask = u16::from_le_bytes([head[1], head[2]]);
+                let cpu_index = (flags & FLAG_CPU7 != 0) as usize;
+                let mut record = prev[cpu_index].expect("delta record before keyframe");
 
-                let cpsr = Cpsr::from(record.cpsr);
-                let inst_info = if cpsr.thumb() {
-                    let (op, func) = lookup_thumb_opcode(record.opcode as u16);
-                    InstInfo::from(func(record.opcode as u16, *op))
-                } else {
-                    let (op, func) = lookup_opcode(record.opcode);
-                    func(record.opcode, *op)
+                let mut word = [0u8; 4];
+                let mut next_word = |reader: &mut BufReader<File>| {
+                    reader.read_exact(&mut word).expect("truncated delta record payload");
+                    u32::from_le_bytes(word)
                 };
-
-                let mut output = "Executed ".to_owned();
-                for reg in reg_reserve!(Reg::SP, Reg::LR, Reg::PC, Reg::CPSR, Reg::SPSR) + RegReserve::gp() {
-                    output += &format!("{reg:?}: {:x}, ", record_reg(&record, reg));
+                let explicit_pc = if flags & FLAG_PC_SEQ == 0 { Some(next_word(&mut reader)) } else { None };
+                if flags & FLAG_CPSR_SAME == 0 {
+                    record.cpsr = next_word(&mut reader);
                 }
-                let _ = writeln!(out, "{cpu:?} {output}\n\t{cpu:?} {inst_info:?}");
+                if flags & FLAG_SPSR_SAME == 0 {
+                    record.spsr = next_word(&mut reader);
+                }
+                if flags & FLAG_OPCODE_SAME == 0 {
+                    record.opcode = next_word(&mut reader);
+                }
+                for i in 0..15 {
+                    if mask & (1 << i) != 0 {
+                        record.regs[i] = next_word(&mut reader);
+                    }
+                }
+                record.pc = match explicit_pc {
+                    Some(pc) => pc,
+                    None => record.pc.wrapping_add(if record.cpsr & 0x20 != 0 { 2 } else { 4 }),
+                };
+                print_record(&mut out, &record);
+                prev[cpu_index] = Some(record);
             }
             TAG_TEXT => {
                 let mut len = [0u8; 4];
