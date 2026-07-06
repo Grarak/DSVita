@@ -115,9 +115,32 @@ Test setup: arm64 binaries run on the local machine; arm32 binaries on the pi5 (
 - Gates: armhf + a64 dsvita build, vita vpk builds, armv7 vixl generation semantically
   identical.
 
-## Stages 3, 5, 6
-- Not started (S3 seam refactor with the armv7 byte-identity gate; S5 A64 backend on the
-  new glue; S6 jit-vs-jit tracediff loop).
+## Stage 3 — backend seam refactor: DONE, acceptance met
+- Pure moves + driver hoist, armv7-sacred: `emitter/*` → `emitter/arm32/` verbatim; the
+  arm32 assembler files (arm/, thumb/, block_asm, reg_alloc, vixl glue) → `assembler/arm32/`
+  with compatibility re-exports (zero call-site churn); the shared block driver in
+  jit_asm.rs no longer assembles mnemonics through Deref — its four inline sequences are
+  named BlockAsm seam methods (emit_validate_block_hash / emit_enter_block_hook /
+  emit_entry_pc_dispatch / emit_set_guest_pc_const) a second backend provides; `HostReg`
+  alias per D4 (arm32 = guest Reg; runtime-data register encodings deliberately unchanged —
+  see todo/aarch64-width-audit.md §D). Width + wrapping audits delivered in that file.
+- **Byte-identity gate PASSED: 283 + 2488 + 2041 blocks (hello_world / HG / Diamond -e 2,
+  threshold 0) byte-identical pre-vs-post refactor, zero excluded blocks.** Gate =
+  DSVITA_BLOCK_HASH_LOG stream at jit_insert_block + tools/armv7_gate.sh (capture/compare,
+  two same-build baselines calibrate) + DSVITA_BLOCK_DUMP_PC companion.
+- The gate itself took six iterations to make sound — all masking/tooling, no codegen
+  issues found in the refactor: host fn pointers under qemu-PIE live INSIDE guest-value
+  ranges (value masking impossible → mask by materialization pattern into scratch regs);
+  T32 splits pointers across movw/movt; vixl picks movw OR a rotated mov for the low half
+  depending on the VALUE (heap layout!) → matched pairs must be canonicalized, not just
+  imm-masked; blanket value-masking corrupts instruction words; and two same-mtime-tick
+  stale-build races (capture now touches the whole tree — same pitfall as DEVELOPMENT.md §4).
+- Other gates: vita vpk builds; a64 release boots HG (~630 uncapped vblank-lines/s local);
+  pi5 armhf release fps spot-check unchanged (HG uncapped 2080-2716 lines/s, same band as
+  pre-refactor 2286-2900).
+
+## Stages 5, 6
+- Not started (S5 A64 backend on the vixl glue + seam; S6 jit-vs-jit tracediff loop).
 
 ## Env notes
 - qemu HG: release ≈ 500 vblank-lines/s, release-debug+DEBUG_LOG ≈ 50/s.

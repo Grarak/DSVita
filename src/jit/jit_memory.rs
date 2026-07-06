@@ -11,9 +11,9 @@ use crate::jit::assembler::arm::alu_assembler::AluShiftImm;
 use crate::jit::assembler::arm::transfer_assembler::{LdrStrImm, LdrStrImmSBHD};
 #[cfg(target_arch = "arm")]
 use crate::jit::assembler::block_asm::BlockAsm;
-use crate::jit::assembler::{GuestInstMetadata, GuestInstOffset};
 #[cfg(target_arch = "arm")]
 use crate::jit::assembler::{arm, thumb};
+use crate::jit::assembler::{GuestInstMetadata, GuestInstOffset};
 #[cfg(target_arch = "arm")]
 use crate::jit::inst_mem_handler::{
     inst_read64_mem_handler, inst_read64_mem_handler_with_cpsr, inst_read_io_mem_handler, inst_read_io_mem_handler_with_cpsr, inst_read_mem_handler, inst_read_mem_handler_multiple,
@@ -28,6 +28,118 @@ use crate::jit::reg::Reg;
 use crate::jit::{Cond, MemoryAmount};
 use crate::logging::debug_println;
 use crate::mmap::{flush_icache, ArmContext, MemRegion, Mmap, PAGE_SHIFT, PAGE_SIZE};
+
+#[cfg(target_os = "linux")]
+fn block_hash_log(cpu: CpuType, guest_pc: u32, thumb: bool, code: &[u8]) {
+    use std::io::Write;
+    // One-time env lookup; None = disabled (the common case, one branch per block insert).
+    static WRITER: std::sync::OnceLock<Option<std::sync::Mutex<std::io::BufWriter<std::fs::File>>>> = std::sync::OnceLock::new();
+    let writer = WRITER.get_or_init(|| {
+        std::env::var("DSVITA_BLOCK_HASH_LOG")
+            .ok()
+            .map(|path| std::sync::Mutex::new(std::io::BufWriter::new(std::fs::File::create(path).unwrap())))
+    });
+    if let Some(writer) = writer {
+        // DSVITA_BLOCK_DUMP_PC=<hex pc> additionally dumps that block's raw bytes — the
+        // debugging companion when the gate reports a mismatch.
+        if let Ok(dump_pc) = std::env::var("DSVITA_BLOCK_DUMP_PC") {
+            if u32::from_str_radix(&dump_pc, 16) == Ok(guest_pc) {
+                let _ = std::fs::write(format!("/tmp/block_{guest_pc:x}_{}_{}.bin", thumb as u8, std::process::id()), code);
+            }
+        }
+        // Baked host pointers differ between BINARIES of the same source lineage — and under
+        // qemu's PIE layout they collide with guest-range values, so masking goes by the
+        // MATERIALIZATION PATTERN on the pristine bytes (a blanket value mask would zero
+        // instruction words too and blind the gate). Emitted code only materializes host
+        // pointers into scratch registers (r0-r3 via the driver seam, r12 via call());
+        // masked before hashing:
+        //   - movw/movt pairs targeting a scratch register (both ISAs),
+        //   - the pool words of pc-relative literal loads: always for a scratch rd, and for
+        //     other rds only when the word sits in the unambiguous high host ranges (heap
+        //     pointers in the HLE substitution blocks).
+        // Scratch-register guest constants get masked too — deterministically on both
+        // sides, so the compare stays sound (a small false-negative surface; lengths and
+        // all other bytes still compare exactly).
+        const SCRATCH: [u32; 5] = [0, 1, 2, 3, 12];
+        let mut masked = code.to_vec();
+        let n_words = masked.len() / 4;
+        // (pool word index, rd) of every pc-relative literal load.
+        let mut pool_refs = Vec::new();
+        if thumb {
+            let hw = |b: &[u8], i: usize| u16::from_le_bytes([b[i * 2], b[i * 2 + 1]]);
+            let n = masked.len() / 2;
+            for i in 0..n {
+                let h1 = hw(&masked, i);
+                // T16 ldr rd, [pc, #imm8*4]: pool word at align4(pc+4)+imm.
+                if h1 & 0xF800 == 0x4800 {
+                    let target = ((i * 2 + 4) & !3) + ((h1 & 0xFF) as usize) * 4;
+                    if target / 4 < n_words {
+                        pool_refs.push((target / 4, (h1 >> 8 & 7) as u32));
+                    }
+                }
+                // T32 ldr.w rd, [pc, #imm12] (F8DF).
+                if h1 == 0xF8DF && i + 1 < n {
+                    let h2 = hw(&masked, i + 1);
+                    let target = ((i * 2 + 4) & !3) + (h2 & 0xFFF) as usize;
+                    if target / 4 < n_words {
+                        pool_refs.push((target / 4, (h2 >> 12) as u32));
+                    }
+                }
+                // T32 movw/movt pair into a scratch reg.
+                if i + 3 < n {
+                    let (h2, h3, h4) = (hw(&masked, i + 1), hw(&masked, i + 2), hw(&masked, i + 3));
+                    let rd = (h2 >> 8 & 0xF) as u32;
+                    if h1 & 0xFBF0 == 0xF240 && h3 & 0xFBF0 == 0xF2C0 && h4 >> 8 & 0xF == h2 >> 8 & 0xF && SCRATCH.contains(&rd) {
+                        for (j, h) in [(i, h1 & !0x040F), (i + 1, h2 & !0x70FF), (i + 2, h3 & !0x040F), (i + 3, h4 & !0x70FF)] {
+                            masked[j * 2..j * 2 + 2].copy_from_slice(&h.to_le_bytes());
+                        }
+                    }
+                }
+            }
+        } else {
+            let wd = |b: &[u8], i: usize| u32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
+            for i in 0..n_words {
+                let w1 = wd(&masked, i);
+                // A32 ldr rd, [pc, #imm12]: pool word at pc+8+imm.
+                if w1 & 0x0FFF0000 == 0x059F0000 {
+                    let target = i * 4 + 8 + (w1 & 0xFFF) as usize;
+                    if target / 4 < n_words {
+                        pool_refs.push((target / 4, w1 >> 12 & 0xF));
+                    }
+                }
+                // A32 low-half + movt pair into a scratch reg. The low half is movw, or a
+                // plain mov/mvn when the value's bottom 16 bits are rotation-encodable
+                // (vixl picks the shorter form).
+                if i + 1 < n_words {
+                    let w2 = wd(&masked, i + 1);
+                    let rd = w1 >> 12 & 0xF;
+                    let is_movw = w1 & 0x0FF00000 == 0x03000000;
+                    let is_mov_imm = w1 & 0x0FEF0000 == 0x03A00000 || w1 & 0x0FEF0000 == 0x03E00000;
+                    if (is_movw || is_mov_imm) && w2 & 0x0FF00000 == 0x03400000 && w2 >> 12 & 0xF == rd && SCRATCH.contains(&rd) {
+                        // Canonicalize: vixl picks movw or a rotated mov for the low half
+                        // depending on the value, so the surviving opcode bits must not
+                        // depend on that choice — only cond and rd stay.
+                        let canon1 = (w1 & 0xF0000000) | 0x03000000 | (rd << 12);
+                        let canon2 = (w2 & 0xF0000000) | 0x03400000 | (rd << 12);
+                        masked[i * 4..i * 4 + 4].copy_from_slice(&canon1.to_le_bytes());
+                        masked[(i + 1) * 4..(i + 1) * 4 + 4].copy_from_slice(&canon2.to_le_bytes());
+                    }
+                }
+            }
+        }
+        for (word, rd) in pool_refs {
+            let value = u32::from_le_bytes(masked[word * 4..word * 4 + 4].try_into().unwrap());
+            let high_host = (0x10000000..0x70000000).contains(&value) || (0xA2000000..0xFFFF0000).contains(&value);
+            if SCRATCH.contains(&rd) || high_host {
+                masked[word * 4..word * 4 + 4].fill(0);
+            }
+        }
+        let hash = xxhash_rust::xxh32::xxh32(&masked, 0);
+        let mut writer = writer.lock().unwrap();
+        let _ = writeln!(writer, "{} {guest_pc:x} {} {} {hash:08x}", cpu as u8, thumb as u8, code.len());
+        let _ = writer.flush();
+    }
+}
 use crate::settings::{Arm7Emu, Settings};
 use crate::utils;
 use crate::utils::{HeapArray, HeapArrayU8};
@@ -268,6 +380,12 @@ impl Emu {
 
     #[cfg(target_arch = "arm")]
     pub fn jit_insert_block(&mut self, block_asm: BlockAsm, debug_info: &JitDebugInfo, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu: CpuType) -> (*const extern "C" fn(u32), bool) {
+        // Byte-identity gate for backend refactors (the armv7-sacred check): with
+        // DSVITA_BLOCK_HASH_LOG=<path> every compiled block's pre-relocation bytes are
+        // hashed and appended as "cpu pc thumb len hash" — two builds of the same source
+        // lineage must produce identical streams over a deterministic boot.
+        #[cfg(target_os = "linux")]
+        block_hash_log(cpu, guest_pc, thumb, block_asm.get_code_buffer());
         macro_rules! insert {
             ($entries:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
                 let ret = insert!($entries);

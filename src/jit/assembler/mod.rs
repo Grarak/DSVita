@@ -1,15 +1,17 @@
-// The arm32 code-generation pipeline; other host arches run the interpreter until they
-// grow a backend of their own.
+// Per-backend assemblers live in their own directory; everything below the module
+// declarations is backend-neutral (guest-file shapes, block metadata). Other host arches
+// run the interpreter until they grow a backend of their own (aarch64 lands in stage 5).
 #[cfg(target_arch = "arm")]
-pub mod arm;
+pub mod arm32;
+// Compatibility re-exports: call sites keep addressing crate::jit::assembler::{arm, ...}.
 #[cfg(target_arch = "arm")]
-pub mod block_asm;
+pub use arm32::{arm, block_asm, reg_alloc, thumb, vixl};
+
+/// The host register type each backend allocates from. The arm32 backend's host registers
+/// are modelled by the same vixl aarch32 `Reg` as the guest file (host r4-r11 hold the
+/// guest pool); a 64-bit backend defines its own.
 #[cfg(target_arch = "arm")]
-pub mod reg_alloc;
-#[cfg(target_arch = "arm")]
-pub mod thumb;
-#[cfg(target_arch = "arm")]
-pub mod vixl;
+pub type HostReg = crate::jit::reg::Reg;
 
 use crate::jit::op::Op;
 use crate::jit::reg::{Reg, RegReserve};

@@ -91,6 +91,9 @@ unsafe impl Sync for RecordBudget {}
 
 static RECORD_BUDGET: RecordBudget = RecordBudget(UnsafeCell::new(0));
 
+// env reads must never happen on the vita; the whole capture configuration is linux-only
+// (inst logs are only reachable through the linux cli anyway).
+#[cfg(target_os = "linux")]
 fn init_budget() {
     let max = std::env::var("DSVITA_INST_LOG_MAX").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
     unsafe { *RECORD_BUDGET.0.get() = max };
@@ -100,6 +103,9 @@ fn init_budget() {
     let text = std::env::var("DSVITA_INST_LOG_TEXT").map(|v| v != "0").unwrap_or(true);
     TEXT_ENABLED.store(text, std::sync::atomic::Ordering::Relaxed);
 }
+
+#[cfg(not(target_os = "linux"))]
+fn init_budget() {}
 
 static TEXT_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 

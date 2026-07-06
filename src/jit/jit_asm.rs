@@ -29,7 +29,8 @@ use std::hint::assert_unchecked;
 use std::intrinsics::unlikely;
 use std::{mem, slice};
 #[cfg(target_arch = "arm")]
-use vixl::{BranchHint_kNear, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, Label, MasmAdd5, MasmB3, MasmBlx1, MasmLdr2, MasmLsr5, MasmMov4, MasmSubs3};
+use vixl::Label;
+#[cfg(target_arch = "arm")]
 use xxhash_rust::xxh32::xxh32;
 
 pub static mut BLOCK_LOG: bool = false;
@@ -602,34 +603,14 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
             let size = (guest_pc_end - guest_pc + pc_step) as usize;
             let hash = xxh32(unsafe { slice::from_raw_parts(guest_ptr as _, size) }, 0);
 
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
-            block_asm.ldr2(Reg::R0, guest_ptr as u32);
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &(size as u32).into());
-            block_asm.ldr2(Reg::R5, hash);
-            block_asm.call(validate_guest_block_hash as _);
+            block_asm.emit_validate_block_hash(guest_ptr as u32, size as u32, hash, validate_guest_block_hash as _);
         }
 
         if BRANCH_LOG {
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
-            block_asm.call(map_fun_cpu!(asm.cpu, debug_enter_block));
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &Reg::R4.into());
+            block_asm.emit_enter_block_hook(map_fun_cpu!(asm.cpu, debug_enter_block));
         }
 
-        let mut default_pc_label = Label::new();
-
-        let pc = guest_pc | (thumb as u32);
-        block_asm.ldr2(Reg::R1, pc);
-        block_asm.subs3(Reg::R0, Reg::R0, &Reg::R1.into());
-        block_asm.b3(Cond::EQ, &mut default_pc_label, BranchHint_kNear);
-        if !thumb {
-            block_asm.lsr5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &1.into());
-        }
-        block_asm.ldr2(Reg::R3, map_fun_cpu!(asm.cpu, jump_to_other_guest_pc) as u32);
-        block_asm.blx1(Reg::R3);
-        block_asm.add5(FlagsUpdate_LeaveFlags, Cond::AL, Reg::PC, Reg::PC, &Reg::R0.into());
-
-        block_asm.bind(&mut default_pc_label);
-        block_asm.set_guest_start();
+        block_asm.emit_entry_pc_dispatch(guest_pc | (thumb as u32), map_fun_cpu!(asm.cpu, jump_to_other_guest_pc));
 
         asm.emit_fs_clear_overlay_image_hook(guest_pc, thumb, &mut block_asm);
 
@@ -638,8 +619,7 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
         let last_inst = asm.jit_buf.insts.last().unwrap();
         if !last_inst.is_uncond_branch() {
             let next_pc = guest_pc_end + if thumb { 3 } else { 4 };
-            block_asm.ldr2(Reg::R0, next_pc);
-            block_asm.store_guest_reg(Reg::R0, Reg::PC);
+            block_asm.emit_set_guest_pc_const(next_pc);
             asm.emit_branch_external_label(asm.jit_buf.insts.len() - 1, asm.analyzer.basic_blocks.len() - 1, next_pc, false, false, &mut block_asm);
         }
 

@@ -9,15 +9,15 @@ use crate::mmap::{PAGE_SHIFT, PAGE_SIZE};
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 use vixl::{
-    BranchHint_kNear, FlagsUpdate, FlagsUpdate_DontCare, InstructionSet_A32, InstructionSet_T32, Label, MacroAssembler, MaskedSpecialRegisterType_CPSR_f, MasmAdd5, MasmB2, MasmBlx1, MasmLdr2,
-    MasmLdr3, MasmLsr5, MasmMov2, MasmMrs2, MasmMsr2, MasmNop, MasmPop1, MasmPush1, MasmStr3, MasmStrb2, MasmSub5, ShiftType_ASR, ShiftType_LSL, ShiftType_LSR, ShiftType_ROR, ShiftType_RRX,
-    SpecialRegisterType_CPSR,
+    BranchHint_kNear, FlagsUpdate, FlagsUpdate_DontCare, FlagsUpdate_LeaveFlags, InstructionSet_A32, InstructionSet_T32, Label, MacroAssembler, MaskedSpecialRegisterType_CPSR_f, MasmAdd5, MasmB2,
+    MasmB3, MasmBlx1, MasmLdr2, MasmLdr3, MasmLsr5, MasmMov2, MasmMov4, MasmMrs2, MasmMsr2, MasmNop, MasmPop1, MasmPush1, MasmStr3, MasmStrb2, MasmSub5, MasmSubs3, ShiftType_ASR, ShiftType_LSL,
+    ShiftType_LSR, ShiftType_ROR, ShiftType_RRX, SpecialRegisterType_CPSR,
 };
 
 pub const GUEST_REGS_PTR_REG: Reg = Reg::R3;
 pub const CPSR_TMP_REG: Reg = Reg::R0;
 
-pub use super::{GuestInstMetadata, GuestInstMetadataFastMem, GuestInstMetadataShared, GuestInstMetadataSlowMem, GuestInstOffset};
+pub use crate::jit::assembler::{GuestInstMetadata, GuestInstMetadataFastMem, GuestInstMetadataShared, GuestInstMetadataSlowMem, GuestInstOffset};
 
 pub struct BlockAsm {
     masm: MacroAssembler,
@@ -121,6 +121,51 @@ impl BlockAsm {
     pub fn call(&mut self, fun: *const ()) {
         self.ldr2(Reg::R12, fun as u32);
         self.blx1(Reg::R12);
+    }
+
+    // Driver seam (see the port plan D3): the shared block driver in jit_asm.rs calls these
+    // named sequences instead of assembling mnemonics itself, so a second backend only has
+    // to provide the same methods.
+
+    /// Validate the guest block bytes against `hash` before executing (arm7 non-sdk blocks).
+    /// The block-entry pc arrives in R0 and must survive the call.
+    pub fn emit_validate_block_hash(&mut self, guest_ptr: u32, size: u32, hash: u32, validate_fun: *const ()) {
+        self.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
+        self.ldr2(Reg::R0, guest_ptr);
+        self.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &size.into());
+        self.ldr2(Reg::R5, hash);
+        self.call(validate_fun);
+    }
+
+    /// BRANCH_LOG enter-block hook; preserves the entry pc in R0 around the call.
+    pub fn emit_enter_block_hook(&mut self, hook_fun: *const ()) {
+        self.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
+        self.call(hook_fun);
+        self.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &Reg::R4.into());
+    }
+
+    /// Block-entry dispatch: the target pc arrives in R0; on a mismatch against this
+    /// block's `pc` the delta is handed to `jump_fun` (jump_to_other_guest_pc) which
+    /// resolves the in-block entry offset; a match falls through to the guest start.
+    pub fn emit_entry_pc_dispatch(&mut self, pc: u32, jump_fun: *const ()) {
+        let mut default_pc_label = Label::new();
+        self.ldr2(Reg::R1, pc);
+        self.subs3(Reg::R0, Reg::R0, &Reg::R1.into());
+        self.b3(Cond::EQ, &mut default_pc_label, BranchHint_kNear);
+        if !self.thumb {
+            self.lsr5(FlagsUpdate_DontCare, Cond::AL, Reg::R0, Reg::R0, &1.into());
+        }
+        self.ldr2(Reg::R3, jump_fun as u32);
+        self.blx1(Reg::R3);
+        self.add5(FlagsUpdate_LeaveFlags, Cond::AL, Reg::PC, Reg::PC, &Reg::R0.into());
+        self.bind(&mut default_pc_label);
+        self.set_guest_start();
+    }
+
+    /// Materialize a constant into the guest PC slot.
+    pub fn emit_set_guest_pc_const(&mut self, pc: u32) {
+        self.ldr2(Reg::R0, pc);
+        self.store_guest_reg(Reg::R0, Reg::PC);
     }
 
     pub fn alloc_guest_inst(&mut self, inst: &InstInfo, next_live_regs: RegReserve) {

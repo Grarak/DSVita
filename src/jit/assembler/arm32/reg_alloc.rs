@@ -4,7 +4,7 @@ use crate::logging::debug_panic;
 use vixl::{Cond, FlagsUpdate, MacroAssembler, MasmLdr2, MasmMov4, MasmStr2};
 
 pub const GUEST_REG_ALLOCATIONS: RegReserve = reg_reserve!(Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10, Reg::R11);
-pub use super::GUEST_REGS_LENGTH;
+pub use crate::jit::assembler::GUEST_REGS_LENGTH;
 
 pub struct RegAlloc {
     pub free_regs: RegReserve,
