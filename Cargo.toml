@@ -87,6 +87,12 @@ vita_gl = { path = "vitaGL" }
 openssl-sys = "=0.9.111"
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "native-tls"] }
 
+# The dev/debug profile is the tracing build: DEBUG_LOG keys off the profile NAME
+# ("debug"), so `cargo build` yields the instrumented emulator directly — no source
+# toggling — and opt-level 3 keeps it fast enough for multi-million-record captures.
+[profile.dev]
+opt-level = 3
+
 [profile.release-debug]
 inherits = "dev"
 opt-level = 3

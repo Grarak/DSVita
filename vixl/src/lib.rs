@@ -134,17 +134,29 @@ impl RegReserve {
 
     pub fn next_gp_free(self) -> Option<Reg> {
         let count = self.0.trailing_ones();
-        if count >= Reg::SP as u32 { None } else { Some(Reg::from(count as u8)) }
+        if count >= Reg::SP as u32 {
+            None
+        } else {
+            Some(Reg::from(count as u8))
+        }
     }
 
     pub fn peek_gp(self) -> Option<Reg> {
         let count = self.0.trailing_zeros();
-        if count >= Reg::SP as u32 { None } else { Some(Reg::from(count as u8)) }
+        if count >= Reg::SP as u32 {
+            None
+        } else {
+            Some(Reg::from(count as u8))
+        }
     }
 
     pub fn peek(self) -> Option<Reg> {
         let count = self.0.trailing_zeros();
-        if count >= Reg::CPSR as u32 { None } else { Some(Reg::from(count as u8)) }
+        if count >= Reg::CPSR as u32 {
+            None
+        } else {
+            Some(Reg::from(count as u8))
+        }
     }
 
     pub const fn len(self) -> usize {
@@ -363,7 +375,6 @@ mod aarch32_glue {
 
     include!(concat!(env!("OUT_DIR"), "/vixl_bindings.rs"));
     include!(concat!(env!("OUT_DIR"), "/vixl_inst_wrapper.rs"));
-
 
     pub struct DOperand {
         inner: *mut Aarch32DOperand,
@@ -584,7 +595,6 @@ mod aarch32_glue {
             }
         }
     }
-
 }
 #[cfg(target_arch = "arm")]
 pub use aarch32_glue::*;
@@ -886,6 +896,14 @@ mod aarch64_glue {
             unsafe { masm_a64_str_off(self.inner, r(rt), is64 as i32, r(base), offset, mode as i32) }
         }
 
+        pub fn ldrh_off(&mut self, rt: A64Reg, base: A64Reg, offset: i64, mode: A64AddrModeKind) {
+            unsafe { masm_a64_ldrh_off(self.inner, r(rt), r(base), offset, mode as i32) }
+        }
+
+        pub fn strh_off(&mut self, rt: A64Reg, base: A64Reg, offset: i64, mode: A64AddrModeKind) {
+            unsafe { masm_a64_strh_off(self.inner, r(rt), r(base), offset, mode as i32) }
+        }
+
         pub fn ldr_regoff(&mut self, rt: A64Reg, is64: bool, base: A64Reg, index: A64Reg, extend: A64ExtendKind, amount: u32) {
             unsafe { masm_a64_ldr_regoff(self.inner, r(rt), is64 as i32, r(base), r(index), extend as i32, amount) }
         }
@@ -942,6 +960,21 @@ mod aarch64_glue {
     alu_reg_method!(eor_reg, masm_a64_eor_reg);
     alu_reg_method!(bic_reg, masm_a64_bic_reg);
 
+    macro_rules! carry_method {
+        ($name:ident, $shim:ident) => {
+            impl A64MacroAssembler {
+                pub fn $name(&mut self, rd: A64Reg, rn: A64Reg, rm: A64Reg, is64: bool) {
+                    unsafe { $shim(self.inner, rd as u32, rn as u32, rm as u32, is64 as i32) }
+                }
+            }
+        };
+    }
+
+    carry_method!(adc, masm_a64_adc);
+    carry_method!(adcs, masm_a64_adcs);
+    carry_method!(sbc, masm_a64_sbc);
+    carry_method!(sbcs, masm_a64_sbcs);
+
     impl A64MacroAssembler {
         pub fn cmp_imm(&mut self, rn: A64Reg, imm: u64, is64: bool) {
             unsafe { masm_a64_cmp_imm(self.inner, r(rn), imm, is64 as i32) }
@@ -955,6 +988,10 @@ mod aarch64_glue {
             unsafe { masm_a64_tst_imm(self.inner, r(rn), imm, is64 as i32) }
         }
 
+        pub fn tst_reg(&mut self, rn: A64Reg, rm: A64Reg, shift: A64ShiftKind, amount: u32, is64: bool) {
+            unsafe { masm_a64_tst_reg(self.inner, r(rn), r(rm), shift as i32, amount, is64 as i32) }
+        }
+
         pub fn lsl_imm(&mut self, rd: A64Reg, rn: A64Reg, shift: u32, is64: bool) {
             unsafe { masm_a64_lsl_imm(self.inner, r(rd), r(rn), shift, is64 as i32) }
         }
@@ -965,6 +1002,10 @@ mod aarch64_glue {
 
         pub fn asr_imm(&mut self, rd: A64Reg, rn: A64Reg, shift: u32, is64: bool) {
             unsafe { masm_a64_asr_imm(self.inner, r(rd), r(rn), shift, is64 as i32) }
+        }
+
+        pub fn ror_imm(&mut self, rd: A64Reg, rn: A64Reg, shift: u32, is64: bool) {
+            unsafe { masm_a64_ror_imm(self.inner, r(rd), r(rn), shift, is64 as i32) }
         }
     }
 }

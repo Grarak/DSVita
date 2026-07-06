@@ -500,6 +500,30 @@ unsafe extern "C" fn jump_to_other_guest_pc<const CPU: CpuType>(_: u32, _: u32) 
     );
 }
 
+/// aarch64 twin of jump_to_other_guest_pc: an emitted block entered at a pc other than its
+/// start resolves the matching instruction's host address here. `block_base` is the
+/// block's own page-aligned base (materialized by `adr` in the dispatch stub), which keys
+/// the per-block A64BlockMeta. Restores the pre_cycle_count_sum the block's flush math
+/// expects at that instruction; guest registers and flags need nothing — they live in
+/// memory on this backend.
+#[cfg(target_arch = "aarch64")]
+unsafe extern "C" fn a64_jump_to_other_guest_pc<const CPU: CpuType>(tagged_pc: u32, block_base: usize) -> usize {
+    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
+    debug_assert_eq!(tagged_pc & 1, 0, "thumb blocks are not compiled yet");
+    let page = (block_base - asm.emu.jit.mem.as_ptr() as usize) >> PAGE_SHIFT;
+    let meta = &asm.emu.jit.a64_block_meta[page];
+    let index = (tagged_pc.wrapping_sub(meta.guest_pc_start) >> 2) as usize;
+    debug_assert!(
+        index < meta.insts.len(),
+        "{CPU:?} mid-entry pc {tagged_pc:x} outside block at {:x} ({} insts)",
+        meta.guest_pc_start,
+        meta.insts.len()
+    );
+    let inst = meta.insts[index];
+    asm.runtime_data.pre_cycle_count_sum = inst.pre_cycle_count_sum;
+    block_base + inst.code_offset as usize
+}
+
 #[cold]
 pub extern "C" fn emit_code_block(guest_pc: u32) {
     let thumb = (guest_pc & 1) == 1;
@@ -512,8 +536,68 @@ pub extern "C" fn emit_code_block(guest_pc: u32) {
 
 #[cfg(not(target_arch = "arm"))]
 fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
-    // Interpreter-only host: no jit backend exists and the interpreter covers the full
-    // instruction set; a refusal means genuinely undefined code is being executed.
+    // aarch64 host: hot supported blocks compile through the stage-5 backend; everything
+    // else (including every HLE-substitution pc — those substitutions exist only in the
+    // arm32 emitter) interprets. The interpreter covers the full instruction set, so a
+    // refusal to interpret means genuinely undefined code is being executed.
+    #[cfg(target_arch = "aarch64")]
+    {
+        let interp_blocked_by_twl_microcode = asm.cpu == ARM9 && asm.emu.nitro_sdk_version.is_twl_sdk() && asm.emu.settings.arm7_emu() == Arm7Emu::Hle && guest_pc & 0xFFFF000 == 0x1FF8000;
+        debug_assert!(!interp_blocked_by_twl_microcode, "TWL microcode has no aarch64 substitution; -e 2 is rejected at startup");
+
+        // Counter value 255 doubles as the "tried and refused" sentinel: a block the
+        // backend cannot compile yet would otherwise be re-decoded and re-refused on every
+        // handback (a 20x boot slowdown when it was measured). Naturally saturated-hot
+        // interpreted blocks land on the same value and skip the attempt too — identical
+        // behavior, they keep interpreting.
+        const REFUSED: u8 = 255;
+        let count_ptr = asm.emu.jit.jit_memory_map.get_exec_count(guest_pc);
+        if !count_ptr.is_null() {
+            let count = unsafe { (*count_ptr).saturating_add(1) };
+            unsafe { *count_ptr = count };
+            if count > crate::jit::interpreter::INTERP_THRESHOLD && count < REFUSED && a64_jit_enabled() {
+                let pc_step = if thumb { 2 } else { 4 };
+                asm.jit_buf.clear_all();
+                let guest_pc_end = JitAsm::fill_jit_insts_buf(asm.cpu, &mut asm.jit_buf.insts, &mut asm.jit_buf.insts_cycle_counts, asm.emu, guest_pc, thumb, false);
+                if !asm.jit_buf.insts.is_empty() && crate::jit::emitter::aarch64::is_block_jit_supported(&asm.jit_buf.insts, thumb) && !a64_pc_skipped(guest_pc) && a64_block_budget() {
+                    let mut block_asm = crate::jit::assembler::aarch64::A64BlockAsm::new(asm.cpu, thumb);
+                    block_asm.emit_entry_pc_dispatch(
+                        guest_pc | (thumb as u32),
+                        match asm.cpu {
+                            ARM9 => a64_jump_to_other_guest_pc::<{ ARM9 }> as *const (),
+                            ARM7 => a64_jump_to_other_guest_pc::<{ ARM7 }> as *const (),
+                        },
+                    );
+                    asm.emit_a64(&mut block_asm, guest_pc, guest_pc_end + pc_step);
+                    let block_meta = crate::jit::jit_memory::A64BlockMeta {
+                        guest_pc_start: guest_pc,
+                        insts: block_asm
+                            .inst_offsets
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &code_offset)| crate::jit::jit_memory::A64InstOffset {
+                                code_offset,
+                                pre_cycle_count_sum: asm.jit_buf.insts_cycle_counts[i] - asm.jit_buf.insts[i].cycle as u16,
+                            })
+                            .collect(),
+                    };
+                    let code = block_asm.finalize();
+                    let (jit_entry, flushed) = asm.emu.jit_insert_block_a64(code, block_meta, guest_pc, guest_pc_end + pc_step, thumb, asm.cpu);
+                    let jit_entry: extern "C" fn(u32) = unsafe { mem::transmute(jit_entry) };
+                    asm.runtime_data.pre_cycle_count_sum = 0;
+                    jit_entry(guest_pc | (thumb as u32));
+                    // The allocation flushed jit memory: host frames above may point into
+                    // freed blocks — unwind the whole guest context like arm32 does.
+                    if flushed {
+                        unsafe { exit_guest_context!(asm) };
+                    }
+                    return;
+                }
+                unsafe { *count_ptr = REFUSED };
+            }
+        }
+    }
+
     if !crate::jit::interpreter::interpret_block(asm, guest_pc, thumb) {
         let opcode = match asm.cpu {
             ARM9 => asm.emu.mem_read::<{ ARM9 }, u32>(guest_pc),
@@ -521,6 +605,36 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
         };
         panic!("{:?} undefined instruction at {guest_pc:x} thumb {thumb}: {opcode:08x}", asm.cpu);
     }
+}
+
+/// Kill switch while the aarch64 backend grows: DSVITA_A64_JIT=0 forces interpreter-only.
+#[cfg(target_arch = "aarch64")]
+fn a64_jit_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("DSVITA_A64_JIT").map(|v| v != "0").unwrap_or(true))
+}
+
+/// Bisect skip list: DSVITA_A64_SKIP_PC=hexpc,hexpc refuses specific block start pcs.
+#[cfg(target_arch = "aarch64")]
+fn a64_pc_skipped(guest_pc: u32) -> bool {
+    static LIST: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| {
+        std::env::var("DSVITA_A64_SKIP_PC")
+            .map(|v| v.split(',').filter_map(|p| u32::from_str_radix(p, 16).ok()).collect())
+            .unwrap_or_default()
+    })
+    .contains(&guest_pc)
+}
+
+/// Bisect limiter for divergence hunts: DSVITA_A64_MAX_BLOCKS=N compiles only the first N
+/// blocks that pass the support check; the rest interpret.
+#[cfg(target_arch = "aarch64")]
+fn a64_block_budget() -> bool {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static LIMIT: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    static USED: AtomicU32 = AtomicU32::new(0);
+    let limit = *LIMIT.get_or_init(|| std::env::var("DSVITA_A64_MAX_BLOCKS").ok().and_then(|v| v.parse().ok()).unwrap_or(u32::MAX));
+    USED.fetch_add(1, Ordering::Relaxed) < limit
 }
 
 #[cfg(target_arch = "arm")]

@@ -167,6 +167,24 @@ const SLOW_MEM_MULTIPLE_LENGTH_ARM: usize = 28;
 pub const SLOW_SWP_MEM_SINGLE_WRITE_LENGTH_ARM: usize = 20;
 pub const SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM: usize = 20;
 
+/// Per-instruction dispatch metadata of an aarch64 block, keyed by the block's first jit
+/// page: the entry-pc dispatch resolves a mid-block guest pc to its host code offset and
+/// the pre_cycle_count_sum the block's flush math expects there (the a64 twin of the
+/// arm32 GuestInstOffset tables — no register mappings, everything lives in memory).
+#[cfg(target_arch = "aarch64")]
+#[derive(Copy, Clone, Default)]
+pub struct A64InstOffset {
+    pub code_offset: u32,
+    pub pre_cycle_count_sum: u16,
+}
+
+#[cfg(target_arch = "aarch64")]
+#[derive(Default)]
+pub struct A64BlockMeta {
+    pub guest_pc_start: u32,
+    pub insts: Vec<A64InstOffset>,
+}
+
 #[derive(Copy, Clone)]
 pub struct JitEntry(pub *const extern "C" fn(u32));
 
@@ -352,6 +370,8 @@ pub struct JitMemory {
     jit_perf_map_record: JitPerfMapRecord,
     pub guest_inst_offsets: HeapArray<Vec<GuestInstOffset>, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
     guest_inst_metadata: HeapArray<Vec<GuestInstMetadata>, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
+    #[cfg(target_arch = "aarch64")]
+    pub a64_block_meta: HeapArray<A64BlockMeta, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
 }
 
 impl Emu {
@@ -445,6 +465,69 @@ impl Emu {
             },
         }
     }
+
+    /// aarch64 twin of jit_insert_block: takes finalized code bytes plus the per-inst
+    /// dispatch metadata (no entry patching or fastmem yet — later stage-5 slices).
+    /// Returns the entry and whether the allocation flushed jit memory — the caller must
+    /// exit the guest context after running a block that flushed, exactly like arm32
+    /// (host frames above may belong to freed blocks).
+    #[cfg(target_arch = "aarch64")]
+    pub fn jit_insert_block_a64(&mut self, code: &[u8], block_meta: A64BlockMeta, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu: CpuType) -> (*const extern "C" fn(u32), bool) {
+        block_hash_log(cpu, guest_pc, thumb, code);
+
+        macro_rules! insert {
+            ($entries:expr, $region:expr, [$($cpu_entry:expr),+]) => {{
+                let ret = insert!($entries);
+                $(
+                    self.jit_protect_region::<{ $cpu_entry }>(guest_pc, guest_pc_end, thumb, &$region);
+                )*
+                ret
+            }};
+
+            ($entries:expr) => {{
+                let aligned_size = utils::align_up(code.len(), PAGE_SIZE);
+                let (allocated_offset_addr, flushed) = self.jit.allocate_block(aligned_size, cpu);
+                utils::write_to_mem_slice(&mut self.jit.mem, allocated_offset_addr, code);
+                unsafe { flush_icache(self.jit.mem.as_ptr().add(allocated_offset_addr), aligned_size) };
+
+                let jit_entry_addr = ((allocated_offset_addr + self.jit.mem.as_ptr() as usize) | (thumb as usize)) as *const extern "C" fn(u32);
+
+                let guest_block_size = (guest_pc_end - guest_pc) as usize;
+                debug_assert!(guest_block_size < PAGE_SIZE);
+                self.jit.jit_memory_map.write_jit_entries(guest_pc, guest_block_size, JitEntry(jit_entry_addr));
+
+                let metadata = JitBlockMetadata::new(guest_pc | (thumb as u32), guest_pc_end | (thumb as u32), (allocated_offset_addr >> PAGE_SHIFT) as u16, ((allocated_offset_addr + aligned_size) >> PAGE_SHIFT) as u16);
+                self.jit.get_jit_data(cpu).jit_funcs.push_back(metadata);
+
+                self.jit_set_live_range(guest_pc, guest_pc_end, thumb);
+
+                self.jit.a64_block_meta[allocated_offset_addr >> PAGE_SHIFT] = block_meta;
+
+                (jit_entry_addr, flushed)
+            }};
+        }
+
+        match cpu {
+            ARM9 => match guest_pc & 0xFF000000 {
+                regions::ITCM_OFFSET | regions::ITCM_OFFSET2 => insert!(self.jit.jit_entries.itcm, regions::ITCM_REGION, [ARM9]),
+                regions::MAIN_OFFSET => insert!(self.jit.jit_entries.main, regions::MAIN_REGION, [ARM9, ARM7]),
+                regions::VRAM_OFFSET => insert!(self.jit.jit_entries.vram),
+                _ => todo!("{:x}", guest_pc),
+            },
+            ARM7 => match guest_pc & 0xFF000000 {
+                regions::MAIN_OFFSET => insert!(self.jit.jit_entries.main),
+                regions::SHARED_WRAM_OFFSET => {
+                    if guest_pc & regions::ARM7_WRAM_OFFSET == regions::ARM7_WRAM_OFFSET {
+                        insert!(self.jit.jit_entries.wram_arm7)
+                    } else {
+                        insert!(self.jit.jit_entries.shared_wram_arm7)
+                    }
+                }
+                regions::VRAM_OFFSET => insert!(self.jit.jit_entries.vram),
+                _ => todo!("{:x}", guest_pc),
+            },
+        }
+    }
 }
 
 impl JitMemory {
@@ -464,6 +547,8 @@ impl JitMemory {
             jit_perf_map_record: JitPerfMapRecord::new(),
             guest_inst_offsets: HeapArray::default(),
             guest_inst_metadata: HeapArray::default(),
+            #[cfg(target_arch = "aarch64")]
+            a64_block_meta: HeapArray::default(),
         }
     }
 
@@ -490,6 +575,10 @@ impl JitMemory {
         for vec in self.guest_inst_metadata.deref_mut() {
             vec.clear();
         }
+        #[cfg(target_arch = "aarch64")]
+        for meta in self.a64_block_meta.deref_mut() {
+            *meta = A64BlockMeta::default();
+        }
     }
 
     fn get_jit_data(&mut self, cpu_type: CpuType) -> &mut JitMemoryMetadata {
@@ -507,6 +596,10 @@ impl JitMemory {
             .write_jit_entries(block_metadata.guest_pc, (block_metadata.guest_pc_end - block_metadata.guest_pc) as usize, DEFAULT_JIT_ENTRY);
         for i in block_metadata.addr_offset_start..block_metadata.addr_offset_end {
             self.guest_inst_metadata[i as usize].clear();
+            #[cfg(target_arch = "aarch64")]
+            {
+                self.a64_block_meta[i as usize] = A64BlockMeta::default();
+            }
         }
 
         let jit_size = self.get_jit_data(cpu_type).size;
@@ -526,6 +619,10 @@ impl JitMemory {
             self.jit_memory_map.write_jit_entries(guest_pc, guest_block_size, DEFAULT_JIT_ENTRY);
             for i in addr_offset_start..addr_offset_end {
                 self.guest_inst_metadata[i as usize].clear();
+                #[cfg(target_arch = "aarch64")]
+                {
+                    self.a64_block_meta[i as usize] = A64BlockMeta::default();
+                }
             }
 
             freed_end = addr_offset_end;

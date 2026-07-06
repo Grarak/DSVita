@@ -1,6 +1,8 @@
 // Per-backend assemblers live in their own directory; everything below the module
 // declarations is backend-neutral (guest-file shapes, block metadata). Other host arches
 // run the interpreter until they grow a backend of their own (aarch64 lands in stage 5).
+#[cfg(target_arch = "aarch64")]
+pub mod aarch64;
 #[cfg(target_arch = "arm")]
 pub mod arm32;
 // Compatibility re-exports: call sites keep addressing crate::jit::assembler::{arm, ...}.

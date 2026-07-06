@@ -5,8 +5,9 @@
 # test box) vs aarch64 interpreter (this machine), identical settings, no input, then
 # `trace_diff.py --strict` — the traces must match record-for-record.
 #
-# Both variants are built here with DEBUG_LOG=true and INTERP_THRESHOLD=255 (temporary
-# source flips, restored on exit), release-debug profile, and run with --hle-irq 0 so the
+# Both variants are built as the debug profile (opt-level 3 since the profile bump; the
+# profile NAME is what turns DEBUG_LOG on — no source flip needed) with a temporary
+# INTERP_THRESHOLD=255 source flip (restored on exit), and run with --hle-irq 0 so the
 # os irq handler is interpreted raw on both sides (the HLE substitution only exists in
 # compiled code). Both sides capture exactly <records> instruction records via
 # DSVITA_INST_LOG_MAX (the logger closes itself on a record boundary — signal-based stops
@@ -22,20 +23,18 @@ EMU_N="${3:-0}"
 [ -n "$ROM" ] || { echo "usage: tracediff.sh <rom.nds> [records] [arm7_emu=0]" >&2; exit 2; }
 
 cd "$DSVITA_ROOT"
-MAIN_RS=src/main.rs
 INTERP_RS=src/jit/interpreter/mod.rs
-trap 'git checkout -- '"$MAIN_RS $INTERP_RS"' 2>/dev/null' EXIT
+trap 'git checkout -- '"$INTERP_RS"' 2>/dev/null' EXIT
 
-sed -i 's/^pub const DEBUG_LOG: bool = .*/pub const DEBUG_LOG: bool = true;/' $MAIN_RS
 sed -i 's/^pub const INTERP_THRESHOLD: u8 = .*/pub const INTERP_THRESHOLD: u8 = 255;/' $INTERP_RS
 # Defeat the same-mtime-tick fingerprint race (a sed+build chain can silently skip the
 # recompile — see DEVELOPMENT.md pitfalls): bump mtimes, then require the compile line.
-sleep 1.1; touch $MAIN_RS $INTERP_RS
+sleep 1.1; touch $INTERP_RS
 
 build_checked() {
     local target="$1"
     local out
-    out=$(cargo build --profile release-debug --target "$target" 2>&1) || { echo "$out" | tail -20; exit 1; }
+    out=$(cargo build --target "$target" 2>&1) || { echo "$out" | tail -20; exit 1; }
     echo "$out" | grep -q "Compiling dsvita" || { echo "STALE BUILD for $target (no 'Compiling dsvita')" >&2; exit 1; }
     echo "$out" | grep -E "Compiling dsvita|Finished"
 }
@@ -45,8 +44,8 @@ build_checked thumbv7neon-unknown-linux-gnueabihf
 echo "== building aarch64 (threshold 255, DEBUG_LOG) =="
 build_checked aarch64-unknown-linux-gnu
 
-ARMHF=target/thumbv7neon-unknown-linux-gnueabihf/release-debug/dsvita
-A64=target/aarch64-unknown-linux-gnu/release-debug/dsvita
+ARMHF=target/thumbv7neon-unknown-linux-gnueabihf/debug/dsvita
+A64=target/aarch64-unknown-linux-gnu/debug/dsvita
 md5sum $ARMHF $A64
 
 echo "== deploying reference to the test box =="

@@ -449,7 +449,9 @@ pub fn actual_main() {
     let mut screen_layouts = ScreenLayouts::new();
     let mut ra_context = RaContext::new();
     let mut cjk_download = cjk_font::Download::new();
-    let ra_context_thread_handle = ra_context.start_server_request_receive_thread();
+    // Join-on-drop guard: the request thread reads ra_context through a raw pointer, so it
+    // must be joined before ra_context drops — also during panic unwinds (see RaThreadGuard).
+    let _ra_context_thread_guard = ra_context.start_server_request_receive_thread();
 
     let mut running = true;
     while running {
@@ -738,5 +740,6 @@ pub fn actual_main() {
         gpu_renderer.set_quit(false);
     }
 
-    ra_context.stop_server_request_receive_thread(ra_context_thread_handle);
+    // The RA request thread is joined by _ra_context_thread_guard's drop, after this point
+    // but before ra_context itself drops.
 }

@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use std::{fs, mem, ptr, slice, thread};
@@ -64,7 +64,7 @@ pub struct RaContext {
     requests_sender: Sender<Request>,
     requests_receiver: Receiver<Request>,
 
-    active: AtomicBool,
+    active: Arc<AtomicBool>,
     login_callback_data: Mutex<Option<LoginCallbackData>>,
 
     pub event: Mutex<(RaEvent, Instant)>,
@@ -197,7 +197,7 @@ impl RaContext {
                 requests_sender,
                 requests_receiver,
 
-                active: AtomicBool::new(false),
+                active: Arc::new(AtomicBool::new(false)),
                 login_callback_data: Mutex::new(None),
 
                 event: Mutex::new((RaEvent::default(), Instant::now())),
@@ -296,7 +296,7 @@ impl RaContext {
         }
     }
 
-    pub fn start_server_request_receive_thread(&mut self) -> JoinHandle<()> {
+    pub fn start_server_request_receive_thread(&mut self) -> RaThreadGuard {
         self.active.store(true, Ordering::Release);
 
         let ptr = self as *mut _ as usize;
@@ -417,12 +417,32 @@ impl RaContext {
                     }
                 }
             })
+            .map(|handle| RaThreadGuard {
+                active: Arc::clone(&self.active),
+                handle: Some(handle),
+            })
             .unwrap()
     }
+}
 
-    pub fn stop_server_request_receive_thread(&self, thread_handle: JoinHandle<()>) {
+/// Join-on-drop guard for the request thread. The thread reads the RaContext through a raw
+/// pointer into actual_main's stack frame, so it MUST be joined before RaContext drops —
+/// including when a panic unwinds actual_main (letting it run past the unwind is a
+/// use-after-free that corrupts the channel and aborts, burying the real panic). Bind the
+/// guard AFTER the RaContext so drop order joins the thread first.
+pub struct RaThreadGuard {
+    active: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl Drop for RaThreadGuard {
+    fn drop(&mut self) {
         self.active.store(false, Ordering::Release);
-        thread_handle.join().unwrap();
+        if let Some(handle) = self.handle.take() {
+            // The thread only observes `active` between requests (≤500ms recv timeout); a
+            // panicked thread must not double-panic the unwind.
+            let _ = handle.join();
+        }
     }
 }
 

@@ -5,7 +5,6 @@ use std::mem;
 mod analyzer;
 pub mod assembler;
 pub mod disassembler;
-#[cfg(target_arch = "arm")]
 mod emitter;
 mod inst_branch_handler;
 mod inst_cp15_handler;

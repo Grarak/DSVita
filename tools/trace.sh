@@ -7,8 +7,9 @@ export DISPLAY="$DSVITA_DISPLAY"
 [ -n "$DSVITA_XAUTHORITY" ] && export XAUTHORITY="$DSVITA_XAUTHORITY"
 export LIBGL_ALWAYS_SOFTWARE=1
 cd "$DSVITA_ROOT"
-pkill -9 -f "release-debug/dsvita" 2>/dev/null
+pkill -9 -f "debug/dsvita" 2>/dev/null
 sleep 1
 rm -f /tmp/dsvita_trace.log
-setsid qemu-arm -L "$DSVITA_SYSROOT" target/thumbv7neon-unknown-linux-gnueabihf/release-debug/dsvita --inst-log "$1" "$DSVITA_TEST_ROM" >/tmp/dsvita_trace.log 2>&1 &
+# The debug profile IS the tracing build (DEBUG_LOG keys off the profile name; opt-level 3).
+setsid qemu-arm -L "$DSVITA_SYSROOT" target/thumbv7neon-unknown-linux-gnueabihf/debug/dsvita --inst-log "$1" "$DSVITA_TEST_ROM" >/tmp/dsvita_trace.log 2>&1 &
 disown
