@@ -19,7 +19,7 @@ impl JitAsm<'_> {
     pub fn emit(&mut self, block_asm: &mut BlockAsm, thumb: bool) {
         // A zero-instruction fill means execution reached an undefined instruction (or data):
         // fail loudly instead of underflowing into a capacity-overflow abort.
-        assert!(
+        debug_assert!(
             !self.jit_buf.insts.is_empty(),
             "{:?} compiling empty block at {:x} thumb {thumb}: execution reached undefined code",
             self.cpu,

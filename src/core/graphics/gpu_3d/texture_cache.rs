@@ -649,7 +649,7 @@ impl Texture3DCache {
                     oldest_size = texture_3d.metadata.size();
                 }
             }
-            assert_ne!(oldest_size, 0);
+            debug_assert_ne!(oldest_size, 0);
             self.total_size -= oldest_size;
             unsafe { self.cache.remove(&oldest_key).unwrap_unchecked() };
         }

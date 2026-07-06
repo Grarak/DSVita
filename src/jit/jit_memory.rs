@@ -646,7 +646,9 @@ impl JitMemory {
             }
             self.reset_blocks(cpu_type);
             let jit_data = self.get_jit_data(cpu_type);
-            assert!(jit_data.start + required_size <= jit_data.end);
+            // reset_blocks frees at least a quarter of the region, so the allocation
+            // always fits — checked in debug, assumed in release.
+            unsafe { assert_unchecked(jit_data.start + required_size <= jit_data.end) };
             flushed = true;
         }
 

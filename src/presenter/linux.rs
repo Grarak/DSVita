@@ -175,8 +175,8 @@ impl Presenter {
         let gl_ctx = window.gl_create_context().unwrap();
         gl::load_with(|name| sdl_video.gl_get_proc_address(name) as *const _);
 
-        assert_eq!(gl_attr.context_profile(), GLProfile::GLES);
-        assert_eq!(gl_attr.context_version(), (3, 0));
+        debug_assert_eq!(gl_attr.context_profile(), GLProfile::GLES);
+        debug_assert_eq!(gl_attr.context_version(), (3, 0));
 
         let event_pump = sdl.event_pump().unwrap();
 

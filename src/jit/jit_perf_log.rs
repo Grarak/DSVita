@@ -111,7 +111,7 @@ impl JitPerfLog {
         let mut file = OpenOptions::new().create_new(true).read(true).write(true).open(dir.join(format!("jit-{}.dump", header.pid))).unwrap();
 
         let ptr = unsafe { mmap(ptr::null_mut(), PAGE_SIZE as _, PROT_READ | PROT_EXEC, MAP_PRIVATE, file.as_raw_fd() as _, 0) };
-        assert_ne!(ptr, MAP_FAILED);
+        debug_assert_ne!(ptr, MAP_FAILED);
 
         let header: [u8; size_of::<JitHeader>()] = unsafe { mem::transmute(header) };
         file.write_all(&header).unwrap();

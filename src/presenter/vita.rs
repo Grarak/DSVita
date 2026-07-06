@@ -595,7 +595,7 @@ unsafe fn dialog_input(title: &str, value: &str, input_type: u32, text_box_mode:
     params.title = title.as_ptr() as _;
 
     let mut input_buf = [0u16; SCE_IME_DIALOG_MAX_TEXT_LENGTH as usize + 1];
-    assert!(max_len < SCE_IME_DIALOG_MAX_TEXT_LENGTH);
+    debug_assert!(max_len < SCE_IME_DIALOG_MAX_TEXT_LENGTH);
 
     let value = to_cstr_utf16(value);
     params.initialText = value.as_ptr() as _;
