@@ -11,7 +11,13 @@ fn main() {
     // The generated aarch32 masm wrappers and their C++ objects are only meaningful on the
     // two 32-bit arm targets; other host arches use the pure-Rust types from lib.rs only
     // (Reg/RegReserve/Cond for guest decode) until an aarch64 backend lands.
-    if !vitabuild::is_target_arm32() {
+    // Per-backend builds: the two 32-bit arm targets get the generated aarch32 masm wrappers,
+    // aarch64 gets the hand-written shim surface over vixl's A64 macro assembler
+    // (wrapper-aarch64.{h,cc} IS the explicit instruction list the backend may use).
+    // Any other host arch only uses the pure-Rust types from lib.rs (Reg/RegReserve/Cond
+    // for guest decode).
+    if std::env::var("TARGET").unwrap().starts_with("aarch64") {
+        build_aarch64();
         return;
     }
 
@@ -323,4 +329,68 @@ fn main() {
             variant_i += 1;
         }
     }
+}
+
+/// aarch64: compile the vendored A64 vixl sources plus the hand-written shim layer and
+/// bindgen the shim header. No build-time codegen — the shim surface is the checked-in,
+/// explicit instruction list (aarch64/wrapper-aarch64.h).
+fn build_aarch64() {
+    let vixl_path = Path::new("vixl_src");
+    println!("cargo:rerun-if-changed=vixl_src/src/aarch64/wrapper-aarch64.h");
+    println!("cargo:rerun-if-changed=vixl_src/src/aarch64/wrapper-aarch64.cc");
+    println!("cargo:rerun-if-changed=vixl_src/src/aarch64/wrapper-aarch64-structs.h");
+
+    let mut vixl_flags = vec![
+        "-DVIXL_CODE_BUFFER_MALLOC=1".to_string(),
+        "-DVIXL_INCLUDE_TARGET_A64=1".to_string(),
+        "-std=c++17".to_string(),
+        "-Wno-unused-parameter".to_string(),
+    ];
+    if is_debug() {
+        vixl_flags.push("-DVIXL_DEBUG=1".to_string());
+    }
+
+    let vixl_files = [
+        "code-buffer-vixl.cc",
+        "compiler-intrinsics-vixl.cc",
+        "cpu-features.cc",
+        "utils-vixl.cc",
+        "aarch64/assembler-aarch64.cc",
+        "aarch64/assembler-sve-aarch64.cc",
+        "aarch64/cpu-aarch64.cc",
+        "aarch64/cpu-features-auditor-aarch64.cc",
+        "aarch64/decoder-aarch64.cc",
+        "aarch64/instructions-aarch64.cc",
+        "aarch64/macro-assembler-aarch64.cc",
+        "aarch64/macro-assembler-sve-aarch64.cc",
+        "aarch64/operands-aarch64.cc",
+        "aarch64/pointer-auth-aarch64.cc",
+        "aarch64/registers-aarch64.cc",
+        "aarch64/wrapper-aarch64.cc",
+    ];
+
+    let mut vixl_build = create_cc_build();
+    vixl_build.include(vixl_path.join("src"));
+    for flag in &vixl_flags {
+        vixl_build.flag(flag);
+    }
+    for file in vixl_files {
+        let path = vixl_path.join("src").join(file);
+        if !path.exists() {
+            continue; // pointer-auth is absent in some vixl versions
+        }
+        vixl_build.file(path.to_str().unwrap());
+    }
+    vixl_build.compile("vixl");
+
+    let bindings_file = get_out_path().join("vixl_a64_bindings.rs");
+    let mut bindings = create_bindgen_builder()
+        .clang_args(["-x", "c++"])
+        .clang_args(["-I", vixl_path.join("src").to_str().unwrap()])
+        .formatter(Formatter::Prettyplease)
+        .header(vixl_path.join("src/aarch64/wrapper-aarch64.h").to_str().unwrap());
+    for flag in &vixl_flags {
+        bindings = bindings.clang_arg(flag);
+    }
+    bindgen_generate_to_file(bindings, bindings_file);
 }

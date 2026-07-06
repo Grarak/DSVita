@@ -94,9 +94,30 @@ Test setup: arm64 binaries run on the local machine; arm32 binaries on the pi5 (
 - Rules (maintainer): never decode traces on the box — always pull the .ilog and analyze
   locally.
 
-## Stages 3-6
-- Not started (seam refactor, vixl a64 with hardcoded instruction lists, A64 backend,
-  jit-vs-jit tracediff loop).
+## Stage 4 — vixl aarch64: DONE, acceptance met
+- Hardcoded instruction lists on BOTH arches (maintainer ask): the aarch32 build no longer
+  parses the expanded macro assembler (clang-format+regex gone) — the frozen parse lives in
+  `vixl/aarch32_masm_list.txt` and drives the same generation deterministically (sorted
+  output verified semantically identical to the old parse). aarch64's explicit list is the
+  hand-written shim layer itself: `vixl_src/src/aarch64/wrapper-aarch64.{h,cc}` (in the
+  vixl fork submodule — **local commit 764e9f47, Grarak/vixl needs a push**), plain-
+  primitive C functions constructing vixl operands internally; extend it by adding shims.
+- Coverage v1: mov/movz/movk, ALU imm+shifted-reg (+flags variants), shifts, bitfields,
+  csel/cset/csinc, ldr/str imm-offset all widths + regoff (fastmem `[xB, wA, uxtw]`),
+  ldp/stp, literal-pool loads, b/b.cond/bl/cbz/cbnz/tbz/tbnz/br/blr/ret/adr, mrs/msr NZCV,
+  nop/brk, raw nop, ExactAssemblyScope (pool blocking for fastmem/patch windows).
+- **Acceptance: 7 execute tests assemble + mmap-execute on the dev box** (NZCV round-trip
+  driving csel, ldp/stp pre/post-index, literal pool, branch loop, exact scope, regoff
+  load). Pitfalls hit: A64 `GetBuffer()` returns a reference; pool literals must register
+  with the masm's LiteralPool or FinalizeCode never places them; macro insts assert inside
+  exact scopes (raw forms only); two upstream unqualified RawLiteral enum uses fail C++17
+  lookup (patched in the fork).
+- Gates: armhf + a64 dsvita build, vita vpk builds, armv7 vixl generation semantically
+  identical.
+
+## Stages 3, 5, 6
+- Not started (S3 seam refactor with the armv7 byte-identity gate; S5 A64 backend on the
+  new glue; S6 jit-vs-jit tracediff loop).
 
 ## Env notes
 - qemu HG: release ≈ 500 vblank-lines/s, release-debug+DEBUG_LOG ≈ 50/s.

@@ -8,4 +8,8 @@ edition = "2024"
 [build-dependencies]
 bindgen = "0.72.1"
 regex = "1.11.1"
+
 vitabuild = { path = "../vitabuild" }
+
+[target.'cfg(target_arch = "aarch64")'.dev-dependencies]
+libc = "0.2"
