@@ -1948,6 +1948,10 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
     let mut pressed_savestates = false;
     let mut savestate_entries: Vec<SavestateUiEntry> = Vec::new();
     let mut savestate_selected: Option<usize> = None;
+    let mut pressed_cheats = false;
+    // Snapshot of the shared cheat list for rendering; the `##i` suffix keeps imgui
+    // ids unique when cheat names repeat
+    let mut cheat_entries: Vec<(CString, bool)> = Vec::new();
     let mut pressed_quit = false;
     let mut pressed_exit = false;
     let mut return_value = None;
@@ -1995,6 +1999,16 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                     overlay_focused = true;
                     savestate_selected = None;
                     savestate_entries = load_savestate_entries(rom_path, settings.arm7_emu() as u8);
+                    ImGui::CloseCurrentPopup();
+                }
+                if menu_button(c"Cheats", BUTTON_WIDTH) {
+                    pressed_cheats = true;
+                    overlay_focused = true;
+                    cheat_entries = crate::cheats::names_and_states()
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (name, enabled))| (CString::new(format!("{name}##cheat{i}")).unwrap(), enabled))
+                        .collect();
                     ImGui::CloseCurrentPopup();
                 }
                 if menu_button(c"Blow into mic", BUTTON_WIDTH) {
@@ -2103,6 +2117,37 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                         if savestate_selected.is_none() && back_closes_overlay(overlay_focused) {
                             pressed_savestates = false;
                             free_savestate_entries(&mut savestate_entries);
+                        }
+                        overlay_focused = ImGui::IsWindowFocused(0);
+                    }
+                    ImGui::End();
+                } else if pressed_cheats {
+                    if begin_fullscreen_overlay(c"##cheats") {
+                        if cheat_entries.is_empty() {
+                            ImGui::Spacing();
+                            centered_text(c"No cheats found");
+                            ImGui::Spacing();
+                            let hint = CString::new(format!("Place cheats in {}", crate::cheats::cheats_path(rom_path).display())).unwrap_or_default();
+                            centered_text(&hint);
+                        } else {
+                            let child_sz = ImVec2 { x: 0.0, y: 0.0 };
+                            if ImGui::BeginChild(c"##cheat_scroll".as_ptr() as _, &child_sz, false, 0) {
+                                for (i, (label, enabled)) in cheat_entries.iter_mut().enumerate() {
+                                    // Toggles hit the shared list immediately and persist
+                                    // to the .cht file; the cpu thread is parked while the
+                                    // menu is open, so cheats take effect on resume
+                                    if ImGui::Checkbox(label.as_ptr(), enabled) {
+                                        crate::cheats::set_enabled(i, *enabled);
+                                        if let Err(err) = crate::cheats::save(rom_path) {
+                                            eprintln!("Failed to save cheats: {err}");
+                                        }
+                                    }
+                                }
+                            }
+                            ImGui::EndChild();
+                        }
+                        if back_closes_overlay(overlay_focused) {
+                            pressed_cheats = false;
                         }
                         overlay_focused = ImGui::IsWindowFocused(0);
                     }

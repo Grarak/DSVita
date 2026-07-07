@@ -52,6 +52,7 @@ use CpuType::{ARM7, ARM9};
 mod bitset;
 mod cartridge_io;
 mod cartridge_metadata;
+mod cheats;
 mod core;
 #[cfg(debug_assertions)]
 mod debug_inst_log;
@@ -509,6 +510,8 @@ pub fn actual_main() {
 
         cartridge_io.parse_overlays();
         info_println!("Found {} overlays", cartridge_io.overlays.len());
+
+        cheats::load(&cartridge_io.file_path);
 
         emu_unsafe.get_mut().cartridge.set_cartridge_io(cartridge_io);
         emu_unsafe.get_mut().settings = settings;

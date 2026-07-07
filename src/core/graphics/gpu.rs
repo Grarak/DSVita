@@ -351,6 +351,9 @@ impl Emu {
                     }
                 }
             }
+            // After savestate handling, so a freshly loaded state gets cheats stamped
+            // onto it within the same frame
+            crate::cheats::apply(self);
         }
     }
 }
