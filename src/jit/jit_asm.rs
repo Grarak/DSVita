@@ -296,6 +296,10 @@ impl JitRuntimeData {
         mem::offset_of!(JitRuntimeData, return_stack)
     }
 
+    pub const fn get_return_stack_ptr_offset() -> usize {
+        mem::offset_of!(JitRuntimeData, return_stack_ptr)
+    }
+
     pub fn is_idle_loop(&self) -> bool {
         self.data_packed.idle_loop()
     }

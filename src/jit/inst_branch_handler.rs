@@ -60,20 +60,29 @@ fn run_scheduler_idle_loop<const ARM7_HLE: bool>(asm: &mut JitAsm) {
     asm.emu.regs_3d_run_cmds(asm.emu.cm.get_cycles());
 }
 
+// Outlined so the depth guard costs its callers one compare + never-taken branch of
+// icache footprint; the exit machinery lands with the cold bulk.
+#[cold]
+#[inline(never)]
+fn stack_depth_exceeded(asm: &mut JitAsm, sp_depth_size: usize, current_pc: u32) -> ! {
+    if IS_DEBUG {
+        asm.runtime_data.set_branch_out_pc(current_pc);
+    }
+    if BRANCH_LOG {
+        JitAsmCommonFuns::<{ ARM9 }>::debug_stack_depth_too_big(sp_depth_size, current_pc);
+    }
+    unsafe { exit_guest_context!(asm) }
+}
+
 #[inline(always)]
 pub fn check_stack_depth(asm: &mut JitAsm, current_pc: u32) {
     let sp_depth_size = asm.runtime_data.get_sp_depth_size();
     if unlikely(sp_depth_size >= MAX_STACK_DEPTH_SIZE) {
-        if IS_DEBUG {
-            asm.runtime_data.set_branch_out_pc(current_pc);
-        }
-        if BRANCH_LOG {
-            JitAsmCommonFuns::<{ ARM9 }>::debug_stack_depth_too_big(sp_depth_size, current_pc);
-        }
-        unsafe { exit_guest_context!(asm) };
+        stack_depth_exceeded(asm, sp_depth_size, current_pc);
     }
 }
 
+#[cold]
 #[inline(never)]
 pub extern "C" fn handle_interrupt(asm: *mut JitAsm, target_pc: u32, current_pc: u32) {
     let asm = unsafe { asm.as_mut_unchecked() };
@@ -108,6 +117,7 @@ fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm, total_cycles: u16, current
     debug_println!("{CPU:?} flush cycles {} at {current_pc:x}", asm.runtime_data.accumulated_cycles);
 }
 
+#[cold]
 #[inline(never)]
 fn exe_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, current_pc: u32) {
     match CPU {
@@ -194,10 +204,30 @@ pub unsafe extern "C" fn branch_reg<const CPU: CpuType, const HAS_LR_RETURN: boo
     }
 }
 
-pub unsafe extern "C" fn branch_lr<const CPU: CpuType, const ARM7_HLE: bool>(total_cycles: u16, target_pc: u32, current_pc: u32) {
-    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
+// The return-stack miss: replay a mispredicted return inside an interrupt frame, else
+// leave the guest context. Outlined — the match path above is the one every guest
+// return executes.
+#[cold]
+#[inline(never)]
+unsafe fn branch_lr_mismatch<const CPU: CpuType>(asm: &mut JitAsm, target_pc: u32, desired_lr: u32, current_pc: u32) -> ! {
+    if BRANCH_LOG {
+        JitAsmCommonFuns::<CPU>::debug_branch_lr_failed(current_pc, target_pc, desired_lr);
+    }
+    if CPU == ARM9 && unlikely(asm.runtime_data.is_in_interrupt()) {
+        let sp_depth_size = asm.runtime_data.get_sp_depth_size();
+        if likely(sp_depth_size < MAX_STACK_DEPTH_SIZE) {
+            asm.runtime_data.pre_cycle_count_sum = 0;
+            asm.runtime_data.push_return_stack(desired_lr);
+            call_jit_fun::<CPU>(asm, target_pc);
+        } else if BRANCH_LOG {
+            JitAsmCommonFuns::<CPU>::debug_stack_depth_too_big(sp_depth_size, current_pc);
+        }
+    }
+    exit_guest_context!(asm);
+}
 
-    flush_cycles::<CPU>(asm, total_cycles, current_pc);
+#[inline(always)]
+unsafe fn branch_lr_after_flush<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, target_pc: u32, current_pc: u32) {
     check_scheduler::<CPU, ARM7_HLE>(asm, current_pc);
 
     if IS_DEBUG {
@@ -211,21 +241,23 @@ pub unsafe extern "C" fn branch_lr<const CPU: CpuType, const ARM7_HLE: bool>(tot
             JitAsmCommonFuns::<CPU>::debug_branch_lr(current_pc, target_pc);
         }
     } else {
-        if BRANCH_LOG {
-            JitAsmCommonFuns::<CPU>::debug_branch_lr_failed(current_pc, target_pc, desired_lr);
-        }
-        if CPU == ARM9 && unlikely(asm.runtime_data.is_in_interrupt()) {
-            let sp_depth_size = asm.runtime_data.get_sp_depth_size();
-            if likely(sp_depth_size < MAX_STACK_DEPTH_SIZE) {
-                asm.runtime_data.pre_cycle_count_sum = 0;
-                asm.runtime_data.push_return_stack(desired_lr);
-                unsafe { call_jit_fun::<CPU>(asm, target_pc) };
-            } else if BRANCH_LOG {
-                JitAsmCommonFuns::<CPU>::debug_stack_depth_too_big(sp_depth_size, current_pc);
-            }
-        }
-        exit_guest_context!(asm);
+        branch_lr_mismatch::<CPU>(asm, target_pc, desired_lr, current_pc);
     }
+}
+
+pub unsafe extern "C" fn branch_lr<const CPU: CpuType, const ARM7_HLE: bool>(total_cycles: u16, target_pc: u32, current_pc: u32) {
+    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
+
+    flush_cycles::<CPU>(asm, total_cycles, current_pc);
+    branch_lr_after_flush::<CPU, ARM7_HLE>(asm, target_pc, current_pc);
+}
+
+/// The emitted BX-LR fast path flushes the cycle accounting inline and only lands here
+/// when the scheduler quantum is up or the return-stack peek mismatched — everything
+/// after the flush, with the pop not yet committed (the fast path only peeks).
+pub unsafe extern "C" fn branch_lr_slow<const CPU: CpuType, const ARM7_HLE: bool>(target_pc: u32, current_pc: u32) {
+    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
+    branch_lr_after_flush::<CPU, ARM7_HLE>(asm, target_pc, current_pc);
 }
 
 pub unsafe extern "C" fn branch_any_reg<const ARM7_HLE: bool>(total_cycles: u16, current_pc: u32) {

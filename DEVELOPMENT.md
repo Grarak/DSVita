@@ -376,6 +376,58 @@ offset once per straight-line run, re-resolve on 4KB page cross or jump), cached
 pointer in the dispatch context, the flat loop for cold branch targets, the AL-condition
 fast path, batched ldm/stm, store-only breakout checks.
 
+### Link-time hot/cold symbol ordering (July 2026 — pi-verified mechanism, vita verdict pending)
+
+`build.rs` passes `-Wl,--symbol-ordering-file=tools/symbol_order/<target-triple>.txt` to lld
+whenever that file exists. Listed (profiled-hot) functions are laid out contiguously in list
+order; everything unlisted — the cold bulk — lands grouped together, so the hot working set
+spans the minimum number of icache lines and iTLB pages.
+
+Workflow:
+
+1. Flat profile on the box, then
+   `perf report --no-children --no-demangle -s dso,symbol -g none --stdio --percent-limit 0.01`
+2. `tools/gen_symbol_order.sh <report.txt> <dso-name> tools/symbol_order/<triple>.txt`
+3. Port to the other target (hash suffixes differ per target):
+   `tools/match_symbol_order.sh <src-order.txt> <other-target.elf> <out.txt>` — matches by
+   demangled name with `::h<hash>` stripped; a key with several monomorphizations emits all.
+
+Gotchas (each cost a debug loop):
+
+- rustc does NOT surface linker warnings on successful links, so a stale ordering file
+  (symbol hashes churn with any code change) silently degrades to a no-op. After
+  regenerating, verify with `llvm-nm --numeric-sort` that the list entries sit contiguous.
+- Match against a FRESHLY built elf — hashes in a stale `target/` binary may already be
+  wrong for the current tree.
+- The vita `ldscript.ld` (SECTIONS script) is compatible: lld still applies the ordering,
+  but places the ordered group mid-`.text` (branch-distance heuristic) rather than at the
+  front, and `.text.startup` functions (e.g. `actual_main`) stay in their own script group.
+  Grouping is what matters; both are fine.
+- Vita link needs `OPENSSL_DIR=/usr/local/vitasdk/arm-vita-eabi OPENSSL_STATIC=1`.
+
+Measured on the pi (HG town savestate, uncapped, warm, per-instruction rates): iTLB misses
+-29% (0.68→0.49 MPKI), L1-icache misses -6% (4.83→4.59 MPKI), throughput +0.6% — inside
+noise on the out-of-order A76, as expected when the front-end stall isn't the bottleneck.
+The in-order A9 should benefit more; per the verdict rule this ships only if vita hardware
+measures a win.
+
+### Dispatch-spine follow-ups from the miss profile (July 2026, vita verdicts pending)
+
+The 5-event miss profile put ~25% of all branch mispredicts and ~25% of all L1I misses in
+the jit↔native dispatch funnel (branch_lr alone owned 7.2% of every icache miss). Two
+changes came out of it:
+
+- Cold-tail outlining of the handlers (#[cold] mismatch/exceed/interrupt paths): pi-neutral
+  — the icache pressure is jit-code capacity eviction, not handler size. Kept as the
+  structural base for the next item; drop if vita also measures nothing.
+- **Emitted BX-LR return fast path** (both backends): the match case runs inline in
+  compiled code, slow cases tail into branch_lr_slow. pi5: **+4.0% throughput**
+  (interleaved A/B, well above noise) even though emitted code volume grows (L1I misses
+  rose 4.6→5.1 MPKI) — the win is the removed native round trip per guest return, not the
+  front end. Gate = jit-vs-jit determinism pairs (byte-identical HG-boot ilogs both
+  arches; hello_world residuals are host-address bookkeeping records only — "Enter jit
+  addr" and fastmem fault logs embed per-process host pointers, benign across builds).
+
 ---
 
 ## 7. Known open items / divergence suspects

@@ -20,8 +20,8 @@ use super::emit::class_disabled;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::aarch64::{BlockAsm, SCRATCH0, SCRATCH1, SCRATCH2};
-use crate::jit::inst_branch_handler::{branch_lr, branch_reg, handle_interrupt, pre_branch, run_scheduler};
-use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
+use crate::jit::inst_branch_handler::{branch_lr, branch_lr_slow, branch_reg, handle_interrupt, pre_branch, run_scheduler};
+use crate::jit::jit_asm::{JitAsm, JitRuntimeData, RETURN_STACK_SIZE};
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
 use crate::logging::branch_println;
@@ -185,24 +185,106 @@ impl JitAsm<'_> {
             .strh_off(SCRATCH0, A64Reg::X8, JitRuntimeData::get_pre_cycle_count_sum_offset() as i64, vixl::A64AddrModeKind::Offset);
     }
 
-    /// BX LR: return through the return stack — store the guest PC, pop the frame and
-    /// tail-jump into branch_lr, whose `ret` on a matched pop unwinds straight to the
-    /// caller's post-BL code (the guest call/return pairs map onto host call/returns).
+    /// BX LR: return through the return stack. The common case — quantum not up, popped
+    /// entry matches — runs entirely in emitted code (flush the cycle accounting, peek
+    /// the return stack, set the cpsr T bit) and host-returns straight to the caller's
+    /// post-BL code, mirroring branch_lr's match path instruction for instruction. The
+    /// scheduler-due and mismatch cases tail-jump into branch_lr_slow, which is
+    /// branch_lr minus the already-emitted flush (the peek is uncommitted — it re-pops).
+    /// BRANCH_LOG builds keep the plain branch_lr tail call so the log hooks fire.
     pub(super) fn emit_branch_return(&mut self, block_asm: &mut BlockAsm, inst_index: usize, guest_pc: u32, arm7_hle: bool) {
         let current_pc = guest_pc + ((inst_index as u32) << if block_asm.thumb { 1 } else { 2 });
         let total_cycles = self.jit_buf.insts_cycle_counts[inst_index];
 
         block_asm.load_guest(A64Reg::X1, Reg::LR);
         block_asm.store_guest(A64Reg::X1, Reg::PC);
-        block_asm.mov_imm(A64Reg::X0, total_cycles as u32);
-        block_asm.mov_imm(A64Reg::X2, current_pc);
+
+        if BRANCH_LOG {
+            block_asm.mov_imm(A64Reg::X0, total_cycles as u32);
+            block_asm.mov_imm(A64Reg::X2, current_pc);
+            block_asm.masm.mov_imm64(
+                A64Reg::X8,
+                match (self.cpu, arm7_hle) {
+                    (ARM9, true) => branch_lr::<{ ARM9 }, true> as *const () as u64,
+                    (ARM9, false) => branch_lr::<{ ARM9 }, false> as *const () as u64,
+                    (ARM7, true) => branch_lr::<{ ARM7 }, true> as *const () as u64,
+                    (ARM7, false) => branch_lr::<{ ARM7 }, false> as *const () as u64,
+                },
+            );
+            block_asm.restore_frame();
+            block_asm.masm.br(A64Reg::X8);
+            return;
+        }
+
+        let runtime_data_addr = ptr::addr_of_mut!(self.runtime_data) as u64;
+        let mut slow_label = A64Label::new();
+
+        // flush_cycles: accumulated += total_cycles + 2 - pre_cycle_count_sum; pre = 0.
+        block_asm.masm.mov_imm64(A64Reg::X8, runtime_data_addr);
+        block_asm
+            .masm
+            .ldrh_off(SCRATCH0, A64Reg::X8, JitRuntimeData::get_accumulated_cycles_offset() as i64, vixl::A64AddrModeKind::Offset);
+        block_asm
+            .masm
+            .ldrh_off(SCRATCH1, A64Reg::X8, JitRuntimeData::get_pre_cycle_count_sum_offset() as i64, vixl::A64AddrModeKind::Offset);
+        block_asm.mov_imm(SCRATCH2, total_cycles as u32 + 2);
+        block_asm.masm.add_reg(SCRATCH0, SCRATCH0, SCRATCH2, A64ShiftKind::LSL, 0, false);
+        block_asm.masm.sub_reg(SCRATCH0, SCRATCH0, SCRATCH1, A64ShiftKind::LSL, 0, false);
+        block_asm
+            .masm
+            .strh_off(SCRATCH0, A64Reg::X8, JitRuntimeData::get_accumulated_cycles_offset() as i64, vixl::A64AddrModeKind::Offset);
+        block_asm.mov_imm(SCRATCH1, 0);
+        block_asm
+            .masm
+            .strh_off(SCRATCH1, A64Reg::X8, JitRuntimeData::get_pre_cycle_count_sum_offset() as i64, vixl::A64AddrModeKind::Offset);
+
+        if IS_DEBUG {
+            block_asm.mov_imm(SCRATCH2, current_pc);
+            block_asm
+                .masm
+                .str_off(SCRATCH2, false, A64Reg::X8, JitRuntimeData::get_branch_out_pc_offset() as i64, vixl::A64AddrModeKind::Offset);
+        }
+
+        // check_scheduler's threshold — the quantum-up case runs the scheduler in
+        // branch_lr_slow, in the same order the native path does.
+        block_asm.masm.cmp_imm(SCRATCH0, self.cpu.max_loop_cycle_count() as u64, false);
+        block_asm.masm.b_cond(&mut slow_label, Cond::HS);
+
+        // Peek the return stack: idx = (ptr - 1) & (SIZE - 1), as (ptr + SIZE - 1) & mask
+        // since there is no sub-immediate in the shim. Committed only on a match.
+        block_asm
+            .masm
+            .ldrb_off(SCRATCH1, A64Reg::X8, JitRuntimeData::get_return_stack_ptr_offset() as i64, vixl::A64AddrModeKind::Offset);
+        block_asm.mov_imm(SCRATCH2, RETURN_STACK_SIZE as u32 - 1);
+        block_asm.masm.add_reg(SCRATCH1, SCRATCH1, SCRATCH2, A64ShiftKind::LSL, 0, false);
+        block_asm.masm.ubfx(SCRATCH1, SCRATCH1, 0, RETURN_STACK_SIZE.trailing_zeros(), false);
+        block_asm.masm.add_reg(SCRATCH2, A64Reg::X8, SCRATCH1, A64ShiftKind::LSL, 2, true);
+        block_asm
+            .masm
+            .ldr_off(SCRATCH2, false, SCRATCH2, JitRuntimeData::get_return_stack_offset() as i64, vixl::A64AddrModeKind::Offset);
+        block_asm.masm.cmp_reg(SCRATCH2, A64Reg::X1, A64ShiftKind::LSL, 0, false);
+        block_asm.masm.b_cond(&mut slow_label, Cond::NE);
+
+        // Match: commit the pop, thread_set_thumb (target bit0 -> cpsr T), host-return.
+        block_asm
+            .masm
+            .strb_off(SCRATCH1, A64Reg::X8, JitRuntimeData::get_return_stack_ptr_offset() as i64, vixl::A64AddrModeKind::Offset);
+        block_asm.load_cpsr(SCRATCH0);
+        block_asm.masm.bfi(SCRATCH0, A64Reg::X1, 5, 1, false);
+        block_asm.store_cpsr(SCRATCH0);
+        block_asm.restore_frame();
+        block_asm.masm.ret();
+
+        block_asm.masm.bind(&mut slow_label);
+        block_asm.masm.mov_reg(A64Reg::X0, A64Reg::X1, false);
+        block_asm.mov_imm(A64Reg::X1, current_pc);
         block_asm.masm.mov_imm64(
             A64Reg::X8,
             match (self.cpu, arm7_hle) {
-                (ARM9, true) => branch_lr::<{ ARM9 }, true> as *const () as u64,
-                (ARM9, false) => branch_lr::<{ ARM9 }, false> as *const () as u64,
-                (ARM7, true) => branch_lr::<{ ARM7 }, true> as *const () as u64,
-                (ARM7, false) => branch_lr::<{ ARM7 }, false> as *const () as u64,
+                (ARM9, true) => branch_lr_slow::<{ ARM9 }, true> as *const () as u64,
+                (ARM9, false) => branch_lr_slow::<{ ARM9 }, false> as *const () as u64,
+                (ARM7, true) => branch_lr_slow::<{ ARM7 }, true> as *const () as u64,
+                (ARM7, false) => branch_lr_slow::<{ ARM7 }, false> as *const () as u64,
             },
         );
         block_asm.restore_frame();
