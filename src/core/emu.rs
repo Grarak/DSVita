@@ -166,22 +166,34 @@ impl Emu {
     }
 
     pub fn save_state(&mut self, screenshot: &[u8]) -> Option<Vec<u8>> {
+        // Progress split: serialize is a fast field walk, compression dominates
+        crate::savestate::op_report(crate::savestate::OpPhase::Serialize, 0);
         let mut state = SavestateContext::new_save();
         self.savestate(&mut state);
         let raw = state.into_data()?;
-        Some(crate::savestate::encode_savestate_file(self.settings.arm7_emu() as u8, screenshot, &raw))
+        Some(crate::savestate::encode_savestate_file(self.settings.arm7_emu() as u8, screenshot, &raw, |done, total| {
+            crate::savestate::op_report(crate::savestate::OpPhase::Compress, (5 + done * 90 / total.max(1)) as u8);
+        }))
     }
 
+    // Reports load progress/result for the pause-menu dialog; reports are dropped
+    // when no dialog armed the op (boot -s loads)
     pub fn load_state(&mut self, data: Vec<u8>) -> bool {
+        crate::savestate::op_report(crate::savestate::OpPhase::Decompress, 10);
         let Some(raw) = crate::savestate::decode_savestate_file(&data, self.settings.arm7_emu() as u8) else {
+            crate::savestate::op_fail();
             return false;
         };
+        crate::savestate::op_report(crate::savestate::OpPhase::Apply, 60);
         let mut state = SavestateContext::new_load(raw);
         self.savestate(&mut state);
         if !state.is_load_successful() {
+            crate::savestate::op_fail();
             return false;
         }
+        crate::savestate::op_report(crate::savestate::OpPhase::Apply, 85);
         self.savestate_post_load();
+        crate::savestate::op_finish_load(data.len());
         true
     }
 
@@ -190,6 +202,7 @@ impl Emu {
         let dir = rom_path.parent().unwrap_or(std::path::Path::new(".")).join("savestates");
         if let Err(err) = std::fs::create_dir_all(&dir) {
             crate::logging::info_println!("Failed to create savestate dir {dir:?}: {err}");
+            crate::savestate::op_fail();
             return;
         }
         let stem = rom_path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
@@ -200,16 +213,22 @@ impl Emu {
             path = dir.join(format!("{stem}-{num}.sav"));
         }
         match self.save_state(screenshot) {
-            Some(data) => match std::fs::write(&path, &data) {
-                Ok(()) => {
-                    crate::logging::info_println!("Savestate ({} bytes) written to {path:?}", data.len());
+            Some(data) => {
+                crate::savestate::op_report(crate::savestate::OpPhase::Write, 95);
+                match std::fs::write(&path, &data) {
+                    Ok(()) => {
+                        crate::logging::info_println!("Savestate ({} bytes) written to {path:?}", data.len());
+                        crate::savestate::op_finish_save(data.len());
+                    }
+                    Err(err) => {
+                        crate::logging::info_println!("Failed to write savestate {path:?}: {err}");
+                        crate::savestate::op_fail();
+                    }
                 }
-                Err(err) => {
-                    crate::logging::info_println!("Failed to write savestate {path:?}: {err}");
-                }
-            },
+            }
             None => {
                 crate::logging::info_println!("Savestate serialization failed");
+                crate::savestate::op_fail();
             }
         }
     }

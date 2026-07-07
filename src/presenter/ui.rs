@@ -1708,6 +1708,8 @@ struct SavestateUiEntry {
     path: PathBuf,
     label: CString,
     detail: CString,
+    // Row-spanning selectable id; the visible content is drawlist-drawn on top
+    sel_id: CString,
     texture: u32,
     arm7_matches: bool,
 }
@@ -1796,22 +1798,26 @@ unsafe fn load_savestate_entries(rom_path: &Path, current_arm7: u8) -> Vec<Saves
     for (num, path) in found {
         let Some(meta) = crate::savestate::peek_meta(&path) else { continue };
         let arm7_matches = meta.arm7_emu == current_arm7;
-        let modified = fs::metadata(&path)
-            .and_then(|m| m.modified())
+        let metadata = fs::metadata(&path).ok();
+        let modified = metadata
+            .as_ref()
+            .and_then(|m| m.modified().ok())
             .map(|time| chrono::DateTime::<chrono::Local>::from(time).format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_default();
+        let size = metadata.map(|m| format!(" - {:.1} MB", m.len() as f64 / (1024.0 * 1024.0))).unwrap_or_default();
         let detail = if arm7_matches {
-            modified
+            format!("{modified}{size}")
         } else {
             let state_mode: &'static str = crate::settings::Arm7Emu::from(meta.arm7_emu).into();
             let session_mode: &'static str = crate::settings::Arm7Emu::from(current_arm7).into();
-            format!("{modified} - ARM7 emulation: {state_mode} (session: {session_mode})")
+            format!("{modified}{size} - ARM7 emulation: {state_mode} (session: {session_mode})")
         };
         entries.push(SavestateUiEntry {
             texture: create_screenshot_texture(&meta.screenshot),
             path,
             label: CString::new(format!("Savestate {num}")).unwrap(),
             detail: CString::new(detail).unwrap(),
+            sel_id: CString::new(format!("##savestate{num}")).unwrap(),
             arm7_matches,
         });
     }
@@ -1856,37 +1862,46 @@ unsafe fn render_savestate_overlay(entries: &[SavestateUiEntry], selected: &mut 
         const THUMB_W: f32 = 240.0;
         const THUMB_H: f32 = 136.0;
         for (i, entry) in entries.iter().enumerate() {
-            ImGui::PushID(entry.label.as_ptr());
-
-            ImGui::BeginGroup();
-            let thumb_sz = ImVec2 { x: THUMB_W, y: THUMB_H };
-            let uv0 = ImVec2 { x: 0.0, y: 0.0 };
-            let uv1 = ImVec2 { x: 1.0, y: 1.0 };
-            let tint = ImVec4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 };
-            let border = ImVec4 { x: 0.3, y: 0.3, z: 0.3, w: 1.0 };
-            if entry.texture != 0 {
-                ImGui::Image(entry.texture as _, &thumb_sz, &uv0, &uv1, &tint, &border);
-            } else {
-                // Keep rows aligned when a state has no screenshot
-                ImGui::Dummy(&thumb_sz);
-            }
-
-            ImGui::SameLine(0.0, 14.0);
-            ImGui::BeginGroup();
-            ImGui::SetWindowFontScale(1.15);
-            ImGui::Text(entry.label.as_ptr() as _);
-            ImGui::SetWindowFontScale(1.0);
-            ImGui::Text(entry.detail.as_ptr() as _);
-            ImGui::EndGroup();
-            ImGui::EndGroup();
-            if ImGui::IsItemClicked(0) {
+            // One row-spanning Selectable so the entry is reachable by gamepad/
+            // keyboard nav (a plain widget group never receives nav focus); the
+            // thumbnail and texts are drawlist-drawn over it so no other item
+            // competes for hover/clicks.
+            let origin = ImGui::GetCursorScreenPos();
+            let sel_sz = ImVec2 {
+                x: ImGui::GetContentRegionAvail().x,
+                y: THUMB_H,
+            };
+            if ImGui::Selectable(entry.sel_id.as_ptr(), false, 0, &sel_sz) {
                 *selected = Some(i);
             }
+
+            let dl = ImGui::GetWindowDrawList();
+            if entry.texture != 0 {
+                let thumb_min = origin;
+                let thumb_max = ImVec2 {
+                    x: origin.x + THUMB_W,
+                    y: origin.y + THUMB_H,
+                };
+                let uv0 = ImVec2 { x: 0.0, y: 0.0 };
+                let uv1 = ImVec2 { x: 1.0, y: 1.0 };
+                ImDrawList_AddImage(dl, entry.texture as _, &thumb_min, &thumb_max, &uv0, &uv1, 0xFFFFFFFF);
+                ImDrawList_AddRect(dl, &thumb_min, &thumb_max, 0xFF4D4D4D, 0.0, 0, 1.0);
+            }
+            let line_height = ImGui::GetTextLineHeightWithSpacing();
+            let label_pos = ImVec2 {
+                x: origin.x + THUMB_W + 14.0,
+                y: origin.y + 4.0,
+            };
+            let detail_pos = ImVec2 {
+                x: label_pos.x,
+                y: label_pos.y + line_height * 1.3,
+            };
+            ImDrawList_AddText(dl, &label_pos, 0xFFFFFFFF, entry.label.as_ptr(), ptr::null());
+            ImDrawList_AddText(dl, &detail_pos, 0xFFCCCCCC, entry.detail.as_ptr(), ptr::null());
 
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
-            ImGui::PopID();
         }
     }
     ImGui::EndChild();
@@ -2090,13 +2105,16 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                         match render_savestate_overlay(&savestate_entries, &mut savestate_selected) {
                             Some(SavestateUiAction::Create) => {
                                 // Screenshot of the frozen frame behind the menu; the state
-                                // itself is written by the cpu thread at the next vblank
+                                // itself is written by the cpu thread at the next vblank.
+                                // op_begin arms the progress dialog main.rs shows meanwhile.
                                 let screenshot = gpu_renderer.capture_main_framebuffer_jpeg();
+                                crate::savestate::op_begin();
                                 crate::savestate::request_save_with_screenshot(screenshot);
                                 return_value = Some(UiPauseMenuReturn::Resume);
                             }
                             Some(SavestateUiAction::Load(path)) => match fs::read(&path) {
                                 Ok(data) => {
+                                    crate::savestate::op_begin();
                                     crate::savestate::request_load(data);
                                     return_value = Some(UiPauseMenuReturn::Resume);
                                 }
@@ -2210,6 +2228,49 @@ pub fn show_progress(ui_backend: &mut impl UiBackend, current_name: impl AsRef<s
             ImGui::EndPopup();
         }
         ImGui::OpenPopup(c"ProgressPopup".as_ptr());
+
+        ImGui::Render();
+        ui_backend.render_draw_data(ImGui::GetDrawData());
+        ui_backend.swap_window();
+    }
+}
+
+/// One frame of the savestate progress dialog, drawn over the frozen game frame
+/// while main.rs waits for the cpu thread to finish a menu-requested save/load.
+pub fn show_savestate_progress(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRenderer, text: impl AsRef<str>, progress: usize) {
+    unsafe {
+        gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
+        gl::ClearColor(0f32, 0f32, 0f32, 1f32);
+        gl::Clear(gl::COLOR_BUFFER_BIT);
+        gpu_renderer.blit_main_framebuffer();
+
+        ui_backend.new_frame();
+
+        center_next_window();
+        if ImGui::BeginPopupModal(
+            c"SavestateProgressPopup".as_ptr(),
+            ptr::null_mut(),
+            (ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar
+                | ImGuiWindowFlags__ImGuiWindowFlags_NoResize
+                | ImGuiWindowFlags__ImGuiWindowFlags_NoMove
+                | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse
+                | ImGuiWindowFlags__ImGuiWindowFlags_AlwaysAutoResize) as _,
+        ) {
+            dialog_title(c"Savestate");
+            let text = CString::new(text.as_ref()).unwrap_or_default();
+            centered_text(&text);
+            ImGui::Spacing();
+            const BAR_WIDTH: f32 = 440.0;
+            let avail = ImGui::GetContentRegionAvail().x;
+            if avail > BAR_WIDTH {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - BAR_WIDTH) * 0.5);
+            }
+            let sz = ImVec2 { x: BAR_WIDTH, y: 28.0 };
+            ImGui::ProgressBar(progress as f32 / 100.0, &sz, ptr::null());
+            ImGui::EndPopup();
+        }
+        ImGui::OpenPopup(c"SavestateProgressPopup".as_ptr());
 
         ImGui::Render();
         ui_backend.render_draw_data(ImGui::GetDrawData());

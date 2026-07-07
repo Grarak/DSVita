@@ -1,7 +1,7 @@
 use crate::utils::{HeapArray, HeapMem};
 use std::io::Read;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::{ptr, slice};
 
@@ -28,12 +28,129 @@ pub fn request_load(data: Vec<u8>) {
     *REQUEST.lock().unwrap() = Some(SavestateRequest::Load { data });
 }
 
-// Consumed once per frame at the vblank hook on the cpu thread
+// Consumed once per frame at the vblank hook on the cpu thread. UI requests
+// first: they drive the pause-menu progress dialog whose wait loop wakes the cpu
+// for exactly one frame, so a pending quick-save must not shadow them.
 pub fn take_request() -> Option<SavestateRequest> {
+    if let Some(request) = REQUEST.lock().unwrap().take() {
+        return Some(request);
+    }
     if SAVE_REQUEST.swap(false, Ordering::Relaxed) {
         return Some(SavestateRequest::Save { screenshot: Vec::new() });
     }
-    REQUEST.lock().unwrap().take()
+    None
+}
+
+// Cross-thread status for the pause-menu progress dialog: the ui thread arms it
+// (op_begin) before queuing a request, the cpu thread reports while performing
+// the save/load, the main thread polls until a terminal state and clears it.
+// Quick-saves (F11/SIGUSR1) never arm it, so their reports are dropped and no
+// dialog is shown for them.
+const OP_IDLE: u8 = 0;
+const OP_WORKING: u8 = 1;
+const OP_DONE_SAVE: u8 = 2;
+const OP_DONE_LOAD: u8 = 3;
+const OP_FAILED: u8 = 4;
+
+static OP_STATE: AtomicU8 = AtomicU8::new(OP_IDLE);
+static OP_PHASE: AtomicU8 = AtomicU8::new(0);
+static OP_PROGRESS: AtomicU8 = AtomicU8::new(0);
+static OP_BYTES: AtomicU32 = AtomicU32::new(0);
+
+#[derive(Copy, Clone)]
+pub enum OpPhase {
+    Serialize = 0,
+    Compress = 1,
+    Write = 2,
+    Decompress = 3,
+    Apply = 4,
+}
+
+impl OpPhase {
+    pub fn label(self) -> &'static str {
+        match self {
+            OpPhase::Serialize => "Serializing state",
+            OpPhase::Compress => "Compressing",
+            OpPhase::Write => "Writing file",
+            OpPhase::Decompress => "Decompressing",
+            OpPhase::Apply => "Applying state",
+        }
+    }
+
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0 => OpPhase::Serialize,
+            1 => OpPhase::Compress,
+            2 => OpPhase::Write,
+            3 => OpPhase::Decompress,
+            _ => OpPhase::Apply,
+        }
+    }
+}
+
+pub enum OpView {
+    Working { phase: OpPhase, progress: u8 },
+    DoneSave { bytes: u32 },
+    DoneLoad { bytes: u32 },
+    Failed,
+}
+
+pub fn op_begin() {
+    OP_PHASE.store(OpPhase::Serialize as u8, Ordering::Relaxed);
+    OP_PROGRESS.store(0, Ordering::Relaxed);
+    OP_STATE.store(OP_WORKING, Ordering::Release);
+}
+
+pub fn op_active() -> bool {
+    OP_STATE.load(Ordering::Acquire) != OP_IDLE
+}
+
+pub fn op_clear() {
+    OP_STATE.store(OP_IDLE, Ordering::Release);
+}
+
+// Reported from the cpu thread; dropped unless the dialog armed the op
+pub fn op_report(phase: OpPhase, progress: u8) {
+    if OP_STATE.load(Ordering::Relaxed) == OP_WORKING {
+        OP_PHASE.store(phase as u8, Ordering::Relaxed);
+        OP_PROGRESS.store(progress, Ordering::Relaxed);
+    }
+}
+
+pub fn op_finish_save(bytes: usize) {
+    if OP_STATE.load(Ordering::Relaxed) == OP_WORKING {
+        OP_BYTES.store(bytes as u32, Ordering::Relaxed);
+        OP_STATE.store(OP_DONE_SAVE, Ordering::Release);
+    }
+}
+
+pub fn op_finish_load(bytes: usize) {
+    if OP_STATE.load(Ordering::Relaxed) == OP_WORKING {
+        OP_BYTES.store(bytes as u32, Ordering::Relaxed);
+        OP_STATE.store(OP_DONE_LOAD, Ordering::Release);
+    }
+}
+
+pub fn op_fail() {
+    if OP_STATE.load(Ordering::Relaxed) == OP_WORKING {
+        OP_STATE.store(OP_FAILED, Ordering::Release);
+    }
+}
+
+pub fn op_poll() -> OpView {
+    match OP_STATE.load(Ordering::Acquire) {
+        OP_DONE_SAVE => OpView::DoneSave {
+            bytes: OP_BYTES.load(Ordering::Relaxed),
+        },
+        OP_DONE_LOAD => OpView::DoneLoad {
+            bytes: OP_BYTES.load(Ordering::Relaxed),
+        },
+        OP_FAILED => OpView::Failed,
+        _ => OpView::Working {
+            phase: OpPhase::from_u8(OP_PHASE.load(Ordering::Relaxed)),
+            progress: OP_PROGRESS.load(Ordering::Relaxed),
+        },
+    }
 }
 
 pub use dsvita_macros::Savestate;
@@ -76,16 +193,48 @@ pub fn peek_meta(path: &Path) -> Option<SavestateMeta> {
     Some(SavestateMeta { arm7_emu, screenshot })
 }
 
-pub fn encode_savestate_file(arm7_emu: u8, screenshot: &[u8], state: &[u8]) -> Vec<u8> {
+pub fn encode_savestate_file(arm7_emu: u8, screenshot: &[u8], state: &[u8], mut on_progress: impl FnMut(usize, usize)) -> Vec<u8> {
     let mut out = Vec::with_capacity(HEADER_FIXED_LEN + screenshot.len() + state.len() / 4);
     out.extend_from_slice(&SAVESTATE_MAGIC.to_le_bytes());
     out.extend_from_slice(&SAVESTATE_VERSION.to_le_bytes());
     out.push(arm7_emu);
     out.extend_from_slice(&(screenshot.len() as u32).to_le_bytes());
     out.extend_from_slice(screenshot);
+
     // Level 1: the payload is dominated by sparse guest ram, which even the fastest
-    // level shrinks massively, and saves happen on the vita's cpu
-    out.extend_from_slice(&miniz_oxide::deflate::compress_to_vec(state, 1));
+    // level shrinks massively, and saves happen on the vita's cpu. Streamed in
+    // chunks (same flags compress_to_vec(_, 1) uses, so the format is unchanged)
+    // because compression dominates the save time and feeds the progress dialog.
+    use miniz_oxide::deflate::core::{compress, create_comp_flags_from_zip_params, CompressorOxide, TDEFLFlush, TDEFLStatus};
+    const CHUNK: usize = 512 << 10;
+    let mut compressor = CompressorOxide::new(create_comp_flags_from_zip_params(1, 0, 0));
+    let header_len = out.len();
+    out.resize(header_len + (state.len() / 2).max(64), 0);
+    let mut in_pos = 0;
+    let mut out_pos = header_len;
+    loop {
+        let in_end = (in_pos + CHUNK).min(state.len());
+        let flush = if in_end == state.len() { TDEFLFlush::Finish } else { TDEFLFlush::None };
+        let (status, bytes_in, bytes_out) = compress(&mut compressor, &state[in_pos..in_end], &mut out[out_pos..], flush);
+        in_pos += bytes_in;
+        out_pos += bytes_out;
+        on_progress(in_pos, state.len());
+        match status {
+            TDEFLStatus::Done => break,
+            TDEFLStatus::Okay => {
+                if out.len() - out_pos < 64 {
+                    let grow = out.len();
+                    out.resize(grow * 2, 0);
+                }
+            }
+            // Can't happen with valid flags on a fresh compressor
+            _ => {
+                debug_assert!(false, "savestate deflate failed: {status:?}");
+                break;
+            }
+        }
+    }
+    out.truncate(out_pos);
     out
 }
 
@@ -663,10 +812,19 @@ mod tests {
         state_bytes[123] = 45;
         state_bytes[60000] = 99;
 
-        let file = encode_savestate_file(2, &screenshot, &state_bytes);
+        let mut progress_calls = 0;
+        let file = encode_savestate_file(2, &screenshot, &state_bytes, |done, total| {
+            assert!(done <= total);
+            progress_calls += 1;
+        });
+        assert!(progress_calls > 0);
         assert!(file.len() < state_bytes.len() / 2);
 
         assert_eq!(decode_savestate_file(&file, 2).unwrap(), state_bytes);
+
+        // Chunked encode must produce the exact one-shot compress_to_vec format
+        let reference = miniz_oxide::deflate::compress_to_vec(&state_bytes, 1);
+        assert_eq!(&file[11 + screenshot.len()..], &reference[..]);
 
         // arm7 emulation mode mismatch is rejected
         assert!(decode_savestate_file(&file, 0).is_none());

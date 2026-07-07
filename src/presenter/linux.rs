@@ -282,6 +282,10 @@ impl Presenter {
         show_progress(self, current_name, progress, total)
     }
 
+    pub fn present_savestate_progress(&mut self, gpu_renderer: &GpuRenderer, text: impl AsRef<str>, progress: usize) {
+        crate::presenter::ui::show_savestate_progress(self, gpu_renderer, text, progress)
+    }
+
     pub fn get_default_key_mapping() -> [u32; crate::key_bindings::NUM_KEYS] {
         [0; crate::key_bindings::NUM_KEYS]
     }

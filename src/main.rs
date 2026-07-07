@@ -727,6 +727,30 @@ pub fn actual_main() {
                         }
                         presenter.set_key_mapping(global_settings.get_control(settings.controls_index()).buttons);
                         screen_layout = emu_unsafe.get_mut().settings.screen_layout(&screen_layouts);
+                        if savestate::op_active() {
+                            // The menu queued a savestate request and armed the progress
+                            // dialog. The cpu thread is parked at the vblank hook; wake it
+                            // with pause still set so it consumes the request at that hook,
+                            // runs one frame and parks again. render_loop must consume the
+                            // frame it produces, or the rendering handshake would never let
+                            // it park. Then draw dialog frames off the reported status.
+                            cpu_thread.thread().unpark();
+                            gpu_renderer.render_loop(&mut presenter, &fps, &last_save_time, &screen_layout, &ra_context, settings, true);
+                            let result_text = loop {
+                                match savestate::op_poll() {
+                                    savestate::OpView::Working { phase, progress } => presenter.present_savestate_progress(gpu_renderer, phase.label(), progress as usize),
+                                    savestate::OpView::DoneSave { bytes } => break format!("Savestate saved ({:.1} MB)", bytes as f64 / (1024.0 * 1024.0)),
+                                    savestate::OpView::DoneLoad { bytes } => break format!("Savestate loaded ({:.1} MB)", bytes as f64 / (1024.0 * 1024.0)),
+                                    savestate::OpView::Failed => break "Savestate operation failed".to_string(),
+                                }
+                            };
+                            savestate::op_clear();
+                            // Hold the result (with the file size) briefly before resuming
+                            let hold_until = std::time::Instant::now() + Duration::from_millis(1200);
+                            while std::time::Instant::now() < hold_until {
+                                presenter.present_savestate_progress(gpu_renderer, &result_text, 100);
+                            }
+                        }
                         gpu_renderer.unpause(cpu_thread.thread());
                     }
                 }
