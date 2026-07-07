@@ -3,6 +3,7 @@ use crate::core::cycle_manager::ImmEventType::{CartridgeWordReadArm9, CpuInterru
 use crate::core::emu::Emu;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
+use crate::savestate::Savestate;
 use std::cmp::max;
 use std::intrinsics::{likely, unlikely};
 use std::mem;
@@ -90,6 +91,7 @@ impl From<u8> for EventType {
     }
 }
 
+#[derive(Savestate)]
 pub struct CycleManager {
     cycle_count: u32,
     events: [u32; Last as usize],

@@ -1,7 +1,9 @@
 use crate::core::memory::regions;
+use crate::savestate::Savestate;
 use crate::utils;
 use crate::utils::{Convert, HeapArrayU8};
 
+#[derive(Savestate)]
 pub struct Wifi {
     pub mem: HeapArrayU8<{ regions::WIFI_RAM_SIZE as usize }>,
 }

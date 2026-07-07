@@ -6,6 +6,7 @@ use crate::core::CpuType::ARM7;
 use crate::core::{exception_handler, CpuType};
 use crate::jit::jit_asm::JitAsm;
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 use std::fmt::{Debug, Formatter};
 use std::mem;
 use CpuType::ARM9;
@@ -65,6 +66,7 @@ impl Debug for InterruptFlags {
 }
 
 #[repr(C)]
+#[derive(Savestate)]
 pub struct CpuRegs {
     pub post_flg: u8,
     pub halt_cnt: u8,

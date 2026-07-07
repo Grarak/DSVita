@@ -4,6 +4,7 @@ use std::marker::ConstParamTy;
 use std::ops;
 use std::ops::{Index, IndexMut};
 
+mod blow_mic_data;
 pub mod cp15;
 pub mod cpu_regs;
 pub mod cycle_manager;
@@ -21,7 +22,6 @@ pub mod spu;
 pub mod thread_regs;
 pub mod timers;
 mod wifi;
-mod blow_mic_data;
 
 const GUEST_REGS_ARM9_ADDR: usize = if cfg!(target_os = "vita") { 0xA0000000 } else { 0xA0000000 };
 const GUEST_REGS_ARM7_ADDR: usize = if cfg!(target_os = "vita") { 0xA8000000 } else { 0xA1000000 };

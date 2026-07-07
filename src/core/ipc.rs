@@ -5,6 +5,7 @@ use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::fixed_fifo::FixedFifo;
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 use crate::settings::{Arm7Emu, Settings};
 use bilge::prelude::*;
 use enum_dispatch::enum_dispatch;
@@ -40,6 +41,7 @@ pub struct IpcFifoCnt {
     pub enable: bool,
 }
 
+#[derive(Savestate)]
 pub struct Fifo {
     pub cnt: IpcFifoCnt,
     pub queue: FixedFifo<u32, 16>,
@@ -56,9 +58,14 @@ impl Fifo {
     }
 }
 
+crate::savestate::impl_savestate_bytes!(IpcSyncCnt, IpcFifoCnt);
+
+#[derive(Savestate)]
 pub struct Ipc {
     pub sync_regs: [IpcSyncCnt; 2],
     pub fifo: [Fifo; 2],
+    // Derived from settings at construction, not guest state
+    #[savestate(skip)]
     ipc_type: IpcType,
 }
 

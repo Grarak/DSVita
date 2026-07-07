@@ -7,14 +7,14 @@ use crate::utils;
 use crate::utils::HeapDynamic;
 use bilge::prelude::*;
 use gl::types::GLuint;
-#[cfg(target_arch = "arm")]
-use std::arch::arm::{
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{
     uint16x8_t, uint16x8x2_t, uint32x4x2_t, uint32x4x4_t, uint8x16x2_t, uint8x8x2_t, vaddl_u8, vaddq_u16, vand_u8, vcombine_u32, vdup_n_u8, vdupq_n_u8, vget_high_u16, vget_high_u8, vget_low_u16,
     vget_low_u32, vget_low_u8, vld1_u16, vld1_u16_x4, vld1_u8_x2, vld1_u8_x4, vld2_u8, vld2q_u8, vmovl_u8, vmull_u8, vorr_u8, vorrq_u8, vrev64_u32, vset_lane_u32, vset_lane_u8, vsetq_lane_u32,
     vsetq_lane_u8, vshr_n_u8, vshrn_n_u16, vst1q_u32, vst1q_u32_x2, vst1q_u32_x4, vtbl1_u8, vtbl2_u8, vtbl4_u8, vzip_u8, vzipq_u16,
 };
-#[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::{
+#[cfg(target_arch = "arm")]
+use std::arch::arm::{
     uint16x8_t, uint16x8x2_t, uint32x4x2_t, uint32x4x4_t, uint8x16x2_t, uint8x8x2_t, vaddl_u8, vaddq_u16, vand_u8, vcombine_u32, vdup_n_u8, vdupq_n_u8, vget_high_u16, vget_high_u8, vget_low_u16,
     vget_low_u32, vget_low_u8, vld1_u16, vld1_u16_x4, vld1_u8_x2, vld1_u8_x4, vld2_u8, vld2q_u8, vmovl_u8, vmull_u8, vorr_u8, vorrq_u8, vrev64_u32, vset_lane_u32, vset_lane_u8, vsetq_lane_u32,
     vsetq_lane_u8, vshr_n_u8, vshrn_n_u16, vst1q_u32, vst1q_u32_x2, vst1q_u32_x4, vtbl1_u8, vtbl2_u8, vtbl4_u8, vzip_u8, vzipq_u16,

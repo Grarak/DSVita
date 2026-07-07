@@ -4,6 +4,7 @@ use crate::core::hle::arm7_hle::IpcFifoTag;
 use crate::core::spi::MIC_SAMPLE_CYCLES;
 use crate::core::CpuType::ARM7;
 use crate::presenter::PRESENTER_AUDIO_IN_SAMPLE_RATE;
+use crate::savestate::Savestate;
 use bilge::prelude::*;
 
 #[bitsize(8)]
@@ -32,6 +33,9 @@ impl SampleFlags {
     }
 }
 
+crate::savestate::impl_savestate_bytes!(SampleFlags);
+
+#[derive(Savestate)]
 pub(super) struct MicHle {
     data: [u16; 16],
     sample_flags: SampleFlags,

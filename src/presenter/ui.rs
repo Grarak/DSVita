@@ -7,9 +7,9 @@ use crate::presenter::imgui::root::{
     ImDrawData, ImDrawList_AddImage, ImDrawList_AddQuad, ImDrawList_AddQuadFilled, ImDrawList_AddRect, ImDrawList_AddRectFilled, ImDrawList_AddText, ImFontAtlas_AddFontFromMemoryTTF,
     ImFontAtlas_GetGlyphRangesDefault, ImFontConfig, ImFontConfig_ImFontConfig, ImGui, ImGuiCol__ImGuiCol_Button, ImGuiCol__ImGuiCol_Text, ImGuiCond__ImGuiSetCond_Always,
     ImGuiHoveredFlags__ImGuiHoveredFlags_Default, ImGuiItemFlags__ImGuiItemFlags_Disabled, ImGuiNavInput__ImGuiNavInput_Cancel, ImGuiNavInput__ImGuiNavInput_FocusNext,
-    ImGuiNavInput__ImGuiNavInput_FocusPrev, ImGuiStyleVar__ImGuiStyleVar_Alpha, ImGuiWindowFlags__ImGuiWindowFlags_AlwaysAutoResize, ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus,
-    ImGuiWindowFlags__ImGuiWindowFlags_HorizontalScrollbar, ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags__ImGuiWindowFlags_NoMove,
-    ImGuiWindowFlags__ImGuiWindowFlags_NoResize, ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar, ImVec2, ImVec4,
+    ImGuiNavInput__ImGuiNavInput_FocusPrev, ImGuiStyleVar__ImGuiStyleVar_Alpha, ImGuiWindowFlags__ImGuiWindowFlags_AlwaysAutoResize, ImGuiWindowFlags__ImGuiWindowFlags_HorizontalScrollbar,
+    ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus, ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing,
+    ImGuiWindowFlags__ImGuiWindowFlags_NoMove, ImGuiWindowFlags__ImGuiWindowFlags_NoResize, ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar, ImVec2, ImVec4,
 };
 use crate::presenter::{cjk_font, default_key_binding, show_controls_create_settings, show_layout_create_settings, show_retroachievements_settings, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::ra_context::RaContext;
@@ -1302,7 +1302,11 @@ unsafe fn render_tile_grid(
         };
         let target = if dir != 0 {
             let nav_id = (*ImGui::GetCurrentContext()).NavId;
-            let cur = tile_textures.iter().enumerate().position(|(i, texture)| tile_button_id(i, *texture) == nav_id).map_or(0, |c| c as isize);
+            let cur = tile_textures
+                .iter()
+                .enumerate()
+                .position(|(i, texture)| tile_button_id(i, *texture) == nav_id)
+                .map_or(0, |c| c as isize);
             Some((cur + dir * page as isize).clamp(0, n as isize - 1) as usize)
         } else {
             None
@@ -1449,7 +1453,11 @@ unsafe fn render_carousel(
         };
         let target = if dir != 0 {
             let nav_id = (*ImGui::GetCurrentContext()).NavId;
-            let cur = tile_textures.iter().enumerate().position(|(i, texture)| tile_button_id(i, *texture) == nav_id).map_or(0, |c| c as isize);
+            let cur = tile_textures
+                .iter()
+                .enumerate()
+                .position(|(i, texture)| tile_button_id(i, *texture) == nav_id)
+                .map_or(0, |c| c as isize);
             Some((cur + dir * page as isize).clamp(0, n as isize - 1) as usize)
         } else {
             None
@@ -1463,7 +1471,10 @@ unsafe fn render_carousel(
         for (i, texture) in tile_textures.iter().enumerate() {
             let col = i / ROWS;
             let row = i % ROWS;
-            let pos = ImVec2 { x: base_x + col as f32 * cell_w, y: base_y + row as f32 * cell_h };
+            let pos = ImVec2 {
+                x: base_x + col as f32 * cell_w,
+                y: base_y + row as f32 * cell_h,
+            };
             ImGui::SetCursorPos(&pos);
             ImGui::PushID3(i as _);
             if ImGui::ImageButton(*texture as _, &tile_sz, &uv0, &uv1, TILE_PADDING, &bg, &tint) {
@@ -1693,6 +1704,237 @@ unsafe fn render_game_preview(cartridge: &CartridgePreview, icon_tex: u32) {
         Err(_) => ImGui::Text(c"Couldn't read game title".as_ptr() as _),
     }
 }
+struct SavestateUiEntry {
+    path: PathBuf,
+    label: CString,
+    detail: CString,
+    texture: u32,
+    arm7_matches: bool,
+}
+
+fn rgb_to_rgba(rgb: &[u8], pixels: usize) -> Vec<u8> {
+    let mut rgba = vec![0u8; pixels * 4];
+    for i in 0..pixels {
+        rgba[i * 4..i * 4 + 3].copy_from_slice(&rgb[i * 3..i * 3 + 3]);
+        rgba[i * 4 + 3] = 0xFF;
+    }
+    rgba
+}
+
+fn decode_screenshot_jpeg(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
+    let data = decoder.decode().ok()?;
+    let info = decoder.info()?;
+    if info.pixel_format != jpeg_decoder::PixelFormat::RGB24 {
+        return None;
+    }
+    let pixels = info.width as usize * info.height as usize;
+    Some((info.width as u32, info.height as u32, rgb_to_rgba(&data, pixels)))
+}
+
+fn decode_screenshot_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0u8; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    if info.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    let data = match info.color_type {
+        png::ColorType::Rgba => {
+            buf.truncate(info.buffer_size());
+            buf
+        }
+        png::ColorType::Rgb => rgb_to_rgba(&buf, (info.width * info.height) as usize),
+        _ => return None,
+    };
+    Some((info.width, info.height, data))
+}
+
+/// Decode an embedded screenshot (jpeg, or png from older savestates) into a GL
+/// texture; 0 on any failure (entry then renders without a thumbnail).
+unsafe fn create_screenshot_texture(bytes: &[u8]) -> u32 {
+    let decoded = match bytes {
+        [0xFF, 0xD8, ..] => decode_screenshot_jpeg(bytes),
+        [0x89, b'P', b'N', b'G', ..] => decode_screenshot_png(bytes),
+        _ => None,
+    };
+    let Some((width, height, data)) = decoded else { return 0 };
+    let mut tex = 0;
+    gl::GenTextures(1, &mut tex);
+    gl::BindTexture(gl::TEXTURE_2D, tex);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as _);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as _);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
+    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as _);
+    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, width as _, height as _, 0, gl::RGBA, gl::UNSIGNED_BYTE, data.as_ptr() as _);
+    tex
+}
+
+pub fn savestates_dir(rom_path: &Path) -> PathBuf {
+    rom_path.parent().unwrap_or(Path::new(".")).join("savestates")
+}
+
+/// Scan `<rom_dir>/savestates/<stem>-<N>.sav`, newest number first. Entries whose
+/// arm7 emulation mode differs from the running session can't be loaded.
+unsafe fn load_savestate_entries(rom_path: &Path, current_arm7: u8) -> Vec<SavestateUiEntry> {
+    let mut entries = Vec::new();
+    let stem = rom_path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let prefix = format!("{stem}-");
+    let Ok(read_dir) = fs::read_dir(savestates_dir(rom_path)) else { return entries };
+
+    let mut found = Vec::new();
+    for dir_entry in read_dir.flatten() {
+        let name = dir_entry.file_name().to_string_lossy().into_owned();
+        let Some(num) = name.strip_prefix(&prefix).and_then(|rest| rest.strip_suffix(".sav")).and_then(|num| num.parse::<u32>().ok()) else {
+            continue;
+        };
+        found.push((num, dir_entry.path()));
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+
+    for (num, path) in found {
+        let Some(meta) = crate::savestate::peek_meta(&path) else { continue };
+        let arm7_matches = meta.arm7_emu == current_arm7;
+        let modified = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .map(|time| chrono::DateTime::<chrono::Local>::from(time).format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_default();
+        let detail = if arm7_matches {
+            modified
+        } else {
+            let state_mode: &'static str = crate::settings::Arm7Emu::from(meta.arm7_emu).into();
+            let session_mode: &'static str = crate::settings::Arm7Emu::from(current_arm7).into();
+            format!("{modified} - ARM7 emulation: {state_mode} (session: {session_mode})")
+        };
+        entries.push(SavestateUiEntry {
+            texture: create_screenshot_texture(&meta.screenshot),
+            path,
+            label: CString::new(format!("Savestate {num}")).unwrap(),
+            detail: CString::new(detail).unwrap(),
+            arm7_matches,
+        });
+    }
+    entries
+}
+
+unsafe fn free_savestate_entries(entries: &mut Vec<SavestateUiEntry>) {
+    for entry in entries.iter() {
+        if entry.texture != 0 {
+            gl::DeleteTextures(1, &entry.texture);
+        }
+    }
+    entries.clear();
+}
+
+enum SavestateUiAction {
+    Create,
+    Load(PathBuf),
+    Delete(PathBuf),
+}
+
+/// Full-screen savestate list: thumbnail and name/date per entry, create button on
+/// top. Clicking an entry opens a modal offering Load (arm7-gated) or Delete.
+unsafe fn render_savestate_overlay(entries: &[SavestateUiEntry], selected: &mut Option<usize>) -> Option<SavestateUiAction> {
+    let mut action = None;
+
+    if full_width_button(c"Create new savestate") {
+        action = Some(SavestateUiAction::Create);
+    }
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if entries.is_empty() {
+        ImGui::Spacing();
+        centered_text(c"No savestates yet");
+    }
+
+    let child_sz = ImVec2 { x: 0.0, y: 0.0 };
+    if ImGui::BeginChild(c"##savestate_scroll".as_ptr() as _, &child_sz, false, 0) {
+        // Thumbnails keep the presenter aspect (960x544)
+        const THUMB_W: f32 = 240.0;
+        const THUMB_H: f32 = 136.0;
+        for (i, entry) in entries.iter().enumerate() {
+            ImGui::PushID(entry.label.as_ptr());
+
+            ImGui::BeginGroup();
+            let thumb_sz = ImVec2 { x: THUMB_W, y: THUMB_H };
+            let uv0 = ImVec2 { x: 0.0, y: 0.0 };
+            let uv1 = ImVec2 { x: 1.0, y: 1.0 };
+            let tint = ImVec4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 };
+            let border = ImVec4 { x: 0.3, y: 0.3, z: 0.3, w: 1.0 };
+            if entry.texture != 0 {
+                ImGui::Image(entry.texture as _, &thumb_sz, &uv0, &uv1, &tint, &border);
+            } else {
+                // Keep rows aligned when a state has no screenshot
+                ImGui::Dummy(&thumb_sz);
+            }
+
+            ImGui::SameLine(0.0, 14.0);
+            ImGui::BeginGroup();
+            ImGui::SetWindowFontScale(1.15);
+            ImGui::Text(entry.label.as_ptr() as _);
+            ImGui::SetWindowFontScale(1.0);
+            ImGui::Text(entry.detail.as_ptr() as _);
+            ImGui::EndGroup();
+            ImGui::EndGroup();
+            if ImGui::IsItemClicked(0) {
+                *selected = Some(i);
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    // Load-or-delete dialog for the clicked entry
+    if let Some(i) = *selected {
+        let entry = &entries[i];
+        ImGui::OpenPopup(c"SavestateActionPopup".as_ptr());
+        center_next_window();
+        const MODAL_FLAGS: u32 = (ImGuiWindowFlags__ImGuiWindowFlags_NoTitleBar
+            | ImGuiWindowFlags__ImGuiWindowFlags_NoResize
+            | ImGuiWindowFlags__ImGuiWindowFlags_NoMove
+            | ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse
+            | ImGuiWindowFlags__ImGuiWindowFlags_AlwaysAutoResize) as u32;
+        if ImGui::BeginPopupModal(c"SavestateActionPopup".as_ptr(), ptr::null_mut(), MODAL_FLAGS as _) {
+            dialog_title(&entry.label);
+            centered_text(&entry.detail);
+            ImGui::Spacing();
+            const BUTTON_WIDTH: f32 = 260.0;
+            if !entry.arm7_matches {
+                ImGui::PushItemFlag(ImGuiItemFlags__ImGuiItemFlags_Disabled as _, true);
+                ImGui::PushStyleVar(ImGuiStyleVar__ImGuiStyleVar_Alpha as _, (*ImGui::GetStyle()).Alpha * 0.5f32);
+            }
+            if menu_button(c"Load", BUTTON_WIDTH) {
+                action = Some(SavestateUiAction::Load(entry.path.clone()));
+                *selected = None;
+                ImGui::CloseCurrentPopup();
+            }
+            if !entry.arm7_matches {
+                ImGui::PopItemFlag();
+                ImGui::PopStyleVar(1);
+            }
+            if menu_button(c"Delete", BUTTON_WIDTH) {
+                action = Some(SavestateUiAction::Delete(entry.path.clone()));
+                *selected = None;
+                ImGui::CloseCurrentPopup();
+            }
+            if menu_button(c"Cancel", BUTTON_WIDTH) || cancel_pressed() {
+                *selected = None;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
+
+    action
+}
+
 #[derive(Eq, PartialEq)]
 pub enum UiPauseMenuReturn {
     Resume,
@@ -1701,8 +1943,11 @@ pub enum UiPauseMenuReturn {
     QuitApp,
 }
 
-pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRenderer, settings: &mut Settings, settings_file_path: &std::path::Path) -> UiPauseMenuReturn {
+pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRenderer, settings: &mut Settings, settings_file_path: &std::path::Path, rom_path: &Path) -> UiPauseMenuReturn {
     let mut pressed_settings = false;
+    let mut pressed_savestates = false;
+    let mut savestate_entries: Vec<SavestateUiEntry> = Vec::new();
+    let mut savestate_selected: Option<usize> = None;
     let mut pressed_quit = false;
     let mut pressed_exit = false;
     let mut return_value = None;
@@ -1743,6 +1988,13 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                     pressed_settings = true;
                     active_tab = 0;
                     overlay_focused = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if menu_button(c"Savestates", BUTTON_WIDTH) {
+                    pressed_savestates = true;
+                    overlay_focused = true;
+                    savestate_selected = None;
+                    savestate_entries = load_savestate_entries(rom_path, settings.arm7_emu() as u8);
                     ImGui::CloseCurrentPopup();
                 }
                 if menu_button(c"Blow into mic", BUTTON_WIDTH) {
@@ -1819,6 +2071,42 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                         overlay_focused = ImGui::IsWindowFocused(0);
                     }
                     ImGui::End();
+                } else if pressed_savestates {
+                    if begin_fullscreen_overlay(c"##savestates") {
+                        match render_savestate_overlay(&savestate_entries, &mut savestate_selected) {
+                            Some(SavestateUiAction::Create) => {
+                                // Screenshot of the frozen frame behind the menu; the state
+                                // itself is written by the cpu thread at the next vblank
+                                let screenshot = gpu_renderer.capture_main_framebuffer_jpeg();
+                                crate::savestate::request_save_with_screenshot(screenshot);
+                                return_value = Some(UiPauseMenuReturn::Resume);
+                            }
+                            Some(SavestateUiAction::Load(path)) => match fs::read(&path) {
+                                Ok(data) => {
+                                    crate::savestate::request_load(data);
+                                    return_value = Some(UiPauseMenuReturn::Resume);
+                                }
+                                Err(err) => {
+                                    eprintln!("Failed to read savestate {path:?}: {err}");
+                                }
+                            },
+                            Some(SavestateUiAction::Delete(path)) => {
+                                if let Err(err) = fs::remove_file(&path) {
+                                    eprintln!("Failed to delete savestate {path:?}: {err}");
+                                }
+                                free_savestate_entries(&mut savestate_entries);
+                                savestate_entries = load_savestate_entries(rom_path, settings.arm7_emu() as u8);
+                            }
+                            None => {}
+                        }
+                        // Close the overlay only when no entry dialog is open
+                        if savestate_selected.is_none() && back_closes_overlay(overlay_focused) {
+                            pressed_savestates = false;
+                            free_savestate_entries(&mut savestate_entries);
+                        }
+                        overlay_focused = ImGui::IsWindowFocused(0);
+                    }
+                    ImGui::End();
                 } else if pressed_quit || pressed_exit {
                     ImGui::OpenPopup(c"QuitPopup".as_ptr());
                 } else {
@@ -1831,6 +2119,7 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
             ui_backend.swap_window();
 
             if let Some(ret) = return_value {
+                free_savestate_entries(&mut savestate_entries);
                 // Apply unconditionally: a Save clears `dirty`, so gating on it
                 // would drop the runtime changes the user just saved. Copying back
                 // unchanged settings is a harmless no-op.

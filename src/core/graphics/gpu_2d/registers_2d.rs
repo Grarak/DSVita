@@ -1,5 +1,6 @@
 use crate::core::graphics::gpu_2d::Gpu2DEngine;
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 use bilge::prelude::*;
 use std::cmp::min;
 use std::mem;
@@ -112,14 +113,18 @@ impl From<u8> for DisplayMode {
     }
 }
 
-#[derive(Default)]
+crate::savestate::impl_savestate_bytes!(DispCnt, BgCnt);
+
+#[derive(Default, Savestate)]
 pub struct Gpu2DRegistersInner {
     x: [i32; 2],
     y: [i32; 2],
 }
 
-#[derive(Default)]
+#[derive(Default, Savestate)]
 pub struct Gpu2DRegisters {
+    // Engine identity, fixed at construction
+    #[savestate(skip)]
     pub engine: Gpu2DEngine,
     pub disp_cnt: DispCnt,
     pub bg_cnt: [BgCnt; 4],

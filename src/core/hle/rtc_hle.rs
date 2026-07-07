@@ -1,7 +1,9 @@
 use crate::core::emu::Emu;
 use crate::core::hle::arm7_hle::IpcFifoTag;
 use crate::core::CpuType::ARM7;
+use crate::savestate::Savestate;
 
+#[derive(Savestate)]
 pub struct RtcHle;
 
 impl RtcHle {

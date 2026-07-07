@@ -5,6 +5,7 @@ use crate::core::hle::bios::{PITCH_TABLE, VOLUME_TABLE};
 use crate::core::spu::{MainSoundCnt, SoundCapCnt, SoundChannelFormat, SoundCnt, CHANNEL_COUNT};
 use crate::core::CpuType::ARM7;
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 use bilge::prelude::*;
 use static_assertions::const_assert_eq;
 use std::cmp::{max, min};
@@ -129,7 +130,7 @@ struct Channel {
     length: u32,
     data_addr_duty_cycle: u32,
     linked_track: Option<u32>, // size 8, callback and data
-    next: Option<u16>,           // size 4, ptr
+    next: Option<u16>,         // size 4, ptr
 }
 
 const_assert_eq!(size_of::<Channel>(), 0x54);
@@ -292,7 +293,9 @@ const BASE_VOLUME_TABLE: [i16; 128] = [
     -0x0001, 0x0000,
 ];
 
-#[derive(Default)]
+crate::savestate::impl_savestate_bytes!(Channel, Sequence, Track, Alarm);
+
+#[derive(Default, Savestate)]
 pub struct SoundNitro {
     cmd_queue: VecDeque<u32>,
     counter: u32,

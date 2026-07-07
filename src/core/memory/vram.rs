@@ -496,6 +496,17 @@ pub struct Vram {
     arm7: OverlapMapping<{ 128 * 2 * 1024 }, { ARM7_SIZE as usize }, 2>,
 }
 
+impl crate::savestate::Savestate for Vram {
+    fn savestate(&mut self, state: &mut crate::savestate::SavestateContext) {
+        self.cnt.savestate(state);
+        self.banks.mem.savestate(state);
+        if !state.is_save() {
+            self.banks.dirty_sections = !Bitset::new();
+            self.rebuild_maps();
+        }
+    }
+}
+
 impl Vram {
     pub fn rebuild_maps(&mut self) {
         self.stat = 0;

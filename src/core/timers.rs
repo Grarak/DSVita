@@ -2,6 +2,7 @@ use crate::core::cpu_regs::InterruptFlag;
 use crate::core::cycle_manager::EventType;
 use crate::core::emu::Emu;
 use crate::core::CpuType;
+use crate::savestate::Savestate;
 use bilge::prelude::*;
 
 const CHANNEL_COUNT: usize = 4;
@@ -24,7 +25,7 @@ impl TimerCntH {
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Savestate)]
 pub struct TimerChannel {
     cnt_l: u16,
     cnt_h: u16,
@@ -33,6 +34,7 @@ pub struct TimerChannel {
     pub scheduled_cycle: u32,
 }
 
+#[derive(Savestate)]
 pub struct Timers {
     pub channels: [TimerChannel; CHANNEL_COUNT],
 }

@@ -1,5 +1,6 @@
 use crate::core::emu::Emu;
 use crate::core::hle::arm7_hle::IpcFifoTag;
+use crate::savestate::Savestate;
 
 const START_BIT: u32 = 0x02000000;
 const END_BIT: u32 = 0x01000000;
@@ -18,6 +19,7 @@ const CMD_REG2_VALUE: u16 = 18;
 const CMD_REG3_VALUE: u16 = 19;
 const CMD_REG4_VALUE: u16 = 20;
 
+#[derive(Savestate)]
 pub(super) struct PowerManagerHle {
     data: [u16; 16],
 }

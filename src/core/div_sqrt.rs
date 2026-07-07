@@ -1,7 +1,8 @@
+use crate::savestate::Savestate;
 use std::hint::unreachable_unchecked;
 use std::intrinsics::{unchecked_div, unchecked_rem};
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Savestate)]
 #[repr(C)]
 pub struct CpContext {
     div_numer: i64,
@@ -11,6 +12,7 @@ pub struct CpContext {
     pub sqrt_cnt: u16,
 }
 
+#[derive(Savestate)]
 pub struct DivSqrt {
     pub context: CpContext,
     sqrt_result: u32,

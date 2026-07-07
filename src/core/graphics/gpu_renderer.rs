@@ -816,6 +816,69 @@ impl GpuRenderer {
                 gl::ClearColor(0f32, 0f32, 0f32, 1f32);
                 gl::Clear(gl::COLOR_BUFFER_BIT);
                 self.blit_main_framebuffer();
+                // Frame-dump instrument (DSVITA_FRAME_DUMP=N[,M...]): glReadPixels the
+                // final composed framebuffer at presented-frame #N into raw RGBA files —
+                // cross-arch pixel comparison of the actual render output, downstream of
+                // every emulation and renderer stage.
+                if crate::IS_DEBUG {
+                    use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+                    static FRAMES: AtomicU32 = AtomicU32::new(0);
+                    static TARGETS: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+                    let targets = TARGETS.get_or_init(|| std::env::var("DSVITA_FRAME_DUMP").map(|v| v.split(',').filter_map(|p| p.parse().ok()).collect()).unwrap_or_default());
+                    if !targets.is_empty() {
+                        let n = FRAMES.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+                        if targets.contains(&n) {
+                            unsafe {
+                                let renderer = gl::GetString(gl::RENDERER);
+                                let version = gl::GetString(gl::VERSION);
+                                if !renderer.is_null() && !version.is_null() {
+                                    eprintln!("GLINFO renderer={:?} version={:?}", std::ffi::CStr::from_ptr(renderer as _), std::ffi::CStr::from_ptr(version as _));
+                                }
+                            }
+                            let w = PRESENTER_SCREEN_WIDTH as usize;
+                            let h = PRESENTER_SCREEN_HEIGHT as usize;
+                            let mut pixels = vec![0u8; w * h * 4];
+                            unsafe {
+                                gl::BindFramebuffer(gl::READ_FRAMEBUFFER, self.final_fbo.fbo);
+                                gl::ReadPixels(0, 0, w as _, h as _, gl::RGBA, gl::UNSIGNED_BYTE, pixels.as_mut_ptr() as _);
+                                gl::BindFramebuffer(gl::READ_FRAMEBUFFER, 0);
+                            }
+                            let path = format!("frame_{n}.rgba");
+                            let _ = std::fs::write(&path, &pixels);
+                            // The 2D shader inputs for this frame: the per-scanline
+                            // register tables (repr(C)/plain arrays — layout is
+                            // arch-independent, so the hashes compare across builds).
+                            let regs_hash = |r: &crate::core::graphics::gpu_2d::renderer_regs_2d::Gpu2DRenderRegs| {
+                                use xxhash_rust::xxh32::xxh32;
+                                let mut h = xxh32(unsafe { std::slice::from_raw_parts(r.disp_cnts.as_ptr() as *const u8, std::mem::size_of_val(&r.disp_cnts)) }, 0);
+                                h = xxh32(unsafe { std::slice::from_raw_parts(r.bg_cnts.as_ptr() as *const u8, std::mem::size_of_val(&r.bg_cnts)) }, h);
+                                h = xxh32(unsafe { std::slice::from_raw_parts(&r.win_bg_ubo as *const _ as *const u8, std::mem::size_of_val(&r.win_bg_ubo)) }, h);
+                                h = xxh32(unsafe { std::slice::from_raw_parts(&r.bg_ubo as *const _ as *const u8, std::mem::size_of_val(&r.bg_ubo)) }, h);
+                                h = xxh32(unsafe { std::slice::from_raw_parts(&r.blend_ubo as *const _ as *const u8, std::mem::size_of_val(&r.blend_ubo)) }, h);
+                                h
+                            };
+                            let ha = regs_hash(&self.renderer_regs_2d_shared.regs_a[0]);
+                            let hb = regs_hash(&self.renderer_regs_2d_shared.regs_b[0]);
+                            // Raw engine-A table dump for content inspection (frozen vs live).
+                            {
+                                let r = &self.renderer_regs_2d_shared.regs_a[0];
+                                let dc = unsafe { std::slice::from_raw_parts(r.disp_cnts.as_ptr() as *const u8, std::mem::size_of_val(&r.disp_cnts)) };
+                                let bc = unsafe { std::slice::from_raw_parts(r.bg_cnts.as_ptr() as *const u8, std::mem::size_of_val(&r.bg_cnts)) };
+                                let ofs = unsafe { std::slice::from_raw_parts(r.bg_ubo.ofs.as_ptr() as *const u8, std::mem::size_of_val(&r.bg_ubo.ofs)) };
+                                let mut blob = Vec::new();
+                                blob.extend_from_slice(dc);
+                                blob.extend_from_slice(bc);
+                                blob.extend_from_slice(ofs);
+                                let _ = std::fs::write(format!("ubo_a_{n}.bin"), &blob);
+                                eprintln!(
+                                    "UBODUMP#{n} disp_cnt[0]={:08x} disp_cnt[96]={:08x} bg_cnt[0..4]={:04x},{:04x},{:04x},{:04x} ofs[0..4]={:08x},{:08x},{:08x},{:08x}",
+                                    r.disp_cnts[0], r.disp_cnts[96], r.bg_cnts[0], r.bg_cnts[1], r.bg_cnts[2], r.bg_cnts[3], r.bg_ubo.ofs[0], r.bg_ubo.ofs[1], r.bg_ubo.ofs[2], r.bg_ubo.ofs[3]
+                                );
+                            }
+                            eprintln!("FRAMEDUMP#{n} {w}x{h} -> {path} hash={:08x} ubo_a={ha:08x} ubo_b={hb:08x}", xxhash_rust::xxh32::xxh32(&pixels, 0));
+                        }
+                    }
+                }
                 presenter.gl_swap_window();
             }
 
@@ -951,6 +1014,49 @@ impl GpuRenderer {
             self.rendering_condvar.notify_all();
             self.processed_3d_condvar.notify_one();
         }
+    }
+
+    // Reads the composed game frame back as a small jpeg for savestate thumbnails:
+    // 4x downscale (960x544 -> 240x136, the exact size the savestate list renders).
+    // Main thread only (owns the gl context); the pause menu blits this same fbo.
+    pub fn capture_main_framebuffer_jpeg(&self) -> Vec<u8> {
+        const W: usize = PRESENTER_SCREEN_WIDTH as usize;
+        const H: usize = PRESENTER_SCREEN_HEIGHT as usize;
+        const SCALE: usize = 4;
+        const OUT_W: usize = W / SCALE;
+        const OUT_H: usize = H / SCALE;
+        let mut pixels = vec![0u8; W * H * 4];
+        unsafe {
+            gl::BindFramebuffer(gl::READ_FRAMEBUFFER, self.final_fbo.fbo);
+            gl::ReadPixels(0, 0, W as _, H as _, gl::RGBA, gl::UNSIGNED_BYTE, pixels.as_mut_ptr() as _);
+            gl::BindFramebuffer(gl::READ_FRAMEBUFFER, 0);
+        }
+        // Box-filter downscale to rgb; GL rows are bottom-up, flip while sampling
+        let mut small = vec![0u8; OUT_W * OUT_H * 3];
+        for out_y in 0..OUT_H {
+            for out_x in 0..OUT_W {
+                let mut sums = [0u32; 3];
+                for sub_y in 0..SCALE {
+                    let src_y = H - 1 - (out_y * SCALE + sub_y);
+                    for sub_x in 0..SCALE {
+                        let src = (src_y * W + out_x * SCALE + sub_x) * 4;
+                        for c in 0..3 {
+                            sums[c] += pixels[src + c] as u32;
+                        }
+                    }
+                }
+                let dst = (out_y * OUT_W + out_x) * 3;
+                for c in 0..3 {
+                    small[dst + c] = (sums[c] / (SCALE * SCALE) as u32) as u8;
+                }
+            }
+        }
+        let mut jpeg = Vec::new();
+        let encoder = jpeg_encoder::Encoder::new(&mut jpeg, 75);
+        if encoder.encode(&small, OUT_W as u16, OUT_H as u16, jpeg_encoder::ColorType::Rgb).is_err() {
+            jpeg.clear();
+        }
+        jpeg
     }
 
     pub fn blit_main_framebuffer(&self) {

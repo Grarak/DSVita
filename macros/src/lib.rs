@@ -5,6 +5,18 @@ use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use syn::{parse_macro_input, Expr, ExprClosure, Ident, Lit, Pat};
 
+mod savestate;
+
+/// Derives `crate::savestate::Savestate`: recurses into every field in declaration order.
+/// Field attributes: `#[savestate(skip)]`, `#[savestate(bytes)]`, `#[savestate(with = "path")]`.
+/// Type-level `#[savestate(bytes)]` memcpys the whole value (for bilge/pod register types).
+/// Enums serialize a u8 tag by declaration order; data variant fields need `Default` on load.
+#[proc_macro_derive(Savestate, attributes(savestate))]
+pub fn derive_savestate(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(item as syn::DeriveInput);
+    savestate::derive(input).unwrap_or_else(syn::Error::into_compile_error).into()
+}
+
 struct Entry {
     size: usize,
     offset: usize,

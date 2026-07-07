@@ -75,6 +75,10 @@ pub struct Presenter {
     keymap: u32,
 }
 
+extern "C" fn sigusr1_savestate_handler(_: i32) {
+    crate::savestate::request_save();
+}
+
 impl Presenter {
     #[cold]
     pub fn new() -> Option<Self> {
@@ -94,7 +98,8 @@ impl Presenter {
                     .default_value("0")
                     .value_parser(value_parser!(u8)),
             )
-            .arg(arg!(ui: --ui "Use UI").required(false).action(ArgAction::SetTrue));
+            .arg(arg!(ui: --ui "Use UI").required(false).action(ArgAction::SetTrue))
+            .arg(arg!(-s <savestate> "Continue from a savestate file").num_args(1).required(false).value_parser(value_parser!(String)));
         if DEBUG_LOG {
             arg_matches = arg_matches
                 .arg(
@@ -143,6 +148,10 @@ impl Presenter {
                 crate::debug_inst_log::init_lazy(path);
             }
         }
+
+        // kill -USR1 <pid> requests a savestate, same path as the F11 key — signal-safe
+        // (handler only flips an atomic) and scriptable for headless testing
+        unsafe { libc::signal(libc::SIGUSR1, sigusr1_savestate_handler as libc::sighandler_t) };
 
         sdl2::hint::set("SDL_NO_SIGNAL_HANDLERS", "1");
         let sdl = sdl2::init().unwrap();
@@ -265,8 +274,8 @@ impl Presenter {
 
     pub fn on_game_launched(&self) {}
 
-    pub fn present_pause(&mut self, gpu_renderer: &GpuRenderer, settings: &mut Settings, settings_file_path: &std::path::Path) -> UiPauseMenuReturn {
-        show_pause_menu(self, gpu_renderer, settings, settings_file_path)
+    pub fn present_pause(&mut self, gpu_renderer: &GpuRenderer, settings: &mut Settings, settings_file_path: &std::path::Path, rom_path: &std::path::Path) -> UiPauseMenuReturn {
+        show_pause_menu(self, gpu_renderer, settings, settings_file_path, rom_path)
     }
 
     pub fn present_progress(&mut self, current_name: impl AsRef<str>, progress: usize, total: usize) {
@@ -278,6 +287,10 @@ impl Presenter {
     }
 
     pub fn set_key_mapping(&mut self, _: [u32; crate::key_bindings::NUM_KEYS]) {}
+
+    pub fn get_savestate_path(&self) -> Option<PathBuf> {
+        self.arg_matches.get_one::<String>("savestate").map(PathBuf::from)
+    }
 
     pub fn poll_event(&mut self, _: &Settings) -> PresentEvent {
         for event in self.event_pump.poll_iter() {
@@ -302,6 +315,9 @@ impl Presenter {
                     ];
                     if let Some(index) = function_keys.iter().position(|&key| key == code) {
                         return PresentEvent::SetFramelimit(if index == 9 { 0 } else { index as u8 + 1 });
+                    }
+                    if code == keyboard::Keycode::F11 {
+                        crate::savestate::request_save();
                     }
                     if let Some(code) = self.key_code_mapping.get(&code) {
                         self.keymap &= !(1 << *code as u8);

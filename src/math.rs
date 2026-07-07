@@ -67,6 +67,8 @@ pub const MTX_IDENTITY: [i32; 16] = [
 #[derive(Clone)]
 pub struct Matrix(pub [i32; 16]);
 
+crate::savestate::impl_savestate_bytes!(Matrix);
+
 impl Matrix {
     pub unsafe fn vld_identity() -> [int32x4_t; 4] {
         let mtx = vld1q_s32_x4(MTX_IDENTITY.as_ptr());
@@ -163,6 +165,12 @@ macro_rules! define_vector {
                 }
             }
 
+            impl<const SIZE: usize> crate::savestate::Savestate for [<Vector $t>]<SIZE> {
+                fn savestate(&mut self, state: &mut crate::savestate::SavestateContext) {
+                    state.bytes_of(self);
+                }
+            }
+
             impl<const SIZE: usize> AsRef<[$t; SIZE]> for [<Vector $t>]<SIZE> {
                 fn as_ref(&self) -> &[$t; SIZE] {
                     &self.0
@@ -210,6 +218,15 @@ where
 {
     pub values: [i32; SIZE],
     padding: [i32; 4 - SIZE],
+}
+
+impl<const SIZE: usize> crate::savestate::Savestate for Vectori32<SIZE>
+where
+    [(); 4 - SIZE]:,
+{
+    fn savestate(&mut self, state: &mut crate::savestate::SavestateContext) {
+        state.bytes_of(self);
+    }
 }
 
 impl<const SIZE: usize> Vectori32<SIZE>

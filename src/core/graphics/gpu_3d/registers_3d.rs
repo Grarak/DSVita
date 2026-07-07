@@ -6,16 +6,17 @@ use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType::ARM9;
 use crate::fast_fixed_fifo::FastFixedFifo;
 use crate::math::{vdot_vec3, vmult_mat4, vmult_vec3_mat3_no_store, Matrix, Vectorf32, Vectori16, Vectori32, MTX_IDENTITY};
+use crate::savestate::Savestate;
 use crate::utils;
 use crate::utils::HeapMem;
 use bilge::prelude::*;
 use paste::paste;
-#[cfg(target_arch = "arm")]
-use std::arch::arm::{
-    int32x4_t, vcombine_s32, vget_high_s32, vget_low_s32, vld1_s32, vld1q_s32, vld1q_s32_x3, vld1q_s32_x4, vnegq_s32, vsetq_lane_s32, vshrq_n_s32, vst1q_s32, vst1q_s32_x4, vsub_s32,
-};
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{
+    int32x4_t, vcombine_s32, vget_high_s32, vget_low_s32, vld1_s32, vld1q_s32, vld1q_s32_x3, vld1q_s32_x4, vnegq_s32, vsetq_lane_s32, vshrq_n_s32, vst1q_s32, vst1q_s32_x4, vsub_s32,
+};
+#[cfg(target_arch = "arm")]
+use std::arch::arm::{
     int32x4_t, vcombine_s32, vget_high_s32, vget_low_s32, vld1_s32, vld1q_s32, vld1q_s32_x3, vld1q_s32_x4, vnegq_s32, vsetq_lane_s32, vshrq_n_s32, vst1q_s32, vst1q_s32_x4, vsub_s32,
 };
 use std::arch::{asm, naked_asm};
@@ -427,7 +428,7 @@ impl From<u8> for PrimitiveType {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Savestate)]
 #[repr(u8)]
 enum MtxMode {
     #[default]
@@ -444,8 +445,25 @@ impl From<u8> for MtxMode {
     }
 }
 
+crate::savestate::impl_savestate_bytes!(
+    GxStat,
+    Viewport,
+    TexImageParam,
+    MaterialColor0,
+    MaterialColor1,
+    PolygonAttr,
+    SwapBuffers,
+    Gpu3DFlags,
+    Gpu3DBuffersState,
+    Vertex,
+    Polygon,
+    Shininess
+);
+
+// repr(C), nothing but i32 matrices: single memcpy
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Savestate)]
+#[savestate(bytes)]
 struct Matrices {
     proj: Matrix,
     coord: Matrix,
@@ -545,9 +563,12 @@ impl Default for Shininess {
     }
 }
 
+#[derive(Savestate)]
 pub struct Gpu3DBuffer {
+    #[savestate(bytes)]
     pub vertices: [Vertex; VERTEX_LIMIT],
     pub vertices_count: u16,
+    #[savestate(bytes)]
     pub polygons: [Polygon; POLYGON_LIMIT],
     polygons_count: u16,
     pub clip_matrices: MatrixVec,
@@ -594,7 +615,7 @@ struct Gpu3DBuffersState {
     unsued: u4,
 }
 
-#[derive(Default)]
+#[derive(Default, Savestate)]
 struct Gpu3DBuffers {
     front: HeapMem<Gpu3DBuffer>,
     back: HeapMem<Gpu3DBuffer>,
@@ -635,7 +656,7 @@ impl Gpu3DBuffers {
 }
 
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Savestate)]
 pub struct Gpu3DRegisters {
     flags: Gpu3DFlags,
     pub last_total_cycles: u32,

@@ -59,6 +59,10 @@ const P_GBA_ROM_OFFSET: usize = P_OAM_OFFSET + FAST_MEM_PAGE_SIZE;
 const P_ARM9_BIOS_OFFSET: usize = P_GBA_ROM_OFFSET + FAST_MEM_PAGE_SIZE;
 const P_ARM7_BIOS_OFFSET: usize = P_ARM9_BIOS_OFFSET;
 
+// Mutable guest memory span inside the shm: itcm, dtcm, main, shared wram, arm7 wram,
+// palettes, oam. Excludes the mmu padding before and the constant gba-rom/bios pages after.
+pub const SAVESTATE_SHM_RANGE: std::ops::Range<usize> = P_ITCM_OFFSET..P_GBA_ROM_OFFSET;
+
 pub const ITCM_REGION: MemRegion = MemRegion::new(ITCM_OFFSET as usize, MAIN_OFFSET as usize, ITCM_SIZE as usize, P_ITCM_OFFSET, true);
 pub const DTCM_REGION: MemRegion = MemRegion::new(0, 0, DTCM_SIZE as usize, P_DTCM_OFFSET, true);
 pub const MAIN_REGION: MemRegion = MemRegion::new(MAIN_OFFSET as usize, SHARED_WRAM_OFFSET as usize, MAIN_SIZE as usize, P_MAIN_OFFSET, true);

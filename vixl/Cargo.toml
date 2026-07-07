@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 
 [build-dependencies]
-regex = "1.11.1"
 bindgen = "0.72.1"
 regex = "1.11.1"
 

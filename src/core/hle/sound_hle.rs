@@ -1,6 +1,8 @@
 use crate::core::emu::Emu;
 use crate::core::hle::sound_nitro::SoundNitro;
+use crate::savestate::Savestate;
 
+#[derive(Savestate)]
 pub struct SoundHle {
     engine: i8,
     pub(super) nitro: SoundNitro,
@@ -8,10 +10,7 @@ pub struct SoundHle {
 
 impl SoundHle {
     pub(super) fn new() -> Self {
-        SoundHle {
-            engine: -1,
-            nitro: SoundNitro::new(),
-        }
+        SoundHle { engine: -1, nitro: SoundNitro::new() }
     }
 }
 

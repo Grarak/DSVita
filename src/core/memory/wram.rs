@@ -31,6 +31,15 @@ pub struct Wram {
     arm7_map: SharedWramMap,
 }
 
+impl crate::savestate::Savestate for Wram {
+    fn savestate(&mut self, state: &mut crate::savestate::SavestateContext) {
+        self.cnt.savestate(state);
+        if !state.is_save() {
+            self.init_maps();
+        }
+    }
+}
+
 impl Wram {
     pub fn new() -> Self {
         let mut instance = Wram {

@@ -4,6 +4,7 @@ use crate::core::emu::Emu;
 use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 use crate::utils;
 use crate::utils::HeapArrayU8;
 use crate::{cartridge_io::CartridgeIo, utils::OptionWrapper};
@@ -53,7 +54,7 @@ impl Default for RomCtrl {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Savestate)]
 enum CmdMode {
     Header,
     Chip,
@@ -62,7 +63,9 @@ enum CmdMode {
     None,
 }
 
-#[derive(Default)]
+crate::savestate::impl_savestate_bytes!(AuxSpiCnt, RomCtrl);
+
+#[derive(Default, Savestate)]
 struct CartridgeInner {
     block_size: u16,
     read_count: u16,
@@ -79,7 +82,10 @@ struct CartridgeInner {
     bus_cmd_out: u64,
 }
 
+#[derive(Savestate)]
 pub struct Cartridge {
+    // File handles, rom cache and save chip content; saves persist through the .sav file
+    #[savestate(skip)]
     pub io: OptionWrapper<CartridgeIo>,
     cmd_mode: CmdMode,
     inner: [CartridgeInner; 2],

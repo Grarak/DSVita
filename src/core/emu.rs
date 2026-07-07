@@ -17,6 +17,7 @@ use crate::core::timers::Timers;
 use crate::core::wifi::Wifi;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::jit_memory::JitMemory;
+use crate::savestate::{Savestate, SavestateContext};
 use crate::settings::{Settings, DEFAULT_SETTINGS};
 use bilge::prelude::*;
 use std::ptr::NonNull;
@@ -50,6 +51,8 @@ impl Default for NitroSdkVersion {
         NitroSdkVersion::from(u32::MAX)
     }
 }
+
+crate::savestate::impl_savestate_bytes!(NitroSdkVersion);
 
 pub struct Emu {
     pub ipc: Ipc,
@@ -133,5 +136,94 @@ impl Emu {
         self.os_irq_handler_thread_switch_addr = 0;
         self.fs_clear_overlay_image_addr = 0;
         self.initialized = false;
+    }
+
+    // Guest state only: jit, settings and host resources are absent by construction.
+    // breakout_imm/initialized are runtime control flow, not guest state.
+    fn savestate(&mut self, state: &mut SavestateContext) {
+        self.ipc.savestate(state);
+        self.cartridge.savestate(state);
+        self.gpu.savestate(state);
+        self.cm.savestate(state);
+        self.cpu.savestate(state);
+        self.cp15.savestate(state);
+        self.input.savestate(state);
+        self.mem.savestate(state);
+        self.hle.savestate(state);
+        self.div_sqrt.savestate(state);
+        self.spi.savestate(state);
+        self.rtc.savestate(state);
+        self.spu.savestate(state);
+        self.dma.savestate(state);
+        self.timers.savestate(state);
+        self.wifi.savestate(state);
+        self.nitro_sdk_version.savestate(state);
+        self.os_irq_table_addr.savestate(state);
+        self.os_irq_handler_thread_switch_addr.savestate(state);
+        self.fs_clear_overlay_image_addr.savestate(state);
+        ARM9.thread_regs().savestate(state);
+        ARM7.thread_regs().savestate(state);
+    }
+
+    pub fn save_state(&mut self, screenshot: &[u8]) -> Option<Vec<u8>> {
+        let mut state = SavestateContext::new_save();
+        self.savestate(&mut state);
+        let raw = state.into_data()?;
+        Some(crate::savestate::encode_savestate_file(self.settings.arm7_emu() as u8, screenshot, &raw))
+    }
+
+    pub fn load_state(&mut self, data: Vec<u8>) -> bool {
+        let Some(raw) = crate::savestate::decode_savestate_file(&data, self.settings.arm7_emu() as u8) else {
+            return false;
+        };
+        let mut state = SavestateContext::new_load(raw);
+        self.savestate(&mut state);
+        if !state.is_load_successful() {
+            return false;
+        }
+        self.savestate_post_load();
+        true
+    }
+
+    pub fn savestate_to_file(&mut self, screenshot: &[u8]) {
+        let rom_path = self.cartridge.io.file_path.clone();
+        let dir = rom_path.parent().unwrap_or(std::path::Path::new(".")).join("savestates");
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            crate::logging::info_println!("Failed to create savestate dir {dir:?}: {err}");
+            return;
+        }
+        let stem = rom_path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+        let mut num = 1u32;
+        let mut path = dir.join(format!("{stem}-{num}.sav"));
+        while path.exists() {
+            num += 1;
+            path = dir.join(format!("{stem}-{num}.sav"));
+        }
+        match self.save_state(screenshot) {
+            Some(data) => match std::fs::write(&path, &data) {
+                Ok(()) => {
+                    crate::logging::info_println!("Savestate ({} bytes) written to {path:?}", data.len());
+                }
+                Err(err) => {
+                    crate::logging::info_println!("Failed to write savestate {path:?}: {err}");
+                }
+            },
+            None => {
+                crate::logging::info_println!("Savestate serialization failed");
+            }
+        }
+    }
+
+    fn savestate_post_load(&mut self) {
+        // Host mappings derive from the restored cp15/wram/vram state
+        self.mmu_update_all::<{ ARM9 }>();
+        self.mmu_update_all::<{ ARM7 }>();
+
+        // Every compiled block may mismatch the restored memory; full jit reset.
+        // (invalidate_blocks only covers itcm/main/vram live ranges — wram has none)
+        self.jit.init(&self.settings);
+
+        // Rebase spu channel host pointers onto the restored guest addresses (needs the mmu)
+        self.spu_savestate_post_load();
     }
 }

@@ -106,6 +106,19 @@ where
     }
 }
 
+// Serializes the whole backing array so start/end stay valid as is
+impl<T: crate::savestate::Savestate, const SIZE: u16> crate::savestate::Savestate for FixedFifo<T, SIZE>
+where
+    [(); SIZE as usize]:,
+{
+    fn savestate(&mut self, state: &mut crate::savestate::SavestateContext) {
+        self.start.savestate(state);
+        self.len.savestate(state);
+        self.end.savestate(state);
+        self.fifo.savestate(state);
+    }
+}
+
 impl<T: Debug, const SIZE: u16> Debug for FixedFifo<T, SIZE>
 where
     [(); SIZE as usize]:,

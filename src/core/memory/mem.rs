@@ -17,6 +17,16 @@ use std::marker::PhantomData;
 use std::mem;
 use CpuType::ARM7;
 
+impl crate::savestate::Savestate for Memory {
+    fn savestate(&mut self, state: &mut crate::savestate::SavestateContext) {
+        state.pod_slice(&mut self.shm[regions::SAVESTATE_SHM_RANGE]);
+        self.wram.savestate(state);
+        self.wifi.savestate(state);
+        self.vram.savestate(state);
+        // mmu tables are host mappings; Emu::savestate_post_load runs mmu_update_all
+    }
+}
+
 pub struct Memory {
     pub shm: Shm,
     pub wram: Wram,

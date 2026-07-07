@@ -2,6 +2,7 @@ use crate::core::blow_mic_data::BLOW_MIC_DATA;
 use crate::core::emu::Emu;
 use crate::logging::debug_println;
 use crate::presenter::{PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_IN_SAMPLE_RATE};
+use crate::savestate::Savestate;
 use crate::settings::{Language, Settings};
 use crate::utils;
 use crate::utils::{HeapArray, HeapArrayI16, HeapArrayU8};
@@ -147,17 +148,24 @@ impl MicSampler {
     }
 }
 
+#[derive(Savestate)]
 pub struct Spi {
     pub cnt: u16,
     pub data: u8,
     write_count: usize,
     cmd: u8,
     addr: u32,
+    #[savestate(skip)]
     touch_points: Arc<AtomicU16>,
+    // Loaded from the firmware file, constant for the session
+    #[savestate(skip)]
     pub firmware: HeapArrayU8<FIRMWARE_SIZE>,
     last_mic_sample: u16,
     pub mic_sample_cycle: u32,
+    // Host mic ring, refilled continuously
+    #[savestate(skip)]
     pub mic_samples: HeapArray<i16, { PRESENTER_AUDIO_IN_BUF_SIZE }>,
+    #[savestate(skip)]
     pub mic_sampler: Arc<Mutex<MicSampler>>,
     blow_mic_offset: u16,
 }

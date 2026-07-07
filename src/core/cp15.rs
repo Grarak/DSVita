@@ -1,6 +1,7 @@
 use crate::core::emu::Emu;
 use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 use bilge::prelude::*;
 use std::{cmp, mem};
 
@@ -51,6 +52,7 @@ struct TcmReg {
 const CONTROL_RW_BITS_MASK: u32 = 0x000FF085;
 const TCM_MIN_SIZE: u32 = 4 * 1024;
 
+#[derive(Savestate)]
 pub struct Cp15 {
     control: u32,
     pub exception_addr: u32,
@@ -64,7 +66,7 @@ pub struct Cp15 {
     proc_id: u32,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Savestate)]
 #[repr(u8)]
 pub enum TcmState {
     Disabled = 0,

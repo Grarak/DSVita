@@ -32,6 +32,10 @@ xxhash-rust = { version = "0.8.15", features = ["xxh32"] }
 libc = "0.2.186"
 
 png = "0.18.1"
+jpeg-encoder = "0.6.1"
+jpeg-decoder = { version = "0.3.2", default-features = false }
+# Already in the tree transitively (png -> flate2); used directly for savestate compression
+miniz_oxide = "0.8"
 rcheevos = { path = "rcheevos" }
 
 [patch.crates-io]

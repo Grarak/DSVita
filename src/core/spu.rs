@@ -3,6 +3,7 @@ use crate::core::emu::Emu;
 use crate::core::CpuType::ARM7;
 use crate::logging::debug_println;
 use crate::presenter::{PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE};
+use crate::savestate::Savestate;
 use crate::soundtouch::SoundTouch;
 use crate::utils::{array_init, HeapArrayU32};
 use bilge::prelude::*;
@@ -364,6 +365,49 @@ struct SoundCapChannel {
     tmr_current: u32,
 }
 
+crate::savestate::impl_savestate_bytes!(SoundCnt, SoundCapCnt, MainSoundCnt);
+
+// sad_ptr/sad_current are host pointers into shm; serialize the progress as an offset
+// and leave the base at 0 — Emu::savestate_post_load rebases them via get_shm_offset
+impl Savestate for SpuChannel {
+    fn savestate(&mut self, state: &mut crate::savestate::SavestateContext) {
+        self.cnt.savestate(state);
+        self.sad.savestate(state);
+        self.tmr.savestate(state);
+        self.pnt.savestate(state);
+        self.len.savestate(state);
+        let mut current_offset = (self.sad_current - self.sad_ptr) as u32;
+        current_offset.savestate(state);
+        if !state.is_save() {
+            self.sad_ptr = 0;
+            self.sad_current = current_offset as usize;
+        }
+        self.tmr_current.savestate(state);
+        self.adpcm_value.savestate(state);
+        self.adpcm_loop_value.savestate(state);
+        self.adpcm_index.savestate(state);
+        self.adpcm_loop_index.savestate(state);
+        self.adpcm_toggle.savestate(state);
+        self.active.savestate(state);
+    }
+}
+
+impl Savestate for SoundCapChannel {
+    fn savestate(&mut self, state: &mut crate::savestate::SavestateContext) {
+        self.cnt.savestate(state);
+        self.dad.savestate(state);
+        self.len.savestate(state);
+        let mut current_offset = (self.dad_current - self.dad_ptr) as u32;
+        current_offset.savestate(state);
+        if !state.is_save() {
+            self.dad_ptr = 0;
+            self.dad_current = current_offset as usize;
+        }
+        self.tmr_current.savestate(state);
+    }
+}
+
+#[derive(Savestate)]
 pub struct Spu {
     channels: [SpuChannel; CHANNEL_COUNT],
     sound_cap_channels: [SoundCapChannel; 2],
@@ -371,6 +415,7 @@ pub struct Spu {
     sound_bias: u16,
     duty_cycles: [i32; 6],
     noise_values: [u16; 2],
+    #[savestate(skip)]
     sound_sampler: NonNull<SoundSampler>,
 }
 
@@ -398,6 +443,21 @@ impl Spu {
 }
 
 impl Emu {
+    // Savestate stored sad_current/dad_current as offsets with a zero base;
+    // rebase them onto the restored shm mapping. Runs after mmu_update_all.
+    pub fn spu_savestate_post_load(&mut self) {
+        for channel_num in 0..CHANNEL_COUNT {
+            let base = self.mem.shm.as_ptr() as usize + self.get_shm_offset::<{ ARM7 }, true, false>(self.spu.channels[channel_num].sad);
+            self.spu.channels[channel_num].sad_ptr = base;
+            self.spu.channels[channel_num].sad_current += base;
+        }
+        for channel_num in 0..2 {
+            let base = self.mem.shm.as_ptr() as usize + self.get_shm_offset::<{ ARM7 }, true, false>(self.spu.sound_cap_channels[channel_num].dad);
+            self.spu.sound_cap_channels[channel_num].dad_ptr = base;
+            self.spu.sound_cap_channels[channel_num].dad_current += base;
+        }
+    }
+
     pub fn spu_initialize_schedule(&mut self) {
         self.cm.schedule(512 * 2, EventType::SpuSample);
     }

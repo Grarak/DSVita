@@ -3,6 +3,7 @@ use crate::core::cycle_manager::ImmEventType;
 use crate::core::emu::Emu;
 use crate::core::CpuType;
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 use crate::utils;
 use bilge::prelude::*;
 use std::cmp::min;
@@ -93,7 +94,7 @@ impl From<u8> for DmaTransferMode {
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Savestate)]
 struct DmaChannel {
     cnt: u32,
     sad: u32,
@@ -104,8 +105,11 @@ struct DmaChannel {
     current_count: u32,
 }
 
+#[derive(Savestate)]
 pub struct Dma {
     channels: [DmaChannel; CHANNEL_COUNT],
+    // Scratch refilled inside a single transfer, never live across events
+    #[savestate(skip)]
     src_buf: Vec<u8>,
 }
 

@@ -69,7 +69,7 @@ mod math;
 mod mmap;
 mod presenter;
 mod ra_context;
-mod release_inst_log;
+mod savestate;
 mod screen_layouts;
 mod screen_overlays;
 mod settings;
@@ -81,7 +81,7 @@ pub const DEBUG_LOG: bool = const_str_equal(BUILD_PROFILE_NAME, "debug");
 pub const IS_DEBUG: bool = DEBUG_LOG || const_str_equal(BUILD_PROFILE_NAME, "release-debug");
 pub const BRANCH_LOG: bool = DEBUG_LOG;
 
-fn run_cpu(emu: &mut Emu) {
+fn run_cpu(emu: &mut Emu, savestate: Option<Vec<u8>>) {
     let arm9_ram_addr = emu.cartridge.io.header.arm9_values.ram_address;
     let arm9_entry_addr = emu.cartridge.io.header.arm9_values.entry_address;
     let arm7_ram_addr = emu.cartridge.io.header.arm7_values.ram_address;
@@ -199,6 +199,14 @@ fn run_cpu(emu: &mut Emu) {
 
     let jit_asm_arm9 = unsafe { (ARM9.jit_asm_addr() as *mut JitAsm).as_mut_unchecked() };
     let jit_asm_arm7 = unsafe { (ARM7.jit_asm_addr() as *mut JitAsm).as_mut_unchecked() };
+
+    if let Some(data) = savestate {
+        if emu.load_state(data) {
+            info_println!("Savestate loaded, continuing");
+        } else {
+            eprintln!("Failed to load savestate");
+        }
+    }
 
     jit_asm_arm9.parse_nitrosdk_entry();
 
@@ -507,6 +515,13 @@ pub fn actual_main() {
 
         sound_sampler.get_mut().init();
 
+        let savestate = presenter.get_savestate_path().and_then(|path| match std::fs::read(&path) {
+            Ok(data) => Some(data),
+            Err(err) => {
+                eprintln!("Failed to read savestate {path:?}: {err}");
+                None
+            }
+        });
         let cpu_thread = thread::Builder::new()
             .name("cpu".to_owned())
             .stack_size(MAX_STACK_DEPTH_SIZE + 1024 * 1024) // Add 1MB headroom to stack
@@ -515,7 +530,7 @@ pub fn actual_main() {
                 info_println!("Start cpu {:?}", thread::current().id());
                 let emu = emu_ptr as *mut Emu;
                 start_profiling();
-                run_cpu(unsafe { emu.as_mut_unchecked() });
+                run_cpu(unsafe { emu.as_mut_unchecked() }, savestate);
                 stop_profiling();
                 info_println!("Stopped cpu {:?}", thread::current().id());
             })
@@ -690,7 +705,8 @@ pub fn actual_main() {
                     ra_context.on_idle();
                 }
                 emu_unsafe.get_mut().settings.set_screen_layout(&screen_layout);
-                match presenter.present_pause(gpu_renderer, &mut emu_unsafe.get_mut().settings, &settings_file_path) {
+                let rom_path = emu_unsafe.get_mut().cartridge.io.file_path.clone();
+                match presenter.present_pause(gpu_renderer, &mut emu_unsafe.get_mut().settings, &settings_file_path, &rom_path) {
                     UiPauseMenuReturn::Quit => {
                         gpu_renderer.set_quit(true);
                         gpu_renderer.unpause(cpu_thread.thread());

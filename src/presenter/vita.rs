@@ -286,6 +286,10 @@ impl Presenter {
         self.key_mapping = mapping;
     }
 
+    pub fn get_savestate_path(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+
     pub fn poll_event(&mut self, settings: &Settings) -> PresentEvent {
         let mut stick_keymap = 0xFFFFFFFF;
 
@@ -468,9 +472,9 @@ impl Presenter {
         unsafe { sceShellUtilLock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_QUICK_MENU | SCE_SHELL_UTIL_LOCK_TYPE_USB_CONNECTION | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2) };
     }
 
-    pub fn present_pause(&mut self, gpu_renderer: &GpuRenderer, settings: &mut Settings, settings_file_path: &std::path::Path) -> UiPauseMenuReturn {
+    pub fn present_pause(&mut self, gpu_renderer: &GpuRenderer, settings: &mut Settings, settings_file_path: &std::path::Path, rom_path: &std::path::Path) -> UiPauseMenuReturn {
         unsafe { sceShellUtilUnlock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN | SCE_SHELL_UTIL_LOCK_TYPE_QUICK_MENU | SCE_SHELL_UTIL_LOCK_TYPE_USB_CONNECTION | SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN_2) };
-        let ret = show_pause_menu(self, gpu_renderer, settings, settings_file_path);
+        let ret = show_pause_menu(self, gpu_renderer, settings, settings_file_path, rom_path);
         match ret {
             UiPauseMenuReturn::Resume | UiPauseMenuReturn::BlowMic => unsafe {
                 self.do_nothing_until_all_btns_released = true;

@@ -1,6 +1,7 @@
+use crate::savestate::Savestate;
 use std::ops::{Add, AddAssign, BitAnd, BitXor, BitXorAssign, Not, Sub, SubAssign};
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Savestate)]
 pub struct Bitset<const SIZE: usize>(pub [u32; SIZE]);
 
 impl<const SIZE: usize> Bitset<SIZE> {

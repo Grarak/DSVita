@@ -10,6 +10,7 @@ use crate::core::hle::touchscreen_hle::TouchscreenHle;
 use crate::core::hle::wifi_hle::WifiHle;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 use bilge::prelude::*;
 use std::cmp::Ordering;
 use std::mem;
@@ -52,6 +53,7 @@ pub struct IpcFifoMessage {
     pub data: u26,
 }
 
+#[derive(Savestate)]
 pub struct Arm7Hle {
     pub(super) firmware: FirmwareHle,
     pub rtc: RtcHle,

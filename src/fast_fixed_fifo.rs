@@ -1,8 +1,8 @@
 use crate::mmap::{Shm, VirtualMem, PAGE_SIZE};
-#[cfg(target_arch = "arm")]
-use std::arch::arm::{vld4q_u32, vst4q_u32};
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{vld4q_u32, vst4q_u32};
+#[cfg(target_arch = "arm")]
+use std::arch::arm::{vld4q_u32, vst4q_u32};
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};
 use std::{
@@ -103,6 +103,27 @@ impl<T, const SIZE: usize> FastFixedFifo<T, SIZE> {
 
     pub fn pos_end(&self) -> usize {
         self.end
+    }
+}
+
+// Contents live in host vmem, so serialize logically: the mirrored mapping makes
+// [front_ptr, front_ptr + len) contiguous for any start; load renormalizes to start = 0
+impl<T: Copy, const SIZE: usize> crate::savestate::Savestate for FastFixedFifo<T, SIZE> {
+    fn savestate(&mut self, state: &mut crate::savestate::SavestateContext) {
+        let mut len = self.len;
+        len.savestate(state);
+        if state.is_save() {
+            state.pod_slice(unsafe { std::slice::from_raw_parts_mut(self.front_ptr_mut(), self.len) });
+        } else {
+            self.clear();
+            if len > SIZE {
+                state.set_error();
+                return;
+            }
+            state.pod_slice(unsafe { std::slice::from_raw_parts_mut(self.vmem.as_mut_ptr() as *mut T, len) });
+            self.len = len;
+            self.end = len % SIZE;
+        }
     }
 }
 

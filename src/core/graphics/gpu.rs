@@ -9,6 +9,7 @@ use crate::core::memory::dma::DmaTransferMode;
 use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 use crate::settings::Arm7Emu;
 use crate::utils::PtrWrapper;
 use bilge::prelude::*;
@@ -112,15 +113,20 @@ impl DispCapCnt {
     }
 }
 
+crate::savestate::impl_savestate_bytes!(DispStat, PowCnt1, DispCapCnt);
+
+#[derive(Savestate)]
 pub struct Gpu {
     disp_stat: [DispStat; 2],
     pub pow_cnt1: PowCnt1,
     pub disp_cap_cnt: DispCapCnt,
+    #[savestate(skip)]
     frame_rate_counter: FrameRateCounter,
     pub v_count: u16,
     pub gpu_2d_regs_a: Gpu2DRegisters,
     pub gpu_2d_regs_b: Gpu2DRegisters,
     pub gpu_3d_regs: Gpu3DRegisters,
+    #[savestate(skip)]
     pub renderer: PtrWrapper<GpuRenderer>,
 }
 
@@ -219,11 +225,11 @@ impl Emu {
         if crate::IS_DEBUG && self.gpu.v_count == 191 {
             use std::sync::atomic::{AtomicU32, Ordering};
             static VBLANKS: AtomicU32 = AtomicU32::new(0);
-            static TARGET: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-            let target = *TARGET.get_or_init(|| std::env::var("DSVITA_VBLANK_HASH").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
-            if target != 0 {
+            static TARGETS: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+            let targets = TARGETS.get_or_init(|| std::env::var("DSVITA_VBLANK_HASH").map(|v| v.split(',').filter_map(|p| p.parse().ok()).collect()).unwrap_or_default());
+            if !targets.is_empty() {
                 let n = VBLANKS.fetch_add(1, Ordering::Relaxed) + 1;
-                if n == target {
+                if targets.contains(&n) {
                     use xxhash_rust::xxh32::xxh32;
                     let palettes = self.mem_get_palettes();
                     let oam = self.mem_get_oam();
@@ -233,12 +239,19 @@ impl Emu {
                             crate::core::memory::regions::MAIN_REGION.size,
                         )
                     };
+                    // The 2D register files as raw bytes — the render inputs the memory
+                    // regions don't cover.
+                    let regs_a = unsafe { std::slice::from_raw_parts(&self.gpu.gpu_2d_regs_a as *const _ as *const u8, std::mem::size_of_val(&self.gpu.gpu_2d_regs_a)) };
+                    let regs_b = unsafe { std::slice::from_raw_parts(&self.gpu.gpu_2d_regs_b as *const _ as *const u8, std::mem::size_of_val(&self.gpu.gpu_2d_regs_b)) };
                     eprintln!(
-                        "VBLANKHASH#{n} main={:08x} vram={:08x} palettes={:08x} oam={:08x}",
+                        "VBLANKHASH#{n} main={:08x} vram={:08x} palettes={:08x} oam={:08x} regs2d={:08x}/{:08x} pow={:04x}",
                         xxh32(main, 0),
                         xxh32(self.mem.vram.banks.mem.as_slice(), 0),
                         xxh32(palettes, 0),
-                        xxh32(oam, 0)
+                        xxh32(oam, 0),
+                        xxh32(regs_a, 0),
+                        xxh32(regs_b, 0),
+                        u16::from(self.gpu.pow_cnt1)
                     );
                 }
             }
@@ -320,5 +333,24 @@ impl Emu {
         }
 
         self.cm.schedule(256 * 6, EventType::GpuScanline256);
+
+        // Vblank entry (same point the pause menu parks the cpu thread), with all gpu
+        // events rescheduled so both save and in-session load see/restore a consistent
+        // scheduler; the hook sits between jit execute calls, so the full jit reset a
+        // load performs has no compiled frames on the stack
+        if unlikely(self.gpu.v_count == 192) {
+            if let Some(request) = crate::savestate::take_request() {
+                match request {
+                    crate::savestate::SavestateRequest::Save { screenshot } => self.savestate_to_file(&screenshot),
+                    crate::savestate::SavestateRequest::Load { data } => {
+                        if self.load_state(data) {
+                            crate::logging::info_println!("Savestate loaded");
+                        } else {
+                            crate::logging::info_println!("Savestate load failed (corrupt or arm7 emulation mismatch)");
+                        }
+                    }
+                }
+            }
+        }
     }
 }

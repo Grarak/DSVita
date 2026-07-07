@@ -2,6 +2,7 @@ use crate::core::emu::Emu;
 use crate::core::CpuType;
 use crate::jit::reg::Reg;
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 use crate::{DEBUG_LOG, IS_DEBUG};
 use bilge::prelude::*;
 use std::intrinsics::likely;
@@ -23,7 +24,7 @@ pub struct Cpsr {
 }
 
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Savestate)]
 pub struct UserRegs {
     pub gp_regs: [u32; 5],
     pub sp: u32,
@@ -31,7 +32,7 @@ pub struct UserRegs {
 }
 
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Savestate)]
 pub struct FiqRegs {
     pub gp_regs: [u32; 5],
     pub sp: u32,
@@ -40,14 +41,14 @@ pub struct FiqRegs {
 }
 
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Savestate)]
 pub struct OtherModeRegs {
     pub sp: u32,
     pub lr: u32,
     pub spsr: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Savestate)]
 #[repr(C, align(32))]
 pub struct ThreadRegs {
     pub gp_regs: [u32; 13],

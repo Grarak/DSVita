@@ -2,6 +2,7 @@ use crate::core::cycle_manager::EventType;
 use crate::core::emu::Emu;
 use crate::core::hle::arm7_hle::IpcFifoTag;
 use crate::core::CpuType::ARM7;
+use crate::savestate::Savestate;
 
 #[repr(u8)]
 enum WMApiid {
@@ -89,6 +90,7 @@ struct WMStartScanCallback {
     link_level: u16,
 }
 
+#[derive(Savestate)]
 pub struct WifiHle {
     msg_ptr: u32,
     status_ptr: u32,

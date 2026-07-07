@@ -1,3 +1,4 @@
+use crate::savestate::Savestate;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -18,9 +19,11 @@ pub enum Keycode {
     Y = 11,
 }
 
+#[derive(Savestate)]
 pub struct Input {
     key_input: u16,
     ext_key_in: u16,
+    #[savestate(skip)]
     key_map: Arc<AtomicU32>,
 }
 

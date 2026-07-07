@@ -2,7 +2,9 @@ use crate::core::emu::Emu;
 use crate::core::hle::arm7_hle::IpcFifoTag;
 use crate::core::CpuType::ARM7;
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 
+#[derive(Savestate)]
 pub(super) struct CartHle {
     cmd: u32,
     data_pos: u32,

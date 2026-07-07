@@ -1,6 +1,7 @@
 use crate::core::cpu_regs::InterruptFlag;
 use crate::core::emu::Emu;
 use crate::core::CpuType::ARM7;
+use crate::savestate::Savestate;
 use crate::utils::HeapArrayU8;
 use bilge::prelude::*;
 
@@ -24,7 +25,7 @@ pub enum PaketType {
     CmdAck = 6,
 }
 
-#[derive(Default)]
+#[derive(Default, Savestate)]
 pub struct Wifi {
     pub w_mode_wep: u16,
     pub w_txstat_cnt: u16,

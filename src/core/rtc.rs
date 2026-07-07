@@ -1,4 +1,5 @@
 use crate::logging::debug_println;
+use crate::savestate::Savestate;
 use crate::IS_DEBUG;
 use bilge::prelude::*;
 use chrono::{Datelike, Timelike};
@@ -16,7 +17,7 @@ struct RtcReg {
     not_used1: u1,
 }
 
-#[derive(Default)]
+#[derive(Default, Savestate)]
 pub struct Rtc {
     rtc: u8,
     select_out: bool,
