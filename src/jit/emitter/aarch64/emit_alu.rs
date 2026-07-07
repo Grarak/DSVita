@@ -11,7 +11,7 @@
 // forms stay refused for S-ops.
 
 use super::{SCRATCH3, SCRATCH4};
-use crate::jit::assembler::aarch64::{A64BlockAsm, SCRATCH0, SCRATCH1, SCRATCH2};
+use crate::jit::assembler::aarch64::{BlockAsm, SCRATCH0, SCRATCH1, SCRATCH2};
 use crate::jit::inst_info::{InstInfo, Operand, Shift, ShiftValue};
 use crate::jit::op::Op;
 use crate::jit::reg::Reg;
@@ -60,18 +60,19 @@ fn has_dst(op: Op) -> bool {
     !matches!(op, Op::Tst | Op::Teq | Op::Cmp | Op::Cmn)
 }
 
-fn source_reg(block_asm: &mut A64BlockAsm, dst: A64Reg, guest: Reg, pc: u32) -> A64Reg {
+fn source_reg(block_asm: &mut BlockAsm, scratch: A64Reg, guest: Reg, pc: u32) -> A64Reg {
     if guest == Reg::PC {
         // ARM pipeline: PC reads as the instruction address + 8.
-        block_asm.mov_imm(dst, pc + 8);
+        block_asm.mov_imm(scratch, pc + 8);
+        scratch
     } else {
-        block_asm.load_guest(dst, guest);
+        // Allocated by alloc_guest_inst before the body.
+        block_asm.guest_map(guest)
     }
-    dst
 }
 
 /// Shifter carry-out of operand 2, when the flags want it.
-enum CarryOut {
+pub(super) enum CarryOut {
     Unchanged,
     Static(bool),
     /// 0/1 in SCRATCH4.
@@ -80,7 +81,7 @@ enum CarryOut {
 
 /// Materialize operand 2 into a register; when `want_carry`, also produce the shifter
 /// carry-out per the A32 rules.
-fn op2(block_asm: &mut A64BlockAsm, operand: &Operand, opcode: u32, pc: u32, want_carry: bool) -> (A64Reg, CarryOut) {
+fn op2(block_asm: &mut BlockAsm, operand: &Operand, opcode: u32, pc: u32, want_carry: bool) -> (A64Reg, CarryOut) {
     match operand {
         Operand::Imm(imm) => {
             block_asm.mov_imm(SCRATCH1, *imm);
@@ -138,13 +139,13 @@ fn op2(block_asm: &mut A64BlockAsm, operand: &Operand, opcode: u32, pc: u32, wan
 }
 
 /// Seed the host carry flag from the guest cpsr (for adc/sbc/rsc).
-fn seed_carry(block_asm: &mut A64BlockAsm) {
+pub(super) fn seed_carry(block_asm: &mut BlockAsm) {
     block_asm.load_cpsr(SCRATCH3);
     block_asm.masm.msr_nzcv(SCRATCH3);
 }
 
 /// Merge fresh arithmetic NZCV (currently in host flags) into the guest cpsr.
-fn writeback_arith_flags(block_asm: &mut A64BlockAsm) {
+pub(super) fn writeback_arith_flags(block_asm: &mut BlockAsm) {
     block_asm.masm.mrs_nzcv(SCRATCH3);
     block_asm.load_cpsr(SCRATCH4);
     block_asm.masm.and_imm(SCRATCH4, SCRATCH4, 0x0FFFFFFF, false);
@@ -154,7 +155,7 @@ fn writeback_arith_flags(block_asm: &mut A64BlockAsm) {
 }
 
 /// Merge logical-op flags: N/Z from `result`, C per the shifter carry, V untouched.
-fn writeback_logical_flags(block_asm: &mut A64BlockAsm, result: A64Reg, carry: CarryOut) {
+pub(super) fn writeback_logical_flags(block_asm: &mut BlockAsm, result: A64Reg, carry: CarryOut) {
     // N/Z via a host tst, captured from NZCV.
     block_asm.masm.tst_reg(result, result, A64ShiftKind::LSL, 0, false);
     block_asm.masm.mrs_nzcv(SCRATCH3);
@@ -178,7 +179,7 @@ fn writeback_logical_flags(block_asm: &mut A64BlockAsm, result: A64Reg, carry: C
     block_asm.store_cpsr(SCRATCH0);
 }
 
-pub(super) fn emit_data_processing(block_asm: &mut A64BlockAsm, inst: &InstInfo, pc: u32) {
+pub(super) fn emit_data_processing(block_asm: &mut BlockAsm, inst: &InstInfo, pc: u32) {
     let (base_op, flag_mode, carry_in) = op_class(inst.op).unwrap();
     let operands = inst.operands();
     let want_carry = flag_mode == FlagMode::Logical;
@@ -201,7 +202,12 @@ pub(super) fn emit_data_processing(block_asm: &mut A64BlockAsm, inst: &InstInfo,
     }
 
     let set_host_flags = flag_mode == FlagMode::Arith;
-    let result = SCRATCH2;
+    // Results go straight into the mapped destination (dirty-tracked by the allocator);
+    // the compare/test shapes have no destination and use a scratch.
+    let result = match dst {
+        Some(dst) if has_dst(inst.op) => block_asm.guest_map(dst),
+        _ => SCRATCH2,
+    };
     match (base_op, set_host_flags) {
         (Op::Mov, _) => block_asm.masm.orr_reg(result, A64Reg::ZR, rhs, A64ShiftKind::LSL, 0, false),
         (Op::Mvn, _) => {
@@ -231,11 +237,5 @@ pub(super) fn emit_data_processing(block_asm: &mut A64BlockAsm, inst: &InstInfo,
         FlagMode::None => {}
         FlagMode::Arith => writeback_arith_flags(block_asm),
         FlagMode::Logical => writeback_logical_flags(block_asm, result, carry),
-    }
-
-    if let Some(dst) = dst {
-        if has_dst(inst.op) {
-            block_asm.store_guest(result, dst);
-        }
     }
 }

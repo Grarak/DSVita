@@ -185,7 +185,6 @@ mod handler {
     }
 }
 
-#[cfg(target_arch = "arm")]
 unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(metadata: *const GuestInstMetadata, host_regs: &[usize; GUEST_REG_POOL_SIZE]) {
     let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
     debug_println!("{CPU:?} breakout after write");
@@ -194,14 +193,85 @@ unsafe extern "C" fn breakout_after_write<const CPU: CpuType>(metadata: *const G
 
     for dirty_guest_reg in metadata.dirty_guest_regs - Reg::CPSR {
         let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(dirty_guest_reg as usize);
-        let value = *host_regs.get_unchecked(mapped_reg as usize - 4) as u32;
+        let value = *host_regs.get_unchecked(crate::jit::assembler::host_pool_index(mapped_reg)) as u32;
         debug_println!("{CPU:?} save {dirty_guest_reg:?} as {value:x} from host {mapped_reg:?}");
         *asm.emu.thread_get_reg_mut(CPU, dirty_guest_reg) = value;
     }
     breakout_imm::<CPU>(asm, metadata.total_cycle_count, metadata.pc);
 }
 
-unsafe extern "C" fn _inst_write_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(value0: u32, value1: u32, addr: u32, metadata: *const GuestInstMetadata) -> *const GuestInstMetadata {
+/// The a64 write-breakout trampoline the slow-mem patch calls when a write invalidated
+/// the running block (handler returned the metadata in x0): dump the pool for
+/// breakout_after_write and resume at the patch site if it returns (breakout_imm exits
+/// the guest context when the block can't continue).
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+pub unsafe extern "C" fn inst_write_breakout_shim_a64(_metadata: *const GuestInstMetadata) {
+    core::arch::naked_asm!(
+        "sub sp, sp, #96",
+        "stp x19, x20, [sp]",
+        "stp x21, x22, [sp, #16]",
+        "stp x23, x24, [sp, #32]",
+        "stp x25, x26, [sp, #48]",
+        "stp x28, x30, [sp, #64]",
+        "mov x1, sp",
+        "bl {breakout}",
+        "ldr x30, [sp, #72]",
+        "add sp, sp, #96",
+        "ret",
+        breakout = sym breakout_after_write_current_cpu,
+    );
+}
+
+/// The a64 ldm/stm trampoline (always-slow: no fast path, no patching — the emitter
+/// bakes the handler + metadata in at compile time): arm32's dump-dance around the
+/// portable core — dump the pool so the handler can read mapped values and write loaded
+/// ones back through it, then reload everything (dump layout = host_pool_index order:
+/// x19-x26 then x28, lr on top).
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+pub unsafe extern "C" fn inst_mem_handler_multiple_a64<
+    const CPU: CpuType,
+    const WRITE: bool,
+    const WRITE_BACK: bool,
+    const DECREMENT: bool,
+    const VALID: bool,
+    const USER: bool,
+    const NEEDS_PC: bool,
+>(
+    _params: u32,
+    _metadata: *const GuestInstMetadata,
+) {
+    core::arch::naked_asm!(
+        "sub sp, sp, #96",
+        "stp x19, x20, [sp]",
+        "stp x21, x22, [sp, #16]",
+        "stp x23, x24, [sp, #32]",
+        "stp x25, x26, [sp, #48]",
+        "stp x28, x30, [sp, #64]",
+        "mov x2, sp",
+        "bl {core}",
+        "ldp x19, x20, [sp]",
+        "ldp x21, x22, [sp, #16]",
+        "ldp x23, x24, [sp, #32]",
+        "ldp x25, x26, [sp, #48]",
+        "ldp x28, x30, [sp, #64]",
+        "add sp, sp, #96",
+        "ret",
+        core = sym _inst_mem_handler_multiple::<CPU, WRITE, WRITE_BACK, DECREMENT, VALID, USER, NEEDS_PC, false>,
+    );
+}
+
+/// Dispatch breakout_after_write on the running cpu (the shim has no const generic).
+#[cfg(target_arch = "aarch64")]
+unsafe extern "C" fn breakout_after_write_current_cpu(metadata: *const GuestInstMetadata, host_regs: &[usize; GUEST_REG_POOL_SIZE]) {
+    match crate::CURRENT_RUNNING_CPU {
+        CpuType::ARM9 => breakout_after_write::<{ CpuType::ARM9 }>(metadata, host_regs),
+        CpuType::ARM7 => breakout_after_write::<{ CpuType::ARM7 }>(metadata, host_regs),
+    }
+}
+
+pub unsafe extern "C" fn _inst_write_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(value0: u32, value1: u32, addr: u32, metadata: *const GuestInstMetadata) -> *const GuestInstMetadata {
     let metadata = metadata.as_ref_unchecked();
     debug_println!("{CPU:?} handle write request addr {addr:x} at {:x}", metadata.pc);
 
@@ -214,7 +284,7 @@ unsafe extern "C" fn _inst_write_mem_handler<const CPU: CpuType, const AMOUNT: M
     }
 }
 
-unsafe extern "C" fn _inst_write_io_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(
+pub unsafe extern "C" fn _inst_write_io_mem_handler<const CPU: CpuType, const AMOUNT: MemoryAmount>(
     value0: u32,
     value1: u32,
     addr: u32,
@@ -482,15 +552,19 @@ pub unsafe extern "C" fn _inst_mem_handler_multiple<
     if WRITE {
         for dirty_guest_reg in metadata.dirty_guest_regs - Reg::CPSR {
             let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(dirty_guest_reg as usize);
-            let value = *host_regs.get_unchecked(mapped_reg as usize - 4) as u32;
-            *asm.emu.thread_get_reg_mut(CPU, dirty_guest_reg) = value;
+            if mapped_reg != crate::jit::assembler::HOST_REG_NONE {
+                let value = *host_regs.get_unchecked(crate::jit::assembler::host_pool_index(mapped_reg)) as u32;
+                *asm.emu.thread_get_reg_mut(CPU, dirty_guest_reg) = value;
+            }
         }
     } else {
         let op0 = Reg::from(u8::from(params.op0()));
         if metadata.dirty_guest_regs.is_reserved(op0) {
             let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(op0 as usize);
-            let value = *host_regs.get_unchecked(mapped_reg as usize - 4) as u32;
-            *asm.emu.thread_get_reg_mut(CPU, op0) = value;
+            if mapped_reg != crate::jit::assembler::HOST_REG_NONE {
+                let value = *host_regs.get_unchecked(crate::jit::assembler::host_pool_index(mapped_reg)) as u32;
+                *asm.emu.thread_get_reg_mut(CPU, op0) = value;
+            }
         }
     }
 
@@ -502,7 +576,9 @@ pub unsafe extern "C" fn _inst_mem_handler_multiple<
 
     if WRITE_BACK {
         let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(op0_reg as usize);
-        *host_regs.get_unchecked_mut(mapped_reg as usize - 4) = *asm.emu.thread_get_reg(CPU, op0_reg) as usize;
+        if mapped_reg != crate::jit::assembler::HOST_REG_NONE {
+            *host_regs.get_unchecked_mut(crate::jit::assembler::host_pool_index(mapped_reg)) = *asm.emu.thread_get_reg(CPU, op0_reg) as usize;
+        }
     }
 
     if !WRITE {
@@ -512,8 +588,8 @@ pub unsafe extern "C" fn _inst_mem_handler_multiple<
             let reg = Reg::from(zeros as u8);
             rlist &= !(0x80000000 >> zeros);
             let mapped_reg = *metadata.mapped_guest_regs.get_unchecked(reg as usize);
-            if mapped_reg != Reg::None {
-                *host_regs.get_unchecked_mut(mapped_reg as usize - 4) = *asm.emu.thread_get_reg(CPU, reg) as usize;
+            if mapped_reg != crate::jit::assembler::HOST_REG_NONE {
+                *host_regs.get_unchecked_mut(crate::jit::assembler::host_pool_index(mapped_reg)) = *asm.emu.thread_get_reg(CPU, reg) as usize;
             }
         }
     }

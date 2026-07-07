@@ -9,21 +9,49 @@ pub mod arm32;
 #[cfg(target_arch = "arm")]
 pub use arm32::{arm, block_asm, reg_alloc, thumb, vixl};
 
-/// The host register type each backend allocates from. The arm32 backend's host registers
-/// are modelled by the same vixl aarch32 `Reg` as the guest file (host r4-r11 hold the
-/// guest pool); a 64-bit backend defines its own.
-#[cfg(target_arch = "arm")]
-pub type HostReg = crate::jit::reg::Reg;
-
+use crate::jit::inst_info::Operands;
 use crate::jit::op::Op;
 use crate::jit::reg::{Reg, RegReserve};
-use crate::jit::inst_info::Operands;
 use std::ptr;
 
 // Host-register pool shape shared by all backends: 8 pool registers, guest regs id'd by the
-// 16-entry guest file. The arm32 backend maps the pool to r4-r11.
+// 16-entry guest file. The arm32 backend maps the pool to r4-r11, the a64 one to x19-x26.
 pub const GUEST_REGS_LENGTH: usize = 16;
+#[cfg(target_arch = "arm")]
 pub const GUEST_REG_POOL_SIZE: usize = 8;
+// x19-x26 + x28: every callee-saved register except the pinned ThreadRegs base (x27)
+// and fp/lr — the spill/restore fabric addresses guest slots through x27 on every
+// access, so it stays out of the pool.
+#[cfg(not(target_arch = "arm"))]
+pub const GUEST_REG_POOL_SIZE: usize = 9;
+
+/// The host register type each backend allocates from — also the element type of the
+/// shared metadata's mapped_guest_regs (slow-mem patching routes values between pool
+/// registers and the handlers through it). arm32 models host registers with the same
+/// vixl aarch32 `Reg` as the guest file; the a64 backend uses A64Reg.
+#[cfg(target_arch = "arm")]
+pub type HostReg = Reg;
+#[cfg(not(target_arch = "arm"))]
+pub type HostReg = vixl::A64Reg;
+#[cfg(target_arch = "arm")]
+pub const HOST_REG_NONE: HostReg = Reg::None;
+#[cfg(not(target_arch = "arm"))]
+pub const HOST_REG_NONE: HostReg = vixl::A64Reg::ZR;
+
+/// Index of a mapped host register within the pool dump the breakout/writeback paths
+/// capture (arm32: r4-r11 pushed in order; a64: x19-x26).
+#[cfg(target_arch = "arm")]
+pub fn host_pool_index(reg: HostReg) -> usize {
+    reg as usize - 4
+}
+#[cfg(not(target_arch = "arm"))]
+pub fn host_pool_index(reg: HostReg) -> usize {
+    if reg == vixl::A64Reg::X28 {
+        8
+    } else {
+        reg as usize - vixl::A64Reg::X19 as usize
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct GuestInstMetadataFastMem {
@@ -31,13 +59,13 @@ pub struct GuestInstMetadataFastMem {
     pub size: u16,
     pub op: Op,
     pub operands: Operands,
-    pub op0: Reg,
+    pub op0: HostReg,
     pub opcode_offset: usize,
     pub is_os_irq_handler: bool,
 }
 
 impl GuestInstMetadataFastMem {
-    fn new(start_offset: u16, size: u16, op: Op, operands: Operands, op0: Reg, opcode_offset: usize, is_os_irq_handler: bool) -> Self {
+    fn new(start_offset: u16, size: u16, op: Op, operands: Operands, op0: HostReg, opcode_offset: usize, is_os_irq_handler: bool) -> Self {
         GuestInstMetadataFastMem {
             start_offset,
             size,
@@ -74,7 +102,7 @@ pub struct GuestInstMetadata {
     pub pc: u32,
     pub total_cycle_count: u16,
     pub dirty_guest_regs: RegReserve,
-    pub mapped_guest_regs: [Reg; GUEST_REGS_LENGTH],
+    pub mapped_guest_regs: [HostReg; GUEST_REGS_LENGTH],
 }
 
 impl GuestInstMetadata {
@@ -87,9 +115,9 @@ impl GuestInstMetadata {
         total_cycle_count: u16,
         op: Op,
         operands: Operands,
-        op0: Reg,
+        op0: HostReg,
         dirty_guest_regs: RegReserve,
-        mapped_guest_regs: [Reg; GUEST_REGS_LENGTH],
+        mapped_guest_regs: [HostReg; GUEST_REGS_LENGTH],
     ) -> Self {
         GuestInstMetadata {
             s: GuestInstMetadataShared::new(GuestInstMetadataFastMem::new(fast_mem_start_offset, fast_mem_size, op, operands, op0, opcode_offset, is_os_irq_handler)),

@@ -726,6 +726,11 @@ impl JitAsm<'_> {
         has_dc_invalidate_range && bl_count == 3
     }
 
+    /// a64: nothing to hook — jit_insert_block always write-protects, so overlay
+    /// reloads invalidate through the generic per-write path (HAS_FS_CLEAR_HOOK).
+    #[cfg(target_arch = "aarch64")]
+    pub fn emit_fs_clear_overlay_image_hook(&mut self, _guest_pc: u32, _thumb: bool, _block_asm: &mut crate::jit::assembler::aarch64::BlockAsm) {}
+
     #[cfg(target_arch = "arm")]
     pub fn emit_fs_clear_overlay_image_hook(&mut self, guest_pc: u32, thumb: bool, block_asm: &mut BlockAsm) {
         if self.cpu == ARM7 || !self.emu.nitro_sdk_version.is_valid() {
@@ -758,7 +763,6 @@ impl JitAsm<'_> {
         info_println!("Found fs clear overlay at {guest_pc:x}");
     }
 
-    #[cfg(target_arch = "arm")]
     pub fn emit_nitrosdk_func(&mut self, guest_pc: u32, thumb: bool) -> bool {
         if !self.emu.nitro_sdk_version.is_valid() {
             return false;
@@ -826,7 +830,6 @@ impl JitAsm<'_> {
         false
     }
 
-    #[cfg(target_arch = "arm")]
     pub fn emit_hle_os_irq_handler(&mut self, guest_pc: u32, thumb: bool) -> bool {
         if thumb {
             return false;

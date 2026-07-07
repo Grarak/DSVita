@@ -1,11 +1,15 @@
-// The aarch64 code-generation backend's emitter, laid out like emitter/arm32: emit.rs
+// The aarch64 emitter, laid out like emitter/arm32: emit.rs
 // drives the block loop and owns the support valve, emit_alu.rs lowers data-processing
 // (the flags-in-memory strategy), emit_branch.rs lowers branches (local jumps,
 // tail-called externals, scheduler tails).
 
-mod emit;
+pub(super) mod emit;
+#[cfg(target_arch = "aarch64")]
+pub use emit::class_disabled;
 mod emit_alu;
 mod emit_branch;
+mod emit_transfer;
+mod thumb;
 
 pub use emit::is_block_jit_supported;
 

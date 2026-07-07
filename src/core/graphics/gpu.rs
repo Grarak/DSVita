@@ -212,6 +212,38 @@ impl Emu {
     }
 
     pub fn gpu_on_scanline355_event(&mut self) {
+        // Debug-build instrument: DSVITA_VBLANK_HASH=N prints memory fingerprints at
+        // vblank #N — a guest-time anchor comparable across engines and builds (record
+        // counts are not: the cpu interleave differs). Register traces can't see wrong
+        // stores; these hashes can.
+        if crate::IS_DEBUG && self.gpu.v_count == 191 {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static VBLANKS: AtomicU32 = AtomicU32::new(0);
+            static TARGET: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+            let target = *TARGET.get_or_init(|| std::env::var("DSVITA_VBLANK_HASH").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
+            if target != 0 {
+                let n = VBLANKS.fetch_add(1, Ordering::Relaxed) + 1;
+                if n == target {
+                    use xxhash_rust::xxh32::xxh32;
+                    let palettes = self.mem_get_palettes();
+                    let oam = self.mem_get_oam();
+                    let main = unsafe {
+                        std::slice::from_raw_parts(
+                            self.mem.shm.as_ptr().add(crate::core::memory::regions::MAIN_REGION.shm_offset),
+                            crate::core::memory::regions::MAIN_REGION.size,
+                        )
+                    };
+                    eprintln!(
+                        "VBLANKHASH#{n} main={:08x} vram={:08x} palettes={:08x} oam={:08x}",
+                        xxh32(main, 0),
+                        xxh32(self.mem.vram.banks.mem.as_slice(), 0),
+                        xxh32(palettes, 0),
+                        xxh32(oam, 0)
+                    );
+                }
+            }
+        }
+
         self.gpu.v_count += 1;
         match self.gpu.v_count {
             1 => self.gpu.gpu_3d_regs.on_first_scanline(self.gpu.pow_cnt1),

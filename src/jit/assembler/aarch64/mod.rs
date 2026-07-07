@@ -3,5 +3,7 @@
 // emitted exit-guest-context twin) and the block-body register conventions.
 
 mod block_asm;
+pub mod encode;
+pub mod reg_alloc;
 
 pub use block_asm::*;

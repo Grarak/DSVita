@@ -4,24 +4,70 @@ One doc: current state, how the A64 jit works, what's pending, how to debug it, 
 lessons that cost real time. Supersedes the old plan/progress/session notes (git history
 has them; the width/wrapping audit survives as `todo/aarch64-width-audit.md`).
 
-## State (July 6 2026, branch `aarch64-port-s1`)
+## State (July 7 2026 night, branch `aarch64-port-s1`)
 
-Stages 1-4 are DONE and gated: interpreter-only a64 host with full instruction coverage;
-strict cross-arch tracediff harness (armhf-interp pi vs a64-interp local: 12M + 100M
-records identical); backend seam refactor (armv7 byte-identity gate green over 3 boots);
-vixl aarch64 glue (hand-written shim surface in the fork submodule, 7 mmap-execute
-tests). Stage 5 (the A64 jit backend) has slices 1-3 landed: ALU, S-flags/conditional
-execution/carry ops, and branches — local jumps, conditional B, entry-pc dispatch,
-TAIL-CALL chaining. Strict 12M-record jit-vs-interp gates pass on HeartGold
-(byte-identical ilogs), Mario Kart, Chrono Trigger, Diamond, Castlevania DoS (the
-slice-2 depth-guard parity boundary is closed by the tail calls) + hello_world 3M.
-Release-boot throughput is at parity (only ALU+branch blocks compile so far).
-NSMB is the one strict failure — bisected to a single block, cause still open (below).
+Stages 1-4 DONE. Stage 5 slices 1-8 DONE and gated (ALU, flags, branches+tail-calls,
+bl/blx/bx+return-stack, thumb, HLE substitutions, register allocator, single-transfer
+fastmem + SIGSEGV patcher). One shared compile_block; pool x19-x26+x28; ARM7 homebrew
+hash validation; the ORIGINAL vixl aarch32 generation pipeline restored (cc-expand +
+clang-format + Condition-regex, no list file); every DSVITA_* debug valve behind
+IS_DEBUG (release builds fold them out — device bisects need release-debug builds).
+ldm/stm lowering wired end-to-end but DEFAULTED OFF (irq-phase split — see pending).
+Gates at HEAD: hello_world 3M strict, armv7-sacred byte-identical ×3 baselines, HG
+jit-vs-jit determinism byte-identical, release smokes healthy.
 
-**Blocked on maintainer**: push the vixl fork submodule commits (`764e9f47` + `733af427`)
-to Grarak/vixl before publishing the branch; disassembler-vs-NooDS cycle call (swp 4v2,
-ldrd 3v2, ldm/stm formula — jit charges disasm, interpreter follows NooDS for the ops it
-gained in S1); merge decision for the branch.
+Debug instruments (all IS_DEBUG): DSVITA_VBLANK_HASH=N[,M] (main/vram/palettes/oam +
+2D-register-file xxh32 at vblank anchors), MEMHASH at the inst-log budget stop,
+DSVITA_FRAME_DUMP=N[,M] (glReadPixels of the final framebuffer pre-swap → frame_N.rgba
++ GLINFO renderer/version line).
+
+**Blocked on maintainer**: push the vixl fork submodule commits (`764e9f47` + `733af427`
++ `ca310352` + `736846d9`) to Grarak/vixl; disassembler-vs-NooDS cycle call; merge
+decision.
+
+## A64 visual corruption investigation (ACTIVE — narrowed to frozen engine-A tables)
+
+Symptoms (maintainer): 2D glitches on a64 even with software GL; Black crash. Pi5 = the
+visual box; pinned sav (~/hg_master.sav); pkill -x only (never -f — matches the ssh
+cmdline); presented-frame pace on the pi ≈ 19fps (llvmpipe present is the wall — an
+uncapped run reaches presented-frame 300 in ~15s while emulation races ahead).
+
+**Established, in order:**
+1. Guest emulation EXONERATED: vram/palettes/oam byte-identical armhf↔a64 at vblank 300
+   AND 2700 (01005a6c/88d53f07/6e3fbd46, pi-sav).
+2. Pixels (glReadPixels DSVITA_FRAME_DUMP): armhf = perfect HG title; a64 = 3D screen
+   PIXEL-PERFECT, 2D screen broken (logo doubled, ghosting, garbage rows, missing 2D
+   overlay). Deterministic across runs. Evidence: scratchpad frame_{a64,armhf}.png +
+   frame_compare.png.
+3. DRIVER EXONERATED (was the maintainer's theory — tested): GLINFO identical on both
+   sides — `llvmpipe (LLVM 19.1.7, 128 bits)`, Mesa 25.0.7 (no V3D fallback).
+4. **THE FINDING: a64's engine-A per-scanline UBO table is FROZEN.** Its hash is
+   eab5662c at presented-frame 300 uncapped AND presented-frame 2700 capped — wildly
+   different guest times, identical table — while armhf's varies with the scene
+   (b2a113c9 at its scene). ubo_b matches across arches (constant/blank engine B).
+   2D = GL shaders fed per-scanline tables (disp_cnts/bg_cnts/win_bg/bg/blend ubos in
+   renderer_regs_2d_shared, double-buffered [1]→[0], swap under the `rendering` mutex in
+   gpu_renderer::on_scanline_finish; cpu thread samples per scanline via on_scanline).
+   Frozen table + live vram = exactly the doubled-logo/ghosting signature.
+
+**Next: why does engine-A sampling never update on a64?** Candidates, in checking order:
+- `sample_2d` stuck false (set from `sync_3d = !geometry_3d_skip()` in
+  on_scanline_finish; init sets it how?) — then on_scanline never writes [1].
+- The [0]↔[1] swap never runs: guarded by `if !*rendering && self.ready_2d` — if the
+  render thread never clears `rendering` (or ready_2d never sets), [0] stays initial.
+- on_scanline not called at all on a64 (the per-scanline event wiring).
+Instrument sketch (was written, rejected mid-run — re-add if needed): dump
+disp_cnts[0]/[96], bg_cnts[0..4], bg_ubo.ofs[0..4] alongside FRAMEDUMP — zeros ⇒ never
+sampled; stale-but-nonzero ⇒ swap starvation. One uncapped release-debug run per side
+(~40s each) answers it. Then reconcile with S1's clean title (same pi/driver — S1's
+sampling worked; diff the sampling call-path S1..HEAD, suspects: the scanline-event
+scheduling changes from the f25fd7e-era interpreter rework — f25fd7e black-stall fits
+"tables never sampled" too).
+
+Bisect worktrees: scratchpad/bisect (S1-era), bisect2 (free). Worktree checkouts DISCARD
+instruments — re-verify before runs. simd-adler vendor swap + submodule fetch from the
+main tree (recipes in git history of this section). Pi binaries: ~/dsvita_{a64dbg,hfdbg}
+(release-debug, instruments live) + older tags; frame dumps land in ~ as frame_N.rgba.
 
 ## How the a64 jit works
 
@@ -102,7 +148,7 @@ lowering decision (stage 6 demands record-identical armhf-jit ↔ a64-jit).
 |---|---|
 | `DSVITA_A64_JIT=0` | kill switch, interpreter-only |
 | `DSVITA_A64_INTERP_TIMING=1` | interpreter scheduler thresholds on local branches (gate runs) |
-| `DSVITA_A64_DISABLE=c,l,a,i,b,v` | bisect classes: cond exec / logical-S / arith-S / carry-in / branch shapes / fwd validity check |
+| `DSVITA_A64_DISABLE=c,l,a,i,b,v,t` | bisect classes: cond exec / logical-S / arith-S / carry-in / branch shapes / fwd validity check / thumb |
 | `DSVITA_A64_MAX_BLOCKS=N` | compile only the first N support-passing blocks |
 | `DSVITA_A64_SKIP_PC=hexpc,hexpc` | refuse specific block start pcs |
 | `DSVITA_BLOCK_HASH_LOG=path` | per-insert `cpu pc thumb len hash` stream (also the armv7 byte-identity gate) |
@@ -122,37 +168,60 @@ lowering decision (stage 6 demands record-identical armhf-jit ↔ a64-jit).
 
 ## Pending work
 
-1. **NSMB strict divergence (next session, start here)** — splits at ~11.3M records;
-   `DSVITA_A64_SKIP_PC=2067318` alone makes the full 12M pass. The seed block is 4 insts
-   (`cmp r10,#0 | movgt r6,r6,lsl#1 | bgt 0x206727c | b 0x206726c`, both exits external),
-   reached via an uncond `b 2067318` ~4700×/frame inside a decompression loop. Evidence:
-   flush-stream values (text records) are identical for 182,391 events and diverge at the
-   block's FIRST-ever execution; `run scheduler at 2067320` firings then phase-shift by
-   one iteration; the vblank-ish IRQ lands one delay-loop iteration apart (ARM9-inst
-   index 9,675,589: jit enters `1ffd5e4` irq, ref keeps looping); the arm7 stream is
-   pc-identical but reads a shared counter ±1 (6210 value-diff records). Per-iteration
-   charge algebra is provably equal on every enumerable path (interp b:+3 & check; block
-   chain `counts+2−pre_sum`:+5 & check; all four mid-entry pre_sums verified; same
-   boundaries, same thresholds). Suspects: the `cpu_check_for_interrupt` accumulated bump
-   (cpu_regs.rs:109, "make sure to run the interrupt asap") interacting with
-   lump-vs-spread charging, or an unnoticed hand-off detail around
-   `emit_code_block`-as-tail-callee. **Next step**: temporary debug prints of
-   `(pc, accumulated_cycles)` at the `b 2067318` Branch arm and at the block's chain in
-   both engines, one text-pair capture, hand-count the delta over one iteration window.
-2. **S5 remaining slices** (plan ladder): bl/blx/bx + return stack (external branches
-   with lr), thumb (entry bit0 tags must be stripped/routed before `br` — a64 cannot
-   interwork-jump), single transfers slow-path-always, ldm/stm → ldp/stp, fastmem +
-   SIGSEGV patcher (`aarch64/patch.rs`, budgets, icache discipline), swp/psr/cp15/swi,
-   DSP/Q ops as Rust helpers, HLE substitutions last (legalizes `-e 2`), reg_alloc port.
-3. **Stage 6**: armhf-jit ↔ a64-jit strict loop at threshold 0 (needs near-total op
-   coverage + idle-loop parity first); perf floor: a64-jit ≥ armhf-jit on the pi5.
-4. Small: a64 visual check of a commercial boot (dev box blocks unattended screenshots;
-   pi run stands in); ARM7 wram blocks have neither write-protection nor the arm32 hash
-   check on a64 — latent staleness hole, revisit at the transfers slice.
+1. **Visual corruption** — active, section above (finish the armhf half of the frame/UBO
+   comparison, then the verdict tree).
+2. **Full op coverage → delete is_block_jit_supported.** Singles DONE (fastmem).
+   ldm/stm WIRED but OFF in is_multiple_transfer_supported: with it on, hello_world's
+   strict pair splits at ~130k records on ARM7 irq phase — an interrupt dispatches one
+   instruction earlier than the interpreter right after a compiled thumb pop (T-loss
+   scan via trace_diff Stream: pop {r0} at 0x3802308 → vector 0x23800b0). Find the
+   cycle-accounting detail (text-pair + scheduler-firing grep playbook); also refuse or
+   no-op EMPTY rlists before re-enabling (the core debug_asserts non-empty).
+   Then the rest, designs settled: PC-dst loads as terminals; ldrd/strd window
+   extension; swp two-call; mrs/msr/cp15/swi via the interpreter helpers; mul family
+   inline (N/Z only); shift-by-reg S-forms + RRX with csel carry rules; undefined →
+   inst_undefined. Then delete the valve + REFUSED sentinel + the arm32-only
+   fall-through cfg island, and run stage 6.
+3. **Stage 6**: armhf-jit ↔ a64-jit strict pairs at threshold 0 — the definitive value
+   gate (jit-vs-interp died with fastmem write-breakouts by design; methodology section
+   below). Perf floor: a64-jit ≥ armhf-jit on the pi5.
+4. **NSMB strict divergence (parked, possibly moot under stage 6)** — DSVITA_A64_SKIP_PC
+   =2067318 alone makes 12M pass; scheduler firings phase-shift one iteration after that
+   block's first execution; charge algebra provably equal. If revived: print
+   (pc, accumulated_cycles) at the branch arm + block chain, one text pair, hand-count.
+
+### Register pool (maintainer ruling July 7)
+All callee-saved registers allocate: x19-x26 + x28 (GUEST_REG_POOL_SIZE 9 on a64, 8 on
+arm32 — per-arch const). x27 stays the pinned ThreadRegs base: the spill/restore fabric
+addresses guest slots through it on every access. Block frames save fp/lr + x27/x28 +
+x19-x26 (112 bytes); the breakout shim dumps 9 (x28 at dump[8], host_pool_index maps
+the x27 gap).
+
+### ARM7 homebrew hash validation (arm32 parity)
+ARM7 blocks outside VRAM with no nitro-sdk detected rehash their guest code (xxh32) at
+every fresh entry — homebrew self-modifies ARM7 code without any write-protect contract.
+Mismatch → a64_validate_guest_block_hash recompiles and the emitted check tail-jumps
+into the new entry (x19 parks the tagged entry pc across the call; allocator holds
+nothing that early).
+
+### Gate methodology after fastmem
+Strict jit-vs-interp pairs die by design once write fastmem is live: a write into a
+jit-protected page breakouts (extra run_scheduler observation point the interpreter's
+flat loop doesn't have) → the cpu interleave shifts (HG/Kart split at the ARM7 boot copy
+loop ~235K records, no value divergence before the shift). hello_world still passes
+(no protected writes). arm32-jit has the same property — the definitive value gate is
+stage 6 (armhf-jit ↔ a64-jit strict pairs, both breakout identically), which needs full
+op coverage first (coverage gaps interpret, and the interpreter's scheduler thresholds
+differ at those pcs). Until then: hello_world strict + release smokes + jit-vs-jit
+determinism pairs (same binary twice, byte-identical — budget the capture time, a 6M
+HG debug capture needs >5 min per side).
 
 ## Debugging playbook
 
-The regression tool for every slice is the same-box strict pair: reference =
+Preferred reference (maintainer steer): **armhf-jit ↔ a64-jit strict pairs** — trace
+against the known-working arm32 implementation whenever the a64 op coverage allows
+(tools/tracediff.sh is the cross-box harness). The same-box interp pair below remains
+the fallback for op classes arm32 compiles but a64 doesn't yet: reference =
 `DSVITA_A64_JIT=0`, candidate = `DSVITA_A64_INTERP_TIMING=1`, otherwise identical.
 
 - **Builds**: `cargo build` (the dev profile IS the trace build since the opt-level

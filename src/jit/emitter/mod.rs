@@ -7,5 +7,19 @@ pub mod aarch64;
 #[cfg(target_arch = "arm")]
 mod arm32;
 
-#[cfg(target_arch = "arm")]
-pub(crate) use arm32::map_fun_cpu;
+macro_rules! map_fun_cpu {
+    ($cpu:expr, $fun:ident) => {{
+        match $cpu {
+            crate::core::CpuType::ARM9 => $fun::<{ crate::core::CpuType::ARM9 }> as *const (),
+            crate::core::CpuType::ARM7 => $fun::<{ crate::core::CpuType::ARM7 }> as *const (),
+        }
+    }};
+    ($cpu:expr, $fun:ident, $($args:tt)*) => {{
+        match $cpu {
+            crate::core::CpuType::ARM9 => $fun::<{ crate::core::CpuType::ARM9 }, $($args)*> as *const (),
+            crate::core::CpuType::ARM7 => $fun::<{ crate::core::CpuType::ARM7 }, $($args)*> as *const (),
+        }
+    }};
+}
+
+pub(crate) use map_fun_cpu;

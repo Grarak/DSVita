@@ -226,17 +226,7 @@ unsafe fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize
 
     let guest_mem_addr = (mem_addr - CPU.mmu_tcm_addr()) as u32;
     debug_println!("{CPU:?} guest fault at {host_pc:x} {mem_addr:x} to guest {guest_mem_addr:x}");
-    #[cfg(target_arch = "arm")]
-    {
-        asm.emu.jit.patch_slow_mem(host_pc, guest_mem_addr, CPU, arm_context)
-    }
-    // No jit backend emits fastmem accesses on this host yet; a guest-window fault is a bug.
-    #[cfg(not(target_arch = "arm"))]
-    {
-        let _ = arm_context;
-        eprintln!("{CPU:?} unexpected guest-window fault at {host_pc:x} (guest {guest_mem_addr:x}) without a jit backend");
-        false
-    }
+    asm.emu.jit.patch_slow_mem(host_pc, guest_mem_addr, CPU, arm_context)
 }
 
 #[cold]

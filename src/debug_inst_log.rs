@@ -186,6 +186,23 @@ pub fn log(emu: &Emu, cpu: CpuType, pc: u32, opcode: u32) {
             unsafe { *LOGGER.writer.get() = None };
             unsafe { *LAZY_PATH.0.get() = None };
             println!("inst log record budget exhausted, log closed");
+            // Memory-state fingerprints at the deterministic stop point: register traces
+            // can't see wrong STOREs (a bad str/stm corrupts vram/main invisibly until
+            // something reads it back) — cross-engine runs compare these hashes to catch
+            // exactly that class.
+            {
+                use xxhash_rust::xxh32::xxh32;
+                let palettes = emu.mem_get_palettes();
+                let oam = emu.mem_get_oam();
+                let main = unsafe {
+                    std::slice::from_raw_parts(
+                        emu.mem.shm.as_ptr().add(crate::core::memory::regions::MAIN_REGION.shm_offset),
+                        crate::core::memory::regions::MAIN_REGION.size,
+                    )
+                };
+                let vram_hash = xxh32(emu.mem.vram.banks.mem.as_slice(), 0);
+                eprintln!("MEMHASH main={:08x} vram={vram_hash:08x} palettes={:08x} oam={:08x}", xxh32(main, 0), xxh32(palettes, 0), xxh32(oam, 0));
+            }
             return;
         }
     }

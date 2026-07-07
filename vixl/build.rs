@@ -8,14 +8,11 @@ use std::process::Command;
 use vitabuild::{bindgen_generate_to_file, create_bindgen_builder, create_cc_build, get_out_path, get_vitasdk_path, is_debug, is_host_linux, is_target_vita};
 
 fn main() {
-    // The generated aarch32 masm wrappers and their C++ objects are only meaningful on the
-    // two 32-bit arm targets; other host arches use the pure-Rust types from lib.rs only
-    // (Reg/RegReserve/Cond for guest decode) until an aarch64 backend lands.
-    // Per-backend builds: the two 32-bit arm targets get the generated aarch32 masm wrappers,
-    // aarch64 gets the hand-written shim surface over vixl's A64 macro assembler
-    // (wrapper-aarch64.{h,cc} IS the explicit instruction list the backend may use).
-    // Any other host arch only uses the pure-Rust types from lib.rs (Reg/RegReserve/Cond
-    // for guest decode).
+    // Per-backend builds: the two 32-bit arm targets get the generated aarch32 masm
+    // wrappers (compiler-expanded macro-assembler source, clang-formatted, then parsed
+    // for the Condition-first overloads); aarch64 gets the hand-written shim surface
+    // over vixl's A64 macro assembler (wrapper-aarch64.h IS the explicit instruction
+    // list). Any other host arch only uses the pure-Rust types from lib.rs.
     if std::env::var("TARGET").unwrap().starts_with("aarch64") {
         build_aarch64();
         return;

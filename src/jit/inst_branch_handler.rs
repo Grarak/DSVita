@@ -100,6 +100,11 @@ fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm, total_cycles: u16, current
     cycles += total_cycles as u32 + 2 - asm.runtime_data.pre_cycle_count_sum as u32;
     unsafe { assert_unchecked(cycles <= u16::MAX as u32) };
     asm.runtime_data.accumulated_cycles = cycles as u16;
+    // The flush consumes the pre-charge; leaving the field set poisons flows that regain
+    // control without rewriting it (a compiled callee returning into the interpreter's
+    // hand_to_next_entry call: its bx-lr flushed here, nobody re-set the field, and the
+    // interpreter's own next branch flushes with total_cycles 0 — sub overflow).
+    asm.runtime_data.pre_cycle_count_sum = 0;
     debug_println!("{CPU:?} flush cycles {} at {current_pc:x}", asm.runtime_data.accumulated_cycles);
 }
 

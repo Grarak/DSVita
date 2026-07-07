@@ -31,6 +31,9 @@ use crate::mmap::{flush_icache, ArmContext, MemRegion, Mmap, PAGE_SHIFT, PAGE_SI
 
 #[cfg(target_os = "linux")]
 fn block_hash_log(cpu: CpuType, guest_pc: u32, thumb: bool, code: &[u8]) {
+    if !crate::IS_DEBUG {
+        return;
+    }
     use std::io::Write;
     // One-time env lookup; None = disabled (the common case, one branch per block insert).
     static WRITER: std::sync::OnceLock<Option<std::sync::Mutex<std::io::BufWriter<std::fs::File>>>> = std::sync::OnceLock::new();
@@ -172,18 +175,43 @@ pub const SLOW_SWP_MEM_SINGLE_READ_LENGTH_ARM: usize = 20;
 /// the pre_cycle_count_sum the block's flush math expects there (the a64 twin of the
 /// arm32 GuestInstOffset tables — no register mappings, everything lives in memory).
 #[cfg(target_arch = "aarch64")]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct A64InstOffset {
     pub code_offset: u32,
     pub pre_cycle_count_sum: u16,
+    /// Per pool register (x19-x26): a pointer to the guest register slot it holds at
+    /// this instruction, or a harmless dummy slot when unmapped — the mid-entry dispatch
+    /// stub reloads all eight unconditionally (the arm32 jump_to_other_guest_pc scheme).
+    pub mapping: [*const u32; crate::jit::assembler::GUEST_REG_POOL_SIZE],
+}
+
+#[cfg(target_arch = "aarch64")]
+impl Default for A64InstOffset {
+    fn default() -> Self {
+        A64InstOffset {
+            code_offset: 0,
+            pre_cycle_count_sum: 0,
+            mapping: [core::ptr::null(); crate::jit::assembler::GUEST_REG_POOL_SIZE],
+        }
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[derive(Default)]
 pub struct A64BlockMeta {
     pub guest_pc_start: u32,
+    pub thumb: bool,
     pub insts: Vec<A64InstOffset>,
+    /// Patchable fast-mem windows: (host offset of the faulting instruction relative to
+    /// the block base, metadata), in emission order — the SIGSEGV patcher's lookup.
+    pub metadatas: Vec<(u32, Box<crate::jit::assembler::GuestInstMetadata>)>,
 }
+
+/// The A64 slow-mem patch budget for a single transfer (18 instructions): worst case is
+/// a write — mov value + mov addr + mov64 metadata + mov64 handler + blr + cbz over the
+/// breakout + mov64 shim + blr = 17 — every fast window pads to this so the patch fits
+/// in place.
+pub const SLOW_MEM_SINGLE_LENGTH_A64: usize = 72;
 
 #[derive(Copy, Clone)]
 pub struct JitEntry(pub *const extern "C" fn(u32));
@@ -372,6 +400,8 @@ pub struct JitMemory {
     guest_inst_metadata: HeapArray<Vec<GuestInstMetadata>, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
     #[cfg(target_arch = "aarch64")]
     pub a64_block_meta: HeapArray<A64BlockMeta, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
+    #[cfg(target_arch = "aarch64")]
+    pub a64_page_owner: HeapArray<u32, { JIT_MEMORY_SIZE / PAGE_SIZE }>,
 }
 
 impl Emu {
@@ -472,7 +502,45 @@ impl Emu {
     /// exit the guest context after running a block that flushed, exactly like arm32
     /// (host frames above may belong to freed blocks).
     #[cfg(target_arch = "aarch64")]
-    pub fn jit_insert_block_a64(&mut self, code: &[u8], block_meta: A64BlockMeta, guest_pc: u32, guest_pc_end: u32, thumb: bool, cpu: CpuType) -> (*const extern "C" fn(u32), bool) {
+    pub fn jit_insert_block(
+        &mut self,
+        mut block_asm: crate::jit::assembler::aarch64::BlockAsm,
+        _debug_info: &crate::jit::jit_asm::JitDebugInfo,
+        guest_pc: u32,
+        guest_pc_end: u32,
+        thumb: bool,
+        cpu: CpuType,
+    ) -> (*const extern "C" fn(u32), bool) {
+        // Mid-entry metadata straight from the assembler's per-inst records: host code
+        // offsets, pre-charged cycle sums, and the pool restore tables (a pointer to the
+        // guest slot each pool register holds, or the PC slot as a harmless dummy).
+        let thread_regs_base = cpu.thread_regs() as *const crate::core::thread_regs::ThreadRegs as *const u32;
+        let dummy_slot = unsafe { thread_regs_base.add(crate::jit::reg::Reg::PC as usize) };
+        let block_meta = A64BlockMeta {
+            guest_pc_start: guest_pc,
+            thumb,
+            metadatas: std::mem::take(&mut block_asm.guest_inst_metadata),
+            insts: block_asm
+                .inst_offsets
+                .iter()
+                .enumerate()
+                .map(|(i, &code_offset)| {
+                    let snapshot = &block_asm.inst_mappings[i];
+                    let mut mapping = [dummy_slot; crate::jit::assembler::GUEST_REG_POOL_SIZE];
+                    for (guest, &host) in snapshot.iter().enumerate() {
+                        if host != vixl::A64Reg::ZR {
+                            mapping[crate::jit::assembler::host_pool_index(host)] = unsafe { thread_regs_base.add(guest) };
+                        }
+                    }
+                    A64InstOffset {
+                        code_offset,
+                        pre_cycle_count_sum: block_asm.inst_pre_sums[i],
+                        mapping,
+                    }
+                })
+                .collect(),
+        };
+        let code = block_asm.get_code_buffer();
         block_hash_log(cpu, guest_pc, thumb, code);
 
         macro_rules! insert {
@@ -490,7 +558,9 @@ impl Emu {
                 utils::write_to_mem_slice(&mut self.jit.mem, allocated_offset_addr, code);
                 unsafe { flush_icache(self.jit.mem.as_ptr().add(allocated_offset_addr), aligned_size) };
 
-                let jit_entry_addr = ((allocated_offset_addr + self.jit.mem.as_ptr() as usize) | (thumb as usize)) as *const extern "C" fn(u32);
+                // No host-ISA tag in the entry (arm32 tags bit0 to pick the host encoder;
+                // the A64 host has only one) — guest mode travels in the tagged guest pc.
+                let jit_entry_addr = (allocated_offset_addr + self.jit.mem.as_ptr() as usize) as *const extern "C" fn(u32);
 
                 let guest_block_size = (guest_pc_end - guest_pc) as usize;
                 debug_assert!(guest_block_size < PAGE_SIZE);
@@ -501,7 +571,13 @@ impl Emu {
 
                 self.jit_set_live_range(guest_pc, guest_pc_end, thumb);
 
-                self.jit.a64_block_meta[allocated_offset_addr >> PAGE_SHIFT] = block_meta;
+                let base_page = allocated_offset_addr >> PAGE_SHIFT;
+                self.jit.a64_block_meta[base_page] = block_meta;
+                // Multi-page blocks: every covered page points back at the owner, so the
+                // patcher can find the block from any faulting host pc inside it.
+                for page in base_page..((allocated_offset_addr + aligned_size) >> PAGE_SHIFT) {
+                    self.jit.a64_page_owner[page] = base_page as u32;
+                }
 
                 (jit_entry_addr, flushed)
             }};
@@ -549,6 +625,8 @@ impl JitMemory {
             guest_inst_metadata: HeapArray::default(),
             #[cfg(target_arch = "aarch64")]
             a64_block_meta: HeapArray::default(),
+            #[cfg(target_arch = "aarch64")]
+            a64_page_owner: HeapArray::default(),
         }
     }
 
@@ -1250,6 +1328,209 @@ impl JitMemory {
 
     pub fn is_in_jit_mem(&self, addr: usize) -> bool {
         addr >= self.mem.as_ptr() as usize && addr < self.mem.as_ptr() as usize + JIT_MEMORY_SIZE
+    }
+
+    /// The a64 handler for a faulting access: the portable inst_mem_handler cores (no
+    /// cpsr-preserving wrappers — guest flags live in memory on this backend), with the
+    /// same io-function specialization as arm32.
+    #[cfg(target_arch = "aarch64")]
+    fn get_inst_mem_handler_fun_a64<const CPU: CpuType>(is_write: bool, transfer: SingleTransfer, guest_memory_addr: u32, io_func: &mut Option<*const ()>) -> *const () {
+        use crate::jit::inst_mem_handler::{_inst_read_io_mem_handler, _inst_read_mem_handler, _inst_write_io_mem_handler, _inst_write_mem_handler};
+
+        macro_rules! pick {
+            ($write_func:ident, $read_func:ident) => {
+                match (is_write, transfer.size()) {
+                    (true, 0) => $write_func::<CPU, { MemoryAmount::Byte }> as _,
+                    (true, 1) => $write_func::<CPU, { MemoryAmount::Half }> as _,
+                    (true, 2) => $write_func::<CPU, { MemoryAmount::Word }> as _,
+                    (false, 0) => {
+                        if transfer.signed() {
+                            $read_func::<CPU, { MemoryAmount::Byte }, true> as _
+                        } else {
+                            $read_func::<CPU, { MemoryAmount::Byte }, false> as _
+                        }
+                    }
+                    (false, 1) => {
+                        if transfer.signed() {
+                            $read_func::<CPU, { MemoryAmount::Half }, true> as _
+                        } else {
+                            $read_func::<CPU, { MemoryAmount::Half }, false> as _
+                        }
+                    }
+                    (false, 2) => $read_func::<CPU, { MemoryAmount::Word }, false> as _,
+                    _ => unsafe { unreachable_unchecked() },
+                }
+            };
+        }
+
+        // GX fifo writes stay on the generic handler: handle_request_write runs the
+        // fifo-full/scheduler semantics the raw io functions skip (arm32 routes this
+        // range to its dedicated gxfifo handlers before any io specialization).
+        if CPU == ARM9 && is_write && guest_memory_addr >= 0x4000400 && guest_memory_addr < 0x4000440 {
+            return pick!(_inst_write_mem_handler, _inst_read_mem_handler);
+        }
+
+        if guest_memory_addr & 0xFF000000 == regions::IO_PORTS_OFFSET {
+            let io_addr = guest_memory_addr & 0xFFFFFF;
+            let dma_range = 0xB0..=0xEC;
+            let spu_range = 0x400..=0x4FC;
+            let size = 1u32 << transfer.size();
+            let aligned_addr = io_addr & !(size - 1);
+            *io_func = match CPU {
+                ARM9 if !dma_range.contains(&io_addr) => {
+                    if is_write {
+                        io_arm9::get_write_with_size(aligned_addr, size as usize).map(|f| f as _)
+                    } else {
+                        io_arm9::get_read_with_size(aligned_addr, size as usize).map(|f| f as _)
+                    }
+                }
+                ARM7 if !dma_range.contains(&io_addr) && !spu_range.contains(&io_addr) => {
+                    if is_write {
+                        io_arm7::get_write_with_size(aligned_addr, size as usize).map(|f| f as _)
+                    } else {
+                        io_arm7::get_read_with_size(aligned_addr, size as usize).map(|f| f as _)
+                    }
+                }
+                _ => None,
+            };
+            if io_func.is_some() {
+                return pick!(_inst_write_io_mem_handler, _inst_read_io_mem_handler);
+            }
+        }
+
+        pick!(_inst_write_mem_handler, _inst_read_mem_handler)
+    }
+
+    /// The a64 ldm/stm handler monomorphization for an instruction's shape — emit-time
+    /// selection (always-slow, no address specialization; the generic core routes io
+    /// including gxfifo through handle_multiple_request).
+    #[cfg(target_arch = "aarch64")]
+    pub fn get_inst_mem_multiple_handler_fun_a64<const CPU: CpuType>(is_write: bool, transfer: MultipleTransfer, user: bool, valid: bool, needs_pc: bool) -> *const () {
+        use crate::jit::inst_mem_handler::inst_mem_handler_multiple_a64 as h;
+        debug_assert!(transfer.write_back() || valid);
+        debug_assert!(is_write || !needs_pc);
+        debug_assert!(!user || !needs_pc);
+        macro_rules! pick {
+            ($($w:literal, $wb:literal, $dec:literal, $v:literal, $u:literal, $pc:literal);+ $(;)?) => {
+                match (is_write, transfer.write_back(), !transfer.add(), valid, user, needs_pc) {
+                    $(($w, $wb, $dec, $v, $u, $pc) => h::<CPU, $w, $wb, $dec, $v, $u, $pc> as _,)+
+                    _ => unsafe { unreachable_unchecked() },
+                }
+            };
+        }
+        pick!(
+            false, false, false, true, false, false;
+            false, false, true, true, false, false;
+            false, true, false, true, false, false;
+            false, true, true, true, false, false;
+            false, false, false, true, true, false;
+            false, false, true, true, true, false;
+            false, true, false, true, true, false;
+            false, true, true, true, true, false;
+            true, false, false, true, false, false;
+            true, false, true, true, false, false;
+            true, true, false, true, false, false;
+            true, true, true, true, false, false;
+            true, true, false, false, false, false;
+            true, true, true, false, false, false;
+            true, false, false, true, true, false;
+            true, false, true, true, true, false;
+            true, true, false, true, true, false;
+            true, true, true, true, true, false;
+            true, true, false, false, true, false;
+            true, true, true, false, true, false;
+        )
+    }
+
+    /// Rewrite a faulting a64 fast-mem window in place with the slow-path call. The
+    /// canonical contract with emit_single_transfer: w11 holds the unaligned guest
+    /// address, the mapped op0 the value.
+    #[cfg(target_arch = "aarch64")]
+    unsafe fn execute_patch_slow_mem_a64(host_pc: &mut usize, guest_memory_addr: u32, window_start: usize, window_size: usize, metadata: &mut GuestInstMetadata, cpu: CpuType) {
+        use crate::jit::assembler::aarch64::encode;
+        use crate::jit::inst_mem_handler::inst_write_breakout_shim_a64;
+        use vixl::A64Reg;
+
+        let transfer = match metadata.s.fast.op {
+            Op::Ldr(transfer) | Op::LdrT(transfer) | Op::Str(transfer) | Op::StrT(transfer) => transfer,
+            _ => unreachable_unchecked(),
+        };
+        let is_write = metadata.s.fast.op.is_write_mem_transfer();
+        let op0_mapped = metadata.s.fast.op0;
+
+        let mut io_func = None;
+        let handler = match cpu {
+            ARM9 => Self::get_inst_mem_handler_fun_a64::<{ ARM9 }>(is_write, transfer, guest_memory_addr, &mut io_func),
+            ARM7 => Self::get_inst_mem_handler_fun_a64::<{ ARM7 }>(is_write, transfer, guest_memory_addr, &mut io_func),
+        };
+        if let Some(io_func) = io_func {
+            metadata.s.slow.initial_patch_addr = guest_memory_addr;
+            metadata.s.slow.io_func = io_func;
+        }
+        let metadata_ptr = metadata as *const GuestInstMetadata as u64;
+
+        let mut buf: Vec<u32> = Vec::with_capacity(window_size / 4);
+        if is_write {
+            // _inst_write[_io]_mem_handler(value0: w0, value1: w1, addr: w2, metadata: x3)
+            // -> metadata-or-null; non-null means the write invalidated the running
+            // block — hand the pool dump to the breakout shim (never returns).
+            buf.push(encode::mov_reg(A64Reg::X0, op0_mapped));
+            buf.push(encode::mov_reg(A64Reg::X2, A64Reg::X11));
+            encode::emit_mov_imm64(&mut buf, A64Reg::X3, metadata_ptr);
+            encode::emit_mov_imm64(&mut buf, A64Reg::X8, handler as u64);
+            buf.push(encode::blr(A64Reg::X8));
+            buf.push(encode::cbz64(A64Reg::X0, 6));
+            encode::emit_mov_imm64(&mut buf, A64Reg::X8, inst_write_breakout_shim_a64 as *const () as u64);
+            buf.push(encode::blr(A64Reg::X8));
+        } else {
+            // _inst_read[_io]_mem_handler(metadata-or-unused: x0, _: x1, addr: w2) -> w0,
+            // already rotated for unaligned words.
+            if io_func.is_some() {
+                encode::emit_mov_imm64(&mut buf, A64Reg::X0, metadata_ptr);
+            }
+            buf.push(encode::mov_reg(A64Reg::X2, A64Reg::X11));
+            encode::emit_mov_imm64(&mut buf, A64Reg::X8, handler as u64);
+            buf.push(encode::blr(A64Reg::X8));
+            buf.push(encode::mov_reg(op0_mapped, A64Reg::X0));
+        }
+        while buf.len() * 4 < window_size {
+            buf.push(encode::NOP);
+        }
+        debug_assert!(buf.len() * 4 == window_size);
+
+        let window = slice::from_raw_parts_mut(window_start as *mut u8, window_size);
+        for (i, inst) in buf.iter().enumerate() {
+            window[i * 4..i * 4 + 4].copy_from_slice(&inst.to_le_bytes());
+        }
+        *host_pc = window_start;
+        flush_icache(window.as_ptr(), window.len());
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub unsafe fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType, _: &ArmContext) -> bool {
+        if !self.is_in_jit_mem(*host_pc) {
+            eprintln!("Segfault outside of guest context");
+            return false;
+        }
+
+        let jit_mem_offset = *host_pc - self.mem.as_ptr() as usize;
+        let base_page = self.a64_page_owner[jit_mem_offset >> PAGE_SHIFT] as usize;
+        let block_base = self.mem.as_ptr() as usize + (base_page << PAGE_SHIFT);
+        let offset_in_block = (*host_pc - block_base) as u32;
+        let meta = &mut self.a64_block_meta[base_page];
+        let index = meta.metadatas.iter().position(|(offset, _)| *offset == offset_in_block);
+        let Some(index) = index else {
+            eprintln!("{cpu:?} fault at {host_pc:x} (block +{offset_in_block:x}) without fast-mem metadata");
+            return false;
+        };
+        let (_, metadata) = &mut meta.metadatas[index];
+
+        debug_println!("{cpu:?} a64 slow mem patch at {:x} {:?} addr {guest_memory_addr:x}", metadata.pc, metadata.s.fast.op);
+
+        let window_start = *host_pc - metadata.s.fast.start_offset as usize;
+        let window_size = metadata.s.fast.size as usize;
+        Self::execute_patch_slow_mem_a64(host_pc, guest_memory_addr, window_start, window_size, metadata, cpu);
+        true
     }
 
     #[cfg(target_arch = "arm")]

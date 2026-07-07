@@ -129,9 +129,9 @@ impl BlockAsm {
 
     /// Validate the guest block bytes against `hash` before executing (arm7 non-sdk blocks).
     /// The block-entry pc arrives in R0 and must survive the call.
-    pub fn emit_validate_block_hash(&mut self, guest_ptr: u32, size: u32, hash: u32, validate_fun: *const ()) {
+    pub fn emit_validate_block_hash(&mut self, guest_ptr: usize, size: u32, hash: u32, _tagged_pc: u32, validate_fun: *const ()) {
         self.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
-        self.ldr2(Reg::R0, guest_ptr);
+        self.ldr2(Reg::R0, guest_ptr as u32);
         self.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &size.into());
         self.ldr2(Reg::R5, hash);
         self.call(validate_fun);

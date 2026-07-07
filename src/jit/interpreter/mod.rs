@@ -17,7 +17,7 @@
 // Handback model: "one block then call next entry". We interpret straight-line instructions until
 // a branch (or a PC write), then hand control to the next guest address' jit entry via
 // `call_jit_fun`, exactly like a compiled block would. Anything not (yet) interpreted maps to
-// `inst_fallback`, which compiles the block, so correctness holds regardless of coverage.
+// undefined encodings, which debug_panic — reaching one means the emulation already derailed.
 
 mod alu;
 mod branch;
@@ -35,6 +35,7 @@ use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::inst_branch_handler::{branch_lr, branch_reg, breakout_imm, call_jit_fun, check_scheduler, check_stack_depth};
 use crate::jit::jit_asm::JitAsm;
 use crate::jit::reg::Reg;
+use crate::logging::debug_panic;
 use crate::settings::Arm7Emu;
 use crate::{utils, DEBUG_LOG, IS_DEBUG};
 use std::hint::assert_unchecked;
@@ -121,8 +122,6 @@ pub(super) enum InstResult {
     /// jit routes to `branch_lr`): pop the return stack; on a match control goes back natively to
     /// whoever called this block (a compiled call site or an interpreter BranchLink frame).
     BranchReturn(u16, u32),
-    /// Not (yet) interpreted, compile the block instead.
-    Fallback,
 }
 
 /// Execution context for the instruction currently being interpreted.
@@ -238,18 +237,24 @@ pub fn print_last_interpreted() {
     }
 }
 
-pub(super) fn inst_fallback(_ctx: &mut Ctx, _opcode: u32) -> InstResult {
-    InstResult::Fallback
+/// Undefined-encoding table slots land here: the instruction set is fully covered, so
+/// executing one means the emulation already derailed (jumped into data, corrupted code).
+pub(super) fn inst_undefined(ctx: &mut Ctx, opcode: u32) -> InstResult {
+    debug_panic!("undefined instruction at {:x}: {opcode:08x}", ctx.inst_addr);
 }
 
-pub(super) fn inst_fallback_t(_ctx: &mut Ctx, _opcode: u16) -> InstResult {
-    InstResult::Fallback
+pub(super) fn inst_undefined_t(ctx: &mut Ctx, opcode: u16) -> InstResult {
+    debug_panic!("undefined thumb instruction at {:x}: {opcode:04x}", ctx.inst_addr);
+}
+
+/// True in the trace-reference build: nothing ever compiles, everything interprets.
+pub const fn always_interpret() -> bool {
+    INTERP_THRESHOLD == 255
 }
 
 /// Entry point from `emit_code_block_internal`. Interprets the cold block starting at `guest_pc`
-/// (aligned, no thumb bit) and hands control to the next entry. Returns false only when the very
-/// first instruction can't be interpreted, in which case the caller compiles the block instead.
-pub fn interpret_block(asm: &mut JitAsm, guest_pc: u32, thumb: bool) -> bool {
+/// (aligned, no thumb bit) and hands control to the next entry.
+pub fn interpret_block(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     if thumb {
         interpret_block_inner::<true>(asm, guest_pc)
     } else {
@@ -257,12 +262,11 @@ pub fn interpret_block(asm: &mut JitAsm, guest_pc: u32, thumb: bool) -> bool {
     }
 }
 
-fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) -> bool {
+fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) {
     let cpu = asm.cpu;
     let arm7_hle = asm.emu.settings.arm7_emu() == Arm7Emu::Hle;
     let regs: *mut ThreadRegs = cpu.thread_regs();
     let mut addr = guest_pc;
-    let mut executed_any = false;
 
     let step: u32 = if THUMB { 2 } else { 4 };
     // Sequential opcode fetch: resolve the shm offset once and bump it alongside `addr`, instead
@@ -333,9 +337,10 @@ fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) -> 
                     unsafe { (*regs).lr = addr + 4 };
                     InstResult::BranchLink(1, target, addr + 4)
                 } else {
-                    // Remaining ARMv5 0xF-space (PLD, ...): keep the pre-coverage behavior and
-                    // let the jit decide, so undefined garbage never gets nop-marched through.
-                    InstResult::Fallback
+                    // Remaining ARMv5 0xF-space (PLD, ...): nothing emits these today — the jit
+                    // can't compile them either (decode stops at cond 0xF). If a game ever uses
+                    // PLD, implement it as a costed nop in BOTH engines.
+                    debug_panic!("unhandled cond-0xF instruction at {addr:x}: {opcode:08x}")
                 }
             } else {
                 let cpsr = unsafe { (*regs).cpsr };
@@ -356,9 +361,8 @@ fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) -> 
             (result, opcode)
         };
 
-        // Log the executed instruction's post-state, like the jit's debug_after_exec_op. Fallback
-        // instructions aren't executed here (the jit logs them when it compiles the block), and
-        // taken branches aren't logged because the jit's emitted code transfers control before its
+        // Log the executed instruction's post-state, like the jit's debug_after_exec_op. Taken
+        // branches aren't logged because the jit's emitted code transfers control before its
         // debug hook runs — logging them here would break trace diffing against a jit run.
         if DEBUG_LOG && matches!(result, InstResult::Continue(_) | InstResult::ContinueStore(_)) {
             crate::debug_inst_log::log(asm.emu, cpu, addr, opcode);
@@ -367,14 +371,12 @@ fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) -> 
         match result {
             InstResult::Continue(cycles) => {
                 asm.runtime_data.accumulated_cycles += cycles;
-                executed_any = true;
                 addr += step;
                 code_shm_offset += step;
                 page_left -= step;
             }
             InstResult::ContinueStore(cycles) => {
                 asm.runtime_data.accumulated_cycles += cycles;
-                executed_any = true;
                 addr += step;
                 code_shm_offset += step;
                 page_left -= step;
@@ -430,7 +432,7 @@ fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) -> 
                     }
                 }
                 hand_to_next_entry(asm, target);
-                return true;
+                return;
             }
             InstResult::BranchLink(cycles, target, lr) => {
                 // The jit's branch_reg adds the +2 branch epilogue cost in its flush, checks the
@@ -447,7 +449,6 @@ fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) -> 
                         (ARM7, false) => branch_reg::<{ ARM7 }, true, false>(0, target, lr, addr),
                     }
                 }
-                executed_any = true;
                 addr = lr & !1;
                 page_left = 0;
             }
@@ -466,18 +467,7 @@ fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) -> 
                         (ARM7, false) => branch_lr::<{ ARM7 }, false>(0, target, addr),
                     }
                 }
-                return true;
-            }
-            InstResult::Fallback => {
-                if !executed_any {
-                    // Nothing ran yet, let the caller compile this exact block.
-                    return false;
-                }
-                // State is consistent at `addr`, compile and run from there.
-                let target = addr | THUMB as u32;
-                unsafe { (*regs).pc = target };
-                hand_to_next_entry(asm, target);
-                return true;
+                return;
             }
         }
     }

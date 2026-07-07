@@ -19,8 +19,8 @@
 use super::emit::class_disabled;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
-use crate::jit::assembler::aarch64::{A64BlockAsm, SCRATCH0, SCRATCH1, SCRATCH2};
-use crate::jit::inst_branch_handler::{handle_interrupt, pre_branch, run_scheduler};
+use crate::jit::assembler::aarch64::{BlockAsm, SCRATCH0, SCRATCH1, SCRATCH2};
+use crate::jit::inst_branch_handler::{branch_lr, branch_reg, handle_interrupt, pre_branch, run_scheduler};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData};
 use crate::jit::reg::Reg;
 use crate::jit::Cond;
@@ -42,17 +42,36 @@ extern "C" fn debug_branch_imm<const CPU: CpuType>(current_pc: u32, target_pc: u
 /// jit-vs-interp gate). The two differ only on ARM9 (128 vs 255).
 pub(super) fn local_branch_sched_threshold(cpu: CpuType) -> u32 {
     static INTERP_TIMING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *INTERP_TIMING.get_or_init(|| std::env::var("DSVITA_A64_INTERP_TIMING").map(|v| v == "1").unwrap_or(false)) {
+    if crate::IS_DEBUG && *INTERP_TIMING.get_or_init(|| std::env::var("DSVITA_A64_INTERP_TIMING").map(|v| v == "1").unwrap_or(false)) {
         cpu.max_loop_cycle_count()
     } else {
         cpu.max_branch_loop_cycle_count()
     }
 }
 
-/// A conditional B's taken path, emitted out of line after the block body.
+/// What a taken branch instruction does — the out-of-line taken paths and the inline AL
+/// emissions share these shapes.
+pub(super) enum BranchKind {
+    /// B: local jump or external tail call. Never falls through.
+    B { target: u32 },
+    /// BL: linking call through pre_branch + the target's entry; execution resumes at the
+    /// following instruction.
+    Bl { target: u32 },
+    /// BX LR: return through the return stack (branch_lr tail call).
+    BxReturn,
+    /// BX other-reg: dynamic-target tail call through branch_reg.
+    BxReg { reg: Reg },
+    /// BLX reg: linking dynamic call through branch_reg; resumes at the next instruction.
+    BlxReg { reg: Reg },
+    /// Thumb BL/BLX second half: target = LR + (off11 << 1), computed at run time (the
+    /// BlSetupT half staged LR). `to_arm` = BLX (mode switch, target word-aligned).
+    BlOff { off: u32, to_arm: bool },
+}
+
+/// A conditional branch's taken path, emitted out of line after the block body.
 pub(super) struct TakenBranch {
     pub(super) inst_index: usize,
-    pub(super) target: u32,
+    pub(super) kind: BranchKind,
     pub(super) label: A64Label,
 }
 
@@ -67,11 +86,35 @@ pub(super) struct SchedBlock {
 }
 
 impl JitAsm<'_> {
+    /// Emit a taken branch of any kind. B never returns to the block; the linking kinds
+    /// (BL, BLX reg) resume at the following instruction — inline that's the natural fall
+    /// through, out of line the caller jumps back via `inst_labels[inst_index + 1]`.
+    pub(super) fn emit_taken_branch(
+        &mut self,
+        block_asm: &mut BlockAsm,
+        inst_index: usize,
+        kind: &BranchKind,
+        guest_pc: u32,
+        insts_len: usize,
+        arm7_hle: bool,
+        inst_labels: &mut [A64Label],
+        sched_blocks: &mut Vec<SchedBlock>,
+    ) {
+        match kind {
+            BranchKind::B { target } => self.emit_branch(block_asm, inst_index, *target, guest_pc, insts_len, arm7_hle, inst_labels, sched_blocks),
+            BranchKind::Bl { target } => self.emit_branch_link(block_asm, inst_index, *target, guest_pc, arm7_hle),
+            BranchKind::BxReturn => self.emit_branch_return(block_asm, inst_index, guest_pc, arm7_hle),
+            BranchKind::BxReg { reg } => self.emit_branch_reg(block_asm, inst_index, *reg, false, guest_pc, arm7_hle),
+            BranchKind::BlxReg { reg } => self.emit_branch_reg(block_asm, inst_index, *reg, true, guest_pc, arm7_hle),
+            BranchKind::BlOff { off, to_arm } => self.emit_branch_link_off(block_asm, inst_index, *off, *to_arm, guest_pc, arm7_hle),
+        }
+    }
+
     /// A taken B at `inst_index`: local targets jump inside the block, external targets
     /// tail-call out through the shared runtime.
     pub(super) fn emit_branch(
         &mut self,
-        block_asm: &mut A64BlockAsm,
+        block_asm: &mut BlockAsm,
         inst_index: usize,
         target: u32,
         guest_pc: u32,
@@ -80,12 +123,136 @@ impl JitAsm<'_> {
         inst_labels: &mut [A64Label],
         sched_blocks: &mut Vec<SchedBlock>,
     ) {
-        let block_end = guest_pc + insts_len as u32 * 4;
+        let step_shift = if block_asm.thumb { 1 } else { 2 };
+        let block_end = guest_pc + ((insts_len as u32) << step_shift);
         if target >= guest_pc && target < block_end {
-            let target_index = ((target - guest_pc) >> 2) as usize;
+            let target_index = ((target - guest_pc) >> step_shift) as usize;
             self.emit_local_branch(block_asm, inst_index, target_index, guest_pc, inst_labels, sched_blocks);
         } else {
             self.emit_external_branch(block_asm, inst_index, target, guest_pc, arm7_hle);
+        }
+    }
+
+    /// BL / BLX imm: write the guest LR and PC, flush through pre_branch (which pushes the
+    /// return stack and checks the ARM9 host-stack depth guard), then CALL the target's
+    /// entry slot — the host frame is unwound by the callee's eventual matched return
+    /// through branch_lr's `ret`, exactly like arm32's blx call sites. On return the
+    /// block's instructions so far are pre-charged (pre_cycle_count_sum = counts[i]).
+    pub(super) fn emit_branch_link(&mut self, block_asm: &mut BlockAsm, inst_index: usize, target: u32, guest_pc: u32, arm7_hle: bool) {
+        debug_assert!(!block_asm.thumb);
+        let current_pc = guest_pc + (inst_index as u32) * 4;
+        let total_cycles = self.jit_buf.insts_cycle_counts[inst_index];
+        let lr = current_pc + 4;
+
+        block_asm.mov_imm(SCRATCH0, lr);
+        block_asm.store_guest(SCRATCH0, Reg::LR);
+        block_asm.mov_imm(SCRATCH0, target);
+        block_asm.store_guest(SCRATCH0, Reg::PC);
+
+        block_asm.masm.mov_imm64(A64Reg::X0, self as *mut JitAsm as u64);
+        block_asm.mov_imm(A64Reg::X1, total_cycles as u32);
+        block_asm.mov_imm(A64Reg::X2, lr);
+        block_asm.mov_imm(A64Reg::X3, current_pc);
+        block_asm.call_host(match (self.cpu, arm7_hle) {
+            (ARM9, true) => pre_branch::<{ ARM9 }, true, true> as *const (),
+            (ARM9, false) => pre_branch::<{ ARM9 }, true, false> as *const (),
+            (ARM7, true) => pre_branch::<{ ARM7 }, true, true> as *const (),
+            (ARM7, false) => pre_branch::<{ ARM7 }, true, false> as *const (),
+        });
+
+        if BRANCH_LOG {
+            block_asm.mov_imm(A64Reg::X0, current_pc);
+            block_asm.mov_imm(A64Reg::X1, target);
+            block_asm.call_host(match self.cpu {
+                ARM9 => debug_branch_imm::<{ ARM9 }> as *const (),
+                ARM7 => debug_branch_imm::<{ ARM7 }> as *const (),
+            });
+        }
+
+        // Call the entry slot (re-read at run time; a cold target lands in
+        // emit_code_block). An ARM-mode BL never changes mode — no thumb tag handling.
+        let target_entry_slot = self.emu.jit.jit_memory_map.get_jit_entry(target);
+        block_asm.masm.mov_imm64(SCRATCH0, target_entry_slot as u64);
+        block_asm.masm.ldr_off(SCRATCH0, true, SCRATCH0, 0, vixl::A64AddrModeKind::Offset);
+        block_asm.mov_imm(A64Reg::X0, target);
+        block_asm.masm.blr(SCRATCH0);
+
+        // Resume behind the call: everything up to and including the BL is pre-charged.
+        block_asm.masm.mov_imm64(A64Reg::X8, ptr::addr_of_mut!(self.runtime_data) as u64);
+        block_asm.mov_imm(SCRATCH0, total_cycles as u32);
+        block_asm
+            .masm
+            .strh_off(SCRATCH0, A64Reg::X8, JitRuntimeData::get_pre_cycle_count_sum_offset() as i64, vixl::A64AddrModeKind::Offset);
+    }
+
+    /// BX LR: return through the return stack — store the guest PC, pop the frame and
+    /// tail-jump into branch_lr, whose `ret` on a matched pop unwinds straight to the
+    /// caller's post-BL code (the guest call/return pairs map onto host call/returns).
+    pub(super) fn emit_branch_return(&mut self, block_asm: &mut BlockAsm, inst_index: usize, guest_pc: u32, arm7_hle: bool) {
+        let current_pc = guest_pc + ((inst_index as u32) << if block_asm.thumb { 1 } else { 2 });
+        let total_cycles = self.jit_buf.insts_cycle_counts[inst_index];
+
+        block_asm.load_guest(A64Reg::X1, Reg::LR);
+        block_asm.store_guest(A64Reg::X1, Reg::PC);
+        block_asm.mov_imm(A64Reg::X0, total_cycles as u32);
+        block_asm.mov_imm(A64Reg::X2, current_pc);
+        block_asm.masm.mov_imm64(
+            A64Reg::X8,
+            match (self.cpu, arm7_hle) {
+                (ARM9, true) => branch_lr::<{ ARM9 }, true> as *const () as u64,
+                (ARM9, false) => branch_lr::<{ ARM9 }, false> as *const () as u64,
+                (ARM7, true) => branch_lr::<{ ARM7 }, true> as *const () as u64,
+                (ARM7, false) => branch_lr::<{ ARM7 }, false> as *const () as u64,
+            },
+        );
+        block_asm.restore_frame();
+        block_asm.masm.br(A64Reg::X8);
+    }
+
+    /// BX reg (dynamic target, no link): tail-jump into branch_reg, which handles the
+    /// thumb interworking bit and dispatches. BLX reg (link): CALL branch_reg instead —
+    /// it pushes the return stack, runs the callee and restores pre_cycle_count_sum
+    /// itself before returning here.
+    pub(super) fn emit_branch_reg(&mut self, block_asm: &mut BlockAsm, inst_index: usize, target_reg: Reg, has_return: bool, guest_pc: u32, arm7_hle: bool) {
+        let thumb = block_asm.thumb;
+        let current_pc = guest_pc + ((inst_index as u32) << if thumb { 1 } else { 2 });
+        let total_cycles = self.jit_buf.insts_cycle_counts[inst_index];
+
+        if target_reg == Reg::PC {
+            // Pipeline pc read: instruction address + 8 in ARM, + 4 in thumb.
+            block_asm.mov_imm(A64Reg::X1, current_pc + if thumb { 4 } else { 8 });
+        } else {
+            block_asm.load_guest(A64Reg::X1, target_reg);
+        }
+        block_asm.store_guest(A64Reg::X1, Reg::PC);
+        if has_return {
+            // The return address is the following instruction, mode-tagged in thumb.
+            let lr = if thumb { (current_pc + 2) | 1 } else { current_pc + 4 };
+            block_asm.mov_imm(SCRATCH0, lr);
+            block_asm.store_guest(SCRATCH0, Reg::LR);
+            block_asm.mov_imm(A64Reg::X2, lr);
+        } else {
+            block_asm.mov_imm(A64Reg::X2, 0);
+        }
+        block_asm.mov_imm(A64Reg::X0, total_cycles as u32);
+        block_asm.mov_imm(A64Reg::X3, current_pc);
+
+        let fun = match (self.cpu, has_return, arm7_hle) {
+            (ARM9, true, true) => branch_reg::<{ ARM9 }, true, true> as *const (),
+            (ARM9, true, false) => branch_reg::<{ ARM9 }, true, false> as *const (),
+            (ARM9, false, true) => branch_reg::<{ ARM9 }, false, true> as *const (),
+            (ARM9, false, false) => branch_reg::<{ ARM9 }, false, false> as *const (),
+            (ARM7, true, true) => branch_reg::<{ ARM7 }, true, true> as *const (),
+            (ARM7, true, false) => branch_reg::<{ ARM7 }, true, false> as *const (),
+            (ARM7, false, true) => branch_reg::<{ ARM7 }, false, true> as *const (),
+            (ARM7, false, false) => branch_reg::<{ ARM7 }, false, false> as *const (),
+        };
+        if has_return {
+            block_asm.call_host(fun);
+        } else {
+            block_asm.masm.mov_imm64(A64Reg::X8, fun as u64);
+            block_asm.restore_frame();
+            block_asm.masm.br(A64Reg::X8);
         }
     }
 
@@ -93,9 +260,10 @@ impl JitAsm<'_> {
     /// already-accounted pre_cycle_count_sum), check the scheduler threshold, set the
     /// target's pre_cycle_count_sum and jump to its label. The exceed/invalid tails are
     /// deferred to emit_local_branch_sched_tail.
-    fn emit_local_branch(&mut self, block_asm: &mut A64BlockAsm, inst_index: usize, target_index: usize, guest_pc: u32, inst_labels: &mut [A64Label], sched_blocks: &mut Vec<SchedBlock>) {
-        let current_pc = guest_pc + (inst_index as u32) * 4;
-        let target_pc = guest_pc + (target_index as u32) * 4;
+    fn emit_local_branch(&mut self, block_asm: &mut BlockAsm, inst_index: usize, target_index: usize, guest_pc: u32, inst_labels: &mut [A64Label], sched_blocks: &mut Vec<SchedBlock>) {
+        let step_shift = if block_asm.thumb { 1 } else { 2 };
+        let current_pc = guest_pc + ((inst_index as u32) << step_shift);
+        let target_pc = guest_pc + ((target_index as u32) << step_shift);
         let total_cycles = self.jit_buf.insts_cycle_counts[inst_index];
         let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[target_index] - self.jit_buf.insts[target_index].cycle as u16;
         let runtime_data_addr = ptr::addr_of_mut!(self.runtime_data) as u64;
@@ -165,8 +333,8 @@ impl JitAsm<'_> {
     /// The out-of-line tails of a local branch: scheduler-exceed (run the scheduler, on
     /// ARM9 dispatch a pending interrupt, rejoin the fast path) and, for forward branches,
     /// the stale-block exit.
-    pub(super) fn emit_local_branch_sched_tail(&mut self, block_asm: &mut A64BlockAsm, sched: &mut SchedBlock, guest_pc: u32, arm7_hle: bool) {
-        let current_pc = guest_pc + (sched.inst_index as u32) * 4;
+    pub(super) fn emit_local_branch_sched_tail(&mut self, block_asm: &mut BlockAsm, sched: &mut SchedBlock, guest_pc: u32, arm7_hle: bool) {
+        let current_pc = guest_pc + ((sched.inst_index as u32) << if block_asm.thumb { 1 } else { 2 });
         let jit_asm_addr = self as *mut JitAsm as u64;
         let runtime_data_addr = ptr::addr_of_mut!(self.runtime_data) as u64;
 
@@ -229,12 +397,13 @@ impl JitAsm<'_> {
     /// External branch: store the guest PC, flush through pre_branch (cycles, scheduler,
     /// pre_cycle_count_sum), then pop the frame and tail-jump to the target's jit entry —
     /// the host stack stays flat across compiled block chains (arm32's restore_stack + bx).
-    fn emit_external_branch(&mut self, block_asm: &mut A64BlockAsm, inst_index: usize, target: u32, guest_pc: u32, arm7_hle: bool) {
-        debug_assert!(!block_asm.thumb);
-        let current_pc = guest_pc + (inst_index as u32) * 4;
+    fn emit_external_branch(&mut self, block_asm: &mut BlockAsm, inst_index: usize, target: u32, guest_pc: u32, arm7_hle: bool) {
+        let thumb = block_asm.thumb;
+        let current_pc = guest_pc + ((inst_index as u32) << if thumb { 1 } else { 2 });
         let total_cycles = self.jit_buf.insts_cycle_counts[inst_index];
+        let tagged_target = target | thumb as u32;
 
-        block_asm.mov_imm(SCRATCH0, target);
+        block_asm.mov_imm(SCRATCH0, tagged_target);
         block_asm.store_guest(SCRATCH0, Reg::PC);
 
         block_asm.masm.mov_imm64(A64Reg::X0, self as *mut JitAsm as u64);
@@ -264,7 +433,7 @@ impl JitAsm<'_> {
         let target_entry_slot = self.emu.jit.jit_memory_map.get_jit_entry(target);
         block_asm.masm.mov_imm64(SCRATCH0, target_entry_slot as u64);
         block_asm.masm.ldr_off(SCRATCH0, true, SCRATCH0, 0, vixl::A64AddrModeKind::Offset);
-        block_asm.mov_imm(A64Reg::X0, target);
+        block_asm.mov_imm(A64Reg::X0, tagged_target);
         block_asm.restore_frame();
         block_asm.masm.br(SCRATCH0);
     }

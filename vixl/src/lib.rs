@@ -911,6 +911,50 @@ mod aarch64_glue {
         pub fn str_regoff(&mut self, rt: A64Reg, is64: bool, base: A64Reg, index: A64Reg, extend: A64ExtendKind, amount: u32) {
             unsafe { masm_a64_str_regoff(self.inner, r(rt), is64 as i32, r(base), r(index), extend as i32, amount) }
         }
+
+        pub fn rorv(&mut self, rd: A64Reg, rn: A64Reg, rm: A64Reg) {
+            unsafe { masm_a64_rorv(self.inner, r(rd), r(rn), r(rm)) }
+        }
+
+        pub fn ldrb_off(&mut self, rt: A64Reg, base: A64Reg, offset: i64, mode: A64AddrModeKind) {
+            unsafe { masm_a64_ldrb_off(self.inner, r(rt), r(base), offset, mode as i32) }
+        }
+
+        pub fn strb_off(&mut self, rt: A64Reg, base: A64Reg, offset: i64, mode: A64AddrModeKind) {
+            unsafe { masm_a64_strb_off(self.inner, r(rt), r(base), offset, mode as i32) }
+        }
+
+        pub fn ldrsb_off(&mut self, rt: A64Reg, base: A64Reg, offset: i64, mode: A64AddrModeKind) {
+            unsafe { masm_a64_ldrsb_off(self.inner, r(rt), 0, r(base), offset, mode as i32) }
+        }
+
+        pub fn ldrsh_off(&mut self, rt: A64Reg, base: A64Reg, offset: i64, mode: A64AddrModeKind) {
+            unsafe { masm_a64_ldrsh_off(self.inner, r(rt), 0, r(base), offset, mode as i32) }
+        }
+
+        pub fn ldrb_regoff(&mut self, rt: A64Reg, base: A64Reg, index: A64Reg, extend: A64ExtendKind, amount: u32) {
+            unsafe { masm_a64_ldrb_regoff(self.inner, r(rt), r(base), r(index), extend as i32, amount) }
+        }
+
+        pub fn strb_regoff(&mut self, rt: A64Reg, base: A64Reg, index: A64Reg, extend: A64ExtendKind, amount: u32) {
+            unsafe { masm_a64_strb_regoff(self.inner, r(rt), r(base), r(index), extend as i32, amount) }
+        }
+
+        pub fn ldrh_regoff(&mut self, rt: A64Reg, base: A64Reg, index: A64Reg, extend: A64ExtendKind, amount: u32) {
+            unsafe { masm_a64_ldrh_regoff(self.inner, r(rt), r(base), r(index), extend as i32, amount) }
+        }
+
+        pub fn strh_regoff(&mut self, rt: A64Reg, base: A64Reg, index: A64Reg, extend: A64ExtendKind, amount: u32) {
+            unsafe { masm_a64_strh_regoff(self.inner, r(rt), r(base), r(index), extend as i32, amount) }
+        }
+
+        pub fn ldrsb_regoff(&mut self, rt: A64Reg, base: A64Reg, index: A64Reg, extend: A64ExtendKind, amount: u32) {
+            unsafe { masm_a64_ldrsb_regoff(self.inner, r(rt), r(base), r(index), extend as i32, amount) }
+        }
+
+        pub fn ldrsh_regoff(&mut self, rt: A64Reg, base: A64Reg, index: A64Reg, extend: A64ExtendKind, amount: u32) {
+            unsafe { masm_a64_ldrsh_regoff(self.inner, r(rt), r(base), r(index), extend as i32, amount) }
+        }
     }
 
     impl Drop for A64MacroAssembler {
@@ -971,6 +1015,7 @@ mod aarch64_glue {
     }
 
     carry_method!(adc, masm_a64_adc);
+    carry_method!(mul, masm_a64_mul);
     carry_method!(adcs, masm_a64_adcs);
     carry_method!(sbc, masm_a64_sbc);
     carry_method!(sbcs, masm_a64_sbcs);
