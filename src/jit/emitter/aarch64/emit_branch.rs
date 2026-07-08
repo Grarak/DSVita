@@ -20,9 +20,10 @@ use super::emit::class_disabled;
 use crate::core::CpuType;
 use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::aarch64::{BlockAsm, SCRATCH0, SCRATCH1, SCRATCH2};
-use crate::jit::inst_branch_handler::{branch_lr, branch_lr_slow, branch_reg, handle_interrupt, pre_branch, run_scheduler};
+use crate::jit::assembler::GUEST_REGS_LENGTH;
+use crate::jit::inst_branch_handler::{branch_lr, branch_lr_slow, branch_reg, handle_idle_loop, handle_interrupt, pre_branch, run_scheduler};
 use crate::jit::jit_asm::{JitAsm, JitRuntimeData, RETURN_STACK_SIZE};
-use crate::jit::reg::Reg;
+use crate::jit::reg::{Reg, RegReserve};
 use crate::jit::Cond;
 use crate::logging::branch_println;
 use crate::{BRANCH_LOG, IS_DEBUG};
@@ -35,6 +36,10 @@ extern "C" fn debug_branch_label<const CPU: CpuType>(current_pc: u32, target_pc:
 
 extern "C" fn debug_branch_imm<const CPU: CpuType>(current_pc: u32, target_pc: u32) {
     branch_println!("{CPU:?} branch imm from {current_pc:x} to {target_pc:x}");
+}
+
+extern "C" fn debug_idle_loop<const CPU: CpuType>(current_pc: u32, target_pc: u32) {
+    branch_println!("{CPU:?} detected idle loop {current_pc:x} to {target_pc:x}");
 }
 
 /// Scheduler threshold for local branches: arm32-jit parity by default (the stage-6
@@ -68,21 +73,30 @@ pub(super) enum BranchKind {
     BlOff { off: u32, to_arm: bool },
 }
 
-/// A conditional branch's taken path, emitted out of line after the block body.
+/// A conditional branch's taken path, emitted out of line after the block body. The
+/// register mapping and dirty set are captured at the branch point (the taken tail is
+/// reached via the b.cond there, so the pool holds those values at run time) — the
+/// epilogue restores them so the branch's relocation/return bookkeeping is correct.
 pub(super) struct TakenBranch {
     pub(super) inst_index: usize,
     pub(super) kind: BranchKind,
     pub(super) label: A64Label,
+    pub(super) dirty_guest_regs: RegReserve,
+    pub(super) guest_regs_mapping: [A64Reg; GUEST_REGS_LENGTH],
 }
 
 /// The out-of-line tail of a local branch: the scheduler-exceed path and, for forward
-/// branches, the stale-block exit. `cont_label` was bound on the branch's fast path.
+/// branches, the stale-block exit. `cont_label` was bound on the branch's fast path; the
+/// mapping/dirty are the branch-point state the tail flushes before the scheduler and
+/// reloads after an interrupt (so the fast path's relocation sees coherent registers).
 pub(super) struct SchedBlock {
     inst_index: usize,
     target: u32,
     sched_label: A64Label,
     cont_label: A64Label,
     invalid_label: Option<A64Label>,
+    guest_regs_mapping: [A64Reg; GUEST_REGS_LENGTH],
+    dirty_guest_regs: RegReserve,
 }
 
 impl JitAsm<'_> {
@@ -127,9 +141,78 @@ impl JitAsm<'_> {
         let block_end = guest_pc + ((insts_len as u32) << step_shift);
         if target >= guest_pc && target < block_end {
             let target_index = ((target - guest_pc) >> step_shift) as usize;
-            self.emit_local_branch(block_asm, inst_index, target_index, guest_pc, inst_labels, sched_blocks);
+            // Idle loops (analyzer-flagged short backward spins) fast-forward the scheduler
+            // to the next event instead of spinning — arm32 parity (its analyzer-driven idle
+            // detection changes timing, so the a64 backend must match it for the a32-jit↔
+            // a64-jit gate). Idle branches are conditional, so this runs in the out-of-line
+            // taken path.
+            if self.analyzer.insts_metadata[inst_index].idle_loop() {
+                self.emit_idle_loop(block_asm, inst_index, target_index, guest_pc, arm7_hle);
+            } else {
+                self.emit_local_branch(block_asm, inst_index, target_index, guest_pc, inst_labels, sched_blocks);
+            }
         } else {
             self.emit_external_branch(block_asm, inst_index, target, guest_pc, arm7_hle);
+        }
+    }
+
+    /// An idle loop: the guest is spinning until the next scheduler event. Store the loop
+    /// head as the resume PC, then (ARM9) fast-forward the scheduler through handle_idle_loop
+    /// — which resets accumulated_cycles/pre_cycle_count_sum and dispatches any interrupt —
+    /// and jump back to the loop head with its registers reloaded from memory; (ARM7) flag
+    /// the idle loop and exit the quantum. Dirty registers were already spilled by the
+    /// conditional branch's save before the b.cond, so guest memory is coherent here.
+    fn emit_idle_loop(&mut self, block_asm: &mut BlockAsm, inst_index: usize, target_index: usize, guest_pc: u32, arm7_hle: bool) {
+        let thumb = block_asm.thumb;
+        let step_shift = if thumb { 1 } else { 2 };
+        let current_pc = guest_pc + ((inst_index as u32) << step_shift);
+        let target_pc = guest_pc + ((target_index as u32) << step_shift);
+
+        block_asm.mov_imm(SCRATCH0, target_pc | thumb as u32);
+        block_asm.store_guest(SCRATCH0, Reg::PC);
+
+        if BRANCH_LOG {
+            block_asm.mov_imm(A64Reg::X0, current_pc);
+            block_asm.mov_imm(A64Reg::X1, target_pc);
+            block_asm.call_host(match self.cpu {
+                ARM9 => debug_idle_loop::<{ ARM9 }> as *const (),
+                ARM7 => debug_idle_loop::<{ ARM7 }> as *const (),
+            });
+        }
+
+        match self.cpu {
+            ARM9 => {
+                let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[target_index] - self.jit_buf.insts[target_index].cycle as u16;
+                block_asm.masm.mov_imm64(A64Reg::X0, self as *mut JitAsm as u64);
+                block_asm.mov_imm(A64Reg::X1, target_pre_cycle_count_sum as u32);
+                block_asm.mov_imm(A64Reg::X2, current_pc);
+                block_asm.call_host(if arm7_hle { handle_idle_loop::<true> as *const () } else { handle_idle_loop::<false> as *const () });
+                // handle_idle_loop reset the cycle accounting and may have dispatched an
+                // interrupt (moving guest memory); rejoin the loop head with fresh registers.
+                let target_block = self.analyzer.get_basic_block_from_inst(target_index);
+                block_asm.init_basic_block_regs(target_block);
+                block_asm.b_basic_block(target_block);
+            }
+            ARM7 => {
+                let runtime_data_addr = ptr::addr_of_mut!(self.runtime_data) as u64;
+                block_asm.masm.mov_imm64(A64Reg::X8, runtime_data_addr);
+                if IS_DEBUG {
+                    block_asm.mov_imm(SCRATCH0, current_pc);
+                    block_asm
+                        .masm
+                        .str_off(SCRATCH0, false, A64Reg::X8, JitRuntimeData::get_branch_out_pc_offset() as i64, vixl::A64AddrModeKind::Offset);
+                }
+                // Flag the idle loop for the scheduler (arm32 parity: byte at data_packed+3,
+                // bit 0x80), then exit the quantum.
+                block_asm
+                    .masm
+                    .ldrb_off(SCRATCH0, A64Reg::X8, JitRuntimeData::get_data_packed_offset() as i64 + 3, vixl::A64AddrModeKind::Offset);
+                block_asm.masm.orr_imm(SCRATCH0, SCRATCH0, 0x80, false);
+                block_asm
+                    .masm
+                    .strb_off(SCRATCH0, A64Reg::X8, JitRuntimeData::get_data_packed_offset() as i64 + 3, vixl::A64AddrModeKind::Offset);
+                block_asm.emit_exit_guest_context(ptr::addr_of_mut!(self.runtime_data.host_sp));
+            }
         }
     }
 
@@ -342,7 +425,7 @@ impl JitAsm<'_> {
     /// already-accounted pre_cycle_count_sum), check the scheduler threshold, set the
     /// target's pre_cycle_count_sum and jump to its label. The exceed/invalid tails are
     /// deferred to emit_local_branch_sched_tail.
-    fn emit_local_branch(&mut self, block_asm: &mut BlockAsm, inst_index: usize, target_index: usize, guest_pc: u32, inst_labels: &mut [A64Label], sched_blocks: &mut Vec<SchedBlock>) {
+    fn emit_local_branch(&mut self, block_asm: &mut BlockAsm, inst_index: usize, target_index: usize, guest_pc: u32, _inst_labels: &mut [A64Label], sched_blocks: &mut Vec<SchedBlock>) {
         let step_shift = if block_asm.thumb { 1 } else { 2 };
         let current_pc = guest_pc + ((inst_index as u32) << step_shift);
         let target_pc = guest_pc + ((target_index as u32) << step_shift);
@@ -401,7 +484,18 @@ impl JitAsm<'_> {
         block_asm
             .masm
             .strh_off(SCRATCH0, A64Reg::X8, JitRuntimeData::get_pre_cycle_count_sum_offset() as i64, vixl::A64AddrModeKind::Offset);
-        block_asm.masm.b(&mut inst_labels[target_index]);
+
+        // Relocate the live mapping into the target block's canonical entry mapping, then
+        // jump to its label (arm32's relocate_for_basic_block + b_basic_block). Capture the
+        // branch-point mapping/dirty for the scheduler tail: it flushes them before the
+        // scheduler runs and reloads them after an interrupt, so this relocation — shared by
+        // the fast path and the tail's rejoin — always sees coherent registers.
+        let guest_regs_mapping = block_asm.get_guest_regs_mapping();
+        let dirty_guest_regs = block_asm.dirty_guest_regs;
+        let target_block = self.analyzer.get_basic_block_from_inst(target_index);
+        let target_output_regs = self.analyzer.basic_blocks[target_block].output_regs;
+        block_asm.relocate_for_basic_block(target_output_regs, target_block);
+        block_asm.b_basic_block(target_block);
 
         sched_blocks.push(SchedBlock {
             inst_index,
@@ -409,6 +503,8 @@ impl JitAsm<'_> {
             sched_label,
             cont_label,
             invalid_label,
+            guest_regs_mapping,
+            dirty_guest_regs,
         });
     }
 
@@ -421,9 +517,18 @@ impl JitAsm<'_> {
         let runtime_data_addr = ptr::addr_of_mut!(self.runtime_data) as u64;
 
         block_asm.masm.bind(&mut sched.sched_label);
+        // Restore the branch-point mapping and flush dirty registers to memory before the
+        // scheduler observes the guest context — the fast path kept them in the (callee-
+        // saved) pool for the relocation. set_guest_regs_mapping is compile-time bookkeeping
+        // so the flush/reload target the right slots.
+        block_asm.set_guest_regs_mapping(sched.guest_regs_mapping);
+        block_asm.dirty_guest_regs = sched.dirty_guest_regs;
+        block_asm.save_dirty_guest_regs();
         // The interrupt/exit resume point: like the interpreter, the guest PC is the
-        // branch target before the scheduler can observe it.
-        block_asm.mov_imm(SCRATCH0, sched.target);
+        // branch target before the scheduler can observe it. Tag the thumb bit — the ARM7
+        // exit re-dispatches by PC bit0, so an untagged target re-enters in ARM mode (the
+        // idle loop tags it the same way).
+        block_asm.mov_imm(SCRATCH0, sched.target | block_asm.thumb as u32);
         block_asm.store_guest(SCRATCH0, Reg::PC);
         match self.cpu {
             ARM9 => {
@@ -442,6 +547,9 @@ impl JitAsm<'_> {
                 block_asm.mov_imm(A64Reg::X1, sched.target);
                 block_asm.mov_imm(A64Reg::X2, current_pc);
                 block_asm.call_host(handle_interrupt as *const ());
+                // The interrupt updated guest memory; refresh the pool before rejoining the
+                // fast path's relocation, which reads the mapped registers.
+                block_asm.reload_active_guest_regs_all();
                 block_asm.masm.mov_imm64(A64Reg::X8, runtime_data_addr);
                 block_asm.masm.b(&mut sched.cont_label);
             }
@@ -463,7 +571,7 @@ impl JitAsm<'_> {
             // The block was invalidated under our feet: exit the guest context; execution
             // resumes at the stored target PC with fresh code.
             block_asm.masm.bind(invalid_label);
-            block_asm.mov_imm(SCRATCH0, sched.target);
+            block_asm.mov_imm(SCRATCH0, sched.target | block_asm.thumb as u32);
             block_asm.store_guest(SCRATCH0, Reg::PC);
             if IS_DEBUG {
                 block_asm.masm.mov_imm64(A64Reg::X8, runtime_data_addr);
@@ -479,7 +587,7 @@ impl JitAsm<'_> {
     /// External branch: store the guest PC, flush through pre_branch (cycles, scheduler,
     /// pre_cycle_count_sum), then pop the frame and tail-jump to the target's jit entry —
     /// the host stack stays flat across compiled block chains (arm32's restore_stack + bx).
-    fn emit_external_branch(&mut self, block_asm: &mut BlockAsm, inst_index: usize, target: u32, guest_pc: u32, arm7_hle: bool) {
+    pub(super) fn emit_external_branch(&mut self, block_asm: &mut BlockAsm, inst_index: usize, target: u32, guest_pc: u32, arm7_hle: bool) {
         let thumb = block_asm.thumb;
         let current_pc = guest_pc + ((inst_index as u32) << if thumb { 1 } else { 2 });
         let total_cycles = self.jit_buf.insts_cycle_counts[inst_index];

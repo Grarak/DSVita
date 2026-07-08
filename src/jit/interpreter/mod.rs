@@ -262,6 +262,44 @@ pub fn interpret_block(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     }
 }
 
+/// Execute one instruction the a64 backend doesn't lower inline (mul, msr/mrs, cp15, swp)
+/// through the interpreter's dispatch table, called from a COMPILED block so the block keeps
+/// the jit's 128-cycle back-edge scheduler cadence instead of interpreting whole (255,
+/// every-branch) — the timing-parity requirement for the a32-jit<->a64-jit gate. Guest state
+/// is memory-resident on entry (the emitter flushed and cleared its mapping) and the handler
+/// mutates it in memory, so the emitter reloads afterward. The block charges this op's cycles
+/// at its branch boundary via insts_cycle_counts, so the returned cycle count is discarded; a
+/// store op requesting an immediate breakout is honored (multiple-transfer handler parity).
+pub unsafe extern "C" fn interpret_single<const CPU: CpuType>(opcode: u32, tagged_pc: u32, total_cycles: u16) {
+    let asm_ptr = crate::get_jit_asm_ptr::<CPU>();
+    let thumb = tagged_pc & 1 == 1;
+    let pc = tagged_pc & !1;
+    let regs: *mut ThreadRegs = CPU.thread_regs();
+    let result = {
+        let mut ctx = Ctx {
+            asm: asm_ptr.as_mut_unchecked(),
+            cpu: CPU,
+            regs,
+            inst_addr: pc,
+        };
+        if thumb {
+            THUMB_TABLE[(opcode >> 6) as usize](&mut ctx, opcode as u16)
+        } else {
+            ARM_TABLE[arm_index(opcode)](&mut ctx, opcode)
+        }
+    };
+    match result {
+        InstResult::Continue(_) => {}
+        InstResult::ContinueStore(_) => {
+            let asm = asm_ptr.as_mut_unchecked();
+            if unlikely(asm.emu.breakout_imm) {
+                breakout_imm::<CPU>(asm, total_cycles, pc);
+            }
+        }
+        _ => debug_panic!("interpret_single: unexpected branch result at {pc:x} op {opcode:x}"),
+    }
+}
+
 fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) {
     let cpu = asm.cpu;
     let arm7_hle = asm.emu.settings.arm7_emu() == Arm7Emu::Hle;

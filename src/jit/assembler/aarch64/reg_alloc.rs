@@ -6,7 +6,7 @@
 // discontinuity (branch instructions, local branch targets), so the swap machinery
 // isn't needed. Guest PC and CPSR stay memory-resident.
 
-use crate::jit::assembler::aarch64::block_asm::GUEST_REGS_PTR;
+use crate::jit::assembler::aarch64::block_asm::{GUEST_REGS_PTR, SCRATCH2};
 use crate::jit::assembler::{GUEST_REGS_LENGTH, GUEST_REG_POOL_SIZE};
 use crate::jit::reg::{Reg, RegReserve};
 use crate::logging::debug_panic;
@@ -153,6 +153,124 @@ impl A64RegAlloc {
                 Self::spill_guest_reg(guest_reg, mapped_reg, masm);
             }
         }
+    }
+
+    /// Free-pool bitmask snapshot — a basic block's init records it; init_guest_regs
+    /// restores it (one bit per GUEST_REG_ALLOCATIONS slot).
+    pub fn free_regs(&self) -> u16 {
+        self.free_regs
+    }
+
+    pub fn set_free_regs(&mut self, free_regs: u16) {
+        self.free_regs = free_regs;
+    }
+
+    /// Install a whole guest→host mapping (basic-block entry / relocation bookkeeping),
+    /// rebuilding host_regs_mapping and the free-pool mask from it. Mirrors arm32's
+    /// set_guest_regs_mappings.
+    pub fn set_guest_regs_mappings(&mut self, mapping: &[A64Reg; GUEST_REGS_LENGTH]) {
+        self.guest_regs_mapping = *mapping;
+        self.host_regs_mapping = [Reg::None; GUEST_REG_POOL_SIZE];
+        self.free_regs = (1 << GUEST_REG_POOL_SIZE) - 1;
+        for (i, &mapped_reg) in self.guest_regs_mapping.iter().enumerate() {
+            if mapped_reg != A64Reg::ZR {
+                let idx = pool_index(mapped_reg);
+                self.host_regs_mapping[idx] = Reg::from(i as u8);
+                self.free_regs &= !(1 << idx);
+            }
+        }
+    }
+
+    /// Reserve host homes for a set of guest regs without evicting anything (the pre-pass
+    /// that computes a basic block's entry mapping — arm32's reserve_guest_regs). Returns
+    /// the guest regs that got a home; the rest stay memory-resident for that block.
+    /// `restore` false in the pre-pass emits no loads.
+    pub fn reserve_guest_regs(&mut self, guest_regs: RegReserve, restore: bool, masm: &mut A64MacroAssembler) -> RegReserve {
+        let mut reserved_regs = RegReserve::new();
+        for reg in guest_regs {
+            if self.alloc_free_guest_reg(reg, restore, masm).is_some() {
+                reserved_regs += reg;
+            }
+        }
+        reserved_regs
+    }
+
+    /// Reload the mapped subset of `guest_regs` from guest memory (basic-block entry after
+    /// a relocation moved values into their homes but some arrive fresh from memory).
+    pub fn reload_active_guest_regs(&self, guest_regs: RegReserve, masm: &mut A64MacroAssembler) {
+        for guest_reg in guest_regs {
+            let mapped_reg = self.guest_regs_mapping[guest_reg as usize];
+            if mapped_reg != A64Reg::ZR {
+                Self::restore_guest_reg(guest_reg, mapped_reg, masm);
+            }
+        }
+    }
+
+    /// One step of the mapping shuffle: get `guest_reg` into `desired_host_reg`, breaking
+    /// cycles by parking a value in SCRATCH2 (the trailing set_guest_regs_mappings rebuild
+    /// discards that transient). arm32's swap_guest_regs, minus the flags concern (a64's
+    /// guest cpsr is memory-resident, so the moves never clobber guest flags).
+    fn swap_guest_regs(&mut self, root_guest_reg: Reg, guest_reg: Reg, desired_host_reg: A64Reg, desired_mapping: &[A64Reg; GUEST_REGS_LENGTH], masm: &mut A64MacroAssembler) {
+        let current_host_reg = self.guest_regs_mapping[guest_reg as usize];
+        if current_host_reg == desired_host_reg {
+            return;
+        }
+
+        let current_host_used_by = self.host_regs_mapping[pool_index(desired_host_reg)];
+        if current_host_used_by != Reg::None {
+            let next_desired_host_reg = desired_mapping[current_host_used_by as usize];
+            if root_guest_reg == current_host_used_by {
+                masm.mov_reg(SCRATCH2, desired_host_reg, false);
+                self.guest_regs_mapping[current_host_used_by as usize] = SCRATCH2;
+            } else if next_desired_host_reg != A64Reg::ZR {
+                self.swap_guest_regs(root_guest_reg, current_host_used_by, next_desired_host_reg, desired_mapping, masm);
+            }
+        }
+
+        let current_host_reg = self.guest_regs_mapping[guest_reg as usize];
+        self.set_guest_reg_mapping(guest_reg, Some(desired_host_reg));
+        masm.mov_reg(desired_host_reg, current_host_reg, false);
+    }
+
+    /// Shuffle the current mapping into `desired_mapping` at a basic-block boundary:
+    /// spill dirty regs the target block doesn't carry as inputs, drop their mappings,
+    /// move the survivors into their target homes, then reload the ones arriving from
+    /// memory. arm32's relocate_guest_regs (no flags_update — a64 cpsr is memory-resident).
+    pub fn relocate_guest_regs(&mut self, dirty_guest_regs: RegReserve, basic_block_output_regs: RegReserve, desired_mapping: &[A64Reg; GUEST_REGS_LENGTH], masm: &mut A64MacroAssembler) {
+        let og_guest_regs_mapping = self.guest_regs_mapping;
+        let mut regs_to_save = dirty_guest_regs;
+        for (i, &mapped_reg) in desired_mapping.iter().enumerate() {
+            let reg = Reg::from(i as u8);
+            if mapped_reg != A64Reg::ZR && basic_block_output_regs.is_reserved(reg) {
+                regs_to_save -= reg;
+            }
+        }
+
+        self.save_dirty_guest_regs(regs_to_save, masm);
+
+        for reg in regs_to_save {
+            if desired_mapping[reg as usize] == A64Reg::ZR && self.guest_regs_mapping[reg as usize] != A64Reg::ZR {
+                self.set_guest_reg_mapping(reg, None);
+            }
+        }
+
+        for i in 0..desired_mapping.len() {
+            let reg = Reg::from(i as u8);
+            let desired_mapping_reg = desired_mapping[i];
+            let current_mapping = self.guest_regs_mapping[i];
+            if current_mapping != A64Reg::ZR && desired_mapping_reg != A64Reg::ZR && current_mapping != desired_mapping_reg {
+                self.swap_guest_regs(reg, reg, desired_mapping_reg, desired_mapping, masm);
+            }
+        }
+
+        for (i, &desired_mapping_reg) in desired_mapping.iter().enumerate() {
+            let current_mapping = self.guest_regs_mapping[i];
+            if desired_mapping_reg != A64Reg::ZR && current_mapping != desired_mapping_reg {
+                Self::restore_guest_reg(Reg::from(i as u8), desired_mapping_reg, masm);
+            }
+        }
+
+        self.set_guest_regs_mappings(&og_guest_regs_mapping);
     }
 
     /// Drop every mapping (memory must already be coherent — see save_dirty_guest_regs).

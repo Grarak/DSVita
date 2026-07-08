@@ -21,7 +21,7 @@
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;
 use crate::jit::assembler::aarch64::reg_alloc::A64RegAlloc;
-use crate::jit::assembler::{GuestInstMetadata, GUEST_REGS_LENGTH};
+use crate::jit::assembler::{GuestInstMetadata, GUEST_REGS_LENGTH, GUEST_REG_POOL_SIZE};
 use crate::jit::inst_info::InstInfo;
 use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::jit::Cond;
@@ -58,7 +58,12 @@ pub struct BlockAsm {
     /// Straight-line register allocator: mappings live between control-flow
     /// discontinuities; dirty registers get written back at every flush point.
     pub reg_alloc: A64RegAlloc,
-    dirty_guest_regs: RegReserve,
+    pub dirty_guest_regs: RegReserve,
+    /// Per-basic-block jump labels (Some when the block is a local-branch entry), and the
+    /// precomputed entry mapping (dirty&output regs, free-pool mask, guest→host mapping)
+    /// each block is relocated to on entry — arm32's basic-block emitter twins.
+    pub guest_basic_block_labels: Vec<Option<A64Label>>,
+    basic_blocks_guest_regs_mappings: Vec<(RegReserve, u16, [A64Reg; GUEST_REGS_LENGTH])>,
     /// Patchable fast-mem windows and always-slow handler calls: (key offset, metadata),
     /// in emission order. Boxed so the metadata address is stable from emission on —
     /// the ldm/stm handler call bakes the pointer in at emit time (the singles patcher
@@ -79,13 +84,18 @@ impl BlockAsm {
             inst_mappings: Vec::new(),
             reg_alloc: A64RegAlloc::new(),
             dirty_guest_regs: RegReserve::new(),
+            guest_basic_block_labels: Vec::new(),
+            basic_blocks_guest_regs_mappings: Vec::new(),
             guest_inst_metadata: Vec::new(),
         }
     }
 
-    /// Emit the block frame and pin the ThreadRegs base (arm32's prologue twin; the
-    /// basic-block count is an arm32 label-table concern — unused here).
-    pub fn prologue(&mut self, _basic_block_count: usize) {
+    /// Emit the block frame and pin the ThreadRegs base (arm32's prologue twin). Sizes the
+    /// per-basic-block label + entry-mapping tables the basic-block emitter fills in.
+    pub fn prologue(&mut self, basic_block_count: usize) {
+        self.guest_basic_block_labels.resize_with(basic_block_count, || None);
+        self.basic_blocks_guest_regs_mappings
+            .resize_with(basic_block_count, || (RegReserve::new(), (1 << GUEST_REG_POOL_SIZE) - 1, [A64Reg::ZR; GUEST_REGS_LENGTH]));
         let asm = self;
         let regs: *mut ThreadRegs = asm.cpu.thread_regs();
         asm.masm.bind(&mut asm.start_label);
@@ -274,11 +284,95 @@ impl BlockAsm {
         self.guest_inst_metadata.last_mut().unwrap().1.s.fast.size = size;
     }
 
+    pub fn get_guest_inst_metadata_len(&self) -> usize {
+        self.guest_inst_metadata.len()
+    }
+
+    /// Set the window size on every guest_inst_metadata record from `start` on — a
+    /// multi-register transfer records one per fault-site access, all pointing at the same
+    /// window (arm32's set_fast_mem_size).
+    pub fn set_fast_mem_size(&mut self, start: usize, size: u16) {
+        for (_, metadata) in &mut self.guest_inst_metadata[start..] {
+            metadata.s.fast.size = size;
+        }
+    }
+
     /// Compile-time-only variant for paths where the spills were already emitted on
     /// every arriving path (unreachable fall-throughs after unconditional branches).
     pub fn clear_guest_regs_mapping(&mut self) {
         self.reg_alloc.clear();
         self.dirty_guest_regs = RegReserve::new();
+    }
+
+    // --- Basic-block emitter seam (arm32 block_asm twins) ---
+    // A block is a straight-line run between control-flow discontinuities. The pre-pass
+    // computes each block's canonical entry mapping (init_guest_regs_mapping); emission
+    // installs it (init_guest_regs), binds the block's label if it's a branch target
+    // (bind_basic_block), and every edge into a block relocates the live mapping to that
+    // canonical mapping (relocate_for_basic_block) before the jump. Guest PC and CPSR stay
+    // memory-resident on a64, so unlike arm32 there is no cross-block cpsr-in-host dance.
+
+    /// Pre-pass: reserve host homes for a block's live-in guest regs (first-fit, no code
+    /// emitted) and record the resulting entry mapping. `output_regs` is the block's
+    /// written set — the recorded dirty subset is inputs that the block also writes.
+    pub fn init_guest_regs_mapping(&mut self, guest_regs: RegReserve, output_regs: RegReserve, basic_block_index: usize) {
+        self.reg_alloc = A64RegAlloc::new();
+        let dirty_guest_regs = self.reg_alloc.reserve_guest_regs(guest_regs - Reg::CPSR - Reg::PC, false, &mut self.masm);
+        self.basic_blocks_guest_regs_mappings[basic_block_index] = (dirty_guest_regs & output_regs, self.reg_alloc.free_regs(), self.reg_alloc.guest_regs_mapping);
+    }
+
+    /// Emission: install block `basic_block_index`'s precomputed entry mapping. Block 0's
+    /// input values still have to be loaded from memory (reload_active_guest_regs_all in
+    /// the driver); later blocks receive them relocated from their predecessor.
+    pub fn init_guest_regs(&mut self, basic_block_index: usize) {
+        let (dirty_guest_regs, free_regs, guest_regs_mapping) = self.basic_blocks_guest_regs_mappings[basic_block_index];
+        self.dirty_guest_regs = dirty_guest_regs;
+        self.reg_alloc.set_guest_regs_mappings(&guest_regs_mapping);
+        self.reg_alloc.set_free_regs(free_regs);
+    }
+
+    /// Reload every mapped guest register of the current mapping from memory — block 0's
+    /// entry (values are still only in guest memory there).
+    pub fn reload_active_guest_regs_all(&mut self) {
+        self.reg_alloc.reload_active_guest_regs(RegReserve::all() - Reg::PC, &mut self.masm);
+    }
+
+    pub fn bind_basic_block(&mut self, basic_block_index: usize) {
+        self.masm.bind(self.guest_basic_block_labels[basic_block_index].as_mut().unwrap());
+    }
+
+    pub fn b_basic_block(&mut self, basic_block_index: usize) {
+        self.masm.b(self.guest_basic_block_labels[basic_block_index].as_mut().unwrap());
+    }
+
+    /// Shuffle the live mapping into block `basic_block_index`'s canonical entry mapping
+    /// before jumping to it (arm32's relocate_for_basic_block).
+    pub fn relocate_for_basic_block(&mut self, basic_block_output_regs: RegReserve, basic_block_index: usize) {
+        let desired_mapping = self.basic_blocks_guest_regs_mappings[basic_block_index].2;
+        self.reg_alloc
+            .relocate_guest_regs(self.dirty_guest_regs - Reg::PC - Reg::CPSR, basic_block_output_regs, &desired_mapping, &mut self.masm);
+    }
+
+    /// Enter a basic block whose registers must be (re)loaded from guest memory rather than
+    /// relocated from a predecessor — the idle-loop reset, where the scheduler/interrupt
+    /// excursion left the pool stale (arm32's init_basic_block_regs). CPSR stays memory-
+    /// resident on a64, so there is no host-flag reload.
+    pub fn init_basic_block_regs(&mut self, basic_block_index: usize) {
+        let mapping = self.basic_blocks_guest_regs_mappings[basic_block_index].2;
+        self.reg_alloc.set_guest_regs_mappings(&mapping);
+        self.reload_active_guest_regs_all();
+    }
+
+    pub fn set_guest_regs_mapping(&mut self, guest_regs_mapping: [A64Reg; GUEST_REGS_LENGTH]) {
+        self.reg_alloc.set_guest_regs_mappings(&guest_regs_mapping);
+    }
+
+    pub fn get_guest_regs_mapping(&self) -> [A64Reg; GUEST_REGS_LENGTH] {
+        self.reg_alloc.guest_regs_mapping
+    }
+
+    pub fn add_dirty_guest_regs(&mut self, guest_regs: RegReserve) {
+        self.dirty_guest_regs += guest_regs;
     }
 
     /// Materialize the block's own host base address (== its jit entry: blocks are
