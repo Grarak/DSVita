@@ -656,8 +656,12 @@ pub fn actual_main() {
         let mut prev_touch: Option<(i16, i16)> = None;
         loop {
             let pause = match presenter.poll_event(&emu_unsafe.get_mut().settings) {
-                PresentEvent::Inputs { mut keymap, touch } => {
-                    if let Some((x, y)) = touch {
+                PresentEvent::Inputs { mut keymap, touch, debug_touch } => {
+                    if let Some((dx, dy)) = debug_touch {
+                        // Synthetic touch already in DS screen space; skip the window-pixel transform.
+                        touch_points.store(((dy as u16) << 8) | (dx as u16), Ordering::Relaxed);
+                        keymap &= !(1 << 16);
+                    } else if let Some((x, y)) = touch {
                         let (x_norm, y_norm) = screen_layout.normalize_touch_points(x, y);
                         if prev_touch.is_none()
                             && x >= PRESENTER_SCREEN_WIDTH as i16 - SWAP_ZONE_WIDTH

@@ -22,6 +22,9 @@ pub enum PresentEvent {
     Inputs {
         keymap: u32,
         touch: Option<(i16, i16)>,
+        // Debug-only synthetic touch in DS screen space (x in 0..256, y in 0..192), set by the
+        // keyboard tap-grid (DSVITA_DBG_TOUCH) so headless profiling can drive touch-gated titles.
+        debug_touch: Option<(i16, i16)>,
     },
     CycleScreenLayout {
         offset: i8,

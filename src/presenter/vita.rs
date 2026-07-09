@@ -364,7 +364,7 @@ impl Presenter {
                     previous_pressed_btn = 0;
                     self.do_nothing_until_all_btns_released = false;
                 } else {
-                    return PresentEvent::Inputs { keymap: 0xFFFFFFFF, touch: None };
+                    return PresentEvent::Inputs { keymap: 0xFFFFFFFF, touch: None, debug_touch: None };
                 }
             }
 
@@ -412,6 +412,7 @@ impl Presenter {
         PresentEvent::Inputs {
             keymap: self.keymap & stick_keymap,
             touch: self.touch_points,
+            debug_touch: None,
         }
     }
 
