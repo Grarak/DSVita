@@ -82,6 +82,7 @@ impl Default for FrameWindow {
 struct Gpu2DFrame {
     layers: [HeapArray<FrameLayer, { DISPLAY_WIDTH * DISPLAY_HEIGHT }>; 2],
     window: HeapArray<FrameWindow, { DISPLAY_WIDTH * DISPLAY_HEIGHT }>,
+    obj_window: HeapArray<bool, { DISPLAY_WIDTH * DISPLAY_HEIGHT }>,
     layer_texs: [GLuint; 2],
     fbo: GpuFbo,
 }
@@ -91,6 +92,7 @@ impl Gpu2DFrame {
         Gpu2DFrame {
             layers: [HeapArray::default(), HeapArray::default()],
             window: HeapArray::default(),
+            obj_window: HeapArray::default(),
             layer_texs: array_init!({ unsafe {
                 let mut tex = 0;
                 gl::GenTextures(1, &mut tex);
@@ -123,6 +125,26 @@ impl Gpu2DFrame {
             assert_unchecked(x < DISPLAY_WIDTH);
         }
         u8::from(self.window[y * DISPLAY_WIDTH + x]) & (1 << bit) != 0
+    }
+
+    fn reset_obj_window(&mut self, from_line: usize, to_line: usize) {
+        self.obj_window[from_line * DISPLAY_WIDTH..to_line * DISPLAY_WIDTH].fill(false);
+    }
+
+    fn mark_obj_window(&mut self, x: usize, y: usize) {
+        unsafe {
+            assert_unchecked(y < DISPLAY_HEIGHT);
+            assert_unchecked(x < DISPLAY_WIDTH);
+        }
+        self.obj_window[y * DISPLAY_WIDTH + x] = true;
+    }
+
+    fn is_obj_window(&self, x: usize, y: usize) -> bool {
+        unsafe {
+            assert_unchecked(y < DISPLAY_HEIGHT);
+            assert_unchecked(x < DISPLAY_WIDTH);
+        }
+        self.obj_window[y * DISPLAY_WIDTH + x]
     }
 
     fn set_obj_pixel(&mut self, x: usize, y: usize, color: u16, prio: u8) {
@@ -353,6 +375,11 @@ impl Gpu2DProgram {
                         continue;
                     }
 
+                    if disp_cnt.obj_window_display_flag() && frame.is_obj_window(x, line) {
+                        frame.set_window(x, line, (win_out >> 8) as u8, false);
+                        continue;
+                    }
+
                     frame.set_window(x, line, win_out as u8, false);
                 }
             }
@@ -419,7 +446,7 @@ impl Gpu2DProgram {
                 screen_base += h_overflow + v_overflow;
             }
 
-            let y_pixel_start = y_pixel_offset - start_y;
+            let y_pixel_start = from_line + y_pixel_offset - start_y;
             let char_y = y_pixel_offset & 7;
             let y_pixel_count = 8 - char_y;
             y_pixel_offset += y_pixel_count;
@@ -508,6 +535,189 @@ impl Gpu2DProgram {
         }
     }
 
+    // Affine coordinates are pre-accumulated per scanline in bg_ubo (async/batched rendering, not
+    // NooDS' per-scanline internalX/Y): the effective internal register is x + accumulated pb.
+    fn affine_start(regs: &Gpu2DRenderRegs, bg: usize, line: usize) -> (i32, i32, i32, i32) {
+        let idx = (bg - 2) * DISPLAY_HEIGHT + line;
+        let internal_x = regs.bg_ubo.x[idx].wrapping_add(regs.bg_ubo.pb[idx]);
+        let internal_y = regs.bg_ubo.y[idx].wrapping_add(regs.bg_ubo.pd[idx]);
+        (internal_x, internal_y, regs.bg_ubo.pa[idx], regs.bg_ubo.pc[idx])
+    }
+
+    unsafe fn draw_bg_affine(frame: &mut Gpu2DFrame, mem: &Gpu2DMem, regs: &Gpu2DRenderRegs, from_line: usize, to_line: usize, bg: usize) {
+        assert_unchecked(to_line <= DISPLAY_HEIGHT);
+        assert_unchecked(from_line < to_line);
+        assert_unchecked(bg == 2 || bg == 3);
+
+        let disp_cnt = DispCnt::from(regs.disp_cnt(from_line));
+        let bg_cnt = BgCnt::from(regs.bg_cnt(from_line, bg));
+
+        let screen_base = u32::from(disp_cnt.screen_base()) * 64 * 1024 + u32::from(bg_cnt.screen_base_block()) * 2 * 1024;
+        let char_base = u32::from(disp_cnt.char_base()) * 64 * 1024 + u32::from(bg_cnt.char_base_block()) * 16 * 1024;
+
+        let size = 128i32 << u8::from(bg_cnt.screen_size());
+        let entries_width = (size / 8) as u32;
+        let wrap = bg_cnt.ext_palette_slot_display_area_overflow();
+        let priority = u8::from(bg_cnt.priority());
+
+        for line in from_line..to_line {
+            let (internal_x, internal_y, pa, pc) = Self::affine_start(regs, bg, line);
+            for x in 0..DISPLAY_WIDTH {
+                if !frame.can_display_pixel(x, line, bg as u8) {
+                    continue;
+                }
+                let mut coord_x = internal_x.wrapping_add(x as i32 * pa) >> 8;
+                let mut coord_y = internal_y.wrapping_add(x as i32 * pc) >> 8;
+                if wrap {
+                    coord_x &= size - 1;
+                    coord_y &= size - 1;
+                } else if coord_x < 0 || coord_x >= size || coord_y < 0 || coord_y >= size {
+                    continue;
+                }
+                let coord_x = coord_x as u32;
+                let coord_y = coord_y as u32;
+
+                let tile = utils::read_from_mem::<u8>(mem.bg, screen_base + (coord_y >> 3) * entries_width + (coord_x >> 3));
+                let pal_index = utils::read_from_mem::<u8>(mem.bg, char_base + tile as u32 * 64 + (coord_y & 7) * 8 + (coord_x & 7));
+                if pal_index != 0 {
+                    let color = utils::read_from_mem::<u16>(mem.pal, (pal_index as u32) << 1) | (1 << 15);
+                    frame.set_bg_pixel(x, line, color, bg as u8, priority);
+                }
+            }
+        }
+    }
+
+    unsafe fn draw_bg_extended(frame: &mut Gpu2DFrame, mem: &Gpu2DMem, regs: &Gpu2DRenderRegs, from_line: usize, to_line: usize, bg: usize) {
+        assert_unchecked(to_line <= DISPLAY_HEIGHT);
+        assert_unchecked(from_line < to_line);
+        assert_unchecked(bg == 2 || bg == 3);
+
+        let disp_cnt = DispCnt::from(regs.disp_cnt(from_line));
+        let bg_cnt = BgCnt::from(regs.bg_cnt(from_line, bg));
+        let bg_cnt_raw = u16::from(bg_cnt);
+        let priority = u8::from(bg_cnt.priority());
+        let wrap = bg_cnt.ext_palette_slot_display_area_overflow();
+
+        if bg_cnt.color_256_palettes() {
+            // Bitmap (direct color or 256-color)
+            let data_base = ((bg_cnt_raw as u32) << 6) & 0x7C000;
+            let (size_x, size_y) = match u8::from(bg_cnt.screen_size()) {
+                0 => (128i32, 128i32),
+                1 => (256, 256),
+                2 => (512, 256),
+                _ => (512, 512),
+            };
+            let direct_color = bg_cnt_raw & (1 << 2) != 0;
+            for line in from_line..to_line {
+                let (internal_x, internal_y, pa, pc) = Self::affine_start(regs, bg, line);
+                for x in 0..DISPLAY_WIDTH {
+                    if !frame.can_display_pixel(x, line, bg as u8) {
+                        continue;
+                    }
+                    let mut coord_x = internal_x.wrapping_add(x as i32 * pa) >> 8;
+                    let mut coord_y = internal_y.wrapping_add(x as i32 * pc) >> 8;
+                    if wrap {
+                        coord_x &= size_x - 1;
+                        coord_y &= size_y - 1;
+                    } else if coord_x < 0 || coord_x >= size_x || coord_y < 0 || coord_y >= size_y {
+                        continue;
+                    }
+                    let pixel_offset = coord_y as u32 * size_x as u32 + coord_x as u32;
+                    if direct_color {
+                        let color = utils::read_from_mem::<u16>(mem.bg, data_base + pixel_offset * 2);
+                        if color & (1 << 15) != 0 {
+                            frame.set_bg_pixel(x, line, color, bg as u8, priority);
+                        }
+                    } else {
+                        let pal_index = utils::read_from_mem::<u8>(mem.bg, data_base + pixel_offset);
+                        if pal_index != 0 {
+                            let color = utils::read_from_mem::<u16>(mem.pal, (pal_index as u32) << 1) | (1 << 15);
+                            frame.set_bg_pixel(x, line, color, bg as u8, priority);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Extended affine (16-bit tile entries with flip and extended palettes)
+            let screen_base = u32::from(disp_cnt.screen_base()) * 64 * 1024 + u32::from(bg_cnt.screen_base_block()) * 2 * 1024;
+            let char_base = u32::from(disp_cnt.char_base()) * 64 * 1024 + u32::from(bg_cnt.char_base_block()) * 16 * 1024;
+            let size = 128i32 << u8::from(bg_cnt.screen_size());
+            let entries_width = (size / 8) as u32;
+            let use_ext_pal = disp_cnt.bg_extended_palettes();
+            let ext_pal_base = (bg * (vram::BG_EXT_PAL_SIZE / 4)) as u32;
+            for line in from_line..to_line {
+                let (internal_x, internal_y, pa, pc) = Self::affine_start(regs, bg, line);
+                for x in 0..DISPLAY_WIDTH {
+                    if !frame.can_display_pixel(x, line, bg as u8) {
+                        continue;
+                    }
+                    let mut coord_x = internal_x.wrapping_add(x as i32 * pa) >> 8;
+                    let mut coord_y = internal_y.wrapping_add(x as i32 * pc) >> 8;
+                    if wrap {
+                        coord_x &= size - 1;
+                        coord_y &= size - 1;
+                    } else if coord_x < 0 || coord_x >= size || coord_y < 0 || coord_y >= size {
+                        continue;
+                    }
+                    let coord_x = coord_x as u32;
+                    let coord_y = coord_y as u32;
+
+                    let entry = utils::read_from_mem::<u16>(mem.bg, screen_base + ((coord_y >> 3) * entries_width + (coord_x >> 3)) * 2);
+                    let x_in = if entry & (1 << 10) != 0 { 7 - (coord_x & 7) } else { coord_x & 7 };
+                    let y_in = if entry & (1 << 11) != 0 { 7 - (coord_y & 7) } else { coord_y & 7 };
+                    let pal_index = utils::read_from_mem::<u8>(mem.bg, char_base + (entry as u32 & 0x3FF) * 64 + y_in * 8 + x_in);
+                    if pal_index != 0 {
+                        let color = if use_ext_pal {
+                            let pal_addr = ext_pal_base + (u32::from(entry >> 12) << 9) + ((pal_index as u32) << 1);
+                            utils::read_from_mem::<u16>(mem.bg_ext_pal, pal_addr) | (1 << 15)
+                        } else {
+                            utils::read_from_mem::<u16>(mem.pal, (pal_index as u32) << 1) | (1 << 15)
+                        };
+                        frame.set_bg_pixel(x, line, color, bg as u8, priority);
+                    }
+                }
+            }
+        }
+    }
+
+    unsafe fn draw_bg_large(frame: &mut Gpu2DFrame, mem: &Gpu2DMem, regs: &Gpu2DRenderRegs, from_line: usize, to_line: usize, bg: usize) {
+        assert_unchecked(to_line <= DISPLAY_HEIGHT);
+        assert_unchecked(from_line < to_line);
+        assert_unchecked(bg == 2);
+
+        let bg_cnt = BgCnt::from(regs.bg_cnt(from_line, bg));
+        let priority = u8::from(bg_cnt.priority());
+        let wrap = bg_cnt.ext_palette_slot_display_area_overflow();
+        let (size_x, size_y) = if u8::from(bg_cnt.screen_size()) != 0 { (1024i32, 512i32) } else { (512i32, 1024i32) };
+
+        // A full large bitmap needs 512KB of VRAM; engine B only maps 128KB and wraps its rows.
+        let vram_rows = (mem.bg.len() / size_x as usize) as i32;
+        debug_assert!((vram_rows as u32).is_power_of_two());
+
+        for line in from_line..to_line {
+            let (internal_x, internal_y, pa, pc) = Self::affine_start(regs, bg, line);
+            for x in 0..DISPLAY_WIDTH {
+                if !frame.can_display_pixel(x, line, bg as u8) {
+                    continue;
+                }
+                let mut coord_x = internal_x.wrapping_add(x as i32 * pa) >> 8;
+                let mut coord_y = internal_y.wrapping_add(x as i32 * pc) >> 8;
+                if wrap {
+                    coord_x &= size_x - 1;
+                    coord_y &= size_y - 1;
+                } else if coord_x < 0 || coord_x >= size_x || coord_y < 0 || coord_y >= size_y {
+                    continue;
+                }
+                coord_y &= vram_rows - 1;
+                let pal_index = utils::read_from_mem::<u8>(mem.bg, (coord_y * size_x + coord_x) as u32);
+                if pal_index != 0 {
+                    let color = utils::read_from_mem::<u16>(mem.pal, (pal_index as u32) << 1) | (1 << 15);
+                    frame.set_bg_pixel(x, line, color, bg as u8, priority);
+                }
+            }
+        }
+    }
+
     unsafe fn draw_bg_3d(frame: &mut Gpu2DFrame, regs: &Gpu2DRenderRegs, from_line: usize, to_line: usize) {
         assert_unchecked(to_line <= DISPLAY_HEIGHT);
         assert_unchecked(from_line < to_line);
@@ -526,9 +736,9 @@ impl Gpu2DProgram {
     unsafe fn draw_bg<const MODE: BgMode>(frame: &mut Gpu2DFrame, mem: &Gpu2DMem, regs: &Gpu2DRenderRegs, from_line: usize, to_line: usize, bg: usize) {
         match MODE {
             BgMode::Text => Self::draw_bg_text(frame, mem, regs, from_line, to_line, bg),
-            BgMode::Affine => todo!(),
-            BgMode::Extended => todo!(),
-            BgMode::Large => todo!(),
+            BgMode::Affine => Self::draw_bg_affine(frame, mem, regs, from_line, to_line, bg),
+            BgMode::Extended => Self::draw_bg_extended(frame, mem, regs, from_line, to_line, bg),
+            BgMode::Large => Self::draw_bg_large(frame, mem, regs, from_line, to_line, bg),
             BgMode::Display3d => Self::draw_bg_3d(frame, regs, from_line, to_line),
         }
     }
@@ -591,7 +801,16 @@ impl Gpu2DProgram {
         }
     }
 
-    unsafe fn draw_object_normal(frame: &mut Gpu2DFrame, mem: &Gpu2DMem, regs: &Gpu2DRenderRegs, from_line: usize, to_line: usize, oam: &OamAttribs, coords: (i16, i16), size_shifts: (u8, u8)) {
+    unsafe fn draw_object_normal<const WINDOW: bool>(
+        frame: &mut Gpu2DFrame,
+        mem: &Gpu2DMem,
+        regs: &Gpu2DRenderRegs,
+        from_line: usize,
+        to_line: usize,
+        oam: &OamAttribs,
+        coords: (i16, i16),
+        size_shifts: (u8, u8),
+    ) {
         assert_unchecked(to_line <= DISPLAY_HEIGHT);
         assert_unchecked(from_line < to_line);
 
@@ -605,21 +824,61 @@ impl Gpu2DProgram {
         let attrib2 = OamAttrib2::from(oam.attr2);
 
         let alpha = ((attrib0.get_gfx_mode() != OamGfxMode::AlphaBlending) as u16) << 15;
+        let priority = u8::from(attrib2.priority());
 
-        let boundry_shift = if disp_cnt.tile_1d_obj_mapping() {
-            5 + u8::from(disp_cnt.tile_obj_1d_boundary())
-        } else {
-            // 5
-            todo!()
-        };
+        let boundry_shift = if disp_cnt.tile_1d_obj_mapping() { 5 + u8::from(disp_cnt.tile_obj_1d_boundary()) } else { 5 };
         let tile_base = u32::from(attrib2.tile_index()) << boundry_shift;
 
-        if attrib0.is_8bit() {
-            todo!()
-        } else {
-            let tile_count_x = 1 << (width_shift - 3);
-            let tile_count_y = 1 << (height_shift - 3);
+        let tile_count_x = 1usize << (width_shift - 3);
+        let tile_count_y = 1usize << (height_shift - 3);
 
+        if attrib0.is_8bit() {
+            // In 2D mapping the object map is a fixed 128 pixel (16 tile) wide grid
+            let map_width_shift = if disp_cnt.tile_1d_obj_mapping() { width_shift } else { 7 };
+
+            let (pal, pal_bank_addr): (&[u8], u32) = if disp_cnt.obj_extended_palettes() {
+                (mem.obj_ext_pal, u32::from(attrib2.pal_bank()) << 9)
+            } else {
+                (mem.pal, 0x200)
+            };
+
+            for y_tile_index in 0..tile_count_y {
+                let map_index = if attrib1.v_flip() { tile_count_y - y_tile_index - 1 } else { y_tile_index };
+                let tile_row_base = tile_base + ((map_index << (map_width_shift + 3)) as u32);
+                for x_tile_index in 0..tile_count_x {
+                    let map_index = if attrib1.h_flip() { tile_count_x - x_tile_index - 1 } else { x_tile_index };
+                    let tile_addr = tile_row_base + map_index as u32 * 64;
+
+                    for y_tile_offset in 0..8 {
+                        let y_pixel = (y as usize).wrapping_add((y_tile_index << 3) + y_tile_offset);
+                        if y_pixel < from_line || y_pixel >= to_line {
+                            continue;
+                        }
+
+                        let row = if attrib1.v_flip() { 7 - y_tile_offset } else { y_tile_offset };
+                        let row_addr = tile_addr + row as u32 * 8;
+                        for x_tile_offset in 0..8 {
+                            let x_pixel = (x as usize).wrapping_add((x_tile_index << 3) + x_tile_offset);
+                            if x_pixel >= DISPLAY_WIDTH || (!WINDOW && !frame.can_display_pixel(x_pixel, y_pixel, 4)) {
+                                continue;
+                            }
+
+                            let col = if attrib1.h_flip() { 7 - x_tile_offset } else { x_tile_offset };
+                            let pal_index = utils::read_from_mem::<u8>(mem.obj, row_addr + col as u32);
+                            if pal_index != 0 {
+                                if WINDOW {
+                                    frame.mark_obj_window(x_pixel, y_pixel);
+                                } else {
+                                    let color = (utils::read_from_mem::<u16>(pal, pal_bank_addr + ((pal_index as u32) << 1)) & !(1 << 15)) | alpha;
+                                    frame.set_obj_pixel(x_pixel, y_pixel, color, priority);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // In 2D mapping the object map is a fixed 256 pixel (32 tile) wide grid
             let map_width_shift = if disp_cnt.tile_1d_obj_mapping() { width_shift } else { 8 };
 
             let pal_addr = 0x200 + (u32::from(attrib2.pal_bank()) << 5);
@@ -633,7 +892,7 @@ impl Gpu2DProgram {
                     let tile_base = tile_base + map_index as u32 * 32;
 
                     for y_tile_offset in 0..8 {
-                        let y_pixel = (y as usize).wrapping_add((y_tile_index << 3) as usize + y_tile_offset);
+                        let y_pixel = (y as usize).wrapping_add((y_tile_index << 3) + y_tile_offset);
                         if y_pixel < from_line || y_pixel >= to_line {
                             continue;
                         }
@@ -642,16 +901,20 @@ impl Gpu2DProgram {
                         let tile_addr = tile_base + map_index as u32 * 4;
                         let pal_indices = utils::read_from_mem::<u32>(mem.obj, tile_addr);
                         for x_tile_offset in 0..8 {
-                            let x_pixel = (x as usize).wrapping_add((x_tile_index << 3) as usize + x_tile_offset);
-                            if x_pixel >= DISPLAY_WIDTH || !frame.can_display_pixel(x_pixel, y_pixel, 4) {
+                            let x_pixel = (x as usize).wrapping_add((x_tile_index << 3) + x_tile_offset);
+                            if x_pixel >= DISPLAY_WIDTH || (!WINDOW && !frame.can_display_pixel(x_pixel, y_pixel, 4)) {
                                 continue;
                             }
 
                             let x_tile_offset = if attrib1.h_flip() { 7 - x_tile_offset } else { x_tile_offset };
                             let pal_index = (pal_indices >> (x_tile_offset * 4)) & 0xF;
                             if pal_index != 0 {
-                                let color = (utils::read_from_mem::<u16>(mem.pal, pal_addr + pal_index * 2) & !(1 << 15)) | alpha;
-                                frame.set_obj_pixel(x_pixel, y_pixel, color, u8::from(attrib2.priority()));
+                                if WINDOW {
+                                    frame.mark_obj_window(x_pixel, y_pixel);
+                                } else {
+                                    let color = (utils::read_from_mem::<u16>(mem.pal, pal_addr + pal_index * 2) & !(1 << 15)) | alpha;
+                                    frame.set_obj_pixel(x_pixel, y_pixel, color, priority);
+                                }
                             }
                         }
                     }
@@ -660,7 +923,7 @@ impl Gpu2DProgram {
         }
     }
 
-    unsafe fn draw_object_affine(
+    unsafe fn draw_object_affine<const WINDOW: bool>(
         frame: &mut Gpu2DFrame,
         mem: &Gpu2DMem,
         regs: &Gpu2DRenderRegs,
@@ -690,12 +953,7 @@ impl Gpu2DProgram {
 
         let alpha = ((attrib0.get_gfx_mode() != OamGfxMode::AlphaBlending) as u16) << 15;
 
-        let boundry_shift = if disp_cnt.tile_1d_obj_mapping() {
-            5 + u8::from(disp_cnt.tile_obj_1d_boundary())
-        } else {
-            // 5
-            todo!()
-        };
+        let boundry_shift = if disp_cnt.tile_1d_obj_mapping() { 5 + u8::from(disp_cnt.tile_obj_1d_boundary()) } else { 5 };
         let tile_base = u32::from(attrib2.tile_index()) << boundry_shift;
 
         let affine_addr = ((oam.attr1 >> 9) & 0xF) as usize * 0x20;
@@ -725,9 +983,11 @@ impl Gpu2DProgram {
             8
         };
 
+        let priority = u8::from(attrib2.priority());
+
         for y_sprite in 0..height {
             let y_pixel = (y as usize).wrapping_add(y_sprite as usize);
-            if y_pixel >= DISPLAY_HEIGHT {
+            if y_pixel < from_line || y_pixel >= to_line {
                 continue;
             }
 
@@ -736,7 +996,7 @@ impl Gpu2DProgram {
 
             for x_sprite in 0..width {
                 let x_pixel = (x as usize).wrapping_add(x_sprite as usize);
-                if x_pixel >= DISPLAY_WIDTH || !frame.can_display_pixel(x_pixel, y_pixel, 4) {
+                if x_pixel >= DISPLAY_WIDTH || (!WINDOW && !frame.can_display_pixel(x_pixel, y_pixel, 4)) {
                     continue;
                 }
 
@@ -756,24 +1016,131 @@ impl Gpu2DProgram {
                     pal_index = (pal_index >> ((x_tile & 1) << 2)) & 0xF;
                 }
                 if pal_index != 0 {
-                    let color = (utils::read_from_mem::<u16>(pal, pal_index as u32 * 2) & !(1 << 15)) | alpha;
-                    frame.set_obj_pixel(x_pixel, y_pixel, color, u8::from(attrib2.priority()));
+                    if WINDOW {
+                        frame.mark_obj_window(x_pixel, y_pixel);
+                    } else {
+                        let color = (utils::read_from_mem::<u16>(pal, pal_index as u32 * 2) & !(1 << 15)) | alpha;
+                        frame.set_obj_pixel(x_pixel, y_pixel, color, priority);
+                    }
                 }
             }
         }
     }
 
-    unsafe fn draw_objects(frame: &mut Gpu2DFrame, mem: &Gpu2DMem, regs: &Gpu2DRenderRegs, from_line: usize, to_line: usize) {
+    // Bitmap objects hold direct RGB555 color. Like NooDS, they are drawn opaque (the per-object
+    // alpha is not applied in the layer model); fully transparent objects (alpha 0) are skipped.
+    unsafe fn draw_object_bitmap(
+        frame: &mut Gpu2DFrame,
+        mem: &Gpu2DMem,
+        regs: &Gpu2DRenderRegs,
+        from_line: usize,
+        to_line: usize,
+        oam: &OamAttribs,
+        coords: (i16, i16),
+        sprite_size_shifts: (u8, u8),
+        size_shifts: (u8, u8),
+    ) {
+        assert_unchecked(to_line <= DISPLAY_HEIGHT);
+        assert_unchecked(from_line < to_line);
+
+        let (x, y) = coords;
+        let disp_cnt = DispCnt::from(regs.disp_cnts[from_line]);
+        let attrib0 = OamAttrib0::from(oam.attr0);
+        let attrib1 = OamAttrib1::from(oam.attr1);
+        let attrib2 = OamAttrib2::from(oam.attr2);
+        let priority = u8::from(attrib2.priority());
+
+        let (sprite_width_shift, sprite_height_shift) = sprite_size_shifts;
+        let sprite_width = 1i32 << sprite_width_shift;
+        let sprite_height = 1i32 << sprite_height_shift;
+
+        // Determine the base address and stride of the bitmap
+        let (data_base, bitmap_width) = if disp_cnt.bitmap_obj_mapping() {
+            let boundary = if disp_cnt.bitmap_obj_1d_boundary() { 256u32 } else { 128 };
+            (u32::from(attrib2.tile_index()) * boundary, sprite_width as u32)
+        } else {
+            let obj_2d = disp_cnt.bitmap_obj_2d();
+            let x_mask: u32 = if obj_2d { 0x1F } else { 0x0F };
+            let tile_index = u32::from(attrib2.tile_index());
+            ((tile_index & x_mask) * 0x10 + (tile_index & !x_mask) * 0x80, if obj_2d { 256u32 } else { 128 })
+        };
+
+        if attrib0.get_obj_mode() == OamObjMode::Normal {
+            for y_sprite in 0..sprite_height {
+                let y_pixel = (y as i32).wrapping_add(y_sprite);
+                if y_pixel < from_line as i32 || y_pixel >= to_line as i32 {
+                    continue;
+                }
+                let y_pixel = y_pixel as usize;
+                let sprite_row = if attrib1.v_flip() { sprite_height - y_sprite - 1 } else { y_sprite } as u32;
+                let row_base = data_base + sprite_row * bitmap_width * 2;
+                for x_sprite in 0..sprite_width {
+                    let x_pixel = if attrib1.h_flip() { (x as i32) + sprite_width - x_sprite - 1 } else { (x as i32) + x_sprite };
+                    if x_pixel < 0 || x_pixel >= DISPLAY_WIDTH as i32 {
+                        continue;
+                    }
+                    let x_pixel = x_pixel as usize;
+                    if !frame.can_display_pixel(x_pixel, y_pixel, 4) {
+                        continue;
+                    }
+                    let pixel = utils::read_from_mem::<u16>(mem.obj, row_base + x_sprite as u32 * 2);
+                    if pixel & (1 << 15) != 0 {
+                        frame.set_obj_pixel(x_pixel, y_pixel, pixel, priority);
+                    }
+                }
+            }
+        } else {
+            // Rotscale: iterate the (possibly doubled) bounding box and map back into the sprite
+            let (width_shift, height_shift) = size_shifts;
+            let width = 1i32 << width_shift;
+            let height = 1i32 << height_shift;
+
+            let affine_addr = ((oam.attr1 >> 9) & 0xF) as u32 * 0x20;
+            let mat = [
+                utils::read_from_mem::<u16>(mem.oam, affine_addr + 0x6) as i16 as i32,
+                utils::read_from_mem::<u16>(mem.oam, affine_addr + 0xE) as i16 as i32,
+                utils::read_from_mem::<u16>(mem.oam, affine_addr + 0x16) as i16 as i32,
+                utils::read_from_mem::<u16>(mem.oam, affine_addr + 0x1E) as i16 as i32,
+            ];
+
+            for y_box in 0..height {
+                let y_pixel = (y as i32).wrapping_add(y_box);
+                if y_pixel < from_line as i32 || y_pixel >= to_line as i32 {
+                    continue;
+                }
+                let y_pixel = y_pixel as usize;
+                let origin_y = y_box - height / 2;
+                for x_box in 0..width {
+                    let x_pixel = (x as i32).wrapping_add(x_box);
+                    if x_pixel < 0 || x_pixel >= DISPLAY_WIDTH as i32 {
+                        continue;
+                    }
+                    let x_pixel = x_pixel as usize;
+                    if !frame.can_display_pixel(x_pixel, y_pixel, 4) {
+                        continue;
+                    }
+                    let origin_x = x_box - width / 2;
+                    let tex_x = ((origin_x * mat[0] + origin_y * mat[1]) >> 8) + sprite_width / 2;
+                    let tex_y = ((origin_x * mat[2] + origin_y * mat[3]) >> 8) + sprite_height / 2;
+                    if tex_x < 0 || tex_x >= sprite_width || tex_y < 0 || tex_y >= sprite_height {
+                        continue;
+                    }
+                    let pixel = utils::read_from_mem::<u16>(mem.obj, data_base + (tex_y as u32 * bitmap_width + tex_x as u32) * 2);
+                    if pixel & (1 << 15) != 0 {
+                        frame.set_obj_pixel(x_pixel, y_pixel, pixel, priority);
+                    }
+                }
+            }
+        }
+    }
+
+    unsafe fn draw_objects<const WINDOW: bool>(frame: &mut Gpu2DFrame, mem: &Gpu2DMem, regs: &Gpu2DRenderRegs, from_line: usize, to_line: usize) {
         assert_unchecked(to_line <= DISPLAY_HEIGHT);
         assert_unchecked(from_line < to_line);
 
         let disp_cnt = DispCnt::from(regs.disp_cnts[from_line]);
         if !disp_cnt.screen_display_obj() {
             return;
-        }
-
-        if disp_cnt.obj_window_display_flag() {
-            todo!()
         }
 
         const OAM_COUNT: usize = regions::OAM_SIZE as usize / 2 / size_of::<OamAttribs>();
@@ -785,8 +1152,15 @@ impl Gpu2DProgram {
             if obj_mode == OamObjMode::Disabled {
                 continue;
             }
-            if attrib0.get_gfx_mode() != OamGfxMode::Normal && attrib0.get_gfx_mode() != OamGfxMode::AlphaBlending {
-                todo!("{:?}", attrib0.get_gfx_mode());
+
+            // Window objects define the object window; all others are drawn normally
+            let gfx_mode = attrib0.get_gfx_mode();
+            if WINDOW {
+                if gfx_mode != OamGfxMode::Window {
+                    continue;
+                }
+            } else if gfx_mode == OamGfxMode::Window {
+                continue;
             }
 
             if attrib0.is_mosaic() {
@@ -833,10 +1207,36 @@ impl Gpu2DProgram {
                 continue;
             }
 
+            if !WINDOW && gfx_mode == OamGfxMode::Bitmap {
+                if u8::from(OamAttrib2::from(oam.attr2).pal_bank()) != 0 {
+                    Self::draw_object_bitmap(frame, mem, regs, from_line, to_line, oam, (x, y), sprite_size_shifts, size_shifts);
+                }
+                continue;
+            }
+
             match obj_mode {
-                OamObjMode::Normal => Self::draw_object_normal(frame, mem, regs, from_line, to_line, oam, (x, y), size_shifts),
-                OamObjMode::Affine | OamObjMode::AffineDouble => Self::draw_object_affine(frame, mem, regs, from_line, to_line, oam, (x, y), sprite_size_shifts, size_shifts),
+                OamObjMode::Normal => Self::draw_object_normal::<WINDOW>(frame, mem, regs, from_line, to_line, oam, (x, y), size_shifts),
+                OamObjMode::Affine | OamObjMode::AffineDouble => Self::draw_object_affine::<WINDOW>(frame, mem, regs, from_line, to_line, oam, (x, y), sprite_size_shifts, size_shifts),
                 _ => unreachable_unchecked(),
+            }
+        }
+    }
+
+    // VRAM display mode: the engine outputs a raw RGB555 bitmap straight from an LCDC-mapped VRAM
+    // bank, bypassing the layer/window/blend pipeline. Written as an opaque per-pixel backdrop
+    // (layer 5, not a blend target) so the blend pass passes it through unchanged.
+    unsafe fn draw_vram_display(frame: &mut Gpu2DFrame, mem: &Gpu2DMem, regs: &Gpu2DRenderRegs, from_line: usize, to_line: usize) {
+        assert_unchecked(to_line <= DISPLAY_HEIGHT);
+        assert_unchecked(from_line < to_line);
+
+        let base = u8::from(DispCnt::from(regs.disp_cnts[from_line]).vram_block()) as u32 * 0x20000;
+        for line in from_line..to_line {
+            let row = base + (line * DISPLAY_WIDTH * 2) as u32;
+            for x in 0..DISPLAY_WIDTH {
+                let pixel = utils::read_from_mem::<u16>(mem.lcdc, row + (x * 2) as u32);
+                let layer = FrameLayer::from(utils::rgba5_to_rgba8_non_norm(pixel));
+                frame.layers[0][line * DISPLAY_WIDTH + x] = layer;
+                frame.layers[1][line * DISPLAY_WIDTH + x] = layer;
             }
         }
     }
@@ -857,8 +1257,17 @@ impl Gpu2DProgram {
                 line += 1;
             }
 
+            let disp_cnt = DispCnt::from(from_disp_cnt);
+            if u8::from(disp_cnt.display_mode()) == 2 {
+                Self::draw_vram_display(frame, &mem, regs, from_line, line);
+                continue;
+            }
+            if disp_cnt.screen_display_obj() && disp_cnt.obj_window_display_flag() {
+                frame.reset_obj_window(from_line, line);
+                Self::draw_objects::<true>(frame, &mem, regs, from_line, line);
+            }
             Self::draw_windows(frame, regs, from_line, line);
-            Self::draw_objects(frame, &mem, regs, from_line, line);
+            Self::draw_objects::<false>(frame, &mem, regs, from_line, line);
             Self::draw_bgs(frame, &mem, regs, from_line, line);
         }
     }

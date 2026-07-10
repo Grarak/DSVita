@@ -4,6 +4,7 @@ use crate::core::graphics::gpu::{DispCapCnt, PowCnt1, DISPLAY_HEIGHT, DISPLAY_WI
 use crate::core::graphics::gpu_2d::registers_2d::Gpu2DRegisters;
 use crate::core::graphics::gpu_2d::renderer_2d::Gpu2DRenderer;
 use crate::core::graphics::gpu_2d::renderer_regs_2d::Gpu2DRenderRegsShared;
+use crate::core::graphics::gpu_2d::renderer_soft_2d::Gpu2DSoftRenderer;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::registers_3d::Gpu3DRegisters;
 use crate::core::graphics::gpu_3d::renderer_3d::{Gpu3DRenderer, WidescreenOption};

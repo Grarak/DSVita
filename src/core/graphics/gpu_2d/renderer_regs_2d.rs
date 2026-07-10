@@ -72,6 +72,7 @@ const_assert!(size_of::<BgUbo>() <= 16 * 1024);
 #[repr(C)]
 pub struct BlendUbo {
     pub bld_cnts_alphas_ys: [u32; DISPLAY_HEIGHT],
+    pub master_brights: [u32; DISPLAY_HEIGHT],
 }
 
 const_assert!(size_of::<BlendUbo>() <= 16 * 1024);
@@ -142,6 +143,7 @@ impl Gpu2DRenderRegs {
         let eva = (inner.bld_alpha & 0x1F) as u32;
         let evb = (inner.bld_alpha >> 8) as u32;
         self.blend_ubo.bld_cnts_alphas_ys[line] = (inner.bld_cnt as u32) | (eva << 16) | (evb << 21) | ((inner.bld_y as u32) << 26);
+        self.blend_ubo.master_brights[line] = inner.master_bright as u32;
     }
 
     pub fn disp_cnt(&self, line: usize) -> u32 {

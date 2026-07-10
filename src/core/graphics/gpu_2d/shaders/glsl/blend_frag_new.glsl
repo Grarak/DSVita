@@ -7,6 +7,7 @@ layout(location = 0) out vec4 color;
 
 uniform BlendUbo {
     int bldCntsAlphasYs[192];
+    int masterBrights[192];
 };
 
 uniform sampler2D topLayer;
@@ -110,5 +111,18 @@ void main() {
             topColor.rgb -= topColor.rgb * bldYF;
         }
         color = vec4(topColor.rgb, 1.0);
+    }
+
+    // Master brightness: final stage, applied to the whole engine output
+    int mb = masterBrights[y];
+    int mbFactor = min(mb & 0x1F, 16);
+    if (mbFactor != 0) {
+        int mbMode = (mb >> 14) & 3;
+        float mbF = float(mbFactor) / 16.0;
+        if (mbMode == 1) {
+            color.rgb += (1.0 - color.rgb) * mbF;
+        } else if (mbMode == 2) {
+            color.rgb -= color.rgb * mbF;
+        }
     }
 }
