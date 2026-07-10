@@ -314,9 +314,9 @@ impl JitAsm<'_> {
                 }
                 ARM7 => {
                     self.emit_branch_out_metadata(inst_index, true, block_asm);
-                    let mem_operand = (Reg::R0, JitRuntimeData::get_data_packed_offset() as i32 + 3).into();
+                    let mem_operand = (Reg::R0, JitRuntimeData::get_data_packed_offset() as i32).into();
                     block_asm.ldrb2(Reg::R1, &mem_operand);
-                    block_asm.orr5(FlagsUpdate_DontCare, Cond::AL, Reg::R1, Reg::R1, &0x80.into());
+                    block_asm.orr5(FlagsUpdate_DontCare, Cond::AL, Reg::R1, Reg::R1, &(crate::jit::jit_asm::IDLE_LOOP_FLAG_MASK as u32).into());
                     block_asm.strb2(Reg::R1, &mem_operand);
                     block_asm.exit_guest_context(&mut self.runtime_data.host_sp);
                 }

@@ -98,6 +98,14 @@ pub struct CycleManager {
     next_event_cycle: u32,
     active_events: u32,
     active_imm_events: u32,
+    // Due cycle of the event currently being dispatched, valid only inside a handler.
+    // Periodic handlers reschedule via schedule_from_due instead of the dispatch-time
+    // cycle_count: the jit overshoots the due cycle by the slice remainder, and
+    // rescheduling from the overshot count made every periodic grid drift (SPU sample
+    // cadence vs ARM7 timers), desyncing the capture-based surround loop games run on
+    // the ARM7 sound driver (audio crackle in e.g. Animal Crossing, Star Wars Ep3).
+    #[savestate(skip)]
+    current_event_due: u32,
 }
 
 impl CycleManager {
@@ -108,6 +116,7 @@ impl CycleManager {
             next_event_cycle: u32::MAX,
             active_events: 0,
             active_imm_events: 0,
+            current_event_due: 0,
         }
     }
 
@@ -117,6 +126,7 @@ impl CycleManager {
         self.next_event_cycle = u32::MAX;
         self.active_events = 0;
         self.active_imm_events = 0;
+        self.current_event_due = 0;
     }
 
     pub fn add_cycles(&mut self, cycle_count: u16) {
@@ -144,9 +154,30 @@ impl CycleManager {
         }
     }
 
+    // Reschedule a periodic event relative to its due cycle instead of the (overshot)
+    // dispatch-time cycle_count, keeping the event grid drift-free. Only valid while
+    // dispatching that event. A due cycle already in the past fires on the next check,
+    // so a late slice catches up instead of stretching the period.
+    pub fn schedule_from_due(&mut self, in_cycles: u32, event_type: EventType) {
+        debug_assert!(in_cycles >= 1);
+        let event_cycle = self.current_event_due.saturating_add(in_cycles);
+        self.events[event_type as usize] = event_cycle;
+        self.active_events |= 1 << (31 - event_type as u8);
+        if event_cycle < self.next_event_cycle {
+            self.next_event_cycle = event_cycle;
+        }
+    }
+
+    pub fn current_event_due(&self) -> u32 {
+        self.current_event_due
+    }
+
     pub fn jump_to_next_event(&mut self) {
-        debug_assert!(self.cycle_count <= self.next_event_cycle);
-        self.cycle_count = self.next_event_cycle;
+        // A catch-up reschedule (schedule_from_due after a late slice) can leave
+        // next_event_cycle in the past — never move the clock backwards.
+        if self.next_event_cycle > self.cycle_count {
+            self.cycle_count = self.next_event_cycle;
+        }
     }
 }
 
@@ -222,6 +253,9 @@ impl Emu {
             let event_cycle = unsafe { *self.cm.events.get_unchecked(event_index) };
             if event_cycle <= cycle_count {
                 self.cm.active_events &= !(1 << (31 - event_index));
+                // The due slot is only overwritten once its handler reschedules, so it still
+                // holds this event's due cycle here; schedule_from_due anchors to it.
+                self.cm.current_event_due = event_cycle;
                 let func = unsafe { LUT.get_unchecked(event_index) };
                 func(self);
             } else if event_cycle < self.cm.next_event_cycle {

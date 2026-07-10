@@ -168,7 +168,7 @@ fn run_cpu(emu: &mut Emu, savestate: Option<Vec<u8>>) {
         regs.user.gp_regs[4] = arm7_entry_addr; // R12
         regs.user.sp = 0x380FD80;
         regs.irq.sp = 0x380FF80;
-        regs.user.sp = 0x380FFC0;
+        regs.svc.sp = 0x380FFC0;
         regs.user.lr = arm7_entry_addr;
         regs.pc = arm7_entry_addr;
         emu.thread_set_cpsr(ARM7, 0x000000DF, false);

@@ -37,8 +37,29 @@ Emulator keyboard map: WASD = dpad, K = A, J = B, I = X, U = Y, B = Start, V = S
 | `extract.sh <ilog> <out.txt> [maxlines]` | Decode an ilog and keep only `^ARM7 Executed` register lines |
 | `sync.sh <ilog> <out.txt> [lines]` | Decode and grep the IPCSYNC (0x4000180) read/write traffic |
 | `gen_thumb_table.py` | Regenerate `src/jit/interpreter/thumb_table.rs` from the thumb disassembler layout |
-| `trace_diff.py <a.ilog> <b.ilog> [W]` | Streaming BINARY ilog differ — finds the first divergence (same-pc-diff-regs or unresolvable control-flow split) between two traces without decoding to text. Resyncs around HLE gaps (interp interprets a cold SDK function the jit HLE-replaces), same-block `bl` parity gaps, and spin-loop iteration-count skew. `W` = resync window (default 100000; two-phase 2000 then W). Pair the interp build (threshold 100) against the jit build (threshold 0), both DEBUG_LOG=true. See `DEVELOPMENT.md` §4 for the workflow and parity caveats. |
+| `trace_diff.py <a.ilog> <b.ilog> [W] [--strict] [--cpu N]` | Streaming BINARY ilog differ — finds the first divergence (same-pc-diff-regs or unresolvable control-flow split) between two traces without decoding to text. Default mode resyncs around HLE gaps, same-block `bl` parity gaps, and spin-loop iteration-count skew (`W` = resync window, default 100000). `--strict` = record-for-record, first mismatch wins. `--cpu 0\|1` filters to one cpu's stream — the way past benign ARM9/ARM7 interleave shifts (per-cpu streams identical + interleave different = timing skew, not a value bug). See `DEVELOPMENT.md` §4 for workflow and parity caveats. |
+| `block_diff.py <a> <b> <cpu>` | Per-cpu BLOCK-ENTRY streams (pc discontinuities), engine-neutral; first control-flow-level difference before staring at records |
+| `tracediff.sh <rom> [records] [arm7_emu]` | Cross-arch strict pair: armhf interpreter (on the test box) vs aarch64 interpreter (local), identical settings, then `trace_diff.py --strict`. Flips INTERP_THRESHOLD=255 in-source for both builds and restores it |
+| `armv7_gate.sh` | armv7-sacred byte-identity gate: per-block `(cpu, pc, thumb, len, xxh32)` stream over deterministic qemu boots vs a baseline — any shared-jit refactor must keep it identical (`armv7_gate_compare.py` masks host-pointer materializations) |
+
+## Profiling / benchmarking (test box)
+
+| script | what it does |
+|---|---|
+| `ab_measure.sh <bin> <rom>` | Launch uncapped, drive to gameplay, print mean emu-fps over 20 s |
+| `ab_batch.sh` | Interleaved A/B fps runs of two binaries (thermal-drift-resistant) |
+| `prof_one2.sh <rom> <out> [boot_s] [prof_s]` | Unified per-game profile: DSVITA_DBG_TOUCH drive-in through menus, then a perf record over gameplay (`prof_one2_audio.sh` = same with `-a`) |
+| `batch_prof2.sh` / `batch_audio.sh` | Sweep the profiler over a rom list (`~/prof_keep.txt` / `~/prof_worst.txt`) |
+| `gen_symbol_order.sh` / `match_symbol_order.sh` | Link-time hot/cold symbol ordering files from a perf report (see `DEVELOPMENT.md` §6) |
 
 Decode any ilog to text with `dsvita decode-inst-log <path>`. Record lazily (start on `pkill
--USR2 -x dsvita`) with `--inst-log-lazy <path>` to capture only the final stretch of a long run.
-Both need a `DEBUG_LOG = true` build (src/main.rs).
+-USR2 -x dsvita`) with `--inst-log-lazy <path>` to capture only the final stretch of a long
+run — the tool of choice for hang steady-states. Tracing needs a DEBUG_LOG build: plain
+`cargo build` (the dev profile IS the trace build; DEBUG_LOG keys off the profile name).
+
+## Audio triage (env valves, any build)
+
+`DSVITA_AUDIO_DUMP=<path>` dumps every SPU sample event (8-byte frames: final L/R +
+pre-capture mixer L/R, s16le 32768 Hz, pre-transport → guest-deterministic).
+`DSVITA_SPU_LOG=1` logs channel/capture/main-cnt writes to stderr. Workflow and analysis
+recipes in `DEVELOPMENT.md` §4 "Audio triage".

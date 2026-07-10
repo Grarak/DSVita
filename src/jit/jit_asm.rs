@@ -218,6 +218,12 @@ struct JitRuntimeDataPacked {
     _unused: u6,
 }
 
+// Bit of JitRuntimeDataPacked.idle_loop, for the emitted flag store in the ARM7
+// idle-loop exit (both backends). Kept next to the struct so a layout change can't
+// silently strand the emitters again (the u32→u8 repack left them setting bit 31's
+// old byte — a padding byte — so the runtime flag never became true).
+pub const IDLE_LOOP_FLAG_MASK: u8 = 0x02;
+
 #[repr(C, align(32))]
 pub struct JitRuntimeData {
     pub accumulated_cycles: u16,
@@ -233,6 +239,7 @@ pub struct JitRuntimeData {
 
 impl JitRuntimeData {
     fn new() -> Self {
+        debug_assert!(JitRuntimeDataPacked::from(IDLE_LOOP_FLAG_MASK).idle_loop());
         JitRuntimeData {
             pre_cycle_count_sum: 0,
             accumulated_cycles: 0,

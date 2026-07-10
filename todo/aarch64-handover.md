@@ -4,7 +4,7 @@ One doc: current state, how the A64 jit works, what's pending, how to debug it, 
 lessons that cost real time. Supersedes the old plan/progress/session notes (git history
 has them; the width/wrapping audit survives as `todo/aarch64-width-audit.md`).
 
-## State (July 7 2026 night, branch `aarch64-port-s1`)
+## State (July 10 2026, branch `aarch64-port-s1`)
 
 Stages 1-4 DONE. Stage 5 slices 1-8 DONE and gated (ALU, flags, branches+tail-calls,
 bl/blx/bx+return-stack, thumb, HLE substitutions, register allocator, single-transfer
@@ -12,9 +12,21 @@ fastmem + SIGSEGV patcher). One shared compile_block; pool x19-x26+x28; ARM7 hom
 hash validation; the ORIGINAL vixl aarch32 generation pipeline restored (cc-expand +
 clang-format + Condition-regex, no list file); every DSVITA_* debug valve behind
 IS_DEBUG (release builds fold them out — device bisects need release-debug builds).
-ldm/stm lowering wired end-to-end but DEFAULTED OFF (irq-phase split — see pending).
-Gates at HEAD: hello_world 3M strict, armv7-sacred byte-identical ×3 baselines, HG
+Gates: hello_world 3M strict, armv7-sacred byte-identical ×3 baselines, HG
 jit-vs-jit determinism byte-identical, release smokes healthy.
+
+Since July 8: the emitter is basic-block based (arm32-parity port), idle-loop
+detection/fast-forward is emitted on a64 too, **multi-register ldm/stm is ON**
+(LDP/STP fastmem; the AC crash was the sched-tail storing an untagged thumb resume pc,
+fixed alongside), and **Animal Crossing boots on a64** — the residual freeze was the
+ARM7 idle-loop flag written to a stale byte offset from before the JitRuntimeDataPacked
+u32→u8 repack (dead on BOTH backends; arm32 merely lost the fast-forward silently, the
+a64's 0-cycle idle exit livelocked the whole scheduler). The flag mask is now
+`IDLE_LOOP_FLAG_MASK` beside the struct with a debug assert — see DEVELOPMENT.md §5.8.
+Note for anyone touching emitted offsets: `JitRuntimeData` gained a `pre_force_cycles`
+field (irq-force bookkeeping, DEVELOPMENT.md §1) — all emitted accesses go through
+`offset_of!`-based getters, keep it that way. Full-rom sweep on the multi-register
+build: ~94 games OK (July 8, plus fixes since).
 
 Debug instruments (all IS_DEBUG): DSVITA_VBLANK_HASH=N[,M] (main/vram/palettes/oam +
 2D-register-file xxh32 at vblank anchors), MEMHASH at the inst-log budget stop,
@@ -25,7 +37,14 @@ DSVITA_FRAME_DUMP=N[,M] (glReadPixels of the final framebuffer pre-swap → fram
 + `ca310352` + `736846d9`) to Grarak/vixl; disassembler-vs-NooDS cycle call; merge
 decision.
 
-## A64 visual corruption investigation (ACTIVE — narrowed to frozen engine-A tables)
+## A64 visual corruption investigation (SIDESTEPPED — software 2D renderer)
+
+**Status July 9-10: production 2D moved to the software renderer** (`renderer_soft_2d.rs`,
+NooDS-referenced, async/batched affine from bg_ubo), which does not exhibit the corruption;
+`renderer_2d` remains only for `set_tex_ptrs`. The GL-path findings below stay valid if the
+GL 2D renderer is ever revived — the frozen-UBO root cause was narrowed but not fixed.
+
+### The GL-path findings (historical)
 
 Symptoms (maintainer): 2D glitches on a64 even with software GL; Black crash. Pi5 = the
 visual box; pinned sav (~/hg_master.sav); pkill -x only (never -f — matches the ssh
@@ -90,9 +109,8 @@ lowering decision (stage 6 demands record-identical armhf-jit ↔ a64-jit).
   the generic per-write path), stores per-block `A64BlockMeta`, and returns `flushed`;
   the driver exits the guest context after a flushing insert (host frames above may
   point into freed blocks — same rule as arm32).
-- HLE substitutions (os irq handler, nitro-sdk patterns, TWL microcode) exist only in
-  the arm32 emitter → on a64 those pcs interpret; `-e 2` stays refused at startup until
-  the HLE slice.
+- HLE substitutions (os irq handler, nitro-sdk patterns, TWL microcode) are live on
+  both backends since stage-5 slice 6 (`-e 2` is legal on aarch64).
 
 ### Block anatomy (runtime contract)
 - A block is a normal AAPCS64 function taking the tagged guest pc in w0. Prologue: fp/lr
@@ -163,25 +181,23 @@ lowering decision (stage 6 demands record-identical armhf-jit ↔ a64-jit).
 - Remaining top risks (plan ranking): emit_transfer lowering + slow-mem patch scheme +
   cross-modifying icache discipline on the A76; vixl masm surprises around pools/veneers
   (use ExactAssemblyScope for patch/fastmem windows; execute-tests exist).
-- Stage-6 note: arm32's analyzer-driven idle-loop detection changes timing; the a64
-  backend will need the same analysis before armhf-jit ↔ a64-jit strict can pass.
+- Stage-6 note: idle-loop detection/fast-forward is emitted on BOTH backends now (a64
+  got it in the basic-block port; the shared flag-byte bug is fixed — DEVELOPMENT.md
+  §5.8), so it is no longer an armhf↔a64 timing asymmetry.
 
 ## Pending work
 
-1. **Visual corruption** — active, section above (finish the armhf half of the frame/UBO
-   comparison, then the verdict tree).
-2. **Full op coverage → delete is_block_jit_supported.** Singles DONE (fastmem).
-   ldm/stm WIRED but OFF in is_multiple_transfer_supported: with it on, hello_world's
-   strict pair splits at ~130k records on ARM7 irq phase — an interrupt dispatches one
-   instruction earlier than the interpreter right after a compiled thumb pop (T-loss
-   scan via trace_diff Stream: pop {r0} at 0x3802308 → vector 0x23800b0). Find the
-   cycle-accounting detail (text-pair + scheduler-firing grep playbook); also refuse or
-   no-op EMPTY rlists before re-enabling (the core debug_asserts non-empty).
-   Then the rest, designs settled: PC-dst loads as terminals; ldrd/strd window
-   extension; swp two-call; mrs/msr/cp15/swi via the interpreter helpers; mul family
-   inline (N/Z only); shift-by-reg S-forms + RRX with csel carry rules; undefined →
-   inst_undefined. Then delete the valve + REFUSED sentinel + the arm32-only
-   fall-through cfg island, and run stage 6.
+1. **Visual corruption** — sidestepped by the software 2D renderer (section above);
+   the GL 2D path keeps its frozen-UBO bug if ever revived. Soft-2D gaps: vram-display,
+   mosaic; Vita untested.
+2. **Full op coverage → delete is_block_jit_supported.** Singles DONE (fastmem),
+   **multi-register ldm/stm DONE and ON** (LDP/STP fastmem windows + whole-window slow
+   patch; the crash that kept it gated was the local-branch sched tail storing an
+   untagged thumb resume pc — fixed). Remaining, designs settled: PC-dst loads as
+   terminals; ldrd/strd window extension; swp two-call; mrs/msr/cp15/swi via the
+   interpreter helpers; mul family inline (N/Z only); shift-by-reg S-forms + RRX with
+   csel carry rules; undefined → inst_undefined. Then delete the valve + REFUSED
+   sentinel + the arm32-only fall-through cfg island, and run stage 6.
 3. **Stage 6**: armhf-jit ↔ a64-jit strict pairs at threshold 0 — the definitive value
    gate (jit-vs-interp died with fastmem write-breakouts by design; methodology section
    below). Perf floor: a64-jit ≥ armhf-jit on the pi5.
@@ -254,8 +270,10 @@ the fallback for op classes arm32 compiles but a64 doesn't yet: reference =
   a trace via the record opcodes (`trace_diff.read_inst`/`Stream`) or
   `decode-inst-log | grep "PC: <hex>"`. `DSVITA_BLOCK_DUMP_PC=hexpc` dumps emitted bytes.
 - **Hygiene**: kill stray emulator/qemu processes between timing-sensitive runs
-  (`pkill -f dsvita`); traces are tens of GB — stream, delete after; never decode on the
-  pi, pull first.
+  (`pkill -x dsvita` — never `-f`, it matches the invoking ssh cmdline); traces are tens
+  of GB — stream, delete after; never decode on the pi, pull first.
+- Engine-independent techniques (scheduler-freeze state dump, screenshot bisect oracle,
+  audio dump valves, NooDS headless reference harness) live in DEVELOPMENT.md §4.
 
 ## Lessons learned (paid for in hours)
 

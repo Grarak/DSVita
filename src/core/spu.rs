@@ -22,6 +22,27 @@ pub const CHANNEL_COUNT: usize = 16;
 const SAMPLE_RATE: usize = 32768;
 pub const SAMPLE_BUFFER_SIZE: usize = SAMPLE_RATE * PRESENTER_AUDIO_OUT_BUF_SIZE / PRESENTER_AUDIO_OUT_SAMPLE_RATE;
 
+// Debug tooling: DSVITA_AUDIO_DUMP=<path> dumps every sample pushed by the SPU as raw
+// s16le stereo @ 32768Hz (pre-transport, guest-time deterministic). DSVITA_SPU_LOG=1
+// logs channel start/stop and capture control writes to stderr.
+fn audio_dump_file() -> Option<std::io::BufWriter<std::fs::File>> {
+    let path = std::env::var("DSVITA_AUDIO_DUMP").ok()?;
+    Some(std::io::BufWriter::new(std::fs::File::create(path).unwrap()))
+}
+
+pub fn spu_log_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("DSVITA_SPU_LOG").is_ok_and(|v| v != "0"))
+}
+
+macro_rules! spu_log {
+    ($($args:tt)*) => {
+        if unlikely(crate::core::spu::spu_log_enabled()) {
+            eprintln!($($args)*);
+        }
+    };
+}
+
 pub struct SoundSampler {
     queues: [(HeapArrayU32<SAMPLE_BUFFER_SIZE>, u16); 2],
     busy_queue: usize,
@@ -35,6 +56,7 @@ pub struct SoundSampler {
     size_count: f32,
     cond_mutex: Mutex<bool>,
     condvar: Condvar,
+    dump: Option<std::io::BufWriter<std::fs::File>>,
 }
 
 impl SoundSampler {
@@ -57,6 +79,7 @@ impl SoundSampler {
             size_count: 0.0,
             cond_mutex: Mutex::new(false),
             condvar: Condvar::new(),
+            dump: audio_dump_file(),
         }
     }
 
@@ -71,6 +94,16 @@ impl SoundSampler {
         self.average_size = 0.0;
         self.size_count = 0.0;
         *self.cond_mutex.lock().unwrap() = false;
+    }
+
+    // Debug dump frame: final output sample + pre-capture mixer L/R (each clamped to i16).
+    fn dump_frame(&mut self, final_word: u32, mix_word: u32) {
+        if unlikely(self.dump.is_some()) {
+            use std::io::Write;
+            let dump = self.dump.as_mut().unwrap();
+            dump.write_all(&final_word.to_le_bytes()).unwrap();
+            dump.write_all(&mix_word.to_le_bytes()).unwrap();
+        }
     }
 
     #[inline(always)]
@@ -415,6 +448,11 @@ pub struct Spu {
     sound_bias: u16,
     duty_cycles: [i32; 6],
     noise_values: [u16; 2],
+    // Bit i mirrors channels[i].active — the sample loop iterates set bits instead of
+    // scanning all 16 slots. The bools stay authoritative (savestate format unchanged);
+    // rebuilt from them on load.
+    #[savestate(skip)]
+    active_channels: u16,
     #[savestate(skip)]
     sound_sampler: NonNull<SoundSampler>,
 }
@@ -428,6 +466,7 @@ impl Spu {
             sound_bias: 0,
             duty_cycles: [0; 6],
             noise_values: [0; 2],
+            active_channels: 0,
             sound_sampler,
         }
     }
@@ -439,6 +478,16 @@ impl Spu {
         self.sound_bias = 0;
         self.duty_cycles = [0; 6];
         self.noise_values = [0; 2];
+        self.active_channels = 0;
+    }
+
+    fn set_channel_active(&mut self, channel_num: usize, active: bool) {
+        self.channels[channel_num].active = active;
+        if active {
+            self.active_channels |= 1 << channel_num;
+        } else {
+            self.active_channels &= !(1 << channel_num);
+        }
     }
 }
 
@@ -455,6 +504,12 @@ impl Emu {
             let base = self.mem.shm.as_ptr() as usize + self.get_shm_offset::<{ ARM7 }, true, false>(self.spu.sound_cap_channels[channel_num].dad);
             self.spu.sound_cap_channels[channel_num].dad_ptr = base;
             self.spu.sound_cap_channels[channel_num].dad_current += base;
+        }
+        self.spu.active_channels = 0;
+        for channel_num in 0..CHANNEL_COUNT {
+            if self.spu.channels[channel_num].active {
+                self.spu.active_channels |= 1 << channel_num;
+            }
         }
     }
 
@@ -486,7 +541,10 @@ impl Emu {
         if was_disabled && channel.cnt.start_status() && self.spu.main_sound_cnt.master_enable() && (channel.sad != 0 || channel.cnt.get_format() == SoundChannelFormat::PsgNoise) {
             self.spu_start_channel(channel_num);
         } else if !channel.cnt.start_status() {
-            channel.active = false;
+            if self.spu.channels[channel_num].active {
+                spu_log!("[{}] stop ch{channel_num} (cnt write)", self.cm.get_cycles());
+            }
+            self.spu.set_channel_active(channel_num, false);
         }
     }
 
@@ -501,7 +559,7 @@ impl Emu {
             if channel.sad != 0 && (self.spu.main_sound_cnt.master_enable() && channel.cnt.start_status()) {
                 self.spu_start_channel(channel_num);
             } else {
-                channel.active = false;
+                self.spu.set_channel_active(channel_num, false);
             }
         }
     }
@@ -530,6 +588,8 @@ impl Emu {
 
         debug_println!("spu set main sound cnt {:x}", u16::from(self.spu.main_sound_cnt));
 
+        spu_log!("[{}] main cnt={:04x}", self.cm.get_cycles(), u16::from(self.spu.main_sound_cnt));
+
         if was_disabled && self.spu.main_sound_cnt.master_enable() {
             for i in 0..CHANNEL_COUNT {
                 if self.spu.channels[i].cnt.start_status() && (self.spu.channels[i].sad != 0 || self.spu.channels[i].cnt.get_format() == SoundChannelFormat::PsgNoise) {
@@ -540,6 +600,7 @@ impl Emu {
             for channel in &mut self.spu.channels {
                 channel.active = false;
             }
+            self.spu.active_channels = 0;
         }
     }
 
@@ -559,6 +620,14 @@ impl Emu {
 
         cap_channel.cnt = cnt;
 
+        spu_log!(
+            "[{}] cap{channel_num} cnt={:02x} dad={:08x} len={:04x}",
+            self.cm.get_cycles(),
+            u8::from(cnt),
+            cap_channel.dad,
+            cap_channel.len
+        );
+
         debug_println!("spu set snd cap cnt {:x}", u8::from(cap_channel.cnt));
     }
 
@@ -573,6 +642,8 @@ impl Emu {
         let dad_ptr = self.mem.shm.as_ptr() as usize + self.get_shm_offset::<{ ARM7 }, true, false>(dad);
         let cap_channel = &mut self.spu.sound_cap_channels[channel_num];
         cap_channel.dad_ptr = dad_ptr;
+        // A DAD write restarts the capture position (hardware behavior, NooDS parity)
+        cap_channel.dad_current = dad_ptr;
 
         debug_println!("spu set snd cap cnt {:x}", u8::from(cap_channel.cnt));
     }
@@ -589,6 +660,23 @@ impl Emu {
         self.spu.channels[channel_num].sad_ptr = self.mem.shm.as_ptr() as usize + self.get_shm_offset::<{ ARM7 }, true, false>(self.spu.channels[channel_num].sad);
         self.spu.channels[channel_num].sad_current = self.spu.channels[channel_num].sad_ptr;
         self.spu.channels[channel_num].tmr_current = self.spu.channels[channel_num].tmr as u32;
+
+        {
+            let ch = &self.spu.channels[channel_num];
+            spu_log!(
+                "[{}] start ch{channel_num} fmt={:?} sad={:08x} tmr={:04x} pnt={:04x} len={:06x} vol={} pan={} rep={} cnt={:08x}",
+                self.cm.get_cycles(),
+                ch.cnt.get_format(),
+                ch.sad,
+                ch.tmr,
+                ch.pnt,
+                ch.len,
+                u8::from(ch.cnt.volume_mul()),
+                u8::from(ch.cnt.panning()),
+                u8::from(ch.cnt.repeat_mode()),
+                u32::from(ch.cnt)
+            );
+        }
 
         match self.spu.channels[channel_num].cnt.get_format() {
             SoundChannelFormat::ImaAdpcm => {
@@ -608,7 +696,7 @@ impl Emu {
             _ => {}
         }
 
-        self.spu.channels[channel_num].active = true;
+        self.spu.set_channel_active(channel_num, true);
     }
 
     fn spu_next_sample_psg(&mut self, channel_num: usize) {
@@ -636,7 +724,8 @@ impl Emu {
         let adpcm_data = if channel.adpcm_toggle { adpcm_data >> 4 } else { adpcm_data & 0xF };
 
         let diff = unsafe { *ADPCM_DIFF_TABLE.get_unchecked(channel.adpcm_index as usize).get_unchecked(adpcm_data as usize) };
-        channel.adpcm_value = (channel.adpcm_value as i32 + diff).clamp(-0x8000, 0x7FFF) as i16;
+        // Hardware clips ADPCM to -0x7FFF..0x7FFF, not -0x8000 (GBATEK, NooDS parity)
+        channel.adpcm_value = (channel.adpcm_value as i32 + diff).clamp(-0x7FFF, 0x7FFF) as i16;
 
         channel.adpcm_index = unsafe { ADPCM_INDEX_TABLE.get_unchecked(channel.adpcm_index as usize)[(adpcm_data & 0x7) as usize] };
 
@@ -706,6 +795,12 @@ impl Emu {
             }
         }
         self.spu.channels[channel_num].tmr_current = tmr_current;
+        // Only the one-shot stop in the loop above can deactivate here; callers guarantee
+        // the channel was active on entry, so a cleared bool means "drop the mask bit".
+        if unlikely(!self.spu.channels[channel_num].active) {
+            self.spu.active_channels &= !(1 << channel_num);
+            spu_log!("[{}] end ch{channel_num} (one-shot)", self.cm.get_cycles());
+        }
 
         let channel = &self.spu.channels[channel_num];
         let volume_mul = u8::from(channel.cnt.volume_mul());
@@ -738,7 +833,7 @@ impl Emu {
             self.spu.sound_cap_channels[i].cnt.set_start_status(false);
         }
         self.spu.sound_sampler.as_mut().push(0, self.settings.framelimit(), self.settings.audio_stretching());
-        self.cm.schedule(512 * 2, EventType::SpuSample);
+        self.cm.schedule_from_due(512 * 2, EventType::SpuSample);
     }
 
     pub fn spu_on_sample_event(&mut self) {
@@ -752,19 +847,18 @@ impl Emu {
             let mut channels_left = [0; 2];
             let mut channels_right = [0; 2];
 
-            for i in 0..CHANNEL_COUNT {
-                if !self.spu.channels[i].active {
-                    continue;
-                }
+            let mut active = self.spu.active_channels;
+            while active != 0 {
+                let i = active.trailing_zeros() as usize;
+                active &= active - 1;
 
                 let format = self.spu.channels[i].cnt.get_format();
-                let fun: unsafe fn(&mut Self, usize) -> (i32, i32) = match format {
-                    SoundChannelFormat::Pcm8 => Self::spu_sample_channel::<{ SoundChannelFormat::Pcm8 }>,
-                    SoundChannelFormat::Pcm16 => Self::spu_sample_channel::<{ SoundChannelFormat::Pcm16 }>,
-                    SoundChannelFormat::ImaAdpcm => Self::spu_sample_channel::<{ SoundChannelFormat::ImaAdpcm }>,
-                    SoundChannelFormat::PsgNoise => Self::spu_sample_channel::<{ SoundChannelFormat::PsgNoise }>,
+                let (data_left, data_right) = match format {
+                    SoundChannelFormat::Pcm8 => self.spu_sample_channel::<{ SoundChannelFormat::Pcm8 }>(i),
+                    SoundChannelFormat::Pcm16 => self.spu_sample_channel::<{ SoundChannelFormat::Pcm16 }>(i),
+                    SoundChannelFormat::ImaAdpcm => self.spu_sample_channel::<{ SoundChannelFormat::ImaAdpcm }>(i),
+                    SoundChannelFormat::PsgNoise => self.spu_sample_channel::<{ SoundChannelFormat::PsgNoise }>(i),
                 };
-                let (data_left, data_right) = fun(self, i);
 
                 if i == 1 || i == 3 {
                     let index = i >> 1;
@@ -844,12 +938,13 @@ impl Emu {
             let sample_left = (sample_left - 0x8000) as u32;
             let sample_right = (sample_right - 0x8000) as u32;
 
-            self.spu.sound_sampler.as_mut().push(
-                ((sample_right << 16) & 0xFFFF0000) | (sample_left & 0xFFFF),
-                self.settings.framelimit(),
-                self.settings.audio_stretching(),
-            );
-            self.cm.schedule(512 * 2, EventType::SpuSample);
+            let final_word = ((sample_right << 16) & 0xFFFF0000) | (sample_left & 0xFFFF);
+            let mix_l = mixers[0].clamp(-0x8000, 0x7FFF) as u16 as u32;
+            let mix_r = mixers[1].clamp(-0x8000, 0x7FFF) as u16 as u32;
+            self.spu.sound_sampler.as_mut().dump_frame(final_word as u32, (mix_r << 16) | mix_l);
+
+            self.spu.sound_sampler.as_mut().push(final_word as u32, self.settings.framelimit(), self.settings.audio_stretching());
+            self.cm.schedule_from_due(512 * 2, EventType::SpuSample);
         }
     }
 }

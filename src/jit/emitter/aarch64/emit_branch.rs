@@ -202,15 +202,14 @@ impl JitAsm<'_> {
                         .masm
                         .str_off(SCRATCH0, false, A64Reg::X8, JitRuntimeData::get_branch_out_pc_offset() as i64, vixl::A64AddrModeKind::Offset);
                 }
-                // Flag the idle loop for the scheduler (arm32 parity: byte at data_packed+3,
-                // bit 0x80), then exit the quantum.
+                // Flag the idle loop for the scheduler, then exit the quantum.
                 block_asm
                     .masm
-                    .ldrb_off(SCRATCH0, A64Reg::X8, JitRuntimeData::get_data_packed_offset() as i64 + 3, vixl::A64AddrModeKind::Offset);
-                block_asm.masm.orr_imm(SCRATCH0, SCRATCH0, 0x80, false);
+                    .ldrb_off(SCRATCH0, A64Reg::X8, JitRuntimeData::get_data_packed_offset() as i64, vixl::A64AddrModeKind::Offset);
+                block_asm.masm.orr_imm(SCRATCH0, SCRATCH0, crate::jit::jit_asm::IDLE_LOOP_FLAG_MASK as u64, false);
                 block_asm
                     .masm
-                    .strb_off(SCRATCH0, A64Reg::X8, JitRuntimeData::get_data_packed_offset() as i64 + 3, vixl::A64AddrModeKind::Offset);
+                    .strb_off(SCRATCH0, A64Reg::X8, JitRuntimeData::get_data_packed_offset() as i64, vixl::A64AddrModeKind::Offset);
                 block_asm.emit_exit_guest_context(ptr::addr_of_mut!(self.runtime_data.host_sp));
             }
         }

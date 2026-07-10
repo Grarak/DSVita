@@ -23,7 +23,28 @@ listed below.
   renderer sync, checked after stores).
 - **Immediate events (`schedule_imm`) only fire when the scheduler actually runs.** A pending
   interrupt is dispatched by an imm event; if the guest controls when the scheduler runs
-  (fixed-cycle loops), the event can be systematically starved (see case study §5.3).
+  (fixed-cycle loops), the event can be systematically starved (see case study §5.3 — and its
+  counter-case: forcing prompt delivery of the ARM7-HLE's synchronously synthesized IPC reply
+  irqs wedges games instead).
+
+### Cycle-manager event grids
+- **Periodic events reschedule from their due cycle (`schedule_from_due`), never from the
+  dispatch-time `cycle_count`.** The jit overshoots each due cycle by the slice remainder;
+  rescheduling from the overshot count made every periodic grid drift independently — the SPU
+  sample grid slipped ~2 samples per 512-sample alarm period against the ARM7 timer grid,
+  which desynced the capture-ring surround loop games run on the ARM7 sound driver (§5.7).
+  A due cycle left in the past by a catch-up is legal: it fires on the next check, so a late
+  slice catches up instead of stretching the period. Consequences that must hold together:
+  `jump_to_next_event` never moves the clock backwards, and the 2^31 overflow rebase uses
+  saturating subtraction (a past due underflowed it — abort on release-debug, a never-firing
+  event on release). GPU scanline events still reschedule dispatch-relative; convert them the
+  same way if a vblank-vs-timer sync bug ever surfaces.
+- **A forced scheduler run must not invent guest time.** `cpu_check_for_interrupt`'s
+  saturation of `accumulated_cycles` (the §5.3 fix) saves the real count in
+  `pre_force_cycles`; every consumer restores it through `take_real_accumulated`. Without the
+  restore, ARM7-HLE mode converted the phantom quantum straight into guest time on every irq
+  re-enable (`run_scheduler::<true>` has no min() against a real ARM7 slice) and inflated the
+  clock enough to trip SDK timeouts.
 
 ### Guest state conventions
 - **`regs.pc` and every branch target carry the thumb bit in bit 0** at all
@@ -198,7 +219,51 @@ Ordered by cost. Every technique below cracked at least one real bug.
    (the bug) — both look identical. Compare against NooDS at the divergence pcs. When a
    memory corruption needs a known-good write sequence, **instrument NooDS's `Memory::write`
    with an address watch** and capture the reference stream — this pinpointed an
-   event-ordering bug that pure trace diffing could not.
+   event-ordering bug that pure trace diffing could not. For anything longer than a spot
+   check, build NooDS headless: a ~30-line main that heap-allocates `Core`, sets
+   `Settings::fpsLimiter = 0` / `threaded2D = threaded3D = 0`, and loops
+   `running.store(true); runCore();` (the core stops itself every frame) runs a rom at
+   several times real speed on the dev box with no window — tap `Spu::pushSample` or
+   `Memory::write` behind an env var and the reference stream is free. Boot with no input
+   is deterministic there too, so segment-level comparisons line up.
+8. **Bisect hangs by screenshot, not by exit code.** A boot hang has no crash to detect;
+   a screenshot at a fixed wall-time plus a non-black-pixel percentage (fps overlay text
+   stays under a few percent; any real frame is far above) is a reliable GOOD/BAD oracle
+   for `git checkout` bisecting. Two traps: "fixed the crash" commits are not "boots"
+   commits (AC's a64 crash fix still left a hang — bisect each symptom separately), and
+   old revisions may not build the current frontend — ask the maintainer for a known-good
+   release anchor before walking the whole history.
+9. **A frozen scheduler has a signature.** When fps shows 0/60 with the cpu thread busy:
+   drop a wall-clock-throttled (1 Hz) state print inside `cm_check_events` — `cycle_count`,
+   `next_event_cycle`, the active-event set with due cycles, halt bits, both pcs. A live
+   guest with `cycle_count` frozen short of `next_event_cycle` means nobody is adding
+   cycles or jumping: some execution path runs guest code accounted at 0 cycles in a loop
+   (§5.8). The same dump distinguishes that instantly from "events pending but handler
+   never rescheduled" and "all events gone". For the steady-state loop itself,
+   `--inst-log-lazy` + SIGUSR2 after the hang settles captures exactly the spin without
+   the boot prefix.
+
+### Audio triage
+
+Two env valves (compiled in, off by default, cpu-thread only):
+
+- `DSVITA_AUDIO_DUMP=<path>` writes every SPU sample event as an 8-byte frame — final
+  output L/R plus the pre-capture mixer L/R (s16le, 32768 Hz). It taps *before* the
+  transport queues, so the stream is guest-time deterministic: identical runs produce
+  identical dumps, and a no-input boot can be compared sample-by-sample across builds or
+  against a NooDS `pushSample` dump of the same segment.
+- `DSVITA_SPU_LOG=1` prints channel start/stop, capture control writes and main-cnt writes
+  to stderr with cycle timestamps (the per-second fps counter also prints to stderr —
+  filter it out).
+
+Reading a dump: count discontinuities (|Δsample| above ~8000) per channel and histogram
+their spacing and position mod the suspected ring size. Sustained dozens per second with
+full-scale clipping = emulation; NooDS-level counts (tens per minutes, at scene changes) =
+content. Final-output glitches with no counterpart in the mixer stream (neither at t nor
+one ring-length earlier) prove the fault is in the capture-ring dynamics rather than the
+source channels — that separation is what cracked §5.7. Games that route ALL audio through
+the capture units (main-cnt output-from = channels 1/3) turn any capture bug into global
+crackle; the SPU log shows that configuration in the first seconds of boot.
 
 ### JIT-block annotation (jitdump)
 
@@ -286,6 +351,23 @@ adding new mid-block breakout paths — a first attempt that emitted a breakout 
 `msr` blocks faulted on register-allocation contract violations (§1) and was abandoned for
 the quantum-saturation design, which needed no emitter changes at all.
 
+**The counter-case (found by bisecting a `-e 2` boot wedge back to this very fix):** in
+ARM7-HLE mode IPC replies are synthesized synchronously inside the guest's own send, so a
+reply irq is already pending the moment the guest re-enables interrupts — a timing no
+hardware produces (the real ARM7 needs time to process the command). Forcing prompt
+delivery then interrupts Animal Crossing inside its CARD critical-section exit and the SDK
+wedges its backup read into an endless full-flash retry loop (~80 passes/minute of read
+commands; the cartridge protocol itself was repeatedly suspected and repeatedly innocent).
+Neither extreme works: never forcing starves GTA:CTW, always forcing wedges AC:WW — and
+making the forced quantum time-honest is NOT enough, the delivery point itself is the
+poison. Shipped resolution: a named predicate defers the forced dispatch only when every
+pending flag is one of the HLE's synchronous IPC ones (they deliver at quantum expiry, the
+latency the mode always had); physical irqs keep the forcing. **GTA:CTW `-e 2` and AC:WW
+`-e 2` are mutual canaries — any change to irq-delivery timing must be tested against
+both.** The clean long-term fix is giving HLE replies real latency (a scheduled event
+instead of a synchronous push); the deferral models that latency without new event
+plumbing.
+
 ### 5.4 TWL microcode spin (interpret-then-compile does not self-heal)
 Described in §3.3. The subtle part: the hotness threshold normally guarantees "interpreted
 now, compiled soon, substitution eventually" — but a loop whose back-edge target is
@@ -311,6 +393,44 @@ caller's locals — the callback table. Lessons: the safety net converts a hard 
 into subtle downstream corruption, so treat real-address `failed to branch lr` records as
 primary evidence (§4.5); and a function's own pcs executing at a never-before-seen sp is
 the fingerprint of a broken call/return upstream, not of the function itself.
+
+### 5.7 SPU event-grid drift desyncs capture-ring surround (audio crackle)
+Users reported crackling in Animal Crossing WW and Star Wars Ep3; the pre-transport audio
+dump reproduced it (thousands of full-scale 4-6-sample bursts, positions drifting slowly
+mod the ring size) while NooDS on identical content had a few dozen legitimate transients.
+The chain: AC routes ALL audio through the capture units — capture 0/1 write the mixer
+into two adjacent rings, channels 1/3 play them back, main-cnt selects those channels as
+final output, and the ARM7 driver surround-processes alternating half-rings in place on a
+timer alarm, trusting that its alarm and the capture write head stay phase-locked (on
+hardware both derive from one crystal). Every periodic event rescheduled itself from the
+overshot dispatch-time clock, so the SPU sample grid slipped a few cycles per event while
+timers slipped a few per *overflow* — a net drift of ~2 samples per alarm period. The
+driver's in-place pass then re-processed the seam samples capture hadn't refreshed yet:
+double-applied transform ≈ 2× amplitude, clipping — exactly the observed bursts. Fix:
+`schedule_from_due` (§1). Diagnosis chain worth keeping: deterministic dump → discontinuity
+histogram → mixer-vs-final separation → NooDS ring-watch (log CPU stores + capture writes +
+channel reads with positions) revealed the driver's exact chunking → the drift was then one
+interval-histogram away (56% of sample events fired 1-10+ cycles late, compounding).
+Lesson: **any guest feedback loop closed through emulated hardware (capture rings, CPU
+streamed audio) turns relative timing drift between event grids into data corruption** —
+grid exactness matters even where "a few cycles late" looks harmless.
+
+### 5.8 One stale byte offset in emitted code = engine-wide livelock
+Animal Crossing never booted on the a64 backend: 0 fps forever, cpu thread spinning, all
+scheduler events pending, clock frozen 293 cycles short of the next event (§4.9 signature).
+The emitted ARM7 idle-loop exit "set" the idle flag by writing bit 7 of `data_packed+3` —
+the layout of the old 32-bit packed struct. A repack to one byte moved `idle_loop` to bit 1
+of byte 0; both backends kept emitting the stale offset, which now lands in struct padding,
+so `is_idle_loop(ARM7)` never became true. On arm32 the damage was invisible: its idle exit
+flushes real cycles, so the scheduler kept advancing and only the fast-forward optimization
+silently died. The a64 idle exit reports 0 accumulated cycles — once both CPUs sat in
+boot-handshake poll loops, the scheduler executed the "not idle" ARM7 block for 0 cycles,
+added 0 to the clock, and never reached any event. Fixes and lessons: the flag mask is now
+a named constant beside the struct with a debug assert tying it to the bitfield, so a
+future repack can't strand the emitters again — **hand-computed field offsets in emitted
+code are invisible to the type system; pin them to the struct declaration**. And: identical
+dead code can be fatal on one backend and asymptomatic on the other — "arm32 works" never
+exonerates shared emitted-code patterns.
 
 ---
 
@@ -444,7 +564,21 @@ changes came out of it:
   matches a NooDS write-sequence reference exactly, so the skew is HLE event-timing.
   Reference technique: §4.7 NooDS write-watch.
 - `cpu_send_interrupt`'s enabled-arrival path could theoretically starve like 5.3 (no known
-  repro; the fix pattern is the same quantum saturation).
+  repro; the fix pattern is the same quantum saturation — but read the 5.3 counter-case
+  first: forcing HLE sync-IPC reply irqs is known-harmful, and any change here must be
+  tested against both GTA:CTW `-e 2` and AC:WW `-e 2`).
+- **Ghost Trick is completely silent** — all ARM7 modes (`-e 0/1/2`, `--hle-irq 0`), before
+  and after the July 2026 scheduler fixes. The ARM7 sound driver initializes (main sound
+  cnt gets written) but no channel ever starts; silent even under full HLE where the ARM7
+  driver is replaced, so the blockage is ARM9-side — the game's sound library never issues
+  play commands (waiting on card streaming? an IPC ack?). NooDS plays its music from ~7 s.
+  Repro: `DSVITA_SPU_LOG=1`, grep stderr for `start ch` — zero means still broken.
+- GPU scanline events still reschedule from the dispatch-time clock (see §1 event grids) —
+  the frame grid drifts a hair slow. Harmless so far; convert to `schedule_from_due` if a
+  vblank-vs-timer sync bug ever shows.
+- The clean fix for the 5.3 counter-case is real latency on ARM7-HLE IPC replies (a
+  scheduled event instead of the synchronous push inside the guest's send); the pending-flag
+  deferral models that latency without the event plumbing and savestate churn.
 - The interpreter now covers the full instruction set (the former fallback list — SWI,
   MCR/MRC, LDRD/STRD, SWP, DSP muls, cond=0xF space, user-banked ldm/stm, empty rlists —
   is implemented from the NooDS reference). Open disagreement: the disassembler's cycle

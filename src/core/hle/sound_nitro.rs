@@ -384,7 +384,7 @@ impl Emu {
         let alarm = &mut self.hle.sound.nitro.alarms[alarm_index];
         let delay = alarm.repeat;
         if delay != 0 {
-            self.cm.schedule(delay * 64, EventType::sound_alarm_hle(alarm_index as u8));
+            self.cm.schedule_from_due(delay * 64, EventType::sound_alarm_hle(alarm_index as u8));
         } else {
             alarm.active = false;
         }
@@ -2427,8 +2427,9 @@ impl Emu {
     }
 
     fn sound_nitro_process(&mut self, param: u32) {
+        // param != 0 only inside the SoundCmdHle event handler — anchor to the due cycle
         if param != 0 {
-            self.cm.schedule(174592, EventType::SoundCmdHle);
+            self.cm.schedule_from_due(174592, EventType::SoundCmdHle);
         }
 
         self.sound_nitro_update_hardware_channels();

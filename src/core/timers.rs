@@ -114,8 +114,10 @@ impl Emu {
             channel.current_value = channel.cnt_l;
             if !cnt.is_count_up(channel_num) {
                 let remaining_cycles = (TIME_OVERFLOW - channel.current_value as u32) << channel.current_shift;
-                channel.scheduled_cycle = self.cm.get_cycles() + remaining_cycles;
-                self.cm.schedule(remaining_cycles, EventType::timer(cpu, channel_num as u8))
+                // Anchor to the overflow's due cycle, not the overshot dispatch cycle,
+                // so the timer grid stays exact (drives the sound driver's alarms).
+                channel.scheduled_cycle = self.cm.current_event_due().saturating_add(remaining_cycles);
+                self.cm.schedule_from_due(remaining_cycles, EventType::timer(cpu, channel_num as u8))
             }
 
             if cnt.irq_enable() {
