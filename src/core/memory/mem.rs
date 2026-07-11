@@ -37,6 +37,10 @@ pub struct Memory {
     pub mmu_arm7: MmuArm7,
 }
 
+// Indexed by (addr >> 24) & 0xF — all 16 region nibbles must be covered: the upper
+// slots (OAM, the GBA slot, bios) are reached by real guest accesses (rockwrestler's
+// trace hooks write into the empty GBA slot) even though their mapped reads are served
+// by the mmu fast path before the slow-path dispatch gets here.
 macro_rules! create_io_read_lut {
     () => {
         [
@@ -47,6 +51,15 @@ macro_rules! create_io_read_lut {
             Self::read_io_ports,
             Self::read_palettes,
             Self::read_vram,
+            Self::read_oam,
+            Self::read_gba, // 0x8: GBA rom
+            Self::read_gba, // 0x9: GBA rom
+            Self::read_gba, // 0xA: GBA ram
+            Self::read_gba, // 0xB
+            Self::read_gba, // 0xC
+            Self::read_gba, // 0xD
+            Self::read_gba, // 0xE
+            Self::read_gba, // 0xF: bios
         ]
     };
 }
@@ -61,6 +74,15 @@ macro_rules! create_io_write_lut {
             Self::write_io_ports,
             Self::write_palettes,
             Self::write_vram,
+            Self::write_oam,
+            Self::write_gba, // 0x8: GBA rom
+            Self::write_gba, // 0x9: GBA rom
+            Self::write_gba, // 0xA: GBA ram
+            Self::write_gba, // 0xB
+            Self::write_gba, // 0xC
+            Self::write_gba, // 0xD
+            Self::write_gba, // 0xE
+            Self::write_gba, // 0xF: bios
         ]
     };
 }
@@ -202,8 +224,8 @@ struct MemoryIo<const CPU: CpuType, const TCM: bool, T: Convert> {
 }
 
 impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryIo<CPU, TCM, T> {
-    const READ_LUT: [fn(u32, &mut Emu) -> T; 7] = create_io_read_lut!();
-    const WRITE_LUT: [fn(u32, T, &mut Emu); 7] = create_io_write_lut!();
+    const READ_LUT: [fn(u32, &mut Emu) -> T; 16] = create_io_read_lut!();
+    const WRITE_LUT: [fn(u32, T, &mut Emu); 16] = create_io_write_lut!();
 
     fn read(addr: u32, emu: &mut Emu) -> T {
         read_dtcm!(CPU, TCM, addr, emu, shm_offset, { utils::read_from_mem(&emu.mem.shm, shm_offset) });
@@ -283,6 +305,22 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryIo<CPU, TCM, T> {
     fn write_vram(addr: u32, value: T, emu: &mut Emu) {
         write_vram!(addr, size_of::<T>(), emu, { emu.mem.vram.write::<CPU, _>(addr, value) });
     }
+
+    // OAM is mmu-mapped like the palettes: the slow path only sees it with the mapping
+    // absent, same stub contract as read_palettes/write_palettes above.
+    fn read_oam(_: u32, _: &mut Emu) -> T {
+        T::from(0)
+    }
+
+    fn write_oam(_: u32, _: T, _: &mut Emu) {}
+
+    // The GBA slot and the bios: mapped reads are served by the mmu fast path; writes
+    // are hardware-ignored (rockwrestler's enable/disable_trace hooks poke 0x800xxxx).
+    fn read_gba(_: u32, _: &mut Emu) -> T {
+        T::from(0)
+    }
+
+    fn write_gba(_: u32, _: T, _: &mut Emu) {}
 }
 
 struct MemoryMultipleSliceIo<const CPU: CpuType, const TCM: bool, T: Convert> {
@@ -290,8 +328,8 @@ struct MemoryMultipleSliceIo<const CPU: CpuType, const TCM: bool, T: Convert> {
 }
 
 impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU, TCM, T> {
-    const READ_LUT: [fn(u32, &mut [T], &mut Emu); 7] = create_io_read_lut!();
-    const WRITE_LUT: [fn(u32, &[T], &mut Emu); 7] = create_io_write_lut!();
+    const READ_LUT: [fn(u32, &mut [T], &mut Emu); 16] = create_io_read_lut!();
+    const WRITE_LUT: [fn(u32, &[T], &mut Emu); 16] = create_io_write_lut!();
 
     fn read(addr: u32, slice: &mut [T], emu: &mut Emu) {
         read_dtcm!(CPU, TCM, addr, emu, shm_offset, {
@@ -409,6 +447,16 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleSliceIo<CPU,
         emu.mem.vram.write_slice::<CPU, _>(addr, slice);
         emu.jit.invalidate_block(addr, size_of_val(slice));
     }
+
+    // Same stub contract as palettes above: OAM through the mmu, GBA slot/bios
+    // writes hardware-ignored.
+    fn read_oam(_: u32, _: &mut [T], _: &mut Emu) {}
+
+    fn write_oam(_: u32, _: &[T], _: &mut Emu) {}
+
+    fn read_gba(_: u32, _: &mut [T], _: &mut Emu) {}
+
+    fn write_gba(_: u32, _: &[T], _: &mut Emu) {}
 }
 
 struct MemoryFixedSliceIo<const CPU: CpuType, const TCM: bool, T: Convert> {
@@ -416,8 +464,8 @@ struct MemoryFixedSliceIo<const CPU: CpuType, const TCM: bool, T: Convert> {
 }
 
 impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TCM, T> {
-    const READ_LUT: [fn(u32, &mut [T], &mut Emu); 7] = create_io_read_lut!();
-    const WRITE_LUT: [fn(u32, &[T], &mut Emu); 7] = create_io_write_lut!();
+    const READ_LUT: [fn(u32, &mut [T], &mut Emu); 16] = create_io_read_lut!();
+    const WRITE_LUT: [fn(u32, &[T], &mut Emu); 16] = create_io_write_lut!();
 
     fn read(addr: u32, slice: &mut [T], emu: &mut Emu) {
         read_dtcm!(CPU, TCM, addr, emu, shm_offset, {
@@ -527,6 +575,15 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryFixedSliceIo<CPU, TC
             emu.mem.vram.write::<CPU, _>(addr, slice[i]);
         }
     }
+
+    // Same stub contract as palettes above.
+    fn read_oam(_: u32, _: &mut [T], _: &mut Emu) {}
+
+    fn write_oam(_: u32, _: &[T], _: &mut Emu) {}
+
+    fn read_gba(_: u32, _: &mut [T], _: &mut Emu) {}
+
+    fn write_gba(_: u32, _: &[T], _: &mut Emu) {}
 }
 
 struct MemoryMultipleMemsetIo<const CPU: CpuType, const TCM: bool, T: Convert> {
@@ -534,7 +591,7 @@ struct MemoryMultipleMemsetIo<const CPU: CpuType, const TCM: bool, T: Convert> {
 }
 
 impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleMemsetIo<CPU, TCM, T> {
-    const WRITE_LUT: [fn(u32, T, usize, &mut Emu); 7] = create_io_write_lut!();
+    const WRITE_LUT: [fn(u32, T, usize, &mut Emu); 16] = create_io_write_lut!();
 
     fn write(addr: u32, value: T, size: usize, emu: &mut Emu) {
         write_dtcm!(CPU, TCM, addr, emu, shm_offset, {
@@ -593,6 +650,11 @@ impl<const CPU: CpuType, const TCM: bool, T: Convert> MemoryMultipleMemsetIo<CPU
             emu.mem.vram.write::<CPU, _>(addr + (i << write_shift) as u32, value);
         }
     }
+
+    // Same stub contract as palettes above.
+    fn write_oam(_: u32, _: T, _: usize, _: &mut Emu) {}
+
+    fn write_gba(_: u32, _: T, _: usize, _: &mut Emu) {}
 }
 
 impl Memory {
