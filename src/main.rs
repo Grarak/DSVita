@@ -656,7 +656,14 @@ pub fn actual_main() {
         let mut prev_touch: Option<(i16, i16)> = None;
         loop {
             let pause = match presenter.poll_event(&emu_unsafe.get_mut().settings) {
-                PresentEvent::Inputs { mut keymap, touch, debug_touch } => {
+                PresentEvent::Inputs {
+                    mut keymap,
+                    touch,
+                    #[cfg(debug_assertions)]
+                    debug_touch,
+                } => {
+                    #[cfg(not(debug_assertions))]
+                    let debug_touch: Option<(i16, i16)> = None;
                     if let Some((dx, dy)) = debug_touch {
                         // Synthetic touch already in DS screen space; skip the window-pixel transform.
                         touch_points.store(((dy as u16) << 8) | (dx as u16), Ordering::Relaxed);

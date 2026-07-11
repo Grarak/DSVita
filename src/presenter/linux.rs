@@ -72,7 +72,9 @@ pub struct Presenter {
     mouse_pressed: bool,
     mouse_id: Option<u32>,
     touch_points: Option<(i16, i16)>,
+    #[cfg(debug_assertions)]
     debug_touch: Option<(i16, i16)>,
+    #[cfg(debug_assertions)]
     debug_touch_enabled: bool,
     keymap: u32,
 }
@@ -215,7 +217,9 @@ impl Presenter {
             mouse_pressed: false,
             mouse_id: None,
             touch_points: None,
+            #[cfg(debug_assertions)]
             debug_touch: None,
+            #[cfg(debug_assertions)]
             debug_touch_enabled: std::env::var("DSVITA_DBG_TOUCH").is_ok(),
             keymap: 0xFFFFFFFF,
         };
@@ -311,9 +315,7 @@ impl Presenter {
                     keycode: Some(keyboard::Keycode::Escape),
                     ..
                 } => return PresentEvent::Pause,
-                Event::KeyDown {
-                    keycode: Some(code), keymod, ..
-                } => {
+                Event::KeyDown { keycode: Some(code), keymod, .. } => {
                     // F1-F9 set the framelimit to 1-9 (100%..500%), F10 uncaps it.
                     let function_keys = [
                         keyboard::Keycode::F1,
@@ -333,6 +335,7 @@ impl Presenter {
                     if code == keyboard::Keycode::F11 {
                         crate::savestate::request_save();
                     }
+                    #[cfg(debug_assertions)]
                     if self.debug_touch_enabled {
                         if let Some(pt) = debug_touch_point(code) {
                             self.debug_touch = Some(pt);
@@ -349,6 +352,7 @@ impl Presenter {
                     }
                 }
                 Event::KeyUp { keycode: Some(code), .. } => {
+                    #[cfg(debug_assertions)]
                     if self.debug_touch_enabled && debug_touch_point(code).is_some() {
                         self.debug_touch = None;
                     }
@@ -391,6 +395,7 @@ impl Presenter {
         PresentEvent::Inputs {
             keymap: self.keymap,
             touch: self.touch_points,
+            #[cfg(debug_assertions)]
             debug_touch: self.debug_touch,
         }
     }
@@ -432,6 +437,7 @@ impl Presenter {
 
 // Debug-only keyboard tap grid → DS touch-screen coordinates (x 0..256, y 0..192). Lets headless
 // profiling tap through touch-to-start gates and touch menus. Enabled by DSVITA_DBG_TOUCH.
+#[cfg(debug_assertions)]
 fn debug_touch_point(code: keyboard::Keycode) -> Option<(i16, i16)> {
     use keyboard::Keycode::*;
     Some(match code {

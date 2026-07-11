@@ -25,11 +25,13 @@ pub const SAMPLE_BUFFER_SIZE: usize = SAMPLE_RATE * PRESENTER_AUDIO_OUT_BUF_SIZE
 // Debug tooling: DSVITA_AUDIO_DUMP=<path> dumps every sample pushed by the SPU as raw
 // s16le stereo @ 32768Hz (pre-transport, guest-time deterministic). DSVITA_SPU_LOG=1
 // logs channel start/stop and capture control writes to stderr.
+#[cfg(debug_assertions)]
 fn audio_dump_file() -> Option<std::io::BufWriter<std::fs::File>> {
     let path = std::env::var("DSVITA_AUDIO_DUMP").ok()?;
     Some(std::io::BufWriter::new(std::fs::File::create(path).unwrap()))
 }
 
+#[cfg(debug_assertions)]
 pub fn spu_log_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("DSVITA_SPU_LOG").is_ok_and(|v| v != "0"))
@@ -37,6 +39,7 @@ pub fn spu_log_enabled() -> bool {
 
 macro_rules! spu_log {
     ($($args:tt)*) => {
+        #[cfg(debug_assertions)]
         if unlikely(crate::core::spu::spu_log_enabled()) {
             eprintln!($($args)*);
         }
@@ -56,6 +59,7 @@ pub struct SoundSampler {
     size_count: f32,
     cond_mutex: Mutex<bool>,
     condvar: Condvar,
+    #[cfg(debug_assertions)]
     dump: Option<std::io::BufWriter<std::fs::File>>,
 }
 
@@ -79,6 +83,7 @@ impl SoundSampler {
             size_count: 0.0,
             cond_mutex: Mutex::new(false),
             condvar: Condvar::new(),
+            #[cfg(debug_assertions)]
             dump: audio_dump_file(),
         }
     }
@@ -97,6 +102,7 @@ impl SoundSampler {
     }
 
     // Debug dump frame: final output sample + pre-capture mixer L/R (each clamped to i16).
+    #[cfg(debug_assertions)]
     fn dump_frame(&mut self, final_word: u32, mix_word: u32) {
         if unlikely(self.dump.is_some()) {
             use std::io::Write;
@@ -939,11 +945,14 @@ impl Emu {
             let sample_right = (sample_right - 0x8000) as u32;
 
             let final_word = ((sample_right << 16) & 0xFFFF0000) | (sample_left & 0xFFFF);
-            let mix_l = mixers[0].clamp(-0x8000, 0x7FFF) as u16 as u32;
-            let mix_r = mixers[1].clamp(-0x8000, 0x7FFF) as u16 as u32;
-            self.spu.sound_sampler.as_mut().dump_frame(final_word as u32, (mix_r << 16) | mix_l);
+            #[cfg(debug_assertions)]
+            {
+                let mix_l = mixers[0].clamp(-0x8000, 0x7FFF) as u16 as u32;
+                let mix_r = mixers[1].clamp(-0x8000, 0x7FFF) as u16 as u32;
+                self.spu.sound_sampler.as_mut().dump_frame(final_word, (mix_r << 16) | mix_l);
+            }
 
-            self.spu.sound_sampler.as_mut().push(final_word as u32, self.settings.framelimit(), self.settings.audio_stretching());
+            self.spu.sound_sampler.as_mut().push(final_word, self.settings.framelimit(), self.settings.audio_stretching());
             self.cm.schedule_from_due(512 * 2, EventType::SpuSample);
         }
     }

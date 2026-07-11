@@ -3,6 +3,7 @@ use crate::core::emu::Emu;
 use crate::core::hle::arm7_hle::IpcFifoTag;
 use crate::core::spi::MIC_SAMPLE_CYCLES;
 use crate::core::CpuType::ARM7;
+use crate::logging::debug_println;
 use crate::presenter::PRESENTER_AUDIO_IN_SAMPLE_RATE;
 use crate::savestate::Savestate;
 use bilge::prelude::*;
@@ -116,7 +117,7 @@ impl Emu {
 
                 self.arm7_hle_send_ipc_fifo(IpcFifoTag::Mic, 0x300c300, false);
             }
-            _ => println!("unknown mic request {data:x}"),
+            _ => debug_println!("unknown mic request {data:x}"),
         }
     }
 
