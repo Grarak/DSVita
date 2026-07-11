@@ -22,6 +22,7 @@
 mod alu;
 mod branch;
 mod memory;
+mod system;
 mod thumb_alu;
 mod thumb_branch;
 mod thumb_memory;
@@ -43,15 +44,13 @@ use std::intrinsics::{likely, unlikely};
 use alu::*;
 use branch::*;
 use memory::*;
+use system::*;
 use thumb_alu::*;
 use thumb_branch::*;
 use thumb_memory::*;
 
 // Threshold of executions of a cold address before it gets compiled to a jit block.
 // 255 = always interpret (counter saturates), 0 = always compile. Useful for testing.
-#[cfg(not(target_arch = "arm"))]
-pub mod fallback;
-
 pub const INTERP_THRESHOLD: u8 = 100;
 
 // CPSR flag bits.
@@ -321,10 +320,21 @@ fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) -> 
                         asm: &mut *asm,
                     };
                     ARM_TABLE[arm_index(opcode)](&mut ctx, opcode)
+                } else if cpu == ARM7 {
+                    // ARMv4: cond 0xF is NV — never executed.
+                    InstResult::Continue(1)
+                } else if opcode & 0x0E00_0000 == 0x0A00_0000 {
+                    // BLX imm (cond 0xF space): thumb interwork call to pc+8+imm24<<2+H<<1.
+                    // Writes the guest LR like the jit's emit_blx (the linking is architectural,
+                    // not just return-stack bookkeeping); cycle count from the disassembler.
+                    let imm = (((opcode & 0xFFFFFF) << 8) as i32 >> 6) as u32;
+                    let h = (opcode >> 23) & 2;
+                    let target = addr.wrapping_add(8).wrapping_add(imm).wrapping_add(h) | 1;
+                    unsafe { (*regs).lr = addr + 4 };
+                    InstResult::BranchLink(1, target, addr + 4)
                 } else {
-                    // Reserved (cond 0xF): unconditional extension space (BLX imm, PLD, ...), let
-                    // the jit handle it (the table index ignores the condition bits, so it can't
-                    // classify these).
+                    // Remaining ARMv5 0xF-space (PLD, ...): keep the pre-coverage behavior and
+                    // let the jit decide, so undefined garbage never gets nop-marched through.
                     InstResult::Fallback
                 }
             } else {
@@ -399,9 +409,12 @@ fn interpret_block_inner<const THUMB: bool>(asm: &mut JitAsm, guest_pc: u32) -> 
                 // reach their special jit entries.
                 // Alignment matches call_jit_fun's align_guest_pc: &!1 in thumb, &!3 in ARM.
                 let aligned = target & !(step - 1);
-                if target & 1 == THUMB as u32 && (cpu == ARM9 || asm.os_irq_handler_addr & 0xFF000000 == regions::SHARED_WRAM_OFFSET) {
-                    let count_ptr = asm.emu.jit.jit_memory_map.get_exec_count(aligned);
-                    unsafe { assert_unchecked(!count_ptr.is_null()) };
+                // A null counter = target outside the executable regions (the hle bios
+                // trampolines): full instruction coverage means ldm/mov-to-pc into the bios
+                // return sentinels now flows through here — those must reach their special
+                // jit entries via the handback below.
+                let count_ptr = asm.emu.jit.jit_memory_map.get_exec_count(aligned);
+                if target & 1 == THUMB as u32 && !count_ptr.is_null() && (cpu == ARM9 || asm.os_irq_handler_addr & 0xFF000000 == regions::SHARED_WRAM_OFFSET) {
                     let count = unsafe { (*count_ptr).saturating_add(1) };
                     unsafe { *count_ptr = count };
                     // The TWL microcode window (0x1FF8xxx) must also hand off: its HLE

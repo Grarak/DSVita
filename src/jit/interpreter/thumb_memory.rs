@@ -166,10 +166,6 @@ pub(super) fn str_sp_t(ctx: &mut Ctx, opcode: u16) -> InstResult {
 pub(super) fn ldmia_t(ctx: &mut Ctx, opcode: u16) -> InstResult {
     let rb = ((opcode >> 8) & 0x7) as u32;
     let rlist = (opcode & 0xFF) as u32;
-    if rlist == 0 {
-        // Empty register list: unpredictable, let the jit decide.
-        return InstResult::Fallback;
-    }
     let count = rlist.count_ones() as usize;
     let addr = ctx.reg(rb);
 
@@ -193,9 +189,6 @@ pub(super) fn ldmia_t(ctx: &mut Ctx, opcode: u16) -> InstResult {
 pub(super) fn stmia_t(ctx: &mut Ctx, opcode: u16) -> InstResult {
     let rb = ((opcode >> 8) & 0x7) as u32;
     let rlist = (opcode & 0xFF) as u32;
-    if rlist == 0 {
-        return InstResult::Fallback;
-    }
     let count = rlist.count_ones() as usize;
     let addr = ctx.reg(rb);
     let final_base = addr.wrapping_add(count as u32 * 4);

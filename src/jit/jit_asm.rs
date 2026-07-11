@@ -511,10 +511,14 @@ pub extern "C" fn emit_code_block(guest_pc: u32) {
 
 #[cfg(not(target_arch = "arm"))]
 fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
-    // Interpreter-only host: no jit backend exists, every block interprets, and the
-    // interpreter's Fallback ops execute one instruction at a time (interpreter::fallback).
+    // Interpreter-only host: no jit backend exists and the interpreter covers the full
+    // instruction set; a refusal means genuinely undefined code is being executed.
     if !crate::jit::interpreter::interpret_block(asm, guest_pc, thumb) {
-        crate::jit::interpreter::fallback::interpret_fallback(asm, guest_pc, thumb);
+        let opcode = match asm.cpu {
+            ARM9 => asm.emu.mem_read::<{ ARM9 }, u32>(guest_pc),
+            ARM7 => asm.emu.mem_read::<{ ARM7 }, u32>(guest_pc),
+        };
+        panic!("{:?} undefined instruction at {guest_pc:x} thumb {thumb}: {opcode:08x}", asm.cpu);
     }
 }
 
@@ -551,6 +555,13 @@ fn emit_code_block_internal(asm: &mut JitAsm, guest_pc: u32, thumb: bool) {
     // compiling it right away is a win anyway.
     if !is_os_irq_handler && !interp_blocked_by_fs_clear_overlay && !interp_blocked_by_twl_microcode {
         let count_ptr = asm.emu.jit.jit_memory_map.get_exec_count(guest_pc);
+        if count_ptr.is_null() {
+            panic!(
+                "{:?} dispatch to unmapped guest pc {guest_pc:x} thumb {thumb}, last interpreted {:x?}",
+                asm.cpu,
+                unsafe { crate::jit::interpreter::LAST_INTERPRETED }
+            );
+        }
         unsafe { assert_unchecked(!count_ptr.is_null()) };
         let count = unsafe { (*count_ptr).saturating_add(1) };
         unsafe { *count_ptr = count };

@@ -17,6 +17,14 @@ use vixl::{
 
 impl JitAsm<'_> {
     pub fn emit(&mut self, block_asm: &mut BlockAsm, thumb: bool) {
+        // A zero-instruction fill means execution reached an undefined instruction (or data):
+        // fail loudly instead of underflowing into a capacity-overflow abort.
+        assert!(
+            !self.jit_buf.insts.is_empty(),
+            "{:?} compiling empty block at {:x} thumb {thumb}: execution reached undefined code",
+            self.cpu,
+            self.jit_buf.guest_pc_start
+        );
         block_asm.guest_inst_offsets.reserve(self.jit_buf.insts.len() - 1);
 
         for i in 0..self.analyzer.basic_blocks.len() {

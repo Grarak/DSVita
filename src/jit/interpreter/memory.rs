@@ -51,7 +51,7 @@ fn ldr_str<const LOAD: bool, const BYTE: bool, const ADDR: u8, const UP: bool, c
     let rd = (opcode >> 12) & 0xF;
     let base = ctx.reg(rn);
     let offset = if OFFK == 0 { opcode & 0xFFF } else { transfer_reg_offset::<OFFK>(ctx, opcode) };
-    let offset_addr = if UP { base + offset } else { base - offset };
+    let offset_addr = if UP { base.wrapping_add(offset) } else { base.wrapping_sub(offset) };
     let addr = if ADDR == 2 { base } else { offset_addr };
 
     if LOAD {
@@ -131,7 +131,7 @@ fn ldrh_strh<const LOAD: bool, const SIZE: u8, const SIGNED: bool, const ADDR: u
     let rd = (opcode >> 12) & 0xF;
     let base = ctx.reg(rn);
     let offset = if REG { ctx.reg(opcode & 0xF) } else { ((opcode >> 4) & 0xF0) | (opcode & 0xF) };
-    let offset_addr = if UP { base + offset } else { base - offset };
+    let offset_addr = if UP { base.wrapping_add(offset) } else { base.wrapping_sub(offset) };
     let addr = if ADDR == 2 { base } else { offset_addr };
 
     if LOAD {
@@ -198,24 +198,21 @@ fn ldm_stm<const LOAD: bool, const PRE: bool, const UP: bool, const USER: bool, 
     let rn = (opcode >> 16) & 0xF;
     let reg_list = opcode & 0xFFFF;
 
-    // User-mode banked transfers (S bit, without PC in the list) need banked register access.
-    if USER && (reg_list & (1 << 15) == 0) {
-        return InstResult::Fallback;
-    }
-
+    // User-mode banked transfers (S bit without PC in the list) go through the user bank.
+    // Empty register lists transfer nothing and write back an unchanged base, like NooDS.
+    let user_banked = USER && (reg_list & (1 << 15) == 0) && !ctx.asm.emu.thread_is_user_mode(ctx.cpu);
+    let fiq_mode = user_banked && (ctx.cpsr() & 0x1F) == 0x11;
     let count = reg_list.count_ones();
-    if count == 0 {
-        return InstResult::Fallback;
-    }
 
     let base = ctx.reg(rn);
-    let final_base = if UP { base + count * 4 } else { base - count * 4 };
+    let final_base = if UP { base.wrapping_add(count * 4) } else { base.wrapping_sub(count * 4) };
     // Registers transfer lowest-numbered to lowest-address; compute the lowest accessed address.
+    // ARM address arithmetic wraps mod 2^32 (negative-index / high-base accesses).
     let addr = match (UP, PRE) {
-        (true, false) => base,                  // IA
-        (true, true) => base + 4,               // IB
-        (false, true) => base - count * 4,      // DB
-        (false, false) => base - count * 4 + 4, // DA
+        (true, false) => base,                                        // IA
+        (true, true) => base.wrapping_add(4),                         // IB
+        (false, true) => base.wrapping_sub(count * 4),                // DB
+        (false, false) => base.wrapping_sub(count * 4).wrapping_add(4), // DA
     };
 
     // The disassembler's cycle value: rlist.len() + 2 for ldm, + 1 for stm.
@@ -240,17 +237,34 @@ fn ldm_stm<const LOAD: bool, const PRE: bool, const UP: bool, const USER: bool, 
             let value = unsafe { *values.get_unchecked(slot) };
             slot += 1;
             if i == 15 {
-                if USER {
-                    ctx.asm.emu.thread_restore_spsr(ctx.cpu);
-                }
                 branch_target = Some(value);
+            } else if user_banked && (i == 13 || i == 14 || fiq_mode) {
+                // Only sp/lr are banked outside fiq; r8-r12 share the active file (the user
+                // store is a stale copy synced at mode switches) — same rule as the jit's
+                // get_reg_usr_mut.
+                let cpu = ctx.cpu;
+                *ctx.asm.emu.thread_get_reg_usr_mut(cpu, crate::jit::reg::Reg::from(i as u8)) = value;
             } else {
                 ctx.set_reg(i, value);
             }
         }
 
-        if WB && (reg_list & (1 << rn) == 0) {
-            ctx.set_reg(rn, final_base);
+        // Base in the list: the loaded value wins on the ARM7; the ARM9 re-applies the
+        // writeback unless the base is the last listed register (an only-reg base writes
+        // back too) — armwrestler's LDM base-in-list cases, NooDS parity.
+        if WB {
+            let base_in_list = reg_list & (1 << rn) != 0;
+            if !base_in_list || (ctx.cpu == ARM9 && ((reg_list >> (rn + 1)) != 0 || reg_list == (1 << rn))) {
+                ctx.set_reg(rn, final_base);
+            }
+        }
+
+        // The spsr->cpsr restore of `ldm {..,pc}^` is architecturally the LAST step: the base
+        // writeback above must land in the executing mode's sp, not the restored mode's (the
+        // mode switch swaps the banked sp/lr). Restoring inside the loop shifted the irq
+        // handler's sp writeback into the interrupted mode (libnds cothread stack corruption).
+        if USER && branch_target.is_some() {
+            ctx.asm.emu.thread_restore_spsr(ctx.cpu);
         }
 
         match branch_target {
@@ -265,7 +279,17 @@ fn ldm_stm<const LOAD: bool, const PRE: bool, const UP: bool, const USER: bool, 
             if reg_list & (1 << i) == 0 {
                 continue;
             }
-            let value = if i == 15 { ctx.inst_addr + 12 } else { ctx.reg(i) };
+            let value = if i == 15 {
+                ctx.inst_addr + 12
+            } else if user_banked && (i == 13 || i == 14 || fiq_mode) {
+                *ctx.asm.emu.thread_get_reg_usr(ctx.cpu, crate::jit::reg::Reg::from(i as u8))
+            } else if WB && ctx.cpu == ARM7 && i == rn && (reg_list & ((1 << rn) - 1)) != 0 {
+                // ARM7 STM with the base in the list stores the written-back base unless
+                // it is the first listed register (NooDS parity; the ARM9 stores the old).
+                final_base
+            } else {
+                ctx.reg(i)
+            };
             unsafe { *values.get_unchecked_mut(slot) = value };
             slot += 1;
         }
@@ -300,3 +324,92 @@ macro_rules! ldm_stm_op {
 
 ldm_stm_op!(ldm, true);
 ldm_stm_op!(stm, false);
+
+// ---------------------------------------------------------------------------------------------
+// LDRD/STRD (arm9 only; the disassembler rejects odd/pc rd encodings as UnkArm) and SWP/SWPB.
+// Semantics from NooDS interpreter_transfer.cpp.
+// ---------------------------------------------------------------------------------------------
+
+fn ldrd_strd<const STORE: bool, const ADDR: u8, const UP: bool, const REG: bool>(ctx: &mut Ctx, opcode: u32) -> InstResult {
+    if ctx.cpu == ARM7 {
+        return InstResult::Continue(1);
+    }
+    let rn = (opcode >> 16) & 0xF;
+    let rd = (opcode >> 12) & 0xF;
+    let base = ctx.reg(rn);
+    let offset = if REG { ctx.reg(opcode & 0xF) } else { ((opcode >> 4) & 0xF0) | (opcode & 0xF) };
+    let offset_addr = if UP { base.wrapping_add(offset) } else { base.wrapping_sub(offset) };
+    let addr = if ADDR == 2 { base } else { offset_addr };
+
+    if STORE {
+        let v0 = ctx.reg(rd);
+        let v1 = ctx.reg(rd + 1);
+        mem_write!(ctx.asm, u32, addr, v0);
+        mem_write!(ctx.asm, u32, addr.wrapping_add(4), v1);
+        if ADDR != 0 {
+            ctx.set_reg(rn, offset_addr);
+        }
+        InstResult::ContinueStore(2)
+    } else {
+        let v0 = mem_read!(ctx.asm, u32, addr);
+        let v1 = mem_read!(ctx.asm, u32, addr.wrapping_add(4));
+        if ADDR != 0 {
+            ctx.set_reg(rn, offset_addr);
+        }
+        ctx.set_reg(rd, v0);
+        ctx.set_reg(rd + 1, v1);
+        InstResult::Continue(2)
+    }
+}
+
+macro_rules! dword_addr {
+    ($name:ident, $store:expr, $addr:expr, $a:ident) => {
+        paste! {
+            pub(super) fn [<$name _ $a ip>](c: &mut Ctx, o: u32) -> InstResult { ldrd_strd::<$store, $addr, true, false>(c, o) }
+            pub(super) fn [<$name _ $a im>](c: &mut Ctx, o: u32) -> InstResult { ldrd_strd::<$store, $addr, false, false>(c, o) }
+            pub(super) fn [<$name _ $a rp>](c: &mut Ctx, o: u32) -> InstResult { ldrd_strd::<$store, $addr, true, true>(c, o) }
+            pub(super) fn [<$name _ $a rm>](c: &mut Ctx, o: u32) -> InstResult { ldrd_strd::<$store, $addr, false, true>(c, o) }
+        }
+    };
+}
+
+macro_rules! dword_op {
+    ($name:ident, $store:expr) => {
+        dword_addr!($name, $store, 0, of);
+        dword_addr!($name, $store, 1, pr);
+        dword_addr!($name, $store, 2, pt);
+    };
+}
+
+dword_op!(ldrd, false);
+dword_op!(strd, true);
+
+fn swp_common<const BYTE: bool>(ctx: &mut Ctx, opcode: u32) -> InstResult {
+    let rd = (opcode >> 12) & 0xF;
+    let rm = opcode & 0xF;
+    let rn = (opcode >> 16) & 0xF;
+    let addr = ctx.reg(rn);
+    let store_value = ctx.reg(rm);
+    let loaded = if BYTE {
+        let v = mem_read!(ctx.asm, u8, addr) as u32;
+        mem_write!(ctx.asm, u8, addr, store_value as u8);
+        v
+    } else {
+        let v = mem_read!(ctx.asm, u32, addr & !3).rotate_right((addr & 3) << 3);
+        mem_write!(ctx.asm, u32, addr & !3, store_value);
+        v
+    };
+    if rd != 15 {
+        ctx.set_reg(rd, loaded);
+    }
+    // NooDS: (arm7 << 1) + 2.
+    InstResult::ContinueStore(if ctx.cpu == ARM7 { 4 } else { 2 })
+}
+
+pub(super) fn swp(c: &mut Ctx, o: u32) -> InstResult {
+    swp_common::<false>(c, o)
+}
+
+pub(super) fn swpb(c: &mut Ctx, o: u32) -> InstResult {
+    swp_common::<true>(c, o)
+}

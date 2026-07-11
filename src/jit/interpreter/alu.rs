@@ -503,3 +503,161 @@ pub(super) fn clz(ctx: &mut Ctx, opcode: u32) -> InstResult {
     ctx.set_reg((opcode >> 12) & 0xF, rm.leading_zeros());
     InstResult::Continue(1)
 }
+
+// ---------------------------------------------------------------------------------------------
+// ARMv5 DSP extensions (arm9 only): saturating add/sub and signed halfword multiplies.
+// Semantics from NooDS interpreter_alu.cpp; Q (bit 27) is sticky.
+// ---------------------------------------------------------------------------------------------
+
+const Q_BIT: u32 = 1 << 27;
+
+#[inline]
+fn clamp_q(ctx: &mut Ctx, value: i64) -> u32 {
+    if value > 0x7FFFFFFF {
+        ctx.set_cpsr(ctx.cpsr() | Q_BIT);
+        0x7FFFFFFF
+    } else if value < -0x80000000 {
+        ctx.set_cpsr(ctx.cpsr() | Q_BIT);
+        0x80000000
+    } else {
+        value as u32
+    }
+}
+
+macro_rules! qalu {
+    ($name:ident, |$ctx:ident, $a:ident, $b:ident| $body:expr) => {
+        pub(super) fn $name($ctx: &mut Ctx, opcode: u32) -> InstResult {
+            if $ctx.cpu == ARM7 {
+                return InstResult::Continue(1);
+            }
+            let $a = $ctx.reg(opcode & 0xF) as i32 as i64;
+            let $b = $ctx.reg((opcode >> 16) & 0xF) as i32 as i64;
+            let value = $body;
+            let rd = (opcode >> 12) & 0xF;
+            let result = clamp_q($ctx, value);
+            if rd != 15 {
+                $ctx.set_reg(rd, result);
+            }
+            InstResult::Continue(1)
+        }
+    };
+}
+
+qalu!(qadd, |ctx, a, b| a + b);
+qalu!(qsub, |ctx, a, b| a - b);
+qalu!(qdadd, |ctx, a, b| {
+    let doubled = clamp_q(ctx, b * 2) as i32 as i64;
+    a + doubled
+});
+qalu!(qdsub, |ctx, a, b| {
+    let doubled = clamp_q(ctx, b * 2) as i32 as i64;
+    a - doubled
+});
+
+#[inline]
+fn half<const TOP: bool>(value: u32) -> i64 {
+    if TOP {
+        (value >> 16) as i16 as i64
+    } else {
+        value as i16 as i64
+    }
+}
+
+macro_rules! smul_xy {
+    ($name:ident, $x:expr, $y:expr) => {
+        pub(super) fn $name(ctx: &mut Ctx, opcode: u32) -> InstResult {
+            if ctx.cpu == ARM7 {
+                return InstResult::Continue(1);
+            }
+            let op1 = half::<$x>(ctx.reg(opcode & 0xF));
+            let op2 = half::<$y>(ctx.reg((opcode >> 8) & 0xF));
+            let rd = (opcode >> 16) & 0xF;
+            ctx.set_reg(rd, (op1 * op2) as u32);
+            InstResult::Continue(1)
+        }
+    };
+}
+
+smul_xy!(smulbb, false, false);
+smul_xy!(smulbt, false, true);
+smul_xy!(smultb, true, false);
+smul_xy!(smultt, true, true);
+
+macro_rules! smla_xy {
+    ($name:ident, $x:expr, $y:expr) => {
+        pub(super) fn $name(ctx: &mut Ctx, opcode: u32) -> InstResult {
+            if ctx.cpu == ARM7 {
+                return InstResult::Continue(1);
+            }
+            let op1 = half::<$x>(ctx.reg(opcode & 0xF));
+            let op2 = half::<$y>(ctx.reg((opcode >> 8) & 0xF));
+            let acc = ctx.reg((opcode >> 12) & 0xF) as i32 as i64;
+            let res = op1 * op2 + acc;
+            let rd = (opcode >> 16) & 0xF;
+            let truncated = res as i32;
+            if res != truncated as i64 {
+                ctx.set_cpsr(ctx.cpsr() | Q_BIT);
+            }
+            ctx.set_reg(rd, truncated as u32);
+            InstResult::Continue(1)
+        }
+    };
+}
+
+smla_xy!(smlabb, false, false);
+smla_xy!(smlabt, false, true);
+smla_xy!(smlatb, true, false);
+smla_xy!(smlatt, true, true);
+
+macro_rules! smulw_y {
+    ($name:ident, $y:expr, $acc:expr) => {
+        pub(super) fn $name(ctx: &mut Ctx, opcode: u32) -> InstResult {
+            if ctx.cpu == ARM7 {
+                return InstResult::Continue(1);
+            }
+            let op1 = ctx.reg(opcode & 0xF) as i32 as i64;
+            let op2 = half::<$y>(ctx.reg((opcode >> 8) & 0xF));
+            let mut res = (op1 * op2) >> 16;
+            if $acc {
+                let acc = ctx.reg((opcode >> 12) & 0xF) as i32 as i64;
+                res += acc;
+                let truncated = res as i32;
+                if res != truncated as i64 {
+                    ctx.set_cpsr(ctx.cpsr() | Q_BIT);
+                }
+            }
+            let rd = (opcode >> 16) & 0xF;
+            ctx.set_reg(rd, res as u32);
+            InstResult::Continue(1)
+        }
+    };
+}
+
+smulw_y!(smulwb, false, false);
+smulw_y!(smulwt, true, false);
+smulw_y!(smlawb, false, true);
+smulw_y!(smlawt, true, true);
+
+macro_rules! smlal_xy {
+    ($name:ident, $x:expr, $y:expr) => {
+        pub(super) fn $name(ctx: &mut Ctx, opcode: u32) -> InstResult {
+            if ctx.cpu == ARM7 {
+                return InstResult::Continue(1);
+            }
+            let rd_lo = (opcode >> 12) & 0xF;
+            let rd_hi = (opcode >> 16) & 0xF;
+            let op2 = half::<$x>(ctx.reg(opcode & 0xF));
+            let op3 = half::<$y>(ctx.reg((opcode >> 8) & 0xF));
+            let mut res = ((ctx.reg(rd_hi) as u64) << 32 | ctx.reg(rd_lo) as u64) as i64;
+            res = res.wrapping_add(op2 * op3);
+            ctx.set_reg(rd_lo, res as u32);
+            ctx.set_reg(rd_hi, (res >> 32) as u32);
+            InstResult::Continue(2)
+        }
+    };
+}
+
+smlal_xy!(smlalbb, false, false);
+smlal_xy!(smlalbt, false, true);
+smlal_xy!(smlaltb, true, false);
+smlal_xy!(smlaltt, true, true);
