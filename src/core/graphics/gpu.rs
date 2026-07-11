@@ -126,8 +126,13 @@ pub struct Gpu {
     pub gpu_2d_regs_a: Gpu2DRegisters,
     pub gpu_2d_regs_b: Gpu2DRegisters,
     pub gpu_3d_regs: Gpu3DRegisters,
-    #[savestate(skip)]
+    #[savestate(with = "savestate_renderer_3d_registers")]
     pub renderer: PtrWrapper<GpuRenderer>,
+}
+
+// Not the renderer itself: only the 3d display registers it holds, see savestate_registers
+fn savestate_renderer_3d_registers(renderer: &mut PtrWrapper<GpuRenderer>, state: &mut crate::savestate::SavestateContext) {
+    renderer.renderer_3d.savestate_registers(state);
 }
 
 impl Gpu {

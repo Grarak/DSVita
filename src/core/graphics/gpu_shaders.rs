@@ -64,6 +64,8 @@ pub struct Gpu3DShaderPrograms {
     pub polygon_attrs: GLint,
     pub tex_image_param: GLint,
     pub screen_width: GLint,
+    pub toon_table: GLint,
+    pub toon_highlight: GLint,
 }
 
 impl Gpu3DShaderPrograms {
@@ -88,6 +90,8 @@ impl Gpu3DShaderPrograms {
         let polygon_attrs = gl::GetUniformLocation(program, c"polygonAttrsF".as_ptr() as _);
         let tex_image_param = gl::GetUniformLocation(program, c"texImageParamF".as_ptr() as _);
         let screen_width = gl::GetUniformLocation(program, c"screenWidth".as_ptr() as _);
+        let toon_table = gl::GetUniformLocation(program, c"toonTable".as_ptr() as _);
+        let toon_highlight = gl::GetUniformLocation(program, c"toonHighlight".as_ptr() as _);
 
         gl::UseProgram(previous_program as _);
 
@@ -96,6 +100,8 @@ impl Gpu3DShaderPrograms {
             polygon_attrs,
             tex_image_param,
             screen_width,
+            toon_table,
+            toon_highlight,
         }
     }
 

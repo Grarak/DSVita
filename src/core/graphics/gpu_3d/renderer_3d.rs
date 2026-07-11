@@ -8,6 +8,7 @@ use crate::core::graphics::gpu_renderer::GpuRendererCommon;
 use crate::core::graphics::gpu_shaders::{Gpu3DShaderDepthPrograms, Gpu3DShaderPrograms, GpuShadersPrograms};
 use crate::core::memory::vram;
 use crate::math::{vmult_vec4_mat4_no_store, Vectori32};
+use crate::savestate::{Savestate, SavestateContext};
 use crate::settings::{ListInner, SettingValue};
 use crate::utils::{rgb5_to_float8, HeapArray, HeapArrayU8, HeapMem, PtrWrapper, StrErr};
 use bilge::prelude::*;
@@ -93,7 +94,9 @@ impl Default for Disp3DCnt {
     }
 }
 
-#[derive(Clone)]
+crate::savestate::impl_savestate_bytes!(Disp3DCnt, ClearColor);
+
+#[derive(Clone, Savestate)]
 struct Gpu3DRendererInner {
     disp_cnt: Disp3DCnt,
     edge_colors: [u16; 8],
@@ -382,6 +385,16 @@ impl Gpu3DRenderer {
 
     pub fn invalidate(&mut self) {
         self.dirty = true;
+    }
+
+    // The 3d display registers (disp cnt, clear, fog, toon, edge) are written straight into the
+    // renderer and live nowhere else, so savestates walk them here; runs on the cpu thread like
+    // the io writes themselves
+    pub fn savestate_registers(&mut self, state: &mut SavestateContext) {
+        self.inners[1].savestate(state);
+        if !state.is_save() {
+            self.invalidate();
+        }
     }
 
     pub fn get_disp_3d_cnt(&self) -> u16 {
@@ -703,18 +716,30 @@ impl Gpu3DRenderer {
             push_indices(&mut self.indices_opaque, self.vertices_buf_count, draw.vertex_count);
         }
 
+        // The DS depth-equal test passes within a margin (0x200 of 0xFFFFFF for z-buffering); bias
+        // equal-test polygons towards the viewer and rely on LEQUAL to emulate that. Clip space z
+        // spans twice the depth range, thus double the margin. W-buffering applies the bias to the
+        // fragment depth in the shader instead.
+        const Z_EQUAL_MARGIN: f32 = 2.0 * 0x200 as f32 / 0xFFFFFF as f32;
+        let z_bias = if draw.attr.depth_test_equal() && !self.buffer.swap_buffers.depth_buffering_w() {
+            Z_EQUAL_MARGIN
+        } else {
+            0.0
+        };
+
         for i in draw.vertex_start_index..draw.vertex_start_index + draw.vertex_count {
             let vertex = self.buffer.vertices.get_unchecked(i as usize);
 
             let color = u16::from(vertex.data.color());
 
-            let gpu_vertex = Gpu3DVertex {
+            let mut gpu_vertex = Gpu3DVertex {
                 coords: vertex.coords.float.0,
                 tex_coords: [vertex.s.trans_tex_coords[0], vertex.s.trans_tex_coords[1]],
                 tex_size: [1 << u8::from(draw.tex_image_param.size_s_shift()), 1 << u8::from(draw.tex_image_param.size_t_shift())],
                 viewport: [draw.viewport.x1(), draw.viewport.y1(), draw.viewport.x2(), draw.viewport.y2()],
                 color: [(color & 0x1F) as u8, ((color >> 5) & 0x1F) as u8, ((color >> 10) & 0x1F) as u8, u8::from(draw.attr.alpha())],
             };
+            gpu_vertex.coords[2] -= z_bias * gpu_vertex.coords[3];
 
             // println!("{} {} add vertex {i} {:?}", draw_attr.id(), draw_attr.trans_new_depth(), gpu_vertex.coords);
 
@@ -821,12 +846,6 @@ impl Gpu3DRenderer {
 
             let tex_image_param = [u32::from(batch.tex_image_param)];
             gl::Uniform1fv(program.tex_image_param, 1, tex_image_param.as_ptr() as _);
-
-            if batch.attr.depth_test_equal() {
-                gl::DepthFunc(gl::EQUAL);
-            } else {
-                gl::DepthFunc(gl::LEQUAL);
-            }
 
             if translucent_only {
                 if batch.attr.trans_new_depth() {
@@ -970,6 +989,16 @@ impl Gpu3DRenderer {
         gl::Enable(gl::STENCIL_TEST);
 
         gl::Uniform1f(program.screen_width, guest_width);
+
+        let mut toon_table = [0f32; 32 * 3];
+        for i in 0..32 {
+            let [r, g, b] = rgb5_to_float8(self.inners[0].toon_table[i]);
+            toon_table[i * 3] = r;
+            toon_table[i * 3 + 1] = g;
+            toon_table[i * 3 + 2] = b;
+        }
+        gl::Uniform3fv(program.toon_table, 32, toon_table.as_ptr());
+        gl::Uniform1f(program.toon_highlight, u8::from(self.inners[0].disp_cnt.polygon_attr_shading()) as f32);
 
         gl::BindBuffer(gl::ARRAY_BUFFER, self.gl.vertices_buf);
         #[cfg(target_os = "linux")]

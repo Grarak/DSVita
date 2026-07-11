@@ -156,7 +156,7 @@ pub fn op_poll() -> OpView {
 pub use dsvita_macros::Savestate;
 
 pub const SAVESTATE_MAGIC: u32 = u32::from_le_bytes(*b"DSVS");
-pub const SAVESTATE_VERSION: u16 = 2;
+pub const SAVESTATE_VERSION: u16 = 3;
 
 // File layout: magic u32 | version u16 | arm7_emu u8 | screenshot_len u32 | screenshot |
 // deflate-compressed state. The header stays uncompressed so the list UI can read the
