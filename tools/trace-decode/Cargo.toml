@@ -1,0 +1,25 @@
+# Standalone x86 trace decoder. Detached from the dsvita workspace (own [workspace] table) so a
+# normal arm/aarch64 dsvita build never compiles it, and so it builds for the x86 host by
+# default. It reuses dsvita's REAL disassembler (src/jit/disassembler/**, inst_info, op) via
+# #[path] includes — see src/jit.rs — instead of reimplementing it, so its output matches the
+# in-emulator decoder (debug_inst_log.rs::decode_file) exactly. The only deps are pure Rust:
+# `vixl` for the Reg/Cond/RegReserve types (on a non-arm host vixl's build.rs compiles NO C++,
+# it hands back only the Rust types) and `paste` (the delegation-table name macro). No C/C++,
+# no SDL, no emulator.
+[package]
+name = "trace-decode"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[[bin]]
+name = "trace_decode"
+path = "src/main.rs"
+
+[dependencies]
+vixl = { path = "../../vixl" }
+paste = "1"
+
+[profile.release]
+opt-level = 2

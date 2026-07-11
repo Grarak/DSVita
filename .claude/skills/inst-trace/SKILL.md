@@ -44,12 +44,18 @@ Local capture: `tools/trace.sh <out.ilog>` boots `$DSVITA_TEST_ROM` under qemu.
 ## Decode & analyze
 
 ```bash
-dsvita decode-inst-log <path> > out.txt        # exact per-inst text (regs + InstInfo)
+tools/trace_decode.sh <path> > out.txt         # exact per-inst text (regs + InstInfo), x86-NATIVE
 grep -a "^ARM9 Executed" out.txt               # per-cpu register-state stream
+tools/trace_decode.sh <path> --cpu 1 --index   # filter to one cpu (0=ARM9,1=ARM7), number records
 tools/extract.sh <ilog> <out.txt> [maxlines]   # ARM7 stream shortcut
 tools/sync.sh <ilog> <out.txt>                 # IPCSYNC (0x4000180) handshake traffic
 tools/trace_diff.py <a.ilog> <b.ilog> [W]      # streaming binary differ with HLE-gap resync
 ```
+
+`trace_decode.sh` builds/runs `tools/trace-decode` — a detached crate that reuses dsvita's REAL
+disassembler (`#[path]` includes of `src/jit/disassembler/**`, `inst_info`, `op`) but links no
+C/C++, so it decodes on the x86 dev box where there is no dsvita binary. Its output is identical
+to the in-emulator `dsvita decode-inst-log <path>` (which still works on an arm/aarch64 box).
 
 Interleaved `memory read/write at X with value Y` text records show io handshakes,
 overlay/file loads, and pointer provenance — grep them before writing new tooling.
@@ -67,7 +73,9 @@ overlay/file loads, and pointer provenance — grep them before writing new tool
 - **Never decode or analyze traces on the test box** — always scp the .ilog to the dev
   machine first (maintainer rule). The box's SD is slow and small; the dev machine chews a
   24 GB log in seconds. Decoding/diffing is pure ilog parsing — architecture-independent, so
-  it ALWAYS happens on the dev machine regardless of where the trace was captured.
+  it ALWAYS happens on the dev machine regardless of where the trace was captured. On an x86
+  dev box (no dsvita binary) decode with `tools/trace_decode.sh` and diff with `trace_diff.py`
+  — both run natively there.
 - **Only run a built binary locally when the dev machine's arch matches it.** `tracediff.sh`
   runs the `aarch64-unknown-linux-gnu` side natively — that assumes an **aarch64 dev box**
   (the current setup: native a64 + `qemu-arm` for the a32 side). On an **x86 dev machine**,

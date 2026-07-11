@@ -1,4 +1,5 @@
 /target
+/tools/trace-decode/target
 /.idea
 /.vscode
 .DS_Store

@@ -59,6 +59,7 @@ mod debug_inst_log;
 #[cfg(not(debug_assertions))]
 #[path = "release_inst_log.rs"]
 mod debug_inst_log;
+mod inst_log_format;
 mod fast_fixed_fifo;
 mod fixed_fifo;
 mod game_info;
