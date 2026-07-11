@@ -124,6 +124,12 @@ impl JitMemory {
             true, true, true, true, true, false;
             true, true, false, false, true, false;
             true, true, true, false, true, false;
+            true, false, false, true, false, true;
+            true, false, true, true, false, true;
+            true, true, false, true, false, true;
+            true, true, true, true, false, true;
+            true, true, false, false, false, true;
+            true, true, true, false, false, true;
         )
     }
 
@@ -226,14 +232,17 @@ impl JitMemory {
         let op0 = metadata.s.fast.operands.values[0].as_reg_no_shift().unwrap_unchecked();
         let user = transfer.user() && !rlist.is_reserved(Reg::PC);
         let valid = !transfer.write_back() || !rlist.is_reserved(op0);
+        // A stored pc reads the pipeline value — the guest PC slot is stale mid-block
+        // (the fast window materializes it the same way).
+        let needs_pc = is_write && rlist.is_reserved(Reg::PC);
         let mut pre = transfer.pre();
         if !transfer.add() {
             pre = !pre;
         }
         let params = InstMemMultipleParams::new(rlist.0 as u16, u4::new(rlist.len() as u8), u4::new(op0 as u8), pre, transfer.user(), u6::new(0));
         let handler = match cpu {
-            ARM9 => Self::get_inst_mem_multiple_handler_fun_a64::<{ ARM9 }>(is_write, transfer, user, valid, false),
-            ARM7 => Self::get_inst_mem_multiple_handler_fun_a64::<{ ARM7 }>(is_write, transfer, user, valid, false),
+            ARM9 => Self::get_inst_mem_multiple_handler_fun_a64::<{ ARM9 }>(is_write, transfer, user, valid, needs_pc),
+            ARM7 => Self::get_inst_mem_multiple_handler_fun_a64::<{ ARM7 }>(is_write, transfer, user, valid, needs_pc),
         };
         let metadata_ptr = metadata as *const GuestInstMetadata as u64;
 
@@ -276,7 +285,7 @@ impl JitMemory {
         };
         let (_, metadata) = &mut meta.metadatas[index];
 
-        debug_println!("{cpu:?} a64 slow mem patch at {:x} {:?} addr {guest_memory_addr:x}", metadata.pc, metadata.s.fast.op);
+        debug_println!("{cpu:?} slow mem patch at {:x} {:?} addr {guest_memory_addr:x}", metadata.pc, metadata.s.fast.op);
 
         let window_start = *host_pc - metadata.s.fast.start_offset as usize;
         let window_size = metadata.s.fast.size as usize;

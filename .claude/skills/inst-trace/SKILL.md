@@ -65,5 +65,10 @@ overlay/file loads, and pointer provenance — grep them before writing new tool
 - Instruction records are delta-encoded automatically (~5x smaller than the old fixed 80 B
   records; keyframe every 2^20 records per cpu). All readers (decode-inst-log,
   trace_diff.py) handle both formats.
+- The very frequent mem.rs "memory read/write at" lines are compact binary TAG_MEM records
+  (6-10 B vs ~40-50 B text; slice/DMA element lines batch into one record). The decoder
+  regenerates the exact old text lines, so decoded output and greps are unchanged.
+  `DSVITA_INST_LOG_TEXT=0` drops them like any text. Logs from before July 10 2026 still
+  decode; older binaries can't read new logs.
 - `DSVITA_INST_LOG_MAX=N` stops the log after exactly N records, flushed from the logging
   thread — use it instead of SIGINT for A/B pairs (a signal stop can tear a record).

@@ -30,6 +30,10 @@ RECORD_SIZE = 80  # InstLogRecord: regs[15]+pc+cpsr+spsr+opcode+cpu, repr(C), 4-
 TAG_INST = 0
 TAG_TEXT = 1
 TAG_INST_DELTA = 2  # delta vs the same cpu's previous record; see debug_inst_log.rs
+TAG_MEM = 3  # compact memory-access record; see debug_inst_log.rs
+
+MEM_WIDTHS = (0, 1, 2, 4)
+MEM_FIRST_SLICE_KIND = 7  # kinds 7..=10 carry a count u32 + count elements
 
 FLAG_CPU7 = 1 << 0
 FLAG_PC_SEQ = 1 << 1
@@ -128,6 +132,18 @@ def read_inst(f, prev):
             (ln,) = struct.unpack("<I", f.read(4))
             f.read(ln)
             f.read(1)  # newline flag
+        elif t == TAG_MEM:
+            head = f.read(5)
+            if len(head) < 5:
+                return None
+            width = MEM_WIDTHS[(head[0] >> 5) & 3]
+            if (head[0] & 0xF) >= MEM_FIRST_SLICE_KIND:
+                cnt = f.read(4)
+                if len(cnt) < 4:
+                    return None
+                f.read(width * struct.unpack("<I", cnt)[0])
+            else:
+                f.read(width)
         else:
             return None  # corrupt tail from killed process — treat as EOF
 

@@ -63,13 +63,17 @@ pub(in super::super) fn emit_thumb_data_processing(block_asm: &mut BlockAsm, ins
             block_asm.masm.subs_reg(result, A64Reg::ZR, rhs, A64ShiftKind::LSL, 0, false);
             writeback_arith_flags(block_asm);
         }
-        // add rd, rm (high registers, no flags).
+        // add rd, rm (high registers, no flags). A pc destination goes through a scratch
+        // into the guest PC slot for the driver's indirect-branch dispatch.
         Op::AddHT => {
             let dst = operands[0].as_reg_no_shift().unwrap();
-            let result = block_asm.guest_map(dst);
+            let result = if dst == Reg::PC { SCRATCH2 } else { block_asm.guest_map(dst) };
             let rhs = thumb_operand(block_asm, &operands[2], pc);
             let lhs = thumb_source_reg(block_asm, SCRATCH0, operands[1].as_reg_no_shift().unwrap(), pc);
             block_asm.masm.add_reg(result, lhs, rhs, A64ShiftKind::LSL, 0, false);
+            if dst == Reg::PC {
+                block_asm.store_guest(SCRATCH2, Reg::PC);
+            }
         }
         // cmp/cmn rn, (rm|imm8).
         Op::CmpT | Op::CmpHT | Op::CmnT => {
@@ -93,9 +97,12 @@ pub(in super::super) fn emit_thumb_data_processing(block_asm: &mut BlockAsm, ins
         // mov rd, rm (high registers, no flags).
         Op::MovHT => {
             let dst = operands[0].as_reg_no_shift().unwrap();
-            let result = block_asm.guest_map(dst);
+            let result = if dst == Reg::PC { SCRATCH2 } else { block_asm.guest_map(dst) };
             let rhs = thumb_operand(block_asm, &operands[1], pc);
             block_asm.masm.orr_reg(result, A64Reg::ZR, rhs, A64ShiftKind::LSL, 0, false);
+            if dst == Reg::PC {
+                block_asm.store_guest(SCRATCH2, Reg::PC);
+            }
         }
         // mvns rd, rm.
         Op::MvnT => {
@@ -204,12 +211,7 @@ pub(in super::super) fn emit_thumb_data_processing(block_asm: &mut BlockAsm, ins
                 block_asm.masm.add_imm(result, sp, imm as u64, false);
             }
         }
-        // First half of a long BL/BLX: LR = pc + 4 + (soff11 << 12) — a constant (the
-        // decoder operand already carries the full shifted offset).
-        Op::BlSetupT => {
-            let off = operands[0].as_imm().unwrap() as i32;
-            block_asm.set_guest_imm(Reg::LR, (pc + 4).wrapping_add_signed(off));
-        }
+        Op::BlSetupT => {}
         // BLX on the ARM7 is a no-op (NooDS rule; the interpreter logs it as executed).
         Op::BlxOffT | Op::BlxRegT => {}
         _ => unreachable!(),

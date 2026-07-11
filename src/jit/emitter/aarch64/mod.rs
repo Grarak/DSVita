@@ -5,13 +5,10 @@
 
 pub(super) mod emit;
 #[cfg(target_arch = "aarch64")]
-pub use emit::class_disabled;
 mod emit_alu;
 mod emit_branch;
 mod emit_transfer;
 mod thumb;
-
-pub use emit::is_block_jit_supported;
 
 use vixl::A64Reg;
 

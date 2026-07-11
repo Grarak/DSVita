@@ -226,8 +226,10 @@ unsafe fn branch_lr_mismatch<const CPU: CpuType>(asm: &mut JitAsm, target_pc: u3
     exit_guest_context!(asm);
 }
 
-#[inline(always)]
-unsafe fn branch_lr_after_flush<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, target_pc: u32, current_pc: u32) {
+pub unsafe extern "C" fn branch_lr<const CPU: CpuType, const ARM7_HLE: bool>(total_cycles: u16, target_pc: u32, current_pc: u32) {
+    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
+
+    flush_cycles::<CPU>(asm, total_cycles, current_pc);
     check_scheduler::<CPU, ARM7_HLE>(asm, current_pc);
 
     if IS_DEBUG {
@@ -243,21 +245,6 @@ unsafe fn branch_lr_after_flush<const CPU: CpuType, const ARM7_HLE: bool>(asm: &
     } else {
         branch_lr_mismatch::<CPU>(asm, target_pc, desired_lr, current_pc);
     }
-}
-
-pub unsafe extern "C" fn branch_lr<const CPU: CpuType, const ARM7_HLE: bool>(total_cycles: u16, target_pc: u32, current_pc: u32) {
-    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
-
-    flush_cycles::<CPU>(asm, total_cycles, current_pc);
-    branch_lr_after_flush::<CPU, ARM7_HLE>(asm, target_pc, current_pc);
-}
-
-/// The emitted BX-LR fast path flushes the cycle accounting inline and only lands here
-/// when the scheduler quantum is up or the return-stack peek mismatched — everything
-/// after the flush, with the pop not yet committed (the fast path only peeks).
-pub unsafe extern "C" fn branch_lr_slow<const CPU: CpuType, const ARM7_HLE: bool>(target_pc: u32, current_pc: u32) {
-    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
-    branch_lr_after_flush::<CPU, ARM7_HLE>(asm, target_pc, current_pc);
 }
 
 pub unsafe extern "C" fn branch_any_reg<const ARM7_HLE: bool>(total_cycles: u16, current_pc: u32) {

@@ -129,7 +129,7 @@ impl BlockAsm {
 
     /// Validate the guest block bytes against `hash` before executing (arm7 non-sdk blocks).
     /// The block-entry pc arrives in R0 and must survive the call.
-    pub fn emit_validate_block_hash(&mut self, guest_ptr: usize, size: u32, hash: u32, _tagged_pc: u32, validate_fun: *const ()) {
+    pub fn emit_validate_block_hash(&mut self, guest_ptr: usize, size: u32, hash: u32, validate_fun: *const ()) {
         self.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R4, &Reg::R0.into());
         self.ldr2(Reg::R0, guest_ptr as u32);
         self.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &size.into());
@@ -258,21 +258,6 @@ impl BlockAsm {
         self.mrs2(tmp_reg, SpecialRegisterType_CPSR.into());
         self.lsr5(flags_update, Cond::AL, tmp_reg, tmp_reg, &24.into());
         self.strb2(tmp_reg, &(GUEST_REGS_PTR_REG, Reg::CPSR as i32 * 4 + 3).into());
-    }
-
-    /// Like store_guest_cpsr_reg, but keeps the full cpsr in keep_reg so the flags can later be
-    /// restored with a register msr instead of reloading them through memory. keep_reg must
-    /// survive until the restore: the allocator only hands out r4-r11 and the assembler only
-    /// scratches ip, so host lr is safe across accounting and relocation as long as nothing is
-    /// called in between.
-    pub fn store_guest_cpsr_reg_keep(&mut self, keep_reg: Reg, scratch_reg: Reg) {
-        self.mrs2(keep_reg, SpecialRegisterType_CPSR.into());
-        self.lsr5(FlagsUpdate_DontCare, Cond::AL, scratch_reg, keep_reg, &24.into());
-        self.strb2(scratch_reg, &(GUEST_REGS_PTR_REG, Reg::CPSR as i32 * 4 + 3).into());
-    }
-
-    pub fn restore_guest_cpsr_from_reg(&mut self, keep_reg: Reg) {
-        self.msr2(MaskedSpecialRegisterType_CPSR_f.into(), &keep_reg.into());
     }
 
     pub fn save_dirty_guest_cpsr(&mut self, clear: bool) {

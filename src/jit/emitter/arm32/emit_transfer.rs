@@ -223,7 +223,7 @@ impl JitAsm<'_> {
 
                 fast_mem_start
             }
-            _ => {
+            None => {
                 let op1_mapped = block_asm.get_guest_map(op1);
                 let op2_mapped = block_asm.get_guest_operand_map(op2);
 

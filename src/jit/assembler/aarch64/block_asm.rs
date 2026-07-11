@@ -40,6 +40,10 @@ pub struct BlockAsm {
     pub masm: A64MacroAssembler,
     pub thumb: bool,
     pub is_os_irq_handler: bool,
+    /// This block is FSi_ClearOverlayImage: its returns leave the guest context so the
+    /// overlay invalidation the entry hook performed is observed before any chained
+    /// block runs (arm32's is_fs_clear_overlay twin).
+    pub is_fs_clear_overlay: bool,
     cpu: CpuType,
     /// Bound at buffer offset 0: `adr` against it materializes the block's host base
     /// address (blocks are page-aligned in jit memory, and the mid-entry runtime keys its
@@ -77,6 +81,7 @@ impl BlockAsm {
             masm: A64MacroAssembler::new(),
             thumb,
             is_os_irq_handler,
+            is_fs_clear_overlay: false,
             cpu,
             start_label: A64Label::new(),
             inst_offsets: Vec::new(),
@@ -139,21 +144,12 @@ impl BlockAsm {
     /// recompiles and returns the new entry — pop our frame and tail-jump into it.
     /// x19 parks the tagged entry pc across the call (frame-saved, and the allocator
     /// holds nothing this early).
-    pub fn emit_validate_block_hash(&mut self, guest_ptr: usize, size: u32, hash: u32, tagged_pc: u32, validate_fun: *const ()) {
-        self.masm.mov_reg(A64Reg::X19, A64Reg::X0, true);
+    pub fn emit_validate_block_hash(&mut self, guest_ptr: usize, size: u32, hash: u32, validate_fun: *const ()) {
+        self.masm.mov_reg(A64Reg::X19, A64Reg::X0, false);
         self.masm.mov_imm64(A64Reg::X0, guest_ptr as u64);
         self.mov_imm(A64Reg::X1, size);
-        self.mov_imm(A64Reg::X2, hash);
-        self.mov_imm(A64Reg::X3, tagged_pc);
+        self.mov_imm(A64Reg::X20, hash);
         self.call_host(validate_fun);
-        let mut valid = A64Label::new();
-        self.masm.cbz(A64Reg::X0, true, &mut valid);
-        self.masm.mov_reg(A64Reg::X8, A64Reg::X0, true);
-        self.restore_frame();
-        self.masm.mov_imm32(A64Reg::X0, tagged_pc);
-        self.masm.br(A64Reg::X8);
-        self.masm.bind(&mut valid);
-        self.masm.mov_reg(A64Reg::X0, A64Reg::X19, true);
     }
 
     /// BRANCH_LOG enter-block hook; x19 parks the entry pc around the call (frame-saved,

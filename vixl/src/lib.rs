@@ -983,6 +983,7 @@ mod aarch64_glue {
     alu_imm_method!(ands_imm, masm_a64_ands_imm);
     alu_imm_method!(orr_imm, masm_a64_orr_imm);
     alu_imm_method!(eor_imm, masm_a64_eor_imm);
+    alu_imm_method!(bic_imm, masm_a64_bic_imm);
 
     macro_rules! alu_reg_method {
         ($name:ident, $shim:ident) => {

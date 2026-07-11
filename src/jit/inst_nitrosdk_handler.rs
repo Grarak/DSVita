@@ -726,10 +726,42 @@ impl JitAsm<'_> {
         has_dc_invalidate_range && bl_count == 3
     }
 
-    /// a64: nothing to hook — jit_insert_block always write-protects, so overlay
-    /// reloads invalidate through the generic per-write path (HAS_FS_CLEAR_HOOK).
+    /// a64 twin of the arm32 hook below. The generic per-write invalidation would keep
+    /// stale overlay blocks correct eventually, but arm32's hook invalidates at the
+    /// function entry AND exits the guest context at every return inside it — skipping
+    /// either desynchronizes quantum boundaries and the return stack against the arm32
+    /// backend (GTA:CTW's overlay loads).
     #[cfg(target_arch = "aarch64")]
-    pub fn emit_fs_clear_overlay_image_hook(&mut self, _guest_pc: u32, _thumb: bool, _block_asm: &mut crate::jit::assembler::aarch64::BlockAsm) {}
+    pub fn emit_fs_clear_overlay_image_hook(&mut self, guest_pc: u32, thumb: bool, block_asm: &mut crate::jit::assembler::aarch64::BlockAsm) {
+        if self.cpu == ARM7 || !self.emu.nitro_sdk_version.is_valid() {
+            return;
+        }
+
+        if self.emu.fs_clear_overlay_image_addr == 0 {
+            let regs = ARM9.thread_regs();
+            let ptr = regs.gp_regs[0];
+            let shm_offset = self.emu.get_shm_offset::<{ ARM9 }, true, false>(ptr & 0x0FFFFFFF);
+            if shm_offset != 0 {
+                let overlay_info: &cartridge_io::FsOverlayInfoHeader = unsafe { mem::transmute(self.emu.mem.shm.as_ptr().add(shm_offset)) };
+                if (overlay_info.id as usize) < self.emu.cartridge.io.overlays.len() {
+                    let stored_overlay = &self.emu.cartridge.io.overlays[overlay_info.id as usize];
+                    if overlay_info == stored_overlay {
+                        if self.is_addr_fs_clear_overlay_image(guest_pc, thumb) {
+                            self.emu.fs_clear_overlay_image_addr = guest_pc;
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.emu.fs_clear_overlay_image_addr == 0 || self.emu.fs_clear_overlay_image_addr != guest_pc {
+            return;
+        }
+
+        block_asm.call_host(fs_clear_overlay_image_hook as *const ());
+        block_asm.is_fs_clear_overlay = true;
+        info_println!("Found fs clear overlay at {guest_pc:x}");
+    }
 
     #[cfg(target_arch = "arm")]
     pub fn emit_fs_clear_overlay_image_hook(&mut self, guest_pc: u32, thumb: bool, block_asm: &mut BlockAsm) {

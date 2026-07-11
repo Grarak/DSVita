@@ -190,14 +190,55 @@ lowering decision (stage 6 demands record-identical armhf-jit ↔ a64-jit).
 1. **Visual corruption** — sidestepped by the software 2D renderer (section above);
    the GL 2D path keeps its frozen-UBO bug if ever revived. Soft-2D gaps: vram-display,
    mosaic; Vita untested.
-2. **Full op coverage → delete is_block_jit_supported.** Singles DONE (fastmem),
-   **multi-register ldm/stm DONE and ON** (LDP/STP fastmem windows + whole-window slow
-   patch; the crash that kept it gated was the local-branch sched tail storing an
-   untagged thumb resume pc — fixed). Remaining, designs settled: PC-dst loads as
-   terminals; ldrd/strd window extension; swp two-call; mrs/msr/cp15/swi via the
-   interpreter helpers; mul family inline (N/Z only); shift-by-reg S-forms + RRX with
-   csel carry rules; undefined → inst_undefined. Then delete the valve + REFUSED
-   sentinel + the arm32-only fall-through cfg island, and run stage 6.
+2. **Full op coverage — DONE (July 10, valve deleted).** Singles + multi ldm/stm on
+   fastmem; **indirect branches (PC-writing ALU/loads) DONE**: arm32's
+   handle_indirect_branch ported (emit_indirect_branch/_thumb in emit_branch.rs) —
+   mode-bit rules per shape (v4/ALU force ARM, v5 loads interwork, movs/subs pc restore
+   spsr), return-shaped forms (mov pc lr / sp pops) share the BX-LR return-stack fast
+   path, the rest tail-call branch_any_reg (ARM9) or exit (ARM7); conditional forms
+   dispatch out of line (CondIndirectBranch, arm32's cond_indirect_branches twin). The
+   emitters plumb pc values through SCRATCH3/SCRATCH2 into the guest PC slot (pc never
+   allocates). Plus: swi (emit_swi), ARM BLX imm (BranchKind::BlxImm), stm-with-pc
+   pipeline value (+ needs_pc slow-handler wiring). Shapes without a native lowering run
+   through interpret_single inside the block (needs_interpret_single): reg-amount shifts
+   (both ISAs), RRX, ldrd/strd, clz/q ops, and user-bank ldm/stm without pc (the
+   LDP/STP unroll has no banked redirection — WW's os context restore corrupted svc
+   sp/lr until routed). interpret_single MUST get the thumb-tagged pc (untagged = thumb
+   opcodes decode as ARM — cost a day). Corner left refused: pc-dest with reg-shift/RRX
+   (UNPREDICTABLE).
+   Gate results (dev box, qemu-arm armhf vs native a64, --hle-irq 0 -f 0): SM64 boot
+   **4M records STRICT PASS**; hello_world 3M content-identical per cpu (tail interleave
+   shift = same-binary nondeterminism, same byte offset); **GTA:CTW 30M records STRICT
+   PASS + 240s crash-free** (was: dead in seconds). The GTA session (July 10 late) fixed
+   five a64-vs-a32 asymmetries — the WW timer-skew earlier in this list was the first of
+   them:
+   - **ARM7 idle-loop exit didn't charge cycles** (arm32's emit_branch_out_metadata
+     count_cycles=true) → cm fed one loop-body short per idle entry → timer reads drift.
+   - **cp15 was interpret_single-routed**: the interpreter's wait-for-irq halt runs
+     run_scheduler inside breakout_imm while arm32's emit_cp15 charges+exits — cm feed
+     rounding split, irq delivery phase-shifted. Now emit_cp15 (a64) mirrors arm32:
+     halt regs (0x070004/0x070802) park pc+4, cpu_regs_halt, charge, exit; the rest are
+     direct cp15_read/cp15_write calls on the mapped operand.
+   - **fs-clear-overlay hook was a deliberate no-op on a64**: arm32 invalidates at entry
+     AND exits guest at every return inside FSi_ClearOverlayImage — skipping it desyncs
+     quantum boundaries + return stack at every overlay load. Ported (BlockAsm
+     is_fs_clear_overlay + return-stack gate).
+   - **ITCM mirror aliasing in jump_to_other_guest_pc**: low-vector irq entry (pc 0x18)
+     into a block compiled at the 0x1ff8xxx mirror panicked the mid-entry offset math —
+     fold the pc onto the block's mirror (the map already folds by % ITCM_SIZE).
+   - **THE GTA KILLER — pc-relative stores emitted with an uninitialized address**:
+     emit_single_transfer's imm_addr arm only materialized SCRATCH2 for VRAM-pc blocks
+     or foldable word loads; `str r10, [pc, #-0x218]` (GTA's self-patching TWL code)
+     stored through garbage x11 → shredded memory/code → roaming "nondeterministic"
+     crashes (empty-block at 21366d4, wram OOB, gba-region LUT OOB). Also: the region
+     LUTs in mem.rs are now 16 entries (index is (addr>>24)&0xF; hardware-probe loops
+     read 0x8-0xF regions — reads 0/writes ignored, matching the fastmem zero page).
+   Debug recipe that cracked it: instrument every cm advance (run_scheduler feeds, idle
+   feeds, main-loop feeds, jump_to_next_event, schedule dues, timer reads) with
+   debug_println, diff the streams — the first differing line names the subsystem; then
+   read the raw records around the first strict divergence (a re-logged BL = the callee
+   host-returned on one engine and exit-returned on the other = return-stack/exit-set
+   asymmetry).
 3. **Stage 6**: armhf-jit ↔ a64-jit strict pairs at threshold 0 — the definitive value
    gate (jit-vs-interp died with fastmem write-breakouts by design; methodology section
    below). Perf floor: a64-jit ≥ armhf-jit on the pi5.

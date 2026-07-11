@@ -17,17 +17,14 @@ use vixl::{
 
 impl JitAsm<'_> {
     pub fn emit(&mut self, block_asm: &mut BlockAsm, thumb: bool) {
-        // A zero-instruction fill means execution reached an undefined instruction (or data):
-        // fail loudly instead of underflowing into a capacity-overflow abort.
-        debug_assert!(
-            !self.jit_buf.insts.is_empty(),
-            "{:?} compiling empty block at {:x} thumb {thumb}: execution reached undefined code",
-            self.cpu,
-            self.jit_buf.guest_pc_start
-        );
+        let insts_len = self.jit_buf.insts.len();
+        let guest_pc = self.jit_buf.guest_pc_start;
+        let num_blocks = self.analyzer.basic_blocks.len();
+        let step_shift = if thumb { 1 } else { 2 };
+
         block_asm.guest_inst_offsets.reserve(self.jit_buf.insts.len() - 1);
 
-        for i in 0..self.analyzer.basic_blocks.len() {
+        for i in 0..num_blocks {
             let basic_block = &self.analyzer.basic_blocks[i];
             let metadata = self.analyzer.insts_metadata[basic_block.start_index];
             if metadata.local_branch_entry() {
@@ -37,7 +34,7 @@ impl JitAsm<'_> {
             block_asm.init_guest_regs_mapping(required_guest_regs, basic_block.output_regs, i);
         }
 
-        for i in 0..self.analyzer.basic_blocks.len() {
+        for i in 0..num_blocks {
             let cursor_start = block_asm.get_cursor_offset() as usize;
             self.jit_buf.debug_info.record_basic_block_offset(i, cursor_start);
             let required_guest_regs = self.analyzer.basic_blocks[i].get_inputs() - Reg::PC;
@@ -58,6 +55,15 @@ impl JitAsm<'_> {
         }
 
         self.jit_buf.debug_info.record_inst_offset(self.jit_buf.insts.len(), block_asm.get_cursor_offset() as usize);
+
+        let last_inst = self.jit_buf.insts.last().unwrap();
+        if !last_inst.is_uncond_branch() {
+            let next_pc = guest_pc + ((insts_len as u32) << step_shift);
+            block_asm.emit_set_guest_pc_const(next_pc);
+            self.emit_branch_external_label(self.jit_buf.insts.len() - 1, self.analyzer.basic_blocks.len() - 1, next_pc | thumb as u32, false, false, block_asm);
+        }
+
+        self.emit_epilogue(block_asm);
     }
 
     pub fn emit_epilogue(&mut self, block_asm: &mut BlockAsm) {

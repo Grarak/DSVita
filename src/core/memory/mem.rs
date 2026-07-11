@@ -1,21 +1,22 @@
+use crate::core::CpuType;
+use crate::core::CpuType::ARM9;
 use crate::core::cp15::TcmState;
 use crate::core::emu::Emu;
-use crate::core::memory::mmu::{MmuArm7, MmuArm9, MMU_PAGE_SHIFT, MMU_PAGE_SIZE};
+use crate::core::memory::mmu::{MMU_PAGE_SHIFT, MMU_PAGE_SIZE, MmuArm7, MmuArm9};
 use crate::core::memory::regions;
 use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram::Vram;
 use crate::core::memory::wifi::Wifi;
 use crate::core::memory::wram::Wram;
-use crate::core::CpuType;
-use crate::core::CpuType::ARM9;
+use crate::debug_inst_log::{self, MemLogKind};
 use crate::logging::debug_println;
 use crate::mmap::Shm;
+use crate::utils;
 use crate::utils::Convert;
-use crate::{utils, DEBUG_LOG};
+use CpuType::ARM7;
 use std::intrinsics::unlikely;
 use std::marker::PhantomData;
 use std::mem;
-use CpuType::ARM7;
 
 impl crate::savestate::Savestate for Memory {
     fn savestate(&mut self, state: &mut crate::savestate::SavestateContext) {
@@ -116,11 +117,7 @@ macro_rules! read_io_ports {
             ARM7 => {
                 if unlikely($addr_offset >= 0x800000) {
                     let $addr_offset = $addr_offset & !0x8000;
-                    if unlikely((0x804000..0x806000).contains(&$addr_offset)) {
-                        $read_wifi
-                    } else {
-                        $read
-                    }
+                    if unlikely((0x804000..0x806000).contains(&$addr_offset)) { $read_wifi } else { $read }
                 } else {
                     $read
                 }
@@ -630,11 +627,7 @@ impl Emu {
     pub fn get_shm_offset<const CPU: CpuType, const TCM: bool, const WRITE: bool>(&self, addr: u32) -> usize {
         let mmu = {
             if CPU == ARM9 && TCM {
-                if WRITE {
-                    self.mmu_get_write_tcm::<CPU>()
-                } else {
-                    self.mmu_get_read_tcm::<CPU>()
-                }
+                if WRITE { self.mmu_get_write_tcm::<CPU>() } else { self.mmu_get_read_tcm::<CPU>() }
             } else if WRITE {
                 self.mmu_get_write::<CPU>()
             } else {
@@ -660,24 +653,24 @@ impl Emu {
     }
 
     pub fn mem_read_with_options<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32) -> T {
-        debug_println!("{CPU:?} memory read at {addr:x}");
+        debug_inst_log::log_mem(CPU, MemLogKind::Read, addr, 0);
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
         let shm_offset = self.get_shm_offset::<CPU, TCM, false>(aligned_addr) as u32;
         if shm_offset != 0 {
             let ret: T = utils::read_from_mem(&self.mem.shm, shm_offset);
-            debug_println!("{CPU:?} memory read at {addr:x} with value {:x}", ret.into());
+            debug_inst_log::log_mem(CPU, MemLogKind::ReadValue, addr, ret.into());
             return ret;
         }
 
         let ret: T = MemoryIo::<CPU, TCM, T>::read(aligned_addr, self);
-        debug_println!("{CPU:?} memory read at {addr:x} with value {:x}", ret.into());
+        debug_inst_log::log_mem(CPU, MemLogKind::ReadValue, addr, ret.into());
         ret
     }
 
     pub fn mem_read_multiple_slice<const CPU: CpuType, const TCM: bool, const SHM_MEMORY: bool, T: Convert>(&mut self, addr: u32, slice: &mut [T]) {
-        debug_println!("{CPU:?} slice memory read at {addr:x} with size {}", size_of_val(slice));
+        debug_inst_log::log_mem(CPU, MemLogKind::SliceReadSize, addr, size_of_val(slice) as u32);
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
@@ -685,26 +678,18 @@ impl Emu {
             let shm_offset = self.get_shm_offset::<CPU, TCM, false>(aligned_addr) as u32;
             if shm_offset != 0 {
                 utils::read_from_mem_slice(&self.mem.shm, shm_offset, slice);
-                if DEBUG_LOG {
-                    for (i, &value) in slice.iter().enumerate() {
-                        debug_println!("{CPU:?} slice memory read at {:x} with value {:x}", aligned_addr as usize + i * size_of::<T>(), value.into());
-                    }
-                }
+                debug_inst_log::log_mem_slice(CPU, MemLogKind::SliceReadValue, aligned_addr, slice);
                 return;
             }
         }
 
         MemoryMultipleSliceIo::<CPU, TCM, T>::read(aligned_addr, slice, self);
 
-        if DEBUG_LOG {
-            for (i, &value) in slice.iter().enumerate() {
-                debug_println!("{CPU:?} slice memory read at {:x} with value {:x}", aligned_addr as usize + i * size_of::<T>(), value.into());
-            }
-        }
+        debug_inst_log::log_mem_slice(CPU, MemLogKind::SliceReadValue, aligned_addr, slice);
     }
 
     pub fn mem_read_fixed_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, slice: &mut [T]) {
-        debug_println!("{CPU:?} fixed slice memory read at {addr:x} with size {}", size_of_val(slice));
+        debug_inst_log::log_mem(CPU, MemLogKind::FixedReadSize, addr, size_of_val(slice) as u32);
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
@@ -715,11 +700,7 @@ impl Emu {
             MemoryFixedSliceIo::<CPU, TCM, T>::read(aligned_addr, slice, self);
         }
 
-        if DEBUG_LOG {
-            for &mut value in slice {
-                debug_println!("{CPU:?} fixed slice memory read at {:x} with value {:x}", aligned_addr as usize, value.into());
-            }
-        }
+        debug_inst_log::log_mem_slice(CPU, MemLogKind::FixedReadValue, aligned_addr, slice);
     }
 
     pub fn mem_write<const CPU: CpuType, T: Convert>(&mut self, addr: u32, value: T) {
@@ -731,7 +712,7 @@ impl Emu {
     }
 
     fn mem_write_internal<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, value: T) {
-        debug_println!("{:?} memory write at {:x} with value {:x}", CPU, addr, value.into());
+        debug_inst_log::log_mem(CPU, MemLogKind::WriteValue, addr, value.into());
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 
@@ -745,14 +726,10 @@ impl Emu {
     }
 
     pub fn mem_write_multiple_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, slice: &[T]) {
-        debug_println!("{CPU:?} fixed slice memory write at {addr:x} with size {}", size_of_val(slice));
+        debug_inst_log::log_mem(CPU, MemLogKind::FixedWriteSize, addr, size_of_val(slice) as u32);
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
-        if DEBUG_LOG {
-            for (i, &value) in slice.iter().enumerate() {
-                debug_println!("{CPU:?} slice memory write at {:x} with value {:x}", aligned_addr as usize + i * size_of::<T>(), value.into());
-            }
-        }
+        debug_inst_log::log_mem_slice(CPU, MemLogKind::SliceWriteValue, aligned_addr, slice);
 
         let shm_offset = self.get_shm_offset::<CPU, TCM, true>(aligned_addr) as u32;
         if shm_offset != 0 {
@@ -764,14 +741,10 @@ impl Emu {
     }
 
     pub fn mem_write_fixed_slice<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, slice: &[T]) {
-        debug_println!("{CPU:?} fixed slice memory write at {addr:x} with size {}", size_of_val(slice));
+        debug_inst_log::log_mem(CPU, MemLogKind::FixedWriteSize, addr, size_of_val(slice) as u32);
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
-        if DEBUG_LOG {
-            for &value in slice {
-                debug_println!("{CPU:?} fixed slice memory write at {:x} with value {:x}", aligned_addr, value.into());
-            }
-        }
+        debug_inst_log::log_mem_slice(CPU, MemLogKind::FixedWriteValue, aligned_addr, slice);
 
         let shm_offset = self.get_shm_offset::<CPU, TCM, true>(aligned_addr) as u32;
         if shm_offset != 0 {
@@ -783,7 +756,7 @@ impl Emu {
     }
 
     pub fn mem_write_multiple_memset<const CPU: CpuType, const TCM: bool, T: Convert>(&mut self, addr: u32, value: T, size: usize) {
-        debug_println!("{CPU:?} multiple memset memory write at {addr:x} with size {}", size_of::<T>() * size);
+        debug_inst_log::log_mem(CPU, MemLogKind::MemsetWriteSize, addr, (size_of::<T>() * size) as u32);
         let aligned_addr = addr & !(size_of::<T>() as u32 - 1);
         let aligned_addr = aligned_addr & 0x0FFFFFFF;
 

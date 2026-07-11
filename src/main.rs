@@ -227,14 +227,14 @@ pub unsafe fn get_jit_asm_ptr<'a, const CPU: CpuType>() -> *mut JitAsm<'a> {
 unsafe fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize, arm_context: &ArmContext) -> bool {
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
 
-    debug_println!("{CPU:?} fault at {host_pc:x} {mem_addr:x}");
+    debug_println!("{CPU:?} fault at {mem_addr:x}");
     if mem_addr < CPU.mmu_tcm_addr() {
         eprintln!("{CPU:?} fault {host_pc:x} {mem_addr:x} outside of mapped memory, pc in jit mem {}", asm.emu.jit.is_in_jit_mem(*host_pc));
         return false;
     }
 
     let guest_mem_addr = (mem_addr - CPU.mmu_tcm_addr()) as u32;
-    debug_println!("{CPU:?} guest fault at {host_pc:x} {mem_addr:x} to guest {guest_mem_addr:x}");
+    debug_println!("{CPU:?} guest fault at {mem_addr:x} to guest {guest_mem_addr:x}");
     asm.emu.jit.patch_slow_mem(host_pc, guest_mem_addr, CPU, arm_context)
 }
 

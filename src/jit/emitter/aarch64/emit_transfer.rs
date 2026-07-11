@@ -8,11 +8,15 @@
 //   the mapped op0  = the value written / loaded (metadata carries the mapping).
 // Word reads rotate unaligned values like the ARM does (the slow handler returns them
 // pre-rotated); halfword/byte accesses go aligned and unrotated, matching arm32's fast
-// path. Refused here (still interpreted): PC-destination loads, PC-source stores,
-// ldrd/strd, RRX-shifted offsets.
+// path. A pc operand never lives in the pool: pc-destination loads shuttle through
+// SCRATCH3 into the guest PC slot (the driver's indirect-branch dispatch consumes it),
+// pc sources materialize the pipeline value. Still unhandled: ldrd/strd, RRX-shifted
+// offsets.
 
 use super::SCRATCH3;
+use crate::core::memory::regions::VRAM_OFFSET;
 use crate::core::CpuType;
+use crate::core::CpuType::{ARM7, ARM9};
 use crate::jit::assembler::aarch64::{BlockAsm, GUEST_REGS_PTR, SCRATCH0, SCRATCH1, SCRATCH2};
 use crate::jit::inst_info::{InstInfo, Operand};
 use crate::jit::inst_info::{Shift, ShiftValue};
@@ -25,75 +29,6 @@ use vixl::{A64AddrModeKind, A64ExtendKind, A64Reg, A64ShiftKind};
 /// Minimum multi-register fastmem window: it must hold the slow-path multiple-handler call
 /// the patcher writes in (params + metadata + handler mov_imm64s + blr) — pad short windows.
 const SLOW_MEM_MULTIPLE_MIN_A64: u32 = 64;
-
-/// Whether the a64 backend can compile this single transfer.
-pub(in super::super) fn is_single_transfer_supported(inst: &InstInfo, thumb: bool) -> bool {
-    let transfer = match inst.op {
-        Op::Ldr(transfer) | Op::LdrT(transfer) | Op::Str(transfer) | Op::StrT(transfer) => transfer,
-        _ => return false,
-    };
-    // ldrd/strd later (needs the pair rotation dance).
-    if transfer.size() == 3 {
-        return false;
-    }
-    let operands = inst.operands();
-    let op0 = match operands[0].as_reg_no_shift() {
-        Some(reg) => reg,
-        None => return false,
-    };
-    // PC-destination loads are block terminals (pop pc) — a later slice; PC-source
-    // stores read pc+12 — rare, keep interpreting.
-    if op0 == Reg::PC {
-        return false;
-    }
-    // PC-base only as a pre-indexed compile-time fold (imm_transfer_addr's shape).
-    if inst.operands()[1].as_reg_no_shift() == Some(Reg::PC) && !transfer.pre() {
-        return false;
-    }
-    match &operands[2] {
-        Operand::Imm(_) => true,
-        Operand::Reg { reg, shift } => {
-            if *reg == Reg::PC {
-                return false;
-            }
-            match shift {
-                None => true,
-                // Shift-by-immediate only in addressing; amount 0 on ROR means RRX.
-                Some(shift) => {
-                    let (kind_is_ror, value) = match shift {
-                        Shift::Lsl(v) => (false, v),
-                        Shift::Lsr(v) => (false, v),
-                        Shift::Asr(v) => (false, v),
-                        Shift::Ror(v) => (true, v),
-                    };
-                    match value {
-                        ShiftValue::Imm(amount) => !(kind_is_ror && *amount == 0),
-                        ShiftValue::Reg(_) => false,
-                    }
-                }
-            }
-        }
-        _ => false,
-    }
-}
-
-/// Whether the a64 backend can compile this multiple transfer. A single-register ldm/stm is
-/// a word transfer with a ±4 base writeback (emit_multiple_transfer_single); a multi-register
-/// list unrolls into LDP/STP pairs against the mirrored guest window, each a SIGSEGV fault
-/// site patched to the shared multiple slow handler (emit_multiple_transfer_multi). Refused:
-/// user-bank (banked registers) and PC-in-list (pop pc is a block terminal — a later slice
-/// with the PC-destination loads).
-pub(in super::super) fn is_multiple_transfer_supported(inst: &InstInfo) -> bool {
-    let transfer = match inst.op {
-        Op::Ldm(t) | Op::LdmT(t) | Op::Stm(t) | Op::StmT(t) => t,
-        _ => return false,
-    };
-    let rlist = match inst.operands()[1].as_reg_list() {
-        Some(rlist) => rlist,
-        None => return false,
-    };
-    !rlist.is_empty() && !rlist.is_reserved(Reg::PC) && !transfer.user()
-}
 
 impl JitAsm<'_> {
     /// ldm/stm through the fastmem window. A single-register list is one word transfer;
@@ -125,7 +60,16 @@ impl JitAsm<'_> {
         let rlist = inst.operands()[1].as_reg_list().unwrap();
         let reg = rlist.get_lowest_reg();
         let op0_mapped = block_asm.guest_map(op0);
-        let reg_mapped = block_asm.guest_map(reg);
+        // A pc in the list can't live in the pool — same scratch dance as a pc op0 in
+        // emit_single_transfer (loads finish with a store to the guest PC slot below).
+        let reg_mapped = if reg == Reg::PC {
+            if is_write {
+                block_asm.mov_imm(SCRATCH3, pc + (4 << (!thumb as u32)));
+            }
+            SCRATCH3
+        } else {
+            block_asm.guest_map(reg)
+        };
 
         // --- Pre-window (patch-immune): access address into SCRATCH2 (IA/IB/DA/DB), then
         // the base writeback. Load whose destination is the base skips writeback (the
@@ -162,7 +106,9 @@ impl JitAsm<'_> {
             block_asm.masm.str_regoff(reg_mapped, false, SCRATCH1, SCRATCH0, A64ExtendKind::UXTW, 0);
         } else {
             block_asm.masm.ldr_regoff(reg_mapped, false, SCRATCH1, SCRATCH0, A64ExtendKind::UXTW, 0);
-            block_asm.mark_guest_dirty(reg);
+            if reg != Reg::PC {
+                block_asm.mark_guest_dirty(reg);
+            }
         }
 
         // Pad to the single-transfer slow-path window size and record it.
@@ -173,6 +119,11 @@ impl JitAsm<'_> {
             block_asm.masm.nop();
         }
         block_asm.set_fast_mem_size_last(SLOW_MEM_SINGLE_LENGTH_A64 as u16);
+
+        // Post-window (runs after the fast access and after a patched slow call alike).
+        if reg == Reg::PC && !is_write {
+            block_asm.store_guest(SCRATCH3, Reg::PC);
+        }
     }
 
     /// A multi-register ldm/stm. AArch64 has no native ldm/stm, so unroll the ascending
@@ -220,12 +171,24 @@ impl JitAsm<'_> {
         block_asm.masm.mov_imm64(SCRATCH1, self.cpu.mmu_tcm_addr() as u64);
         block_asm.masm.add_reg(SCRATCH0, SCRATCH1, SCRATCH0, A64ShiftKind::LSL, 0, true);
 
+        // A pc in a store list reads the pipeline value (pc + 8 / + 4, matching the slow
+        // handler's NEEDS_PC) — the guest PC slot is stale mid-block. It's the highest
+        // register, so it's always the last list entry. Loads write the slot directly:
+        // that's exactly where the driver's indirect-branch dispatch picks the target up.
+        let store_reg_value = |block_asm: &mut BlockAsm, dst: A64Reg, reg: Reg| {
+            if reg == Reg::PC {
+                block_asm.mov_imm(dst, pc + (4 << (!thumb as u32)));
+            } else {
+                block_asm.masm.ldr_off(dst, false, GUEST_REGS_PTR, reg as i64 * 4, A64AddrModeKind::Offset);
+            }
+        };
+
         let mut i = 0usize;
         while i + 1 < regs.len() {
             let off = i as i64 * 4;
             if is_write {
-                block_asm.masm.ldr_off(SCRATCH2, false, GUEST_REGS_PTR, regs[i] as i64 * 4, A64AddrModeKind::Offset);
-                block_asm.masm.ldr_off(SCRATCH3, false, GUEST_REGS_PTR, regs[i + 1] as i64 * 4, A64AddrModeKind::Offset);
+                store_reg_value(block_asm, SCRATCH2, regs[i]);
+                store_reg_value(block_asm, SCRATCH3, regs[i + 1]);
                 block_asm.guest_inst_metadata(cycles, inst, window_start, A64Reg::ZR, tagged_pc);
                 block_asm.masm.stp(SCRATCH2, SCRATCH3, false, SCRATCH0, off, A64AddrModeKind::Offset);
             } else {
@@ -239,7 +202,7 @@ impl JitAsm<'_> {
         if i < regs.len() {
             let off = i as i64 * 4;
             if is_write {
-                block_asm.masm.ldr_off(SCRATCH2, false, GUEST_REGS_PTR, regs[i] as i64 * 4, A64AddrModeKind::Offset);
+                store_reg_value(block_asm, SCRATCH2, regs[i]);
                 block_asm.guest_inst_metadata(cycles, inst, window_start, A64Reg::ZR, tagged_pc);
                 block_asm.masm.str_off(SCRATCH2, false, SCRATCH0, off, A64AddrModeKind::Offset);
             } else {
@@ -326,14 +289,41 @@ impl JitAsm<'_> {
         let operands = inst.operands();
         let op0 = operands[0].as_reg_no_shift().unwrap();
         let op1 = operands[1].as_reg_no_shift().unwrap();
-        let op0_mapped = block_asm.guest_map(op0);
+        // A pc op0 can't live in the pool: loads land in SCRATCH3 and finish with a store
+        // to the guest PC slot (the driver's indirect-branch dispatch consumes it), stores
+        // read the pipeline value (pc + 8, arm32 parity — thumb can't encode a pc op0).
+        let op0_mapped = if op0 == Reg::PC {
+            debug_assert!(!thumb);
+            if is_write {
+                block_asm.mov_imm(SCRATCH3, pc + 8);
+            }
+            SCRATCH3
+        } else {
+            block_asm.guest_map(op0)
+        };
 
         // --- Pre-window: the canonical unaligned access address into SCRATCH2 (w11),
         // base writeback into the mapped base. All patch-immune.
         let imm_addr = inst.imm_transfer_addr(pc);
         match imm_addr {
             Some(imm_addr) => {
-                // Base is PC (or fully constant): fold the whole address.
+                // A compile-time-constant word load of immutable memory folds to its value
+                // (not from VRAM-resident code — that can self-modify under the block).
+                let consider_slow_mem = pc & 0xFF000000 == VRAM_OFFSET;
+                if !consider_slow_mem && !is_write && size == 4 && self.analyzer.can_imm_load(imm_addr) {
+                    let imm_value = match self.cpu {
+                        ARM9 => self.emu.mem_read::<{ ARM9 }, u32>(imm_addr),
+                        ARM7 => self.emu.mem_read::<{ ARM7 }, u32>(imm_addr),
+                    };
+                    block_asm.masm.mov_imm32(op0_mapped, imm_value);
+                    if op0 == Reg::PC {
+                        block_asm.store_guest(SCRATCH3, Reg::PC);
+                    }
+                    return;
+                }
+
+                // Everything else (stores, non-word/unfoldable loads) folds the address —
+                // the access itself goes through the normal window.
                 block_asm.mov_imm(SCRATCH2, if transfer.pre() { imm_addr } else { unsafe { std::hint::unreachable_unchecked() } });
             }
             None => {
@@ -430,7 +420,9 @@ impl JitAsm<'_> {
                 }
                 _ => unsafe { std::hint::unreachable_unchecked() },
             }
-            block_asm.mark_guest_dirty(op0);
+            if op0 != Reg::PC {
+                block_asm.mark_guest_dirty(op0);
+            }
         }
 
         // Pad the window to the slow-path size and record it.
@@ -441,5 +433,10 @@ impl JitAsm<'_> {
             block_asm.masm.nop();
         }
         block_asm.set_fast_mem_size_last(SLOW_MEM_SINGLE_LENGTH_A64 as u16);
+
+        // Post-window (runs after the fast access and after a patched slow call alike).
+        if op0 == Reg::PC && !is_write {
+            block_asm.store_guest(SCRATCH3, Reg::PC);
+        }
     }
 }

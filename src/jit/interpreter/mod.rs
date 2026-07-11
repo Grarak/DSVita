@@ -247,7 +247,6 @@ pub(super) fn inst_undefined_t(ctx: &mut Ctx, opcode: u16) -> InstResult {
     debug_panic!("undefined thumb instruction at {:x}: {opcode:04x}", ctx.inst_addr);
 }
 
-/// True in the trace-reference build: nothing ever compiles, everything interprets.
 pub const fn always_interpret() -> bool {
     INTERP_THRESHOLD == 255
 }

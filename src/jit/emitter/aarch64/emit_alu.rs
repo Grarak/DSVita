@@ -203,8 +203,11 @@ pub(super) fn emit_data_processing(block_asm: &mut BlockAsm, inst: &InstInfo, pc
 
     let set_host_flags = flag_mode == FlagMode::Arith;
     // Results go straight into the mapped destination (dirty-tracked by the allocator);
-    // the compare/test shapes have no destination and use a scratch.
+    // the compare/test shapes have no destination and use a scratch. A pc destination
+    // stays memory-resident: the value goes through a scratch into the guest PC slot,
+    // which the driver's indirect-branch dispatch consumes.
     let result = match dst {
+        Some(Reg::PC) => SCRATCH2,
         Some(dst) if has_dst(inst.op) => block_asm.guest_map(dst),
         _ => SCRATCH2,
     };
@@ -237,5 +240,11 @@ pub(super) fn emit_data_processing(block_asm: &mut BlockAsm, inst: &InstInfo, pc
         FlagMode::None => {}
         FlagMode::Arith => writeback_arith_flags(block_asm),
         FlagMode::Logical => writeback_logical_flags(block_asm, result, carry),
+    }
+
+    // The transient S-op cpsr writeback above doesn't matter for `movs pc`-style
+    // exception returns: the dispatch restores the spsr wholesale right after.
+    if dst == Some(Reg::PC) {
+        block_asm.store_guest(SCRATCH2, Reg::PC);
     }
 }

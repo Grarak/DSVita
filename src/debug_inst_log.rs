@@ -1,13 +1,16 @@
+use crate::core::CpuType;
 use crate::core::emu::Emu;
 use crate::core::thread_regs::Cpsr;
-use crate::core::CpuType;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_info::InstInfo;
-use crate::jit::reg::{reg_reserve, Reg, RegReserve};
+use crate::jit::reg::{Reg, RegReserve, reg_reserve};
+use crate::utils::Convert;
 use std::cell::UnsafeCell;
 use std::fs::File;
+use std::hint::assert_unchecked;
 use std::io::{BufReader, BufWriter, Read, Write};
+use std::mem;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -25,6 +28,7 @@ const RECORD_SIZE: usize = size_of::<InstLogRecord>();
 const TAG_INST: u8 = 0;
 const TAG_TEXT: u8 = 1;
 const TAG_INST_DELTA: u8 = 2;
+const TAG_MEM: u8 = 3;
 
 // Delta records (TAG_INST_DELTA) carry only what changed since the same cpu's previous
 // record — consecutive instructions share almost all register state, so this shrinks traces
@@ -56,8 +60,6 @@ struct PrevState {
 struct PrevStates(UnsafeCell<[PrevState; 2]>);
 
 unsafe impl Sync for PrevStates {}
-
-static PREV_STATES: PrevStates = PrevStates(UnsafeCell::new([PrevState::default_const(), PrevState::default_const()]));
 
 impl PrevState {
     const fn default_const() -> Self {
@@ -218,11 +220,9 @@ fn write_record(writer: &mut BufWriter<File>, emu: &Emu, cpu: CpuType, pc: u32, 
     let cpsr = *emu.thread_get_reg(cpu, Reg::CPSR);
     let spsr = *emu.thread_get_reg(cpu, Reg::SPSR);
 
+    static PREV_STATES: PrevStates = PrevStates(UnsafeCell::new([PrevState::default_const(), PrevState::default_const()]));
     let prev = unsafe { &mut (*PREV_STATES.0.get())[cpu as usize] };
     if !prev.valid || prev.since_keyframe >= KEYFRAME_INTERVAL {
-        // Zero-init so the struct's 3 padding bytes are deterministic — two identical runs
-        // then produce byte-identical files.
-        let mut bytes = [0u8; RECORD_SIZE];
         let record = InstLogRecord {
             regs,
             pc,
@@ -231,9 +231,9 @@ fn write_record(writer: &mut BufWriter<File>, emu: &Emu, cpu: CpuType, pc: u32, 
             opcode,
             cpu: cpu as u8,
         };
-        unsafe { std::ptr::copy_nonoverlapping((&record as *const InstLogRecord).cast::<u8>(), bytes.as_mut_ptr(), std::mem::offset_of!(InstLogRecord, cpu) + 1) };
+        let bytes: &[u8; RECORD_SIZE] = unsafe { mem::transmute(&record) };
         let _ = writer.write_all(&[TAG_INST]);
-        let _ = writer.write_all(&bytes);
+        let _ = writer.write_all(bytes);
         prev.since_keyframe = 0;
     } else {
         // Delta record: flags + changed-reg mask, then only the changed words.
@@ -241,7 +241,7 @@ fn write_record(writer: &mut BufWriter<File>, emu: &Emu, cpu: CpuType, pc: u32, 
         // payload: [pc][cpsr][spsr][opcode][regs...] — worst case 19 words.
         let mut payload = [0u32; 19];
         let mut n = 0;
-        if pc == prev.pc.wrapping_add(if cpsr & 0x20 != 0 { 2 } else { 4 }) {
+        if pc == prev.pc.wrapping_add(if Cpsr::from(cpsr).thumb() { 2 } else { 4 }) {
             flags |= FLAG_PC_SEQ;
         } else {
             payload[n] = pc;
@@ -273,8 +273,8 @@ fn write_record(writer: &mut BufWriter<File>, emu: &Emu, cpu: CpuType, pc: u32, 
                 n += 1;
             }
         }
-        let _ = writer.write_all(&[TAG_INST_DELTA, flags]);
-        let _ = writer.write_all(&mask.to_le_bytes());
+        unsafe { assert_unchecked(n <= payload.len()) };
+        let _ = writer.write_all(&[TAG_INST_DELTA, flags, (mask & 0xFF) as u8, (mask >> 8) as u8]);
         let payload_bytes = unsafe { std::slice::from_raw_parts(payload.as_ptr().cast::<u8>(), n * 4) };
         let _ = writer.write_all(payload_bytes);
         prev.since_keyframe += 1;
@@ -323,6 +323,148 @@ fn write_text(s: &str, newline: bool) {
     let _ = writer.write_all(&[newline as u8]);
 }
 
+// Compact memory-access records (TAG_MEM) replace the extremely frequent "memory read/write at"
+// debug_println! lines from mem.rs — the decoder regenerates the exact same text at a fraction of
+// the serialized size. Layout: meta u8 (bits 0-3 kind, bit 4 cpu7, bits 5-6 value width code),
+// addr LE u32, then per kind:
+// - single kinds: the value/size in MEM_WIDTHS[code] bytes (code 0 = value 0, no bytes),
+// - slice kinds: element count LE u32, then count elements of MEM_WIDTHS[code] bytes each; the
+//   per-element address is re-derived from the kind's stride (Slice* = element width, Fixed* = 0).
+#[derive(Copy, Clone, PartialEq)]
+#[repr(u8)]
+pub enum MemLogKind {
+    Read = 0,
+    ReadValue = 1,
+    WriteValue = 2,
+    SliceReadSize = 3,
+    FixedReadSize = 4,
+    FixedWriteSize = 5,
+    MemsetWriteSize = 6,
+    SliceReadValue = 7,
+    FixedReadValue = 8,
+    SliceWriteValue = 9,
+    FixedWriteValue = 10,
+}
+
+const MEM_FLAG_CPU7: u8 = 1 << 4;
+const MEM_WIDTHS: [usize; 4] = [0, 1, 2, 4];
+
+impl MemLogKind {
+    fn from_u8(value: u8) -> Self {
+        if value > MemLogKind::FixedWriteValue as u8 {
+            panic!("unknown mem log record kind {value}");
+        }
+        unsafe { mem::transmute(value) }
+    }
+
+    fn is_slice(self) -> bool {
+        matches!(
+            self,
+            MemLogKind::SliceReadValue | MemLogKind::FixedReadValue | MemLogKind::SliceWriteValue | MemLogKind::FixedWriteValue
+        )
+    }
+
+    fn element_stride(self, element_size: usize) -> usize {
+        match self {
+            MemLogKind::SliceReadValue | MemLogKind::SliceWriteValue => element_size,
+            _ => 0,
+        }
+    }
+}
+
+fn format_mem_line(cpu: CpuType, kind: MemLogKind, addr: u32, value: u32) -> String {
+    match kind {
+        MemLogKind::Read => format!("{cpu:?} memory read at {addr:x}"),
+        MemLogKind::ReadValue => format!("{cpu:?} memory read at {addr:x} with value {value:x}"),
+        MemLogKind::WriteValue => format!("{cpu:?} memory write at {addr:x} with value {value:x}"),
+        MemLogKind::SliceReadSize => format!("{cpu:?} slice memory read at {addr:x} with size {value}"),
+        MemLogKind::FixedReadSize => format!("{cpu:?} fixed slice memory read at {addr:x} with size {value}"),
+        MemLogKind::FixedWriteSize => format!("{cpu:?} fixed slice memory write at {addr:x} with size {value}"),
+        MemLogKind::MemsetWriteSize => format!("{cpu:?} multiple memset memory write at {addr:x} with size {value}"),
+        MemLogKind::SliceReadValue => format!("{cpu:?} slice memory read at {addr:x} with value {value:x}"),
+        MemLogKind::FixedReadValue => format!("{cpu:?} fixed slice memory read at {addr:x} with value {value:x}"),
+        MemLogKind::SliceWriteValue => format!("{cpu:?} slice memory write at {addr:x} with value {value:x}"),
+        MemLogKind::FixedWriteValue => format!("{cpu:?} fixed slice memory write at {addr:x} with value {value:x}"),
+    }
+}
+
+fn mem_meta(cpu: CpuType, kind: MemLogKind, width_code: u8) -> u8 {
+    kind as u8 | (if cpu == CpuType::ARM7 { MEM_FLAG_CPU7 } else { 0 }) | (width_code << 5)
+}
+
+/// Append a single memory-access record (`kind` must not be a slice kind; `value` is the value or
+/// size the kind's suffix prints, 0 for [`MemLogKind::Read`]). Falls back to the same stdout line
+/// `debug_println!` produced when no inst log is active, so this can replace those call sites 1:1.
+#[inline]
+pub fn log_mem(cpu: CpuType, kind: MemLogKind, addr: u32, value: u32) {
+    if !crate::DEBUG_LOG {
+        return;
+    }
+    if !is_logging() {
+        let current_thread = std::thread::current();
+        println!("[{}] {}", current_thread.name().unwrap(), format_mem_line(cpu, kind, addr, value));
+        return;
+    }
+    if !TEXT_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let Some(writer) = lazy_writer() else { return };
+
+    let width_code = if value == 0 {
+        0
+    } else if value <= 0xFF {
+        1
+    } else if value <= 0xFFFF {
+        2
+    } else {
+        3
+    };
+    let mut buf = [0u8; 10];
+    buf[0] = TAG_MEM;
+    buf[1] = mem_meta(cpu, kind, width_code);
+    buf[2..6].copy_from_slice(&addr.to_le_bytes());
+    let n = MEM_WIDTHS[width_code as usize];
+    buf[6..6 + n].copy_from_slice(&value.to_le_bytes()[..n]);
+    let _ = writer.write_all(&buf[..6 + n]);
+}
+
+/// Append the per-element value lines of a slice access as one batched record (`kind` must be a
+/// slice kind). `addr` is the first element's address; the decoder advances it by the kind's
+/// stride per element and reprints the exact per-element `debug_println!` lines.
+#[inline]
+pub fn log_mem_slice<T: Convert>(cpu: CpuType, kind: MemLogKind, addr: u32, values: &[T]) {
+    if !crate::DEBUG_LOG {
+        return;
+    }
+    if !is_logging() {
+        let current_thread = std::thread::current();
+        let name = current_thread.name().unwrap();
+        let stride = kind.element_stride(size_of::<T>());
+        for (i, &value) in values.iter().enumerate() {
+            println!("[{name}] {}", format_mem_line(cpu, kind, addr.wrapping_add((i * stride) as u32), value.into()));
+        }
+        return;
+    }
+    if !TEXT_ENABLED.load(std::sync::atomic::Ordering::Relaxed) || values.is_empty() {
+        return;
+    }
+    let Some(writer) = lazy_writer() else { return };
+
+    let width_code = match size_of::<T>() {
+        1 => 1,
+        2 => 2,
+        _ => 3,
+    };
+    let mut head = [0u8; 10];
+    head[0] = TAG_MEM;
+    head[1] = mem_meta(cpu, kind, width_code);
+    head[2..6].copy_from_slice(&addr.to_le_bytes());
+    head[6..10].copy_from_slice(&(values.len() as u32).to_le_bytes());
+    let _ = writer.write_all(&head);
+    let payload = unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), size_of_val(values)) };
+    let _ = writer.write_all(payload);
+}
+
 pub fn flush() {
     if let Some(writer) = unsafe { (*LOGGER.writer.get()).as_mut() } {
         let _ = writer.flush();
@@ -348,7 +490,7 @@ pub fn decode_file(path: &str) {
     // Delta decode state: the last full record seen per cpu.
     let mut prev: [Option<InstLogRecord>; 2] = [None, None];
 
-    let mut print_record = |out: &mut BufWriter<std::io::StdoutLock>, record: &InstLogRecord| {
+    let print_record = |out: &mut BufWriter<std::io::StdoutLock>, record: &InstLogRecord| {
         let cpu = CpuType::from(record.cpu);
         let cpsr = Cpsr::from(record.cpsr);
         let inst_info = if cpsr.thumb() {
@@ -406,7 +548,7 @@ pub fn decode_file(path: &str) {
                 }
                 record.pc = match explicit_pc {
                     Some(pc) => pc,
-                    None => record.pc.wrapping_add(if record.cpsr & 0x20 != 0 { 2 } else { 4 }),
+                    None => record.pc.wrapping_add(if Cpsr::from(record.cpsr).thumb() { 2 } else { 4 }),
                 };
                 print_record(&mut out, &record);
                 prev[cpu_index] = Some(record);
@@ -421,6 +563,31 @@ pub fn decode_file(path: &str) {
                 let _ = out.write_all(&text);
                 if newline[0] != 0 {
                     let _ = out.write_all(b"\n");
+                }
+            }
+            TAG_MEM => {
+                let mut head = [0u8; 5];
+                reader.read_exact(&mut head).expect("truncated mem record header");
+                let kind = MemLogKind::from_u8(head[0] & 0xF);
+                let cpu = CpuType::from((head[0] >> 4) & 1);
+                let width = MEM_WIDTHS[((head[0] >> 5) & 3) as usize];
+                let addr = u32::from_le_bytes([head[1], head[2], head[3], head[4]]);
+                let next_value = |reader: &mut BufReader<File>| {
+                    let mut buf = [0u8; 4];
+                    reader.read_exact(&mut buf[..width]).expect("truncated mem record value");
+                    u32::from_le_bytes(buf)
+                };
+                if kind.is_slice() {
+                    let mut count = [0u8; 4];
+                    reader.read_exact(&mut count).expect("truncated mem record count");
+                    let stride = kind.element_stride(width) as u32;
+                    for i in 0..u32::from_le_bytes(count) {
+                        let value = next_value(&mut reader);
+                        let _ = writeln!(out, "{}", format_mem_line(cpu, kind, addr.wrapping_add(i.wrapping_mul(stride)), value));
+                    }
+                } else {
+                    let value = if width == 0 { 0 } else { next_value(&mut reader) };
+                    let _ = writeln!(out, "{}", format_mem_line(cpu, kind, addr, value));
                 }
             }
             other => panic!("unknown inst log record tag {other}"),

@@ -2,8 +2,8 @@ use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG};
 use crate::jit::emitter::map_fun_cpu;
-use crate::jit::inst_branch_handler::{branch_lr, branch_lr_slow, branch_reg, handle_idle_loop, handle_interrupt, pre_branch};
-use crate::jit::jit_asm::{JitAsm, JitForwardBranch, JitRunSchedulerLabel, JitRuntimeData, RETURN_STACK_SIZE};
+use crate::jit::inst_branch_handler::{branch_lr, branch_reg, handle_idle_loop, handle_interrupt, pre_branch};
+use crate::jit::jit_asm::{JitAsm, JitForwardBranch, JitRunSchedulerLabel, JitRuntimeData};
 use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::{inst_branch_handler, Cond};
 use crate::logging::branch_println;
@@ -11,8 +11,8 @@ use crate::settings::Arm7Emu;
 use crate::{BRANCH_LOG, IS_DEBUG};
 use std::ptr;
 use vixl::{
-    BranchHint_kFar, BranchHint_kNear, FlagsUpdate_DontCare, Label, MasmAdd5, MasmAnd3, MasmB2, MasmB3, MasmBfi4, MasmBic5, MasmBlx1, MasmBx1, MasmCmp2, MasmLdr2, MasmLdrb2, MasmLdrh2, MasmMov2,
-    MasmMov4, MasmOrr5, MasmStr2, MasmStrb2, MasmStrh2, MasmSub5,
+    BranchHint_kFar, BranchHint_kNear, FlagsUpdate_DontCare, Label, MasmB2, MasmB3, MasmBic5, MasmBlx1, MasmBx1, MasmCmp2, MasmLdr2, MasmLdrb2, MasmMov2, MasmMov4, MasmOrr5, MasmStr2, MasmStrb2,
+    MasmStrh2,
 };
 use CpuType::ARM7;
 
@@ -180,11 +180,6 @@ impl JitAsm<'_> {
         }
     }
 
-    /// BX LR through the return stack. The common case — quantum not up, popped entry
-    /// matches — runs entirely emitted (flush the cycle accounting, peek the stack, set
-    /// the cpsr T bit) and returns through host LR, mirroring branch_lr's match path.
-    /// Scheduler-due and mismatch tail into branch_lr_slow (branch_lr minus the flush;
-    /// the peek is uncommitted). BRANCH_LOG builds keep the plain branch_lr call.
     pub fn emit_branch_return_stack(&mut self, inst_index: usize, target_pc_reg: Reg, block_asm: &mut BlockAsm) {
         if block_asm.is_fs_clear_overlay {
             self.emit_branch_out_metadata(inst_index, true, block_asm);
@@ -192,75 +187,22 @@ impl JitAsm<'_> {
             return;
         }
 
-        let total_cycles = self.jit_buf.insts_cycle_counts[inst_index];
-        let arm7_hle = self.emu.settings.arm7_emu() == Arm7Emu::Hle;
-
-        if BRANCH_LOG {
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &total_cycles.into());
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pc_reg.into());
+        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &self.jit_buf.insts_cycle_counts[inst_index].into());
+        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pc_reg.into());
+        if IS_DEBUG {
             let pc = block_asm.current_pc;
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &pc.into());
-            block_asm.restore_stack();
-            block_asm.ldr2(Reg::R12, if arm7_hle { map_fun_cpu!(self.cpu, branch_lr, true) } else { map_fun_cpu!(self.cpu, branch_lr, false) } as u32);
-            block_asm.bx1(Reg::R12);
-            return;
         }
 
-        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pc_reg.into());
         block_asm.restore_stack();
-
-        let mut slow_label = Label::new();
-
-        // flush_cycles: accumulated += total_cycles + 2 - pre_cycle_count_sum; pre = 0.
-        // (emit_count_cycles isn't reusable here — it scratches R1, which holds the
-        // target.) R2 keeps the new accumulated value for the threshold compare.
-        block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
-        block_asm.ldrh2(Reg::R2, &(Reg::R0, JitRuntimeData::get_accumulated_cycles_offset() as i32).into());
-        block_asm.ldrh2(Reg::R12, &(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
-        block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R2, Reg::R2, &(total_cycles as u32 + 2).into());
-        block_asm.sub5(FlagsUpdate_DontCare, Cond::AL, Reg::R2, Reg::R2, &Reg::R12.into());
-        block_asm.strh2(Reg::R2, &(Reg::R0, JitRuntimeData::get_accumulated_cycles_offset() as i32).into());
-        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &0.into());
-        block_asm.strh2(Reg::R12, &(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
-
-        if IS_DEBUG {
-            let pc = block_asm.current_pc;
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R12, &pc.into());
-            block_asm.str2(Reg::R12, &(Reg::R0, JitRuntimeData::get_branch_out_pc_offset() as i32).into());
-        }
-
-        // check_scheduler's threshold — quantum-up runs the scheduler in branch_lr_slow,
-        // in the native order.
-        block_asm.cmp2(Reg::R2, &self.cpu.max_loop_cycle_count().into());
-        block_asm.b3(Cond::HS, &mut slow_label, BranchHint_kNear);
-
-        // Peek the return stack: idx = (ptr - 1) & (SIZE - 1), committed only on a match.
-        block_asm.ldrb2(Reg::R2, &(Reg::R0, JitRuntimeData::get_return_stack_ptr_offset() as i32).into());
-        block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R2, Reg::R2, &(RETURN_STACK_SIZE as u32 - 1).into());
-        block_asm.and3(Reg::R2, Reg::R2, &(RETURN_STACK_SIZE as u32 - 1).into());
-        block_asm.add5(FlagsUpdate_DontCare, Cond::AL, Reg::R12, Reg::R0, &unsafe {
-            vixl::Operand::new4(Reg::R2.into(), vixl::Shift { shift_: crate::jit::ShiftType::Lsl as _ }, 2u32)
-        });
-        block_asm.ldr2(Reg::R12, &(Reg::R12, JitRuntimeData::get_return_stack_offset() as i32).into());
-        block_asm.cmp2(Reg::R12, &Reg::R1.into());
-        block_asm.b3(Cond::NE, &mut slow_label, BranchHint_kNear);
-
-        // Match: commit the pop, thread_set_thumb (target bit0 -> cpsr T), host-return.
-        block_asm.strb2(Reg::R2, &(Reg::R0, JitRuntimeData::get_return_stack_ptr_offset() as i32).into());
-        block_asm.ldr2(Reg::R3, self.cpu.guest_regs_addr() as u32);
-        block_asm.ldr2(Reg::R2, &(Reg::R3, Reg::CPSR as i32 * 4).into());
-        block_asm.and3(Reg::R12, Reg::R1, &1.into());
-        block_asm.bfi4(Reg::R2, Reg::R12, 5, 1);
-        block_asm.str2(Reg::R2, &(Reg::R3, Reg::CPSR as i32 * 4).into());
-        block_asm.bx1(Reg::LR);
-
-        block_asm.bind(&mut slow_label);
-        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &Reg::R1.into());
-        if IS_DEBUG {
-            let pc = block_asm.current_pc;
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &pc.into());
-        }
-        block_asm.ldr2(Reg::R12, if arm7_hle { map_fun_cpu!(self.cpu, branch_lr_slow, true) } else { map_fun_cpu!(self.cpu, branch_lr_slow, false) } as u32);
+        block_asm.ldr2(
+            Reg::R12,
+            if self.emu.settings.arm7_emu() == Arm7Emu::Hle {
+                map_fun_cpu!(self.cpu, branch_lr, true)
+            } else {
+                map_fun_cpu!(self.cpu, branch_lr, false)
+            } as u32,
+        );
         block_asm.bx1(Reg::R12);
     }
 
@@ -340,21 +282,10 @@ impl JitAsm<'_> {
                 block_asm.b3(!cond, skip_label, BranchHint_kNear);
             }
 
+            block_asm.save_dirty_guest_cpsr(false);
+
             let jump_to_index = (inst_index as isize + ((aligned_target_pc as isize - block_asm.current_pc as isize) >> pc_shift)) as usize;
             let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
-
-            let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
-            let basic_block_input_regs = self.analyzer.basic_blocks[basic_block_index].get_inputs();
-            // Loop back-edges live here: when the target consumes the flags the accounting cmp
-            // is about to clobber, carry the cpsr in host lr and restore it with a register msr
-            // instead of storing and reloading it through memory every iteration. BRANCH_LOG
-            // calls in between, which clobbers lr, so it falls back to the memory reload.
-            let keep_cpsr_in_lr = !BRANCH_LOG && basic_block_input_regs.is_reserved(Reg::CPSR) && block_asm.dirty_guest_regs.is_reserved(Reg::CPSR);
-            if keep_cpsr_in_lr {
-                block_asm.store_guest_cpsr_reg_keep(Reg::LR, Reg::R0);
-            } else {
-                block_asm.save_dirty_guest_cpsr(false);
-            }
 
             block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
             self.emit_count_cycles(self.jit_buf.insts_cycle_counts[inst_index], block_asm);
@@ -378,11 +309,11 @@ impl JitAsm<'_> {
                 block_asm.restore_guest_regs_ptr();
             }
 
-            let basic_block_output_regs = self.analyzer.basic_blocks[basic_block_index].output_regs;
-            block_asm.relocate_for_basic_block(FlagsUpdate_DontCare, basic_block_output_regs, basic_block_index);
-            if keep_cpsr_in_lr {
-                block_asm.restore_guest_cpsr_from_reg(Reg::LR);
-            } else if basic_block_input_regs.is_reserved(Reg::CPSR) {
+            let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
+            let basic_block = &self.analyzer.basic_blocks[basic_block_index];
+            let basic_block_input_regs = basic_block.get_inputs();
+            block_asm.relocate_for_basic_block(FlagsUpdate_DontCare, basic_block.output_regs, basic_block_index);
+            if basic_block_input_regs.is_reserved(Reg::CPSR) {
                 block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
             }
             block_asm.b_basic_block(basic_block_index);
@@ -416,19 +347,10 @@ impl JitAsm<'_> {
         let aligned_target_pc = forward_branch.target_pc & !1;
         let pc_shift = if thumb { 1 } else { 2 };
 
+        block_asm.save_dirty_guest_cpsr(false);
+
         let jump_to_index = (inst_index as isize + ((aligned_target_pc as isize - block_asm.current_pc as isize) >> pc_shift)) as usize;
         let target_pre_cycle_count_sum = self.jit_buf.insts_cycle_counts[jump_to_index] - self.jit_buf.insts[jump_to_index].cycle as u16;
-
-        let target_basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
-        let target_basic_block_input_regs = self.analyzer.basic_blocks[target_basic_block_index].get_inputs();
-        // Same as the backward-branch case: carry the cpsr in host lr past the accounting and
-        // jit-entry checks when the target consumes the flags they clobber.
-        let keep_cpsr_in_lr = !BRANCH_LOG && target_basic_block_input_regs.is_reserved(Reg::CPSR) && block_asm.dirty_guest_regs.is_reserved(Reg::CPSR);
-        if keep_cpsr_in_lr {
-            block_asm.store_guest_cpsr_reg_keep(Reg::LR, Reg::R0);
-        } else {
-            block_asm.save_dirty_guest_cpsr(false);
-        }
 
         block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
         self.emit_count_cycles(self.jit_buf.insts_cycle_counts[inst_index], block_asm);
@@ -465,14 +387,14 @@ impl JitAsm<'_> {
             block_asm.restore_guest_regs_ptr();
         }
 
-        let basic_block = &self.analyzer.basic_blocks[target_basic_block_index];
-        block_asm.relocate_for_basic_block(FlagsUpdate_DontCare, basic_block.output_regs, target_basic_block_index);
-        if keep_cpsr_in_lr {
-            block_asm.restore_guest_cpsr_from_reg(Reg::LR);
-        } else if target_basic_block_input_regs.is_reserved(Reg::CPSR) {
+        let basic_block_index = self.analyzer.get_basic_block_from_inst(jump_to_index);
+        let basic_block = &self.analyzer.basic_blocks[basic_block_index];
+        let basic_block_input_regs = basic_block.get_inputs();
+        block_asm.relocate_for_basic_block(FlagsUpdate_DontCare, basic_block.output_regs, basic_block_index);
+        if basic_block_input_regs.is_reserved(Reg::CPSR) {
             block_asm.load_guest_cpsr_reg(CPSR_TMP_REG);
         }
-        block_asm.b_basic_block(target_basic_block_index);
+        block_asm.b_basic_block(basic_block_index);
 
         self.jit_buf.run_scheduler_labels.push(JitRunSchedulerLabel::new(
             forward_branch.inst_index,
