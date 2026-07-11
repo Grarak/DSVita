@@ -83,7 +83,8 @@ guest literal pool at runtime; never hardcode them.
 
 ## The verdict rule
 
-The dev box is out-of-order silicon with a different thread architecture; the target is
-in-order. Wins here can be nil there (and vice versa — several target-positive changes
-measured neutral here). A perf change only counts after the target hardware measured it.
-One change per commit so each can be accepted or dropped independently.
+The dev box and the target are both out-of-order, but very different cores (A76-class vs the
+Vita's A9: far smaller OoO window, caches, and thread architecture). Wins here can be nil
+there (and vice versa — several target-positive changes measured neutral here). A perf
+change only counts after the target hardware measured it. One change per commit so each can
+be accepted or dropped independently.

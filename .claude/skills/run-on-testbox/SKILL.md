@@ -29,8 +29,19 @@ silently skip the recompile — see DEVELOPMENT.md §4 pitfalls).
 | Check alive | `ssh $DSVITA_PI_HOST 'pgrep -x <binary-name>'` |
 
 Keyboard map: WASD = dpad, K = A, J = B, I = X, U = Y, B = Start, V = Select, 8/9 = L/R.
-Mouse click on the bottom-screen area = touch (needs local display; remotely there is no
-touch injection — only keys).
+
+**Touch injection remotely** (debug/release-debug builds): launch with `DSVITA_DBG_TOUCH=1`
+and a keyboard tap-grid maps to bottom-screen DS coords — `G H L` (top row), `N O P`
+(middle), `Q R Z` (bottom), a 3×3 over the touch screen. A held key = a held stylus, so
+`pi_key.sh <key> <hold_ms>` drives "touch to start" gates, menus, and walk-by-touch. Needed
+for titles that gate on touch (Zelda PH, the HG title screen). Rub/drag minigames (GTA:CTW
+window-smash) can't be driven — no drag path.
+- Rapid taps must go in ONE ssh session (loop `wtype` with short sleeps); a tap per
+  round-trip is too slow and the game "heals" between them.
+
+**Input-free verify loop**: `kill -USR1 <pid>` quick-saves at vblank; relaunch with
+`-s <savestate>` to resume — lets you A/B or re-test a scene deterministically without
+re-driving inputs.
 
 Rules that bite:
 - ALWAYS launch with `LIBGL_ALWAYS_SOFTWARE=1` — the box's GPU driver renders incorrectly
