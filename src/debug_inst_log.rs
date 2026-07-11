@@ -1,10 +1,10 @@
-use crate::core::CpuType;
 use crate::core::emu::Emu;
 use crate::core::thread_regs::Cpsr;
+use crate::core::CpuType;
 use crate::jit::disassembler::lookup_table::lookup_opcode;
 use crate::jit::disassembler::thumb::lookup_table_thumb::lookup_thumb_opcode;
 use crate::jit::inst_info::InstInfo;
-use crate::jit::reg::{Reg, RegReserve, reg_reserve};
+use crate::jit::reg::{reg_reserve, Reg, RegReserve};
 use crate::utils::Convert;
 use std::cell::UnsafeCell;
 use std::fs::File;

@@ -209,9 +209,9 @@ fn ldm_stm<const LOAD: bool, const PRE: bool, const UP: bool, const USER: bool, 
     // Registers transfer lowest-numbered to lowest-address; compute the lowest accessed address.
     // ARM address arithmetic wraps mod 2^32 (negative-index / high-base accesses).
     let addr = match (UP, PRE) {
-        (true, false) => base,                                        // IA
-        (true, true) => base.wrapping_add(4),                         // IB
-        (false, true) => base.wrapping_sub(count * 4),                // DB
+        (true, false) => base,                                          // IA
+        (true, true) => base.wrapping_add(4),                           // IB
+        (false, true) => base.wrapping_sub(count * 4),                  // DB
         (false, false) => base.wrapping_sub(count * 4).wrapping_add(4), // DA
     };
 

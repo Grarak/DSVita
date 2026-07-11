@@ -20,12 +20,12 @@ pub mod jit_asm;
 mod jit_asm_common_funs;
 pub mod jit_memory;
 mod jit_memory_map;
-#[cfg(target_arch = "aarch64")]
-mod slow_mem_patch;
 #[cfg(target_os = "linux")]
 mod jit_perf_log;
 pub mod op;
 pub mod reg;
+#[cfg(target_arch = "aarch64")]
+mod slow_mem_patch;
 
 pub type Cond = vixl::Cond;
 

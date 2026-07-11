@@ -27,15 +27,7 @@ pub enum Hotkey {
 /// Hotkey editor row labels and ini keys, indexed by `Hotkey`. Missing ini keys
 /// parse to the default binding, so profiles saved before hotkeys were
 /// customizable keep the built-in shortcuts.
-pub const HOTKEY_NAMES: [&str; NUM_HOTKEYS] = [
-    "Previous layout",
-    "Next layout",
-    "Swap screens",
-    "Scale top screen",
-    "Scale bottom screen",
-    "Blow mic",
-    "Toggle lid",
-];
+pub const HOTKEY_NAMES: [&str; NUM_HOTKEYS] = ["Previous layout", "Next layout", "Swap screens", "Scale top screen", "Scale bottom screen", "Blow mic", "Toggle lid"];
 
 /// A named custom controls profile: for each DS key and each hotkey, the host
 /// (Vita) button bits that trigger it. Vita-specific in meaning (the values are

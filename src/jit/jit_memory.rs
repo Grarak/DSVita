@@ -31,9 +31,9 @@ use crate::jit::reg::Reg;
 #[cfg(target_arch = "arm")]
 use crate::jit::{Cond, MemoryAmount};
 use crate::logging::debug_println;
-use crate::mmap::{flush_icache, MemRegion, Mmap, PAGE_SHIFT, PAGE_SIZE};
 #[cfg(target_arch = "arm")]
 use crate::mmap::ArmContext;
+use crate::mmap::{flush_icache, MemRegion, Mmap, PAGE_SHIFT, PAGE_SIZE};
 
 #[cfg(target_os = "linux")]
 fn block_hash_log(cpu: CpuType, guest_pc: u32, thumb: bool, code: &[u8]) {

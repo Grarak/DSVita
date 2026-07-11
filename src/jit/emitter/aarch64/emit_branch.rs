@@ -206,7 +206,11 @@ impl JitAsm<'_> {
                 block_asm.masm.mov_imm64(A64Reg::X0, self as *mut JitAsm as u64);
                 block_asm.mov_imm(A64Reg::X1, target_pre_cycle_count_sum as u32);
                 block_asm.mov_imm(A64Reg::X2, current_pc);
-                block_asm.call_host(if arm7_hle { handle_idle_loop::<true> as *const () } else { handle_idle_loop::<false> as *const () });
+                block_asm.call_host(if arm7_hle {
+                    handle_idle_loop::<true> as *const ()
+                } else {
+                    handle_idle_loop::<false> as *const ()
+                });
                 // handle_idle_loop reset the cycle accounting and may have dispatched an
                 // interrupt (moving guest memory); rejoin the loop head with fresh registers.
                 let target_block = self.analyzer.get_basic_block_from_inst(target_index);

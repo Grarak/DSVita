@@ -1,22 +1,22 @@
-use crate::core::CpuType;
-use crate::core::CpuType::ARM9;
 use crate::core::cp15::TcmState;
 use crate::core::emu::Emu;
-use crate::core::memory::mmu::{MMU_PAGE_SHIFT, MMU_PAGE_SIZE, MmuArm7, MmuArm9};
+use crate::core::memory::mmu::{MmuArm7, MmuArm9, MMU_PAGE_SHIFT, MMU_PAGE_SIZE};
 use crate::core::memory::regions;
 use crate::core::memory::regions::{OAM_SIZE, STANDARD_PALETTES_SIZE};
 use crate::core::memory::vram::Vram;
 use crate::core::memory::wifi::Wifi;
 use crate::core::memory::wram::Wram;
+use crate::core::CpuType;
+use crate::core::CpuType::ARM9;
 use crate::debug_inst_log::{self, MemLogKind};
 use crate::logging::debug_println;
 use crate::mmap::Shm;
 use crate::utils;
 use crate::utils::Convert;
-use CpuType::ARM7;
 use std::intrinsics::unlikely;
 use std::marker::PhantomData;
 use std::mem;
+use CpuType::ARM7;
 
 impl crate::savestate::Savestate for Memory {
     fn savestate(&mut self, state: &mut crate::savestate::SavestateContext) {
@@ -139,7 +139,11 @@ macro_rules! read_io_ports {
             ARM7 => {
                 if unlikely($addr_offset >= 0x800000) {
                     let $addr_offset = $addr_offset & !0x8000;
-                    if unlikely((0x804000..0x806000).contains(&$addr_offset)) { $read_wifi } else { $read }
+                    if unlikely((0x804000..0x806000).contains(&$addr_offset)) {
+                        $read_wifi
+                    } else {
+                        $read
+                    }
                 } else {
                     $read
                 }
@@ -689,7 +693,11 @@ impl Emu {
     pub fn get_shm_offset<const CPU: CpuType, const TCM: bool, const WRITE: bool>(&self, addr: u32) -> usize {
         let mmu = {
             if CPU == ARM9 && TCM {
-                if WRITE { self.mmu_get_write_tcm::<CPU>() } else { self.mmu_get_read_tcm::<CPU>() }
+                if WRITE {
+                    self.mmu_get_write_tcm::<CPU>()
+                } else {
+                    self.mmu_get_read_tcm::<CPU>()
+                }
             } else if WRITE {
                 self.mmu_get_write::<CPU>()
             } else {
