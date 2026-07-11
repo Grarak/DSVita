@@ -25,8 +25,10 @@ Runtime log: `/tmp/dsvita.log`. The emulator runs detached; give it a few second
 screenshotting.
 
 Constraints:
-- qemu-arm is ~100x slower than native — fine for correctness, useless for perf. For real
-  speed or interactive testing use the remote ARM box (run-on-testbox skill).
+- The dev machine is x86, so the armhf binary only runs here under qemu-arm — ~100x slower
+  than native, fine for a quick correctness check, useless for perf. Default to running
+  roms/games on the pi5 test box (run-on-testbox skill; roms there live at `~/nds`); reach for
+  qemu locally only for a fast boot/correctness sanity check.
 - Under Xwayland, mouse injection reaches SDL but keyboard does NOT — touch-navigable flows
   can be driven (mouse click on the bottom-screen area = touch), button-only flows cannot.
 - CLI: `-f 0|1|2..` framelimit (0 = uncapped, 1 = 100%, 5 = 200%, 9 = 500%), `-e 0|1|2` =

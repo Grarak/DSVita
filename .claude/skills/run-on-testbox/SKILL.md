@@ -6,13 +6,19 @@ description: Deploy and run DSVita on the remote ARM test box (raspberry pi clas
 # Run DSVita on the remote ARM test box
 
 Prerequisite: `.env` in the repo root with `DSVITA_PI_HOST` (ssh, key auth). Optional:
-`DSVITA_PI_BIN` (default `~/dsvita`). Never use sudo on the box without asking.
+`DSVITA_PI_BIN` (default `~/claude/dsvita/dsvita`). Never use sudo on the box without asking.
+
+**Working directory & roms.** The dev machine is x86 and can't run the armhf binary natively,
+so the pi5 is where all roms/games run. Roms live on the box at `~/nds`. Do every box-side
+thing — deployed binaries, logs, traces, savestates — under a `~/claude/dsvita/` working
+directory so you don't pollute the home dir; keep `DSVITA_PI_BIN` pointed into it.
 
 ## Deploy
 
 ```bash
 cargo build --profile release-debug --target thumbv7neon-unknown-linux-gnueabihf
-scp target/thumbv7neon-unknown-linux-gnueabihf/release-debug/dsvita "$DSVITA_PI_HOST:~/dsvita"
+ssh "$DSVITA_PI_HOST" 'mkdir -p ~/claude/dsvita'
+scp target/thumbv7neon-unknown-linux-gnueabihf/release-debug/dsvita "$DSVITA_PI_HOST:~/claude/dsvita/dsvita"
 ```
 
 When testing multiple build variants, give each binary a DISTINCT name on the box and

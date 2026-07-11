@@ -23,7 +23,7 @@ require_env() {
 
 # Defaults that work on most setups; override in .env if needed.
 : "${DSVITA_DISPLAY:=:0}"
-: "${DSVITA_PI_BIN:=~/dsvita}"
+: "${DSVITA_PI_BIN:=~/claude/dsvita/dsvita}"
 : "${DSVITA_PI_RUNTIME_DIR:=/run/user/1000}"
 : "${DSVITA_PI_WAYLAND_DISPLAY:=wayland-0}"
 : "${DSVITA_PI_WTYPE:=wtype}"

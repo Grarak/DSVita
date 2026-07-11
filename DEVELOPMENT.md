@@ -184,8 +184,10 @@ Ordered by cost. Every technique below cracked at least one real bug.
    never starts" hang and an interrupt-starvation hang were localized in minutes each.
 5. **Instruction-trace diff** (the heavy hammer). `--inst-log <path>` records from boot;
    `--inst-log-lazy <path>` arms on SIGUSR2 (capture the final stretch); SIGINT and the panic
-   hook flush. Decode with `dsvita decode-inst-log <path>`. Diff two engines (threshold 0 vs
-   100/255 builds) or two arm7-emulation modes.
+   hook flush. Decode with `tools/trace_decode.sh <path>` (x86-native — a detached crate that
+   reuses dsvita's real disassembler but links no C/C++, so it decodes on the dev box that has
+   no dsvita binary; `dsvita decode-inst-log <path>` is the equivalent on an arm/aarch64 box).
+   Diff two engines (threshold 0 vs 100/255 builds) or two arm7-emulation modes.
    - **Parity caveats (each one cost real time):** neither engine logs taken branches, but
      the jit logs extra records the interpreter doesn't — "enter block" markers, records
      re-emitted on return-stack resume, same-block `bl`s. Filter to per-cpu `Executed`
@@ -289,6 +291,12 @@ instruction right after a load is usually the load's latency (skid), not that in
 
 ### Environment / tooling pitfalls
 
+- **The dev machine is x86; run all roms/games on the pi5 test box.** The dev box builds the
+  armhf binary but cannot run it natively — qemu-arm is ~100x slower and correctness-only
+  (run-local skill), so for anything interactive or timed use the pi5 (run-on-testbox skill).
+  Roms live on the pi5 at `~/nds`. Confine every box-side artifact — deployed binaries, logs,
+  traces, savestates — to a `~/claude/dsvita/` working directory so you don't pollute the home
+  dir; point `DSVITA_PI_BIN` into it.
 - **`sed -i file && cargo build` chained in one command can produce a STALE binary**: the
   edit lands in the same mtime tick as the previous build's fingerprint and cargo skips the
   recompile. This faked an A/B result and sent a whole investigation the wrong way. Run edits
