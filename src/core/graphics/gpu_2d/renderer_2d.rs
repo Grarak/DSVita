@@ -3,7 +3,7 @@ use crate::core::graphics::gl_utils::{
 };
 use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::graphics::gpu_2d::registers_2d::{BgCnt, DispCnt};
-use crate::core::graphics::gpu_2d::renderer_regs_2d::{BgUbo, BlendUbo, Gpu2DMem, Gpu2DRenderRegs, Gpu2DRenderRegsShared, WinBgUbo};
+use crate::core::graphics::gpu_2d::renderer_regs_2d::{BgUbo, Gpu2DMem, Gpu2DRenderRegs, Gpu2DRenderRegsShared, WinBgUbo};
 use crate::core::graphics::gpu_2d::Gpu2DEngine;
 use crate::core::graphics::gpu_2d::Gpu2DEngine::{A, B};
 use crate::core::graphics::gpu_3d::renderer_3d::{Gpu3DFbo, WidescreenOption};
@@ -137,7 +137,7 @@ pub struct Gpu2DCommon {
     blend_programs: [GLuint; 2],
     blend_3d_program: GLuint,
     blend_3d_widescreen_invert_coefficient_loc: GLint,
-    blend_ubo: GLuint,
+    blend_tex: GLuint,
 }
 
 impl Gpu2DCommon {
@@ -170,9 +170,19 @@ impl Gpu2DCommon {
                 (disp_cnt_loc, ubo, fbo)
             };
 
-            let mut blend_ubo = 0;
-            gl::GenBuffers(1, &mut blend_ubo);
-            gl::BindBuffer(gl::UNIFORM_BUFFER, blend_ubo);
+            // Per-scanline blend + master-bright registers, fed to the blend shaders as a
+            // 192x2 RGBA8 texture (x = scanline; rows = the two BlendUbo arrays, uploaded
+            // as-is) — one more uniform block doesn't fit on the Vita, and neither does a
+            // 2-wide texture
+            let mut blend_tex = 0;
+            gl::GenTextures(1, &mut blend_tex);
+            gl::BindTexture(gl::TEXTURE_2D, blend_tex);
+            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, DISPLAY_HEIGHT as _, 2, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as _);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as _);
+            gl::BindTexture(gl::TEXTURE_2D, 0);
 
             let blend_programs = [gpu_programs.blend.top, gpu_programs.blend.bottom];
             for program in blend_programs {
@@ -187,10 +197,7 @@ impl Gpu2DCommon {
                 gl::Uniform1i(gl::GetUniformLocation(program, c"objTex".as_ptr() as _), 4);
                 gl::Uniform1i(gl::GetUniformLocation(program, c"objDepthTex".as_ptr() as _), 5);
                 gl::Uniform1i(gl::GetUniformLocation(program, c"winTex".as_ptr() as _), 6);
-
-                if cfg!(target_os = "linux") {
-                    gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"BlendUbo".as_ptr() as _), 0);
-                }
+                gl::Uniform1i(gl::GetUniformLocation(program, c"blendTex".as_ptr() as _), 7);
             }
 
             gl::UseProgram(gpu_programs.blend_3d);
@@ -199,6 +206,7 @@ impl Gpu2DCommon {
 
             gl::Uniform1i(gl::GetUniformLocation(gpu_programs.blend_3d, c"texBlend".as_ptr() as _), 0);
             gl::Uniform1i(gl::GetUniformLocation(gpu_programs.blend_3d, c"tex3d".as_ptr() as _), 1);
+            gl::Uniform1i(gl::GetUniformLocation(gpu_programs.blend_3d, c"blendTex".as_ptr() as _), 2);
 
             let blend_3d_widescreen_invert_coefficient_loc = gl::GetUniformLocation(gpu_programs.blend_3d, c"widescreenInvertCoefficient".as_ptr() as _);
 
@@ -215,7 +223,7 @@ impl Gpu2DCommon {
                 blend_programs,
                 blend_3d_program: gpu_programs.blend_3d,
                 blend_3d_widescreen_invert_coefficient_loc,
-                blend_ubo,
+                blend_tex,
             }
         }
     }
@@ -704,9 +712,20 @@ impl Gpu2DProgram {
         gl::ActiveTexture(gl::TEXTURE6);
         gl::BindTexture(gl::TEXTURE_2D, common.win_bg_fbo.color);
 
-        gl::BindBuffer(gl::UNIFORM_BUFFER, common.blend_ubo);
-        gl::BufferData(gl::UNIFORM_BUFFER, size_of::<BlendUbo>() as _, ptr::addr_of!(regs.blend_ubo) as _, gl::DYNAMIC_DRAW);
-        gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, common.blend_ubo);
+        // The BlendUbo arrays are the texture rows, so the struct uploads as-is
+        gl::ActiveTexture(gl::TEXTURE7);
+        gl::BindTexture(gl::TEXTURE_2D, common.blend_tex);
+        #[cfg(target_os = "linux")]
+        gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, DISPLAY_HEIGHT as _, 2, gl::RGBA, gl::UNSIGNED_BYTE, ptr::addr_of!(regs.blend_ubo) as _);
+        #[cfg(target_os = "vita")]
+        {
+            // Remap swaps in fresh backing memory, so the queued draw of the other
+            // engine keeps reading its own copy
+            use crate::core::graphics::gpu_2d::renderer_regs_2d::BlendUbo;
+            use crate::presenter::Presenter;
+            let tex_ptr = Presenter::gl_remap_tex() as *mut BlendUbo;
+            tex_ptr.copy_from_nonoverlapping(ptr::addr_of!(regs.blend_ubo), 1);
+        }
 
         const VERTICES: [f32; 2 * 4] = [-1f32, 1f32, 1f32, 1f32, 1f32, -1f32, -1f32, -1f32];
 
@@ -741,6 +760,9 @@ impl Gpu2DProgram {
 
             gl::ActiveTexture(gl::TEXTURE1);
             gl::BindTexture(gl::TEXTURE_2D, fbo_3d.color());
+
+            gl::ActiveTexture(gl::TEXTURE2);
+            gl::BindTexture(gl::TEXTURE_2D, common.blend_tex);
 
             const VERTICES: [f32; 4 * 4] = [-1f32, 1f32, 0f32, 0f32, 1f32, 1f32, 1f32, 0f32, 1f32, -1f32, 1f32, 1f32, -1f32, -1f32, 0f32, 1f32];
 
@@ -783,7 +805,6 @@ impl Gpu2DProgram {
         }
 
         gl::BindTexture(gl::TEXTURE_2D, 0);
-        gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
         gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
 
         blend_fbo_color

@@ -12,10 +12,10 @@ uniform sampler2D bg3Tex;
 uniform sampler2D objTex;
 uniform sampler2D objDepthTex;
 uniform sampler2D winTex;
-
-uniform BlendUbo {
-    int bldCntsAlphasYs[192];
-};
+// Per-scanline blend + master-bright registers as a 192x2 RGBA8 texture (x = scanline,
+// row 0 = bldCntAlphaY, row 1 = masterBright — the Vita can't sample a 2-wide texture
+// and a uniform block for these doesn't fit)
+uniform sampler2D blendTex;
 
 int topNum = 5;
 int bottomNum = 5;
@@ -87,7 +87,8 @@ void main() {
     }
 
     int y = int(screenPos.y * 191.0);
-    int bldCntAlphaY = bldCntsAlphasYs[y];
+    vec4 bldRaw = texelFetch(blendTex, ivec2(y, 0), 0);
+    int bldCntAlphaY = int(bldRaw.r * 255.0) | (int(bldRaw.g * 255.0) << 8) | (int(bldRaw.b * 255.0) << 16) | (int(bldRaw.a * 255.0) << 24);
     int bldCnt = bldCntAlphaY & 0xFFFF;
     int bldEva = (bldCntAlphaY >> 16) & 0x1F;
     int bldEvb = (bldCntAlphaY >> 21) & 0x1F;
@@ -96,6 +97,7 @@ void main() {
     bool blendBottom = ((bldCnt >> (8 + bottomNum)) & 1) != 0;
     int bldMode = (bldCnt >> 6) & 3;
 
+    bool blended = false;
 #ifdef BLEND_3D
     if (top3D) {
         if (blendBottom) {
@@ -123,38 +125,55 @@ void main() {
         // Semi transparent object
         if (blendBottom) {
             color = alphaBlend(bldEva, bldEvb);
-            return;
-        }
-
-        if (bldMode < 2) {
+            blended = true;
+        } else if (bldMode < 2) {
             bldMode = 0;
         }
     }
 
-    if (bldMode == 0 || !blendTop || ((winEnabled >> 5) & 1) == 0) {
-        color = vec4(topColor.rgb, 1.0);
-    } else {
-        switch (bldMode) {
-            case 1: {
-                if (blendBottom) {
-                    color = alphaBlend(bldEva, bldEvb);
-                } else {
-                    color = vec4(topColor.rgb, 1.0);
+    if (!blended) {
+        if (bldMode == 0 || !blendTop || ((winEnabled >> 5) & 1) == 0) {
+            color = vec4(topColor.rgb, 1.0);
+        } else {
+            switch (bldMode) {
+                case 1: {
+                    if (blendBottom) {
+                        color = alphaBlend(bldEva, bldEvb);
+                    } else {
+                        color = vec4(topColor.rgb, 1.0);
+                    }
+                    break;
                 }
-                break;
-            }
-            case 2: {
-                float bldYF = float(bldY) / 16.0;
-                vec3 increaseColor = (1.0 - topColor.rgb) * bldYF;
-                color = vec4((topColor.rgb + increaseColor), 1.0);
-                break;
-            }
-            case 3: {
-                float bldYF = float(bldY) / 16.0;
-                vec3 decreaseColor = topColor.rgb * bldYF;
-                color = vec4((topColor.rgb - decreaseColor), 1.0);
-                break;
+                case 2: {
+                    float bldYF = float(bldY) / 16.0;
+                    vec3 increaseColor = (1.0 - topColor.rgb) * bldYF;
+                    color = vec4((topColor.rgb + increaseColor), 1.0);
+                    break;
+                }
+                case 3: {
+                    float bldYF = float(bldY) / 16.0;
+                    vec3 decreaseColor = topColor.rgb * bldYF;
+                    color = vec4((topColor.rgb - decreaseColor), 1.0);
+                    break;
+                }
             }
         }
     }
+
+#ifndef BLEND_3D
+    // Master brightness: final stage over the whole engine output. The BLEND_3D
+    // variant emits an encoded intermediate; blend_3d applies it there instead.
+    vec4 mbRaw = texelFetch(blendTex, ivec2(y, 1), 0);
+    int mb = int(mbRaw.r * 255.0) | (int(mbRaw.g * 255.0) << 8);
+    int mbFactor = min(mb & 0x1F, 16);
+    if (mbFactor != 0) {
+        int mbMode = (mb >> 14) & 3;
+        float mbF = float(mbFactor) / 16.0;
+        if (mbMode == 1) {
+            color.rgb += (1.0 - color.rgb) * mbF;
+        } else if (mbMode == 2) {
+            color.rgb -= color.rgb * mbF;
+        }
+    }
+#endif
 }

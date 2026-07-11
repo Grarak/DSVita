@@ -10,6 +10,7 @@ in vec2 texCoords3d;
 
 uniform sampler2D texBlend;
 uniform sampler2D tex3d;
+uniform sampler2D blendTex;
 
 void main() {
     vec4 colorBlend = texture(texBlend, texCoordsBlend);
@@ -42,6 +43,22 @@ void main() {
         default: {
             color = colorBlend;
             break;
+        }
+    }
+
+    // Master brightness: final stage of the engine A output (the blend pass emits an
+    // encoded intermediate, so it is applied here); registers come from blendTex row y
+    int y = int(texCoordsBlend.y * 191.0);
+    vec4 mbRaw = texelFetch(blendTex, ivec2(y, 1), 0);
+    int mb = int(mbRaw.r * 255.0) | (int(mbRaw.g * 255.0) << 8);
+    int mbFactor = min(mb & 0x1F, 16);
+    if (mbFactor != 0) {
+        int mbMode = (mb >> 14) & 3;
+        float mbF = float(mbFactor) / 16.0;
+        if (mbMode == 1) {
+            color.rgb += (1.0 - color.rgb) * mbF;
+        } else if (mbMode == 2) {
+            color.rgb -= color.rgb * mbF;
         }
     }
 }

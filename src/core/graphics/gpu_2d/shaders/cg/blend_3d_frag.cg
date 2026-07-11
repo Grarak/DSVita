@@ -1,8 +1,10 @@
 float2 in texCoordsBlend : TEXCOORD0;
 float2 in texCoords3d : TEXCOORD1;
+float2 in masterBrightAddr : TEXCOORD2;
 
 uniform sampler2D texBlend : TEXUNIT0;
 uniform sampler2D tex3d : TEXUNIT1;
+uniform usampler2D blendTex : TEXUNIT2;
 
 void main(out float4 color : COLOR) {
     float4 colorBlend = tex2D(texBlend, texCoordsBlend);
@@ -25,5 +27,22 @@ void main(out float4 color : COLOR) {
         color = float4(color3d.rgb, 1.0);
     } else {
         color = colorBlend;
+    }
+
+    // Master brightness: final stage of the engine A output (the blend pass emits an
+    // encoded intermediate, so it is applied here); registers come from blendTex row y
+    unsigned int mb = tex2D<unsigned int>(blendTex, masterBrightAddr);
+    unsigned char mbFactor = mb & 0x1F;
+    if (mbFactor > 16) {
+        mbFactor = 16;
+    }
+    if (mbFactor != 0) {
+        unsigned char mbMode = (mb >> 14) & 3;
+        float mbF = float(mbFactor) / 16.0;
+        if (mbMode == 1) {
+            color.rgb += (1.0 - color.rgb) * mbF;
+        } else if (mbMode == 2) {
+            color.rgb -= color.rgb * mbF;
+        }
     }
 }

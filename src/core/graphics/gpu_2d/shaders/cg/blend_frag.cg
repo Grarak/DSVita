@@ -1,4 +1,6 @@
 float2 in screenPos : TEXCOORD0;
+float2 in bldCntAlphaYAddr : TEXCOORD1;
+float2 in masterBrightAddr : TEXCOORD2;
 
 uniform sampler2D bg0Tex : TEXUNIT0;
 uniform sampler2D bg1Tex : TEXUNIT1;
@@ -7,10 +9,10 @@ uniform sampler2D bg3Tex : TEXUNIT3;
 uniform sampler2D objTex : TEXUNIT4;
 uniform sampler2D objDepthTex : TEXUNIT5;
 uniform usampler2D winTex : TEXUNIT6;
-
-uniform BlendUbo {
-    int bldCntsAlphasYs[192];
-} BlendUbo : BUFFER[0];
+// Per-scanline blend + master-bright registers as a 192x2 RGBA8 texture (x = scanline,
+// row 0 = bldCntAlphaY, row 1 = masterBright — the Vita can't sample a 2-wide texture
+// and a uniform block for these doesn't fit)
+uniform usampler2D blendTex : TEXUNIT7;
 
 static char topNum = 5;
 static char bottomNum = 5;
@@ -81,8 +83,12 @@ void main(out float4 color : COLOR) {
         discard;
     }
 
-    short y = short(screenPos.y * 191.0);
-    int bldCntAlphaY = BlendUbo.bldCntsAlphasYs[y];
+    unsigned int bldCntAlphaY = tex2D<unsigned int>(blendTex, bldCntAlphaYAddr);
+#ifndef BLEND_3D
+    // Master brightness: final stage over the whole engine output. The BLEND_3D
+    // variant emits an encoded intermediate; blend_3d applies it there instead.
+    unsigned int mb = tex2D<unsigned int>(blendTex, masterBrightAddr);
+#endif
     short bldCnt = bldCntAlphaY & 0xFFFF;
     short bldEva = (bldCntAlphaY >> 16) & 0x1F;
     short bldEvb = (bldCntAlphaY >> 21) & 0x1F;
@@ -91,6 +97,7 @@ void main(out float4 color : COLOR) {
     bool blendBottom = ((bldCnt >> (8 + bottomNum)) & 1) != 0;
     unsigned char bldMode = (bldCnt >> 6) & 3;
 
+    bool blended = false;
 #ifdef BLEND_3D
     if (top3D) {
         if (blendBottom) {
@@ -113,29 +120,45 @@ void main(out float4 color : COLOR) {
         // Semi transparent object
         if (blendBottom) {
             color = alphaBlend(bldEva, bldEvb);
-            return;
-        }
-
-        if (bldMode < 2) {
+            blended = true;
+        } else if (bldMode < 2) {
             bldMode = 0;
         }
     }
 
-    if (bldMode == 0 || !blendTop || ((winEnabled >> 5) & 1) == 0) {
-        color = float4(topColor.rgb, 1.0);
-    } else if (bldMode == 1) {
-        if (blendBottom) {
-            color = alphaBlend(bldEva, bldEvb);
-        } else {
+    if (!blended) {
+        if (bldMode == 0 || !blendTop || ((winEnabled >> 5) & 1) == 0) {
             color = float4(topColor.rgb, 1.0);
+        } else if (bldMode == 1) {
+            if (blendBottom) {
+                color = alphaBlend(bldEva, bldEvb);
+            } else {
+                color = float4(topColor.rgb, 1.0);
+            }
+        } else if (bldMode == 2) {
+            float bldYF = float(bldY) / 16.0;
+            float3 increaseColor = (1.0 - topColor.rgb) * bldYF;
+            color = float4((topColor.rgb + increaseColor), 1.0);
+        } else if (bldMode == 3) {
+            float bldYF = float(bldY) / 16.0;
+            float3 decreaseColor = topColor.rgb * bldYF;
+            color = float4((topColor.rgb - decreaseColor), 1.0);
         }
-    } else if (bldMode == 2) {
-        float bldYF = float(bldY) / 16.0;
-        float3 increaseColor = (1.0 - topColor.rgb) * bldYF;
-        color = float4((topColor.rgb + increaseColor), 1.0);
-    } else if (bldMode == 3) {
-        float bldYF = float(bldY) / 16.0;
-        float3 decreaseColor = topColor.rgb * bldYF;
-        color = float4((topColor.rgb - decreaseColor), 1.0);
     }
+
+#ifndef BLEND_3D
+    unsigned char mbFactor = mb & 0x1F;
+    if (mbFactor > 16) {
+        mbFactor = 16;
+    }
+    if (mbFactor != 0) {
+        unsigned char mbMode = (mb >> 14) & 3;
+        float mbF = float(mbFactor) / 16.0;
+        if (mbMode == 1) {
+            color.rgb += (1.0 - color.rgb) * mbF;
+        } else if (mbMode == 2) {
+            color.rgb -= color.rgb * mbF;
+        }
+    }
+#endif
 }
