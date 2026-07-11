@@ -332,4 +332,8 @@ impl Spi {
     pub fn start_blow_mic(&mut self) {
         self.blow_mic_offset = 0;
     }
+
+    pub fn is_blow_mic_active(&self) -> bool {
+        (self.blow_mic_offset as usize) < BLOW_MIC_DATA.len()
+    }
 }

@@ -458,7 +458,7 @@ pub fn actual_main() {
             &mut screen_layouts,
             &mut ra_context,
             &mut cjk_download,
-            KeyBinding::new("Default".to_string(), Presenter::get_default_key_mapping()),
+            KeyBinding::new("Default".to_string(), Presenter::get_default_key_mapping(), Presenter::get_default_hotkey_mapping()),
         ) {
             Some((cartridge_io, global_settings, settings, settings_file_path)) => (cartridge_io, global_settings, settings, settings_file_path),
             None => break,
@@ -474,7 +474,7 @@ pub fn actual_main() {
             }
         }
 
-        presenter.set_key_mapping(global_settings.get_control(settings.controls_index()).buttons);
+        presenter.set_key_mapping(global_settings.get_control(settings.controls_index()));
 
         info_println!("{} Settings: {settings:?}", cartridge_io.file_name);
 
@@ -729,7 +729,7 @@ pub fn actual_main() {
                         if ret == UiPauseMenuReturn::BlowMic {
                             emu_unsafe.get_mut().spi.start_blow_mic();
                         }
-                        presenter.set_key_mapping(global_settings.get_control(settings.controls_index()).buttons);
+                        presenter.set_key_mapping(global_settings.get_control(settings.controls_index()));
                         screen_layout = emu_unsafe.get_mut().settings.screen_layout(&screen_layouts);
                         if savestate::op_active() {
                             // The menu queued a savestate request and armed the progress

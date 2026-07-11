@@ -79,7 +79,7 @@ impl GlobalSettings {
             for binding_name in ini.sections() {
                 if let Some(binding_name) = binding_name {
                     if let Some(props) = ini.section(Some(binding_name)) {
-                        custom_controls.push(KeyBinding::from_ini(binding_name, props));
+                        custom_controls.push(KeyBinding::from_ini(binding_name, props, default_keybinding.hotkeys));
                     }
                 }
             }

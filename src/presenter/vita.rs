@@ -2,7 +2,7 @@ use crate::cartridge_io::{CartridgeIo, CartridgePreview};
 use crate::core::graphics::gpu_renderer::GpuRenderer;
 use crate::core::input::Keycode;
 use crate::global_settings::GlobalSettings;
-use crate::key_bindings::{KeyBinding, DS_KEY_NAMES, NUM_KEYS};
+use crate::key_bindings::{Hotkey, KeyBinding, DS_KEY_NAMES, HOTKEY_NAMES, NUM_HOTKEYS, NUM_KEYS};
 use crate::logging::info_println;
 use crate::presenter::imgui::root::{
     ImDrawData, ImGui, ImGuiCol__ImGuiCol_Text, ImGui_ImplVitaGL_GamepadUsage, ImGui_ImplVitaGL_Init, ImGui_ImplVitaGL_MouseStickUsage, ImGui_ImplVitaGL_NewFrame, ImGui_ImplVitaGL_RenderDrawData,
@@ -92,6 +92,10 @@ const DISPLAY_KEYCODES: [Keycode; NUM_KEYS] = [
     Keycode::Start,
 ];
 
+/// Default button per hotkey (indexed by `Hotkey`), triggered while the PS
+/// button is held. Blow mic and lid toggle default to unbound.
+const DEFAULT_HOTKEY_MAPPING: [u32; NUM_HOTKEYS] = [SCE_CTRL_LTRIGGER, SCE_CTRL_RTRIGGER, SCE_CTRL_CROSS, SCE_CTRL_SQUARE, SCE_CTRL_CIRCLE, 0, 0];
+
 /// Default Vita button per editor row (display order, matches `DS_KEY_NAMES`).
 const DEFAULT_KEY_MAPPING: [u32; NUM_KEYS] = {
     let mut mapping = [0u32; NUM_KEYS];
@@ -111,7 +115,7 @@ const DEFAULT_KEY_MAPPING: [u32; NUM_KEYS] = {
 };
 
 /// The Vita buttons a DS key can be bound to, shown in the controls editor.
-const BINDABLE_BUTTONS: [(&CStr, u32); NUM_KEYS] = [
+const BINDABLE_BUTTONS: [(&CStr, u32); 12] = [
     (c"Circle", SCE_CTRL_CIRCLE),
     (c"Cross", SCE_CTRL_CROSS),
     (c"Triangle", SCE_CTRL_TRIANGLE),
@@ -131,6 +135,7 @@ pub fn default_key_binding() -> KeyBinding {
     KeyBinding {
         name: String::new(),
         buttons: DEFAULT_KEY_MAPPING,
+        hotkeys: DEFAULT_HOTKEY_MAPPING,
     }
 }
 
@@ -192,8 +197,10 @@ pub struct Presenter {
     touch_points: Option<(i16, i16)>,
     keymap: u32,
     key_mapping: [u32; NUM_KEYS],
+    hotkey_mapping: [u32; NUM_HOTKEYS],
     pressed_btn: u32,
     do_nothing_until_all_btns_released: bool,
+    ps_hotkey_used: bool,
     core_unlocked: bool,
     can_stream_screen: bool,
 }
@@ -267,8 +274,10 @@ impl Presenter {
                 touch_points: None,
                 keymap: 0xFFFFFFFF,
                 key_mapping: DEFAULT_KEY_MAPPING,
+                hotkey_mapping: DEFAULT_HOTKEY_MAPPING,
                 pressed_btn: 0,
                 do_nothing_until_all_btns_released: false,
+                ps_hotkey_used: false,
                 core_unlocked: has_cap_unlocker,
                 can_stream_screen: has_cap_unlocker && Self::module_installed("udcd_uvc_dsvita"),
             };
@@ -282,8 +291,13 @@ impl Presenter {
         DEFAULT_KEY_MAPPING
     }
 
-    pub fn set_key_mapping(&mut self, mapping: [u32; NUM_KEYS]) {
-        self.key_mapping = mapping;
+    pub fn get_default_hotkey_mapping() -> [u32; NUM_HOTKEYS] {
+        DEFAULT_HOTKEY_MAPPING
+    }
+
+    pub fn set_key_mapping(&mut self, binding: &KeyBinding) {
+        self.key_mapping = binding.buttons;
+        self.hotkey_mapping = binding.hotkeys;
     }
 
     pub fn get_savestate_path(&self) -> Option<std::path::PathBuf> {
@@ -302,61 +316,99 @@ impl Presenter {
             let mut previous_pressed_btn = self.pressed_btn;
             self.pressed_btn = pressed.buttons;
 
+            let touch_report = MaybeUninit::<SceTouchData>::uninit();
+            let mut touch_report = touch_report.assume_init();
+            sceTouchPeek(SCE_TOUCH_PORT_FRONT, &mut touch_report, 1);
+
+            if touch_report.reportNum > 0 {
+                let report = touch_report.report.first().unwrap();
+                let x = report.x as u32 * PRESENTER_SCREEN_WIDTH / 1920;
+                let y = report.y as u32 * PRESENTER_SCREEN_HEIGHT / 1080;
+                self.touch_points = Some((x as i16, y as i16));
+            } else {
+                self.touch_points = None;
+            }
+
+            // Virtual hotkey bits re-arm every poll; the PS layer below pulses them
+            self.keymap |= (1 << Keycode::BlowMic as u8) | (1 << Keycode::Lid as u8);
+
             if pressed.buttons & SCE_CTRL_PSBUTTON != 0 {
-                const SHORTCUT_EVENTS: [(PresentEvent, SceCtrlButtons); 5] = [
+                // A held PS button is a hotkey modifier layer: DS keys are suppressed
+                self.keymap = 0xFFFFFFFF;
+
+                let held = |btn: u32| btn != 0 && pressed.buttons & btn == btn;
+                let released = |btn: u32| btn != 0 && previous_pressed_btn & btn == btn && pressed.buttons & btn != btn;
+
+                const LAYOUT_HOTKEYS: [(Hotkey, PresentEvent); 5] = [
                     (
+                        Hotkey::PreviousLayout,
                         PresentEvent::CycleScreenLayout {
                             offset: -1,
                             swap: false,
                             top_screen_scale_offset: 0,
                             bottom_screen_scale_offset: 0,
                         },
-                        SCE_CTRL_LTRIGGER,
                     ),
                     (
+                        Hotkey::NextLayout,
                         PresentEvent::CycleScreenLayout {
                             offset: 1,
                             swap: false,
                             top_screen_scale_offset: 0,
                             bottom_screen_scale_offset: 0,
                         },
-                        SCE_CTRL_RTRIGGER,
                     ),
                     (
+                        Hotkey::SwapScreens,
                         PresentEvent::CycleScreenLayout {
                             offset: 0,
                             swap: true,
                             top_screen_scale_offset: 0,
                             bottom_screen_scale_offset: 0,
                         },
-                        SCE_CTRL_CROSS,
                     ),
                     (
-                        PresentEvent::CycleScreenLayout {
-                            offset: 0,
-                            swap: false,
-                            top_screen_scale_offset: 0,
-                            bottom_screen_scale_offset: 1,
-                        },
-                        SCE_CTRL_CIRCLE,
-                    ),
-                    (
+                        Hotkey::ScaleTopScreen,
                         PresentEvent::CycleScreenLayout {
                             offset: 0,
                             swap: false,
                             top_screen_scale_offset: 1,
                             bottom_screen_scale_offset: 0,
                         },
-                        SCE_CTRL_SQUARE,
+                    ),
+                    (
+                        Hotkey::ScaleBottomScreen,
+                        PresentEvent::CycleScreenLayout {
+                            offset: 0,
+                            swap: false,
+                            top_screen_scale_offset: 0,
+                            bottom_screen_scale_offset: 1,
+                        },
                     ),
                 ];
 
-                for (event, button) in SHORTCUT_EVENTS {
-                    if previous_pressed_btn & button != 0 && pressed.buttons & button == 0 {
+                for (hotkey, event) in LAYOUT_HOTKEYS {
+                    if released(self.hotkey_mapping[hotkey as usize]) {
                         self.do_nothing_until_all_btns_released = true;
                         return event;
                     }
                 }
+
+                if held(self.hotkey_mapping[Hotkey::BlowMic as usize]) {
+                    self.keymap &= !(1 << Keycode::BlowMic as u8);
+                    self.ps_hotkey_used = true;
+                }
+                if released(self.hotkey_mapping[Hotkey::ToggleLid as usize]) {
+                    // One pulsed poll; the core toggles the hinge on this edge
+                    self.keymap &= !(1 << Keycode::Lid as u8);
+                    self.ps_hotkey_used = true;
+                }
+
+                return PresentEvent::Inputs {
+                    keymap: self.keymap,
+                    touch: self.touch_points,
+                    debug_touch: None,
+                };
             }
 
             if self.do_nothing_until_all_btns_released {
@@ -369,12 +421,22 @@ impl Presenter {
             }
 
             if previous_pressed_btn & SCE_CTRL_PSBUTTON != 0 && pressed.buttons & SCE_CTRL_PSBUTTON == 0 {
-                return PresentEvent::Pause;
+                let used = self.ps_hotkey_used;
+                self.ps_hotkey_used = false;
+                if used {
+                    // A hold-type hotkey fired during this PS press; swallow the
+                    // pause and ignore the still-held combo buttons until released
+                    self.do_nothing_until_all_btns_released = true;
+                } else {
+                    return PresentEvent::Pause;
+                }
             }
 
+            // All bits of a binding must be held, so hand-edited ini profiles can bind
+            // button combinations; editor-made single-button bindings behave as before
             for (row, &host_key) in self.key_mapping.iter().enumerate() {
                 let guest_key = DISPLAY_KEYCODES[row] as usize;
-                if host_key != 0 && pressed.buttons & host_key != 0 {
+                if host_key != 0 && pressed.buttons & host_key == host_key {
                     self.keymap &= !(1 << guest_key);
                 } else {
                     self.keymap |= 1 << guest_key;
@@ -396,18 +458,6 @@ impl Presenter {
                 }
             }
 
-            let touch_report = MaybeUninit::<SceTouchData>::uninit();
-            let mut touch_report = touch_report.assume_init();
-            sceTouchPeek(SCE_TOUCH_PORT_FRONT, &mut touch_report, 1);
-
-            if touch_report.reportNum > 0 {
-                let report = touch_report.report.first().unwrap();
-                let x = report.x as u32 * PRESENTER_SCREEN_WIDTH / 1920;
-                let y = report.y as u32 * PRESENTER_SCREEN_HEIGHT / 1080;
-                self.touch_points = Some((x as i16, y as i16));
-            } else {
-                self.touch_points = None;
-            }
         }
         PresentEvent::Inputs {
             keymap: self.keymap & stick_keymap,
@@ -726,6 +776,38 @@ pub fn show_layout_create_settings(global_settings: &mut GlobalSettings, custom_
     }
 }
 
+/// One controls-editor row: `label` with a combo of the bindable Vita buttons
+/// (plus None) writing the picked button bit into `value`.
+unsafe fn binding_button_row(id: i32, label: &str, value: &mut u32) {
+    ImGui::PushID3(id);
+    let key_label = CString::from_str(label).unwrap();
+    ImGui::Text(key_label.as_ptr());
+    ImGui::SameLine(0f32, -1f32);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 200f32);
+    ImGui::PushItemWidth(200f32);
+
+    let current = BINDABLE_BUTTONS.iter().position(|(_, bit)| *bit == *value);
+    let preview = current.map(|c| BINDABLE_BUTTONS[c].0).unwrap_or(c"None");
+    if ImGui::BeginCombo(c"##btn".as_ptr(), preview.as_ptr(), 0) {
+        let sz = ImVec2 { x: 0f32, y: 0f32 };
+        if ImGui::Selectable(c"None".as_ptr(), current.is_none(), 0, &sz) {
+            *value = 0;
+        }
+        for (j, (name, bit)) in BINDABLE_BUTTONS.iter().enumerate() {
+            let is_selected = current == Some(j);
+            if ImGui::Selectable(name.as_ptr(), is_selected, 0, &sz) {
+                *value = *bit;
+            }
+            if is_selected {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::PopItemWidth();
+    ImGui::PopID();
+}
+
 pub fn show_controls_create_settings(global_settings: &mut GlobalSettings, custom_layout_context: &mut CustomLayoutContext, binding: &mut KeyBinding) -> bool {
     unsafe {
         let has_error = custom_layout_context.empty_name || custom_layout_context.duplicated_name;
@@ -745,33 +827,14 @@ pub fn show_controls_create_settings(global_settings: &mut GlobalSettings, custo
         ImGui::Separator();
 
         for i in 0..NUM_KEYS {
-            ImGui::PushID3(i as _);
-            let key_label = CString::from_str(DS_KEY_NAMES[i]).unwrap();
-            ImGui::Text(key_label.as_ptr());
-            ImGui::SameLine(0f32, -1f32);
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 200f32);
-            ImGui::PushItemWidth(200f32);
+            binding_button_row(i as _, DS_KEY_NAMES[i], &mut binding.buttons[i]);
+        }
 
-            let current = BINDABLE_BUTTONS.iter().position(|(_, bit)| *bit == binding.buttons[i]);
-            let preview = current.map(|c| BINDABLE_BUTTONS[c].0).unwrap_or(c"None");
-            if ImGui::BeginCombo(c"##btn".as_ptr(), preview.as_ptr(), 0) {
-                let sz = ImVec2 { x: 0f32, y: 0f32 };
-                if ImGui::Selectable(c"None".as_ptr(), current.is_none(), 0, &sz) {
-                    binding.buttons[i] = 0;
-                }
-                for (j, (name, bit)) in BINDABLE_BUTTONS.iter().enumerate() {
-                    let is_selected = current == Some(j);
-                    if ImGui::Selectable(name.as_ptr(), is_selected, 0, &sz) {
-                        binding.buttons[i] = *bit;
-                    }
-                    if is_selected {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            ImGui::PopItemWidth();
-            ImGui::PopID();
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextDisabled(c"Hotkeys (hold the PS button)".as_ptr());
+        for i in 0..NUM_HOTKEYS {
+            binding_button_row((NUM_KEYS + i) as _, HOTKEY_NAMES[i], &mut binding.hotkeys[i]);
         }
 
         ImGui::EndChild();

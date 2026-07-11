@@ -294,7 +294,11 @@ impl Presenter {
         [0; crate::key_bindings::NUM_KEYS]
     }
 
-    pub fn set_key_mapping(&mut self, _: [u32; crate::key_bindings::NUM_KEYS]) {}
+    pub fn get_default_hotkey_mapping() -> [u32; crate::key_bindings::NUM_HOTKEYS] {
+        [0; crate::key_bindings::NUM_HOTKEYS]
+    }
+
+    pub fn set_key_mapping(&mut self, _: &KeyBinding) {}
 
     pub fn get_savestate_path(&self) -> Option<PathBuf> {
         self.arg_matches.get_one::<String>("savestate").map(PathBuf::from)
@@ -307,7 +311,9 @@ impl Presenter {
                     keycode: Some(keyboard::Keycode::Escape),
                     ..
                 } => return PresentEvent::Pause,
-                Event::KeyDown { keycode: Some(code), .. } => {
+                Event::KeyDown {
+                    keycode: Some(code), keymod, ..
+                } => {
                     // F1-F9 set the framelimit to 1-9 (100%..500%), F10 uncaps it.
                     let function_keys = [
                         keyboard::Keycode::F1,
@@ -332,13 +338,25 @@ impl Presenter {
                             self.debug_touch = Some(pt);
                         }
                     }
-                    if let Some(code) = self.key_code_mapping.get(&code) {
+                    if keymod.intersects(keyboard::Mod::LCTRLMOD | keyboard::Mod::RCTRLMOD) {
+                        // Held ctrl is the hotkey layer, like a held PS button on the Vita:
+                        // hotkeys trigger and the DS keys are suppressed
+                        if let Some(code) = hotkey_code(code) {
+                            self.keymap &= !(1 << code as u8);
+                        }
+                    } else if let Some(code) = self.key_code_mapping.get(&code) {
                         self.keymap &= !(1 << *code as u8);
                     }
                 }
                 Event::KeyUp { keycode: Some(code), .. } => {
                     if self.debug_touch_enabled && debug_touch_point(code).is_some() {
                         self.debug_touch = None;
+                    }
+                    if let Some(code) = hotkey_code(code) {
+                        self.keymap |= 1 << code as u8;
+                    }
+                    if matches!(code, keyboard::Keycode::LCtrl | keyboard::Keycode::RCtrl) {
+                        self.keymap |= (1 << input::Keycode::BlowMic as u8) | (1 << input::Keycode::Lid as u8);
                     }
                     if let Some(code) = self.key_code_mapping.get(&code) {
                         self.keymap |= 1 << *code as u8;
@@ -547,6 +565,15 @@ pub fn show_layout_create_settings(global_settings: &mut GlobalSettings, custom_
             }
         }
         false
+    }
+}
+
+/// The keyboard hotkeys, active while ctrl is held (the Vita's PS-button layer).
+fn hotkey_code(code: keyboard::Keycode) -> Option<input::Keycode> {
+    match code {
+        keyboard::Keycode::M => Some(input::Keycode::BlowMic),
+        keyboard::Keycode::N => Some(input::Keycode::Lid),
+        _ => None,
     }
 }
 
