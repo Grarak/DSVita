@@ -1,4 +1,5 @@
-// The aarch64 code-generation backend, stage-5 slices 1-3 (see todo/aarch64-port.md D7).
+// The aarch64 code-generation backend (mirrors the arm32 BlockAsm layout; architecture and
+// porting lessons in DEVELOPMENT.md §8).
 //
 // Runtime contract of an emitted block: a normal AAPCS64 function taking the tagged guest
 // pc in w0. The prologue pins the cpu's ThreadRegs in x27 (callee-saved: the previous
@@ -6,17 +7,16 @@
 // interpreter frames do) and then dispatches on w0 — entry at the block's start pc falls
 // through into the body; any other pc inside the compiled range resolves through the
 // jump-to-other-guest-pc runtime into the matching instruction offset (interrupt returns
-// and hot mid-block branch targets land there). Guest registers live at [x27, #reg*4];
-// every instruction body loads its sources fresh and stores its result back — no
-// cross-instruction allocation yet, correctness first (the reg_alloc port is a later
-// slice).
+// and hot mid-block branch targets land there). Guest registers live at [x27, #reg*4]; the
+// register allocator (reg_alloc.rs) maps hot guests into the x19-x26 + x28 pool and spills
+// dirty ones back to those slots.
 //
-// Control flow (slice 3): local branches jump between instruction labels inside the
-// block; external branches flush through the shared pre_branch runtime and then TAIL-CALL
-// the target's jit entry — the block's frame is popped before the jump, so compiled
-// block-to-block transfers no longer grow the host stack (the arm32 restore_stack + bx
-// scheme). An emitted block's own `ret` is therefore never executed; control returns to
-// the block's caller through whatever the chain eventually rets from.
+// Control flow: local branches jump between instruction labels inside the block; external
+// branches flush through the shared pre_branch runtime and then TAIL-CALL the target's jit
+// entry — the block's frame is popped before the jump, so compiled block-to-block transfers
+// no longer grow the host stack (the arm32 restore_stack + bx scheme). An emitted block's
+// own `ret` is therefore never executed; control returns to the block's caller through
+// whatever the chain eventually rets from.
 
 use crate::core::thread_regs::ThreadRegs;
 use crate::core::CpuType;

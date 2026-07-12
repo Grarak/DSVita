@@ -593,3 +593,201 @@ changes came out of it:
   values differ from NooDS for SWP (4 vs arm9 2), LDRD (3 vs 2) and the ldm/stm formula;
   the jit charges the disassembler, the interpreter follows NooDS for the new ops.
   Needs one source of truth (§1 cycle accounting says: mirror the jit).
+- **A64 hardware GL 2D corruption** (a64 backend only, §8): the 3D screen renders
+  pixel-perfect but the 2D screen is broken (doubled logo, ghosting, garbage rows). Guest
+  emulation is exonerated (vram/palettes/oam byte-identical armhf↔a64 at matched vblank
+  anchors) and so is the driver (identical llvmpipe/Mesa GLINFO both sides). Narrowed root:
+  a64's engine-A per-scanline UBO table is FROZEN — its hash is constant across wildly
+  different guest times while armhf's tracks the scene; frozen table + live vram = exactly
+  the doubled/ghosting signature. WHY engine-A sampling never updates on a64 is unresolved
+  (suspects: `sample_2d` stuck false / the `[0]↔[1]` double-buffer swap in
+  `gpu_renderer::on_scanline_finish` never running / `on_scanline` not wired). The software
+  2D renderer (`renderer_soft_2d.rs`, NooDS-referenced) sidesteps it but is currently
+  DISABLED (commented out in `gpu_renderer.rs` — too slow on the Vita; the hardware renderer
+  was restored and given master-brightness). Soft-2D gaps if it is ever revived:
+  vram-display, mosaic.
+- **A64 NSMB residual timing divergence (parked)**: scheduler firings phase-shift by one
+  iteration after a specific block's first execution although the charge algebra is provably
+  equal — likely the same boundary-parity class (§8 lessons). The bisect valve that isolated
+  it was removed with the other stage-bringup valves; revisit via the §8 firing-stream diff.
+- **A64 perf parity (the remaining port gate)**: a64-jit throughput ≥ armhf-jit on the pi5
+  is the perf floor for the backend; not yet hardware-confirmed. Value parity is gated by
+  armhf-jit↔a64-jit strict pairs (§8 gate methodology).
+
+---
+
+## 8. The aarch64 (A64) JIT backend
+
+DSVita has two JIT backends. The **arm32** backend (thumbv7neon — the Vita and Raspberry-Pi
+target) is the shipping engine and the reference for every lowering decision. The **aarch64**
+backend is a full second code generator that runs the emulator natively on an aarch64 Linux
+dev box; because that box is itself aarch64, it doubles as a same-box cross-gate — native a64
+execution on one side, `qemu-arm` running the armhf build on the other. The two engines must
+be **trace-identical**; the definitive value gate is armhf-jit ↔ a64-jit strict pairs. Op
+coverage is complete and `-e 2` (HLE) is legal on a64.
+
+### Files
+`src/jit/emitter/aarch64/{emit,emit_alu,emit_branch,emit_transfer}.rs` + `thumb/` (block
+driver, ALU, branches + indirect branches, memory transfers, thumb) and
+`src/jit/assembler/aarch64/{block_asm,encode,reg_alloc}.rs` (A64BlockAsm seam, raw encoders,
+register allocator), mirroring the arm32 layout. vixl's aarch64 MacroAssembler is the
+low-level emitter (glue lives in the vixl fork). The arm32 backend stays the reference —
+keep the two record-identical.
+
+### Block anatomy (runtime contract)
+- A block is a normal AAPCS64 function taking the **tagged guest pc in w0**. Prologue: fp/lr
+  frame, save the caller's x27/x28 + x19-x26, pin the cpu's ThreadRegs in **x27** (callee-saved
+  → survives every runtime call, so blocks nest across the branch runtime like interpreter
+  frames). Guest registers live in memory at `[x27, #reg*4]`; the allocator maps hot ones into
+  the pool.
+- **Entry-pc dispatch**: the prologue compares w0 against the block's start pc; a mismatch
+  (interrupt returns, hot mid-range branch targets — the memory map stamps the whole guest
+  range) routes through `a64_jump_to_other_guest_pc`, which uses per-page `A64BlockMeta`
+  (per-inst host offset + `pre_cycle_count_sum`) to enter at the exact instruction. The block
+  base is materialized with `adr` against a label bound at offset 0 (blocks are page-aligned,
+  so base == entry).
+- **External branches tail-call**: store PC, flush through `pre_branch` (cycles+2,
+  run_scheduler, `pre_cycle_count_sum=0`), pop the block frame, then `br` to the target's
+  entry — compiled block-to-block transfers never grow the host stack, and a cold target
+  lands in `emit_code_block` as the tail callee. An emitted block's own `ret` is therefore
+  never executed. **Blocks must END in an unconditional AL B** — a fall-through exit would
+  charge +2 and add an interrupt point the interpreter's flat loop lacks (surfaces as an
+  irq-timing trace split).
+
+### Register allocator
+x19-x26 + x28 allocate (`GUEST_REG_POOL_SIZE` = **9 on a64, 8 on arm32**, a per-arch const in
+`assembler/mod.rs`; `GUEST_REG_ALLOCATIONS` in `reg_alloc.rs`). **x27 is the pinned ThreadRegs
+base** — the spill/restore fabric addresses guest slots through it on every access, so it never
+allocates. `alloc_guest_regs` evicts a victim, **spills only dirty guests**, and records
+per-basic-block mappings so cross-block edges reconcile. The block frame saves fp/lr + x27/x28
++ x19-x26 (112 bytes); the write-breakout shim dumps 9 host regs (`host_pool_index` maps the
+x27 gap).
+
+### Flags
+Guest NZCV lives in the stored cpsr word. Arithmetic S-ops emit the A64 **W-form** S-instruction
+(bit-exact NZCV for the 32-bit add/sub families) and merge host NZCV into cpsr; logical S-ops
+take N/Z from the result and compute the A32 shifter carry-out explicitly (statically for
+rotated immediates — the rotation survives only in the raw opcode — and via a pre-shift `ubfx`
+for immediate-amount register shifts). adc/sbc/rsc seed host C from the guest cpsr first.
+Conditional instructions load cpsr → `msr NZCV` → one inverted `b.cond` over the body; **the
+per-inst DEBUG_LOG hook stays OUTSIDE the skip** (the interpreter logs condition-failed
+instructions too). Q/DSP saturation has no A64 home → Rust-helper calls, no inline saturation.
+
+### Cycle accounting parity (the value contract)
+Both engines charge and OBSERVE cycles at the same guest boundaries (see §1). The jit charges
+lump-at-boundary via cumulative `insts_cycle_counts[i] − pre_cycle_count_sum`; the interpreter
+spreads per-inst then checks at the branch — totals and check-points are identical by
+construction. **Threshold fork**: arm32-jit checks local back-edges against
+`max_branch_loop_cycle_count` (128) while the interpreter checks every taken branch against
+`max_loop_cycle_count` (255 ARM9 / 128 ARM7). Production a64 mirrors arm32;
+`DSVITA_A64_INTERP_TIMING=1` selects the interpreter thresholds and is **mandatory for
+jit-vs-interp strict gate runs** (an ARM9-only difference).
+
+### Coverage and the interpret-single fallback
+Singles + multi-register ldm/stm on fastmem (LDP/STP), indirect branches (PC-writing ALU/loads
+— arm32's `handle_indirect_branch` ported: mode-bit rules per shape, return-shaped forms share
+the BX-LR return-stack fast path, the rest tail-call `branch_any_reg` on ARM9 / exit on ARM7,
+conditional forms dispatch out of line), swi, ARM BLX-imm, and stm-with-pc all lower natively.
+Shapes with no native lowering run through `interpret_single` **inside the compiled block**
+(`needs_interpret_single`): register-amount shifts (both ISAs), RRX, ldrd/strd, clz/Q ops, and
+user-bank ldm/stm without pc (the LDP/STP unroll has no banked redirection). **interpret_single
+MUST be handed the thumb-tagged pc** — untagged, thumb opcodes decode as ARM (cost a day).
+Refused entirely: pc-dest with register-shift/RRX (UNPREDICTABLE).
+
+### Valves (all IS_DEBUG — folded out of release builds)
+| env | effect |
+|---|---|
+| `DSVITA_A64_INTERP_TIMING=1` | interpreter scheduler thresholds on local branches (jit-vs-interp gate runs) |
+| `DSVITA_BLOCK_HASH_LOG=path` | per-insert `cpu pc thumb len hash` stream — also the armv7 byte-identity gate and the block compile order |
+| `DSVITA_BLOCK_DUMP_PC=hexpc` | dump the emitted bytes for a block start pc |
+
+The stage-bringup bisect valves (`DSVITA_A64_JIT` / `_DISABLE` / `_MAX_BLOCKS` / `_SKIP_PC`)
+were removed when the port completed. To force interpreter-only, do it the arm32 way: build
+with `INTERP_THRESHOLD=255` (`src/jit/interpreter/mod.rs`).
+
+### Debugging and gate methodology
+Preferred reference (maintainer steer): **armhf-jit ↔ a64-jit strict pairs** — trace against
+the known-working arm32 implementation whenever a64 op coverage allows (`tools/tracediff.sh` is
+the cross-box harness: qemu-arm armhf vs native a64, identical settings). Fallback for op
+classes arm32 compiles but a64 interprets: an interpreter-only reference (a `INTERP_THRESHOLD
+=255` build) vs the jit build with `DSVITA_A64_INTERP_TIMING=1`, otherwise identical.
+
+Strict **jit-vs-interp** pairs die by design once write-fastmem is live: a write into a
+jit-protected page breakouts — an extra `run_scheduler` observation point the interpreter's
+flat loop does not have — so the cpu interleave shifts (no value divergence before the shift).
+hello_world still passes (no protected writes); arm32-jit has the same property. The definitive
+value gate is therefore **stage-6 armhf-jit ↔ a64-jit strict pairs** (both breakout
+identically). Until then: hello_world strict + release smokes + jit-vs-jit determinism pairs
+(the same binary twice → byte-identical; budget capture time — a 6M HG debug capture is
+>5 min/side). Because the delta ilog zeroes padding, `cmp a.ilog b.ilog` alone proves strict
+identity — use it before the differ, then the coarse→fine ladder in §4 (block_diff → trace_diff
+`--cpu` → flush/scheduler text-stream forensics).
+
+Instrument recipe that cracked the a64 parity bugs: instrument every cycle-manager advance
+(run_scheduler feeds, idle feeds, main-loop feeds, `jump_to_next_event`, schedule dues, timer
+reads) with `debug_println`, diff the streams — the first differing line names the subsystem;
+then read the raw records around the first strict divergence (a re-logged BL means the callee
+host-returned on one engine and exit-returned on the other = a return-stack / exit-set
+asymmetry).
+
+### Pointer-width seam (arm32 is 32-bit, a64 is 64-bit)
+The arm32 backend legitimately lives in a 32-bit pointer world — host-pointer bakes
+(`ldr2(reg, ptr as u32)`), jit-entry patch words (`addr | thumb`), the `SLOW_MEM_*` budgets —
+all behind BlockAsm seam methods; the a64 emitter materializes pointers with movz/movk and owns
+its own patch/fastmem budgets. Shared driver/runtime sites take `usize` and let each backend
+narrow (e.g. block-hash validation's guest pointer). Runtime data that encodes **host register
+numbers** (`InstMemMultipleParams.op0`, `breakout_after_write`'s `mapped_reg`) stays per-backend:
+arm32 keeps encoding its own register numbers (changing them would break emitted-code byte
+identity for zero benefit); the pool-index abstraction (0..N) is the contract for NEW backends
+only — the a64 emitter encodes pool indices in the same fields and its own handlers decode them.
+Guest-data arithmetic is u32/u64-typed and thus width-independent; the address paths apply
+region masks on u32 guest addresses before any usize widening, so no 2^32-wrap dependence
+exists.
+
+### Porting lessons (each paid for in hours)
+- **Reload pointers after calls at emitted rejoin points.** The scheduler tail rejoined the
+  fast path with x8 (the runtime-data pointer) clobbered by run_scheduler / handle_interrupt →
+  a wild `strh` → heap corruption that crashed much later inside malloc. arm32 reloads r0 at
+  exactly those joins; every out-of-line tail must audit the registers live across its calls.
+- **Boundary parity beats instruction parity** (see cycle accounting above). A hidden
+  accounting drift stays invisible for millions of records and only bites when a threshold
+  crossing lands on a different side of an irq raise (the NSMB suspect, §7).
+- **Block-level first, records second** (the steer that localized NSMB): reduce to
+  block-entry / firing streams, find the first STRUCTURAL difference, then zoom to records —
+  record diffs point at the symptom, not the seed.
+- **The interpreter is the semantic reference for gates, arm32 for lowering.** When they
+  disagree (thresholds, spurious validity exits) production follows arm32 and the gate gets a
+  parity valve; the stage-6 pair is jit-vs-jit.
+- **vixl a64 pitfalls**: `GetBuffer()` returns a reference; pool literals must register with
+  the masm's LiteralPool or FinalizeCode never places them; macro-instructions assert inside
+  exact-assembly scopes (use raw forms there); `adr` against a label bound at offset 0
+  self-identifies a page-aligned block. Wrap patch/fastmem windows in `ExactAssemblyScope`.
+- **Background threads must be joined on unwind paths** (not a64-specific, but the port
+  surfaced it): the retro-achievements request thread held a raw pointer into `actual_main`'s
+  stack, so any panic became a use-after-free abort that buried the real error (a detour
+  chasing a "crash" that was a wrong rom path). Fixed with a join-on-drop guard.
+- **The five GTA:CTW parity bugs** — each an armhf↔a64 asymmetry that passed the boot window
+  then diverged or crashed in-game (the exact class §4's "byte-identical boot is necessary but
+  not sufficient" warns about):
+  1. **ARM7 idle-loop exit didn't charge cycles** → the cycle manager fed one loop-body short
+     per idle entry → timer reads drift (arm32's `emit_branch_out_metadata` has
+     `count_cycles=true`).
+  2. **cp15 was interpret_single-routed** → the interpreter's wait-for-irq halt runs
+     run_scheduler inside the breakout while arm32's `emit_cp15` charges+exits → cm-feed
+     rounding split, irq delivery phase-shift. Fixed by mirroring arm32 (halt regs park pc+4,
+     `cpu_regs_halt`, charge, exit; the rest are direct cp15 read/write on the mapped operand).
+  3. **The fs-clear-overlay hook was a no-op on a64** → arm32 invalidates at entry AND exits
+     the guest at every return inside `FSi_ClearOverlayImage`; skipping it desyncs quantum
+     boundaries and the return stack at every overlay load.
+  4. **ITCM mirror aliasing in jump_to_other_guest_pc** → a low-vector irq entry (pc 0x18) into
+     a block compiled at the `0x1ff8xxx` mirror panicked the offset math; fold the pc onto the
+     block's mirror (`% ITCM_SIZE`, as the map already does).
+  5. **pc-relative stores emitted with an uninitialized address (the killer)** →
+     `emit_single_transfer` only materialized the address register for VRAM-pc blocks and
+     foldable word loads, so `str r10, [pc, #-0x218]` (GTA's self-patching TWL code) stored
+     through a garbage register → shredded memory/code → roaming "nondeterministic" crashes.
+     Fixing it also surfaced that the `mem.rs` region LUTs must have 16 entries (index
+     `(addr>>24)&0xF`; hardware-probe loops read the 0x8-0xF regions).
+
+  (The sixth asymmetry of that era — the shared idle-loop flag written to a stale byte offset —
+  is its own case study, §5.8.)
