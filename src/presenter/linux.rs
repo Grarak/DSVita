@@ -28,6 +28,8 @@ use std::ffi::{CStr, CString};
 use std::ops::BitOrAssign;
 use std::path::PathBuf;
 use std::rc::Rc;
+#[cfg(debug_assertions)]
+use std::sync::atomic::Ordering;
 use std::str::FromStr;
 use std::{mem, ptr, slice, thread};
 
@@ -76,6 +78,10 @@ pub struct Presenter {
     debug_touch: Option<(i16, i16)>,
     #[cfg(debug_assertions)]
     debug_touch_enabled: bool,
+    // DSVITA_DBG_PORT: a localhost TCP command port for headless control (buttons, touch,
+    // framelimit, savestate, quit) without a wayland virtual keyboard or signals. See DebugState.
+    #[cfg(debug_assertions)]
+    debug_state: Option<std::sync::Arc<DebugState>>,
     keymap: u32,
 }
 
@@ -221,6 +227,8 @@ impl Presenter {
             debug_touch: None,
             #[cfg(debug_assertions)]
             debug_touch_enabled: std::env::var("DSVITA_DBG_TOUCH").is_ok(),
+            #[cfg(debug_assertions)]
+            debug_state: std::env::var("DSVITA_DBG_PORT").ok().and_then(|p| p.parse::<u16>().ok()).map(spawn_debug_port),
             keymap: 0xFFFFFFFF,
         };
 
@@ -392,11 +400,44 @@ impl Presenter {
                 _ => {}
             }
         }
+        // Debug command port (DSVITA_DBG_PORT): service one-shot runtime commands (quit,
+        // framelimit) as PresentEvents, and fold held buttons / touch into this frame's inputs.
+        #[cfg(debug_assertions)]
+        if let Some(ref st) = self.debug_state {
+            if st.quit.swap(false, Ordering::Relaxed) {
+                return PresentEvent::Quit;
+            }
+            let fl = st.pending_framelimit.swap(-1, Ordering::Relaxed);
+            if fl >= 0 {
+                return PresentEvent::SetFramelimit(fl as u8);
+            }
+        }
+
+        let keymap;
+        #[cfg(debug_assertions)]
+        let mut debug_touch = self.debug_touch;
+        #[cfg(debug_assertions)]
+        {
+            let mut km = self.keymap;
+            if let Some(ref st) = self.debug_state {
+                km &= !st.held_buttons.load(Ordering::Relaxed);
+                let t = st.touch.load(Ordering::Relaxed);
+                if t >= 0 {
+                    debug_touch = Some(((t >> 16) as i16, (t & 0xFFFF) as i16));
+                }
+            }
+            keymap = km;
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            keymap = self.keymap;
+        }
+
         PresentEvent::Inputs {
-            keymap: self.keymap,
+            keymap,
             touch: self.touch_points,
             #[cfg(debug_assertions)]
-            debug_touch: self.debug_touch,
+            debug_touch,
         }
     }
 
@@ -433,6 +474,143 @@ impl Presenter {
     pub fn can_stream_screen(&self) -> bool {
         false
     }
+}
+
+// Shared state for the DSVITA_DBG_PORT command port. A background thread mutates it from socket
+// commands; poll_event reads it each frame. Held-button bits are DS input::Keycode positions.
+#[cfg(debug_assertions)]
+struct DebugState {
+    held_buttons: std::sync::atomic::AtomicU32,
+    touch: std::sync::atomic::AtomicI32, // (x << 16) | y, or -1 for released
+    pending_framelimit: std::sync::atomic::AtomicI32, // -1 = none, else 0..=9
+    quit: std::sync::atomic::AtomicBool,
+}
+
+// Spawn the debug command port on 127.0.0.1:<port>. Newline-delimited text commands:
+//   press/release <btn> | buttons [<btn>...] | touch <x> <y> | touch off |
+//   framelimit <0..9> | savestate | quit
+// btn: a b x y up down left right start select l r. Replies "ok" or "err: ...".
+#[cfg(debug_assertions)]
+fn spawn_debug_port(port: u16) -> std::sync::Arc<DebugState> {
+    use std::io::{BufRead, BufReader, Write};
+    let state = std::sync::Arc::new(DebugState {
+        held_buttons: std::sync::atomic::AtomicU32::new(0),
+        touch: std::sync::atomic::AtomicI32::new(-1),
+        pending_framelimit: std::sync::atomic::AtomicI32::new(-1),
+        quit: std::sync::atomic::AtomicBool::new(false),
+    });
+    let srv = state.clone();
+    thread::Builder::new()
+        .name("dbg_port".to_owned())
+        .spawn(move || {
+            let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("[dbg_port] bind 127.0.0.1:{port} failed: {e}");
+                    return;
+                }
+            };
+            eprintln!("[dbg_port] listening on 127.0.0.1:{port}");
+            for stream in listener.incoming().flatten() {
+                let mut writer = match stream.try_clone() {
+                    Ok(w) => w,
+                    Err(_) => continue,
+                };
+                for line in BufReader::new(stream).lines() {
+                    let Ok(line) = line else { break };
+                    let reply = handle_debug_cmd(&srv, line.trim());
+                    if writeln!(writer, "{reply}").is_err() {
+                        break;
+                    }
+                }
+            }
+        })
+        .unwrap();
+    state
+}
+
+#[cfg(debug_assertions)]
+fn handle_debug_cmd(state: &DebugState, line: &str) -> String {
+    let mut it = line.split_whitespace();
+    let cmd = it.next().unwrap_or("");
+    match cmd {
+        "" => "ok".to_owned(),
+        "press" | "release" => {
+            let Some(code) = it.next().and_then(debug_input_key) else {
+                return "err: unknown button".to_owned();
+            };
+            let bit = 1u32 << code as u8;
+            if cmd == "press" {
+                state.held_buttons.fetch_or(bit, Ordering::Relaxed);
+            } else {
+                state.held_buttons.fetch_and(!bit, Ordering::Relaxed);
+            }
+            "ok".to_owned()
+        }
+        "buttons" => {
+            let mut mask = 0u32;
+            for tok in it {
+                match debug_input_key(tok) {
+                    Some(code) => mask |= 1 << code as u8,
+                    None => return format!("err: unknown button '{tok}'"),
+                }
+            }
+            state.held_buttons.store(mask, Ordering::Relaxed);
+            "ok".to_owned()
+        }
+        "touch" => {
+            match it.next() {
+                Some("off") | None => state.touch.store(-1, Ordering::Relaxed),
+                Some(x) => {
+                    let (Ok(x), Some(Ok(y))) = (x.parse::<i32>(), it.next().map(str::parse::<i32>)) else {
+                        return "err: touch <x> <y> | touch off".to_owned();
+                    };
+                    if !(0..256).contains(&x) || !(0..192).contains(&y) {
+                        return "err: touch out of range (x 0..256, y 0..192)".to_owned();
+                    }
+                    state.touch.store((x << 16) | y, Ordering::Relaxed);
+                }
+            }
+            "ok".to_owned()
+        }
+        "framelimit" => match it.next().and_then(|s| s.parse::<i32>().ok()) {
+            Some(n @ 0..=9) => {
+                state.pending_framelimit.store(n, Ordering::Relaxed);
+                "ok".to_owned()
+            }
+            _ => "err: framelimit <0..9>".to_owned(),
+        },
+        "savestate" => {
+            crate::savestate::request_save();
+            "ok".to_owned()
+        }
+        "quit" => {
+            state.quit.store(true, Ordering::Relaxed);
+            "ok".to_owned()
+        }
+        other => format!("err: unknown cmd '{other}'"),
+    }
+}
+
+// Debug-only DS button names → input::Keycode, for the debug command port.
+#[cfg(debug_assertions)]
+fn debug_input_key(name: &str) -> Option<input::Keycode> {
+    use input::Keycode::*;
+    Some(match name {
+        "a" => A,
+        "b" => B,
+        "x" => X,
+        "y" => Y,
+        "up" => Up,
+        "down" => Down,
+        "left" => Left,
+        "right" => Right,
+        "start" => Start,
+        "select" => Select,
+        "l" => TriggerL,
+        "r" => TriggerR,
+        _ => return None,
+    })
 }
 
 // Debug-only keyboard tap grid → DS touch-screen coordinates (x 0..256, y 0..192). Lets headless
