@@ -166,6 +166,28 @@ impl JitCondIndirectBranch {
     }
 }
 
+// Out-of-line quantum stub for a linked external branch (scheduler-at-block-end): when the
+// inline cycle check trips, jump here, call exe_scheduler, then branch back to continue_label
+// (the resume point after the check). No guest-reg/PC bookkeeping — PC and dirty regs were
+// already committed at the branch, and exe_scheduler is the same call pre_branch makes.
+#[cfg(target_arch = "arm")]
+pub struct JitLinkSchedStub {
+    pub bind_label: Label,
+    pub continue_label: Label,
+    pub current_pc: u32,
+}
+
+#[cfg(target_arch = "arm")]
+impl JitLinkSchedStub {
+    pub fn new(bind_label: Label, continue_label: Label, current_pc: u32) -> Self {
+        JitLinkSchedStub {
+            bind_label,
+            continue_label,
+            current_pc,
+        }
+    }
+}
+
 pub struct JitBuf {
     pub guest_pc_start: u32,
     pub insts: Vec<InstInfo>,
@@ -176,6 +198,8 @@ pub struct JitBuf {
     pub run_scheduler_labels: Vec<JitRunSchedulerLabel>,
     #[cfg(target_arch = "arm")]
     pub cond_indirect_branches: Vec<JitCondIndirectBranch>,
+    #[cfg(target_arch = "arm")]
+    pub link_sched_stubs: Vec<JitLinkSchedStub>,
     pub debug_info: JitDebugInfo,
 }
 
@@ -191,6 +215,8 @@ impl JitBuf {
             run_scheduler_labels: Vec::new(),
             #[cfg(target_arch = "arm")]
             cond_indirect_branches: Vec::new(),
+            #[cfg(target_arch = "arm")]
+            link_sched_stubs: Vec::new(),
             debug_info: JitDebugInfo::default(),
         }
     }
@@ -203,6 +229,7 @@ impl JitBuf {
             self.forward_branches.clear();
             self.run_scheduler_labels.clear();
             self.cond_indirect_branches.clear();
+            self.link_sched_stubs.clear();
         }
     }
 }

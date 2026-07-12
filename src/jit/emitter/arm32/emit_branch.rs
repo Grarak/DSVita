@@ -2,8 +2,8 @@ use crate::core::CpuType;
 use crate::core::CpuType::ARM9;
 use crate::jit::assembler::block_asm::{BlockAsm, CPSR_TMP_REG};
 use crate::jit::emitter::map_fun_cpu;
-use crate::jit::inst_branch_handler::{branch_lr, branch_reg, handle_idle_loop, handle_interrupt, pre_branch};
-use crate::jit::jit_asm::{JitAsm, JitForwardBranch, JitRunSchedulerLabel, JitRuntimeData};
+use crate::jit::inst_branch_handler::{branch_lr, branch_reg, exe_scheduler_external, handle_idle_loop, handle_interrupt, pre_branch};
+use crate::jit::jit_asm::{JitAsm, JitForwardBranch, JitLinkSchedStub, JitRunSchedulerLabel, JitRuntimeData};
 use crate::jit::reg::{reg_reserve, Reg};
 use crate::jit::{inst_branch_handler, Cond};
 use crate::logging::branch_println;
@@ -60,21 +60,57 @@ impl JitAsm<'_> {
     }
 
     pub fn emit_call_branch_imm(&mut self, inst_index: usize, target_pc: u32, has_return: bool, set_thumb_bit: bool, block_asm: &mut BlockAsm) {
+        if !has_return {
+            // External immediate B/cond-B: inline pre_branch::<CPU, false, HLE> — flush_cycles + the
+            // per-cpu quantum check + pre_cycle_count_sum := 0 — instead of the C call, and move the
+            // quantum's scheduler call to an out-of-line stub at the END of the block so it stays off
+            // the hot path (emit_link_sched_stub). Then slot-dispatch. Guest behaviour is identical to
+            // routing through the pre_branch C call; measured faster on the Vita.
+            block_asm.ldr2(Reg::R0, ptr::addr_of_mut!(self.runtime_data) as u32);
+            // flush_cycles: accumulated += total + 2 - pre_cycle_count_sum (R2 = accumulated).
+            self.emit_count_cycles(self.jit_buf.insts_cycle_counts[inst_index], block_asm);
+            // pre_cycle_count_sum := 0 (flush_cycles clears it; the fresh target entry re-charges).
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &0.into());
+            block_asm.strh2(Reg::R1, &(Reg::R0, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
+
+            // check_scheduler: external edges gate on max_loop_cycle_count (ARM9 255 / ARM7 128), NOT
+            // the local-branch 128 — using 128 here would shift the scheduler quantum.
+            let mut exceed_label = Label::new();
+            let mut continue_label = Label::new();
+            block_asm.cmp2(Reg::R2, &self.cpu.max_loop_cycle_count().into());
+            block_asm.b3(Cond::HS, &mut exceed_label, BranchHint_kFar);
+            block_asm.bind(&mut continue_label);
+
+            if BRANCH_LOG {
+                let pc = block_asm.current_pc;
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
+                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &target_pc.into());
+                block_asm.call(map_fun_cpu!(self.cpu, debug_branch_imm));
+            }
+
+            // set_thumb_bit is always false for these edges (BLX-imm is has_return), so the dispatch
+            // never needs the guest-regs pointer in R3 — no restore_guest_regs_ptr here.
+            block_asm.restore_stack();
+            self.emit_call_jit_addr_imm(target_pc, false, set_thumb_bit, block_asm);
+
+            self.jit_buf.link_sched_stubs.push(JitLinkSchedStub::new(exceed_label, continue_label, block_asm.current_pc));
+            return;
+        }
+
+        // BL/BLX-imm: pre_branch also does check_stack_depth + push_return_stack, so a call edge keeps
+        // the C call rather than inlining.
         block_asm.ldr2(Reg::R0, self as *mut _ as u32);
         block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R1, &self.jit_buf.insts_cycle_counts[inst_index].into());
-        if has_return {
-            let lr_reg = block_asm.get_guest_map(Reg::LR);
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &lr_reg.into());
-        }
+        let lr_reg = block_asm.get_guest_map(Reg::LR);
+        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R2, &lr_reg.into());
         if IS_DEBUG {
             let pc = block_asm.current_pc;
             block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R3, &pc.into());
         }
-        block_asm.call(match (has_return, self.emu.settings.arm7_emu() == Arm7Emu::Hle) {
-            (false, false) => map_fun_cpu!(self.cpu, pre_branch, false, false),
-            (true, false) => map_fun_cpu!(self.cpu, pre_branch, true, false),
-            (false, true) => map_fun_cpu!(self.cpu, pre_branch, false, true),
-            (true, true) => map_fun_cpu!(self.cpu, pre_branch, true, true),
+        block_asm.call(if self.emu.settings.arm7_emu() == Arm7Emu::Hle {
+            map_fun_cpu!(self.cpu, pre_branch, true, true)
+        } else {
+            map_fun_cpu!(self.cpu, pre_branch, true, false)
         });
 
         if BRANCH_LOG {
@@ -85,10 +121,7 @@ impl JitAsm<'_> {
         }
 
         block_asm.restore_guest_regs_ptr();
-        if !has_return {
-            block_asm.restore_stack();
-        }
-        self.emit_call_jit_addr_imm(target_pc, has_return, set_thumb_bit, block_asm);
+        self.emit_call_jit_addr_imm(target_pc, true, set_thumb_bit, block_asm);
     }
 
     pub fn emit_call_branch_reg(&mut self, inst_index: usize, target_pc_reg: Reg, has_return: bool, block_asm: &mut BlockAsm) {
@@ -123,35 +156,58 @@ impl JitAsm<'_> {
         }
     }
 
+    pub fn emit_link_sched_stub(&mut self, index: usize, block_asm: &mut BlockAsm) {
+        let hle = self.emu.settings.arm7_emu() == Arm7Emu::Hle;
+        let cpu = self.cpu;
+        let stub = &mut self.jit_buf.link_sched_stubs[index];
+        block_asm.bind(&mut stub.bind_label);
+
+        if IS_DEBUG {
+            let pc = stub.current_pc;
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &pc.into());
+        }
+        // exe_scheduler = the same call check_scheduler makes: ARM9 runs the scheduler inline
+        // (and dispatches a pending interrupt) then returns here; ARM7 exits the guest context
+        // and never returns (the branch-back below is then unreachable, which is fine).
+        block_asm.call(match (cpu, hle) {
+            (ARM9, false) => exe_scheduler_external::<{ ARM9 }, false> as *const (),
+            (ARM9, true) => exe_scheduler_external::<{ ARM9 }, true> as *const (),
+            (ARM7, false) => exe_scheduler_external::<{ ARM7 }, false> as *const (),
+            (ARM7, true) => exe_scheduler_external::<{ ARM7 }, true> as *const (),
+        });
+        block_asm.b2(&mut stub.continue_label, BranchHint_kFar);
+    }
+
     pub fn emit_branch_external_label(&mut self, inst_index: usize, basic_block_index: usize, target_pc: u32, has_return: bool, set_thumb_bit: bool, block_asm: &mut BlockAsm) {
-        if has_return {
-            self.emit_call_branch_imm(inst_index, target_pc, true, set_thumb_bit, block_asm);
-            block_asm.ldr2(Reg::R1, ptr::addr_of_mut!(self.runtime_data) as u32);
+        self.emit_call_branch_imm(inst_index, target_pc, has_return, set_thumb_bit, block_asm);
+        // A B/cond-B edge is a tail jump — nothing follows. A BL/BLX-imm edge returns here, so lay
+        // down the post-return recovery (re-charge pre_cycle_count_sum, reload guest regs).
+        if !has_return {
+            return;
+        }
+        block_asm.ldr2(Reg::R1, ptr::addr_of_mut!(self.runtime_data) as u32);
 
-            if inst_index == self.jit_buf.insts.len() - 1 {
-                block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &0.into());
-                block_asm.strh2(Reg::R0, &(Reg::R1, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
-
-                block_asm.restore_guest_regs_ptr();
-                block_asm.restore_stack();
-                let lr = if block_asm.thumb { block_asm.current_pc + 3 } else { block_asm.current_pc + 4 };
-                self.emit_call_jit_addr_imm(lr, false, false, block_asm);
-                return;
-            }
-
-            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &self.jit_buf.insts_cycle_counts[inst_index].into());
+        if inst_index == self.jit_buf.insts.len() - 1 {
+            block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &0.into());
             block_asm.strh2(Reg::R0, &(Reg::R1, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
 
-            let mut next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
-            if self.jit_buf.insts[inst_index].cond != Cond::AL {
-                next_live_regs += Reg::CPSR;
-            }
-            block_asm.restore_tmp_regs(next_live_regs);
-
-            block_asm.reload_active_guest_regs_all();
-        } else {
-            self.emit_call_branch_imm(inst_index, target_pc, false, set_thumb_bit, block_asm);
+            block_asm.restore_guest_regs_ptr();
+            block_asm.restore_stack();
+            let lr = if block_asm.thumb { block_asm.current_pc + 3 } else { block_asm.current_pc + 4 };
+            self.emit_call_jit_addr_imm(lr, false, false, block_asm);
+            return;
         }
+
+        block_asm.mov4(FlagsUpdate_DontCare, Cond::AL, Reg::R0, &self.jit_buf.insts_cycle_counts[inst_index].into());
+        block_asm.strh2(Reg::R0, &(Reg::R1, JitRuntimeData::get_pre_cycle_count_sum_offset() as i32).into());
+
+        let mut next_live_regs = self.analyzer.get_next_live_regs(basic_block_index, inst_index);
+        if self.jit_buf.insts[inst_index].cond != Cond::AL {
+            next_live_regs += Reg::CPSR;
+        }
+        block_asm.restore_tmp_regs(next_live_regs);
+
+        block_asm.reload_active_guest_regs_all();
     }
 
     pub fn emit_branch_reg(&mut self, inst_index: usize, basic_block_index: usize, target_pc_reg: Reg, has_return: bool, block_asm: &mut BlockAsm) {

@@ -117,9 +117,7 @@ fn flush_cycles<const CPU: CpuType>(asm: &mut JitAsm, total_cycles: u16, current
     debug_println!("{CPU:?} flush cycles {} at {current_pc:x}", asm.runtime_data.accumulated_cycles);
 }
 
-#[cold]
-#[inline(never)]
-fn exe_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, current_pc: u32) {
+fn exe_scheduler_internal<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, current_pc: u32) {
     match CPU {
         ARM9 => {
             let pc_og = ARM9.thread_regs().pc;
@@ -137,6 +135,18 @@ fn exe_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, cur
             unsafe { exit_guest_context!(asm) };
         }
     }
+}
+
+#[cold]
+pub unsafe extern "C" fn exe_scheduler_external<const CPU: CpuType, const ARM7_HLE: bool>(current_pc: u32) {
+    let asm = get_jit_asm_ptr::<CPU>().as_mut_unchecked();
+    exe_scheduler_internal::<CPU, ARM7_HLE>(asm, current_pc);
+}
+
+#[cold]
+#[inline(never)]
+fn exe_scheduler<const CPU: CpuType, const ARM7_HLE: bool>(asm: &mut JitAsm, current_pc: u32) {
+    exe_scheduler_internal::<CPU, ARM7_HLE>(asm, current_pc);
 }
 
 #[inline(always)]

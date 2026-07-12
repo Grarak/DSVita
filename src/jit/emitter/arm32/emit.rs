@@ -94,6 +94,11 @@ impl JitAsm<'_> {
                 .debug_info
                 .record_basic_block(self.analyzer.basic_blocks[basic_block_index].start_pc, cursor_start, block_size);
         }
+        // Out-of-line quantum stubs for linked external branches (scheduler-at-block-end). Pure
+        // dispatch glue with no guest instructions, so no debug-info basic block to record.
+        for i in 0..self.jit_buf.link_sched_stubs.len() {
+            self.emit_link_sched_stub(i, block_asm);
+        }
     }
 
     fn emit_cond_indirect_branch(&mut self, cond_indirect_branch_index: usize, block_asm: &mut BlockAsm) {
