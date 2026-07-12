@@ -4,14 +4,14 @@
 # navigates save/difficulty/language menus and touch gates, and a gameplay profiling loop
 # with NO Start/Select (so the game never sits paused during sampling).
 set -u
+. "$(dirname "$0")/env.sh"
 ROM="$1"; OUT="$2"; BOOT="${3:-16}"; PROF="${4:-25}"
-BIN=~/dsvita_a32touch
-NAME=dsvita_a32touch
-D=~/prof
+BIN="${DSVITA_PI_BIN/#\~/$HOME}"; NAME=$(basename "$BIN")
+D="$HOME/prof"
 mkdir -p "$D"
-export DISPLAY=:0 LIBGL_ALWAYS_SOFTWARE=1 DSVITA_DBG_TOUCH=1
-export XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0
-WT=~/tools/usr/bin/wtype
+export DISPLAY="$DSVITA_DISPLAY" LIBGL_ALWAYS_SOFTWARE=1 DSVITA_DBG_TOUCH=1
+export XDG_RUNTIME_DIR="$DSVITA_PI_RUNTIME_DIR" WAYLAND_DISPLAY="$DSVITA_PI_WAYLAND_DISPLAY"
+WT="$DSVITA_PI_WTYPE"
 key(){ "$WT" -P "$1" -s "${2:-110}" -p "$1" 2>/dev/null; }
 
 pkill -x "$NAME" 2>/dev/null; sleep 1

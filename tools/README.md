@@ -48,9 +48,9 @@ Emulator keyboard map: WASD = dpad, K = A, J = B, I = X, U = Y, B = Start, V = S
 | script | what it does |
 |---|---|
 | `ab_measure.sh <bin> <rom>` | Launch uncapped, drive to gameplay, print mean emu-fps over 20 s |
-| `ab_batch.sh` | Interleaved A/B fps runs of two binaries (thermal-drift-resistant) |
+| `ab_batch.sh [base] [opt] [list]` | Interleaved A/B fps of two builds (dropped in `$HOME` on the box, by name) over a rom list (relative to `$DSVITA_ROMS_DIR`; default `$HOME/ab_roms.txt`), thermal-drift-resistant |
 | `prof_one2.sh <rom> <out> [boot_s] [prof_s]` | Unified per-game profile: DSVITA_DBG_TOUCH drive-in through menus, then a perf record over gameplay (`prof_one2_audio.sh` = same with `-a`) |
-| `batch_prof2.sh` / `batch_audio.sh` | Sweep the profiler over a rom list (`~/prof_keep.txt` / `~/prof_worst.txt`) |
+| `batch_prof2.sh [list]` / `batch_audio.sh [list]` | Sweep the profiler over a newline rom list (filenames relative to `$DSVITA_ROMS_DIR`; default `$HOME/prof_keep.txt` / `$HOME/prof_worst.txt`) |
 | `gen_symbol_order.sh` / `match_symbol_order.sh` | Link-time hot/cold symbol ordering files from a perf report (see `DEVELOPMENT.md` §6) |
 
 Decode any ilog to text with `tools/trace_decode.sh <path>` (x86-native — the standalone

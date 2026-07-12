@@ -1,9 +1,11 @@
 #!/bin/bash
 # ab_measure.sh <bin_name> <rom> — launch uncapped, drive to gameplay, print mean emu-fps over 20s.
 set -u
+. "$(dirname "$0")/env.sh"
 NAME="$1"; ROM="$2"; BIN=~/"$1"
-export DISPLAY=:0 LIBGL_ALWAYS_SOFTWARE=1 DSVITA_DBG_TOUCH=1 XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0
-WT=~/tools/usr/bin/wtype; key(){ "$WT" -P "$1" -s "${2:-110}" -p "$1" 2>/dev/null; }
+export DISPLAY="$DSVITA_DISPLAY" LIBGL_ALWAYS_SOFTWARE=1 DSVITA_DBG_TOUCH=1
+export XDG_RUNTIME_DIR="$DSVITA_PI_RUNTIME_DIR" WAYLAND_DISPLAY="$DSVITA_PI_WAYLAND_DISPLAY"
+WT="$DSVITA_PI_WTYPE"; key(){ "$WT" -P "$1" -s "${2:-110}" -p "$1" 2>/dev/null; }
 pkill -x "$NAME" 2>/dev/null; sleep 1
 LOG=~/ab_run.log; : > "$LOG"
 nohup "$BIN" -f 0 "$ROM" >"$LOG" 2>&1 &
