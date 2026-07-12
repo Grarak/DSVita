@@ -1,4 +1,4 @@
-// The aarch64 single-transfer emitter (stage-5 fastmem slice, arm32's emit_transfer
+// The aarch64 single-transfer emitter (arm32's emit_transfer
 // shape): the fast path accesses the 256MB-mirrored guest window directly —
 // `[mmu_base, aligned_addr, uxtw]` — inside a nop-padded window sized for the slow-path
 // patch. A SIGSEGV in the window (io region, or a write into a jit-protected page)

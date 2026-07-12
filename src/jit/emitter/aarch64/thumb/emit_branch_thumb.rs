@@ -1,4 +1,4 @@
-// The aarch64 thumb branch lowering (stage-5 slice 5): kind construction for the thumb
+// The aarch64 thumb branch lowering: kind construction for the thumb
 // branch ops (B/Bcc offsets are relative to pc + 4 and pre-shifted by the decoder; the
 // InstInfo conversion already mapped the Bcc conditions onto Cond, so the shared
 // conditional machinery applies unchanged) and the BL/BLX long-call second half.

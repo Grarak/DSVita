@@ -1,4 +1,4 @@
-// The aarch64 thumb data-processing lowering (stage-5 slice 5): the flag-setting
+// The aarch64 thumb data-processing lowering: the flag-setting
 // low-register ALU maps onto the shared W-form S-ops and cpsr writeback helpers from
 // emit_alu; thumb has no shifted operand-2, so the dedicated shift instructions carry
 // the ARM immediate-shift carry rules themselves.

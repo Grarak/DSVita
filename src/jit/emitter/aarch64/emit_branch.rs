@@ -1,4 +1,4 @@
-// The aarch64 branch lowering, stage-5 slice 3 (mirroring the arm32 backend):
+// The aarch64 branch lowering (mirroring the arm32 backend):
 // - A B whose target lies inside the block jumps between per-instruction labels. The taken
 //   path charges the branch epilogue (+2) against the runtime cycle accounting and checks
 //   the scheduler threshold — the out-of-line exceed path runs the scheduler and, on ARM9,

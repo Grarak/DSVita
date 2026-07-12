@@ -1,4 +1,4 @@
-// The aarch64 data-processing lowering, stage-5 slice 2: ALU ops with and without flag
+// The aarch64 data-processing lowering: ALU ops with and without flag
 // updates, comparisons, and the A32 operand-2 shifter.
 //
 // Flag strategy: guest NZCV lives in the stored cpsr word, not in host flags — every
