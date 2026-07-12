@@ -85,11 +85,11 @@ overlay/file loads, and pointer provenance — grep them before writing new tool
   box.
 - **A byte-identical boot-window diff is NECESSARY BUT NOT SUFFICIENT** for a jit/emitter
   change. Boot (2M–4M records) never reaches JIT arena reset (`reset_blocks` when the ~28MB
-  arena fills), fs-clear overlay reloads, or state that only forms after warmup (e.g. a link
-  that first crosses ISAs late). A block-linking change once passed a 4M-record MKDS-boot
-  diff byte-identical yet crashed the game at ~40s. So after the strict diff, ALSO run real
-  games (release-debug) past arena reset — ~40–60s at `-f 1`, and screenshot. Standing set:
-  Mario Kart DS, Pokémon Diamond, HeartGold. (Diamond/HG are NitroSDK overlay reloaders.)
+  arena fills), fs-clear overlay reloads, or state that only forms after warmup (self-modifying
+  code paths, a rarely-hit interrupt). An emitter change once passed a 4M-record MKDS-boot diff
+  byte-identical yet crashed the game at ~40s, well past the boot window. So after the strict
+  diff, ALSO run real games (release-debug) past arena reset — ~40–60s at `-f 1`, and screenshot.
+  Standing set: Mario Kart DS, Pokémon Diamond, HeartGold. (Diamond/HG are NitroSDK overlay reloaders.)
 
 ## Keeping traces small
 
