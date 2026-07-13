@@ -609,14 +609,6 @@ impl Presenter {
         self.core_unlocked
     }
 
-    /// ((x, y, w, h) of the presented frame on the default framebuffer, full surface size).
-    pub fn present_rect(&self) -> ((i32, i32, i32, i32), (i32, i32)) {
-        (
-            (0, 0, crate::presenter::PRESENTER_SCREEN_WIDTH as i32, crate::presenter::PRESENTER_SCREEN_HEIGHT as i32),
-            (crate::presenter::PRESENTER_SCREEN_WIDTH as i32, crate::presenter::PRESENTER_SCREEN_HEIGHT as i32),
-        )
-    }
-
     pub fn can_stream_screen(&self) -> bool {
         self.can_stream_screen
     }

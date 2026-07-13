@@ -186,7 +186,11 @@ pub struct GpuRenderer {
     render_time_sum: u32,
     average_render_time: u32,
 
+    // The Vita presents at a fixed 960x544 and keeps those dimensions hardcoded (below);
+    // only the other platforms need a parameterized present rect (Android letterboxes).
+    #[cfg(not(target_os = "vita"))]
     present_rect: (i32, i32, i32, i32),
+    #[cfg(not(target_os = "vita"))]
     present_surface: (i32, i32),
 }
 
@@ -311,7 +315,9 @@ impl GpuRenderer {
             render_time_sum: 0,
             average_render_time: 0,
 
+            #[cfg(not(target_os = "vita"))]
             present_rect: (0, 0, PRESENTER_SCREEN_WIDTH as i32, PRESENTER_SCREEN_HEIGHT as i32),
+            #[cfg(not(target_os = "vita"))]
             present_surface: (PRESENTER_SCREEN_WIDTH as i32, PRESENTER_SCREEN_HEIGHT as i32),
         }
     }
@@ -880,6 +886,9 @@ impl GpuRenderer {
 
             if !pause {
                 gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+                #[cfg(target_os = "vita")]
+                let (sw, sh) = (PRESENTER_SCREEN_WIDTH as i32, PRESENTER_SCREEN_HEIGHT as i32);
+                #[cfg(not(target_os = "vita"))]
                 let (sw, sh) = self.present_surface;
                 gl::Viewport(0, 0, sw, sh);
                 gl::ClearColor(0f32, 0f32, 0f32, 1f32);
@@ -1132,6 +1141,7 @@ impl GpuRenderer {
     /// size (for the border clear). Set once from the presenter — the desktop window is
     /// exactly 960x544, Android letterboxes into an arbitrary surface. The Vita presents
     /// at fixed 960x544 and keeps those hardcoded, so it has no setter.
+    #[cfg(not(target_os = "vita"))]
     pub fn set_present_rect(&mut self, rect: (i32, i32, i32, i32), surface: (i32, i32)) {
         self.present_rect = rect;
         self.present_surface = surface;
@@ -1141,6 +1151,9 @@ impl GpuRenderer {
         unsafe {
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
             gl::BindFramebuffer(gl::READ_FRAMEBUFFER, self.final_fbo.fbo);
+            #[cfg(target_os = "vita")]
+            let (x, y, w, h) = (0, 0, PRESENTER_SCREEN_WIDTH as i32, PRESENTER_SCREEN_HEIGHT as i32);
+            #[cfg(not(target_os = "vita"))]
             let (x, y, w, h) = self.present_rect;
             gl::BlitFramebuffer(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, x, y, x + w, y + h, gl::COLOR_BUFFER_BIT, gl::NEAREST);
         }
