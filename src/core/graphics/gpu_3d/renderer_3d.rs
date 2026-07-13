@@ -340,7 +340,7 @@ impl Gpu3DRenderer {
 
             translucent_polygons: Vec::new(),
 
-            #[cfg(target_os = "linux")]
+            #[cfg(not(target_os = "vita"))]
             vertices_buf: PtrWrapper::null(),
             #[cfg(target_os = "vita")]
             vertices_buf: unsafe { PtrWrapper::new(crate::presenter::Presenter::gl_mem_align_ram(16, size_of::<Gpu3DVertex>() * VERTEX_LIMIT) as _) },
@@ -948,7 +948,7 @@ impl Gpu3DRenderer {
         self.indices_opaque_batches.clear();
         self.indices_translucent_batches.clear();
 
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "vita"))]
         {
             self.vertices_buf = PtrWrapper::new(self.mem.vertices_buf.as_mut_ptr() as _);
         }
@@ -1001,7 +1001,7 @@ impl Gpu3DRenderer {
         gl::Uniform1f(program.toon_highlight, u8::from(self.inners[0].disp_cnt.polygon_attr_shading()) as f32);
 
         gl::BindBuffer(gl::ARRAY_BUFFER, self.gl.vertices_buf);
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "vita"))]
         {
             gl::BufferData(
                 gl::ARRAY_BUFFER,

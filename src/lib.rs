@@ -31,8 +31,9 @@ use crate::jit::jit_memory::JitMemory;
 use crate::key_bindings::KeyBinding;
 use crate::logging::{debug_println, info_println};
 use crate::mmap::{register_abort_handler, ArmContext, Mmap, PAGE_SIZE};
-use crate::presenter::ui::UiPauseMenuReturn;
-use crate::presenter::{cjk_font, PresentEvent, Presenter, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
+#[cfg(not(target_os = "android"))]
+use crate::presenter::cjk_font;
+use crate::presenter::{PresentEvent, Presenter, UiPauseMenuReturn, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::ra_context::RaContext;
 use crate::screen_layouts::ScreenLayouts;
 use crate::settings::Arm7Emu;
@@ -54,6 +55,10 @@ mod cartridge_io;
 mod cartridge_metadata;
 mod cheats;
 mod core;
+#[cfg(debug_assertions)]
+mod debug_inst_log;
+#[cfg(not(debug_assertions))]
+#[path = "release_inst_log.rs"]
 mod debug_inst_log;
 mod fast_fixed_fifo;
 mod fixed_fifo;
@@ -436,6 +441,8 @@ pub fn actual_main() {
 
     let mut screen_layouts = ScreenLayouts::new();
     let mut ra_context = RaContext::new();
+    // CJK font is an ImGui-atlas concern; Android's Activity UI renders CJK natively.
+    #[cfg(not(target_os = "android"))]
     let mut cjk_download = cjk_font::Download::new();
     // Join-on-drop guard: the request thread reads ra_context through a raw pointer, so it
     // must be joined before ra_context drops — also during panic unwinds (see RaThreadGuard).
@@ -446,6 +453,7 @@ pub fn actual_main() {
         let (mut cartridge_io, global_settings, mut settings, settings_file_path) = match presenter.present_ui(
             &mut screen_layouts,
             &mut ra_context,
+            #[cfg(not(target_os = "android"))]
             &mut cjk_download,
             KeyBinding::new("Default".to_string(), Presenter::get_default_key_mapping(), Presenter::get_default_hotkey_mapping()),
         ) {

@@ -5,7 +5,7 @@ use std::ptr;
 
 macro_rules! shader_source {
     ($name:expr) => {{
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "vita"))]
         {
             include_str!(concat!("shaders/glsl/", $name, ".glsl"))
         }
@@ -15,7 +15,7 @@ macro_rules! shader_source {
         }
     }};
     ($path:expr, $name:expr) => {{
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "vita"))]
         {
             include_str!(concat!($path, "/glsl/", $name, ".glsl"))
         }
@@ -43,7 +43,7 @@ pub unsafe fn create_shader(name: impl Into<String>, shader_src: &str, typ: GLen
     }
 
     let mut shader_src = shader_src.to_string();
-    if cfg!(target_os = "linux") && !shader_src.starts_with("#version 300 es") {
+    if cfg!(not(target_os = "vita")) && !shader_src.starts_with("#version 300 es") {
         shader_src = "#version 300 es\n".to_string() + &shader_src;
     }
 
@@ -127,7 +127,7 @@ pub unsafe fn create_mem_texture2d(width: u32, height: u32) -> GLuint {
 }
 
 pub unsafe fn create_pal_texture1d(size: u32) -> GLuint {
-    if cfg!(target_os = "linux") {
+    if cfg!(not(target_os = "vita")) {
         create_mem_texture1d(size)
     } else {
         let mut tex = 0;
@@ -144,7 +144,7 @@ pub unsafe fn create_pal_texture1d(size: u32) -> GLuint {
 }
 
 pub unsafe fn create_pal_texture2d(width: u32, height: u32) -> GLuint {
-    if cfg!(target_os = "linux") {
+    if cfg!(not(target_os = "vita")) {
         create_mem_texture2d(width, height)
     } else {
         let mut tex = 0;
@@ -169,7 +169,7 @@ pub unsafe fn sub_mem_texture2d(width: u32, height: u32, data: *const u8) {
 }
 
 pub unsafe fn sub_pal_texture1d(size: u32, data: *const u8) {
-    if cfg!(target_os = "linux") {
+    if cfg!(not(target_os = "vita")) {
         sub_mem_texture1d(size, data)
     } else {
         panic!()
@@ -177,7 +177,7 @@ pub unsafe fn sub_pal_texture1d(size: u32, data: *const u8) {
 }
 
 pub unsafe fn sub_pal_texture2d(width: u32, height: u32, data: *const u8) {
-    if cfg!(target_os = "linux") {
+    if cfg!(not(target_os = "vita")) {
         sub_mem_texture2d(width, height, data)
     } else {
         panic!()
@@ -199,7 +199,7 @@ pub unsafe fn create_fb_color(width: u32, height: u32) -> GLuint {
 
 pub unsafe fn create_fb_depth_tex(fbo: GLuint, width: u32, height: u32, stencil: bool) -> GLuint {
     gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
-    if cfg!(target_os = "linux") {
+    if cfg!(not(target_os = "vita")) {
         let mut tex = 0;
         gl::GenTextures(1, &mut tex);
         gl::BindTexture(gl::TEXTURE_2D, tex);

@@ -1,14 +1,35 @@
 pub use self::platform::*;
+// CJK font download + ImGui atlas merge — Android's Activity UI renders CJK natively.
+#[cfg(not(target_os = "android"))]
 pub mod cjk_font;
+// Android renders no native UI at all — menus/dialogs are the Activity's job (Java),
+// so the ImGui-based ui module and its bindings only exist off-Android.
+#[cfg(not(target_os = "android"))]
 pub mod ui;
 
+#[cfg(not(target_os = "android"))]
 pub(crate) mod imgui {
     #![allow(warnings, unused)]
     include!(concat!(env!("OUT_DIR"), "/imgui_bindings.rs"));
 }
 
+/// What the platform pause surface (ImGui menu, or the Android Activity) tells the main
+/// loop to do next. Lives here because the android build has no `ui` module.
+#[derive(Eq, PartialEq)]
+pub enum UiPauseMenuReturn {
+    Resume,
+    BlowMic,
+    Quit,
+    QuitApp,
+}
+
 #[cfg(target_os = "linux")]
-#[path = "linux.rs"]
+#[path = "sdl.rs"]
+mod platform;
+
+// Native presenter: plain Activity + JNI, EGL, AAudio — no SDL on Android.
+#[cfg(target_os = "android")]
+#[path = "android.rs"]
 mod platform;
 
 #[cfg(target_os = "vita")]

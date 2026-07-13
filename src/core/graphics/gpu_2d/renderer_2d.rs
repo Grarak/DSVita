@@ -99,7 +99,7 @@ struct Gpu2DTextures {
     pal: GLuint,
     bg_ext_pal: GLuint,
     obj_ext_pal: GLuint,
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "vita"))]
     mem: Gpu2DTexMem,
 }
 
@@ -119,7 +119,7 @@ impl Gpu2DTextures {
                 pal: create_pal_texture1d(regions::STANDARD_PALETTES_SIZE / 2),
                 bg_ext_pal: create_pal_texture2d(1024, 32),
                 obj_ext_pal: create_pal_texture2d(1024, 8),
-                #[cfg(target_os = "linux")]
+                #[cfg(not(target_os = "vita"))]
                 mem: Gpu2DTexMem::new(bg_width * bg_height, obj_width * obj_height),
             }
         }
@@ -158,7 +158,7 @@ impl Gpu2DCommon {
 
                 // Don't set ubo binding on vita, shader cache in vitaGL doesn't seem to consider block name
                 // Which results in an endless loop
-                if cfg!(target_os = "linux") {
+                if cfg!(not(target_os = "vita")) {
                     gl::UniformBlockBinding(gpu_programs.win, gl::GetUniformBlockIndex(gpu_programs.win, c"WinBgUbo".as_ptr() as _), 0);
                 }
 
@@ -344,7 +344,7 @@ impl Gpu2DObjProgramInner {
         let tex_height_loc = gl::GetUniformLocation(program, c"objTexHeight".as_ptr() as _);
         let window_loc = gl::GetUniformLocation(program, c"objWindow".as_ptr() as _);
 
-        if cfg!(target_os = "linux") {
+        if cfg!(not(target_os = "vita")) {
             gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"WinBgUbo".as_ptr() as _), 0);
         }
 
@@ -446,7 +446,7 @@ impl Gpu2DProgram {
                     gl::Uniform1i(gl::GetUniformLocation(program, c"winTex".as_ptr() as _), 3);
                     gl::Uniform1i(gl::GetUniformLocation(program, c"display3dTex".as_ptr() as _), 4);
 
-                    if cfg!(target_os = "linux") && has_ubo {
+                    if cfg!(not(target_os = "vita")) && has_ubo {
                         gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"BgUbo".as_ptr() as _), 0);
                     }
 
@@ -715,7 +715,7 @@ impl Gpu2DProgram {
         // The BlendUbo arrays are the texture rows, so the struct uploads as-is
         gl::ActiveTexture(gl::TEXTURE7);
         gl::BindTexture(gl::TEXTURE_2D, common.blend_tex);
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "vita"))]
         gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, DISPLAY_HEIGHT as _, 2, gl::RGBA, gl::UNSIGNED_BYTE, ptr::addr_of!(regs.blend_ubo) as _);
         #[cfg(target_os = "vita")]
         {
@@ -811,7 +811,7 @@ impl Gpu2DProgram {
     }
 
     unsafe fn draw(&mut self, common: &Gpu2DCommon, regs: &Gpu2DRenderRegs, texs: &Gpu2DTextures, mem: Gpu2DMem, lcdc_pal: GLuint) {
-        if cfg!(target_os = "linux") {
+        if cfg!(not(target_os = "vita")) {
             gl::BindTexture(gl::TEXTURE_2D, texs.oam);
             sub_mem_texture1d(regions::OAM_SIZE / 2, mem.oam.as_ptr());
 
@@ -864,7 +864,7 @@ impl Gpu2DProgram {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
         }
 
-        if cfg!(target_os = "linux") {
+        if cfg!(not(target_os = "vita")) {
             gl::BindTexture(gl::TEXTURE_2D, texs.pal);
             sub_pal_texture1d(regions::STANDARD_PALETTES_SIZE / 2, mem.pal.as_ptr());
 
@@ -908,7 +908,7 @@ impl Gpu2DProgram {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
         }
 
-        if cfg!(target_os = "linux") {
+        if cfg!(not(target_os = "vita")) {
             gl::BindTexture(gl::TEXTURE_2D, texs.bg);
             sub_mem_texture2d(texs.bg_width, texs.bg_height, mem.bg.as_ptr());
 
@@ -934,7 +934,7 @@ impl Gpu2DProgram {
         }
 
         if lcdc_pal != 0 {
-            if cfg!(target_os = "linux") {
+            if cfg!(not(target_os = "vita")) {
                 gl::BindTexture(gl::TEXTURE_2D, lcdc_pal);
                 sub_pal_texture2d(1024, 656, mem.lcdc.as_ptr());
             }
@@ -1036,7 +1036,7 @@ pub struct Gpu2DRenderer {
     pub common: Gpu2DCommon,
     program: Gpu2DProgram,
     blend_fbos: [GpuFbo; 2],
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "vita"))]
     lcdc_mem_buf: HeapArrayU8<{ vram::TOTAL_SIZE }>,
 }
 
@@ -1055,14 +1055,14 @@ impl Gpu2DRenderer {
                     GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap(),
                     GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap(),
                 ],
-                #[cfg(target_os = "linux")]
+                #[cfg(not(target_os = "vita"))]
                 lcdc_mem_buf: HeapArrayU8::default(),
             }
         }
     }
 
     pub fn set_tex_ptrs(&mut self, refs: &mut GpuMemRefs) {
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "vita"))]
         unsafe {
             refs.lcdc = PtrWrapper::new(mem::transmute(self.lcdc_mem_buf.as_mut_ptr()));
 

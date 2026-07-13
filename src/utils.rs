@@ -423,6 +423,12 @@ pub fn set_thread_prio_affinity(_: ThreadPriority, affinity: &[ThreadAffinity]) 
     affinity::set_thread_affinity(&affinity).unwrap();
 }
 
+// No-op for now: Android cpusets restrict which cores an app may pin, and the desktop
+// core numbering doesn't map to big.LITTLE anyway. Big-core pinning + setpriority is a
+// planned perf item once the port runs.
+#[cfg(target_os = "android")]
+pub fn set_thread_prio_affinity(_: ThreadPriority, _: &[ThreadAffinity]) {}
+
 #[cfg(target_os = "vita")]
 pub fn set_thread_prio_affinity(thread_priority: ThreadPriority, thread_affinity: &[ThreadAffinity]) {
     unsafe {

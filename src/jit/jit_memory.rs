@@ -35,7 +35,7 @@ use crate::logging::debug_println;
 use crate::mmap::ArmContext;
 use crate::mmap::{flush_icache, MemRegion, Mmap, PAGE_SHIFT, PAGE_SIZE};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn block_hash_log(cpu: CpuType, guest_pc: u32, thumb: bool, code: &[u8]) {
     if !crate::IS_DEBUG {
         return;
@@ -338,10 +338,10 @@ impl JitPerfMapRecord {
     }
 }
 
-#[cfg(target_os = "vita")]
+#[cfg(not(target_os = "linux"))]
 struct JitPerfMapRecord;
 
-#[cfg(target_os = "vita")]
+#[cfg(not(target_os = "linux"))]
 impl JitPerfMapRecord {
     fn new() -> Self {
         JitPerfMapRecord

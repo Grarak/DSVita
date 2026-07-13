@@ -1950,13 +1950,7 @@ unsafe fn render_savestate_overlay(entries: &[SavestateUiEntry], selected: &mut 
     action
 }
 
-#[derive(Eq, PartialEq)]
-pub enum UiPauseMenuReturn {
-    Resume,
-    BlowMic,
-    Quit,
-    QuitApp,
-}
+pub use crate::presenter::UiPauseMenuReturn;
 
 pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRenderer, settings: &mut Settings, settings_file_path: &std::path::Path, rom_path: &Path) -> UiPauseMenuReturn {
     let mut pressed_settings = false;

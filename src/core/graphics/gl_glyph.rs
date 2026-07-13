@@ -22,12 +22,12 @@ impl GlGlyph {
 
         let glyph_tex = unsafe {
             let mut tex = 0;
-            if cfg!(target_os = "linux") {
+            if cfg!(not(target_os = "vita")) {
                 gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
             }
             gl::GenTextures(1, &mut tex);
             gl::BindTexture(gl::TEXTURE_2D, tex);
-            if cfg!(target_os = "linux") {
+            if cfg!(not(target_os = "vita")) {
                 gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as _, width as _, height as _, 0, gl::RED, gl::UNSIGNED_BYTE, ptr::null());
             } else {
                 gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, width as _, height as _, 0, gl::RED, gl::UNSIGNED_BYTE, ptr::null());
@@ -37,7 +37,7 @@ impl GlGlyph {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as _);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as _);
             gl::BindTexture(gl::TEXTURE_2D, 0);
-            if cfg!(target_os = "linux") {
+            if cfg!(not(target_os = "vita")) {
                 gl::PixelStorei(gl::UNPACK_ALIGNMENT, 0);
             }
             tex

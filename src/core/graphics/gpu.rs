@@ -43,7 +43,7 @@ impl FrameRateCounter {
         let now = Instant::now();
         if unlikely(now.duration_since(self.last_update).as_millis() >= 1000) {
             self.fps.store(self.frame_counter, Ordering::Relaxed);
-            #[cfg(target_os = "linux")]
+            #[cfg(not(target_os = "vita"))]
             eprintln!("{}", self.frame_counter);
             self.frame_counter = 0;
             self.last_update = now;

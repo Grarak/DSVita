@@ -65,9 +65,9 @@ unsafe impl Sync for RecordBudget {}
 
 static RECORD_BUDGET: RecordBudget = RecordBudget(UnsafeCell::new(0));
 
-// env reads must never happen on the vita; the whole capture configuration is linux-only
+// env reads must never happen on the vita; the whole capture configuration is linux+android-only
 // (inst logs are only reachable through the linux cli anyway).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn init_budget() {
     let max = std::env::var("DSVITA_INST_LOG_MAX").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
     unsafe { *RECORD_BUDGET.0.get() = max };
@@ -78,7 +78,7 @@ fn init_budget() {
     TEXT_ENABLED.store(text, std::sync::atomic::Ordering::Relaxed);
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn init_budget() {}
 
 static TEXT_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
@@ -88,7 +88,7 @@ pub fn init(path: &str) {
     unsafe { *LOGGER.writer.get() = Some(BufWriter::with_capacity(1 << 20, file)) };
     init_budget();
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe {
         libc::signal(libc::SIGINT, sigint_handler as libc::sighandler_t)
     };
@@ -109,7 +109,7 @@ pub fn init_lazy(path: &str) {
     unsafe { *LAZY_PATH.0.get() = Some(path.to_string()) };
     init_budget();
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe {
         libc::signal(libc::SIGINT, sigint_handler as libc::sighandler_t);
     };
@@ -137,7 +137,7 @@ fn lazy_writer() -> Option<&'static mut BufWriter<File>> {
     writer.as_mut()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 extern "C" fn sigint_handler(_sig: i32) {
     flush();
     // 128 + SIGINT, the conventional exit status for a ctrl-c termination.

@@ -269,7 +269,7 @@ impl Gpu2dBlendProgram {
             gl::GenBuffers(1, &mut ubo);
             gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
 
-            if cfg!(target_os = "linux") {
+            if cfg!(not(target_os = "vita")) {
                 gl::UniformBlockBinding(program, gl::GetUniformBlockIndex(program, c"BlendUbo".as_ptr() as _), 0);
             }
 
