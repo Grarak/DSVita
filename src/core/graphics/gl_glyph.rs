@@ -28,7 +28,10 @@ impl GlGlyph {
             gl::GenTextures(1, &mut tex);
             gl::BindTexture(gl::TEXTURE_2D, tex);
             if cfg!(not(target_os = "vita")) {
-                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as _, width as _, height as _, 0, gl::RED, gl::UNSIGNED_BYTE, ptr::null());
+                // Single-channel coverage atlas: sized R8 with a RED upload (the text shader
+                // reads .r). Unsized GL_RED is not a valid GLES3 internalformat — strict
+                // drivers (Adreno) reject it, lenient ones (llvmpipe/v3d) accepted it.
+                gl::TexImage2D(gl::TEXTURE_2D, 0, gl::R8 as _, width as _, height as _, 0, gl::RED, gl::UNSIGNED_BYTE, ptr::null());
             } else {
                 gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, width as _, height as _, 0, gl::RED, gl::UNSIGNED_BYTE, ptr::null());
             }

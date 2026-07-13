@@ -208,7 +208,7 @@ impl GpuRenderer {
             gl::GenTextures(1, &mut tex);
             gl::BindTexture(gl::TEXTURE_2D, tex);
             #[cfg(not(target_os = "vita"))]
-            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RG as _, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, 0, gl::RG, gl::UNSIGNED_BYTE, std::ptr::null());
+            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RG8 as _, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, 0, gl::RG, gl::UNSIGNED_BYTE, std::ptr::null());
             #[cfg(target_os = "vita")]
             Presenter::gl_tex_image_2d_rgba5(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
@@ -1130,7 +1130,8 @@ impl GpuRenderer {
 
     /// Where the 960x544 frame lands on the default framebuffer, plus the full surface
     /// size (for the border clear). Set once from the presenter — the desktop window is
-    /// exactly 960x544, Android letterboxes into an arbitrary surface.
+    /// exactly 960x544, Android letterboxes into an arbitrary surface. The Vita presents
+    /// at fixed 960x544 and keeps those hardcoded, so it has no setter.
     pub fn set_present_rect(&mut self, rect: (i32, i32, i32, i32), surface: (i32, i32)) {
         self.present_rect = rect;
         self.present_surface = surface;

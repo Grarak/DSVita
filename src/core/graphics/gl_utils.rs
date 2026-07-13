@@ -210,7 +210,10 @@ pub unsafe fn create_fb_color(width: u32, height: u32) -> GLuint {
     let mut tex = 0;
     gl::GenTextures(1, &mut tex);
     gl::BindTexture(gl::TEXTURE_2D, tex);
-    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, width as _, height as _, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
+    // Sized internalformat: unsized GL_RGBA is not a color-renderable format on
+    // strict GLES3 drivers (Adreno rejects the FBO attachment), only lenient ones
+    // (llvmpipe/v3d/virgl) accepted it.
+    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8 as _, width as _, height as _, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as _);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
