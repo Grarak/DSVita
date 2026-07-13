@@ -1,12 +1,13 @@
 #!/bin/bash
-# Build libdsvita.so for arm64-v8a and stage it into the gradle jniLibs dir.
+# Build libdsvita.so for arm64-v8a. The gradle app module (or a caller) copies it
+# out of target/; this script only cross-builds.
 #
 #   tools/android_build.sh [profile]     profile: dev (default) | release | release-debug
 #
-# Cross setup: host clang-21 + the NDK's sysroot/compiler-rt (ANDROID_NDK_HOME from
-# .env) — the official NDK's own binaries are x86_64-only and useless on this aarch64
-# box. The CC_/CFLAGS_ env below is for third-party build scripts (ring); our own C deps
-# get their flags from vitabuild.
+# Cross setup: host clang-21 + the NDK's sysroot/compiler-rt (ANDROID_NDK_HOME) — the
+# official NDK binaries are x86_64-only, useless on an aarch64 box. The CC_/CFLAGS_ env
+# below is for third-party build scripts (ring); our own C deps get flags from vitabuild.
+# The gradle app module calls this to cross-build the cdylib; see DEVELOPMENT.md Â§9.
 set -e
 . "$(dirname "$0")/env.sh"
 require_env ANDROID_NDK_HOME
@@ -27,8 +28,4 @@ export CXXFLAGS_aarch64_linux_android="--target=aarch64-linux-android30 --sysroo
 
 cd "$DSVITA_ROOT"
 cargo rustc --lib --crate-type cdylib --target aarch64-linux-android $PROFILE_FLAG
-
-JNILIBS="$DSVITA_ROOT/android/app/src/main/jniLibs/arm64-v8a"
-mkdir -p "$JNILIBS"
-cp "target/aarch64-linux-android/$OUT_DIR/libdsvita.so" "$JNILIBS/"
-echo "staged: $JNILIBS/libdsvita.so ($(du -h "$JNILIBS/libdsvita.so" | cut -f1))"
+echo "built: target/aarch64-linux-android/$OUT_DIR/libdsvita.so ($(du -h "target/aarch64-linux-android/$OUT_DIR/libdsvita.so" | cut -f1))"

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material 3 dark, teal-forward to match the app icon vibe. -->
+    <style name="Theme.DSVita" parent="Theme.Material3.DynamicColors.Dark.NoActionBar">
+        <item name="colorPrimary">@color/teal_200</item>
+        <item name="colorOnPrimary">@color/black</item>
+        <item name="colorPrimaryContainer">@color/teal_700</item>
+        <item name="colorOnPrimaryContainer">@color/teal_100</item>
+        <item name="colorSecondary">@color/teal_200</item>
+        <item name="android:colorBackground">@color/bg</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorSurfaceContainer">@color/surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/surface_high</item>
+    </style>
+
+    <style name="Theme.DSVita.Browser">
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!-- Fullscreen, black, no bars: the emulator surface owns the screen. -->
+    <style name="Theme.DSVita.Game" parent="Theme.Material3.Dark">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowBackground">@color/black</item>
+        <item name="android:statusBarColor">@color/black</item>
+        <item name="android:navigationBarColor">@color/black</item>
+        <item name="colorPrimary">@color/teal_200</item>
+        <item name="colorSurfaceContainerHigh">@color/surface_high</item>
+    </style>
+</resources>

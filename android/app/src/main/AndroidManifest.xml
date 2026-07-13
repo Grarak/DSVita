@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- RetroAchievements -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="DSVita"
+        android:allowBackup="true"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.DSVita">
+        <activity
+            android:name=".DSVitaActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"
+            android:screenOrientation="sensorLandscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

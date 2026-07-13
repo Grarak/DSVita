@@ -791,3 +791,55 @@ exists.
 
   (The sixth asymmetry of that era — the shared idle-loop flag written to a stale byte offset —
   is its own case study, §5.8.)
+
+## 9. The Android (aarch64) port
+
+Android reuses the whole emulator core, the aarch64 JIT and the GLES3 renderer; the
+platform seam is `src/presenter/android.rs` (a plain-Activity JNI presenter with EGL +
+AAudio, no SDL, no ImGui) plus tiny `cfg(target_os = "android")` arms in `src/mmap/`,
+`src/utils.rs`, `src/jit/jit_memory.rs` and `build.rs`. The UI is entirely Kotlin
+(`android/app/src/main/kotlin`): the native side blocks in `present_ui`/`present_pause`
+and the Activity drives it over JNI. Settings render generically from JSON that
+`android.rs` serializes out of the Rust `Setting` definitions — the Rust side stays the
+single source of truth.
+
+### Things that bit us (don't re-learn these)
+
+- **libc's bionic-aarch64 `ucontext_t` is wrong.** It omits the kernel's padding after
+  the 8-byte sigset, so `uc_mcontext` sits at offset 48 instead of the kernel's 176 and
+  the fastmem signal handler reads a garbage PC. `sigsegv_handler` addresses the mcontext
+  at `ucontext + 176` on Android.
+- **`__clear_cache` is unresolved at dlopen.** aarch64 `__builtin___clear_cache` lowers to
+  a `__clear_cache` libcall bionic doesn't export and rustc links `-nodefaultlibs`, so
+  `build.rs` links the NDK's `libclang_rt.builtins-aarch64-android.a` explicitly.
+- **No fixed guest VAs on Android.** ART/zygote own the low VA space, so the guest region
+  bases are whatever the startup mmaps return (see §1 / `core/mod.rs`); this is why the a64
+  bases are `static mut`, not constants.
+- **SurfaceView hole-punch.** The GL surface composites *behind* the window; an opaque root
+  view fills its transparent hole and the game goes black. The root stays transparent and
+  the GL side clears the letterbox border itself.
+- **Device builds must be `release-debug`.** The `dev` profile's per-instruction DEBUG_LOG
+  firehose floods the logcat ring and evicts anything you're trying to read.
+
+### Building on an aarch64 Linux box
+
+Google ships no aarch64 host tooling, so everything runs the host `clang-21` against the
+NDK's sysroot (`ANDROID_NDK_HOME`), mirroring the armhf `DSVITA_SYSROOT` cross. The native
+lib is `tools/android_build.sh [profile]` (cargo `cdylib`); `vitabuild::is_target_android`
+carries the cross flags.
+
+The app is a standard Gradle project under `android/` (AGP + Kotlin + Material 3) — it
+opens and builds normally in Android Studio / on any x86_64 machine. To build it *on the
+aarch64 box*, AGP would fetch an x86_64 `aapt2` from maven, so point it at an arm64 one:
+
+- SDK at `~/android/sdk` (`local.properties` → `sdk.dir`, gitignored): `platforms/android-34`
+  + `platform-tools` from Google, `build-tools/34.0.0` with its native `aapt2`/`zipalign`
+  replaced by small `LD_LIBRARY_PATH` wrapper scripts around the Ubuntu `arm64` binaries
+  (the Ubuntu `android-sdk-build-tools` debs, dpkg-extracted).
+- `~/.gradle/gradle.properties` (user-global, off-repo):
+  `android.aapt2FromMavenOverride=<sdk>/build-tools/34.0.0/aapt2`.
+- `./android/gradlew -p android :app:assembleDebug`. The Rust `cdylib` is wired in as a
+  gradle task, so this cross-builds the `.so` too.
+
+Gradle produces its own debug-signed APK; `adb install -r` over an apksigner-signed one
+fails on the key mismatch — `adb uninstall` first when switching.
