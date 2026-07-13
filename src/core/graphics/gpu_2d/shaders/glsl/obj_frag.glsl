@@ -13,9 +13,10 @@ uniform float dispCntF;
 uniform float objTexHeight;
 uniform bool objWindow;
 
-uniform WinBgUbo {
-    int winHV[192 * 2];
-    int winInOut[192];
+// std140 + ivec4 packing — see BgUbo in bg_frag_common.glsl.
+layout(std140) uniform WinBgUbo {
+    ivec4 winHV[96];
+    ivec4 winInOut[48];
 };
 
 uniform sampler2D oamTex;
@@ -142,7 +143,7 @@ vec4 drawSprite(int objX, int objY, int attrib2, int width) {
     }
 
     if (objWindow) {
-        int enabled = (winInOut[int(191.0 * screenPosF.y)] >> 24) & 0xFF;
+        int enabled = (winInOut[(int(191.0 * screenPosF.y)) >> 2][(int(191.0 * screenPosF.y)) & 3] >> 24) & 0xFF;
         enabled |= 0x80; // indicate this was set by obj, to avoid win out override
         return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
     } else {
@@ -162,7 +163,7 @@ vec4 drawSprite(int objX, int objY, int attrib2, int width) {
     }
 
     if (objWindow) {
-        int enabled = (winInOut[int(191.0 * screenPosF.y)] >> 24) & 0xFF;
+        int enabled = (winInOut[(int(191.0 * screenPosF.y)) >> 2][(int(191.0 * screenPosF.y)) & 3] >> 24) & 0xFF;
         enabled |= 0x80; // indicate this was set by obj, to avoid win out override
         return vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
     } else {

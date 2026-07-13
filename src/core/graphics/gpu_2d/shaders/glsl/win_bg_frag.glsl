@@ -9,9 +9,10 @@ in vec2 screenPos;
 in vec2 screenPosF;
 uniform float dispCntF;
 
-uniform WinBgUbo {
-    int winHV[192 * 2];
-    int winInOut[192];
+// std140 + ivec4 packing — see BgUbo in bg_frag_common.glsl.
+layout(std140) uniform WinBgUbo {
+    ivec4 winHV[96];
+    ivec4 winInOut[48];
 };
 
 uniform sampler2D objWinTex;
@@ -23,7 +24,7 @@ bool checkBounds(int x, int y, int winNum) {
         return false;
     }
 
-    int hv = winHV[y * 2 + winNum];
+    int hv = winHV[(y * 2 + winNum) >> 2][(y * 2 + winNum) & 3];
     int h = hv & 0xFFFF;
     int v = (hv >> 16) & 0xFFFF;
 
@@ -53,7 +54,7 @@ bool checkBounds(int x, int y, int winNum) {
         }
     }
 
-    int winIn = winInOut[y] & 0xFFFF;
+    int winIn = winInOut[(y) >> 2][(y) & 3] & 0xFFFF;
     int enabled = (winIn >> (winNum * 8)) & 0xFF;
     color = vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
     return true;
@@ -69,7 +70,7 @@ void main() {
             objWin &= 0x7F;
             color = vec4(float(objWin) / 255.0, 0.0, 0.0, 0.0);
         } else {
-            int enabled = (winInOut[y] >> 16) & 0xFF;
+            int enabled = (winInOut[(y) >> 2][(y) & 3] >> 16) & 0xFF;
             color = vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
         }
     }
