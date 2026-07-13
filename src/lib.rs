@@ -495,6 +495,8 @@ pub fn actual_main() {
                 })
             }));
             emu_unsafe.get_mut().gpu.set_gpu_renderer(NonNull::from(gpu_renderer.as_mut().unwrap()));
+            let (rect, surface) = presenter.present_rect();
+            gpu_renderer.as_mut().unwrap().set_present_rect(rect, surface);
         }
         let stream_to_screen = settings.stream_top_screen() && presenter.can_stream_screen();
         emu_unsafe.get_mut().gpu.renderer.init(stream_to_screen);

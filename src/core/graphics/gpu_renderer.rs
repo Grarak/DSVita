@@ -185,6 +185,9 @@ pub struct GpuRenderer {
     render_time_measure_count: u8,
     render_time_sum: u32,
     average_render_time: u32,
+
+    present_rect: (i32, i32, i32, i32),
+    present_surface: (i32, i32),
 }
 
 impl GpuRenderer {
@@ -307,6 +310,9 @@ impl GpuRenderer {
             render_time_measure_count: 0,
             render_time_sum: 0,
             average_render_time: 0,
+
+            present_rect: (0, 0, PRESENTER_SCREEN_WIDTH as i32, PRESENTER_SCREEN_HEIGHT as i32),
+            present_surface: (PRESENTER_SCREEN_WIDTH as i32, PRESENTER_SCREEN_HEIGHT as i32),
         }
     }
 
@@ -874,7 +880,8 @@ impl GpuRenderer {
 
             if !pause {
                 gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-                gl::Viewport(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _);
+                let (sw, sh) = self.present_surface;
+                gl::Viewport(0, 0, sw, sh);
                 gl::ClearColor(0f32, 0f32, 0f32, 1f32);
                 gl::Clear(gl::COLOR_BUFFER_BIT);
                 self.blit_main_framebuffer();
@@ -1121,22 +1128,20 @@ impl GpuRenderer {
         jpeg
     }
 
+    /// Where the 960x544 frame lands on the default framebuffer, plus the full surface
+    /// size (for the border clear). Set once from the presenter — the desktop window is
+    /// exactly 960x544, Android letterboxes into an arbitrary surface.
+    pub fn set_present_rect(&mut self, rect: (i32, i32, i32, i32), surface: (i32, i32)) {
+        self.present_rect = rect;
+        self.present_surface = surface;
+    }
+
     pub fn blit_main_framebuffer(&self) {
         unsafe {
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
             gl::BindFramebuffer(gl::READ_FRAMEBUFFER, self.final_fbo.fbo);
-            gl::BlitFramebuffer(
-                0,
-                0,
-                PRESENTER_SCREEN_WIDTH as _,
-                PRESENTER_SCREEN_HEIGHT as _,
-                0,
-                0,
-                PRESENTER_SCREEN_WIDTH as _,
-                PRESENTER_SCREEN_HEIGHT as _,
-                gl::COLOR_BUFFER_BIT,
-                gl::NEAREST,
-            );
+            let (x, y, w, h) = self.present_rect;
+            gl::BlitFramebuffer(0, 0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, x, y, x + w, y + h, gl::COLOR_BUFFER_BIT, gl::NEAREST);
         }
     }
 
