@@ -14,7 +14,7 @@ pub struct MovsThumb {
 impl MovsThumb {
     pub fn movs8(rd: Reg, imm: u8) -> u16 {
         debug_assert!(rd <= Reg::R6);
-        u16::from(MovsThumb::new(imm, u3::from(rd as u8), u5::new(0b00100)))
+        u16::from(MovsThumb::new(imm, u3::new(rd as u8), u5::new(0b00100)))
     }
 }
 
