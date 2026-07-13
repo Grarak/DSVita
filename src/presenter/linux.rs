@@ -74,19 +74,11 @@ pub struct Presenter {
     mouse_pressed: bool,
     mouse_id: Option<u32>,
     touch_points: Option<(i16, i16)>,
-    #[cfg(debug_assertions)]
-    debug_touch: Option<(i16, i16)>,
-    #[cfg(debug_assertions)]
-    debug_touch_enabled: bool,
     // DSVITA_DBG_PORT: a localhost TCP command port for headless control (buttons, touch,
-    // framelimit, savestate, quit) without a wayland virtual keyboard or signals. See DebugState.
+    // framelimit, savestate, inst-log, quit) without a wayland virtual keyboard or signals.
     #[cfg(debug_assertions)]
     debug_state: Option<std::sync::Arc<DebugState>>,
     keymap: u32,
-}
-
-extern "C" fn sigusr1_savestate_handler(_: i32) {
-    crate::savestate::request_save();
 }
 
 impl Presenter {
@@ -119,7 +111,7 @@ impl Presenter {
                         .value_parser(value_parser!(String)),
                 )
                 .arg(
-                    arg!(--"inst-log-lazy" <path> "Like --inst-log, but recording only starts on SIGUSR2")
+                    arg!(--"inst-log-lazy" <path> "Like --inst-log, but recording only starts on the debug port 'inst-log' command")
                         .num_args(1)
                         .required(false)
                         .value_parser(value_parser!(String)),
@@ -158,10 +150,6 @@ impl Presenter {
                 crate::debug_inst_log::init_lazy(path);
             }
         }
-
-        // kill -USR1 <pid> requests a savestate, same path as the F11 key — signal-safe
-        // (handler only flips an atomic) and scriptable for headless testing
-        unsafe { libc::signal(libc::SIGUSR1, sigusr1_savestate_handler as libc::sighandler_t) };
 
         sdl2::hint::set("SDL_NO_SIGNAL_HANDLERS", "1");
         let sdl = sdl2::init().unwrap();
@@ -223,10 +211,6 @@ impl Presenter {
             mouse_pressed: false,
             mouse_id: None,
             touch_points: None,
-            #[cfg(debug_assertions)]
-            debug_touch: None,
-            #[cfg(debug_assertions)]
-            debug_touch_enabled: std::env::var("DSVITA_DBG_TOUCH").is_ok(),
             #[cfg(debug_assertions)]
             debug_state: std::env::var("DSVITA_DBG_PORT").ok().and_then(|p| p.parse::<u16>().ok()).map(spawn_debug_port),
             keymap: 0xFFFFFFFF,
@@ -343,12 +327,6 @@ impl Presenter {
                     if code == keyboard::Keycode::F11 {
                         crate::savestate::request_save();
                     }
-                    #[cfg(debug_assertions)]
-                    if self.debug_touch_enabled {
-                        if let Some(pt) = debug_touch_point(code) {
-                            self.debug_touch = Some(pt);
-                        }
-                    }
                     if keymod.intersects(keyboard::Mod::LCTRLMOD | keyboard::Mod::RCTRLMOD) {
                         // Held ctrl is the hotkey layer, like a held PS button on the Vita:
                         // hotkeys trigger and the DS keys are suppressed
@@ -360,10 +338,6 @@ impl Presenter {
                     }
                 }
                 Event::KeyUp { keycode: Some(code), .. } => {
-                    #[cfg(debug_assertions)]
-                    if self.debug_touch_enabled && debug_touch_point(code).is_some() {
-                        self.debug_touch = None;
-                    }
                     if let Some(code) = hotkey_code(code) {
                         self.keymap |= 1 << code as u8;
                     }
@@ -415,7 +389,7 @@ impl Presenter {
 
         let keymap;
         #[cfg(debug_assertions)]
-        let mut debug_touch = self.debug_touch;
+        let mut debug_touch: Option<(i16, i16)> = None;
         #[cfg(debug_assertions)]
         {
             let mut km = self.keymap;
@@ -488,8 +462,9 @@ struct DebugState {
 
 // Spawn the debug command port on 127.0.0.1:<port>. Newline-delimited text commands:
 //   press/release <btn> | buttons [<btn>...] | touch <x> <y> | touch off |
-//   framelimit <0..9> | savestate | quit
-// btn: a b x y up down left right start select l r. Replies "ok" or "err: ...".
+//   framelimit <0..9> | savestate | inst-log | quit
+// btn: a b x y up down left right start select l r. inst-log arms --inst-log-lazy capture.
+// Replies "ok" or "err: ...".
 #[cfg(debug_assertions)]
 fn spawn_debug_port(port: u16) -> std::sync::Arc<DebugState> {
     use std::io::{BufRead, BufReader, Write};
@@ -584,6 +559,10 @@ fn handle_debug_cmd(state: &DebugState, line: &str) -> String {
             crate::savestate::request_save();
             "ok".to_owned()
         }
+        "inst-log" => {
+            crate::debug_inst_log::arm_lazy();
+            "ok".to_owned()
+        }
         "quit" => {
             state.quit.store(true, Ordering::Relaxed);
             "ok".to_owned()
@@ -609,25 +588,6 @@ fn debug_input_key(name: &str) -> Option<input::Keycode> {
         "select" => Select,
         "l" => TriggerL,
         "r" => TriggerR,
-        _ => return None,
-    })
-}
-
-// Debug-only keyboard tap grid → DS touch-screen coordinates (x 0..256, y 0..192). Lets headless
-// profiling tap through touch-to-start gates and touch menus. Enabled by DSVITA_DBG_TOUCH.
-#[cfg(debug_assertions)]
-fn debug_touch_point(code: keyboard::Keycode) -> Option<(i16, i16)> {
-    use keyboard::Keycode::*;
-    Some(match code {
-        G => (51, 48),
-        H => (128, 48),
-        L => (205, 48),
-        N => (51, 96),
-        O => (128, 96),
-        P => (205, 96),
-        Q => (51, 154),
-        R => (128, 154),
-        Z => (205, 154),
         _ => return None,
     })
 }

@@ -183,8 +183,8 @@ Ordered by cost. Every technique below cracked at least one real bug.
    traffic at all = spinning before irq setup (very early boot). This is how both a "GPU
    never starts" hang and an interrupt-starvation hang were localized in minutes each.
 5. **Instruction-trace diff** (the heavy hammer). `--inst-log <path>` records from boot;
-   `--inst-log-lazy <path>` arms on SIGUSR2 (capture the final stretch); SIGINT and the panic
-   hook flush. Decode with `tools/trace_decode.sh <path>` (x86-native — a detached crate that
+   `--inst-log-lazy <path>` arms on the debug port's `inst-log` command (capture the final
+   stretch); SIGINT and the panic hook flush. Decode with `tools/trace_decode.sh <path>` (x86-native — a detached crate that
    reuses dsvita's real disassembler but links no C/C++, so it decodes on the dev box that has
    no dsvita binary; `dsvita decode-inst-log <path>` is the equivalent on an arm/aarch64 box).
    Diff two engines (threshold 0 vs 100/255 builds) or two arm7-emulation modes.
@@ -242,8 +242,8 @@ Ordered by cost. Every technique below cracked at least one real bug.
    cycles or jumping: some execution path runs guest code accounted at 0 cycles in a loop
    (§5.8). The same dump distinguishes that instantly from "events pending but handler
    never rescheduled" and "all events gone". For the steady-state loop itself,
-   `--inst-log-lazy` + SIGUSR2 after the hang settles captures exactly the spin without
-   the boot prefix.
+   `--inst-log-lazy` + the debug port's `inst-log` command after the hang settles captures
+   exactly the spin without the boot prefix.
 
 ### Audio triage
 

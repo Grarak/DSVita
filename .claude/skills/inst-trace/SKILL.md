@@ -36,7 +36,7 @@ alive; sends without dispatches = starvation; no irq traffic = pre-irq-setup spi
 | mode | how |
 |---|---|
 | From boot | `dsvita --inst-log <path> <rom> ...` (boot with NO input = deterministic, diffs cleanly) |
-| Final stretch only | `dsvita --inst-log-lazy <path> ...`, then `kill -USR2 <pid>` at the interesting moment |
+| Final stretch only | `dsvita --inst-log-lazy <path> ...` with `DSVITA_DBG_PORT=<port>`, then send `inst-log` to the port at the interesting moment (`printf 'inst-log\n' \| nc -q0 127.0.0.1 <port>`) |
 | Flush + stop | `kill -INT <pid>` (the panic hook also flushes — a crash self-captures its tail) |
 
 Local capture: `tools/trace.sh <out.ilog>` boots `$DSVITA_TEST_ROM` under qemu.

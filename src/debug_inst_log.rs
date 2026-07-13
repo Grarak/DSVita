@@ -94,8 +94,9 @@ pub fn init(path: &str) {
     };
 }
 
-// Lazy variant: logging starts only once SIGUSR2 arrives (`kill -USR2 <pid>`), so a trace can be
-// limited to the interesting final stretch of a long run instead of gigabytes of boot.
+// Lazy variant: logging starts only when armed at runtime (the debug port's `inst-log` command),
+// so a trace can be limited to the interesting final stretch of a long run instead of gigabytes
+// of boot.
 struct LazyPath(UnsafeCell<Option<String>>);
 
 // SAFETY: written once during startup before the cpu thread exists.
@@ -111,13 +112,12 @@ pub fn init_lazy(path: &str) {
     #[cfg(target_os = "linux")]
     unsafe {
         libc::signal(libc::SIGINT, sigint_handler as libc::sighandler_t);
-        libc::signal(libc::SIGUSR2, sigusr2_handler as libc::sighandler_t);
     };
 }
 
-#[cfg(target_os = "linux")]
-extern "C" fn sigusr2_handler(_sig: i32) {
-    // Only flag here (signal-safe); the logging sites open the file lazily.
+/// Arm the lazy log at runtime (the debug port's `inst-log` command); the logging sites then open
+/// the file. No-op unless the run was started with `--inst-log-lazy`.
+pub fn arm_lazy() {
     LAZY_ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 

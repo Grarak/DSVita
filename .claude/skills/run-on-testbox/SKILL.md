@@ -36,18 +36,23 @@ silently skip the recompile — see DEVELOPMENT.md §4 pitfalls).
 
 Keyboard map: WASD = dpad, K = A, J = B, I = X, U = Y, B = Start, V = Select, 8/9 = L/R.
 
-**Touch injection remotely** (debug/release-debug builds): launch with `DSVITA_DBG_TOUCH=1`
-and a keyboard tap-grid maps to bottom-screen DS coords — `G H L` (top row), `N O P`
-(middle), `Q R Z` (bottom), a 3×3 over the touch screen. A held key = a held stylus, so
-`pi_key.sh <key> <hold_ms>` drives "touch to start" gates, menus, and walk-by-touch. Needed
-for titles that gate on touch (Zelda PH, the HG title screen). Rub/drag minigames (GTA:CTW
-window-smash) can't be driven — no drag path.
-- Rapid taps must go in ONE ssh session (loop `wtype` with short sleeps); a tap per
-  round-trip is too slow and the game "heals" between them.
+**Debug command port** (debug/release-debug builds) — the headless control channel; needs no
+wayland virtual keyboard (so it works even where `wtype`/`pi_key.sh` is absent). Launch with
+`DSVITA_DBG_PORT=<port>` and send newline-delimited commands to `127.0.0.1:<port>` on the box,
+e.g. `printf 'buttons a\n' | nc -q0 127.0.0.1 5555`:
+- `press/release <btn>` | `buttons [<btn>...]` (exact held set) — btn: `a b x y up down left
+  right start select l r`. A held button = held on the DS.
+- `touch <x> <y>` (DS coords, x 0..256 y 0..192) | `touch off` — drives "touch to start" gates
+  and touch menus (Zelda PH, HG title). No drag path, so rub/drag minigames can't be driven.
+- `framelimit <0..9>` (0 = uncapped) | `savestate` (quick-save at vblank) | `inst-log` (arm a
+  `--inst-log-lazy` capture) | `quit`.
 
-**Input-free verify loop**: `kill -USR1 <pid>` quick-saves at vblank; relaunch with
-`-s <savestate>` to resume — lets you A/B or re-test a scene deterministically without
-re-driving inputs.
+Sequence timing in ONE ssh session (loop the `nc` sends with short sleeps); a command per ssh
+round-trip is too slow and the game "heals" between them.
+
+**Input-free verify loop**: the port's `savestate` (or the F11 key) quick-saves at vblank;
+relaunch with `-s <savestate>` to resume — lets you A/B or re-test a scene deterministically
+without re-driving inputs.
 
 Rules that bite:
 - ALWAYS launch with `LIBGL_ALWAYS_SOFTWARE=1` — the box's GPU driver renders incorrectly
