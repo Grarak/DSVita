@@ -3,13 +3,13 @@
 #
 #   tools/android_build.sh [profile]     profile: dev (default) | release | release-debug
 #
-# Cross setup: host clang-21 + the NDK's sysroot/compiler-rt (DSVITA_ANDROID_NDK from
+# Cross setup: host clang-21 + the NDK's sysroot/compiler-rt (ANDROID_NDK_HOME from
 # .env) — the official NDK's own binaries are x86_64-only and useless on this aarch64
 # box. The CC_/CFLAGS_ env below is for third-party build scripts (ring); our own C deps
 # get their flags from vitabuild.
 set -e
 . "$(dirname "$0")/env.sh"
-require_env DSVITA_ANDROID_NDK
+require_env ANDROID_NDK_HOME
 
 PROFILE="${1:-dev}"
 case "$PROFILE" in
@@ -18,7 +18,7 @@ case "$PROFILE" in
     *) PROFILE_FLAG="--profile $PROFILE" ; OUT_DIR="$PROFILE" ;;
 esac
 
-SYSROOT="$DSVITA_ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 export CC_aarch64_linux_android=clang-21
 export CXX_aarch64_linux_android=clang++-21
 export AR_aarch64_linux_android=llvm-ar-21

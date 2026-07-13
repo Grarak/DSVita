@@ -7,13 +7,14 @@
 #   tools/android_apk.sh [profile]     profile: dev (default) | release | release-debug
 #
 # Layout expected under $DSVITA_ANDROID_TOOLS (default ~/android):
-#   jdk/                Temurin JDK (javac/java/keytool)
+#   jdk/                Temurin JDK (java/keytool)
+#   kotlinc/            Kotlin compiler (JVM tool, arch-neutral)
 #   r8.jar              D8 dexer (maven.google.com com.android.tools:r8)
 #   android-11/android.jar   platform android.jar (API 30, platform-30_r03.zip)
 #   adb-root/           dpkg-extracted arm64 debs: aapt2, zipalign, apksigner + android-lib*
 set -e
 . "$(dirname "$0")/env.sh"
-require_env DSVITA_ANDROID_NDK
+require_env ANDROID_NDK_HOME
 
 : "${DSVITA_ANDROID_TOOLS:=$HOME/android}"
 JDK="$DSVITA_ANDROID_TOOLS/jdk"
@@ -32,11 +33,12 @@ BUILD="$DSVITA_ROOT/target/android-apk"
 rm -rf "$BUILD"
 mkdir -p "$BUILD/classes" "$BUILD/dex" "$BUILD/stage/lib/arm64-v8a"
 
-# android.jar as plain classpath (bootclasspath clashes with -source 9+); D8 does the
-# API/desugaring work anyway.
-"$JDK/bin/javac" -source 17 -target 17 -cp "$ANDROID_JAR" -d "$BUILD/classes" -Xlint:-options java/com/grarak/dsvita/DSVitaActivity.java
+# Kotlin-only app code; kotlinc is a JVM tool, so it runs anywhere the JDK does.
+KOTLINC="$DSVITA_ANDROID_TOOLS/kotlinc/bin/kotlinc"
+export JAVA_HOME="$JDK"
+"$KOTLINC" -classpath "$ANDROID_JAR" -jvm-target 17 kotlin -d "$BUILD/classes"
 
-"$JDK/bin/java" -cp "$R8_JAR" com.android.tools.r8.D8 --release --lib "$ANDROID_JAR" --min-api 30 --output "$BUILD/dex" "$BUILD/classes/com/grarak/dsvita/"*.class
+"$JDK/bin/java" -cp "$R8_JAR" com.android.tools.r8.D8 --release --lib "$ANDROID_JAR" --min-api 30 --output "$BUILD/dex" $(find "$BUILD/classes" -name '*.class') "$DSVITA_ANDROID_TOOLS/kotlinc/lib/kotlin-stdlib.jar"
 
 "$TOOLS_ROOT/usr/bin/aapt2" link -o "$BUILD/unsigned.apk" --manifest AndroidManifest.xml -I "$ANDROID_JAR"
 

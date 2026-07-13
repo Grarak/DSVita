@@ -63,10 +63,10 @@ pub fn is_target_android() -> bool {
 }
 
 // The Android build uses the host clang-21 with only the NDK's sysroot (the official
-// NDK ships x86_64 host binaries — useless on the aarch64 dev box). DSVITA_ANDROID_NDK
+// NDK ships x86_64 host binaries — useless on the aarch64 dev box). ANDROID_NDK_HOME
 // points at the NDK root, mirroring the DSVITA_SYSROOT convention of the armhf cross.
 pub fn get_android_ndk_prebuilt() -> PathBuf {
-    let ndk = env::var("DSVITA_ANDROID_NDK").expect("DSVITA_ANDROID_NDK must point at an NDK (r27+) for aarch64-linux-android builds");
+    let ndk = env::var("ANDROID_NDK_HOME").expect("ANDROID_NDK_HOME must point at an NDK (r27+) for aarch64-linux-android builds");
     PathBuf::from(ndk).join("toolchains/llvm/prebuilt/linux-x86_64")
 }
 

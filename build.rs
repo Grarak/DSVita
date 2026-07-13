@@ -73,7 +73,7 @@ fn main() {
             }
         }
     } else if vitabuild::is_target_android() {
-        println!("cargo:rerun-if-env-changed=DSVITA_ANDROID_NDK");
+        println!("cargo:rerun-if-env-changed=ANDROID_NDK_HOME");
         // Host clang-21 drives the link; the NDK contributes sysroot, crt objects and the
         // compiler-rt builtins (via its resource dir — the host clang's own lacks the
         // android flavor). rustc passes -nodefaultlibs, so -rtlib is belt-and-braces.

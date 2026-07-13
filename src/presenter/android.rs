@@ -23,7 +23,7 @@ use crate::mmap::PAGE_SIZE;
 use crate::presenter::{PresentEvent, UiPauseMenuReturn, PRESENTER_AUDIO_IN_BUF_SIZE, PRESENTER_AUDIO_OUT_BUF_SIZE, PRESENTER_AUDIO_OUT_SAMPLE_RATE, PRESENTER_SCREEN_HEIGHT, PRESENTER_SCREEN_WIDTH};
 use crate::ra_context::RaContext;
 use crate::screen_layouts::ScreenLayouts;
-use crate::settings::{Settings, SettingsConfig};
+use crate::settings::{SettingGroup, SettingValue, Settings, SettingsConfig};
 use jni_sys::{jboolean, jint, jobject, jstring, JNIEnv};
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::fs::File;
@@ -239,6 +239,106 @@ fn load_env_file() {
             println!("dsvita.env: {}={}", key.trim(), value.trim());
         }
     }
+}
+
+// ------------------------------------------------------------------ settings bridge
+
+// The Activity renders settings generically from this JSON — the Rust definitions stay
+// the single source of truth (titles, options, groups, runtime flags).
+fn json_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn serialize_settings(settings: &mut Settings) -> String {
+    let mut out = String::from("[");
+    for (i, setting) in settings.get_all_mut().iter_mut().enumerate() {
+        if i != 0 {
+            out.push(',');
+        }
+        let group = match setting.group {
+            SettingGroup::Emulation => "Emulation",
+            SettingGroup::Graphics => "Graphics",
+            SettingGroup::Screen => "Screen",
+            SettingGroup::System => "System",
+        };
+        out += &format!(
+            "{{\"idx\":{i},\"title\":\"{}\",\"desc\":\"{}\",\"group\":\"{group}\",\"runtime\":{},",
+            json_escape(setting.title),
+            json_escape(setting.description),
+            setting.runtime
+        );
+        match &setting.value {
+            SettingValue::Bool(value) => out += &format!("\"kind\":\"bool\",\"value\":{value}}}"),
+            SettingValue::List(inner) => {
+                let options: Vec<String> = inner.values.iter().map(|v| format!("\"{}\"", json_escape(v))).collect();
+                out += &format!("\"kind\":\"list\",\"selection\":{},\"options\":[{}]}}", inner.selection, options.join(","));
+            }
+            SettingValue::Int(value) => out += &format!("\"kind\":\"int\",\"value\":{value}}}"),
+        }
+    }
+    out.push(']');
+    out
+}
+
+// Per-game config with the dynamic option lists (layouts, control profiles) populated
+// exactly like a launch does.
+fn build_game_config(rom_path: &Path) -> SettingsConfig {
+    let storage = storage_dir();
+    let file_name = rom_path.file_name().unwrap().to_str().unwrap();
+    let mut config = SettingsConfig::new(storage.join("settings").join(format!("{file_name}.ini")));
+    let mut screen_layouts = ScreenLayouts::new();
+    let global_settings = GlobalSettings::new(storage.join("global_settings"), default_key_binding()).unwrap();
+    screen_layouts.populate_custom_layouts(&global_settings.custom_layouts);
+    config.settings.populate_screen_layouts(&screen_layouts);
+    config.settings.populate_controls(&global_settings.default_control, &global_settings.custom_controls);
+    config
+}
+
+fn apply_setting(setting: &mut crate::settings::Setting, value: i32) {
+    match &mut setting.value {
+        SettingValue::Bool(b) => *b = value != 0,
+        SettingValue::List(inner) => inner.selection = (value.max(0) as usize).min(inner.values.len().saturating_sub(1)),
+        SettingValue::Int(v) => *v = value.max(0) as usize,
+    }
+}
+
+unsafe fn new_jstring(env: *mut JNIEnv, s: &str) -> jstring {
+    let c = CString::new(s).unwrap();
+    (**env).NewStringUTF.unwrap()(env, c.as_ptr())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_grarak_dsvita_DSVitaActivity_nativeGetGameSettings(env: *mut JNIEnv, _class: jobject, rom_path: jstring) -> jstring {
+    let path = PathBuf::from(unsafe { jstring_to_string(env, rom_path) });
+    let mut config = build_game_config(&path);
+    unsafe { new_jstring(env, &serialize_settings(&mut config.settings)) }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_grarak_dsvita_DSVitaActivity_nativeSetGameSetting(env: *mut JNIEnv, _class: jobject, rom_path: jstring, idx: jint, value: jint) {
+    let path = PathBuf::from(unsafe { jstring_to_string(env, rom_path) });
+    let mut config = build_game_config(&path);
+    if let Some(setting) = config.settings.get_all_mut().get_mut(idx as usize) {
+        apply_setting(setting, value);
+        config.dirty = true;
+        config.flush();
+    }
+}
+
+// Runtime (paused-game) settings: the pause snapshot is published when present_pause
+// blocks; edits queue up and are applied on the emu thread when the dialog resolves.
+static PAUSE_SETTINGS_JSON: Mutex<String> = Mutex::new(String::new());
+static PENDING_RUNTIME_SETTINGS: Mutex<Vec<(usize, i32)>> = Mutex::new(Vec::new());
+
+#[no_mangle]
+pub extern "system" fn Java_com_grarak_dsvita_DSVitaActivity_nativeGetRuntimeSettings(env: *mut JNIEnv, _class: jobject) -> jstring {
+    let json = PAUSE_SETTINGS_JSON.lock().unwrap().clone();
+    unsafe { new_jstring(env, &json) }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_grarak_dsvita_DSVitaActivity_nativeSetRuntimeSetting(_env: *mut JNIEnv, _class: jobject, idx: jint, value: jint) {
+    PENDING_RUNTIME_SETTINGS.lock().unwrap().push((idx as usize, value));
 }
 
 // -------------------------------------------------------------------------------- EGL
@@ -487,15 +587,40 @@ impl Presenter {
 
     pub fn on_game_launched(&self) {}
 
-    /// The Activity shows the pause dialog; block until it reports the choice.
-    pub fn present_pause(&mut self, _gpu_renderer: &GpuRenderer, _settings: &mut Settings, _settings_file_path: &Path, _rom_path: &Path) -> UiPauseMenuReturn {
-        let mut guard = PAUSE_CHOICE.lock().unwrap();
-        loop {
-            if let Some(choice) = guard.take() {
-                return choice;
+    /// The Activity shows the pause dialog; block until it reports the choice. While
+    /// blocked, the live settings are published for the runtime-settings screen and any
+    /// queued edits are applied (and persisted) on this thread before returning.
+    pub fn present_pause(&mut self, _gpu_renderer: &GpuRenderer, settings: &mut Settings, settings_file_path: &Path, _rom_path: &Path) -> UiPauseMenuReturn {
+        *PAUSE_SETTINGS_JSON.lock().unwrap() = serialize_settings(settings);
+        PENDING_RUNTIME_SETTINGS.lock().unwrap().clear();
+
+        let choice = {
+            let mut guard = PAUSE_CHOICE.lock().unwrap();
+            loop {
+                if let Some(choice) = guard.take() {
+                    break choice;
+                }
+                guard = PAUSE_COND.wait(guard).unwrap();
             }
-            guard = PAUSE_COND.wait(guard).unwrap();
+        };
+
+        let pending = std::mem::take(&mut *PENDING_RUNTIME_SETTINGS.lock().unwrap());
+        if !pending.is_empty() {
+            for (idx, value) in pending {
+                if let Some(setting) = settings.get_all_mut().get_mut(idx) {
+                    if setting.runtime {
+                        apply_setting(setting, value);
+                    }
+                }
+            }
+            if !settings_file_path.as_os_str().is_empty() {
+                let mut config = SettingsConfig::from(settings.clone());
+                config.settings_file_path = settings_file_path.to_path_buf();
+                config.dirty = true;
+                config.flush();
+            }
         }
+        choice
     }
 
     pub fn present_progress(&mut self, current_name: impl AsRef<str>, progress: usize, total: usize) {
@@ -527,15 +652,16 @@ impl Presenter {
 
         self.keymap = !DS_KEYS_HELD.load(Ordering::Relaxed);
 
-        // Touch arrives in surface pixels; the shared normalize path expects the 960x544
-        // logical space.
+        // Touch arrives in surface pixels; map through the letterbox rect into the
+        // 960x544 logical space the shared normalize path expects.
         let touch = match TOUCH.load(Ordering::Relaxed) {
             u32::MAX => None,
             packed => {
-                let (w, h) = self.egl.surface_size;
-                let x = (packed >> 16) as i32 * PRESENTER_SCREEN_WIDTH as i32 / w.max(1);
-                let y = (packed & 0xFFFF) as i32 * PRESENTER_SCREEN_HEIGHT as i32 / h.max(1);
-                Some((x as i16, y as i16))
+                let ((ox, _, w, h), (_, sh)) = self.present_rect();
+                let oy_top = (sh - h) / 2;
+                let x = ((packed >> 16) as i32 - ox) * PRESENTER_SCREEN_WIDTH as i32 / w.max(1);
+                let y = ((packed & 0xFFFF) as i32 - oy_top) * PRESENTER_SCREEN_HEIGHT as i32 / h.max(1);
+                Some((x.clamp(0, PRESENTER_SCREEN_WIDTH as i32 - 1) as i16, y.clamp(0, PRESENTER_SCREEN_HEIGHT as i32 - 1) as i16))
             }
         };
 
@@ -545,6 +671,19 @@ impl Presenter {
             #[cfg(debug_assertions)]
             debug_touch: None,
         }
+    }
+
+    /// Aspect-fit letterbox of the 960x544 frame into the surface (GL bottom-left rect).
+    pub fn present_rect(&self) -> ((i32, i32, i32, i32), (i32, i32)) {
+        let (sw, sh) = self.egl.surface_size;
+        let w = PRESENTER_SCREEN_WIDTH as i64;
+        let h = PRESENTER_SCREEN_HEIGHT as i64;
+        let (dw, dh) = if (sw as i64) * h <= (sh as i64) * w {
+            (sw, ((sw as i64) * h / w) as i32)
+        } else {
+            (((sh as i64) * w / h) as i32, sh)
+        };
+        (((sw - dw) / 2, (sh - dh) / 2, dw, dh), (sw, sh))
     }
 
     pub fn gl_swap_window(&self) {
