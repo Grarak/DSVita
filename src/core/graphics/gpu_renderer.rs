@@ -92,6 +92,45 @@ impl GpuStream {
     }
 }
 
+// DSVITA_2D_TRACE=1 (debug builds): once a second, print the 2d sampling cadence —
+// the isolation counters for the frozen-table class of bugs.
+#[derive(Copy, Clone)]
+enum Trace2D {
+    ScanlineCall,
+    ScanlineSampled,
+    Snapshot,
+    Handoff,
+    ReloadArmed,
+    ReloadSkipBusy,
+    ReloadSkipReady,
+}
+
+fn trace_2d(what: Trace2D) {
+    use std::sync::atomic::AtomicU32;
+    if !crate::IS_DEBUG {
+        return;
+    }
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var("DSVITA_2D_TRACE").is_ok_and(|v| v == "1")) {
+        return;
+    }
+    static COUNTS: [AtomicU32; 7] = [const { AtomicU32::new(0) }; 7];
+    COUNTS[what as usize].fetch_add(1, Ordering::Relaxed);
+    if matches!(what, Trace2D::ScanlineCall) {
+        static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+        let mut last = LAST.lock().unwrap();
+        let now = std::time::Instant::now();
+        if last.is_none_or(|t| now.duration_since(t).as_secs() >= 1) {
+            *last = Some(now);
+            let c: Vec<u32> = COUNTS.iter().map(|c| c.swap(0, Ordering::Relaxed)).collect();
+            eprintln!(
+                "2DTRACE lines={} sampled={} snapshots={} handoffs={} reload_armed={} skip_busy={} skip_ready={}",
+                c[0], c[1], c[2], c[3], c[4], c[5], c[6]
+            );
+        }
+    }
+}
+
 pub struct GpuRenderer {
     renderer_regs_2d_shared: Gpu2DRenderRegsShared,
     renderer_2d: Gpu2DRenderer,
@@ -101,7 +140,7 @@ pub struct GpuRenderer {
     pub renderer_3d: Gpu3DRenderer,
     gpu_mem_refs: GpuMemRefs,
 
-    common: GpuRendererCommon,
+    pub common: GpuRendererCommon,
     capture_program: GLuint,
     capture_size_scalers_uniform: GLint,
     capture_fbo: GpuFbo,
@@ -288,7 +327,9 @@ impl GpuRenderer {
     }
 
     pub fn on_scanline(&mut self, inner_a: &mut Gpu2DRegisters, inner_b: &mut Gpu2DRegisters, line: u8) {
+        trace_2d(Trace2D::ScanlineCall);
         if self.sample_2d {
+            trace_2d(Trace2D::ScanlineSampled);
             self.renderer_regs_2d_shared.on_scanline(inner_a, inner_b, line);
         }
     }
@@ -305,6 +346,7 @@ impl GpuRenderer {
         breakout_imm: &mut bool,
     ) {
         if self.sample_2d {
+            trace_2d(Trace2D::Snapshot);
             self.common.mem_buf.read_vram(vram_banks);
             self.common.mem_buf.read_palettes_oam(palettes, oam);
             self.common.pow_cnt1[1] = pow_cnt1;
@@ -316,6 +358,7 @@ impl GpuRenderer {
         let mut rendering = self.rendering.lock().unwrap();
 
         if !*rendering && self.ready_2d {
+            trace_2d(Trace2D::Handoff);
             if unlikely(self.pause) {
                 thread::park();
                 if self.is_quit() {
@@ -348,6 +391,13 @@ impl GpuRenderer {
     }
 
     pub fn reload_registers(&mut self, vram: &Vram) {
+        trace_2d(if self.ready_2d {
+            Trace2D::ReloadSkipReady
+        } else if self.renderer_vram_busy.load(Ordering::SeqCst) {
+            Trace2D::ReloadSkipBusy
+        } else {
+            Trace2D::ReloadArmed
+        });
         if !self.ready_2d && !self.renderer_vram_busy.load(Ordering::SeqCst) {
             self.common.mem_buf.queue_vram(vram);
             self.renderer_regs_2d_shared.reload_registers();

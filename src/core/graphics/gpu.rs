@@ -249,14 +249,18 @@ impl Emu {
                     let regs_a = unsafe { std::slice::from_raw_parts(&self.gpu.gpu_2d_regs_a as *const _ as *const u8, std::mem::size_of_val(&self.gpu.gpu_2d_regs_a)) };
                     let regs_b = unsafe { std::slice::from_raw_parts(&self.gpu.gpu_2d_regs_b as *const _ as *const u8, std::mem::size_of_val(&self.gpu.gpu_2d_regs_b)) };
                     eprintln!(
-                        "VBLANKHASH#{n} main={:08x} vram={:08x} palettes={:08x} oam={:08x} regs2d={:08x}/{:08x} pow={:04x}",
+                        "VBLANKHASH#{n} main={:08x} vram={:08x} palettes={:08x} oam={:08x} regs2d={:08x}/{:08x} pow={:04x} sampal={:08x} samvram={:08x}",
                         xxh32(main, 0),
                         xxh32(self.mem.vram.banks.mem.as_slice(), 0),
                         xxh32(palettes, 0),
                         xxh32(oam, 0),
                         xxh32(regs_a, 0),
                         xxh32(regs_b, 0),
-                        u16::from(self.gpu.pow_cnt1)
+                        u16::from(self.gpu.pow_cnt1),
+                        // The render-feed snapshots, guest-time-anchored: guest-state hashes
+                        // equal + these unequal = the 2d sampling path diverges (§7 class).
+                        xxh32(self.gpu.renderer.common.mem_buf.pal.as_slice(), 0),
+                        xxh32(self.gpu.renderer.common.mem_buf.vram_banks.mem.as_slice(), 0),
                     );
                 }
             }
