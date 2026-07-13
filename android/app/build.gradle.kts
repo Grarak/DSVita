@@ -26,6 +26,9 @@ android {
         }
         getByName("release") {
             isMinifyEnabled = false
+            // Sign release with the debug key so sideload/testing builds install without a
+            // separate keystore; swap in a real signingConfig for distribution.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
