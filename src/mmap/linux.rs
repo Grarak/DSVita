@@ -302,6 +302,12 @@ static mut NEXT_SEGV_HANDLER: sigaction = unsafe { mem::zeroed::<sigaction>() };
 unsafe extern "C" fn sigsegv_handler(sig: i32, si: *mut siginfo_t, segfault_ctx: *mut c_void) {
     let si_addr = (*si).si_addr();
     let context = segfault_ctx as *mut ucontext_t;
+    // libc's bionic aarch64 ucontext_t is missing the kernel's padding after the 8-byte
+    // sigset (arm64 reserves a full 128-byte mask block), which puts uc_mcontext at
+    // offset 48 instead of the kernel's 176 — pc reads garbage. Address it directly.
+    #[cfg(target_os = "android")]
+    let context = &mut *((segfault_ctx as *mut u8).add(176) as *mut mcontext_t);
+    #[cfg(not(target_os = "android"))]
     let context = &mut (*context).uc_mcontext;
 
     let delegate_fun: fn(usize, &mut usize, &ArmContext) -> bool = mem::transmute(DELEGATE_FUN);

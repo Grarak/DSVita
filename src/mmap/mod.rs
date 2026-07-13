@@ -3,7 +3,8 @@ use static_assertions::const_assert_eq;
 use std::ops::{Deref, DerefMut};
 use std::slice;
 
-#[cfg(target_os = "linux")]
+// Android is a Linux kernel underneath — it shares the whole mmap/memfd/signal layer.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[path = "linux.rs"]
 mod platform;
 

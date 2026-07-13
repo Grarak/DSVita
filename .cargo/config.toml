@@ -9,5 +9,11 @@ linker = "clang-21"
 linker = "clang-21"
 rustflags = ["-Clink-args=-fuse-ld=lld"]
 
+# Target/sysroot/rtlib link args come from build.rs (cargo:rustc-link-arg) using the
+# DSVITA_ANDROID_NDK env var — same convention as the armhf cross via DSVITA_SYSROOT.
+[target.aarch64-linux-android]
+linker = "clang-21"
+rustflags = ["-Clink-args=-fuse-ld=lld"]
+
 [unstable]
 build-std = ["core", "alloc", "std", "panic_abort"]

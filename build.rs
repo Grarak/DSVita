@@ -72,6 +72,34 @@ fn main() {
                 println!("cargo:rustc-link-arg=-l{lib}");
             }
         }
+    } else if vitabuild::is_target_android() {
+        println!("cargo:rerun-if-env-changed=DSVITA_ANDROID_NDK");
+        // Host clang-21 drives the link; the NDK contributes sysroot, crt objects and the
+        // compiler-rt builtins (via its resource dir — the host clang's own lacks the
+        // android flavor). rustc passes -nodefaultlibs, so -rtlib is belt-and-braces.
+        println!("cargo:rustc-link-arg=--target=aarch64-linux-android{}", vitabuild::ANDROID_API);
+        println!("cargo:rustc-link-arg=--sysroot={}", vitabuild::get_android_sysroot().to_str().unwrap());
+        println!("cargo:rustc-link-arg=-resource-dir={}", vitabuild::get_android_resource_dir().to_str().unwrap());
+        println!("cargo:rustc-link-arg=-rtlib=compiler-rt");
+        // rustc links with -nodefaultlibs, so the compiler-rt builtins never get pulled
+        // implicitly — but the C side needs them (aarch64 __builtin___clear_cache lowers
+        // to a __clear_cache libcall; bionic doesn't export it).
+        println!(
+            "cargo:rustc-link-arg={}",
+            vitabuild::get_android_resource_dir().join("lib/linux/libclang_rt.builtins-aarch64-android.a").to_str().unwrap()
+        );
+        // Future-proofing for 16 KiB-page devices: the .so must still *load* there so the
+        // runtime page-size guard can print its message instead of a cryptic dlopen error.
+        println!("cargo:rustc-link-arg=-Wl,-z,max-page-size=16384");
+        // Partner of the c++_static the cc crate emits for the C++ archives.
+        println!("cargo:rustc-link-lib=c++abi");
+        println!("cargo:rustc-link-lib=log");
+        // ANativeWindow_fromSurface lives in libandroid (EGL/aaudio are #[link]ed at
+        // their extern blocks in presenter/android.rs).
+        println!("cargo:rustc-link-lib=android");
+
+        let mut cache_build = create_c_build();
+        cache_build.file("builtins/cache.c").compile("cache");
     } else {
         println!("cargo:rerun-if-env-changed=DSVITA_SYSROOT");
         if vitabuild::is_target_arm32() {
@@ -250,16 +278,15 @@ fn main() {
         bindgen_generate_to_file(soundtouch_bindgen, bindings_file);
     }
 
-    if !is_target_vita() && is_host_linux() {
+    // No ImGui on Android at all — the Activity renders every menu/dialog natively and
+    // the emulator core never draws UI there.
+    if !is_target_vita() && !vitabuild::is_target_android() && is_host_linux() {
         const IMGUI_FILES: &[&str] = &["imgui.cpp", "imgui_draw.cpp"];
 
         let imgui_path = PathBuf::from("imgui");
 
         let mut imgui_build = create_cc_build();
-        imgui_build
-            .include(&imgui_path)
-            .include(imgui_path.join("examples").join("sdl_opengl3_example"))
-            .file("imgui_impl_sdl_gl3.cpp");
+        imgui_build.include(&imgui_path).include(imgui_path.join("examples").join("sdl_opengl3_example")).file("imgui_impl_sdl_gl3.cpp");
 
         println!("cargo:rerun-if-changed=imgui_impl_sdl_gl3.cpp");
         for file in IMGUI_FILES {

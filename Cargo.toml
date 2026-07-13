@@ -58,6 +58,14 @@ backtrace = "0.3.74"
 
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "rustls-tls"] }
 
+# No clap (no CLI on Android), no affinity (cpusets forbid naive pinning), no sdl2 (the
+# Android presenter talks EGL/AAudio/JNI directly); everything else matches Linux.
+[target.aarch64-linux-android.dependencies]
+jni-sys = "0.3"
+backtrace = "0.3.74"
+
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "rustls-tls"] }
+
 [build-dependencies]
 bindgen = "0.72.1"
 vitabuild = { path = "vitabuild" }

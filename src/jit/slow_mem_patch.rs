@@ -269,7 +269,7 @@ impl JitMemory {
 
     pub unsafe fn patch_slow_mem(&mut self, host_pc: &mut usize, guest_memory_addr: u32, cpu: CpuType, _: &ArmContext) -> bool {
         if !self.is_in_jit_mem(*host_pc) {
-            eprintln!("Segfault outside of guest context");
+            eprintln!("Segfault outside of guest context (pc {:x}, jit {:x}+{:x})", *host_pc, self.mem.as_ptr() as usize, self.mem.len());
             return false;
         }
 

@@ -56,10 +56,40 @@ pub fn is_target_arm32() -> bool {
     target.starts_with("thumbv7") || target.starts_with("armv7")
 }
 
+pub const ANDROID_API: u32 = 30;
+
+pub fn is_target_android() -> bool {
+    env::var("TARGET").unwrap() == "aarch64-linux-android"
+}
+
+// The Android build uses the host clang-21 with only the NDK's sysroot (the official
+// NDK ships x86_64 host binaries — useless on the aarch64 dev box). DSVITA_ANDROID_NDK
+// points at the NDK root, mirroring the DSVITA_SYSROOT convention of the armhf cross.
+pub fn get_android_ndk_prebuilt() -> PathBuf {
+    let ndk = env::var("DSVITA_ANDROID_NDK").expect("DSVITA_ANDROID_NDK must point at an NDK (r27+) for aarch64-linux-android builds");
+    PathBuf::from(ndk).join("toolchains/llvm/prebuilt/linux-x86_64")
+}
+
+pub fn get_android_sysroot() -> PathBuf {
+    get_android_ndk_prebuilt().join("sysroot")
+}
+
+// The NDK's clang resource dir; handed to the *link* step so -rtlib=compiler-rt finds
+// libclang_rt.builtins-aarch64-android.a (the host clang's own resource dir lacks it).
+pub fn get_android_resource_dir() -> PathBuf {
+    let clang_dir = get_android_ndk_prebuilt().join("lib/clang");
+    let version = clang_dir.read_dir().unwrap().next().unwrap().unwrap();
+    version.path()
+}
+
 pub fn get_common_c_flags() -> Vec<String> {
     let base = if is_target_arm32() { ARM32_C_FLAGS } else { PORTABLE_C_FLAGS };
     let mut flags = base.to_vec().iter().map(|flag| flag.to_string()).collect::<Vec<_>>();
-    if !is_target_vita() {
+    if is_target_android() {
+        // The API level rides in the triple; the plain rustc TARGET has none.
+        flags.push(format!("--target=aarch64-linux-android{ANDROID_API}"));
+        flags.push(format!("--sysroot={}", get_android_sysroot().to_str().unwrap()));
+    } else if !is_target_vita() {
         flags.push(format!("--target={}", env::var("TARGET").unwrap()));
         // DSVITA_SYSROOT is the armhf cross sysroot; native hosts use their own.
         if is_target_arm32() {
@@ -81,13 +111,15 @@ pub fn get_common_c_flags() -> Vec<String> {
 
 pub fn create_c_build() -> cc::Build {
     let mut build = cc::Build::new();
-    build.compiler("clang-21").archiver("llvm-ar-21").pic(false);
+    build.compiler("clang-21").archiver("llvm-ar-21").pic(is_target_android());
 
     for flag in get_common_c_flags() {
         build.flag(flag);
     }
 
-    if !is_debug() && is_opt_build() {
+    // No cross-language LTO into the Android .so: the archives would carry clang-21
+    // bitcode while the final link may also see NDK-flavored inputs — keep it plain.
+    if !is_debug() && is_opt_build() && !is_target_android() {
         build.flag("-flto=full");
     }
     build
@@ -96,7 +128,12 @@ pub fn create_c_build() -> cc::Build {
 pub fn create_cc_build() -> cc::Build {
     let mut build = cc::Build::new();
     build.cpp(true);
-    build.compiler("clang++-21").archiver("llvm-ar-21").pic(false);
+    build.compiler("clang++-21").archiver("llvm-ar-21").pic(is_target_android());
+    if is_target_android() {
+        // Static libc++: no libc++_shared.so to bundle into the APK. libc++abi is added
+        // separately in build.rs (NDK splits them).
+        build.cpp_link_stdlib("c++_static");
+    }
 
     if let Some(vitasdk_path) = get_vitasdk_path() {
         if is_target_vita() || !is_host_linux() {
@@ -109,7 +146,7 @@ pub fn create_cc_build() -> cc::Build {
         }
     }
 
-    if !is_debug() && is_opt_build() {
+    if !is_debug() && is_opt_build() && !is_target_android() {
         build.flag("-flto=full");
     }
 
@@ -125,6 +162,9 @@ pub fn create_bindgen_builder() -> bindgen::Builder {
     // triple so struct layouts (pointer width, long) come out right.
     if is_target_arm32() {
         bindgen = bindgen.clang_arg("--target=thumbv7neon-unknown-linux-gnueabihf");
+    } else if is_target_android() {
+        bindgen = bindgen.clang_arg(format!("--target=aarch64-linux-android{ANDROID_API}"));
+        bindgen = bindgen.clang_arg(format!("--sysroot={}", get_android_sysroot().to_str().unwrap()));
     } else {
         bindgen = bindgen.clang_arg(format!("--target={}", env::var("TARGET").unwrap()));
     }
