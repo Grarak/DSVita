@@ -104,7 +104,13 @@ pub unsafe fn create_mem_texture1d(size: u32) -> GLuint {
     let mut tex = 0;
     gl::GenTextures(1, &mut tex);
     gl::BindTexture(gl::TEXTURE_2D, tex);
-    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, (size / 4) as _, 1, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
+    // Integer texture on GLES3 hosts: the shaders texelFetch these through usampler2D
+    // (exact coords, raw bytes). The Vita's cg shaders keep normalized float sampling.
+    if cfg!(not(target_os = "vita")) {
+        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8UI as _, (size / 4) as _, 1, 0, gl::RGBA_INTEGER, gl::UNSIGNED_BYTE, ptr::null());
+    } else {
+        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, (size / 4) as _, 1, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
+    }
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as _);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
@@ -117,7 +123,21 @@ pub unsafe fn create_mem_texture2d(width: u32, height: u32) -> GLuint {
     let mut tex = 0;
     gl::GenTextures(1, &mut tex);
     gl::BindTexture(gl::TEXTURE_2D, tex);
-    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, (width / 2) as _, (height / 2) as _, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
+    if cfg!(not(target_os = "vita")) {
+        gl::TexImage2D(
+            gl::TEXTURE_2D,
+            0,
+            gl::RGBA8UI as _,
+            (width / 2) as _,
+            (height / 2) as _,
+            0,
+            gl::RGBA_INTEGER,
+            gl::UNSIGNED_BYTE,
+            ptr::null(),
+        );
+    } else {
+        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA as _, (width / 2) as _, (height / 2) as _, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
+    }
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as _);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
@@ -161,11 +181,13 @@ pub unsafe fn create_pal_texture2d(width: u32, height: u32) -> GLuint {
 }
 
 pub unsafe fn sub_mem_texture1d(size: u32, data: *const u8) {
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, (size / 4) as _, 1, gl::RGBA, gl::UNSIGNED_BYTE, data as _);
+    let format = if cfg!(not(target_os = "vita")) { gl::RGBA_INTEGER } else { gl::RGBA };
+    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, (size / 4) as _, 1, format, gl::UNSIGNED_BYTE, data as _);
 }
 
 pub unsafe fn sub_mem_texture2d(width: u32, height: u32, data: *const u8) {
-    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, (width / 2) as _, (height / 2) as _, gl::RGBA, gl::UNSIGNED_BYTE, data as _);
+    let format = if cfg!(not(target_os = "vita")) { gl::RGBA_INTEGER } else { gl::RGBA };
+    gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, (width / 2) as _, (height / 2) as _, format, gl::UNSIGNED_BYTE, data as _);
 }
 
 pub unsafe fn sub_pal_texture1d(size: u32, data: *const u8) {

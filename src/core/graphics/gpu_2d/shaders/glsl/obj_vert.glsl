@@ -6,22 +6,20 @@ precision highp int;
 in vec4 position;
 in float oamIndex;
 
-uniform sampler2D oamTex;
+uniform highp usampler2D oamTex;
 
 out vec2 objPos;
 flat out ivec2 objDims;
 out vec2 screenPosF;
-out vec2 objAttrib0Addr;
-out vec2 objAttrib2Addr;
+flat out int oamAttribBase;
 
 uniform float dispCntF;
 uniform bool objWindow;
 
 int readOam16Aligned(int addr) {
-    float x = float(addr >> 2) / 255.0f;
-    vec4 value = texture(oamTex, vec2(x, 1.0));
+    uvec4 value = texelFetch(oamTex, ivec2(addr >> 2, 0), 0);
     int entry = addr & 2;
-    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
+    return int(value[entry]) | (int(value[entry + 1]) << 8);
 }
 
 const vec2 SizeLookup[12] = vec2[12](
@@ -110,8 +108,7 @@ void main() {
     float y = float(oamY) + oamHeight * position.y;
 
     screenPosF = vec2(x / 255.0, y / 191.0);
-    objAttrib0Addr = vec2(oamIndex * 8.0 / 4.0 / 255.0, 1.0);
-    objAttrib2Addr = vec2((oamIndex * 8.0 + 4.0) / 4.0 / 255.0, 1.0);
+    oamAttribBase = index * 8;
 
     int priority = (attrib2 >> 10) & 3;
     gl_Position = vec4(screenPosF.x * 2.0 - 1.0, 1.0 - screenPosF.y * 2.0, float(priority) / 4.0 + oamIndex / 127.0 / 100.0, 1.0);

@@ -6,8 +6,7 @@ layout(location = 0) out vec4 color;
 in vec2 objPos;
 flat in ivec2 objDims;
 in vec2 screenPosF;
-in vec2 objAttrib0Addr;
-in vec2 objAttrib2Addr;
+flat in int oamAttribBase;
 
 uniform float dispCntF;
 uniform float objTexHeight;
@@ -19,55 +18,47 @@ layout(std140) uniform WinBgUbo {
     ivec4 winInOut[48];
 };
 
-uniform sampler2D oamTex;
-uniform sampler2D objTex;
-uniform sampler2D palTex;
-uniform sampler2D extPalTex;
+// Integer samplers + texelFetch — see bg_frag_common.glsl.
+uniform highp usampler2D oamTex;
+uniform highp usampler2D objTex;
+uniform highp usampler2D palTex;
+uniform highp usampler2D extPalTex;
 uniform sampler2D winTex;
 
+int readOam16Aligned(int addr) {
+    uvec4 value = texelFetch(oamTex, ivec2(addr >> 2, 0), 0);
+    int entry = addr & 2;
+    return int(value[entry]) | (int(value[entry + 1]) << 8);
+}
+
 int readAttrib0() {
-    vec4 value = texture(oamTex, objAttrib0Addr);
-    return int(value[0] * 255.0) | (int(value[1] * 255.0) << 8);
+    return readOam16Aligned(oamAttribBase);
 }
 
 int readAttrib2() {
-    vec4 value = texture(oamTex, objAttrib2Addr);
-    return int(value[0] * 255.0) | (int(value[1] * 255.0) << 8);
+    return readOam16Aligned(oamAttribBase + 4);
 }
 
 int readObj8(int addr) {
-    int addrX = (addr >> 2) & 0x1FF;
-    int addrY = addr >> 11;
-    float x = float(addrX) / 511.0;
-    float y = float(addrY) / objTexHeight;
-    return int(texture(objTex, vec2(x, y))[addr & 3] * 255.0);
+    return int(texelFetch(objTex, ivec2((addr >> 2) & 0x1FF, addr >> 11), 0)[addr & 3]);
 }
 
 int readObj16Aligned(int addr) {
-    int addrX = (addr >> 2) & 0x1FF;
-    int addrY = addr >> 11;
-    float x = float(addrX) / 511.0;
-    float y = float(addrY) / objTexHeight;
-    vec4 value = texture(objTex, vec2(x, y));
+    uvec4 value = texelFetch(objTex, ivec2((addr >> 2) & 0x1FF, addr >> 11), 0);
     int entry = addr & 2;
-    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
+    return int(value[entry]) | (int(value[entry + 1]) << 8);
 }
 
 int readPal16Aligned(int addr) {
-    float x = float(addr >> 2) / 255.0;
-    vec4 value = texture(palTex, vec2(x, 1.0));
+    uvec4 value = texelFetch(palTex, ivec2(addr >> 2, 0), 0);
     int entry = addr & 2;
-    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
+    return int(value[entry]) | (int(value[entry + 1]) << 8);
 }
 
 int readExtPal16Aligned(int addr) {
-    int addrX = (addr >> 2) & 0x1FF;
-    int addrY = addr >> 11;
-    float x = float(addrX) / 511.0;
-    float y = float(addrY) / 3.0;
-    vec4 value = texture(extPalTex, vec2(x, y));
+    uvec4 value = texelFetch(extPalTex, ivec2((addr >> 2) & 0x1FF, addr >> 11), 0);
     int entry = addr & 2;
-    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
+    return int(value[entry]) | (int(value[entry + 1]) << 8);
 }
 
 vec3 normRgb5(int color) {

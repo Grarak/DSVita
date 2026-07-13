@@ -8,16 +8,13 @@ layout(location = 0) out vec4 color;
 in vec2 screenPos;
 uniform float dispCntF;
 
-uniform sampler2D lcdcPalTex;
+// Integer sampler + texelFetch — see bg_frag_common.glsl.
+uniform highp usampler2D lcdcPalTex;
 
 int readLcdcPal16Aligned(int addr) {
-    int addrX = (addr >> 2) & 0x1FF;
-    int addrY = addr >> 11;
-    float x = float(addrX) / 511.0;
-    float y = float(addrY) / 327.0;
-    vec4 value = texture(lcdcPalTex, vec2(x, y));
+    uvec4 value = texelFetch(lcdcPalTex, ivec2((addr >> 2) & 0x1FF, addr >> 11), 0);
     int entry = addr & 2;
-    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
+    return int(value[entry]) | (int(value[entry + 1]) << 8);
 }
 
 vec3 normRgb5(int color) {

@@ -35,43 +35,36 @@ int getBgCnt() {
     return floatBitsToInt(bgCntF);
 }
 
-uniform sampler2D bgTex;
-uniform sampler2D palTex;
-uniform sampler2D extPalTex;
+// Integer samplers + texelFetch: the old normalized-float coordinates landed on texel
+// edges (i/511, y=1.0), so NEAREST sat on the rounding razor — exact on llvmpipe-13,
+// off-by-one texels on v3d/llvmpipe-20 (per-pixel garbage). texelFetch is exact by
+// construction and the uvec4 result skips the float->int requantization entirely.
+uniform highp usampler2D bgTex;
+uniform highp usampler2D palTex;
+uniform highp usampler2D extPalTex;
 uniform sampler2D winTex;
 uniform sampler2D display3dTex;
 
 int readBg8(int addr) {
-    float x = float((addr >> 2) & 0x1FF) / 511.0;
-    float y = float(addr >> 11) / bgTexHeight;
-    return int(texture(bgTex, vec2(x, y))[addr & 3] * 255.0);
+    return int(texelFetch(bgTex, ivec2((addr >> 2) & 0x1FF, addr >> 11), 0)[addr & 3]);
 }
 
 int readBg16Aligned(int addr) {
-    int addrX = (addr >> 2) & 0x1FF;
-    int addrY = addr >> 11;
-    float x = float(addrX) / 511.0;
-    float y = float(addrY) / bgTexHeight;
-    vec4 value = texture(bgTex, vec2(x, y));
+    uvec4 value = texelFetch(bgTex, ivec2((addr >> 2) & 0x1FF, addr >> 11), 0);
     int entry = addr & 2;
-    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
+    return int(value[entry]) | (int(value[entry + 1]) << 8);
 }
 
 int readPal16Aligned(int addr) {
-    float x = float(addr >> 2) / 255.0;
-    vec4 value = texture(palTex, vec2(x, 1.0));
+    uvec4 value = texelFetch(palTex, ivec2(addr >> 2, 0), 0);
     int entry = addr & 2;
-    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
+    return int(value[entry]) | (int(value[entry + 1]) << 8);
 }
 
 int readExtPal16Aligned(int addr) {
-    int addrX = (addr >> 2) & 0x1FF;
-    int addrY = addr >> 11;
-    float x = float(addrX) / 511.0;
-    float y = float(addrY) / 15.0;
-    vec4 value = texture(extPalTex, vec2(x, y));
+    uvec4 value = texelFetch(extPalTex, ivec2((addr >> 2) & 0x1FF, addr >> 11), 0);
     int entry = addr & 2;
-    return int(value[entry] * 255.0) | (int(value[entry + 1] * 255.0) << 8);
+    return int(value[entry]) | (int(value[entry + 1]) << 8);
 }
 
 vec3 normRgb5(int color) {
