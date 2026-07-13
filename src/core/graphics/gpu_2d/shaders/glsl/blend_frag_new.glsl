@@ -5,9 +5,13 @@ precision highp int;
 
 layout(location = 0) out vec4 color;
 
-uniform BlendUbo {
-    int bldCntsAlphasYs[192];
-    int masterBrights[192];
+// std140 + ivec4 packing: the default (shared) block layout is the driver's choice —
+// llvmpipe packs int arrays tightly while v3d pads them to 16-byte strides, so a plain
+// int[192] reads past the uploaded data there (solid white scanlines). ivec4[48] has
+// the same 16-byte stride under std140 on every driver and matches the packed upload.
+layout(std140) uniform BlendUbo {
+    ivec4 bldCntsAlphasYs[48];
+    ivec4 masterBrights[48];
 };
 
 uniform sampler2D topLayer;
@@ -22,7 +26,7 @@ vec3 alphaBlendColors(vec3 topColor, vec3 bottomColor, float eva, float evb) {
 
 void main() {
     int y = int(texCoords.y * 191.0);
-    int bldCntAlphaY = bldCntsAlphasYs[y];
+    int bldCntAlphaY = bldCntsAlphasYs[y >> 2][y & 3];
     int bldCnt = bldCntAlphaY & 0xFFFF;
     int bldTop = bldCnt & 0xFF;
     int bldBottom = (bldCnt >> 8) & 0xFF;
@@ -114,7 +118,7 @@ void main() {
     }
 
     // Master brightness: final stage, applied to the whole engine output
-    int mb = masterBrights[y];
+    int mb = masterBrights[y >> 2][y & 3];
     int mbFactor = min(mb & 0x1F, 16);
     if (mbFactor != 0) {
         int mbMode = (mb >> 14) & 3;
