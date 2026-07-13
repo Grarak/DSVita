@@ -95,7 +95,9 @@ impl GpuStream {
 pub struct GpuRenderer {
     renderer_regs_2d_shared: Gpu2DRenderRegsShared,
     renderer_2d: Gpu2DRenderer,
-    // renderer_soft_2d: Gpu2DSoftRenderer,
+    // DSVITA_SOFT_2D=1 (debug builds): scanline-software 2D instead of the GL renderer —
+    // the isolation tool for the a64 2D-corruption class of bugs (GL-side vs guest-side).
+    renderer_soft_2d: Option<Gpu2DSoftRenderer>,
     pub renderer_3d: Gpu3DRenderer,
     gpu_mem_refs: GpuMemRefs,
 
@@ -163,7 +165,7 @@ impl GpuRenderer {
             let mut tex = 0;
             gl::GenTextures(1, &mut tex);
             gl::BindTexture(gl::TEXTURE_2D, tex);
-            #[cfg(target_os = "linux")]
+            #[cfg(not(target_os = "vita"))]
             gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RG as _, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, 0, gl::RG, gl::UNSIGNED_BYTE, std::ptr::null());
             #[cfg(target_os = "vita")]
             Presenter::gl_tex_image_2d_rgba5(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
@@ -219,7 +221,7 @@ impl GpuRenderer {
         GpuRenderer {
             renderer_regs_2d_shared: Gpu2DRenderRegsShared::new(),
             renderer_2d: Gpu2DRenderer::new(gpu_programs),
-            // renderer_soft_2d: Gpu2DSoftRenderer::new(),
+            renderer_soft_2d: (crate::IS_DEBUG && std::env::var("DSVITA_SOFT_2D").is_ok_and(|v| v == "1")).then(Gpu2DSoftRenderer::new),
             renderer_3d: Gpu3DRenderer::new(gpu_programs),
             gpu_mem_refs: GpuMemRefs::default(),
 
@@ -632,14 +634,18 @@ impl GpuRenderer {
             gl::ClearColor(0f32, 0f32, 0f32, 1f32);
             gl::Clear(gl::COLOR_BUFFER_BIT);
 
-            self.renderer_2d.draw::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
-            let b_fbo_color = self.renderer_2d.blend::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, None);
-
-            // self.renderer_soft_2d.draw::<{ A }>(&self.common, &self.renderer_regs_2d_shared);
-            self.renderer_2d.draw::<{ A }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
-
-            // self.renderer_soft_2d.draw::<{ B }>(&self.common, &self.renderer_regs_2d_shared);
-            // let b_fbo_color = self.renderer_soft_2d.blend::<{ B }>(&self.common, &self.renderer_regs_2d_shared, 0);
+            let b_fbo_color = if self.renderer_soft_2d.is_some() {
+                let soft = self.renderer_soft_2d.as_mut().unwrap();
+                soft.draw::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
+                let b_fbo_color = soft.blend::<{ B }>(&self.common, &self.renderer_regs_2d_shared, 0);
+                soft.draw::<{ A }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
+                b_fbo_color
+            } else {
+                self.renderer_2d.draw::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
+                let b_fbo_color = self.renderer_2d.blend::<{ B }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, None);
+                self.renderer_2d.draw::<{ A }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared);
+                b_fbo_color
+            };
 
             if self.rendering_3d {
                 self.rendering_3d = false;
@@ -654,11 +660,15 @@ impl GpuRenderer {
                 self.renderer_3d.render(&self.common, upscale_3d_factor_index, widescreen, widescreen_coefficient);
             }
 
-            // let a_fbo_color = self.renderer_soft_2d.blend::<{ A }>(&self.common, &self.renderer_regs_2d_shared, self.renderer_3d.gl.fbo.color);
             let fbo_3d = self
                 .renderer_3d
                 .get_fbo(self.common.pow_cnt1[0].display_swap(), upscale_3d_factor_index, widescreen, widescreen_coefficient);
-            let a_fbo_color = self.renderer_2d.blend::<{ A }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, Some(fbo_3d));
+            let a_fbo_color = if self.renderer_soft_2d.is_some() {
+                let color_3d = fbo_3d.color();
+                self.renderer_soft_2d.as_mut().unwrap().blend::<{ A }>(&self.common, &self.renderer_regs_2d_shared, color_3d)
+            } else {
+                self.renderer_2d.blend::<{ A }>(&self.gpu_mem_refs, &self.renderer_regs_2d_shared, Some(fbo_3d))
+            };
 
             if disp_cap_cnt.capture_enabled() && u8::from(disp_cap_cnt.capture_source()) != 1 {
                 if u8::from(disp_cap_cnt.capture_size()) == 0 {
@@ -762,7 +772,8 @@ impl GpuRenderer {
                 self.merge_screens([top_screen, bottom_screen], 0);
             }
 
-            if settings.show_debug_stats() {
+            // No GL-drawn OSD on Android — stats/toasts belong to the Activity's UI there.
+            if !cfg!(target_os = "android") && settings.show_debug_stats() {
                 let fps = fps.load(Ordering::Relaxed) as u32;
                 let per = fps * 100 / 60;
 
@@ -772,7 +783,7 @@ impl GpuRenderer {
                     {
                         format!("CPU: {}MHz", vitasdk_sys::scePowerGetArmClockFrequency())
                     }
-                    #[cfg(target_os = "linux")]
+                    #[cfg(not(target_os = "vita"))]
                     "".to_string()
                 };
                 if let Some((last_time_saved, success)) = last_time_saved {
@@ -908,7 +919,7 @@ impl GpuRenderer {
                 let mut query_result = 0;
                 gl::GetQueryObjectiv(self.capture_query, gl::QUERY_RESULT, &mut query_result);
 
-                #[cfg(target_os = "linux")]
+                #[cfg(not(target_os = "vita"))]
                 {
                     gl::BindFramebuffer(gl::READ_FRAMEBUFFER, self.capture_fbo.fbo);
                     gl::ReadPixels(0, 0, width as _, height as _, gl::RG, gl::UNSIGNED_BYTE, read_pixels_ptr as _);
