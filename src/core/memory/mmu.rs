@@ -32,8 +32,10 @@ fn remove_mmu_write_entry(addr: u32, region: &MemRegion, mmu: &mut [usize], vmem
 
 impl MmuArm9 {
     pub fn new() -> Self {
+        let vmem_tcm = VirtualMem::new(V_MEM_ARM9_RANGE as _, ARM9.mmu_tcm_addr()).unwrap();
+        ARM9.set_mmu_tcm_addr(vmem_tcm.as_ptr() as usize);
         MmuArm9 {
-            vmem_tcm: VirtualMem::new(V_MEM_ARM9_RANGE as _, ARM9.mmu_tcm_addr()).unwrap(),
+            vmem_tcm,
             mmu_read: HeapArrayUsize::default(),
             mmu_write: HeapArrayUsize::default(),
             mmu_read_tcm: HeapArrayUsize::default(),
@@ -263,8 +265,10 @@ pub struct MmuArm7 {
 
 impl MmuArm7 {
     pub fn new() -> Self {
+        let vmem = VirtualMem::new(V_MEM_ARM7_RANGE as usize, ARM7.mmu_tcm_addr()).unwrap();
+        ARM7.set_mmu_tcm_addr(vmem.as_ptr() as usize);
         MmuArm7 {
-            vmem: VirtualMem::new(V_MEM_ARM7_RANGE as usize, ARM7.mmu_tcm_addr()).unwrap(),
+            vmem,
             mmu_read: HeapArrayUsize::default(),
             mmu_write: HeapArrayUsize::default(),
         }

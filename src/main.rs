@@ -229,7 +229,14 @@ unsafe fn process_fault<const CPU: CpuType>(mem_addr: usize, host_pc: &mut usize
     let asm = unsafe { get_jit_asm_ptr::<CPU>().as_mut_unchecked() };
 
     debug_println!("{CPU:?} fault at {mem_addr:x}");
-    if mem_addr < CPU.mmu_tcm_addr() {
+    // Range check instead of a one-sided compare: with kernel-chosen bases (aarch64)
+    // the regions have no fixed ordering, so only faults inside this cpu's fastmem
+    // reservation are patchable.
+    let v_mem_range = match CPU {
+        ARM9 => regions::V_MEM_ARM9_RANGE,
+        ARM7 => regions::V_MEM_ARM7_RANGE,
+    } as usize;
+    if mem_addr < CPU.mmu_tcm_addr() || mem_addr - CPU.mmu_tcm_addr() >= v_mem_range {
         eprintln!("{CPU:?} fault {host_pc:x} {mem_addr:x} outside of mapped memory, pc in jit mem {}", asm.emu.jit.is_in_jit_mem(*host_pc));
         return false;
     }
@@ -415,8 +422,13 @@ pub fn actual_main() {
     let mic_sampler_clone = mic_sampler.clone();
     let sound_sampler_ptr = sound_sampler.get() as usize;
 
+    // On aarch64 guest_regs_addr() is 0 until set_guest_regs_addr records where the
+    // kernel put the mapping; 0 makes Mmap::rw let the kernel choose. 32-bit hosts and
+    // Vita pass their fixed constants unchanged.
     let mut arm9_thread_regs = Mmap::rw("arm9_thread_regs", ARM9.guest_regs_addr(), utils::align_up(size_of::<ThreadRegs>(), PAGE_SIZE)).unwrap();
     let mut arm7_thread_regs = Mmap::rw("arm7_thread_regs", ARM7.guest_regs_addr(), utils::align_up(size_of::<ThreadRegs>(), PAGE_SIZE)).unwrap();
+    ARM9.set_guest_regs_addr(arm9_thread_regs.as_ptr() as usize);
+    ARM7.set_guest_regs_addr(arm7_thread_regs.as_ptr() as usize);
     let arm9_thread_regs = arm9_thread_regs.as_mut_ptr() as *mut ThreadRegs;
     let arm7_thread_regs = arm7_thread_regs.as_mut_ptr() as *mut ThreadRegs;
     unsafe {
@@ -439,6 +451,8 @@ pub fn actual_main() {
 
     let mut jit_asm_arm9 = Mmap::rw("arm9_jit_asm", ARM9.jit_asm_addr(), utils::align_up(size_of::<JitAsm>(), PAGE_SIZE)).unwrap();
     let mut jit_asm_arm7 = Mmap::rw("arm7_jit_asm", ARM7.jit_asm_addr(), utils::align_up(size_of::<JitAsm>(), PAGE_SIZE)).unwrap();
+    ARM9.set_jit_asm_addr(jit_asm_arm9.as_ptr() as usize);
+    ARM7.set_jit_asm_addr(jit_asm_arm7.as_ptr() as usize);
     let jit_asm_arm9: &'static mut JitAsm = unsafe { mem::transmute(jit_asm_arm9.as_mut_ptr()) };
     let jit_asm_arm7: &'static mut JitAsm = unsafe { mem::transmute(jit_asm_arm7.as_mut_ptr()) };
     *jit_asm_arm9 = JitAsm::new(ARM9, unsafe { emu_unsafe.get().as_mut().unwrap() });
