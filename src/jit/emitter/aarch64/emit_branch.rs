@@ -316,6 +316,24 @@ impl JitAsm<'_> {
 
         // Resume behind the call: everything up to and including the BL is pre-charged.
         block_asm.masm.mov_imm64(A64Reg::X8, ptr::addr_of_mut!(self.runtime_data) as u64);
+        if inst_index == self.jit_buf.insts.len() - 1 {
+            // arm32's emit_branch_external_label last-inst case: a block-terminating BL has
+            // no following instruction to resume into — falling through here would execute
+            // the out-of-line tails behind the block (SM64's sound-stream wait: its poll
+            // block ends on a BL, the fall-through ran a local branch's sched tail, and the
+            // "resumed" flow re-entered the wait loop with stale flags forever). Zero the
+            // pre-charge and tail-dispatch to the fall-through pc through its entry slot.
+            block_asm
+                .masm
+                .strh_off(A64Reg::ZR, A64Reg::X8, JitRuntimeData::get_pre_cycle_count_sum_offset() as i64, vixl::A64AddrModeKind::Offset);
+            let next_entry_slot = self.emu.jit.jit_memory_map.get_jit_entry(lr);
+            block_asm.masm.mov_imm64(A64Reg::X8, next_entry_slot as u64);
+            block_asm.masm.ldr_off(A64Reg::X8, true, A64Reg::X8, 0, vixl::A64AddrModeKind::Offset);
+            block_asm.mov_imm(A64Reg::X0, lr | block_asm.thumb as u32);
+            block_asm.restore_frame();
+            block_asm.masm.br(A64Reg::X8);
+            return;
+        }
         block_asm.mov_imm(SCRATCH0, total_cycles as u32);
         block_asm
             .masm
@@ -400,6 +418,23 @@ impl JitAsm<'_> {
         };
         if has_return {
             block_asm.call_host(fun);
+            if inst_index == self.jit_buf.insts.len() - 1 {
+                // Block-terminating BLX reg: same as the BL case in
+                // emit_branch_link_external — no following instruction to resume into, so
+                // zero the pre-charge and tail-dispatch to the fall-through pc (arm32's
+                // emit_branch_reg last-inst path).
+                let lr = if thumb { (current_pc + 2) | 1 } else { current_pc + 4 };
+                block_asm.masm.mov_imm64(A64Reg::X8, ptr::addr_of_mut!(self.runtime_data) as u64);
+                block_asm
+                    .masm
+                    .strh_off(A64Reg::ZR, A64Reg::X8, JitRuntimeData::get_pre_cycle_count_sum_offset() as i64, vixl::A64AddrModeKind::Offset);
+                let next_entry_slot = self.emu.jit.jit_memory_map.get_jit_entry(lr);
+                block_asm.masm.mov_imm64(A64Reg::X8, next_entry_slot as u64);
+                block_asm.masm.ldr_off(A64Reg::X8, true, A64Reg::X8, 0, vixl::A64AddrModeKind::Offset);
+                block_asm.mov_imm(A64Reg::X0, lr);
+                block_asm.restore_frame();
+                block_asm.masm.br(A64Reg::X8);
+            }
         } else {
             block_asm.masm.mov_imm64(A64Reg::X8, fun as u64);
             block_asm.restore_frame();
