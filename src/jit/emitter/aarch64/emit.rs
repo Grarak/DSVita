@@ -292,9 +292,21 @@ impl JitAsm<'_> {
             block_asm.dirty_guest_regs = taken.dirty_guest_regs;
             self.emit_taken_branch(block_asm, taken.inst_index, &taken.kind, guest_pc, insts_len, arm7_hle, inst_labels, &mut sched_blocks);
             if matches!(taken.kind, BranchKind::Bl { .. } | BranchKind::BlxReg { .. } | BranchKind::BlxImm { .. } | BranchKind::BlOff { .. }) {
-                let resume_mapping = block_asm.inst_mappings[taken.inst_index + 1];
-                block_asm.reload_mapping(&resume_mapping);
-                block_asm.masm.b(&mut inst_labels[taken.inst_index + 1]);
+                if taken.inst_index + 1 < insts_len {
+                    let resume_mapping = block_asm.inst_mappings[taken.inst_index + 1];
+                    block_asm.reload_mapping(&resume_mapping);
+                    block_asm.masm.b(&mut inst_labels[taken.inst_index + 1]);
+                } else {
+                    // A conditional linking branch as the block's LAST instruction: only
+                    // data decoded as code produces this (real blocks end at unconditional
+                    // flow changes), so there is no fall-through instruction to rejoin —
+                    // exit the block at the resume pc instead of indexing past the block.
+                    let step_shift = if block_asm.thumb { 1 } else { 2 };
+                    let resume_pc = guest_pc + ((taken.inst_index as u32 + 1) << step_shift);
+                    block_asm.mov_imm(SCRATCH3, resume_pc);
+                    block_asm.store_guest(SCRATCH3, Reg::PC);
+                    self.emit_branch_out_exit(block_asm, taken.inst_index, resume_pc);
+                }
             }
         }
 
@@ -356,18 +368,30 @@ impl JitAsm<'_> {
             block_asm.call_host(cpu_regs_halt as *const ());
             self.emit_branch_out_exit(block_asm, inst_index, pc);
         } else {
+            // A pc operand only occurs in data decoded as a conditional mcr/mrc (pc isn't
+            // allocator-managed here — guest_map would assert). Mcr reads the pipeline
+            // value; mrc lands in the guest PC slot via scratch, like a pc-destination load.
             match op {
                 Op::Mcr => {
-                    let op0_mapped = block_asm.guest_map(op0);
                     block_asm.mov_imm(A64Reg::X0, cp15_reg);
-                    block_asm.masm.mov_reg(A64Reg::X1, op0_mapped, false);
+                    if op0 == Reg::PC {
+                        block_asm.mov_imm(A64Reg::X1, pc + 8);
+                    } else {
+                        let op0_mapped = block_asm.guest_map(op0);
+                        block_asm.masm.mov_reg(A64Reg::X1, op0_mapped, false);
+                    }
                     block_asm.call_host(cp15_write as *const ());
                 }
                 Op::Mrc => {
                     block_asm.mov_imm(A64Reg::X0, cp15_reg);
                     block_asm.call_host(cp15_read as *const ());
-                    let op0_mapped = block_asm.guest_map(op0);
-                    block_asm.masm.mov_reg(op0_mapped, A64Reg::X0, false);
+                    if op0 == Reg::PC {
+                        block_asm.masm.mov_reg(SCRATCH3, A64Reg::X0, false);
+                        block_asm.store_guest(SCRATCH3, Reg::PC);
+                    } else {
+                        let op0_mapped = block_asm.guest_map(op0);
+                        block_asm.masm.mov_reg(op0_mapped, A64Reg::X0, false);
+                    }
                 }
                 _ => unsafe { std::hint::unreachable_unchecked() },
             }
@@ -397,8 +421,9 @@ impl JitAsm<'_> {
 /// cp15 (mcr/mrc), psr moves (msr/mrs), swap, clz and the saturating q ops, ldrd/strd
 /// (the pair rotation dance), and the shifter shapes the alu/transfer emitters don't
 /// lower — register amounts (dynamic carry; also their thumb forms) and RRX. A pc
-/// destination combined with such a shifter is UNPREDICTABLE and stays refused
-/// (emit_data_processing's unreachable).
+/// destination combined with such a shifter (UNPREDICTABLE on hardware; reached only by
+/// data decoded as always-false conditional code) goes through the interpreter too —
+/// the post-inst indirect dispatch picks up whatever pc it writes.
 fn needs_interpret_single(inst: &InstInfo, thumb: bool) -> bool {
     let op = inst.op;
     if thumb {
@@ -419,7 +444,7 @@ fn needs_interpret_single(inst: &InstInfo, thumb: bool) -> bool {
             Op::Ldr(transfer) | Op::Str(transfer) => transfer.size() == 3,
             _ => false,
         };
-        return size3 || (unlowered_shift && !inst.out_regs.is_reserved(Reg::PC));
+        return size3 || unlowered_shift;
     }
     // User-bank ldm/stm (`^` without pc in the list): the unrolled fast path works on the
     // current-bank ThreadRegs view, so the banked redirection must come from the
@@ -435,7 +460,7 @@ fn needs_interpret_single(inst: &InstInfo, thumb: bool) -> bool {
             op,
             Op::Swp | Op::Swpb | Op::MsrRc | Op::MsrRs | Op::MsrIc | Op::MsrIs | Op::MrsRc | Op::MrsRs | Op::Clz | Op::Qadd | Op::Qsub | Op::Qdadd | Op::Qdsub
         )
-        || (op.is_alu() && unlowered_shift && !inst.out_regs.is_reserved(Reg::PC))
+        || (op.is_alu() && unlowered_shift)
 }
 
 /// What a taken ARM branch does, if `inst` is one.

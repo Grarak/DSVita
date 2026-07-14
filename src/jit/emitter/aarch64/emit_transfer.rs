@@ -59,7 +59,15 @@ impl JitAsm<'_> {
         let op0 = inst.operands()[0].as_reg_no_shift().unwrap();
         let rlist = inst.operands()[1].as_reg_list().unwrap();
         let reg = rlist.get_lowest_reg();
-        let op0_mapped = block_asm.guest_map(op0);
+        // A pc base only occurs in data decoded as an always-false conditional ldm/stm
+        // (pc isn't allocator-managed here — guest_map would assert); materialize the
+        // pipeline value and drop the writeback below.
+        let op0_mapped = if op0 == Reg::PC {
+            block_asm.mov_imm(SCRATCH1, pc + (4 << (!thumb as u32)));
+            SCRATCH1
+        } else {
+            block_asm.guest_map(op0)
+        };
         // A pc in the list can't live in the pool — same scratch dance as a pc op0 in
         // emit_single_transfer (loads finish with a store to the guest PC slot below).
         let reg_mapped = if reg == Reg::PC {
@@ -83,7 +91,7 @@ impl JitAsm<'_> {
         } else {
             block_asm.masm.mov_reg(SCRATCH2, op0_mapped, false);
         }
-        if transfer.write_back() && (is_write || reg != op0) {
+        if transfer.write_back() && (is_write || reg != op0) && op0 != Reg::PC {
             if transfer.add() {
                 block_asm.masm.add_imm(op0_mapped, op0_mapped, 4, false);
             } else {
@@ -233,7 +241,20 @@ impl JitAsm<'_> {
 
     /// The offset operand as a value in a register (or a fold into the compile-time
     /// address when both base and offset are constant — handled by the caller).
-    fn transfer_offset_value(block_asm: &mut BlockAsm, operand: &Operand) -> Option<A64Reg> {
+    ///
+    /// A pc offset register only appears in data decoded as an (always-false)
+    /// conditional transfer — e.g. a literal-pool word after a function's `ldm ..., pc`.
+    /// It still has to EMIT: pc isn't allocator-managed on this backend, so guest_map
+    /// would debug-assert (and emit garbage in release). Materialize the pipeline value.
+    fn transfer_offset_value(block_asm: &mut BlockAsm, operand: &Operand, pc: u32, thumb: bool) -> Option<A64Reg> {
+        let map_offset_reg = |block_asm: &mut BlockAsm, reg: Reg| {
+            if reg == Reg::PC {
+                block_asm.mov_imm(SCRATCH0, if thumb { (pc + 4) & !3 } else { pc + 8 });
+                SCRATCH0
+            } else {
+                block_asm.guest_map(reg)
+            }
+        };
         match operand {
             Operand::Imm(imm) => {
                 if *imm == 0 {
@@ -243,9 +264,9 @@ impl JitAsm<'_> {
                     Some(SCRATCH0)
                 }
             }
-            Operand::Reg { reg, shift: None } => Some(block_asm.guest_map(*reg)),
+            Operand::Reg { reg, shift: None } => Some(map_offset_reg(block_asm, *reg)),
             Operand::Reg { reg, shift: Some(shift) } => {
-                let mapped = block_asm.guest_map(*reg);
+                let mapped = map_offset_reg(block_asm, *reg);
                 let (kind, amount) = match shift {
                     Shift::Lsl(ShiftValue::Imm(amount)) => (A64ShiftKind::LSL, *amount),
                     Shift::Lsr(ShiftValue::Imm(amount)) => (A64ShiftKind::LSR, *amount),
@@ -333,7 +354,7 @@ impl JitAsm<'_> {
                     block_asm.mov_imm(SCRATCH1, pc_value);
                 }
                 let base = if op1 == Reg::PC { SCRATCH1 } else { block_asm.guest_map(op1) };
-                let offset = Self::transfer_offset_value(block_asm, &operands[2]);
+                let offset = Self::transfer_offset_value(block_asm, &operands[2], pc, thumb);
 
                 if transfer.pre() {
                     match offset {
