@@ -1,9 +1,15 @@
 package com.grarak.dsvita
 
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -12,11 +18,13 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
+import android.util.Log
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -74,15 +82,51 @@ class DSVitaActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private external fun nativeSetGameSetting(romPath: String, idx: Int, value: Int)
     private external fun nativeGetRuntimeSettings(): String
     private external fun nativeSetRuntimeSetting(idx: Int, value: Int)
+    private external fun nativeGetDebugText(): String
+    private external fun nativeDebugCmd(cmd: String): String
 
     private lateinit var root: FrameLayout
     private lateinit var surfaceView: SurfaceView
     private lateinit var browser: View
     private lateinit var settingsScreen: SettingsScreen
     private lateinit var controls: OnScreenControls
+    private lateinit var debugText: TextView
     private val roms = ArrayList<File>()
     private var inGame = false
     private var paused = false
+
+    // Debug command bridge (release builds reply "err"):
+    //   adb shell am broadcast -a com.grarak.dsvita.DBG --es cmd "touch 128 96; press a"
+    // ';'-separated commands, grammar in presenter/dbg_cmds.rs; replies land in logcat
+    // under DSVitaDbg.
+    private val debugReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val line = intent.getStringExtra("cmd") ?: return
+            for (cmd in line.split(';')) {
+                Log.i("DSVitaDbg", "${cmd.trim()} -> ${nativeDebugCmd(cmd.trim())}")
+            }
+        }
+    }
+
+    // Debug-stats OSD: the native render loop publishes the same line the desktop OSD
+    // draws (empty = disabled); poll it into the TextView while a game runs.
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val debugTextPoll = object : Runnable {
+        override fun run() {
+            if (!inGame) {
+                debugText.visibility = View.GONE
+                return
+            }
+            val text = nativeGetDebugText()
+            if (text.isEmpty()) {
+                debugText.visibility = View.GONE
+            } else {
+                debugText.visibility = View.VISIBLE
+                debugText.text = text
+            }
+            uiHandler.postDelayed(this, 500)
+        }
+    }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -104,6 +148,19 @@ class DSVitaActivity : AppCompatActivity(), SurfaceHolder.Callback {
         controls.visibility = View.GONE
         root.addView(controls, matchParent())
 
+        debugText = TextView(this)
+        debugText.setTextColor(Color.WHITE)
+        debugText.setShadowLayer(4f, 0f, 0f, Color.BLACK)
+        debugText.textSize = 12f
+        debugText.typeface = Typeface.MONOSPACE
+        debugText.gravity = Gravity.CENTER_HORIZONTAL
+        debugText.visibility = View.GONE
+        // Top-center: clear of the L/R shoulder buttons in the screen corners.
+        val debugTextLp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        debugTextLp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        debugTextLp.topMargin = dp(6)
+        root.addView(debugText, debugTextLp)
+
         browser = buildBrowser()
         root.addView(browser, matchParent())
 
@@ -119,8 +176,15 @@ class DSVitaActivity : AppCompatActivity(), SurfaceHolder.Callback {
         }
         refreshRomList()
 
+        ContextCompat.registerReceiver(this, debugReceiver, IntentFilter("com.grarak.dsvita.DBG"), ContextCompat.RECEIVER_EXPORTED)
+
         // Direct-launch intent (adb / file manager): skip the browser and boot the rom.
         romFromIntent(intent)?.let { launchRom(it) }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unregisterReceiver(debugReceiver)
     }
 
     // External storage can be unavailable — an unmounted emulated volume on some
@@ -219,6 +283,8 @@ class DSVitaActivity : AppCompatActivity(), SurfaceHolder.Callback {
         controls.visibility = if (prefs().getBoolean("osc", true)) View.VISIBLE else View.GONE
         hideSystemBars()
         nativeLaunch(rom.absolutePath)
+        uiHandler.removeCallbacks(debugTextPoll)
+        uiHandler.post(debugTextPoll)
     }
 
     private fun prefs() = getSharedPreferences("dsvita", MODE_PRIVATE)

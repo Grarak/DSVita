@@ -23,6 +23,11 @@ pub enum UiPauseMenuReturn {
     QuitApp,
 }
 
+// Runtime debug commands (buttons/touch/framelimit/savestate/…), shared by the Linux
+// TCP debug port and the Android broadcast receiver.
+#[cfg(all(debug_assertions, not(target_os = "vita")))]
+pub(crate) mod dbg_cmds;
+
 #[cfg(target_os = "linux")]
 #[path = "sdl.rs"]
 mod platform;

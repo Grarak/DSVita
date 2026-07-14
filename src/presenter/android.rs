@@ -341,6 +341,41 @@ pub extern "system" fn Java_com_grarak_dsvita_DSVitaActivity_nativeSetRuntimeSet
     PENDING_RUNTIME_SETTINGS.lock().unwrap().push((idx as usize, value));
 }
 
+// Runtime debug commands: the Activity's broadcast receiver forwards
+//   adb shell am broadcast -a com.grarak.dsvita.DBG --es cmd "<cmd>"
+// lines here; poll_event folds the state into each frame's inputs, mirroring the Linux
+// TCP debug port. Grammar lives in presenter/dbg_cmds.rs.
+#[cfg(debug_assertions)]
+static DEBUG_STATE: super::dbg_cmds::DebugState = super::dbg_cmds::DebugState::new();
+
+#[no_mangle]
+pub extern "system" fn Java_com_grarak_dsvita_DSVitaActivity_nativeDebugCmd(env: *mut JNIEnv, _class: jobject, cmd: jstring) -> jstring {
+    let line = unsafe { jstring_to_string(env, cmd) };
+    #[cfg(debug_assertions)]
+    let reply = super::dbg_cmds::handle_debug_cmd(&DEBUG_STATE, line.trim());
+    #[cfg(not(debug_assertions))]
+    let reply = {
+        let _ = line;
+        "err: release build".to_owned()
+    };
+    unsafe { new_jstring(env, &reply) }
+}
+
+// Debug-stats OSD line: there is no GL-drawn text on android, so the render loop
+// publishes the same string the desktop OSD draws and the Activity polls it into a
+// TextView. Empty = stats disabled (the TextView hides itself).
+static DEBUG_STATS: Mutex<String> = Mutex::new(String::new());
+
+pub fn set_debug_stats(text: String) {
+    *DEBUG_STATS.lock().unwrap() = text;
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_grarak_dsvita_DSVitaActivity_nativeGetDebugText(env: *mut JNIEnv, _class: jobject) -> jstring {
+    let text = DEBUG_STATS.lock().unwrap().clone();
+    unsafe { new_jstring(env, &text) }
+}
+
 // -------------------------------------------------------------------------------- EGL
 
 type EGLDisplay = *mut c_void;
@@ -650,7 +685,23 @@ impl Presenter {
             return PresentEvent::Pause;
         }
 
+        // Broadcast-receiver debug commands, mirroring the Linux debug port's poll fold.
+        #[cfg(debug_assertions)]
+        {
+            if DEBUG_STATE.quit.swap(false, Ordering::Relaxed) {
+                return PresentEvent::Quit;
+            }
+            let fl = DEBUG_STATE.pending_framelimit.swap(-1, Ordering::Relaxed);
+            if fl >= 0 {
+                return PresentEvent::SetFramelimit(fl as u8);
+            }
+        }
+
         self.keymap = !DS_KEYS_HELD.load(Ordering::Relaxed);
+        #[cfg(debug_assertions)]
+        {
+            self.keymap &= !DEBUG_STATE.held_buttons.load(Ordering::Relaxed);
+        }
 
         // Touch arrives in surface pixels; map through the letterbox rect into the
         // 960x544 logical space the shared normalize path expects.
@@ -665,11 +716,21 @@ impl Presenter {
             }
         };
 
+        #[cfg(debug_assertions)]
+        let mut debug_touch: Option<(i16, i16)> = None;
+        #[cfg(debug_assertions)]
+        {
+            let t = DEBUG_STATE.touch.load(Ordering::Relaxed);
+            if t >= 0 {
+                debug_touch = Some(((t >> 16) as i16, (t & 0xFFFF) as i16));
+            }
+        }
+
         PresentEvent::Inputs {
             keymap: self.keymap,
             touch,
             #[cfg(debug_assertions)]
-            debug_touch: None,
+            debug_touch,
         }
     }
 

@@ -834,8 +834,7 @@ impl GpuRenderer {
                 self.merge_screens([top_screen, bottom_screen], 0);
             }
 
-            // No GL-drawn OSD on Android — stats/toasts belong to the Activity's UI there.
-            if !cfg!(target_os = "android") && settings.show_debug_stats() {
+            if settings.show_debug_stats() {
                 let fps = fps.load(Ordering::Relaxed) as u32;
                 let per = fps * 100 / 60;
 
@@ -860,24 +859,38 @@ impl GpuRenderer {
 
                 let arm7_emu: &str = settings.arm7_emu().into();
 
-                const OFFSET_X: u32 = 500;
-                const OFFSET_Y: u32 = 450;
-                const WIDTH: u32 = PRESENTER_SCREEN_WIDTH - OFFSET_X;
-                const HEIGHT: u32 = PRESENTER_SCREEN_HEIGHT - OFFSET_Y;
-                gl::Viewport(OFFSET_X as _, OFFSET_Y as _, WIDTH as _, HEIGHT as _);
-
-                self.gl_glyph.draw(
-                    format!(
-                        "{}ms ({}fps) {arm7_emu}\n{per}% ({fps}/60)\n{info_text}",
-                        self.average_render_time / 1000,
-                        if self.average_render_time == 0 { 0 } else { 1000000 / self.average_render_time }
-                    ),
-                    (WIDTH as f32, HEIGHT as f32),
-                    (430.0, 0.0),
-                    40.0,
-                    Layout::default().h_align(HorizontalAlign::Right).v_align(VerticalAlign::Center),
-                    1.0,
+                let text = format!(
+                    "{}ms ({}fps) {arm7_emu}\n{per}% ({fps}/60)\n{info_text}",
+                    self.average_render_time / 1000,
+                    if self.average_render_time == 0 { 0 } else { 1000000 / self.average_render_time }
                 );
+
+                // No GL-drawn OSD on Android — publish the line; the Activity polls it
+                // into a TextView.
+                #[cfg(target_os = "android")]
+                crate::presenter::set_debug_stats(text);
+
+                #[cfg(not(target_os = "android"))]
+                {
+                    const OFFSET_X: u32 = 500;
+                    const OFFSET_Y: u32 = 450;
+                    const WIDTH: u32 = PRESENTER_SCREEN_WIDTH - OFFSET_X;
+                    const HEIGHT: u32 = PRESENTER_SCREEN_HEIGHT - OFFSET_Y;
+                    gl::Viewport(OFFSET_X as _, OFFSET_Y as _, WIDTH as _, HEIGHT as _);
+
+                    self.gl_glyph.draw(
+                        text,
+                        (WIDTH as f32, HEIGHT as f32),
+                        (430.0, 0.0),
+                        40.0,
+                        Layout::default().h_align(HorizontalAlign::Right).v_align(VerticalAlign::Center),
+                        1.0,
+                    );
+                }
+            } else {
+                // Clear the published line so the TextView hides when stats get toggled off.
+                #[cfg(target_os = "android")]
+                crate::presenter::set_debug_stats(String::new());
             }
 
             if unlikely(settings.retroachievements()) {

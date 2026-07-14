@@ -458,30 +458,17 @@ impl Presenter {
     }
 }
 
-// Shared state for the DSVITA_DBG_PORT command port. A background thread mutates it from socket
-// commands; poll_event reads it each frame. Held-button bits are DS input::Keycode positions.
+// State + command parser live in presenter::dbg_cmds, shared with the Android
+// broadcast-receiver bridge.
 #[cfg(debug_assertions)]
-struct DebugState {
-    held_buttons: std::sync::atomic::AtomicU32,
-    touch: std::sync::atomic::AtomicI32,              // (x << 16) | y, or -1 for released
-    pending_framelimit: std::sync::atomic::AtomicI32, // -1 = none, else 0..=9
-    quit: std::sync::atomic::AtomicBool,
-}
+use super::dbg_cmds::{handle_debug_cmd, DebugState};
 
-// Spawn the debug command port on 127.0.0.1:<port>. Newline-delimited text commands:
-//   press/release <btn> | buttons [<btn>...] | touch <x> <y> | touch off |
-//   framelimit <0..9> | savestate | inst-log | quit
-// btn: a b x y up down left right start select l r. inst-log arms --inst-log-lazy capture.
-// Replies "ok" or "err: ...".
+// Spawn the debug command port on 127.0.0.1:<port>; see dbg_cmds.rs for the command
+// grammar. Replies "ok" or "err: ...".
 #[cfg(debug_assertions)]
 fn spawn_debug_port(port: u16) -> std::sync::Arc<DebugState> {
     use std::io::{BufRead, BufReader, Write};
-    let state = std::sync::Arc::new(DebugState {
-        held_buttons: std::sync::atomic::AtomicU32::new(0),
-        touch: std::sync::atomic::AtomicI32::new(-1),
-        pending_framelimit: std::sync::atomic::AtomicI32::new(-1),
-        quit: std::sync::atomic::AtomicBool::new(false),
-    });
+    let state = std::sync::Arc::new(DebugState::new());
     let srv = state.clone();
     thread::Builder::new()
         .name("dbg_port".to_owned())
@@ -510,94 +497,6 @@ fn spawn_debug_port(port: u16) -> std::sync::Arc<DebugState> {
         })
         .unwrap();
     state
-}
-
-#[cfg(debug_assertions)]
-fn handle_debug_cmd(state: &DebugState, line: &str) -> String {
-    let mut it = line.split_whitespace();
-    let cmd = it.next().unwrap_or("");
-    match cmd {
-        "" => "ok".to_owned(),
-        "press" | "release" => {
-            let Some(code) = it.next().and_then(debug_input_key) else {
-                return "err: unknown button".to_owned();
-            };
-            let bit = 1u32 << code as u8;
-            if cmd == "press" {
-                state.held_buttons.fetch_or(bit, Ordering::Relaxed);
-            } else {
-                state.held_buttons.fetch_and(!bit, Ordering::Relaxed);
-            }
-            "ok".to_owned()
-        }
-        "buttons" => {
-            let mut mask = 0u32;
-            for tok in it {
-                match debug_input_key(tok) {
-                    Some(code) => mask |= 1 << code as u8,
-                    None => return format!("err: unknown button '{tok}'"),
-                }
-            }
-            state.held_buttons.store(mask, Ordering::Relaxed);
-            "ok".to_owned()
-        }
-        "touch" => {
-            match it.next() {
-                Some("off") | None => state.touch.store(-1, Ordering::Relaxed),
-                Some(x) => {
-                    let (Ok(x), Some(Ok(y))) = (x.parse::<i32>(), it.next().map(str::parse::<i32>)) else {
-                        return "err: touch <x> <y> | touch off".to_owned();
-                    };
-                    if !(0..256).contains(&x) || !(0..192).contains(&y) {
-                        return "err: touch out of range (x 0..256, y 0..192)".to_owned();
-                    }
-                    state.touch.store((x << 16) | y, Ordering::Relaxed);
-                }
-            }
-            "ok".to_owned()
-        }
-        "framelimit" => match it.next().and_then(|s| s.parse::<i32>().ok()) {
-            Some(n @ 0..=9) => {
-                state.pending_framelimit.store(n, Ordering::Relaxed);
-                "ok".to_owned()
-            }
-            _ => "err: framelimit <0..9>".to_owned(),
-        },
-        "savestate" => {
-            crate::savestate::request_save();
-            "ok".to_owned()
-        }
-        "inst-log" => {
-            crate::debug_inst_log::arm_lazy();
-            "ok".to_owned()
-        }
-        "quit" => {
-            state.quit.store(true, Ordering::Relaxed);
-            "ok".to_owned()
-        }
-        other => format!("err: unknown cmd '{other}'"),
-    }
-}
-
-// Debug-only DS button names → input::Keycode, for the debug command port.
-#[cfg(debug_assertions)]
-fn debug_input_key(name: &str) -> Option<input::Keycode> {
-    use input::Keycode::*;
-    Some(match name {
-        "a" => A,
-        "b" => B,
-        "x" => X,
-        "y" => Y,
-        "up" => Up,
-        "down" => Down,
-        "left" => Left,
-        "right" => Right,
-        "start" => Start,
-        "select" => Select,
-        "l" => TriggerL,
-        "r" => TriggerR,
-        _ => return None,
-    })
 }
 
 impl UiBackend for Presenter {
