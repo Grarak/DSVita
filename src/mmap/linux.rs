@@ -256,12 +256,61 @@ pub unsafe fn set_protection(start: *mut u8, size: usize, read: bool, write: boo
     mprotect(start as _, size as _, prot);
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 extern "C" {
     fn built_in_clear_cache(start: *const u8, end: *const u8);
 }
 
+#[cfg(not(target_arch = "aarch64"))]
 pub unsafe fn flush_icache(start: *const u8, size: usize) {
     built_in_clear_cache(start, start.add(size));
+}
+
+// Taken from Dolphin (https://github.com/dolphin-emu/dolphin, Arm64_CacheFlush) via
+// Flycast (core/linux/posix_vmem.cpp). GCC/compiler-rt's __builtin___clear_cache is not
+// reliable on aarch64: it caches the icache/dcache line sizes, which can differ between
+// cores on a big.LITTLE SoC. A JIT thread that migrates cores mid-flush then strides past
+// whole lines and leaves stale instructions in the i-cache — the JIT executes the old
+// code. Read CTR_EL0 ourselves and keep the global-minimum line size so the stride is
+// always fine enough for every core.
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn flush_icache(start: *const u8, size: usize) {
+    use core::arch::asm;
+
+    static mut ICACHE_LINE_SIZE: usize = 0xffff;
+    static mut DCACHE_LINE_SIZE: usize = 0xffff;
+
+    let start_addr = start as usize;
+    let end = start_addr + size;
+
+    let ctr_el0: u64;
+    asm!("mrs {}, ctr_el0", out(reg) ctr_el0, options(nomem, nostack, preserves_flags));
+    let mut isize = 4usize << (ctr_el0 & 0xf);
+    let mut dsize = 4usize << ((ctr_el0 >> 16) & 0xf);
+
+    // Use the global minimum cache line size (see the migration hazard above). min() takes
+    // its arg by value, so the static is read by copy — no reference to a mutable static.
+    isize = isize.min(ICACHE_LINE_SIZE);
+    ICACHE_LINE_SIZE = isize;
+    dsize = dsize.min(DCACHE_LINE_SIZE);
+    DCACHE_LINE_SIZE = dsize;
+
+    let mut addr = start_addr & !(dsize - 1);
+    while addr < end {
+        // Use "civac" instead of "cvau", the suggested workaround for Cortex-A53 errata
+        // 819472, 826319, 827319 and 824069.
+        asm!("dc civac, {}", in(reg) addr, options(nostack, preserves_flags));
+        addr += dsize;
+    }
+    asm!("dsb ish", options(nostack, preserves_flags));
+
+    let mut addr = start_addr & !(isize - 1);
+    while addr < end {
+        asm!("ic ivau, {}", in(reg) addr, options(nostack, preserves_flags));
+        addr += isize;
+    }
+    asm!("dsb ish", options(nostack, preserves_flags));
+    asm!("isb", options(nostack, preserves_flags));
 }
 
 impl Drop for VirtualMem {
