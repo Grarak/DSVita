@@ -1,6 +1,7 @@
 package com.grarak.dsvita
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
@@ -117,6 +118,34 @@ class DSVitaActivity : AppCompatActivity(), SurfaceHolder.Callback {
             nativeInit(getExternalFilesDir(null)!!.absolutePath)
         }
         refreshRomList()
+
+        // Direct-launch intent (adb / file manager): skip the browser and boot the rom.
+        romFromIntent(intent)?.let { launchRom(it) }
+    }
+
+    // A launcher intent may target a specific rom two ways:
+    //   am start -n com.grarak.dsvita/.DSVitaActivity --es rom <abs-path-or-filename>
+    //   am start -a android.intent.action.VIEW -d file://<abs-path>   (.nds VIEW filter)
+    // A bare "rom" name resolves against the app's external files dir.
+    private fun romFromIntent(intent: Intent?): File? {
+        if (intent == null) return null
+        intent.getStringExtra("rom")?.let { arg ->
+            val f = if (arg.startsWith("/")) File(arg) else File(getExternalFilesDir(null), arg)
+            if (f.isFile) return f
+        }
+        intent.data?.path?.let { path ->
+            val f = File(path)
+            if (f.isFile) return f
+        }
+        return null
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // launchRom() itself no-ops while a game is already running; a clean re-launch
+        // wants `adb shell am force-stop com.grarak.dsvita` first.
+        if (!inGame) romFromIntent(intent)?.let { launchRom(it) }
     }
 
     private fun matchParent() = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
