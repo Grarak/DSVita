@@ -115,13 +115,19 @@ class DSVitaActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         if (!initialized) {
             initialized = true
-            nativeInit(getExternalFilesDir(null)!!.absolutePath)
+            nativeInit(storageDir().absolutePath)
         }
         refreshRomList()
 
         // Direct-launch intent (adb / file manager): skip the browser and boot the rom.
         romFromIntent(intent)?.let { launchRom(it) }
     }
+
+    // External storage can be unavailable — an unmounted emulated volume on some
+    // Waydroid/emulator setups makes getExternalFilesDir return null. Fall back to the
+    // always-present internal files dir so the app still runs; roms load fine via an
+    // absolute-path launch intent regardless of where the browser scans.
+    private fun storageDir(): File = getExternalFilesDir(null) ?: filesDir
 
     // A launcher intent may target a specific rom two ways:
     //   am start -n com.grarak.dsvita/.DSVitaActivity --es rom <abs-path-or-filename>
@@ -130,7 +136,7 @@ class DSVitaActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private fun romFromIntent(intent: Intent?): File? {
         if (intent == null) return null
         intent.getStringExtra("rom")?.let { arg ->
-            val f = if (arg.startsWith("/")) File(arg) else File(getExternalFilesDir(null), arg)
+            val f = if (arg.startsWith("/")) File(arg) else File(storageDir(), arg)
             if (f.isFile) return f
         }
         intent.data?.path?.let { path ->
@@ -199,10 +205,10 @@ class DSVitaActivity : AppCompatActivity(), SurfaceHolder.Callback {
     @SuppressLint("NotifyDataSetChanged")
     private fun refreshRomList() {
         roms.clear()
-        getExternalFilesDir(null)?.listFiles { _, name -> name.lowercase().endsWith(".nds") }?.let {
+        storageDir().listFiles { _, name -> name.lowercase().endsWith(".nds") }?.let {
             roms.addAll(it.sorted())
         }
-        romAdapter.submit(roms, getExternalFilesDir(null)?.absolutePath ?: "")
+        romAdapter.submit(roms, storageDir().absolutePath)
     }
 
     private fun launchRom(rom: File) {
