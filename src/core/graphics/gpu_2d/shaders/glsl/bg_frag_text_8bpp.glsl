@@ -56,8 +56,8 @@ vec4 drawText(int x, int y) {
     }
 }
 
-void main() {
-    int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
+bool bgMain() {
+    int winEnabled = int(texture(winTex, screenPosF).x);
     if ((winEnabled & (1 << bgNum)) == 0) {
         discard;
     }
@@ -67,4 +67,5 @@ void main() {
 
     color = drawText(x, y);
     setPrio();
+    return true;
 }

@@ -1,17 +1,24 @@
-precision highp int;
 precision highp float;
+precision highp int;
 
-layout(location = 0) out vec4 color;
+#ifdef BLEND_3D
+layout(location = 0) out uvec4 fragOutColor;
+#else
+layout(location = 0) out vec4 fragOutColor;
+#endif
+
+out vec4 color;
 
 in vec2 screenPos;
 
-uniform sampler2D bg0Tex;
-uniform sampler2D bg1Tex;
-uniform sampler2D bg2Tex;
-uniform sampler2D bg3Tex;
+uniform highp usampler2D bg0Tex;
+uniform highp usampler2D bg1Tex;
+uniform highp usampler2D bg2Tex;
+uniform highp usampler2D bg3Tex;
 uniform sampler2D objTex;
 uniform sampler2D objDepthTex;
-uniform sampler2D winTex;
+// Integer window mask, sampled as raw enable bytes — see bg_frag_common.glsl
+uniform highp usampler2D winTex;
 // Per-scanline blend + master-bright registers as a 192x2 RGBA8 texture (x = scanline,
 // row 0 = bldCntAlphaY, row 1 = masterBright — the Vita can't sample a 2-wide texture
 // and a uniform block for these doesn't fit)
@@ -36,14 +43,14 @@ void sortObjPrio() {
     }
 }
 
-void sortBgPrio(int num, sampler2D bgTex) {
-    vec4 texColor = texture(bgTex, screenPos);
-    int data = int(texColor.a * 255.0);
-    if (data == 255) { // frag was discarded
+void sortBgPrio(int num, highp usampler2D bgTex) {
+    uvec4 texColor = texture(bgTex, screenPos);
+    uint data = texColor.a;
+    if (data == 255u) { // frag was discarded
         return;
     }
 
-    int prio = data & 0x3;
+    int prio = int(data) & 0x3;
     if (prio < topPrio) {
         bottomNum = topNum;
         bottomPrio = topPrio;
@@ -51,9 +58,9 @@ void sortBgPrio(int num, sampler2D bgTex) {
 
         topNum = num;
         topPrio = prio;
-        topColor = texColor;
+        topColor.rgb = vec3(texColor) / 255.0;
 #ifdef BLEND_3D
-        int alpha3D = (data >> 2) & 0x3F;
+        int alpha3D = (int(data) >> 2) & 0x3F;
         top3D = num == 0 && alpha3D != 0;
         if (top3D) {
             topColor.a = float(alpha3D) / 31.0;
@@ -62,7 +69,7 @@ void sortBgPrio(int num, sampler2D bgTex) {
     } else if (prio < bottomPrio) {
         bottomNum = num;
         bottomPrio = prio;
-        bottomColor = texColor;
+        bottomColor.rgb = vec3(texColor) / 255.0;
     }
 }
 
@@ -73,8 +80,8 @@ vec4 alphaBlend(int eva, int evb) {
     return blendedColor;
 }
 
-void main() {
-    int winEnabled = int(texture(winTex, screenPos).x * 255.0);
+void blend() {
+    int winEnabled = int(texture(winTex, screenPos).x);
 
     sortObjPrio();
     sortBgPrio(0, bg0Tex);
@@ -175,5 +182,14 @@ void main() {
             color.rgb -= color.rgb * mbF;
         }
     }
+#endif
+}
+
+void main() {
+    blend();
+#ifdef BLEND_3D
+    fragOutColor = uvec4(color * 255.0);
+#else
+    fragOutColor = color;
 #endif
 }

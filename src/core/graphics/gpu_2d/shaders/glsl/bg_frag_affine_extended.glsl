@@ -49,8 +49,8 @@ vec4 drawAffine(int x, int y) {
     }
 }
 
-void main() {
-    int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
+bool bgMain() {
+    int winEnabled = int(texture(winTex, screenPosF).x);
     if ((winEnabled & (1 << bgNum)) == 0) {
         discard;
     }
@@ -60,4 +60,5 @@ void main() {
 
     color = drawAffine(x, y);
     setPrio();
+    return true;
 }

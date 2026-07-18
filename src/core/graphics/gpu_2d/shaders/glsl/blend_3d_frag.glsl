@@ -8,30 +8,31 @@ layout(location = 0) out vec4 color;
 in vec2 texCoordsBlend;
 in vec2 texCoords3d;
 
-uniform sampler2D texBlend;
+uniform highp usampler2D texBlend;
 uniform sampler2D tex3d;
 uniform sampler2D blendTex;
 
 void main() {
-    vec4 colorBlend = texture(texBlend, texCoordsBlend);
+    uvec4 colorBlend = texture(texBlend, texCoordsBlend);
     vec4 color3d = texture(tex3d, texCoords3d);
+    vec4 colorBlendF = vec4(colorBlend) / 255.0;
 
-    int mode = int(colorBlend.a * 255.0);
+    int mode = int(colorBlend.a);
     switch (mode) {
         case 1: {
             float eva = color3d.a;
             float evb = 1.0 - eva;
-            color = vec4(color3d.rgb * eva + colorBlend.rgb * evb, 1.0);
+            color = vec4(color3d.rgb * eva + colorBlendF.rgb * evb, 1.0);
             break;
         }
         case 2: {
-            float bldYF = colorBlend.r;
+            float bldYF = colorBlendF.r;
             vec3 increaseColor = (1.0 - color3d.rgb) * bldYF;
             color = vec4((color3d.rgb + increaseColor), 1.0);
             break;
         }
         case 3: {
-            float bldYF = colorBlend.r;
+            float bldYF = colorBlendF.r;
             vec3 decreaseColor = color3d.rgb * bldYF;
             color = vec4((color3d.rgb - decreaseColor), 1.0);
             break;
@@ -41,7 +42,7 @@ void main() {
             break;
         }
         default: {
-            color = colorBlend;
+            color = colorBlendF;
             break;
         }
     }

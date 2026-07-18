@@ -206,14 +206,18 @@ pub unsafe fn sub_pal_texture2d(width: u32, height: u32, data: *const u8) {
     }
 }
 
-pub unsafe fn create_fb_color(width: u32, height: u32) -> GLuint {
+pub unsafe fn create_fb_color(width: u32, height: u32, integer: bool) -> GLuint {
     let mut tex = 0;
     gl::GenTextures(1, &mut tex);
     gl::BindTexture(gl::TEXTURE_2D, tex);
-    // Sized internalformat: unsized GL_RGBA is not a color-renderable format on
-    // strict GLES3 drivers (Adreno rejects the FBO attachment), only lenient ones
-    // (llvmpipe/v3d/virgl) accepted it.
-    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8 as _, width as _, height as _, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
+    if integer {
+        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8UI as _, width as _, height as _, 0, gl::RGBA_INTEGER, gl::UNSIGNED_BYTE, ptr::null());
+    } else {
+        // Sized internalformat: unsized GL_RGBA is not a color-renderable format on
+        // strict GLES3 drivers (Adreno rejects the FBO attachment), only lenient ones
+        // (llvmpipe/v3d/virgl) accepted it.
+        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8 as _, width as _, height as _, 0, gl::RGBA, gl::UNSIGNED_BYTE, ptr::null());
+    }
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as _);
     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
@@ -261,10 +265,11 @@ pub struct GpuFbo {
     pub fbo: GLuint,
     pub width: u32,
     pub height: u32,
+    integer: bool,
 }
 
 impl GpuFbo {
-    pub fn from_tex(width: u32, height: u32, depth: bool, stencil: bool, tex: GLuint) -> Result<Self, StrErr> {
+    fn from_tex_internal(width: u32, height: u32, depth: bool, stencil: bool, tex: GLuint, integer: bool) -> Result<Self, StrErr> {
         unsafe {
             debug_assert!(depth || !stencil);
 
@@ -287,13 +292,26 @@ impl GpuFbo {
                     fbo,
                     width,
                     height,
+                    integer,
                 })
             }
         }
     }
 
+    pub fn from_tex(width: u32, height: u32, depth: bool, stencil: bool, tex: GLuint) -> Result<Self, StrErr> {
+        Self::from_tex_internal(width, height, depth, stencil, tex, false)
+    }
+
     pub fn new(width: u32, height: u32, depth: bool, stencil: bool) -> Result<Self, StrErr> {
-        unsafe { Self::from_tex(width, height, depth, stencil, create_fb_color(width, height)) }
+        unsafe { Self::from_tex_internal(width, height, depth, stencil, create_fb_color(width, height, false), false) }
+    }
+
+    pub fn new_integer(width: u32, height: u32, depth: bool, stencil: bool) -> Result<Self, StrErr> {
+        unsafe { Self::from_tex_internal(width, height, depth, stencil, create_fb_color(width, height, !cfg!(target_os = "vita")), !cfg!(target_os = "vita")) }
+    }
+
+    pub fn is_integer(&self) -> bool {
+        !cfg!(target_os = "vita") && self.integer
     }
 }
 

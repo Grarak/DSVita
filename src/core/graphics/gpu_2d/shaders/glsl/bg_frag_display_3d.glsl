@@ -1,8 +1,8 @@
 in vec2 screenPosWidescreen;
 
-void main() {
+bool bgMain() {
     color = texture(display3dTex, screenPosWidescreen);
-    int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
+    int winEnabled = int(texture(winTex, screenPosF).x);
     if ((winEnabled & 1) == 0) {
         discard;
     }
@@ -14,6 +14,7 @@ void main() {
     int bgCnt = getBgCnt();
     int priority = bgCnt & 3;
     int alpha = int(color.a * 31.0);
-    int data = priority | (alpha << 2);
-    color.a = float(data) / 255.0;
+    uint data = uint(priority) | uint(alpha << 2);
+    fragOutColor.a = data;
+    return false;
 }

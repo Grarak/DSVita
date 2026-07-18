@@ -3,7 +3,8 @@
 precision highp float;
 precision highp int;
 
-layout(location = 0) out vec4 color;
+layout(location = 0) out uvec4 fragOutColor;
+vec4 color;
 in vec2 screenPos;
 in vec2 screenPosF;
 in vec2 affineDims;
@@ -42,7 +43,9 @@ int getBgCnt() {
 uniform highp usampler2D bgTex;
 uniform highp usampler2D palTex;
 uniform highp usampler2D extPalTex;
-uniform sampler2D winTex;
+// Integer window mask: texture() on a usampler returns the raw enable byte, no *255
+// requantization. win_bg_fbo is rgba8ui on GLES hosts (float on the Vita).
+uniform highp usampler2D winTex;
 uniform sampler2D display3dTex;
 
 int readBg8(int addr) {
@@ -86,4 +89,13 @@ void setPrio() {
     int bgCnt = getBgCnt();
     int priority = bgCnt & 3;
     color.a = float(priority) / 255.0;
+}
+
+bool bgMain();
+
+void main() {
+    if (bgMain()) {
+        float maxUint = 255.0;
+        fragOutColor = uvec4(color * maxUint);
+    }
 }

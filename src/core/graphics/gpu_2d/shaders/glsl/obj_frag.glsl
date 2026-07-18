@@ -23,7 +23,8 @@ uniform highp usampler2D oamTex;
 uniform highp usampler2D objTex;
 uniform highp usampler2D palTex;
 uniform highp usampler2D extPalTex;
-uniform sampler2D winTex;
+// Integer window mask, sampled as raw enable bytes — see bg_frag_common.glsl
+uniform highp usampler2D winTex;
 
 int readOam16Aligned(int addr) {
     uvec4 value = texelFetch(oamTex, ivec2(addr >> 2, 0), 0);
@@ -171,7 +172,7 @@ vec4 drawSprite(int objX, int objY, int attrib2, int width) {
 void main() {
     int attrib0 = readAttrib0();
     int attrib2 = readAttrib2();
-    int winEnabled = int(texture(winTex, screenPosF).x * 255.0);
+    int winEnabled = int(texture(winTex, screenPosF).x);
 
 #ifdef BITMAP
     bool checkWindow = true;

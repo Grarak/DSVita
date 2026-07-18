@@ -11,7 +11,7 @@ use crate::core::graphics::gpu_mem_buf::GpuMemRefs;
 use crate::core::graphics::gpu_shaders::{Gpu2DObjShaderProgram, GpuShadersPrograms};
 use crate::core::memory::oam::{OamAttrib0, OamAttrib1, OamAttrib2, OamAttribs, OamGfxMode, OamObjMode};
 use crate::core::memory::{regions, vram};
-use crate::utils::{self, array_init, HeapArrayU8};
+use crate::utils::{self, array_init, rgb5_to_rgb8, HeapArrayU8};
 use crate::utils::{rgb5_to_float8, PtrWrapper};
 use gl::types::{GLint, GLuint};
 use std::hint::unreachable_unchecked;
@@ -165,7 +165,11 @@ impl Gpu2DCommon {
                 gl::BindBuffer(gl::UNIFORM_BUFFER, 0);
                 gl::UseProgram(0);
 
-                let fbo = GpuFbo::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32, false, false).unwrap();
+                // Integer color attachment (rgba8ui): the window enable byte is sampled by
+                // the bg/obj/blend shaders as raw uints, dodging the normalized-float
+                // requantization that miscounts bits on strict GLES drivers. new_integer
+                // falls back to float on the Vita, whose cg shaders keep float sampling.
+                let fbo = GpuFbo::new_integer(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32, false, false).unwrap();
 
                 (disp_cnt_loc, ubo, fbo)
             };
@@ -219,7 +223,7 @@ impl Gpu2DCommon {
                 win_bg_fbo,
                 win_obj_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap(),
                 obj_fbo: GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, true, false).unwrap(),
-                bg_fbos: array_init!({ GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap() }; 4),
+                bg_fbos: array_init!({ GpuFbo::new_integer(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap() }; 4),
                 blend_programs,
                 blend_3d_program: gpu_programs.blend_3d,
                 blend_3d_widescreen_invert_coefficient_loc,
@@ -692,9 +696,14 @@ impl Gpu2DProgram {
         gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
 
         let backdrop = utils::read_from_mem::<u16>(mem.pal, 0);
-        let [r, g, b] = rgb5_to_float8(backdrop);
-        gl::ClearColor(r, g, b, 1.0);
-        gl::Clear(gl::COLOR_BUFFER_BIT);
+        if blend_fbo.is_integer() {
+            let [r, g, b, _] = rgb5_to_rgb8(backdrop).to_le_bytes();
+            gl::ClearBufferuiv(gl::COLOR, 0, [r as u32, g as u32, b as u32, u8::MAX as u32].as_ptr());
+        } else {
+            let [r, g, b] = rgb5_to_float8(backdrop);
+            gl::ClearColor(r, g, b, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
 
         gl::UseProgram(blend_program);
 
@@ -846,8 +855,14 @@ impl Gpu2DProgram {
         {
             gl::BindFramebuffer(gl::FRAMEBUFFER, common.win_bg_fbo.fbo);
             gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
-            gl::ClearColor(1f32, 0f32, 0f32, 0f32);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
+            // Default all layers enabled: scanlines with no window drawn keep this and show
+            // everything (draw_windows early-returns when no window is enabled)
+            if common.win_bg_fbo.is_integer() {
+                gl::ClearBufferuiv(gl::COLOR, 0, [u8::MAX as u32, 0, 0, 0].as_ptr());
+            } else {
+                gl::ClearColor(1f32, 0f32, 0f32, 0f32);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+            }
 
             gl::UseProgram(common.win_bg_program);
 
@@ -920,8 +935,12 @@ impl Gpu2DProgram {
             for i in 0..4 {
                 gl::BindFramebuffer(gl::FRAMEBUFFER, common.bg_fbos[i].fbo);
                 gl::Viewport(0, 0, DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _);
-                gl::ClearColor(0f32, 0f32, 0f32, 1f32);
-                gl::Clear(gl::COLOR_BUFFER_BIT);
+                if common.bg_fbos[i].is_integer() {
+                    gl::ClearBufferuiv(gl::COLOR, 0, [0, 0, 0, u8::MAX as u32].as_ptr());
+                } else {
+                    gl::ClearColor(0f32, 0f32, 0f32, 1f32);
+                    gl::Clear(gl::COLOR_BUFFER_BIT);
+                }
             }
 
             gl::BindBuffer(gl::UNIFORM_BUFFER, self.bg_ubo);
@@ -1052,7 +1071,7 @@ impl Gpu2DRenderer {
                 common: Gpu2DCommon::new(gpu_programs),
                 program: Gpu2DProgram::new(gpu_programs),
                 blend_fbos: [
-                    GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap(),
+                    GpuFbo::new_integer(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap(),
                     GpuFbo::new(DISPLAY_WIDTH as _, DISPLAY_HEIGHT as _, false, false).unwrap(),
                 ],
                 #[cfg(not(target_os = "vita"))]

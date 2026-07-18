@@ -3,7 +3,7 @@
 precision highp float;
 precision highp int;
 
-layout(location = 0) out vec4 color;
+layout(location = 0) out uvec4 fragOutColor;
 
 in vec2 screenPos;
 in vec2 screenPosF;
@@ -56,22 +56,24 @@ bool checkBounds(int x, int y, int winNum) {
 
     int winIn = winInOut[(y) >> 2][(y) & 3] & 0xFFFF;
     int enabled = (winIn >> (winNum * 8)) & 0xFF;
-    color = vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+    fragOutColor = uvec4(uint(enabled), 0u, 0u, 0u);
     return true;
 }
 
 void main() {
     int x = int(screenPos.x);
     int y = int(screenPos.y);
-    int objWin = int(texture(objWinTex, screenPosF).x * 255.0);
+    // objWinTex is a float fbo (obj shader writes both this and the float obj fbo), so
+    // round the byte back out of the unorm8 sample instead of truncating on the razor
+    int objWin = int(texture(objWinTex, screenPosF).x * 255.0 + 0.5);
 
     if (!checkBounds(x, y, 0) && !checkBounds(x, y, 1)) {
         if (((objWin >> 7) & 1) != 0) {
             objWin &= 0x7F;
-            color = vec4(float(objWin) / 255.0, 0.0, 0.0, 0.0);
+            fragOutColor = uvec4(uint(objWin), 0u, 0u, 0u);
         } else {
             int enabled = (winInOut[(y) >> 2][(y) & 3] >> 16) & 0xFF;
-            color = vec4(float(enabled) / 255.0, 0.0, 0.0, 0.0);
+            fragOutColor = uvec4(uint(enabled), 0u, 0u, 0u);
         }
     }
 }
