@@ -47,6 +47,9 @@ android {
     packaging {
         jniLibs.keepDebugSymbols += "**/libdsvita.so"
     }
+    lint {
+        disable.add("Instantiatable")
+    }
 }
 
 dependencies {
