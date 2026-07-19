@@ -36,6 +36,7 @@ rcheevos = { path = "rcheevos" }
 
 [patch.crates-io]
 simd-adler32 = { git = 'https://github.com/Grarak/simd-adler32.git' }
+openssl-sys = { git = 'https://github.com/Grarak/rust-openssl.git' }
 
 [target.thumbv7neon-unknown-linux-gnueabihf.dependencies]
 clap = { version = "4.5.17", features = ["cargo"] }
