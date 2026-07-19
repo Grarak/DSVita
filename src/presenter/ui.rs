@@ -2208,6 +2208,7 @@ pub fn show_progress(ui_backend: &mut impl UiBackend, current_name: impl AsRef<s
             dialog_title(c"Loading");
             centered_text(c"If you are stuck here, make sure you have");
             centered_text(c"kubridge version 0.3.1 installed!");
+            centered_text(c"If you experience a crash here, remove shader cache in ux0:/data/shader_cache");
             ImGui::Spacing();
             let text = CString::from_str(current_name.as_ref()).unwrap();
             centered_text(&text);
