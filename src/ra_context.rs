@@ -133,7 +133,7 @@ impl RaContext {
             error_message: if error_message.is_null() {
                 None
             } else {
-                Some(CStr::from_ptr(error_message).to_str().unwrap().to_string())
+                Some(CStr::from_ptr(error_message).to_str().unwrap_or("").to_string())
             },
         });
     }
@@ -146,7 +146,7 @@ impl RaContext {
                 description: if error_message.is_null() {
                     "".to_string()
                 } else {
-                    CStr::from_ptr(error_message).to_str().unwrap().to_string()
+                    CStr::from_ptr(error_message).to_str().unwrap_or("").to_string()
                 },
                 badge_name: "".to_string(),
                 badge_url: "".to_string(),
