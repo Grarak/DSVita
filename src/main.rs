@@ -52,6 +52,10 @@ mod bitset;
 mod cartridge_io;
 mod cartridge_metadata;
 mod core;
+#[cfg(debug_assertions)]
+mod debug_inst_log;
+#[cfg(not(debug_assertions))]
+#[path = "release_inst_log.rs"]
 mod debug_inst_log;
 mod fast_fixed_fifo;
 mod fixed_fifo;
@@ -64,6 +68,7 @@ mod math;
 mod mmap;
 mod presenter;
 mod ra_context;
+mod release_inst_log;
 mod screen_layouts;
 mod screen_overlays;
 mod settings;
