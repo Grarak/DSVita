@@ -19,7 +19,6 @@ use std::arch::aarch64::{
 use std::arch::arm::{
     int32x4_t, vcombine_s32, vget_high_s32, vget_low_s32, vld1_s32, vld1q_s32, vld1q_s32_x3, vld1q_s32_x4, vnegq_s32, vsetq_lane_s32, vshrq_n_s32, vst1q_s32, vst1q_s32_x4, vsub_s32,
 };
-use std::arch::{asm, naked_asm};
 use std::cmp::max;
 use std::hint::assert_unchecked;
 use std::intrinsics::unlikely;
@@ -711,10 +710,7 @@ impl Emu {
 
         let is_cmd_fifo_half_full = regs_3d.is_cmd_fifo_half_full();
 
-        let mut cycle_diff = total_cycles - regs_3d.last_total_cycles;
-        if cycle_diff != 0 {
-            cycle_diff -= 1;
-        }
+        let mut cycle_diff = (total_cycles - regs_3d.last_total_cycles).saturating_sub(1);
         let mut cycle_diff = utils::align_up(cycle_diff as usize, 4);
         regs_3d.last_total_cycles = total_cycles;
 
@@ -775,7 +771,7 @@ impl Emu {
 
         #[cfg(target_arch = "arm")]
         unsafe {
-            asm!(
+            std::arch::asm!(
                 ".p2align 5",
                 "1:",
                 "ldr r8, [r4], #4", // value = fifo[consumed]
@@ -1632,7 +1628,7 @@ impl Gpu3DRegisters {
     #[unsafe(naked)]
     #[cfg(target_arch = "arm")]
     fn exe_swap_buffers(&mut self, _: &[u32; 32]) {
-        naked_asm!("add lr, #0xC", "b {}", sym Self::exe_swap_buffers_impl);
+        std::arch::naked_asm!("add lr, #0xC", "b {}", sym Self::exe_swap_buffers_impl);
     }
 
     // Non-arm hosts have no lr-hijack: the dispatch loop checks for cmd 0x50 instead.

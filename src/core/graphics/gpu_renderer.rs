@@ -28,9 +28,9 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
 use std::thread::Thread;
 use std::time::{Duration, Instant};
-use std::{ptr, thread};
 
 pub struct GpuRendererCommon {
     pub mem_buf: GpuMemBuf,
@@ -1065,7 +1065,7 @@ impl GpuRenderer {
         };
 
         unsafe { crate::presenter::udcd_uvc_dsvita_sendCustomFrame(ptr as _) };
-        self.stream.mutex.lock().unwrap().ptrs[index] = ptr::null();
+        self.stream.mutex.lock().unwrap().ptrs[index] = std::ptr::null();
     }
 
     #[inline(never)]

@@ -19,7 +19,7 @@ use crate::settings::{SettingGroup, SettingValue, Settings, SettingsConfig};
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::{fs, mem, ptr};
+use std::{fs, mem, path, ptr};
 use strum::IntoEnumIterator;
 
 pub trait UiBackend {
@@ -1960,7 +1960,7 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
     let mut pressed_cheats = false;
     // Snapshot of the shared cheat list for rendering; the `##i` suffix keeps imgui
     // ids unique when cheat names repeat
-    let mut cheat_entries: Vec<(CString, bool)> = Vec::new();
+    let mut cheat_entries: Vec<(CString, bool, bool)> = Vec::new();
     let mut pressed_quit = false;
     let mut pressed_exit = false;
     let mut return_value = None;
@@ -2016,7 +2016,7 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                     cheat_entries = crate::cheats::names_and_states()
                         .into_iter()
                         .enumerate()
-                        .map(|(i, (name, enabled))| (CString::new(format!("{name}##cheat{i}")).unwrap(), enabled))
+                        .map(|(i, (name, has_code, enabled))| (CString::new(if has_code { format!("{name}##cheat{i}") } else { name }).unwrap(), has_code, enabled))
                         .collect();
                     ImGui::CloseCurrentPopup();
                 }
@@ -2139,20 +2139,25 @@ pub fn show_pause_menu(ui_backend: &mut impl UiBackend, gpu_renderer: &GpuRender
                             ImGui::Spacing();
                             centered_text(c"No cheats found");
                             ImGui::Spacing();
-                            let hint = CString::new(format!("Place cheats in {}", crate::cheats::cheats_path(rom_path).display())).unwrap_or_default();
+                            let hint = CString::new(format!("Place cheats in {}", path::absolute(crate::cheats::cheats_path(rom_path)).unwrap().display())).unwrap_or_default();
                             centered_text(&hint);
+                            centered_text(c"Download them from https://github.com/libretro/libretro-database");
                         } else {
                             let child_sz = ImVec2 { x: 0.0, y: 0.0 };
                             if ImGui::BeginChild(c"##cheat_scroll".as_ptr() as _, &child_sz, false, 0) {
-                                for (i, (label, enabled)) in cheat_entries.iter_mut().enumerate() {
+                                for (i, (label, has_code, enabled)) in cheat_entries.iter_mut().enumerate() {
                                     // Toggles hit the shared list immediately and persist
                                     // to the .cht file; the cpu thread is parked while the
                                     // menu is open, so cheats take effect on resume
-                                    if ImGui::Checkbox(label.as_ptr(), enabled) {
-                                        crate::cheats::set_enabled(i, *enabled);
-                                        if let Err(err) = crate::cheats::save(rom_path) {
-                                            eprintln!("Failed to save cheats: {err}");
+                                    if *has_code {
+                                        if ImGui::Checkbox(label.as_ptr(), enabled) {
+                                            crate::cheats::set_enabled(i, *enabled);
+                                            if let Err(err) = crate::cheats::save(rom_path) {
+                                                eprintln!("Failed to save cheats: {err}");
+                                            }
                                         }
+                                    } else {
+                                        ImGui::Text(label.as_ptr());
                                     }
                                 }
                             }

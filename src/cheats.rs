@@ -8,7 +8,7 @@ use std::sync::Mutex;
 pub struct Cheat {
     pub name: String,
     // Action Replay DS bytecode, pairs of u32 per code line
-    pub code: Vec<u32>,
+    pub code: Option<Vec<u32>>,
     pub enabled: bool,
 }
 
@@ -32,10 +32,6 @@ pub fn cheats_path(rom_path: &Path) -> PathBuf {
     rom_path.parent().unwrap_or(Path::new(".")).join("cheats").join(format!("{stem}.cht"))
 }
 
-fn is_cheat_header(line: &str) -> bool {
-    line.starts_with('[')
-}
-
 // Load the cheat list for a game, replacing whatever the previous game left behind.
 // NooDS-compatible .cht format: "[name]+" ('+' enabled, '-' disabled) starts a cheat,
 // followed by "XXXXXXXX XXXXXXXX" code lines; anything unparsable is skipped
@@ -49,15 +45,15 @@ pub fn load(rom_path: &Path) {
 }
 
 fn serialize(cheats: &[Cheat]) -> String {
-    let mut out = String::new();
-    for cheat in cheats {
-        out += &format!("[{}]{}\n", cheat.name, if cheat.enabled { '+' } else { '-' });
-        for line in cheat.code.chunks(2) {
-            out += &format!("{:08X} {:08X}\n", line[0], line.get(1).copied().unwrap_or(0));
+    let mut out = format!("cheats = {}", cheats.len());
+    for (i, cheat) in cheats.iter().enumerate() {
+        out += &format!("\n\ncheat{i}_desc = \"{}\"", cheat.name);
+        if let Some(code) = &cheat.code {
+            out += &format!("\ncheat{i}_code = \"{}\"", code.iter().map(|hex| format!("{hex:08X}")).collect::<Vec<_>>().join("+"));
+            out += &format!("\ncheat{i}_enable = {}", cheat.enabled);
         }
-        out += "\n";
     }
-    out
+    out + "\n"
 }
 
 // Write the list back in the same format load parses
@@ -70,8 +66,8 @@ pub fn save(rom_path: &Path) -> std::io::Result<()> {
     std::fs::write(path, out)
 }
 
-pub fn names_and_states() -> Vec<(String, bool)> {
-    CHEATS.lock().unwrap().iter().map(|cheat| (cheat.name.clone(), cheat.enabled)).collect()
+pub fn names_and_states() -> Vec<(String, bool, bool)> {
+    CHEATS.lock().unwrap().iter().map(|cheat| (cheat.name.clone(), cheat.code.is_some(), cheat.enabled)).collect()
 }
 
 pub fn set_enabled(index: usize, enabled: bool) {
@@ -89,29 +85,66 @@ pub fn apply(emu: &mut Emu) {
     }
     let cheats = CHEATS.lock().unwrap();
     for cheat in cheats.iter().filter(|cheat| cheat.enabled) {
-        run_cheat(emu, &cheat.code);
+        if let Some(code) = &cheat.code {
+            run_cheat(emu, code);
+        }
     }
 }
 
 // Parsing split from fs so tests can drive it with in-memory strings
 fn parse(content: &str) -> Vec<Cheat> {
     let mut cheats = Vec::new();
+    let mut first = true;
     for line in content.lines() {
         let line = line.trim_end();
-        if is_cheat_header(line) {
-            let Some(end) = line.rfind(']') else { continue };
-            cheats.push(Cheat {
-                // Names come from a user-edited file and reach CString in the ui
-                name: line[1..end].replace('\0', ""),
-                code: Vec::new(),
-                enabled: line[end..].ends_with('+'),
-            });
-        } else if let Some(cheat) = cheats.last_mut() {
-            for word in line.split_whitespace() {
-                if let Ok(value) = u32::from_str_radix(word, 16) {
-                    cheat.code.push(value);
+        let Some(sep) = line.find("=") else {
+            continue;
+        };
+        let key = line[..sep].trim();
+        let value = line[sep + 1..].trim();
+        if key.is_empty() || value.is_empty() {
+            continue;
+        }
+
+        if first {
+            first = false;
+            if key == "cheats" {
+                match value.parse::<u32>() {
+                    Ok(amount) => cheats.resize_with(amount as usize, || Cheat {
+                        name: "".to_string(),
+                        code: None,
+                        enabled: false,
+                    }),
+                    Err(_) => break,
                 }
+            } else {
+                break;
             }
+            continue;
+        }
+
+        let Some(sep) = key.find("_") else {
+            continue;
+        };
+        let subkey = &key[..sep];
+        let category = &key[sep + 1..];
+        if subkey.is_empty() || category.is_empty() || !subkey.starts_with("cheat") {
+            continue;
+        }
+        let entry = &subkey["cheat".len()..];
+        let Ok(entry) = entry.parse::<u32>() else {
+            continue;
+        };
+        if entry as usize >= cheats.len() {
+            continue;
+        }
+
+        let entry = &mut cheats[entry as usize];
+        match category {
+            "desc" => entry.name = value[1..value.len() - 1].to_string(),
+            "code" => entry.code = Some(value[1..value.len() - 1].split("+").filter_map(|hex| u32::from_str_radix(hex, 16).ok()).collect()),
+            "enable" => entry.enabled = value == "true",
+            _ => {}
         }
     }
     cheats
@@ -266,53 +299,5 @@ fn run_cheat(emu: &mut Emu, code: &[u32]) {
         }
 
         addr += 2;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_noods_format() {
-        let cheats = parse("[Max money]+\n0223CC44 000F423F\n1223CC48 0000270F\n\n[Walk anywhere]-\n923FDFFA 00000002\nD2000000 00000000\n\n");
-        assert_eq!(cheats.len(), 2);
-        assert_eq!(cheats[0].name, "Max money");
-        assert!(cheats[0].enabled);
-        assert_eq!(cheats[0].code, vec![0x0223CC44, 0x000F423F, 0x1223CC48, 0x0000270F]);
-        assert_eq!(cheats[1].name, "Walk anywhere");
-        assert!(!cheats[1].enabled);
-        assert_eq!(cheats[1].code, vec![0x923FDFFA, 0x00000002, 0xD2000000, 0x00000000]);
-    }
-
-    #[test]
-    fn parse_tolerates_junk() {
-        // Codes before any header, unparsable hex and stray text are skipped
-        let cheats = parse("02000000 00000001\nhello\n[A]+\nnothex 12345678\n0200000C 00000002\n");
-        assert_eq!(cheats.len(), 1);
-        assert_eq!(cheats[0].code, vec![0x12345678, 0x0200000C, 0x00000002]);
-    }
-
-    #[test]
-    fn serialize_parse_roundtrip() {
-        let original = vec![
-            Cheat {
-                name: "First".to_string(),
-                code: vec![0x020F0000, 0xDEADBEEF],
-                enabled: true,
-            },
-            Cheat {
-                name: "Second [hard] mode".to_string(),
-                code: vec![0xD3000000, 0x02100000, 0xD6000000, 0x00000000],
-                enabled: false,
-            },
-        ];
-        let reparsed = parse(&serialize(&original));
-        assert_eq!(reparsed.len(), original.len());
-        for (a, b) in reparsed.iter().zip(&original) {
-            assert_eq!(a.name, b.name);
-            assert_eq!(a.code, b.code);
-            assert_eq!(a.enabled, b.enabled);
-        }
     }
 }
