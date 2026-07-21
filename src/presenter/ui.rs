@@ -5,7 +5,7 @@ use crate::global_settings::{GlobalSettings, MenuLayout};
 use crate::key_bindings::KeyBinding;
 use crate::presenter::imgui::root::{
     ImDrawData, ImDrawList_AddImage, ImDrawList_AddQuad, ImDrawList_AddQuadFilled, ImDrawList_AddRect, ImDrawList_AddRectFilled, ImDrawList_AddText, ImFontAtlas_AddFontFromMemoryTTF,
-    ImFontAtlas_GetGlyphRangesDefault, ImFontConfig, ImFontConfig_ImFontConfig, ImGui, ImGuiCol__ImGuiCol_Button, ImGuiCol__ImGuiCol_Text, ImGuiCond__ImGuiSetCond_Always,
+    ImFontAtlas_GetGlyphRangesDefault, ImFontConfig, ImFontConfig_ImFontConfig, ImGui, ImGuiCol__ImGuiCol_Button, ImGuiCol__ImGuiCol_ButtonActive, ImGuiCol__ImGuiCol_ButtonHovered, ImGuiCol__ImGuiCol_Text, ImGuiCond__ImGuiSetCond_Always,
     ImGuiHoveredFlags__ImGuiHoveredFlags_Default, ImGuiItemFlags__ImGuiItemFlags_Disabled, ImGuiNavInput__ImGuiNavInput_Cancel, ImGuiNavInput__ImGuiNavInput_FocusNext,
     ImGuiNavInput__ImGuiNavInput_FocusPrev, ImGuiStyleVar__ImGuiStyleVar_Alpha, ImGuiWindowFlags__ImGuiWindowFlags_AlwaysAutoResize, ImGuiWindowFlags__ImGuiWindowFlags_HorizontalScrollbar,
     ImGuiWindowFlags__ImGuiWindowFlags_NoBringToFrontOnFocus, ImGuiWindowFlags__ImGuiWindowFlags_NoCollapse, ImGuiWindowFlags__ImGuiWindowFlags_NoFocusOnAppearing,
@@ -1664,8 +1664,18 @@ unsafe fn render_game_detail_overlay(
     }
     ImGui::SameLine(0f32, spacing);
     let info_sz = ImVec2 { x: info_w, y: 0f32 };
+    // Red button when this game has specific recommendations, so it stands out
+    // from the generic hints shown for unknown games
+    if game_info.is_some() {
+        ImGui::PushStyleColor(ImGuiCol__ImGuiCol_Button as _, 0xFF2020B0);
+        ImGui::PushStyleColor(ImGuiCol__ImGuiCol_ButtonHovered as _, 0xFF3030D0);
+        ImGui::PushStyleColor(ImGuiCol__ImGuiCol_ButtonActive as _, 0xFF181890);
+    }
     if ImGui::Button(info_label.as_ptr(), &info_sz) {
         ImGui::OpenPopup(c"game_info_dialog".as_ptr());
+    }
+    if game_info.is_some() {
+        ImGui::PopStyleColor(3);
     }
     ImGui::PushTextWrapPos(0f32);
     ImGui::TextDisabled(c"First launch will take a while. Don't exit or power off your Vita.".as_ptr());
