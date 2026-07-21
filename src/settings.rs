@@ -85,10 +85,24 @@ impl ListInner {
 }
 
 #[derive(Clone)]
+pub struct SliderInner {
+    pub value: i32,
+    pub min: i32,
+    pub max: i32,
+}
+
+impl SliderInner {
+    pub const fn new(value: i32, min: i32, max: i32) -> Self {
+        SliderInner { value, min, max }
+    }
+}
+
+#[derive(Clone)]
 pub enum SettingValue {
     Bool(bool),
     List(ListInner),
     Int(usize),
+    Slider(SliderInner),
 }
 
 impl<D: Default + Into<u8> + Sized + Into<&'static str>, T: Iterator<Item = D>> From<T> for SettingValue {
@@ -106,6 +120,7 @@ impl SettingValue {
             SettingValue::Bool(value) => *value ^= true,
             SettingValue::List(inner) => inner.selection = (inner.selection + 1) % inner.values.len(),
             SettingValue::Int(_) => {}
+            SettingValue::Slider(_) => {}
         }
     }
 
@@ -137,6 +152,13 @@ impl SettingValue {
         }
     }
 
+    pub fn as_slider(&self) -> Option<&SliderInner> {
+        match self {
+            SettingValue::Slider(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
     fn parse_str(&mut self, str: &str) {
         match self {
             SettingValue::Bool(value) => *value = bool::from_str(str).unwrap_or(false),
@@ -145,6 +167,11 @@ impl SettingValue {
                 inner.reset_to_initial_selection();
             }
             SettingValue::Int(_) => {}
+            SettingValue::Slider(inner) => {
+                if let Ok(value) = i32::from_str(str) {
+                    inner.value = value.clamp(inner.min, inner.max);
+                }
+            }
         }
     }
 
@@ -153,6 +180,7 @@ impl SettingValue {
             SettingValue::Bool(value) => value.to_string(),
             SettingValue::List(inner) => inner.values[inner.selection].to_string(),
             SettingValue::Int(value) => value.to_string(),
+            SettingValue::Slider(inner) => inner.value.to_string(),
         }
     }
 }
@@ -166,6 +194,7 @@ impl Display for SettingValue {
                 SettingValue::Bool(value) => if *value { "on" } else { "off" }.to_string(),
                 SettingValue::List(inner) => inner.values[inner.selection].clone(),
                 SettingValue::Int(value) => value.to_string(),
+                SettingValue::Slider(inner) => inner.value.to_string(),
             }
         )
     }
@@ -230,6 +259,10 @@ pub(crate) enum SettingId {
     Language,
     Controls,
     JoystickAsDpad,
+    RightStickTouch,
+    RightStickTouchSensitivity,
+    RightStickTouchPivotX,
+    RightStickTouchPivotY,
     ShowDebugStatistics,
     Retroachievements,
 }
@@ -272,6 +305,38 @@ impl SettingId {
             SettingId::Language => Setting::new("Language", "Preferred in-game language. Only applies if the game actually includes it.", Language::iter().into(), false, SettingGroup::System),
             SettingId::Controls => Setting::new("Controls", "Custom button mapping to use. Create profiles under Global settings.", SettingValue::List(ListInner::new(0, vec![])), true, SettingGroup::System),
             SettingId::JoystickAsDpad => Setting::new("Joystick as D-Pad", "Use the left analog stick as the D-Pad.", SettingValue::Bool(true), true, SettingGroup::System),
+            SettingId::RightStickTouch => Setting::new(
+                "Right stick touch camera",
+                if cfg!(target_os = "vita") {
+                    "Drags the touchscreen with the right analog stick around a pivot point. Useful for camera control in 3D games with touch aiming. Pick the pivot below so it doesn't overlap other touch elements."
+                } else {
+                    "Drags the touchscreen around a pivot point while the right mouse button is held, emulating a right analog stick. Useful for camera control in 3D games with touch aiming. Pick the pivot below so it doesn't overlap other touch elements."
+                },
+                SettingValue::Bool(false),
+                true,
+                SettingGroup::System,
+            ),
+            SettingId::RightStickTouchSensitivity => Setting::new(
+                "Touch camera sensitivity",
+                "How far the touch drag moves from the pivot at full stick deflection, in percent. Higher values turn the camera faster.",
+                SettingValue::Slider(SliderInner::new(100, 25, 200)),
+                true,
+                SettingGroup::System,
+            ),
+            SettingId::RightStickTouchPivotX => Setting::new(
+                "Touch camera pivot X",
+                "Horizontal center of the right stick touch drag, in DS touchscreen pixels.",
+                SettingValue::Slider(SliderInner::new(128, 0, 255)),
+                true,
+                SettingGroup::System,
+            ),
+            SettingId::RightStickTouchPivotY => Setting::new(
+                "Touch camera pivot Y",
+                "Vertical center of the right stick touch drag, in DS touchscreen pixels.",
+                SettingValue::Slider(SliderInner::new(96, 0, 191)),
+                true,
+                SettingGroup::System,
+            ),
             SettingId::ShowDebugStatistics => Setting::new("Show debug statistics", "Show FPS and other debug information while playing.", SettingValue::Bool(true), true, SettingGroup::System),
             SettingId::Retroachievements => Setting::new("Retroachievements", "Enables RetroAchievements. Log in first via Global settings.", SettingValue::Bool(true), false, SettingGroup::System),
         }
@@ -308,6 +373,25 @@ impl Settings {
 
     pub fn joystick_as_dpad(&self) -> bool {
         unsafe { self.0[SettingId::JoystickAsDpad as usize].value.as_bool().unwrap_unchecked() }
+    }
+
+    pub fn right_stick_touch(&self) -> bool {
+        unsafe { self.0[SettingId::RightStickTouch as usize].value.as_bool().unwrap_unchecked() }
+    }
+
+    /// Sensitivity of the right-stick touch drag as a factor (setting is in percent).
+    pub fn right_stick_touch_sensitivity(&self) -> f32 {
+        unsafe { self.0[SettingId::RightStickTouchSensitivity as usize].value.as_slider().unwrap_unchecked().value as f32 / 100.0 }
+    }
+
+    /// Pivot of the right-stick touch drag, in DS touchscreen pixels.
+    pub fn right_stick_touch_pivot(&self) -> (i16, i16) {
+        unsafe {
+            (
+                self.0[SettingId::RightStickTouchPivotX as usize].value.as_slider().unwrap_unchecked().value as i16,
+                self.0[SettingId::RightStickTouchPivotY as usize].value.as_slider().unwrap_unchecked().value as i16,
+            )
+        }
     }
 
     pub fn tap_corner_to_swap(&self) -> bool {

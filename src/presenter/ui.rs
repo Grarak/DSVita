@@ -481,6 +481,7 @@ unsafe fn render_setting(setting: &mut crate::settings::Setting, id: usize, dirt
         SettingValue::Bool(_) => buttons_width,
         SettingValue::List(_) => COMBO_WIDTH,
         SettingValue::Int(_) => COMBO_WIDTH,
+        SettingValue::Slider(_) => COMBO_WIDTH,
     };
     let region_x = ImGui::GetCursorPosX();
     let avail = ImGui::GetContentRegionAvail().x;
@@ -539,6 +540,16 @@ unsafe fn render_setting(setting: &mut crate::settings::Setting, id: usize, dirt
             ImGui::PopItemWidth();
         }
         SettingValue::Int(_) => {}
+        SettingValue::Slider(inner) => {
+            let id = CString::new(format!("##{id}_slider")).unwrap();
+            ImGui::PushItemWidth(control_w);
+            let mut value = inner.value;
+            if ImGui::SliderInt(id.as_ptr() as _, &mut value, inner.min, inner.max, c"%d".as_ptr()) {
+                inner.value = value.clamp(inner.min, inner.max);
+                *dirty = true;
+            }
+            ImGui::PopItemWidth();
+        }
     }
     ImGui::PopID();
 
@@ -1565,6 +1576,7 @@ unsafe fn render_game_info_dialog(info: Option<&crate::game_info::SettingRecomme
                         SettingValue::Bool(value) => (if *value { "on" } else { "off" }).to_string(),
                         SettingValue::Int(index) => definition.value.as_list().and_then(|(_, values)| values.get(*index)).cloned().unwrap_or_else(|| index.to_string()),
                         SettingValue::List(inner) => inner.values.get(inner.selection).cloned().unwrap_or_default(),
+                        SettingValue::Slider(inner) => inner.value.to_string(),
                     };
                     let line = CString::new(format!("{} - {}: {}", group, definition.title, value_text)).unwrap();
                     dialog_bullet(&line, wrap);

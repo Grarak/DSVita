@@ -274,6 +274,7 @@ fn serialize_settings(settings: &mut Settings) -> String {
                 out += &format!("\"kind\":\"list\",\"selection\":{},\"options\":[{}]}}", inner.selection, options.join(","));
             }
             SettingValue::Int(value) => out += &format!("\"kind\":\"int\",\"value\":{value}}}"),
+            SettingValue::Slider(inner) => out += &format!("\"kind\":\"slider\",\"value\":{},\"min\":{},\"max\":{}}}", inner.value, inner.min, inner.max),
         }
     }
     out.push(']');
@@ -299,6 +300,7 @@ fn apply_setting(setting: &mut crate::settings::Setting, value: i32) {
         SettingValue::Bool(b) => *b = value != 0,
         SettingValue::List(inner) => inner.selection = (value.max(0) as usize).min(inner.values.len().saturating_sub(1)),
         SettingValue::Int(v) => *v = value.max(0) as usize,
+        SettingValue::Slider(inner) => inner.value = value.clamp(inner.min, inner.max),
     }
 }
 
@@ -729,6 +731,7 @@ impl Presenter {
         PresentEvent::Inputs {
             keymap: self.keymap,
             touch,
+            stick_touch: None,
             #[cfg(debug_assertions)]
             debug_touch,
         }

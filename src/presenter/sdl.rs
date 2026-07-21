@@ -74,6 +74,10 @@ pub struct Presenter {
     mouse_pressed: bool,
     mouse_id: Option<u32>,
     touch_points: Option<(i16, i16)>,
+    // Right-mouse drag emulates the Vita's right stick for the touch camera feature:
+    // deflection is the vector from the press origin to the current mouse position.
+    right_mouse_origin: Option<(i32, i32)>,
+    mouse_pos: (i32, i32),
     // DSVITA_DBG_PORT: a localhost TCP command port for headless control (buttons, touch,
     // framelimit, savestate, inst-log, quit) without a wayland virtual keyboard or signals.
     #[cfg(debug_assertions)]
@@ -211,6 +215,8 @@ impl Presenter {
             mouse_pressed: false,
             mouse_id: None,
             touch_points: None,
+            right_mouse_origin: None,
+            mouse_pos: (0, 0),
             #[cfg(debug_assertions)]
             debug_state: std::env::var("DSVITA_DBG_PORT").ok().and_then(|p| p.parse::<u16>().ok()).map(spawn_debug_port),
             keymap: 0xFFFFFFFF,
@@ -300,7 +306,7 @@ impl Presenter {
         self.arg_matches.get_one::<String>("savestate").map(PathBuf::from)
     }
 
-    pub fn poll_event(&mut self, _: &Settings) -> PresentEvent {
+    pub fn poll_event(&mut self, settings: &Settings) -> PresentEvent {
         for event in self.event_pump.poll_iter() {
             match event {
                 Event::KeyDown {
@@ -363,7 +369,13 @@ impl Presenter {
                     self.mouse_id = Some(which);
                     self.touch_points = Some((x as i16, y as i16));
                 }
+                Event::MouseButtonUp { mouse_btn: MouseButton::Right, .. } => self.right_mouse_origin = None,
+                Event::MouseButtonDown { mouse_btn: MouseButton::Right, x, y, .. } => {
+                    self.right_mouse_origin = Some((x, y));
+                    self.mouse_pos = (x, y);
+                }
                 Event::MouseMotion { which, x, y, .. } => {
+                    self.mouse_pos = (x, y);
                     if let Some(mouse_id) = self.mouse_id {
                         if self.mouse_pressed && mouse_id == which {
                             self.touch_points = Some((x as i16, y as i16));
@@ -407,9 +419,20 @@ impl Presenter {
             keymap = self.keymap;
         }
 
+        let stick_touch = self.right_mouse_origin.and_then(|(origin_x, origin_y)| {
+            // Pixels of mouse travel for full stick deflection
+            const MOUSE_STICK_RANGE: f32 = 100.0;
+            crate::presenter::stick_touch_point(
+                (self.mouse_pos.0 - origin_x) as f32 / MOUSE_STICK_RANGE,
+                (self.mouse_pos.1 - origin_y) as f32 / MOUSE_STICK_RANGE,
+                settings,
+            )
+        });
+
         PresentEvent::Inputs {
             keymap,
             touch: self.touch_points,
+            stick_touch,
             #[cfg(debug_assertions)]
             debug_touch,
         }

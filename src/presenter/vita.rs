@@ -306,6 +306,7 @@ impl Presenter {
 
     pub fn poll_event(&mut self, settings: &Settings) -> PresentEvent {
         let mut stick_keymap = 0xFFFFFFFF;
+        let stick_touch;
 
         unsafe {
             let pressed = MaybeUninit::<SceCtrlData>::uninit();
@@ -407,6 +408,7 @@ impl Presenter {
                 return PresentEvent::Inputs {
                     keymap: self.keymap,
                     touch: self.touch_points,
+                    stick_touch: None,
                     #[cfg(debug_assertions)]
                     debug_touch: None,
                 };
@@ -420,6 +422,7 @@ impl Presenter {
                     return PresentEvent::Inputs {
                         keymap: 0xFFFFFFFF,
                         touch: None,
+                        stick_touch: None,
                         #[cfg(debug_assertions)]
                         debug_touch: None,
                     };
@@ -463,10 +466,13 @@ impl Presenter {
                     }
                 }
             }
+
+            stick_touch = crate::presenter::stick_touch_point((pressed.rx as f32 - 127.0) / 127.0, (pressed.ry as f32 - 127.0) / 127.0, settings);
         }
         PresentEvent::Inputs {
             keymap: self.keymap & stick_keymap,
             touch: self.touch_points,
+            stick_touch,
             #[cfg(debug_assertions)]
             debug_touch: None,
         }
