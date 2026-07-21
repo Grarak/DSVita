@@ -1,5 +1,6 @@
 use crate::cartridge_io::{CartridgeIo, CartridgePreview};
 use crate::core::graphics::gpu_renderer::GpuRenderer;
+use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use crate::core::input::Keycode;
 use crate::global_settings::GlobalSettings;
 use crate::key_bindings::{Hotkey, KeyBinding, DS_KEY_NAMES, HOTKEY_NAMES, NUM_HOTKEYS, NUM_KEYS};
@@ -203,6 +204,9 @@ pub struct Presenter {
     ps_hotkey_used: bool,
     core_unlocked: bool,
     can_stream_screen: bool,
+    // Active area of the rear touchpad, for mapping it to the DS touchscreen
+    rear_touch_min: (f32, f32),
+    rear_touch_range: (f32, f32),
 }
 
 impl Presenter {
@@ -266,6 +270,19 @@ impl Presenter {
             });
 
             sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_STOP);
+            sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK, SCE_TOUCH_SAMPLING_STATE_START);
+
+            let mut rear_panel_info: SceTouchPanelInfo = mem::zeroed();
+            let (rear_touch_min, rear_touch_range) = if sceTouchGetPanelInfo(SCE_TOUCH_PORT_BACK, &mut rear_panel_info) >= 0 && rear_panel_info.maxAaX > rear_panel_info.minAaX && rear_panel_info.maxAaY > rear_panel_info.minAaY
+            {
+                (
+                    (rear_panel_info.minAaX as f32, rear_panel_info.minAaY as f32),
+                    ((rear_panel_info.maxAaX - rear_panel_info.minAaX) as f32, (rear_panel_info.maxAaY - rear_panel_info.minAaY) as f32),
+                )
+            } else {
+                // Standard rear pad active area
+                ((0.0, 108.0), (1919.0, 781.0))
+            };
 
             let has_cap_unlocker = Self::module_installed("CapUnlocker");
             let mut instance = Presenter {
@@ -280,6 +297,8 @@ impl Presenter {
                 ps_hotkey_used: false,
                 core_unlocked: has_cap_unlocker,
                 can_stream_screen: has_cap_unlocker && Self::module_installed("udcd_uvc_dsvita"),
+                rear_touch_min,
+                rear_touch_range,
             };
 
             init_ui(&mut instance);
@@ -306,7 +325,7 @@ impl Presenter {
 
     pub fn poll_event(&mut self, settings: &Settings) -> PresentEvent {
         let mut stick_keymap = 0xFFFFFFFF;
-        let stick_touch;
+        let ds_touch;
 
         unsafe {
             let pressed = MaybeUninit::<SceCtrlData>::uninit();
@@ -408,7 +427,7 @@ impl Presenter {
                 return PresentEvent::Inputs {
                     keymap: self.keymap,
                     touch: self.touch_points,
-                    stick_touch: None,
+                    ds_touch: None,
                     #[cfg(debug_assertions)]
                     debug_touch: None,
                 };
@@ -422,7 +441,7 @@ impl Presenter {
                     return PresentEvent::Inputs {
                         keymap: 0xFFFFFFFF,
                         touch: None,
-                        stick_touch: None,
+                        ds_touch: None,
                         #[cfg(debug_assertions)]
                         debug_touch: None,
                     };
@@ -469,13 +488,28 @@ impl Presenter {
 
             let right_stick_x = (pressed.rx as f32 - 127.0) / 127.0;
             let right_stick_y = (pressed.ry as f32 - 127.0) / 127.0;
-            stick_touch = crate::presenter::stick_touch_point(right_stick_x, right_stick_y, settings);
+            let stick_touch = crate::presenter::stick_touch_point(right_stick_x, right_stick_y, settings);
             stick_keymap &= crate::presenter::stick_trigger_keymap(right_stick_x, settings);
+
+            let mut rear_touch = None;
+            if settings.rear_touch() {
+                let rear_report = MaybeUninit::<SceTouchData>::uninit();
+                let mut rear_report = rear_report.assume_init();
+                sceTouchPeek(SCE_TOUCH_PORT_BACK, &mut rear_report, 1);
+                if rear_report.reportNum > 0 {
+                    let report = rear_report.report.first().unwrap();
+                    let x = (report.x as f32 - self.rear_touch_min.0) / self.rear_touch_range.0 * (DISPLAY_WIDTH - 1) as f32;
+                    let y = (report.y as f32 - self.rear_touch_min.1) / self.rear_touch_range.1 * (DISPLAY_HEIGHT - 1) as f32;
+                    rear_touch = Some((x.clamp(0.0, DISPLAY_WIDTH as f32 - 1.0) as i16, y.clamp(0.0, DISPLAY_HEIGHT as f32 - 1.0) as i16));
+                }
+            }
+
+            ds_touch = rear_touch.or(stick_touch);
         }
         PresentEvent::Inputs {
             keymap: self.keymap & stick_keymap,
             touch: self.touch_points,
-            stick_touch,
+            ds_touch,
             #[cfg(debug_assertions)]
             debug_touch: None,
         }

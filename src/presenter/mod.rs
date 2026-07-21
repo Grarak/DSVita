@@ -48,9 +48,9 @@ pub enum PresentEvent {
     Inputs {
         keymap: u32,
         touch: Option<(i16, i16)>,
-        // Synthetic touch from the right stick camera feature, already in DS touchscreen
-        // space (x in 0..256, y in 0..192). Real touch input takes priority over it.
-        stick_touch: Option<(i16, i16)>,
+        // Synthetic touch from the right stick camera or the rear touchpad, already in DS
+        // touchscreen space (x in 0..256, y in 0..192). Real touch input takes priority.
+        ds_touch: Option<(i16, i16)>,
         // Debug-only synthetic touch in DS screen space (x in 0..256, y in 0..192), set by the
         // keyboard tap-grid (DSVITA_DBG_TOUCH) so headless profiling can drive touch-gated titles.
         #[cfg(debug_assertions)]

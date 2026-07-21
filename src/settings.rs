@@ -287,6 +287,7 @@ pub(crate) enum SettingId {
     RightStickTouchSensitivity,
     RightStickTouchPivotX,
     RightStickTouchPivotY,
+    RearTouch,
     ShowDebugStatistics,
     Retroachievements,
 }
@@ -361,6 +362,17 @@ impl SettingId {
                 true,
                 SettingGroup::System,
             ),
+            SettingId::RearTouch => Setting::new(
+                "Rear touch as touchscreen",
+                if cfg!(target_os = "vita") {
+                    "Maps the rear touchpad to the DS touchscreen, so you can tap and drag without covering the display. The whole pad covers the whole touchscreen; the front touchscreen keeps working."
+                } else {
+                    "Maps the window to the DS touchscreen while the middle mouse button is held, emulating the Vita's rear touchpad."
+                },
+                SettingValue::Bool(false),
+                true,
+                SettingGroup::System,
+            ),
             SettingId::ShowDebugStatistics => Setting::new("Show debug statistics", "Show FPS and other debug information while playing.", SettingValue::Bool(true), true, SettingGroup::System),
             SettingId::Retroachievements => Setting::new("Retroachievements", "Enables RetroAchievements. Log in first via Global settings.", SettingValue::Bool(true), false, SettingGroup::System),
         }
@@ -416,6 +428,10 @@ impl Settings {
                 self.0[SettingId::RightStickTouchPivotY as usize].value.as_slider().unwrap_unchecked().value as i16,
             )
         }
+    }
+
+    pub fn rear_touch(&self) -> bool {
+        unsafe { self.0[SettingId::RearTouch as usize].value.as_bool().unwrap_unchecked() }
     }
 
     pub fn tap_corner_to_swap(&self) -> bool {

@@ -731,7 +731,7 @@ impl Presenter {
         PresentEvent::Inputs {
             keymap: self.keymap,
             touch,
-            stick_touch: None,
+            ds_touch: None,
             #[cfg(debug_assertions)]
             debug_touch,
         }

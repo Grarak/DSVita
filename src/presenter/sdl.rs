@@ -77,6 +77,9 @@ pub struct Presenter {
     // Right-mouse drag emulates the Vita's right stick for the touch camera feature:
     // deflection is the vector from the press origin to the current mouse position.
     right_mouse_origin: Option<(i32, i32)>,
+    // Middle-mouse hold emulates the Vita's rear touchpad: the window maps
+    // absolutely to the DS touchscreen.
+    middle_mouse_pressed: bool,
     mouse_pos: (i32, i32),
     // DSVITA_DBG_PORT: a localhost TCP command port for headless control (buttons, touch,
     // framelimit, savestate, inst-log, quit) without a wayland virtual keyboard or signals.
@@ -216,6 +219,7 @@ impl Presenter {
             mouse_id: None,
             touch_points: None,
             right_mouse_origin: None,
+            middle_mouse_pressed: false,
             mouse_pos: (0, 0),
             #[cfg(debug_assertions)]
             debug_state: std::env::var("DSVITA_DBG_PORT").ok().and_then(|p| p.parse::<u16>().ok()).map(spawn_debug_port),
@@ -374,6 +378,11 @@ impl Presenter {
                     self.right_mouse_origin = Some((x, y));
                     self.mouse_pos = (x, y);
                 }
+                Event::MouseButtonUp { mouse_btn: MouseButton::Middle, .. } => self.middle_mouse_pressed = false,
+                Event::MouseButtonDown { mouse_btn: MouseButton::Middle, x, y, .. } => {
+                    self.middle_mouse_pressed = true;
+                    self.mouse_pos = (x, y);
+                }
                 Event::MouseMotion { which, x, y, .. } => {
                     self.mouse_pos = (x, y);
                     if let Some(mouse_id) = self.mouse_id {
@@ -434,10 +443,20 @@ impl Presenter {
             keymap &= crate::presenter::stick_trigger_keymap(x, settings);
         }
 
+        // Middle-mouse rear touch emulation: window position -> DS touchscreen, absolute
+        let rear_touch = if self.middle_mouse_pressed && settings.rear_touch() {
+            use crate::core::graphics::gpu::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+            let x = (self.mouse_pos.0 * DISPLAY_WIDTH as i32 / PRESENTER_SCREEN_WIDTH as i32).clamp(0, DISPLAY_WIDTH as i32 - 1);
+            let y = (self.mouse_pos.1 * DISPLAY_HEIGHT as i32 / PRESENTER_SCREEN_HEIGHT as i32).clamp(0, DISPLAY_HEIGHT as i32 - 1);
+            Some((x as i16, y as i16))
+        } else {
+            None
+        };
+
         PresentEvent::Inputs {
             keymap,
             touch: self.touch_points,
-            stick_touch,
+            ds_touch: rear_touch.or(stick_touch),
             #[cfg(debug_assertions)]
             debug_touch,
         }

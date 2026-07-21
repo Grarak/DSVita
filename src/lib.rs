@@ -662,7 +662,7 @@ pub fn actual_main() {
                 PresentEvent::Inputs {
                     mut keymap,
                     touch,
-                    stick_touch,
+                    ds_touch,
                     #[cfg(debug_assertions)]
                     debug_touch,
                 } => {
@@ -685,8 +685,8 @@ pub fn actual_main() {
                             touch_points.store(((y_norm as u16) << 8) | (x_norm as u16), Ordering::Relaxed);
                             keymap &= !(1 << 16);
                         }
-                    } else if let Some((x, y)) = stick_touch {
-                        // Right stick camera drag, already in DS touchscreen space
+                    } else if let Some((x, y)) = ds_touch {
+                        // Right stick camera drag or rear touch, already in DS touchscreen space
                         touch_points.store(((y as u16) << 8) | (x as u16), Ordering::Relaxed);
                         keymap &= !(1 << 16);
                     }
