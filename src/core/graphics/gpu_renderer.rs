@@ -1116,19 +1116,31 @@ impl GpuRenderer {
         const SCALE: usize = 4;
         const OUT_W: usize = W / SCALE;
         const OUT_H: usize = H / SCALE;
+        #[cfg(not(target_os = "vita"))]
         let mut pixels = vec![0u8; W * H * 4];
+        #[cfg(not(target_os = "vita"))]
         unsafe {
             gl::BindFramebuffer(gl::READ_FRAMEBUFFER, self.final_fbo.fbo);
             gl::ReadPixels(0, 0, W as _, H as _, gl::RGBA, gl::UNSIGNED_BYTE, pixels.as_mut_ptr() as _);
             gl::BindFramebuffer(gl::READ_FRAMEBUFFER, 0);
         }
-        // Box-filter downscale to rgb; GL rows are bottom-up, flip while sampling
+
+        #[cfg(target_os = "vita")]
+        let pixels: &[u8; W * H * 4] = unsafe {
+            gl::BindTexture(gl::TEXTURE_2D, self.final_fbo.color);
+            std::mem::transmute(Presenter::gl_get_tex_ptr())
+        };
+
         let mut small = vec![0u8; OUT_W * OUT_H * 3];
         for out_y in 0..OUT_H {
             for out_x in 0..OUT_W {
                 let mut sums = [0u32; 3];
                 for sub_y in 0..SCALE {
-                    let src_y = H - 1 - (out_y * SCALE + sub_y);
+                    let mut src_y = out_y * SCALE + sub_y;
+                    if !cfg!(target_os = "vita") {
+                        // Box-filter downscale to rgb; GL rows are bottom-up, flip while sampling
+                        src_y = H - 1 - src_y;
+                    }
                     for sub_x in 0..SCALE {
                         let src = (src_y * W + out_x * SCALE + sub_x) * 4;
                         for c in 0..3 {
