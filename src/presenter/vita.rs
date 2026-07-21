@@ -236,7 +236,7 @@ impl Presenter {
             vita_gl::vglSetupRuntimeShaderCompiler(SharkOpt::Fast as _, 1, 0, 1);
             info_println!("Initialize vitaGL");
             // Disable multisampling for depth texture
-            vita_gl::vglInitExtended(0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, 70 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
+            vita_gl::vglInitExtended(0, PRESENTER_SCREEN_WIDTH as _, PRESENTER_SCREEN_HEIGHT as _, 75 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
 
             info_println!("Checking for kubridge");
 
