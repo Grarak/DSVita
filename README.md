@@ -6,23 +6,22 @@ Fast NDS Emulator for ARM32/PSVita
 
 ## Status
 
-[![DSVita Pokemon Black](http://img.youtube.com/vi/T5SaVkuuhbM/0.jpg)](https://www.youtube.com/watch?v=T5SaVkuuhbM "DSVita Mario Kart DS")
+[![DSVita Mario Kart DS](http://img.youtube.com/vi/T5SaVkuuhbM/0.jpg)](https://www.youtube.com/watch?v=T5SaVkuuhbM "DSVita Mario Kart DS")
 
-This runs most games, however consider:
+Most games run, with these caveats:
 
-- 3D rendering
-    - Mostly implemented
-      - Z fighting can occur
-      - Games using 3D on both screen will have bad framerates and stutters
-      - Some effects like fog are unimplemented
+- 3D rendering is mostly implemented
+    - Z fighting can occur
+    - Games using 3D on both screens will have bad framerates and stutters
+    - Some effects like fog are unimplemented
 - 2D rendering is mostly complete
-- ARM7 HLE will not work with some games
-    - Disable it if certain games don't boot further, get stuck, crash or have any other issues
-    - There are other emulation modes like SoundHle. You can pick them if full HLE breaks anything
+- ARM7 HLE (the `Arm7 Emulation` setting, `Hle`) doesn't work with some games
+    - If a game doesn't boot, gets stuck or crashes, switch to `SoundHle` or `AccurateLle` —
+      each step is more compatible but slower
 - Auto frameskip is always used
-    - You will most likely hover around 20-30 fps, even if they run at full game speed
-- No scanline rendering, thus games that update VRAM mid frame will not render correctly
-    - Not many games do this, however games that do use it for scrolling texts
+    - The FPS counter will often show 20-30 fps even when the game logic runs at full speed
+- No scanline rendering, so games that update VRAM mid-frame will not render correctly
+    - Few games do this; those that do mostly use it for scrolling text
 
 ## Installation/Setup
 
@@ -32,16 +31,15 @@ This runs most games, however consider:
 - Install `kubridge.skprx` version >= 0.3.1 from https://github.com/bythos14/kubridge/releases
   - Make sure this plugin is in the `*KERNEL` section, otherwise the app might crash upon opening
   - If you have the wrong version installed, the app will either crash or will not be able to launch any games
-- It's strongly recommend to overclock your vita to 500MHz
-- Create the folder ux0:data/dsvita and put your roms there
-    - They must have the file extensions `*.nds`
+- It's strongly recommended to overclock your Vita to 500MHz
+- Create the folder `ux0:data/dsvita` and put your roms there
+    - They must have the `.nds` file extension
 - Check out the [compatibility list](https://github.com/Grarak/DSVita/wiki/Compatibility-list) for popular games
 
 ## Bug reporting
 
-Feel free to create an issue if you run into problems, however please make sure before reporting anything the game you
-are
-having issues with exhibits the same behavior with the `AccurateLle` setting enabled.
+Feel free to create an issue if you run into problems. Before reporting, please make sure the
+issue still occurs with the `Arm7 Emulation` setting set to `AccurateLle`.
 
 ## Building
 
@@ -57,7 +55,7 @@ $ git clone --recurse-submodules https://github.com/Grarak/DSVita.git
 ```
 
 ### Linux
-Get a armhf sysroot with libsdl2 development packages installed
+Get an armhf sysroot with libsdl2 development packages installed
 - On ubuntu >= 22.04
     ```bash
     $ sudo apt install debootstrap qemu-user-static
@@ -92,6 +90,14 @@ invariants, debugging playbook) lives in `DEVELOPMENT.md`.
 $ LIBCLANG_PATH=<path to llvm-18 library> cargo vita build vpk -- --release
 ```
 
+### Android (experimental)
+The Android port is still experimental and has no releases yet. It needs an Android NDK
+(sysroot only, the compiling is done by host clang-21):
+```bash
+$ export ANDROID_NDK_HOME=<path to ndk>
+$ cd android && ./gradlew assembleDebug   # builds libdsvita.so via cargo and packs the apk
+```
+
 ### Final optimized release build
 To obtain the most optimized build you need to use a [patched rust compiler](https://github.com/Grarak/rust) due to LTO incompatibility.
 The upstream rust compiler doesn't set the target cpu and target features in the callsite attributes
@@ -100,7 +106,7 @@ which prevents the clang linker from inlining cross language functions.
 $ RUSTC=<path to compiled rustc> LIBCLANG_PATH=<path to llvm-18 library> RUSTFLAGS="-Zlocation-detail=none -Zfmt-debug=none -Zub-checks=no -Zsaturating-float-casts=no -Ztrap-unreachable=no -Zmir-opt-level=4 -Clinker-plugin-lto -Clto=fat -Zunstable-options -Cpanic=immediate-abort" cargo vita build vpk -- --release
 ```
 
-Currently we are also stuck with an older rust compiler, which still uses llvm-21, later versions of llvm seem to cause performance regressions.
+The toolchain is also pinned to an older rust nightly (see `rust-toolchain.toml`), the last one built against llvm-21 — newer llvm versions cause performance regressions.
 
 ### Stream top screen over udcd-uvc (experimental)
 - Install (replace your existing udcd-uvc install) https://github.com/Grarak/vita-udcd-uvc/releases/tag/1.0 under the `*KERNEL` section of your config.txt
