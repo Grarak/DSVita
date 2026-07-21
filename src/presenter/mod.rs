@@ -67,29 +67,70 @@ pub enum PresentEvent {
     Quit,
 }
 
-/// Maps a right stick deflection (each axis in -1..1) to a synthetic touch point in
-/// DS touchscreen coordinates, dragging around the configured pivot. Returns None
-/// when the feature is off or the stick rests inside the deadzone, which the caller
-/// treats as pen up.
-pub fn stick_touch_point(stick_x: f32, stick_y: f32, settings: &crate::settings::Settings) -> Option<(i16, i16)> {
-    const DEADZONE: f32 = 0.2;
-    /// Drag distance from the pivot at full deflection and 100% sensitivity, in DS
-    /// touchscreen pixels.
-    const RADIUS: f32 = 70.0;
+/// Synthetic swipe state for the 'Touch camera' right stick mode.
+///
+/// Games read camera drags as per-frame pen movement, so a parked pen stops the
+/// camera even at full stick deflection. A held stick therefore produces repeated
+/// swipes: the pen strokes from the pivot outward in the stick direction, and when
+/// the stroke reaches its travel bound the pen lifts for two polls and a new stroke
+/// starts at the pivot.
+pub struct StickTouchState {
+    // Pen offset from the pivot while a stroke is active
+    offset: Option<(f32, f32)>,
+    // Polls left to keep the pen lifted between strokes, so games register the
+    // release instead of seeing one long backwards jump to the pivot
+    lift: u8,
+}
 
-    if settings.right_stick_mode() != crate::settings::RightStickMode::TouchCamera {
-        return None;
+impl StickTouchState {
+    pub const fn new() -> Self {
+        StickTouchState { offset: None, lift: 0 }
     }
-    let len = (stick_x * stick_x + stick_y * stick_y).sqrt();
-    if len < DEADZONE {
-        return None;
+
+    /// Advances the swipe by one poll with the current stick deflection (each axis
+    /// in -1..1) and returns the pen position in DS touchscreen coordinates, or None
+    /// for pen up.
+    pub fn update(&mut self, stick_x: f32, stick_y: f32, settings: &crate::settings::Settings) -> Option<(i16, i16)> {
+        const DEADZONE: f32 = 0.2;
+        /// Stroke length from the pivot before the pen lifts, in DS touchscreen pixels.
+        const TRAVEL: f32 = 70.0;
+        /// Pen speed in pixels per poll at full deflection and 100% sensitivity.
+        const SPEED: f32 = 4.0;
+
+        if settings.right_stick_mode() != crate::settings::RightStickMode::TouchCamera {
+            self.offset = None;
+            self.lift = 0;
+            return None;
+        }
+        let len = (stick_x * stick_x + stick_y * stick_y).sqrt();
+        if len < DEADZONE {
+            self.offset = None;
+            self.lift = 0;
+            return None;
+        }
+        if self.lift > 0 {
+            self.lift -= 1;
+            return None;
+        }
+
+        // Rescale so the pen speed grows from zero right outside the deadzone
+        let scale = ((len - DEADZONE) / (1.0 - DEADZONE)).min(1.0) / len * SPEED * settings.right_stick_touch_sensitivity();
+        let offset = self.offset.get_or_insert((0.0, 0.0));
+        offset.0 += stick_x * scale;
+        offset.1 += stick_y * scale;
+
+        if offset.0 * offset.0 + offset.1 * offset.1 > TRAVEL * TRAVEL {
+            // Stroke exhausted: lift the pen and start a new stroke at the pivot
+            self.offset = None;
+            self.lift = 1;
+            return None;
+        }
+
+        let (pivot_x, pivot_y) = settings.right_stick_touch_pivot();
+        let x = (pivot_x as f32 + offset.0).round().clamp(0.0, crate::core::graphics::gpu::DISPLAY_WIDTH as f32 - 1.0);
+        let y = (pivot_y as f32 + offset.1).round().clamp(0.0, crate::core::graphics::gpu::DISPLAY_HEIGHT as f32 - 1.0);
+        Some((x as i16, y as i16))
     }
-    // Rescale so the drag offset grows from zero right outside the deadzone
-    let scale = ((len - DEADZONE) / (1.0 - DEADZONE)).min(1.0) / len * RADIUS * settings.right_stick_touch_sensitivity();
-    let (pivot_x, pivot_y) = settings.right_stick_touch_pivot();
-    let x = (pivot_x as f32 + stick_x * scale).round().clamp(0.0, crate::core::graphics::gpu::DISPLAY_WIDTH as f32 - 1.0);
-    let y = (pivot_y as f32 + stick_y * scale).round().clamp(0.0, crate::core::graphics::gpu::DISPLAY_HEIGHT as f32 - 1.0);
-    Some((x as i16, y as i16))
 }
 
 /// Keymap mask for the 'L and R triggers' right stick mode: clears (presses) the

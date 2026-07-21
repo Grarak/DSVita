@@ -81,6 +81,7 @@ pub struct Presenter {
     // absolutely to the DS touchscreen.
     middle_mouse_pressed: bool,
     mouse_pos: (i32, i32),
+    stick_touch_state: crate::presenter::StickTouchState,
     // DSVITA_DBG_PORT: a localhost TCP command port for headless control (buttons, touch,
     // framelimit, savestate, inst-log, quit) without a wayland virtual keyboard or signals.
     #[cfg(debug_assertions)]
@@ -221,6 +222,7 @@ impl Presenter {
             right_mouse_origin: None,
             middle_mouse_pressed: false,
             mouse_pos: (0, 0),
+            stick_touch_state: crate::presenter::StickTouchState::new(),
             #[cfg(debug_assertions)]
             debug_state: std::env::var("DSVITA_DBG_PORT").ok().and_then(|p| p.parse::<u16>().ok()).map(spawn_debug_port),
             keymap: 0xFFFFFFFF,
@@ -437,11 +439,10 @@ impl Presenter {
                 (self.mouse_pos.1 - origin_y) as f32 / MOUSE_STICK_RANGE,
             )
         });
-        let stick_touch = right_stick.and_then(|(x, y)| crate::presenter::stick_touch_point(x, y, settings));
+        let (right_stick_x, right_stick_y) = right_stick.unwrap_or((0.0, 0.0));
+        let stick_touch = self.stick_touch_state.update(right_stick_x, right_stick_y, settings);
         let mut keymap = keymap;
-        if let Some((x, _)) = right_stick {
-            keymap &= crate::presenter::stick_trigger_keymap(x, settings);
-        }
+        keymap &= crate::presenter::stick_trigger_keymap(right_stick_x, settings);
 
         // Middle-mouse rear touch emulation: window position -> DS touchscreen, absolute
         let rear_touch = if self.middle_mouse_pressed && settings.rear_touch() {

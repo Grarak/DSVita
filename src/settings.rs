@@ -343,7 +343,7 @@ impl SettingId {
             ),
             SettingId::RightStickTouchSensitivity => Setting::new(
                 "Touch camera sensitivity",
-                "How far the touch drag moves from the pivot at full stick deflection, in percent. Higher values turn the camera faster.",
+                "How fast the touch drag swipes at full stick deflection, in percent. Higher values turn the camera faster.",
                 SettingValue::Slider(SliderInner::new(100, 25, 200)),
                 true,
                 SettingGroup::System,

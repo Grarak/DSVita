@@ -207,6 +207,7 @@ pub struct Presenter {
     // Active area of the rear touchpad, for mapping it to the DS touchscreen
     rear_touch_min: (f32, f32),
     rear_touch_range: (f32, f32),
+    stick_touch_state: crate::presenter::StickTouchState,
 }
 
 impl Presenter {
@@ -299,6 +300,7 @@ impl Presenter {
                 can_stream_screen: has_cap_unlocker && Self::module_installed("udcd_uvc_dsvita"),
                 rear_touch_min,
                 rear_touch_range,
+                stick_touch_state: crate::presenter::StickTouchState::new(),
             };
 
             init_ui(&mut instance);
@@ -488,7 +490,7 @@ impl Presenter {
 
             let right_stick_x = (pressed.rx as f32 - 127.0) / 127.0;
             let right_stick_y = (pressed.ry as f32 - 127.0) / 127.0;
-            let stick_touch = crate::presenter::stick_touch_point(right_stick_x, right_stick_y, settings);
+            let stick_touch = self.stick_touch_state.update(right_stick_x, right_stick_y, settings);
             stick_keymap &= crate::presenter::stick_trigger_keymap(right_stick_x, settings);
 
             let mut rear_touch = None;
