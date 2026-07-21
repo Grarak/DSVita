@@ -467,7 +467,10 @@ impl Presenter {
                 }
             }
 
-            stick_touch = crate::presenter::stick_touch_point((pressed.rx as f32 - 127.0) / 127.0, (pressed.ry as f32 - 127.0) / 127.0, settings);
+            let right_stick_x = (pressed.rx as f32 - 127.0) / 127.0;
+            let right_stick_y = (pressed.ry as f32 - 127.0) / 127.0;
+            stick_touch = crate::presenter::stick_touch_point(right_stick_x, right_stick_y, settings);
+            stick_keymap &= crate::presenter::stick_trigger_keymap(right_stick_x, settings);
         }
         PresentEvent::Inputs {
             keymap: self.keymap & stick_keymap,

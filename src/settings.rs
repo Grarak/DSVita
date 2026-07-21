@@ -63,6 +63,30 @@ impl From<Language> for u8 {
     }
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, Default, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
+pub enum RightStickMode {
+    #[default]
+    Off = 0,
+    #[strum(serialize = "Touch camera")]
+    TouchCamera = 1,
+    #[strum(serialize = "L and R triggers")]
+    TriggerLR = 2,
+}
+
+impl From<u8> for RightStickMode {
+    fn from(value: u8) -> Self {
+        debug_assert!(value <= RightStickMode::TriggerLR as u8);
+        unsafe { std::mem::transmute(value) }
+    }
+}
+
+impl From<RightStickMode> for u8 {
+    fn from(value: RightStickMode) -> Self {
+        value as u8
+    }
+}
+
 #[derive(Clone)]
 pub struct ListInner {
     pub selection: usize,
@@ -259,7 +283,7 @@ pub(crate) enum SettingId {
     Language,
     Controls,
     JoystickAsDpad,
-    RightStickTouch,
+    RightStickMode,
     RightStickTouchSensitivity,
     RightStickTouchPivotX,
     RightStickTouchPivotY,
@@ -305,14 +329,14 @@ impl SettingId {
             SettingId::Language => Setting::new("Language", "Preferred in-game language. Only applies if the game actually includes it.", Language::iter().into(), false, SettingGroup::System),
             SettingId::Controls => Setting::new("Controls", "Custom button mapping to use. Create profiles under Global settings.", SettingValue::List(ListInner::new(0, vec![])), true, SettingGroup::System),
             SettingId::JoystickAsDpad => Setting::new("Joystick as D-Pad", "Use the left analog stick as the D-Pad.", SettingValue::Bool(true), true, SettingGroup::System),
-            SettingId::RightStickTouch => Setting::new(
-                "Right stick touch camera",
+            SettingId::RightStickMode => Setting::new(
+                "Right stick function",
                 if cfg!(target_os = "vita") {
-                    "Drags the touchscreen with the right analog stick around a pivot point. Useful for camera control in 3D games with touch aiming. Pick the pivot below so it doesn't overlap other touch elements."
+                    "What the right analog stick does. 'Touch camera' drags the touchscreen around the pivot point below, for camera control in 3D games with touch aiming. 'L and R triggers' holds L when the stick moves left and R when it moves right."
                 } else {
-                    "Drags the touchscreen around a pivot point while the right mouse button is held, emulating a right analog stick. Useful for camera control in 3D games with touch aiming. Pick the pivot below so it doesn't overlap other touch elements."
+                    "What the emulated right stick (hold the right mouse button and drag) does. 'Touch camera' drags the touchscreen around the pivot point below, for camera control in 3D games with touch aiming. 'L and R triggers' holds L when the stick moves left and R when it moves right."
                 },
-                SettingValue::Bool(false),
+                RightStickMode::iter().into(),
                 true,
                 SettingGroup::System,
             ),
@@ -375,8 +399,8 @@ impl Settings {
         unsafe { self.0[SettingId::JoystickAsDpad as usize].value.as_bool().unwrap_unchecked() }
     }
 
-    pub fn right_stick_touch(&self) -> bool {
-        unsafe { self.0[SettingId::RightStickTouch as usize].value.as_bool().unwrap_unchecked() }
+    pub fn right_stick_mode(&self) -> RightStickMode {
+        unsafe { RightStickMode::from(self.0[SettingId::RightStickMode as usize].value.as_list().unwrap_unchecked().0 as u8) }
     }
 
     /// Sensitivity of the right-stick touch drag as a factor (setting is in percent).

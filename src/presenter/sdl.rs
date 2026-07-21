@@ -419,15 +419,20 @@ impl Presenter {
             keymap = self.keymap;
         }
 
-        let stick_touch = self.right_mouse_origin.and_then(|(origin_x, origin_y)| {
+        // Right-mouse drag as right stick: deflection from the press origin
+        let right_stick = self.right_mouse_origin.map(|(origin_x, origin_y)| {
             // Pixels of mouse travel for full stick deflection
             const MOUSE_STICK_RANGE: f32 = 100.0;
-            crate::presenter::stick_touch_point(
+            (
                 (self.mouse_pos.0 - origin_x) as f32 / MOUSE_STICK_RANGE,
                 (self.mouse_pos.1 - origin_y) as f32 / MOUSE_STICK_RANGE,
-                settings,
             )
         });
+        let stick_touch = right_stick.and_then(|(x, y)| crate::presenter::stick_touch_point(x, y, settings));
+        let mut keymap = keymap;
+        if let Some((x, _)) = right_stick {
+            keymap &= crate::presenter::stick_trigger_keymap(x, settings);
+        }
 
         PresentEvent::Inputs {
             keymap,

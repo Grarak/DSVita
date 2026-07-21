@@ -77,7 +77,7 @@ pub fn stick_touch_point(stick_x: f32, stick_y: f32, settings: &crate::settings:
     /// touchscreen pixels.
     const RADIUS: f32 = 70.0;
 
-    if !settings.right_stick_touch() {
+    if settings.right_stick_mode() != crate::settings::RightStickMode::TouchCamera {
         return None;
     }
     let len = (stick_x * stick_x + stick_y * stick_y).sqrt();
@@ -90,6 +90,22 @@ pub fn stick_touch_point(stick_x: f32, stick_y: f32, settings: &crate::settings:
     let x = (pivot_x as f32 + stick_x * scale).round().clamp(0.0, crate::core::graphics::gpu::DISPLAY_WIDTH as f32 - 1.0);
     let y = (pivot_y as f32 + stick_y * scale).round().clamp(0.0, crate::core::graphics::gpu::DISPLAY_HEIGHT as f32 - 1.0);
     Some((x as i16, y as i16))
+}
+
+/// Keymap mask for the 'L and R triggers' right stick mode: clears (presses) the
+/// TriggerL bit while the stick points left and the TriggerR bit while it points
+/// right. All bits set when the mode is off or the stick rests in the deadzone.
+pub fn stick_trigger_keymap(stick_x: f32, settings: &crate::settings::Settings) -> u32 {
+    const THRESHOLD: f32 = 0.5;
+    let mut keymap = 0xFFFFFFFF;
+    if settings.right_stick_mode() == crate::settings::RightStickMode::TriggerLR {
+        if stick_x < -THRESHOLD {
+            keymap &= !(1 << crate::core::input::Keycode::TriggerL as u8);
+        } else if stick_x > THRESHOLD {
+            keymap &= !(1 << crate::core::input::Keycode::TriggerR as u8);
+        }
+    }
+    keymap
 }
 
 pub const PRESENTER_AUDIO_OUT_SAMPLE_RATE: usize = 48000;
